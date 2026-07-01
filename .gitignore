@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Données & secrets
+.env
+.env.local
+.env.*.local
+.env.llm_proxy
+keys
+keys.txt
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+data/
+logs/
+*.log
+nohup.out
+
+# Cache HTTP / artefacts
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code scratch dir — wiped at SessionStart, gitignored except marker
+tmp/*
+!tmp/.gitkeep
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Chain Autopilot runtime backup (apply layer writes chains.env.bak)
+chains.env.bak
+*.bak

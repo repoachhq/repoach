@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1500" height="850" viewBox="0 0 1500 850" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Verdana, sans-serif">
+  <defs>
+    <marker id="arrW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e5e7eb"/>
+    </marker>
+    <marker id="arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+    </marker>
+    <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="850" fill="#0a0e17"/>
+
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — NIM Observability</text>
+  <text x="45" y="73" font-size="12.5" fill="#9ca3af">Two independent streams record NIM behaviour for later analysis. The hosted NIM is volatile and the chain self-heals (budget-retry + Max failover), which HIDES drift — so we measure it from both sides.</text>
+
+  <!-- Legend -->
+  <line x1="1090" y1="38" x2="1130" y2="38" stroke="#34d399" stroke-width="2.4"/>
+  <text x="1138" y="42" font-size="12" fill="#d1d5db">active probe</text>
+  <line x1="1090" y1="60" x2="1130" y2="60" stroke="#fbbf24" stroke-width="2.4"/>
+  <text x="1138" y="64" font-size="12" fill="#d1d5db">passive telemetry</text>
+  <line x1="1270" y1="38" x2="1310" y2="38" stroke="#a78bfa" stroke-width="2" stroke-dasharray="2,4"/>
+  <text x="1318" y="42" font-size="12" fill="#d1d5db">observes NIM</text>
+
+  <!-- Observed target : NIM -->
+  <rect x="160" y="95" width="1180" height="62" rx="11" fill="#15120a" stroke="#f59e0b" stroke-width="1.8"/>
+  <rect x="1284" y="106" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="1306" y="119" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="185" y="125" font-size="16" font-weight="bold" fill="#fbbf24">NVIDIA NIM — hosted serving (the observed target)</text>
+  <text x="185" y="146" font-size="12" fill="#cbd5e1">volatile: warm / cold / thinking-leak (HTTP 200 but empty when reasoning eats the max_tokens budget) · self-hosting infeasible (8 GB GPU)</text>
+
+  <!-- ════════ stream headers ════════ -->
+  <text x="90" y="205" font-size="14" font-weight="bold" fill="#34d399">① ACTIVE PROBES — scheduled, push</text>
+  <text x="790" y="205" font-size="14" font-weight="bold" fill="#fbbf24">② PASSIVE TELEMETRY — from real traffic</text>
+
+  <!-- ───────── ACTIVE column ───────── -->
+  <!-- timer -->
+  <rect x="90" y="220" width="330" height="66" rx="10" fill="#15120a" stroke="#f59e0b" stroke-width="1.6"/>
+  <rect x="352" y="230" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="374" y="243" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="108" y="250" font-size="14" font-weight="bold" fill="#fbbf24">systemd timer (every 15 min)</text>
+  <text x="108" y="271" font-size="11.5" fill="#cbd5e1">ferova-nim-health.timer</text>
+
+  <!-- monitor-chains -->
+  <rect x="90" y="312" width="615" height="135" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="637" y="324" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="660" y="337" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="108" y="342" font-size="15.5" font-weight="bold" fill="#93c5fd">ferova monitor-chains</text>
+  <text x="108" y="367" font-size="12" fill="#cbd5e1">check_tier_heads — probe each tier's HEAD model DIRECTLY</text>
+  <text x="108" y="386" font-size="12" fill="#9ca3af">(bypasses the proxy on purpose — measures the raw NIM head)</text>
+  <text x="108" y="411" font-size="12" fill="#cbd5e1">classify →  ok · slow · empty (thinking-leak) · error · skipped</text>
+  <text x="108" y="433" font-size="11.5" fill="#9ca3af">concurrent (asyncio.gather) · exit 1 on any degraded head → cron-gateable</text>
+
+  <!-- SQLite store -->
+  <rect x="90" y="475" width="615" height="86" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.8"/>
+  <rect x="637" y="487" width="44" height="18" rx="9" fill="#4ade80"/>
+  <text x="659" y="500" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="108" y="507" font-size="15.5" font-weight="bold" fill="#86efac">nim_health_probe — SQLite</text>
+  <text x="108" y="531" font-size="12" fill="#cbd5e1">recorded_at · tier · model · status · latency_s · content_chars</text>
+  <text x="108" y="551" font-size="11.5" fill="#9ca3af">one row per tier per sweep · shared get_settings().db_path</text>
+
+  <!-- ───────── PASSIVE column ───────── -->
+  <!-- agents -->
+  <rect x="790" y="220" width="620" height="66" rx="10" fill="#170f1c" stroke="#e879f9" stroke-width="1.6"/>
+  <rect x="1342" y="230" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="1357" y="243" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="808" y="250" font-size="14" font-weight="bold" fill="#f0abfc">review bots + builder agents</text>
+  <text x="808" y="271" font-size="11.5" fill="#cbd5e1">every request thinks through the proxy — no extra calls, telemetry is free</text>
+
+  <!-- proxy -->
+  <rect x="790" y="312" width="620" height="135" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="1342" y="324" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="1365" y="337" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="808" y="342" font-size="15.5" font-weight="bold" fill="#93c5fd">LLM proxy :8082 — chain-walk</text>
+  <text x="808" y="367" font-size="12" fill="#cbd5e1">budget-retry: a starved thinking model → retry SAME candidate +max_tokens</text>
+  <text x="808" y="388" font-size="12" fill="#cbd5e1">failover: nvidia_nim → open_router → claude_code/Max (the reliable backstop)</text>
+  <text x="808" y="411" font-size="12" fill="#cbd5e1">peek_for_content — times each attempt → latency_s</text>
+  <text x="808" y="433" font-size="11.5" fill="#9ca3af">self-heals NIM flakiness, which is exactly why drift must be measured</text>
+
+  <!-- events -->
+  <rect x="790" y="475" width="620" height="46" rx="10" fill="#1a160c" stroke="#facc15" stroke-width="1.6"/>
+  <rect x="1342" y="481" width="44" height="18" rx="9" fill="#facc15"/>
+  <text x="1364" y="494" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="808" y="503" font-size="12.5" fill="#fde047">events: proxy_chain_failover_fired / recovered · proxy_budget_retry · PEEK_DECISION  (all carry latency_s)</text>
+
+  <!-- server.log -->
+  <rect x="790" y="535" width="620" height="64" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.8"/>
+  <rect x="1342" y="547" width="44" height="18" rx="9" fill="#4ade80"/>
+  <text x="1364" y="560" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="808" y="567" font-size="15.5" font-weight="bold" fill="#86efac">server.log — durable</text>
+  <text x="808" y="589" font-size="12" fill="#cbd5e1">NO LONGER wiped on restart · 50 MB rotation · 30-day retention (JSON lines)</text>
+
+  <!-- ───────── ANALYSIS ───────── -->
+  <rect x="410" y="650" width="680" height="84" rx="11" fill="#13101f" stroke="#a78bfa" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <rect x="984" y="662" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="1012" y="675" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="430" y="685" font-size="16" font-weight="bold" fill="#c4b5fd">ANALYSIS — deferred (after a few sessions)</text>
+  <text x="430" y="710" font-size="12.5" fill="#cbd5e1">which models drift · when · latency distribution · failure rate per model/tier</text>
+  <text x="430" y="729" font-size="11.5" fill="#9ca3af">SQL over nim_health_probe  +  grep the durable server.log events</text>
+
+  <!-- ════════ arrows ════════ -->
+  <!-- probes / traffic observe NIM (up, dashed purple) -->
+  <path d="M300,312 L300,159" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+  <text x="308" y="240" font-size="11" fill="#a78bfa" transform="rotate(-90 308 240)">probe head · direct</text>
+  <path d="M1120,312 L1120,159" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+  <text x="1128" y="240" font-size="11" fill="#a78bfa" transform="rotate(-90 1128 240)">route + observe</text>
+
+  <!-- active flow (teal) -->
+  <path d="M255,286 L255,308" stroke="#34d399" stroke-width="2.2" fill="none" marker-end="url(#arrA)"/>
+  <text x="263" y="302" font-size="11" fill="#34d399">fires</text>
+  <path d="M397,447 L397,471" stroke="#34d399" stroke-width="2.2" fill="none" marker-end="url(#arrA)"/>
+  <text x="405" y="464" font-size="11" fill="#34d399">persist sweep</text>
+
+  <!-- passive flow (amber) -->
+  <path d="M1100,286 L1100,308" stroke="#fbbf24" stroke-width="2.2" fill="none" marker-end="url(#arrP)"/>
+  <text x="1108" y="302" font-size="11" fill="#fbbf24">request</text>
+  <path d="M1100,447 L1100,471" stroke="#fbbf24" stroke-width="2.2" fill="none" marker-end="url(#arrP)"/>
+  <text x="1108" y="464" font-size="11" fill="#fbbf24">emit (loguru)</text>
+  <path d="M1100,521 L1100,531" stroke="#fbbf24" stroke-width="2.2" fill="none" marker-end="url(#arrP)"/>
+
+  <!-- both stores -> analysis -->
+  <path d="M397,561 C397,620 600,640 660,648" stroke="#9ca3af" stroke-width="2" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <path d="M1100,599 C1100,630 900,640 840,648" stroke="#9ca3af" stroke-width="2" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+
+  <!-- Box-type strip -->
+  <text x="45" y="800" font-size="13" font-weight="bold" fill="#d1d5db">Box types:</text>
+  <rect x="150" y="786" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="165" y="799" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="190" y="800" font-size="12.5" fill="#cbd5e1">LLM agent</text>
+  <rect x="320" y="786" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="343" y="799" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="376" y="800" font-size="12.5" fill="#cbd5e1">our code</text>
+  <rect x="520" y="786" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="542" y="799" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="574" y="800" font-size="12.5" fill="#cbd5e1">external service / ops</text>
+  <rect x="760" y="786" width="44" height="18" rx="9" fill="#4ade80"/>
+  <text x="782" y="799" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="814" y="800" font-size="12.5" fill="#cbd5e1">durable store</text>
+  <rect x="960" y="786" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="988" y="799" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="1026" y="800" font-size="12.5" fill="#cbd5e1">the operator</text>
+</svg>

@@ -1,0 +1,51 @@
+name: ShellCheck
+
+# SP-DEPLOY-SHELL-HARDENING (2026-05-07): static analysis on every shell
+# script in the repo. Catches the bug class that broke the auto-deploy
+# on PR #127 ("scheduler_health is referenced but not assigned" with
+# ``set -u`` enabled, SC2154) before it can land. ~1s per script,
+# trivial CI cost.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: shellcheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: ShellCheck (warning-level)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify ShellCheck is available
+        run: |
+          # SP-CI-SELF-HOSTED: the self-hosted runner has no passwordless
+          # sudo, so the binary is provisioned once on the machine (in
+          # ~/.local/bin, on the runner PATH) instead of apt-installed
+          # per run. Fail loud if it is missing rather than silently skip.
+          command -v shellcheck >/dev/null || {
+            echo "::error::shellcheck not on PATH — install it once on the runner host"
+            exit 1
+          }
+          shellcheck --version | head -2
+
+      - name: Lint every tracked .sh file
+        run: |
+          set -e
+          # Use ``git ls-files`` so we never lint vendored or stale
+          # untracked scripts. ``-S warning`` blocks errors + warnings;
+          # info/style notices remain advisory.
+          mapfile -t scripts < <(git ls-files '*.sh')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "::warning::No .sh files tracked"
+            exit 0
+          fi
+          echo "Linting ${#scripts[@]} script(s)"
+          shellcheck -S warning "${scripts[@]}"

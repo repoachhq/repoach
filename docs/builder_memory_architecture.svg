@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1500" height="980" viewBox="0 0 1500 980" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Verdana, sans-serif">
+  <defs>
+    <marker id="arrFlow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e5e7eb"/>
+    </marker>
+    <marker id="arrRecall" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34d399"/>
+    </marker>
+    <marker id="arrRemember" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+    <marker id="arrHttp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="980" fill="#0a0e17"/>
+
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Builder Memory</text>
+  <text x="45" y="73" font-size="12.5" fill="#9ca3af">The BUILD agents recall past lessons before planning and remember the outcome after building — scoped to project=&quot;builder&quot; only. A self-improving loop, gracefully degrading.</text>
+
+  <!-- Legend top-right -->
+  <line x1="1045" y1="38" x2="1085" y2="38" stroke="#34d399" stroke-width="2.4"/>
+  <text x="1093" y="42" font-size="12" fill="#d1d5db">recall (read)</text>
+  <line x1="1045" y1="60" x2="1085" y2="60" stroke="#fbbf24" stroke-width="2.4"/>
+  <text x="1093" y="64" font-size="12" fill="#d1d5db">remember (write)</text>
+  <line x1="1240" y1="38" x2="1280" y2="38" stroke="#e5e7eb" stroke-width="2.4"/>
+  <text x="1288" y="42" font-size="12" fill="#d1d5db">build flow</text>
+  <line x1="1240" y1="60" x2="1280" y2="60" stroke="#9ca3af" stroke-width="2" stroke-dasharray="6,4"/>
+  <text x="1288" y="64" font-size="12" fill="#d1d5db">call / HTTP</text>
+
+  <!-- ════════════════ ZONE : BUILD FLOW ════════════════ -->
+  <rect x="45" y="95" width="1410" height="205" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="127" font-size="15" font-weight="bold" fill="#9ca3af">BUILD  ·  one  `ferova develop &lt;SP-ID&gt;`  run</text>
+
+  <!-- review_develop -->
+  <rect x="70" y="150" width="245" height="120" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="261" y="162" width="44" height="18" rx="9" fill="#60a5fa"/>
+  <text x="283" y="175" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="90" y="186" font-size="15" font-weight="bold" fill="#93c5fd">review_develop</text>
+  <text x="90" y="210" font-size="11.5" fill="#9ca3af">cli/review_cmds.py</text>
+  <text x="90" y="234" font-size="12" fill="#cbd5e1">runs the build,</text>
+  <text x="90" y="252" font-size="12" fill="#cbd5e1">then ④ remembers</text>
+
+  <!-- Planner -->
+  <rect x="395" y="150" width="270" height="120" rx="10" fill="#170f1c" stroke="#e879f9" stroke-width="1.8"/>
+  <rect x="619" y="162" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="634" y="175" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="415" y="186" font-size="15" font-weight="bold" fill="#f0abfc">Planner Agent</text>
+  <text x="415" y="210" font-size="11.5" fill="#9ca3af">review/planner.py</text>
+  <text x="415" y="234" font-size="12" fill="#cbd5e1">① recalls lessons,</text>
+  <text x="415" y="252" font-size="12" fill="#cbd5e1">② rides them in {SPEC_PLAN}</text>
+
+  <!-- Developer -->
+  <rect x="745" y="150" width="240" height="120" rx="10" fill="#170f1c" stroke="#e879f9" stroke-width="1.8"/>
+  <rect x="949" y="162" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="964" y="175" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="765" y="186" font-size="15" font-weight="bold" fill="#f0abfc">Developer</text>
+  <text x="765" y="210" font-size="11.5" fill="#9ca3af">review/dev_runner.py</text>
+  <text x="765" y="234" font-size="12" fill="#cbd5e1">executes the plan,</text>
+  <text x="765" y="252" font-size="12" fill="#cbd5e1">step by step</text>
+
+  <!-- Build result -->
+  <rect x="1065" y="150" width="365" height="120" rx="10" fill="#1a160d" stroke="#fbbf24" stroke-width="1.8"/>
+  <rect x="1380" y="162" width="38" height="18" rx="9" fill="#fbbf24"/>
+  <text x="1399" y="175" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="1085" y="186" font-size="15" font-weight="bold" fill="#fcd34d">Build result</text>
+  <text x="1085" y="210" font-size="12" fill="#cbd5e1">pushed / stalled  ·  n_steps  ·  no_op_reason</text>
+  <text x="1085" y="234" font-size="12" fill="#cbd5e1">→ becomes the next builder lesson</text>
+
+  <!-- flow arrows in the build zone -->
+  <line x1="315" y1="210" x2="393" y2="210" stroke="#e5e7eb" stroke-width="2" marker-end="url(#arrFlow)"/>
+  <line x1="665" y1="210" x2="743" y2="210" stroke="#e5e7eb" stroke-width="2" marker-end="url(#arrFlow)"/>
+  <line x1="985" y1="210" x2="1063" y2="210" stroke="#e5e7eb" stroke-width="2" marker-end="url(#arrFlow)"/>
+
+  <!-- ════════════════ MEMORY STACK ════════════════ -->
+
+  <!-- CLI (side) -->
+  <rect x="70" y="372" width="230" height="118" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="246" y="384" width="44" height="18" rx="9" fill="#60a5fa"/>
+  <text x="268" y="397" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="90" y="408" font-size="14.5" font-weight="bold" fill="#93c5fd">ferova memory</text>
+  <text x="90" y="433" font-size="12" fill="#cbd5e1">seed-builder  (load 7 traps)</text>
+  <text x="90" y="455" font-size="12" fill="#cbd5e1">recall-builder &lt;q&gt;  (inspect)</text>
+  <text x="90" y="478" font-size="11" fill="#9ca3af">cli/main.py — operator tools</text>
+
+  <!-- builder_memory.py (orchestration) -->
+  <rect x="360" y="360" width="930" height="135" rx="12" fill="#0d1626" stroke="#60a5fa" stroke-width="2"/>
+  <rect x="1244" y="374" width="44" height="18" rx="9" fill="#60a5fa"/>
+  <text x="1266" y="387" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="382" y="392" font-size="16" font-weight="bold" fill="#93c5fd">review/builder_memory.py</text>
+  <text x="650" y="392" font-size="13" font-weight="bold" fill="#34d399">project = &quot;builder&quot;</text>
+  <text x="382" y="420" font-size="12.5" fill="#cbd5e1">recall_builder_lessons(query)      ·   lessons_section(lessons)  → markdown block</text>
+  <text x="382" y="443" font-size="12.5" fill="#cbd5e1">remember_build_outcome(spec_id, pushed, reason, n_steps)</text>
+  <text x="382" y="466" font-size="12.5" fill="#cbd5e1">SEED_LESSONS (7 curated builder traps)</text>
+  <text x="382" y="486" font-size="12" fill="#f87171">⛔ kill-switch:  builder_memory_enabled  (env)  — disabled ⇒ whole loop is a no-op</text>
+
+  <!-- agentmemory_client.py -->
+  <rect x="360" y="540" width="930" height="105" rx="12" fill="#0d1626" stroke="#60a5fa" stroke-width="2"/>
+  <rect x="1244" y="554" width="44" height="18" rx="9" fill="#60a5fa"/>
+  <text x="1266" y="567" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="382" y="572" font-size="16" font-weight="bold" fill="#93c5fd">memory/agentmemory_client.py</text>
+  <text x="700" y="572" font-size="13" font-weight="bold" fill="#fcd34d">REST · graceful (never raises)</text>
+  <text x="382" y="600" font-size="12.5" fill="#cbd5e1">recall(query, project, base_url)      → POST /agentmemory/search       → [] on any failure</text>
+  <text x="382" y="623" font-size="12.5" fill="#cbd5e1">remember(content, project, base_url) → POST /agentmemory/remember  → False on any failure</text>
+
+  <!-- agentmemory service -->
+  <rect x="360" y="690" width="930" height="240" rx="12" fill="#0f1a16" stroke="#34d399" stroke-width="2"/>
+  <rect x="1244" y="704" width="44" height="18" rx="9" fill="#34d399"/>
+  <text x="1266" y="717" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="382" y="722" font-size="16" font-weight="bold" fill="#6ee7b7">agentmemory service</text>
+  <text x="640" y="722" font-size="12.5" fill="#9ca3af">localhost:3111 · BM25 · systemd --user · adopted upstream, not rebuilt</text>
+
+  <!-- scopes -->
+  <rect x="395" y="755" width="250" height="140" rx="10" fill="#10231b" stroke="#34d399" stroke-width="2.4"/>
+  <text x="415" y="785" font-size="15" font-weight="bold" fill="#6ee7b7">project = &quot;builder&quot;  ✅</text>
+  <text x="415" y="812" font-size="12" fill="#cbd5e1">the ONLY scope touched</text>
+  <text x="415" y="835" font-size="12" fill="#9ca3af">7 seeded + every build's</text>
+  <text x="415" y="853" font-size="12" fill="#9ca3af">outcome accumulate here</text>
+  <text x="415" y="879" font-size="11.5" fill="#34d399">isolation verified live</text>
+
+  <rect x="675" y="755" width="195" height="60" rx="9" fill="#161a17" stroke="#374151" stroke-width="1.4"/>
+  <text x="772" y="782" font-size="13" fill="#6b7280" text-anchor="middle">project = &quot;review&quot;</text>
+  <text x="772" y="802" font-size="12" fill="#6b7280" text-anchor="middle">✕  out of scope</text>
+
+  <rect x="675" y="835" width="195" height="60" rx="9" fill="#161a17" stroke="#374151" stroke-width="1.4"/>
+  <text x="772" y="862" font-size="13" fill="#6b7280" text-anchor="middle">project = &quot;code&quot;</text>
+  <text x="772" y="882" font-size="12" fill="#6b7280" text-anchor="middle">✕  out of scope</text>
+
+  <rect x="900" y="755" width="360" height="60" rx="9" fill="#161a17" stroke="#374151" stroke-width="1.4"/>
+  <text x="1080" y="782" font-size="13" fill="#6b7280" text-anchor="middle">project = &quot;claude-sessions&quot;</text>
+  <text x="1080" y="802" font-size="12" fill="#6b7280" text-anchor="middle">✕  out of scope</text>
+
+  <text x="900" y="858" font-size="12.5" fill="#9ca3af">Scopes never cross-read:</text>
+  <text x="900" y="879" font-size="12.5" fill="#9ca3af">a review/code search returns 0 builder lessons.</text>
+
+  <!-- ════════════════ MEMORY LOOP ARROWS ════════════════ -->
+
+  <!-- ① recall : Planner -> builder_memory -->
+  <path d="M470,270 L470,360" fill="none" stroke="#34d399" stroke-width="2.4" marker-end="url(#arrRecall)"/>
+  <text x="478" y="320" font-size="12" font-weight="bold" fill="#34d399">① recall</text>
+  <text x="478" y="338" font-size="11" fill="#6ee7b7">spec.id + opening</text>
+
+  <!-- ② lessons : builder_memory -> Planner (dashed up) -->
+  <path d="M600,360 L600,272" fill="none" stroke="#34d399" stroke-width="2.2" stroke-dasharray="7,5" marker-end="url(#arrRecall)"/>
+  <text x="608" y="320" font-size="12" font-weight="bold" fill="#34d399">② lessons</text>
+  <text x="608" y="338" font-size="11" fill="#6ee7b7">→ {SPEC_PLAN}</text>
+
+  <!-- ④ remember : review_develop/result -> builder_memory -->
+  <path d="M1180,270 L1180,330 L900,330 L900,360" fill="none" stroke="#fbbf24" stroke-width="2.4" marker-end="url(#arrRemember)"/>
+  <text x="930" y="322" font-size="12" font-weight="bold" fill="#fbbf24">④ remember(outcome)</text>
+
+  <!-- ③ orchestration -> client -->
+  <path d="M820,495 L820,540" fill="none" stroke="#9ca3af" stroke-width="2.2" stroke-dasharray="6,4" marker-end="url(#arrHttp)"/>
+  <text x="828" y="525" font-size="11.5" fill="#9ca3af">③ recall / remember</text>
+
+  <!-- client -> service (HTTP) -->
+  <path d="M820,645 L820,690" fill="none" stroke="#9ca3af" stroke-width="2.2" stroke-dasharray="6,4" marker-end="url(#arrHttp)"/>
+  <text x="828" y="675" font-size="11.5" fill="#9ca3af">HTTP :3111</text>
+
+  <!-- CLI -> builder_memory -->
+  <path d="M300,431 L358,431" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrHttp)"/>
+
+  <!-- ════════════════ learning-loop callout ════════════════ -->
+  <rect x="45" y="936" width="1410" height="34" rx="9" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="958" font-size="12.5" fill="#cbd5e1">Learning loop (self-evolving):  ①② recall past lessons  →  plan better-informed  →  build  →  ④ remember the new lesson  →  the next spec recalls it.  A down service never breaks a build.</text>
+</svg>

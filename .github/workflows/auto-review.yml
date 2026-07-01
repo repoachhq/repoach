@@ -1,0 +1,696 @@
+name: Auto Review (review bots)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # Only PRs targeting develop trigger the auto-review pipeline.
+    # main is reserved for manual develop -> main promotions; bots
+    # never act on main.
+    branches: [develop]
+  # Re-fire the pipeline when a new comment or review lands on the PR.
+  # The original pull_request trigger fires only on opened/synchronize,
+  # so a verdict that flips later (after a manual reviewer comment, an
+  # archive-comment update from a fresh ``ferova review pr <N>``
+  # run, or a human pushing back) was previously stranded — the
+  # auto_merge job could not see the new APPROVE.  This trigger lets
+  # any conversational signal re-evaluate the gate.
+  issue_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to review"
+        required: true
+        type: number
+
+concurrency:
+  # Resolve the PR number across every supported event type:
+  #   pull_request          → github.event.pull_request.number
+  #   pull_request_review   → github.event.pull_request.number
+  #   issue_comment         → github.event.issue.number  (PR comments
+  #                            arrive as issue_comment events; the
+  #                            issue *is* the PR for review purposes)
+  #   workflow_dispatch     → github.event.inputs.pr_number
+  group: >-
+    review-${{ github.event.pull_request.number
+            || github.event.issue.number
+            || github.event.inputs.pr_number }}
+  # SP-CI-FIX-LOOP-CLOSURE follow-up: a Coder push fires a synchronize
+  # run in this same group — with unconditional cancellation it KILLS
+  # the in-progress parent run right before its in-run re-review and
+  # merge (observed live on PR #372).  Bot-triggered runs therefore
+  # never cancel; they queue, the parent finishes its loop, then the
+  # queued run starts and skips on the actor gate.  Owner pushes keep
+  # cancelling stale runs as before.
+  cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
+
+jobs:
+  review:
+    name: Architect / Sentinel / Tester / Scribe
+    # Skip when:
+    #   * the PR is still a draft
+    #   * the event is an issue_comment on a regular issue (not a PR
+    #     — issue_comment fires on both; ``issue.pull_request`` is
+    #     non-null only for PR comments)
+    #   * the comment came from a bot (avoid feedback loops on the
+    #     archive comment that this very workflow upserts)
+    #   * the triggering actor is not the repository owner
+    #     (SP-CI-SECRETS-ISOLATION layer 1: this job mounts all six
+    #     provider keys, so only owner-triggered events may run it;
+    #     untrusted actors still get the secret-free ci.yml. Extend
+    #     to an explicit allowlist if collaborators are added.)
+    if: >-
+      github.event.pull_request.draft != true
+      && (github.event_name != 'issue_comment'
+          || github.event.issue.pull_request != null)
+      && (github.event_name != 'issue_comment'
+          || github.event.comment.user.type != 'Bot')
+      && (github.event_name != 'pull_request_review'
+          || github.event.review.user.type != 'Bot')
+      && github.actor == github.repository_owner
+    runs-on: self-hosted
+    # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
+    # ONLY in the ``bots`` Environment (no repo-level copies), so this
+    # job binds to it too — it boots the proxy sidecar and needs them.
+    # Caveat: a future protection rule on ``bots`` (required reviewer,
+    # wait timer) would gate every review run, not just auto_fix —
+    # split into two environments before adding one.
+    environment: bots
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      statuses: write
+    outputs:
+      verdict: ${{ steps.run_review.outputs.verdict }}
+      pr_number: ${{ steps.pr.outputs.number }}
+    steps:
+      # SP-CI-SECRETS-ISOLATION layer 2: this job holds all six
+      # provider keys, so it must never install or import PR-authored
+      # code.  The package under review is installed from the BASE
+      # ref (develop) — the PR cannot tamper with its own reviewer.
+      # PR content enters the job as *data only*: the diff via the
+      # gh API and file excerpts read from the separate ``pr_head``
+      # checkout below (no pip install, no pytest, no imports there).
+      - name: Checkout base ref (trusted tooling)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.ref || 'develop' }}
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install package from base ref
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Resolve PR number
+        id: pr
+        run: |
+          # Resolve from any of the supported event payloads:
+          # pull_request / pull_request_review carry the PR object;
+          # issue_comment carries the issue object whose number IS the
+          # PR number for PR comments; workflow_dispatch carries
+          # ``inputs.pr_number``.
+          if [ -n "${{ github.event.pull_request.number }}" ]; then
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.issue.number }}" ]; then
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Data-only checkout of the PR head: the hallucination guard,
+      # round-2 file excerpts and ``load_spec`` read file contents
+      # from the working tree, so the review CLI runs with this
+      # directory as cwd.  Nothing here is installed or imported —
+      # the executing package is the base-ref install above.
+      - name: Checkout PR head (data only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: refs/pull/${{ steps.pr.outputs.number }}/head
+          path: pr_head
+
+      - name: Start LLM proxy sidecar
+        id: start_proxy
+        # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): the agent process
+        # is now proxy-only.  Boot the proxy in the background and
+        # block until /health responds, then run the review CLI
+        # against it.  All provider API keys (NIM, OpenRouter,
+        # DeepSeek, Kimi, Groq, Cerebras) are consumed by the proxy
+        # — agent_loop never touches them directly.
+        env:
+          # Provider credentials — consumed by the proxy.
+          FEROVA_NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          FEROVA_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          FEROVA_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          FEROVA_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          FEROVA_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FEROVA_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          # Capability chains.  These are not secret — they reference
+          # public model names — so we can declare them inline.
+          # Match the production .env used on the developer box.
+          # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): chains live in
+          # the version-controlled ``chains.env`` at the repo root.
+          # The startup step below sources it so the same definition
+          # flows into both local and CI.
+          # Proxy auth — random per-run token shared between the
+          # sidecar and the agent process.
+          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_PROXY_HOST: "127.0.0.1"
+          FEROVA_PROXY_PORT: "8083"
+          # SP-PROXY-CHAIN-FAILOVER (2026-05-09): per-attempt read
+          # timeout. Defaults to 120s in settings.py — too long for the
+          # bot client, which also caps at ~120s, so the bot kills the
+          # connection before the proxy can fail over to the next
+          # candidate. 30s × 4 candidates = 120s fits the bot envelope.
+          HTTP_READ_TIMEOUT: "30"
+        run: |
+          set -e
+          mkdir -p logs
+          # Source the canonical chain definitions — same file local
+          # devs use; no inlined duplicates.
+          set -a
+          source chains.env
+          set +a
+          nohup python -m ferova.llm_proxy > logs/llm_proxy.log 2>&1 &
+          echo "$!" > logs/llm_proxy.pid
+          # Wait up to 20s for /health to respond.
+          for i in $(seq 1 40); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:8083/health > /dev/null; then
+              echo "proxy_ready=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::LLM proxy did not become healthy in 20s"
+          tail -50 logs/llm_proxy.log || true
+          exit 1
+
+      - name: Run review-bot team
+        id: run_review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Agent process talks to the local proxy only.
+          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
+          # Optional: when both are set in repo secrets the orchestrator
+          # fires a Claude Code routine after posting reviews, delivering
+          # the report straight to the user's assistant session.
+          FEROVA_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
+          FEROVA_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
+          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+        run: |
+          # SP-AUTO-REVIEW-V2-MIGRATION : capture the V2-gateway JSON
+          # payload to a file so the operator can fetch the structured
+          # verdict from the workflow run page without scraping the
+          # PR's sticky archive comment.  The exit-code interpretation
+          # is unchanged ; safe_merge + review report still parse the
+          # archive comment as the source of truth.
+          set +e
+          mkdir -p logs/review_ci
+          artifact="$GITHUB_WORKSPACE/logs/review_ci/review_pr_${{ steps.pr.outputs.number }}.json"
+          # cwd = the data-only PR head checkout: guard/excerpt/spec
+          # reads see the PR's files while the interpreter runs the
+          # base-ref install (SP-CI-SECRETS-ISOLATION layer 2).
+          cd pr_head
+          python -m ferova.cli.main review pr "${{ steps.pr.outputs.number }}" | tee "$artifact"
+          rc=${PIPESTATUS[0]}
+          # Exit code 2 == REQUEST_CHANGES (gate the merge); 0 == APPROVE/COMMENT.
+          # Anything else is an actual failure of the bot pipeline.
+          if [ "$rc" -eq 0 ]; then
+            echo "verdict=APPROVE_OR_COMMENT" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ "$rc" -eq 2 ]; then
+            echo "verdict=REQUEST_CHANGES" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "verdict=ERROR" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      - name: Upload review JSON artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-pr-${{ steps.pr.outputs.number }}-json
+          path: logs/review_ci/review_pr_${{ steps.pr.outputs.number }}.json
+          if-no-files-found: ignore
+
+      # SP-LEDGER-TRANSPORT: the findings/coverage ledger this job wrote
+      # lives in an ephemeral per-job db; ship it as a run-scoped
+      # artifact so the auto_merge job's pure gate can re-verify it at
+      # head (cross-run continuity). Written by this trusted base-ref
+      # job — not forgeable by PR code.
+      - name: Upload findings ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: findings-ledger-${{ steps.pr.outputs.number }}
+          path: ${{ runner.temp }}/ferova_review.db
+          overwrite: true
+          if-no-files-found: ignore
+
+      - name: Dump LLM proxy log (scrubbed)
+        if: always()
+        run: |
+          # Same scrubber pattern as the Coder job — workflow logs
+          # are visible to anyone with repo read access; redact
+          # bearer tokens, provider API keys, etc. before stdout.
+          echo "=== llm_proxy.log (tail 200, scrubbed) ==="
+          if [ -f logs/llm_proxy.log ]; then
+            tail -n 200 logs/llm_proxy.log | sed -E \
+              -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._=+/-]{8,}/\1***REDACTED***/g' \
+              -e 's/(x-api-key|api[_-]?key|auth[_-]?token|access[_-]?token|secret)([[:space:]"=:]+)["'"'"']?[A-Za-z0-9._=+/-]{8,}["'"'"']?/\1\2***REDACTED***/Ig' \
+              -e 's/sk-[A-Za-z0-9._=+/-]{20,}/sk-***REDACTED***/g' \
+              -e 's/nvapi-[A-Za-z0-9._=+/-]{20,}/nvapi-***REDACTED***/g' \
+              -e 's/gsk_[A-Za-z0-9]{32,}/gsk_***REDACTED***/g' \
+              -e 's/csk-[A-Za-z0-9]{32,}/csk-***REDACTED***/g' \
+              -e 's/github_pat_[A-Za-z0-9_]{20,}/github_pat_***REDACTED***/g' \
+              -e 's/EAA[A-Za-z0-9]{30,}/EAA***REDACTED***/g'
+          else
+            echo "(no log file)"
+          fi
+
+  auto_fix:
+    name: Coder auto-fix loop
+    needs: review
+    # Run after every successful review pass — the Coder loop itself
+    # is responsible for deciding whether there is anything to do
+    # (REQUEST_CHANGES verdict OR red required CI checks).  This is
+    # critical: review bots only see the diff, so an APPROVE verdict
+    # on a PR with red CI must still trigger the fix loop.
+    # SP-CI-SECRETS-ISOLATION layer 1: this job mounts the provider
+    # keys AND a contents-write token, so it is owner-gated even
+    # though ``needs.review`` already implies the gate passed —
+    # defence in depth against a future trigger that bypasses review.
+    if: >-
+      needs.review.outputs.verdict != 'ERROR'
+      && github.actor == github.repository_owner
+    runs-on: self-hosted
+    # SP-CI-SECRETS-ISOLATION layer 3 — residual trust grant: unlike
+    # the review job, auto_fix MUST execute PR-authored code by
+    # design (the Coder gates run ruff + the pytest matrix on the
+    # fixed tree, and the fix loop edits and pushes that tree).  The
+    # containment is therefore the actor gate above plus this
+    # ``bots`` Environment: move the six provider secrets into it so
+    # they exist only where PR code runs deliberately, and add a
+    # required-reviewer protection on the Environment if the threat
+    # model ever changes (collaborators, public repo).
+    environment: bots
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      # Same scopes as auto_merge — the CI-status fetch in
+      # ``coder_loop.fetch_ci_status`` and the wait-for-CI step both
+      # call ``gh pr checks --required`` which needs ``checks: read``
+      # via GraphQL ``pulls.statusCheckRollup``.
+      checks: read
+      statuses: read
+      # ``actions: write`` — SP-CI-FIX-LOOP-CLOSURE: a Coder push by
+      # ``github-actions[bot]`` produces workflow runs held at
+      # ``action_required``; the release step below reruns them so CI
+      # goes green on the pushed head.
+      actions: write
+    outputs:
+      pushed: ${{ steps.coder.outputs.pushed }}
+      re_verdict: ${{ steps.rereview.outputs.re_verdict }}
+    steps:
+      - name: Checkout PR head (writable)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Set up BOTH Python versions the CI matrix tests so the local
+      # pre-push gate (run_pytest_matrix) can validate each before
+      # the bot pushes.  setup-python@v5 keeps prior interpreters
+      # accessible by their versioned name (python3.11 / python3.13).
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install package on both interpreters
+        run: |
+          python -m pip install --upgrade pip
+          # Install editable + dev deps on the active 3.13 (driver of
+          # the loop). The matrix re-run only invokes pytest under
+          # 3.11, so we install the test deps there too.
+          pip install -e ".[dev]"
+          python3.11 -m pip install --upgrade pip
+          python3.11 -m pip install -e ".[dev]"
+
+      - name: Configure coder-bot git identity
+        run: |
+          git config user.name "coder-bot[bot]"
+          git config user.email "coder-bot@users.noreply.github.com"
+
+      - name: Wait for required CI checks to complete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Required checks (Test suite Python 3.11/3.13) run in the
+          # parallel CI workflow.  We must wait for them to finish
+          # before invoking the Coder loop, otherwise we either skip
+          # CI failures (CI still pending == fetch_ci_status returns
+          # PENDING == no-op) or we apply fixes against stale state.
+          # Poll up to 12 minutes (typical full suite is ~2-3 min).
+          for i in $(seq 1 72); do
+            pending=$(gh pr checks "${{ needs.review.outputs.pr_number }}" --required --json bucket --jq '[.[] | select(.bucket=="pending")] | length' 2>/dev/null || echo 0)
+            if [ "$pending" = "0" ]; then
+              echo "Required CI checks finished (loop $i)."
+              exit 0
+            fi
+            echo "$pending required check(s) still pending — sleeping 10s ($i/72)..."
+            sleep 10
+          done
+          echo "::warning::CI did not finish in 12 minutes; proceeding so the loop does not stall."
+
+      - name: Start LLM proxy sidecar
+        # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): same proxy
+        # sidecar pattern as the review job — Coder is a proxy-only
+        # client now.
+        env:
+          FEROVA_NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          FEROVA_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          FEROVA_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          FEROVA_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          FEROVA_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FEROVA_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): chains live in
+          # the version-controlled ``chains.env`` at the repo root.
+          # The startup step below sources it so the same definition
+          # flows into both local and CI.
+          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_PROXY_HOST: "127.0.0.1"
+          FEROVA_PROXY_PORT: "8083"
+          # SP-PROXY-CHAIN-FAILOVER (2026-05-09): see review job above.
+          HTTP_READ_TIMEOUT: "30"
+        run: |
+          set -e
+          mkdir -p logs
+          set -a
+          source chains.env
+          set +a
+          nohup python -m ferova.llm_proxy > logs/llm_proxy.log 2>&1 &
+          echo "$!" > logs/llm_proxy.pid
+          for i in $(seq 1 40); do
+            if curl --silent --fail --max-time 1 http://127.0.0.1:8083/health > /dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "::error::LLM proxy did not become healthy in 20s"
+          tail -50 logs/llm_proxy.log || true
+          exit 1
+
+      - name: Run Coder auto-fix
+        id: coder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
+          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          # Local pre-push gate runs pytest under both interpreters
+          # so a fix that works on 3.13 but breaks 3.11 is reverted
+          # here, not surfaced via a red CI run that burns minutes
+          # and routine quota.
+          FEROVA_CODER_PYTHONS: python3.11,python3.13
+        run: |
+          set +e
+          python -m ferova.cli.main review fix "${{ needs.review.outputs.pr_number }}"
+          rc=$?
+          # The findings-driven Coder (slice 10b) emits only:
+          # Exit 0 == fixes applied & pushed (the in-run re-review below
+          # takes over — a bot-push synchronize event is HELD by
+          # GitHub and must never be relied upon, SP-CI-FIX-LOOP-CLOSURE).
+          # Exit 4 == nothing to fix (no open blocking findings, or pytest
+          # red and reverted).
+          # Exit 5 == base != develop (refused by safety gate).
+          if [ "$rc" -eq 0 ]; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pushed=false" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -eq 4 ] || [ "$rc" -eq 5 ]; then
+            exit 0
+          fi
+          if [ "$rc" -eq 9 ]; then
+            # SP-CODER-PLACEHOLDER-DETECT: every proposed fix was
+            # rejected as an LLM placeholder string (sentinel match,
+            # single-comment-line file, massive shrinkage, or test
+            # file with no ``def test_``).  No files were written;
+            # the persisted plan
+            # ``logs/coder_placeholder_rejected_*.txt`` is
+            # tail-printed by the next step.
+            echo "::error::Coder fixes rejected as placeholders — see persisted plan (no files written)"
+            exit 9
+          fi
+          exit "$rc"
+
+      - name: Release held CI runs on the pushed head
+        if: steps.coder.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # SP-CI-FIX-LOOP-CLOSURE: the Coder's push is authored by
+          # github-actions[bot]; GitHub holds the resulting CI /
+          # ShellCheck runs at ``action_required`` (and the fork-PR
+          # approve API refuses them).  ``rerun`` releases them so the
+          # merge gate can see green checks on the new head.  Zero
+          # held runs is fine — the synchronize event may not fire at
+          # all for token pushes.
+          pr_branch="$(gh pr view "${{ needs.review.outputs.pr_number }}" --json headRefName --jq .headRefName)"
+          for i in $(seq 1 6); do
+            held="$(gh api "repos/${{ github.repository }}/actions/runs?branch=${pr_branch}&per_page=10" \
+              --jq '.workflow_runs[] | select(.conclusion == "action_required") | .id')"
+            if [ -n "$held" ]; then
+              while IFS= read -r run_id; do
+                echo "releasing held run ${run_id}"
+                gh api -X POST "repos/${{ github.repository }}/actions/runs/${run_id}/rerun" \
+                  || echo "rerun ${run_id} failed (non-fatal — merge gate will skip loudly)"
+              done <<< "$held"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "no held runs found after 60s — nothing to release"
+
+      - name: Re-review the pushed head (in-run)
+        id: rereview
+        if: steps.coder.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
+          FEROVA_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
+          FEROVA_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
+          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+        run: |
+          # SP-CI-FIX-LOOP-CLOSURE: the run that pushed the fix
+          # re-reviews it — no new event needed, the original run's
+          # actor (the owner) keeps every gate intact.  Review tooling
+          # executes from the PR checkout here, which is inside this
+          # job's documented residual trust grant (auto_fix runs PR
+          # code by design; actor-gated + bots environment).  The
+          # proxy sidecar from the fix step is still alive.
+          set +e
+          python -m ferova.cli.main review pr "${{ needs.review.outputs.pr_number }}"
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "re_verdict=APPROVE_OR_COMMENT" >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [ "$rc" -eq 2 ]; then
+            echo "re_verdict=REQUEST_CHANGES" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "re_verdict=ERROR" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      # SP-LEDGER-TRANSPORT: after a fix + in-run re-review, THIS db
+      # holds the post-fix findings — supersede the review job's
+      # ledger artifact so auto_merge re-verifies the fresh head.
+      - name: Upload findings ledger (post-fix)
+        if: steps.coder.outputs.pushed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: findings-ledger-${{ needs.review.outputs.pr_number }}
+          path: ${{ runner.temp }}/ferova_review.db
+          overwrite: true
+          if-no-files-found: ignore
+
+      - name: Dump LLM proxy log (scrubbed)
+        if: always()
+        run: |
+          # The proxy log carries bearer tokens (``Authorization: Bearer …``
+          # on inbound + outbound HTTP), provider API keys when an
+          # upstream returns them in error bodies, and full prompt
+          # bodies (which include user messages on WA-chat paths
+          # though not on the review-bot paths).  Workflow logs are
+          # visible to anyone with repo read access, so the dump
+          # below pipes through a sed scrubber that redacts every
+          # known secret-shaped token before it lands in stdout.
+          # GitHub Actions also auto-masks every value stored in
+          # ``secrets.*`` — this scrubber is a defence-in-depth layer
+          # for proxy-internal state that isn't in the workflow's
+          # secrets context.
+          echo "=== llm_proxy.log (tail 200, scrubbed) ==="
+          if [ -f logs/llm_proxy.log ]; then
+            tail -n 200 logs/llm_proxy.log | sed -E \
+              -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._=+/-]{8,}/\1***REDACTED***/g' \
+              -e 's/(x-api-key|api[_-]?key|auth[_-]?token|access[_-]?token|secret)([[:space:]"=:]+)["'"'"']?[A-Za-z0-9._=+/-]{8,}["'"'"']?/\1\2***REDACTED***/Ig' \
+              -e 's/sk-[A-Za-z0-9._=+/-]{20,}/sk-***REDACTED***/g' \
+              -e 's/nvapi-[A-Za-z0-9._=+/-]{20,}/nvapi-***REDACTED***/g' \
+              -e 's/gsk_[A-Za-z0-9]{32,}/gsk_***REDACTED***/g' \
+              -e 's/csk-[A-Za-z0-9]{32,}/csk-***REDACTED***/g' \
+              -e 's/github_pat_[A-Za-z0-9_]{20,}/github_pat_***REDACTED***/g' \
+              -e 's/EAA[A-Za-z0-9]{30,}/EAA***REDACTED***/g'
+          else
+            echo "(no log file)"
+          fi
+
+      - name: Dump Coder/Developer parse_failed responses
+        if: always()
+        run: |
+          # SP-CODER-PARSER-OBSERVABILITY (2026-05-06): when the
+          # Coder or Developer parser falls through every recovery
+          # path, the dispatch persists the full raw response under
+          # ``logs/{coder,developer}_parse_failed_<id>_<utc>.txt``.
+          # Surface those files in the workflow output (scrubbed for
+          # the same secret patterns) so post-mortem doesn't depend
+          # on re-running CI with extra prints.
+          shopt -s nullglob
+          files=(
+            logs/coder_parse_failed_*.txt
+            logs/developer_parse_failed_*.txt
+            logs/coder_accept_without_fixes_*.txt
+            logs/coder_placeholder_rejected_*.txt
+          )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "(no parse_failed responses persisted)"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "=== $f (scrubbed) ==="
+            sed -E \
+              -e 's/(Bearer[[:space:]]+)[A-Za-z0-9._=+/-]{8,}/\1***REDACTED***/g' \
+              -e 's/(x-api-key|api[_-]?key|auth[_-]?token|access[_-]?token|secret)([[:space:]"=:]+)["'"'"']?[A-Za-z0-9._=+/-]{8,}["'"'"']?/\1\2***REDACTED***/Ig' \
+              -e 's/sk-[A-Za-z0-9._=+/-]{20,}/sk-***REDACTED***/g' \
+              -e 's/nvapi-[A-Za-z0-9._=+/-]{20,}/nvapi-***REDACTED***/g' \
+              -e 's/gsk_[A-Za-z0-9]{32,}/gsk_***REDACTED***/g' \
+              -e 's/csk-[A-Za-z0-9]{32,}/csk-***REDACTED***/g' \
+              -e 's/github_pat_[A-Za-z0-9_]{20,}/github_pat_***REDACTED***/g' \
+              -e 's/EAA[A-Za-z0-9]{30,}/EAA***REDACTED***/g' \
+              "$f"
+            echo "=== end $f ==="
+          done
+
+  auto_merge:
+    name: Auto-merge to develop
+    # SP-CI-FIX-LOOP-CLOSURE: the loop closes INSIDE this run.  When
+    # auto_fix pushed, the in-run re-review's verdict is the only one
+    # that may merge (the round-1 verdict is stale for the new head);
+    # when nothing was pushed, the round-1 verdict rules.  Bot-push
+    # synchronize events are held by GitHub at action_required and are
+    # deliberately NOT part of this design.
+    needs: [review, auto_fix]
+    # SP-CI-SECRETS-ISOLATION layer 1: contents-write token — owner
+    # only, same defence-in-depth rationale as auto_fix.
+    if: >-
+      !failure() && !cancelled()
+      && github.actor == github.repository_owner
+      && ((needs.auto_fix.outputs.pushed == 'true'
+           && needs.auto_fix.outputs.re_verdict == 'APPROVE_OR_COMMENT')
+          || (needs.auto_fix.outputs.pushed != 'true'
+           && needs.review.outputs.verdict == 'APPROVE_OR_COMMENT'))
+    runs-on: self-hosted
+    permissions:
+      contents: write
+      pull-requests: write
+      # ``gh pr checks --required`` reads the GraphQL
+      # ``pulls.statusCheckRollup`` field — without ``checks: read``
+      # it returns "Resource not accessible by integration" and the
+      # auto-merge gate skips with SKIP_CI_RED even though CI passed.
+      checks: read
+      statuses: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Wait for required CI checks to complete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Mirror the wait in auto_fix so a verdict==APPROVE PR with
+          # still-running CI doesn't skip with SKIP_CI_TIMEOUT and stall
+          # the merge until the next push. The Python gate also waits
+          # 12 min internally (SP-AUTOMERGE-CI-GATE), so this loop is a
+          # belt-and-suspenders pre-wait.
+          for i in $(seq 1 72); do
+            pending=$(gh pr checks "${{ needs.review.outputs.pr_number }}" --required --json bucket --jq '[.[] | select(.bucket=="pending")] | length' 2>/dev/null || echo 0)
+            if [ "$pending" = "0" ]; then
+              echo "Required CI checks finished (loop $i)."
+              exit 0
+            fi
+            echo "$pending required check(s) still pending — sleeping 10s ($i/72)..."
+            sleep 10
+          done
+          echo "::warning::CI did not finish in 12 minutes; auto_merge will skip with SKIP_CI_TIMEOUT."
+
+      # SP-LEDGER-TRANSPORT: hydrate this job's db with the findings
+      # ledger from the review (or post-fix auto_fix) job so the pure
+      # gate in ``review merge`` re-verifies real findings at head.
+      # Missing artifact → empty db → the gate sees no findings
+      # (graceful); the step-level continue-on-error keeps the merge
+      # path alive.
+      - name: Download findings ledger
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: findings-ledger-${{ needs.review.outputs.pr_number }}
+          path: ${{ runner.temp }}
+
+      - name: Run auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+        run: |
+          set +e
+          python -m ferova.cli.main review merge "${{ needs.review.outputs.pr_number }}"
+          rc=$?
+          # Exit 0 == merged or already-merged (idempotent).
+          # Exit 5 == merge gates not met (CI not green, verdict not APPROVE,
+          #   base != develop). All non-fatal — leave PR for next round.
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
+            exit 0
+          fi
+          exit "$rc"

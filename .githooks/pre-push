@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Pre-push gate (versioned, .githooks/) — block direct pushes to protected
+# branches and run the local CI mirror before any push reaches origin.
+#
+# Activated repo-wide via ``git config core.hooksPath .githooks``.  Pairs
+# with the pre-commit hook in the same directory.
+#
+# git reads ``<local_ref> <local_sha> <remote_ref> <remote_sha>`` lines on
+# stdin for every ref being pushed.  We refuse outright if any of those
+# refs resolves to ``refs/heads/main`` or ``refs/heads/develop`` (the
+# project convention is "PR-only on protected branches"), then run
+# ``scripts/ci_local.sh --fast`` so a push of a feature branch still
+# pre-runs the lint suite.
+#
+# Bypass with ``git push --no-verify`` only when the gate is itself
+# broken — never to silence a real failure.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+protected_refs=(
+    "refs/heads/main"
+    "refs/heads/develop"
+)
+
+while read -r _local_ref _local_sha remote_ref _remote_sha ; do
+    for protected in "${protected_refs[@]}" ; do
+        if [[ "$remote_ref" == "$protected" ]] ; then
+            printf "\n\033[31m✗ Direct push to %s refused by .githooks/pre-push.\033[0m\n" "$remote_ref"
+            echo "  Open a PR and use scripts/safe_merge.sh <PR> instead."
+            echo "  (override only for hook-internal repairs: git push --no-verify)"
+            exit 1
+        fi
+    done
+done
+
+if [[ -x scripts/ci_local.sh ]] ; then
+    printf "\n\033[1m== scripts/ci_local.sh --fast ==\033[0m\n"
+    if ! ./scripts/ci_local.sh --fast ; then
+        printf "\n\033[31m✗ Local CI (lint) failed — push aborted.\033[0m\n"
+        echo "  Fix the lint errors above or use --no-verify (last resort)."
+        exit 1
+    fi
+fi
+
+exit 0

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Chain Autopilot cycle every 6h (shadow)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

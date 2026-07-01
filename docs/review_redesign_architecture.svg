@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1500" height="1300" viewBox="0 0 1500 1300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Verdana, sans-serif">
+  <defs>
+    <marker id="arrW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e5e7eb"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/>
+    </marker>
+    <marker id="arrO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fb923c"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="1300" fill="#0a0e17"/>
+
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Review Redesign (evidence-first target)</text>
+  <text x="45" y="73" font-size="12.5" fill="#9ca3af">The LLM proposes and judges over evidence it cannot fabricate — the harness verifies, and the harness alone decides the merge.</text>
+
+  <!-- Legend top-right -->
+  <line x1="1120" y1="38" x2="1160" y2="38" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="1170" y="42" font-size="12" fill="#d1d5db">primary flow</text>
+  <line x1="1120" y1="60" x2="1160" y2="60" stroke="#9ca3af" stroke-width="2" stroke-dasharray="7,5"/>
+  <text x="1170" y="64" font-size="12" fill="#d1d5db">conditional</text>
+  <line x1="1290" y1="38" x2="1330" y2="38" stroke="#fb923c" stroke-width="2" stroke-dasharray="7,5"/>
+  <text x="1340" y="42" font-size="12" fill="#d1d5db">fix loop</text>
+
+  <!-- ════════════ ZONE 1 : SCOPE ════════════ -->
+  <rect x="45" y="95" width="1410" height="135" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="127" font-size="15" font-weight="bold" fill="#9ca3af">①  SCOPE — a truncated review cannot exist</text>
+
+  <rect x="120" y="140" width="180" height="70" rx="10" fill="#101622" stroke="#94a3b8" stroke-width="1.8"/>
+  <text x="210" y="170" font-size="16" font-weight="bold" fill="#e5e7eb" text-anchor="middle">PR event</text>
+  <text x="210" y="192" font-size="12" fill="#9ca3af" text-anchor="middle">opened / new push</text>
+
+  <rect x="380" y="140" width="430" height="70" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="754" y="150" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="777" y="163" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="400" y="170" font-size="16" font-weight="bold" fill="#93c5fd">Diff Scoper</text>
+  <text x="400" y="192" font-size="12.5" fill="#cbd5e1">splits the diff into complete slices — whole file/hunk units, never cut mid-claim</text>
+
+  <rect x="890" y="140" width="440" height="70" rx="10" fill="#101622" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="6,4"/>
+  <text x="910" y="170" font-size="13.5" font-weight="bold" fill="#cbd5e1">coverage matrix — finder × slice</text>
+  <text x="910" y="192" font-size="12" fill="#9ca3af">an absent finder is a recorded hole, never an approval</text>
+
+  <path d="M300,175 L374,175" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <path d="M810,175 L884,175" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+
+  <!-- ════════════ ZONE 2 : FIND ════════════ -->
+  <rect x="45" y="260" width="1410" height="150" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="292" font-size="15" font-weight="bold" fill="#9ca3af">②  FIND — lenses emit FINDINGS, never verdicts · a finding without an evidence pointer is stillborn</text>
+
+  <rect x="120" y="310" width="280" height="75" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.6"/>
+  <rect x="344" y="320" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="359" y="333" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="138" y="343" font-size="15.5" font-weight="bold" fill="#86efac">design lens</text>
+  <text x="138" y="368" font-size="12" fill="#cbd5e1">architecture, altitude, reuse</text>
+
+  <rect x="440" y="310" width="280" height="75" rx="10" fill="#1c1012" stroke="#f87171" stroke-width="1.6"/>
+  <rect x="664" y="320" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="679" y="333" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="458" y="343" font-size="15.5" font-weight="bold" fill="#fca5a5">security lens</text>
+  <text x="458" y="368" font-size="12" fill="#cbd5e1">trust boundaries, secrets, gates</text>
+
+  <rect x="760" y="310" width="280" height="75" rx="10" fill="#1a160c" stroke="#facc15" stroke-width="1.6"/>
+  <rect x="984" y="320" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="999" y="333" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="778" y="343" font-size="15.5" font-weight="bold" fill="#fde047">tests lens</text>
+  <text x="778" y="368" font-size="12" fill="#cbd5e1">promised vs delivered</text>
+
+  <rect x="1080" y="310" width="280" height="75" rx="10" fill="#0c171c" stroke="#22d3ee" stroke-width="1.6"/>
+  <rect x="1304" y="320" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="1319" y="333" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="1098" y="343" font-size="15.5" font-weight="bold" fill="#67e8f9">docs lens</text>
+  <text x="1098" y="368" font-size="12" fill="#cbd5e1">docstrings, conventions</text>
+
+  <path d="M595,210 L595,254" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="610" y="240" font-size="11" fill="#9ca3af">complete slices</text>
+
+  <!-- ════════════ ZONE 3 : VERIFY ════════════ -->
+  <rect x="45" y="440" width="1410" height="220" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="472" font-size="15" font-weight="bold" fill="#9ca3af">③  VERIFY — false findings die here · true findings survive a mediocre reviewer</text>
+
+  <rect x="120" y="490" width="430" height="95" rx="10" fill="#1a160c" stroke="#facc15" stroke-width="1.8"/>
+  <rect x="494" y="502" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="517" y="515" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="140" y="523" font-size="16" font-weight="bold" fill="#fde047">Mechanical verifiers</text>
+  <text x="140" y="548" font-size="12.5" fill="#cbd5e1">missing_test → pytest collect · missing_docstring → AST read</text>
+  <text x="140" y="567" font-size="12.5" fill="#cbd5e1">broken_behavior → execute · lint → run the gate  (guard, promoted)</text>
+
+  <rect x="610" y="490" width="430" height="95" rx="10" fill="#170f1c" stroke="#e879f9" stroke-width="1.8"/>
+  <rect x="984" y="502" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="999" y="515" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="630" y="523" font-size="16" font-weight="bold" fill="#f0abfc">Adversarial refuter</text>
+  <text x="630" y="548" font-size="12.5" fill="#cbd5e1">design / security claims · independent chain · refute-by-default</text>
+  <text x="630" y="567" font-size="12.5" fill="#cbd5e1">judges over fetched evidence it cannot fabricate</text>
+
+  <rect x="1100" y="490" width="290" height="125" rx="10" fill="#101622" stroke="#94a3b8" stroke-width="1.8"/>
+  <rect x="1310" y="502" width="50" height="18" rx="9" fill="#34d399"/>
+  <text x="1335" y="515" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="1120" y="523" font-size="16" font-weight="bold" fill="#cbd5e1">Findings ledger</text>
+  <text x="1120" y="548" font-size="12" fill="#cbd5e1">proposed → verified | refuted</text>
+  <text x="1120" y="567" font-size="12" fill="#cbd5e1">verified+blocking → open</text>
+  <text x="1120" y="586" font-size="12" fill="#cbd5e1">open → resolved | stuck</text>
+  <text x="1120" y="605" font-size="11" fill="#9ca3af">SQLite · pr_findings</text>
+
+  <path d="M740,385 L740,430 L500,484" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <path d="M740,430 L830,484" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="755" y="425" font-size="11" fill="#9ca3af">findings + evidence pointers</text>
+  <path d="M550,560 L600,560" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <text x="552" y="550" font-size="10.5" fill="#9ca3af">residue</text>
+  <path d="M1040,545 L1094,545" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <path d="M550,530 C1000,460 1060,490 1096,520" stroke="#e5e7eb" stroke-width="1.6" fill="none" marker-end="url(#arrW)"/>
+
+  <text x="120" y="640" font-size="12" font-style="italic" fill="#818cf8">principle — stored state is a hint: the ledger seeds what to check, the gate re-verifies everything at the exact head it is about to merge</text>
+
+  <!-- ════════════ ZONE 4 : DECIDE ════════════ -->
+  <rect x="45" y="690" width="1410" height="240" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="722" font-size="15" font-weight="bold" fill="#9ca3af">④  DECIDE — the harness alone · no LLM in the merge decision</text>
+
+  <rect x="120" y="740" width="700" height="70" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="2"/>
+  <rect x="754" y="752" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="777" y="765" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="140" y="770" font-size="15.5" font-weight="bold" fill="#93c5fd">GATE — pure function at head SHA</text>
+  <text x="140" y="795" font-size="12.5" fill="#cbd5e1">CI green @ head  ∧  zero open blocking findings (re-verified)  ∧  spec done_when + smoke green  ∧  coverage ≥ threshold</text>
+
+  <rect x="120" y="840" width="330" height="70" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.8"/>
+  <rect x="384" y="850" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="407" y="863" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="140" y="870" font-size="15.5" font-weight="bold" fill="#86efac">Auto-merge</text>
+  <text x="140" y="893" font-size="12" fill="#cbd5e1">squash → develop · report rendered from the ledger</text>
+
+  <rect x="520" y="840" width="400" height="70" rx="10" fill="#1b130c" stroke="#fb923c" stroke-width="1.8"/>
+  <rect x="854" y="850" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="869" y="863" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="540" y="870" font-size="15.5" font-weight="bold" fill="#fdba74">Coder</text>
+  <text x="540" y="893" font-size="12" fill="#cbd5e1">consumes open findings · fix → push · same verifier re-runs at new head</text>
+
+  <rect x="990" y="840" width="400" height="70" rx="10" fill="#13101f" stroke="#a78bfa" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <rect x="1324" y="850" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="1352" y="863" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="1010" y="870" font-size="15.5" font-weight="bold" fill="#c4b5fd">STUCK — loud stop</text>
+  <text x="1010" y="893" font-size="12" fill="#cbd5e1">findings not strictly decreasing → routine notification + full dossier</text>
+
+  <path d="M1245,615 C1245,680 1000,710 830,742" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <path d="M280,810 L280,834" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="295" y="828" font-size="11.5" fill="#86efac">all facts green</text>
+  <path d="M620,810 L660,834" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <text x="640" y="828" font-size="11.5" fill="#fdba74">open blocking findings</text>
+  <path d="M820,795 C1000,800 1080,815 1130,834" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <text x="1015" y="822" font-size="11.5" fill="#c4b5fd">no progress between rounds</text>
+  <!-- fix loop back to verify -->
+  <path d="M720,910 C720,960 60,940 70,640 C75,560 95,545 114,540" stroke="#fb923c" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrO)"/>
+  <text x="58" y="800" font-size="11.5" fill="#fb923c" transform="rotate(-90 58 800)">fix → push → re-verify at new head (≤ progress-bounded rounds)</text>
+
+  <!-- ════════════ ZONE 5 : LEARN ════════════ -->
+  <rect x="45" y="960" width="1410" height="130" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="992" font-size="15" font-weight="bold" fill="#9ca3af">⑤  LEARN — the factory studies its own findings · only verified ones become lessons</text>
+
+  <rect x="120" y="1005" width="420" height="70" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="484" y="1015" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="507" y="1028" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="140" y="1035" font-size="15.5" font-weight="bold" fill="#93c5fd">Lesson distiller</text>
+  <text x="140" y="1058" font-size="12" fill="#cbd5e1">cycle end (merged | stuck): verified findings → lessons by claim_type</text>
+
+  <rect x="590" y="1005" width="380" height="70" rx="10" fill="#15120a" stroke="#f59e0b" stroke-width="1.8"/>
+  <rect x="904" y="1015" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="926" y="1028" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="610" y="1035" font-size="15.5" font-weight="bold" fill="#fbbf24">agentmemory :3111</text>
+  <text x="610" y="1052" font-size="11.5" fill="#cbd5e1">project=builder · the Planner recalls before the next build</text>
+  <text x="610" y="1068" font-size="11.5" fill="#cbd5e1">project=review · the lenses + refuter recall before reviewing</text>
+
+  <rect x="1020" y="1005" width="370" height="70" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="1334" y="1015" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="1357" y="1028" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="1040" y="1035" font-size="15.5" font-weight="bold" fill="#93c5fd">Insights report (CLI)</text>
+  <text x="1040" y="1058" font-size="12" fill="#cbd5e1">recurring claim_types · hot modules · per-lens precision</text>
+
+  <path d="M1320,615 C1400,700 1420,850 1330,954" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="1418" y="860" font-size="11" fill="#9ca3af" transform="rotate(-90 1418 860)">all findings — verified + refuted</text>
+  <path d="M540,1040 L584,1040" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="562" y="1030" font-size="10.5" fill="#9ca3af" text-anchor="middle">lessons</text>
+  <path d="M590,1020 C160,1000 80,700 95,420 C98,395 105,385 113,378" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <text x="84" y="560" font-size="11.5" fill="#fbbf24" transform="rotate(-90 84 560)">review-scope recall — the bench remembers its own traps</text>
+
+  <!-- ════════════ FOOTER : retired / promoted ════════════ -->
+  <rect x="45" y="1110" width="695" height="120" rx="14" fill="#140d10" stroke="#7f1d1d" stroke-width="1.2"/>
+  <text x="70" y="1140" font-size="14" font-weight="bold" fill="#f87171">RETIRED — patches around the wrong primitive</text>
+  <text x="70" y="1165" font-size="12" fill="#cbd5e1">verdict enum · 4/4 consensus · nit-only auto-promote</text>
+  <text x="70" y="1185" font-size="12" fill="#cbd5e1">parse_failed / TRANSPORT promotion paths</text>
+  <text x="70" y="1205" font-size="12" fill="#cbd5e1">archive comment as merge gate · Coder chasing raw comments</text>
+
+  <rect x="760" y="1110" width="695" height="120" rx="14" fill="#0c1a14" stroke="#14532d" stroke-width="1.2"/>
+  <text x="785" y="1140" font-size="14" font-weight="bold" fill="#4ade80">PROMOTED — the hard-won assets become the core</text>
+  <text x="785" y="1165" font-size="12" fill="#cbd5e1">hallucination guard → mechanical verifier library</text>
+  <text x="785" y="1185" font-size="12" fill="#cbd5e1">evidence-challenge → refuter · round-2 dialogue → contested judging</text>
+  <text x="785" y="1205" font-size="12" fill="#cbd5e1">truncation-announce → scoper · dialogue ratchet → finding dedup</text>
+
+  <!-- Taxonomy strip -->
+  <text x="45" y="1275" font-size="13" font-weight="bold" fill="#d1d5db">Box types:</text>
+  <rect x="150" y="1261" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="165" y="1274" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="190" y="1275" font-size="12.5" fill="#cbd5e1">LLM — proposes and judges, never decides</text>
+  <rect x="480" y="1261" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="503" y="1274" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="536" y="1275" font-size="12.5" fill="#cbd5e1">deterministic — owns the decision</text>
+  <rect x="800" y="1261" width="50" height="18" rx="9" fill="#34d399"/>
+  <text x="825" y="1274" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">DATA</text>
+  <text x="860" y="1275" font-size="12.5" fill="#cbd5e1">durable store — a hint, not the truth</text>
+  <rect x="1130" y="1261" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="1158" y="1274" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="1196" y="1275" font-size="12.5" fill="#cbd5e1">the operator — exception handler only</text>
+</svg>

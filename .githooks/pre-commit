@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Pre-commit gate (versioned, .githooks/) — local mirror of CI lint steps.
+#
+# Activated repo-wide via ``git config core.hooksPath .githooks`` (or the
+# bring_up_all.sh bootstrap).  Mirrors the .pre-commit-config.yaml setup
+# but as a single self-contained script that works without the
+# ``pre-commit`` framework — the framework refuses when core.hooksPath is
+# set, so we ship the gate inline.
+#
+# Bypass with ``git commit --no-verify`` only for genuinely-broken hook
+# scripts ; never to silence a real lint failure.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+bold() { printf "\n\033[1m== %s ==\033[0m\n" "$1" ; }
+ok()   { printf "\033[32m  ✓ %s\033[0m\n" "$1" ; }
+fail() { printf "\033[31m  ✗ %s\033[0m\n" "$1" ; }
+
+mapfile -t staged_py < <(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.py$' || true)
+mapfile -t staged_sh < <(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.sh$' || true)
+
+if [[ ${#staged_py[@]} -eq 0 && ${#staged_sh[@]} -eq 0 ]] ; then
+    exit 0
+fi
+
+failures=()
+
+if [[ ${#staged_py[@]} -gt 0 ]] ; then
+    bold "ruff check (staged python)"
+    if ruff check "${staged_py[@]}" ; then
+        ok "ruff check"
+    else
+        fail "ruff check"
+        failures+=("ruff check")
+    fi
+
+    bold "ruff format --check (staged python)"
+    if ruff format --check "${staged_py[@]}" ; then
+        ok "ruff format --check"
+    else
+        fail "ruff format --check  (run: ruff format ${staged_py[*]})"
+        failures+=("ruff format --check")
+    fi
+
+    bold "lint — no inline comments / no noqa (golden rule #6)"
+    if python scripts/lint_no_inline_comments.py --summary ; then
+        ok "no-inline-comments"
+    else
+        fail "no-inline-comments"
+        failures+=("no-inline-comments")
+    fi
+
+    bold "lint — no silent except (SP-LINT-LOG-CATCH-ALL)"
+    if python scripts/lint_no_silent_except.py --summary ; then
+        ok "no-silent-except"
+    else
+        fail "no-silent-except  (add _log.warning before the swallow, or raise instead)"
+        failures+=("no-silent-except")
+    fi
+
+    bold "lint — edge honesty (SP-ARCH-EDGE-GATE)"
+    if ferova arch check --staged ; then
+        ok "edge-honesty"
+    else
+        fail "edge-honesty  (declare the missing depends_on edge in the spec frontmatter)"
+        failures+=("edge-honesty")
+    fi
+fi
+
+if [[ ${#staged_sh[@]} -gt 0 ]] && command -v shellcheck >/dev/null 2>&1 ; then
+    bold "shellcheck (staged shell)"
+    if shellcheck -S warning "${staged_sh[@]}" ; then
+        ok "shellcheck"
+    else
+        fail "shellcheck"
+        failures+=("shellcheck")
+    fi
+fi
+
+if [[ ${#failures[@]} -eq 0 ]] ; then
+    exit 0
+fi
+
+printf "\n\033[31mPre-commit gate failed (%d):\033[0m\n" "${#failures[@]}"
+printf '    - %s\n' "${failures[@]}"
+echo "Fix the above or commit with --no-verify (last resort) ."
+exit 1

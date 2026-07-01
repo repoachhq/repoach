@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1500" height="1180" viewBox="0 0 1500 1180" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Verdana, sans-serif">
+  <defs>
+    <marker id="arrW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e5e7eb"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9ca3af"/>
+    </marker>
+    <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="1180" fill="#0a0e17"/>
+
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Review Factory</text>
+  <text x="45" y="73" font-size="12.5" fill="#9ca3af">A spec's life, top to bottom: build → review → ship — the Coder loops fixes until the bench validates. Infrastructure stays in the basement.</text>
+
+  <!-- Legend top-right -->
+  <line x1="1090" y1="38" x2="1130" y2="38" stroke="#e5e7eb" stroke-width="2"/>
+  <text x="1140" y="42" font-size="12" fill="#d1d5db">primary flow</text>
+  <line x1="1090" y1="60" x2="1130" y2="60" stroke="#9ca3af" stroke-width="2" stroke-dasharray="7,5"/>
+  <text x="1140" y="64" font-size="12" fill="#d1d5db">conditional</text>
+  <line x1="1280" y1="38" x2="1320" y2="38" stroke="#a78bfa" stroke-width="2" stroke-dasharray="2,4"/>
+  <text x="1330" y="42" font-size="12" fill="#d1d5db">infrastructure link</text>
+
+  <!-- ════════════════ ZONE 1 : BUILD ════════════════ -->
+  <rect x="45" y="95" width="1410" height="175" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="127" font-size="15" font-weight="bold" fill="#9ca3af">①  BUILD</text>
+
+  <!-- Operator -->
+  <rect x="200" y="145" width="280" height="95" rx="10" fill="#13101f" stroke="#a78bfa" stroke-width="1.8"/>
+  <rect x="404" y="157" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="432" y="170" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="220" y="180" font-size="16" font-weight="bold" fill="#c4b5fd">Operator</text>
+  <text x="220" y="205" font-size="12.5" fill="#cbd5e1">writes the spec</text>
+  <text x="220" y="224" font-size="12" fill="#9ca3af">docs/specs/&lt;SP-ID&gt;.md</text>
+
+  <!-- Planner -->
+  <rect x="560" y="145" width="280" height="95" rx="10" fill="#170f1c" stroke="#e879f9" stroke-width="1.8"/>
+  <rect x="794" y="157" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="809" y="170" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="580" y="180" font-size="16" font-weight="bold" fill="#f0abfc">Planner Agent</text>
+  <text x="580" y="205" font-size="12.5" fill="#cbd5e1">reads the spec, explores the repo,</text>
+  <text x="580" y="224" font-size="12.5" fill="#cbd5e1">writes the ACTION PLAN</text>
+  <text x="580" y="258" font-size="11" fill="#a78bfa">↕ agentmemory: recalls past lessons before planning · build remembers its outcome (builder scope)</text>
+
+  <!-- Developer -->
+  <rect x="920" y="145" width="280" height="95" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="1154" y="157" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="1169" y="170" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="940" y="180" font-size="16" font-weight="bold" fill="#93c5fd">Developer Agent</text>
+  <text x="940" y="205" font-size="12.5" fill="#cbd5e1">executes the plan,</text>
+  <text x="940" y="224" font-size="12.5" fill="#cbd5e1">one commit per step</text>
+
+  <!-- PR event -->
+  <rect x="1280" y="155" width="130" height="75" rx="10" fill="#101622" stroke="#94a3b8" stroke-width="1.8"/>
+  <text x="1345" y="188" font-size="16" font-weight="bold" fill="#e5e7eb" text-anchor="middle">PR</text>
+  <text x="1345" y="210" font-size="12" fill="#9ca3af" text-anchor="middle">→ develop</text>
+
+  <path d="M480,192 L554,192" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="517" y="182" font-size="11" fill="#9ca3af" text-anchor="middle">spec</text>
+  <path d="M840,192 L914,192" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="877" y="182" font-size="11" fill="#f0abfc" text-anchor="middle">plan</text>
+  <path d="M1200,192 L1274,192" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="1237" y="182" font-size="11" fill="#9ca3af" text-anchor="middle">push</text>
+
+  <!-- spine: PR -> REVIEW zone -->
+  <path d="M1345,230 C1345,290 700,300 420,388" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="760" y="310" font-size="11.5" fill="#9ca3af">PR event (opened or new push) — GitHub Actions boots the bench in CI, owner-gated (see basement)</text>
+
+  <!-- ════════════════ ZONE 2 : REVIEW ════════════════ -->
+  <rect x="45" y="330" width="1410" height="370" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="362" font-size="15" font-weight="bold" fill="#9ca3af">②  REVIEW — black box in GitHub Actions (replayable locally) · in: PR event → out: report + verdict</text>
+
+  <!-- Orchestrator -->
+  <rect x="110" y="390" width="300" height="85" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
+  <rect x="354" y="402" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="377" y="415" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="130" y="425" font-size="16" font-weight="bold" fill="#93c5fd">Orchestrator</text>
+  <text x="130" y="450" font-size="12.5" fill="#cbd5e1">fans out the bench, builds the report</text>
+
+  <!-- Bench -->
+  <rect x="470" y="390" width="230" height="85" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.6"/>
+  <rect x="644" y="400" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="659" y="413" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="488" y="423" font-size="15.5" font-weight="bold" fill="#86efac">Architect</text>
+  <text x="488" y="450" font-size="12" fill="#cbd5e1">design review</text>
+
+  <rect x="720" y="390" width="230" height="85" rx="10" fill="#1c1012" stroke="#f87171" stroke-width="1.6"/>
+  <rect x="894" y="400" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="909" y="413" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="738" y="423" font-size="15.5" font-weight="bold" fill="#fca5a5">Sentinel</text>
+  <text x="738" y="450" font-size="12" fill="#cbd5e1">security review</text>
+
+  <rect x="970" y="390" width="230" height="85" rx="10" fill="#1a160c" stroke="#facc15" stroke-width="1.6"/>
+  <rect x="1144" y="400" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="1159" y="413" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="988" y="423" font-size="15.5" font-weight="bold" fill="#fde047">Tester</text>
+  <text x="988" y="450" font-size="12" fill="#cbd5e1">tests promised vs delivered</text>
+
+  <rect x="1220" y="390" width="230" height="85" rx="10" fill="#0c171c" stroke="#22d3ee" stroke-width="1.6"/>
+  <rect x="1394" y="400" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="1409" y="413" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="1238" y="423" font-size="15.5" font-weight="bold" fill="#67e8f9">Scribe</text>
+  <text x="1238" y="450" font-size="12" fill="#cbd5e1">docs review</text>
+
+  <!-- orchestrator -> bench -->
+  <path d="M410,432 L464,432" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="437" y="422" font-size="11" fill="#9ca3af" text-anchor="middle">diff</text>
+
+  <!-- bench -> guard -->
+  <path d="M830,475 L830,519" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="845" y="503" font-size="11" fill="#9ca3af">verdicts + comments</text>
+
+  <!-- Guard -->
+  <rect x="665" y="525" width="330" height="85" rx="10" fill="#1a160c" stroke="#facc15" stroke-width="1.6"/>
+  <rect x="939" y="537" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="962" y="550" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="683" y="558" font-size="15.5" font-weight="bold" fill="#fde047">Hallucination Guard</text>
+  <text x="683" y="583" font-size="12.5" fill="#cbd5e1">checks every claim against the repo</text>
+
+  <!-- Verdict gate -->
+  <rect x="470" y="635" width="720" height="50" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="2"/>
+  <rect x="1124" y="651" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="1147" y="664" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="810" y="666" font-size="15.5" font-weight="bold" fill="#93c5fd" text-anchor="middle">VERDICT — report + validation · unanimous 4/4 APPROVE + green CI</text>
+
+  <path d="M830,610 L830,629" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+
+  <!-- ════════════════ ZONE 3 : SHIP ════════════════ -->
+  <rect x="45" y="730" width="1410" height="160" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="70" y="762" font-size="15" font-weight="bold" fill="#9ca3af">③  SHIP — or fix and loop back to review</text>
+
+  <!-- Coder -->
+  <rect x="200" y="775" width="320" height="95" rx="10" fill="#1b130c" stroke="#fb923c" stroke-width="1.8"/>
+  <rect x="474" y="787" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="489" y="800" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="220" y="810" font-size="16" font-weight="bold" fill="#fdba74">Coder</text>
+  <text x="220" y="835" font-size="12.5" fill="#cbd5e1">verifies each claim on disk, then fixes —</text>
+  <text x="220" y="854" font-size="12.5" fill="#cbd5e1">ruff + pytest matrix gate → push (≤ 3 rounds)</text>
+
+  <!-- Auto-merge -->
+  <rect x="640" y="775" width="300" height="95" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.8"/>
+  <rect x="874" y="787" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="897" y="800" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="660" y="810" font-size="16" font-weight="bold" fill="#86efac">Auto-merge</text>
+  <text x="660" y="835" font-size="12.5" fill="#cbd5e1">squash → develop</text>
+  <text x="660" y="854" font-size="12" fill="#9ca3af">bots never touch main</text>
+
+  <!-- main -->
+  <rect x="1060" y="775" width="300" height="95" rx="10" fill="#13101f" stroke="#a78bfa" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <rect x="1294" y="787" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="1322" y="800" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="1080" y="810" font-size="16" font-weight="bold" fill="#c4b5fd">main</text>
+  <text x="1080" y="835" font-size="12.5" fill="#cbd5e1">operator merges develop → main</text>
+  <text x="1080" y="854" font-size="12" fill="#9ca3af">when he decides</text>
+
+  <!-- consensus outcomes -->
+  <path d="M560,685 C480,710 400,740 370,769" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <text x="395" y="725" font-size="11.5" fill="#fca5a5">REQUEST_CHANGES</text>
+  <path d="M830,685 L830,727 L790,769" stroke="#e5e7eb" stroke-width="2" fill="none" marker-end="url(#arrW)"/>
+  <text x="845" y="722" font-size="11.5" fill="#86efac">4/4 + CI green</text>
+  <!-- coder loops back into the review -->
+  <path d="M194,812 C88,780 70,580 84,470 C88,450 98,438 104,433" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+  <text x="60" y="660" font-size="11.5" fill="#9ca3af" transform="rotate(-90 60 660)">loop — fix, push, re-review (path whitelist on every write) · ≤ 3 rounds</text>
+  <!-- auto-merge -> main -->
+  <path d="M940,822 L1054,822" stroke="#9ca3af" stroke-width="1.8" stroke-dasharray="7,5" fill="none" marker-end="url(#arrG)"/>
+
+  <!-- ════════════════ BASEMENT : INFRASTRUCTURE ════════════════ -->
+  <rect x="45" y="920" width="1410" height="200" rx="14" fill="#0b0f1d" stroke="#312e81" stroke-width="1.2"/>
+  <text x="70" y="950" font-size="14" font-weight="bold" fill="#818cf8">INFRASTRUCTURE — no judgment lives here</text>
+
+  <rect x="120" y="965" width="280" height="70" rx="10" fill="#15120a" stroke="#f59e0b" stroke-width="1.6"/>
+  <rect x="332" y="975" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="354" y="988" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="138" y="995" font-size="14.5" font-weight="bold" fill="#fbbf24">GitHub</text>
+  <text x="138" y="1018" font-size="11.5" fill="#cbd5e1">code host, PR registry, events</text>
+
+  <rect x="470" y="965" width="280" height="70" rx="10" fill="#15120a" stroke="#f59e0b" stroke-width="1.6"/>
+  <rect x="678" y="975" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="700" y="988" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="488" y="995" font-size="14.5" font-weight="bold" fill="#fbbf24">GitHub Actions (ubuntu)</text>
+  <text x="488" y="1014" font-size="10.5" fill="#cbd5e1">auto-review.yml — owner-gated, base-ref tooling,</text>
+  <text x="488" y="1028" font-size="10.5" fill="#cbd5e1">PR code = data only · provider keys: bots env only</text>
+
+  <rect x="820" y="965" width="280" height="70" rx="10" fill="#13101f" stroke="#a78bfa" stroke-width="1.6"/>
+  <rect x="1026" y="975" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="1049" y="988" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="838" y="995" font-size="14.5" font-weight="bold" fill="#c4b5fd">LLM proxy :8082</text>
+  <text x="838" y="1014" font-size="10.5" fill="#cbd5e1">nvidia_nim → open_router → claude_code</text>
+  <text x="838" y="1028" font-size="10.5" fill="#cbd5e1">loopback-only by default · token required</text>
+
+  <rect x="1170" y="965" width="280" height="70" rx="10" fill="#0c1a14" stroke="#4ade80" stroke-width="1.6"/>
+  <rect x="1376" y="975" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="1399" y="988" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="1188" y="995" font-size="14.5" font-weight="bold" fill="#86efac">Audit</text>
+  <text x="1188" y="1018" font-size="11.5" fill="#cbd5e1">SQLite trail + push notification</text>
+
+  <!-- 2nd basement row: builder memory + NIM observability (added 2026-06) -->
+  <rect x="120" y="1048" width="635" height="62" rx="10" fill="#15120a" stroke="#f59e0b" stroke-width="1.6"/>
+  <rect x="687" y="1058" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="709" y="1071" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="138" y="1078" font-size="14.5" font-weight="bold" fill="#fbbf24">agentmemory :3111</text>
+  <text x="138" y="1099" font-size="11.5" fill="#cbd5e1">builder memory — recall before plan / remember after build · project=builder</text>
+
+  <rect x="800" y="1048" width="635" height="62" rx="10" fill="#101622" stroke="#94a3b8" stroke-width="1.6"/>
+  <rect x="1367" y="1058" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="1390" y="1071" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="818" y="1078" font-size="14.5" font-weight="bold" fill="#cbd5e1">NIM health monitor</text>
+  <text x="818" y="1099" font-size="11.5" fill="#cbd5e1">monitor-chains → nim_health_probe (SQLite, 15 min) · proxy budget-retry + durable telemetry</text>
+
+  <!-- infrastructure links (dotted purple) -->
+  <path d="M1410,200 C1470,400 1460,850 400,968" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+  <text x="1408" y="560" font-size="11" fill="#a78bfa" transform="rotate(-90 1408 560)">PR registered on GitHub</text>
+  <path d="M400,1000 L464,1000" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+  <path d="M610,965 C610,930 400,920 300,890 C200,860 170,560 200,478" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+  <text x="155" y="700" font-size="11" fill="#a78bfa" transform="rotate(-90 155 700)">wakes the orchestrator</text>
+  <path d="M960,890 C960,930 960,940 960,959" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+  <text x="975" y="935" font-size="11" fill="#a78bfa">every AI agent thinks through the proxy</text>
+  <path d="M1190,685 C1280,760 1300,880 1310,959" stroke="#a78bfa" stroke-width="1.4" stroke-dasharray="2,4" fill="none" marker-end="url(#arrP)"/>
+
+  <!-- Taxonomy strip -->
+  <text x="45" y="1160" font-size="13" font-weight="bold" fill="#d1d5db">Box types:</text>
+  <rect x="150" y="1146" width="30" height="18" rx="9" fill="#e879f9"/>
+  <text x="165" y="1159" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">AI</text>
+  <text x="190" y="1160" font-size="12.5" fill="#cbd5e1">LLM agent — judgment (7)</text>
+  <rect x="400" y="1146" width="46" height="18" rx="9" fill="#94a3b8"/>
+  <text x="423" y="1159" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
+  <text x="456" y="1160" font-size="12.5" fill="#cbd5e1">deterministic — never improvises</text>
+  <rect x="700" y="1146" width="44" height="18" rx="9" fill="#f59e0b"/>
+  <text x="722" y="1159" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
+  <text x="754" y="1160" font-size="12.5" fill="#cbd5e1">external service</text>
+  <rect x="900" y="1146" width="56" height="18" rx="9" fill="#f9fafb"/>
+  <text x="928" y="1159" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">HUMAN</text>
+  <text x="966" y="1160" font-size="12.5" fill="#cbd5e1">the operator — sole owner of main</text>
+</svg>

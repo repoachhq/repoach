@@ -1,0 +1,293 @@
+"""Pure evidence-first merge gate (SP-MERGE-GATE-SHADOW, redesign slice 7a).
+
+The legacy gate trusts the archive's self-reported 4/4 verdict — a
+forgeable, stale signal (audit CRITICAL #1) fed by the parse_failed
+promotion path (CRITICAL #2). This module computes the merge decision
+as a PURE FUNCTION of facts re-verified at the exact head: CI green,
+zero open blocking findings (mechanical claims re-verified on disk at
+head; judged claims trusted only when their stored verdict was
+computed at THIS head), and spec coverage present. Stored finding
+state is a hint — the truth is the re-verification at head.
+
+Slice 7a runs this in SHADOW: ``run_auto_merge`` computes and logs the
+decision next to the live 4/4 gate WITHOUT changing what merges, so
+the pure gate can be compared against the 4/4 on real PRs before the
+flip (slice 7b drops the archive gate and decides on this).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from .finding_verifiers import verify_finding
+from .findings import (
+    ClaimType,
+    FindingStatus,
+    Severity,
+    fetch_findings,
+    fetch_review_integrity,
+    init_findings_schema,
+)
+from .reviewer import ReviewVerdict
+from .spec_gate import fetch_spec_coverage, init_spec_coverage_schema
+
+_MIN_REVIEWERS = 4
+"""A complete review has at least four reviewers parsed (the bench)."""
+
+_MECHANICAL_TYPES = frozenset(
+    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
+)
+_JUDGED_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY})
+_SETTLED = frozenset({FindingStatus.RESOLVED, FindingStatus.REFUTED})
+_BLOCKING_STATUSES = frozenset({FindingStatus.VERIFIED, FindingStatus.STUCK})
+"""Statuses that confirm a live blocking problem (SP-STUCK-ESCALATION).
+
+``stuck`` is a terminal escalation state — auto-resolution gave up — so a
+stuck blocking finding must keep gating the merge exactly like a verified
+one; otherwise marking a real judged finding ``stuck`` would silently
+unblock it. ``stuck`` is deliberately NOT in ``_SETTLED`` and the gate's
+re-verification stays the escape hatch (a stuck finding the operator
+actually fixes re-verifies green / falls stale and merges normally).
+"""
+
+
+class MergeFacts(BaseModel):
+    """The re-verified facts the pure gate decides on.
+
+    Attributes:
+        head_sha: The exact head the decision is computed against.
+        ci_green: Whether every required check is green at that head.
+        open_blocking_findings: Count of blocking findings confirmed
+            real at head (mechanical re-verified, or judged-and-fresh).
+            ``stuck`` blocking findings count exactly like ``verified``
+            ones (terminal escalation must keep the merge blocked).
+        spec_covered: Whether the plan's acceptance selectors are all
+            present at head.
+        spec_coverage_known: Whether a coverage record exists at all
+            (a hand-shipped PR has none).
+        review_complete: Whether the bench ran fresh at this head with
+            every reviewer parsed and zero unparsed outcomes — the
+            evidence-first replacement for the archive verdict that
+            closes the parse_failed-promote hole (audit CRITICAL #2).
+        review_integrity_known: Whether a review-integrity record
+            exists for this PR at all.
+    """
+
+    head_sha: str
+    ci_green: bool
+    open_blocking_findings: int
+    spec_covered: bool
+    spec_coverage_known: bool
+    review_complete: bool
+    review_integrity_known: bool
+
+
+class MergeDecision(BaseModel):
+    """The pure gate's verdict.
+
+    Attributes:
+        merge: True when every condition holds.
+        reasons: One human-readable line per failing condition; empty
+            when ``merge`` is True.
+    """
+
+    merge: bool
+    reasons: list[str]
+
+
+def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
+    """Decide whether to merge, purely from re-verified *facts*.
+
+    Args:
+        facts: The facts gathered at the exact head.
+
+    Returns:
+        A :class:`MergeDecision`. ``merge`` is True only when the head
+        is known, CI is green, no blocking finding survives
+        re-verification, and (when coverage was recorded) the spec's
+        acceptance selectors are present.
+    """
+    reasons: list[str] = []
+    if not facts.head_sha:
+        reasons.append("head_sha unknown")
+    if not facts.review_integrity_known:
+        reasons.append("no review-integrity record at head (review did not run)")
+    elif not facts.review_complete:
+        reasons.append("review incomplete or unparsed reviewers at head")
+    if not facts.ci_green:
+        reasons.append("CI not green at head")
+    if facts.open_blocking_findings > 0:
+        reasons.append(f"{facts.open_blocking_findings} open blocking finding(s) at head")
+    if facts.spec_coverage_known and not facts.spec_covered:
+        reasons.append("spec acceptance selectors not all present")
+    return MergeDecision(merge=not reasons, reasons=reasons)
+
+
+def verdict_from_facts(facts: MergeFacts) -> ReviewVerdict:
+    """Derive the team review verdict from the findings ledger.
+
+    The evidence-first replacement for the strict consensus gate
+    (SP-CODER-TRIGGER-FLIP / redesign slice 10b): the team verdict is
+    ``REQUEST_CHANGES`` exactly when the review surfaced a blocking
+    problem the author must address — an open blocking finding at head,
+    or an incomplete review (an unparsed reviewer or fewer than the full
+    bench) — otherwise ``APPROVE``.
+
+    CI freshness and spec coverage are deliberately NOT folded in: CI is
+    still pending while the review runs, and both are re-checked by the
+    authoritative gate (:func:`compute_merge_decision`). Keeping this in
+    lockstep with the *findings* dimension of that gate means the review
+    verdict never contradicts the merge it gates — unlike the legacy
+    consensus, which also blocked on ``COMMENT`` verdicts and ``major``
+    comments that the pure gate would happily merge.
+
+    Args:
+        facts: The ledger facts summarised at the review head.
+
+    Returns:
+        ``REQUEST_CHANGES`` or ``APPROVE``.
+    """
+    if facts.open_blocking_findings > 0 or not facts.review_complete:
+        return ReviewVerdict.REQUEST_CHANGES
+    return ReviewVerdict.APPROVE
+
+
+def gather_merge_facts(
+    db_path: Path,
+    *,
+    pr_number: int,
+    repo_root: Path,
+    head_sha: str,
+    ci_green: bool,
+) -> MergeFacts:
+    """Re-verify the ledger at *head_sha* and assemble :class:`MergeFacts`.
+
+    Mechanical blocking findings are re-checked on disk at the current
+    head (their stored status is a hint, not trusted); judged blocking
+    findings count only when their stored verdict is ``verified`` AND
+    was computed at this head. Settled findings (resolved / refuted)
+    never count.
+
+    Args:
+        db_path: The findings + coverage ledger.
+        pr_number: The PR under decision.
+        repo_root: The head checkout the verifiers resolve against.
+        head_sha: The exact head being decided on.
+        ci_green: Whether required checks are green at head.
+
+    Returns:
+        The assembled :class:`MergeFacts`.
+    """
+    init_findings_schema(db_path)
+    open_blocking = 0
+    for finding in fetch_findings(db_path, pr_number):
+        if finding.severity is not Severity.BLOCKING or finding.status in _SETTLED:
+            continue
+        if finding.claim_type in _MECHANICAL_TYPES:
+            status, _, _ = verify_finding(finding, repo_root=repo_root)
+            if status is FindingStatus.VERIFIED:
+                open_blocking += 1
+        elif finding.claim_type in _JUDGED_TYPES:
+            fresh = finding.status in _BLOCKING_STATUSES and finding.checked_at_sha == head_sha
+            if fresh:
+                open_blocking += 1
+    return _assemble_facts(
+        db_path,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        ci_green=ci_green,
+        open_blocking=open_blocking,
+    )
+
+
+def summarise_ledger_facts(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str,
+) -> MergeFacts:
+    """Assemble :class:`MergeFacts` from RECORDED ledger state only.
+
+    The display sibling of :func:`gather_merge_facts`: it trusts each
+    finding's stored status instead of re-verifying on disk, so it is
+    safe to call where the PR head is NOT checked out (the review job
+    runs from the base ref) and without any GitHub call. It feeds the
+    review-time report (:func:`report.render_ledger_report`) — a snapshot
+    of what the ledger currently records, never the merge authority. The
+    authoritative decision always comes from :func:`gather_merge_facts`
+    re-verifying at a checked-out head (auto-merge / ``review gate``).
+
+    A blocking finding counts as open when it is not settled and its
+    stored status still confirms the problem: mechanical findings when
+    ``status == verified``; judged findings when ``status == verified``
+    and the verification was computed at ``head_sha``. ``ci_green`` is
+    derived from the ledger too — a red CI is materialised as a verified
+    ``broken_behavior`` finding (slice 8b), so CI is treated as red while
+    any such finding is unsettled.
+
+    Args:
+        db_path: The findings + coverage ledger.
+        pr_number: The PR being reported on.
+        head_sha: The head the report is rendered against.
+
+    Returns:
+        The assembled :class:`MergeFacts` from recorded state.
+    """
+    init_findings_schema(db_path)
+    open_blocking = 0
+    ci_red = False
+    for finding in fetch_findings(db_path, pr_number):
+        if finding.status in _SETTLED:
+            continue
+        if finding.claim_type is ClaimType.BROKEN_BEHAVIOR:
+            ci_red = True
+            continue
+        if finding.severity is not Severity.BLOCKING:
+            continue
+        if finding.status not in _BLOCKING_STATUSES:
+            continue
+        if finding.claim_type in _MECHANICAL_TYPES or (
+            finding.claim_type in _JUDGED_TYPES and finding.checked_at_sha == head_sha
+        ):
+            open_blocking += 1
+    return _assemble_facts(
+        db_path,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        ci_green=not ci_red,
+        open_blocking=open_blocking,
+    )
+
+
+def _assemble_facts(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str,
+    ci_green: bool,
+    open_blocking: int,
+) -> MergeFacts:
+    """Fold the spec-coverage and review-integrity records into facts.
+
+    Shared by :func:`gather_merge_facts` (re-verified ``open_blocking``)
+    and :func:`summarise_ledger_facts` (recorded ``open_blocking``) so
+    the non-finding facts can never drift between the two.
+    """
+    init_spec_coverage_schema(db_path)
+    coverage = fetch_spec_coverage(db_path, pr_number)
+    integrity = fetch_review_integrity(db_path, pr_number)
+    fresh = [r for r in integrity if r["head_sha"] == head_sha]
+    review_complete = bool(fresh) and all(
+        r["n_unparsed"] == 0 and r["n_reviewers"] >= _MIN_REVIEWERS for r in fresh
+    )
+    return MergeFacts(
+        head_sha=head_sha,
+        ci_green=ci_green,
+        open_blocking_findings=open_blocking,
+        spec_covered=bool(coverage) and coverage[-1].covered,
+        spec_coverage_known=bool(coverage),
+        review_complete=review_complete,
+        review_integrity_known=bool(fresh),
+    )

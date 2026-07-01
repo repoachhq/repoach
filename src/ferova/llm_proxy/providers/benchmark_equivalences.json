@@ -1,0 +1,49 @@
+{
+  "equivalences": [
+    {
+      "canonical": "deepseek-v4-pro",
+      "aliases": ["DeepSeek V4 Pro (Max)"],
+      "id_patterns": ["deepseek-v4-pro"]
+    },
+    {
+      "canonical": "deepseek-v3.2-speciale",
+      "aliases": ["DeepSeek V3.2 Speciale"],
+      "id_patterns": ["deepseek-v3.2-speciale", "deepseek-v3.2"]
+    },
+    {
+      "canonical": "glm-5.2",
+      "aliases": ["GLM-5.2 (max)", "GLM-5.2"],
+      "id_patterns": ["glm-5.2"]
+    },
+    {
+      "canonical": "qwen3.7-max",
+      "aliases": ["Qwen3.7 Max", "Qwen3.7-Max"],
+      "id_patterns": ["qwen3.7-max"]
+    },
+    {
+      "canonical": "kimi-k2.6",
+      "aliases": ["Kimi K2.6"],
+      "id_patterns": ["kimi-k2.6", "kimi-k2-6"]
+    },
+    {
+      "canonical": "minimax-m3",
+      "aliases": ["MiniMax-M3"],
+      "id_patterns": ["minimax-m3"]
+    },
+    {
+      "canonical": "mimo-v2.5-pro",
+      "aliases": ["MiMo-V2.5-Pro"],
+      "id_patterns": ["mimo-v2.5-pro", "mimo-v2.5"]
+    },
+    {
+      "canonical": "mistral-medium-3.5",
+      "aliases": ["Mistral Medium 3.5"],
+      "id_patterns": ["mistral-medium-3.5"]
+    },
+    {
+      "canonical": "mistral-small-4",
+      "aliases": ["Mistral Small 4 (Reasoning)"],
+      "id_patterns": ["mistral-small-4"]
+    }
+  ]
+}
