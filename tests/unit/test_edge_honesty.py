@@ -116,9 +116,7 @@ def test_tier1b_literal_in_owner_is_fine(tmp_path: Path) -> None:
 
 
 def test_frontier_is_non_blocking_and_aggregated(tmp_path: Path) -> None:
-    specs = _corpus(
-        tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"')}
-    )
+    specs = _corpus(tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"')})
     registry = load_registry(specs)
     changed = _src(
         tmp_path,
@@ -134,9 +132,7 @@ def test_frontier_is_non_blocking_and_aggregated(tmp_path: Path) -> None:
 
 
 def test_frontier_suppression(tmp_path: Path) -> None:
-    specs = _corpus(
-        tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"')}
-    )
+    specs = _corpus(tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"')})
     registry = load_registry(specs)
     changed = _src(tmp_path, "src/ferova/a/mod.py", 'Table("legacy_one", m)\n')
 
