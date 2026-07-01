@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..agent_engine.agent_loop import (
-    DEFAULT_NIM_CHAIN,
+    DEFAULT_REVIEWER_CHAIN,
     LONG_OUTPUT_TIMEOUT_S,
     PROXY_OPUS_CHAIN,
     PROXY_SONNET_CHAIN,
@@ -401,7 +401,7 @@ class Reviewer:
 
     role: BotRole = BotRole.ARCHITECT
     persona_filename: str = "architect_0.5.0.md"
-    model_chain: tuple[str, ...] = DEFAULT_NIM_CHAIN
+    model_chain: tuple[str, ...] = DEFAULT_REVIEWER_CHAIN
     max_tokens: int = 4096
     temperature: float = 0.1
     _RETRY_BACKOFFS_S: tuple[float, ...] = (0.0, 30.0, 90.0)
