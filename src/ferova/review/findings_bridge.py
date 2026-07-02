@@ -50,9 +50,7 @@ def _files_in_diff(diff: str) -> set[str]:
 
     Failure-soft: malformed input yields whatever it could parse (an empty
     set is acceptable — the caller then keeps every comment, matching the
-    historical no-filter behaviour). This mirrors
-    ``coder_loop._files_in_diff`` deliberately; the duplicate is temporary
-    until the legacy arbiter is retired with that module.
+    historical no-filter behaviour).
 
     Args:
         diff: A unified-diff blob.
