@@ -12,7 +12,7 @@ hook may remind you when a dream is due, but it never triggers one.
 
 ## Live context
 
-!`slug=$(echo "${CLAUDE_PROJECT_DIR:-$PWD}" | sed 's#[/_]#-#g'); mem="$HOME/.claude/projects/$slug/memory"; echo "memory_dir=$mem"; echo "memory_files=$(ls "$mem"/*.md 2>/dev/null | wc -l)"; echo "last_dream=$(python3 -c "import json; print(json.load(open('$mem/.dream_state.json')).get('last_dream','never'))" 2>/dev/null || echo never)"; cmd="${CLAUDE_PROJECT_DIR:-$PWD}/CLAUDE.md"; echo "claude_md_bytes=$(stat -c%s "$cmd" 2>/dev/null || echo 0) (budget 40000)"`
+!`slug=$(echo "${CLAUDE_PROJECT_DIR:-$PWD}" | sed 's#[/_]#-#g'); mem="$HOME/.claude/projects/$slug/memory"; echo "memory_dir=$mem"; echo "memory_files=$(ls "$mem"/*.md 2>/dev/null | wc -l)"; echo "last_dream=$(mem="$mem" python3 -c "import json, os; print(json.load(open(os.environ['mem'] + '/.dream_state.json')).get('last_dream', 'never'))" 2>/dev/null || echo never)"; cmd="${CLAUDE_PROJECT_DIR:-$PWD}/CLAUDE.md"; echo "claude_md_bytes=$(stat -c%s "$cmd" 2>/dev/null || echo 0) (budget 40000)"`
 
 ## Instructions
 
