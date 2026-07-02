@@ -79,15 +79,18 @@ def main():
     now = datetime.now(UTC)
 
     last_dream = state.get("last_dream")
+    since_ts: float = 0
     if last_dream:
-        last_dt = datetime.fromisoformat(last_dream)
-        if last_dt.tzinfo is None:
-            last_dt = last_dt.replace(tzinfo=UTC)
-        if (now - last_dt) < timedelta(hours=HOURS_BETWEEN_DREAMS):
-            return
-        since_ts = last_dt.timestamp()
-    else:
-        since_ts = 0
+        try:
+            last_dt = datetime.fromisoformat(last_dream)
+        except (TypeError, ValueError):
+            last_dt = None
+        if last_dt is not None:
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=UTC)
+            if (now - last_dt) < timedelta(hours=HOURS_BETWEEN_DREAMS):
+                return
+            since_ts = last_dt.timestamp()
 
     new_sessions = _count_new_sessions(sessions_dir, since_ts)
     if new_sessions < MIN_SESSIONS_BETWEEN_DREAMS:
