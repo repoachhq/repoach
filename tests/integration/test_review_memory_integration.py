@@ -72,7 +72,7 @@ def test_seed_recall_inject_end_to_end(
     monkeypatch.setenv("REVIEW_MEMORY_ENABLED", "true")
 
     assert review_memory.seed_review_memory() == 6
-    assert len(fake_store["review"]) == 6
+    assert len(fake_store["ferova-review"]) == 6
 
     diff = "diff --git a/src/ferova/review/foo.py b/src/ferova/review/foo.py\n"
     block = orchestrator_module._build_review_lessons_block("fix review foo", diff)
@@ -96,7 +96,7 @@ def test_kill_switch_disables_recall_end_to_end(
     fresh_settings: None,
     fake_store: dict[str, list[str]],
 ) -> None:
-    fake_store["review"] = ["a lesson that must not surface"]
+    fake_store["ferova-review"] = ["a lesson that must not surface"]
     monkeypatch.setenv("REVIEW_MEMORY_ENABLED", "false")
 
     block = orchestrator_module._build_review_lessons_block("title", "")
