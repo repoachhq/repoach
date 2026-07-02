@@ -63,7 +63,7 @@ def test_recall_enabled_calls_client_with_builder_project(
     monkeypatch.setattr(builder_memory.agentmemory_client, "recall", _fake_recall)
 
     assert builder_memory.recall_builder_lessons("q") == ["recalled lesson"]
-    assert seen["project"] == "builder"
+    assert seen["project"] == "ferova-builder"
 
 
 def test_remember_outcome_pushed(monkeypatch: pytest.MonkeyPatch, fresh_settings: None) -> None:
@@ -83,7 +83,7 @@ def test_remember_outcome_pushed(monkeypatch: pytest.MonkeyPatch, fresh_settings
     )
     assert "SP-X" in captured["content"]
     assert "pushed" in captured["content"]
-    assert captured["project"] == "builder"
+    assert captured["project"] == "ferova-builder"
 
 
 def test_remember_outcome_stalled(monkeypatch: pytest.MonkeyPatch, fresh_settings: None) -> None:
