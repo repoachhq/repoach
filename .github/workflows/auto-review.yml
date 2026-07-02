@@ -56,11 +56,11 @@ jobs:
     #     non-null only for PR comments)
     #   * the comment came from a bot (avoid feedback loops on the
     #     archive comment that this very workflow upserts)
-    #   * the triggering actor is not the repository owner
+    #   * the triggering actor is not on the reviewer allowlist
     #     (SP-CI-SECRETS-ISOLATION layer 1: this job mounts all six
     #     provider keys, so only owner-triggered events may run it;
-    #     untrusted actors still get the secret-free ci.yml. Extend
-    #     to an explicit allowlist if collaborators are added.)
+    #     untrusted actors still get the secret-free ci.yml. Extend the
+    #     fromJSON list as collaborators are added.)
     if: >-
       github.event.pull_request.draft != true
       && (github.event_name != 'issue_comment'
@@ -69,7 +69,7 @@ jobs:
           || github.event.comment.user.type != 'Bot')
       && (github.event_name != 'pull_request_review'
           || github.event.review.user.type != 'Bot')
-      && github.actor == github.repository_owner
+      && contains(fromJSON('["jwfaye"]'), github.actor)
     runs-on: self-hosted
     # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
     # ONLY in the ``bots`` Environment (no repo-level copies), so this
@@ -293,7 +293,7 @@ jobs:
     # defence in depth against a future trigger that bypasses review.
     if: >-
       needs.review.outputs.verdict != 'ERROR'
-      && github.actor == github.repository_owner
+      && contains(fromJSON('["jwfaye"]'), github.actor)
     runs-on: self-hosted
     # SP-CI-SECRETS-ISOLATION layer 3 — residual trust grant: unlike
     # the review job, auto_fix MUST execute PR-authored code by
@@ -615,7 +615,7 @@ jobs:
     # only, same defence-in-depth rationale as auto_fix.
     if: >-
       !failure() && !cancelled()
-      && github.actor == github.repository_owner
+      && contains(fromJSON('["jwfaye"]'), github.actor)
       && ((needs.auto_fix.outputs.pushed == 'true'
            && needs.auto_fix.outputs.re_verdict == 'APPROVE_OR_COMMENT')
           || (needs.auto_fix.outputs.pushed != 'true'
