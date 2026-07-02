@@ -1,0 +1,11 @@
+[Unit]
+Description=Ferova — 15-minute cadence for the NIM chain-head health probe
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=ferova-nim-health.service
+
+[Install]
+WantedBy=timers.target

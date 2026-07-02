@@ -5,5 +5,5 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Documents/work/ferova
-ExecStart=%h/anaconda3/envs/ferova/bin/ferova regenerate-chains
+ExecStart=%h/Documents/work/ferova/.venv/bin/ferova regenerate-chains
 SuccessExitStatus=0 1
