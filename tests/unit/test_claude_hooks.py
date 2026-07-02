@@ -190,3 +190,36 @@ def test_end_of_session_survives_garbage_stdin() -> None:
     result = _run_hook("end-of-session-reminder.py", "not json at all")
     assert result.returncode == 0
     assert result.stdout == ""
+
+
+def test_branch_policy_blocks_hard_reset_to_protected(scratch_repo: Path) -> None:
+    """A hard reset to a protected ref is refused from any branch."""
+    subprocess.run(["git", "checkout", "-q", "-b", "feat/x"], cwd=scratch_repo, check=True)
+    result = _run_hook(
+        "enforce-branch-policy.py",
+        _bash_payload("git reset --hard origin/develop"),
+        cwd=scratch_repo,
+    )
+    assert result.returncode == 2
+    assert "Destructive" in result.stderr
+
+
+def test_tmp_scripts_allows_blessed_script_locations() -> None:
+    """Scripts under scripts/, deploy/, ci/ and .claude/hooks/ pass through."""
+    for command in (
+        "bash scripts/ci_local.sh --fast",
+        "python3 scripts/lint_no_inline_comments.py --summary",
+        "bash deploy/provision.sh",
+        "bash ci/smoke.sh",
+        "python3 .claude/hooks/dream_check.py",
+    ):
+        result = _run_hook("enforce-tmp-scripts.py", _bash_payload(command))
+        assert result.returncode == 0, (command, result.stderr)
+
+
+def test_tmp_scripts_blocks_repo_root_script() -> None:
+    """An ad-hoc script at the repo root is refused with exit 2."""
+    for command in ("./myscript.sh", "python3 build.py"):
+        result = _run_hook("enforce-tmp-scripts.py", _bash_payload(command))
+        assert result.returncode == 2, command
+        assert "ad-hoc script" in result.stderr
