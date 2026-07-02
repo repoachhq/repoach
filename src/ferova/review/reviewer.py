@@ -870,14 +870,19 @@ class Sentinel(Reviewer):
     """Security reviewer — secrets, gates, subprocess, prompt injection.
 
     Routes through ``PROXY_OPUS_CHAIN`` because security review needs
-    the highest reasoning tier ; ``max_tokens`` is bumped to 2000 so
-    security findings have room for detail.
+    the highest reasoning tier.  ``max_tokens`` deliberately inherits
+    the 4096 base default : the opus chain is where reasoning models
+    (chain-of-thought before the JSON) are most likely, and a stale
+    ``max_tokens = 2000`` override — a leftover from the era of the
+    1500 base cap, when 2000 was a bump — had left the security bench
+    with the LOWEST budget of the four reviewers, re-exposing the
+    mid-JSON truncation class the 4096 base fixed (see the base-class
+    docstring, PR #93).
     """
 
     role = BotRole.SENTINEL
     persona_filename = "sentinel_0.4.0.md"
     model_chain = PROXY_OPUS_CHAIN
-    max_tokens = 2000
 
 
 class Tester(Reviewer):
