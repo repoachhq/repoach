@@ -168,6 +168,8 @@ def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
                 for alias in node.names:
                     if alias.name == "*" or alias.name in defined:
                         continue
+                    if _module_file(src_root, f"{dotted}.{alias.name}") is not None:
+                        continue
                     homes = _find_name_homes(src_root, alias.name)
                     violations.append(
                         f"{path_str}: '{alias.name}' is not defined in '{dotted}'; "
