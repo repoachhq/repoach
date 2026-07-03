@@ -15,7 +15,7 @@ from __future__ import annotations
 from ..core.config import get_settings
 from ..memory import agentmemory_client
 
-REVIEW_PROJECT = "review"
+REVIEW_PROJECT = "ferova-review"
 
 SEED_REVIEW_LESSONS: tuple[str, ...] = (
     "Verify a flagged string is part of THIS diff before flagging it — pre-existing "

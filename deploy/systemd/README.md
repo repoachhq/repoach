@@ -1,11 +1,54 @@
 # systemd --user units
 
-Version-controlled deploy units for the Ferova background cadences (run as
-`systemctl --user`, the same pattern as the existing `ferova-nim-health`
-timer). Paths use the `%h` specifier (the invoking user's home), so they assume
-the checkout at `%h/Documents/work/ferova` and the `ferova` conda env
-at `%h/anaconda3/envs/ferova`; adjust `WorkingDirectory` / `ExecStart` if
-either differs.
+Version-controlled deploy units for the Ferova runtime and background
+cadences (run as `systemctl --user`). Paths use the `%h` specifier (the
+invoking user's home), so they assume the checkout at
+`%h/Documents/work/ferova` and its `.venv` runtime (`pip install -e
+".[dev]"` inside `%h/Documents/work/ferova/.venv`); adjust
+`WorkingDirectory` / `ExecStart` if either differs.
+
+Common prerequisite: the units append their output under the checkout's
+`logs/` directory (gitignored) — `mkdir -p ~/Documents/work/ferova/logs`
+once before the first install.
+
+## LLM proxy (`ferova-llm-proxy`)
+
+The chain-failover proxy sidecar every factory bot calls. Binds
+`127.0.0.1:8084` for now: on a machine where the sharp-agent stack still
+owns `127.0.0.1:8082`, the two proxies coexist and ferova's factory must
+be pointed at its OWN proxy (ferova's `chains.env` + provider keys)
+via the checkout's `.env`:
+
+```
+FEROVA_LLM_PROXY_BASE_URL=http://127.0.0.1:8084
+```
+
+When the sharp-agent stack is retired, drop the `.env` override and the
+`FEROVA_PROXY_PORT=8084` line in the unit to reclaim the default 8082.
+
+```bash
+mkdir -p ~/Documents/work/ferova/logs
+cp deploy/systemd/ferova-llm-proxy.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ferova-llm-proxy.service
+curl -s http://127.0.0.1:8084/health
+```
+
+## NIM chain-head health probe (`ferova-nim-health`)
+
+Runs `ferova monitor-chains` every 15 minutes, persisting each sweep to
+the `nim_health_probe` table (`FEROVA_DB_PATH`). This history seeds the
+proxy's health breaker at startup and feeds Chain Autopilot attribution
+(which needs ≥3 probes inside its 24h window before it acts) — without
+the cadence both start blind.
+
+```bash
+cp deploy/systemd/ferova-nim-health.service ~/.config/systemd/user/
+cp deploy/systemd/ferova-nim-health.timer   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ferova-nim-health.timer
+systemctl --user list-timers ferova-nim-health.timer
+```
 
 ## Chain Autopilot cadence (`ferova-chainpilot`)
 

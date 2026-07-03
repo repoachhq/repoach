@@ -12,7 +12,7 @@ from __future__ import annotations
 from ..core.config import get_settings
 from ..memory import agentmemory_client
 
-BUILDER_PROJECT = "builder"
+BUILDER_PROJECT = "ferova-builder"
 
 SEED_LESSONS: tuple[str, ...] = (
     "Integration-test SQLite DBs must live OUTSIDE the repo tree — `git clean -fd` "
