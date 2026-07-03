@@ -72,7 +72,12 @@ class MergeFacts(BaseModel):
             evidence-first replacement for the archive verdict that
             closes the parse_failed-promote hole (audit CRITICAL #2).
         review_integrity_known: Whether a review-integrity record
-            exists for this PR at all.
+            exists at this exact head.
+        review_integrity_any: Whether ANY review-integrity record
+            exists for this PR — distinguishes a review that ran at an
+            older head from a findings-ledger artifact that failed to
+            transport into an empty database (the generic "review did
+            not run" reason misdirected the operator; tech-debt survey).
     """
 
     head_sha: str
@@ -82,6 +87,7 @@ class MergeFacts(BaseModel):
     spec_coverage_known: bool
     review_complete: bool
     review_integrity_known: bool
+    review_integrity_any: bool = False
 
 
 class MergeDecision(BaseModel):
@@ -113,7 +119,13 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     if not facts.head_sha:
         reasons.append("head_sha unknown")
     if not facts.review_integrity_known:
-        reasons.append("no review-integrity record at head (review did not run)")
+        if facts.review_integrity_any:
+            reasons.append("no review-integrity record at head (review ran at an older head)")
+        else:
+            reasons.append(
+                "no review records for this PR in the ledger — "
+                "findings-ledger artifact missing or not transported?"
+            )
     elif not facts.review_complete:
         reasons.append("review incomplete or unparsed reviewers at head")
     if not facts.ci_green:
@@ -290,4 +302,5 @@ def _assemble_facts(
         spec_coverage_known=bool(coverage),
         review_complete=review_complete,
         review_integrity_known=bool(fresh),
+        review_integrity_any=bool(integrity),
     )

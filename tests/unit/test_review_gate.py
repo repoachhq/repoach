@@ -44,6 +44,9 @@ def _gh(*, green: bool = True) -> MagicMock:
     gh.pr_head_sha.return_value = _HEAD
 
     def _run_side(args: list[str]) -> GhResult:
+        if args[:1] == ["api"] and "/check-runs" in args[1]:
+            nd = "\n".join(json.dumps(e) for e in _rollup(green=green))
+            return GhResult(returncode=0, stdout=nd, stderr="", argv=args)
         if args[:2] == ["pr", "view"] and "statusCheckRollup" in " ".join(args):
             return GhResult(
                 returncode=0,

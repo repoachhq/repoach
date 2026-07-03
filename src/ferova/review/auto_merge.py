@@ -141,6 +141,40 @@ def fetch_status_rollup(gh: GhCli, pr_number: int) -> tuple[list[dict], str]:
     return [dict(entry) for entry in rollup], ""
 
 
+def fetch_check_runs(gh: GhCli, head_sha: str) -> tuple[list[dict], str]:
+    """Return ``(check_run_entries, error_message)`` for a commit.
+
+    Queries the commit's complete check-run record instead of the PR
+    ``statusCheckRollup``: the rollup is blind to ``workflow_dispatch``
+    runs and was observed pinning a stale CANCELLED entry over a newer
+    green run at the same SHA (PR #3, 2026-07-03).  Entries are
+    normalised to the rollup shape (``name`` / ``status`` /
+    ``conclusion`` / ``startedAt``); the ``--jq`` projection emits one
+    JSON object per line.
+    """
+    res = gh._run(
+        [
+            "api",
+            "repos/{owner}/{repo}/commits/" + head_sha + "/check-runs",
+            "--paginate",
+            "--jq",
+            ".check_runs[] | {name, status, conclusion, startedAt: .started_at}",
+        ]
+    )
+    if not res.ok:
+        return [], f"gh api check-runs failed: {res.stderr[:200]}"
+    entries: list[dict] = []
+    for line in res.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            entries.append(dict(json.loads(stripped)))
+        except json.JSONDecodeError:
+            return [], f"unparseable check-runs line: {stripped[:200]}"
+    return entries, ""
+
+
 def classify_required_checks(
     rollup: Iterable[dict],
     required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
@@ -148,15 +182,23 @@ def classify_required_checks(
     """Bucket required checks into ``(failed, pending, missing)``.
 
     Each ``rollup`` entry is a ``{"name", "status", "conclusion", ...}``
-    dict as returned by ``gh pr view --json statusCheckRollup``.
-    Duplicate entries (workflow re-runs) collapse to the latest one
-    because the rollup is ordered chronologically.  An unknown
-    conclusion bucket is treated as a failure (fail-closed).
+    dict, from either ``gh pr view --json statusCheckRollup`` or
+    :func:`fetch_check_runs`.  Duplicate entries (workflow re-runs,
+    concurrency cancellations) collapse to the latest ``startedAt``
+    per name — neither source is reliably ordered, and the observed
+    stale-cancelled-over-fresh-green pinning (PR #3, 2026-07-03) means
+    iteration order must never decide.  ISO-8601 timestamps compare
+    lexicographically; an entry without one is treated as oldest.  An
+    unknown conclusion bucket is treated as a failure (fail-closed).
     """
     by_name: dict[str, dict] = {}
     for entry in rollup:
         name = str(entry.get("name") or "")
-        if name:
+        if not name:
+            continue
+        started = str(entry.get("startedAt") or "")
+        current = by_name.get(name)
+        if current is None or started >= str(current.get("startedAt") or ""):
             by_name[name] = dict(entry)
 
     failed: list[str] = []
@@ -189,13 +231,18 @@ def evaluate_ci_gate(
     poll_interval: int = _DEFAULT_POLL_INTERVAL,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    head_sha: str | None = None,
 ) -> CIGateOutcome:
     """Block until every required check succeeds, fails, or times out.
 
     SP-AUTOMERGE-CI-GATE: refuses to merge when any required status
     check is in FAILURE / CANCELLED / TIMED_OUT / ACTION_REQUIRED.
     Pending checks are polled every ``poll_interval`` seconds for up
-    to ``wait_seconds`` total before timing out.
+    to ``wait_seconds`` total before timing out.  Facts come from the
+    head commit's check-runs (``head_sha`` when given, else resolved
+    per poll so a mid-poll push is still judged at the fresh head);
+    the PR ``statusCheckRollup`` is only a fallback when the commit
+    API fails.
     """
     deadline = monotonic() + wait_seconds
     last_snapshot: list[dict] = []
@@ -210,7 +257,19 @@ def evaluate_ci_gate(
     )
 
     while True:
-        rollup, err = fetch_status_rollup(gh, pr_number)
+        sha = head_sha or gh.pr_head_sha(pr_number)
+        if sha:
+            rollup, err = fetch_check_runs(gh, sha)
+            if err and not rollup:
+                _log.warning(
+                    "auto_merge.check_runs_fallback_to_rollup",
+                    pr_number=pr_number,
+                    head_sha=sha[:12],
+                    error=err[:200],
+                )
+                rollup, err = fetch_status_rollup(gh, pr_number)
+        else:
+            rollup, err = fetch_status_rollup(gh, pr_number)
         poll_count += 1
         if err and not rollup:
             _log.error(
