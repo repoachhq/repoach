@@ -10,7 +10,7 @@ Public surface preserved (callers keep working):
 
 * :class:`AgentLoop` with ``run_oneshot`` / ``run``
 * :class:`ToolDef` (callable + JSON schema), :class:`NimAgentOutput`
-* Module-level chain constants (``DEFAULT_NIM_CHAIN``,
+* Module-level chain constants (``DEFAULT_REVIEWER_CHAIN``,
   ``PROXY_*_CHAIN`` etc.) — back-compat aliases pointing at the
   matching capability tier.
 
@@ -37,9 +37,10 @@ Module-level constants :
       PROXY_SONNET_CHAIN``.  They all resolve through
       :func:`alias_for_capability` so renaming the alias on the
       proxy side stays a single point of change.
-    - :data:`DEFAULT_NIM_CHAIN` is a historical name kept so
-      external imports resolve without referencing the original
-      hard-coded chains.
+    - :data:`DEFAULT_REVIEWER_CHAIN` is the base default for the
+      reviewers' ``model_chain``, aliased to
+      :data:`PROXY_SONNET_CHAIN` so reviewers resolve through the
+      full ``MODEL_SONNET`` proxy chain — not a NIM-only chain.
 """
 
 from __future__ import annotations
@@ -96,7 +97,7 @@ shrink per-call outputs and make this ceiling comfortable again."""
 PROXY_SONNET_CHAIN: tuple[str, ...] = (alias_for_capability(CapabilityTier.SONNET),)
 PROXY_OPUS_CHAIN: tuple[str, ...] = (alias_for_capability(CapabilityTier.OPUS),)
 
-DEFAULT_NIM_CHAIN: tuple[str, ...] = PROXY_SONNET_CHAIN
+DEFAULT_REVIEWER_CHAIN: tuple[str, ...] = PROXY_SONNET_CHAIN
 
 
 @dataclass(frozen=True)
@@ -704,7 +705,7 @@ class AgentLoop:
 
 
 __all__ = [
-    "DEFAULT_NIM_CHAIN",
+    "DEFAULT_REVIEWER_CHAIN",
     "LONG_OUTPUT_TIMEOUT_S",
     "PROXY_OPUS_CHAIN",
     "PROXY_SONNET_CHAIN",
