@@ -462,6 +462,7 @@ class AgentLoop:
         messages: list[Message],
         tool_specs: list[ToolSpec],
         turn: int,
+        skip_models: frozenset[str] = frozenset(),
     ) -> AgentResponse:
         """One gateway call with transport-level retry (tool-loop turns).
 
@@ -478,6 +479,10 @@ class AgentLoop:
             messages: Conversation so far.
             tool_specs: Serialised tool surface.
             turn: Loop turn number, for logging only.
+            skip_models: Provider-prefixed model refs the proxy must
+                bypass this turn (SP-PROXY-SEMANTIC-FAILOVER) — the
+                tool loop escalates a repeatedly markup-leaking model
+                here so the chain serves the next candidate.
 
         Returns:
             The gateway response.
@@ -505,6 +510,7 @@ class AgentLoop:
                     tools=tool_specs,
                     max_tokens=self._max_tokens,
                     temperature=self._temperature,
+                    skip_models=skip_models,
                 )
             except (GatewayTransportError, GatewayChainExhausted) as exc:
                 last_exc = exc
@@ -564,6 +570,8 @@ class AgentLoop:
             capability=self._capability.value,
         )
 
+        skip_models: set[str] = set()
+        consecutive_leaks = 0
         for turn in range(1, self._max_turns + 1):
             _log.debug("agent_loop.turn_start", turn=turn, n_messages=len(messages))
             response = self._call_turn_with_retry(
@@ -571,6 +579,7 @@ class AgentLoop:
                 messages=messages,
                 tool_specs=tool_specs,
                 turn=turn,
+                skip_models=frozenset(skip_models),
             )
             turn_tokens = int(response.usage.total_tokens)
             total_tokens += turn_tokens
@@ -581,12 +590,23 @@ class AgentLoop:
             if not tool_calls:
                 text = _extract_text(response)
                 if _LEAKED_TOOLCALL_MARKUP_RE.search(text):
+                    consecutive_leaks += 1
                     _log.warning(
                         "agent_loop.toolcall_markup_leaked",
                         turn=turn,
                         model_used=model_used,
+                        consecutive=consecutive_leaks,
                         text_preview=text[:160],
                     )
+                    if consecutive_leaks >= 2 and response.model_used:
+                        skip_models.add(response.model_used)
+                        consecutive_leaks = 0
+                        _log.warning(
+                            "agent_loop.leaking_model_skipped",
+                            turn=turn,
+                            skipped=response.model_used,
+                            skip_models=sorted(skip_models),
+                        )
                     messages.append(Message(role="assistant", content=list(response.content)))
                     messages.append(
                         Message(
@@ -626,6 +646,7 @@ class AgentLoop:
                     trace=_trace_to_dicts(response.trace),
                 )
 
+            consecutive_leaks = 0
             _log.info(
                 "agent_loop.turn_tool_calls",
                 turn=turn,
