@@ -449,3 +449,16 @@ def test_developer_respond_writes_parse_failed_dump_to_injected_logs_dir(
     written = list(custom_dir.glob("developer_parse_failed_*.txt"))
     assert len(written) == 1, f"expected one dump in {custom_dir}, got {written}"
     assert written[0].read_text(encoding="utf-8") == "{}"
+
+
+def test_developer_loop_carries_the_thirty_turn_budget() -> None:
+    """The agentic Developer gets 30 tool-call turns, not the 15 default.
+
+    Both SP-DEV-STEP-PREFLIGHT dispatches (2026-07-04) exhausted the
+    15-turn budget on read operations against the ~1,000-line
+    dev_runner.py before writing anything; this pin keeps the raised
+    budget from silently regressing.
+    """
+    import ferova.review.reviewer as reviewer_module
+
+    assert reviewer_module._DEVELOPER_MAX_TURNS == 30
