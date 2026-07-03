@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 from ferova.review.dev_runner import (
     DevSessionResult,
     build_step_brief,
+    commit_paths,
     execute_plan_step,
     load_or_produce_plan,
     run_developer_session,
@@ -945,3 +946,60 @@ class TestStepBrief:
         assert "`src/mini.py`" in brief
         assert "pytest tests/unit/test_mini.py is green" in brief
         assert "Previous attempt" not in brief
+
+
+class TestPreExistingWorktreeFiles:
+    def test_execute_plan_step_ignores_pre_existing_paths(self, tmp_path: Path) -> None:
+        """Foreign files present at session start neither escape nor get committed.
+
+        Attempt-1 of the SP-FINDINGS-BRIDGE-DOCFIX dogfood: an
+        uncommitted spec draft and a stray lockfile were attributed to
+        the step and the whole session was refused; git add -A would
+        then have swept them into the step commit.
+        """
+        repo = _init_repo(tmp_path)
+        (repo / "stray.lock").write_text("foreign\n", encoding="utf-8")
+        plan = _one_step_plan()
+        dev = _developer_writing([_good_attempt()])
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+            pre_existing=frozenset({"stray.lock"}),
+        )
+
+        assert outcome.ok is True
+        committed = _git(repo, "show", "--name-only", "--format=", "HEAD").splitlines()
+        assert "stray.lock" not in committed
+        assert "?? stray.lock" in _git(repo, "status", "--porcelain")
+
+
+class TestCommitPaths:
+    def test_stages_only_the_named_paths(self, tmp_path: Path) -> None:
+        """The step commit carries exactly its own files, nothing foreign."""
+        repo = _init_repo(tmp_path)
+        (repo / "wanted.txt").write_text("in\n", encoding="utf-8")
+        (repo / "foreign.txt").write_text("out\n", encoding="utf-8")
+        ok, _ = commit_paths(repo, ["wanted.txt"], "chore: targeted commit")
+        assert ok is True
+        committed = _git(repo, "show", "--name-only", "--format=", "HEAD").splitlines()
+        assert committed == ["wanted.txt"]
+        assert "?? foreign.txt" in _git(repo, "status", "--porcelain")
+
+    def test_empty_paths_is_nothing_to_commit(self, tmp_path: Path) -> None:
+        """An empty path list refuses without touching git."""
+        repo = _init_repo(tmp_path)
+        ok, detail = commit_paths(repo, [], "chore: empty")
+        assert ok is False
+        assert detail == "nothing to commit"
+
+    def test_missing_path_reports_the_git_add_failure(self, tmp_path: Path) -> None:
+        """A nonexistent path surfaces the git add error verbatim."""
+        repo = _init_repo(tmp_path)
+        ok, detail = commit_paths(repo, ["does-not-exist.txt"], "chore: broken")
+        assert ok is False
+        assert "git add failed" in detail

@@ -23,6 +23,7 @@ from ferova.review.auto_merge import (
     OUTCOME_SKIP_CI_FAILED,
     OUTCOME_SKIP_GATE,
     classify_required_checks,
+    fetch_check_runs,
     required_checks_green,
     run_auto_merge,
 )
@@ -304,3 +305,17 @@ def test_ci_gate_falls_back_to_rollup_when_commit_api_fails() -> None:
     gh._run.side_effect = _api_broken
     ok, _ = required_checks_green(gh, 1, wait_seconds=0, poll_interval=0)
     assert ok is True
+
+
+def test_fetch_check_runs_unparseable_line_returns_error() -> None:
+    """A garbage NDJSON line degrades to an error, never a partial truth."""
+    gh = MagicMock()
+    gh._run.return_value = GhResult(
+        returncode=0,
+        stdout='{"name": "Test suite (Python 3.11)", "status": "COMPLETED", "conclusion": "SUCCESS"}\nnot json',
+        stderr="",
+        argv=["api"],
+    )
+    entries, err = fetch_check_runs(gh, "abc123")
+    assert entries == []
+    assert "unparseable" in err

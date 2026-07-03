@@ -301,6 +301,31 @@ def commit_all(repo_root: Path, message: str) -> tuple[bool, str]:
     return True, "committed"
 
 
+def commit_paths(repo_root: Path, paths: list[str], message: str) -> tuple[bool, str]:
+    """Stage exactly *paths* and commit; ``(False, why)`` when nothing staged.
+
+    Targeted sibling of :func:`commit_all` for the step executor: a
+    session may start with pre-existing untracked files in the tree
+    (an uncommitted spec draft, a stray lockfile — the
+    SP-FINDINGS-BRIDGE-DOCFIX attempt-1 incident), and ``git add -A``
+    would silently sweep them into the step's commit. Staging the
+    step's own changed paths keeps foreign files out of factory
+    commits.
+    """
+    if not paths:
+        return False, "nothing to commit"
+    rc, out = _run_git(repo_root, "add", "--", *paths)
+    if rc != 0:
+        return False, f"git add failed: {out}"
+    rc, out = _run_git(repo_root, "diff", "--cached", "--name-only")
+    if rc != 0 or not out.strip():
+        return False, "nothing to commit"
+    rc, out = _run_git(repo_root, "commit", "-m", message)
+    if rc != 0:
+        return False, f"git commit failed: {out}"
+    return True, "committed"
+
+
 def push_branch(repo_root: Path, branch: str) -> tuple[bool, str]:
     """Push ``HEAD`` to ``origin/<branch>``; push-only wrap-up sibling."""
     rc, out = _run_git(repo_root, "push", "origin", f"HEAD:{branch}", timeout_s=180)
@@ -595,6 +620,7 @@ def execute_plan_step(
     db: Path,
     spec_markdown: str = "",
     arch_owns: str = "",
+    pre_existing: frozenset[str] = frozenset(),
 ) -> StepOutcome:
     """Execute one plan step agentically: drive the loop, verify, commit.
 
@@ -628,6 +654,11 @@ def execute_plan_step(
             (SP-DEV-STEP-CONTEXT) — empty keeps the plan-only brief.
         arch_owns: The governed architecture contract (SP-ARCH-DEV-WIRE),
             forwarded into the step brief; empty for a frontier/no-spec run.
+        pre_existing: Repo-relative paths already modified or
+            untracked when the SESSION started — never attributed to
+            the step, never staged into its commit (attempt-1 of the
+            SP-FINDINGS-BRIDGE-DOCFIX dogfood was refused over an
+            uncommitted spec draft and a stray lockfile).
 
     Returns:
         A :class:`StepOutcome`; ``ok=True`` means the step's commit is on the
@@ -680,7 +711,7 @@ def execute_plan_step(
             )
             continue
 
-        changed = _changed_paths(repo_root)
+        changed = [p for p in _changed_paths(repo_root) if p not in pre_existing]
         if not changed:
             gate_feedback = (
                 "Your loop ended without writing any file. Use write_file/edit_file "
@@ -767,7 +798,8 @@ def execute_plan_step(
                     promised=list(step.unit_tests),
                 )
 
-        escaped = [p for p in _changed_paths(repo_root) if p not in contract]
+        step_changes = [p for p in _changed_paths(repo_root) if p not in pre_existing]
+        escaped = [p for p in step_changes if p not in contract]
         if escaped:
             totals.fixes_rejected += len(escaped)
             totals.rejected_paths.extend(escaped)
@@ -784,7 +816,7 @@ def execute_plan_step(
             )
             return totals
 
-        committed, commit_detail = commit_all(repo_root, step.commit_message)
+        committed, commit_detail = commit_paths(repo_root, step_changes, step.commit_message)
         if not committed:
             gate_feedback = f"git commit gate: {commit_detail}"
             continue
@@ -931,6 +963,15 @@ def _develop_one_spec(
     except Exception as exc:
         _log.info("dev_runner.arch_owns_failed", spec_id=spec.id, error=str(exc))
 
+    pre_existing = frozenset(_changed_paths(repo))
+    if pre_existing:
+        _log.warning(
+            "dev_runner.pre_existing_worktree_files_ignored",
+            spec_id=spec.id,
+            n=len(pre_existing),
+            paths=sorted(pre_existing)[:10],
+        )
+
     for step in action_plan.steps:
         outcome = execute_plan_step(
             step,
@@ -941,6 +982,7 @@ def _develop_one_spec(
             db=db,
             spec_markdown=spec.raw_markdown,
             arch_owns=arch_owns_brief,
+            pre_existing=pre_existing,
         )
         result.fixes_applied += outcome.fixes_applied
         result.fixes_rejected += outcome.fixes_rejected
