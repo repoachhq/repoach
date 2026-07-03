@@ -166,3 +166,47 @@ def test_brief_spec_section_capped() -> None:
 def test_brief_without_spec_unchanged() -> None:
     plan, step = _one_step_plan()
     assert "Source spec" not in build_step_brief(plan, step)
+
+
+def test_submodule_from_import_is_accepted(tmp_path: Path) -> None:
+    """``from <package> import <submodule>`` resolves via the module file.
+
+    Tech-debt ledger entry 25 (2026-07-02 dogfood): the gate consulted
+    only ``__init__`` top-level names, refusing the perfectly valid
+    submodule form and blocking a legitimate Developer step twice.
+    """
+    _seed_findings_package(tmp_path)
+    candidate = _seed_module(
+        tmp_path,
+        "tests/unit/test_probe.py",
+        "from ferova.review import findings\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is True
+    assert report == ""
+
+
+def test_subpackage_from_import_is_accepted(tmp_path: Path) -> None:
+    """``from ferova import review`` resolves via the package __init__."""
+    _seed_findings_package(tmp_path)
+    candidate = _seed_module(
+        tmp_path,
+        "tests/unit/test_probe.py",
+        "from ferova import review\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is True
+    assert report == ""
+
+
+def test_missing_name_is_still_reported(tmp_path: Path) -> None:
+    """A name that is neither defined nor a submodule still violates."""
+    _seed_findings_package(tmp_path)
+    candidate = _seed_module(
+        tmp_path,
+        "tests/unit/test_probe.py",
+        "from ferova.review import does_not_exist\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is False
+    assert "does_not_exist" in report
