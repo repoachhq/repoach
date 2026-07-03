@@ -315,3 +315,23 @@ def test_summarise_ci_green_from_broken_behavior(tmp_path: Path) -> None:
     update_finding_status(db, ci_fail, FindingStatus.RESOLVED, verification_method="pytest")
     green = summarise_ledger_facts(db, pr_number=1, head_sha="head123")
     assert green.ci_green is True
+
+
+def test_gather_review_integrity_clean_rerun_redeems_flaked_head(tmp_path: Path) -> None:
+    """A clean re-review at the same head outweighs an earlier flaked run.
+
+    Observed live on PR #2 (2026-07-03): a transport-flaked round
+    (n_unparsed=1) followed by a clean 4/0 re-review at the SAME head
+    left the gate refusing forever, because the aggregation required
+    ALL integrity rows at the head to be clean. One clean complete run
+    is proof that a complete review happened at this head.
+    """
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=1)
+    record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.review_complete is True
+    assert compute_merge_decision(facts).merge is True

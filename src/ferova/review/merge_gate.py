@@ -279,7 +279,7 @@ def _assemble_facts(
     coverage = fetch_spec_coverage(db_path, pr_number)
     integrity = fetch_review_integrity(db_path, pr_number)
     fresh = [r for r in integrity if r["head_sha"] == head_sha]
-    review_complete = bool(fresh) and all(
+    review_complete = any(
         r["n_unparsed"] == 0 and r["n_reviewers"] >= _MIN_REVIEWERS for r in fresh
     )
     return MergeFacts(
