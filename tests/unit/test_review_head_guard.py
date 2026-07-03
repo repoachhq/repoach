@@ -86,3 +86,16 @@ def test_foreign_branch_checkout_skips_the_guard(
     resolved = resolve_fresh_head(gh, 3, repo_root=root, attempts=5, delay_s=0.0)
     assert resolved == "served" * 6
     assert gh.pr_head_sha.call_count == 1
+
+
+def test_pr_view_exception_returns_the_served_head(
+    repo_on_branch: tuple[Path, str],
+) -> None:
+    """A gh without pr_view (or a failing one) degrades to the served head."""
+    root, _ = repo_on_branch
+    gh = MagicMock()
+    gh.pr_head_sha.return_value = "served" * 6
+    gh.pr_view.side_effect = RuntimeError("boom")
+    resolved = resolve_fresh_head(gh, 3, repo_root=root, attempts=3, delay_s=0.0)
+    assert resolved == "served" * 6
+    assert gh.pr_head_sha.call_count == 1
