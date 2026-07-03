@@ -301,6 +301,27 @@ def commit_all(repo_root: Path, message: str) -> tuple[bool, str]:
     return True, "committed"
 
 
+def _step_already_committed(repo_root: Path, step: PlanStep) -> bool:
+    """True when the step's exact commit subject already sits on the branch.
+
+    Session resume support: a multi-step session that fails at step N
+    used to re-dispatch steps 1..N-1 on the next run — the Developer
+    then found nothing left to write and the whole session died on the
+    already-done step (observed on SP-ORCH-DOCSTRING attempt 4→5 and,
+    as pure token waste, on the SP-FINDINGS-BRIDGE-DOCFIX re-runs:
+    ~397k tokens re-paid for a committed step). Plan commit subjects
+    are specific enough to key on; the range is bounded to the session
+    branch (``origin/develop..HEAD``) so a coincidental subject on the
+    base can never skip real work.
+    """
+    rc, out = _run_git(repo_root, "log", "--format=%s", "origin/develop..HEAD")
+    if rc != 0:
+        rc, out = _run_git(repo_root, "log", "--format=%s", "-n", "30", "HEAD")
+        if rc != 0:
+            return False
+    return step.commit_message in out.splitlines()
+
+
 def commit_paths(repo_root: Path, paths: list[str], message: str) -> tuple[bool, str]:
     """Stage exactly *paths* and commit; ``(False, why)`` when nothing staged.
 
@@ -973,6 +994,15 @@ def _develop_one_spec(
         )
 
     for step in action_plan.steps:
+        if _step_already_committed(repo, step):
+            result.steps_completed += 1
+            _log.info(
+                "dev_runner.step_already_committed",
+                spec_id=spec.id,
+                step=step.index,
+                commit=step.commit_message,
+            )
+            continue
         outcome = execute_plan_step(
             step,
             plan=action_plan,
