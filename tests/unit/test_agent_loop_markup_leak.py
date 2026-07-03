@@ -108,3 +108,25 @@ def test_plain_final_answers_are_untouched() -> None:
     output = _loop_with(client).run("go", tools=[_tool()])
     assert output.text == "all gates green, step complete"
     assert len(client.calls) == 1
+
+
+def test_persistent_leaker_is_skipped_from_the_chain() -> None:
+    """Two consecutive leaks escalate to skip_models for the next turns.
+
+    Attempt 3 of SP-ORCH-DOCSTRING proved the reprompt alone cannot
+    save a session when the model leaks on every turn (8 corrective
+    reprompts, still zero files written): the provider was plainly not
+    honouring the tool interface. After two consecutive leaks the loop
+    now bypasses that model via SP-PROXY-SEMANTIC-FAILOVER's
+    skip_models so the chain serves the next candidate.
+    """
+    leak1 = _text_response(_MINIMAX_LEAK)
+    leak2 = _text_response(_MINIMAX_LEAK)
+    clean = _text_response("done")
+    client = _ScriptedClient([leak1, leak2, clean])
+    output = _loop_with(client).run("go", tools=[_tool()])
+    assert output.text == "done"
+    assert len(client.calls) == 3
+    assert client.calls[0]["skip_models"] == frozenset()
+    assert client.calls[1]["skip_models"] == frozenset()
+    assert client.calls[2]["skip_models"] == frozenset({"fake/sonnet"})
