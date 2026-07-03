@@ -1476,6 +1476,22 @@ def _developer_response_has_fixes(response: Any) -> bool:
     return False
 
 
+_DEVELOPER_MAX_TURNS = 30
+"""Tool-call budget for the agentic Developer loop.
+
+The AgentLoop default of 15 was sized for the Planner's read-only
+exploration. Real code steps on large modules exhaust it on reads
+alone: on SP-DEV-STEP-PREFLIGHT (2026-07-04) both dispatches ended
+"I exhausted the tool-call budget on read operations" against the
+~1,000-line dev_runner.py, and the first SP-FINDINGS-BRIDGE-DOCFIX
+run died the same way — ~518k and ~280k tokens for zero writes.
+Thirty turns gives orientation AND implementation room; the
+per-step attempt cap still bounds the total cost, and
+SP-DEV-BRIEF-FILE-CONTENT (embedding contract-file content in the
+brief) remains the structural fix.
+"""
+
+
 class Developer:
     """Autonomous agent that implements a spec from its plan.
 
@@ -1543,6 +1559,7 @@ class Developer:
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 per_call_timeout_s=LONG_OUTPUT_TIMEOUT_S,
+                max_turns=_DEVELOPER_MAX_TURNS,
             )
         self._logs_dir = logs_dir
         from .mcp_whitelist import allowed_tools_for
