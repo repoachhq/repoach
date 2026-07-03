@@ -55,3 +55,6 @@ tmp/*
 # Chain Autopilot runtime backup (apply layer writes chains.env.bak)
 chains.env.bak
 *.bak
+
+# uv-generated lockfile — the repo is officially pip/conda-managed
+uv.lock
