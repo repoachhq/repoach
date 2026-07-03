@@ -1,21 +1,37 @@
-"""Review-team orchestration: parallel reviewers + aggregated verdict + posting.
+"""Review-team orchestration: the evidence-first pipeline from diff to posted findings.
 
-The orchestrator is the entry point invoked by the CLI command and
-the GitHub Actions workflow.  Given a PR number, it:
+``ReviewTeamOrchestrator.review_pr`` is the entry point invoked by the
+CLI command (``ferova review pr``) and the auto-review GitHub Actions
+workflow.  Given a PR number, it drives the following pipeline, in
+order:
 
 1. Fetches the diff via ``gh pr diff``.
-2. Runs the four reviewer bots concurrently.
-3. Aggregates their verdicts into a final team verdict.
-4. Posts each comment + each per-bot review on the GitHub PR.
-5. Persists every outcome in L4 ``pr_reviews``.
-6. Upserts a sticky archive comment on the PR carrying the full
-   :class:`TeamOutcome` JSON, so the result can be retrieved later
-   from any machine via :meth:`GhCli.fetch_archive_comment`.
+2. Runs the four reviewer bots (Architect, Sentinel, Tester, Scribe)
+   concurrently.
+3. Applies the hallucination guard to disprove unsupported "missing
+   X" claims before they reach a human.
+4. Optionally runs a round-2 confirm-or-retract dialogue for every
+   reviewer that flagged a blocker or major, so a challenged claim
+   can be retracted with evidence.
+5. Records each finding plus a review-integrity row, so every claim
+   is traceable back to its origin.
+6. Runs mechanical verification (``finding_verifiers``) and the
+   adversarial refuter over judged claims, advancing each finding
+   through its lifecycle in the findings ledger.
+7. Derives the team verdict from the findings ledger via
+   :func:`merge_gate.verdict_from_facts` — the verdict is *derived*
+   from the ledger's open findings, not aggregated from per-bot
+   verdicts.
+8. Posts inline comments, per-bot reviews, and a sticky archive
+   comment on the PR.  The archive comment is report-only: a
+   human-readable snapshot of the run, not the retrievable source of
+   truth (that remains the findings ledger and ``pr_reviews`` in L4).
+9. Persists every outcome in L4 ``pr_reviews``.
 
-The orchestrator does **not** auto-merge anything and does **not**
-auto-invoke the Coder bot — those are explicit follow-up actions
-(future :func:`run_coder_response`).  This keeps the human in the
-loop for the merge button by default.
+Auto-merge and the findings-driven Coder fix loop are separate,
+workflow-driven follow-ups hosted in ``auto_merge.py`` and
+``coder_findings.py`` respectively — the orchestrator reviews a PR;
+it never merges one.
 """
 
 from __future__ import annotations
