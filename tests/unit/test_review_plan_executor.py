@@ -949,7 +949,7 @@ class TestStepBrief:
 
 
 class TestPreExistingWorktreeFiles:
-    def test_pre_existing_untracked_files_are_ignored(self, tmp_path: Path) -> None:
+    def test_execute_plan_step_ignores_pre_existing_paths(self, tmp_path: Path) -> None:
         """Foreign files present at session start neither escape nor get committed.
 
         Attempt-1 of the SP-FINDINGS-BRIDGE-DOCFIX dogfood: an
