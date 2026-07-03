@@ -23,6 +23,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -218,7 +220,9 @@ class ReviewTeamOrchestrator:
         diff = diff_res.stdout
         diff_hash = _compute_diff_hash(diff)
 
-        head_sha = self._gh.pr_head_sha(pr_number) if self._post else None
+        head_sha = (
+            resolve_fresh_head(self._gh, pr_number, repo_root=Path.cwd()) if self._post else None
+        )
 
         spec_plan_md: str | None = None
         spec_id: str | None = None
@@ -1133,6 +1137,86 @@ def _build_prior_review_context(
             diff_changed=diff_changed,
         )
     return result
+
+
+def _local_git(repo_root: Path, *args: str) -> str | None:
+    """Return stdout of a git command in *repo_root*, or ``None`` on error."""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log.debug("orchestrator.local_git_failed", args=args, error=str(exc)[:120])
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def resolve_fresh_head(
+    gh: GhCli,
+    pr_number: int,
+    *,
+    repo_root: Path,
+    attempts: int = 6,
+    delay_s: float = 5.0,
+    sleep: object = time.sleep,
+) -> str | None:
+    """Resolve the PR head, guarding against post-push propagation lag.
+
+    A review launched right after ``git push`` can be served the
+    pre-push head — recorded live on PR #3, where a full round of
+    integrity and findings landed at the stale SHA and the run was
+    wasted. When the local checkout sits on the PR's head branch, the
+    locally committed HEAD is ground truth: re-poll ``gh`` (bounded)
+    until the API catches up. If it never does, log loudly and return
+    what GitHub serves — the review must still record what it actually
+    reviewed (evidence-first), but the operator sees the divergence.
+    """
+    served = gh.pr_head_sha(pr_number)
+    local_branch = _local_git(repo_root, "symbolic-ref", "--short", "HEAD")
+    if not local_branch:
+        return served
+    try:
+        view = gh.pr_view(pr_number)
+    except Exception as exc:
+        _log.debug(
+            "orchestrator.head_guard_view_failed",
+            pr_number=pr_number,
+            error=str(exc)[:120],
+        )
+        return served
+    head_branch = view.get("headRefName") if isinstance(view, dict) else None
+    if head_branch != local_branch:
+        return served
+    local_head = _local_git(repo_root, "rev-parse", "HEAD")
+    if not local_head:
+        return served
+    for attempt in range(attempts):
+        if served == local_head:
+            return served
+        _log.warning(
+            "orchestrator.head_propagation_lag",
+            pr_number=pr_number,
+            attempt=attempt + 1,
+            served=(served or "")[:12],
+            local=local_head[:12],
+        )
+        sleep(delay_s)
+        served = gh.pr_head_sha(pr_number)
+    if served != local_head:
+        _log.error(
+            "orchestrator.reviewing_stale_head",
+            pr_number=pr_number,
+            served=(served or "")[:12],
+            local=local_head[:12],
+        )
+    return served
 
 
 def _compute_diff_hash(diff: str) -> str:
