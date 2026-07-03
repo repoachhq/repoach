@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 from ferova.review.dev_runner import (
     DevSessionResult,
+    _step_already_committed,
     build_step_brief,
     commit_paths,
     execute_plan_step,
@@ -1003,3 +1004,16 @@ class TestCommitPaths:
         ok, detail = commit_paths(repo, ["does-not-exist.txt"], "chore: broken")
         assert ok is False
         assert "git add failed" in detail
+
+
+class TestStepResume:
+    def test_committed_step_subject_is_detected(self, tmp_path: Path) -> None:
+        """A commit whose subject matches the step's message marks it done."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        assert _step_already_committed(repo, step) is False
+        (repo / "seed.txt").write_text("x\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", step.commit_message)
+        assert _step_already_committed(repo, step) is True
