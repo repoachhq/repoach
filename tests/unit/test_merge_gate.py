@@ -335,3 +335,28 @@ def test_gather_review_integrity_clean_rerun_redeems_flaked_head(tmp_path: Path)
     )
     assert facts.review_complete is True
     assert compute_merge_decision(facts).merge is True
+
+
+def test_missing_ledger_reason_names_artifact_transport(tmp_path: Path) -> None:
+    """An empty ledger points at the artifact, not at a review that never ran."""
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    decision = compute_merge_decision(facts)
+    assert decision.merge is False
+    assert any("artifact missing or not transported" in r for r in decision.reasons)
+
+
+def test_stale_head_reason_names_the_older_head(tmp_path: Path) -> None:
+    """Integrity rows at another head yield the older-head refusal, not the artifact one."""
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=1, head_sha="old999", n_reviewers=4, n_unparsed=0)
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    decision = compute_merge_decision(facts)
+    assert decision.merge is False
+    assert any("review ran at an older head" in r for r in decision.reasons)

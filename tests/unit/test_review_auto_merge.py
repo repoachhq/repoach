@@ -22,6 +22,7 @@ from ferova.review.auto_merge import (
     OUTCOME_SKIP_BASE,
     OUTCOME_SKIP_CI_FAILED,
     OUTCOME_SKIP_GATE,
+    classify_required_checks,
     required_checks_green,
     run_auto_merge,
 )
@@ -80,6 +81,10 @@ def _gh(
     gh.pr_head_sha.return_value = _HEAD
 
     def _run_side(args: list[str]) -> GhResult:
+        if args[:1] == ["api"] and "/check-runs" in args[1]:
+            entries = _all_green_rollup() if checks_ok else _one_failed_rollup()
+            nd = "\n".join(json.dumps(e) for e in entries)
+            return GhResult(returncode=0, stdout=nd, stderr="", argv=args)
         if args[:2] == ["pr", "view"] and "statusCheckRollup" in " ".join(args):
             return GhResult(
                 returncode=0,
@@ -236,3 +241,66 @@ def test_auto_merge_persists_each_outcome(tmp_path: Path) -> None:
     run_auto_merge(3, gh=_gh(checks_ok=False), db_path=db)
     run_auto_merge(4, gh=_gh(), db_path=db)
     assert _row_count(db) == 4
+
+
+def test_classify_prefers_latest_started_at() -> None:
+    """A newer green run outweighs a stale cancelled one — and vice versa.
+
+    Observed live on PR #3 (2026-07-03): the PR rollup pinned a stale
+    CANCELLED entry over a fresh green run at the same SHA; neither
+    source is reliably ordered, so the latest ``startedAt`` per name
+    must decide.
+    """
+    name = DEFAULT_REQUIRED_CHECK_NAMES[0]
+    other = DEFAULT_REQUIRED_CHECK_NAMES[1]
+    green_other = {"name": other, "status": "COMPLETED", "conclusion": "SUCCESS"}
+    stale_cancel_then_green = [
+        {
+            "name": name,
+            "status": "COMPLETED",
+            "conclusion": "CANCELLED",
+            "startedAt": "2026-07-02T19:29:18Z",
+        },
+        {
+            "name": name,
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "startedAt": "2026-07-02T23:58:48Z",
+        },
+        green_other,
+    ]
+    failed, pending, missing = classify_required_checks(stale_cancel_then_green)
+    assert (failed, pending, missing) == ([], [], [])
+
+    green_then_regression = [
+        {
+            "name": name,
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "startedAt": "2026-07-02T19:29:18Z",
+        },
+        {
+            "name": name,
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+            "startedAt": "2026-07-02T23:58:48Z",
+        },
+        green_other,
+    ]
+    failed, _, _ = classify_required_checks(green_then_regression)
+    assert failed == [f"{name}=FAILURE"]
+
+
+def test_ci_gate_falls_back_to_rollup_when_commit_api_fails() -> None:
+    """A commit check-runs API failure degrades to the PR rollup."""
+    gh = _gh(checks_ok=True)
+    original_side = gh._run.side_effect
+
+    def _api_broken(args: list[str]) -> GhResult:
+        if args[:1] == ["api"] and "/check-runs" in args[1]:
+            return GhResult(returncode=1, stdout="", stderr="boom", argv=args)
+        return original_side(args)
+
+    gh._run.side_effect = _api_broken
+    ok, _ = required_checks_green(gh, 1, wait_seconds=0, poll_interval=0)
+    assert ok is True
