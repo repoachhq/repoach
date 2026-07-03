@@ -42,6 +42,25 @@ _NOISE_DIR_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _coerce_int(value: object, name: str) -> int | str:
+    """Accept int or digit-string for a paging parameter; error string otherwise.
+
+    Proxy-served models routinely pass tool arguments as JSON strings
+    ("120" for 120); rejecting those would waste a Developer turn on a
+    formality the tool can absorb.
+    """
+    if isinstance(value, bool):
+        return f"error: {name!r} must be an integer, got {value!r}"
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        candidate = stripped.removeprefix("-")
+        if candidate.isdigit():
+            return int(stripped)
+    return f"error: {name!r} must be an integer, got {value!r}"
+
+
 def _jail(repo_root: Path, path: str) -> Path | str:
     """Resolve *path* inside *repo_root* or describe why it is refused.
 
@@ -101,8 +120,24 @@ def make_planner_tools(repo_root: Path | None = None) -> list[ToolDef]:
         _log.info("planner_tools.list_dir", path=path, n_entries=len(entries))
         return "\n".join(clipped) if clipped else "(empty directory)"
 
-    def read_file(path: str) -> str:
-        """Read one repo file, capped at 24 000 chars."""
+    def read_file(path: str, start_line: int = 1, max_lines: int = 0) -> str:
+        """Read one repo file with line-based paging under the 24 000-char cap.
+
+        A file larger than the cap cannot be served whole, and a blind
+        truncation strands the model mid-module: two Developer sessions
+        exhausted their full turn budget re-reading ``dev_runner.py``
+        without ever reaching its second half. Every clipped response
+        therefore ends with the exact ``start_line`` call that serves
+        the next window, so the refusal doubles as the paging manual.
+        """
+        start = _coerce_int(start_line, "start_line")
+        if isinstance(start, str):
+            return start
+        window = _coerce_int(max_lines, "max_lines")
+        if isinstance(window, str):
+            return window
+        if start < 1:
+            return f"error: 'start_line' must be >= 1, got {start}"
         resolved = _jail(root, path)
         if isinstance(resolved, str):
             return resolved
@@ -113,13 +148,41 @@ def make_planner_tools(repo_root: Path | None = None) -> list[ToolDef]:
         except (OSError, UnicodeDecodeError) as exc:
             _log.warning("planner_tools.read_failed", path=path, error=str(exc)[:120])
             return f"error: unreadable file {path!r}: {type(exc).__name__}"
-        _log.info("planner_tools.read_file", path=path, chars=len(contents))
-        if len(contents) > _READ_FILE_CAP_CHARS:
-            return (
-                contents[:_READ_FILE_CAP_CHARS]
-                + f"\n... [truncated: file is {len(contents)} chars total]"
-            )
-        return contents
+        lines = contents.splitlines()
+        total = len(lines)
+        _log.info(
+            "planner_tools.read_file",
+            path=path,
+            chars=len(contents),
+            start_line=start,
+            max_lines=window,
+        )
+        if start == 1 and window <= 0 and len(contents) <= _READ_FILE_CAP_CHARS:
+            return contents
+        if start > total:
+            return f"error: 'start_line' {start} is beyond the end of {path!r} ({total} lines)"
+        requested = lines[start - 1 :] if window <= 0 else lines[start - 1 : start - 1 + window]
+        served: list[str] = []
+        served_chars = 0
+        for line in requested:
+            if not served and len(line) > _READ_FILE_CAP_CHARS:
+                return (
+                    line[:_READ_FILE_CAP_CHARS]
+                    + f"\n... [truncated: line {start} alone exceeds the"
+                    + f" {_READ_FILE_CAP_CHARS}-char cap; file is {len(contents)} chars total]"
+                )
+            if served and served_chars + len(line) + 1 > _READ_FILE_CAP_CHARS:
+                break
+            served.append(line)
+            served_chars += len(line) + 1
+        last = start + len(served) - 1
+        body = "\n".join(served)
+        if last >= total:
+            return f"{body}\n[end of file: lines {start}-{total} of {total}]"
+        return (
+            f"{body}\n... [truncated at line {last} of {total}: "
+            f"call read_file({path!r}, start_line={last + 1}) to continue]"
+        )
 
     def grep_repo(pattern: str, glob: str = "*.py") -> str:
         """Regex-search the repo, ``path:line: text`` matches, capped at 80.
@@ -186,11 +249,23 @@ def make_planner_tools(repo_root: Path | None = None) -> list[ToolDef]:
         ),
         ToolDef(
             name="read_file",
-            description="Read one repo-relative file (capped at 24000 chars).",
+            description=(
+                "Read one repo-relative file (capped at 24000 chars). For files"
+                " larger than the cap, page with start_line/max_lines — a"
+                " truncated response names the exact start_line to continue from."
+            ),
             parameters_schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "repo-relative file path"}
+                    "path": {"type": "string", "description": "repo-relative file path"},
+                    "start_line": {
+                        "type": "integer",
+                        "description": "1-based line to start reading from (default 1)",
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "max lines to return; 0 means until cap or EOF",
+                    },
                 },
                 "required": ["path"],
             },
