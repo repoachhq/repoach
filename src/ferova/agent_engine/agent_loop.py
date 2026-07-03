@@ -46,6 +46,7 @@ Module-level constants :
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -220,6 +221,21 @@ def _extract_text(response: AgentResponse) -> str:
     via :class:`ToolCallBlock` when deciding the next turn).
     """
     return "".join(b.text for b in response.content if isinstance(b, TextBlock))
+
+
+_LEAKED_TOOLCALL_MARKUP_RE = re.compile(
+    r"\]<\]minimax\[>\[|<\uFF5C+DSML\uFF5C+|<tool_call>|<invoke name="
+)
+"""Signatures of tool calls leaked as plain text by cheap chain models.
+
+Observed live (SP-ORCH-DOCSTRING, 2026-07-03): minimax-m3 emitted
+``]<]minimax[>[<tool_call>`` markup instead of native ``tool_use``
+blocks, the loop took it for a final answer, and the session ended
+"without writing any file" — four dispatches, ~1.1M tokens, zero
+edits. deepseek's DSML variant was seen earlier in persisted coder
+summaries. A response matching one of these with no parsed tool_use
+is a leaked action, never an answer.
+"""
 
 
 def _extract_tool_calls(response: AgentResponse) -> list[ToolCallBlock]:
@@ -564,6 +580,31 @@ class AgentLoop:
 
             if not tool_calls:
                 text = _extract_text(response)
+                if _LEAKED_TOOLCALL_MARKUP_RE.search(text):
+                    _log.warning(
+                        "agent_loop.toolcall_markup_leaked",
+                        turn=turn,
+                        model_used=model_used,
+                        text_preview=text[:160],
+                    )
+                    messages.append(Message(role="assistant", content=list(response.content)))
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=[
+                                TextBlock(
+                                    text=(
+                                        "Your last reply emitted tool calls as plain "
+                                        "text markup, which this loop cannot execute. "
+                                        "Re-issue the SAME actions through the native "
+                                        "tool interface — one tool_use block per call, "
+                                        "never tool syntax inside your text."
+                                    )
+                                )
+                            ],
+                        )
+                    )
+                    continue
                 elapsed = round(time.monotonic() - started, 2)
                 _log.info(
                     "agent_loop.final_answer",
