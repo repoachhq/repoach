@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 from ferova.cli.main import app
 
 
-def test_chains_audit_reports_reasoner_head_and_exits_zero(
+def test_chains_audit_reports_reasoner_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A reasoner head in ``chains.env`` is reported; exit code is 0."""
