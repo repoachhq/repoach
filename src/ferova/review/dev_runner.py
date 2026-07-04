@@ -62,6 +62,7 @@ from .plan import ActionPlan, PlanStep, load_plan, plan_relpath
 from .reviewer import Developer
 from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
+from .spec_gate import selector_present
 from .spec_supersede import supersede_parent_on_decompose
 
 _log = get_logger(__name__)
@@ -361,6 +362,14 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
     SP-AGENT-THINKING-CONTROL step 4, whose fully-delivered work
     preflighted red for that reason alone.
 
+    Every ``::`` node id must also resolve statically
+    (:func:`selector_present`) BEFORE pytest runs: pytest silently
+    swallows a missing node id when the same file is also listed bare
+    in the invocation (exit 0), which certified SP-BUDGET-RETRY-FIXES
+    step 3 complete while its three promised tests did not exist —
+    the bare-file integration promise in the same attributed set
+    masked them (2026-07-04).
+
     Args:
         repo_root: Repository working tree root.
         plan: The action plan for integration-test attribution.
@@ -381,6 +390,16 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
     for file_path in step.files:
         if not (repo_root / file_path).is_file():
             return False
+
+    node_selectors = [s for s in attributed if "::" in s]
+    absent_nodes = [s for s in node_selectors if not selector_present(repo_root, s)]
+    if absent_nodes:
+        _log.info(
+            "dev_runner.step_preflight_selector_absent",
+            step=step.index,
+            selectors=absent_nodes,
+        )
+        return False
 
     tree_groups: dict[str, list[str]] = {}
     for selector in attributed:
