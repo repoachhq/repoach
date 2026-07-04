@@ -67,18 +67,30 @@ class ModelRouter:
                 (``"opus"`` / ``"sonnet"`` / ``"haiku"`` / a real
                 Anthropic model name) ``ModelRouter`` classifies via
                 substring match.
-            skip_models: SP-PROXY-SEMANTIC-FAILOVER — provider-prefixed
-                model refs (the exact ``provider/model`` string from
-                ``chains.env``) the caller has already tried and
-                rejected on semantic grounds (e.g. the response was
-                parse-unusable).  Excluded from the returned chain ;
-                the chain falls back to its first entry if every
-                candidate gets skipped (so the caller surfaces the
-                final failure instead of looping on an empty chain).
+            skip_models: SP-PROXY-SEMANTIC-FAILOVER — entries the caller
+                has already tried and rejected on semantic grounds
+                (e.g. the response was parse-unusable). Each entry is
+                either the exact ``provider/model`` ref from
+                ``chains.env`` or a bare model id as served back in
+                ``model_used`` (``"minimaxai/minimax-m3"``): the agent
+                loop only ever sees the latter, and strict ModelRef
+                parsing turned its first real eviction into a 500
+                (unknown provider 'minimaxai', 2026-07-04). Excluded
+                from the returned chain; the chain falls back to its
+                first entry if every candidate gets skipped (so the
+                caller surfaces the final failure instead of looping
+                on an empty chain).
         """
         chain = self._table.chain_for(claude_model_name)
         blocked: set[ModelRef] = set(get_breaker().down_refs(time.monotonic()))
-        blocked.update(ModelRef.parse(ref) for ref in skip_models)
+        bare_model_ids: set[str] = set()
+        for ref in skip_models:
+            try:
+                blocked.add(ModelRef.parse(ref))
+            except ValueError:
+                bare_model_ids.add(ref)
+        if bare_model_ids:
+            blocked.update(r for r in chain.refs if r.model in bare_model_ids)
         if blocked:
             chain = chain.without(frozenset(blocked))
         return [ref.to_resolved(claude_model_name) for ref in chain.refs]

@@ -443,3 +443,36 @@ def test_response_is_parsable_rejects_transport_error_prose() -> None:
     block.text = "Connection error. (request_id=req_abc123)"
     response.content = [block]
     assert reviewer._response_is_parsable(response) is False
+
+
+def test_resolve_chain_skips_bare_model_ids(three_link_settings: Settings) -> None:
+    """A model_used-shaped entry (no provider prefix) evicts by model id.
+
+    The agent loop only ever sees ``model_used`` ("minimaxai/minimax-m3",
+    the model id, whose first segment is a vendor namespace, not a
+    registered provider); strict ModelRef parsing turned the loop's
+    first real eviction into a proxy 500 (unknown provider 'minimaxai',
+    SP-AGENT-THINKING-CONTROL step 4, 2026-07-04). Matching is exact on
+    the model id as spelled by the serving entry — the same model
+    behind another provider (a different serving template) keeps its
+    chance.
+    """
+    router = ModelRouter(three_link_settings)
+    chain = router.resolve_chain(
+        "claude-sonnet-4-6",
+        skip_models=frozenset({"moonshotai/kimi-k2.6"}),
+    )
+    refs = [entry.provider_model_ref for entry in chain]
+    assert refs == ["kimi/kimi-k2.6", "nvidia_nim/deepseek-ai/deepseek-v4-flash"]
+
+
+def test_resolve_chain_bare_id_matching_nothing_is_harmless(
+    three_link_settings: Settings,
+) -> None:
+    """An unknown bare id filters nothing and never raises."""
+    router = ModelRouter(three_link_settings)
+    chain = router.resolve_chain(
+        "claude-sonnet-4-6",
+        skip_models=frozenset({"ghost/vendor-model-9000"}),
+    )
+    assert len(chain) == 3
