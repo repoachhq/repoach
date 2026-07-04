@@ -242,3 +242,95 @@ def test_disabled_flag_keeps_immediate_failover(monkeypatch: pytest.MonkeyPatch)
     assert _REAL_TEXT_DELTA in chunks
     assert head.calls == [128]
     assert tail.calls == [128]
+
+
+class _SequencedProvider(BaseProvider):
+    """Plays one chunk list per call, repeating the last; records budgets."""
+
+    SUPPORTS_NATIVE_TOOLS: bool = True
+
+    def __init__(self, config: ProviderConfig, *, per_call: list[list[str]]) -> None:
+        super().__init__(config)
+        self._per_call = per_call
+        self.calls: list[int | None] = []
+
+    async def cleanup(self) -> None:
+        return None
+
+    async def stream_response(
+        self, request: Any, input_tokens: int = 0, *, request_id: str | None = None
+    ) -> AsyncIterator[str]:
+        index = min(len(self.calls), len(self._per_call) - 1)
+        self.calls.append(request.max_tokens)
+        for chunk in self._per_call[index]:
+            yield chunk
+
+
+def _make_request_with_budget(max_tokens: int | None) -> MessagesRequest:
+    return MessagesRequest(
+        model="claude-sonnet-4-6",
+        max_tokens=max_tokens,
+        messages=[Message(role="user", content="ping")],
+        tools=None,
+    )
+
+
+def test_none_max_tokens_starved_empty_does_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request without max_tokens survives a starved empty and retries.
+
+    _retry_with_more_budget multiplied original_max unguarded; a None
+    max_tokens on the starved path raised TypeError outside any try.
+    The escalation now bases itself on the cap when no original ask
+    exists.
+    """
+    head = _SequencedProvider(ProviderConfig(api_key="x"), per_call=[_STARVED_EMPTY, _REAL_CONTENT])
+    tail = _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["should not be reached"])
+    service = _build_service(monkeypatch, {"nvidia_nim": head, "kimi": tail})
+
+    chunks = _drain(service.create_message(_make_request_with_budget(None)))
+
+    assert _REAL_TEXT_DELTA in chunks
+    assert head.calls == [None, 8192]
+    assert tail.calls == []
+
+
+def test_escalation_exceeds_the_effective_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A first attempt at the 4096 answer-headroom floor retries strictly above.
+
+    With the old 4096 default cap the enlarged ask equalled the
+    effective floor of the combined-budget providers and the retry was
+    a provable no-op; the 8192 default gives the x8 factor real room.
+    """
+    head = _BudgetSensitiveProvider(
+        ProviderConfig(api_key="x"), threshold=8000, below=_STARVED_EMPTY, at_or_above=_REAL_CONTENT
+    )
+    tail = _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["should not be reached"])
+    service = _build_service(monkeypatch, {"nvidia_nim": head, "kimi": tail})
+
+    chunks = _drain(service.create_message(_make_request_with_budget(4096)))
+
+    assert _REAL_TEXT_DELTA in chunks
+    assert head.calls == [4096, 8192]
+    assert tail.calls == []
+
+
+def test_at_cap_requests_still_fail_over_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A starved empty already at the cap fails over immediately."""
+    head = _BudgetSensitiveProvider(
+        ProviderConfig(api_key="x"),
+        threshold=10**9,
+        below=_STARVED_EMPTY,
+        at_or_above=_REAL_CONTENT,
+    )
+    tail = _ScriptedProvider(ProviderConfig(api_key="x"), chunks=_REAL_CONTENT)
+    service = _build_service(monkeypatch, {"nvidia_nim": head, "kimi": tail})
+
+    chunks = _drain(service.create_message(_make_request_with_budget(8192)))
+
+    assert _REAL_TEXT_DELTA in chunks
+    assert head.calls == [8192]
+    assert tail.calls == [8192]
