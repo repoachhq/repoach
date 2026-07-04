@@ -75,3 +75,49 @@ def test_agent_request_disabled_thinking_round_trips() -> None:
 
     dumped = request.model_dump(exclude_none=True)
     assert dumped["thinking"]["type"] == "disabled"
+
+
+def test_thinking_field_reaches_the_translated_request() -> None:
+    """An enabled thinking config on ``AgentRequest`` produces a
+    ``MessagesRequest`` carrying the identical config.
+
+    AC1 from SP-AGENT-THINKING-CONTROL.
+    """
+    from ferova.llm_proxy.api.agent_dispatcher import _translate_request
+
+    thinking = ThinkingConfig(type="enabled", budget_tokens=1024)
+    request = _build_request(thinking=thinking)
+    translated = _translate_request(request, "test-model")
+
+    assert translated.thinking is not None
+    assert translated.thinking.type == "enabled"
+    assert translated.thinking.budget_tokens == 1024
+
+
+def test_absent_thinking_field_translates_to_none() -> None:
+    """No field on ``AgentRequest`` → the translated request's
+    ``thinking`` is ``None`` (today's behaviour pinned).
+
+    AC2 from SP-AGENT-THINKING-CONTROL.
+    """
+    from ferova.llm_proxy.api.agent_dispatcher import _translate_request
+
+    request = _build_request()
+    translated = _translate_request(request, "test-model")
+
+    assert translated.thinking is None
+
+
+def test_disabled_thinking_round_trips() -> None:
+    """``{"type": "disabled"}`` survives translation intact.
+
+    AC3 from SP-AGENT-THINKING-CONTROL.
+    """
+    from ferova.llm_proxy.api.agent_dispatcher import _translate_request
+
+    thinking = ThinkingConfig(type="disabled")
+    request = _build_request(thinking=thinking)
+    translated = _translate_request(request, "test-model")
+
+    assert translated.thinking is not None
+    assert translated.thinking.type == "disabled"
