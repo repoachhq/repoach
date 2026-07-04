@@ -7,6 +7,7 @@ ToolDef metadata the AgentLoop serialises for the model.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -161,3 +162,78 @@ class TestToolDefMetadata:
         assert tools["list_dir"].parameters_schema["required"] == ["path"]
         assert tools["read_file"].parameters_schema["required"] == ["path"]
         assert tools["grep_repo"].parameters_schema["required"] == ["pattern"]
+
+
+class TestReadFilePaging:
+    """SP-DEV read paging — a clipped read must teach the model how to continue.
+
+    Two Developer sessions burned their entire turn budget re-reading a
+    ~1,200-line module the 24k cap could never serve whole; every window
+    below pins that the response names the exact next ``start_line``.
+    """
+
+    @pytest.fixture()
+    def numbered(self, repo: Path) -> Path:
+        target = repo / "src" / "numbered.py"
+        target.write_text("".join(f"L{n}\n" for n in range(1, 201)), encoding="utf-8")
+        return repo
+
+    def test_window_serves_exactly_the_requested_lines(self, numbered: Path) -> None:
+        out = _tools_by_name(numbered)["read_file"].callable_fn(
+            path="src/numbered.py", start_line=50, max_lines=10
+        )
+        assert out.splitlines()[0] == "L50"
+        assert "L59" in out
+        assert "L60" not in out.replace("start_line=60", "")
+        assert "start_line=60" in out
+
+    def test_window_reaching_eof_reports_end_of_file(self, numbered: Path) -> None:
+        out = _tools_by_name(numbered)["read_file"].callable_fn(
+            path="src/numbered.py", start_line=195
+        )
+        assert "L200" in out
+        assert "[end of file: lines 195-200 of 200]" in out
+
+    def test_capped_full_read_names_the_next_start_line(self, repo: Path) -> None:
+        big = repo / "src" / "big_lines.py"
+        big.write_text(
+            "".join(f"row{n:04d} {'y' * 20}\n" for n in range(1, 2001)), encoding="utf-8"
+        )
+        first = _tools_by_name(repo)["read_file"].callable_fn(path="src/big_lines.py")
+        assert "truncated at line" in first
+        match = re.search(r"start_line=(\d+)", first)
+        assert match is not None
+        second = _tools_by_name(repo)["read_file"].callable_fn(
+            path="src/big_lines.py", start_line=int(match.group(1))
+        )
+        assert f"row{int(match.group(1)):04d}" in second
+
+    def test_string_paging_args_are_coerced(self, numbered: Path) -> None:
+        out = _tools_by_name(numbered)["read_file"].callable_fn(
+            path="src/numbered.py", start_line="50", max_lines="3"
+        )
+        assert out.splitlines()[0] == "L50"
+        assert "start_line=53" in out
+
+    def test_bad_paging_args_are_error_strings(self, numbered: Path) -> None:
+        tools = _tools_by_name(numbered)
+        assert (
+            tools["read_file"]
+            .callable_fn(path="src/numbered.py", start_line="abc")
+            .startswith("error:")
+        )
+        assert (
+            tools["read_file"]
+            .callable_fn(path="src/numbered.py", start_line=0)
+            .startswith("error:")
+        )
+        assert (
+            tools["read_file"]
+            .callable_fn(path="src/numbered.py", start_line=999)
+            .startswith("error:")
+        )
+
+    def test_schema_advertises_the_paging_parameters(self, repo: Path) -> None:
+        schema = _tools_by_name(repo)["read_file"].parameters_schema
+        assert set(schema["properties"]) == {"path", "start_line", "max_lines"}
+        assert schema["required"] == ["path"]
