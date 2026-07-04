@@ -210,3 +210,74 @@ def test_missing_name_is_still_reported(tmp_path: Path) -> None:
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is False
     assert "does_not_exist" in report
+
+
+def test_facade_reexported_name_is_accepted(tmp_path: Path) -> None:
+    """A name imported through a package façade counts as defined there.
+
+    The gate once refused ``from ferova.arch import load_registry`` —
+    an explicit ``__init__.py`` re-export listed in ``__all__`` that
+    pytest imported fine — and killed a green Developer step over a
+    pre-existing import (SP-DEV-STEP-PREFLIGHT, 2026-07-04).
+    """
+    _seed_findings_package(tmp_path)
+    _seed_module(
+        tmp_path,
+        "src/ferova/arch/registry.py",
+        "def load_registry(root):\n    return root\n",
+    )
+    _seed_module(
+        tmp_path,
+        "src/ferova/arch/__init__.py",
+        'from ferova.arch.registry import load_registry\n\n__all__ = ["load_registry"]\n',
+    )
+    candidate = _seed_module(
+        tmp_path,
+        "src/ferova/review/bridge.py",
+        "from ferova.arch import load_registry\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is True
+    assert report == ""
+
+
+def test_facade_aliased_and_plain_imports_count(tmp_path: Path) -> None:
+    """``import x as y`` and plain ``import x`` aliases are facade names too."""
+    _seed_findings_package(tmp_path)
+    _seed_module(tmp_path, "src/ferova/arch/graph.py", "class Graph:\n    pass\n")
+    _seed_module(
+        tmp_path,
+        "src/ferova/arch/__init__.py",
+        "import json\nfrom ferova.arch.graph import Graph as ArchGraph\n",
+    )
+    candidate = _seed_module(
+        tmp_path,
+        "src/ferova/review/bridge.py",
+        "from ferova.arch import ArchGraph, json\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is True
+    assert report == ""
+
+
+def test_name_absent_from_the_facade_is_still_reported(tmp_path: Path) -> None:
+    """The fix must not blanket-accept: unknown façade names still fail."""
+    _seed_findings_package(tmp_path)
+    _seed_module(
+        tmp_path,
+        "src/ferova/arch/registry.py",
+        "def load_registry(root):\n    return root\n",
+    )
+    _seed_module(
+        tmp_path,
+        "src/ferova/arch/__init__.py",
+        "from ferova.arch.registry import load_registry\n",
+    )
+    candidate = _seed_module(
+        tmp_path,
+        "src/ferova/review/bridge.py",
+        "from ferova.arch import save_registry\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is False
+    assert "'save_registry' is not defined in 'ferova.arch'" in report

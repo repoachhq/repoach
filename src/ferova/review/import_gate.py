@@ -51,7 +51,16 @@ def _package_modules(src_root: Path, dotted: str) -> tuple[str, list[str]]:
 
 
 def _top_level_names(module_file: Path) -> set[str]:
-    """Collect every top-level def / class / assigned name of a module."""
+    """Collect every top-level defined or imported name of a module.
+
+    Imported aliases count as defined: a package façade (an
+    ``__init__.py`` re-exporting submodule names, usually with
+    ``__all__``) makes those names part of its public surface. The
+    gate once refused ``from ferova.arch import load_registry`` —
+    a re-export sanctioned by ``ferova.arch.__all__`` that pytest
+    imported fine — and killed a green Developer step over an import
+    the model had not even written (SP-DEV-STEP-PREFLIGHT, 2026-07-04).
+    """
     try:
         tree = ast.parse(module_file.read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError) as exc:
@@ -71,6 +80,13 @@ def _top_level_names(module_file: Path) -> set[str]:
                     names.add(target.id)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names.add(node.target.id)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
     return names
 
 
