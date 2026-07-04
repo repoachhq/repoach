@@ -123,7 +123,7 @@ class TestActionPlanValidation:
         with pytest.raises(ValidationError, match="integration test"):
             _plan(integration_tests=[])
 
-    def test_docs_only_plan_without_integration_tests_accepted(self) -> None:
+    def test_docs_only_plan_with_empty_integration_promises_stays_valid(self) -> None:
         docs_step = _step(files=["docs/notes.md"], unit_tests=[])
         plan = _plan(steps=[docs_step], integration_tests=[])
         assert plan.integration_tests == []
