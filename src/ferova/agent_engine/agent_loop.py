@@ -66,6 +66,7 @@ from ..llm_proxy.api.models.agent_v1 import (
     ToolSpec,
     TraceEntry,
 )
+from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from .adapters import GatewayChainExhausted, GatewayError, GatewayTransportError, ProxyGatewayClient
 
 _log = get_logger(__name__)
@@ -274,9 +275,10 @@ class AgentLoop:
         capability: CapabilityTier | None = None,
         model_chain: Iterable[str] | None = None,
         max_turns: int = 15,
-        per_call_timeout_s: float = LONG_OUTPUT_TIMEOUT_S,
+        per_call_timeout_s: Locale = LONG_OUTPUT_TIMEOUT_S,
         max_tokens: int = 1500,
         temperature: float = 0.1,
+        thinking: ThinkingConfig | dict[str, Any] | None = None,
     ) -> None:
         """Initialise the loop pointing at the local proxy gateway.
 
@@ -293,6 +295,10 @@ class AgentLoop:
                 call.  Defaults to :data:`LONG_OUTPUT_TIMEOUT_S`.
             max_tokens: Output token cap per turn.
             temperature: Sampling temperature.
+            thinking: Optional thinking config forwarded verbatim to
+                every gateway call (tool turns, wrap-up, and wrap-up
+                retry).  Absent means today's behaviour (no thinking
+                config on the translated request).
 
         Raises:
             ValueError: If ``model_chain`` is provided but empty,
