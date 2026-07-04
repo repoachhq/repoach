@@ -93,6 +93,13 @@ class Usage(BaseModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    reasoning_tokens: int = 0
+    """Attribution only — already included in ``output_tokens`` (NG3).
+
+    Defaults to 0 so existing callers building ``Usage(...)`` without
+    this field keep working; a missing or unreadable upstream detail
+    also resolves to 0 rather than failing the response.
+    """
 
 
 TraceOutcome = Literal[
