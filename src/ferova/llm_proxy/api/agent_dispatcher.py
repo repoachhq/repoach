@@ -153,6 +153,7 @@ def _translate_request(request: AgentRequest, model_alias: str) -> MessagesReque
         stream=True,
         temperature=request.temperature,
         tools=[_translate_tool(t) for t in request.tools] or None,
+        thinking=request.thinking,
     )
 
 

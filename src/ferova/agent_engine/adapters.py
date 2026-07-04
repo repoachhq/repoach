@@ -18,6 +18,7 @@ without any ``SimpleNamespace`` glue.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 
@@ -29,6 +30,7 @@ from ..llm_proxy.api.models.agent_v1 import (
     Message,
     ToolSpec,
 )
+from ..llm_proxy.api.models.anthropic import ThinkingConfig
 
 _log = get_logger(__name__)
 
@@ -93,6 +95,7 @@ class ProxyGatewayClient:
         max_tokens: int,
         temperature: float,
         skip_models: frozenset[str] = frozenset(),
+        thinking: ThinkingConfig | dict[str, Any] | None = None,
     ) -> AgentResponse:
         """POST one request to ``/v1/agent`` and return the parsed response.
 
@@ -115,6 +118,11 @@ class ProxyGatewayClient:
                 :meth:`ModelRouter.resolve_chain` filters them out.
                 Defaults to an empty frozenset for tools-less and
                 non-reviewer callers.
+            thinking: Optional thinking config forwarded verbatim to
+                the gateway.  A dict is coerced to
+                :class:`ThinkingConfig`; ``None`` (default) means
+                today's behaviour — no thinking field on the
+                translated request.
 
         Returns:
             The parsed :class:`AgentResponse`.
@@ -129,6 +137,11 @@ class ProxyGatewayClient:
                 non-JSON body, or response that fails AgentResponse
                 validation.
         """
+        thinking_config: ThinkingConfig | None = None
+        if thinking is not None:
+            thinking_config = (
+                ThinkingConfig.model_validate(thinking) if isinstance(thinking, dict) else thinking
+            )
         request = AgentRequest(
             schema_version="1",
             capability=capability.value,
@@ -138,6 +151,7 @@ class ProxyGatewayClient:
             max_tokens=max_tokens,
             temperature=temperature,
             skip_models=sorted(skip_models),
+            thinking=thinking_config,
         )
         body = request.model_dump(exclude_none=True)
         url = f"{self._base_url}/v1/agent"

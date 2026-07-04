@@ -66,6 +66,7 @@ from ..llm_proxy.api.models.agent_v1 import (
     ToolSpec,
     TraceEntry,
 )
+from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from .adapters import GatewayChainExhausted, GatewayError, GatewayTransportError, ProxyGatewayClient
 
 _log = get_logger(__name__)
@@ -277,6 +278,7 @@ class AgentLoop:
         per_call_timeout_s: float = LONG_OUTPUT_TIMEOUT_S,
         max_tokens: int = 1500,
         temperature: float = 0.1,
+        thinking: ThinkingConfig | dict[str, Any] | None = None,
     ) -> None:
         """Initialise the loop pointing at the local proxy gateway.
 
@@ -293,6 +295,10 @@ class AgentLoop:
                 call.  Defaults to :data:`LONG_OUTPUT_TIMEOUT_S`.
             max_tokens: Output token cap per turn.
             temperature: Sampling temperature.
+            thinking: Optional thinking config forwarded verbatim to
+                every gateway call (tool turns, wrap-up, and wrap-up
+                retry).  Absent means today's behaviour (no thinking
+                config on the translated request).
 
         Raises:
             ValueError: If ``model_chain`` is provided but empty,
@@ -329,6 +335,7 @@ class AgentLoop:
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._per_call_timeout_s = per_call_timeout_s
+        self._thinking: ThinkingConfig | dict[str, Any] | None = thinking
         self._client = ProxyGatewayClient(
             base_url=base_url,
             api_key=api_key,
@@ -419,6 +426,7 @@ class AgentLoop:
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
                 skip_models=frozenset(skip_models),
+                thinking=self._thinking,
             )
             last_response = response
             last_elapsed = time.monotonic() - started
@@ -533,6 +541,7 @@ class AgentLoop:
                     max_tokens=self._max_tokens,
                     temperature=self._temperature,
                     skip_models=skip_models,
+                    thinking=self._thinking,
                 )
             except (GatewayTransportError, GatewayChainExhausted) as exc:
                 last_exc = exc
@@ -793,6 +802,7 @@ class AgentLoop:
             max_tokens=self._max_tokens,
             temperature=self._temperature,
             skip_models=frozenset(skip_models),
+            thinking=self._thinking,
         )
         total_tokens += int(wrap_up.usage.total_tokens)
         wrap_up_text = _extract_text(wrap_up)
@@ -827,6 +837,7 @@ class AgentLoop:
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
                 skip_models=frozenset(skip_models),
+                thinking=self._thinking,
             )
             total_tokens += int(wrap_up.usage.total_tokens)
             wrap_up_text = _extract_text(wrap_up)

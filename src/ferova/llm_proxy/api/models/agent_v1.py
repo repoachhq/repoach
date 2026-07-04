@@ -13,6 +13,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from .anthropic import ThinkingConfig
+
 
 class TextBlock(BaseModel):
     type: Literal["text"] = "text"
@@ -84,6 +86,15 @@ class AgentRequest(BaseModel):
     :meth:`ModelRouter.resolve_chain` so the next attempt picks a
     different candidate.  Empty list (default) means no filtering —
     the resolve falls through to the full configured chain."""
+    thinking: ThinkingConfig | None = None
+    """SP-AGENT-THINKING-CONTROL — optional thinking control mirroring
+    :class:`MessagesRequest.thinking`.  Absent (default) means today's
+    behaviour: the dispatcher does not set a thinking config on the
+    translated request and the provider's global default applies.
+    When set, the dispatcher copies the value verbatim onto the
+    built :class:`MessagesRequest` so the existing per-provider
+    reasoning machinery takes over (NIM bounds it, OpenRouter
+    honours it, etc.)."""
 
 
 StopReason = Literal["end_turn", "tool_use", "max_turns", "content_filter", "error"]
