@@ -6,9 +6,7 @@ status: draft
 author: agent
 
 owns:
-  code:
-    - src/ferova/review/dev_runner.py
-    - tests/unit/test_review_plan_executor.py
+  code: []
   resources: []
 
 depends_on: [SP-ARCH-GRAPH, SP-DEVAGENT-LOOP, SP-PLAN-CONTRACT-LINTS]
