@@ -708,6 +708,13 @@ def execute_plan_step(
     Two attempts always run; a third runs only after a lint-class gate failure,
     where the model is usually one nudge from green (:data:`_MAX_STEP_ATTEMPTS`).
 
+    A promised test file absent after the loop is terminal ONLY when the step's
+    own contract cannot create it (a genuinely mis-shaped plan). When the file
+    sits inside the contract, the absence is a retryable gate like any other:
+    SP-USAGE-REASONING-SPLIT dispatch 1 was finalized mid-thought ("Now let me
+    write the test file:"), and the old unconditional stop discarded a
+    310k-token attempt one write_file short of green.
+
     Args:
         step: The plan step to execute.
         plan: The full plan (context for the brief).
@@ -838,6 +845,22 @@ def execute_plan_step(
         if step.unit_tests:
             absent = [t for t in step.unit_tests if not (repo_root / t.split("::", 1)[0]).is_file()]
             if absent:
+                absent_files = sorted({t.split("::", 1)[0] for t in absent})
+                creatable = [f for f in absent_files if f in step.files]
+                if creatable:
+                    gate_feedback = (
+                        f"promised-test gate: {creatable} were never written, yet they "
+                        "sit inside this step's file contract — create them now with "
+                        "write_file and make their promised tests pass"
+                    )
+                    _log.warning(
+                        "dev_runner.step_promise_unwritten",
+                        spec_id=plan.spec_id,
+                        step=step.index,
+                        attempt=attempt,
+                        files=creatable,
+                    )
+                    continue
                 totals.reason = (
                     f"step {step.index} ({step.title!r}) promises tests that do not "
                     f"exist after its loop and are not in its file contract: {absent} — "
