@@ -267,8 +267,19 @@ def ensure_branch(branch: str, *, base: str = "develop", repo_root: Path | None 
     return True
 
 
-def _run_git(repo_root: Path, *args: str, timeout_s: int = 60) -> tuple[int, str]:
-    """Run one git command in *repo_root*, return ``(rc, output_tail)``."""
+def _run_git(
+    repo_root: Path, *args: str, timeout_s: int = 60, tail_chars: int = 400
+) -> tuple[int, str]:
+    """Run one git command in *repo_root*, return ``(rc, output_tail)``.
+
+    The default tail cap suits error tails fed back to models. A caller
+    that PARSES the output must pass ``tail_chars=0`` (uncapped): the
+    resume fast path grepped commit subjects through the 400-char tail
+    and silently beheaded the newest subjects once a session branch
+    grew past ~7 commits — SP-AGENT-THINKING-CONTROL re-paid a 683k
+    token dispatch for a step whose commit sat at the top of the log
+    (2026-07-04).
+    """
     git = shutil.which("git") or "git"
     proc = subprocess.run(
         [git, *args],
@@ -279,7 +290,7 @@ def _run_git(repo_root: Path, *args: str, timeout_s: int = 60) -> tuple[int, str
         check=False,
     )
     output = (proc.stdout + proc.stderr).strip()
-    return proc.returncode, output[-400:]
+    return proc.returncode, output[-tail_chars:] if tail_chars else output
 
 
 def commit_all(repo_root: Path, message: str) -> tuple[bool, str]:
@@ -314,9 +325,9 @@ def _step_already_committed(repo_root: Path, step: PlanStep) -> bool:
     branch (``origin/develop..HEAD``) so a coincidental subject on the
     base can never skip real work.
     """
-    rc, out = _run_git(repo_root, "log", "--format=%s", "origin/develop..HEAD")
+    rc, out = _run_git(repo_root, "log", "--format=%s", "origin/develop..HEAD", tail_chars=0)
     if rc != 0:
-        rc, out = _run_git(repo_root, "log", "--format=%s", "-n", "30", "HEAD")
+        rc, out = _run_git(repo_root, "log", "--format=%s", "-n", "30", "HEAD", tail_chars=0)
         if rc != 0:
             return False
     return step.commit_message in out.splitlines()
@@ -343,6 +354,13 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
     unrelated tests in the same promised file were green (2026-07-04) —
     only a strict per-selector green counts here.
 
+    Selectors run in one pytest invocation PER TEST TREE (``tests/unit``
+    vs ``tests/integration``, mirroring how CI invokes them): a plan may
+    promise the same basename in both trees, and a single combined
+    invocation dies on the rootdir module-name collision — observed on
+    SP-AGENT-THINKING-CONTROL step 4, whose fully-delivered work
+    preflighted red for that reason alone.
+
     Args:
         repo_root: Repository working tree root.
         plan: The action plan for integration-test attribution.
@@ -364,16 +382,24 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
         if not (repo_root / file_path).is_file():
             return False
 
+    tree_groups: dict[str, list[str]] = {}
+    for selector in attributed:
+        tree = "integration" if selector.startswith("tests/integration/") else "unit"
+        tree_groups.setdefault(tree, []).append(selector)
+
     try:
-        ok, _tail, reconciled = run_promised_tests(repo_root, attributed)
-        if ok and reconciled:
-            _log.info(
-                "dev_runner.step_preflight_reconciled_not_proof",
-                step=step.index,
-                selectors=attributed,
-            )
-            return False
-        return ok
+        for selectors in tree_groups.values():
+            ok, _tail, reconciled = run_promised_tests(repo_root, selectors)
+            if ok and reconciled:
+                _log.info(
+                    "dev_runner.step_preflight_reconciled_not_proof",
+                    step=step.index,
+                    selectors=selectors,
+                )
+                return False
+            if not ok:
+                return False
+        return True
     except Exception as exc:
         _log.warning("dev_runner.step_preflight_error", error=str(exc))
         return False

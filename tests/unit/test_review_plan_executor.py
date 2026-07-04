@@ -1085,6 +1085,33 @@ class TestStepResume:
         _git(repo, "commit", "-m", step.commit_message)
         assert _step_already_committed(repo, step) is True
 
+    def test_subject_detected_beyond_the_git_output_tail_cap(self, tmp_path: Path) -> None:
+        """The newest subject survives a long branch log.
+
+        _run_git's 400-char tail cap (meant for error tails fed to
+        models) beheaded the newest subjects once a session branch grew
+        past ~7 commits: SP-AGENT-THINKING-CONTROL re-paid a 683k-token
+        dispatch for a step whose commit sat at the top of the log
+        (2026-07-04). The subject list must be read uncapped.
+        """
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        for index in range(8):
+            (repo / f"filler_{index}.txt").write_text("x\n", encoding="utf-8")
+            _git(repo, "add", "-A")
+            _git(
+                repo,
+                "commit",
+                "-m",
+                f"chore(filler-{index}): a deliberately verbose subject line padding "
+                "the log well past the four-hundred-character tail cap",
+            )
+        (repo / "seed.txt").write_text("x\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-m", step.commit_message)
+        assert _step_already_committed(repo, step) is True
+
 
 class TestStepPreflightPredicate:
     _FAILING_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 2\n'
@@ -1132,6 +1159,31 @@ class TestStepPreflightPredicate:
         (repo / "tests" / "unit" / "test_mini.py").write_text(self._FAILING_TEST, encoding="utf-8")
 
         assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_groups_selectors_per_test_tree(self, tmp_path: Path) -> None:
+        """Same-basename unit and integration promises preflight green.
+
+        A single combined pytest invocation dies on the rootdir
+        module-name collision when tests/unit and tests/integration
+        promise the same basename — SP-AGENT-THINKING-CONTROL step 4's
+        fully-delivered work preflighted red for that reason alone
+        (2026-07-04). Selectors run per tree, mirroring CI.
+        """
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            files=["src/mini.py", "tests/unit/test_same_name.py"],
+            unit_tests=["tests/unit/test_same_name.py::test_value"],
+            integration_tests=["tests/integration/test_same_name.py"],
+        )
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_same_name.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_same_name.py").write_text(
+            _GREEN_INTEGRATION, encoding="utf-8"
+        )
+
+        assert step_preflight_complete(repo, plan, step) is True
 
     def test_preflight_predicate_rejects_a_reconciled_green(self, tmp_path: Path) -> None:
         """Unrelated green tests in the promised file are not completion proof.
