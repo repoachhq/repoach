@@ -10,6 +10,10 @@ translated ``MessagesRequest``.
 
 from __future__ import annotations
 
+from typing import Any
+
+from ferova.agent_engine.adapters import ProxyGatewayClient
+from ferova.llm.capability import CapabilityTier
 from ferova.llm_proxy.api.models.agent_v1 import AgentRequest, Message, TextBlock
 from ferova.llm_proxy.api.models.anthropic import ThinkingConfig
 
@@ -121,3 +125,116 @@ def test_disabled_thinking_round_trips() -> None:
 
     assert translated.thinking is not None
     assert translated.thinking.type == "disabled"
+
+
+# ---------------------------------------------------------------------------
+# ProxyGatewayClient.call — thinking kwarg threading (step 3/4)
+# ---------------------------------------------------------------------------
+
+
+class _StubResponse:
+    def __init__(self, *, status_code: int, payload: Any | None = None) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = ""
+
+    def json(self) -> Any:
+        if self._payload is None:
+            raise ValueError("no JSON body")
+        return self._payload
+
+
+class _StubClient:
+    """httpx.Client stand-in that records the POST and returns a fixed response."""
+
+    def __init__(self, response: _StubResponse) -> None:
+        self._response = response
+        self.posted: list[dict[str, Any]] = []
+
+    def __enter__(self) -> _StubClient:
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        return None
+
+    def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str]) -> _StubResponse:
+        self.posted.append({"url": url, "json": json, "headers": headers})
+        return self._response
+
+
+def _ok_payload() -> dict[str, Any]:
+    return {
+        "schema_version": "1",
+        "capability": "sonnet",
+        "stop_reason": "end_turn",
+        "model_used": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": "PONG"}],
+        "usage": {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8},
+        "elapsed_ms": 100,
+        "trace": [],
+    }
+
+
+def _client() -> ProxyGatewayClient:
+    return ProxyGatewayClient(
+        base_url="http://localhost:8082",
+        api_key="test-token",
+        timeout_s=10.0,
+    )
+
+
+def test_proxy_client_threads_thinking_to_body(monkeypatch) -> None:
+    """``ProxyGatewayClient.call(..., thinking=...)`` carries the thinking
+    object verbatim into the POST body.
+
+    Step 3/4 of SP-AGENT-THINKING-CONTROL — the client-side kwarg must
+    land on the wire so the dispatcher's translator can copy it onto
+    the built ``MessagesRequest``.
+    """
+    stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
+    monkeypatch.setattr(
+        "ferova.agent_engine.adapters.httpx.Client",
+        lambda **_kw: stub,
+    )
+
+    _client().call(
+        capability=CapabilityTier.SONNET,
+        system="you are X",
+        messages=[Message(role="user", content=[TextBlock(text="hi")])],
+        tools=[],
+        max_tokens=100,
+        temperature=0.1,
+        thinking={"type": "enabled", "budget_tokens": 1024},
+    )
+
+    assert len(stub.posted) == 1
+    body = stub.posted[0]["json"]
+    assert "thinking" in body
+    assert body["thinking"]["type"] == "enabled"
+    assert body["thinking"]["budget_tokens"] == 1024
+
+
+def test_proxy_client_omits_thinking_when_unset(monkeypatch) -> None:
+    """A ``call`` without the ``thinking`` kwarg omits the field from the body.
+
+    Step 3/4 of SP-AGENT-THINKING-CONTROL — every existing caller keeps
+    today's behaviour (no thinking config on the translated request).
+    """
+    stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
+    monkeypatch.setattr(
+        "ferova.agent_engine.adapters.httpx.Client",
+        lambda **_kw: stub,
+    )
+
+    _client().call(
+        capability=CapabilityTier.SONNET,
+        system="you are X",
+        messages=[Message(role="user", content=[TextBlock(text="hi")])],
+        tools=[],
+        max_tokens=100,
+        temperature=0.1,
+    )
+
+    assert len(stub.posted) == 1
+    body = stub.posted[0]["json"]
+    assert "thinking" not in body
