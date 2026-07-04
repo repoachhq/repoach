@@ -122,7 +122,7 @@ def _build_agent_request() -> AgentRequest:
 
 
 @pytest.mark.asyncio
-async def test_agent_dispatch_carries_upstream_reasoning_tokens_end_to_end() -> None:
+async def test_agent_dispatch_reports_reasoning_tokens_end_to_end() -> None:
     """A fake openai_chat stream with completion_tokens_details.reasoning_tokens=1200
     ends up on the dispatched /v1/agent response's usage.reasoning_tokens, while
     output_tokens keeps its existing (unsplit) value.
