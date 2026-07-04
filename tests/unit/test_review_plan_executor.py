@@ -1185,6 +1185,27 @@ class TestStepPreflightPredicate:
 
         assert step_preflight_complete(repo, plan, step) is True
 
+    def test_preflight_rejects_missing_node_id_masked_by_a_bare_file(self, tmp_path: Path) -> None:
+        """A bare-file promise must not mask absent promised node ids.
+
+        pytest exits 0 when a missing ``file::node`` selector shares an
+        invocation with the same file listed bare — that masked
+        SP-BUDGET-RETRY-FIXES step 3 (three promised tests certified
+        complete while none existed, 2026-07-04). Node ids are resolved
+        statically before pytest runs.
+        """
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            files=["src/mini.py", "tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_not_written_yet"],
+            integration_tests=["tests/unit/test_mini.py"],
+        )
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
     def test_preflight_predicate_rejects_a_reconciled_green(self, tmp_path: Path) -> None:
         """Unrelated green tests in the promised file are not completion proof.
 
