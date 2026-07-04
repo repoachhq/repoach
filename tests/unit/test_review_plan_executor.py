@@ -569,13 +569,67 @@ class TestGateAndSessionEdges:
         assert "FEROVA_OPENROUTER_API_KEY" not in env
         assert env.get("FEROVA_DB_PATH") == "data/x.db"
 
-    def test_developer_omitting_a_promised_test_stops_without_retry(self, tmp_path: Path) -> None:
+    def test_omitted_in_contract_promise_is_retried_and_heals(self, tmp_path: Path) -> None:
+        """An unwritten promised test inside the contract retries like any gate.
+
+        SP-USAGE-REASONING-SPLIT dispatch 1 was finalized mid-thought one
+        write_file short of green; the old unconditional stop threw the
+        attempt away even though the step's own contract could create the
+        missing file.
+        """
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
-        dev = _developer_writing([[("src/mini.py", _CLEAN_MODULE)]])
+        dev = _developer_writing(
+            [
+                [("src/mini.py", _CLEAN_MODULE)],
+                [("tests/unit/test_mini.py", _CLEAN_TEST)],
+            ]
+        )
 
         outcome = execute_plan_step(
             plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 2
+
+    def test_promise_outside_the_contract_stops_without_retry(self, tmp_path: Path) -> None:
+        """A promise only an EARLIER step could create is terminal when absent."""
+        repo = _init_repo(tmp_path)
+        creator = PlanStep(
+            index=1,
+            title="Create the shared test",
+            files=["tests/unit/test_mini.py", "tests/integration/test_demo_flow.py"],
+            action="Create the shared test file.",
+            commit_message="test(demo): shared test",
+            done_when="pytest tests/unit/test_mini.py is green",
+            unit_tests=["tests/unit/test_mini.py"],
+        )
+        promiser = PlanStep(
+            index=2,
+            title="Use the shared test",
+            files=["src/mini.py"],
+            action="Create the module.",
+            commit_message="feat(demo): add mini module",
+            done_when="pytest tests/unit/test_mini.py is green",
+            unit_tests=["tests/unit/test_mini.py"],
+        )
+        plan = ActionPlan(
+            spec_id=_SPEC_ID,
+            title="Demo plan",
+            summary="Two-step demo.",
+            steps=[creator, promiser],
+            integration_tests=["tests/integration/test_demo_flow.py"],
+        )
+        dev = _developer_writing([[("src/mini.py", _CLEAN_MODULE)]])
+
+        outcome = execute_plan_step(
+            plan.steps[1],
             plan=plan,
             repo_root=repo,
             developer=dev,
