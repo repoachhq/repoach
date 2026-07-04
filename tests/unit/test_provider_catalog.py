@@ -50,3 +50,36 @@ def test_legacy_import_paths_reexport_the_catalog() -> None:
     assert CONFIG_SUPPORTED is catalog.SUPPORTED_PROVIDER_IDS
     assert REGISTRY_SUPPORTED is catalog.SUPPORTED_PROVIDER_IDS
     assert registry.PROVIDER_DESCRIPTORS is catalog.PROVIDER_DESCRIPTORS
+
+
+_LIVE_CHAIN_MODELS: tuple[str, ...] = (
+    "nvidia_nim/z-ai/glm-5.2",
+    "minimaxai/minimax-m3",
+    "nvidia_nim/qwen/qwen3.7-max",
+    "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+    "kimi/kimi-k2.6",
+    "nvidia_nim/mistralai/mistral-medium-3.5",
+    "claude_code/opus",
+    "claude_code/sonnet",
+    "claude_code/haiku",
+)
+
+
+def test_every_live_chain_model_has_a_thinking_class() -> None:
+    for model_id in _LIVE_CHAIN_MODELS:
+        assert catalog.classify_thinking(model_id) != "unknown", model_id
+
+
+def test_classify_thinking_known_hybrid() -> None:
+    assert catalog.classify_thinking("nvidia_nim/z-ai/glm-5.2") == "hybrid"
+    assert catalog.classify_thinking("claude_code/opus") == "hybrid"
+
+
+def test_classify_thinking_known_reasoner() -> None:
+    assert catalog.classify_thinking("minimaxai/minimax-m3") == "reasoner"
+    assert catalog.classify_thinking("kimi/kimi-k2.6") == "reasoner"
+
+
+def test_classify_thinking_unknown_model() -> None:
+    assert catalog.classify_thinking("nvidia_nim/some/unlisted-model") == "unknown"
+    assert catalog.classify_thinking("") == "unknown"

@@ -198,6 +198,35 @@ def autopilot(
     )
 
 
+@app.command("chains-audit")
+def chains_audit() -> None:
+    """Print chain-head thinking-class findings and always exit 0.
+
+    Reads the configured ``MODEL_OPUS`` / ``MODEL_SONNET`` / ``MODEL_HAIKU``
+    slots, parses each into a chain of model ids, and reports every chain
+    whose head model is classified ``reasoner`` or ``unknown`` (rule #1 of
+    ``chains.env``). Report-only slice — enforcement is a later decision.
+    """
+    from ..llm_proxy.config.settings import Settings
+    from ..llm_proxy.providers.thinking_audit import audit_chain_thinking
+    from ..llm_proxy.routing.chain import Chain
+
+    settings = Settings()
+
+    chains: dict[str, list[str]] = {}
+    for chain_name, spec in (
+        ("opus", settings.model_opus),
+        ("sonnet", settings.model_sonnet),
+        ("haiku", settings.model_haiku),
+    ):
+        if not spec or not spec.strip():
+            continue
+        chains[chain_name] = [str(ref) for ref in Chain.parse(spec).refs]
+
+    for finding in audit_chain_thinking(chains):
+        typer.echo(finding)
+
+
 @app.command("regenerate-chains")
 def regenerate_chains(
     apply: bool = typer.Option(
