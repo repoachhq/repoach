@@ -243,6 +243,28 @@ def _extract_tool_calls(response: AgentResponse) -> list[ToolCallBlock]:
     return [b for b in response.content if isinstance(b, ToolCallBlock)]
 
 
+_BUDGET_NUDGE_REMAINING_TURNS: frozenset[int] = frozenset({8, 3})
+"""Remaining-turn counts at which the loop warns the model in-band.
+
+Three SP-DEV-STEP-PREFLIGHT dispatches (26, 27, 29 — ~2.6M tokens
+combined) each spent every turn exploring and finalized with zero
+writes while their own wrap-up summaries stated the implementation
+they never issued. The loop is the only party that can see the budget,
+so it must say so while turns remain to act on it.
+"""
+
+
+def _budget_nudge_text(remaining: int, max_turns: int) -> str:
+    """The in-band budget warning appended alongside tool results."""
+    return (
+        f"Budget notice: only {remaining} of {max_turns} turns remain before "
+        "this loop is finalized. Stop exploring. Produce your deliverables "
+        "through tool calls NOW — file writes first if your task requires "
+        "them — then give your final answer. Analysis not materialized "
+        "through tools before the budget runs out is discarded."
+    )
+
+
 class AgentLoop:
     """Proxy-only ``ferova/v1`` tool-using agent loop."""
 
@@ -547,7 +569,12 @@ class AgentLoop:
         On the budget-exhausted path the loop appends one final
         ``user`` turn that asks the model to wrap up without tools,
         using only the evidence already gathered, and returns the
-        resulting answer.
+        resulting answer. A wrap-up that leaks tool-call markup is
+        retried once with the leaking model skipped — markup can
+        never execute once the turns are gone, so it must not become
+        the recorded summary. While turns remain, the loop warns the
+        model in-band at :data:`_BUDGET_NUDGE_REMAINING_TURNS` so
+        deliverables land before the budget dies.
         """
         if not tools:
             return self.run_oneshot(prompt, system=system)
@@ -724,7 +751,19 @@ class AgentLoop:
                         )
                     )
 
-            messages.append(Message(role="user", content=list(result_blocks)))
+            turn_feedback: list[TextBlock | ToolResultBlock] = list(result_blocks)
+            remaining_turns = self._max_turns - turn
+            if remaining_turns in _BUDGET_NUDGE_REMAINING_TURNS:
+                _log.info(
+                    "agent_loop.budget_nudge",
+                    turn=turn,
+                    remaining_turns=remaining_turns,
+                    tool_calls_total=len(tool_calls_log),
+                )
+                turn_feedback.append(
+                    TextBlock(text=_budget_nudge_text(remaining_turns, self._max_turns))
+                )
+            messages.append(Message(role="user", content=turn_feedback))
 
         _log.warning(
             "agent_loop.budget_exhausted",
@@ -753,10 +792,46 @@ class AgentLoop:
             tools=[],
             max_tokens=self._max_tokens,
             temperature=self._temperature,
+            skip_models=frozenset(skip_models),
         )
         total_tokens += int(wrap_up.usage.total_tokens)
+        wrap_up_text = _extract_text(wrap_up)
+        if _LEAKED_TOOLCALL_MARKUP_RE.search(wrap_up_text):
+            _log.warning(
+                "agent_loop.wrapup_markup_leaked",
+                model_used=wrap_up.model_used,
+                text_preview=wrap_up_text[:160],
+            )
+            if wrap_up.model_used:
+                skip_models.add(wrap_up.model_used)
+            wrap_up = self._client.call(
+                capability=self._capability,
+                system=system,
+                messages=[
+                    *wrap_up_messages,
+                    Message(role="assistant", content=list(wrap_up.content)),
+                    Message(
+                        role="user",
+                        content=[
+                            TextBlock(
+                                text=(
+                                    "Your last reply emitted tool-call markup as "
+                                    "plain text. No tools can run anymore. State "
+                                    "your final answer as prose only."
+                                )
+                            )
+                        ],
+                    ),
+                ],
+                tools=[],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+                skip_models=frozenset(skip_models),
+            )
+            total_tokens += int(wrap_up.usage.total_tokens)
+            wrap_up_text = _extract_text(wrap_up)
         return NimAgentOutput(
-            text=_extract_text(wrap_up),
+            text=wrap_up_text,
             tool_calls_made=tool_calls_log,
             elapsed_s=round(time.monotonic() - started, 2),
             tokens_used=total_tokens,
