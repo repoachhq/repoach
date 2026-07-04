@@ -131,7 +131,11 @@ def _one_step_plan() -> tuple[ActionPlan, PlanStep]:
     step = PlanStep(
         index=1,
         title="Do the step",
-        files=["src/ferova/foo.py", "tests/unit/test_foo.py"],
+        files=[
+            "src/ferova/foo.py",
+            "tests/unit/test_foo.py",
+            "tests/integration/test_foo_flow.py",
+        ],
         action="Apply the fixes.",
         commit_message="feat(foo): step",
         done_when="gates green",

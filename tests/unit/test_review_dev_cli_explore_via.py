@@ -62,7 +62,11 @@ def _plan() -> ActionPlan:
             PlanStep(
                 index=1,
                 title="Add module",
-                files=["src/mini.py", "tests/unit/test_mini.py"],
+                files=[
+                    "src/mini.py",
+                    "tests/unit/test_mini.py",
+                    "tests/integration/test_demo.py",
+                ],
                 action="Create it.",
                 commit_message="feat(demo): mini",
                 done_when="pytest tests/unit/test_mini.py passes",

@@ -46,7 +46,7 @@ def _plan(unit_tests: list[str]) -> ActionPlan:
             PlanStep(
                 index=1,
                 title="add x",
-                files=["src/x.py", "tests/unit/test_x.py"],
+                files=["src/x.py", "tests/unit/test_x.py", "tests/integration/test_flow.py"],
                 action="create x + test",
                 commit_message="feat: x",
                 done_when="green",

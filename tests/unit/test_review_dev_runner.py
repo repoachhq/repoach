@@ -177,7 +177,7 @@ def _init_git_repo_with_plan(tmp_path: Path, *, step_files: list[str]) -> Path:
             PlanStep(
                 index=1,
                 title="Do the step",
-                files=step_files,
+                files=[*step_files, "tests/integration/test_foo_flow.py"],
                 action="Apply the fixes.",
                 commit_message="feat(foo): step one",
                 done_when="gates green",
