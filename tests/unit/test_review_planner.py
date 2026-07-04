@@ -70,7 +70,11 @@ def _valid_plan_payload() -> dict:
             {
                 "index": 1,
                 "title": "Add the module",
-                "files": ["src/ferova/demo.py", "tests/unit/test_demo.py"],
+                "files": [
+                    "src/ferova/demo.py",
+                    "tests/unit/test_demo.py",
+                    "tests/integration/test_demo_flow.py",
+                ],
                 "action": "Create the module.",
                 "commit_message": "feat(demo): add module",
                 "done_when": "pytest tests/unit/test_demo.py is green",

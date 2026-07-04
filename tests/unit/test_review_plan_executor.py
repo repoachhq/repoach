@@ -38,6 +38,7 @@ _SPEC_ID = "SP-EXEC-DEMO"
 
 _CLEAN_MODULE = '"""Demo module."""\n\nVALUE = 1\n'
 _CLEAN_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 1\n'
+_GREEN_INTEGRATION = '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert True\n'
 _BROKEN_MODULE = "def broken(:\n"
 _LINT_FAILING_MODULE = '"""Mini."""\n\nVALUE = undefined_name\n'
 
@@ -69,7 +70,15 @@ def _init_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _one_step_plan(**step_overrides) -> ActionPlan:
+def _one_step_plan(*, integration_tests: list[str] | None = None, **step_overrides) -> ActionPlan:
+    """One-step demo plan; integration promises are auto-added to the contract.
+
+    SP-PLAN-CONTRACT-LINTS made undeliverable integration promises a
+    validation error, so the default promise must live in the step's
+    files; pass ``integration_tests=[]`` for a docs-only fixture.
+    """
+    if integration_tests is None:
+        integration_tests = ["tests/integration/test_demo_flow.py"]
     step = {
         "index": 1,
         "title": "Add the demo module",
@@ -80,12 +89,14 @@ def _one_step_plan(**step_overrides) -> ActionPlan:
         "unit_tests": ["tests/unit/test_mini.py"],
     }
     step.update(step_overrides)
+    promised_files = [sel.split("::", 1)[0] for sel in integration_tests]
+    step["files"] = [*step["files"], *[f for f in promised_files if f not in step["files"]]]
     return ActionPlan(
         spec_id=_SPEC_ID,
         title="Demo plan",
         summary="One-step demo.",
         steps=[PlanStep(**step)],
-        integration_tests=["tests/integration/test_demo_flow.py"],
+        integration_tests=integration_tests,
     )
 
 
@@ -840,6 +851,7 @@ class TestDecomposeWiring:
                 suffix = spec_id.rsplit("-", 1)[-1]
                 code = f"src/multi_{'a' if suffix == '1' else 'b'}.py"
                 test = f"tests/unit/test_multi_{suffix}.py"
+                integration = f"tests/integration/test_int_{suffix}.py"
                 plan = ActionPlan(
                     spec_id=spec_id,
                     title=f"plan {spec_id}",
@@ -848,14 +860,14 @@ class TestDecomposeWiring:
                         PlanStep(
                             index=1,
                             title="impl",
-                            files=[code, test],
+                            files=[code, test, integration],
                             action="create the module and its test",
                             commit_message=f"feat: {spec_id}",
                             done_when="green",
                             unit_tests=[test],
                         )
                     ],
-                    integration_tests=[f"tests/integration/test_int_{suffix}.py"],
+                    integration_tests=[integration],
                 )
                 return plan, None, {}
 
@@ -1035,7 +1047,7 @@ class TestStepPreflightPredicate:
 
     def test_preflight_predicate_returns_false_on_empty_selectors(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
-        plan = _one_step_plan(files=["docs/note.md"], unit_tests=[])
+        plan = _one_step_plan(files=["docs/note.md"], unit_tests=[], integration_tests=[])
         step = plan.steps[0]
         (repo / "docs" / "note.md").write_text("note\n", encoding="utf-8")
 
@@ -1049,6 +1061,10 @@ class TestStepPreflightPredicate:
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            _GREEN_INTEGRATION, encoding="utf-8"
+        )
 
         assert step_preflight_complete(repo, plan, step) is True
 
@@ -1097,7 +1113,7 @@ class TestStepPreflightPredicate:
 
         assert step_preflight_complete(repo, plan, step) is True
 
-        unrelated_plan = _one_step_plan(files=["docs/note.md"], unit_tests=[])
+        unrelated_plan = _one_step_plan(files=["docs/note.md"], unit_tests=[], integration_tests=[])
         unrelated_step = unrelated_plan.steps[0]
         (repo / "docs" / "note.md").write_text("note\n", encoding="utf-8")
 
@@ -1117,6 +1133,10 @@ class TestSessionPreflight:
         monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            _GREEN_INTEGRATION, encoding="utf-8"
+        )
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "chore: pre-seed mini module")
         dev = _developer_writing([_good_attempt()])
@@ -1173,6 +1193,10 @@ class TestSessionPreflight:
         monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            _GREEN_INTEGRATION, encoding="utf-8"
+        )
         dev = _developer_writing([_good_attempt()])
 
         result = run_developer_session(

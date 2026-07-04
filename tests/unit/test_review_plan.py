@@ -27,7 +27,11 @@ def _step(**overrides) -> PlanStep:
     payload = {
         "index": 1,
         "title": "Add the module",
-        "files": ["src/ferova/demo.py", "tests/unit/test_demo.py"],
+        "files": [
+            "src/ferova/demo.py",
+            "tests/unit/test_demo.py",
+            "tests/integration/test_demo_flow.py",
+        ],
         "action": "Create the module with the documented API.",
         "commit_message": "feat(demo): add module",
         "done_when": "pytest tests/unit/test_demo.py is green",
@@ -119,7 +123,7 @@ class TestActionPlanValidation:
         with pytest.raises(ValidationError, match="integration test"):
             _plan(integration_tests=[])
 
-    def test_docs_only_plan_without_integration_tests_accepted(self) -> None:
+    def test_docs_only_plan_with_empty_integration_promises_stays_valid(self) -> None:
         docs_step = _step(files=["docs/notes.md"], unit_tests=[])
         plan = _plan(steps=[docs_step], integration_tests=[])
         assert plan.integration_tests == []
@@ -154,7 +158,11 @@ class TestActionPlanValidation:
     def test_same_step_code_and_test_accepted(self) -> None:
         step = _step(
             index=1,
-            files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+            files=[
+                "src/ferova/feature.py",
+                "tests/unit/test_feature.py",
+                "tests/integration/test_demo_flow.py",
+            ],
             unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         plan = _plan(steps=[step])
@@ -163,12 +171,16 @@ class TestActionPlanValidation:
     def test_test_created_by_earlier_step_accepted(self) -> None:
         first = _step(
             index=1,
-            files=["src/a.py", "tests/unit/test_shared.py"],
+            files=[
+                "src/a.py",
+                "tests/unit/test_shared.py",
+                "tests/integration/test_demo_flow.py",
+            ],
             unit_tests=["tests/unit/test_shared.py::test_a"],
         )
         second = _step(
             index=2,
-            files=["src/b.py"],
+            files=["src/b.py", "tests/integration/test_demo_flow.py"],
             unit_tests=["tests/unit/test_shared.py::test_b"],
         )
         plan = _plan(steps=[first, second])
@@ -178,6 +190,47 @@ class TestActionPlanValidation:
     def test_blank_required_text_rejected(self, field: str) -> None:
         with pytest.raises(ValidationError, match="non-empty"):
             _plan(**{field: ""})
+
+    def test_integration_promise_without_creating_step_is_rejected(self) -> None:
+        step = _step(
+            index=1,
+            files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py"],
+        )
+        with pytest.raises(ValidationError) as excinfo:
+            _plan(steps=[step], integration_tests=["tests/integration/test_feature_e2e.py"])
+        message = str(excinfo.value)
+        assert "tests/integration/test_feature_e2e.py" in message
+        assert "add that file" in message
+
+    def test_integration_promise_created_by_any_step_is_accepted(self) -> None:
+        first = _step(
+            index=1,
+            files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py"],
+        )
+        second = _step(
+            index=2,
+            files=["tests/integration/test_feature_e2e.py"],
+            unit_tests=["tests/unit/test_feature.py::test_smoke"],
+        )
+        plan = _plan(
+            steps=[first, second],
+            integration_tests=["tests/integration/test_feature_e2e.py::test_e2e"],
+        )
+        assert plan.integration_tests == ["tests/integration/test_feature_e2e.py::test_e2e"]
+
+    def test_integration_promise_node_id_resolves_file_part(self) -> None:
+        step = _step(
+            index=1,
+            files=["src/ferova/feature.py", "tests/integration/test_feature_e2e.py"],
+            unit_tests=["tests/integration/test_feature_e2e.py::test_smoke"],
+        )
+        plan = _plan(
+            steps=[step],
+            integration_tests=["tests/integration/test_feature_e2e.py::test_e2e"],
+        )
+        assert plan.integration_tests == ["tests/integration/test_feature_e2e.py::test_e2e"]
 
 
 class TestRender:

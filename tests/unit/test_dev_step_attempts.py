@@ -14,7 +14,7 @@ def _plan() -> ActionPlan:
     step = PlanStep(
         index=1,
         title="Add a module",
-        files=["src/x.py", "tests/unit/test_x.py"],
+        files=["src/x.py", "tests/unit/test_x.py", "tests/integration/test_x.py"],
         action="Create the module.",
         commit_message="feat: x",
         done_when="green",

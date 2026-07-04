@@ -53,7 +53,11 @@ def _two_step_plan() -> ActionPlan:
             PlanStep(
                 index=2,
                 title="Add module two",
-                files=["src/two.py", "tests/unit/test_two.py"],
+                files=[
+                    "src/two.py",
+                    "tests/unit/test_two.py",
+                    "tests/integration/test_demo_absent.py",
+                ],
                 action="Create module two and its test.",
                 commit_message="feat(demo): module two",
                 done_when="pytest tests/unit/test_two.py is green",

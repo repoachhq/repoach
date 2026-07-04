@@ -21,10 +21,11 @@ from ferova.review.spec_gate import (
 
 
 def _plan(*, unit_tests: list[str], integration_tests: list[str]) -> ActionPlan:
+    promised_files = [t.split("::", 1)[0] for t in [*unit_tests, *integration_tests]]
     step = PlanStep(
         index=1,
         title="Do the step",
-        files=["src/ferova/foo.py", *[t.split("::", 1)[0] for t in unit_tests]],
+        files=["src/ferova/foo.py", *promised_files],
         action="Implement.",
         commit_message="feat(foo): step",
         done_when="gates green",
@@ -48,7 +49,7 @@ def test_acceptance_selectors_dedup_in_order() -> None:
             PlanStep(
                 index=1,
                 title="a",
-                files=["src/x.py", "tests/unit/test_a.py"],
+                files=["src/x.py", "tests/unit/test_a.py", "tests/integration/test_flow.py"],
                 action="x",
                 commit_message="feat(x): a",
                 done_when="ok",
