@@ -1239,3 +1239,10 @@ class TestSessionPreflight:
 
         dev.develop_step.assert_called()
         assert result.steps_completed == 1
+
+
+def test_preflight_integration_test_file_exists() -> None:
+    """Guard the preflight integration test against accidental deletion."""
+    target = Path(__file__).parents[2] / "tests" / "integration" / "test_dev_runner_preflight.py"
+    assert target.is_file()
+    assert "def test_preflight_skip_path_end_to_end" in target.read_text(encoding="utf-8")
