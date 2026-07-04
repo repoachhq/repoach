@@ -23,6 +23,7 @@ from ferova.review.dev_runner import (
     execute_plan_step,
     load_or_produce_plan,
     run_developer_session,
+    step_preflight_complete,
 )
 from ferova.review.devagent_loop import DevLoopResult
 from ferova.review.persistence import init_schema
@@ -1017,3 +1018,87 @@ class TestStepResume:
         _git(repo, "add", "-A")
         _git(repo, "commit", "-m", step.commit_message)
         assert _step_already_committed(repo, step) is True
+
+
+class TestStepPreflightPredicate:
+    _FAILING_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 2\n'
+
+    def test_preflight_predicate_returns_false_when_a_contract_file_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_predicate_returns_false_on_empty_selectors(self, tmp_path: Path) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(files=["docs/note.md"], unit_tests=[])
+        step = plan.steps[0]
+        (repo / "docs" / "note.md").write_text("note\n", encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_predicate_returns_true_when_files_and_tests_green(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is True
+
+    def test_preflight_predicate_returns_false_when_promised_test_fails(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(self._FAILING_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_predicate_attributes_integration_selectors_by_file(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            files=[
+                "src/mini.py",
+                "tests/unit/test_mini.py",
+                "tests/integration/test_demo_flow.py",
+            ],
+            unit_tests=["tests/unit/test_mini.py"],
+        )
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        red_integration = (
+            '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert False\n'
+        )
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            red_integration, encoding="utf-8"
+        )
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+        green_integration = (
+            '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert True\n'
+        )
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            green_integration, encoding="utf-8"
+        )
+
+        assert step_preflight_complete(repo, plan, step) is True
+
+        unrelated_plan = _one_step_plan(files=["docs/note.md"], unit_tests=[])
+        unrelated_step = unrelated_plan.steps[0]
+        (repo / "docs" / "note.md").write_text("note\n", encoding="utf-8")
+
+        assert step_preflight_complete(repo, unrelated_plan, unrelated_step) is False

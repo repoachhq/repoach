@@ -322,6 +322,50 @@ def _step_already_committed(repo_root: Path, step: PlanStep) -> bool:
     return step.commit_message in out.splitlines()
 
 
+def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -> bool:
+    """Return True when every file in the step exists and its promised tests are green.
+
+    Builds a test selector set from the step's ``unit_tests`` plus every
+    ``plan.integration_tests`` selector whose file path (the substring before
+    ``::``, or the whole selector when no ``::`` is present) is contained in
+    ``step.files``.  Returns ``False`` when the selector set is empty (nothing
+    mechanical to prove completion).  Returns ``False`` when any path in
+    ``step.files`` does not exist on disk under *repo_root*.  Otherwise calls
+    :func:`run_promised_tests` inside a broad try/except — any exception
+    (pytest crash, timeout, git error) logs
+    ``dev_runner.step_preflight_error`` and returns ``False`` (fail-open to a
+    normal dispatch).  Returns the boolean first element of the tuple on
+    success.
+
+    Args:
+        repo_root: Repository working tree root.
+        plan: The action plan for integration-test attribution.
+        step: The plan step to preflight.
+
+    Returns:
+        ``True`` when the step is mechanically provable as complete.
+    """
+    attributed: list[str] = list(step.unit_tests)
+    for selector in plan.integration_tests:
+        file_path = selector.split("::", 1)[0]
+        if file_path in step.files:
+            attributed.append(selector)
+
+    if not attributed:
+        return False
+
+    for file_path in step.files:
+        if not (repo_root / file_path).is_file():
+            return False
+
+    try:
+        ok, _tail, _reconciled = run_promised_tests(repo_root, attributed)
+        return ok
+    except Exception as exc:
+        _log.warning("dev_runner.step_preflight_error", error=str(exc))
+        return False
+
+
 def commit_paths(repo_root: Path, paths: list[str], message: str) -> tuple[bool, str]:
     """Stage exactly *paths* and commit; ``(False, why)`` when nothing staged.
 

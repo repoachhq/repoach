@@ -11,7 +11,7 @@ owns:
     - tests/unit/test_review_plan_executor.py
   resources: []
 
-depends_on: []
+depends_on: [SP-ARCH-GRAPH, SP-DEVAGENT-LOOP]
 provides_to: []
 constraints: {}
 ---
