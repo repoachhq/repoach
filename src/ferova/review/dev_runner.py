@@ -322,6 +322,50 @@ def _step_already_committed(repo_root: Path, step: PlanStep) -> bool:
     return step.commit_message in out.splitlines()
 
 
+def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -> bool:
+    """Return True when every file in the step exists and its promised tests are green.
+
+    Builds a test selector set from the step's ``unit_tests`` plus every
+    ``plan.integration_tests`` selector whose file path (the substring before
+    ``::``, or the whole selector when no ``::`` is present) is contained in
+    ``step.files``.  Returns ``False`` when the selector set is empty (nothing
+    mechanical to prove completion).  Returns ``False`` when any path in
+    ``step.files`` does not exist on disk under *repo_root*.  Otherwise calls
+    :func:`run_promised_tests` inside a broad try/except — any exception
+    (pytest crash, timeout, git error) logs
+    ``dev_runner.step_preflight_error`` and returns ``False`` (fail-open to a
+    normal dispatch).  Returns the boolean first element of the tuple on
+    success.
+
+    Args:
+        repo_root: Repository working tree root.
+        plan: The action plan for integration-test attribution.
+        step: The plan step to preflight.
+
+    Returns:
+        ``True`` when the step is mechanically provable as complete.
+    """
+    attributed: list[str] = list(step.unit_tests)
+    for selector in plan.integration_tests:
+        file_path = selector.split("::", 1)[0]
+        if file_path in step.files:
+            attributed.append(selector)
+
+    if not attributed:
+        return False
+
+    for file_path in step.files:
+        if not (repo_root / file_path).is_file():
+            return False
+
+    try:
+        ok, _tail, _reconciled = run_promised_tests(repo_root, attributed)
+        return ok
+    except Exception as exc:
+        _log.warning("dev_runner.step_preflight_error", error=str(exc))
+        return False
+
+
 def commit_paths(repo_root: Path, paths: list[str], message: str) -> tuple[bool, str]:
     """Stage exactly *paths* and commit; ``(False, why)`` when nothing staged.
 
@@ -1001,6 +1045,37 @@ def _develop_one_spec(
                 spec_id=spec.id,
                 step=step.index,
                 commit=step.commit_message,
+            )
+            continue
+        if step_preflight_complete(repo, action_plan, step):
+            contract = set(step.files)
+            dirty = [p for p in _changed_paths(repo) if p in contract]
+            if dirty:
+                commit_paths(repo, dirty, step.commit_message)
+            result.steps_completed += 1
+            selectors = list(step.unit_tests) + [
+                t for t in action_plan.integration_tests if t.split("::", 1)[0] in contract
+            ]
+            _log.info(
+                "dev_runner.step_preflight_complete",
+                spec_id=spec.id,
+                step=step.index,
+                selectors=selectors,
+            )
+            record_coder_response(
+                db,
+                pr_number=0,
+                plan={
+                    "fixes": [],
+                    "commit_message": step.commit_message,
+                    "summary": (
+                        f"preflight-complete step {step.index} ({step.title}): "
+                        f"{', '.join(selectors)}"
+                    ),
+                },
+                model_used="preflight",
+                elapsed_s=0.0,
+                tokens_used=0,
             )
             continue
         outcome = execute_plan_step(

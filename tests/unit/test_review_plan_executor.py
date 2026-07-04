@@ -23,6 +23,7 @@ from ferova.review.dev_runner import (
     execute_plan_step,
     load_or_produce_plan,
     run_developer_session,
+    step_preflight_complete,
 )
 from ferova.review.devagent_loop import DevLoopResult
 from ferova.review.persistence import init_schema
@@ -1017,3 +1018,231 @@ class TestStepResume:
         _git(repo, "add", "-A")
         _git(repo, "commit", "-m", step.commit_message)
         assert _step_already_committed(repo, step) is True
+
+
+class TestStepPreflightPredicate:
+    _FAILING_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 2\n'
+
+    def test_preflight_predicate_returns_false_when_a_contract_file_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_predicate_returns_false_on_empty_selectors(self, tmp_path: Path) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(files=["docs/note.md"], unit_tests=[])
+        step = plan.steps[0]
+        (repo / "docs" / "note.md").write_text("note\n", encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_predicate_returns_true_when_files_and_tests_green(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is True
+
+    def test_preflight_predicate_returns_false_when_promised_test_fails(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(self._FAILING_TEST, encoding="utf-8")
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+    def test_preflight_predicate_attributes_integration_selectors_by_file(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            files=[
+                "src/mini.py",
+                "tests/unit/test_mini.py",
+                "tests/integration/test_demo_flow.py",
+            ],
+            unit_tests=["tests/unit/test_mini.py"],
+        )
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        red_integration = (
+            '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert False\n'
+        )
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            red_integration, encoding="utf-8"
+        )
+
+        assert step_preflight_complete(repo, plan, step) is False
+
+        green_integration = (
+            '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert True\n'
+        )
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            green_integration, encoding="utf-8"
+        )
+
+        assert step_preflight_complete(repo, plan, step) is True
+
+        unrelated_plan = _one_step_plan(files=["docs/note.md"], unit_tests=[])
+        unrelated_step = unrelated_plan.steps[0]
+        (repo / "docs" / "note.md").write_text("note\n", encoding="utf-8")
+
+        assert step_preflight_complete(repo, unrelated_plan, unrelated_step) is False
+
+
+class TestSessionPreflight:
+    """SP-DEV-STEP-PREFLIGHT — wiring the predicate into the session loop."""
+
+    def test_preflight_completes_a_green_step_for_zero_tokens(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        _seed_plan(repo, plan)
+        _git(repo, "branch", "develop")
+        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "chore: pre-seed mini module")
+        dev = _developer_writing([_good_attempt()])
+
+        result = run_developer_session(
+            _SPEC_ID,
+            repo_root=repo,
+            developer=dev,
+            push=False,
+            db_path=repo.parent / "test.db",
+            judge=_compliant_judge,
+        )
+
+        assert result.steps_completed == 1
+        dev.develop_step.assert_not_called()
+
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(f"sqlite:///{repo.parent / 'test.db'}")
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT model_used, tokens_used FROM pr_coder_responses")
+            ).fetchall()
+        assert any(row[0] == "preflight" and row[1] == 0 for row in rows)
+
+    def test_preflight_dispatches_when_a_contract_file_is_missing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        _seed_plan(repo, plan)
+        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "chore: pre-seed test only")
+        dev = _developer_writing([_good_attempt()])
+
+        result = run_developer_session(
+            _SPEC_ID,
+            repo_root=repo,
+            developer=dev,
+            push=False,
+            db_path=repo.parent / "test.db",
+            judge=_compliant_judge,
+        )
+
+        dev.develop_step.assert_called()
+        assert result.steps_completed == 1
+
+    def test_preflight_commits_uncommitted_green_work(self, tmp_path: Path, monkeypatch) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        _seed_plan(repo, plan)
+        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        dev = _developer_writing([_good_attempt()])
+
+        result = run_developer_session(
+            _SPEC_ID,
+            repo_root=repo,
+            developer=dev,
+            push=False,
+            db_path=repo.parent / "test.db",
+            judge=_compliant_judge,
+        )
+
+        dev.develop_step.assert_not_called()
+        assert result.steps_completed == 1
+        subjects = _git(repo, "log", "--format=%s").splitlines()
+        assert "feat(demo): add mini module" in subjects
+
+    def test_preflight_attributes_integration_selectors_by_file(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            files=[
+                "src/mini.py",
+                "tests/unit/test_mini.py",
+                "tests/integration/test_demo_flow.py",
+            ],
+            unit_tests=["tests/unit/test_mini.py"],
+        )
+        _seed_plan(repo, plan)
+        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        red_integration = (
+            '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert False\n'
+        )
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            red_integration, encoding="utf-8"
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "chore: pre-seed red integration")
+
+        green_integration = (
+            '"""Integration test."""\n\n\ndef test_flow() -> None:\n    assert True\n'
+        )
+
+        def _fix_integration(*, brief, repo_root, allowed_paths, repo_tree="", spec_id=None):
+            (Path(repo_root) / "tests" / "integration" / "test_demo_flow.py").write_text(
+                green_integration, encoding="utf-8"
+            )
+            return DevLoopResult(text="fixed", model_used="fake", turns=1, tokens_used=1)
+
+        dev = MagicMock()
+        dev.develop_step.side_effect = _fix_integration
+
+        result = run_developer_session(
+            _SPEC_ID,
+            repo_root=repo,
+            developer=dev,
+            push=False,
+            db_path=repo.parent / "test.db",
+            judge=_compliant_judge,
+        )
+
+        dev.develop_step.assert_called()
+        assert result.steps_completed == 1
+
+
+def test_preflight_integration_test_file_exists() -> None:
+    """Guard the preflight integration test against accidental deletion."""
+    target = Path(__file__).parents[2] / "tests" / "integration" / "test_dev_runner_preflight.py"
+    assert target.is_file()
+    assert "def test_preflight_skip_path_end_to_end" in target.read_text(encoding="utf-8")
