@@ -275,7 +275,7 @@ class AgentLoop:
         capability: CapabilityTier | None = None,
         model_chain: Iterable[str] | None = None,
         max_turns: int = 15,
-        per_call_timeout_s: Locale = LONG_OUTPUT_TIMEOUT_S,
+        per_call_timeout_s: float = LONG_OUTPUT_TIMEOUT_S,
         max_tokens: int = 1500,
         temperature: float = 0.1,
         thinking: ThinkingConfig | dict[str, Any] | None = None,
