@@ -162,7 +162,7 @@ class SSEBuilder:
             },
         )
 
-    def message_delta(self, stop_reason: str, output_tokens: int) -> str:
+    def message_delta(self, stop_reason: str, output_tokens: int, reasoning_tokens: int = 0) -> str:
         return self._format_event(
             "message_delta",
             {
@@ -172,6 +172,7 @@ class SSEBuilder:
                     "input_tokens": self.input_tokens,
                     "output_tokens": output_tokens,
                 },
+                "reasoning_tokens": reasoning_tokens,
             },
         )
 
@@ -316,6 +317,12 @@ class SSEBuilder:
     @property
     def accumulated_reasoning(self) -> str:
         return "".join(self._accumulated_reasoning_parts)
+
+    def estimate_reasoning_tokens(self) -> int:
+        accumulated_reasoning = self.accumulated_reasoning
+        if ENCODER:
+            return len(ENCODER.encode(accumulated_reasoning))
+        return len(accumulated_reasoning) // 4
 
     def estimate_output_tokens(self) -> int:
         accumulated_text = self.accumulated_text

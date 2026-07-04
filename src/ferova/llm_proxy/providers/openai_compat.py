@@ -28,6 +28,50 @@ from ferova.llm_proxy.providers.error_mapping import provider_error_message
 from ferova.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
 
+def _extract_reasoning_tokens(usage_info: Any, tag: str) -> int:
+    """Extract ``reasoning_tokens`` from the upstream usage object.
+
+    Reads ``usage_info.completion_tokens_details.reasoning_tokens``, tolerating
+    a missing attribute, ``None`` detail object, ``None`` value, or a non-integer
+    value (falls back to 0 with a single debug log).
+    """
+    try:
+        details = getattr(usage_info, "completion_tokens_details", None)
+    except Exception as exc:
+        logger.warning(
+            "{} completion_tokens_details access raised {}, falling back to 0",
+            tag,
+            type(exc).__name__,
+        )
+        return 0
+
+    if details is None:
+        return 0
+
+    try:
+        value = getattr(details, "reasoning_tokens", None)
+    except Exception as exc:
+        logger.warning(
+            "{} reasoning_tokens access raised {}, falling back to 0",
+            tag,
+            type(exc).__name__,
+        )
+        return 0
+
+    if value is None:
+        return 0
+
+    if isinstance(value, int):
+        return value
+
+    logger.debug(
+        "{} reasoning_tokens non-integer type={}, falling back to 0",
+        tag,
+        type(value).__name__,
+    )
+    return 0
+
+
 class OpenAIChatTransport(BaseProvider):
     """Base for OpenAI-compatible ``/chat/completions`` adapters (NIM, DeepSeek, …)."""
 
@@ -376,5 +420,13 @@ class OpenAIChatTransport(BaseProvider):
                     provider_input,
                     provider_input - input_tokens,
                 )
-        yield sse.message_delta(map_stop_reason(finish_reason), output_tokens)
+
+        if usage_info is not None:
+            reasoning_tokens_value = _extract_reasoning_tokens(usage_info, tag)
+        else:
+            reasoning_tokens_value = sse.estimate_reasoning_tokens()
+
+        yield sse.message_delta(
+            map_stop_reason(finish_reason), output_tokens, reasoning_tokens=reasoning_tokens_value
+        )
         yield sse.message_stop()

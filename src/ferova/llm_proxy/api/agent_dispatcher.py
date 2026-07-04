@@ -218,6 +218,7 @@ async def _aggregate_sse_stream(
     model: str = ""
     input_tokens = 0
     output_tokens = 0
+    reasoning_tokens = 0
 
     async for chunk in body_iterator:
         text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
@@ -259,6 +260,7 @@ async def _aggregate_sse_stream(
                     stop_reason = str(delta.get("stop_reason"))
                 usage = data.get("usage") or {}
                 output_tokens += int(usage.get("output_tokens") or 0)
+                reasoning_tokens += int(data.get("reasoning_tokens") or 0)
 
     ordered_blocks = [blocks_by_index[i] for i in sorted(blocks_by_index)]
     return {
@@ -269,6 +271,7 @@ async def _aggregate_sse_stream(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
+            reasoning_tokens=reasoning_tokens,
         ),
     }
 
