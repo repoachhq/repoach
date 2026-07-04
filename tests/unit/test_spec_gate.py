@@ -74,6 +74,25 @@ def test_selector_present_file_and_symbol(tmp_path: Path) -> None:
     assert selector_present(tmp_path, "tests/unit/test_ghost.py::test_one") is False
 
 
+def test_selector_present_resolves_class_scoped_node_ids(tmp_path: Path) -> None:
+    """A ``file::TestClass::test_name`` selector resolves class and method.
+
+    The whole node was previously matched as one function name, so
+    every class-scoped promised selector failed self-verify and spec
+    coverage even while pytest ran it green (SP-DEV-STEP-PREFLIGHT,
+    2026-07-04: five green predicate tests reported absent at head).
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_c.py").write_text(
+        "class TestThing:\n    def test_inner(self):\n        assert True\n",
+        encoding="utf-8",
+    )
+    assert selector_present(tmp_path, "tests/test_c.py::TestThing::test_inner") is True
+    assert selector_present(tmp_path, "tests/test_c.py::TestThing::test_absent") is False
+    assert selector_present(tmp_path, "tests/test_c.py::TestGhost::test_inner") is False
+    assert selector_present(tmp_path, "tests/test_c.py::TestThing::test_inner[p0]") is True
+
+
 def test_selector_present_strips_parametrize_id(tmp_path: Path) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_p.py").write_text(

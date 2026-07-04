@@ -98,18 +98,24 @@ def acceptance_selectors(plan: ActionPlan) -> list[str]:
 
 
 def selector_present(repo_root: Path, selector: str) -> bool:
-    """Return whether *selector*'s file (and node-id symbol) exists at head.
+    """Return whether *selector*'s file (and node-id symbols) exist at head.
 
     Args:
         repo_root: Root the selector path resolves against (the PR head).
-        selector: A pytest selector — a bare ``file.py`` or a
-            ``file.py::test_name`` node id (any ``[param]`` suffix is
-            stripped before the symbol search).
+        selector: A pytest selector — a bare ``file.py``, a
+            ``file.py::test_name`` node id, or a class-scoped
+            ``file.py::TestClass::test_name`` node id (any ``[param]``
+            suffix is stripped before the symbol search).
 
     Returns:
         ``True`` when the file exists and, for a node id, the file
-        defines ``def <symbol>``; ``False`` when the file or symbol is
-        absent or the file cannot be read.
+        defines ``def <function>`` plus ``class <C>`` for every
+        intermediate class segment; ``False`` when the file or any
+        symbol is absent or the file cannot be read. The whole node
+        was previously treated as one function name, so every
+        class-scoped promised selector failed the self-verify and
+        spec-coverage checks even while green (SP-DEV-STEP-PREFLIGHT,
+        2026-07-04).
     """
     file_part, _, node = selector.partition("::")
     target = repo_root / file_part
@@ -117,13 +123,17 @@ def selector_present(repo_root: Path, selector: str) -> bool:
         return False
     if not node:
         return True
-    symbol = node.split("[", 1)[0]
+    segments = [part.split("[", 1)[0] for part in node.split("::") if part]
+    if not segments:
+        return False
     try:
         source = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         _log.debug("spec_gate.selector_read_failed", selector=selector, error=str(exc)[:120])
         return False
-    return f"def {symbol}" in source
+    if f"def {segments[-1]}" not in source:
+        return False
+    return all(f"class {cls}" in source for cls in segments[:-1])
 
 
 def compute_spec_coverage(repo_root: Path, *, spec_id: str, plan: ActionPlan) -> SpecCoverage:
