@@ -1047,6 +1047,37 @@ def _develop_one_spec(
                 commit=step.commit_message,
             )
             continue
+        if step_preflight_complete(repo, action_plan, step):
+            contract = set(step.files)
+            dirty = [p for p in _changed_paths(repo) if p in contract]
+            if dirty:
+                commit_paths(repo, dirty, step.commit_message)
+            result.steps_completed += 1
+            selectors = list(step.unit_tests) + [
+                t for t in action_plan.integration_tests if t.split("::", 1)[0] in contract
+            ]
+            _log.info(
+                "dev_runner.step_preflight_complete",
+                spec_id=spec.id,
+                step=step.index,
+                selectors=selectors,
+            )
+            record_coder_response(
+                db,
+                pr_number=0,
+                plan={
+                    "fixes": [],
+                    "commit_message": step.commit_message,
+                    "summary": (
+                        f"preflight-complete step {step.index} ({step.title}): "
+                        f"{', '.join(selectors)}"
+                    ),
+                },
+                model_used="preflight",
+                elapsed_s=0.0,
+                tokens_used=0,
+            )
+            continue
         outcome = execute_plan_step(
             step,
             plan=action_plan,
