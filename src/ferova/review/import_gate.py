@@ -71,7 +71,21 @@ def _top_level_names(module_file: Path) -> set[str]:
         )
         return set()
     names: set[str] = set()
-    for node in tree.body:
+    _collect_defined_names(tree.body, names)
+    return names
+
+
+def _collect_defined_names(statements: list[ast.stmt], names: set[str]) -> None:
+    """Accumulate names a statement block defines, descending into guards.
+
+    Top-level ``try/except`` and ``if`` blocks are transparent: the
+    optional-dependency pattern (``try: import tiktoken; ENCODER = ...
+    except: ENCODER = None``) defines module names the gate refused
+    because it walked only ``tree.body`` — the second blind spot of
+    this gate after the façade re-exports, and it killed another green
+    Developer step (SP-USAGE-REASONING-SPLIT dispatch 2, 2026-07-04).
+    """
+    for node in statements:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
         elif isinstance(node, ast.Assign):
@@ -87,7 +101,12 @@ def _top_level_names(module_file: Path) -> set[str]:
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 names.add(alias.asname or alias.name.split(".")[0])
-    return names
+        elif isinstance(node, ast.Try):
+            for block in (node.body, *[h.body for h in node.handlers], node.orelse, node.finalbody):
+                _collect_defined_names(block, names)
+        elif isinstance(node, ast.If):
+            _collect_defined_names(node.body, names)
+            _collect_defined_names(node.orelse, names)
 
 
 def _find_name_homes(src_root: Path, name: str) -> list[str]:
