@@ -285,3 +285,46 @@ def test_name_absent_from_the_facade_is_still_reported(tmp_path: Path) -> None:
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is False
     assert "'save_registry' is not defined in 'ferova.arch'" in report
+
+
+def test_try_guarded_name_is_accepted(tmp_path: Path) -> None:
+    """Optional-dependency names defined inside try/except count as defined.
+
+    The gate walked only the module's direct body, so the standard
+    ``try: import tiktoken; ENCODER = ... except: ENCODER = None``
+    pattern was invisible and a green Developer step importing ENCODER
+    was refused (SP-USAGE-REASONING-SPLIT dispatch 2, 2026-07-04).
+    """
+    _seed_findings_package(tmp_path)
+    _seed_module(
+        tmp_path,
+        "src/ferova/review/tokens.py",
+        "try:\n    import tiktoken\n\n    ENCODER = tiktoken.get_encoding()\n"
+        "except Exception:\n    ENCODER = None\n",
+    )
+    candidate = _seed_module(
+        tmp_path,
+        "src/ferova/review/bridge.py",
+        "from ferova.review.tokens import ENCODER\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is True
+    assert report == ""
+
+
+def test_if_guarded_name_is_accepted(tmp_path: Path) -> None:
+    """Names assigned under a top-level if/else are defined either way."""
+    _seed_findings_package(tmp_path)
+    _seed_module(
+        tmp_path,
+        "src/ferova/review/flags.py",
+        "import os\n\nif os.environ.get('X'):\n    MODE = 'x'\nelse:\n    MODE = 'y'\n",
+    )
+    candidate = _seed_module(
+        tmp_path,
+        "src/ferova/review/bridge.py",
+        "from ferova.review.flags import MODE\n",
+    )
+    ok, report = check_imports(tmp_path, [candidate])
+    assert ok is True
+    assert report == ""
