@@ -26,6 +26,20 @@ from ferova.llm_proxy.providers.defaults import (
     OPENROUTER_DEFAULT_BASE,
 )
 
+ThinkingClass = Literal["reasoner", "hybrid", "non_thinking", "unknown"]
+
+THINKING_CLASSIFICATION: dict[str, ThinkingClass] = {
+    "glm-5.2": "hybrid",
+    "minimax-m3": "reasoner",
+    "qwen3.7-max": "hybrid",
+    "deepseek-v4-pro": "hybrid",
+    "kimi-k2.6": "reasoner",
+    "mistral-medium-3.5": "non_thinking",
+    "claude_code/opus": "hybrid",
+    "claude_code/sonnet": "hybrid",
+    "claude_code/haiku": "hybrid",
+}
+
 TransportType = Literal["openai_chat", "anthropic_messages"]
 
 
@@ -137,3 +151,23 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = {
 
 
 SUPPORTED_PROVIDER_IDS: tuple[str, ...] = tuple(PROVIDER_DESCRIPTORS)
+
+
+def classify_thinking(model_id: str) -> ThinkingClass:
+    """Return the thinking class for ``model_id`` by substring family matching.
+
+    Iterates :data:`THINKING_CLASSIFICATION` in insertion order; the first
+    pattern that is a substring of ``model_id`` wins. Returns ``"unknown"``
+    when no pattern matches.
+
+    Args:
+        model_id: A provider-prefixed or bare model identifier (e.g.
+            ``"nvidia_nim/z-ai/glm-5.2"`` or ``"minimaxai/minimax-m3"``).
+
+    Returns:
+        The resolved :data:`ThinkingClass`.
+    """
+    for pattern, thinking_class in THINKING_CLASSIFICATION.items():
+        if pattern in model_id:
+            return thinking_class
+    return "unknown"
