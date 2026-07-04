@@ -350,14 +350,18 @@ class ClaudeProxyService:
         when no enlargement is possible or the retry raised.
         """
         original_max = attempt_request.max_tokens
-        enlarged = min(
-            max(
-                original_max * self._settings.budget_retry_factor, self._settings.budget_retry_floor
-            ),
-            self._settings.budget_retry_cap,
-        )
-        if enlarged <= original_max:
-            return None
+        if original_max is None:
+            enlarged = self._settings.budget_retry_cap
+        else:
+            enlarged = min(
+                max(
+                    original_max * self._settings.budget_retry_factor,
+                    self._settings.budget_retry_floor,
+                ),
+                self._settings.budget_retry_cap,
+            )
+            if enlarged <= original_max:
+                return None
         retry_request = attempt_request.model_copy(update={"max_tokens": enlarged}, deep=True)
         request_id = f"req_{uuid.uuid4().hex[:12]}"
         retry_started = time.monotonic()

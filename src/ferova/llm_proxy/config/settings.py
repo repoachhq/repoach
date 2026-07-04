@@ -256,7 +256,7 @@ class Settings(BaseSettings):
     )
     budget_retry_factor: int = Field(default=8, validation_alias=_aliases("BUDGET_RETRY_FACTOR"))
     budget_retry_floor: int = Field(default=512, validation_alias=_aliases("BUDGET_RETRY_FLOOR"))
-    budget_retry_cap: int = Field(default=4096, validation_alias=_aliases("BUDGET_RETRY_CAP"))
+    budget_retry_cap: int = Field(default=8192, validation_alias=_aliases("BUDGET_RETRY_CAP"))
 
     breaker_enabled: bool = Field(default=True, validation_alias=_aliases("BREAKER_ENABLED"))
     breaker_ttl_s: float = Field(default=120.0, validation_alias=_aliases("BREAKER_TTL_S"))
