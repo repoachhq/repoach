@@ -179,6 +179,18 @@ class TestActionPlanValidation:
         with pytest.raises(ValidationError, match="non-empty"):
             _plan(**{field: ""})
 
+    def test_integration_promise_without_creating_step_is_rejected(self) -> None:
+        step = _step(
+            index=1,
+            files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py"],
+        )
+        with pytest.raises(ValidationError) as excinfo:
+            _plan(steps=[step], integration_tests=["tests/integration/test_feature_e2e.py"])
+        message = str(excinfo.value)
+        assert "tests/integration/test_feature_e2e.py" in message
+        assert "add that file" in message
+
 
 class TestRender:
     def test_render_contains_marker_fence_and_step_titles(self) -> None:

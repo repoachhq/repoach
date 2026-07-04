@@ -235,6 +235,32 @@ class ActionPlan(BaseModel):
                     )
         return self
 
+    @model_validator(mode="after")
+    def _integration_promises_are_created_by_the_plan(self) -> ActionPlan:
+        """Every promised integration test must be created by some step.
+
+        Unlike :meth:`_promised_tests_are_created_by_the_plan`, there is
+        no index ordering here: integration tests run at session end,
+        after every step has landed, so any step (regardless of index)
+        may create the promised file. The union of ALL steps' ``files``
+        is the only universe the promise is checked against.
+
+        A plan whose per-step jail forbids ever writing the promised
+        file is unsatisfiable — no session can create it — so this is
+        rejected at validation time with a directive message that
+        guides the Planner to add the missing file to a step.
+        """
+        created_anywhere = {path for step in self.steps for path in step.files}
+        for selector in self.integration_tests:
+            test_file = selector.split("::", 1)[0]
+            if test_file not in created_anywhere:
+                raise ValueError(
+                    f"integration test {selector!r} is promised but no step creates "
+                    f"{test_file!r} — add that file to a step's files (the per-step "
+                    "jail forbids writing files outside every contract)"
+                )
+        return self
+
 
 def plan_relpath(spec_id: str) -> str:
     """Return the repo-relative path of a spec's committed plan.
