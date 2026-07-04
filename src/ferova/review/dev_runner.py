@@ -334,8 +334,14 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
     :func:`run_promised_tests` inside a broad try/except — any exception
     (pytest crash, timeout, git error) logs
     ``dev_runner.step_preflight_error`` and returns ``False`` (fail-open to a
-    normal dispatch).  Returns the boolean first element of the tuple on
-    success.
+    normal dispatch).
+
+    A RECONCILED green is not proof: the file-level fallback exists for the
+    step gate, where the Developer just wrote tests under drifted names. At
+    preflight time the same fallback certified two untouched steps of
+    SP-AGENT-THINKING-CONTROL as complete because an earlier step's
+    unrelated tests in the same promised file were green (2026-07-04) —
+    only a strict per-selector green counts here.
 
     Args:
         repo_root: Repository working tree root.
@@ -359,7 +365,14 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
             return False
 
     try:
-        ok, _tail, _reconciled = run_promised_tests(repo_root, attributed)
+        ok, _tail, reconciled = run_promised_tests(repo_root, attributed)
+        if ok and reconciled:
+            _log.info(
+                "dev_runner.step_preflight_reconciled_not_proof",
+                step=step.index,
+                selectors=attributed,
+            )
+            return False
         return ok
     except Exception as exc:
         _log.warning("dev_runner.step_preflight_error", error=str(exc))

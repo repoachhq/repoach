@@ -1133,6 +1133,29 @@ class TestStepPreflightPredicate:
 
         assert step_preflight_complete(repo, plan, step) is False
 
+    def test_preflight_predicate_rejects_a_reconciled_green(self, tmp_path: Path) -> None:
+        """Unrelated green tests in the promised file are not completion proof.
+
+        The file-level reconciliation fallback certified two untouched
+        SP-AGENT-THINKING-CONTROL steps as complete because an earlier
+        step's schema tests in the same promised file were green
+        (2026-07-04): the promised selectors themselves did not exist.
+        Preflight demands a strict per-selector green.
+        """
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=["tests/unit/test_mini.py::test_selector_that_does_not_exist"]
+        )
+        step = plan.steps[0]
+        (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
+        (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_demo_flow.py").write_text(
+            _GREEN_INTEGRATION, encoding="utf-8"
+        )
+
+        assert step_preflight_complete(repo, plan, step) is False
+
     def test_preflight_predicate_attributes_integration_selectors_by_file(
         self, tmp_path: Path
     ) -> None:
