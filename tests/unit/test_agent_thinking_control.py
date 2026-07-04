@@ -238,3 +238,81 @@ def test_proxy_client_omits_thinking_when_unset(monkeypatch) -> None:
     assert len(stub.posted) == 1
     body = stub.posted[0]["json"]
     assert "thinking" not in body
+
+
+def test_agent_loop_threads_thinking_to_every_turn(monkeypatch) -> None:
+    """Step 4/4 — one thinking policy per loop, on every call it makes.
+
+    A loop constructed with a thinking config must send it on tool
+    turns AND on the budget-exhausted wrap-up call: the wrap-up is
+    where dispatch 28's DSML leak became a recorded summary, so a
+    per-loop policy that skipped it would silently regress there.
+    """
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    from ferova.agent_engine.agent_loop import AgentLoop, ToolDef
+    from ferova.llm_proxy.api.models.agent_v1 import (
+        AgentResponse,
+        ToolCallBlock,
+        Usage,
+    )
+
+    monkeypatch.setattr(
+        "ferova.agent_engine.agent_loop.get_settings",
+        lambda: SimpleNamespace(
+            llm_proxy_base_url="http://localhost:8082",
+            llm_proxy_auth_token=SecretStr("test-token"),
+        ),
+    )
+
+    def _tool_turn(call_id: str) -> AgentResponse:
+        return AgentResponse(
+            schema_version="1",
+            capability="sonnet",
+            stop_reason="tool_use",
+            model_used="fake/sonnet",
+            content=[ToolCallBlock(id=call_id, name="noop", args={})],
+            usage=Usage(input_tokens=10, output_tokens=5, total_tokens=15),
+            elapsed_ms=10,
+            trace=[],
+        )
+
+    def _text_turn(text: str) -> AgentResponse:
+        return AgentResponse(
+            schema_version="1",
+            capability="sonnet",
+            stop_reason="end_turn",
+            model_used="fake/sonnet",
+            content=[TextBlock(type="text", text=text)],
+            usage=Usage(input_tokens=10, output_tokens=5, total_tokens=15),
+            elapsed_ms=10,
+            trace=[],
+        )
+
+    class _ScriptedClient:
+        def __init__(self, responses: list[AgentResponse]) -> None:
+            self._queue = list(responses)
+            self.calls: list[dict[str, Any]] = []
+
+        def call(self, **kwargs: Any) -> AgentResponse:
+            self.calls.append(kwargs)
+            return self._queue.pop(0)
+
+    config = {"type": "enabled", "budget_tokens": 512}
+    client = _ScriptedClient([_tool_turn("t1"), _tool_turn("t2"), _text_turn("summary")])
+    loop = AgentLoop(model_chain=("claude-sonnet-4-6",), max_turns=2, thinking=config)
+    loop._client = client
+    tool = ToolDef(
+        name="noop",
+        description="does nothing",
+        parameters_schema={"type": "object", "properties": {}},
+        callable_fn=lambda **kwargs: "ok",
+    )
+
+    output = loop.run("go", tools=[tool])
+
+    assert output.text == "summary"
+    assert len(client.calls) == 3
+    assert all(call.get("thinking") == config for call in client.calls)
