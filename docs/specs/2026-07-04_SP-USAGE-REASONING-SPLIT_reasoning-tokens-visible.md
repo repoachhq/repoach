@@ -11,7 +11,7 @@ owns:
   code: [src/ferova/llm_proxy/providers/openai_compat.py]
   resources: []
 
-depends_on: []
+depends_on: [SP-PROVIDER-TRANSPORT-SPI, SP-BUDGET-RETRY-FIXES]
 provides_to: []
 
 constraints: {}
@@ -123,8 +123,13 @@ response carries `usage.reasoning_tokens == 1200` while
 
 ## Architecture Impact
 
-- No edge added or removed. `openai_compat.py` moves from the frontier
-  into this spec's `owns.code`.
+- `openai_compat.py` moves from the frontier into this spec's
+  `owns.code`.
+- Adds dependency: SP-USAGE-REASONING-SPLIT -> SP-PROVIDER-TRANSPORT-SPI
+  (`openai_compat.py` imports `providers.error_mapping`, owned there).
+- Adds dependency: SP-USAGE-REASONING-SPLIT -> SP-BUDGET-RETRY-FIXES
+  (the working-set file `api/agent_dispatcher.py` imports
+  `api.services`, owned there since the 2026-07-04 thinking specs).
 
 ## Diagram
 
