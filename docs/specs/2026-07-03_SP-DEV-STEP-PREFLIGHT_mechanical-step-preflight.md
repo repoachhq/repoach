@@ -11,7 +11,9 @@ owns:
   code: [src/ferova/review/dev_runner.py]
   resources: []
 
-depends_on: []
+depends_on: [SP-ARCH-REVIEW-WIRE, SP-DEV-STEP-LOOP-HARDEN, SP-DEVAGENT-DECOMPOSE,
+  SP-DEVAGENT-LOOP, SP-DEVAGENT-SELFVERIFY, SP-DEVAGENT-TOOLS, SP-DEVAGENT-WIRE,
+  SP-PLAN-CONTRACT-LINTS]
 provides_to: []
 
 constraints: {}
