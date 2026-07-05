@@ -36,6 +36,7 @@ Module-level constants :
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -66,6 +67,88 @@ from .spec_gate import selector_present
 from .spec_supersede import supersede_parent_on_decompose
 
 _log = get_logger(__name__)
+
+
+def _promised_test_files(unit_tests: list[str]) -> set[str]:
+    """Return the set of repo-relative file paths extracted from promised selectors.
+
+    Each selector is split on ``::`` and the file part (index 0) is kept.
+    Bare-file selectors that contain no ``::`` are skipped — only selectors
+    that name an explicit node id contribute to the returned set.
+
+    Args:
+        unit_tests: Promised pytest selectors from a plan step.
+
+    Returns:
+        Set of repo-relative file paths whose promised selectors include
+        a ``::`` node-id portion.
+    """
+    return {s.split("::", 1)[0] for s in unit_tests if "::" in s}
+
+
+def _attempt_mechanical_rename(
+    repo_root: Path,
+    file_path: str,
+    promised: list[str],
+    delivered: list[str],
+) -> tuple[bool, str]:
+    """Attempt to mechanically rename one delivered test function to its promised name.
+
+    When exactly one promised node id is missing from *file_path* and exactly
+    one test function is present in the file that no plan step promises, the
+    function is renamed by rewriting ``def <delivered>(...)`` to
+    ``def <promised>(...)`` in place.  Decorators and body are preserved.
+
+    On any parse/IO error the original content is restored and ``(False, '')``
+    is returned.  When the preconditions are not met (ambiguous drift) the
+    function returns ``(False, '')`` without touching the file.
+
+    Args:
+        repo_root: Repository root the *file_path* resolves against.
+        file_path: Repo-relative path to the test file.
+        promised: Node-id names (the ``::name`` part) the step promised.
+        delivered: Test function names actually defined in the file that no
+            plan step promises.
+
+    Returns:
+        ``(True, promised_name)`` when the rename succeeded, or
+        ``(False, '')`` when the drift is ambiguous or a parse/IO error
+        occurred.
+    """
+    if len(promised) != 1 or len(delivered) != 1:
+        return False, ""
+
+    target = (repo_root / file_path).resolve()
+    try:
+        original = target.read_text(encoding="utf-8")
+    except OSError:
+        return False, ""
+
+    promised_name = promised[0]
+    delivered_name = delivered[0]
+
+    try:
+        rewritten = original.replace(f"def {delivered_name}(", f"def {promised_name}(")
+    except Exception:
+        return False, ""
+
+    if rewritten == original:
+        return False, ""
+
+    try:
+        target.write_text(rewritten, encoding="utf-8")
+    except OSError:
+        return False, ""
+
+    try:
+        compile(rewritten, str(target), "exec")
+    except SyntaxError:
+        with contextlib.suppress(OSError):
+            target.write_text(original, encoding="utf-8")
+        return False, ""
+
+    return True, promised_name
+
 
 DEFAULT_BRANCH_TEMPLATE: str = "feat/sp-{slug}-impl"
 
