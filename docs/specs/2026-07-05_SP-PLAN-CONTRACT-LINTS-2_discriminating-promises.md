@@ -1,7 +1,7 @@
 ---
 id: SP-PLAN-CONTRACT-LINTS-2
 title: Discriminating promises — node ids required, integration under tests/integration
-version: 0.2
+version: 0.3
 status: approved
 author: jfaye + Claude (SP-BUDGET-RETRY-FIXES post-mortem, 2026-07-05)
 created: 2026-07-05
@@ -72,6 +72,14 @@ operator review for violating all three):
   updating the paths the fixture seeds and constructs in its OWN tmp
   repository — never creating real `tests/integration/` files for
   fixture use, which would sit outside the step's contract.
+- REPRESENTATIVE SELECTORS MUST BE VERIFIED, NOT INVENTED. A second
+  plan was rejected because all ten "representative existing" node
+  ids were hallucinated — none existed, which kills the session at
+  self-verify. Before promising a selector in an EXISTING file, run
+  `grep_repo` with pattern `def <test_name>` and confirm exactly the
+  promised name; quote the matching `path:line` in the step's action
+  text as proof. A selector you did not verify this way must not
+  appear in the plan.
 
 ## Goals
 
