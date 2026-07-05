@@ -139,7 +139,7 @@ def _one_step_plan() -> tuple[ActionPlan, PlanStep]:
         action="Apply the fixes.",
         commit_message="feat(foo): step",
         done_when="gates green",
-        unit_tests=["tests/unit/test_foo.py"],
+        unit_tests=["tests/unit/test_foo.py::test_brief_carries_spec_section"],
     )
     plan = ActionPlan(
         spec_id="SP-FOO",

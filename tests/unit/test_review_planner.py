@@ -78,7 +78,7 @@ def _valid_plan_payload() -> dict:
                 "action": "Create the module.",
                 "commit_message": "feat(demo): add module",
                 "done_when": "pytest tests/unit/test_demo.py is green",
-                "unit_tests": ["tests/unit/test_demo.py"],
+                "unit_tests": ["tests/unit/test_demo.py::test_happy_path_writes_parseable_plan"],
             }
         ],
         "integration_tests": ["tests/integration/test_demo_flow.py"],
