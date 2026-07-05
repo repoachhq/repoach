@@ -1,7 +1,7 @@
 ---
 id: SP-PLAN-CONTRACT-LINTS-2
 title: Discriminating promises — node ids required, integration under tests/integration
-version: 0.1
+version: 0.2
 status: approved
 author: jfaye + Claude (SP-BUDGET-RETRY-FIXES post-mortem, 2026-07-05)
 created: 2026-07-05
@@ -53,6 +53,25 @@ migrate in the same change — the Planner should enumerate offenders
 with `grep -rn "unit_tests=\|integration_tests=" tests/` and include
 every affected fixture file in a step's contract so the session's own
 gates can reach them.
+
+Plan-shape requirements (a first plan for this spec was rejected in
+operator review for violating all three):
+
+- MIGRATION STEPS PROMISE NODE IDS TOO. Once the validators land, an
+  unmigrated fixture file fails wholesale at plan construction, so any
+  ONE representative existing `::node id` per migrated file is a
+  discriminating promise — use that, never a bare file path (a bare
+  path is exactly the shape this spec outlaws, and it lets a partial
+  migration pass vacuously).
+- EVERY STEP COMMITS A DIFF. No verification-only step ("re-read and
+  run the suite" produces nothing to commit and fails the runner's
+  commit gate); AC5's full-suite verification is the session's own
+  wrap-up gate, not a plan step.
+- FIXTURE PROMISES LIVE INSIDE THE FIXTURE'S TMP REPO. Migrating a
+  fixture's `integration_tests` to `tests/integration/...` means
+  updating the paths the fixture seeds and constructs in its OWN tmp
+  repository — never creating real `tests/integration/` files for
+  fixture use, which would sit outside the step's contract.
 
 ## Goals
 
