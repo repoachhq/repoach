@@ -1415,6 +1415,105 @@ class TestSessionPreflight:
         assert result.steps_completed == 1
 
 
+class TestPromisedTestGateG1G2:
+    """SP-DEV-PROMISE-DELIVERY — G1 (untouched-file refusal) and G2 (mechanical rename)."""
+
+    _DRIFTED_TEST = '"""Demo test."""\n\n\ndef test_drifted() -> None:\n    assert 1 == 1\n'
+    _PROMISED_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 1\n'
+    _TWO_CANDIDATES = (
+        '"""Demo test."""\n\n'
+        "def test_x() -> None:\n    assert 1 == 1\n\n"
+        "def test_y() -> None:\n    assert 1 == 1\n"
+    )
+
+    def test_untouched_promised_file_reconciliation_is_retried(self, tmp_path: Path) -> None:
+        """AC1 — two dispatches: first writes only source, second writes the tests."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=["tests/unit/test_mini.py::test_value"],
+        )
+        (repo / "tests" / "unit" / "test_mini.py").write_text(self._DRIFTED_TEST, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "chore: pre-seed drifted test")
+        dev = _developer_writing(
+            [
+                [("src/mini.py", _CLEAN_MODULE)],
+                [("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._PROMISED_TEST)],
+            ]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 2
+        retry_brief = dev.develop_step.call_args_list[1].kwargs["brief"]
+        assert "promised-test gate: reconciled green but the loop did not touch" in retry_brief
+        assert "tests/unit/test_mini.py::test_value" in retry_brief
+        assert (repo / "tests" / "unit" / "test_mini.py").read_text() == self._PROMISED_TEST
+
+    def test_touched_file_with_drifted_name_is_renamed_to_promise(self, tmp_path: Path) -> None:
+        """AC2 — single drifted test in a touched file, step green in one attempt."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=["tests/unit/test_mini.py::test_value"],
+        )
+        dev = _developer_writing(
+            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._DRIFTED_TEST)]]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 1
+        committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
+        assert "def test_value(" in committed
+        assert "def test_drifted(" not in committed
+
+    def test_ambiguous_drift_keeps_reconciled_accept(self, tmp_path: Path) -> None:
+        """AC3 — two missing + two candidates, no rename, step green via reconciled-accept."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=[
+                "tests/unit/test_mini.py::test_a",
+                "tests/unit/test_mini.py::test_b",
+            ],
+        )
+        dev = _developer_writing(
+            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._TWO_CANDIDATES)]]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 1
+        committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
+        assert "def test_x(" in committed
+        assert "def test_y(" in committed
+        assert "def test_a(" not in committed
+        assert "def test_b(" not in committed
+
+
 def test_preflight_integration_test_file_exists() -> None:
     """Guard the preflight integration test against accidental deletion."""
     target = Path(__file__).parents[2] / "tests" / "integration" / "test_dev_runner_preflight.py"
