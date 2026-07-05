@@ -36,6 +36,8 @@ Module-level constants :
 
 from __future__ import annotations
 
+import contextlib
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -66,6 +68,126 @@ from .spec_gate import selector_present
 from .spec_supersede import supersede_parent_on_decompose
 
 _log = get_logger(__name__)
+
+
+def _promised_test_files(unit_tests: list[str]) -> set[str]:
+    """Return the set of repo-relative file paths extracted from promised selectors.
+
+    Each selector is split on ``::`` and the file part (index 0) is kept.
+    Bare-file selectors that contain no ``::`` are skipped — only selectors
+    that name an explicit node id contribute to the returned set.
+
+    Args:
+        unit_tests: Promised pytest selectors from a plan step.
+
+    Returns:
+        Set of repo-relative file paths whose promised selectors include
+        a ``::`` node-id portion.
+    """
+    return {s.split("::", 1)[0] for s in unit_tests if "::" in s}
+
+
+def _test_function_names_in_file(repo_root: Path, file_path: str) -> list[str]:
+    """Return the ``def test_*`` function names defined in *file_path*.
+
+    Args:
+        repo_root: Repository root the *file_path* resolves against.
+        file_path: Repo-relative path to the test file.
+
+    Returns:
+        Sorted list of test function names (without the ``def`` prefix or
+        trailing parenthesis). Empty when the file is missing or unreadable.
+    """
+    target = (repo_root / file_path).resolve()
+    try:
+        source = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        _log.warning(
+            "dev_runner.test_function_names_unreadable",
+            repo_root=str(repo_root),
+            file_path=file_path,
+            error=str(exc)[:200],
+        )
+        return []
+    return sorted(set(re.findall(r"^def\s+(test_\w+)\s*\(", source, flags=re.MULTILINE)))
+
+
+def _attempt_mechanical_rename(
+    repo_root: Path,
+    file_path: str,
+    promised: list[str],
+    delivered: list[str],
+) -> tuple[str, str]:
+    """Attempt to mechanically rename one delivered test function to its promised name.
+
+    When exactly one promised node id is missing from *file_path* and exactly
+    one test function is present in the file that no plan step promises, the
+    function is renamed by rewriting ``def <delivered>(...)`` to
+    ``def <promised>(...)`` in place.  Decorators and body are preserved.
+
+    The three outcomes are distinct because the gate must treat them
+    differently (SP-DEV-PROMISE-DELIVERY Errors: a failed rename falls
+    back to the retryable G1 gate, while an ambiguous drift keeps the
+    reconciled-accept — the first implementation conflated them into
+    one ``False`` and the judge refused the push, 2026-07-05).
+
+    Args:
+        repo_root: Repository root the *file_path* resolves against.
+        file_path: Repo-relative path to the test file.
+        promised: Node-id names (the ``::name`` part) the step promised.
+        delivered: Test function names actually defined in the file that no
+            plan step promises.
+
+    Returns:
+        ``("renamed", original_content)`` when the rename succeeded (the
+        caller restores *original_content* if the strict re-run stays
+        red); ``("ambiguous", "")`` when the drift is not one-to-one
+        (file untouched); ``("error", "")`` on any parse/IO failure
+        (the file is restored to its original content when a write
+        already happened).
+    """
+    if len(promised) != 1 or len(delivered) != 1:
+        return "ambiguous", ""
+
+    target = (repo_root / file_path).resolve()
+    try:
+        original = target.read_text(encoding="utf-8")
+    except OSError:
+        return "error", ""
+
+    promised_name = promised[0]
+    delivered_name = delivered[0]
+
+    rewritten = original.replace(f"def {delivered_name}(", f"def {promised_name}(")
+    if rewritten == original:
+        return "error", ""
+
+    try:
+        compile(rewritten, str(target), "exec")
+    except SyntaxError:
+        return "error", ""
+
+    try:
+        target.write_text(rewritten, encoding="utf-8")
+    except OSError:
+        with contextlib.suppress(OSError):
+            target.write_text(original, encoding="utf-8")
+        return "error", ""
+
+    return "renamed", original
+
+
+def _restore_file_contents(repo_root: Path, originals: dict[str, str]) -> None:
+    """Write back pre-rename contents after a failed mechanical rename.
+
+    SP-DEV-PROMISE-DELIVERY's failure contract: a rename whose strict
+    re-run stays red (or that errors midway across several files) must
+    not leave mechanically-renamed content in the retry's working tree.
+    """
+    for file_path, content in originals.items():
+        with contextlib.suppress(OSError):
+            (repo_root / file_path).write_text(content, encoding="utf-8")
+
 
 DEFAULT_BRANCH_TEMPLATE: str = "feat/sp-{slug}-impl"
 
@@ -937,12 +1059,82 @@ def execute_plan_step(
                 gate_feedback = f"pytest gate on the step's promised tests: {tests_tail}"
                 continue
             if reconciled:
-                _log.warning(
-                    "dev_runner.promised_tests_reconciled",
-                    spec_id=plan.spec_id,
-                    step=step.index,
-                    promised=list(step.unit_tests),
-                )
+                touched_promised = _promised_test_files(step.unit_tests) & set(changed)
+                if not touched_promised:
+                    gate_feedback = (
+                        "promised-test gate: reconciled green but the loop did not "
+                        "touch the promised test file(s) in this attempt \u2014 write "
+                        "tests named exactly: " + ", ".join(step.unit_tests)
+                    )
+                    _log.warning(
+                        "dev_runner.promised_tests_untouched",
+                        spec_id=plan.spec_id,
+                        step=step.index,
+                        promised=list(step.unit_tests),
+                    )
+                    continue
+                rename_errored = False
+                renamed_originals: dict[str, str] = {}
+                for file_path in sorted(touched_promised):
+                    promised_names = [
+                        s.split("::", 1)[1].split("::", 1)[0]
+                        for s in step.unit_tests
+                        if s.split("::", 1)[0] == file_path
+                    ]
+                    defined = _test_function_names_in_file(repo_root, file_path)
+                    delivered_names = [n for n in defined if n not in promised_names]
+                    outcome, original = _attempt_mechanical_rename(
+                        repo_root, file_path, promised_names, delivered_names
+                    )
+                    if outcome == "renamed":
+                        renamed_originals[file_path] = original
+                    elif outcome == "error":
+                        rename_errored = True
+                        break
+
+                if rename_errored:
+                    _restore_file_contents(repo_root, renamed_originals)
+                    gate_feedback = (
+                        "promised-test gate: mechanical rename failed \u2014 write "
+                        "tests named exactly: " + ", ".join(step.unit_tests)
+                    )
+                    _log.warning(
+                        "dev_runner.promised_tests_rename_failed",
+                        spec_id=plan.spec_id,
+                        step=step.index,
+                        promised=list(step.unit_tests),
+                    )
+                    continue
+                if renamed_originals:
+                    re_ok, re_tail = run_pytest_selectors(repo_root, list(step.unit_tests))
+                    if re_ok:
+                        _log.info(
+                            "dev_runner.promised_tests_renamed",
+                            spec_id=plan.spec_id,
+                            step=step.index,
+                            promised=list(step.unit_tests),
+                        )
+                    else:
+                        _restore_file_contents(repo_root, renamed_originals)
+                        gate_feedback = (
+                            "promised-test gate: the mechanical rename did not make "
+                            "the promised selectors green \u2014 write tests named "
+                            "exactly: " + ", ".join(step.unit_tests)
+                        )
+                        _log.warning(
+                            "dev_runner.promised_tests_rename_rerun_red",
+                            spec_id=plan.spec_id,
+                            step=step.index,
+                            tail=re_tail[:200],
+                        )
+                        continue
+                else:
+                    _log.warning(
+                        "dev_runner.promised_tests_reconciled",
+                        spec_id=plan.spec_id,
+                        step=step.index,
+                        promised=list(step.unit_tests),
+                    )
 
         step_changes = [p for p in _changed_paths(repo_root) if p not in pre_existing]
         escaped = [p for p in step_changes if p not in contract]
