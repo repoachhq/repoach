@@ -48,16 +48,25 @@ class _FakeProcess:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
         self.returncode = 0
+        self.stdin_received: bytes | None = None
 
-    async def communicate(self) -> tuple[bytes, bytes]:
+    async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
+        self.stdin_received = input
         return json.dumps(self._payload).encode(), b""
 
 
-def _collect_sse(payload: dict, tools: list[dict] | None) -> list[dict]:
+def _collect_sse(
+    payload: dict,
+    tools: list[dict] | None,
+    spawn_log: list[tuple[tuple[Any, ...], _FakeProcess]] | None = None,
+) -> list[dict]:
     provider = _provider()
 
     async def fake_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
-        return _FakeProcess(payload)
+        proc = _FakeProcess(payload)
+        if spawn_log is not None:
+            spawn_log.append((args, proc))
+        return proc
 
     async def run() -> list[str]:
         events: list[str] = []
@@ -136,3 +145,22 @@ def test_appendix_documents_the_exact_format_the_parser_accepts() -> None:
     assert '<tool_use>{"name": "<tool_name>", "args": {<json args>}}</tool_use>' in appendix
     assert "read_file" in appendix
     assert "required=path" in appendix
+
+
+def test_prompt_travels_via_stdin_never_argv() -> None:
+    """The conversation prompt reaches the CLI on stdin, not in argv.
+
+    A Developer-session conversation serialized into one prompt
+    exceeded ARG_MAX and the spawn died with OSError 'Argument list
+    too long' — a naked 500 on the backstop hop
+    (SP-DEV-PROMISE-DELIVERY step 2, 2026-07-05). argv keeps only the
+    bounded flags and system prompt.
+    """
+    spawn_log: list[tuple[tuple[Any, ...], _FakeProcess]] = []
+    _collect_sse({"result": "plain answer"}, None, spawn_log)
+
+    assert len(spawn_log) == 1
+    argv, proc = spawn_log[0]
+    assert proc.stdin_received is not None
+    assert b"Explore the repo." in proc.stdin_received
+    assert not any("Explore the repo." in str(arg) for arg in argv)
