@@ -48,7 +48,7 @@ def _two_step_plan() -> ActionPlan:
                 action="Create module one and its test.",
                 commit_message="feat(demo): module one",
                 done_when="pytest tests/unit/test_one.py is green",
-                unit_tests=["tests/unit/test_one.py"],
+                unit_tests=["tests/unit/test_one.py::test_one"],
             ),
             PlanStep(
                 index=2,
@@ -61,7 +61,7 @@ def _two_step_plan() -> ActionPlan:
                 action="Create module two and its test.",
                 commit_message="feat(demo): module two",
                 done_when="pytest tests/unit/test_two.py is green",
-                unit_tests=["tests/unit/test_two.py"],
+                unit_tests=["tests/unit/test_two.py::test_two"],
             ),
         ],
         integration_tests=["tests/integration/test_demo_absent.py"],

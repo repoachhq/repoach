@@ -24,6 +24,7 @@ _SPEC_ID = "SP-PROM-INT"
 _CLEAN_MODULE = '"""Demo module."""\n\nVALUE = 1\n'
 _PROMISED_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 1\n'
 _DRIFTED_TEST = '"""Demo test."""\n\n\ndef test_drifted() -> None:\n    assert 1 == 1\n'
+_FLOW_TEST = '"""Demo integration test."""\n\n\ndef test_flow() -> None:\n    assert 1 == 1\n'
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -36,7 +37,9 @@ def _init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     (repo / "tests" / "unit").mkdir(parents=True)
+    (repo / "tests" / "integration").mkdir(parents=True)
     (repo / "docs" / "specs").mkdir(parents=True)
+    (repo / "tests" / "integration" / "test_demo_flow.py").write_text(_FLOW_TEST, encoding="utf-8")
     (repo / "docs" / "specs" / f"2026-07-05_{_SPEC_ID}_demo.md").write_text(
         f"# {_SPEC_ID} — promise delivery\n\n## Why\n\nIntegration test.\n\n"
         "## Definition of Done\n\n- works\n",
@@ -64,7 +67,7 @@ def _one_step_plan(**overrides: object) -> ActionPlan:
         "action": "Create the module and its test.",
         "commit_message": "feat(demo): add mini module",
         "done_when": "pytest tests/unit/test_mini.py is green",
-        "unit_tests": ["tests/unit/test_mini.py"],
+        "unit_tests": ["tests/unit/test_mini.py::test_value"],
     }
     step.update(overrides)
     return ActionPlan(
@@ -72,7 +75,7 @@ def _one_step_plan(**overrides: object) -> ActionPlan:
         title="Promise delivery demo",
         summary="One-step demo.",
         steps=[PlanStep(**step)],
-        integration_tests=["tests/integration/test_demo_flow.py"],
+        integration_tests=["tests/integration/test_demo_flow.py::test_flow"],
     )
 
 
