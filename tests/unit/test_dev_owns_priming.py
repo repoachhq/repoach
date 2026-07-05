@@ -45,17 +45,17 @@ def _plan() -> tuple[ActionPlan, PlanStep]:
         index=1,
         title="do the thing",
         action="implement",
-        files=["src/x/mod.py", "tests/unit/test_x.py"],
+        files=["src/x/mod.py", "tests/unit/test_x.py", "tests/integration/test_x.py"],
         commit_message="feat(x): do the thing",
         done_when="tests pass",
-        unit_tests=["tests/unit/test_x.py"],
+        unit_tests=["tests/unit/test_x.py::test_render_owns_brief_states_allowed_deps"],
     )
     plan = ActionPlan(
         spec_id="SP-X",
         title="X",
         summary="s",
         steps=[step],
-        integration_tests=["tests/unit/test_x.py"],
+        integration_tests=["tests/integration/test_x.py"],
     )
     return plan, step
 

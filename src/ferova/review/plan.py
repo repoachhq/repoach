@@ -110,6 +110,25 @@ class PlanStep(BaseModel):
                 raise ValueError(f"test selector must not start with '-': {selector!r}")
         return selectors
 
+    @field_validator("unit_tests")
+    @classmethod
+    def _require_node_ids(cls, selectors: list[str]) -> list[str]:
+        """Reject bare-file selectors that prove nothing about new work.
+
+        A bare file path lets any pre-existing green test in the file
+        satisfy the step gate vacuously.  Require a ``::`` node id so
+        the promise discriminates the step's own new test function.
+        Class-scoped selectors with multiple ``::`` segments satisfy
+        this check.
+        """
+        for selector in selectors:
+            if "::" not in selector:
+                raise ValueError(
+                    "promise the exact test function: file.py::test_name — "
+                    "a bare file proves nothing about this step's new work"
+                )
+        return selectors
+
     @model_validator(mode="after")
     def _code_steps_promise_unit_tests(self) -> PlanStep:
         """Enforce the per-step test contract.
@@ -233,6 +252,24 @@ class ActionPlan(BaseModel):
                         f"up to {step.index} creates {test_file!r} — add that test "
                         "file to this step's files (code and its tests ship together)"
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _integration_tests_under_integration_tree(self) -> ActionPlan:
+        """Reject integration test selectors outside ``tests/integration/``.
+
+        A unit-tree path satisfies the src-interlock to the letter while
+        defeating its intent, and mixing it into an attributed selector
+        set produces the pytest masking bug that #34 had to guard against.
+        """
+        for selector in self.integration_tests:
+            file_part = selector.split("::", 1)[0]
+            if not file_part.startswith("tests/integration/"):
+                raise ValueError(
+                    f"integration test selector {selector!r} must live under "
+                    f"tests/integration/ — unit-tree paths defeat the "
+                    f"src-interlock's intent"
+                )
         return self
 
     @model_validator(mode="after")

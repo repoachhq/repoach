@@ -18,7 +18,7 @@ def _plan() -> ActionPlan:
         action="Create the module.",
         commit_message="feat: x",
         done_when="green",
-        unit_tests=["tests/unit/test_x.py"],
+        unit_tests=["tests/unit/test_x.py::test_lint_failure_earns_a_third_attempt"],
     )
     return ActionPlan(
         spec_id="SP-X",

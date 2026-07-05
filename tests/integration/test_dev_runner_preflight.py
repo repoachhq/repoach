@@ -50,7 +50,7 @@ def _one_step_preflight_plan() -> ActionPlan:
                 action="Create the marker module and its test.",
                 commit_message="feat(preflight): add marker module",
                 done_when="pytest tests/unit/test_preflight_marker.py is green",
-                unit_tests=["tests/unit/test_preflight_marker.py"],
+                unit_tests=["tests/unit/test_preflight_marker.py::test_marker"],
             ),
         ],
         integration_tests=[],

@@ -70,7 +70,9 @@ def _plan() -> ActionPlan:
                 action="Create it.",
                 commit_message="feat(demo): mini",
                 done_when="pytest tests/unit/test_mini.py passes",
-                unit_tests=["tests/unit/test_mini.py"],
+                unit_tests=[
+                    "tests/unit/test_mini.py::test_explore_via_and_cc_model_forwarded_to_planner"
+                ],
             )
         ],
         integration_tests=["tests/integration/test_demo.py"],

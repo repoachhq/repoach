@@ -86,7 +86,7 @@ def _one_step_plan(*, integration_tests: list[str] | None = None, **step_overrid
         "action": "Create the module and its test.",
         "commit_message": "feat(demo): add mini module",
         "done_when": "pytest tests/unit/test_mini.py is green",
-        "unit_tests": ["tests/unit/test_mini.py"],
+        "unit_tests": ["tests/unit/test_mini.py::test_value"],
     }
     step.update(step_overrides)
     promised_files = [sel.split("::", 1)[0] for sel in integration_tests]
@@ -292,7 +292,7 @@ class TestExecutePlanStep:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan(
             files=["src/a.py", "src/b.py", "tests/unit/test_ab.py"],
-            unit_tests=["tests/unit/test_ab.py"],
+            unit_tests=["tests/unit/test_ab.py::test_ab"],
         )
         clean_a = '"""A."""\n\nA = 1\n'
         broken_b = '"""B."""\n\nB = undefined_name\n'
@@ -608,7 +608,7 @@ class TestGateAndSessionEdges:
             action="Create the shared test file.",
             commit_message="test(demo): shared test",
             done_when="pytest tests/unit/test_mini.py is green",
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         promiser = PlanStep(
             index=2,
@@ -617,7 +617,7 @@ class TestGateAndSessionEdges:
             action="Create the module.",
             commit_message="feat(demo): add mini module",
             done_when="pytest tests/unit/test_mini.py is green",
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         plan = ActionPlan(
             spec_id=_SPEC_ID,
@@ -918,10 +918,10 @@ class TestDecomposeWiring:
                             action="create the module and its test",
                             commit_message=f"feat: {spec_id}",
                             done_when="green",
-                            unit_tests=[test],
+                            unit_tests=[f"{test}::test_it"],
                         )
                     ],
-                    integration_tests=[integration],
+                    integration_tests=[f"{integration}::test_it"],
                 )
                 return plan, None, {}
 
@@ -1173,14 +1173,14 @@ class TestStepPreflightPredicate:
         plan = _one_step_plan(
             files=["src/mini.py", "tests/unit/test_same_name.py"],
             unit_tests=["tests/unit/test_same_name.py::test_value"],
-            integration_tests=["tests/integration/test_same_name.py"],
+            integration_tests=["tests/integration/test_same_name.py::test_value"],
         )
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_same_name.py").write_text(_CLEAN_TEST, encoding="utf-8")
         (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
         (repo / "tests" / "integration" / "test_same_name.py").write_text(
-            _GREEN_INTEGRATION, encoding="utf-8"
+            _CLEAN_TEST, encoding="utf-8"
         )
 
         assert step_preflight_complete(repo, plan, step) is True
@@ -1198,11 +1198,13 @@ class TestStepPreflightPredicate:
         plan = _one_step_plan(
             files=["src/mini.py", "tests/unit/test_mini.py"],
             unit_tests=["tests/unit/test_mini.py::test_not_written_yet"],
-            integration_tests=["tests/unit/test_mini.py"],
+            integration_tests=["tests/integration/test_mini.py::test_value"],
         )
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
 
         assert step_preflight_complete(repo, plan, step) is False
 
@@ -1239,7 +1241,7 @@ class TestStepPreflightPredicate:
                 "tests/unit/test_mini.py",
                 "tests/integration/test_demo_flow.py",
             ],
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
@@ -1373,7 +1375,7 @@ class TestSessionPreflight:
                 "tests/unit/test_mini.py",
                 "tests/integration/test_demo_flow.py",
             ],
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         _seed_plan(repo, plan)
         monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
