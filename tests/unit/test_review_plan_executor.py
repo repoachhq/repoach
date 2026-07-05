@@ -1513,6 +1513,83 @@ class TestPromisedTestGateG1G2:
         assert "def test_a(" not in committed
         assert "def test_b(" not in committed
 
+    def test_red_rename_rerun_restores_the_drifted_file(self, tmp_path: Path) -> None:
+        """A rename whose strict re-run stays red is rolled back before retry.
+
+        The first implementation set the retry feedback but left the
+        mechanically-renamed red file on disk — the semantic judge
+        refused the push over exactly this (2026-07-05). File A's
+        one-to-one drift renames; file B's promised selector stays
+        missing (ambiguous), so the strict re-run is red and A must
+        come back to its delivered content.
+        """
+        repo = _init_repo(tmp_path)
+        drifted_a = '"""A."""\n\n\ndef test_drifted(self=None):\n    assert True\n'
+        two_candidates_b = (
+            '"""B."""\n\n\ndef test_x():\n    assert True\n\n\ndef test_y():\n    assert True\n'
+        )
+        plan = _one_step_plan(
+            files=["src/mini.py", "tests/unit/test_mini.py", "tests/unit/test_mini_b.py"],
+            unit_tests=[
+                "tests/unit/test_mini.py::test_value",
+                "tests/unit/test_mini_b.py::test_promised_b",
+            ],
+        )
+        dev = _developer_writing(
+            [
+                [
+                    ("src/mini.py", _CLEAN_MODULE),
+                    ("tests/unit/test_mini.py", drifted_a),
+                    ("tests/unit/test_mini_b.py", two_candidates_b),
+                ]
+            ]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is False
+        assert "did not make the promised selectors green" in outcome.reason
+        restored = (repo / "tests" / "unit" / "test_mini.py").read_text(encoding="utf-8")
+        assert "def test_drifted(" in restored
+        assert "def test_value(" not in restored
+
+    def test_rename_error_falls_back_to_retryable_gate(self, tmp_path: Path, monkeypatch) -> None:
+        """A failed mechanical rename retries with the G1 feedback.
+
+        The first implementation folded the error outcome into the
+        ambiguous one and proceeded via reconciled-accept — the second
+        judge gap (2026-07-05).
+        """
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(unit_tests=["tests/unit/test_mini.py::test_value"])
+        dev = _developer_writing(
+            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._DRIFTED_TEST)]]
+        )
+        monkeypatch.setattr(
+            "ferova.review.dev_runner._attempt_mechanical_rename",
+            lambda *args, **kwargs: ("error", ""),
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is False
+        assert "mechanical rename failed" in outcome.reason
+        assert dev.develop_step.call_count >= 2
+
 
 def test_preflight_integration_test_file_exists() -> None:
     """Guard the preflight integration test against accidental deletion."""

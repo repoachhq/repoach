@@ -48,14 +48,14 @@ class TestAttemptMechanicalRename:
             "def test_delivered_name():\n    assert True\n",
             encoding="utf-8",
         )
-        ok, name = _attempt_mechanical_rename(
+        outcome, original = _attempt_mechanical_rename(
             tmp_path,
             "test_example.py",
             promised=["test_promised_name"],
             delivered=["test_delivered_name"],
         )
-        assert ok is True
-        assert name == "test_promised_name"
+        assert outcome == "renamed"
+        assert "def test_delivered_name(" in original
         content = test_file.read_text(encoding="utf-8")
         assert "def test_promised_name(" in content
         assert "def test_delivered_name(" not in content
@@ -63,55 +63,55 @@ class TestAttemptMechanicalRename:
     def test_attempt_mechanical_rename_ambiguous_missing_no_rename(self, tmp_path: Path) -> None:
         """Two missing promised names — no rename, file untouched."""
         test_file = tmp_path / "test_example.py"
-        original = "def test_delivered_name():\n    assert True\n"
-        test_file.write_text(original, encoding="utf-8")
-        ok, name = _attempt_mechanical_rename(
+        seeded = "def test_delivered_name():\n    assert True\n"
+        test_file.write_text(seeded, encoding="utf-8")
+        outcome, original = _attempt_mechanical_rename(
             tmp_path,
             "test_example.py",
             promised=["test_promised_a", "test_promised_b"],
             delivered=["test_delivered_name"],
         )
-        assert ok is False
-        assert name == ""
-        assert test_file.read_text(encoding="utf-8") == original
+        assert outcome == "ambiguous"
+        assert original == ""
+        assert test_file.read_text(encoding="utf-8") == seeded
 
     def test_attempt_mechanical_rename_ambiguous_candidates_no_rename(self, tmp_path: Path) -> None:
         """Two unpromised candidate functions — no rename, file untouched."""
         test_file = tmp_path / "test_example.py"
-        original = "def test_extra_a():\n    assert True\n\ndef test_extra_b():\n    assert True\n"
-        test_file.write_text(original, encoding="utf-8")
-        ok, name = _attempt_mechanical_rename(
+        seeded = "def test_extra_a():\n    assert True\n\ndef test_extra_b():\n    assert True\n"
+        test_file.write_text(seeded, encoding="utf-8")
+        outcome, original = _attempt_mechanical_rename(
             tmp_path,
             "test_example.py",
             promised=["test_promised_name"],
             delivered=["test_extra_a", "test_extra_b"],
         )
-        assert ok is False
-        assert name == ""
-        assert test_file.read_text(encoding="utf-8") == original
+        assert outcome == "ambiguous"
+        assert original == ""
+        assert test_file.read_text(encoding="utf-8") == seeded
 
     def test_attempt_mechanical_rename_parse_error_restores(self, tmp_path: Path) -> None:
-        """A rename that produces invalid syntax restores original content."""
+        """A rename that would produce invalid syntax reports error, file intact."""
         test_file = tmp_path / "test_example.py"
-        original = "def test_delivered_name():\n    return (\n"
-        test_file.write_text(original, encoding="utf-8")
-        ok, name = _attempt_mechanical_rename(
+        seeded = "def test_delivered_name():\n    return (\n"
+        test_file.write_text(seeded, encoding="utf-8")
+        outcome, original = _attempt_mechanical_rename(
             tmp_path,
             "test_example.py",
             promised=["test_promised_name"],
             delivered=["test_delivered_name"],
         )
-        assert ok is False
-        assert name == ""
-        assert test_file.read_text(encoding="utf-8") == original
+        assert outcome == "error"
+        assert original == ""
+        assert test_file.read_text(encoding="utf-8") == "def test_delivered_name():\n    return (\n"
 
     def test_attempt_mechanical_rename_nonexistent_file_returns_false(self, tmp_path: Path) -> None:
-        """A missing file returns (False, '') without raising."""
-        ok, name = _attempt_mechanical_rename(
+        """A missing file reports the error outcome without raising."""
+        outcome, original = _attempt_mechanical_rename(
             tmp_path,
             "nonexistent.py",
             promised=["test_promised_name"],
             delivered=["test_delivered_name"],
         )
-        assert ok is False
-        assert name == ""
+        assert outcome == "error"
+        assert original == ""
