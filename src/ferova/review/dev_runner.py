@@ -37,6 +37,7 @@ Module-level constants :
 from __future__ import annotations
 
 import contextlib
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -84,6 +85,31 @@ def _promised_test_files(unit_tests: list[str]) -> set[str]:
         a ``::`` node-id portion.
     """
     return {s.split("::", 1)[0] for s in unit_tests if "::" in s}
+
+
+def _test_function_names_in_file(repo_root: Path, file_path: str) -> list[str]:
+    """Return the ``def test_*`` function names defined in *file_path*.
+
+    Args:
+        repo_root: Repository root the *file_path* resolves against.
+        file_path: Repo-relative path to the test file.
+
+    Returns:
+        Sorted list of test function names (without the ``def`` prefix or
+        trailing parenthesis). Empty when the file is missing or unreadable.
+    """
+    target = (repo_root / file_path).resolve()
+    try:
+        source = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        _log.warning(
+            "dev_runner.test_function_names_unreadable",
+            repo_root=str(repo_root),
+            file_path=file_path,
+            error=str(exc)[:200],
+        )
+        return []
+    return sorted(set(re.findall(r"^def\s+(test_\w+)\s*\(", source, flags=re.MULTILINE)))
 
 
 def _attempt_mechanical_rename(
@@ -1020,12 +1046,66 @@ def execute_plan_step(
                 gate_feedback = f"pytest gate on the step's promised tests: {tests_tail}"
                 continue
             if reconciled:
-                _log.warning(
-                    "dev_runner.promised_tests_reconciled",
-                    spec_id=plan.spec_id,
-                    step=step.index,
-                    promised=list(step.unit_tests),
-                )
+                touched_promised = _promised_test_files(step.unit_tests) & set(changed)
+                if not touched_promised:
+                    gate_feedback = (
+                        "promised-test gate: reconciled green but the loop did not "
+                        "touch the promised test file(s) in this attempt \u2014 write "
+                        "tests named exactly: " + ", ".join(step.unit_tests)
+                    )
+                    _log.warning(
+                        "dev_runner.promised_tests_untouched",
+                        spec_id=plan.spec_id,
+                        step=step.index,
+                        promised=list(step.unit_tests),
+                    )
+                    continue
+                rename_ok = True
+                for file_path in sorted(touched_promised):
+                    promised_names = [
+                        s.split("::", 1)[1].split("::", 1)[0]
+                        for s in step.unit_tests
+                        if s.split("::", 1)[0] == file_path
+                    ]
+                    defined = _test_function_names_in_file(repo_root, file_path)
+                    delivered_names = [n for n in defined if n not in promised_names]
+                    ok, _name = _attempt_mechanical_rename(
+                        repo_root, file_path, promised_names, delivered_names
+                    )
+                    if not ok:
+                        rename_ok = False
+                        break
+                if rename_ok:
+                    re_ok, re_tail, _re_reconciled = run_promised_tests(
+                        repo_root, list(step.unit_tests)
+                    )
+                    if re_ok:
+                        _log.info(
+                            "dev_runner.promised_tests_renamed",
+                            spec_id=plan.spec_id,
+                            step=step.index,
+                            promised=list(step.unit_tests),
+                        )
+                    else:
+                        gate_feedback = (
+                            "promised-test gate: reconciled green but the loop did not "
+                            "touch the promised test file(s) in this attempt \u2014 write "
+                            "tests named exactly: " + ", ".join(step.unit_tests)
+                        )
+                        _log.warning(
+                            "dev_runner.promised_tests_rename_rerun_red",
+                            spec_id=plan.spec_id,
+                            step=step.index,
+                            tail=re_tail[:200],
+                        )
+                        continue
+                else:
+                    _log.warning(
+                        "dev_runner.promised_tests_reconciled",
+                        spec_id=plan.spec_id,
+                        step=step.index,
+                        promised=list(step.unit_tests),
+                    )
 
         step_changes = [p for p in _changed_paths(repo_root) if p not in pre_existing]
         escaped = [p for p in step_changes if p not in contract]
