@@ -20,19 +20,19 @@ Add two validators to ActionPlan/PlanStep that reject bare-file unit_test promis
 
 ## Step 3 — Migrate remaining unit test fixtures
 
-- **Files**: `tests/unit/test_dev_owns_priming.py`, `tests/unit/test_dev_step_attempts.py`, `tests/unit/test_import_gate.py`, `tests/unit/test_review_dev_cli_explore_via.py`, `tests/unit/test_review_dev_runner.py`
-- **Action**: Migrate bare-file unit_tests promises to ::node_id in each file. For each fixture, read the fixture body to determine the test function name it seeds in its tmp repo (the promise must reference a function the fixture actually creates). Verified: tests/unit/test_dev_owns_priming.py has test_render_owns_brief_states_allowed_deps at line 63 — use that as the representative promise for that file. For test_dev_step_attempts.py line 21, test_import_gate.py line 142, test_review_dev_cli_explore_via.py line 73, test_review_dev_runner.py line 184 — read each fixture's _one_step_plan or equivalent helper to find the seeded test function name and append ::<that_name>. No integration_tests changes needed in these files (they already point to tests/integration/...).
+- **Files**: `tests/unit/test_dev_owns_priming.py`, `tests/unit/test_dev_step_attempts.py`, `tests/unit/test_import_gate.py`, `tests/unit/test_review_dev_cli_explore_via.py`, `tests/unit/test_review_dev_runner.py`, `tests/unit/test_review_planner.py`
+- **Action**: Migrate bare-file unit_tests promises to ::node_id in each file. For each fixture, read the fixture body to determine the test function name it seeds in its tmp repo (the promise must reference a function the fixture actually creates). Verified: tests/unit/test_dev_owns_priming.py has test_render_owns_brief_states_allowed_deps at line 63 — use that as the representative promise for that file. For test_dev_step_attempts.py line 21, test_import_gate.py line 142, test_review_dev_cli_explore_via.py line 73, test_review_dev_runner.py line 184 — read each fixture's _one_step_plan or equivalent helper to find the seeded test function name and append ::<that_name>. No integration_tests changes needed in these files (they already point to tests/integration/...). ALSO migrate tests/unit/test_review_planner.py (missed by the original enumeration: its _valid_plan_payload fixture promises bare files and its integration promise points at a unit path). Every promised selector above is currently RED on this branch because its fixture violates the new lints — the step is complete exactly when all six run green.
 - **Commit**: `test(review): migrate unit fixtures to node-id promises`
 - **Done when**: pytest tests/unit/test_dev_owns_priming.py tests/unit/test_dev_step_attempts.py tests/unit/test_import_gate.py tests/unit/test_review_dev_cli_explore_via.py tests/unit/test_review_dev_runner.py passes
-- **Unit tests**: `tests/unit/test_dev_owns_priming.py::test_render_owns_brief_states_allowed_deps`
+- **Unit tests**: `tests/unit/test_review_planner.py::TestRunPlannerSession::test_happy_path_writes_parseable_plan`, `tests/unit/test_dev_step_attempts.py::test_lint_failure_earns_a_third_attempt`, `tests/unit/test_import_gate.py::test_brief_carries_spec_section`, `tests/unit/test_review_dev_runner.py::test_run_developer_session_no_fixes_returned`, `tests/unit/test_review_dev_cli_explore_via.py::TestLoadOrProduceForwarding::test_explore_via_and_cc_model_forwarded_to_planner`, `tests/unit/test_dev_owns_priming.py::test_build_step_brief_injects_arch_owns`
 
 ## Step 4 — Migrate integration test fixtures
 
 - **Files**: `tests/integration/test_dev_runner_preflight.py`, `tests/integration/test_dev_runner_promise_delivery.py`, `tests/integration/test_developer_session.py`, `tests/integration/test_plan_contract_lints.py`
-- **Action**: Migrate bare-file unit_tests promises to ::node_id in each integration test fixture. For test_dev_runner_preflight.py line 53, test_developer_session.py lines 51 and 64, test_plan_contract_lints.py line 27 — read each fixture to determine the seeded test function name in its tmp repo and append ::<that_name>. For test_dev_runner_promise_delivery.py line 75 (integration_tests=['tests/integration/test_demo_flow.py']), migrate to tests/integration/test_demo_flow.py::test_flow and verify the fixture seeds that function. Also migrate the bare-file unit_tests at lines 108, 136, 170 to ::test_value.
+- **Action**: Migrate bare-file unit_tests promises to ::node_id in each integration test fixture. For test_dev_runner_preflight.py line 53, test_developer_session.py lines 51 and 64, test_plan_contract_lints.py line 27 — read each fixture to determine the seeded test function name in its tmp repo and append ::<that_name>. For test_dev_runner_promise_delivery.py line 75 (integration_tests=['tests/integration/test_demo_flow.py']), migrate to tests/integration/test_demo_flow.py::test_flow and verify the fixture seeds that function. Also migrate the bare-file unit_tests at lines 108, 136, 170 to ::test_value. The two promised selectors are currently RED on this branch because their fixture plans violate the new lints (bare-file unit promises in test_developer_session.py lines 51/60 and test_dev_runner_preflight.py line 53) — the step is complete exactly when both run green.
 - **Commit**: `test(integration): migrate fixtures to node-id promises`
 - **Done when**: pytest tests/integration/test_dev_runner_preflight.py tests/integration/test_dev_runner_promise_delivery.py tests/integration/test_developer_session.py tests/integration/test_plan_contract_lints.py passes
-- **Unit tests**: `tests/integration/test_plan_contract_lints.py::test_integration_promise_lint_fires_on_round_trip`
+- **Unit tests**: `tests/integration/test_dev_runner_preflight.py::test_preflight_skip_path_end_to_end`, `tests/integration/test_developer_session.py::test_full_session_plan_first_one_commit_per_step_with_retry`
 
 ## Integration tests
 
@@ -85,13 +85,19 @@ Add two validators to ActionPlan/PlanStep that reject bare-file unit_test promis
         "tests/unit/test_dev_step_attempts.py",
         "tests/unit/test_import_gate.py",
         "tests/unit/test_review_dev_cli_explore_via.py",
-        "tests/unit/test_review_dev_runner.py"
+        "tests/unit/test_review_dev_runner.py",
+        "tests/unit/test_review_planner.py"
       ],
-      "action": "Migrate bare-file unit_tests promises to ::node_id in each file. For each fixture, read the fixture body to determine the test function name it seeds in its tmp repo (the promise must reference a function the fixture actually creates). Verified: tests/unit/test_dev_owns_priming.py has test_render_owns_brief_states_allowed_deps at line 63 — use that as the representative promise for that file. For test_dev_step_attempts.py line 21, test_import_gate.py line 142, test_review_dev_cli_explore_via.py line 73, test_review_dev_runner.py line 184 — read each fixture's _one_step_plan or equivalent helper to find the seeded test function name and append ::<that_name>. No integration_tests changes needed in these files (they already point to tests/integration/...).",
+      "action": "Migrate bare-file unit_tests promises to ::node_id in each file. For each fixture, read the fixture body to determine the test function name it seeds in its tmp repo (the promise must reference a function the fixture actually creates). Verified: tests/unit/test_dev_owns_priming.py has test_render_owns_brief_states_allowed_deps at line 63 — use that as the representative promise for that file. For test_dev_step_attempts.py line 21, test_import_gate.py line 142, test_review_dev_cli_explore_via.py line 73, test_review_dev_runner.py line 184 — read each fixture's _one_step_plan or equivalent helper to find the seeded test function name and append ::<that_name>. No integration_tests changes needed in these files (they already point to tests/integration/...). ALSO migrate tests/unit/test_review_planner.py (missed by the original enumeration: its _valid_plan_payload fixture promises bare files and its integration promise points at a unit path). Every promised selector above is currently RED on this branch because its fixture violates the new lints — the step is complete exactly when all six run green.",
       "commit_message": "test(review): migrate unit fixtures to node-id promises",
       "done_when": "pytest tests/unit/test_dev_owns_priming.py tests/unit/test_dev_step_attempts.py tests/unit/test_import_gate.py tests/unit/test_review_dev_cli_explore_via.py tests/unit/test_review_dev_runner.py passes",
       "unit_tests": [
-        "tests/unit/test_dev_owns_priming.py::test_render_owns_brief_states_allowed_deps"
+        "tests/unit/test_review_planner.py::TestRunPlannerSession::test_happy_path_writes_parseable_plan",
+        "tests/unit/test_dev_step_attempts.py::test_lint_failure_earns_a_third_attempt",
+        "tests/unit/test_import_gate.py::test_brief_carries_spec_section",
+        "tests/unit/test_review_dev_runner.py::test_run_developer_session_no_fixes_returned",
+        "tests/unit/test_review_dev_cli_explore_via.py::TestLoadOrProduceForwarding::test_explore_via_and_cc_model_forwarded_to_planner",
+        "tests/unit/test_dev_owns_priming.py::test_build_step_brief_injects_arch_owns"
       ]
     },
     {
@@ -103,11 +109,12 @@ Add two validators to ActionPlan/PlanStep that reject bare-file unit_test promis
         "tests/integration/test_developer_session.py",
         "tests/integration/test_plan_contract_lints.py"
       ],
-      "action": "Migrate bare-file unit_tests promises to ::node_id in each integration test fixture. For test_dev_runner_preflight.py line 53, test_developer_session.py lines 51 and 64, test_plan_contract_lints.py line 27 — read each fixture to determine the seeded test function name in its tmp repo and append ::<that_name>. For test_dev_runner_promise_delivery.py line 75 (integration_tests=['tests/integration/test_demo_flow.py']), migrate to tests/integration/test_demo_flow.py::test_flow and verify the fixture seeds that function. Also migrate the bare-file unit_tests at lines 108, 136, 170 to ::test_value.",
+      "action": "Migrate bare-file unit_tests promises to ::node_id in each integration test fixture. For test_dev_runner_preflight.py line 53, test_developer_session.py lines 51 and 64, test_plan_contract_lints.py line 27 — read each fixture to determine the seeded test function name in its tmp repo and append ::<that_name>. For test_dev_runner_promise_delivery.py line 75 (integration_tests=['tests/integration/test_demo_flow.py']), migrate to tests/integration/test_demo_flow.py::test_flow and verify the fixture seeds that function. Also migrate the bare-file unit_tests at lines 108, 136, 170 to ::test_value. The two promised selectors are currently RED on this branch because their fixture plans violate the new lints (bare-file unit promises in test_developer_session.py lines 51/60 and test_dev_runner_preflight.py line 53) — the step is complete exactly when both run green.",
       "commit_message": "test(integration): migrate fixtures to node-id promises",
       "done_when": "pytest tests/integration/test_dev_runner_preflight.py tests/integration/test_dev_runner_promise_delivery.py tests/integration/test_developer_session.py tests/integration/test_plan_contract_lints.py passes",
       "unit_tests": [
-        "tests/integration/test_plan_contract_lints.py::test_integration_promise_lint_fires_on_round_trip"
+        "tests/integration/test_dev_runner_preflight.py::test_preflight_skip_path_end_to_end",
+        "tests/integration/test_developer_session.py::test_full_session_plan_first_one_commit_per_step_with_retry"
       ]
     }
   ],
