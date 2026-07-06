@@ -193,6 +193,68 @@ def compute_insights(findings: list[Finding]) -> FindingsInsights:
     )
 
 
+def render_lens_track_record(
+    db_path: Path, role: str, limit: int = 3, *, max_chars: int = 1200
+) -> str:
+    """Render a lens's refuted track record for prompt injection.
+
+    Computes the lens's verified-vs-refuted precision over the full ledger,
+    then lists the latest ``limit`` refuted findings newest-first.  The
+    section is truncated to ``max_chars`` and degrades to ``""`` on any
+    database error.
+
+    Args:
+        db_path: The findings ledger database.
+        role: The lens identifier (e.g. ``"scribe"``).
+        limit: How many recent refuted findings to include.
+        max_chars: Hard cap on the rendered section length.
+
+    Returns:
+        A bounded text section, or ``""`` when the lens has no refutations
+        or when the database is unreachable.
+    """
+    try:
+        findings = fetch_all_findings(db_path)
+    except Exception as exc:
+        _log.warning("review.track_record.db_error", role=role, error=str(exc))
+        return ""
+
+    lens_precision = compute_lens_precision(findings)
+    precision_info = next((lp for lp in lens_precision if lp.finder == role), None)
+
+    refuted = [f for f in findings if f.status is FindingStatus.REFUTED and f.finder == role]
+    if not refuted:
+        return ""
+
+    refuted = sorted(refuted, key=lambda f: f.id or 0, reverse=True)
+
+    heading = "Your recent refuted claims — do not re-raise without new evidence"
+
+    if precision_info is not None and precision_info.precision is not None:
+        total = precision_info.confirmed + precision_info.refuted
+        precision_line = (
+            f"precision {precision_info.confirmed}/{total} ({precision_info.precision:.2f})"
+        )
+    else:
+        precision_line = "precision 0/0 (N/A)"
+
+    lines: list[str] = [heading, precision_line]
+
+    for finding in refuted[:limit]:
+        if not finding.file or not finding.claim:
+            continue
+        claim_summary = finding.claim[:120]
+        refuter_text = finding.verification_result[:200] if finding.verification_result else "N/A"
+        lines.append(f"- {finding.file}: {claim_summary} — refuter: {refuter_text}")
+
+    section = "\n".join(lines)
+
+    if len(section) > max_chars:
+        section = section[: max_chars - 3] + "..."
+
+    return section
+
+
 def gather_insights(db_path: Path, *, pr_number: int | None = None) -> FindingsInsights:
     """Load findings (one PR or the whole ledger) and compute insights.
 

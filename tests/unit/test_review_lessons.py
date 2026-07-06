@@ -47,6 +47,7 @@ def _rec(
     file: str = "src/m.py",
     claim: str = "smell",
     pr_number: int = 1,
+    verification_result: str = "",
 ) -> int:
     return record_finding(
         db,
@@ -63,6 +64,7 @@ def _rec(
             claim=claim,
             evidence_pointer=f"{file}:1",
             status=status,
+            verification_result=verification_result,
         ),
     )
 
@@ -193,3 +195,62 @@ def test_cli_insights_outputs_json(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     sentinel = next(lp for lp in payload["lens_precision"] if lp["finder"] == "sentinel")
     assert sentinel["confirmed"] == 1 and sentinel["refuted"] == 1
     assert sentinel["precision"] == 0.5
+
+
+def test_track_record_renders_precision_and_recent_refutations(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    for i in range(2):
+        _rec(
+            db,
+            finder="scribe",
+            status=FindingStatus.VERIFIED,
+            claim=f"verified {i}",
+            file=f"v{i}.py",
+        )
+    for i in range(3):
+        _rec(
+            db,
+            finder="scribe",
+            status=FindingStatus.REFUTED,
+            claim=f"refuted {i}",
+            file=f"r{i}.py",
+            verification_result=f"reasoning {i}",
+        )
+
+    section = review_lessons.render_lens_track_record(db, "scribe")
+
+    assert "Your recent refuted claims" in section
+    assert "precision 2/5" in section
+    assert "refuted 2" in section
+    assert "refuted 1" in section
+    assert "refuted 0" in section
+    lines = section.splitlines()
+    refuted_lines = [line for line in lines if line.startswith("-")]
+    assert len(refuted_lines) == 3
+
+
+def test_track_record_empty_without_refutations(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    _rec(db, finder="scribe", status=FindingStatus.VERIFIED, claim="ok", file="a.py")
+
+    assert review_lessons.render_lens_track_record(db, "scribe") == ""
+
+
+def test_track_record_caps_length(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    _rec(
+        db,
+        finder="scribe",
+        status=FindingStatus.REFUTED,
+        claim="bad",
+        file="a.py",
+        verification_result="x" * 5000,
+    )
+
+    section = review_lessons.render_lens_track_record(db, "scribe", max_chars=80)
+
+    assert len(section) <= 83
+    assert section.endswith("...")
