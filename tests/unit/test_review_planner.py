@@ -491,3 +491,83 @@ class TestPersonaFile:
     def test_planner_class_defaults(self) -> None:
         assert Planner.persona_filename == "planner_0.2.0.md"
         assert Planner.role.value == "planner"
+
+
+class TestSelectorCheck:
+    """Mechanical selector verification in the Planner's refine loop."""
+
+    def test_hallucinated_selector_in_existing_file_is_refined(self, tmp_path: Path) -> None:
+        repo = _repo_with_spec(tmp_path)
+        (repo / "tests" / "unit").mkdir(exist_ok=True)
+        (repo / "tests" / "unit" / "test_existing.py").write_text(
+            "def test_real():\n    assert True\n", encoding="utf-8"
+        )
+        payload = _valid_plan_payload()
+        payload["steps"][0]["files"].append("tests/unit/test_existing.py")
+        payload["steps"][0]["unit_tests"] = ["tests/unit/test_existing.py::test_fake"]
+        loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
+        planner = Planner(loop=loop, repo_root=repo)
+
+        plan, error, _audit = planner.plan(
+            spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+        )
+
+        assert plan is None
+        assert error is not None
+        assert "tests/unit/test_existing.py::test_fake" in error
+        assert "selector_present" in error
+        assert "node id" in error
+
+    def test_resolved_selector_is_accepted(self, tmp_path: Path) -> None:
+        repo = _repo_with_spec(tmp_path)
+        (repo / "tests" / "unit").mkdir(exist_ok=True)
+        (repo / "tests" / "unit" / "test_existing.py").write_text(
+            "def test_real():\n    assert True\n", encoding="utf-8"
+        )
+        payload = _valid_plan_payload()
+        payload["steps"][0]["files"].append("tests/unit/test_existing.py")
+        payload["steps"][0]["unit_tests"] = ["tests/unit/test_existing.py::test_real"]
+        loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
+        planner = Planner(loop=loop, repo_root=repo)
+
+        plan, error, _audit = planner.plan(
+            spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+        )
+
+        assert error is None
+        assert plan is not None
+
+    def test_declared_creation_in_action_text_is_accepted(self, tmp_path: Path) -> None:
+        repo = _repo_with_spec(tmp_path)
+        (repo / "tests" / "unit").mkdir(exist_ok=True)
+        (repo / "tests" / "unit" / "test_existing.py").write_text(
+            "def test_real():\n    assert True\n", encoding="utf-8"
+        )
+        payload = _valid_plan_payload()
+        payload["steps"][0]["files"].append("tests/unit/test_existing.py")
+        payload["steps"][0]["unit_tests"] = ["tests/unit/test_existing.py::test_new"]
+        payload["steps"][0]["action"] = "Create test_new in test_existing.py."
+        loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
+        planner = Planner(loop=loop, repo_root=repo)
+
+        plan, error, _audit = planner.plan(
+            spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+        )
+
+        assert error is None
+        assert plan is not None
+
+    def test_selector_in_new_file_is_exempt(self, tmp_path: Path) -> None:
+        repo = _repo_with_spec(tmp_path)
+        payload = _valid_plan_payload()
+        payload["steps"][0]["unit_tests"] = ["tests/unit/test_new.py::test_new"]
+        payload["steps"][0]["files"].append("tests/unit/test_new.py")
+        loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
+        planner = Planner(loop=loop, repo_root=repo)
+
+        plan, error, _audit = planner.plan(
+            spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+        )
+
+        assert error is None
+        assert plan is not None

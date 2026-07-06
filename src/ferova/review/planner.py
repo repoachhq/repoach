@@ -28,6 +28,7 @@ from .planner_cc import run_cc_exploration
 from .planner_tools import make_planner_tools
 from .reviewer import BotRole
 from .spec import load_spec
+from .spec_gate import selector_present
 
 _log = get_logger(__name__)
 
@@ -55,6 +56,56 @@ def _parse_and_validate(text: str, spec_id: str) -> tuple[ActionPlan | None, str
     if plan.spec_id != spec_id:
         return None, f"plan is for {plan.spec_id!r}, requested {spec_id!r}"
     return plan, ""
+
+
+def _check_promised_selectors(plan: ActionPlan, repo_root: Path) -> str | None:
+    """Return None when every promised selector is valid, else a directive.
+
+    A selector is valid when:
+    - its file does not exist at head (exempt, the file is the deliverable), or
+    - it satisfies :func:`selector_present`, or
+    - its node id appears verbatim in the promising step's action text.
+
+    Args:
+        plan: The validated plan whose selectors to check.
+        repo_root: Repository root the selectors resolve against.
+
+    Returns:
+        ``None`` when all selectors are valid; otherwise a directive
+        message listing each offending selector and the two remedies.
+    """
+    offenders: list[str] = []
+    for step in plan.steps:
+        for selector in step.unit_tests:
+            file_part, _, node = selector.partition("::")
+            target = repo_root / file_part
+            if not target.is_file():
+                continue
+            if selector_present(repo_root, selector):
+                continue
+            if node and node in step.action:
+                continue
+            offenders.append(selector)
+    for selector in plan.integration_tests:
+        file_part, _, node = selector.partition("::")
+        target = repo_root / file_part
+        if not target.is_file():
+            continue
+        if selector_present(repo_root, selector):
+            continue
+        # Integration tests are not tied to a single step's action,
+        # so the "declared creation" remedy does not apply here.
+        offenders.append(selector)
+    if not offenders:
+        return None
+    remedies = (
+        "make selector_present resolve it (the test already exists at head), or "
+        "declare creation by naming the node id verbatim in the step action text"
+    )
+    return (
+        "promised selectors are not present at head and not declared for creation:\n"
+        + "\n".join(f"  - {s}: {remedies}" for s in offenders)
+    )
 
 
 def _refine_prompt(previous_text: str, error: str) -> str:
@@ -325,6 +376,32 @@ class Planner:
         for attempt in range(1, _PLAN_PARSE_ATTEMPTS + 1):
             plan, last_error = _parse_and_validate(candidate_text, spec_id)
             if plan is not None:
+                selector_error = _check_promised_selectors(plan, self._repo_root)
+                if selector_error:
+                    last_error = selector_error
+                    _log.warning(
+                        "planner.plan_invalid",
+                        spec_id=spec_id,
+                        explore_via="proxy",
+                        attempt=attempt,
+                        error=last_error[:300],
+                    )
+                    if attempt == _PLAN_PARSE_ATTEMPTS:
+                        break
+                    try:
+                        refine = self._loop.run(
+                            _refine_prompt(candidate_text, last_error), system=system
+                        )
+                    except GatewayError as exc:
+                        _log.warning(
+                            "planner.proxy_refinement_failed",
+                            spec_id=spec_id,
+                            error=str(exc)[:200],
+                        )
+                        return None, f"proxy refinement failed: {str(exc)[:200]}", audit
+                    audit["tokens_used"] = int(audit.get("tokens_used") or 0) + refine.tokens_used
+                    candidate_text = refine.text or ""
+                    continue
                 _log.info(
                     "planner.plan_accepted",
                     spec_id=spec_id,
@@ -395,6 +472,17 @@ class Planner:
             candidate_text = cc.text
             plan, last_error = _parse_and_validate(candidate_text, spec_id)
             if plan is not None:
+                selector_error = _check_promised_selectors(plan, self._repo_root)
+                if selector_error:
+                    last_error = selector_error
+                    _log.warning(
+                        "planner.plan_invalid",
+                        spec_id=spec_id,
+                        explore_via="claude_cli",
+                        attempt=attempt,
+                        error=last_error[:300],
+                    )
+                    continue
                 _log.info(
                     "planner.plan_accepted",
                     spec_id=spec_id,
