@@ -29,7 +29,7 @@ _log = get_logger(__name__)
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
 _PERSONA = "refuter_0.1.0.md"
 
-JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY})
+JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
 """Claim types the mechanical verifiers defer to the refuter."""
 
 _MAX_JUDGED = 10
