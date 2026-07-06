@@ -163,7 +163,8 @@ def test_gather_reverifies_mechanical_findings_at_head(tmp_path: Path) -> None:
     facts = gather_merge_facts(
         db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
     )
-    assert facts.open_blocking_findings == 1
+    assert facts.open_blocking_findings == 0
+    assert len(facts.blocking_unverified) == 2
 
 
 def test_gather_judged_counts_only_when_fresh(tmp_path: Path) -> None:
@@ -360,3 +361,10 @@ def test_stale_head_reason_names_the_older_head(tmp_path: Path) -> None:
     decision = compute_merge_decision(facts)
     assert decision.merge is False
     assert any("review ran at an older head" in r for r in decision.reasons)
+
+
+def test_blocking_unverified_refuses_merge() -> None:
+    facts = _facts(blocking_unverified=["finding 42: spec_gap is PROPOSED at head"])
+    decision = compute_merge_decision(facts)
+    assert decision.merge is False
+    assert any("finding 42" in r for r in decision.reasons)
