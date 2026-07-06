@@ -1,7 +1,7 @@
 ---
 id: SP-PLANNER-SELECTOR-CHECK
 title: Mechanical selector verification in the Planner's refine loop
-version: 0.1
+version: 0.2
 status: approved
 author: jfaye + Claude (three plan reviews on SP-PLAN-CONTRACT-LINTS-2, 2026-07-05)
 created: 2026-07-06
@@ -42,6 +42,23 @@ selector in an existing file is legitimate in exactly two cases: the
 node id resolves at head, or the step CREATES it — and the second is
 checkable too, because a plan that creates a test must name it in the
 promising step's `action` text.
+
+Suggested plan shape (two planning sessions burned their full retry
+budgets on coupling errors this decomposition avoids):
+
+- Step 1 — files `[src/ferova/review/planner.py,
+  tests/unit/test_review_planner.py]` (the test file already EXISTS:
+  it must sit in this step's files for the coupling validator even
+  though the step only appends to it), promising exactly the four AC
+  node ids, all NEW module-level tests this step adds to that file.
+- Step 2 — files `[tests/integration/test_planner_selector_check.py]`
+  (NEW file this step creates), promising one node id inside it; the
+  plan-level `integration_tests` promises that same selector, and the
+  file lives in this step's files so the deliverable validator is
+  satisfied. Non-docs step: it must also promise at least one unit
+  test — promise the same new integration node id in `unit_tests`
+  (integration-tree paths are legal there; only the plan-level list
+  is restricted to tests/integration/).
 
 ## Goals
 
