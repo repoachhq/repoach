@@ -318,7 +318,10 @@ class TestPlanRetry:
         assert not loop.calls[1]["tools"]
         assert "REJECTED" in loop.calls[1]["prompt"]
 
-    def test_three_invalid_attempts_give_up_loudly(self, tmp_path: Path) -> None:
+    def test_three_invalid_attempts_give_up_loudly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "3")
         repo = _repo_with_spec(tmp_path)
         bad = dict(_valid_plan_payload())
         del bad["steps"][0]["commit_message"]
@@ -571,3 +574,72 @@ class TestSelectorCheck:
 
         assert error is None
         assert plan is not None
+
+
+class TestErrorHistory:
+    """SP-PLANNER-REFINE-HISTORY — full error history in the refine loop."""
+
+    def test_refine_prompt_carries_full_error_history(self) -> None:
+        from ferova.review.planner import _refine_prompt
+
+        errors = ["first failure: missing commit_message", "second failure: bad selector"]
+        prompt = _refine_prompt("previous candidate text", errors)
+
+        assert "1. first failure: missing commit_message" in prompt
+        assert "2. second failure: bad selector" in prompt
+        assert prompt.index("first failure") < prompt.index("second failure")
+
+    def test_single_error_history_matches_previous_behaviour(self) -> None:
+        from ferova.review.planner import _refine_prompt
+
+        prompt = _refine_prompt("previous candidate text", ["only failure"])
+
+        assert "1. only failure" in prompt
+        assert "REJECTED" in prompt
+        assert "previous candidate text" in prompt
+
+    def test_parse_attempts_setting_is_honored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "2")
+        repo = _repo_with_spec(tmp_path)
+        bad = dict(_valid_plan_payload())
+        del bad["steps"][0]["commit_message"]
+        loop = _ScriptedLoop([f"```json\n{json.dumps(bad)}\n```"])
+        planner = Planner(loop=loop, repo_root=repo)
+
+        plan, error, _audit = planner.plan(
+            spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+        )
+
+        assert plan is None
+        assert error is not None
+        assert len(loop.calls) == 2
+
+    def test_exhausted_session_reports_full_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "3")
+        repo = _repo_with_spec(tmp_path)
+        bad_a = dict(_valid_plan_payload())
+        del bad_a["steps"][0]["commit_message"]
+        bad_b = dict(_valid_plan_payload(), steps=[])
+        bad_c = dict(_valid_plan_payload(), spec_id="SP-WRONG")
+        loop = _ScriptedLoop(
+            [
+                f"```json\n{json.dumps(bad_a)}\n```",
+                f"```json\n{json.dumps(bad_b)}\n```",
+                f"```json\n{json.dumps(bad_c)}\n```",
+            ]
+        )
+        planner = Planner(loop=loop, repo_root=repo)
+
+        plan, error, _audit = planner.plan(
+            spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+        )
+
+        assert plan is None
+        assert error is not None
+        assert "validation" in error
+        assert "SP-WRONG" in error
+        assert len(loop.calls) == 3
