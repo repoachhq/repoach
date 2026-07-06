@@ -643,3 +643,24 @@ class TestErrorHistory:
         assert "validation" in error
         assert "SP-WRONG" in error
         assert len(loop.calls) == 3
+
+    def test_parse_attempts_below_one_is_clamped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A setting below 1 clamps to 1: initial attempt only, no refinement."""
+        repo = _repo_with_spec(tmp_path)
+        bad = dict(_valid_plan_payload())
+        del bad["steps"][0]["commit_message"]
+
+        for value in ("0", "-1"):
+            monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", value)
+            loop = _ScriptedLoop([f"```json\n{json.dumps(bad)}\n```"])
+            planner = Planner(loop=loop, repo_root=repo)
+
+            plan, error, _audit = planner.plan(
+                spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="src/"
+            )
+
+            assert plan is None
+            assert error is not None
+            assert len(loop.calls) == 1
