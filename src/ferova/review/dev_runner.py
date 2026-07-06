@@ -669,6 +669,129 @@ _BRIEF_SPEC_CAP_CHARS = 12_000
 (SP-DEV-STEP-CONTEXT) — context completeness is the dominant
 reliability lever, but the brief must stay bounded."""
 
+_EMBED_PER_FILE_CAP = 12_000
+"""Per-file character cap for contract file embedding
+(SP-DEV-BRIEF-FILE-CONTENT).  Files larger than this are truncated
+head-first with a ``read_file`` continuation note."""
+
+_EMBED_TOTAL_BUDGET = 48_000
+"""Total character budget across all embedded contract file contents
+(SP-DEV-BRIEF-FILE-CONTENT).  Once exhausted, remaining files are
+listed by name with 'read on demand' notes."""
+
+
+def _embed_contract_files(
+    contract_paths: list[str],
+    repo_root: Path | None = None,
+) -> str:
+    """Return a formatted string embedding contract file contents for the step brief.
+
+    Two sections are produced:
+
+    1. **Existing contract files** — for each *contract_paths* entry
+       that exists on disk, the file's UTF-8 content is embedded under
+       a ``### `path``` heading.  Content is capped at
+       :data:`_EMBED_PER_FILE_CAP` chars per file; oversized files are
+       truncated head-first with a continuation note naming the exact
+       ``read_file(path, start_line=N)`` call.  A total budget of
+       :data:`_EMBED_TOTAL_BUDGET` chars is enforced across all
+       embedded content; once exhausted, remaining existing files are
+       listed by name with "read on demand" notes.  Read errors are
+       listed with the error string (mirroring
+       :func:`read_existing_files`).
+
+    2. **Files to create** — every *contract_paths* entry that does
+       not exist on disk (or whose resolved path escapes the repo
+       root) is listed under a ``## Files to create`` heading.
+
+    Path resolution uses the same jail-safe pattern as
+    :func:`read_existing_files`: resolve against *repo_root*, then
+    verify the result is inside *repo_root* via ``relative_to``.
+
+    Args:
+        contract_paths: Repo-relative paths from the step's file contract.
+        repo_root: Repository root (defaults to ``Path.cwd()``).
+
+    Returns:
+        Formatted markdown string suitable for appending to a step brief.
+    """
+    root = (repo_root or Path.cwd()).resolve()
+
+    existing: list[tuple[str, str]] = []
+    to_create: list[str] = []
+
+    for path in contract_paths:
+        target = (root / path).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            _log.warning(
+                "dev_runner.embed_path_outside_root",
+                path=path,
+                root=str(root),
+            )
+            to_create.append(path)
+            continue
+        if not target.is_file():
+            to_create.append(path)
+            continue
+        try:
+            raw = target.read_text(encoding="utf-8")
+        except OSError as exc:
+            _log.warning(
+                "dev_runner.embed_read_failed",
+                path=path,
+                error=str(exc)[:200],
+            )
+            existing.append((path, f"[read error: {exc}]"))
+            continue
+
+        if len(raw) > _EMBED_PER_FILE_CAP:
+            truncated = raw[:_EMBED_PER_FILE_CAP]
+            next_line = truncated.count("\n") + 1
+            continuation_note = (
+                f"\n\n[... truncated at {_EMBED_PER_FILE_CAP} chars; "
+                f"continue with read_file('{path}', start_line={next_line}) ...]"
+            )
+            existing.append((path, truncated + continuation_note))
+        else:
+            existing.append((path, raw))
+
+    sections: list[str] = []
+    budget_used = 0
+    budget_exhausted = False
+
+    if existing:
+        sections.append("## Existing contract files")
+        sections.append("")
+        for path, content in existing:
+            if budget_exhausted:
+                sections.append(f"### `{path}` (read on demand — budget exhausted)")
+                sections.append("")
+                continue
+            content_len = len(content)
+            if budget_used + content_len > _EMBED_TOTAL_BUDGET:
+                budget_exhausted = True
+                sections.append(f"### `{path}` (read on demand — budget exhausted)")
+                sections.append("")
+                continue
+            sections.append(f"### `{path}`")
+            sections.append("")
+            sections.append("```")
+            sections.append(content)
+            sections.append("```")
+            sections.append("")
+            budget_used += content_len
+
+    if to_create:
+        sections.append("## Files to create")
+        sections.append("")
+        for path in to_create:
+            sections.append(f"- `{path}`")
+        sections.append("")
+
+    return "\n".join(sections).rstrip() + "\n"
+
 
 def run_repo_lint_gates(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
     """Run the repo's own lint gates on the step's contract paths.
@@ -715,10 +838,15 @@ def build_step_brief(
     contract, the verifiable completion criterion, the promised tests,
     — SP-DEV-STEP-CONTEXT — the source spec verbatim (capped at
     :data:`_BRIEF_SPEC_CAP_CHARS`), so a plan action that references
-    "the spec" is resolvable instead of a dead pointer, and —
+    "the spec" is resolvable instead of a dead pointer, —
     SP-ARCH-DEV-WIRE — the governed architecture contract (``arch_owns``,
     empty for a frontier/no-spec run) so the Developer imports only
-    declared dependencies and passes the CI edge-honesty gate first try.
+    declared dependencies and passes the CI edge-honesty gate first try,
+    and — SP-DEV-BRIEF-FILE-CONTENT — the current content of every
+    existing contract file embedded under clear headings, with missing
+    paths listed under a 'to create' heading.  The retry variant
+    (``gate_feedback`` non-empty) re-reads from disk so the loop's
+    previous writes are visible.
     """
     lines = [
         f"# {plan.spec_id} — step {step.index}/{len(plan.steps)}: {step.title}",
@@ -754,6 +882,14 @@ def build_step_brief(
             "```",
             gate_feedback[:2000],
             "```",
+        ]
+    contract_section = _embed_contract_files(step.files)
+    if contract_section.strip():
+        lines += [
+            "",
+            "## Contract files",
+            "",
+            contract_section.rstrip(),
         ]
     if spec_markdown:
         lines += [
