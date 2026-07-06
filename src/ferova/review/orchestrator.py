@@ -294,10 +294,10 @@ class ReviewTeamOrchestrator:
                 )
 
         reviewers: list[Reviewer] = [
-            Architect(),
-            Sentinel(),
-            Tester(),
-            Scribe(),
+            Architect(db_path=self._db_path),
+            Sentinel(db_path=self._db_path),
+            Tester(db_path=self._db_path),
+            Scribe(db_path=self._db_path),
         ]
 
         from .thread_context import fetch_resolved_disagreements
