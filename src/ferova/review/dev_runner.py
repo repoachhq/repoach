@@ -838,10 +838,15 @@ def build_step_brief(
     contract, the verifiable completion criterion, the promised tests,
     — SP-DEV-STEP-CONTEXT — the source spec verbatim (capped at
     :data:`_BRIEF_SPEC_CAP_CHARS`), so a plan action that references
-    "the spec" is resolvable instead of a dead pointer, and —
+    "the spec" is resolvable instead of a dead pointer, —
     SP-ARCH-DEV-WIRE — the governed architecture contract (``arch_owns``,
     empty for a frontier/no-spec run) so the Developer imports only
-    declared dependencies and passes the CI edge-honesty gate first try.
+    declared dependencies and passes the CI edge-honesty gate first try,
+    and — SP-DEV-BRIEF-FILE-CONTENT — the current content of every
+    existing contract file embedded under clear headings, with missing
+    paths listed under a 'to create' heading.  The retry variant
+    (``gate_feedback`` non-empty) re-reads from disk so the loop's
+    previous writes are visible.
     """
     lines = [
         f"# {plan.spec_id} — step {step.index}/{len(plan.steps)}: {step.title}",
@@ -877,6 +882,14 @@ def build_step_brief(
             "```",
             gate_feedback[:2000],
             "```",
+        ]
+    contract_section = _embed_contract_files(step.files)
+    if contract_section.strip():
+        lines += [
+            "",
+            "## Contract files",
+            "",
+            contract_section.rstrip(),
         ]
     if spec_markdown:
         lines += [
