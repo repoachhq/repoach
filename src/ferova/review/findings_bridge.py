@@ -6,6 +6,7 @@ Verifier slices 4-5 own the refinement; proposed status signals unverified.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ..core.logging import get_logger
@@ -27,6 +28,57 @@ SEVERITY_MAP: dict[str, Severity] = {
     "minor": Severity.ADVISORY,
     "nit": Severity.ADVISORY,
 }
+
+_MISSING_TEST_CUE = re.compile(r"(?i)no test for|missing test")
+_MISSING_DOCSTRING_CUE = re.compile(r"(?i)missing docstring|no docstring")
+_LINT_CONVENTION_CUE = re.compile(r"(?i)\blint\b|convention|style nit")
+_BROKEN_BEHAVIOR_CUE = re.compile(r"(?i)\brace\b|deadlock|crash|broken|\bbug\b")
+_SPEC_GAP_CUE = re.compile(r"(?i)spec gap|not in spec|specification gap")
+_SECURITY_CUE = re.compile(r"(?i)security|vulnerability|injection|auth bypass")
+_DESIGN_CUE = re.compile(r"(?i)design|architecture|pattern")
+
+_CLAIM_TYPE_CUES: list[tuple[ClaimType, re.Pattern[str]]] = [
+    (ClaimType.MISSING_TEST, _MISSING_TEST_CUE),
+    (ClaimType.MISSING_DOCSTRING, _MISSING_DOCSTRING_CUE),
+    (ClaimType.LINT_CONVENTION, _LINT_CONVENTION_CUE),
+    (ClaimType.BROKEN_BEHAVIOR, _BROKEN_BEHAVIOR_CUE),
+    (ClaimType.SPEC_GAP, _SPEC_GAP_CUE),
+    (ClaimType.SECURITY, _SECURITY_CUE),
+    (ClaimType.DESIGN, _DESIGN_CUE),
+]
+"""Ordered (claim_type, cue) pairs; first match wins.
+
+Mechanical claim types (missing_test, missing_docstring, lint_convention)
+are checked before the judged types (security, design), with the
+under-triaged broken_behavior / spec_gap cues sitting in between so a
+clearly-mechanical cue never loses to a vaguer judged-sounding word
+appearing later in the same comment.
+"""
+
+
+def classify_claim_type(body: str, role: BotRole) -> ClaimType:
+    """Classify a comment body into a ClaimType by content, falling back to the lens.
+
+    Scans ``body`` against :data:`_CLAIM_TYPE_CUES` in priority order
+    (mechanical types before judged types) and returns the first cue
+    that fires. When no cue fires, returns the lens default for
+    ``role`` (today's behaviour), defaulting to ClaimType.DESIGN for an
+    unmapped role.
+
+    Pure and total: string matching only, no exceptions possible.
+
+    Args:
+        body: The reviewer comment body to scan.
+        role: BotRole that produced the comment, used as the fallback lens.
+
+    Returns:
+        The classified ClaimType.
+    """
+    text = body or ""
+    for claim_type, pattern in _CLAIM_TYPE_CUES:
+        if pattern.search(text):
+            return claim_type
+    return LENS_DEFAULT_CLAIM_TYPE.get(role, ClaimType.DESIGN)
 
 
 def _is_unparsed(outcome: ReviewerOutcome) -> bool:
@@ -91,14 +143,14 @@ def comment_to_finding(
         round_n: Review round index.
 
     Returns:
-        A Finding with status=PROPOSED and claim_type from LENS_DEFAULT_CLAIM_TYPE.
+        A Finding with status=PROPOSED and claim_type from classify_claim_type.
     """
     return Finding(
         pr_number=pr_number,
         head_sha=head_sha,
         round=round_n,
         finder=role.value,
-        claim_type=LENS_DEFAULT_CLAIM_TYPE.get(role, ClaimType.DESIGN),
+        claim_type=classify_claim_type(comment.body, role),
         severity=SEVERITY_MAP.get(comment.severity, Severity.ADVISORY),
         file=comment.file,
         line_start=comment.line,
