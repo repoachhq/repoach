@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from ferova.review.findings import (
     ClaimType,
@@ -71,6 +74,24 @@ class _TestReviewer(Reviewer):
         return (ReviewVerdict.APPROVE, "ok", [], _FailedRunResult(error=""))
 
 
+@pytest.fixture()
+def _hermetic_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the agent-loop settings so no .env / real proxy token is needed.
+
+    ``Reviewer.__init__`` constructs an :class:`AgentLoop`, which refuses
+    to build without ``FEROVA_ANTHROPIC_AUTH_TOKEN``. CI runs without a
+    ``.env``, so the test must not depend on one.
+    """
+    monkeypatch.setattr(
+        "ferova.agent_engine.agent_loop.get_settings",
+        lambda: SimpleNamespace(
+            llm_proxy_base_url="http://localhost:8082",
+            llm_proxy_auth_token=SimpleNamespace(get_secret_value=lambda: "test-token"),
+        ),
+    )
+
+
+@pytest.mark.usefixtures("_hermetic_proxy_settings")
 def test_finder_prompt_carries_its_track_record(tmp_path: Path) -> None:
     """A finder with refutations gets the track record appended; an empty ledger omits it."""
     db = tmp_path / "f.db"
