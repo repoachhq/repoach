@@ -377,19 +377,19 @@ def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
     # they return our canned outcomes without touching NIM.
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(fake_outcomes[0]),
+        lambda **_kw: _StubReviewer(fake_outcomes[0]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(fake_outcomes[1]),
+        lambda **_kw: _StubReviewer(fake_outcomes[1]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(fake_outcomes[2]),
+        lambda **_kw: _StubReviewer(fake_outcomes[2]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(fake_outcomes[3]),
+        lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
     gh = _StubGhCli()
@@ -444,19 +444,19 @@ def test_findings_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> No
     ]
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(fake_outcomes[0]),
+        lambda **_kw: _StubReviewer(fake_outcomes[0]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(fake_outcomes[1]),
+        lambda **_kw: _StubReviewer(fake_outcomes[1]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(fake_outcomes[2]),
+        lambda **_kw: _StubReviewer(fake_outcomes[2]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(fake_outcomes[3]),
+        lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
     def _boom(*_args, **_kwargs):
@@ -481,19 +481,19 @@ def test_verify_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None
     by_role = {o.role: o for o in fake}
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(by_role[BotRole.ARCHITECT]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.ARCHITECT]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(by_role[BotRole.SENTINEL]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.SENTINEL]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(by_role[BotRole.TESTER]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.TESTER]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(by_role[BotRole.SCRIBE]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.SCRIBE]),
     )
 
     def _boom(*_args, **_kwargs):
@@ -513,19 +513,19 @@ def test_judge_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None:
     by_role = {o.role: o for o in fake}
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(by_role[BotRole.ARCHITECT]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.ARCHITECT]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(by_role[BotRole.SENTINEL]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.SENTINEL]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(by_role[BotRole.TESTER]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.TESTER]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(by_role[BotRole.SCRIBE]),
+        lambda **_kw: _StubReviewer(by_role[BotRole.SCRIBE]),
     )
 
     def _boom(*_args, **_kwargs):
@@ -557,15 +557,15 @@ def test_orchestrator_verifies_findings(monkeypatch, tmp_path: Path) -> None:
     }
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(others[BotRole.ARCHITECT]),
+        lambda **_kw: _StubReviewer(others[BotRole.ARCHITECT]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(others[BotRole.SENTINEL]),
+        lambda **_kw: _StubReviewer(others[BotRole.SENTINEL]),
     )
-    monkeypatch.setattr("ferova.review.orchestrator.Tester", lambda: _StubReviewer(tester))
+    monkeypatch.setattr("ferova.review.orchestrator.Tester", lambda **_kw: _StubReviewer(tester))
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe", lambda: _StubReviewer(others[BotRole.SCRIBE])
+        "ferova.review.orchestrator.Scribe", lambda **_kw: _StubReviewer(others[BotRole.SCRIBE])
     )
 
     orch = ReviewTeamOrchestrator(
@@ -612,19 +612,19 @@ def test_review_pr_writes_archive_comment_when_posting(tmp_path, monkeypatch):
     ]
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(fake_outcomes[0]),
+        lambda **_kw: _StubReviewer(fake_outcomes[0]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(fake_outcomes[1]),
+        lambda **_kw: _StubReviewer(fake_outcomes[1]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(fake_outcomes[2]),
+        lambda **_kw: _StubReviewer(fake_outcomes[2]),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(fake_outcomes[3]),
+        lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
     gh = _StubGhCli()
@@ -645,19 +645,19 @@ def test_review_pr_skips_archive_when_dry_run(tmp_path, monkeypatch):
     out = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(out),
+        lambda **_kw: _StubReviewer(out),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _StubReviewer(out),
+        lambda **_kw: _StubReviewer(out),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(out),
+        lambda **_kw: _StubReviewer(out),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(out),
+        lambda **_kw: _StubReviewer(out),
     )
 
     gh = _StubGhCli()
@@ -673,7 +673,7 @@ def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
     for cls in ("Architect", "Sentinel", "Tester", "Scribe"):
         monkeypatch.setattr(
             f"ferova.review.orchestrator.{cls}",
-            lambda o=out: _StubReviewer(o),
+            lambda o=out, **_kw: _StubReviewer(o),
         )
 
     gh = _StubGhCli(review_submit_fail=True)
@@ -709,19 +709,19 @@ def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
     out_ok = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer(out_ok),
+        lambda **_kw: _StubReviewer(out_ok),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Sentinel",
-        lambda: _BoomReviewer(),
+        lambda **_kw: _BoomReviewer(),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Tester",
-        lambda: _StubReviewer(_outcome(BotRole.TESTER, ReviewVerdict.APPROVE)),
+        lambda **_kw: _StubReviewer(_outcome(BotRole.TESTER, ReviewVerdict.APPROVE)),
     )
     monkeypatch.setattr(
         "ferova.review.orchestrator.Scribe",
-        lambda: _StubReviewer(_outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE)),
+        lambda **_kw: _StubReviewer(_outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE)),
     )
 
     gh = _StubGhCli()
