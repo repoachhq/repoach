@@ -3,7 +3,7 @@ id: SP-FINDINGS-BRIDGE-DOCFIX
 title: Drop the stale coder_loop cross-reference from _files_in_diff
 version: 0.1
 status: approved
-author: jfaye + Claude (tech-debt survey 2026-07-02, ledger entry 10)
+author: jfaye (tech-debt survey 2026-07-02, ledger entry 10)
 created: 2026-07-02
 updated: 2026-07-02
 

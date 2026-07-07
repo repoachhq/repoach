@@ -3,7 +3,7 @@ id: SP-CLAIM-TYPE-ROUTING
 title: Content-based claim typing and fail-closed routing
 version: 0.1
 status: approved
-author: jfaye + Claude (review-side evidence sweep, 2026-07-06)
+author: jfaye (review-side evidence sweep, 2026-07-06)
 created: 2026-07-06
 updated: 2026-07-06
 

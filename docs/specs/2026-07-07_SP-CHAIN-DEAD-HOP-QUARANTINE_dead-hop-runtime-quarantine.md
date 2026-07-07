@@ -3,7 +3,7 @@ id: SP-CHAIN-DEAD-HOP-QUARANTINE
 title: Quarantine dead chain hops out of the runtime failover order
 version: 0.1
 status: draft
-author: jfaye + Claude (reconstructed from the approved queue + the 2026-07-02 OpenRouter incident)
+author: jfaye (reconstructed from the approved queue + the 2026-07-02 OpenRouter incident)
 created: 2026-07-07
 updated: 2026-07-07
 

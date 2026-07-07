@@ -3,7 +3,7 @@ id: SP-MFC-GENERATE
 title: Model-first chains.env generation — assemble, render, atomic write
 version: 0.1
 status: draft
-author: Claude (design dialogue with operator)
+author: operator (design dialogue)
 created: 2026-06-30
 updated: 2026-06-30
 

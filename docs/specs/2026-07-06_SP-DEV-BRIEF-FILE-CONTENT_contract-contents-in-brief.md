@@ -3,7 +3,7 @@ id: SP-DEV-BRIEF-FILE-CONTENT
 title: Contract file contents in the step brief
 version: 0.1
 status: approved
-author: jfaye + Claude (improvement-axes report; read-turn telemetry 2026-07-04/05)
+author: jfaye (improvement-axes report; read-turn telemetry 2026-07-04/05)
 created: 2026-07-06
 updated: 2026-07-06
 

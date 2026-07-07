@@ -3,7 +3,7 @@ id: SP-MFC-NIM-HEAD
 title: Enforce a NIM head for the sonnet + haiku tiers in model-first expansion
 version: 0.1
 status: draft
-author: Claude (design dialogue with operator)
+author: operator (design dialogue)
 created: 2026-06-30
 updated: 2026-06-30
 

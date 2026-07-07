@@ -3,7 +3,7 @@ id: SP-ORCH-DOCSTRING
 title: Truthful orchestrator module docstring
 version: 0.1
 status: approved
-author: jfaye + Claude (tech-debt ledger entry 4)
+author: jfaye (tech-debt ledger entry 4)
 created: 2026-07-03
 updated: 2026-07-03
 

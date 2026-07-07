@@ -3,7 +3,7 @@ id: SP-PLANNER-SELECTOR-CHECK
 title: Mechanical selector verification in the Planner's refine loop
 version: 0.2
 status: approved
-author: jfaye + Claude (three plan reviews on SP-PLAN-CONTRACT-LINTS-2, 2026-07-05)
+author: jfaye (three plan reviews on SP-PLAN-CONTRACT-LINTS-2, 2026-07-05)
 created: 2026-07-06
 updated: 2026-07-06
 

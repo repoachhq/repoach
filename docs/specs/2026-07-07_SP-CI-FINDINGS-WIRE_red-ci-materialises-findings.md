@@ -3,7 +3,7 @@ id: SP-CI-FINDINGS-WIRE
 title: Wire red CI into the findings ledger (slice 8b has no caller)
 version: 0.1
 status: draft
-author: jfaye + Claude (live PR #53 post-mortem, 2026-07-07)
+author: jfaye (live PR #53 post-mortem, 2026-07-07)
 created: 2026-07-07
 updated: 2026-07-07
 

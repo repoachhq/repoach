@@ -3,7 +3,7 @@ id: SP-PLANNER-REFINE-HISTORY
 title: Error history in the Planner's refine loop
 version: 0.1
 status: approved
-author: jfaye + Claude (nine whack-a-mole attempts across three planning sessions, 2026-07-06)
+author: jfaye (nine whack-a-mole attempts across three planning sessions, 2026-07-06)
 created: 2026-07-06
 updated: 2026-07-06
 
