@@ -416,13 +416,23 @@ class Reviewer:
     response, momentary chain-wide outage).
     """
 
-    def __init__(self, *, loop: AgentLoop | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        loop: AgentLoop | None = None,
+        db_path: Path | None = None,
+    ) -> None:
         """Create the reviewer with an optional pre-built AgentLoop.
 
         Args:
             loop: A pre-configured :class:`AgentLoop`.  When
                 ``None``, a new one is built using ``self.model_chain``.
+            db_path: Optional path to the findings ledger database.
+                When provided, the reviewer appends its own refuted
+                track record to each prompt so the lens sees its past
+                refutations.  ``None`` (default) skips the section.
         """
+        self._db_path = db_path
         if loop is not None:
             self._loop = loop
         else:
@@ -625,6 +635,14 @@ class Reviewer:
             )
             + extra_prompt_section
         )
+
+        if self._db_path is not None:
+            from .review_lessons import render_lens_track_record
+
+            track = render_lens_track_record(self._db_path, self.role.value)
+            if track:
+                prompt += "\n\n" + track
+
         _log.info(
             "review.bot.spawn",
             role=self.role.value,
