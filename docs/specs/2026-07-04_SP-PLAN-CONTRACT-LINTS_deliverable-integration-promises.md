@@ -3,7 +3,7 @@ id: SP-PLAN-CONTRACT-LINTS
 title: Deliverable integration promises — plan-form lint
 version: 0.1
 status: approved
-author: jfaye + Claude (improvement-axes report; gap named in commit 509b9e7)
+author: jfaye (improvement-axes report; gap named in commit 509b9e7)
 created: 2026-07-04
 updated: 2026-07-04
 

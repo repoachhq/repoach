@@ -3,7 +3,7 @@ id: SP-DEV-PROMISE-DELIVERY
 title: Promised tests delivered — strict reconciliation and mechanical rename
 version: 0.1
 status: approved
-author: jfaye + Claude (six-occurrence failure pattern, 2026-07-04/05)
+author: jfaye (six-occurrence failure pattern, 2026-07-04/05)
 created: 2026-07-05
 updated: 2026-07-05
 

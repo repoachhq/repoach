@@ -3,7 +3,7 @@ id: SP-REFUTED-FEEDBACK
 title: Refutations feed the finders — lens track record in prompts
 version: 0.1
 status: approved
-author: jfaye + Claude (review-side evidence sweep, 2026-07-06)
+author: jfaye (review-side evidence sweep, 2026-07-06)
 created: 2026-07-06
 updated: 2026-07-06
 

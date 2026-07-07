@@ -3,7 +3,7 @@ id: SP-PLAN-CONTRACT-LINTS-2
 title: Discriminating promises — node ids required, integration under tests/integration
 version: 0.3
 status: approved
-author: jfaye + Claude (SP-BUDGET-RETRY-FIXES post-mortem, 2026-07-05)
+author: jfaye (SP-BUDGET-RETRY-FIXES post-mortem, 2026-07-05)
 created: 2026-07-05
 updated: 2026-07-05
 

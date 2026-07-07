@@ -3,7 +3,7 @@ id: SP-CHAINS-THINKING-CLASS
 title: Machine-readable thinking class for chain models
 version: 0.1
 status: approved
-author: jfaye + Claude (thinking-handling audit, 2026-07-04)
+author: jfaye (thinking-handling audit, 2026-07-04)
 created: 2026-07-04
 updated: 2026-07-04
 

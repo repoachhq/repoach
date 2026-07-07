@@ -3,7 +3,7 @@ id: SP-BUDGET-RETRY-FIXES
 title: Budget retry — None guard and real escalation headroom
 version: 0.1
 status: approved
-author: jfaye + Claude (thinking-handling audit, 2026-07-04)
+author: jfaye (thinking-handling audit, 2026-07-04)
 created: 2026-07-04
 updated: 2026-07-04
 
