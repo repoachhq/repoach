@@ -6,7 +6,7 @@
 
 *Plug it into your repo — it builds your system, and keeps forging itself.*
 
-[![CI](https://img.shields.io/badge/CI-green-brightgreen)]() [![License](https://img.shields.io/badge/license-MIT-blue)]() [![Built by Ferova](https://img.shields.io/badge/built%20by-Ferova-orange)]()
+[![CI](https://github.com/ferovahq/ferova/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/ferovahq/ferova/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)]() [![Built by Ferova](https://img.shields.io/badge/built%20by-Ferova-orange)]()
 
 </div>
 
@@ -28,23 +28,46 @@ Every change is anchored to a spec whose frontmatter declares **what it owns** a
 
 ### 3. Self-evolving routing
 Ferova runs its agents across a dozen LLM providers with automatic failover. A built-in autopilot watches each provider's live health and **rewrites its own routing** to stay fast and cheap — bounded by hard safety caps.
-> *It once tried to delete its own routing in a single cycle. Here's the post-mortem →* [link]
 
 ### 🔁 It builds itself
 Ferova is built by Ferova. Every PR in this repo went through Ferova's own review pipeline and merge gate. **The factory is its own first customer.**
 
 ## How it works
 
-```
-spec ─▶ Developer agent ─▶ PR ─▶ Architect · Sentinel · Tester · Scribe ─▶ evidence-first gate ─▶ merge
-                                          (4 reviewers)                   (re-verifies at HEAD)
-```
+A spec's life, top to bottom: build → review → ship. Four reviewers and a claim-verification layer feed a findings ledger; a pure evidence-first gate re-verifies everything at the exact head it is about to merge.
+
+![Ferova — the review factory, from spec to merge](docs/review_factory_architecture.png)
+
+### Deeper dives
+
+<details>
+<summary><b>The review pipeline</b> — findings, mechanical verifiers, adversarial refuter, and the merge gate</summary>
+
+![Ferova — evidence-first review pipeline](docs/review_redesign_architecture.png)
+</details>
+
+<details>
+<summary><b>Builder memory</b> — the factory recalls past lessons before planning and remembers each build's outcome</summary>
+
+![Ferova — builder memory loop](docs/builder_memory_architecture.png)
+</details>
+
+<details>
+<summary><b>Provider observability</b> — active probes + passive telemetry around the self-healing LLM gateway</summary>
+
+![Ferova — NIM observability](docs/nim_observability_architecture.png)
+</details>
 
 ## Quickstart
 
 ```bash
-# zero-key demo against a sample repo — no provider keys required
-pipx run ferova demo
+git clone https://github.com/ferovahq/ferova && cd ferova
+pip install -e ".[dev]"
+
+ferova --help            # the CLI
+ferova review pr <N>     # run the review team on a pull request
+ferova review gate <N>   # evidence-first merge gate, read-only
+ferova develop <SP-ID>   # plan-driven build from a spec
 ```
 
 ## Safety

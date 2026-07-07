@@ -14,7 +14,7 @@
 
   <rect width="1500" height="1300" fill="#0a0e17"/>
 
-  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Review Redesign (evidence-first target)</text>
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Review Pipeline (evidence-first, implemented)</text>
   <text x="45" y="73" font-size="12.5" fill="#9ca3af">The LLM proposes and judges over evidence it cannot fabricate — the harness verifies, and the harness alone decides the merge.</text>
 
   <!-- Legend top-right -->
