@@ -1,6 +1,11 @@
 <div align="center">
 
-# 🔥 Ferova
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo-light.svg" alt="Ferova — anvil and spark" width="110">
+</picture>
+
+# Ferova
 
 ### The self-forging software factory.
 
