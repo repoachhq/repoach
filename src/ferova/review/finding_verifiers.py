@@ -23,6 +23,7 @@ from .findings import (
     Finding,
     FindingStatus,
     fetch_findings,
+    record_verification_attempt,
     update_finding_status,
 )
 from .hallucination_guard import (
@@ -148,6 +149,14 @@ def verify_findings_for_pr(
     for finding in proposed:
         new_status, method, result = verify_finding(finding, repo_root=repo_root)
         if new_status is FindingStatus.PROPOSED:
+            if finding.id is not None:
+                record_verification_attempt(
+                    db_path,
+                    finding.id,
+                    method=method,
+                    result=result,
+                    checked_at_sha=head_sha or "",
+                )
             counts["deferred"] += 1
             continue
         if finding.id is None:
