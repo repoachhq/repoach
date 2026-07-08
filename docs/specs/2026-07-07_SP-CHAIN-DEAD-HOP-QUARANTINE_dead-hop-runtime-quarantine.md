@@ -2,10 +2,10 @@
 id: SP-CHAIN-DEAD-HOP-QUARANTINE
 title: Quarantine dead chain hops out of the runtime failover order
 version: 0.1
-status: draft
+status: approved
 author: jfaye (reconstructed from the approved queue + the 2026-07-02 OpenRouter incident)
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-07-08
 
 owns:
   code: []
@@ -212,6 +212,34 @@ flowchart TD
     D -- no --> F[trip at transient TTL]
     E --> G[/health breaker view + breaker_quarantined log/]
 ```
+
+## Suggested decomposition (Planner guidance)
+
+Added 2026-07-08 after a planning session exhausted five attempts on
+plan-form rules (integration selector placed under `tests/unit/`, or
+integration test omitted, or the integration step missing unit
+tests). The three-step shape below satisfies every rule by
+construction; the Planner may refine details but should keep the
+shape: every step promises unit selectors under `tests/unit/`, and
+the LAST step also promises the integration selector under
+`tests/integration/` (never under `tests/unit/`).
+
+1. **Pure breaker policy** — `routing/breaker.py`:
+   `QUARANTINE_REASONS`, `ttl_for_reason` extension, `escalated_ttl`,
+   trip counter + `recover` + `snapshot`. Unit:
+   `tests/unit/test_health_breaker.py::test_ttl_for_reason_quarantine_class`,
+   `::test_consecutive_failures_escalate_to_quarantine`,
+   `::test_recover_resets_counter`, `::test_snapshot_lists_down_refs`.
+2. **Settings knobs** — `config/settings.py`:
+   `breaker_ttl_quarantine_s`, `breaker_quarantine_threshold`
+   (aliases + bounds). Unit:
+   `tests/unit/test_health_breaker.py::test_quarantine_settings_defaults_and_aliases`.
+3. **Wiring + observability** — `api/services.py` `_trip_breaker`
+   composition + `breaker_quarantined` event; `api/routes.py`
+   `/health` breaker array. Unit:
+   `tests/unit/test_health_breaker.py::test_trip_breaker_composes_escalation`,
+   `::test_health_reports_breaker_entries`. Integration (same step):
+   `tests/integration/test_proxy_dead_hop_quarantine.py::test_dead_hop_quarantined_and_reported_on_health`.
 
 ## Acceptance Criteria
 
