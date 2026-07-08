@@ -244,3 +244,68 @@ def test_build_stuck_dossier_shape(tmp_path: Path) -> None:
     assert dossier["n_rounds"] == len(rounds)
     assert len(dossier["trajectory"]) == len(rounds)
     assert dossier["stuck_findings"][0]["claim"] == "cannot fix this"
+
+
+def test_orchestrator_escalation_seam_is_guarded(monkeypatch) -> None:
+    """The proposed-escalation dossier seam is settings-guarded.
+
+    With routine settings absent, firing the dossier is a silent no-op
+    — the monkeypatched transport is never called.
+    """
+    from types import SimpleNamespace
+
+    from ferova.review import orchestrator
+    from ferova.review.findings import (
+        ClaimType,
+        Finding,
+        FindingStatus,
+        init_findings_schema,
+        record_finding,
+    )
+
+    SimpleNamespace()
+    init_findings_schema(Path("/tmp/_proposed_escalation_seam.db"))
+    record_finding(
+        Path("/tmp/_proposed_escalation_seam.db"),
+        Finding(
+            pr_number=1,
+            head_sha="head123",
+            round=1,
+            finder="architect",
+            claim_type=ClaimType.MISSING_TEST,
+            severity="blocking",
+            file="src/m.py",
+            line_start=3,
+            line_end=3,
+            claim="missing test for foo",
+            evidence_pointer="src/m.py:3",
+            status=FindingStatus.PROPOSED,
+            verify_attempts=PROPOSED_ESCALATION_ATTEMPTS,
+        ),
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "get_settings",
+        lambda: SimpleNamespace(
+            claude_code_routine_id=None,
+            claude_code_routine_token=None,
+        ),
+    )
+
+    called = {"count": 0}
+
+    def _fake_fire(*, routine_id: str, token: str, payload: dict) -> SimpleNamespace:
+        called["count"] += 1
+        return SimpleNamespace(
+            ok=True, status_code=200, session_id="s", session_url="u", error=None
+        )
+
+    monkeypatch.setattr(orchestrator, "fire_review_routine", _fake_fire)
+
+    orchestrator.ReviewTeamOrchestrator._fire_proposed_escalation_dossier(
+        SimpleNamespace(_db_path=Path("/tmp/_proposed_escalation_seam.db")),
+        pr_number=1,
+    )
+
+    assert called["count"] == 0
