@@ -1,9 +1,12 @@
 """FastAPI route handlers."""
 
+import time
+
 from fastapi import APIRouter, Depends, Request, Response
 
 from ferova.llm_proxy.config.settings import Settings
 from ferova.llm_proxy.core.anthropic import get_token_count
+from ferova.llm_proxy.routing import get_breaker
 
 from . import dependencies
 from .agent_dispatcher import dispatch_agent_request
@@ -146,8 +149,28 @@ async def probe_root(_auth=Depends(require_api_key)):
 
 @router.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint.
+
+    Surfaces the failover breaker's current state (SP-CHAIN-DEAD-HOP-QUARANTINE)
+    so operators can see which chain hops are down, why, and for how long.
+    The ``breaker`` array is built from :meth:`BreakerState.snapshot` and
+    carries one entry per currently-down ref with ``ref``, ``reason``,
+    ``ttl_remaining_s``, and ``consecutive_failures``. Empty when nothing
+    is tripped.
+    """
+    breaker_entries = get_breaker().snapshot(time.monotonic())
+    return {
+        "status": "healthy",
+        "breaker": [
+            {
+                "ref": str(entry.ref),
+                "reason": entry.reason,
+                "ttl_remaining_s": entry.ttl_remaining_s,
+                "consecutive_failures": entry.consecutive_failures,
+            }
+            for entry in breaker_entries
+        ],
+    }
 
 
 @router.api_route("/health", methods=["HEAD", "OPTIONS"])
