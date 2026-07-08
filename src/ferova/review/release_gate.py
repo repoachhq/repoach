@@ -15,12 +15,21 @@ classifier and decision core. Fact-gathering (shelling out to
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
 
 from pydantic import BaseModel
 
+from .gh_client import GhCli
+
 _SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)$")
 """Matches GitHub's default squash-merge subject suffix, e.g. ``(#42)``."""
+
+_DEFAULT_CI_SCRIPT = "scripts/ci_local.sh"
+"""Repo-relative path to the local CI parity mirror the gate shells out to."""
 
 
 def classify_release_range(subjects: list[str]) -> list[str]:
@@ -113,3 +122,75 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
     if not facts.ci_green:
         reasons.append("CI not green at develop head")
     return ReleaseDecision(merge=not reasons, reasons=reasons)
+
+
+def _default_ci_runner(repo_root: Path) -> subprocess.CompletedProcess:
+    """Run the local CI parity mirror at *repo_root*.
+
+    Args:
+        repo_root: Repository root expected to contain
+            :data:`_DEFAULT_CI_SCRIPT`.
+
+    Returns:
+        The completed process from running the script.
+
+    Raises:
+        FileNotFoundError: When the script is missing or not
+            executable -- an evaluation error, never a silent pass.
+    """
+    script = repo_root / _DEFAULT_CI_SCRIPT
+    if not script.is_file() or not os.access(script, os.X_OK):
+        raise FileNotFoundError(f"{script} missing or not executable")
+    return subprocess.run([str(script)], cwd=repo_root, capture_output=True, text=True, check=False)
+
+
+def gather_release_facts(
+    *,
+    repo_root: Path,
+    gh: GhCli,
+    pr_number: int | None = None,
+    ci_runner: Callable[[Path], subprocess.CompletedProcess] | None = None,
+) -> ReleaseFacts:
+    """Gather the facts the pure release gate decides on.
+
+    Args:
+        repo_root: Repository root, used to locate the local CI
+            parity mirror.
+        gh: A :class:`~ferova.review.gh_client.GhCli`-like wrapper
+            used for the ``git``/``gh`` invocations.
+        pr_number: The release PR number, when known; enables the
+            release PR's ``headRefOid`` freshness cross-check.
+        ci_runner: Injectable CI runner for tests; defaults to
+            :func:`_default_ci_runner`, which shells out to
+            :data:`_DEFAULT_CI_SCRIPT`.
+
+    Returns:
+        The assembled :class:`ReleaseFacts`.
+
+    Raises:
+        Exception: Any exception raised while running CI (notably a
+            :class:`FileNotFoundError` from the default runner when
+            the script is missing or non-executable) propagates
+            unchanged -- fail-closed: the caller must treat this as
+            an evaluation error, never a fact.
+    """
+    develop_sha = gh._run_git(["rev-parse", "develop"]).stdout.strip()
+    log_result = gh._run_git(["log", "main..develop", "--format=%s"])
+    subjects = [line for line in log_result.stdout.splitlines() if line.strip()]
+    out_of_band_commits = classify_release_range(subjects)
+    ls_remote_result = gh._run_git(["ls-remote", "origin", "develop"])
+    remote_sha = ""
+    first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
+    if ls_remote_result.returncode == 0 and first_line:
+        tokens = first_line.split()
+        remote_sha = tokens[0] if tokens else ""
+    pr_head_sha = gh.pr_head_sha(pr_number) if pr_number is not None else None
+    result = (ci_runner or _default_ci_runner)(repo_root)
+    ci_green = result.returncode == 0
+    return ReleaseFacts(
+        develop_sha=develop_sha,
+        out_of_band_commits=out_of_band_commits,
+        remote_sha=remote_sha,
+        pr_head_sha=pr_head_sha,
+        ci_green=ci_green,
+    )
