@@ -64,6 +64,24 @@ def _seed_review_complete(db: Path, pr_number: int) -> None:
     record_review_integrity(db, pr_number=pr_number, head_sha=_HEAD, n_reviewers=4, n_unparsed=0)
 
 
+def _truthful_ls_remote(sha: str, head_ref: str) -> GhResult:
+    """Build an ``ls-remote`` result agreeing with a given ``pr_head_sha``.
+
+    SP-AUTOMERGE-FRESH-HEAD (operator rule: no stubs) —
+    ``resolve_verified_head`` runs for real in every test, so every
+    fake ``GhCli`` here must answer ``_run_git(["ls-remote", ...])``
+    with the SAME SHA its ``pr_head_sha`` returns; otherwise the real
+    convergence check would (correctly) refuse every existing scenario
+    as a stale head.
+    """
+    return GhResult(
+        returncode=0,
+        stdout=f"{sha}\trefs/heads/{head_ref}\n",
+        stderr="",
+        argv=["git", "ls-remote", "origin", f"refs/heads/{head_ref}"],
+    )
+
+
 def _gh(
     *,
     base: str = "develop",
@@ -80,6 +98,7 @@ def _gh(
         "state": state,
     }
     gh.pr_head_sha.return_value = _HEAD
+    gh._run_git.return_value = _truthful_ls_remote(_HEAD, head)
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:

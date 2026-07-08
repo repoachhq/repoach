@@ -22,6 +22,7 @@ from ferova.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_GATE,
     OUTCOME_SKIP_STALE_HEAD,
+    evaluate_merge_gate,
     resolve_verified_head,
     run_auto_merge,
 )
@@ -225,6 +226,33 @@ def test_auto_merge_refuses_on_stale_head_and_does_not_merge(tmp_path: Path) -> 
 
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
     assert merge_calls == []
+
+
+# ---------------------------------------------------------------------------
+# evaluate_merge_gate wiring (step 3/4 -- SP-AUTOMERGE-FRESH-HEAD)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_merge_gate_stale_head_refuses(tmp_path: Path) -> None:
+    """A persistent API-vs-ls-remote mismatch refuses through the gate CLI path.
+
+    OPERATOR RULE -- no stubs: this drives the real resolve_verified_head
+    end to end (no monkeypatching of it) so evaluate_merge_gate's stale-head
+    refusal is exercised exactly as ferova review gate would hit it, and
+    ferova review gate exits 5 through the existing exit-code mapping.
+    """
+    db = tmp_path / "test.db"
+    gh = _make_gh(base="develop", head="feat/x")
+    gh.pr_head_sha.return_value = _STALE_SHA
+    gh._run_git.return_value = _ls_remote_result(_OTHER_SHA)
+
+    evaluation = evaluate_merge_gate(1, gh=gh, db_path=db, repo_root=tmp_path, sleep=MagicMock())
+
+    assert evaluation.decision.merge is False
+    reason_blob = " ".join(evaluation.decision.reasons)
+    assert "stale head" in reason_blob
+    assert _STALE_SHA[:12] in reason_blob
+    assert _OTHER_SHA[:12] in reason_blob
 
 
 def test_gate_facts_computed_at_verified_head(tmp_path: Path) -> None:

@@ -594,11 +594,61 @@ def evaluate_merge_gate(
     :func:`decide_at_head`. It performs no base/state check and never
     merges or posts — ``safe_merge.sh`` keeps ownership of the actual
     ``gh pr merge``.
+
+    SP-AUTOMERGE-FRESH-HEAD: before any of that, the PR API head is
+    cross-checked against ``git ls-remote`` ground truth through
+    :func:`resolve_verified_head` — the exact same bounded, fail-closed
+    convergence check :func:`run_auto_merge` performs before squashing.
+    A stale or unverifiable head short-circuits with a refused
+    decision (``merge`` False, a reason containing "stale head" and
+    both 12-char SHA prefixes) instead of reaching
+    :func:`decide_at_head` at all, so ``ferova review gate`` exits 5
+    through the existing exit-code mapping and ``safe_merge.sh``
+    aborts on the same signal the CI auto-merge would refuse on.
     """
     gh = gh or GhCli()
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
+
+    pr_meta = gh.pr_view(pr_number) or {}
+    head_ref = str(pr_meta.get("headRefName") or "")
+
+    verified_head, stale_reason = resolve_verified_head(
+        gh,
+        pr_number,
+        head_ref,
+        repo_root=repo_root or Path.cwd(),
+        sleep=sleep,
+    )
+    if verified_head is None:
+        reason = f"stale head: {stale_reason}"
+        _log.warning(
+            "auto_merge.gate_stale_head",
+            pr_number=pr_number,
+            head_ref=head_ref,
+            reason=stale_reason,
+        )
+        stale_facts = MergeFacts(
+            head_sha="",
+            ci_green=False,
+            open_blocking_findings=0,
+            spec_covered=False,
+            spec_coverage_known=False,
+            review_complete=False,
+            review_integrity_known=False,
+        )
+        return GateEvaluation(
+            head_sha="",
+            ci_gate=CIGateOutcome(
+                green=False,
+                outcome_tag=OUTCOME_SKIP_STALE_HEAD,
+                reason=reason,
+            ),
+            facts=stale_facts,
+            decision=MergeDecision(merge=False, reasons=[reason]),
+        )
+
     ci_gate = evaluate_ci_gate(
         gh,
         pr_number,
@@ -607,6 +657,7 @@ def evaluate_merge_gate(
         poll_interval=poll_interval,
         monotonic=monotonic,
         sleep=sleep,
+        head_sha=verified_head,
     )
     head_sha, facts, decision = decide_at_head(
         pr_number,
@@ -614,6 +665,7 @@ def evaluate_merge_gate(
         db=db,
         ci_green=ci_gate.green,
         repo_root=repo_root,
+        head_sha=verified_head,
     )
     _log.info(
         "auto_merge.gate_evaluated",
