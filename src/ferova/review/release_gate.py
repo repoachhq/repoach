@@ -4,17 +4,24 @@ Mirrors the per-PR pure merge gate (:mod:`ferova.review.merge_gate`) for
 the operator-only ``develop -> main`` release: a pure commit-subject
 classifier decides release-range provenance, a pure decision function
 refuses on any red fact, and the gate itself only ever prints facts and
-a decision. It never shells out to ``gh pr merge`` -- the operator alone
-holds the authority to actually merge ``main``.
+a decision. It never shells out to the GitHub CLI merge subcommand --
+the operator alone holds the authority to actually merge ``main``.
 
 This module is the leaf slice of the design (step 1 of 5): the pure
 classifier and decision core. Fact-gathering (shelling out to
 ``git``/``gh``/``scripts/ci_local.sh``) and the receipt round-trip for
 ``ferova release verify`` land in later steps.
+
+Code-shape guarantee (not a runtime assertion -- verified by
+``test_release_gate_never_calls_merge`` reading this file's source):
+this module never invokes a merge or push operation anywhere. It
+only ever gathers facts, decides, prints, and round-trips a receipt
+between ``ferova release gate`` and ``ferova release verify``.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -193,4 +200,87 @@ def gather_release_facts(
         remote_sha=remote_sha,
         pr_head_sha=pr_head_sha,
         ci_green=ci_green,
+    )
+
+
+class ReleaseVerifyResult(BaseModel):
+    """Outcome of a post-merge ``ferova release verify`` run.
+
+    Attributes:
+        verified: True when the live ``main`` tip matches the
+            ``develop`` head the gate approved in the receipt.
+        main_sha: The live ``origin/main`` tip at verify time.
+        expected_sha: The ``develop_sha`` recorded in the gate receipt.
+        detail: Human-readable explanation of the outcome.
+    """
+
+    verified: bool
+    main_sha: str
+    expected_sha: str
+    detail: str
+
+
+def write_gate_receipt(path: Path, *, develop_sha: str, decision: ReleaseDecision) -> None:
+    """Write the gate receipt that ``ferova release verify`` reads back.
+
+    Args:
+        path: Destination file for the receipt (parent directories are
+            created as needed).
+        develop_sha: The ``develop`` head the gate approved.
+        decision: The gate's decision, recorded alongside the head so
+            a refused gate's receipt is self-explanatory too.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "develop_sha": develop_sha,
+                "merge": decision.merge,
+                "reasons": decision.reasons,
+            },
+            indent=2,
+        )
+    )
+
+
+def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
+    """Verify that the live ``main`` tip matches the approved release.
+
+    Reads back the receipt written by :func:`write_gate_receipt` and
+    compares its recorded ``develop_sha`` against the live
+    ``origin/main`` tip. A squash-merge or a stale merge diverges the
+    two SHAs immediately, while the mistake is still one revert away.
+
+    Args:
+        path: The gate receipt written by :func:`write_gate_receipt`.
+        gh: A :class:`~ferova.review.gh_client.GhCli`-like wrapper used
+            for the ``git ls-remote`` invocation.
+
+    Returns:
+        The assembled :class:`ReleaseVerifyResult`.
+
+    Raises:
+        FileNotFoundError: When the receipt is missing -- an
+            evaluation error, mirroring the CI-script fail-closed
+            contract of :func:`_default_ci_runner`.
+        json.JSONDecodeError: When the receipt is not valid JSON --
+            likewise an evaluation error, never a silent pass.
+    """
+    data = json.loads(path.read_text())
+    expected_sha = data["develop_sha"]
+    ls_remote_result = gh._run_git(["ls-remote", "origin", "main"])
+    first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
+    main_sha = first_line.split()[0] if first_line.split() else ""
+    verified = bool(expected_sha) and main_sha == expected_sha
+    detail = (
+        "main tip matches the approved develop head"
+        if verified
+        else "main tip does not match the approved develop head -- squash or stale merge? "
+        "revert and re-merge as a merge commit"
+    )
+    return ReleaseVerifyResult(
+        verified=verified,
+        main_sha=main_sha,
+        expected_sha=expected_sha,
+        detail=detail,
     )

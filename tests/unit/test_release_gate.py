@@ -14,10 +14,13 @@ import pytest
 
 from ferova.review.gh_client import GhResult
 from ferova.review.release_gate import (
+    ReleaseDecision,
     ReleaseFacts,
     classify_release_range,
     compute_release_decision,
     gather_release_facts,
+    verify_release,
+    write_gate_receipt,
 )
 
 
@@ -94,3 +97,36 @@ def test_release_gate_missing_ci_script_is_error(tmp_path: Path) -> None:
     gh = _gh_stub(develop_sha="a", remote_sha="a")
     with pytest.raises(FileNotFoundError):
         gather_release_facts(repo_root=tmp_path, gh=gh)
+
+
+def test_release_verify_detects_squash_divergence(tmp_path: Path) -> None:
+    receipt_path = tmp_path / "release_gate_receipt.json"
+    decision = ReleaseDecision(merge=True, reasons=[])
+    write_gate_receipt(receipt_path, develop_sha="deadbeef", decision=decision)
+
+    gh = MagicMock()
+
+    def _run_git_side(args: list[str]) -> GhResult:
+        if args[:2] == ["ls-remote", "origin"]:
+            return GhResult(
+                returncode=0,
+                stdout="cafef00d\trefs/heads/main\n",
+                stderr="",
+                argv=args,
+            )
+        return GhResult(returncode=0, stdout="", stderr="", argv=args)
+
+    gh._run_git.side_effect = _run_git_side
+
+    result = verify_release(receipt_path, gh=gh)
+
+    assert result.verified is False
+    assert "squash" in result.detail or "stale" in result.detail
+
+
+def test_release_gate_never_calls_merge() -> None:
+    source = Path(__file__).resolve().parents[2] / "src" / "ferova" / "review" / "release_gate.py"
+    text = source.read_text(encoding="utf-8")
+    assert "pr merge" not in text
+    assert "gh pr merge" not in text
+    assert "git push" not in text
