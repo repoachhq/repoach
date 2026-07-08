@@ -57,6 +57,15 @@ A PR that fails to reduce its open-blocking count across this many rounds
 escalates one round before the hard cap, sparing a wasted attempt.
 """
 
+PROPOSED_ESCALATION_ATTEMPTS: int = 2
+"""Number of verification attempts after which a still-proposed blocking
+finding is escalated to the operator dossier.
+
+Two attempts are allowed; the third run's :func:`assess_proposed_escalation`
+names the finding for escalation, and :func:`select_newly_escalated` fires
+the dossier exactly once at the crossing.
+"""
+
 
 pr_coder_rounds = Table(
     "pr_coder_rounds",
@@ -281,5 +290,96 @@ def build_stuck_dossier(
                 "claim": f.claim,
             }
             for f in stuck_findings
+        ],
+    }
+
+
+def assess_proposed_escalation(
+    findings: list[Finding],
+    *,
+    max_attempts: int = PROPOSED_ESCALATION_ATTEMPTS,
+) -> list[Finding]:
+    """Return blocking findings still PROPOSED whose verify_attempts >= max_attempts.
+
+    Pure function over the findings list. A finding qualifies when it is
+    blocking, still proposed, and has accrued at least ``max_attempts``
+    verification attempts (deferrals or otherwise). The assessor is the
+    read-side companion to :func:`select_newly_escalated`, which fires
+    the dossier exactly once at the crossing.
+
+    Args:
+        findings: The findings to assess.
+        max_attempts: Minimum ``verify_attempts`` count for escalation.
+
+    Returns:
+        The blocking proposed findings eligible for escalation.
+    """
+    return [
+        f
+        for f in findings
+        if f.severity is Severity.BLOCKING
+        and f.status is FindingStatus.PROPOSED
+        and f.verify_attempts >= max_attempts
+    ]
+
+
+def select_newly_escalated(
+    findings: list[Finding],
+    *,
+    max_attempts: int = PROPOSED_ESCALATION_ATTEMPTS,
+) -> list[Finding]:
+    """Return findings whose verify_attempts just crossed ``max_attempts``.
+
+    The just-crossed set: a finding with ``verify_attempts == max_attempts``
+    is included; one with ``verify_attempts == max_attempts + 1`` is not.
+    This ensures the dossier fires exactly once per finding across
+    successive runs.
+
+    Args:
+        findings: The findings to filter.
+        max_attempts: The threshold for "just crossed".
+
+    Returns:
+        The findings that crossed the threshold on this run.
+    """
+    return [
+        f
+        for f in findings
+        if f.severity is Severity.BLOCKING
+        and f.status is FindingStatus.PROPOSED
+        and f.verify_attempts == max_attempts
+    ]
+
+
+def build_proposed_escalation_dossier(
+    findings: list[Finding],
+) -> dict[str, object]:
+    """Assemble the operator escalation payload for proposed findings.
+
+    Mirrors :func:`build_stuck_dossier` but for findings frozen in
+    ``proposed`` after repeated verification deferrals. The dossier
+    carries the deferral diagnostic (verification_method +
+    verification_result) so the operator inherits a named, evidenced
+    decision instead of a silent forever-refusal.
+
+    Args:
+        findings: The blocking proposed findings to escalate.
+
+    Returns:
+        A small JSON-serialisable dict; ``kind`` discriminates it from
+        the ``stuck_escalation`` dossier the orchestrator already fires.
+    """
+    return {
+        "kind": "proposed_escalation",
+        "findings": [
+            {
+                "id": f.id,
+                "claim": f.claim,
+                "claim_type": str(f.claim_type),
+                "verify_attempts": f.verify_attempts,
+                "verification_method": f.verification_method,
+                "verification_result": f.verification_result,
+            }
+            for f in findings
         ],
     }
