@@ -426,6 +426,79 @@ class GateEvaluation:
     decision: MergeDecision
 
 
+def resolve_verified_head(
+    gh: GhCli,
+    pr_number: int,
+    head_ref: str,
+    *,
+    repo_root: Path,
+    attempts: int = 4,
+    delay_s: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[str | None, str]:
+    """Cross-check the PR API head against ``git ls-remote`` ground truth.
+
+    SP-AUTOMERGE-FRESH-HEAD (PR #50 orphaned-commit incident,
+    2026-07-06): ``gh pr view --json headRefOid`` was observed 40+
+    minutes stale, so a merge computed at that head silently orphaned
+    a newer commit already sitting on the real branch tip.  This
+    helper resolves the branch tip with
+    ``git ls-remote origin refs/heads/<head_ref>`` — the git backend's
+    own ground truth — and compares it against
+    :meth:`GhCli.pr_head_sha`, re-polling up to ``attempts`` times with
+    ``sleep(delay_s)`` between polls until the two agree.
+
+    The contract is fail-closed: a persistent mismatch, or an
+    ``ls-remote`` transport failure, returns ``None`` rather than a
+    best-guess SHA — callers must refuse to merge, not merge at a
+    head that cannot be verified.
+
+    Args:
+        gh: The GitHub client wrapper; both ``pr_head_sha`` and the
+            underlying ``_run_git`` are used.
+        pr_number: PR whose head is under verification.
+        head_ref: The PR's head branch name (``headRefName``).
+        repo_root: The checkout the caller is verifying against; kept
+            explicit in the signature even though ``gh``'s own working
+            directory drives the actual ``git`` invocation, so callers
+            state unambiguously which clone they mean.
+        attempts: Maximum number of API-vs-``ls-remote`` comparisons
+            before failing closed.
+        delay_s: Seconds passed to ``sleep`` between re-polls.
+        sleep: Injectable sleep so tests run instantly.
+
+    Returns:
+        ``(converged_sha, "")`` once the API head and the ``ls-remote``
+        tip agree.  ``(None, reason)`` fail-closed otherwise: ``reason``
+        carries the ``ls-remote`` error text on a transport failure, or
+        both 12-char SHA prefixes (``api=...``, ``ls_remote=...``) on a
+        persistent mismatch.
+    """
+    _ = repo_root
+    api_sha = ""
+    remote_sha = ""
+    for attempt in range(attempts):
+        ls_remote = gh._run_git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
+        if not ls_remote.ok or not ls_remote.stdout.strip():
+            error = (ls_remote.stderr or ls_remote.stdout).strip()
+            return None, f"ls-remote failed: {error[:200]}"
+        first_line = ls_remote.stdout.strip().splitlines()[0]
+        tokens = first_line.split()
+        remote_sha = tokens[0] if tokens else ""
+        if not remote_sha:
+            return None, f"ls-remote returned no SHA: {first_line[:200]}"
+        api_sha = gh.pr_head_sha(pr_number) or ""
+        if api_sha == remote_sha:
+            return remote_sha, ""
+        if attempt < attempts - 1:
+            sleep(delay_s)
+    return (
+        None,
+        "head verification failed after "
+        f"{attempts} attempts: api={api_sha[:12]}, ls_remote={remote_sha[:12]}",
+    )
+
+
 def decide_at_head(
     pr_number: int,
     *,
