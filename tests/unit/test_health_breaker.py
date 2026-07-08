@@ -64,3 +64,31 @@ def test_health_reports_breaker_entries() -> None:
     body3 = resp3.json()
     assert len(body3["breaker"]) == 1
     assert body3["breaker"][0]["ref"] == "kimi/y"
+
+
+def test_counter_survives_ttl_lapse_prune() -> None:
+    """The consecutive-failure count survives TTL-lapse pruning in
+    down_refs and resets only on recover or clear (spec G2).
+
+    Trip a ref with a tiny TTL, advance now past the TTL, call
+    down_refs (which prunes the lapsed trip window and reason but
+    preserves the counter), trip again — the returned count must be 2,
+    not 1.  Then recover and trip once more — the count restarts at 1.
+    """
+    breaker = get_breaker()
+    ref = _ref("groq/x")
+    now = time.monotonic()
+
+    count1 = breaker.trip(ref, now=now, ttl_s=0.01, reason="timeout")
+    assert count1 == 1
+
+    now += 0.02
+    breaker.down_refs(now)
+    assert not breaker.is_down(ref, now)
+
+    count2 = breaker.trip(ref, now=now, ttl_s=0.01, reason="timeout")
+    assert count2 == 2, f"counter should survive TTL-lapse prune, got {count2} expected 2"
+
+    breaker.recover(ref)
+    count3 = breaker.trip(ref, now=now, ttl_s=0.01, reason="timeout")
+    assert count3 == 1, f"counter should reset on recover, got {count3} expected 1"

@@ -167,13 +167,22 @@ class BreakerState:
         return until is not None and until > now
 
     def down_refs(self, now: float) -> frozenset[ModelRef]:
-        """Return the currently-down refs, pruning any whose TTL lapsed."""
+        """Return the currently-down refs, pruning any whose TTL lapsed.
+
+        Prunes the trip window (``_down_until``) and the stored reason
+        (``_down_reason``) for every lapsed ref, but deliberately
+        preserves the consecutive-failure counter (``_consecutive_failures``)
+        across TTL lapses.  Spec G2 requires the counter to survive
+        TTL expiry and reset only on a successful completion
+        (:meth:`recover`) or an explicit :meth:`clear` — otherwise a
+        permanently-dead hop that fails once per TTL window would never
+        accumulate enough strikes to trigger quarantine escalation.
+        """
         live = {ref: until for ref, until in self._down_until.items() if until > now}
         expired = self._down_until.keys() - live.keys()
         self._down_until = live
         for ref in expired:
             self._down_reason.pop(ref, None)
-            self._consecutive_failures.pop(ref, None)
         return frozenset(self._down_until)
 
     def snapshot(self, now: float) -> list[BreakerEntry]:
