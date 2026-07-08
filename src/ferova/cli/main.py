@@ -15,6 +15,7 @@ import typer
 from ..arch.cli import arch_app
 from ..core.logging import configure_logging
 from ..lint import edge_honesty
+from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
 
 app = typer.Typer(
@@ -22,6 +23,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(review_app, name="review")
+app.add_typer(release_app, name="release")
 
 
 @arch_app.command("check")
