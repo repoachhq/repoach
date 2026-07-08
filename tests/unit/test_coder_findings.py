@@ -458,6 +458,30 @@ def test_run_from_findings_materializes_ci_red(tmp_path: Path, monkeypatch) -> N
     assert bb.status is FindingStatus.RESOLVED
 
 
+def test_run_from_findings_resolves_stale_ci_finding_when_ci_turns_green(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A broken_behavior finding left OPEN from a prior round is resolved
+    when CI is already green at entry, even when the Coder has no push to make."""
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_finding(
+        db,
+        _finding(
+            ClaimType.BROKEN_BEHAVIOR,
+            status=FindingStatus.OPEN,
+            file="(ci):Test suite",
+            claim="CI check failed: Test suite",
+        ),
+    )
+    monkeypatch.setattr(coder_loop, "fetch_ci_status", lambda *a, **k: (coder_loop.CI_GREEN, []))
+    res = run_coder_fix_from_findings(1, gh=_gh_mock(), repo_root=tmp_path, db_path=db)
+    assert res.pushed is False
+    assert res.no_op_reason == "no open blocking findings to resolve"
+    bb = next(f for f in fetch_findings(db, 1) if f.claim_type is ClaimType.BROKEN_BEHAVIOR)
+    assert bb.status is FindingStatus.RESOLVED
+
+
 def _seed_one_open_blocker(db: Path) -> None:
     init_findings_schema(db)
     record_finding(db, _finding(ClaimType.DESIGN, status=FindingStatus.VERIFIED, claim="smell"))
