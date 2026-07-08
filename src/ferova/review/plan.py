@@ -29,6 +29,58 @@ PLAN_MARKER: str = "<!-- ferova-action-plan -->"
 _SPEC_ID_RE = re.compile(r"^SP-[A-Z0-9-]+$")
 _PLAN_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
+_FORM_RULES: dict[str, str] = {
+    "_non_empty_text": ("Required text fields must be non-empty (not just whitespace)."),
+    "_files_repo_relative": (
+        "Every file path must be repo-relative: no absolute paths, no '..' traversal."
+    ),
+    "_selectors_safe": ("Test selectors must not start with '-' (would parse as pytest flags)."),
+    "_require_node_ids": ("Unit-test selectors must include '::' to name the exact test function."),
+    "_code_steps_promise_unit_tests": (
+        "Every step touching non-docs files must promise at least one unit test."
+    ),
+    "_spec_id_shape": ("spec_id must match the canonical SP-[A-Z0-9-]+ form."),
+    "_contiguous_indexes": (
+        "Step indexes must be exactly 1..n in order, with no gaps or duplicates."
+    ),
+    "_src_plans_promise_integration_tests": (
+        "A plan touching src/ must promise at least one integration test."
+    ),
+    "_promised_tests_are_created_by_the_plan": (
+        "Every promised unit test must be created by its step or an earlier one."
+    ),
+    "_integration_tests_under_integration_tree": (
+        "Integration test selectors must live under tests/integration/."
+    ),
+    "_integration_promises_are_created_by_the_plan": (
+        "Every promised integration test must be created by some step in the plan."
+    ),
+}
+
+_STRICT_FORM_RULES: dict[str, str] = {}
+
+
+def render_plan_form_rules() -> str:
+    """Render the complete numbered rule catalog for Planner prompts.
+
+    Merges :data:`_FORM_RULES` and :data:`_STRICT_FORM_RULES` into a
+    single stable-ordered catalog.  Every validator on
+    :class:`PlanStep` and :class:`ActionPlan` has a one-line sentence
+    here; adding a validator without a sentence fails
+    ``test_rule_catalog_covers_every_validator``.
+
+    Returns:
+        A plain-text numbered list, one rule per line, suitable for
+        injection into the Planner's system prompt and refine turns.
+    """
+    merged: dict[str, str] = {}
+    merged.update(_FORM_RULES)
+    merged.update(_STRICT_FORM_RULES)
+    lines: list[str] = []
+    for idx, key in enumerate(sorted(merged), start=1):
+        lines.append(f"{idx}. {merged[key]}")
+    return "\n".join(lines)
+
 
 def require_repo_relative(path: str) -> None:
     """Reject absolute paths and ``..`` traversal segments.
