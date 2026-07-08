@@ -57,7 +57,28 @@ _FORM_RULES: dict[str, str] = {
     ),
 }
 
-_STRICT_FORM_RULES: dict[str, str] = {}
+_STRICT_FORM_RULES: dict[str, str] = {
+    "_step_size_cap": (
+        "Steps must touch at most 3 files and promise at most 5 unit-test "
+        "selectors (proxy for the Developer's 30-turn budget)."
+    ),
+    "_no_test_double_keywords": (
+        "Action text must not instruct stubbing, mocking, or monkeypatching "
+        "plan-touched behavior \u2014 use truthful boundary fakes for external "
+        "boundaries (gh, LLM, network) instead."
+    ),
+}
+
+PLAN_STEP_MAX_FILES: int = 3
+PLAN_STEP_MAX_UNIT_SELECTORS: int = 5
+
+_BANNED_DOUBLE_KEYWORDS: frozenset[str] = frozenset(
+    {"stub", "stubbing", "mock", "mocking", "monkeypatch"}
+)
+_BANNED_DOUBLE_RE: re.Pattern[str] = re.compile(
+    r"\b(?:" + "|".join(re.escape(word) for word in _BANNED_DOUBLE_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
 
 
 def render_plan_form_rules() -> str:
@@ -80,6 +101,62 @@ def render_plan_form_rules() -> str:
     for idx, key in enumerate(sorted(merged), start=1):
         lines.append(f"{idx}. {merged[key]}")
     return "\n".join(lines)
+
+
+def validate_plan_form_strict(plan: ActionPlan) -> list[str]:
+    """Run the strict production-time form checks on a plan.
+
+    This layer is deliberately NOT a pydantic validator: ``load_plan``
+    stays permissive so committed plans (including queued specs' plans)
+    keep loading. Enforcement happens where NEW plans are born (the
+    Planner's emission loop). The checks are:
+
+    * **step size** \u2014 a step touching more than
+      :data:`PLAN_STEP_MAX_FILES` files or promising more than
+      :data:`PLAN_STEP_MAX_UNIT_SELECTORS` unit selectors yields a
+      reason citing the cap and the Developer's 30-turn budget;
+    * **no test-double keywords** \u2014 a step whose action text
+      contains a whole-word (case-insensitive) match for any keyword
+      in :data:`_BANNED_DOUBLE_KEYWORDS` yields a reason quoting the
+      operator rule and pointing to the truthful-boundary-fake
+      vocabulary.
+
+    Args:
+        plan: A validated :class:`ActionPlan` (pydantic validation
+            has already passed; this is the second layer).
+
+    Returns:
+        A list of human-readable violation reasons. An empty list
+        means the plan is clean against the strict form layer.
+    """
+    reasons: list[str] = []
+    for step in plan.steps:
+        if len(step.files) > PLAN_STEP_MAX_FILES:
+            reasons.append(
+                f"step {step.index} ({step.title!r}) touches "
+                f"{len(step.files)} files, exceeding the "
+                f"PLAN_STEP_MAX_FILES cap of {PLAN_STEP_MAX_FILES} \u2014 "
+                "oversized steps blow the Developer's 30-turn budget"
+            )
+        if len(step.unit_tests) > PLAN_STEP_MAX_UNIT_SELECTORS:
+            reasons.append(
+                f"step {step.index} ({step.title!r}) promises "
+                f"{len(step.unit_tests)} unit-test selectors, exceeding "
+                f"the PLAN_STEP_MAX_UNIT_SELECTORS cap of "
+                f"{PLAN_STEP_MAX_UNIT_SELECTORS} \u2014 oversized steps "
+                "blow the Developer's 30-turn budget"
+            )
+        match = _BANNED_DOUBLE_RE.search(step.action)
+        if match is not None:
+            keyword = match.group(0)
+            reasons.append(
+                f"step {step.index} ({step.title!r}) action text "
+                f"instructs {keyword!r} \u2014 the operator rule forbids "
+                "stubbing/monkeypatching plan-touched behavior; use a "
+                "truthful boundary fake for external boundaries (gh, "
+                "LLM, network) instead"
+            )
+    return reasons
 
 
 def require_repo_relative(path: str) -> None:
