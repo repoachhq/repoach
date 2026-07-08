@@ -34,6 +34,14 @@ Escalate persistently-dead chain hops to a long quarantine TTL so dispatch stops
 - **Done when**: pytest tests/unit/test_health_breaker.py::test_health_reports_breaker_entries tests/integration/test_proxy_dead_hop_quarantine.py::test_dead_hop_quarantined_and_reported_on_health passes
 - **Unit tests**: `tests/unit/test_health_breaker.py::test_health_reports_breaker_entries`
 
+## Step 5 — Counter must survive TTL-lapse pruning in down_refs
+
+- **Files**: `src/ferova/llm_proxy/routing/breaker.py`, `tests/unit/test_health_breaker.py`
+- **Action**: In src/ferova/llm_proxy/routing/breaker.py, down_refs currently pops the ref's entry from _consecutive_failures when a lapsed trip is pruned. That violates spec G2: the consecutive-failure count must SURVIVE TTL lapse and reset only on recover (a successful completion) or clear. Remove the _consecutive_failures.pop from the down_refs pruning loop (keep pruning _down_until and _down_reason exactly as is) and state the G2 rationale in the down_refs docstring. Add the unit test tests/unit/test_health_breaker.py::test_counter_survives_ttl_lapse_prune: trip a ref with a tiny ttl, advance now past the ttl, call down_refs (which prunes the lapsed trip), trip again and assert the returned count is 2, not 1; then recover and trip again asserting the count restarts at 1. This is the fix for the failure the integration test exposes end-to-end.
+- **Commit**: `fix(proxy): consecutive-failure count survives TTL-lapse pruning`
+- **Done when**: pytest tests/unit/test_health_breaker.py::test_counter_survives_ttl_lapse_prune tests/integration/test_proxy_dead_hop_quarantine.py::test_dead_hop_quarantined_and_reported_on_health passes
+- **Unit tests**: `tests/unit/test_health_breaker.py::test_counter_survives_ttl_lapse_prune`
+
 ## Integration tests
 
 - `tests/integration/test_proxy_dead_hop_quarantine.py::test_dead_hop_quarantined_and_reported_on_health`
@@ -103,6 +111,20 @@ Escalate persistently-dead chain hops to a long quarantine TTL so dispatch stops
       "done_when": "pytest tests/unit/test_health_breaker.py::test_health_reports_breaker_entries tests/integration/test_proxy_dead_hop_quarantine.py::test_dead_hop_quarantined_and_reported_on_health passes",
       "unit_tests": [
         "tests/unit/test_health_breaker.py::test_health_reports_breaker_entries"
+      ]
+    }
+    ,{
+      "index": 5,
+      "title": "Counter must survive TTL-lapse pruning in down_refs",
+      "files": [
+        "src/ferova/llm_proxy/routing/breaker.py",
+        "tests/unit/test_health_breaker.py"
+      ],
+      "action": "In src/ferova/llm_proxy/routing/breaker.py, down_refs currently pops the ref's entry from _consecutive_failures when a lapsed trip is pruned. That violates spec G2: the consecutive-failure count must SURVIVE TTL lapse and reset only on recover (a successful completion) or clear. Remove the _consecutive_failures.pop from the down_refs pruning loop (keep pruning _down_until and _down_reason exactly as is) and state the G2 rationale in the down_refs docstring. Add the unit test tests/unit/test_health_breaker.py::test_counter_survives_ttl_lapse_prune: trip a ref with a tiny ttl, advance now past the ttl, call down_refs (which prunes the lapsed trip), trip again and assert the returned count is 2, not 1; then recover and trip again asserting the count restarts at 1. This is the fix for the failure the integration test exposes end-to-end.",
+      "commit_message": "fix(proxy): consecutive-failure count survives TTL-lapse pruning",
+      "done_when": "pytest tests/unit/test_health_breaker.py::test_counter_survives_ttl_lapse_prune tests/integration/test_proxy_dead_hop_quarantine.py::test_dead_hop_quarantined_and_reported_on_health passes",
+      "unit_tests": [
+        "tests/unit/test_health_breaker.py::test_counter_survives_ttl_lapse_prune"
       ]
     }
   ],
