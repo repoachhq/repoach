@@ -123,6 +123,7 @@ class Finding(BaseModel):
     verification_method: str = ""
     verification_result: str = ""
     checked_at_sha: str = ""
+    verify_attempts: int = 0
     id: int | None = None
 
 
@@ -145,6 +146,7 @@ pr_findings = Table(
     Column("verification_method", String, nullable=False),
     Column("verification_result", String, nullable=False),
     Column("checked_at_sha", String, nullable=False),
+    Column("verify_attempts", Integer, nullable=False, default=0),
 )
 
 
@@ -166,9 +168,45 @@ def _engine_for(db_path: Path) -> Engine:
 
 
 def init_findings_schema(db_path: Path) -> None:
-    """Create the findings + review-integrity tables if absent (idempotent)."""
+    """Create the findings + review-integrity tables if absent (idempotent).
+
+    Also self-heals existing databases by ALTER-ing columns introduced
+    post-creation (SQLite has no DDL-versioning).
+    """
     engine = _engine_for(db_path)
     _metadata.create_all(engine, checkfirst=True)
+    _migrate_missing_findings_columns(engine)
+
+
+def _migrate_missing_findings_columns(engine: Engine) -> None:
+    """Add columns introduced post-creation to older findings databases.
+
+    Each entry is a single ``ALTER TABLE`` documented with the spec that
+    introduced it.  Idempotent -- checks ``has_column`` first.
+
+    Args:
+        engine: SQLAlchemy engine bound to the findings database.
+    """
+    from sqlalchemy import inspect, text
+
+    migrations = (
+        (
+            "pr_findings",
+            "verify_attempts",
+            "INTEGER NOT NULL DEFAULT 0",
+            "SP-PROPOSED-ESCALATION 1/5",
+        ),
+    )
+
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, column, ddl, _release in migrations:
+            if not inspector.has_table(table):
+                continue
+            existing = {col["name"] for col in inspector.get_columns(table)}
+            if column in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 def record_review_integrity(
@@ -250,6 +288,7 @@ def record_finding(db_path: Path, finding: Finding) -> int:
         verification_method=finding.verification_method,
         verification_result=finding.verification_result,
         checked_at_sha=finding.checked_at_sha,
+        verify_attempts=finding.verify_attempts,
     )
     with engine.connect() as conn:
         result = conn.execute(stmt)
@@ -311,6 +350,59 @@ def update_finding_status(
         return True
 
 
+def record_verification_attempt(
+    db_path: Path,
+    finding_id: int,
+    *,
+    method: str,
+    result: str,
+    checked_at_sha: str,
+) -> int:
+    """Record a verification attempt on a finding without changing its status.
+
+    Persists the verifier's diagnostic (method + result + checked_at_sha),
+    increments ``verify_attempts`` by one, and returns the new attempt count.
+    The lifecycle status is NEVER touched -- a deferred verification stays
+    ``proposed`` so the judge fallback (SP-PROPOSED-ESCALATION 3/5) can pick
+    it up in the same run.
+
+    Args:
+        db_path: Path to the SQLite database file.
+        finding_id: Surrogate key of the row to update.
+        method: How the verifier checked this finding (e.g. ``"symbol_search"``).
+        result: What the verifier concluded (e.g. ``"no checkable symbol"``).
+        checked_at_sha: Commit SHA when the finding was last verified.
+
+    Returns:
+        The new ``verify_attempts`` count after the increment. Returns ``0``
+        when the row does not exist.
+    """
+    init_findings_schema(db_path)
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        row = (
+            conn.execute(
+                select(pr_findings.c.verify_attempts).where(pr_findings.c.id == finding_id)
+            )
+            .mappings()
+            .fetchone()
+        )
+        if row is None:
+            return 0
+        new_count = int(row["verify_attempts"]) + 1
+        conn.execute(
+            update(pr_findings)
+            .where(pr_findings.c.id == finding_id)
+            .values(
+                verification_method=method,
+                verification_result=result,
+                checked_at_sha=checked_at_sha,
+                verify_attempts=new_count,
+            )
+        )
+    return new_count
+
+
 def _rows_to_findings(rows: list) -> list[Finding]:
     """Materialise pr_findings mapping rows into :class:`Finding` models."""
     return [
@@ -331,6 +423,7 @@ def _rows_to_findings(rows: list) -> list[Finding]:
             verification_method=row["verification_method"],
             verification_result=row["verification_result"],
             checked_at_sha=row["checked_at_sha"],
+            verify_attempts=int(row["verify_attempts"]),
         )
         for row in rows
     ]
