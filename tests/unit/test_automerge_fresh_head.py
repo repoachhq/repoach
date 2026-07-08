@@ -229,6 +229,37 @@ def test_auto_merge_refuses_on_stale_head_and_does_not_merge(tmp_path: Path) -> 
 
 
 # ---------------------------------------------------------------------------
+# scripts/safe_merge.sh guard (step 4/4 -- SP-AUTOMERGE-FRESH-HEAD)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_merge_script_contains_fresh_head_guard() -> None:
+    """``scripts/safe_merge.sh`` refuses a stale head right before the squash.
+
+    Covers G6/AC7: the shell wrapper must compare the API ``headRefOid``
+    against ``git ls-remote`` between the pure-gate step and the actual
+    ``gh pr merge`` invocation, and it must NOT offer the emergency
+    override prompt on this path -- stale data is not overridable, unlike
+    the gate refusal a few lines earlier which does offer one.
+    """
+    script_path = Path("scripts/safe_merge.sh")
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "headRefOid" in content
+    assert "ls-remote" in content
+
+    gate_index = content.index('ferova review gate "$pr_number"')
+    guard_index = content.index("remote_head=$(git ls-remote origin")
+    merge_index = content.index('gh pr merge "$pr_number" --squash')
+
+    assert gate_index < guard_index < merge_index
+
+    override_marker = "Type 'merge' to proceed"
+    assert override_marker in content
+    assert override_marker not in content[guard_index:merge_index]
+
+
+# ---------------------------------------------------------------------------
 # evaluate_merge_gate wiring (step 3/4 -- SP-AUTOMERGE-FRESH-HEAD)
 # ---------------------------------------------------------------------------
 
