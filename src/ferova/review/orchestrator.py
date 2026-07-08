@@ -528,6 +528,16 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
+        try:
+            self._fire_proposed_escalation_dossier(pr_number)
+        except Exception as exc:
+            _log.warning(
+                "review_team.proposed_escalation_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+
         if spec_id is not None:
             try:
                 from .plan import load_plan
@@ -827,6 +837,65 @@ class ReviewTeamOrchestrator:
                 "review_team.review_fallback_failed",
                 role=outcome.role.value,
                 stderr=fb.stderr[:200],
+            )
+
+    def _fire_proposed_escalation_dossier(self, pr_number: int) -> None:
+        """Fire a proposed-escalation dossier for findings frozen in proposed.
+
+        After the verify+judge passes, fetches the PR's findings and
+        computes :func:`stuck.assess_proposed_escalation` and
+        :func:`stuck.select_newly_escalated`. When non-empty, builds the
+        dossier and fires it through the same settings-guarded routine
+        seam as :meth:`_fire_routine` — absent routine secrets means
+        silent no-op, never an error.
+
+        Args:
+            pr_number: The PR whose proposed findings to assess.
+        """
+        from .findings import fetch_findings
+        from .stuck import (
+            assess_proposed_escalation,
+            build_proposed_escalation_dossier,
+            select_newly_escalated,
+        )
+
+        findings = fetch_findings(self._db_path, pr_number)
+        eligible = assess_proposed_escalation(findings)
+        if not eligible:
+            return
+        newly = select_newly_escalated(eligible)
+        if not newly:
+            return
+
+        settings = get_settings()
+        routine_id = settings.claude_code_routine_id
+        token_secret = settings.claude_code_routine_token
+        if not routine_id or token_secret is None:
+            return
+        token = token_secret.get_secret_value()
+        if not token:
+            return
+
+        dossier = build_proposed_escalation_dossier(newly)
+        result = fire_review_routine(
+            routine_id=routine_id,
+            token=token,
+            payload=dossier,
+        )
+        if result.ok:
+            _log.info(
+                "review_team.proposed_escalation_fired",
+                pr_number=pr_number,
+                routine_id=routine_id,
+                n_findings=len(newly),
+            )
+        else:
+            _log.warning(
+                "review_team.proposed_escalation_fire_failed",
+                pr_number=pr_number,
+                routine_id=routine_id,
+                status_code=result.status_code,
+                error=(result.error or "")[:200],
             )
 
     def _fire_routine(self, team: TeamOutcome) -> None:
