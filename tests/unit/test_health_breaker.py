@@ -14,7 +14,11 @@ from ferova.llm_proxy.api.model_router import ModelRouter, ResolvedModel
 from ferova.llm_proxy.api.services import ClaudeProxyService
 from ferova.llm_proxy.config.settings import Settings
 from ferova.llm_proxy.routing import get_breaker
-from ferova.llm_proxy.routing.breaker import BreakerState, ttl_for_reason
+from ferova.llm_proxy.routing.breaker import (
+    BreakerState,
+    escalated_ttl,
+    ttl_for_reason,
+)
 from ferova.llm_proxy.routing.refs import ModelRef
 
 
@@ -142,3 +146,97 @@ def test_trip_breaker_transient_timeout_recovers_after_transient_ttl(
     base = time.monotonic()
     service._trip_breaker(_candidate(), "timeout")
     assert not get_breaker().is_down(_ref("groq/x"), now=base + 120.0 + 5.0)
+
+
+@pytest.mark.parametrize(
+    "reason,expected",
+    [
+        ("auth_failed", 21_600.0),
+        ("provider_401", 21_600.0),
+        ("provider_402", 21_600.0),
+        ("provider_403", 21_600.0),
+        ("provider_404", 21_600.0),
+        ("provider_410", 604_800.0),
+        ("timeout", 120.0),
+        ("empty_completion", 120.0),
+        ("rate_limited", 120.0),
+        ("unknown", 120.0),
+    ],
+)
+def test_ttl_for_reason_quarantine_class(reason: str, expected: float) -> None:
+    """Quarantine-class reasons get quarantine TTL; terminal beats quarantine;
+    transient/unknown get default."""
+    assert (
+        ttl_for_reason(
+            reason,
+            default_ttl_s=120.0,
+            terminal_ttl_s=604_800.0,
+            quarantine_ttl_s=21_600.0,
+        )
+        == expected
+    )
+
+
+def test_consecutive_failures_escalate_to_quarantine() -> None:
+    """Three trips with reason empty_completion escalate to quarantine TTL;
+    the counter survives TTL lapse between trips."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    count1 = breaker.trip(ref, now=100.0, ttl_s=120.0, reason="empty_completion")
+    assert count1 == 1
+    assert breaker.is_down(ref, now=150.0)
+    assert not breaker.is_down(ref, now=230.0)
+
+    count2 = breaker.trip(ref, now=300.0, ttl_s=120.0, reason="empty_completion")
+    assert count2 == 2
+    assert breaker.is_down(ref, now=350.0)
+    assert not breaker.is_down(ref, now=430.0)
+
+    count3 = breaker.trip(ref, now=500.0, ttl_s=120.0, reason="empty_completion")
+    assert count3 == 3
+    escalated = escalated_ttl(count3, base_ttl_s=120.0, quarantine_ttl_s=21_600.0, threshold=3)
+    assert escalated == 21_600.0
+
+    breaker.trip(ref, now=500.0, ttl_s=escalated, reason="empty_completion")
+    assert breaker.is_down(ref, now=500.0 + 120.0 + 1.0)
+    assert not breaker.is_down(ref, now=500.0 + 21_600.0 + 1.0)
+
+
+def test_recover_resets_counter() -> None:
+    """Trip, trip, recover, trip — count restarts at 1."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.trip(ref, now=100.0, ttl_s=120.0, reason="timeout")
+    breaker.trip(ref, now=200.0, ttl_s=120.0, reason="timeout")
+    breaker.recover(ref)
+    count = breaker.trip(ref, now=300.0, ttl_s=120.0, reason="timeout")
+    assert count == 1
+
+
+def test_snapshot_lists_down_refs() -> None:
+    """Two tripped refs with distinct reasons — snapshot lists both with
+    reason, remaining TTL, and count; a recovered ref disappears."""
+    breaker = BreakerState()
+    ref_a = _ref("groq/x")
+    ref_b = _ref("kimi/y")
+
+    breaker.trip(ref_a, now=100.0, ttl_s=60.0, reason="timeout")
+    breaker.trip(ref_b, now=100.0, ttl_s=120.0, reason="provider_402")
+
+    snap = breaker.snapshot(now=130.0)
+    assert len(snap) == 2
+
+    by_ref = {str(e.ref): e for e in snap}
+    assert by_ref["groq/x"].reason == "timeout"
+    assert by_ref["groq/x"].consecutive_failures == 1
+    assert 25.0 < by_ref["groq/x"].ttl_remaining_s < 35.0
+    assert by_ref["kimi/y"].reason == "provider_402"
+    assert by_ref["kimi/y"].consecutive_failures == 1
+    assert 85.0 < by_ref["kimi/y"].ttl_remaining_s < 95.0
+
+    breaker.recover(ref_a)
+    snap2 = breaker.snapshot(now=130.0)
+    assert len(snap2) == 1
+    assert str(snap2[0].ref) == "kimi/y"
