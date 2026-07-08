@@ -7,8 +7,10 @@ out of the resolved chain, and the service wiring that trips it.
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
+from loguru import logger as loguru_logger
 from pydantic import ValidationError
 
 from ferova.llm_proxy.api.model_router import ModelRouter, ResolvedModel
@@ -292,3 +294,79 @@ def test_quarantine_settings_defaults_and_aliases(
     monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "0")
     with pytest.raises(ValidationError):
         _build_settings()
+
+
+def _capture_loguru() -> tuple[list[Any], int]:
+    """Install a loguru sink that buffers records; return (records, sink_id)."""
+    records: list[Any] = []
+    sink_id = loguru_logger.add(
+        lambda msg: records.append(msg.record),
+        format="{message}",
+        level="DEBUG",
+    )
+    return records, sink_id
+
+
+def test_trip_breaker_composes_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_trip_breaker composes the quarantine escalation policy.
+
+    Three empty_completion trips on the same ref escalate the third to
+    the quarantine TTL and emit breaker_quarantined exactly once.
+    A provider_402 failure gets the quarantine TTL on the first trip.
+    """
+    records, sink_id = _capture_loguru()
+    try:
+        monkeypatch.setenv("FEROVA_BREAKER_ENABLED", "true")
+        monkeypatch.setenv("FEROVA_BREAKER_TTL_S", "120")
+        monkeypatch.setenv("FEROVA_BREAKER_TTL_QUARANTINE_S", "3600")
+        monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "3")
+        settings = Settings(_env_file=None)
+        service = ClaudeProxyService(
+            settings=settings,
+            provider_getter=lambda _provider_id: None,
+            token_counter=lambda *_args, **_kwargs: 0,
+        )
+        candidate = _candidate()
+        ref = _ref("groq/x")
+
+        base = time.monotonic()
+
+        service._trip_breaker(candidate, "empty_completion")
+        assert get_breaker().is_down(ref, now=base + 60.0)
+        assert not get_breaker().is_down(ref, now=base + 130.0)
+
+        base2 = time.monotonic()
+        service._trip_breaker(candidate, "empty_completion")
+        assert get_breaker().is_down(ref, now=base2 + 60.0)
+        assert not get_breaker().is_down(ref, now=base2 + 130.0)
+
+        base3 = time.monotonic()
+        service._trip_breaker(candidate, "empty_completion")
+        assert get_breaker().is_down(ref, now=base3 + 130.0)
+        assert not get_breaker().is_down(ref, now=base3 + 3610.0)
+
+        quarantined = [r for r in records if r["message"] == "breaker_quarantined"]
+        assert len(quarantined) == 1
+        assert quarantined[0]["extra"]["ref"] == "groq/x"
+        assert quarantined[0]["extra"]["reason"] == "empty_completion"
+        assert quarantined[0]["extra"]["count"] == 3
+        assert quarantined[0]["extra"]["ttl_s"] == 3600.0
+
+        get_breaker().clear()
+        records.clear()
+
+        base4 = time.monotonic()
+        service._trip_breaker(candidate, "provider_402")
+        assert get_breaker().is_down(ref, now=base4 + 130.0)
+        assert not get_breaker().is_down(ref, now=base4 + 3610.0)
+
+        quarantined2 = [r for r in records if r["message"] == "breaker_quarantined"]
+        assert len(quarantined2) == 1
+        assert quarantined2[0]["extra"]["ref"] == "groq/x"
+        assert quarantined2[0]["extra"]["reason"] == "provider_402"
+        assert quarantined2[0]["extra"]["count"] == 1
+        assert quarantined2[0]["extra"]["ttl_s"] == 3600.0
+    finally:
+        loguru_logger.remove(sink_id)
