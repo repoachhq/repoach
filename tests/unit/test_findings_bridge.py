@@ -37,6 +37,42 @@ def _make_outcome(
     )
 
 
+def test_content_cues_override_lens_default() -> None:
+    security_comment = ReviewComment(
+        file="src/foo.py",
+        line=1,
+        severity="blocker",
+        body="This looks like an auth bypass vulnerability, not a test issue.",
+    )
+    finding = comment_to_finding(
+        security_comment, role=BotRole.TESTER, pr_number=1, head_sha="sha", round_n=1
+    )
+    assert finding.claim_type == ClaimType.SECURITY
+
+    test_comment = ReviewComment(
+        file="src/bar.py",
+        line=2,
+        severity="major",
+        body="There is missing test coverage for this branch.",
+    )
+    finding = comment_to_finding(
+        test_comment, role=BotRole.SENTINEL, pr_number=1, head_sha="sha", round_n=1
+    )
+    assert finding.claim_type == ClaimType.MISSING_TEST
+
+
+def test_no_cue_keeps_lens_default() -> None:
+    comment = ReviewComment(
+        file="src/baz.py",
+        line=3,
+        severity="nit",
+        body="This could be tidied up a little.",
+    )
+    for role, expected in LENS_DEFAULT_CLAIM_TYPE.items():
+        finding = comment_to_finding(comment, role=role, pr_number=1, head_sha="sha", round_n=1)
+        assert finding.claim_type == expected
+
+
 def test_lens_default_claim_types() -> None:
     assert LENS_DEFAULT_CLAIM_TYPE[BotRole.ARCHITECT] == ClaimType.DESIGN
     assert LENS_DEFAULT_CLAIM_TYPE[BotRole.SENTINEL] == ClaimType.SECURITY

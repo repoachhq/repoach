@@ -24,6 +24,7 @@ from ferova.llm_proxy.providers.exceptions import (
     RateLimitError,
 )
 from ferova.llm_proxy.routing import ModelRef, get_breaker, ttl_for_reason
+from ferova.llm_proxy.routing.breaker import escalated_ttl
 
 from ._failover import PeekResult, peek_for_content
 from .model_router import ModelRouter, ResolvedModel
@@ -175,24 +176,49 @@ class ClaudeProxyService:
     def _trip_breaker(self, candidate: ResolvedModel, reason: str) -> None:
         """Mark a failed candidate down so the next request skips it.
 
-        Gated by ``breaker_enabled``. The cool-down depends on the
-        failover ``reason``: a permanent death (EOL ``410``) trips for
-        ``breaker_ttl_terminal_s``, a transient flap for ``breaker_ttl_s``
-        — see :func:`ferova.llm_proxy.routing.breaker.ttl_for_reason`.
+        Gated by ``breaker_enabled``.  Composes the quarantine escalation
+        policy (SP-CHAIN-DEAD-HOP-QUARANTINE):
+
+        1. Compute a reason-aware base TTL via
+           :func:`ferova.llm_proxy.routing.breaker.ttl_for_reason`
+           (terminal beats quarantine beats default).
+        2. Peek at the ref's current consecutive-failure count, then
+           apply :func:`ferova.llm_proxy.routing.breaker.escalated_ttl`
+           so the Nth consecutive failure escalates to the quarantine
+           TTL regardless of the original reason.
+        3. Trip once at the effective TTL (no double-increment).
+        4. Emit a structured ``breaker_quarantined`` log event exactly
+           when the applied TTL is the quarantine one.
+
         Closes the health loop — see :mod:`ferova.llm_proxy.routing.breaker`.
         """
         if not self._settings.breaker_enabled:
             return
-        ttl_s = ttl_for_reason(
+        ref = ModelRef.parse(candidate.provider_model_ref)
+        breaker = get_breaker()
+        reason_ttl = ttl_for_reason(
             reason,
             default_ttl_s=self._settings.breaker_ttl_s,
             terminal_ttl_s=self._settings.breaker_ttl_terminal_s,
+            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
         )
-        get_breaker().trip(
-            ModelRef.parse(candidate.provider_model_ref),
-            now=time.monotonic(),
-            ttl_s=ttl_s,
+        current_count = breaker._consecutive_failures.get(ref, 0)
+        would_be_count = current_count + 1
+        effective_ttl = escalated_ttl(
+            would_be_count,
+            base_ttl_s=reason_ttl,
+            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+            threshold=self._settings.breaker_quarantine_threshold,
         )
+        breaker.trip(ref, now=time.monotonic(), ttl_s=effective_ttl, reason=reason)
+        if effective_ttl == self._settings.breaker_ttl_quarantine_s:
+            logger.warning(
+                "breaker_quarantined",
+                ref=str(ref),
+                reason=reason,
+                count=would_be_count,
+                ttl_s=effective_ttl,
+            )
 
     async def _stream_with_failover(
         self,

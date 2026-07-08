@@ -29,7 +29,7 @@ _log = get_logger(__name__)
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
 _PERSONA = "refuter_0.1.0.md"
 
-JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY})
+JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
 """Claim types the mechanical verifiers defer to the refuter."""
 
 _MAX_JUDGED = 10
@@ -142,7 +142,11 @@ def judge_findings_for_pr(
     """
     counts = {"verified": 0, "refuted": 0, "deferred": 0}
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
-    judged_targets = [f for f in proposed if f.claim_type in JUDGED_CLAIM_TYPES]
+    primary_targets = [f for f in proposed if f.claim_type in JUDGED_CLAIM_TYPES]
+    fallback_targets = [
+        f for f in proposed if f.claim_type not in JUDGED_CLAIM_TYPES and f.verify_attempts >= 1
+    ]
+    judged_targets = primary_targets + fallback_targets
     judge: Judge | None = None
     for finding in judged_targets[:_MAX_JUDGED]:
         if judge is None:

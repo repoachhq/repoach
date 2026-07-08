@@ -35,7 +35,7 @@ def _step(**overrides) -> PlanStep:
         "action": "Create the module with the documented API.",
         "commit_message": "feat(demo): add module",
         "done_when": "pytest tests/unit/test_demo.py is green",
-        "unit_tests": ["tests/unit/test_demo.py"],
+        "unit_tests": ["tests/unit/test_demo.py::test_new_thing"],
     }
     payload.update(overrides)
     return PlanStep(**payload)
@@ -57,7 +57,7 @@ class TestPlanStepValidation:
     def test_fully_valid_step_accepted(self) -> None:
         step = _step()
         assert step.index == 1
-        assert step.unit_tests == ["tests/unit/test_demo.py"]
+        assert step.unit_tests == ["tests/unit/test_demo.py::test_new_thing"]
 
     def test_absolute_path_rejected(self) -> None:
         with pytest.raises(ValidationError, match="absolute"):
@@ -95,6 +95,14 @@ class TestPlanStepValidation:
     def test_blank_required_text_rejected(self, field: str) -> None:
         with pytest.raises(ValidationError, match="non-empty"):
             _step(**{field: "   "})
+
+    def test_bare_file_unit_promise_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="promise the exact test function"):
+            _step(unit_tests=["tests/unit/test_demo.py"])
+
+    def test_node_id_unit_promise_is_accepted(self) -> None:
+        step = _step(unit_tests=["tests/unit/test_demo.py::test_new_thing"])
+        assert step.unit_tests == ["tests/unit/test_demo.py::test_new_thing"]
 
 
 class TestActionPlanValidation:
@@ -136,12 +144,12 @@ class TestActionPlanValidation:
         code_step = _step(
             index=1,
             files=["src/ferova/feature.py"],
-            unit_tests=["tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         test_step = _step(
             index=2,
             files=["tests/unit/test_feature.py"],
-            unit_tests=["tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         with pytest.raises(ValidationError, match="no step up to 1 creates"):
             _plan(steps=[code_step, test_step])
@@ -150,7 +158,7 @@ class TestActionPlanValidation:
         step = _step(
             index=1,
             files=["src/ferova/feature.py"],
-            unit_tests=["tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         with pytest.raises(ValidationError, match="no step up to 1 creates"):
             _plan(steps=[step])
@@ -195,7 +203,7 @@ class TestActionPlanValidation:
         step = _step(
             index=1,
             files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
-            unit_tests=["tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         with pytest.raises(ValidationError) as excinfo:
             _plan(steps=[step], integration_tests=["tests/integration/test_feature_e2e.py"])
@@ -207,7 +215,7 @@ class TestActionPlanValidation:
         first = _step(
             index=1,
             files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
-            unit_tests=["tests/unit/test_feature.py"],
+            unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         second = _step(
             index=2,
@@ -301,3 +309,31 @@ class TestLoadPlan:
     def test_load_plan_missing_file_raises(self, tmp_path) -> None:
         with pytest.raises(FileNotFoundError, match="SP-ABSENT"):
             load_plan("SP-ABSENT", root=tmp_path)
+
+
+class TestNodeIdAndIntegrationTreeLints:
+    def test_unit_path_integration_promise_is_rejected(self) -> None:
+        step = _step(
+            files=[
+                "src/ferova/demo.py",
+                "tests/unit/test_demo.py",
+            ],
+            unit_tests=["tests/unit/test_demo.py::test_new_thing"],
+        )
+        with pytest.raises(ValidationError, match=r"tests/unit/test_demo\.py"):
+            _plan(steps=[step], integration_tests=["tests/unit/test_demo.py"])
+
+    def test_integration_tree_promise_is_accepted(self) -> None:
+        step = _step(
+            files=[
+                "src/ferova/demo.py",
+                "tests/unit/test_demo.py",
+                "tests/integration/test_x.py",
+            ],
+            unit_tests=["tests/unit/test_demo.py::test_new_thing"],
+        )
+        plan = _plan(
+            steps=[step],
+            integration_tests=["tests/integration/test_x.py::test_e2e"],
+        )
+        assert plan.integration_tests == ["tests/integration/test_x.py::test_e2e"]

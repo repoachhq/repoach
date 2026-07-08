@@ -88,6 +88,7 @@ class MergeFacts(BaseModel):
     review_complete: bool
     review_integrity_known: bool
     review_integrity_any: bool = False
+    blocking_unverified: list[str] = []
 
 
 class MergeDecision(BaseModel):
@@ -134,6 +135,11 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
         reasons.append(f"{facts.open_blocking_findings} open blocking finding(s) at head")
     if facts.spec_coverage_known and not facts.spec_covered:
         reasons.append("spec acceptance selectors not all present")
+    if facts.blocking_unverified:
+        reasons.append(
+            f"{len(facts.blocking_unverified)} unverified blocking finding(s): "
+            f"{'; '.join(facts.blocking_unverified)}"
+        )
     return MergeDecision(merge=not reasons, reasons=reasons)
 
 
@@ -194,8 +200,19 @@ def gather_merge_facts(
     """
     init_findings_schema(db_path)
     open_blocking = 0
+    blocking_unverified: list[str] = []
     for finding in fetch_findings(db_path, pr_number):
         if finding.severity is not Severity.BLOCKING or finding.status in _SETTLED:
+            continue
+        if finding.claim_type not in _MECHANICAL_TYPES and finding.claim_type not in _JUDGED_TYPES:
+            blocking_unverified.append(
+                f"finding {finding.id}: {finding.claim_type.value} has no verifier"
+            )
+            continue
+        if finding.status is FindingStatus.PROPOSED:
+            blocking_unverified.append(
+                f"finding {finding.id}: {finding.claim_type.value} is PROPOSED at head"
+            )
             continue
         if finding.claim_type in _MECHANICAL_TYPES:
             status, _, _ = verify_finding(finding, repo_root=repo_root)
@@ -211,6 +228,7 @@ def gather_merge_facts(
         head_sha=head_sha,
         ci_green=ci_green,
         open_blocking=open_blocking,
+        blocking_unverified=blocking_unverified,
     )
 
 
@@ -280,6 +298,7 @@ def _assemble_facts(
     head_sha: str,
     ci_green: bool,
     open_blocking: int,
+    blocking_unverified: list[str] | None = None,
 ) -> MergeFacts:
     """Fold the spec-coverage and review-integrity records into facts.
 
@@ -303,4 +322,5 @@ def _assemble_facts(
         review_complete=review_complete,
         review_integrity_known=bool(fresh),
         review_integrity_any=bool(integrity),
+        blocking_unverified=blocking_unverified or [],
     )

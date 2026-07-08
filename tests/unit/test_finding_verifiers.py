@@ -153,3 +153,33 @@ def test_verify_findings_for_pr_round_trip(tmp_path: Path) -> None:
     assert len(refuted) == 1
     assert refuted[0].checked_at_sha == "dead123"
     assert len(fetch_findings(db, 1, status=FindingStatus.PROPOSED)) == 1
+
+
+def test_deferred_verification_persists_diagnostic(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    (tmp_path / "tests").mkdir()
+    record_finding(
+        db,
+        _finding(
+            ClaimType.MISSING_TEST,
+            claim="tests are weak here",
+            file="src/widget.py",
+        ),
+    )
+
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="head123")
+    assert counts == {"verified": 0, "refuted": 0, "deferred": 1}
+
+    proposed = fetch_findings(db, 1, status=FindingStatus.PROPOSED)
+    assert len(proposed) == 1
+    assert proposed[0].verification_method == "symbol_search"
+    assert proposed[0].verification_result == "no checkable symbol"
+    assert proposed[0].verify_attempts == 1
+
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="head456")
+    assert counts == {"verified": 0, "refuted": 0, "deferred": 1}
+
+    proposed = fetch_findings(db, 1, status=FindingStatus.PROPOSED)
+    assert len(proposed) == 1
+    assert proposed[0].verify_attempts == 2

@@ -15,6 +15,7 @@ nothing is written, no partial object escapes.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,7 @@ from .planner_cc import run_cc_exploration
 from .planner_tools import make_planner_tools
 from .reviewer import BotRole
 from .spec import load_spec
+from .spec_gate import selector_present
 
 _log = get_logger(__name__)
 
@@ -35,7 +37,27 @@ _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
 
 _SPEC_HARD_CAP_CHARS: int = 12_000
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
-_PLAN_PARSE_ATTEMPTS: int = 3
+_DEFAULT_PARSE_ATTEMPTS: int = 5
+_PARSE_ATTEMPTS_ENV: str = "FEROVA_PLANNER_PARSE_ATTEMPTS"
+
+
+def _parse_attempts() -> int:
+    """Read the per-session parse-attempt budget from the environment.
+
+    ``FEROVA_PLANNER_PARSE_ATTEMPTS`` (default 5) governs how many
+    times a session tries to get a valid plan out of the model: one
+    initial attempt plus N-1 refinements. A value below 1 is clamped
+    to 1 (initial attempt only, no refinements). Read once per
+    :class:`Planner` instance, i.e. once per planning session.
+    """
+    raw = os.environ.get(_PARSE_ATTEMPTS_ENV, "").strip()
+    if not raw:
+        return _DEFAULT_PARSE_ATTEMPTS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_PARSE_ATTEMPTS
+    return max(1, value)
 
 
 def _parse_and_validate(text: str, spec_id: str) -> tuple[ActionPlan | None, str]:
@@ -57,23 +79,92 @@ def _parse_and_validate(text: str, spec_id: str) -> tuple[ActionPlan | None, str
     return plan, ""
 
 
-def _refine_prompt(previous_text: str, error: str) -> str:
+def _check_promised_selectors(plan: ActionPlan, repo_root: Path) -> str | None:
+    """Return None when every promised selector is valid, else a directive.
+
+    A selector is valid when:
+    - its file does not exist at head (exempt, the file is the deliverable), or
+    - it satisfies :func:`selector_present`, or
+    - its node id appears verbatim in the promising step's action text.
+
+    Args:
+        plan: The validated plan whose selectors to check.
+        repo_root: Repository root the selectors resolve against.
+
+    Returns:
+        ``None`` when all selectors are valid; otherwise a directive
+        message listing each offending selector and the two remedies.
+    """
+    offenders: list[str] = []
+    for step in plan.steps:
+        for selector in step.unit_tests:
+            file_part, _, node = selector.partition("::")
+            target = repo_root / file_part
+            if not target.is_file():
+                continue
+            if selector_present(repo_root, selector):
+                continue
+            if node and node in step.action:
+                continue
+            offenders.append(selector)
+    for selector in plan.integration_tests:
+        file_part, _, node = selector.partition("::")
+        target = repo_root / file_part
+        if not target.is_file():
+            continue
+        if selector_present(repo_root, selector):
+            continue
+        # Integration tests are not tied to a single step's action,
+        # so the "declared creation" remedy does not apply here.
+        offenders.append(selector)
+    if not offenders:
+        return None
+    remedies = (
+        "make selector_present resolve it (the test already exists at head), or "
+        "declare creation by naming the node id verbatim in the step action text"
+    )
+    return (
+        "promised selectors are not present at head and not declared for creation:\n"
+        + "\n".join(f"  - {s}: {remedies}" for s in offenders)
+    )
+
+
+def _refine_prompt(previous_text: str, errors: list[str]) -> str:
     """Build the no-tools refinement prompt after a rejected plan.
 
     The Planner has already explored; re-running the full tool loop to
     fix a JSON-shape slip would re-pay the whole exploration cost, so
     the retry is a single tool-less turn that hands back the rejected
-    candidate plus the exact validation error
-    (SP-PLANNER-PLAN-RETRY).
+    candidate plus the SESSION'S FULL error history — every prior
+    attempt's error, numbered oldest first and truncated to 300 chars
+    (SP-PLANNER-REFINE-HISTORY, after nine whack-a-mole attempts across
+    three planning sessions burned their full retry budgets: shown
+    only the latest error, the model fixed it and reintroduced one it
+    fixed two turns earlier).
     """
+    history = "\n".join(f"{i}. {err[:300]}" for i, err in enumerate(errors, start=1))
     return (
-        "Your previous plan was REJECTED by the schema validator:\n\n"
-        f"{error}\n\n"
+        "Your previous plan was REJECTED by the schema validator.\n\n"
         "Here is the plan you proposed:\n\n"
         f"{previous_text[:6000]}\n\n"
-        "Reply with ONLY the corrected JSON plan in a single ```json fence — "
-        "fix exactly that error, keep everything else identical, do not call any tool."
+        "Every error raised in this session so far, oldest first:\n\n"
+        f"{history}\n\n"
+        "Your next candidate must satisfy ALL of these at once; re-check each "
+        "before answering. Reply with ONLY the corrected JSON plan in a single "
+        "```json fence — keep everything else identical apart from the fixes, "
+        "do not call any tool."
     )
+
+
+def _exhausted_error(errors: list[str]) -> str:
+    """Describe every attempt's failure once the parse-attempt budget is spent.
+
+    Replaces a bare ``last_error`` with the full session history so the
+    loud exhausted-session error names every attempt, not just the
+    final one (SP-PLANNER-REFINE-HISTORY).
+    """
+    attempts = "; ".join(f"attempt {i}: {err[:300]}" for i, err in enumerate(errors, start=1))
+    return f"planner exhausted {len(errors)} parse attempt(s): {attempts}"
 
 
 @dataclass
@@ -321,9 +412,15 @@ class Planner:
             }
         )
         candidate_text = output.text or ""
-        last_error = ""
-        for attempt in range(1, _PLAN_PARSE_ATTEMPTS + 1):
-            plan, last_error = _parse_and_validate(candidate_text, spec_id)
+        errors: list[str] = []
+        max_attempts = _parse_attempts()
+        for attempt in range(1, max_attempts + 1):
+            plan, error = _parse_and_validate(candidate_text, spec_id)
+            if plan is not None:
+                selector_error = _check_promised_selectors(plan, self._repo_root)
+                if selector_error:
+                    error = selector_error
+                    plan = None
             if plan is not None:
                 _log.info(
                     "planner.plan_accepted",
@@ -333,17 +430,19 @@ class Planner:
                     parse_attempt=attempt,
                 )
                 return plan, None, audit
+            errors.append(error)
             _log.warning(
                 "planner.plan_invalid",
                 spec_id=spec_id,
                 explore_via="proxy",
                 attempt=attempt,
-                error=last_error[:300],
+                errors_so_far=len(errors),
+                error=error[:300],
             )
-            if attempt == _PLAN_PARSE_ATTEMPTS:
+            if attempt == max_attempts:
                 break
             try:
-                refine = self._loop.run(_refine_prompt(candidate_text, last_error), system=system)
+                refine = self._loop.run(_refine_prompt(candidate_text, errors), system=system)
             except GatewayError as exc:
                 _log.warning(
                     "planner.proxy_refinement_failed", spec_id=spec_id, error=str(exc)[:200]
@@ -351,7 +450,7 @@ class Planner:
                 return None, f"proxy refinement failed: {str(exc)[:200]}", audit
             audit["tokens_used"] = int(audit.get("tokens_used") or 0) + refine.tokens_used
             candidate_text = refine.text or ""
-        return None, last_error, audit
+        return None, _exhausted_error(errors), audit
 
     def _plan_via_cc(
         self, *, spec_id: str, spec_markdown: str
@@ -368,8 +467,9 @@ class Planner:
             "explore_via": "claude_cli",
         }
         candidate_text = ""
-        last_error = ""
-        for attempt in range(1, _PLAN_PARSE_ATTEMPTS + 1):
+        errors: list[str] = []
+        max_attempts = _parse_attempts()
+        for attempt in range(1, max_attempts + 1):
             if attempt == 1:
                 cc = run_cc_exploration(
                     prompt=prompt,
@@ -379,7 +479,7 @@ class Planner:
                 )
             else:
                 cc = run_cc_exploration(
-                    prompt=_refine_prompt(candidate_text, last_error),
+                    prompt=_refine_prompt(candidate_text, errors),
                     repo_root=self._repo_root,
                     model=self._cc_model,
                     allow_tools=False,
@@ -387,13 +487,22 @@ class Planner:
             audit["turns"] = int(audit.get("turns") or 0) + cc.num_turns
             audit["elapsed_s"] = float(audit.get("elapsed_s") or 0.0) + cc.duration_ms / 1000
             if cc.is_error:
-                last_error = f"claude exploration failed: {cc.error}"
+                errors.append(f"claude exploration failed: {cc.error}")
                 _log.warning(
-                    "planner.cc_attempt_failed", spec_id=spec_id, attempt=attempt, error=cc.error
+                    "planner.cc_attempt_failed",
+                    spec_id=spec_id,
+                    attempt=attempt,
+                    errors_so_far=len(errors),
+                    error=cc.error,
                 )
                 continue
             candidate_text = cc.text
-            plan, last_error = _parse_and_validate(candidate_text, spec_id)
+            plan, error = _parse_and_validate(candidate_text, spec_id)
+            if plan is not None:
+                selector_error = _check_promised_selectors(plan, self._repo_root)
+                if selector_error:
+                    error = selector_error
+                    plan = None
             if plan is not None:
                 _log.info(
                     "planner.plan_accepted",
@@ -403,14 +512,16 @@ class Planner:
                     parse_attempt=attempt,
                 )
                 return plan, None, audit
+            errors.append(error)
             _log.warning(
                 "planner.plan_invalid",
                 spec_id=spec_id,
                 explore_via="claude_cli",
                 attempt=attempt,
-                error=last_error[:300],
+                errors_so_far=len(errors),
+                error=error[:300],
             )
-        return None, last_error, audit
+        return None, _exhausted_error(errors), audit
 
 
 def run_planner_session(

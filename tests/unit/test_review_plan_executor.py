@@ -86,7 +86,7 @@ def _one_step_plan(*, integration_tests: list[str] | None = None, **step_overrid
         "action": "Create the module and its test.",
         "commit_message": "feat(demo): add mini module",
         "done_when": "pytest tests/unit/test_mini.py is green",
-        "unit_tests": ["tests/unit/test_mini.py"],
+        "unit_tests": ["tests/unit/test_mini.py::test_value"],
     }
     step.update(step_overrides)
     promised_files = [sel.split("::", 1)[0] for sel in integration_tests]
@@ -292,7 +292,7 @@ class TestExecutePlanStep:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan(
             files=["src/a.py", "src/b.py", "tests/unit/test_ab.py"],
-            unit_tests=["tests/unit/test_ab.py"],
+            unit_tests=["tests/unit/test_ab.py::test_ab"],
         )
         clean_a = '"""A."""\n\nA = 1\n'
         broken_b = '"""B."""\n\nB = undefined_name\n'
@@ -608,7 +608,7 @@ class TestGateAndSessionEdges:
             action="Create the shared test file.",
             commit_message="test(demo): shared test",
             done_when="pytest tests/unit/test_mini.py is green",
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         promiser = PlanStep(
             index=2,
@@ -617,7 +617,7 @@ class TestGateAndSessionEdges:
             action="Create the module.",
             commit_message="feat(demo): add mini module",
             done_when="pytest tests/unit/test_mini.py is green",
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         plan = ActionPlan(
             spec_id=_SPEC_ID,
@@ -918,10 +918,10 @@ class TestDecomposeWiring:
                             action="create the module and its test",
                             commit_message=f"feat: {spec_id}",
                             done_when="green",
-                            unit_tests=[test],
+                            unit_tests=[f"{test}::test_it"],
                         )
                     ],
-                    integration_tests=[integration],
+                    integration_tests=[f"{integration}::test_it"],
                 )
                 return plan, None, {}
 
@@ -1173,14 +1173,14 @@ class TestStepPreflightPredicate:
         plan = _one_step_plan(
             files=["src/mini.py", "tests/unit/test_same_name.py"],
             unit_tests=["tests/unit/test_same_name.py::test_value"],
-            integration_tests=["tests/integration/test_same_name.py"],
+            integration_tests=["tests/integration/test_same_name.py::test_value"],
         )
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_same_name.py").write_text(_CLEAN_TEST, encoding="utf-8")
         (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
         (repo / "tests" / "integration" / "test_same_name.py").write_text(
-            _GREEN_INTEGRATION, encoding="utf-8"
+            _CLEAN_TEST, encoding="utf-8"
         )
 
         assert step_preflight_complete(repo, plan, step) is True
@@ -1198,11 +1198,13 @@ class TestStepPreflightPredicate:
         plan = _one_step_plan(
             files=["src/mini.py", "tests/unit/test_mini.py"],
             unit_tests=["tests/unit/test_mini.py::test_not_written_yet"],
-            integration_tests=["tests/unit/test_mini.py"],
+            integration_tests=["tests/integration/test_mini.py::test_value"],
         )
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
+        (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
+        (repo / "tests" / "integration" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
 
         assert step_preflight_complete(repo, plan, step) is False
 
@@ -1239,7 +1241,7 @@ class TestStepPreflightPredicate:
                 "tests/unit/test_mini.py",
                 "tests/integration/test_demo_flow.py",
             ],
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         step = plan.steps[0]
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
@@ -1373,7 +1375,7 @@ class TestSessionPreflight:
                 "tests/unit/test_mini.py",
                 "tests/integration/test_demo_flow.py",
             ],
-            unit_tests=["tests/unit/test_mini.py"],
+            unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         _seed_plan(repo, plan)
         monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
@@ -1413,6 +1415,182 @@ class TestSessionPreflight:
 
         dev.develop_step.assert_called()
         assert result.steps_completed == 1
+
+
+class TestPromisedTestGateG1G2:
+    """SP-DEV-PROMISE-DELIVERY — G1 (untouched-file refusal) and G2 (mechanical rename)."""
+
+    _DRIFTED_TEST = '"""Demo test."""\n\n\ndef test_drifted() -> None:\n    assert 1 == 1\n'
+    _PROMISED_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 1\n'
+    _TWO_CANDIDATES = (
+        '"""Demo test."""\n\n'
+        "def test_x() -> None:\n    assert 1 == 1\n\n"
+        "def test_y() -> None:\n    assert 1 == 1\n"
+    )
+
+    def test_untouched_promised_file_reconciliation_is_retried(self, tmp_path: Path) -> None:
+        """AC1 — two dispatches: first writes only source, second writes the tests."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=["tests/unit/test_mini.py::test_value"],
+        )
+        (repo / "tests" / "unit" / "test_mini.py").write_text(self._DRIFTED_TEST, encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "chore: pre-seed drifted test")
+        dev = _developer_writing(
+            [
+                [("src/mini.py", _CLEAN_MODULE)],
+                [("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._PROMISED_TEST)],
+            ]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 2
+        retry_brief = dev.develop_step.call_args_list[1].kwargs["brief"]
+        assert "promised-test gate: reconciled green but the loop did not touch" in retry_brief
+        assert "tests/unit/test_mini.py::test_value" in retry_brief
+        assert (repo / "tests" / "unit" / "test_mini.py").read_text() == self._PROMISED_TEST
+
+    def test_touched_file_with_drifted_name_is_renamed_to_promise(self, tmp_path: Path) -> None:
+        """AC2 — single drifted test in a touched file, step green in one attempt."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=["tests/unit/test_mini.py::test_value"],
+        )
+        dev = _developer_writing(
+            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._DRIFTED_TEST)]]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 1
+        committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
+        assert "def test_value(" in committed
+        assert "def test_drifted(" not in committed
+
+    def test_ambiguous_drift_keeps_reconciled_accept(self, tmp_path: Path) -> None:
+        """AC3 — two missing + two candidates, no rename, step green via reconciled-accept."""
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(
+            unit_tests=[
+                "tests/unit/test_mini.py::test_a",
+                "tests/unit/test_mini.py::test_b",
+            ],
+        )
+        dev = _developer_writing(
+            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._TWO_CANDIDATES)]]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is True
+        assert dev.develop_step.call_count == 1
+        committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
+        assert "def test_x(" in committed
+        assert "def test_y(" in committed
+        assert "def test_a(" not in committed
+        assert "def test_b(" not in committed
+
+    def test_red_rename_rerun_restores_the_drifted_file(self, tmp_path: Path) -> None:
+        """A rename whose strict re-run stays red is rolled back before retry.
+
+        The first implementation set the retry feedback but left the
+        mechanically-renamed red file on disk — the semantic judge
+        refused the push over exactly this (2026-07-05). File A's
+        one-to-one drift renames; file B's promised selector stays
+        missing (ambiguous), so the strict re-run is red and A must
+        come back to its delivered content.
+        """
+        repo = _init_repo(tmp_path)
+        drifted_a = '"""A."""\n\n\ndef test_drifted(self=None):\n    assert True\n'
+        two_candidates_b = (
+            '"""B."""\n\n\ndef test_x():\n    assert True\n\n\ndef test_y():\n    assert True\n'
+        )
+        plan = _one_step_plan(
+            files=["src/mini.py", "tests/unit/test_mini.py", "tests/unit/test_mini_b.py"],
+            unit_tests=[
+                "tests/unit/test_mini.py::test_value",
+                "tests/unit/test_mini_b.py::test_promised_b",
+            ],
+        )
+        dev = _developer_writing(
+            [
+                [
+                    ("src/mini.py", _CLEAN_MODULE),
+                    ("tests/unit/test_mini.py", drifted_a),
+                    ("tests/unit/test_mini_b.py", two_candidates_b),
+                ]
+            ]
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is False
+        assert "did not make the promised selectors green" in outcome.reason
+        restored = (repo / "tests" / "unit" / "test_mini.py").read_text(encoding="utf-8")
+        assert "def test_drifted(" in restored
+        assert "def test_value(" not in restored
+
+    def test_rename_error_falls_back_to_retryable_gate(self, tmp_path: Path, monkeypatch) -> None:
+        """A failed mechanical rename retries with the G1 feedback.
+
+        The first implementation folded the error outcome into the
+        ambiguous one and proceeded via reconciled-accept — the second
+        judge gap (2026-07-05).
+        """
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan(unit_tests=["tests/unit/test_mini.py::test_value"])
+        dev = _developer_writing(
+            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._DRIFTED_TEST)]]
+        )
+        monkeypatch.setattr(
+            "ferova.review.dev_runner._attempt_mechanical_rename",
+            lambda *args, **kwargs: ("error", ""),
+        )
+
+        outcome = execute_plan_step(
+            plan.steps[0],
+            plan=plan,
+            repo_root=repo,
+            developer=dev,
+            repo_tree="src/",
+            db=repo.parent / "test.db",
+        )
+
+        assert outcome.ok is False
+        assert "mechanical rename failed" in outcome.reason
+        assert dev.develop_step.call_count >= 2
 
 
 def test_preflight_integration_test_file_exists() -> None:

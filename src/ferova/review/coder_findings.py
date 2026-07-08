@@ -436,6 +436,7 @@ def run_coder_fix_from_findings(
         A :class:`CoderFindingsResult` describing what happened.
     """
     from .coder_loop import (
+        CI_GREEN,
         CI_RED,
         apply_fixes,
         fetch_ci_status,
@@ -473,6 +474,8 @@ def run_coder_fix_from_findings(
             failed_rows=failed_rows,
             failure_logs=fetch_failed_check_logs(gh, failed_rows),
         )
+    elif ci_state == CI_GREEN:
+        resolve_broken_behavior_findings(db, pr_number=pr_number, head_sha=head_sha)
     open_verified_blocking(db, pr_number, head_sha=head_sha)
     findings = fetch_open_blocking_findings(db, pr_number)
     if not findings:

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ferova">
+  <g fill="#C9D2DE">
+    <path d="M18 54 H96 L126 60 L96 72 H18 Z"/>
+    <polygon points="46,72 78,72 69,90 55,90"/>
+    <polygon points="42,90 82,90 92,104 32,104"/>
+  </g>
+  <path d="M52 14 L57 26 L69 31 L57 36 L52 48 L47 36 L35 31 L47 26 Z" fill="#E85D1F"/>
+</svg>

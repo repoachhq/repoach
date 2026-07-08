@@ -16,6 +16,7 @@ from ferova.review.findings import (
     init_findings_schema,
     is_valid_transition,
     record_finding,
+    record_verification_attempt,
     update_finding_status,
 )
 
@@ -184,3 +185,88 @@ def test_fetch_findings_filters_by_status(tmp_path: Path) -> None:
     verified_only = fetch_findings(db_path, 10, status=FindingStatus.VERIFIED)
     assert len(verified_only) == 1
     assert verified_only[0].id == id_to_verify
+
+
+def test_record_verification_attempt_persists_without_status_change(tmp_path: Path) -> None:
+    """Two deferrals persist diagnostic + bump verify_attempts, status stays PROPOSED."""
+    db_path = tmp_path / "test.db"
+    init_findings_schema(db_path)
+    finding_id = record_finding(db_path, _make_finding())
+
+    first = record_verification_attempt(
+        db_path,
+        finding_id,
+        method="symbol_search",
+        result="no checkable symbol",
+        checked_at_sha="sha-1",
+    )
+    assert first == 1
+
+    second = record_verification_attempt(
+        db_path,
+        finding_id,
+        method="symbol_search",
+        result="no checkable symbol",
+        checked_at_sha="sha-2",
+    )
+    assert second == 2
+
+    findings = fetch_findings(db_path, 1)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.status == FindingStatus.PROPOSED
+    assert f.verification_method == "symbol_search"
+    assert f.verification_result == "no checkable symbol"
+    assert f.checked_at_sha == "sha-2"
+    assert f.verify_attempts == 2
+
+
+def test_verify_attempts_column_self_heals(tmp_path: Path) -> None:
+    """A pre-existing pr_findings without verify_attempts gets the column added on init."""
+    from sqlalchemy import create_engine, inspect, text
+
+    db_path = tmp_path / "legacy.db"
+    legacy_engine = create_engine(f"sqlite:///{db_path}")
+    with legacy_engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE pr_findings ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "pr_number INTEGER NOT NULL, "
+                "head_sha TEXT NOT NULL, "
+                "round INTEGER NOT NULL, "
+                "finder TEXT NOT NULL, "
+                "claim_type TEXT NOT NULL, "
+                "severity TEXT NOT NULL, "
+                "file TEXT NOT NULL, "
+                "line_start INTEGER NOT NULL, "
+                "line_end INTEGER NOT NULL, "
+                "claim TEXT NOT NULL, "
+                "evidence_pointer TEXT NOT NULL, "
+                "status TEXT NOT NULL, "
+                "verification_method TEXT NOT NULL, "
+                "verification_result TEXT NOT NULL, "
+                "checked_at_sha TEXT NOT NULL)"
+            )
+        )
+    legacy_engine.dispose()
+
+    init_findings_schema(db_path)
+
+    healed_engine = create_engine(f"sqlite:///{db_path}")
+    columns = {col["name"] for col in inspect(healed_engine).get_columns("pr_findings")}
+    assert "verify_attempts" in columns
+    healed_engine.dispose()
+
+    finding_id = record_finding(db_path, _make_finding())
+    new_count = record_verification_attempt(
+        db_path,
+        finding_id,
+        method="symbol_search",
+        result="no checkable symbol",
+        checked_at_sha="sha-1",
+    )
+    assert new_count == 1
+    findings = fetch_findings(db_path, 1)
+    assert findings[0].verify_attempts == 1
+    assert findings[0].status == FindingStatus.PROPOSED

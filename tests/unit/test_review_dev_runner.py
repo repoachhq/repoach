@@ -181,7 +181,9 @@ def _init_git_repo_with_plan(tmp_path: Path, *, step_files: list[str]) -> Path:
                 action="Apply the fixes.",
                 commit_message="feat(foo): step one",
                 done_when="gates green",
-                unit_tests=["tests/unit/test_foo_new.py"],
+                unit_tests=[
+                    "tests/unit/test_foo_new.py::test_run_developer_session_no_fixes_returned"
+                ],
             )
         ],
         integration_tests=["tests/integration/test_foo_flow.py"],

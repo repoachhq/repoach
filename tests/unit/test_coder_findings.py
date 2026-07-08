@@ -9,6 +9,7 @@ it can no longer confirm it) is pinned explicitly.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -458,6 +459,30 @@ def test_run_from_findings_materializes_ci_red(tmp_path: Path, monkeypatch) -> N
     assert bb.status is FindingStatus.RESOLVED
 
 
+def test_run_from_findings_resolves_stale_ci_finding_when_ci_turns_green(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A broken_behavior finding left OPEN from a prior round is resolved
+    when CI is already green at entry, even when the Coder has no push to make."""
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_finding(
+        db,
+        _finding(
+            ClaimType.BROKEN_BEHAVIOR,
+            status=FindingStatus.OPEN,
+            file="(ci):Test suite",
+            claim="CI check failed: Test suite",
+        ),
+    )
+    monkeypatch.setattr(coder_loop, "fetch_ci_status", lambda *a, **k: (coder_loop.CI_GREEN, []))
+    res = run_coder_fix_from_findings(1, gh=_gh_mock(), repo_root=tmp_path, db_path=db)
+    assert res.pushed is False
+    assert res.no_op_reason == "no open blocking findings to resolve"
+    bb = next(f for f in fetch_findings(db, 1) if f.claim_type is ClaimType.BROKEN_BEHAVIOR)
+    assert bb.status is FindingStatus.RESOLVED
+
+
 def _seed_one_open_blocker(db: Path) -> None:
     init_findings_schema(db)
     record_finding(db, _finding(ClaimType.DESIGN, status=FindingStatus.VERIFIED, claim="smell"))
@@ -605,3 +630,20 @@ def test_run_from_findings_pytest_red_leaves_work_on_disk(tmp_path: Path, monkey
 def test_revert_working_tree_removed_from_coder_loop() -> None:
     """The destructive revert is gone entirely (SP-DEVAGENT-WIRE)."""
     assert not hasattr(coder_loop, "revert_working_tree")
+
+
+def test_run_from_findings_still_calls_ci_materialiser_and_resolver() -> None:
+    """SP-CI-FINDINGS-WIRE AC5 regression guard.
+
+    The CI materialiser (``record_ci_failures_as_findings``) was
+    implemented with zero callers and nobody noticed. This static
+    source-level assertion fails immediately and loudly if either
+    ``record_ci_failures_as_findings`` or
+    ``resolve_broken_behavior_findings`` is ever deleted from the
+    coder-loop entry path again, independent of whether other
+    behavioural tests around it are weakened or refactored at the
+    same time.
+    """
+    source = inspect.getsource(run_coder_fix_from_findings)
+    assert "record_ci_failures_as_findings" in source
+    assert "resolve_broken_behavior_findings" in source

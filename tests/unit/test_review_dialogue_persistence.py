@@ -152,7 +152,7 @@ def test_record_dialogue_persists_round_1_outcomes(
     for cls, role in cls_to_role.items():
         monkeypatch.setattr(
             f"ferova.review.orchestrator.{cls}",
-            lambda r=role: _StubReviewer([outs[r]]),
+            lambda r=role, **_kw: _StubReviewer([outs[r]]),
         )
 
     gh = _StubGhCli()
@@ -180,7 +180,7 @@ def test_record_dialogue_persists_round_2_only_for_rerun_reviewers(
     arch_round2 = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     monkeypatch.setattr(
         "ferova.review.orchestrator.Architect",
-        lambda: _StubReviewer([arch_blocker, arch_round2]),
+        lambda **_kw: _StubReviewer([arch_blocker, arch_round2]),
     )
     for cls, role in [
         ("Sentinel", BotRole.SENTINEL),
@@ -189,7 +189,7 @@ def test_record_dialogue_persists_round_2_only_for_rerun_reviewers(
     ]:
         monkeypatch.setattr(
             f"ferova.review.orchestrator.{cls}",
-            lambda r=role: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
+            lambda r=role, **_kw: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
         )
 
     gh = _StubGhCli()
@@ -249,7 +249,7 @@ def test_archive_comment_renders_dialogue_section_when_db_has_rows(
     ]:
         monkeypatch.setattr(
             f"ferova.review.orchestrator.{cls}",
-            lambda r=role: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
+            lambda r=role, **_kw: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
         )
     gh = _StubGhCli()
     orch = ReviewTeamOrchestrator(gh=gh, db_path=db_path, post_to_github=True)

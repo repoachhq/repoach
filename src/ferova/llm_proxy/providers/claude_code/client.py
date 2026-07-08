@@ -102,7 +102,16 @@ class ClaudeCodeProvider(BaseProvider):
         *,
         request_id: str | None = None,
     ) -> AsyncIterator[str]:
-        """Run ``claude -p`` and yield Anthropic SSE events."""
+        """Run ``claude -p`` and yield Anthropic SSE events.
+
+        The prompt travels via STDIN, never argv: a Developer-session
+        conversation serialized into one prompt exceeded the kernel's
+        ARG_MAX and the spawn died with ``OSError: Argument list too
+        long`` — surfaced as a naked 500 on the backstop hop
+        (SP-DEV-PROMISE-DELIVERY step 2, 2026-07-05). The bounded
+        system prompt stays in argv; spawn-time ``OSError`` maps to
+        :class:`ProviderError` like every other provider failure.
+        """
         message_id = f"msg_{uuid.uuid4()}"
         sse = SSEBuilder(message_id, request.model, input_tokens)
 
@@ -119,14 +128,14 @@ class ClaudeCodeProvider(BaseProvider):
         ]
         if system_prompt:
             cmd += ["--system-prompt", system_prompt]
-        cmd.append(prompt)
 
         req_tag = f" request_id={request_id}" if request_id else ""
         logger.info(
-            "CLAUDE_CODE_STREAM:{} model={} cmd={}",
+            "CLAUDE_CODE_STREAM:{} model={} prompt_chars={} cmd={}",
             req_tag,
             cli_model,
-            shlex.join(cmd[:-1] + ["<prompt>"]),
+            len(prompt),
+            shlex.join(cmd),
         )
 
         yield sse.message_start()
@@ -136,13 +145,13 @@ class ClaudeCodeProvider(BaseProvider):
                 await self._global_rate_limiter.wait_if_blocked()
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
-                    stdin=asyncio.subprocess.DEVNULL,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self._workdir),
                 )
                 stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(),
+                    proc.communicate(input=prompt.encode("utf-8")),
                     timeout=self._subprocess_timeout,
                 )
                 stdout = stdout_b.decode("utf-8", errors="replace")
@@ -222,6 +231,14 @@ class ClaudeCodeProvider(BaseProvider):
             except asyncio.TimeoutError as exc:
                 err = f"claude CLI timed out after {self._subprocess_timeout}s"
                 logger.error("CLAUDE_CODE_TIMEOUT:{} {}", req_tag, err)
+                for event in sse.close_content_blocks():
+                    yield event
+                for event in sse.emit_error(append_request_id(err, request_id)):
+                    yield event
+                raise ProviderError(err) from exc
+            except OSError as exc:
+                err = f"claude CLI spawn failed: {exc}"
+                logger.error("CLAUDE_CODE_SPAWN_FAILED:{} {}", req_tag, err)
                 for event in sse.close_content_blocks():
                     yield event
                 for event in sse.emit_error(append_request_id(err, request_id)):

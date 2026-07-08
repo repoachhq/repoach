@@ -46,6 +46,8 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "BREAKER_ENABLED": "breaker_enabled",
     "BREAKER_TTL_S": "breaker_ttl_s",
     "BREAKER_TTL_TERMINAL_S": "breaker_ttl_terminal_s",
+    "BREAKER_TTL_QUARANTINE_S": "breaker_ttl_quarantine_s",
+    "BREAKER_QUARANTINE_THRESHOLD": "breaker_quarantine_threshold",
     "BREAKER_PROBE_SEED_ENABLED": "breaker_probe_seed_enabled",
     "BREAKER_PROBE_SEED_DB": "breaker_probe_seed_db",
     "EFFORT_MAP_SEED_ENABLED": "effort_map_seed_enabled",

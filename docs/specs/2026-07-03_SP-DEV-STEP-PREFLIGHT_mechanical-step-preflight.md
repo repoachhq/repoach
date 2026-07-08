@@ -3,7 +3,7 @@ id: SP-DEV-STEP-PREFLIGHT
 title: Mechanical step preflight — never pay the LLM for a completed step
 version: 0.1
 status: approved
-author: jfaye + Claude (improvement-axes report, rank 1)
+author: jfaye (improvement-axes report, rank 1)
 created: 2026-07-03
 updated: 2026-07-03
 

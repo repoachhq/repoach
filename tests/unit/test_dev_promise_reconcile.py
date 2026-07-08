@@ -1,9 +1,11 @@
 """Tests for run_promised_tests promise-reconciliation logic.
 
 Includes the end-to-end case: a step whose Developer delivers a
-passing test under a mismatched name commits anyway, with the
-``dev_runner.promised_tests_reconciled`` warning emitted — the plan is
-a hint, the delivered tree is the truth (SP-DEV-PROMISE-RECONCILE).
+passing test under a mismatched name commits anyway. Since
+SP-DEV-PROMISE-DELIVERY the one-to-one drift is renamed to the
+promised selector before committing (``promised_tests_renamed``) —
+the plan is a hint for exploration, but the promised node id is the
+mechanically checkable contract self-verify will resolve literally.
 """
 
 from __future__ import annotations
@@ -124,4 +126,7 @@ def test_step_commits_on_reconciled_tests(tmp_path: Path) -> None:
     assert outcome.ok is True
     assert _git_commit_count(repo) == initial_commits + 1
     events = {entry["event"] for entry in logs}
-    assert "dev_runner.promised_tests_reconciled" in events
+    assert "dev_runner.promised_tests_renamed" in events
+    committed = (repo / "tests" / "unit" / "test_x.py").read_text(encoding="utf-8")
+    assert "def test_promised_name" in committed
+    assert "def test_delivered_name" not in committed
