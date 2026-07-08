@@ -9,10 +9,14 @@ from __future__ import annotations
 import time
 
 import pytest
+from pydantic import ValidationError
 
 from ferova.llm_proxy.api.model_router import ModelRouter, ResolvedModel
 from ferova.llm_proxy.api.services import ClaudeProxyService
-from ferova.llm_proxy.config.settings import Settings
+from ferova.llm_proxy.config import settings as settings_module
+from ferova.llm_proxy.config.settings import (
+    Settings,
+)
 from ferova.llm_proxy.routing import get_breaker
 from ferova.llm_proxy.routing.breaker import (
     BreakerState,
@@ -240,3 +244,51 @@ def test_snapshot_lists_down_refs() -> None:
     snap2 = breaker.snapshot(now=130.0)
     assert len(snap2) == 1
     assert str(snap2[0].ref) == "kimi/y"
+
+
+def _clean_env_for_quarantine_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip quarantine-related env vars and disable env-file loading."""
+    for key in (
+        "BREAKER_TTL_QUARANTINE_S",
+        "FEROVA_BREAKER_TTL_QUARANTINE_S",
+        "BREAKER_QUARANTINE_THRESHOLD",
+        "FEROVA_BREAKER_QUARANTINE_THRESHOLD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(settings_module, "_env_files", lambda: ())
+    monkeypatch.setattr(settings_module, "_configured_env_files", lambda _cfg: ())
+
+
+def _build_settings() -> Settings:
+    """Return a fresh Settings, bypassing the lru_cache + env file load."""
+    return Settings(_env_file=None)
+
+
+def test_quarantine_settings_defaults_and_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defaults are 21600.0 and 3; FEROVA_ and bare aliases override;
+    threshold 0 is rejected."""
+    _clean_env_for_quarantine_test(monkeypatch)
+    settings = _build_settings()
+    assert settings.breaker_ttl_quarantine_s == 21_600.0
+    assert settings.breaker_quarantine_threshold == 3
+
+    _clean_env_for_quarantine_test(monkeypatch)
+    monkeypatch.setenv("FEROVA_BREAKER_TTL_QUARANTINE_S", "3600.0")
+    monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "5")
+    settings = _build_settings()
+    assert settings.breaker_ttl_quarantine_s == 3600.0
+    assert settings.breaker_quarantine_threshold == 5
+
+    _clean_env_for_quarantine_test(monkeypatch)
+    monkeypatch.setenv("BREAKER_TTL_QUARANTINE_S", "7200.0")
+    monkeypatch.setenv("BREAKER_QUARANTINE_THRESHOLD", "7")
+    settings = _build_settings()
+    assert settings.breaker_ttl_quarantine_s == 7200.0
+    assert settings.breaker_quarantine_threshold == 7
+
+    _clean_env_for_quarantine_test(monkeypatch)
+    monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "0")
+    with pytest.raises(ValidationError):
+        _build_settings()

@@ -132,6 +132,8 @@ _LEGACY_TO_FEROVA_ALIAS: dict[str, str] = {
     "ANTHROPIC_AUTH_TOKEN": "FEROVA_ANTHROPIC_AUTH_TOKEN",
     "CHAINPILOT_APPLY_ENABLED": "FEROVA_CHAINPILOT_APPLY_ENABLED",
     "CHAINPILOT_MAX_MUTATIONS": "FEROVA_CHAINPILOT_MAX_MUTATIONS",
+    "BREAKER_TTL_QUARANTINE_S": "FEROVA_BREAKER_TTL_QUARANTINE_S",
+    "BREAKER_QUARANTINE_THRESHOLD": "FEROVA_BREAKER_QUARANTINE_THRESHOLD",
 }
 
 
@@ -262,6 +264,12 @@ class Settings(BaseSettings):
     breaker_ttl_s: float = Field(default=120.0, validation_alias=_aliases("BREAKER_TTL_S"))
     breaker_ttl_terminal_s: float = Field(
         default=604_800.0, validation_alias=_aliases("BREAKER_TTL_TERMINAL_S")
+    )
+    breaker_ttl_quarantine_s: float = Field(
+        default=21_600.0, validation_alias=_aliases("BREAKER_TTL_QUARANTINE_S")
+    )
+    breaker_quarantine_threshold: int = Field(
+        default=3, ge=1, validation_alias=_aliases("BREAKER_QUARANTINE_THRESHOLD")
     )
     breaker_probe_seed_enabled: bool = Field(
         default=True, validation_alias=_aliases("BREAKER_PROBE_SEED_ENABLED")
