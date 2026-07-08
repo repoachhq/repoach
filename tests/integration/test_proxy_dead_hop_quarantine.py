@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ferova.llm_proxy.api.app import create_app
+from ferova.llm_proxy.config.settings import get_settings
 from ferova.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from ferova.llm_proxy.providers.registry import ProviderRegistry
 from ferova.llm_proxy.routing import get_breaker, reset_breaker
@@ -90,10 +91,26 @@ class _HealthyProvider(BaseProvider):
 
 def test_dead_hop_quarantined_and_reported_on_health(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """Three requests against a dead-first chain quarantine the dead hop
     with a TTL > breaker_ttl_s, and /health lists it with >= 3 consecutive
-    failures while the healthy hop keeps serving."""
+    failures while the healthy hop keeps serving.
+
+    The auth token is forced onto the cached ``Settings`` instance rather
+    than through the environment: ``prefer_dotenv_anthropic_auth_token``
+    lets a developer-machine ``.env`` override process env vars, so an
+    env-only override passes in CI (no ``.env``) but 401s locally. The
+    settings cache is cleared on both sides so neither this test nor the
+    rest of the suite sees the other's resolution.
+
+    The transient breaker TTL is shrunk to 50 ms and the loop sleeps
+    between requests: a tripped hop leaves the chain for its whole TTL,
+    so consecutive failures only accrue across TTL lapses — which is
+    exactly the escalation trigger the spec defines. The stub registry is
+    installed after ``TestClient`` startup because ``AppRuntime`` installs
+    a fresh registry on ``app.state`` during lifespan startup.
+    """
     reset_breaker()
 
     monkeypatch.setenv("FEROVA_ANTHROPIC_AUTH_TOKEN", "test-token")
@@ -102,13 +119,16 @@ def test_dead_hop_quarantined_and_reported_on_health(
         "MODEL_SONNET",
         "nvidia_nim/dead-model,kimi/healthy-model",
     )
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
+    monkeypatch.setattr(get_settings(), "anthropic_auth_token", "test-token")
+    monkeypatch.setattr(get_settings(), "breaker_ttl_s", 0.05)
 
     app = create_app()
 
     dead_provider = _EmptyProvider(ProviderConfig(api_key="x"))
     healthy_provider = _HealthyProvider(ProviderConfig(api_key="x"))
     registry = ProviderRegistry({"nvidia_nim": dead_provider, "kimi": healthy_provider})
-    app.state.provider_registry = registry
 
     headers = {"x-api-key": "test-token"}
     body = {
@@ -118,9 +138,11 @@ def test_dead_hop_quarantined_and_reported_on_health(
     }
 
     with TestClient(app) as client:
+        app.state.provider_registry = registry
         for i in range(3):
             resp = client.post("/v1/messages", json=body, headers=headers)
             assert resp.status_code == 200, f"request {i + 1} failed: {resp.text}"
+            time.sleep(0.1)
 
         breaker = get_breaker()
         dead_ref = ModelRef.parse("nvidia_nim/dead-model")
