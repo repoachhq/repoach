@@ -82,6 +82,7 @@ OUTCOME_SKIP_CI: str = "SKIP_CI_RED"
 OUTCOME_SKIP_CI_FAILED: str = "SKIP_CI_FAILED"
 OUTCOME_SKIP_CI_TIMEOUT: str = "SKIP_CI_TIMEOUT"
 OUTCOME_SKIP_CI_MISSING: str = "SKIP_CI_MISSING"
+OUTCOME_SKIP_STALE_HEAD: str = "SKIP_STALE_HEAD"
 OUTCOME_FAILED: str = "FAILED"
 
 DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
@@ -426,6 +427,106 @@ class GateEvaluation:
     decision: MergeDecision
 
 
+def _ls_remote_tip(gh: GhCli, head_ref: str) -> tuple[str | None, str]:
+    """Resolve the branch tip via ``git ls-remote origin refs/heads/<head_ref>``.
+
+    Shared by :func:`resolve_verified_head` and the pre-squash re-read in
+    :func:`run_auto_merge` — both need the exact same ``ls-remote`` parsing
+    and the exact same fail-closed contract (``None`` plus a reason string
+    on any transport or parse failure).
+
+    Args:
+        gh: The GitHub client wrapper; only ``_run_git`` is used.
+        head_ref: The branch name to resolve (``headRefName``).
+
+    Returns:
+        ``(sha, "")`` on success, ``(None, reason)`` on failure.
+    """
+    ls_remote = gh._run_git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
+    if not ls_remote.ok or not ls_remote.stdout.strip():
+        error = (ls_remote.stderr or ls_remote.stdout).strip()
+        return None, f"ls-remote failed: {error[:200]}"
+    first_line = ls_remote.stdout.strip().splitlines()[0]
+    tokens = first_line.split()
+    remote_sha = tokens[0] if tokens else ""
+    if not remote_sha:
+        return None, f"ls-remote returned no SHA: {first_line[:200]}"
+    return remote_sha, ""
+
+
+def resolve_verified_head(
+    gh: GhCli,
+    pr_number: int,
+    head_ref: str,
+    *,
+    repo_root: Path,
+    attempts: int = 4,
+    delay_s: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[str | None, str]:
+    """Cross-check the PR API head against ``git ls-remote`` ground truth.
+
+    SP-AUTOMERGE-FRESH-HEAD (PR #50 orphaned-commit incident,
+    2026-07-06): ``gh pr view --json headRefOid`` was observed 40+
+    minutes stale, so a merge computed at that head silently orphaned
+    a newer commit already sitting on the real branch tip.  This
+    helper resolves the branch tip with
+    ``git ls-remote origin refs/heads/<head_ref>`` — the git backend's
+    own ground truth — and compares it against
+    :meth:`GhCli.pr_head_sha`, re-polling up to ``attempts`` times with
+    ``sleep(delay_s)`` between polls until the two agree.
+
+    The contract is fail-closed: a persistent mismatch, or an
+    ``ls-remote`` transport failure, returns ``None`` rather than a
+    best-guess SHA — callers must refuse to merge, not merge at a
+    head that cannot be verified.
+
+    Args:
+        gh: The GitHub client wrapper; both ``pr_head_sha`` and the
+            underlying ``_run_git`` are used.
+        pr_number: PR whose head is under verification.
+        head_ref: The PR's head branch name (``headRefName``).
+        repo_root: The checkout the caller is verifying against; kept
+            explicit in the signature even though ``gh``'s own working
+            directory drives the actual ``git`` invocation, so callers
+            state unambiguously which clone they mean.
+        attempts: Maximum number of API-vs-``ls-remote`` comparisons
+            before failing closed.
+        delay_s: Seconds passed to ``sleep`` between re-polls.
+        sleep: Injectable sleep so tests run instantly.
+
+    Returns:
+        ``(converged_sha, "")`` once the API head and the ``ls-remote``
+        tip agree.  ``(None, reason)`` fail-closed otherwise: ``reason``
+        carries the ``ls-remote`` error text on a transport failure, or
+        both 12-char SHA prefixes (``api=...``, ``ls_remote=...``) on a
+        persistent mismatch.
+    """
+    _ = repo_root
+    api_sha = ""
+    remote_sha = ""
+    for attempt in range(attempts):
+        ls_remote = gh._run_git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
+        if not ls_remote.ok or not ls_remote.stdout.strip():
+            error = (ls_remote.stderr or ls_remote.stdout).strip()
+            return None, f"ls-remote failed: {error[:200]}"
+        first_line = ls_remote.stdout.strip().splitlines()[0]
+        tokens = first_line.split()
+        remote_sha = tokens[0] if tokens else ""
+        if not remote_sha:
+            return None, f"ls-remote returned no SHA: {first_line[:200]}"
+        api_sha = gh.pr_head_sha(pr_number) or ""
+        if api_sha == remote_sha:
+            return remote_sha, ""
+        if attempt < attempts - 1:
+            sleep(delay_s)
+    return (
+        None,
+        "head verification failed after "
+        f"{attempts} attempts: api={api_sha[:12]}, ls_remote={remote_sha[:12]}",
+    )
+
+
 def decide_at_head(
     pr_number: int,
     *,
@@ -433,6 +534,7 @@ def decide_at_head(
     db: Path,
     ci_green: bool,
     repo_root: Path | None = None,
+    head_sha: str | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -444,25 +546,33 @@ def decide_at_head(
 
     Args:
         pr_number: The PR under decision.
-        gh: The GitHub client used to resolve the head SHA.
+        gh: The GitHub client used to resolve the head SHA when
+            ``head_sha`` is not supplied.
         db: The findings + coverage ledger.
         ci_green: Whether required checks are green at head (folded into
             the facts so the decision reasons include CI state).
         repo_root: The head checkout the mechanical verifiers resolve
             against; defaults to the current working directory.
+        head_sha: An explicit head to decide at, overriding
+            ``gh.pr_head_sha``.  SP-AUTOMERGE-FRESH-HEAD:
+            :func:`run_auto_merge` passes the ``resolve_verified_head``
+            SHA here so gate facts are computed at the exact commit
+            about to be merged, not whatever the API happens to be
+            serving.  ``None`` (the default) keeps today's behaviour for
+            other callers such as :func:`evaluate_merge_gate`.
 
     Returns:
         ``(head_sha, facts, decision)``.
     """
-    head_sha = gh.pr_head_sha(pr_number) or ""
+    resolved_head = head_sha if head_sha is not None else (gh.pr_head_sha(pr_number) or "")
     facts = gather_merge_facts(
         db,
         pr_number=pr_number,
         repo_root=repo_root or Path.cwd(),
-        head_sha=head_sha,
+        head_sha=resolved_head,
         ci_green=ci_green,
     )
-    return head_sha, facts, compute_merge_decision(facts)
+    return resolved_head, facts, compute_merge_decision(facts)
 
 
 def evaluate_merge_gate(
@@ -484,11 +594,61 @@ def evaluate_merge_gate(
     :func:`decide_at_head`. It performs no base/state check and never
     merges or posts — ``safe_merge.sh`` keeps ownership of the actual
     ``gh pr merge``.
+
+    SP-AUTOMERGE-FRESH-HEAD: before any of that, the PR API head is
+    cross-checked against ``git ls-remote`` ground truth through
+    :func:`resolve_verified_head` — the exact same bounded, fail-closed
+    convergence check :func:`run_auto_merge` performs before squashing.
+    A stale or unverifiable head short-circuits with a refused
+    decision (``merge`` False, a reason containing "stale head" and
+    both 12-char SHA prefixes) instead of reaching
+    :func:`decide_at_head` at all, so ``ferova review gate`` exits 5
+    through the existing exit-code mapping and ``safe_merge.sh``
+    aborts on the same signal the CI auto-merge would refuse on.
     """
     gh = gh or GhCli()
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
+
+    pr_meta = gh.pr_view(pr_number) or {}
+    head_ref = str(pr_meta.get("headRefName") or "")
+
+    verified_head, stale_reason = resolve_verified_head(
+        gh,
+        pr_number,
+        head_ref,
+        repo_root=repo_root or Path.cwd(),
+        sleep=sleep,
+    )
+    if verified_head is None:
+        reason = f"stale head: {stale_reason}"
+        _log.warning(
+            "auto_merge.gate_stale_head",
+            pr_number=pr_number,
+            head_ref=head_ref,
+            reason=stale_reason,
+        )
+        stale_facts = MergeFacts(
+            head_sha="",
+            ci_green=False,
+            open_blocking_findings=0,
+            spec_covered=False,
+            spec_coverage_known=False,
+            review_complete=False,
+            review_integrity_known=False,
+        )
+        return GateEvaluation(
+            head_sha="",
+            ci_gate=CIGateOutcome(
+                green=False,
+                outcome_tag=OUTCOME_SKIP_STALE_HEAD,
+                reason=reason,
+            ),
+            facts=stale_facts,
+            decision=MergeDecision(merge=False, reasons=[reason]),
+        )
+
     ci_gate = evaluate_ci_gate(
         gh,
         pr_number,
@@ -497,6 +657,7 @@ def evaluate_merge_gate(
         poll_interval=poll_interval,
         monotonic=monotonic,
         sleep=sleep,
+        head_sha=verified_head,
     )
     head_sha, facts, decision = decide_at_head(
         pr_number,
@@ -504,6 +665,7 @@ def evaluate_merge_gate(
         db=db,
         ci_green=ci_gate.green,
         repo_root=repo_root,
+        head_sha=verified_head,
     )
     _log.info(
         "auto_merge.gate_evaluated",
@@ -624,6 +786,29 @@ def run_auto_merge(
             )
         )
 
+    verified_head, stale_reason = resolve_verified_head(
+        gh,
+        pr_number,
+        head,
+        repo_root=repo_root or Path.cwd(),
+        sleep=sleep,
+    )
+    if verified_head is None:
+        _log.warning(
+            "auto_merge.stale_head",
+            pr_number=pr_number,
+            base=base,
+            head=head,
+            reason=stale_reason,
+        )
+        return _persist(
+            AutoMergeResult(
+                pr_number=pr_number,
+                outcome=OUTCOME_SKIP_STALE_HEAD,
+                notes=f"stale head: {stale_reason}",
+            )
+        )
+
     ci_gate = evaluate_ci_gate(
         gh,
         pr_number,
@@ -632,6 +817,7 @@ def run_auto_merge(
         poll_interval=poll_interval,
         monotonic=monotonic,
         sleep=sleep,
+        head_sha=verified_head,
     )
     if not ci_gate.green:
         snapshot = _summarise_rollup(ci_gate.rollup_snapshot)
@@ -649,6 +835,7 @@ def run_auto_merge(
         db=db,
         ci_green=ci_gate.green,
         repo_root=repo_root,
+        head_sha=verified_head,
     )
     _log.info(
         "auto_merge.pure_gate",
@@ -665,6 +852,29 @@ def run_auto_merge(
                 pr_number=pr_number,
                 outcome=OUTCOME_SKIP_GATE,
                 notes="pure gate refused: " + "; ".join(decision.reasons),
+            )
+        )
+
+    tip_sha, tip_err = _ls_remote_tip(gh, head)
+    if tip_sha is None or tip_sha != verified_head:
+        reason = (
+            tip_err
+            if tip_sha is None
+            else f"head moved after gate decision: api={verified_head[:12]}, "
+            f"ls_remote={tip_sha[:12]}"
+        )
+        _log.warning(
+            "auto_merge.stale_head",
+            pr_number=pr_number,
+            base=base,
+            head=head,
+            reason=reason,
+        )
+        return _persist(
+            AutoMergeResult(
+                pr_number=pr_number,
+                outcome=OUTCOME_SKIP_STALE_HEAD,
+                notes=f"stale head: {reason}",
             )
         )
 
