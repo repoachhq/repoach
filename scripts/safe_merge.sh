@@ -26,7 +26,12 @@
 #    backoff (rate limits / network) before failing loudly. The local
 #    checkout is at the PR head (step 2), so the gate's on-disk
 #    re-verification is correct here.
-# 6. ``gh pr merge <N> --squash --delete-branch``.
+# 6. Fresh-head guard (SP-AUTOMERGE-FRESH-HEAD): cross-check the API
+#    ``headRefOid`` against ``git ls-remote origin refs/heads/<head>``
+#    immediately before the merge. A mismatch aborts with both SHAs
+#    printed and NO emergency-override prompt — stale data is not
+#    overridable.
+# 7. ``gh pr merge <N> --squash --delete-branch``.
 #
 # On any exit path (success or gate failure), the script restores the
 # original branch — your working tree returns to whatever you were on
@@ -92,7 +97,7 @@ cleanup_on_exit() {
 }
 trap cleanup_on_exit EXIT
 
-bold "[1/6] PR base must be develop"
+bold "[1/7] PR base must be develop"
 base_ref=$(gh pr view "$pr_number" --json baseRefName --jq .baseRefName)
 state=$(gh pr view "$pr_number" --json state --jq .state)
 head_ref=$(gh pr view "$pr_number" --json headRefName --jq .headRefName)
@@ -106,7 +111,7 @@ if [[ "$base_ref" != "develop" ]] ; then
 fi
 ok "base=$base_ref state=$state head=$head_ref"
 
-bold "[2/6] sync local checkout with PR head + origin/develop"
+bold "[2/7] sync local checkout with PR head + origin/develop"
 if ! git diff --quiet HEAD 2>/dev/null || ! git diff --cached --quiet 2>/dev/null ; then
     fail "uncommitted changes detected — commit or stash before safe_merge"
     git status --short
@@ -125,21 +130,21 @@ if ! git merge --no-edit origin/develop ; then
 fi
 ok "checked out $head_ref + merged origin/develop"
 
-bold "[3/6] scripts/ci_local.sh"
+bold "[3/7] scripts/ci_local.sh"
 if [[ "$skip_tests" == "yes" ]] ; then
     ./scripts/ci_local.sh --fast
 else
     ./scripts/ci_local.sh
 fi
 
-bold "[4/6] ferova review pr $pr_number"
+bold "[4/7] ferova review pr $pr_number"
 if [[ "$skip_review" == "yes" ]] ; then
     echo "  (skipped via --skip-review — verdict check also skipped)"
 else
     ferova review pr "$pr_number"
 fi
 
-bold "[5/6] pure merge gate (ferova review gate)"
+bold "[5/7] pure merge gate (ferova review gate)"
 if [[ "$skip_review" == "yes" ]] ; then
     echo "  (skipped — --skip-review implies the user accepts no automated gate)"
 else
@@ -196,7 +201,20 @@ for r in d.get("reasons", []):
     done
 fi
 
-bold "[6/6] gh pr merge --squash"
+bold "[6/7] fresh-head guard (SP-AUTOMERGE-FRESH-HEAD)"
+api_head=$(gh pr view "$pr_number" --json headRefOid --jq .headRefOid)
+remote_head=$(git ls-remote origin "refs/heads/$head_ref" | awk '{print $1}')
+if [[ -z "$api_head" ]] || [[ -z "$remote_head" ]] || [[ "$api_head" != "$remote_head" ]] ; then
+    fail "stale head detected — refusing to merge"
+    echo "    api_head=$api_head"
+    echo "    remote_head=$remote_head"
+    echo "    head_ref=$head_ref"
+    echo "Stale data is not overridable. Re-run after the API catches up."
+    exit 1
+fi
+ok "head verified api=remote=$api_head"
+
+bold "[7/7] gh pr merge --squash"
 gh pr merge "$pr_number" --squash --delete-branch
 ok "PR #$pr_number merged into develop"
 

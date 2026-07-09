@@ -23,9 +23,17 @@ from typing import Literal
 
 from ..agent_engine.adapters import GatewayError
 from ..agent_engine.agent_loop import PROXY_SONNET_CHAIN, AgentLoop
+from ..core.config import get_settings
 from ..core.logging import get_logger
-from .plan import ActionPlan, plan_relpath, render_plan_markdown
+from .plan import (
+    ActionPlan,
+    plan_relpath,
+    render_plan_form_rules,
+    render_plan_markdown,
+    validate_plan_form_strict,
+)
 from .planner_cc import run_cc_exploration
+from .planner_telemetry import record_planner_attempt
 from .planner_tools import make_planner_tools
 from .reviewer import BotRole
 from .spec import load_spec
@@ -141,14 +149,21 @@ def _refine_prompt(previous_text: str, errors: list[str]) -> str:
     three planning sessions burned their full retry budgets: shown
     only the latest error, the model fixed it and reintroduced one it
     fixed two turns earlier).
+
+    The full rule catalog is included alongside the error history so
+    the model corrects against every rule at once rather than
+    discovering them one failure at a time (SP-PLAN-QUALITY).
     """
     history = "\n".join(f"{i}. {err[:300]}" for i, err in enumerate(errors, start=1))
+    catalog = render_plan_form_rules()
     return (
         "Your previous plan was REJECTED by the schema validator.\n\n"
         "Here is the plan you proposed:\n\n"
         f"{previous_text[:6000]}\n\n"
         "Every error raised in this session so far, oldest first:\n\n"
         f"{history}\n\n"
+        "Plan-form rules (all of them — every attempt is validated against every rule):\n\n"
+        f"{catalog}\n\n"
         "Your next candidate must satisfy ALL of these at once; re-check each "
         "before answering. Reply with ONLY the corrected JSON plan in a single "
         "```json fence — keep everything else identical apart from the fixes, "
@@ -422,6 +437,11 @@ class Planner:
                     error = selector_error
                     plan = None
             if plan is not None:
+                strict_reasons = validate_plan_form_strict(plan)
+                if strict_reasons:
+                    error = "\n".join(strict_reasons)
+                    plan = None
+            if plan is not None:
                 _log.info(
                     "planner.plan_accepted",
                     spec_id=spec_id,
@@ -438,6 +458,12 @@ class Planner:
                 attempt=attempt,
                 errors_so_far=len(errors),
                 error=error[:300],
+            )
+            record_planner_attempt(
+                Path(get_settings().db_path),
+                spec_id=spec_id,
+                attempt=attempt,
+                violated_rule=error,
             )
             if attempt == max_attempts:
                 break
@@ -504,6 +530,11 @@ class Planner:
                     error = selector_error
                     plan = None
             if plan is not None:
+                strict_reasons = validate_plan_form_strict(plan)
+                if strict_reasons:
+                    error = "\n".join(strict_reasons)
+                    plan = None
+            if plan is not None:
                 _log.info(
                     "planner.plan_accepted",
                     spec_id=spec_id,
@@ -520,6 +551,12 @@ class Planner:
                 attempt=attempt,
                 errors_so_far=len(errors),
                 error=error[:300],
+            )
+            record_planner_attempt(
+                Path(get_settings().db_path),
+                spec_id=spec_id,
+                attempt=attempt,
+                violated_rule=error,
             )
         return None, _exhausted_error(errors), audit
 
@@ -564,6 +601,10 @@ def run_planner_session(
 
     lessons = recall_builder_lessons(f"{spec.id} {spec.raw_markdown[:300]}")
     spec_markdown = spec.raw_markdown + lessons_section(lessons)
+    spec_markdown += (
+        "\n\n## Plan-form rules (all of them — every attempt is validated against every rule)\n\n"
+        + render_plan_form_rules()
+    )
     plan, error, audit = agent.plan(
         spec_id=spec.id,
         spec_markdown=spec_markdown,

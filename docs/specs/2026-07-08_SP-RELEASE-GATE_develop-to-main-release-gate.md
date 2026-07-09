@@ -2,7 +2,7 @@
 id: SP-RELEASE-GATE
 title: Evidence-first gate for the develop → main release
 version: 0.1
-status: draft
+status: approved
 author: jfaye (mechanises the manual release procedure run on PR #60, 2026-07-08)
 created: 2026-07-08
 updated: 2026-07-08

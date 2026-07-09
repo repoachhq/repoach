@@ -39,9 +39,26 @@ def _rollup(*, green: bool) -> list[dict]:
     return rows
 
 
-def _gh(*, green: bool = True) -> MagicMock:
+def _gh(*, green: bool = True, head: str = "feat/x") -> MagicMock:
+    """Build a truthful fake GhCli — ``ls-remote`` agrees with ``pr_head_sha``.
+
+    SP-AUTOMERGE-FRESH-HEAD (operator rule: no stubs) —
+    ``evaluate_merge_gate`` now runs the real ``resolve_verified_head``
+    convergence check before ``decide_at_head``, so this fake must
+    answer ``pr_view`` with a ``headRefName`` and answer
+    ``_run_git(["ls-remote", ...])`` with the SAME SHA ``pr_head_sha``
+    returns — otherwise the real check would (correctly) refuse every
+    scenario here as a stale head.
+    """
     gh = MagicMock()
     gh.pr_head_sha.return_value = _HEAD
+    gh.pr_view.return_value = {"baseRefName": "develop", "headRefName": head, "state": "OPEN"}
+    gh._run_git.return_value = GhResult(
+        returncode=0,
+        stdout=f"{_HEAD}\trefs/heads/{head}\n",
+        stderr="",
+        argv=["git", "ls-remote", "origin", f"refs/heads/{head}"],
+    )
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:

@@ -29,6 +29,136 @@ PLAN_MARKER: str = "<!-- ferova-action-plan -->"
 _SPEC_ID_RE = re.compile(r"^SP-[A-Z0-9-]+$")
 _PLAN_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
+_FORM_RULES: dict[str, str] = {
+    "_non_empty_text": ("Required text fields must be non-empty (not just whitespace)."),
+    "_files_repo_relative": (
+        "Every file path must be repo-relative: no absolute paths, no '..' traversal."
+    ),
+    "_selectors_safe": ("Test selectors must not start with '-' (would parse as pytest flags)."),
+    "_require_node_ids": ("Unit-test selectors must include '::' to name the exact test function."),
+    "_code_steps_promise_unit_tests": (
+        "Every step touching non-docs files must promise at least one unit test."
+    ),
+    "_spec_id_shape": ("spec_id must match the canonical SP-[A-Z0-9-]+ form."),
+    "_contiguous_indexes": (
+        "Step indexes must be exactly 1..n in order, with no gaps or duplicates."
+    ),
+    "_src_plans_promise_integration_tests": (
+        "A plan touching src/ must promise at least one integration test."
+    ),
+    "_promised_tests_are_created_by_the_plan": (
+        "Every promised unit test must be created by its step or an earlier one."
+    ),
+    "_integration_tests_under_integration_tree": (
+        "Integration test selectors must live under tests/integration/."
+    ),
+    "_integration_promises_are_created_by_the_plan": (
+        "Every promised integration test must be created by some step in the plan."
+    ),
+}
+
+_STRICT_FORM_RULES: dict[str, str] = {
+    "_step_size_cap": (
+        "Steps must touch at most 3 files and promise at most 5 unit-test "
+        "selectors (proxy for the Developer's 30-turn budget)."
+    ),
+    "_no_test_double_keywords": (
+        "Action text must not contain any whole-word occurrence of "
+        "stub, stubbed, stubbing, monkeypatch, mock, mocked, or mocking "
+        "\u2014 use truthful boundary fakes for external boundaries "
+        "(gh, LLM, network) instead."
+    ),
+}
+
+PLAN_STEP_MAX_FILES: int = 3
+PLAN_STEP_MAX_UNIT_SELECTORS: int = 5
+
+_BANNED_DOUBLE_KEYWORDS: frozenset[str] = frozenset(
+    {"stub", "stubbed", "stubbing", "monkeypatch", "mock", "mocked", "mocking"}
+)
+_BANNED_DOUBLE_RE: re.Pattern[str] = re.compile(
+    r"\b(?:" + "|".join(re.escape(word) for word in _BANNED_DOUBLE_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def render_plan_form_rules() -> str:
+    """Render the complete numbered rule catalog for Planner prompts.
+
+    Merges :data:`_FORM_RULES` and :data:`_STRICT_FORM_RULES` into a
+    single stable-ordered catalog.  Every validator on
+    :class:`PlanStep` and :class:`ActionPlan` has a one-line sentence
+    here; adding a validator without a sentence fails
+    ``test_rule_catalog_covers_every_validator``.
+
+    Returns:
+        A plain-text numbered list, one rule per line, suitable for
+        injection into the Planner's system prompt and refine turns.
+    """
+    merged: dict[str, str] = {}
+    merged.update(_FORM_RULES)
+    merged.update(_STRICT_FORM_RULES)
+    lines: list[str] = []
+    for idx, key in enumerate(sorted(merged), start=1):
+        lines.append(f"{idx}. {merged[key]}")
+    return "\n".join(lines)
+
+
+def validate_plan_form_strict(plan: ActionPlan) -> list[str]:
+    """Run the strict production-time form checks on a plan.
+
+    This layer is deliberately NOT a pydantic validator: ``load_plan``
+    stays permissive so committed plans (including queued specs' plans)
+    keep loading. Enforcement happens where NEW plans are born (the
+    Planner's emission loop). The checks are:
+
+    * **step size** \u2014 a step touching more than
+      :data:`PLAN_STEP_MAX_FILES` files or promising more than
+      :data:`PLAN_STEP_MAX_UNIT_SELECTORS` unit selectors yields a
+      reason citing the cap and the Developer's 30-turn budget;
+    * **no test-double keywords** \u2014 a step whose action text
+      contains a whole-word (case-insensitive) match for any keyword
+      in :data:`_BANNED_DOUBLE_KEYWORDS` yields a reason quoting the
+      operator rule and pointing to the truthful-boundary-fake
+      vocabulary.
+
+    Args:
+        plan: A validated :class:`ActionPlan` (pydantic validation
+            has already passed; this is the second layer).
+
+    Returns:
+        A list of human-readable violation reasons. An empty list
+        means the plan is clean against the strict form layer.
+    """
+    reasons: list[str] = []
+    for step in plan.steps:
+        if len(step.files) > PLAN_STEP_MAX_FILES:
+            reasons.append(
+                f"step {step.index} ({step.title!r}) touches "
+                f"{len(step.files)} files, exceeding the "
+                f"PLAN_STEP_MAX_FILES cap of {PLAN_STEP_MAX_FILES} \u2014 "
+                "oversized steps blow the Developer's 30-turn budget"
+            )
+        if len(step.unit_tests) > PLAN_STEP_MAX_UNIT_SELECTORS:
+            reasons.append(
+                f"step {step.index} ({step.title!r}) promises "
+                f"{len(step.unit_tests)} unit-test selectors, exceeding "
+                f"the PLAN_STEP_MAX_UNIT_SELECTORS cap of "
+                f"{PLAN_STEP_MAX_UNIT_SELECTORS} \u2014 oversized steps "
+                "blow the Developer's 30-turn budget"
+            )
+        match = _BANNED_DOUBLE_RE.search(step.action)
+        if match is not None:
+            keyword = match.group(0)
+            reasons.append(
+                f"step {step.index} ({step.title!r}) action text "
+                f"instructs {keyword!r} \u2014 the operator rule forbids "
+                "stubbing/monkeypatching plan-touched behavior; use a "
+                "truthful boundary fake for external boundaries (gh, "
+                "LLM, network) instead"
+            )
+    return reasons
+
 
 def require_repo_relative(path: str) -> None:
     """Reject absolute paths and ``..`` traversal segments.
