@@ -40,6 +40,7 @@ import contextlib
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -66,6 +67,7 @@ from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
 from .spec_gate import selector_present
 from .spec_supersede import supersede_parent_on_decompose
+from .wrapup_attribution import StepCommit
 
 _log = get_logger(__name__)
 
@@ -200,6 +202,9 @@ usually one nudge from green. A non-lint failure (syntax, import, tests,
 commit) stops after two attempts, so a genuinely broken step costs no extra
 dispatch latency (SP-DEV-STEP-LOOP-HARDEN).
 """
+
+WRAPUP_REPAIR_ATTEMPTS: int = 1
+"""Bounds the wrap-up repair loop per introducing step (SP-DEV-WRAPUP-ATTRIBUTION)."""
 
 _LINT_GATE_KIND: str = "lint"
 _OTHER_GATE_KIND: str = "other"
@@ -989,6 +994,128 @@ def _changed_paths(repo_root: Path) -> list[str]:
             entry = entry.split(" -> ", 1)[1]
         paths.append(entry.strip().strip('"'))
     return paths
+
+
+def _run_selector_at_commit(repo_root: Path, sha: str, selector: str) -> bool:
+    """Run *selector* at *sha* in a throwaway git worktree; return whether green.
+
+    Creates a detached worktree via ``git worktree add --detach`` at a fresh
+    ``tempfile.mkdtemp`` directory, runs :func:`run_pytest_selectors` inside it,
+    and always tears the worktree down in a ``finally`` block — the session's
+    own checkout is never disturbed (SP-DEV-WRAPUP-ATTRIBUTION G2).
+
+    Args:
+        repo_root: The session's repository root (the worktree's origin).
+        sha: The commit to check out into the temporary worktree.
+        selector: The pytest selector to run there.
+
+    Returns:
+        ``True`` when the selector is green at *sha*, ``False`` when red.
+
+    Raises:
+        RuntimeError: When ``git worktree add`` fails; the message carries
+            git's combined stdout/stderr tail.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="ferova-wrapup-")
+    try:
+        rc, out = _run_git(repo_root, "worktree", "add", "--detach", tmp_dir, sha)
+        if rc != 0:
+            raise RuntimeError(out)
+        green, _tail = run_pytest_selectors(Path(tmp_dir), [selector])
+        return green
+    finally:
+        _run_git(repo_root, "worktree", "remove", "--force", tmp_dir)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _step_commits_for_plan(repo_root: Path, plan: ActionPlan, base: str) -> list[StepCommit]:
+    """Resolve the plan's ordered step commits (base first) on the current branch.
+
+    Args:
+        repo_root: The session's repository root.
+        plan: The action plan whose steps' commit messages are matched
+            against the branch's commit log.
+        base: The ref the implementation branch was created from.
+
+    Returns:
+        ``[StepCommit(0, "plan base", merge_base_sha), ...]`` followed by one
+        :class:`StepCommit` per plan step whose ``commit_message`` matches a
+        commit subject reachable from the merge-base to ``HEAD``, in plan
+        order. Empty list when the merge-base cannot be resolved.
+    """
+    rc, merge_base = _run_git(repo_root, "merge-base", "HEAD", base, tail_chars=0)
+    if rc != 0:
+        return []
+    merge_base_sha = merge_base.strip()
+    commits = [StepCommit(index=0, title="plan base", sha=merge_base_sha)]
+
+    _rc, log_out = _run_git(
+        repo_root, "log", "--format=%H%x1f%s", "--reverse", f"{merge_base_sha}..HEAD", tail_chars=0
+    )
+    parsed: list[tuple[str, str]] = []
+    for line in log_out.splitlines():
+        if "\x1f" not in line:
+            continue
+        sha, subject = line.split("\x1f", 1)
+        parsed.append((sha, subject))
+
+    for step in plan.steps:
+        for sha, subject in parsed:
+            if step.commit_message == subject:
+                commits.append(StepCommit(index=step.index, title=step.title, sha=sha))
+                break
+
+    return commits
+
+
+def _promised_selectors_for_plan(plan: ActionPlan) -> set[str]:
+    """Return every selector any part of *plan* promises, plan- and step-level.
+
+    Args:
+        plan: The action plan whose promised selectors bound wrap-up
+            attribution — a failure on one of these selectors is the
+            existing loop's job, not the attribution path's.
+
+    Returns:
+        Union of :attr:`ActionPlan.integration_tests` and every step's
+        :attr:`PlanStep.unit_tests`.
+    """
+    return set(plan.integration_tests) | {t for step in plan.steps for t in step.unit_tests}
+
+
+def _collect_failing_wrapup_selectors(repo_root: Path, promised: set[str]) -> list[str]:
+    """Run the full unit suite and return failing selectors that no step promised.
+
+    Args:
+        repo_root: The session's repository root.
+        promised: Every selector promised by the plan (see
+            :func:`_promised_selectors_for_plan`) — excluded from the result
+            since those failures are the existing loop's responsibility.
+
+    Returns:
+        Sorted list of ``FAILED`` selectors from ``pytest -rf`` output that
+        are not in *promised*.
+    """
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf", "tests/unit"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
+        env=scrubbed_env(),
+    )
+    failing: set[str] = set()
+    for line in proc.stdout.splitlines():
+        if not line.startswith("FAILED "):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        failing.add(parts[1])
+    return sorted(failing - promised)
 
 
 def execute_plan_step(
