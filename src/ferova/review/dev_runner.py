@@ -67,7 +67,7 @@ from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
 from .spec_gate import selector_present
 from .spec_supersede import supersede_parent_on_decompose
-from .wrapup_attribution import StepCommit
+from .wrapup_attribution import StepCommit, attribute_failure_to_step
 
 _log = get_logger(__name__)
 
@@ -225,6 +225,10 @@ class DevSessionResult:
     superseded), and ``pr_title`` / ``pr_summary`` carry the parent's title / summary
     captured **before** any supersession so the PR can be opened without re-loading a
     deleted parent spec file.
+
+    SP-DEV-WRAPUP-ATTRIBUTION adds ``wrapup_dossier``, carrying the attribution
+    block (introducing step / pre-existing / error per failing selector) for
+    a wrap-up that stayed red after the bounded repair attempt.
     """
 
     spec_id: str
@@ -246,6 +250,7 @@ class DevSessionResult:
     sub_spec_ids: list[str] = field(default_factory=list)
     pr_title: str = ""
     pr_summary: str = ""
+    wrapup_dossier: str = ""
 
 
 def read_existing_files(plan: SpecPlan, *, repo_root: Path | None = None) -> dict[str, str]:
@@ -1116,6 +1121,155 @@ def _collect_failing_wrapup_selectors(repo_root: Path, promised: set[str]) -> li
             continue
         failing.add(parts[1])
     return sorted(failing - promised)
+
+
+def repair_wrapup_failures(
+    repo_root: Path,
+    plan: ActionPlan,
+    *,
+    dev: Developer,
+    db: Path,
+    base: str,
+    failing_selectors: list[str],
+    result: DevSessionResult,
+) -> str | None:
+    """Attribute each wrap-up failure to its introducing step and repair it.
+
+    SP-DEV-WRAPUP-ATTRIBUTION G2/G3: builds the plan's ordered step commits
+    via :func:`_step_commits_for_plan`, then for every selector in
+    *failing_selectors* calls :func:`attribute_failure_to_step` with a real
+    git-worktree selector runner (:func:`_run_selector_at_commit`).
+
+    A ``pre_existing`` outcome (the selector was already red at the plan
+    base) is recorded in the dossier and never repaired — the failure
+    predates the session (NG3). An ``error`` outcome, or any exception
+    escaping the attribution call itself, is also recorded and left
+    unrepaired, failing closed rather than guessing an attribution. An
+    ``introduced_by_step`` outcome dispatches up to
+    :data:`WRAPUP_REPAIR_ATTEMPTS` bounded repair attempts to the existing
+    Developer loop, scoped to the introducing step's file contract plus the
+    failing selector's own file, with a brief naming the selector, the
+    step's index/title/files, and its commit's diff stat. A repair whose
+    strict re-run of the selector goes green is committed as
+    ``fix(wrapup): <selector> broken by step <n>``; an attempt loop that
+    exhausts without green is recorded unrepaired.
+
+    Args:
+        repo_root: The session's repository root — never disturbed;
+            attribution and repair both operate on it directly (the
+            worktree used for attribution is temporary and torn down
+            per commit by :func:`_run_selector_at_commit`).
+        plan: The action plan whose step commits are walked and whose
+            steps supply file contracts for repair briefs.
+        dev: The Developer agent (or an injected fake) dispatched for
+            each bounded repair attempt.
+        db: L4 database path for dispatch persistence.
+        base: The ref the implementation branch was created from — the
+            plan base attribution is checked against first.
+        failing_selectors: Wrap-up selectors that failed and that no
+            step promised (see :func:`_collect_failing_wrapup_selectors`).
+        result: The session result updated in place —
+            :attr:`DevSessionResult.wrapup_dossier` is always set to the
+            newline-joined dossier lines once every selector has been
+            processed.
+
+    Returns:
+        ``None`` when every selector ended up repaired. Otherwise a
+        ``no_op_reason`` string built from the FIRST selector that stayed
+        unrepaired: for an attributed-but-unfixed step it names the
+        step's index/title and the selector; for a ``pre_existing`` or
+        ``error`` outcome it reuses that selector's dossier line verbatim.
+    """
+    step_commits = _step_commits_for_plan(repo_root, plan, base)
+    dossier_lines: list[str] = []
+    unrepaired: list[tuple[int | None, str, str]] = []
+
+    for selector in failing_selectors:
+        try:
+            outcome = attribute_failure_to_step(
+                selector,
+                step_commits,
+                run_selector=lambda sha, sel: _run_selector_at_commit(repo_root, sha, sel),
+            )
+        except Exception as exc:
+            line = f"error: {selector}: attribution crashed: {exc}"
+            _log.warning(
+                "dev_runner.wrapup_attribution_crashed",
+                selector=selector,
+                error=str(exc)[:200],
+            )
+            dossier_lines.append(line)
+            unrepaired.append((None, "", line))
+            continue
+
+        if outcome.status == "pre_existing":
+            line = f"pre_existing: {selector}"
+            dossier_lines.append(line)
+            unrepaired.append((None, "", line))
+            continue
+
+        if outcome.status == "error":
+            line = f"error: {selector}: {outcome.error}"
+            dossier_lines.append(line)
+            unrepaired.append((None, "", line))
+            continue
+
+        matched_step = next(s for s in plan.steps if s.index == outcome.step.index)
+        _rc, diff_stat = _run_git(repo_root, "show", "--stat", outcome.step.sha, tail_chars=0)
+        commit_message = f"fix(wrapup): {selector} broken by step {outcome.step.index}"
+        brief = (
+            f"Wrap-up repair: the selector `{selector}` is broken by step "
+            f"{matched_step.index} ({matched_step.title}).\n\n"
+            f"Step files: {matched_step.files}\n\n"
+            f"Step diff (git show --stat {outcome.step.sha}):\n{diff_stat}\n\n"
+            "Fix the regression this step introduced so the selector above "
+            "passes again, without breaking the step's own promised tests."
+        )
+
+        repaired = False
+        for _attempt in range(WRAPUP_REPAIR_ATTEMPTS):
+            loop_result = dev.develop_step(
+                brief=brief,
+                repo_root=repo_root,
+                allowed_paths=[*matched_step.files, selector.split("::", 1)[0]],
+                repo_tree="",
+                spec_id=f"{plan.spec_id}:wrapup-repair-step-{outcome.step.index}",
+            )
+            record_coder_response(
+                db,
+                pr_number=0,
+                plan={
+                    "fixes": [],
+                    "commit_message": commit_message,
+                    "summary": f"wrapup repair attempt for {selector}",
+                },
+                model_used=loop_result.model_used,
+                elapsed_s=loop_result.elapsed_s,
+                tokens_used=loop_result.tokens_used,
+            )
+            ok, _tail = run_pytest_selectors(repo_root, [selector])
+            if ok:
+                commit_all(repo_root, commit_message)
+                repaired = True
+                break
+
+        if not repaired:
+            line = f"step {outcome.step.index} ({matched_step.title}): {selector}"
+            dossier_lines.append(line)
+            unrepaired.append((outcome.step.index, matched_step.title, selector))
+
+    result.wrapup_dossier = "\n".join(dossier_lines)
+
+    if not unrepaired:
+        return None
+
+    step_index, step_title, entry = unrepaired[0]
+    if step_index is not None:
+        return (
+            f"full unit suite pytest red — step {step_index} ({step_title}) "
+            f"introduced a failure in {entry} and the bounded repair attempt did not fix it"
+        )
+    return f"full unit suite pytest red — {entry}"
 
 
 def execute_plan_step(
