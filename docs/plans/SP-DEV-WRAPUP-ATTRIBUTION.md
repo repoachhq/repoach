@@ -34,6 +34,14 @@ Add a pure `attribute_failure_to_step` helper in a new `src/ferova/review/wrapup
 - **Done when**: python -m pytest tests/integration/test_wrapup_attribution_end_to_end.py tests/unit/test_dev_runner_wrapup.py::test_wrapup_integration_test_file_exists -q passes
 - **Unit tests**: `tests/unit/test_dev_runner_wrapup.py::test_wrapup_integration_test_file_exists`
 
+## Step 6 — Dossier lines carry the introducing step's diff stat
+
+- **Files**: `src/ferova/review/dev_runner.py`, `tests/unit/test_dev_runner_wrapup.py`
+- **Action**: In repair_wrapup_failures, the unrepaired introduced_by_step dossier line reads `step {n} ({title}): {selector}` — spec G3 requires the attribution block to carry the diff as well. Append the already-computed diff stat: `step {n} ({title}): {selector} — {diff_stat}` where diff_stat is the summary tail line of the `_run_git(..., "show", "--stat", sha)` output (whitespace-collapsed, truncated to 200 chars). Add tests/unit/test_dev_runner_wrapup.py::test_wrapup_dossier_carries_diff_stat reusing the failing-repair fixture from test_wrapup_no_op_reason_names_step, asserting result.wrapup_dossier contains both the step title and a diff-stat-shaped fragment.
+- **Commit**: `fix(dev_runner): wrap-up dossier lines carry the introducing diff stat`
+- **Done when**: pytest tests/unit/test_dev_runner_wrapup.py::test_wrapup_dossier_carries_diff_stat passes
+- **Unit tests**: `tests/unit/test_dev_runner_wrapup.py::test_wrapup_dossier_carries_diff_stat`
+
 ## Integration tests
 
 - `tests/integration/test_wrapup_attribution_end_to_end.py::test_cross_cutting_breakage_attributed_and_repaired`
@@ -118,6 +126,20 @@ Add a pure `attribute_failure_to_step` helper in a new `src/ferova/review/wrapup
       "done_when": "python -m pytest tests/integration/test_wrapup_attribution_end_to_end.py tests/unit/test_dev_runner_wrapup.py::test_wrapup_integration_test_file_exists -q passes",
       "unit_tests": [
         "tests/unit/test_dev_runner_wrapup.py::test_wrapup_integration_test_file_exists"
+      ]
+    },
+    {
+      "index": 6,
+      "title": "Dossier lines carry the introducing step's diff stat",
+      "files": [
+        "src/ferova/review/dev_runner.py",
+        "tests/unit/test_dev_runner_wrapup.py"
+      ],
+      "action": "In repair_wrapup_failures, the unrepaired introduced_by_step dossier line reads `step {n} ({title}): {selector}` — spec G3 requires the attribution block to carry the diff as well. Append the already-computed diff stat: `step {n} ({title}): {selector} — {diff_stat}` where diff_stat is the summary tail line of the `_run_git(..., \"show\", \"--stat\", sha)` output (whitespace-collapsed, truncated to 200 chars). Add tests/unit/test_dev_runner_wrapup.py::test_wrapup_dossier_carries_diff_stat reusing the failing-repair fixture from test_wrapup_no_op_reason_names_step, asserting result.wrapup_dossier contains both the step title and a diff-stat-shaped fragment.",
+      "commit_message": "fix(dev_runner): wrap-up dossier lines carry the introducing diff stat",
+      "done_when": "pytest tests/unit/test_dev_runner_wrapup.py::test_wrapup_dossier_carries_diff_stat passes",
+      "unit_tests": [
+        "tests/unit/test_dev_runner_wrapup.py::test_wrapup_dossier_carries_diff_stat"
       ]
     }
   ],
