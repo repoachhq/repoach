@@ -296,3 +296,19 @@ def test_wrapup_dossier_defaults_empty() -> None:
     result = DevSessionResult(spec_id="SP-WRAPUP-DEMO")
 
     assert result.wrapup_dossier == ""
+
+
+def test_wrapup_integration_test_file_exists() -> None:
+    """Guard the end-to-end integration test file against accidental deletion.
+
+    Reads the real repo file (not an import) so the guard survives even if
+    the integration test module itself fails to collect for an unrelated
+    reason — the point is to catch the file vanishing, not to duplicate
+    its own assertions.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    target = repo_root / "tests" / "integration" / "test_wrapup_attribution_end_to_end.py"
+
+    assert target.exists()
+    text = target.read_text(encoding="utf-8")
+    assert "def test_cross_cutting_breakage_attributed_and_repaired" in text
