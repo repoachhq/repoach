@@ -1254,7 +1254,11 @@ def repair_wrapup_failures(
                 break
 
         if not repaired:
-            line = f"step {outcome.step.index} ({matched_step.title}): {selector}"
+            diff_stat_summary = " ".join(diff_stat.splitlines()[-1].split())[:200]
+            line = (
+                f"step {outcome.step.index} ({matched_step.title}): {selector} "
+                f"\u2014 {diff_stat_summary}"
+            )
             dossier_lines.append(line)
             unrepaired.append((outcome.step.index, matched_step.title, selector))
 

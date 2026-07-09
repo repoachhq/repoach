@@ -275,6 +275,42 @@ def test_wrapup_no_op_reason_names_step(tmp_path: Path) -> None:
     assert "tests/unit/test_wrap_demo.py::test_b" in result.wrapup_dossier
 
 
+def test_wrapup_dossier_carries_diff_stat(tmp_path: Path) -> None:
+    """The unrepaired introduced_by_step dossier line carries the diff stat.
+
+    Reuses the failing-repair fixture from
+    :func:`test_wrapup_no_op_reason_names_step` and asserts the dossier
+    contains both the step title and a diff-stat-shaped fragment
+    (the ``git show --stat`` summary tail line, whitespace-collapsed).
+    """
+    repo = _init_repo_with_wrap_demo(tmp_path)
+    _commit_breaking_step(repo)
+    plan = _one_step_plan_breaking_wrap_demo()
+    db = tmp_path / "test.db"
+    init_schema(db)
+
+    def _step(*, brief, repo_root, allowed_paths, repo_tree="", spec_id=None):
+        return DevLoopResult(text="no-op", model_used="stub", turns=1, tokens_used=0)
+
+    dev = MagicMock()
+    dev.develop_step.side_effect = _step
+
+    result = DevSessionResult(spec_id=plan.spec_id)
+    repair_wrapup_failures(
+        repo,
+        plan,
+        dev=dev,
+        db=db,
+        base="develop",
+        failing_selectors=["tests/unit/test_wrap_demo.py::test_b"],
+        result=result,
+    )
+
+    assert "Step one" in result.wrapup_dossier
+    assert "tests/unit/test_wrap_demo.py::test_b" in result.wrapup_dossier
+    assert "files changed" in result.wrapup_dossier
+
+
 def test_wrapup_wiring_invokes_repair_path() -> None:
     """``_develop_one_spec``'s wrap-up block must call the attribution helpers.
 
