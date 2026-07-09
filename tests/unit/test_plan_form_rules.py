@@ -177,3 +177,21 @@ class TestNoStubDoubleLint:
         )
         plan = _plan(steps=[truthful_fake_step])
         assert validate_plan_form_strict(plan) == []
+
+
+def test_rule_catalog_covers_every_validator() -> None:
+    """Every registered validator name on both models has a rule sentence."""
+    names = _registered_validator_names(PlanStep) | _registered_validator_names(ActionPlan)
+    missing = names - set(_FORM_RULES)
+    assert not missing, f"validators without a rule sentence: {sorted(missing)}"
+
+
+def test_catalog_renders_numbered_sentences() -> None:
+    """The rendered catalog numbers every sentence exactly once."""
+    rendered = render_plan_form_rules()
+    sentences = list(_FORM_RULES.values()) + list(_STRICT_FORM_RULES.values())
+    for sentence in sentences:
+        assert sentence in rendered
+    lines = [line for line in rendered.splitlines() if line.strip()]
+    numbered = [line for line in lines if line.lstrip()[0].isdigit()]
+    assert len(numbered) == len(set(numbered)) >= len(set(sentences))
