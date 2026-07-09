@@ -63,9 +63,10 @@ _STRICT_FORM_RULES: dict[str, str] = {
         "selectors (proxy for the Developer's 30-turn budget)."
     ),
     "_no_test_double_keywords": (
-        "Action text must not instruct stubbing, mocking, or monkeypatching "
-        "plan-touched behavior \u2014 use truthful boundary fakes for external "
-        "boundaries (gh, LLM, network) instead."
+        "Action text must not contain any whole-word occurrence of "
+        "stub, stubbed, stubbing, monkeypatch, mock, mocked, or mocking "
+        "\u2014 use truthful boundary fakes for external boundaries "
+        "(gh, LLM, network) instead."
     ),
 }
 
@@ -73,7 +74,7 @@ PLAN_STEP_MAX_FILES: int = 3
 PLAN_STEP_MAX_UNIT_SELECTORS: int = 5
 
 _BANNED_DOUBLE_KEYWORDS: frozenset[str] = frozenset(
-    {"stub", "stubbing", "mock", "mocking", "monkeypatch"}
+    {"stub", "stubbed", "stubbing", "monkeypatch", "mock", "mocked", "mocking"}
 )
 _BANNED_DOUBLE_RE: re.Pattern[str] = re.compile(
     r"\b(?:" + "|".join(re.escape(word) for word in _BANNED_DOUBLE_KEYWORDS) + r")\b",

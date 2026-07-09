@@ -13,6 +13,7 @@ time.  This module pins two contracts:
 from __future__ import annotations
 
 from ferova.review.plan import (
+    _BANNED_DOUBLE_KEYWORDS,
     _FORM_RULES,
     _STRICT_FORM_RULES,
     PLAN_STEP_MAX_FILES,
@@ -195,3 +196,34 @@ def test_catalog_renders_numbered_sentences() -> None:
     lines = [line for line in rendered.splitlines() if line.strip()]
     numbered = [line for line in lines if line.lstrip()[0].isdigit()]
     assert len(numbered) == len(set(numbered)) >= len(set(sentences))
+
+
+def test_banned_keyword_set_matches_spec() -> None:
+    """The banned test-double keyword set matches spec G3 verbatim.
+
+    G3 enumerates exactly seven words: the noun for a canned double
+    (``stub``) and its two participle forms (``stubbed``,
+    ``stubbing``), the pytest fixture-patching verb (``monkeypatch``),
+    and the three forms of the other test-double noun (``mock``,
+    ``mocked``, ``mocking``). Each must trip the lint as a whole word;
+    substrings inside identifiers or unrelated words (``stubborn``,
+    ``mockingbird``) must not.
+    """
+    spec_words = frozenset(
+        {"stub", "stubbed", "stubbing", "monkeypatch", "mock", "mocked", "mocking"}
+    )
+    assert spec_words == _BANNED_DOUBLE_KEYWORDS
+
+    for word in sorted(spec_words):
+        step = _step(index=1, action=f"Please {word} the target behavior in this step.")
+        plan = _plan(steps=[step])
+        reasons = validate_plan_form_strict(plan)
+        assert reasons, f"expected a reason for banned keyword {word!r}"
+
+    for safe_text in (
+        "The legacy client was stubborn about retries; simplify it.",
+        "Rename the mockingbird_helper identifier to a clearer name.",
+    ):
+        step = _step(index=1, action=safe_text)
+        plan = _plan(steps=[step])
+        assert validate_plan_form_strict(plan) == [], safe_text
