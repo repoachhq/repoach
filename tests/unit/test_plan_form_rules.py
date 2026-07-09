@@ -267,6 +267,23 @@ def test_catalog_renders_numbered_sentences() -> None:
     assert len(numbered) == len(set(numbered)) >= len(set(sentences))
 
 
+def test_action_density_rule_in_catalog() -> None:
+    """The density rule sentence is a value in _STRICT_FORM_RULES and
+    appears, uniquely numbered, in render_plan_form_rules().
+    """
+    assert "_action_density_cap" in _STRICT_FORM_RULES
+    density_sentence = _STRICT_FORM_RULES["_action_density_cap"]
+    assert str(PLAN_STEP_MAX_ACTION_DENSITY) in density_sentence
+
+    rendered = render_plan_form_rules()
+    assert density_sentence in rendered
+
+    lines = [line for line in rendered.splitlines() if line.strip()]
+    density_line = next(line for line in lines if density_sentence in line)
+    assert density_line.lstrip()[0].isdigit()
+    assert lines.count(density_line) == 1
+
+
 def test_banned_keyword_set_matches_spec() -> None:
     """The banned test-double keyword set matches spec G3 verbatim.
 
