@@ -14,6 +14,7 @@ when the repair does not land.
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -21,6 +22,7 @@ from unittest.mock import MagicMock
 from ferova.review.dev_runner import (
     DevSessionResult,
     _collect_failing_wrapup_selectors,
+    _develop_one_spec,
     _step_commits_for_plan,
     repair_wrapup_failures,
 )
@@ -271,3 +273,26 @@ def test_wrapup_no_op_reason_names_step(tmp_path: Path) -> None:
 
     assert "Step one" in result.wrapup_dossier
     assert "tests/unit/test_wrap_demo.py::test_b" in result.wrapup_dossier
+
+
+def test_wrapup_wiring_invokes_repair_path() -> None:
+    """``_develop_one_spec``'s wrap-up block must call the attribution helpers.
+
+    Guard against the wiring silently regressing back to the bare
+    ``full unit suite pytest red after all steps`` no-op — same pattern as
+    ``test_run_from_findings_still_calls_ci_materialiser_and_resolver``: read
+    the function's own source and assert it calls each helper by name rather
+    than exercising the full session end-to-end.
+    """
+    source = inspect.getsource(_develop_one_spec)
+
+    assert "_promised_selectors_for_plan(" in source
+    assert "_collect_failing_wrapup_selectors(" in source
+    assert "repair_wrapup_failures(" in source
+
+
+def test_wrapup_dossier_defaults_empty() -> None:
+    """A freshly constructed :class:`DevSessionResult` has an empty dossier."""
+    result = DevSessionResult(spec_id="SP-WRAPUP-DEMO")
+
+    assert result.wrapup_dossier == ""

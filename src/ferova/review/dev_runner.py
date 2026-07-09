@@ -1791,6 +1791,23 @@ def _develop_one_spec(
     result.ruff_passed = True
     result.pytest_passed = full_ok
     if not full_ok:
+        promised = _promised_selectors_for_plan(action_plan)
+        failing = _collect_failing_wrapup_selectors(repo, promised)
+        if failing:
+            reason = repair_wrapup_failures(
+                repo,
+                action_plan,
+                dev=dev,
+                db=db,
+                base=base,
+                failing_selectors=failing,
+                result=result,
+            )
+            if reason is not None:
+                return reason
+            full_ok, full_tail = run_pytest_matrix(repo)
+            result.pytest_passed = full_ok
+    if not full_ok:
         return f"full unit suite pytest red after all steps ({full_tail[:160]})"
 
     integration_present = [
