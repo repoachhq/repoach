@@ -506,7 +506,7 @@ class TestSelectorCheck:
             "def test_real():\n    assert True\n", encoding="utf-8"
         )
         payload = _valid_plan_payload()
-        payload["steps"][0]["files"].append("tests/unit/test_existing.py")
+        payload["steps"][0]["files"][1] = "tests/unit/test_existing.py"
         payload["steps"][0]["unit_tests"] = ["tests/unit/test_existing.py::test_fake"]
         loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
         planner = Planner(loop=loop, repo_root=repo)
@@ -528,7 +528,7 @@ class TestSelectorCheck:
             "def test_real():\n    assert True\n", encoding="utf-8"
         )
         payload = _valid_plan_payload()
-        payload["steps"][0]["files"].append("tests/unit/test_existing.py")
+        payload["steps"][0]["files"][1] = "tests/unit/test_existing.py"
         payload["steps"][0]["unit_tests"] = ["tests/unit/test_existing.py::test_real"]
         loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
         planner = Planner(loop=loop, repo_root=repo)
@@ -547,7 +547,7 @@ class TestSelectorCheck:
             "def test_real():\n    assert True\n", encoding="utf-8"
         )
         payload = _valid_plan_payload()
-        payload["steps"][0]["files"].append("tests/unit/test_existing.py")
+        payload["steps"][0]["files"][1] = "tests/unit/test_existing.py"
         payload["steps"][0]["unit_tests"] = ["tests/unit/test_existing.py::test_new"]
         payload["steps"][0]["action"] = "Create test_new in test_existing.py."
         loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
@@ -564,7 +564,7 @@ class TestSelectorCheck:
         repo = _repo_with_spec(tmp_path)
         payload = _valid_plan_payload()
         payload["steps"][0]["unit_tests"] = ["tests/unit/test_new.py::test_new"]
-        payload["steps"][0]["files"].append("tests/unit/test_new.py")
+        payload["steps"][0]["files"][1] = "tests/unit/test_new.py"
         loop = _ScriptedLoop([f"```json\n{json.dumps(payload)}\n```"])
         planner = Planner(loop=loop, repo_root=repo)
 
