@@ -20,7 +20,7 @@ Slice 11 of the evidence-first redesign.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ..core.config import get_settings
@@ -28,6 +28,7 @@ from ..core.logging import get_logger
 from ..memory import agentmemory_client
 from .builder_memory import BUILDER_PROJECT
 from .findings import Finding, FindingStatus, fetch_all_findings, fetch_findings
+from .planner_telemetry import fetch_planner_attempts
 
 _log = get_logger(__name__)
 
@@ -69,12 +70,19 @@ class FindingsInsights:
         by_status: Count of findings per lifecycle status.
         by_claim_type: Count of findings per claim type.
         lens_precision: Per-lens precision, ordered by finder name.
+        planner_rule_violations: Count of rejected planner attempts per
+            violated rule, aggregated across EVERY planning session in the
+            telemetry ledger (SP-PLAN-QUALITY step 5). Planner attempts are
+            keyed by ``spec_id``, not by PR, so this deliberately ignores
+            the ``pr_number`` scoping used for the findings-based fields
+            above.
     """
 
     total: int
     by_status: dict[str, int]
     by_claim_type: dict[str, int]
     lens_precision: list[LensPrecision]
+    planner_rule_violations: dict[str, int] = field(default_factory=dict)
 
 
 def distill_verified_lessons(db_path: Path, pr_number: int) -> list[str]:
@@ -258,9 +266,15 @@ def render_lens_track_record(
 def gather_insights(db_path: Path, *, pr_number: int | None = None) -> FindingsInsights:
     """Load findings (one PR or the whole ledger) and compute insights.
 
+    The planner-rule-violation section is always aggregated across the
+    FULL planner telemetry ledger, regardless of ``pr_number``: planner
+    attempts are recorded per ``spec_id`` (a planning session), not per
+    PR, so there is no PR to scope them by.
+
     Args:
         db_path: The findings ledger database.
-        pr_number: Restrict to one PR; ``None`` aggregates every PR.
+        pr_number: Restrict findings to one PR; ``None`` aggregates every
+            PR. Never applied to the planner-rule-violation section.
 
     Returns:
         The assembled :class:`FindingsInsights`.
@@ -268,4 +282,8 @@ def gather_insights(db_path: Path, *, pr_number: int | None = None) -> FindingsI
     findings = (
         fetch_all_findings(db_path) if pr_number is None else fetch_findings(db_path, pr_number)
     )
-    return compute_insights(findings)
+    insights = compute_insights(findings)
+    violations: dict[str, int] = defaultdict(int)
+    for attempt in fetch_planner_attempts(db_path):
+        violations[str(attempt["violated_rule"])] += 1
+    return replace(insights, planner_rule_violations=dict(sorted(violations.items())))

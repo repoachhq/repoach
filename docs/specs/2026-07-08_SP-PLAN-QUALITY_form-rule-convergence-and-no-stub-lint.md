@@ -5,7 +5,7 @@ version: 0.1
 status: approved
 author: jfaye (urgent operator directive 2026-07-08; 4/5 planning sessions exhausted on form rules)
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-09
 
 owns:
   code: []
@@ -54,18 +54,25 @@ rule ("s'il y a un stub évoqué, on écrit une spec"; this spec).
   catalog is injected code-side (planner.py — `prompts/review/*`
   stays operator-owned and untouched) into the INITIAL planning
   prompt AND every refine turn, alongside the existing error history.
-- G2: Step-size lint. New validation errors when a step touches more
-  than `PLAN_STEP_MAX_FILES = 3` files or promises more than
-  `PLAN_STEP_MAX_UNIT_SELECTORS = 5` unit selectors (module
-  constants; proxy for the Developer's 30-turn budget — the dead-hop
+- G2: Step-size lint, enforced as a STRICT PRODUCTION-TIME layer in
+  the Planner's emission loop (never retroactively in `load_plan` —
+  an empirical check showed unconditional model validators would
+  newly break 13 of 31 committed plans, including queued specs'
+  plans; committed plans are grandfathered): a step touching more
+  than `PLAN_STEP_MAX_FILES = 3` files or promising more than
+  `PLAN_STEP_MAX_UNIT_SELECTORS = 5` unit selectors is refused with
+  the cap and the Developer's 30-turn-budget rationale (the dead-hop
   step-3 blowout is the evidence).
-- G3: No-stub lint. A step whose action text instructs `stub` or
-  `monkeypatch` of a symbol or module that ANY step of the same plan
-  touches is a validation error citing the operator rule verbatim
-  ("no stubs — a stub temptation becomes a spec"). Truthful boundary
-  fakes remain expressible (actions describing fakes of external
-  boundaries — gh, LLM, network — do not trip the lint when the
-  faked object is not plan-touched).
+- G3: No-stub lint, same strict layer, UNCONDITIONAL per the operator
+  rule of 2026-07-08 ("no stubs, whatever the reason — a stub
+  temptation becomes a spec"): any whole-word occurrence of the
+  banned test-double vocabulary — exactly `stub`, `stubbed`,
+  `stubbing`, `monkeypatch`, `mock`, `mocked`, `mocking` — in a
+  step's action text is refused, quoting the rule. The code's
+  keyword set and this enumeration are kept identical (AC3b). Plans faking external boundaries (gh, LLM, network) use the
+  sanctioned truthful-boundary-fake vocabulary, which contains none
+  of the banned keywords — the fake carries scripted boundary data
+  while the real code path runs.
 - G4: Convergence telemetry. Every planner attempt persists
   (spec_id, attempt, violated_rule) so oscillation is measurable;
   `ferova review insights` gains a planner section (rule →
@@ -107,11 +114,16 @@ other form errors, so the same refine loop handles them. Insights:
   a validator without a rule sentence fails the test.
 - AC2: `::test_step_size_cap_rejects_oversized_step` — a 4-file step
   and a 6-selector step each fail with the size rule cited.
-- AC3: `::test_no_stub_lint_rejects_stubbing_touched_behavior` — an
-  action saying "monkeypatch resolve_verified_head" while another
-  step touches auto_merge.py fails, citing the operator rule.
-- AC4: `::test_no_stub_lint_allows_truthful_boundary_fakes` — an
-  action describing a fake gh boundary object passes.
+- AC3: `::test_form_lint_rejects_banned_double_keywords` — an action
+  instructing a banned test-double keyword against
+  resolve_verified_head fails citing the operator rule;
+  word-boundary proof: identifiers merely containing a keyword as a
+  substring, and prose like "stubborn", do not trip it.
+- AC3b: `::test_banned_keyword_set_matches_spec` — the code's banned
+  set is exactly the seven words G3 enumerates; each triggers a
+  reason as a whole word, none as a substring.
+- AC4: `::test_form_lint_allows_truthful_boundary_fakes` — an
+  action describing a truthful gh boundary fake passes.
 - AC5: `tests/unit/test_planner_prompt_rules.py::test_initial_prompt_carries_full_catalog`
   and `::test_refine_prompt_carries_catalog_and_history` (fake loop
   capturing prompts; the real prompt-assembly code runs — no stubs of
@@ -129,7 +141,8 @@ other form errors, so the same refine loop handles them. Insights:
 
 ## Open Questions
 
-- OQ1: Should the size caps also gate hand-authored plans at
-  `load_plan` time (they do, mechanically — any objection is a spec
-  amendment raising the constants)? Default: yes, same rules for
-  every author.
+- OQ1: RESOLVED 2026-07-09 — the strict layer gates plan PRODUCTION
+  (Planner emission) only; `load_plan` stays permissive so committed
+  plans are grandfathered (13/31 would otherwise break). Hand-authored
+  plans are held to the same rules by the author's review, and can be
+  checked on demand via `validate_plan_form_strict`.

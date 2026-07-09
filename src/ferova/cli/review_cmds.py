@@ -289,6 +289,7 @@ def review_insights(
                 "total": insights.total,
                 "by_status": insights.by_status,
                 "by_claim_type": insights.by_claim_type,
+                "planner_rule_violations": insights.planner_rule_violations,
                 "lens_precision": [
                     {
                         "finder": lp.finder,
