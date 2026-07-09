@@ -66,9 +66,10 @@ rule ("s'il y a un stub évoqué, on écrit une spec"; this spec).
 - G3: No-stub lint, same strict layer, UNCONDITIONAL per the operator
   rule of 2026-07-08 ("no stubs, whatever the reason — a stub
   temptation becomes a spec"): any whole-word occurrence of the
-  banned test-double keywords (`stub`, `stubbed`, `stubbing`,
-  `monkeypatch`) in a step's action text is refused, quoting the
-  rule. Plans faking external boundaries (gh, LLM, network) use the
+  banned test-double vocabulary — exactly `stub`, `stubbed`,
+  `stubbing`, `monkeypatch`, `mock`, `mocked`, `mocking` — in a
+  step's action text is refused, quoting the rule. The code's
+  keyword set and this enumeration are kept identical (AC3b). Plans faking external boundaries (gh, LLM, network) use the
   sanctioned truthful-boundary-fake vocabulary, which contains none
   of the banned keywords — the fake carries scripted boundary data
   while the real code path runs.
@@ -118,6 +119,9 @@ other form errors, so the same refine loop handles them. Insights:
   resolve_verified_head fails citing the operator rule;
   word-boundary proof: identifiers merely containing a keyword as a
   substring, and prose like "stubborn", do not trip it.
+- AC3b: `::test_banned_keyword_set_matches_spec` — the code's banned
+  set is exactly the seven words G3 enumerates; each triggers a
+  reason as a whole word, none as a substring.
 - AC4: `::test_form_lint_allows_truthful_boundary_fakes` — an
   action describing a truthful gh boundary fake passes.
 - AC5: `tests/unit/test_planner_prompt_rules.py::test_initial_prompt_carries_full_catalog`
@@ -137,7 +141,8 @@ other form errors, so the same refine loop handles them. Insights:
 
 ## Open Questions
 
-- OQ1: Should the size caps also gate hand-authored plans at
-  `load_plan` time (they do, mechanically — any objection is a spec
-  amendment raising the constants)? Default: yes, same rules for
-  every author.
+- OQ1: RESOLVED 2026-07-09 — the strict layer gates plan PRODUCTION
+  (Planner emission) only; `load_plan` stays permissive so committed
+  plans are grandfathered (13/31 would otherwise break). Hand-authored
+  plans are held to the same rules by the author's review, and can be
+  checked on demand via `validate_plan_form_strict`.

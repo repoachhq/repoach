@@ -50,6 +50,14 @@ Give the Planner the whole rulebook instead of one error at a time: a rule catal
 - **Done when**: pytest tests/integration/test_planner_form_convergence.py::test_catalog_present_in_first_planner_request passes
 - **Unit tests**: `tests/integration/test_planner_form_convergence.py::test_catalog_present_in_first_planner_request`
 
+## Step 7 — Banned keyword set matches the spec exactly
+
+- **Files**: `src/ferova/review/plan.py`, `tests/unit/test_plan_form_rules.py`
+- **Action**: In src/ferova/review/plan.py set the banned test-double keyword frozenset to EXACTLY the seven whole words enumerated in the spec's G3 (the noun for a canned double, its two participle forms, the pytest fixture-patching verb, and the three forms of the other test-double noun) — no more, no fewer — keeping the word-boundary regex built from that single frozenset. Update the strict-rule sentence in _STRICT_FORM_RULES if it names the words. Add tests/unit/test_plan_form_rules.py::test_banned_keyword_set_matches_spec: assert the frozenset equals the spec's seven words verbatim, that each word as a whole word in an action text produces a reason, and that substring occurrences inside identifiers or words like 'stubborn' and 'mockingbird' produce none.
+- **Commit**: `fix(review): banned test-double keyword set matches spec G3`
+- **Done when**: pytest tests/unit/test_plan_form_rules.py::test_banned_keyword_set_matches_spec passes
+- **Unit tests**: `tests/unit/test_plan_form_rules.py::test_banned_keyword_set_matches_spec`
+
 ## Integration tests
 
 - `tests/integration/test_planner_form_convergence.py::test_catalog_present_in_first_planner_request`
@@ -151,6 +159,20 @@ Give the Planner the whole rulebook instead of one error at a time: a rule catal
       "done_when": "pytest tests/integration/test_planner_form_convergence.py::test_catalog_present_in_first_planner_request passes",
       "unit_tests": [
         "tests/integration/test_planner_form_convergence.py::test_catalog_present_in_first_planner_request"
+      ]
+    }
+    ,{
+      "index": 7,
+      "title": "Banned keyword set matches the spec exactly",
+      "files": [
+        "src/ferova/review/plan.py",
+        "tests/unit/test_plan_form_rules.py"
+      ],
+      "action": "In src/ferova/review/plan.py set the banned test-double keyword frozenset to EXACTLY the seven whole words enumerated in the spec's G3 (the noun for a canned double, its two participle forms, the pytest fixture-patching verb, and the three forms of the other test-double noun) — no more, no fewer — keeping the word-boundary regex built from that single frozenset. Update the strict-rule sentence in _STRICT_FORM_RULES if it names the words. Add tests/unit/test_plan_form_rules.py::test_banned_keyword_set_matches_spec: assert the frozenset equals the spec's seven words verbatim, that each word as a whole word in an action text produces a reason, and that substring occurrences inside identifiers or words like 'stubborn' and 'mockingbird' produce none.",
+      "commit_message": "fix(review): banned test-double keyword set matches spec G3",
+      "done_when": "pytest tests/unit/test_plan_form_rules.py::test_banned_keyword_set_matches_spec passes",
+      "unit_tests": [
+        "tests/unit/test_plan_form_rules.py::test_banned_keyword_set_matches_spec"
       ]
     }
   ],
