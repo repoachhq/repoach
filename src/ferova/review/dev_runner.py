@@ -40,6 +40,7 @@ import contextlib
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -66,6 +67,7 @@ from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
 from .spec_gate import selector_present
 from .spec_supersede import supersede_parent_on_decompose
+from .wrapup_attribution import StepCommit, attribute_failure_to_step
 
 _log = get_logger(__name__)
 
@@ -201,6 +203,9 @@ commit) stops after two attempts, so a genuinely broken step costs no extra
 dispatch latency (SP-DEV-STEP-LOOP-HARDEN).
 """
 
+WRAPUP_REPAIR_ATTEMPTS: int = 1
+"""Bounds the wrap-up repair loop per introducing step (SP-DEV-WRAPUP-ATTRIBUTION)."""
+
 _LINT_GATE_KIND: str = "lint"
 _OTHER_GATE_KIND: str = "other"
 
@@ -220,6 +225,10 @@ class DevSessionResult:
     superseded), and ``pr_title`` / ``pr_summary`` carry the parent's title / summary
     captured **before** any supersession so the PR can be opened without re-loading a
     deleted parent spec file.
+
+    SP-DEV-WRAPUP-ATTRIBUTION adds ``wrapup_dossier``, carrying the attribution
+    block (introducing step / pre-existing / error per failing selector) for
+    a wrap-up that stayed red after the bounded repair attempt.
     """
 
     spec_id: str
@@ -241,6 +250,7 @@ class DevSessionResult:
     sub_spec_ids: list[str] = field(default_factory=list)
     pr_title: str = ""
     pr_summary: str = ""
+    wrapup_dossier: str = ""
 
 
 def read_existing_files(plan: SpecPlan, *, repo_root: Path | None = None) -> dict[str, str]:
@@ -991,6 +1001,281 @@ def _changed_paths(repo_root: Path) -> list[str]:
     return paths
 
 
+def _run_selector_at_commit(repo_root: Path, sha: str, selector: str) -> bool:
+    """Run *selector* at *sha* in a throwaway git worktree; return whether green.
+
+    Creates a detached worktree via ``git worktree add --detach`` at a fresh
+    ``tempfile.mkdtemp`` directory, runs :func:`run_pytest_selectors` inside it,
+    and always tears the worktree down in a ``finally`` block — the session's
+    own checkout is never disturbed (SP-DEV-WRAPUP-ATTRIBUTION G2).
+
+    Args:
+        repo_root: The session's repository root (the worktree's origin).
+        sha: The commit to check out into the temporary worktree.
+        selector: The pytest selector to run there.
+
+    Returns:
+        ``True`` when the selector is green at *sha*, ``False`` when red.
+
+    Raises:
+        RuntimeError: When ``git worktree add`` fails; the message carries
+            git's combined stdout/stderr tail.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="ferova-wrapup-")
+    try:
+        rc, out = _run_git(repo_root, "worktree", "add", "--detach", tmp_dir, sha)
+        if rc != 0:
+            raise RuntimeError(out)
+        green, _tail = run_pytest_selectors(Path(tmp_dir), [selector])
+        return green
+    finally:
+        _run_git(repo_root, "worktree", "remove", "--force", tmp_dir)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _step_commits_for_plan(repo_root: Path, plan: ActionPlan, base: str) -> list[StepCommit]:
+    """Resolve the plan's ordered step commits (base first) on the current branch.
+
+    Args:
+        repo_root: The session's repository root.
+        plan: The action plan whose steps' commit messages are matched
+            against the branch's commit log.
+        base: The ref the implementation branch was created from.
+
+    Returns:
+        ``[StepCommit(0, "plan base", merge_base_sha), ...]`` followed by one
+        :class:`StepCommit` per plan step whose ``commit_message`` matches a
+        commit subject reachable from the merge-base to ``HEAD``, in plan
+        order. Empty list when the merge-base cannot be resolved.
+    """
+    rc, merge_base = _run_git(repo_root, "merge-base", "HEAD", base, tail_chars=0)
+    if rc != 0:
+        return []
+    merge_base_sha = merge_base.strip()
+    commits = [StepCommit(index=0, title="plan base", sha=merge_base_sha)]
+
+    _rc, log_out = _run_git(
+        repo_root, "log", "--format=%H%x1f%s", "--reverse", f"{merge_base_sha}..HEAD", tail_chars=0
+    )
+    parsed: list[tuple[str, str]] = []
+    for line in log_out.splitlines():
+        if "\x1f" not in line:
+            continue
+        sha, subject = line.split("\x1f", 1)
+        parsed.append((sha, subject))
+
+    for step in plan.steps:
+        for sha, subject in parsed:
+            if step.commit_message == subject:
+                commits.append(StepCommit(index=step.index, title=step.title, sha=sha))
+                break
+
+    return commits
+
+
+def _promised_selectors_for_plan(plan: ActionPlan) -> set[str]:
+    """Return every selector any part of *plan* promises, plan- and step-level.
+
+    Args:
+        plan: The action plan whose promised selectors bound wrap-up
+            attribution — a failure on one of these selectors is the
+            existing loop's job, not the attribution path's.
+
+    Returns:
+        Union of :attr:`ActionPlan.integration_tests` and every step's
+        :attr:`PlanStep.unit_tests`.
+    """
+    return set(plan.integration_tests) | {t for step in plan.steps for t in step.unit_tests}
+
+
+def _collect_failing_wrapup_selectors(repo_root: Path, promised: set[str]) -> list[str]:
+    """Run the full unit suite and return failing selectors that no step promised.
+
+    Args:
+        repo_root: The session's repository root.
+        promised: Every selector promised by the plan (see
+            :func:`_promised_selectors_for_plan`) — excluded from the result
+            since those failures are the existing loop's responsibility.
+
+    Returns:
+        Sorted list of ``FAILED`` selectors from ``pytest -rf`` output that
+        are not in *promised*.
+    """
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf", "tests/unit"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=900,
+        check=False,
+        env=scrubbed_env(),
+    )
+    failing: set[str] = set()
+    for line in proc.stdout.splitlines():
+        if not line.startswith("FAILED "):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        failing.add(parts[1])
+    return sorted(failing - promised)
+
+
+def repair_wrapup_failures(
+    repo_root: Path,
+    plan: ActionPlan,
+    *,
+    dev: Developer,
+    db: Path,
+    base: str,
+    failing_selectors: list[str],
+    result: DevSessionResult,
+) -> str | None:
+    """Attribute each wrap-up failure to its introducing step and repair it.
+
+    SP-DEV-WRAPUP-ATTRIBUTION G2/G3: builds the plan's ordered step commits
+    via :func:`_step_commits_for_plan`, then for every selector in
+    *failing_selectors* calls :func:`attribute_failure_to_step` with a real
+    git-worktree selector runner (:func:`_run_selector_at_commit`).
+
+    A ``pre_existing`` outcome (the selector was already red at the plan
+    base) is recorded in the dossier and never repaired — the failure
+    predates the session (NG3). An ``error`` outcome, or any exception
+    escaping the attribution call itself, is also recorded and left
+    unrepaired, failing closed rather than guessing an attribution. An
+    ``introduced_by_step`` outcome dispatches up to
+    :data:`WRAPUP_REPAIR_ATTEMPTS` bounded repair attempts to the existing
+    Developer loop, scoped to the introducing step's file contract plus the
+    failing selector's own file, with a brief naming the selector, the
+    step's index/title/files, and its commit's diff stat. A repair whose
+    strict re-run of the selector goes green is committed as
+    ``fix(wrapup): <selector> broken by step <n>``; an attempt loop that
+    exhausts without green is recorded unrepaired.
+
+    Args:
+        repo_root: The session's repository root — never disturbed;
+            attribution and repair both operate on it directly (the
+            worktree used for attribution is temporary and torn down
+            per commit by :func:`_run_selector_at_commit`).
+        plan: The action plan whose step commits are walked and whose
+            steps supply file contracts for repair briefs.
+        dev: The Developer agent (or an injected fake) dispatched for
+            each bounded repair attempt.
+        db: L4 database path for dispatch persistence.
+        base: The ref the implementation branch was created from — the
+            plan base attribution is checked against first.
+        failing_selectors: Wrap-up selectors that failed and that no
+            step promised (see :func:`_collect_failing_wrapup_selectors`).
+        result: The session result updated in place —
+            :attr:`DevSessionResult.wrapup_dossier` is always set to the
+            newline-joined dossier lines once every selector has been
+            processed.
+
+    Returns:
+        ``None`` when every selector ended up repaired. Otherwise a
+        ``no_op_reason`` string built from the FIRST selector that stayed
+        unrepaired: for an attributed-but-unfixed step it names the
+        step's index/title and the selector; for a ``pre_existing`` or
+        ``error`` outcome it reuses that selector's dossier line verbatim.
+    """
+    step_commits = _step_commits_for_plan(repo_root, plan, base)
+    dossier_lines: list[str] = []
+    unrepaired: list[tuple[int | None, str, str]] = []
+
+    for selector in failing_selectors:
+        try:
+            outcome = attribute_failure_to_step(
+                selector,
+                step_commits,
+                run_selector=lambda sha, sel: _run_selector_at_commit(repo_root, sha, sel),
+            )
+        except Exception as exc:
+            line = f"error: {selector}: attribution crashed: {exc}"
+            _log.warning(
+                "dev_runner.wrapup_attribution_crashed",
+                selector=selector,
+                error=str(exc)[:200],
+            )
+            dossier_lines.append(line)
+            unrepaired.append((None, "", line))
+            continue
+
+        if outcome.status == "pre_existing":
+            line = f"pre_existing: {selector}"
+            dossier_lines.append(line)
+            unrepaired.append((None, "", line))
+            continue
+
+        if outcome.status == "error":
+            line = f"error: {selector}: {outcome.error}"
+            dossier_lines.append(line)
+            unrepaired.append((None, "", line))
+            continue
+
+        matched_step = next(s for s in plan.steps if s.index == outcome.step.index)
+        _rc, diff_stat = _run_git(repo_root, "show", "--stat", outcome.step.sha, tail_chars=0)
+        commit_message = f"fix(wrapup): {selector} broken by step {outcome.step.index}"
+        brief = (
+            f"Wrap-up repair: the selector `{selector}` is broken by step "
+            f"{matched_step.index} ({matched_step.title}).\n\n"
+            f"Step files: {matched_step.files}\n\n"
+            f"Step diff (git show --stat {outcome.step.sha}):\n{diff_stat}\n\n"
+            "Fix the regression this step introduced so the selector above "
+            "passes again, without breaking the step's own promised tests."
+        )
+
+        repaired = False
+        for _attempt in range(WRAPUP_REPAIR_ATTEMPTS):
+            loop_result = dev.develop_step(
+                brief=brief,
+                repo_root=repo_root,
+                allowed_paths=[*matched_step.files, selector.split("::", 1)[0]],
+                repo_tree="",
+                spec_id=f"{plan.spec_id}:wrapup-repair-step-{outcome.step.index}",
+            )
+            record_coder_response(
+                db,
+                pr_number=0,
+                plan={
+                    "fixes": [],
+                    "commit_message": commit_message,
+                    "summary": f"wrapup repair attempt for {selector}",
+                },
+                model_used=loop_result.model_used,
+                elapsed_s=loop_result.elapsed_s,
+                tokens_used=loop_result.tokens_used,
+            )
+            ok, _tail = run_pytest_selectors(repo_root, [selector])
+            if ok:
+                commit_all(repo_root, commit_message)
+                repaired = True
+                break
+
+        if not repaired:
+            diff_stat_summary = " ".join(diff_stat.splitlines()[-1].split())[:200]
+            line = (
+                f"step {outcome.step.index} ({matched_step.title}): {selector} "
+                f"\u2014 {diff_stat_summary}"
+            )
+            dossier_lines.append(line)
+            unrepaired.append((outcome.step.index, matched_step.title, selector))
+
+    result.wrapup_dossier = "\n".join(dossier_lines)
+
+    if not unrepaired:
+        return None
+
+    step_index, step_title, entry = unrepaired[0]
+    if step_index is not None:
+        return (
+            f"full unit suite pytest red — step {step_index} ({step_title}) "
+            f"introduced a failure in {entry} and the bounded repair attempt did not fix it"
+        )
+    return f"full unit suite pytest red — {entry}"
+
+
 def execute_plan_step(
     step: PlanStep,
     *,
@@ -1509,6 +1794,23 @@ def _develop_one_spec(
     full_ok, full_tail = run_pytest_matrix(repo)
     result.ruff_passed = True
     result.pytest_passed = full_ok
+    if not full_ok:
+        promised = _promised_selectors_for_plan(action_plan)
+        failing = _collect_failing_wrapup_selectors(repo, promised)
+        if failing:
+            reason = repair_wrapup_failures(
+                repo,
+                action_plan,
+                dev=dev,
+                db=db,
+                base=base,
+                failing_selectors=failing,
+                result=result,
+            )
+            if reason is not None:
+                return reason
+            full_ok, full_tail = run_pytest_matrix(repo)
+            result.pytest_passed = full_ok
     if not full_ok:
         return f"full unit suite pytest red after all steps ({full_tail[:160]})"
 
