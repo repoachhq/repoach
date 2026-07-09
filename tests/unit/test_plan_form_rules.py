@@ -16,10 +16,12 @@ from ferova.review.plan import (
     _BANNED_DOUBLE_KEYWORDS,
     _FORM_RULES,
     _STRICT_FORM_RULES,
+    PLAN_STEP_MAX_ACTION_DENSITY,
     PLAN_STEP_MAX_FILES,
     PLAN_STEP_MAX_UNIT_SELECTORS,
     ActionPlan,
     PlanStep,
+    parse_plan_markdown,
     render_plan_form_rules,
     validate_plan_form_strict,
 )
@@ -145,6 +147,73 @@ class TestStepSizeCap:
             str(PLAN_STEP_MAX_UNIT_SELECTORS) in reason and "30-turn" in reason
             for reason in reasons_selectors
         ), reasons_selectors
+
+
+class TestActionDensityCap:
+    def test_action_density_cap_rejects_dense_step(self) -> None:
+        long_action = "x" * (2 * PLAN_STEP_MAX_ACTION_DENSITY + 100)
+        dense_step = _step(
+            index=1,
+            files=["tests/unit/test_a.py", "tests/unit/test_b.py"],
+            action=long_action,
+            unit_tests=["tests/unit/test_a.py::test_foo"],
+        )
+        plan_dense = _plan(steps=[dense_step], integration_tests=[])
+        reasons = validate_plan_form_strict(plan_dense)
+        assert any(
+            str(PLAN_STEP_MAX_ACTION_DENSITY) in reason and "30-turn" in reason
+            for reason in reasons
+        ), reasons
+
+        spread_files = [
+            "tests/unit/test_a.py",
+            "tests/unit/test_b.py",
+            "tests/unit/test_c.py",
+        ]
+        spread_step = _step(
+            index=1,
+            files=spread_files,
+            action=long_action,
+            unit_tests=["tests/unit/test_a.py::test_foo"],
+        )
+        plan_spread = _plan(steps=[spread_step], integration_tests=[])
+        assert validate_plan_form_strict(plan_spread) == []
+
+    def test_action_density_cap_is_emission_only(self) -> None:
+        long_action = "x" * (2 * PLAN_STEP_MAX_ACTION_DENSITY + 100)
+        dense_step = _step(
+            index=1,
+            files=["tests/unit/test_a.py", "tests/unit/test_b.py"],
+            action=long_action,
+            unit_tests=["tests/unit/test_a.py::test_foo"],
+        )
+        plan = _plan(steps=[dense_step], integration_tests=[])
+
+        reasons = validate_plan_form_strict(plan)
+        assert any(str(PLAN_STEP_MAX_ACTION_DENSITY) in reason for reason in reasons), (
+            "strict layer must flag the dense step"
+        )
+
+        rendered = plan.model_dump_json(indent=2)
+        parsed = ActionPlan.model_validate_json(rendered)
+        assert parsed == plan
+
+        markdown = (
+            f"# SP-DEMO \u2014 Demo feature\n\n"
+            f"Ship the demo module end to end.\n\n"
+            f"## Step 1 \u2014 Add the module\n\n"
+            f"- **Files**: `tests/unit/test_a.py`, `tests/unit/test_b.py`\n"
+            f"- **Action**: {long_action}\n"
+            f"- **Commit**: `feat(demo): add module`\n"
+            f"- **Done when**: `pytest tests/unit/test_demo.py is green`\n"
+            f"- **Unit tests**: `tests/unit/test_a.py::test_foo`\n\n"
+            f"## Integration tests\n\n"
+            f"_(none promised)_\n\n"
+            f"<!-- ferova-action-plan -->\n"
+            f"```json\n{rendered}\n```\n"
+        )
+        round_tripped = parse_plan_markdown(markdown)
+        assert round_tripped == plan
 
 
 class TestNoStubDoubleLint:
