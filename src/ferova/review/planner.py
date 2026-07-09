@@ -23,6 +23,7 @@ from typing import Literal
 
 from ..agent_engine.adapters import GatewayError
 from ..agent_engine.agent_loop import PROXY_SONNET_CHAIN, AgentLoop
+from ..core.config import get_settings
 from ..core.logging import get_logger
 from .plan import (
     ActionPlan,
@@ -32,6 +33,7 @@ from .plan import (
     validate_plan_form_strict,
 )
 from .planner_cc import run_cc_exploration
+from .planner_telemetry import record_planner_attempt
 from .planner_tools import make_planner_tools
 from .reviewer import BotRole
 from .spec import load_spec
@@ -457,6 +459,12 @@ class Planner:
                 errors_so_far=len(errors),
                 error=error[:300],
             )
+            record_planner_attempt(
+                Path(get_settings().db_path),
+                spec_id=spec_id,
+                attempt=attempt,
+                violated_rule=error,
+            )
             if attempt == max_attempts:
                 break
             try:
@@ -543,6 +551,12 @@ class Planner:
                 attempt=attempt,
                 errors_so_far=len(errors),
                 error=error[:300],
+            )
+            record_planner_attempt(
+                Path(get_settings().db_path),
+                spec_id=spec_id,
+                attempt=attempt,
+                violated_rule=error,
             )
         return None, _exhausted_error(errors), audit
 
