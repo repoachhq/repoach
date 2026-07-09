@@ -68,10 +68,15 @@ _STRICT_FORM_RULES: dict[str, str] = {
         "\u2014 use truthful boundary fakes for external boundaries "
         "(gh, LLM, network) instead."
     ),
+    "_action_density_cap": (
+        "Step action density (chars per file) must not exceed "
+        "2600 chars/file (proxy for the Developer's 30-turn budget)."
+    ),
 }
 
 PLAN_STEP_MAX_FILES: int = 3
 PLAN_STEP_MAX_UNIT_SELECTORS: int = 5
+PLAN_STEP_MAX_ACTION_DENSITY: int = 2600
 
 _BANNED_DOUBLE_KEYWORDS: frozenset[str] = frozenset(
     {"stub", "stubbed", "stubbing", "monkeypatch", "mock", "mocked", "mocking"}
@@ -120,7 +125,11 @@ def validate_plan_form_strict(plan: ActionPlan) -> list[str]:
       contains a whole-word (case-insensitive) match for any keyword
       in :data:`_BANNED_DOUBLE_KEYWORDS` yields a reason quoting the
       operator rule and pointing to the truthful-boundary-fake
-      vocabulary.
+      vocabulary;
+    * **action density** \u2014 a step whose action chars per file
+      exceeds :data:`PLAN_STEP_MAX_ACTION_DENSITY` yields a reason
+      citing the measured density, the cap, and the Developer's
+      30-turn budget.
 
     Args:
         plan: A validated :class:`ActionPlan` (pydantic validation
@@ -156,6 +165,15 @@ def validate_plan_form_strict(plan: ActionPlan) -> list[str]:
                 "stubbing/monkeypatching plan-touched behavior; use a "
                 "truthful boundary fake for external boundaries (gh, "
                 "LLM, network) instead"
+            )
+        density = len(step.action) / max(1, len(step.files))
+        if density > PLAN_STEP_MAX_ACTION_DENSITY:
+            reasons.append(
+                f"step {step.index} ({step.title!r}) action density "
+                f"{round(density)} chars/file exceeds the "
+                f"PLAN_STEP_MAX_ACTION_DENSITY cap of "
+                f"{PLAN_STEP_MAX_ACTION_DENSITY} \u2014 oversized steps "
+                "blow the Developer's 30-turn budget"
             )
     return reasons
 
