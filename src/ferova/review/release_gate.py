@@ -244,17 +244,23 @@ def write_gate_receipt(path: Path, *, develop_sha: str, decision: ReleaseDecisio
 
 
 def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
-    """Verify that the live ``main`` tip matches the approved release.
+    """Verify that the live ``main`` tip matches the sanctioned release shape.
 
     Reads back the receipt written by :func:`write_gate_receipt` and
-    compares its recorded ``develop_sha`` against the live
-    ``origin/main`` tip. A squash-merge or a stale merge diverges the
-    two SHAs immediately, while the mistake is still one revert away.
+    checks the live ``origin/main`` tip against the two shapes
+    ``release gate`` sanctions for landing the approved ``develop``
+    head: a fast-forward (the approved SHA is the ``main`` tip
+    itself) or a merge commit (the approved SHA is the ``main`` tip's
+    second parent, with ``main..develop`` distance zero -- the shape
+    "Create a merge commit" produces). A squash-merge or a stale merge
+    satisfies neither shape, while the mistake is still one revert
+    away.
 
     Args:
         path: The gate receipt written by :func:`write_gate_receipt`.
         gh: A :class:`~ferova.review.gh_client.GhCli`-like wrapper used
-            for the ``git ls-remote`` invocation.
+            for the ``git ls-remote``/``rev-parse``/``rev-list``
+            invocations.
 
     Returns:
         The assembled :class:`ReleaseVerifyResult`.
@@ -271,7 +277,11 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
     ls_remote_result = gh._run_git(["ls-remote", "origin", "main"])
     first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
     main_sha = first_line.split()[0] if first_line.split() else ""
-    verified = bool(expected_sha) and main_sha == expected_sha
+    second_parent = gh._run_git(["rev-parse", "origin/main^2"]).stdout.strip()
+    distance = gh._run_git(["rev-list", "--count", "origin/main..origin/develop"]).stdout.strip()
+    verified = bool(expected_sha) and (
+        main_sha == expected_sha or (second_parent == expected_sha and distance == "0")
+    )
     detail = (
         "main tip matches the approved develop head"
         if verified

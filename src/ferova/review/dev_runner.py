@@ -65,7 +65,7 @@ from .plan import ActionPlan, PlanStep, load_plan, plan_relpath
 from .reviewer import Developer
 from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
-from .spec_gate import selector_present
+from .spec_gate import promised_present, selector_present
 from .spec_supersede import supersede_parent_on_decompose
 from .wrapup_attribution import StepCommit, attribute_failure_to_step
 
@@ -111,7 +111,7 @@ def _test_function_names_in_file(repo_root: Path, file_path: str) -> list[str]:
             error=str(exc)[:200],
         )
         return []
-    return sorted(set(re.findall(r"^def\s+(test_\w+)\s*\(", source, flags=re.MULTILINE)))
+    return sorted(set(re.findall(r"(?m)^\s*def\s+(test_\w+)\s*\(", source)))
 
 
 def _attempt_mechanical_rename(
@@ -1498,7 +1498,7 @@ def execute_plan_step(
                 renamed_originals: dict[str, str] = {}
                 for file_path in sorted(touched_promised):
                     promised_names = [
-                        s.split("::", 1)[1].split("::", 1)[0]
+                        s.rsplit("::", 1)[-1].split("[", 1)[0]
                         for s in step.unit_tests
                         if s.split("::", 1)[0] == file_path
                     ]
@@ -1550,6 +1550,40 @@ def execute_plan_step(
                         )
                         continue
                 else:
+                    absent_promises: list[str] = []
+                    for selector in step.unit_tests:
+                        if selector.split("::", 1)[0] not in touched_promised:
+                            continue
+                        if not promised_present(repo_root, selector):
+                            absent_promises.append(selector)
+                    if absent_promises:
+                        delivered_listing: list[str] = []
+                        for file_path in sorted(touched_promised):
+                            names = _test_function_names_in_file(repo_root, file_path)
+                            if names:
+                                delivered_listing.append(f"{file_path}: {', '.join(names)}")
+                        delivered_block = (
+                            "\n".join(delivered_listing)
+                            if delivered_listing
+                            else "(no test_* functions found in the touched file)"
+                        )
+                        absent_names = ", ".join(absent_promises)
+                        gate_feedback = (
+                            "promised-test gate: the loop touched the promised test "
+                            "file(s) but the promised trailing name(s) are absent "
+                            f"({absent_names}). Delivered test functions found in the "
+                            f"touched file(s):\n{delivered_block}\n"
+                            "add a test named exactly <name>, or correct the plan "
+                            "promise."
+                        )
+                        _log.warning(
+                            "dev_runner.promised_tests_fanout_refused",
+                            spec_id=plan.spec_id,
+                            step=step.index,
+                            absent=absent_promises,
+                            delivered=delivered_listing,
+                        )
+                        continue
                     _log.warning(
                         "dev_runner.promised_tests_reconciled",
                         spec_id=plan.spec_id,
