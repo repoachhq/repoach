@@ -16,6 +16,7 @@ changes here.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -97,8 +98,16 @@ def acceptance_selectors(plan: ActionPlan) -> list[str]:
     return ordered
 
 
-def selector_present(repo_root: Path, selector: str) -> bool:
-    """Return whether *selector*'s file (and node-id symbols) exist at head.
+def promised_present(repo_root: Path, selector: str) -> bool:
+    r"""Return whether *selector*'s trailing function name is defined at head.
+
+    The promise is satisfied by any ``def <name>(`` in the file at any
+    indentation (flat or class-nested), regardless of intermediate
+    class segments. A word-boundary regex (``def\s+NAME\s*\(``)
+    replaces the previous substring scan, so a promise ``test_foo`` is
+    no longer satisfied by ``def test_foobar(`` and a class-scoped
+    promise no longer requires every intermediate ``class <C>`` to be
+    present (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10).
 
     Args:
         repo_root: Root the selector path resolves against (the PR head).
@@ -109,13 +118,9 @@ def selector_present(repo_root: Path, selector: str) -> bool:
 
     Returns:
         ``True`` when the file exists and, for a node id, the file
-        defines ``def <function>`` plus ``class <C>`` for every
-        intermediate class segment; ``False`` when the file or any
-        symbol is absent or the file cannot be read. The whole node
-        was previously treated as one function name, so every
-        class-scoped promised selector failed the self-verify and
-        spec-coverage checks even while green (SP-DEV-STEP-PREFLIGHT,
-        2026-07-04).
+        defines ``def <trailing_name>(`` at any indentation; ``False``
+        when the file is absent, the file cannot be read, or the
+        trailing name is not defined.
     """
     file_part, _, node = selector.partition("::")
     target = repo_root / file_part
@@ -131,9 +136,31 @@ def selector_present(repo_root: Path, selector: str) -> bool:
     except (OSError, UnicodeDecodeError) as exc:
         _log.debug("spec_gate.selector_read_failed", selector=selector, error=str(exc)[:120])
         return False
-    if f"def {segments[-1]}" not in source:
-        return False
-    return all(f"class {cls}" in source for cls in segments[:-1])
+    pattern = r"(?m)^\s*def\s+" + re.escape(segments[-1]) + r"\s*\("
+    return re.search(pattern, source) is not None
+
+
+def selector_present(repo_root: Path, selector: str) -> bool:
+    """Return whether *selector*'s file (and node-id symbols) exist at head.
+
+    Args:
+        repo_root: Root the selector path resolves against (the PR head).
+        selector: A pytest selector — a bare ``file.py``, a
+            ``file.py::test_name`` node id, or a class-scoped
+            ``file.py::TestClass::test_name`` node id (any ``[param]``
+            suffix is stripped before the symbol search).
+
+    Returns:
+        ``True`` when the file exists and, for a node id, the file
+        defines ``def <trailing_name>(`` at any indentation (flat or
+        class-nested); ``False`` when the file or the trailing name is
+        absent or the file cannot be read. Delegates to
+        :func:`promised_present` so every caller (the merge gate and
+        the self-verify unit-missing check) shares the same
+        word-boundary, class-tolerant predicate
+        (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10).
+    """
+    return promised_present(repo_root, selector)
 
 
 def compute_spec_coverage(repo_root: Path, *, spec_id: str, plan: ActionPlan) -> SpecCoverage:

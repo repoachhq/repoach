@@ -15,6 +15,7 @@ from ferova.review.spec_gate import (
     compute_spec_coverage,
     fetch_spec_coverage,
     init_spec_coverage_schema,
+    promised_present,
     record_spec_coverage,
     selector_present,
 )
@@ -76,12 +77,16 @@ def test_selector_present_file_and_symbol(tmp_path: Path) -> None:
 
 
 def test_selector_present_resolves_class_scoped_node_ids(tmp_path: Path) -> None:
-    """A ``file::TestClass::test_name`` selector resolves class and method.
+    """A ``file::TestClass::test_name`` selector resolves the trailing name.
 
-    The whole node was previously matched as one function name, so
-    every class-scoped promised selector failed self-verify and spec
-    coverage even while pytest ran it green (SP-DEV-STEP-PREFLIGHT,
-    2026-07-04: five green predicate tests reported absent at head).
+    The trailing-name match is class-nesting tolerant: a class-scoped
+    promise is satisfied by any ``def <trailing_name>(`` in the file,
+    regardless of intermediate class segments
+    (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10). The whole node was
+    previously matched as one function name, so every class-scoped
+    promised selector failed self-verify and spec coverage even while
+    pytest ran it green (SP-DEV-STEP-PREFLIGHT, 2026-07-04: five green
+    predicate tests reported absent at head).
     """
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_c.py").write_text(
@@ -90,7 +95,7 @@ def test_selector_present_resolves_class_scoped_node_ids(tmp_path: Path) -> None
     )
     assert selector_present(tmp_path, "tests/test_c.py::TestThing::test_inner") is True
     assert selector_present(tmp_path, "tests/test_c.py::TestThing::test_absent") is False
-    assert selector_present(tmp_path, "tests/test_c.py::TestGhost::test_inner") is False
+    assert selector_present(tmp_path, "tests/test_c.py::TestGhost::test_inner") is True
     assert selector_present(tmp_path, "tests/test_c.py::TestThing::test_inner[p0]") is True
 
 
@@ -100,6 +105,42 @@ def test_selector_present_strips_parametrize_id(tmp_path: Path) -> None:
         "def test_param():\n    assert True\n", encoding="utf-8"
     )
     assert selector_present(tmp_path, "tests/test_p.py::test_param[case1]") is True
+
+
+def test_promised_present_matches_class_nested_method(tmp_path: Path) -> None:
+    """A class-nested method satisfies both flat and class-scoped promises.
+
+    The trailing-name match is class-nesting tolerant: a promise
+    ``path::test_foo`` OR ``path::TestBaz::test_foo`` is satisfied by
+    any ``def test_foo(`` in the file, regardless of intermediate
+    class segments (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10).
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_nested.py").write_text(
+        "class TestBar:\n    def test_foo(self):\n        assert True\n",
+        encoding="utf-8",
+    )
+    assert promised_present(tmp_path, "tests/test_nested.py::test_foo") is True
+    assert promised_present(tmp_path, "tests/test_nested.py::TestBaz::test_foo") is True
+
+
+def test_promised_present_word_boundary(tmp_path: Path) -> None:
+    """A word-boundary regex rejects substring matches and missing defs.
+
+    The previous substring scan ``f"def {name}" in source`` wrongly
+    satisfied promise ``test_foo`` with ``def test_foobar(``; the new
+    regex ``def\\s+NAME\\s*\\(`` requires the trailing ``(`` so the
+    prefix is not a match (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10).
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_prefix.py").write_text(
+        "def test_foobar(self):\n    assert True\n",
+        encoding="utf-8",
+    )
+    assert promised_present(tmp_path, "tests/test_prefix.py::test_foo") is False
+
+    (tmp_path / "tests" / "test_empty.py").write_text("x = 1\n", encoding="utf-8")
+    assert promised_present(tmp_path, "tests/test_empty.py::test_foo") is False
 
 
 def test_compute_coverage_fully_covered(tmp_path: Path) -> None:
