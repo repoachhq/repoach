@@ -2,7 +2,8 @@
 
 > Status: **design v1, adversarial-panel reviewed** (2026-07-11).
 > Umbrella for the resilience spec family (wave 1 specs to be written
-> after operator review of this document). Companion designs:
+> after operator review of this document). Diagram:
+> `chain_resilience_architecture.svg` (+ `.png`). Companion designs:
 > `model_first_chains_architecture.md` (chains.env as generated
 > artifact), `chain_autopilot_architecture.md`, `tech_debt.md` items
 > 1 and 7.
