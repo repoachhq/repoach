@@ -104,100 +104,97 @@ def _scripted_developer(test_file: str, attempts: list[str]) -> MagicMock:
     return dev
 
 
-class TestFanoutReconcileIntegration:
-    """End-to-end fan-out reconcile + step-gate + self-verify path."""
+def test_fanout_drift_refused_in_loop_then_self_corrects(tmp_path: Path) -> None:
+    """The incident shape: two flat promises, two classes with differently-named methods.
 
-    def test_fanout_drift_refused_in_loop_then_self_corrects(self, tmp_path: Path) -> None:
-        """The incident shape: two flat promises, two classes with differently-named methods.
+    Attempt 1: the step gate refuses retryably with feedback naming
+    both absent selectors and listing the delivered method names.
+    Attempt 2: the Developer adds the two promised names; the gate
+    passes and a subsequent ``run_self_verify`` (with a truthful
+    boundary-fake ``gate_judge``) finds no missing promised units.
+    """
+    repo = _init_repo(tmp_path)
+    test_file = "tests/unit/test_x.py"
+    selectors = [
+        f"{test_file}::test_rule_catalog_covers_every_validator",
+        f"{test_file}::test_catalog_renders_numbered_sentences",
+    ]
+    plan = _one_step_plan(test_file, selectors)
 
-        Attempt 1: the step gate refuses retryably with feedback naming
-        both absent selectors and listing the delivered method names.
-        Attempt 2: the Developer adds the two promised names; the gate
-        passes and a subsequent ``run_self_verify`` (with a truthful
-        boundary-fake ``gate_judge``) finds no missing promised units.
-        """
-        repo = _init_repo(tmp_path)
-        test_file = "tests/unit/test_x.py"
-        selectors = [
-            f"{test_file}::test_rule_catalog_covers_every_validator",
-            f"{test_file}::test_catalog_renders_numbered_sentences",
-        ]
-        plan = _one_step_plan(test_file, selectors)
+    fanout_source = (
+        "class TestRuleCatalog:\n"
+        "    def test_rule_a(self):\n"
+        "        assert True\n"
+        "    def test_rule_b(self):\n"
+        "        assert True\n"
+        "    def test_rule_c(self):\n"
+        "        assert True\n\n"
+        "class TestCatalogRenders:\n"
+        "    def test_render_a(self):\n"
+        "        assert True\n"
+        "    def test_render_b(self):\n"
+        "        assert True\n"
+        "    def test_render_c(self):\n"
+        "        assert True\n"
+        "    def test_render_d(self):\n"
+        "        assert True\n"
+    )
+    fixed_source = (
+        "def test_rule_catalog_covers_every_validator():\n"
+        "    assert True\n\n"
+        "def test_catalog_renders_numbered_sentences():\n"
+        "    assert True\n"
+    )
 
-        fanout_source = (
-            "class TestRuleCatalog:\n"
-            "    def test_rule_a(self):\n"
-            "        assert True\n"
-            "    def test_rule_b(self):\n"
-            "        assert True\n"
-            "    def test_rule_c(self):\n"
-            "        assert True\n\n"
-            "class TestCatalogRenders:\n"
-            "    def test_render_a(self):\n"
-            "        assert True\n"
-            "    def test_render_b(self):\n"
-            "        assert True\n"
-            "    def test_render_c(self):\n"
-            "        assert True\n"
-            "    def test_render_d(self):\n"
-            "        assert True\n"
-        )
-        fixed_source = (
-            "def test_rule_catalog_covers_every_validator():\n"
-            "    assert True\n\n"
-            "def test_catalog_renders_numbered_sentences():\n"
-            "    assert True\n"
-        )
+    dev = _scripted_developer(test_file, [fanout_source, fixed_source])
 
-        dev = _scripted_developer(test_file, [fanout_source, fixed_source])
+    outcome = execute_plan_step(
+        plan.steps[0],
+        plan=plan,
+        repo_root=repo,
+        developer=dev,
+        repo_tree="src/",
+        db=repo.parent / "test.db",
+    )
 
-        outcome = execute_plan_step(
-            plan.steps[0],
-            plan=plan,
-            repo_root=repo,
-            developer=dev,
-            repo_tree="src/",
-            db=repo.parent / "test.db",
-        )
+    assert outcome.ok is True
+    assert dev.develop_step.call_count == 2
 
-        assert outcome.ok is True
-        assert dev.develop_step.call_count == 2
+    retry_brief = dev.develop_step.call_args_list[1].kwargs["brief"]
+    assert (
+        "test_rule_catalog_covers_every_validator" in retry_brief
+        and "test_catalog_renders_numbered_sentences" in retry_brief
+    )
+    assert "test_rule_a" in retry_brief or "test_render_a" in retry_brief
 
-        retry_brief = dev.develop_step.call_args_list[1].kwargs["brief"]
-        assert (
-            "test_rule_catalog_covers_every_validator" in retry_brief
-            and "test_catalog_renders_numbered_sentences" in retry_brief
-        )
-        assert "test_rule_a" in retry_brief or "test_render_a" in retry_brief
+    committed = (repo / "tests" / "unit" / "test_x.py").read_text(encoding="utf-8")
+    assert "def test_rule_catalog_covers_every_validator(" in committed
+    assert "def test_catalog_renders_numbered_sentences(" in committed
 
-        committed = (repo / "tests" / "unit" / "test_x.py").read_text(encoding="utf-8")
-        assert "def test_rule_catalog_covers_every_validator(" in committed
-        assert "def test_catalog_renders_numbered_sentences(" in committed
+    spec = SpecPlan(
+        id=_SPEC_ID,
+        file_path=Path(f"docs/specs/2026-07-10_{_SPEC_ID}_demo.md"),
+        raw_markdown=(
+            f"# {_SPEC_ID} \u2014 fan-out reconcile\n\n## Acceptance Criteria\n\n- works\n"
+        ),
+        title="Fan-out reconcile demo",
+        summary="One-step fan-out reconcile demo.",
+    )
 
-        spec = SpecPlan(
-            id=_SPEC_ID,
-            file_path=Path(f"docs/specs/2026-07-10_{_SPEC_ID}_demo.md"),
-            raw_markdown=(
-                f"# {_SPEC_ID} \u2014 fan-out reconcile\n\n## Acceptance Criteria\n\n- works\n"
-            ),
-            title="Fan-out reconcile demo",
-            summary="One-step fan-out reconcile demo.",
-        )
+    def _compliant_judge(_prompt: str) -> str:
+        return '{"compliant": true, "reasons": "ok", "gaps": []}'
 
-        def _compliant_judge(_prompt: str) -> str:
-            return '{"compliant": true, "reasons": "ok", "gaps": []}'
+    self_verify = run_self_verify(
+        repo,
+        spec=spec,
+        plan=plan,
+        suite_green=True,
+        judge=_compliant_judge,
+    )
 
-        self_verify = run_self_verify(
-            repo,
-            spec=spec,
-            plan=plan,
-            suite_green=True,
-            judge=_compliant_judge,
-        )
-
-        assert self_verify.ok is True
-        assert self_verify.mechanical_ok is True
-        assert self_verify.coverage.covered is True
-        assert self_verify.coverage.missing == []
-        assert self_verify.judge.available is True
-        assert self_verify.judge.compliant is True
+    assert self_verify.ok is True
+    assert self_verify.mechanical_ok is True
+    assert self_verify.coverage.covered is True
+    assert self_verify.coverage.missing == []
+    assert self_verify.judge.available is True
+    assert self_verify.judge.compliant is True
