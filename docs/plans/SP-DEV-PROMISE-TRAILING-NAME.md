@@ -26,6 +26,14 @@ One shared promised_present predicate (word-boundary trailing-name match, class-
 - **Done when**: pytest tests/integration/test_promise_fanout_reconcile.py::test_fanout_drift_refused_in_loop_then_self_corrects passes
 - **Unit tests**: `tests/integration/test_promise_fanout_reconcile.py::test_fanout_drift_refused_in_loop_then_self_corrects`
 
+## Step 4 — Reconcile the SP-DEV-PROMISE-DELIVERY AC3 test with the new behavior
+
+- **Files**: `tests/unit/test_review_plan_executor.py`
+- **Action**: The SP-DEV-PROMISE-DELIVERY AC3 test tests/unit/test_review_plan_executor.py::TestPromisedTestGateG1G2::test_ambiguous_drift_keeps_reconciled_accept asserts that an ambiguous drift with ABSENT promised names (promises test_a/test_b, delivers test_x/test_y) KEEPS a reconciled-accept — the exact accept-then-die-at-self-verify behavior SP-DEV-PROMISE-TRAILING-NAME reverses. Rename it to test_ambiguous_drift_absent_names_refused and update its body to assert the step now REFUSES the drift (outcome.ok is False) and that the retry feedback names the absent selectors test_a and test_b; update the docstring to cite SP-DEV-PROMISE-TRAILING-NAME (was SP-DEV-PROMISE-DELIVERY AC3). Leave the other TestPromisedTestGateG1G2 methods unchanged — they were verified still green on the impl branch.
+- **Commit**: `test(review): AC3 test reflects the new refuse-fan-out behavior`
+- **Done when**: pytest tests/unit/test_review_plan_executor.py::TestPromisedTestGateG1G2::test_ambiguous_drift_absent_names_refused passes
+- **Unit tests**: `tests/unit/test_review_plan_executor.py::TestPromisedTestGateG1G2::test_ambiguous_drift_absent_names_refused`
+
 ## Integration tests
 
 - `tests/integration/test_promise_fanout_reconcile.py::test_fanout_drift_refused_in_loop_then_self_corrects`
@@ -78,6 +86,19 @@ One shared promised_present predicate (word-boundary trailing-name match, class-
       "done_when": "pytest tests/integration/test_promise_fanout_reconcile.py::test_fanout_drift_refused_in_loop_then_self_corrects passes",
       "unit_tests": [
         "tests/integration/test_promise_fanout_reconcile.py::test_fanout_drift_refused_in_loop_then_self_corrects"
+      ]
+    },
+    {
+      "index": 4,
+      "title": "Reconcile the SP-DEV-PROMISE-DELIVERY AC3 test with the new behavior",
+      "files": [
+        "tests/unit/test_review_plan_executor.py"
+      ],
+      "action": "The SP-DEV-PROMISE-DELIVERY AC3 test tests/unit/test_review_plan_executor.py::TestPromisedTestGateG1G2::test_ambiguous_drift_keeps_reconciled_accept asserts that an ambiguous drift with ABSENT promised names (promises test_a/test_b, delivers test_x/test_y) KEEPS a reconciled-accept - the exact accept-then-die-at-self-verify behavior SP-DEV-PROMISE-TRAILING-NAME reverses. Rename it to test_ambiguous_drift_absent_names_refused and update its body to assert the step now REFUSES the drift (outcome.ok is False) and that the retry feedback names the absent selectors test_a and test_b; update the docstring to cite SP-DEV-PROMISE-TRAILING-NAME (was SP-DEV-PROMISE-DELIVERY AC3). Leave the other TestPromisedTestGateG1G2 methods unchanged - they were verified still green on the impl branch.",
+      "commit_message": "test(review): AC3 test reflects the new refuse-fan-out behavior",
+      "done_when": "pytest tests/unit/test_review_plan_executor.py::TestPromisedTestGateG1G2::test_ambiguous_drift_absent_names_refused passes",
+      "unit_tests": [
+        "tests/unit/test_review_plan_executor.py::TestPromisedTestGateG1G2::test_ambiguous_drift_absent_names_refused"
       ]
     }
   ],
