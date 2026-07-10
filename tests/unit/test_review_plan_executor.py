@@ -1485,8 +1485,15 @@ class TestPromisedTestGateG1G2:
         assert "def test_value(" in committed
         assert "def test_drifted(" not in committed
 
-    def test_ambiguous_drift_keeps_reconciled_accept(self, tmp_path: Path) -> None:
-        """AC3 — two missing + two candidates, no rename, step green via reconciled-accept."""
+    def test_ambiguous_drift_absent_names_refused(self, tmp_path: Path) -> None:
+        """SP-DEV-PROMISE-TRAILING-NAME — two missing + two candidates, step refused.
+
+        Was SP-DEV-PROMISE-DELIVERY AC3 (reconciled-accept). The trailing-name
+        unification reverses that: a fan-out whose promised trailing names are
+        absent from the touched file is refused at the step gate with feedback
+        naming the absent selectors, so the session self-corrects in-loop instead
+        of dying terminally at self-verify.
+        """
         repo = _init_repo(tmp_path)
         plan = _one_step_plan(
             unit_tests=[
@@ -1507,13 +1514,11 @@ class TestPromisedTestGateG1G2:
             db=repo.parent / "test.db",
         )
 
-        assert outcome.ok is True
-        assert dev.develop_step.call_count == 1
-        committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
-        assert "def test_x(" in committed
-        assert "def test_y(" in committed
-        assert "def test_a(" not in committed
-        assert "def test_b(" not in committed
+        assert outcome.ok is False
+        assert dev.develop_step.call_count >= 2
+        retry_brief = dev.develop_step.call_args_list[1].kwargs["brief"]
+        assert "tests/unit/test_mini.py::test_a" in retry_brief
+        assert "tests/unit/test_mini.py::test_b" in retry_brief
 
     def test_red_rename_rerun_restores_the_drifted_file(self, tmp_path: Path) -> None:
         """A rename whose strict re-run stays red is rolled back before retry.
