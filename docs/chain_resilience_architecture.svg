@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1500" height="1240" viewBox="0 0 1500 1240" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Verdana, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#93c5fd"/>
+    </marker>
+    <marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e879f9"/>
+    </marker>
+  </defs>
+
+  <rect width="1500" height="1240" fill="#0a0e17"/>
+
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#e5e7eb">Chain resilience — architecture v1</text>
+  <text x="45" y="76" font-size="12" fill="#9ca3af">Post-incident design (2026-07-10, PR #76) · adversarial-panel reviewed 2026-07-11 · rationale: docs/chain_resilience_architecture.md</text>
+
+  <rect x="975" y="30" width="112" height="24" rx="6" fill="#86efac" fill-opacity="0.12" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="1031" y="46" font-size="11.5" font-weight="bold" fill="#86efac" text-anchor="middle">W1 — ships first</text>
+  <rect x="1097" y="30" width="150" height="24" rx="6" fill="#93c5fd" fill-opacity="0.12" stroke="#93c5fd" stroke-opacity="0.5"/>
+  <text x="1172" y="46" font-size="11.5" font-weight="bold" fill="#93c5fd" text-anchor="middle">W2 — custom notifier</text>
+  <rect x="1257" y="30" width="128" height="24" rx="6" fill="#e879f9" fill-opacity="0.12" stroke="#e879f9" stroke-opacity="0.5"/>
+  <text x="1321" y="46" font-size="11.5" font-weight="bold" fill="#e879f9" text-anchor="middle">W3 — auto-repair</text>
+  <rect x="1395" y="30" width="60" height="24" rx="6" fill="#9ca3af" fill-opacity="0.10" stroke="#9ca3af" stroke-opacity="0.5" stroke-dasharray="4 3"/>
+  <text x="1425" y="46" font-size="11.5" font-weight="bold" fill="#9ca3af" text-anchor="middle">parked</text>
+
+  <!-- ======================= BAND 1: SURFACES ======================= -->
+  <rect x="45" y="110" width="1410" height="150" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="65" y="138" font-size="13" font-weight="bold" fill="#64748b" letter-spacing="2">OPERATOR SURFACES — WAVE-1 ALERT TERMINUS</text>
+
+  <rect x="65" y="152" width="480" height="90" rx="10" fill="#101622" stroke="#263041"/>
+  <rect x="497" y="160" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="515" y="173" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
+  <text x="81" y="180" font-size="14" font-weight="bold" fill="#cbd5e1">Session-start digest — ferova chain-status</text>
+  <text x="81" y="202" font-size="11" fill="#9ca3af">per-tier 24 h rates (slow counted in the bad column) · breaker state</text>
+  <text x="81" y="220" font-size="11" fill="#9ca3af">cell freshness age · credits · “tier unmonitored” warning</text>
+
+  <rect x="575" y="152" width="330" height="90" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="591" y="180" font-size="14" font-weight="bold" fill="#cbd5e1">GET /health</text>
+  <text x="591" y="202" font-size="11" fill="#9ca3af">breaker snapshot (ref · reason · TTL · strikes)</text>
+  <text x="591" y="220" font-size="11" fill="#9ca3af">+ credits field (W1)</text>
+
+  <rect x="935" y="152" width="500" height="90" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="951" y="180" font-size="14" font-weight="bold" fill="#cbd5e1">GitHub PRs — factory review</text>
+  <text x="951" y="202" font-size="11" fill="#9ca3af">Architect · Sentinel · Tester · Scribe → evidence-first merge gate</text>
+  <text x="951" y="220" font-size="11" fill="#9ca3af">→ auto-merge to develop</text>
+
+  <!-- ======================= BAND 2: DETECTION ======================= -->
+  <rect x="45" y="285" width="1410" height="240" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="65" y="313" font-size="13" font-weight="bold" fill="#64748b" letter-spacing="2">DETECTION</text>
+
+  <rect x="65" y="330" width="310" height="72" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="81" y="356" font-size="14" font-weight="bold" fill="#cbd5e1">monitor-chains</text>
+  <text x="81" y="376" font-size="11" fill="#9ca3af">systemd timer, 15 min — probes each tier’s head</text>
+
+  <rect x="65" y="430" width="310" height="72" rx="10" fill="#101622" stroke="#263041"/>
+  <rect x="327" y="438" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="345" y="451" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
+  <text x="81" y="456" font-size="14" font-weight="bold" fill="#cbd5e1">credits check</text>
+  <text x="81" y="476" font-size="11" fill="#9ca3af">OpenRouter GET /credits, every Nth cycle · floors</text>
+
+  <rect x="435" y="330" width="250" height="72" rx="10" fill="#0d1626" stroke="#335070"/>
+  <text x="451" y="356" font-size="14" font-weight="bold" fill="#cbd5e1">nim_health_probe</text>
+  <text x="451" y="376" font-size="11" fill="#9ca3af">SQLite — per-tier probe history</text>
+
+  <rect x="745" y="322" width="690" height="188" rx="10" fill="none" stroke="#93c5fd" stroke-opacity="0.45" stroke-dasharray="6 4"/>
+  <text x="761" y="346" font-size="12" font-weight="bold" fill="#93c5fd">W2 — custom notification system (transport: operator design, not Claude routines)</text>
+
+  <rect x="765" y="362" width="200" height="76" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="781" y="386" font-size="13" font-weight="bold" fill="#cbd5e1">rate-based detector</text>
+  <text x="781" y="404" font-size="10.5" fill="#9ca3af">x% of last M probes not-ok,</text>
+  <text x="781" y="420" font-size="10.5" fill="#9ca3af">slow counted · hysteresis</text>
+
+  <rect x="1005" y="362" width="175" height="76" rx="10" fill="#0d1626" stroke="#335070"/>
+  <text x="1021" y="386" font-size="13" font-weight="bold" fill="#cbd5e1">health_events</text>
+  <text x="1021" y="404" font-size="10.5" fill="#9ca3af">dedup · correlation key</text>
+  <text x="1021" y="420" font-size="10.5" fill="#9ca3af">subject retirement</text>
+
+  <rect x="1220" y="362" width="195" height="76" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="1236" y="386" font-size="13" font-weight="bold" fill="#cbd5e1">Notifier port</text>
+  <text x="1236" y="404" font-size="10.5" fill="#9ca3af">→ custom transport</text>
+  <text x="1236" y="420" font-size="10.5" fill="#9ca3af">(push, operator-owned)</text>
+
+  <text x="765" y="470" font-size="10.5" fill="#6b7f95">also in W2: containment layer becomes an emitter (quarantine escalations, chain fell to tail)</text>
+  <text x="765" y="488" font-size="10.5" fill="#6b7f95">provider-agnostic head probes close the non-NIM blind spot (today: STATUS_SKIPPED = unmonitored)</text>
+
+  <line x1="375" y1="366" x2="435" y2="366" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="685" y1="380" x2="765" y2="395" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrB)"/>
+  <line x1="965" y1="400" x2="1005" y2="400" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrB)"/>
+  <line x1="1180" y1="400" x2="1220" y2="400" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrB)"/>
+
+  <line x1="520" y1="330" x2="520" y2="242" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="530" y="292" font-size="10.5" fill="#6b7f95">read by digest</text>
+  <line x1="140" y1="430" x2="140" y2="242" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ======================= BAND 3: CONTAINMENT ======================= -->
+  <rect x="45" y="550" width="1410" height="295" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="65" y="578" font-size="13" font-weight="bold" fill="#64748b" letter-spacing="2">CONTAINMENT — LLM_PROXY LIVE DISPATCH</text>
+
+  <rect x="65" y="605" width="110" height="55" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="120" y="637" font-size="13" font-weight="bold" fill="#cbd5e1" text-anchor="middle">client</text>
+
+  <rect x="235" y="592" width="340" height="82" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="251" y="618" font-size="14" font-weight="bold" fill="#cbd5e1">ModelRouter.resolve_chain</text>
+  <text x="251" y="640" font-size="11" fill="#9ca3af">filters tripped refs out of the tier chain</text>
+  <text x="251" y="658" font-size="11" fill="#9ca3af">walks remaining hops on failure</text>
+
+  <rect x="645" y="592" width="400" height="82" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="661" y="618" font-size="14" font-weight="bold" fill="#cbd5e1">breaker — per (provider, model) ref</text>
+  <text x="661" y="640" font-size="11" fill="#9ca3af">TTL: transient 120 s · quarantine 6 h · terminal 7 d</text>
+  <text x="661" y="658" font-size="11" fill="#9ca3af">3-strike escalation, counter survives TTL lapse</text>
+
+  <rect x="1095" y="592" width="330" height="72" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="1111" y="618" font-size="14" font-weight="bold" fill="#cbd5e1">probe_seed — proxy startup</text>
+  <text x="1111" y="640" font-size="11" fill="#9ca3af">pre-trips breaker from nim_health_probe</text>
+
+  <rect x="235" y="712" width="340" height="75" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="251" y="738" font-size="14" font-weight="bold" fill="#cbd5e1">fault → classify → trip</text>
+  <text x="251" y="760" font-size="11" fill="#9ca3af">timeout · 5xx · 429 · empty completion · 4xx</text>
+
+  <rect x="645" y="712" width="400" height="98" rx="10" fill="#101622" stroke="#263041"/>
+  <rect x="997" y="720" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="1015" y="733" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
+  <text x="661" y="738" font-size="14" font-weight="bold" fill="#cbd5e1">slow-strike (shadow-first)</text>
+  <text x="661" y="760" font-size="11" fill="#9ca3af">slow success = strike, not recover()</text>
+  <text x="661" y="778" font-size="11" fill="#9ca3af">separate k-of-n counter · never hard-quarantine</text>
+  <text x="661" y="796" font-size="11" fill="#9ca3af">latency gate + tps floor · budget-retry path covered</text>
+
+  <rect x="1095" y="690" width="330" height="130" rx="10" fill="none" stroke="#9ca3af" stroke-opacity="0.5" stroke-dasharray="5 4"/>
+  <text x="1111" y="714" font-size="13" font-weight="bold" fill="#9ca3af">parked: provider-scope quarantine</text>
+  <text x="1111" y="736" font-size="10.5" fill="#6b7f95">transports fold upstream 4xx into SSE errors —</text>
+  <text x="1111" y="753" font-size="10.5" fill="#6b7f95">provider_402 never reaches _trip_breaker (dead code);</text>
+  <text x="1111" y="770" font-size="10.5" fill="#6b7f95">prereq: PeekResult.upstream_error_status plumbing.</text>
+  <text x="1111" y="787" font-size="10.5" fill="#6b7f95">If revived: 402-only, claude_code tail exempt,</text>
+  <text x="1111" y="804" font-size="10.5" fill="#6b7f95">empty chain → existing 502 (no head resurrection)</text>
+
+  <line x1="175" y1="632" x2="235" y2="632" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="645" y1="632" x2="575" y2="632" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="583" y="624" font-size="10.5" fill="#6b7f95">down_refs</text>
+  <polyline points="405,712 405,692 700,692 700,674" fill="none" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="845" y1="712" x2="845" y2="674" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="1095" y1="628" x2="1045" y2="628" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <polyline points="560,402 560,532 1260,532 1260,592" fill="none" stroke="#94a3b8" stroke-opacity="0.55" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#arr)"/>
+
+  <!-- ======================= BAND 4: REPAIR ======================= -->
+  <rect x="45" y="870" width="1410" height="300" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
+  <text x="65" y="898" font-size="13" font-weight="bold" fill="#64748b" letter-spacing="2">REPAIR — CHAINPILOT, SYSTEMD TIMER 6 H (SHADOW TODAY)</text>
+
+  <rect x="65" y="915" width="330" height="95" rx="10" fill="#101622" stroke="#263041"/>
+  <rect x="347" y="923" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="365" y="936" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
+  <text x="81" y="941" font-size="14" font-weight="bold" fill="#cbd5e1">bounded in-cycle sweep</text>
+  <text x="81" y="963" font-size="11" fill="#9ca3af">chain-relevant cells only · per-provider caps</text>
+  <text x="81" y="981" font-size="11" fill="#9ca3af">429 = observer interference · credits-aware skip</text>
+
+  <rect x="455" y="915" width="230" height="72" rx="10" fill="#0d1626" stroke="#335070"/>
+  <text x="471" y="941" font-size="14" font-weight="bold" fill="#cbd5e1">cell_health_probe</text>
+  <text x="471" y="963" font-size="11" fill="#9ca3af">SQLite — per-cell health</text>
+
+  <rect x="745" y="915" width="280" height="80" rx="10" fill="#101622" stroke="#263041"/>
+  <rect x="977" y="923" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="995" y="936" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
+  <text x="761" y="941" font-size="14" font-weight="bold" fill="#cbd5e1">freshness guard</text>
+  <text x="761" y="963" font-size="11" fill="#9ca3af">since=lookback · refuse to conclude</text>
+  <text x="761" y="981" font-size="11" fill="#9ca3af">on stale cells, loudly</text>
+
+  <rect x="1085" y="915" width="150" height="72" rx="10" fill="#101622" stroke="#263041"/>
+  <text x="1101" y="941" font-size="14" font-weight="bold" fill="#cbd5e1">regenerate</text>
+  <text x="1101" y="963" font-size="11" fill="#9ca3af">model-first</text>
+
+  <rect x="1265" y="900" width="170" height="120" rx="10" fill="#101622" stroke="#e879f9" stroke-opacity="0.45"/>
+  <rect x="1387" y="908" width="36" height="18" rx="4" fill="#e879f9" fill-opacity="0.15" stroke="#e879f9" stroke-opacity="0.5"/>
+  <text x="1405" y="921" font-size="11" font-weight="bold" fill="#e879f9" text-anchor="middle">W3</text>
+  <text x="1281" y="932" font-size="14" font-weight="bold" fill="#cbd5e1">propose PR</text>
+  <text x="1281" y="954" font-size="10.5" fill="#9ca3af">evidence dossier</text>
+  <text x="1281" y="971" font-size="10.5" fill="#9ca3af">fingerprint embargo</text>
+  <text x="1281" y="988" font-size="10.5" fill="#9ca3af">invariants validator</text>
+  <text x="1281" y="1005" font-size="10.5" fill="#9ca3af">onset + recovery hysteresis</text>
+
+  <rect x="65" y="1075" width="460" height="65" rx="10" fill="#101622" stroke="#263041"/>
+  <rect x="477" y="1083" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
+  <text x="495" y="1096" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
+  <text x="81" y="1101" font-size="14" font-weight="bold" fill="#cbd5e1">chains.env — single source of truth</text>
+  <text x="81" y="1123" font-size="11" fill="#9ca3af">Coder-blacklisted: humans or data-driven regeneration only</text>
+
+  <rect x="1085" y="1075" width="350" height="65" rx="10" fill="#101622" stroke="#e879f9" stroke-opacity="0.45"/>
+  <rect x="1387" y="1083" width="36" height="18" rx="4" fill="#e879f9" fill-opacity="0.15" stroke="#e879f9" stroke-opacity="0.5"/>
+  <text x="1405" y="1096" font-size="11" font-weight="bold" fill="#e879f9" text-anchor="middle">W3</text>
+  <text x="1101" y="1101" font-size="14" font-weight="bold" fill="#cbd5e1">reload + breaker reconciliation</text>
+  <text x="1101" y="1123" font-size="11" fill="#9ca3af">cache-clear endpoint · clear stale trips · re-seed</text>
+
+  <line x1="395" y1="955" x2="455" y2="955" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="685" y1="955" x2="745" y2="955" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="1025" y1="953" x2="1085" y2="953" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="1235" y1="953" x2="1265" y2="953" stroke="#e879f9" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrF)"/>
+  <polyline points="1435,940 1447,940 1447,197 1439,197" fill="none" stroke="#e879f9" stroke-opacity="0.6" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrF)"/>
+  <text x="1452" y="570" font-size="10.5" fill="#e879f9" fill-opacity="0.7" transform="rotate(90 1452 570)">opens PR → factory review</text>
+  <polyline points="295,1075 295,847" fill="none" stroke="#94a3b8" stroke-opacity="0.55" stroke-width="1.2" stroke-dasharray="4 4" marker-end="url(#arr)"/>
+  <text x="305" y="1050" font-size="10.5" fill="#6b7f95">defines the tier chains read by the proxy</text>
+
+  <text x="45" y="1210" font-size="11" fill="#6b7f95">Wave 1 beats the 2026-07-10 incident at its surfacing root; wave 2 adds push; wave 3 closes the autonomous repair loop. Full rationale, incident replay and open questions: docs/chain_resilience_architecture.md</text>
+</svg>
