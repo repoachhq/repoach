@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.gh_client import GhResult
+from ferova.review.gh_client import GhCli, GhResult
 from ferova.review.release_gate import (
     ReleaseDecision,
     ReleaseFacts,
@@ -22,6 +22,16 @@ from ferova.review.release_gate import (
     verify_release,
     write_gate_receipt,
 )
+
+
+def _git(repo: Path, *args: str) -> str:
+    """Run ``git`` in *repo* and return combined stdout+stderr stripped.
+
+    Mirrors the helper in ``tests/integration/test_release_gate_end_to_end.py``
+    so the throwaway-repo tests share one fixture style.
+    """
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
+    return (proc.stdout + proc.stderr).strip()
 
 
 def _facts(**over: object) -> ReleaseFacts:
@@ -130,3 +140,145 @@ def test_release_gate_never_calls_merge() -> None:
     assert "pr merge" not in text
     assert "gh pr merge" not in text
     assert "git push" not in text
+
+
+def _init_origin_and_work(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a bare ``origin`` repo and a configured work clone.
+
+    Mirrors the fixture in ``tests/integration/test_release_gate_end_to_end.py``:
+    a bare ``origin`` with ``main`` as the default branch, cloned into a
+    working tree with a throwaway commit identity configured.
+    """
+    origin_dir = tmp_path / "origin.git"
+    work_dir = tmp_path / "work"
+    _git(tmp_path, "init", "--bare", "-q", "-b", "main", str(origin_dir))
+    _git(tmp_path, "clone", "-q", str(origin_dir), str(work_dir))
+    _git(work_dir, "config", "user.email", "test@example.invalid")
+    _git(work_dir, "config", "user.name", "Test Runner")
+    return origin_dir, work_dir
+
+
+def test_verify_accepts_merge_commit_release(tmp_path: Path) -> None:
+    """A sanctioned ``git merge --no-ff`` of develop into main verifies True.
+
+    Builds a real throwaway origin/work pair, seeds ``main`` with an
+    initial commit, branches ``develop`` with one extra commit, then
+    performs the exact merge shape ``release gate`` prescribes --
+    "Create a merge commit" -- and pushes. The gate receipt records the
+    develop tip (as :func:`write_gate_receipt` does in real operation).
+    """
+    _origin_dir, work_dir = _init_origin_and_work(tmp_path)
+
+    (work_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "chore: init")
+    _git(work_dir, "push", "-q", "-u", "origin", "main")
+
+    _git(work_dir, "switch", "-c", "develop")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1)")
+    _git(work_dir, "push", "-q", "-u", "origin", "develop")
+    develop_sha = _git(work_dir, "rev-parse", "develop")
+
+    _git(work_dir, "switch", "main")
+    _git(work_dir, "merge", "--no-ff", "-q", "-m", "Merge develop into main", "develop")
+    _git(work_dir, "push", "-q", "origin", "main")
+
+    receipt_path = tmp_path / "release_gate_receipt.json"
+    write_gate_receipt(
+        receipt_path,
+        develop_sha=develop_sha,
+        decision=ReleaseDecision(merge=True, reasons=[]),
+    )
+
+    gh = GhCli(cwd=work_dir)
+    result = verify_release(receipt_path, gh=gh)
+
+    assert result.verified is True
+
+
+def test_verify_still_refuses_squash(tmp_path: Path) -> None:
+    """A squash-style advance of main (not a merge of develop) verifies False.
+
+    Main advances by a plain commit that is neither the approved SHA
+    nor a merge commit whose second parent is the approved SHA -- the
+    shape a squash merge (or an unrelated commit) produces.
+    """
+    _origin_dir, work_dir = _init_origin_and_work(tmp_path)
+
+    (work_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "chore: init")
+    _git(work_dir, "push", "-q", "-u", "origin", "main")
+
+    _git(work_dir, "switch", "-c", "develop")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1)")
+    _git(work_dir, "push", "-q", "-u", "origin", "develop")
+    develop_sha = _git(work_dir, "rev-parse", "develop")
+
+    _git(work_dir, "switch", "main")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1) (squashed)")
+    _git(work_dir, "push", "-q", "origin", "main")
+
+    receipt_path = tmp_path / "release_gate_receipt.json"
+    write_gate_receipt(
+        receipt_path,
+        develop_sha=develop_sha,
+        decision=ReleaseDecision(merge=True, reasons=[]),
+    )
+
+    gh = GhCli(cwd=work_dir)
+    result = verify_release(receipt_path, gh=gh)
+
+    assert result.verified is False
+    assert "squash" in result.detail or "stale" in result.detail
+
+
+def test_verify_refuses_stale_merge(tmp_path: Path) -> None:
+    """A sanctioned merge commit taken, then develop advances -- distance != 0.
+
+    After ``git merge --no-ff`` lands the approved develop head on
+    main, develop moves again before verify runs, so
+    ``main..develop`` is no longer zero and the merge is stale.
+    """
+    _origin_dir, work_dir = _init_origin_and_work(tmp_path)
+
+    (work_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "chore: init")
+    _git(work_dir, "push", "-q", "-u", "origin", "main")
+
+    _git(work_dir, "switch", "-c", "develop")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1)")
+    _git(work_dir, "push", "-q", "-u", "origin", "develop")
+    develop_sha = _git(work_dir, "rev-parse", "develop")
+
+    _git(work_dir, "switch", "main")
+    _git(work_dir, "merge", "--no-ff", "-q", "-m", "Merge develop into main", "develop")
+    _git(work_dir, "push", "-q", "origin", "main")
+
+    _git(work_dir, "switch", "develop")
+    (work_dir / "feature2.txt").write_text("feature 2\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature 2 (#2)")
+    _git(work_dir, "push", "-q", "origin", "develop")
+
+    receipt_path = tmp_path / "release_gate_receipt.json"
+    write_gate_receipt(
+        receipt_path,
+        develop_sha=develop_sha,
+        decision=ReleaseDecision(merge=True, reasons=[]),
+    )
+
+    gh = GhCli(cwd=work_dir)
+    result = verify_release(receipt_path, gh=gh)
+
+    assert result.verified is False
+    assert "squash" in result.detail or "stale" in result.detail
