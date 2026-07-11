@@ -74,7 +74,7 @@ alerts terminate in another log repeats the failure.
  │ DETECTION │    │                     │                      │       │
  │           │    │                     │                      │       │
  │  monitor-chains (15-min timer) ──► nim_health_probe ────┐   │       │
- │    └─ credits GET, every Nth cycle (W1.4) ──► /health   │   │       │
+ │    └─ credits GET, every cycle (W1.4) ──► /health       │   │       │
  │                                                         │   │       │
  │  [W2] rate-based windowed detector (x% of last M probes │   │       │
  │       not-ok, slow counted, hysteresis) ──► health_events   │       │
@@ -183,7 +183,8 @@ constraints:
 
 No new table, no new timer, no descriptor extension: one OpenRouter
 `GET /api/v1/credits` inside the existing monitor-chains cycle (every
-Nth run), two flat `FEROVA_*` threshold settings, a `credits` field on
+run — one GET per 15 min is negligible and keeps the CLI stateless),
+two flat `FEROVA_*` threshold settings, a `credits` field on
 `GET /health`, a digest line, degraded exit + loud log below floor.
 History has no consumer today; current-value-vs-threshold is the whole
 job.

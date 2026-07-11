@@ -1,14 +1,14 @@
 ---
 id: SP-HEALTH-STORE-NEUTRALIZE
 title: Neutralize the probe store to break the proxy↔review cycle
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-06-21
-updated: 2026-06-21
+updated: 2026-07-11
 
 owns:
-  code: [src/ferova/health/]      # the new neutral health subtree
+  code: [src/ferova/health/__init__.py, src/ferova/health/model_health.py, src/ferova/health/store.py]   # narrowed from src/ferova/health/ (2026-07-11): SP-CREDITS-CHECK owns credits.py; subtree ownership becomes per-module
   resources: [db:table:nim_health_probe]   # the probe store owns this table (moved here)
 
 depends_on: []                        # leaf: pure dataclass + sqlalchemy + core.logging; imports no governed component

@@ -1,16 +1,16 @@
 ---
 id: SP-MFC-REGEN
 title: Model-first chains — live gather + regenerate entrypoint
-version: 0.1
+version: 0.2
 status: draft
 author: operator (design dialogue)
 created: 2026-06-30
-updated: 2026-06-30
+updated: 2026-07-11
 
 owns:
   code: [src/ferova/llm_proxy/routing/chain_regen.py]
   resources: []
-depends_on: [SP-MFC-AA-INGEST, SP-MFC-GENERATE, SP-CHAINPILOT-MATRIX, SP-CHAINPILOT-EQUIVALENCES, SP-CHAINPILOT-PROBE-SWEEP]
+depends_on: [SP-MFC-AA-INGEST, SP-MFC-GENERATE, SP-CHAINPILOT-MATRIX, SP-CHAINPILOT-EQUIVALENCES, SP-CHAINPILOT-PROBE-SWEEP, SP-CREDITS-CHECK]
 provides_to: []
 
 constraints: {}
@@ -127,6 +127,10 @@ Errors:
 - Adds dependency: SP-MFC-REGEN -> SP-CHAINPILOT-EQUIVALENCES (`load_equivalence_table`).
 - Adds dependency: SP-MFC-REGEN -> SP-CHAINPILOT-PROBE-SWEEP (`fetch_cell_probes`,
   `CellProbeRow`).
+- Adds dependency (v0.2, 2026-07-11): SP-MFC-REGEN -> SP-CREDITS-CHECK — the
+  credits snapshot consumed by the SP-REGEN-FRESH-CELLS paid-cell skip lands
+  in this spec's owned file (`chain_regen.py`); the edge-honesty gate resolves
+  edges through the file owner.
 - New / changed coupling: the `regenerate-chains` CLI command is added to the
   frontier `cli/main.py` (a frontier importer, not an owned cross-edge). The
   chainpilot loop is untouched.
