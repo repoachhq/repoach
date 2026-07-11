@@ -59,7 +59,7 @@
   <rect x="327" y="438" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
   <text x="345" y="451" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
   <text x="81" y="456" font-size="14" font-weight="bold" fill="#cbd5e1">credits check</text>
-  <text x="81" y="476" font-size="11" fill="#9ca3af">OpenRouter GET /credits, every Nth cycle · floors</text>
+  <text x="81" y="476" font-size="11" fill="#9ca3af">OpenRouter GET /credits, every cycle · floors</text>
 
   <rect x="435" y="330" width="250" height="72" rx="10" fill="#0d1626" stroke="#335070"/>
   <text x="451" y="356" font-size="14" font-weight="bold" fill="#cbd5e1">nim_health_probe</text>
