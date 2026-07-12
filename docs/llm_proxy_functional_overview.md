@@ -145,6 +145,105 @@ State is in-process (lost on restart) and rebuilt at startup by the
 health probe's history (`pre-fills the breaker`). It is also exposed,
 unauthenticated, for inspection (`state exposed`).
 
+## Circuit breaker internals
+
+Implementation: `src/ferova/llm_proxy/routing/breaker.py` (~60 lines)
+plus the fault classifier in `api/services.py`.
+
+### Three tables
+
+The breaker's whole memory is three dictionaries, each keyed by the
+`(provider, model)` cell:
+
+- `_down_until` — for each penalized cell, the timestamp when it may
+  return (a deadline).
+- `_down_reason` — why it was penalized (for display).
+- `_consecutive_failures` — a per-cell strike counter.
+
+Everything else is how those three are written and read.
+
+### trip / recover
+
+- **`trip`** (on failure) writes the deadline (`now + ttl`), records the
+  reason, and increments the strike counter. Two subtleties: it
+  **extends but never shortens** an existing deadline (a repeated
+  failure can only push the return further out, never accidentally
+  bring a cell back early); and the strike counter climbs on every
+  trip.
+- **`recover`** (on a content-bearing success) clears **all three**
+  tables for the cell — deadline, reason, and strike counter reset to
+  zero. Clean slate. This is the "success" half of feedback loop ①.
+
+### Escalation (the subtle part)
+
+When a penalty expires, `down_refs` prunes the deadline **but keeps the
+strike counter** (`_consecutive_failures` survives TTL lapse). This is
+what makes escalation work: a cell that *flaps* — fail, serve the 2-min
+penalty, return, fail again — accumulates strikes across cycles
+(1, 2, 3…). At the **third** consecutive failure it escalates to the
+long (6 h) penalty. Without the counter surviving expiry, a cell that
+fails once per window would never pass one strike and would flap
+forever; keeping the counter turns "it flaps" into "quarantine it".
+
+### Two readers
+
+- **`down_refs(now)`** — the set of currently-down cells, read by
+  `FILTER`; it lazily prunes expired deadlines as it goes. This is
+  feedback loop ②.
+- **`snapshot(now)`** — a read-only view for `GET /health`: per down
+  cell, `(ref, reason, ttl_remaining, consecutive_failures)`.
+
+### How a fault becomes a penalty class
+
+A raised provider error reaches a penalty duration through **two**
+translations, not one.
+
+**Step 1 — exception → reason word** (`_classify_failover_reason`,
+`api/services.py`). Different providers raise different exception types
+for the same underlying problem, so this normalizes them into one
+vocabulary via an ordered cascade (first match wins):
+
+```
+name contains "timeout"       → "timeout"
+RateLimitError                → "rate_limited"
+OverloadedError               → "provider_5xx"
+AuthenticationError           → "auth_failed"
+InvalidRequestError           → "invalid_request"
+APIError with HTTP status:
+      5xx                     → "provider_5xx"        (all merged)
+      4xx                     → "provider_<status>"   (kept distinct)
+transport/connection/network  → "transport_error"
+otherwise                     → "exception:<TypeName>"
+```
+
+Note the HTTP handling: 5xx codes are **merged** into one word (they
+all mean "server broke, retry"), while 4xx codes keep their **exact
+number** (`provider_401` ≠ `provider_402` ≠ `provider_404` — bad key,
+no credits, and bad id are different problems).
+
+**Step 2 — reason word → penalty duration** (`ttl_for_reason`,
+`breaker.py`). Two named sets and a default:
+
+```
+reason in {provider_410}                              → 7 d  (terminal)
+reason in {auth_failed, provider_401, provider_402,
+           provider_403, provider_404}                → 6 h  (quarantine)
+otherwise (timeout, rate_limited, provider_5xx, …)    → 2 min (transient)
+```
+
+End-to-end example (the 2026-07-10 incident): OpenRouter runs out of
+credits → HTTP 402 → step 1 gives `provider_402` → step 2 puts it in
+the 6 h set → the cell is quarantined for 6 h (credits will not
+self-heal). A plain NIM timeout, by contrast → `timeout` → in no named
+set → 2 min.
+
+**This classifier only runs on *raised* exceptions** (the "call error"
+path). An upstream error folded into the stream (Known limit #1) never
+raises — it looks *empty* — so it skips the classifier entirely, never
+earns its `provider_402` word, and is mislabeled `empty_completion`
+→ the generic 2-min bucket. That is precisely why limit #1 hurts: the
+true cause (and the 6 h it deserved) is lost.
+
 ## Supporting elements
 
 - **CONFIGURATION** — the chains (which models, in what order, per
@@ -192,7 +291,7 @@ are accepted trade-offs.
 
 ## To be expanded
 
-- Circuit breaker internals (TTL escalation, probe seeding).
-- The health probe and the offline chain-repair path.
+- The health probe and the offline chain-repair path (including how the
+  breaker is seeded at startup, `probe_seed`).
 - The `/v1/agent` capability-gateway endpoint (native tool use).
 - Provider transports and the SSE-error folding behind limit #1.
