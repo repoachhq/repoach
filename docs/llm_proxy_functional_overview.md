@@ -19,6 +19,39 @@ guaranteed quality floor (a local Claude is the tail of every chain).
 
 ![Functional diagram](llm_proxy_functional_overview.png)
 
+## Technical stack
+
+The proxy is the `llm_proxy` subtree. A standard, async Python stack:
+
+| Role | Tech | Notes |
+|---|---|---|
+| Language / runtime | Python 3.11+ | fully async (`asyncio`) |
+| API / server | **FastAPI** + **uvicorn** | ASGI; Anthropic-compatible endpoints; **SSE** streaming |
+| HTTP client (to providers) | **httpx** (`[http2]`) | `AsyncClient`, HTTP/2 |
+| Models / validation | **Pydantic v2** | every value object (`ModelRef`, `Chain`, request/response models), frozen and validated |
+| Config | **pydantic-settings** | `Settings`, env files `chains.env` + `.env`, `FEROVA_*` aliases, `lru_cache` |
+| Storage | **SQLAlchemy 2** + **SQLite** | the health history that seeds the breaker at startup |
+| Logging | **loguru** | (the rest of ferova uses `structlog`; the proxy subtree uses loguru) |
+| CLI | **Typer** | the `ferova …` commands; the proxy itself runs as `python -m ferova.llm_proxy` |
+
+**Deployment.** A systemd **user** service (`ferova-llm-proxy.service`)
+runs `uvicorn.run(app)` on `127.0.0.1:8082` with a 5 s graceful
+shutdown — a **local sidecar**, not internet-facing (hence the simple
+shared-secret door at `AUTHENTICATE`).
+
+Three things about the nature of this stack:
+
+1. **Async end-to-end** — a proxy mostly *waits on the network* (the
+   providers). FastAPI + async httpx + SSE is the combination built for
+   serving many in-flight, waiting requests without blocking.
+2. **Pydantic is the through-line** — from config to internal value
+   objects to API messages. This is why malformed input (a bad chain, an
+   unknown provider) fails **loudly at startup** with a clear message,
+   not mid-failover in production.
+3. **SQLite is read-mostly on the proxy side** — the proxy only *reads*
+   the health history to seed the breaker; the health probe (on the
+   ferova side) *writes* it. The database is shared between the two.
+
 ## How a request flows
 
 The top row is the request coming in; it drops down to the providers on
