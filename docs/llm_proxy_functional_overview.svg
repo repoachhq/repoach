@@ -1,0 +1,139 @@
+<svg width="100%" viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans, Verdana, sans-serif">
+  <defs>
+    <marker id="ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="br" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fca5a5"/>
+    </marker>
+    <marker id="bb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7dd3fc"/>
+    </marker>
+    <marker id="bo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="800" fill="#0a0e17"/>
+  <text x="40" y="42" font-size="19" font-weight="bold" fill="#e5e7eb">LLM Proxy — functional diagram</text>
+
+  <!-- CONFIG -->
+  <rect x="385" y="60" width="240" height="58" rx="8" fill="#101622" stroke="#3b3f2a"/>
+  <text x="505" y="82" font-size="12" font-weight="bold" fill="#cbd5e1" text-anchor="middle">CONFIGURATION</text>
+  <text x="505" y="100" font-size="10" fill="#9ca3af" text-anchor="middle">chains + provider credentials · at startup</text>
+  <line x1="505" y1="118" x2="505" y2="166" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ba)"/>
+  <polyline points="625,84 945,84 945,166" fill="none" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#ba)"/>
+  <text x="765" y="78" font-size="9.5" fill="#6b7f95">provider credentials</text>
+  <polyline points="385,90 25,90 25,736 215,736" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 5" marker-end="url(#ba)" opacity="0.55"/>
+  <text x="31" y="410" font-size="9.5" fill="#6b7f95" transform="rotate(-90 31 410)">heads to probe</text>
+
+  <!-- ROW 1 -->
+  <rect x="40" y="170" width="130" height="74" rx="9" fill="#16213a" stroke="#3a4a63" stroke-width="1.4"/>
+  <text x="105" y="202" font-size="12.5" font-weight="bold" fill="#e5e7eb" text-anchor="middle">CLIENT</text>
+  <text x="105" y="220" font-size="10" fill="#9ca3af" text-anchor="middle">agents · tools</text>
+
+  <rect x="215" y="170" width="150" height="74" rx="9" fill="#101622" stroke="#263041"/>
+  <text x="290" y="202" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">AUTHENTICATE</text>
+  <text x="290" y="220" font-size="10" fill="#9ca3af" text-anchor="middle">API token</text>
+
+  <rect x="405" y="170" width="200" height="74" rx="9" fill="#101622" stroke="#263041"/>
+  <text x="505" y="196" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">RESOLVE CHAIN</text>
+  <text x="505" y="214" font-size="10" fill="#9ca3af" text-anchor="middle">alias → tier (opus·sonnet·haiku)</text>
+  <text x="505" y="229" font-size="10" fill="#9ca3af" text-anchor="middle">→ ordered candidates</text>
+
+  <rect x="650" y="170" width="170" height="74" rx="9" fill="#101622" stroke="#263041"/>
+  <text x="735" y="196" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">FILTER</text>
+  <text x="735" y="214" font-size="10" fill="#9ca3af" text-anchor="middle">drops candidates</text>
+  <text x="735" y="229" font-size="10" fill="#9ca3af" text-anchor="middle">on cooldown</text>
+
+  <rect x="865" y="170" width="160" height="74" rx="9" fill="#101622" stroke="#263041"/>
+  <text x="945" y="196" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">CALL</text>
+  <text x="945" y="214" font-size="10" fill="#9ca3af" text-anchor="middle">current candidate’s</text>
+  <text x="945" y="229" font-size="10" fill="#9ca3af" text-anchor="middle">provider · streaming</text>
+
+  <line x1="170" y1="207" x2="215" y2="207" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <line x1="365" y1="207" x2="405" y2="207" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <line x1="605" y1="207" x2="650" y2="207" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <text x="608" y="199" font-size="9.5" fill="#6b7f95">candidates</text>
+  <line x1="820" y1="207" x2="865" y2="207" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <text x="826" y="199" font-size="9.5" fill="#6b7f95">healthy</text>
+  <line x1="1025" y1="195" x2="1075" y2="195" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <text x="1034" y="187" font-size="9.5" fill="#6b7f95">call</text>
+
+  <!-- CALL: error raised by the call → ARBITRATE directly, skipping ANALYZE -->
+  <polyline points="880,244 880,282 715,282 715,340" fill="none" stroke="#fbbf24" stroke-width="1.4" marker-end="url(#bo)"/>
+  <text x="723" y="276" font-size="9.5" fill="#fbbf24">call error (connection · auth · outage · timeout)</text>
+
+  <!-- PROVIDERS -->
+  <rect x="1075" y="140" width="165" height="320" rx="9" fill="#0d1117" stroke="#263041"/>
+  <text x="1157" y="166" font-size="12" font-weight="bold" fill="#cbd5e1" text-anchor="middle">PROVIDERS</text>
+  <text x="1091" y="192" font-size="10.5" fill="#9ca3af">NIM (free)</text>
+  <text x="1091" y="212" font-size="10.5" fill="#9ca3af">DeepSeek · Kimi (direct)</text>
+  <text x="1091" y="232" font-size="10.5" fill="#9ca3af">Cerebras · Groq</text>
+  <text x="1091" y="252" font-size="10.5" fill="#9ca3af">OpenRouter (aggregator)</text>
+  <line x1="1091" y1="268" x2="1224" y2="268" stroke="#263041" stroke-width="1"/>
+  <text x="1091" y="290" font-size="10.5" font-weight="bold" fill="#e879f9">Claude local</text>
+  <text x="1091" y="307" font-size="10" fill="#9ca3af">last resort,</text>
+  <text x="1091" y="322" font-size="10" fill="#9ca3af">tail of every chain</text>
+
+  <line x1="1075" y1="380" x2="1025" y2="380" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <text x="1028" y="372" font-size="9.5" fill="#6b7f95">streamed response</text>
+
+  <!-- ROW 2 -->
+  <rect x="865" y="340" width="160" height="80" rx="9" fill="#101622" stroke="#263041"/>
+  <text x="945" y="366" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">ANALYZE</text>
+  <text x="945" y="384" font-size="10" fill="#9ca3af" text-anchor="middle">full read →</text>
+  <text x="945" y="399" font-size="10" fill="#9ca3af" text-anchor="middle">text | empty</text>
+
+  <rect x="615" y="340" width="200" height="80" rx="9" fill="#101622" stroke="#263041"/>
+  <text x="715" y="366" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">ARBITRATE</text>
+  <text x="715" y="384" font-size="10" fill="#9ca3af" text-anchor="middle">serve · budget retry (1×)</text>
+  <text x="715" y="399" font-size="10" fill="#9ca3af" text-anchor="middle">next candidate · total failure</text>
+
+  <rect x="365" y="340" width="180" height="80" rx="9" fill="#0c1a14" stroke="#2a5c40" stroke-width="1.3"/>
+  <text x="455" y="366" font-size="12.5" font-weight="bold" fill="#86efac" text-anchor="middle">SERVE</text>
+  <text x="455" y="384" font-size="10" fill="#9ca3af" text-anchor="middle">buffered stream,</text>
+  <text x="455" y="399" font-size="10" fill="#9ca3af" text-anchor="middle">real model reported</text>
+
+  <line x1="865" y1="380" x2="815" y2="380" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <text x="822" y="372" font-size="9.5" fill="#6b7f95">verdict</text>
+  <line x1="615" y1="380" x2="545" y2="380" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ba)"/>
+  <text x="552" y="372" font-size="9.5" fill="#6b7f95">response</text>
+  <polyline points="365,380 120,380 120,244" fill="none" stroke="#86efac" stroke-width="1.6" marker-end="url(#ba)"/>
+
+  <!-- loop back: next candidate -->
+  <polyline points="760,340 760,300 945,300 945,244" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ba)"/>
+  <text x="778" y="294" font-size="9.5" fill="#6b7f95">next candidate · budget retry</text>
+
+  <!-- total failure to client -->
+  <polyline points="615,408 85,408 85,244" fill="none" stroke="#fca5a5" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#br)"/>
+  <text x="180" y="400" font-size="9.5" fill="#fca5a5">error returned to client (chain exhausted)</text>
+
+  <!-- BREAKER -->
+  <rect x="215" y="540" width="440" height="110" rx="9" fill="#0d1117" stroke="#335070" stroke-width="1.3"/>
+  <text x="435" y="566" font-size="12.5" font-weight="bold" fill="#cbd5e1" text-anchor="middle">CIRCUIT BREAKER — penalties per (provider, model)</text>
+  <text x="435" y="588" font-size="10" fill="#9ca3af" text-anchor="middle">2 min (transient) | 6 h (account/key/id) | 7 d (model retired) · escalate ×3 failures</text>
+  <text x="435" y="606" font-size="10" fill="#9ca3af" text-anchor="middle">cleared on success · auto-expiry</text>
+  <text x="435" y="624" font-size="10" fill="#9ca3af" text-anchor="middle">two outputs: state feeds FILTER, and is exposed for inspection</text>
+
+  <!-- feedback loop ② breaker → FILTER -->
+  <polyline points="560,540 560,300 735,300 735,244" fill="none" stroke="#7dd3fc" stroke-width="1.6" marker-end="url(#bb)"/>
+  <text x="566" y="294" font-size="10" font-weight="bold" fill="#7dd3fc">② the next filtering drops it</text>
+  <!-- health output (grey) -->
+  <line x1="655" y1="580" x2="740" y2="580" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#ba)"/>
+  <text x="748" y="577" font-size="10" fill="#6b7f95">state exposed (queryable)</text>
+  <!-- feedback loop ① ARBITRATE → breaker -->
+  <line x1="700" y1="420" x2="700" y2="490" stroke="#7dd3fc" stroke-width="1.6"/>
+  <polyline points="700,490 640,490 640,540" fill="none" stroke="#7dd3fc" stroke-width="1.6" marker-end="url(#bb)"/>
+  <text x="708" y="470" font-size="10" font-weight="bold" fill="#7dd3fc">① the call’s outcome → penalizes the model</text>
+
+  <!-- HEALTH PROBE -->
+  <rect x="215" y="700" width="330" height="72" rx="8" fill="#101622" stroke="#263041"/>
+  <text x="231" y="721" font-size="11.5" font-weight="bold" fill="#cbd5e1">HEALTH PROBE (15 min, off-path)</text>
+  <text x="231" y="740" font-size="10" fill="#9ca3af">reads the chain heads (config), calls them</text>
+  <text x="231" y="755" font-size="10" fill="#9ca3af">directly → persisted health history</text>
+  <line x1="330" y1="700" x2="330" y2="650" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ba)"/>
+  <text x="342" y="683" font-size="9.5" fill="#6b7f95">OUTPUT → pre-fills the breaker (at startup)</text>
+  <polyline points="1120,460 1120,748 545,748" fill="none" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ba)"/>
+  <text x="612" y="741" font-size="9.5" fill="#6b7f95">INPUT ← probes the providers’ heads (off-path)</text>
+</svg>
