@@ -85,6 +85,34 @@ OUTCOME_SKIP_CI_MISSING: str = "SKIP_CI_MISSING"
 OUTCOME_SKIP_STALE_HEAD: str = "SKIP_STALE_HEAD"
 OUTCOME_FAILED: str = "FAILED"
 
+SUCCESS_OUTCOMES: frozenset[str] = frozenset({OUTCOME_MERGED, OUTCOME_ALREADY_MERGED})
+NON_FATAL_SKIP_OUTCOMES: frozenset[str] = frozenset(
+    {
+        OUTCOME_SKIP_BASE,
+        OUTCOME_SKIP_GATE,
+        OUTCOME_SKIP_CI,
+        OUTCOME_SKIP_CI_FAILED,
+        OUTCOME_SKIP_CI_TIMEOUT,
+        OUTCOME_SKIP_CI_MISSING,
+        OUTCOME_SKIP_STALE_HEAD,
+    }
+)
+
+
+def merge_exit_code(outcome: str) -> int:
+    """Return the process exit code for an auto-merge outcome.
+
+    Returns 0 for success outcomes (merged or already-merged), 5 for
+    non-fatal skip outcomes (every gate refusal), and 1 for FAILED or
+    any unrecognised string.
+    """
+    if outcome in SUCCESS_OUTCOMES:
+        return 0
+    if outcome in NON_FATAL_SKIP_OUTCOMES:
+        return 5
+    return 1
+
+
 DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
     "Test suite (Python 3.11)",
     "Test suite (Python 3.13)",
@@ -752,11 +780,7 @@ def run_auto_merge(
             )
         except Exception as exc:
             _log.warning("auto_merge.persist_failed", pr_number=pr_number, exc=str(exc))
-        log_method = (
-            _log.info
-            if result.outcome in {OUTCOME_MERGED, OUTCOME_ALREADY_MERGED}
-            else _log.warning
-        )
+        log_method = _log.info if result.outcome in SUCCESS_OUTCOMES else _log.warning
         log_method(
             "auto_merge.gate_decision",
             pr_number=pr_number,
