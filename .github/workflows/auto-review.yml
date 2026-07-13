@@ -95,13 +95,13 @@ jobs:
       # gh API and file excerpts read from the separate ``pr_head``
       # checkout below (no pip install, no pytest, no imports there).
       - name: Checkout base ref (trusted tooling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.ref || 'develop' }}
 
       - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
           cache: pip
@@ -133,7 +133,7 @@ jobs:
       # directory as cwd.  Nothing here is installed or imported —
       # the executing package is the base-ref install above.
       - name: Checkout PR head (data only)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           ref: refs/pull/${{ steps.pr.outputs.number }}/head
@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload review JSON artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: review-pr-${{ steps.pr.outputs.number }}-json
           path: logs/review_ci/review_pr_${{ steps.pr.outputs.number }}.json
@@ -251,7 +251,7 @@ jobs:
       # job — not forgeable by PR code.
       - name: Upload findings ledger
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: findings-ledger-${{ steps.pr.outputs.number }}
           path: ${{ runner.temp }}/ferova_review.db
@@ -325,7 +325,7 @@ jobs:
       re_verdict: ${{ steps.rereview.outputs.re_verdict }}
     steps:
       - name: Checkout PR head (writable)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
@@ -336,13 +336,13 @@ jobs:
       # the bot pushes.  setup-python@v5 keeps prior interpreters
       # accessible by their versioned name (python3.11 / python3.13).
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
           cache: pip
 
       - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
           cache: pip
@@ -529,7 +529,7 @@ jobs:
       # ledger artifact so auto_merge re-verifies the fresh head.
       - name: Upload findings ledger (post-fix)
         if: steps.coder.outputs.pushed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: findings-ledger-${{ needs.review.outputs.pr_number }}
           path: ${{ runner.temp }}/ferova_review.db
@@ -633,10 +633,10 @@ jobs:
       actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
           cache: pip
@@ -674,7 +674,7 @@ jobs:
       # path alive.
       - name: Download findings ledger
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: findings-ledger-${{ needs.review.outputs.pr_number }}
           path: ${{ runner.temp }}

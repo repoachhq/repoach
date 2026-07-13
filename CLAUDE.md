@@ -65,7 +65,7 @@ src/ferova/
   core/            # config, logging
   lint/            # no-inline-comments + no-silent-except gates
   llm/             # capability tiers (opus/sonnet/haiku)
-  llm_proxy/       # chain-failover LLM proxy sidecar (port 8082)
+  llm_proxy/       # chain-failover LLM proxy sidecar (code default :8082; deployed :8084)
   review/          # PR review factory (the system that builds the system)
 prompts/review/    # versioned reviewer/coder/developer prompts (semver)
 scripts/           # ci_local.sh, safe_merge.sh, lint gates

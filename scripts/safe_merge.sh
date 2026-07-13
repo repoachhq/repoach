@@ -42,6 +42,11 @@
 #   scripts/safe_merge.sh <PR_NUMBER> --skip-tests   # skip pytest (lint-only)
 #   scripts/safe_merge.sh <PR_NUMBER> --skip-review  # skip review-bot team
 #
+# --skip-tests and --skip-review each disable part of the gate. When
+# either is set the script prints a loud bypass warning and refuses to
+# proceed until the operator types 'I understand' at the prompt; a
+# non-interactive run (no tty) reads EOF and aborts (fails closed).
+#
 # Exit codes :
 #   0 — merged successfully.
 #   1 — a gate failed and the user did not authorise the override.
@@ -73,6 +78,25 @@ done
 bold() { printf "\n\033[1m== %s ==\033[0m\n" "$1" ; }
 ok()   { printf "\033[32m  ✓ %s\033[0m\n" "$1" ; }
 fail() { printf "\033[31m  ✗ %s\033[0m\n" "$1" ; }
+
+if [[ "$skip_review" == "yes" || "$skip_tests" == "yes" ]] ; then
+    printf "\n\033[1;31m!! merge-gate bypass requested !!\033[0m\n"
+    if [[ "$skip_review" == "yes" ]] ; then
+        printf "  --skip-review disables the review-bot team AND the evidence-first\n"
+        printf "  merge gate — NO automated gate will evaluate PR #%s.\n" "$pr_number"
+    fi
+    if [[ "$skip_tests" == "yes" ]] ; then
+        printf "  --skip-tests runs CI lint-only (the pytest matrix is skipped).\n"
+    fi
+    printf "This merges into \033[1mdevelop\033[0m with the checks above DISABLED.\n"
+    printf "Type '\033[1mI understand\033[0m' to proceed, anything else aborts: "
+    read -r bypass_ack || bypass_ack=""
+    if [[ "$bypass_ack" != "I understand" ]] ; then
+        echo "Aborted — bypass not confirmed."
+        exit 1
+    fi
+    printf "\033[33mBypass confirmed by operator — proceeding.\033[0m\n"
+fi
 
 original_branch=$(git symbolic-ref --short -q HEAD || echo "")
 
