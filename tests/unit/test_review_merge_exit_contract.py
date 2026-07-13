@@ -68,3 +68,34 @@ def test_merge_exit_code_non_fatal_skips_five(outcome: str) -> None:
 def test_merge_exit_code_failed_and_unknown_one() -> None:
     assert am.merge_exit_code(am.OUTCOME_FAILED) == 1
     assert am.merge_exit_code("BOGUS_UNKNOWN_STRING") == 1
+
+
+def test_cli_review_merge_exit_code_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI merge command derives its exit code from merge_exit_code."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from ferova.cli import review_cmds
+    from ferova.review.auto_merge import AutoMergeResult
+
+    monkeypatch.setattr(
+        review_cmds,
+        "run_auto_merge",
+        lambda pr_number: AutoMergeResult(
+            pr_number=pr_number,
+            outcome=am.OUTCOME_SKIP_CI_TIMEOUT,
+            notes="CI timed out",
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(review_cmds.review_app, ["merge", "42"])
+
+    assert result.exit_code == am.merge_exit_code(am.OUTCOME_SKIP_CI_TIMEOUT)
+    assert result.exit_code == 5
+    payload = json.loads(result.output)
+    assert payload["pr_number"] == 42
+    assert payload["outcome"] == am.OUTCOME_SKIP_CI_TIMEOUT

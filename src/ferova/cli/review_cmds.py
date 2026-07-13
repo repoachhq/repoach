@@ -26,13 +26,8 @@ from sqlalchemy import create_engine, text
 
 from ..core.config import get_settings
 from ..review.auto_merge import (
-    OUTCOME_ALREADY_MERGED,
-    OUTCOME_FAILED,
-    OUTCOME_MERGED,
-    OUTCOME_SKIP_BASE,
-    OUTCOME_SKIP_CI,
-    OUTCOME_SKIP_GATE,
     evaluate_merge_gate,
+    merge_exit_code,
     run_auto_merge,
 )
 from ..review.coder_findings import run_coder_fix_from_findings
@@ -233,11 +228,14 @@ def review_merge(
     open blocking findings, complete review, spec coverage).
 
     Exit codes:
-      * ``0`` — merged successfully OR already merged (idempotent).
-      * ``5`` — a non-merge gate prevented action (CI red, pure gate
-        refused, base != develop).  Non-fatal — the next review
-        round can pick it up.
-      * ``1`` — merge attempted but failed (e.g. transient gh error).
+      * ``0`` — merged successfully OR already merged (``APPROVE``,
+        ``ALREADY_MERGED``).
+      * ``5`` — a non-merge gate prevented action (``SKIP_BASE``,
+        ``SKIP_GATE``, ``SKIP_CI_RED``, ``SKIP_CI_FAILED``,
+        ``SKIP_CI_TIMEOUT``, ``SKIP_CI_MISSING``, ``SKIP_STALE_HEAD``).
+        Non-fatal — the next review round can pick it up.
+      * ``1`` — merge attempted but failed (``FAILED``) or any
+        unrecognised outcome.
     """
     result = run_auto_merge(pr_number)
     typer.echo(
@@ -252,17 +250,7 @@ def review_merge(
             ensure_ascii=False,
         )
     )
-    if result.outcome in {OUTCOME_MERGED, OUTCOME_ALREADY_MERGED}:
-        return
-    if result.outcome in {
-        OUTCOME_SKIP_BASE,
-        OUTCOME_SKIP_CI,
-        OUTCOME_SKIP_GATE,
-    }:
-        raise typer.Exit(code=5)
-    if result.outcome == OUTCOME_FAILED:
-        raise typer.Exit(code=1)
-    raise typer.Exit(code=1)
+    raise typer.Exit(code=merge_exit_code(result.outcome))
 
 
 @review_app.command("insights")
