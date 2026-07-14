@@ -309,10 +309,9 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      # Same scopes as auto_merge — the CI-status fetch in
-      # ``coder_loop.fetch_ci_status`` and the wait-for-CI step both
-      # call ``gh pr checks --required`` which needs ``checks: read``
-      # via GraphQL ``pulls.statusCheckRollup``.
+      # Same scopes as auto_merge — ``coder_loop.fetch_ci_status``
+      # (``gh pr checks``) and the Python CI gate (``gh pr view
+      # --json statusCheckRollup``) both need ``checks: read``.
       checks: read
       statuses: read
       # ``actions: write`` — SP-CI-FIX-LOOP-CLOSURE: a Coder push by
@@ -362,26 +361,16 @@ jobs:
           git config user.name "coder-bot[bot]"
           git config user.email "coder-bot@users.noreply.github.com"
 
-      - name: Wait for required CI checks to complete
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Required checks (Test suite Python 3.11/3.13) run in the
-          # parallel CI workflow.  We must wait for them to finish
-          # before invoking the Coder loop, otherwise we either skip
-          # CI failures (CI still pending == fetch_ci_status returns
-          # PENDING == no-op) or we apply fixes against stale state.
-          # Poll up to 12 minutes (typical full suite is ~2-3 min).
-          for i in $(seq 1 72); do
-            pending=$(gh pr checks "${{ needs.review.outputs.pr_number }}" --required --json bucket --jq '[.[] | select(.bucket=="pending")] | length' 2>/dev/null || echo 0)
-            if [ "$pending" = "0" ]; then
-              echo "Required CI checks finished (loop $i)."
-              exit 0
-            fi
-            echo "$pending required check(s) still pending — sleeping 10s ($i/72)..."
-            sleep 10
-          done
-          echo "::warning::CI did not finish in 12 minutes; proceeding so the loop does not stall."
+      # SP-AUTOMERGE-EVENT-DRIVEN (G5): the former "Wait for required
+      # CI checks" step was deleted — ``gh pr checks --required``
+      # counts branch-protection-required checks, and this free-plan
+      # repo has none (SP-CI-SUPPLY-CHAIN-HARDEN H2), so the loop
+      # always exited on its first iteration and protected nothing.
+      # Pending CI needs no pre-wait here: ``fetch_ci_status`` filters
+      # on ``--required`` too and thus reads CI_UNKNOWN on this repo
+      # (never RED/GREEN — a pre-existing blindness, follow-up spec
+      # candidate), which ``coder_findings`` treats as a no-op; the
+      # merge path re-fires via merge-on-ci.yml on CI completion.
 
       - name: Start LLM proxy sidecar
         # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): same proxy
@@ -624,10 +613,10 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      # ``gh pr checks --required`` reads the GraphQL
-      # ``pulls.statusCheckRollup`` field — without ``checks: read``
-      # it returns "Resource not accessible by integration" and the
-      # auto-merge gate skips with SKIP_CI_RED even though CI passed.
+      # The CI gate reads ``gh pr view --json statusCheckRollup`` —
+      # without ``checks: read`` it returns "Resource not accessible
+      # by integration" and the auto-merge gate skips with
+      # SKIP_CI_RED even though CI passed.
       checks: read
       statuses: read
       actions: read
@@ -646,25 +635,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Wait for required CI checks to complete
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Mirror the wait in auto_fix so a verdict==APPROVE PR with
-          # still-running CI doesn't skip with SKIP_CI_TIMEOUT and stall
-          # the merge until the next push. The Python gate also waits
-          # 12 min internally (SP-AUTOMERGE-CI-GATE), so this loop is a
-          # belt-and-suspenders pre-wait.
-          for i in $(seq 1 72); do
-            pending=$(gh pr checks "${{ needs.review.outputs.pr_number }}" --required --json bucket --jq '[.[] | select(.bucket=="pending")] | length' 2>/dev/null || echo 0)
-            if [ "$pending" = "0" ]; then
-              echo "Required CI checks finished (loop $i)."
-              exit 0
-            fi
-            echo "$pending required check(s) still pending — sleeping 10s ($i/72)..."
-            sleep 10
-          done
-          echo "::warning::CI did not finish in 12 minutes; auto_merge will skip with SKIP_CI_TIMEOUT."
+      # SP-AUTOMERGE-EVENT-DRIVEN (G4/G5): the former "Wait for
+      # required CI checks" pre-wait was deleted (inert — see the
+      # auto_fix note) and the Python gate below runs with wait=0:
+      # on a single self-hosted runner, polling for a check that is
+      # queued BEHIND this very job is a self-deadlock (PR #79).  A
+      # pending-CI PR now skips non-fatally and merge-on-ci.yml
+      # re-runs the gate when the CI workflow completes.
 
       # SP-LEDGER-TRANSPORT: hydrate this job's db with the findings
       # ledger from the review (or post-fix auto_fix) job so the pure
@@ -683,13 +660,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          # SP-AUTOMERGE-EVENT-DRIVEN (G4): single CI evaluation, no
+          # slot-holding poll; merge-on-ci.yml retries on completion.
+          # CAVEAT: workflow_run only fires from the DEFAULT branch —
+          # wait=0 is only safe once merge-on-ci.yml is on main; until
+          # that release a pending-CI PR stalls green-but-unmerged
+          # (recover with scripts/safe_merge.sh).
+          FEROVA_AUTOMERGE_CI_WAIT_SECONDS: "0"
         run: |
           set +e
           python -m ferova.cli.main review merge "${{ needs.review.outputs.pr_number }}"
           rc=$?
           # Exit 0 == merged or already-merged (idempotent).
-          # Exit 5 == merge gates not met (CI not green, verdict not APPROVE,
-          #   base != develop). All non-fatal — leave PR for next round.
+          # Exit 5 == a non-fatal gate skip (SP-MERGE-EXIT-CONTRACT):
+          #   CI pending/red, verdict not APPROVE, base != develop,
+          #   stale head. Pending-CI skips are picked up by
+          #   merge-on-ci.yml when the CI workflow completes.
           if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
             exit 0
           fi

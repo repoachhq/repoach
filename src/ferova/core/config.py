@@ -126,6 +126,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    automerge_ci_wait_seconds: int = Field(
+        default=720,
+        ge=0,
+        description="Total CI-gate wait budget in seconds; 0 = single evaluation, fail fast.",
+    )
+    automerge_ci_poll_interval: int = Field(
+        default=30,
+        ge=1,
+        description="Seconds between CI rollup polls when the budget allows waiting.",
+    )
+
     @model_validator(mode="after")
     def require_proxy_token_in_prod(self) -> Settings:
         """Enforce the boot guard documented on ``llm_proxy_auth_token``.
