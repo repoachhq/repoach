@@ -1,0 +1,179 @@
+name: Merge on CI (event-driven gate)
+
+# SP-AUTOMERGE-EVENT-DRIVEN Lane 2 (G6): close the event loop that the
+# fail-fast auto-merge gate opens.  When the auto-review run's merge
+# step finds CI still pending it skips non-fatally (wait=0, exit 5,
+# SP-MERGE-EXIT-CONTRACT) and releases the single self-hosted runner
+# slot; THIS workflow fires when the CI workflow actually completes and
+# re-runs the pure merge gate at head.  No job ever polls for a check
+# that needs the slot it is holding.
+#
+# NOTE: ``workflow_run`` triggers only fire for the workflow file on
+# the DEFAULT branch (main) — this file is inert until released.  The
+# trusted checkout below has the same consequence for CODE: this lane
+# runs MAIN's merge-gate code, so gate fixes landing on develop reach
+# it only after the next develop→main release.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+# The PR number is only known after in-job resolution, so the group
+# keys on head_branch — per-PR under this repo's branch convention.
+concurrency:
+  group: merge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Event-driven merge gate
+    # Payload-level gates, evaluated before the job takes the runner
+    # slot: CI green; PR-head runs only (post-merge pushes to
+    # develop/main and workflow_dispatch runs never queue here);
+    # same-repo heads only; actor allowlist admits the owner AND the
+    # fix-loop bot — coder-pushed heads have their released CI runs
+    # actored by github-actions[bot] (SP-CI-FIX-LOOP-CLOSURE), which is
+    # safe because the merge decision is re-verified by the pure gate
+    # at head, never trusted from the event.
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && contains(fromJSON('["jwfaye", "github-actions[bot]"]'), github.event.workflow_run.actor.login)
+    runs-on: self-hosted
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      # The CI gate reads ``gh pr view --json statusCheckRollup``.
+      checks: read
+      statuses: read
+      actions: read
+    steps:
+      # Trusted ref only: a merge-capable token must never execute
+      # PR-authored code, so neither checkout nor install may use
+      # workflow_run.head_sha (same rationale as the base-ref install
+      # in auto-review.yml).  The PR head is fetched later as DATA
+      # (a worktree the verifiers read) — never installed or executed.
+      - name: Checkout (trusted default branch)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: main
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Same-repo, non-draft, develop-based, SAME-REPO-HEAD PRs only:
+      # ``isCrossRepository | not`` blocks a fork PR that mirrors a
+      # same-repo branch head (identical SHA) from shadowing the
+      # legitimate PR and consuming its CI-completion event.
+      - name: Resolve the open PR at this head
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pr=$(gh pr list --state open --base develop --limit 100 \
+                 --json number,headRefOid,isDraft,isCrossRepository \
+               | jq -r --arg sha "$HEAD_SHA" \
+                 '[.[] | select(.headRefOid == $sha
+                                and (.isDraft | not)
+                                and (.isCrossRepository | not))][0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "::notice::no open non-draft same-repo develop-based PR at $HEAD_SHA — nothing to merge."
+          else
+            echo "resolved PR #$pr at $HEAD_SHA"
+          fi
+          echo "pr_number=$pr" >> "$GITHUB_OUTPUT"
+
+      # The pure gate re-verifies mechanical findings ON DISK "at the
+      # exact head" (merge_gate.py contract) — give it the PR head
+      # tree as read-only DATA via a worktree.  The installed package
+      # (the code that EXECUTES) stays main's: cwd never changes
+      # import resolution, and ls-remote works from a worktree.
+      - name: Materialize the PR head tree (data only)
+        if: steps.resolve.outputs.pr_number != ''
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch origin "$HEAD_SHA"
+          git worktree add --detach "${RUNNER_TEMP}/head-tree" "$HEAD_SHA"
+
+      # SP-LEDGER-TRANSPORT with PROVENANCE: the artifacts API lists
+      # artifacts from ALL runs, so name alone is forgeable.  Accept
+      # only a ledger whose producing run (a) ran THIS repo's
+      # auto-review.yml, (b) has a same-repo head, (c) ran on the
+      # triggering head branch.  Anything else — including no artifact
+      # at all — skips: never run the gate against an empty or
+      # untrusted ledger DB.
+      - name: Locate, verify, and download the findings ledger
+        id: ledger
+        if: steps.resolve.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          echo "db_ready=" >> "$GITHUB_OUTPUT"
+          candidate=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=findings-ledger-${PR_NUMBER}&per_page=100" \
+            | jq -r --arg branch "$HEAD_BRANCH" \
+              '[.artifacts[] | select((.expired | not)
+                                      and .workflow_run.head_branch == $branch)]
+               | sort_by(.created_at) | last
+               | if . == null then "" else "\(.id) \(.workflow_run.id)" end')
+          if [ -z "$candidate" ]; then
+            echo "::notice::no findings-ledger-${PR_NUMBER} artifact from branch ${HEAD_BRANCH} — skipping (next PR event regenerates it)."
+            exit 0
+          fi
+          artifact_id=${candidate% *}
+          producing_run=${candidate#* }
+          run_ok=$(gh api "repos/${{ github.repository }}/actions/runs/${producing_run}" \
+            | jq -r --arg repo "${{ github.repository }}" \
+              'select(.path == ".github/workflows/auto-review.yml"
+                      and .head_repository.full_name == $repo) | .id // empty')
+          if [ -z "$run_ok" ]; then
+            echo "::warning::findings-ledger-${PR_NUMBER} artifact ${artifact_id} was NOT produced by this repo's auto-review.yml (run ${producing_run}) — refusing it."
+            exit 0
+          fi
+          gh api "repos/${{ github.repository }}/actions/artifacts/${artifact_id}/zip" \
+            > "${RUNNER_TEMP}/ledger.zip"
+          python -m zipfile -e "${RUNNER_TEMP}/ledger.zip" "${RUNNER_TEMP}"
+          if [ ! -f "${RUNNER_TEMP}/ferova_review.db" ]; then
+            echo "::notice::artifact ${artifact_id} did not contain ferova_review.db — skipping."
+            exit 0
+          fi
+          echo "db_ready=yes" >> "$GITHUB_OUTPUT"
+
+      - name: Run the merge gate at head
+        if: steps.resolve.outputs.pr_number != '' && steps.ledger.outputs.db_ready == 'yes'
+        working-directory: ${{ runner.temp }}/head-tree
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          # Fail fast here too: the trigger already guarantees CI
+          # completed at the resolved head; a mid-flight push fails
+          # fast and defers to that push's own CI-completion event.
+          FEROVA_AUTOMERGE_CI_WAIT_SECONDS: "0"
+          PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
+        run: |
+          set +e
+          python -m ferova.cli.main review merge "$PR_NUMBER"
+          rc=$?
+          # Exit 0 == merged or already-merged (idempotent).
+          # Exit 5 == a non-fatal gate skip (SP-MERGE-EXIT-CONTRACT) —
+          #   stale head, gate refusal, CI regression at head.  Leave
+          #   the PR for the next event.
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
+            exit 0
+          fi
+          exit "$rc"
