@@ -75,6 +75,11 @@ ferova review gate <N>   # evidence-first merge gate, read-only
 ferova develop <SP-ID>   # plan-driven build from a spec
 ```
 
+New here? The **[getting-started guide](docs/getting_started.md)** walks
+you from clone to a live, authenticated call through the LLM gateway —
+provider keys, `chains.env` routing, the CLI tour, and wiring the
+review factory to your own repo.
+
 ## Safety
 
 Letting agents write and merge code is only acceptable if the blast radius is bounded. In Ferova:
