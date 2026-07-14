@@ -36,9 +36,13 @@ Module-level constants :
     - The ``_FAIL_CONCLUSIONS`` / ``_SUCCESS_CONCLUSIONS`` /
       ``_PENDING_STATUSES`` frozensets bucket the conclusion strings
       returned by ``gh pr view --json statusCheckRollup``.
-    - ``_DEFAULT_WAIT_SECONDS`` matches the "Wait for CI" window of
-      ``auto-review.yml`` (12 minutes).  ``_DEFAULT_POLL_INTERVAL``
-      polls every 30 s within that window.
+    - The CI-gate wait budget and poll cadence are sourced from
+      :class:`ferova.core.config.Settings` at call time
+      (``automerge_ci_wait_seconds`` / ``automerge_ci_poll_interval``,
+      env-tunable as ``FEROVA_AUTOMERGE_CI_WAIT_SECONDS`` /
+      ``FEROVA_AUTOMERGE_CI_POLL_INTERVAL``).  ``wait_seconds=0`` is
+      a defined fail-fast contract: exactly one rollup evaluation,
+      zero ``sleep`` calls (SP-AUTOMERGE-EVENT-DRIVEN).
 """
 
 from __future__ import annotations
@@ -126,11 +130,26 @@ _PENDING_STATUSES: frozenset[str] = frozenset(
     {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "EXPECTED", "REQUESTED"}
 )
 
-_DEFAULT_WAIT_SECONDS: int = 12 * 60
-_DEFAULT_POLL_INTERVAL: int = 30
-
 
 _MERGE_SHA_RE = re.compile(r"\b([0-9a-f]{40})\b")
+
+
+def _resolve_wait_poll(wait_seconds: int | None, poll_interval: int | None) -> tuple[int, int]:
+    """Resolve the CI-gate wait/poll knobs at call time.
+
+    Returns the explicit argument when not ``None``; otherwise reads
+    the value from :func:`ferova.core.config.get_settings`
+    (``automerge_ci_wait_seconds`` / ``automerge_ci_poll_interval``).
+    An explicit argument always wins over the settings default so
+    callers (tests, the ``merge-on-ci.yml`` workflow) can override
+    the env-sourced budget without mutating the process environment.
+    """
+    settings = get_settings()
+    resolved_wait = wait_seconds if wait_seconds is not None else settings.automerge_ci_wait_seconds
+    resolved_poll = (
+        poll_interval if poll_interval is not None else settings.automerge_ci_poll_interval
+    )
+    return resolved_wait, resolved_poll
 
 
 @dataclass
@@ -256,8 +275,8 @@ def evaluate_ci_gate(
     pr_number: int,
     *,
     required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
-    wait_seconds: int = _DEFAULT_WAIT_SECONDS,
-    poll_interval: int = _DEFAULT_POLL_INTERVAL,
+    wait_seconds: int | None = None,
+    poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     head_sha: str | None = None,
@@ -267,12 +286,17 @@ def evaluate_ci_gate(
     SP-AUTOMERGE-CI-GATE: refuses to merge when any required status
     check is in FAILURE / CANCELLED / TIMED_OUT / ACTION_REQUIRED.
     Pending checks are polled every ``poll_interval`` seconds for up
-    to ``wait_seconds`` total before timing out.  Facts come from the
+    to ``wait_seconds`` total before timing out.  Both default from
+    :class:`ferova.core.config.Settings` (``FEROVA_AUTOMERGE_CI_WAIT_SECONDS``
+    / ``FEROVA_AUTOMERGE_CI_POLL_INTERVAL``) when not given explicitly;
+    ``wait_seconds=0`` means exactly one rollup evaluation with zero
+    ``sleep`` calls (SP-AUTOMERGE-EVENT-DRIVEN).  Facts come from the
     head commit's check-runs (``head_sha`` when given, else resolved
     per poll so a mid-poll push is still judged at the fresh head);
     the PR ``statusCheckRollup`` is only a fallback when the commit
     API fails.
     """
+    wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     deadline = monotonic() + wait_seconds
     last_snapshot: list[dict] = []
     poll_count = 0
@@ -365,8 +389,8 @@ def required_checks_green(
     pr_number: int,
     *,
     required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
-    wait_seconds: int = _DEFAULT_WAIT_SECONDS,
-    poll_interval: int = _DEFAULT_POLL_INTERVAL,
+    wait_seconds: int | None = None,
+    poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[bool, str]:
@@ -376,6 +400,7 @@ def required_checks_green(
     outcome tag or rollup snapshot should call ``evaluate_ci_gate``
     directly.
     """
+    wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     outcome = evaluate_ci_gate(
         gh,
         pr_number,
@@ -609,8 +634,8 @@ def evaluate_merge_gate(
     gh: GhCli | None = None,
     db_path: Path | None = None,
     required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
-    wait_seconds: int = _DEFAULT_WAIT_SECONDS,
-    poll_interval: int = _DEFAULT_POLL_INTERVAL,
+    wait_seconds: int | None = None,
+    poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     repo_root: Path | None = None,
@@ -635,6 +660,7 @@ def evaluate_merge_gate(
     aborts on the same signal the CI auto-merge would refuse on.
     """
     gh = gh or GhCli()
+    wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
@@ -717,8 +743,8 @@ def run_auto_merge(
     gh: GhCli | None = None,
     db_path: Path | None = None,
     required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
-    wait_seconds: int = _DEFAULT_WAIT_SECONDS,
-    poll_interval: int = _DEFAULT_POLL_INTERVAL,
+    wait_seconds: int | None = None,
+    poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     repo_root: Path | None = None,
@@ -747,6 +773,7 @@ def run_auto_merge(
     (``OUTCOME_ALREADY_MERGED``).
     """
     gh = gh or GhCli()
+    wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
