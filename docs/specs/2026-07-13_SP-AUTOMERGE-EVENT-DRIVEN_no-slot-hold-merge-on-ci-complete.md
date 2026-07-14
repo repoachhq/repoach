@@ -1,11 +1,11 @@
 ---
 id: SP-AUTOMERGE-EVENT-DRIVEN
 title: Auto-merge never holds the runner slot — fail-fast CI gate + merge on CI completion
-version: 0.1
+version: 0.2
 status: draft
 author: jfaye (PR #79 auto-merge failure triage, 2026-07-13)
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-07-14
 
 owns:
   code: []
@@ -97,9 +97,9 @@ Lane 1 — factory-developable (src):
   `automerge_ci_poll_interval: int = Field(default=30, ge=1, ...)`,
   env-tunable as `FEROVA_AUTOMERGE_CI_WAIT_SECONDS` /
   `FEROVA_AUTOMERGE_CI_POLL_INTERVAL` following the module's existing
-  `Field` + `AliasChoices` pattern. Both are documented in
-  `.env.example` with their defaults and the wait=0 fail-fast
-  semantics.
+  `Field` + `AliasChoices` pattern. (`.env.example` documentation of
+  the two vars belongs to Lane 2 / G4 — `.env*` is whitelist-forbidden
+  to the bots.)
 - G2: the four functions that default wait/poll to the module
   constants — `evaluate_ci_gate` (`auto_merge.py:231-232`),
   `required_checks_green` (`:340-341`), `evaluate_merge_gate`
@@ -123,7 +123,10 @@ Lane 2 — OPERATOR-MANUAL (workflows):
 - G4: the `auto_merge` job's `review merge` step sets
   `FEROVA_AUTOMERGE_CI_WAIT_SECONDS: "0"` in its env — with
   SP-MERGE-EXIT-CONTRACT in place the fast skip exits 5 and the job
-  stays green.
+  stays green. The operator also documents both
+  `FEROVA_AUTOMERGE_CI_*` vars in `.env.example` with their defaults
+  and the wait=0 fail-fast semantics (`.env*` is whitelist-forbidden
+  to the bots, hence operator-manual).
 - G5: both inert "Wait for required CI checks to complete" steps
   (`auto_fix`, `auto_merge`) are deleted, and the two stale
   permission-rationale comments that cite `gh pr checks --required`
@@ -360,7 +363,10 @@ Lane 2 — operator-verifiable checklist (hand-implemented):
   `auto-review.yml:314` / `:627` sites no longer cite
   `gh pr checks --required` while `checks: read` is retained.
 - [ ] AC8: the `auto_merge` job's `review merge` step env contains
-  `FEROVA_AUTOMERGE_CI_WAIT_SECONDS: "0"`.
+  `FEROVA_AUTOMERGE_CI_WAIT_SECONDS: "0"`, and `.env.example`
+  documents `FEROVA_AUTOMERGE_CI_WAIT_SECONDS` and
+  `FEROVA_AUTOMERGE_CI_POLL_INTERVAL` (defaults 720/30; 0 = single
+  evaluation, fail fast).
 - [ ] AC9: `.github/workflows/merge-on-ci.yml` exists and satisfies
   every G6 bullet: `workflow_run` trigger on `CI`/`completed`;
   payload-level gates (success conclusion, `event == 'pull_request'`,
