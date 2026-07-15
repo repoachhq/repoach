@@ -155,7 +155,9 @@ def test_reverify_judged_resolves_on_refute(tmp_path: Path) -> None:
         pr_number=1,
         repo_root=tmp_path,
         head_sha="head456",
-        judge_factory=lambda: _fixed_judge('{"refuted": true, "reasoning": "fixed at head"}'),
+        judge_factory=lambda: _fixed_judge(
+            'VERDICT: {"refuted": true, "reasoning": "fixed at head"}'
+        ),
     )
     assert counts == {"resolved": 1, "still_open": 0}
 
@@ -172,7 +174,9 @@ def test_reverify_judged_stays_open_when_still_real(tmp_path: Path) -> None:
         pr_number=1,
         repo_root=tmp_path,
         head_sha="head456",
-        judge_factory=lambda: _fixed_judge('{"refuted": false, "reasoning": "still present"}'),
+        judge_factory=lambda: _fixed_judge(
+            'VERDICT: {"refuted": false, "reasoning": "still present"}'
+        ),
     )
     assert counts == {"resolved": 0, "still_open": 1}
 

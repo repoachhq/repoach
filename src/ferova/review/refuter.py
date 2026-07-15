@@ -9,12 +9,23 @@ evidence, decides whether the finding stands. Refutation succeeds →
 finding). Evidence the judge cannot read, or an unparseable verdict,
 leaves the finding ``proposed`` for a later round. Dual-run: statuses
 are recorded, no merge decision changes here.
+
+SP-REFUTER-INJECTION-HARDEN (audit 2026-07-13 finding C3): the
+evidence window is PR-head content — adversarial input. It is
+delivered between per-prompt nonce markers it cannot forge, fence runs
+inside it are neutralised, and the verdict is recovered from a
+column-one ``VERDICT:`` line (last well-formed wins) that numbered
+evidence lines can never produce. A wrongly refuted finding is no
+longer buried forever: REFUTED re-opens to PROPOSED when a later
+reviewer re-raises the claim (see :mod:`findings` /
+:mod:`findings_bridge`).
 """
 
 from __future__ import annotations
 
 import json
 import re
+import secrets
 from collections.abc import Callable
 from pathlib import Path
 
@@ -27,7 +38,16 @@ from .hallucination_guard import make_repo_file_reader
 _log = get_logger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
-_PERSONA = "refuter_0.1.0.md"
+_PERSONA = "refuter_0.2.0.md"
+
+_VERDICT_LINE = re.compile(r"^VERDICT:\s*(\{.*\})\s*$")
+"""The judge's verdict line — column one, nothing after the object.
+
+Injection-resistant by construction (SP-REFUTER-INJECTION-HARDEN):
+every evidence line is prefixed with its line number by
+:func:`_evidence_excerpt`, so PR-head content can never produce a line
+that starts with ``VERDICT:`` at column one inside the prompt or an
+echoed reply."""
 
 JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
 """Claim types the mechanical verifiers defer to the refuter."""
@@ -52,7 +72,7 @@ def make_refuter_judge() -> Judge:
     review with no judged findings never spins up the loop.
     """
     loop = AgentLoop(capability=CapabilityTier.OPUS, max_tokens=800, temperature=0.0)
-    return lambda prompt: loop.run_oneshot(prompt, json_response=True).text
+    return lambda prompt: loop.run_oneshot(prompt).text
 
 
 def _evidence_excerpt(finding: Finding, repo_root: Path) -> str | None:
@@ -71,34 +91,67 @@ def _evidence_excerpt(finding: Finding, repo_root: Path) -> str | None:
     return "\n".join(numbered)
 
 
+def _neutralise_fences(evidence: str) -> str:
+    """Render markdown fence runs inert inside the untrusted evidence.
+
+    A run of three or more backticks in PR-head content could read as a
+    fence terminator to the judge model even though the v0.2.0 template
+    delivers evidence through nonce markers rather than a fence. Each
+    backtick in such a run is space-separated (a triple backtick
+    becomes backtick-space-backtick-space-backtick) — a visible,
+    documented mutation that keeps the code legible while making the
+    sequence structurally meaningless (SP-REFUTER-INJECTION-HARDEN G1).
+    """
+    return re.sub(r"`{3,}", lambda match: " ".join(match.group(0)), evidence)
+
+
 def _render_prompt(finding: Finding, evidence: str) -> str:
-    """Substitute the finding + evidence into the refuter persona template."""
+    """Substitute the finding + evidence into the refuter persona template.
+
+    The evidence travels between ``<<<EVIDENCE {nonce}>>>`` markers
+    whose nonce is generated per prompt — PR-head content cannot know
+    it, so it cannot close the data channel and inject instructions
+    (SP-REFUTER-INJECTION-HARDEN G1). Fence runs inside the evidence
+    are neutralised, and ``{EVIDENCE}`` is substituted LAST so
+    placeholder-shaped text inside the window is never expanded.
+    """
     template = (_PROMPTS_DIR / _PERSONA).read_text(encoding="utf-8")
+    nonce = secrets.token_hex(8)
     return (
-        template.replace("{CLAIM_TYPE}", finding.claim_type.value)
+        template.replace("{NONCE}", nonce)
+        .replace("{CLAIM_TYPE}", finding.claim_type.value)
         .replace("{FILE}", f"{finding.file}:{finding.line_start}")
         .replace("{CLAIM}", finding.claim)
-        .replace("{EVIDENCE}", evidence)
+        .replace("{EVIDENCE}", _neutralise_fences(evidence))
     )
 
 
 def _parse_verdict(raw: str) -> tuple[bool, str] | None:
-    """Extract ``(refuted, reasoning)`` from the judge's JSON reply.
+    """Extract ``(refuted, reasoning)`` from the judge's verdict line.
 
-    Tolerant of prose or fences around the object. Returns ``None``
-    when no JSON object with a boolean ``refuted`` can be recovered.
+    Only a line starting with ``VERDICT:`` at column one counts, and
+    the LAST such line with a well-formed object wins — never the first
+    JSON blob in the reply, which prose quoted from the evidence window
+    could plant (SP-REFUTER-INJECTION-HARDEN G2; the evidence itself
+    cannot forge the line because every evidence line carries a
+    line-number prefix). Returns ``None`` when no verdict line with a
+    boolean ``refuted`` exists — the caller leaves the finding
+    ``proposed``, never defaulting to refuted.
     """
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match is None:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except (json.JSONDecodeError, ValueError) as exc:
-        _log.debug("refuter.verdict_json_decode_failed", error=str(exc)[:120])
-        return None
-    if not isinstance(data, dict) or not isinstance(data.get("refuted"), bool):
-        return None
-    return data["refuted"], str(data.get("reasoning", ""))[:300]
+    verdict: tuple[bool, str] | None = None
+    for line in raw.splitlines():
+        match = _VERDICT_LINE.match(line)
+        if match is None:
+            continue
+        try:
+            data = json.loads(match.group(1))
+        except (json.JSONDecodeError, ValueError) as exc:
+            _log.debug("refuter.verdict_json_decode_failed", error=str(exc)[:120])
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("refuted"), bool):
+            continue
+        verdict = data["refuted"], str(data.get("reasoning", ""))[:300]
+    return verdict
 
 
 def refute_finding(finding: Finding, *, repo_root: Path, judge: Judge) -> tuple[FindingStatus, str]:
