@@ -148,7 +148,7 @@ N/A (in-place fix)
   case with an in-repo symlink resolving to a forbidden target and
   assert it is rejected too.
 - [ ] AC3: promised test file + selectors —
-  `tests/unit/test_coder_loop.py::test_apply_fixes_rejects_dot_normalised_forbidden_paths`
+  `tests/unit/test_review_coder_loop.py::test_apply_fixes_rejects_dot_normalised_forbidden_paths`
   and `::test_apply_fixes_rejects_symlink_to_forbidden_target`.
 - [ ] AC4: `ruff` + `ruff format --check` + `pytest tests/unit`
   green; zero inline comments (SP-NO-INLINE-COMMENTS-GATE); no
