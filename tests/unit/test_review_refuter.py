@@ -62,7 +62,7 @@ def test_spec_gap_is_judged(tmp_path: Path) -> None:
     def _factory():
         def _judge(prompt: str) -> str:
             prompts.append(prompt)
-            return '{"refuted": false, "reasoning": "real spec gap — no coverage"}'
+            return 'VERDICT: {"refuted": false, "reasoning": "real spec gap — no coverage"}'
 
         return _judge
 
@@ -122,7 +122,7 @@ def test_mechanical_deferral_falls_back_to_judge(tmp_path: Path) -> None:
     def _factory():
         def _judge(prompt: str) -> str:
             prompts.append(prompt)
-            return '{"refuted": false, "reasoning": "real missing test"}'
+            return 'VERDICT: {"refuted": false, "reasoning": "real missing test"}'
 
         return _judge
 
@@ -183,7 +183,7 @@ def test_judge_fallback_respects_cap(tmp_path: Path) -> None:
     def _factory():
         def _judge(prompt: str) -> str:
             prompts.append(prompt)
-            return '{"refuted": false, "reasoning": "should not be called"}'
+            return 'VERDICT: {"refuted": false, "reasoning": "should not be called"}'
 
         return _judge
 
