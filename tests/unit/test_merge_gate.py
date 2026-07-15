@@ -209,6 +209,18 @@ def test_gather_skips_settled_and_advisory(tmp_path: Path) -> None:
     assert facts.open_blocking_findings == 0
 
 
+def test_incomplete_review_not_approved(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 0
+    assert facts.review_complete is False
+    assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
+    assert compute_merge_decision(facts).merge is False
+
+
 def test_gather_review_integrity_fresh_and_complete(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
