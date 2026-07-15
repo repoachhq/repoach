@@ -158,7 +158,7 @@ N/A (in-place fix)
   case: a `covered=True` record at `old_head` and none at the new
   head → `spec_covered == False`.
 - [ ] AC3: promised test file + selectors —
-  `tests/unit/test_review_merge_gate.py::test_open_judged_blocking_fails_closed`,
+  `tests/unit/test_merge_gate.py::test_open_judged_blocking_fails_closed`,
   `::test_stale_sha_judged_blocking_fails_closed`,
   `::test_spec_coverage_pinned_to_head`.
 - [ ] AC4: `ruff` + `ruff format --check` + `pytest tests/unit`
