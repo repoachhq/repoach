@@ -135,7 +135,7 @@ N/A (in-place fix)
   an APPROVE-eligible facts object.
 - [ ] AC3: promised test file + selectors —
   `tests/unit/test_review_orchestrator.py::test_failed_findings_write_poisons_integrity`
-  and `tests/unit/test_review_merge_gate.py::test_incomplete_review_not_approved`.
+  and `tests/unit/test_merge_gate.py::test_incomplete_review_not_approved`.
 - [ ] AC4: `ruff` + `ruff format --check` + `pytest tests/unit`
   green; zero inline comments (SP-NO-INLINE-COMMENTS-GATE); no
   `# noqa`; `ferova arch graph --check` exits 0.
