@@ -228,15 +228,22 @@ def record_spec_coverage(
         )
 
 
-def fetch_spec_coverage(db_path: Path, pr_number: int) -> list[SpecCoverage]:
-    """Return every recorded coverage report for a PR, ordered by id.
+def fetch_spec_coverage(
+    db_path: Path, pr_number: int, *, head_sha: str | None = None
+) -> list[SpecCoverage]:
+    """Return recorded coverage reports for a PR, ordered by id.
 
     Args:
         db_path: Path to the SQLite database.
         pr_number: The PR number to fetch reports for.
+        head_sha: When given, only reports recorded at this exact head
+            are returned — the merge gate pins coverage to the decided
+            head so a stale ``covered=True`` from an earlier push can
+            never carry the gate (SP-GATE-JUDGED-FAIL-CLOSED, audit
+            finding M8).
 
     Returns:
-        List of coverage reports for the PR, ordered by insertion id.
+        List of matching coverage reports, ordered by insertion id.
     """
     engine = _engine_for(db_path)
     stmt = (
@@ -244,6 +251,8 @@ def fetch_spec_coverage(db_path: Path, pr_number: int) -> list[SpecCoverage]:
         .where(_pr_spec_coverage.c.pr_number == pr_number)
         .order_by(_pr_spec_coverage.c.id)
     )
+    if head_sha is not None:
+        stmt = stmt.where(_pr_spec_coverage.c.head_sha == head_sha)
     with engine.connect() as conn:
         rows = list(conn.execute(stmt).mappings())
         return [
