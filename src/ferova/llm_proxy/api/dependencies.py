@@ -2,6 +2,7 @@
 
 import secrets
 
+import httpx
 from fastapi import Depends, HTTPException, Request
 from loguru import logger
 from starlette.applications import Starlette
@@ -106,3 +107,13 @@ def require_api_key(request: Request, settings: Settings = Depends(get_settings)
 
     if not secrets.compare_digest(token.encode(), anthropic_auth_token.encode()):
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def get_credits_client() -> httpx.AsyncClient:
+    """Return an httpx.AsyncClient for credits health checks.
+
+    Overridable via ``app.dependency_overrides`` in tests so the
+    /health endpoint can be driven through a
+    :class:`httpx.MockTransport` without live network calls.
+    """
+    return httpx.AsyncClient()
