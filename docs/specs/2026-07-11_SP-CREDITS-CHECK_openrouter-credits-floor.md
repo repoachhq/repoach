@@ -167,21 +167,27 @@ fields are unaffected.
 
 - No API key configured → stdout `credits open_router skipped`, no
   fetch, no degradation, `/health` serves `null`.
-- EXISTING TESTS (in scope, promised): the two CLI tests
+- EXISTING TESTS (in scope, promised): every pre-existing
+  `monitor-chains` CLI test invokes the command and would otherwise
+  fire a LIVE credits GET (the llm_proxy `Settings` loads the repo
+  `.env`, `settings.py:20-42`, which carries a real key) and become
+  balance-dependent — an exit-code assertion flips whenever the live
+  balance is below floor. The affected tests, ALL edited in-place to
+  pin `monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")` (an
+  explicit env value beats the `.env` files): in
+  `tests/unit/test_chain_health.py` —
   `test_cli_exit_code_reflects_worst_status` and
-  `test_cli_exit_zero_when_all_healthy`
-  (`tests/unit/test_chain_health.py:146-167`) invoke `monitor-chains`
-  and would otherwise fire a LIVE credits GET (the llm_proxy
-  `Settings` loads the repo `.env`, `settings.py:20-42`, which
-  carries a real key) and become balance-dependent — the exit-0
-  assertion flips whenever the live balance is below floor. Both
-  tests are edited in-place to neutralize the credits path with
-  `monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")` (an explicit
-  env value beats the `.env` files). Key-state pinning is the general
-  rule: CLI tests set the key deterministically via `setenv`
-  (sentinel or empty); `/health` tests control it through the
-  settings dependency override (`app.dependency_overrides`), never
-  through ambient env.
+  `test_cli_exit_zero_when_all_healthy`; in
+  `tests/unit/test_chain_health_store.py` —
+  `test_cli_no_persist_skips` (the exit-0 case that actually breaks)
+  and `test_cli_persists_probes` (pinned for correctness so it asserts
+  exit 1 from tier degradation, not from a live LOW balance). Key-state
+  pinning is the general rule and applies to EVERY `monitor-chains`
+  CLI test in the suite, not only the enumerated ones: CLI tests set
+  the key deterministically via `setenv` (sentinel or empty) OR
+  override the `_probe_client` factory with a MockTransport; `/health`
+  tests control it through the settings dependency override
+  (`app.dependency_overrides`), never through ambient env.
 - Payload missing keys / non-numeric → helper returns `None`
   (status `unavailable`) — `unavailable` does NOT degrade the run
   (a flaky credits endpoint must not page the operator; only a
