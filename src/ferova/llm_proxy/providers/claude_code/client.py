@@ -79,6 +79,12 @@ class ClaudeCodeProvider(BaseProvider):
         stateless LLM and contaminate responses.
         """
         super().__init__(config)
+        if shutil.which(cli_path) is None:
+            logger.warning(
+                "CLAUDE_CODE_CLI_UNRESOLVABLE: cli_path={!r} not found on PATH; "
+                "subprocess spawns will fail with OSError",
+                cli_path,
+            )
         resolved_cli = shutil.which(cli_path) or cli_path
         self._cli_path = resolved_cli
         self._default_model = default_model
