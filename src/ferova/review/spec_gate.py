@@ -101,13 +101,15 @@ def acceptance_selectors(plan: ActionPlan) -> list[str]:
 def promised_present(repo_root: Path, selector: str) -> bool:
     r"""Return whether *selector*'s trailing function name is defined at head.
 
-    The promise is satisfied by any ``def <name>(`` in the file at any
-    indentation (flat or class-nested), regardless of intermediate
-    class segments. A word-boundary regex (``def\s+NAME\s*\(``)
-    replaces the previous substring scan, so a promise ``test_foo`` is
-    no longer satisfied by ``def test_foobar(`` and a class-scoped
+    The promise is satisfied by any ``def <name>(`` or
+    ``async def <name>(`` in the file at any indentation (flat or
+    class-nested), regardless of intermediate class segments. A
+    word-boundary regex (``(?:async\s+)?def\s+NAME\s*\(``) replaces
+    the previous substring scan, so a promise ``test_foo`` is no
+    longer satisfied by ``def test_foobar(`` and a class-scoped
     promise no longer requires every intermediate ``class <C>`` to be
-    present (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10).
+    present (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10;
+    SP-GATE-ASYNC-DEF-SELECTOR, 2026-07-18).
 
     Args:
         repo_root: Root the selector path resolves against (the PR head).
@@ -118,7 +120,8 @@ def promised_present(repo_root: Path, selector: str) -> bool:
 
     Returns:
         ``True`` when the file exists and, for a node id, the file
-        defines ``def <trailing_name>(`` at any indentation; ``False``
+        defines ``def <trailing_name>(`` or
+        ``async def <trailing_name>(`` at any indentation; ``False``
         when the file is absent, the file cannot be read, or the
         trailing name is not defined.
     """
@@ -136,7 +139,7 @@ def promised_present(repo_root: Path, selector: str) -> bool:
     except (OSError, UnicodeDecodeError) as exc:
         _log.debug("spec_gate.selector_read_failed", selector=selector, error=str(exc)[:120])
         return False
-    pattern = r"(?m)^\s*def\s+" + re.escape(segments[-1]) + r"\s*\("
+    pattern = r"(?m)^\s*(?:async\s+)?def\s+" + re.escape(segments[-1]) + r"\s*\("
     return re.search(pattern, source) is not None
 
 
