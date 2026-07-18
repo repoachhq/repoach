@@ -144,6 +144,8 @@ def test_empty_content_head_classified_empty(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_cli_exit_code_reflects_worst_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
+
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [
             ModelHealth("opus", "claude_code/opus", "skipped", None, 0, "non-NIM head"),
@@ -158,6 +160,8 @@ def test_cli_exit_code_reflects_worst_status(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_cli_exit_zero_when_all_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
+
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [ModelHealth("sonnet", "thinker", "ok", 0.4, 2, "ok")]
 
@@ -165,3 +169,146 @@ def test_cli_exit_zero_when_all_healthy(monkeypatch: pytest.MonkeyPatch) -> None
     result = CliRunner().invoke(app, ["monitor-chains"])
 
     assert result.exit_code == 0
+
+
+class _MockTransport(httpx.MockTransport):
+    """Fake transport that answers both NIM POSTs and credits GET."""
+
+    def __init__(
+        self,
+        *,
+        credits_status: int = 200,
+        credits_payload: dict[str, object] | None = None,
+    ) -> None:
+        self._credits_status = credits_status
+        self._credits_payload = credits_payload
+        self.get_requests: list[httpx.Request] = []
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/api/v1/credits" in str(request.url):
+            self.get_requests.append(request)
+            return httpx.Response(
+                self._credits_status,
+                json=self._credits_payload,
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+            request=request,
+        )
+
+
+def _credits_payload(total: float, usage: float) -> dict[str, object]:
+    return {"data": {"total_credits": total, "total_usage": usage}}
+
+
+def test_credits_low_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Healthy heads + remaining < floor -> exit 1, LOW line."""
+    transport = _MockTransport(
+        credits_status=200,
+        credits_payload=_credits_payload(20.0, 19.0),
+    )
+    monkeypatch.setattr(
+        "ferova.cli.main._probe_client",
+        lambda: httpx.AsyncClient(transport=transport),
+    )
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "5.0")
+    monkeypatch.setenv("MODEL", "nvidia_nim/x")
+    monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
+    monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
+    monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+
+    result = CliRunner().invoke(app, ["monitor-chains"])
+
+    assert result.exit_code == 1
+    assert "credits open_router [remaining=" in result.stdout
+    assert "LOW" in result.stdout
+    assert len(transport.get_requests) >= 1
+
+
+def test_credits_ok_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Healthy heads + sufficient credits -> exit 0, ok line."""
+    transport = _MockTransport(
+        credits_status=200,
+        credits_payload=_credits_payload(20.0, 0.0),
+    )
+    monkeypatch.setattr(
+        "ferova.cli.main._probe_client",
+        lambda: httpx.AsyncClient(transport=transport),
+    )
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "2.0")
+    monkeypatch.setenv("MODEL", "nvidia_nim/x")
+    monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
+    monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
+    monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+
+    result = CliRunner().invoke(app, ["monitor-chains"])
+
+    assert result.exit_code == 0
+    assert "credits open_router [remaining=" in result.stdout
+    assert "ok" in result.stdout
+
+
+def test_credits_skipped_when_key_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty key -> skipped line, no credits GET recorded."""
+    transport = _MockTransport()
+    monkeypatch.setattr(
+        "ferova.cli.main._probe_client",
+        lambda: httpx.AsyncClient(transport=transport),
+    )
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("MODEL", "nvidia_nim/x")
+    monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
+    monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
+    monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+
+    result = CliRunner().invoke(app, ["monitor-chains"])
+
+    assert result.exit_code == 0
+    assert "credits open_router skipped" in result.stdout
+    assert len(transport.get_requests) == 0
+
+
+def test_credits_json_output_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--json -> trailing kind=credits object shape."""
+    transport = _MockTransport(
+        credits_status=200,
+        credits_payload=_credits_payload(20.0, 10.0),
+    )
+    monkeypatch.setattr(
+        "ferova.cli.main._probe_client",
+        lambda: httpx.AsyncClient(transport=transport),
+    )
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "2.0")
+    monkeypatch.setenv("MODEL", "nvidia_nim/x")
+    monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
+    monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
+    monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
+    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+
+    import json
+
+    result = CliRunner().invoke(app, ["monitor-chains", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    credits_elem = data[-1]
+    assert credits_elem["kind"] == "credits"
+    assert credits_elem["status"] == "ok"
+    assert credits_elem["total_credits"] == 20.0
+    assert credits_elem["total_usage"] == 10.0
+    assert credits_elem["remaining"] == 10.0
+    assert credits_elem["floor"] == 2.0

@@ -144,3 +144,12 @@ def test_full_run_over_real_specs_does_not_crash() -> None:
     assert "SP-SPEC-TEMPLATE" in registry.nodes
     assert registry.owner_of("format:spec-frontmatter") == "SP-SPEC-TEMPLATE"
     assert isinstance(render(registry, "json"), str)
+
+
+def test_health_credits_ownership_is_disjoint() -> None:
+    """Per-module ownership split: credits.py is SP-CREDITS-CHECK while
+    store.py is SP-HEALTH-STORE-NEUTRALIZE, proving the narrowing holds."""
+    registry = load_registry(_REPO_ROOT / "docs" / "specs")
+
+    assert registry.owner_of("src/ferova/health/credits.py") == "SP-CREDITS-CHECK"
+    assert registry.owner_of("src/ferova/health/store.py") == "SP-HEALTH-STORE-NEUTRALIZE"

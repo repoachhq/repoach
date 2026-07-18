@@ -80,6 +80,7 @@ def test_fetch_filters_tier(tmp_path: Path) -> None:
 
 def test_cli_persists_probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "review.db"
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
 
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return _sweep()
@@ -94,6 +95,7 @@ def test_cli_persists_probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 def test_cli_no_persist_skips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "review.db"
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
 
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [ModelHealth("sonnet", "m", "ok", 0.4, 2, "ok")]
