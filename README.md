@@ -11,7 +11,7 @@
 
 *Plug it into your repo — it builds your system, and keeps forging itself.*
 
-[![CI](https://github.com/ferovahq/ferova/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/ferovahq/ferova/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)]() [![Built by Ferova](https://img.shields.io/badge/built%20by-Ferova-orange)]()
+[![CI](https://github.com/ferovahq/ferova/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/ferovahq/ferova/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Built by Ferova](https://img.shields.io/badge/built%20by-Ferova-orange)]()
 
 </div>
 
@@ -88,6 +88,15 @@ Letting agents write and merge code is only acceptable if the blast radius is bo
 - Every agent fix is **path-whitelisted** — no touching CI config, workflows, or secrets.
 - Secrets are **scrubbed** from every agent's environment.
 - The self-evolving router is bounded by **per-cycle caps** and **can't deploy without a read**.
+
+## Contributing
+
+Issues, docs, spec proposals, and code PRs are all welcome — but this
+repo works a little differently: the factory is its own primary
+developer, and every PR (bot or human) goes through the same
+bot-review team and evidence-first merge gate. Start with
+**[CONTRIBUTING.md](CONTRIBUTING.md)** — it explains the spec-driven
+workflow, the quality gates, and what to expect from the review bots.
 
 ## Status
 
