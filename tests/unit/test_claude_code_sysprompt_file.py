@@ -291,3 +291,70 @@ def test_which_failure_logs_loud_warning() -> None:
         f"Expected a WARNING containing CLAUDE_CODE_CLI_UNRESOLVABLE and {cli_path!r}, "
         f"got {warning_messages}"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC2: concurrent requests get distinct sysprompt files
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_requests_get_distinct_sysprompt_files() -> None:
+    """Two concurrent ``stream_response`` calls with distinct system
+    prompts must each receive a different ``--system-prompt-file`` path,
+    and each file's bytes must equal its own system prompt."""
+    system_a = "System prompt Alpha — unique content for A."
+    system_b = "System prompt Beta — completely different content for B."
+
+    provider = _provider()
+    payload = {"result": "plain answer", "usage": {"output_tokens": 7}}
+
+    spawn_logs: list[tuple[tuple[Any, ...], _FakeProcess]] = []
+    sysprompt_snapshots: list[tuple[bytes, Path]] = []
+
+    async def fake_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
+        proc = _FakeProcess(payload)
+        spawn_logs.append((args, proc))
+        sp_path = _sysprompt_path_from_argv(args)
+        if sp_path is not None and sp_path.exists():
+            sysprompt_snapshots.append((sp_path.read_bytes(), sp_path))
+        return proc
+
+    async def drive(sys_text: str) -> list[str]:
+        events: list[str] = []
+        async for event in provider.stream_response(_request(sys_text)):
+            events.append(event)
+        return events
+
+    async def run_concurrent() -> None:
+        with patch(
+            "ferova.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
+            side_effect=fake_exec,
+        ):
+            await asyncio.gather(drive(system_a), drive(system_b))
+
+    asyncio.run(run_concurrent())
+
+    assert len(spawn_logs) == 2, f"Expected 2 spawns, got {len(spawn_logs)}"
+    assert len(sysprompt_snapshots) == 2, (
+        f"Expected 2 sysprompt snapshots, got {len(sysprompt_snapshots)}"
+    )
+
+    paths = [str(p) for _, p in sysprompt_snapshots]
+    assert paths[0] != paths[1], f"Both requests got the same sysprompt file: {paths[0]}"
+
+    file_contents = {content.decode("utf-8") for content, _ in sysprompt_snapshots}
+    assert file_contents == {system_a, system_b}, (
+        f"File contents {file_contents!r} != expected {{{system_a!r}, {system_b!r}}}"
+    )
+
+    for argv, _ in spawn_logs:
+        argv_strs = [str(a) for a in argv]
+        assert "--system-prompt-file" in argv_strs, (
+            f"Expected --system-prompt-file in argv, got {argv_strs}"
+        )
+        assert not any(system_a in a for a in argv_strs), (
+            "System prompt A must not appear in any argv element"
+        )
+        assert not any(system_b in a for a in argv_strs), (
+            "System prompt B must not appear in any argv element"
+        )
