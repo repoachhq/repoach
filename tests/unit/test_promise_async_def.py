@@ -55,3 +55,15 @@ def test_test_function_names_lists_async_defs(tmp_path: Path) -> None:
     )
     names = _test_function_names_in_file(tmp_path, "tests/test_mixed.py")
     assert names == ["test_async_one", "test_async_two", "test_sync"]
+
+
+def test_async_only_test_file_not_placeholder(tmp_path: Path) -> None:
+    """A test file with only ``async def test_*`` is not a placeholder."""
+    from ferova.review.coder_loop import is_placeholder_content
+
+    result = is_placeholder_content(
+        "tests/test_async_only.py",
+        "async def test_one():\n    assert True\n\nasync def test_two():\n    assert True\n",
+        repo_root=tmp_path,
+    )
+    assert result.is_placeholder is False
