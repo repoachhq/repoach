@@ -308,7 +308,7 @@ def is_placeholder_content(
         path.startswith("tests/") or "/tests/" in path or Path(path).name.startswith("test_")
     )
     if looks_like_test:
-        has_tests = re.search(r"^\s*def\s+test_\w+", new_content, re.MULTILINE)
+        has_tests = re.search(r"^\s*(?:async\s+)?def\s+test_\w+", new_content, re.MULTILINE)
         if not has_tests:
             return PlaceholderResult(
                 is_placeholder=True,

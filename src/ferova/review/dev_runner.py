@@ -111,7 +111,7 @@ def _test_function_names_in_file(repo_root: Path, file_path: str) -> list[str]:
             error=str(exc)[:200],
         )
         return []
-    return sorted(set(re.findall(r"(?m)^\s*def\s+(test_\w+)\s*\(", source)))
+    return sorted(set(re.findall(r"(?m)^\s*(?:async\s+)?def\s+(test_\w+)\s*\(", source)))
 
 
 def _attempt_mechanical_rename(
