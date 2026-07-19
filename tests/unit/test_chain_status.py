@@ -6,13 +6,16 @@ truthful boundary fake for /health and credits — no monkeypatching of ferova c
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
 from ferova.cli.chain_status import build_chain_status
+from ferova.cli.main import app
 from ferova.health.model_health import (
     STATUS_EMPTY,
     STATUS_ERROR,
@@ -234,3 +237,44 @@ async def test_credits_none_renders_unavailable(
     )
 
     assert "  credits: unavailable" in result
+
+
+def test_cli_argv_parsing_and_exit_zero(tmp_path: Path) -> None:
+    """--window-hours, --db-path, --proxy-url are accepted; exit 0 always."""
+    db = tmp_path / "test.db"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "chain-status",
+            "--window-hours",
+            "6",
+            "--db-path",
+            str(db),
+            "--proxy-url",
+            "http://127.0.0.1:9099",
+        ],
+        env={**os.environ, "FEROVA_OPENROUTER_API_KEY": ""},
+    )
+    assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
+
+
+def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -> None:
+    """Unbound proxy + empty db → exit 0, degradation lines rendered, no traceback."""
+    db = tmp_path / "nonexistent"
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "chain-status",
+            "--proxy-url",
+            "http://127.0.0.1:19999",
+            "--db-path",
+            str(db),
+        ],
+        env={**os.environ, "FEROVA_OPENROUTER_API_KEY": ""},
+    )
+    assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
+    assert "proxy: unreachable" in result.stdout
+    assert "no probes in window" in result.stdout
+    assert "Traceback" not in result.stderr

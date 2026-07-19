@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
+import typer
 
 from ferova.health.credits import fetch_openrouter_credits
 from ferova.health.model_health import (
@@ -238,3 +239,52 @@ async def _build_credits_line(
     floor = settings.credits_floor_usd
     flag = " LOW" if remaining < floor else ""
     return f"  credits: open_router remaining={remaining} floor={floor}{flag}"
+
+
+def chain_status(
+    window_hours: float | None = typer.Option(
+        None,
+        "--window-hours",
+        help="Look-back window in hours (default: settings.chain_status_window_h).",
+    ),
+    db_path: str | None = typer.Option(
+        None,
+        "--db-path",
+        help="Override the SQLite path (default: the configured review DB).",
+    ),
+    proxy_url: str = typer.Option(
+        "http://127.0.0.1:8082",
+        "--proxy-url",
+        help="Base URL of the running llm_proxy.",
+    ),
+) -> None:
+    """Print the chain-status digest and always exit 0.
+
+    Every data source degrades to an explicit ``unavailable`` line —
+    this command is a surface, not a gate, so a broken venv can never
+    block a Claude session.
+    """
+    import asyncio
+
+    from ..core.config import get_settings
+    from ..llm_proxy.config.settings import Settings as LSettings
+
+    settings = LSettings()
+    window = window_hours if window_hours is not None else settings.chain_status_window_h
+    target_db = db_path if db_path else get_settings().db_path
+
+    async def _run() -> str:
+        async with httpx.AsyncClient() as client:
+            return await build_chain_status(
+                target_db,
+                window,
+                proxy_url=proxy_url,
+                client=client,
+                settings=settings,
+            )
+
+    try:
+        digest = asyncio.run(_run())
+        typer.echo(digest, nl=False)
+    except Exception:
+        typer.echo("chain-status: unavailable")
