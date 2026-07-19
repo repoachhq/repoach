@@ -169,6 +169,43 @@ def test_apply_fixes_rejects_traversal(tmp_path: Path) -> None:
     assert len(rejected) == 3
 
 
+def test_apply_fixes_rejects_dot_normalised_forbidden_paths(tmp_path: Path) -> None:
+    fixes = [
+        {"path": "./.github/workflows/x.yml", "new_content": "print('owned')\n"},
+        {"path": ".//.githooks/pre-commit", "new_content": "print('owned')\n"},
+        {"path": "./.git/hooks/pre-commit", "new_content": "print('owned')\n"},
+        {"path": "./prompts/review/x.md", "new_content": "print('owned')\n"},
+        {"path": "./src/legit.py", "new_content": "print('ok')\n"},
+    ]
+    applied, rejected = apply_fixes(fixes, repo_root=tmp_path)
+    assert applied == 1
+    assert rejected == [
+        "./.github/workflows/x.yml",
+        ".//.githooks/pre-commit",
+        "./.git/hooks/pre-commit",
+        "./prompts/review/x.md",
+    ]
+    assert not (tmp_path / ".github").exists()
+    assert not (tmp_path / ".githooks").exists()
+    assert not (tmp_path / ".git").exists()
+    assert not (tmp_path / "prompts").exists()
+    assert (tmp_path / "src/legit.py").read_text() == "print('ok')\n"
+
+
+def test_apply_fixes_rejects_symlink_to_forbidden_target(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    forbidden_target = workflows / "ci.yml"
+    forbidden_target.write_text("name: ci\n", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.md").symlink_to(forbidden_target)
+    fixes = [{"path": "docs/note.md", "new_content": "on: push\njobs: {}\n"}]
+    applied, rejected = apply_fixes(fixes, repo_root=tmp_path)
+    assert applied == 0
+    assert rejected == ["docs/note.md"]
+    assert forbidden_target.read_text(encoding="utf-8") == "name: ci\n"
+
+
 def test_apply_fixes_skips_bad_dict_shapes(tmp_path: Path) -> None:
     fixes = [
         {"path": "src/ok.py", "new_content": "x\n"},

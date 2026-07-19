@@ -308,7 +308,7 @@ def is_placeholder_content(
         path.startswith("tests/") or "/tests/" in path or Path(path).name.startswith("test_")
     )
     if looks_like_test:
-        has_tests = re.search(r"^\s*def\s+test_\w+", new_content, re.MULTILINE)
+        has_tests = re.search(r"^\s*(?:async\s+)?def\s+test_\w+", new_content, re.MULTILINE)
         if not has_tests:
             return PlaceholderResult(
                 is_placeholder=True,
@@ -446,6 +446,18 @@ def apply_fixes(
     original file) ..."`` and ``apply_fixes`` wrote it verbatim,
     truncating a 261-line test file to 1 line.
 
+    SP-CODER-WHITELIST-RESOLVE (2026-07-15): the whitelist is enforced
+    twice — once on the raw string (cheap first filter) and again on
+    the RESOLVED repo-relative path right before writing, mirroring
+    the Developer's ``_resolve_writable``.  The raw check alone let
+    ``./``- or ``//``-prefixed strings and in-repo symlinks reach
+    forbidden targets (``.github/``, ``.githooks/``,
+    ``prompts/review/``, ``.git/``, env files): the disguised string
+    never ``startswith`` the bare forbidden prefix, and a symlink's
+    allowed name says nothing about where it resolves.  Any fix whose
+    resolved form is not both inside the repo AND whitelist-allowed is
+    rejected, never written (audit 2026-07-13 finding C1).
+
     Args:
         fixes: List of ``{"path": str, "new_content": str, ...}`` dicts.
         repo_root: Repository root.  All paths are resolved relative
@@ -519,9 +531,17 @@ def apply_fixes(
             continue
         target = (repo_root / path_raw).resolve()
         try:
-            target.relative_to(repo_root)
+            resolved_relative = target.relative_to(repo_root).as_posix()
         except ValueError:
             _log.warning("coder.path_escapes_repo", path=path_raw)
+            rejected.append(path_raw)
+            continue
+        if not is_path_allowed(resolved_relative):
+            _log.warning(
+                "coder.resolved_path_rejected",
+                path=path_raw,
+                resolved=resolved_relative,
+            )
             rejected.append(path_raw)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)

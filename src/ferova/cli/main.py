@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import typer
 
 from ..arch.cli import arch_app
@@ -64,6 +65,15 @@ def show_version() -> None:
     typer.echo(__version__)
 
 
+def _probe_client() -> httpx.AsyncClient:
+    """Return an httpx.AsyncClient for NIM probes and credits checks.
+
+    Extracted as a module-level factory so tests can override it with
+    a MockTransport-backed client.
+    """
+    return httpx.AsyncClient()
+
+
 @app.command("monitor-chains")
 def monitor_chains(
     json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a table."),
@@ -91,40 +101,81 @@ def monitor_chains(
     from datetime import UTC, datetime
     from pathlib import Path
 
-    import httpx
-
     from ..core.config import get_settings
     from ..core.logging import get_logger
+    from ..health.credits import CreditsSnapshot, fetch_openrouter_credits
     from ..llm_proxy.config.settings import Settings
     from ..review.chain_health import check_tier_heads, is_degraded
     from ..review.chain_health_store import record_probes
 
     settings = Settings()
 
-    async def _run() -> list:
-        async with httpx.AsyncClient() as client:
-            return await check_tier_heads(
+    async def _run() -> tuple[list, CreditsSnapshot | None]:
+        async with _probe_client() as client:
+            results = await check_tier_heads(
                 settings,
                 client=client,
                 slow_threshold_s=slow_threshold,
                 max_tokens=max_tokens,
             )
+            if settings.open_router_api_key:
+                credits = await fetch_openrouter_credits(
+                    settings.open_router_api_key, client=client
+                )
+            else:
+                credits = None
+            return results, credits
 
-    results = asyncio.run(_run())
+    results, credits = asyncio.run(_run())
 
     if not no_persist:
         target = Path(db_path) if db_path else Path(get_settings().db_path)
         written = record_probes(target, results, recorded_at=datetime.now(UTC))
         get_logger(__name__).info("nim_health_persisted", rows=written, db_path=str(target))
 
+    floor = settings.credits_floor_usd
+    if not settings.open_router_api_key:
+        credits_status = "skipped"
+    elif credits is None:
+        credits_status = "unavailable"
+    elif credits.remaining < floor:
+        credits_status = "LOW"
+    else:
+        credits_status = "ok"
+
+    log = get_logger(__name__)
+    credits_log: dict[str, object] = {"floor": floor, "status": credits_status}
+    if credits is not None:
+        credits_log["remaining"] = credits.remaining
+    if credits_status == "LOW":
+        log.warning("openrouter_credits", **credits_log)
+    else:
+        log.info("openrouter_credits", **credits_log)
+
     if json_output:
-        typer.echo(json_module.dumps([dataclasses.asdict(r) for r in results], indent=2))
+        results_data: list[object] = [dataclasses.asdict(r) for r in results]
+        credits_elem: dict[str, object] = {
+            "kind": "credits",
+            "status": credits_status,
+            "total_credits": credits.total_credits if credits else None,
+            "total_usage": credits.total_usage if credits else None,
+            "remaining": credits.remaining if credits else None,
+            "floor": floor,
+        }
+        results_data.append(credits_elem)
+        typer.echo(json_module.dumps(results_data, indent=2))
     else:
         for r in results:
             latency = f"{r.latency_s:.2f}s" if r.latency_s is not None else "—"
             typer.echo(f"{r.tier:<7} {r.status:<8} {latency:>8}  {r.model}  {r.detail}")
+        if credits is not None:
+            typer.echo(
+                f"credits open_router [remaining={credits.remaining} floor={floor}] {credits_status}"
+            )
+        else:
+            typer.echo(f"credits open_router {credits_status}")
 
-    if any(is_degraded(r.status) for r in results):
+    if any(is_degraded(r.status) for r in results) or credits_status == "LOW":
         raise typer.Exit(code=1)
 
 

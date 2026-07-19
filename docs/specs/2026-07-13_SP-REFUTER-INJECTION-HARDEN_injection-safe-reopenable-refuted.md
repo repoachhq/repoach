@@ -153,7 +153,7 @@ N/A (in-place fix)
 - [ ] AC3: promised test file + selectors —
   `tests/unit/test_refuter.py::test_evidence_injection_does_not_refute_blocking`,
   `::test_parse_verdict_ignores_injected_leading_object`,
-  `tests/unit/test_findings.py::test_refuted_is_reopenable_on_reraise`.
+  `tests/unit/test_review_findings.py::test_refuted_is_reopenable_on_reraise`.
 - [ ] AC4: `ruff` + `ruff format --check` + `pytest tests/unit`
   green; zero inline comments (SP-NO-INLINE-COMMENTS-GATE); no
   `# noqa`; `ferova arch graph --check` exits 0.

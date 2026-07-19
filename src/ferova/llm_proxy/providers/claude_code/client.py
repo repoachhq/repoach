@@ -79,6 +79,12 @@ class ClaudeCodeProvider(BaseProvider):
         stateless LLM and contaminate responses.
         """
         super().__init__(config)
+        if shutil.which(cli_path) is None:
+            logger.warning(
+                "CLAUDE_CODE_CLI_UNRESOLVABLE: cli_path={!r} not found on PATH; "
+                "subprocess spawns will fail with OSError",
+                cli_path,
+            )
         resolved_cli = shutil.which(cli_path) or cli_path
         self._cli_path = resolved_cli
         self._default_model = default_model
@@ -126,15 +132,19 @@ class ClaudeCodeProvider(BaseProvider):
             "--model",
             cli_model,
         ]
+        sysprompt_path: Path | None = None
         if system_prompt:
-            cmd += ["--system-prompt", system_prompt]
+            sysprompt_path = self._workdir / f"sysprompt_{uuid.uuid4().hex}.txt"
+            sysprompt_path.write_text(system_prompt, encoding="utf-8")
+            cmd += ["--system-prompt-file", str(sysprompt_path)]
 
         req_tag = f" request_id={request_id}" if request_id else ""
         logger.info(
-            "CLAUDE_CODE_STREAM:{} model={} prompt_chars={} cmd={}",
+            "CLAUDE_CODE_STREAM:{} model={} prompt_chars={} system_prompt_chars={} cmd={}",
             req_tag,
             cli_model,
             len(prompt),
+            len(system_prompt),
             shlex.join(cmd),
         )
 
@@ -251,6 +261,17 @@ class ClaudeCodeProvider(BaseProvider):
                 for event in sse.emit_error(str(exc)):
                     yield event
                 raise
+            finally:
+                if sysprompt_path is not None:
+                    try:
+                        sysprompt_path.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning(
+                            "CLAUDE_CODE_SYSPROMPT_CLEANUP_FAILED:{} "
+                            "could not unlink sysprompt file {}",
+                            req_tag,
+                            sysprompt_path,
+                        )
 
         for event in sse.close_content_blocks():
             yield event

@@ -5,6 +5,13 @@ travels through a well-defined lifecycle (proposed -> verified/refuted ->
 open -> resolved/stuck).  The lifecycle is enforced by a single source-of-truth
 transition table (ALLOWED_TRANSITIONS) so all agents -- reviewer, verifier,
 coder -- speak the same state machine.
+
+REFUTED is re-openable (SP-REFUTER-INJECTION-HARDEN): refuted ->
+proposed is admitted so a later reviewer re-raising the same claim
+sends the finding back for a fresh judging round.  Without that exit a
+single injected refutation verdict would bury a real blocking finding
+forever, self-defended by the refuted-finding sentinel.  RESOLVED and
+STUCK stay terminal.
 """
 
 from __future__ import annotations
@@ -67,7 +74,7 @@ ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
     FindingStatus.PROPOSED: frozenset({FindingStatus.VERIFIED, FindingStatus.REFUTED}),
     FindingStatus.VERIFIED: frozenset({FindingStatus.OPEN}),
     FindingStatus.OPEN: frozenset({FindingStatus.RESOLVED, FindingStatus.STUCK}),
-    FindingStatus.REFUTED: frozenset(),
+    FindingStatus.REFUTED: frozenset({FindingStatus.PROPOSED}),
     FindingStatus.RESOLVED: frozenset(),
     FindingStatus.STUCK: frozenset(),
 }

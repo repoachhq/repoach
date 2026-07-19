@@ -9,12 +9,15 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from loguru import logger as loguru_logger
 from pydantic import ValidationError
 
+from ferova.health.credits import reset_credits_cache
 from ferova.llm_proxy.api.app import create_app
+from ferova.llm_proxy.api.dependencies import get_credits_client, get_settings
 from ferova.llm_proxy.api.model_router import ModelRouter, ResolvedModel
 from ferova.llm_proxy.api.services import ClaudeProxyService
 from ferova.llm_proxy.config import settings as settings_module
@@ -445,3 +448,74 @@ def test_counter_survives_ttl_lapse_prune() -> None:
     breaker.recover(ref)
     count3 = breaker.trip(ref, now=now, ttl_s=0.01, reason="timeout")
     assert count3 == 1, f"counter should reset on recover, got {count3} expected 1"
+
+
+_CREDITS_PAYLOAD = {"data": {"total_credits": 20.0, "total_usage": 10.0}}
+
+
+def _make_credits_app(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: int = 200,
+    json_body: object = None,
+) -> tuple[TestClient, list[httpx.Request]]:
+    """Create a TestClient app with overridden credits client and settings.
+
+    Returns the ``TestClient`` and a list that captures every GET
+    request the transport receives so callers can assert call counts.
+    """
+    reset_credits_cache()
+    captured: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(status_code, json=json_body, request=request)
+
+    transport = httpx.MockTransport(handler)
+    credits_client = httpx.AsyncClient(transport=transport)
+
+    app = create_app()
+    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "test-key")
+    app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[get_credits_client] = lambda: credits_client
+
+    return TestClient(app), captured
+
+
+def test_health_credits_cached_single_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two /health calls within the TTL perform exactly one upstream GET."""
+    client, captured = _make_credits_app(monkeypatch=monkeypatch, json_body=_CREDITS_PAYLOAD)
+
+    resp1 = client.get("/health")
+    assert resp1.status_code == 200
+    body1 = resp1.json()
+    assert body1["credits"] == {
+        "open_router": {"total_credits": 20.0, "total_usage": 10.0, "remaining": 10.0},
+    }
+    assert body1["status"] == "healthy"
+    assert isinstance(body1["breaker"], list)
+
+    resp2 = client.get("/health")
+    assert resp2.status_code == 200
+    body2 = resp2.json()
+    assert body2["credits"] is not None
+
+    assert len(captured) == 1
+
+
+def test_health_credits_null_on_upstream_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An upstream 500 yields ``credits: null`` with HTTP 200."""
+    client, _captured = _make_credits_app(monkeypatch=monkeypatch, status_code=500, json_body={})
+
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["credits"] is None
+    assert body["status"] == "healthy"
+    assert isinstance(body["breaker"], list)
+
+
+def test_get_credits_client_returns_async_client() -> None:
+    """The dependency returns an httpx.AsyncClient."""
+    client = get_credits_client()
+    assert isinstance(client, httpx.AsyncClient)

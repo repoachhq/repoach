@@ -10,8 +10,18 @@ import re
 from pathlib import Path
 
 from ..core.logging import get_logger
-from .findings import ClaimType, Finding, Severity, init_findings_schema, record_finding
+from .findings import (
+    ClaimType,
+    Finding,
+    FindingStatus,
+    Severity,
+    fetch_findings,
+    init_findings_schema,
+    record_finding,
+    update_finding_status,
+)
 from .reviewer import BotRole, ReviewComment, ReviewerOutcome
+from .thread_context import REPEAT_SIMILARITY_THRESHOLD, similarity
 
 _log = get_logger(__name__)
 
@@ -160,6 +170,51 @@ def comment_to_finding(
     )
 
 
+def _reopen_refuted_matches(
+    db_path: Path,
+    refuted_rows: list[Finding],
+    finding: Finding,
+) -> int:
+    """Re-open previously refuted findings the new *finding* re-raises.
+
+    A refuted row matches when it cites the same file, carries the same
+    claim type, and its claim text is similar past
+    :data:`~ferova.review.thread_context.REPEAT_SIMILARITY_THRESHOLD`.
+    Each match transitions REFUTED -> PROPOSED
+    (SP-REFUTER-INJECTION-HARDEN G3) so the finding is judged afresh
+    and the refuted-finding sentinel stops defending the dismissal — an
+    injected refutation verdict can no longer bury a blocking finding
+    permanently. Matched rows are removed from *refuted_rows* so one
+    re-raise never re-opens the same row twice in a pass.
+    """
+    reopened = 0
+    for prior in list(refuted_rows):
+        if prior.id is None or prior.file != finding.file:
+            continue
+        if prior.claim_type is not finding.claim_type:
+            continue
+        if similarity(prior.claim, finding.claim) < REPEAT_SIMILARITY_THRESHOLD:
+            continue
+        if update_finding_status(
+            db_path,
+            prior.id,
+            FindingStatus.PROPOSED,
+            verification_method="reraise",
+            verification_result=f"re-raised by {finding.finder} in round {finding.round}",
+        ):
+            reopened += 1
+            refuted_rows.remove(prior)
+            _log.info(
+                "findings_bridge.refuted_reopened",
+                pr_number=finding.pr_number,
+                finding_id=prior.id,
+                file=prior.file,
+                claim_type=prior.claim_type.value,
+                reraised_by=finding.finder,
+            )
+    return reopened
+
+
 def record_findings_for_outcomes(
     db_path: Path,
     *,
@@ -181,6 +236,11 @@ def record_findings_for_outcomes(
     every comment is recorded, matching the arbiter's
     never-silently-drop-everything contract.
 
+    A recorded comment that re-raises a previously REFUTED finding
+    (same file, same claim type, similar claim) also re-opens that
+    finding to PROPOSED via :func:`_reopen_refuted_matches`
+    (SP-REFUTER-INJECTION-HARDEN G3).
+
     Args:
         db_path: Path to the SQLite database file.
         pr_number: GitHub PR number.
@@ -196,8 +256,10 @@ def record_findings_for_outcomes(
     effective_sha = head_sha or ""
     files_in_diff = _files_in_diff(diff)
     diff_filter_enabled = bool(files_in_diff)
+    refuted_rows = list(fetch_findings(db_path, pr_number, status=FindingStatus.REFUTED))
     count = 0
     skipped = 0
+    reopened = 0
     for outcome in outcomes:
         if _is_unparsed(outcome):
             continue
@@ -214,6 +276,11 @@ def record_findings_for_outcomes(
             )
             record_finding(db_path, finding)
             count += 1
+            reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
     if skipped:
         _log.info("findings_bridge.off_diff_skipped", pr_number=pr_number, n_skipped=skipped)
+    if reopened:
+        _log.info(
+            "findings_bridge.refuted_reopened_total", pr_number=pr_number, n_reopened=reopened
+        )
     return count

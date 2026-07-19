@@ -20,6 +20,16 @@ concurrency:
 jobs:
   shellcheck:
     name: ShellCheck (warning-level)
+    # Untrusted PR code is checked out on a self-hosted runner: gate
+    # pull_request events to the maintainer allowlist (push /
+    # workflow_dispatch on the protected branches are already
+    # trusted). ShellCheck only parses the scripts — nothing from the
+    # PR executes — so this is consistency + defence in depth, the
+    # same guard ci.yml and auto-review.yml carry. Extend the
+    # fromJSON list as collaborators are added.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(fromJSON('["jwfaye"]'), github.actor)
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1

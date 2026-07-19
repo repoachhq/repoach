@@ -2,15 +2,17 @@
 
 import time
 
+import httpx
 from fastapi import APIRouter, Depends, Request, Response
 
+from ferova.health.credits import get_cached_credits
 from ferova.llm_proxy.config.settings import Settings
 from ferova.llm_proxy.core.anthropic import get_token_count
 from ferova.llm_proxy.routing import get_breaker
 
 from . import dependencies
 from .agent_dispatcher import dispatch_agent_request
-from .dependencies import get_settings, require_api_key
+from .dependencies import get_credits_client, get_settings, require_api_key
 from .models.agent_v1 import AgentRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import ModelResponse, ModelsListResponse
@@ -148,7 +150,10 @@ async def probe_root(_auth=Depends(require_api_key)):
 
 
 @router.get("/health")
-async def health():
+async def health(
+    settings: Settings = Depends(get_settings),
+    client: httpx.AsyncClient = Depends(get_credits_client),
+):
     """Health check endpoint.
 
     Surfaces the failover breaker's current state (SP-CHAIN-DEAD-HOP-QUARANTINE)
@@ -157,8 +162,29 @@ async def health():
     carries one entry per currently-down ref with ``ref``, ``reason``,
     ``ttl_remaining_s``, and ``consecutive_failures``. Empty when nothing
     is tripped.
+
+    The ``credits`` field carries the OpenRouter account balance
+    (SP-CREDITS-CHECK) when ``open_router_api_key`` is configured and a
+    snapshot is available; ``null`` when the key is absent or the fetch
+    fails.
     """
     breaker_entries = get_breaker().snapshot(time.monotonic())
+    credits = None
+    if settings.open_router_api_key:
+        snapshot = await get_cached_credits(
+            settings.open_router_api_key,
+            client=client,
+            ttl_s=settings.credits_health_cache_ttl_s,
+            timeout_s=3.0,
+        )
+        if snapshot is not None:
+            credits = {
+                "open_router": {
+                    "total_credits": snapshot.total_credits,
+                    "total_usage": snapshot.total_usage,
+                    "remaining": snapshot.remaining,
+                }
+            }
     return {
         "status": "healthy",
         "breaker": [
@@ -170,6 +196,7 @@ async def health():
             }
             for entry in breaker_entries
         ],
+        "credits": credits,
     }
 
 

@@ -118,6 +118,98 @@ def _parse_comment_id(stdout: str) -> int | None:
         return None
 
 
+def record_review_ledger(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str | None,
+    outcomes: list[ReviewerOutcome],
+    round_n: int,
+    diff: str,
+) -> bool:
+    """Persist the review findings, then the integrity row — fail closed.
+
+    The integrity row is written ONLY after the findings write succeeds
+    (SP-FINDINGS-WRITE-FAIL-CLOSED, audit 2026-07-13 finding H3). The
+    two writes used to sit in independent ``try`` blocks: a transient
+    DB/transport failure of :func:`record_findings_for_outcomes` was
+    swallowed to a warning while a clean integrity row was still
+    written, yielding a head that read as fully reviewed with ZERO
+    findings — which the merge gate turns into APPROVE. Skipping the
+    integrity row on a failed findings write makes the gate see no
+    complete review at that head (``review_complete`` False), so the
+    head can never merge on the strength of a review whose findings
+    were lost.
+
+    Args:
+        db_path: The findings + integrity ledger database.
+        pr_number: The PR reviewed.
+        head_sha: The head the review ran against.
+        outcomes: Every reviewer outcome of the pass, parsed or not.
+        round_n: The dialogue round the findings belong to.
+        diff: The reviewed diff (scopes findings to touched files).
+
+    Returns:
+        True when both writes landed; False when either failed (the
+        failure is logged loudly and the head stays non-mergeable).
+    """
+    try:
+        n_findings = record_findings_for_outcomes(
+            db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            outcomes=outcomes,
+            round_n=round_n,
+            diff=diff,
+        )
+        _log.info(
+            "review_team.findings_recorded",
+            pr_number=pr_number,
+            n_findings=n_findings,
+        )
+    except Exception as exc:
+        _log.error(
+            "review_team.findings_record_failed",
+            pr_number=pr_number,
+            exc=type(exc).__name__,
+            message=str(exc)[:200],
+        )
+        _log.error(
+            "review_team.integrity_skipped_findings_failed",
+            pr_number=pr_number,
+            head_sha=head_sha,
+        )
+        return False
+
+    try:
+        from .findings import record_review_integrity
+        from .findings_bridge import _is_unparsed
+
+        n_unparsed = sum(1 for o in outcomes if _is_unparsed(o))
+        record_review_integrity(
+            db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            n_reviewers=len(outcomes),
+            n_unparsed=n_unparsed,
+        )
+        _log.info(
+            "review_team.integrity_recorded",
+            pr_number=pr_number,
+            n_reviewers=len(outcomes),
+            n_unparsed=n_unparsed,
+        )
+    except Exception as exc:
+        _log.warning(
+            "review_team.integrity_record_failed",
+            pr_number=pr_number,
+            exc=type(exc).__name__,
+            message=str(exc)[:200],
+        )
+        return False
+    return True
+
+
 @dataclass
 class TeamOutcome:
     """Aggregated outcome of the four reviewers on one PR.
@@ -431,53 +523,14 @@ class ReviewTeamOrchestrator:
         n_blockers = sum(1 for o in outcomes for c in o.comments if c.severity == "blocker")
         n_majors = sum(1 for o in outcomes for c in o.comments if c.severity == "major")
 
-        try:
-            n_findings = record_findings_for_outcomes(
-                self._db_path,
-                pr_number=pr_number,
-                head_sha=head_sha,
-                outcomes=outcomes,
-                round_n=2 if round2_ran else 1,
-                diff=diff,
-            )
-            _log.info(
-                "review_team.findings_recorded",
-                pr_number=pr_number,
-                n_findings=n_findings,
-            )
-        except Exception as exc:
-            _log.warning(
-                "review_team.findings_record_failed",
-                pr_number=pr_number,
-                exc=type(exc).__name__,
-                message=str(exc)[:200],
-            )
-
-        try:
-            from .findings import record_review_integrity
-            from .findings_bridge import _is_unparsed
-
-            n_unparsed = sum(1 for o in outcomes if _is_unparsed(o))
-            record_review_integrity(
-                self._db_path,
-                pr_number=pr_number,
-                head_sha=head_sha,
-                n_reviewers=len(outcomes),
-                n_unparsed=n_unparsed,
-            )
-            _log.info(
-                "review_team.integrity_recorded",
-                pr_number=pr_number,
-                n_reviewers=len(outcomes),
-                n_unparsed=n_unparsed,
-            )
-        except Exception as exc:
-            _log.warning(
-                "review_team.integrity_record_failed",
-                pr_number=pr_number,
-                exc=type(exc).__name__,
-                message=str(exc)[:200],
-            )
+        record_review_ledger(
+            self._db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            outcomes=outcomes,
+            round_n=2 if round2_ran else 1,
+            diff=diff,
+        )
 
         try:
             verify_counts = verify_findings_for_pr(

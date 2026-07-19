@@ -74,6 +74,8 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "ANTHROPIC_AUTH_TOKEN": "anthropic_auth_token",
     "CHAINPILOT_APPLY_ENABLED": "chainpilot_apply_enabled",
     "CHAINPILOT_MAX_MUTATIONS": "chainpilot_max_mutations",
+    "CREDITS_FLOOR_USD": "credits_floor_usd",
+    "CREDITS_HEALTH_CACHE_TTL_S": "credits_health_cache_ttl_s",
 }
 """Legacy env key → Pydantic field name, kept in lockstep with
 :data:`_LEGACY_TO_FEROVA_ALIAS` to give the read-through tests a

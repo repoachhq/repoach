@@ -5,9 +5,10 @@ forgeable, stale signal (audit CRITICAL #1) fed by the parse_failed
 promotion path (CRITICAL #2). This module computes the merge decision
 as a PURE FUNCTION of facts re-verified at the exact head: CI green,
 zero open blocking findings (mechanical claims re-verified on disk at
-head; judged claims trusted only when their stored verdict was
-computed at THIS head), and spec coverage present. Stored finding
-state is a hint — the truth is the re-verification at head.
+head; judged claims block whenever unsettled — open or SHA-stale
+included, fail closed per SP-GATE-JUDGED-FAIL-CLOSED), and spec
+coverage computed at THIS head. Stored finding state is a hint — the
+truth is the re-verification at head.
 
 Slice 7a runs this in SHADOW: ``run_auto_merge`` computes and logs the
 decision next to the live 4/4 gate WITHOUT changing what merges, so
@@ -60,13 +61,17 @@ class MergeFacts(BaseModel):
         head_sha: The exact head the decision is computed against.
         ci_green: Whether every required check is green at that head.
         open_blocking_findings: Count of blocking findings confirmed
-            real at head (mechanical re-verified, or judged-and-fresh).
-            ``stuck`` blocking findings count exactly like ``verified``
-            ones (terminal escalation must keep the merge blocked).
-        spec_covered: Whether the plan's acceptance selectors are all
-            present at head.
-        spec_coverage_known: Whether a coverage record exists at all
-            (a hand-shipped PR has none).
+            real at head (mechanical re-verified; judged counted
+            whenever unsettled and past ``proposed`` — ``open`` and
+            SHA-stale included, fail closed). ``stuck`` blocking
+            findings count exactly like ``verified`` ones (terminal
+            escalation must keep the merge blocked).
+        spec_covered: Whether a coverage record computed at THIS head
+            reports every promised acceptance selector present.
+        spec_coverage_known: Whether a coverage record exists at this
+            exact head (a hand-shipped PR has none; older-head records
+            do not count — their head lacks a fresh review-integrity
+            row and is refused on that axis).
         review_complete: Whether the bench ran fresh at this head with
             every reviewer parsed and zero unparsed outcomes — the
             evidence-first replacement for the archive verdict that
@@ -183,10 +188,14 @@ def gather_merge_facts(
     """Re-verify the ledger at *head_sha* and assemble :class:`MergeFacts`.
 
     Mechanical blocking findings are re-checked on disk at the current
-    head (their stored status is a hint, not trusted); judged blocking
-    findings count only when their stored verdict is ``verified`` AND
-    was computed at this head. Settled findings (resolved / refuted)
-    never count.
+    head (their stored status is a hint, not trusted). Judged blocking
+    findings count whenever they are unsettled and past ``proposed`` —
+    ``verified``/``stuck`` at ANY sha (a stale ``checked_at_sha`` means
+    unverified at head) and ``open`` (a fix that did not resolve them)
+    all block; only settled findings (resolved / refuted) never count
+    (SP-GATE-JUDGED-FAIL-CLOSED, audit finding C2 — the earlier
+    fresh-at-head requirement silently DROPPED stale and open judged
+    findings, merging over unresolved security work).
 
     Args:
         db_path: The findings + coverage ledger.
@@ -219,9 +228,7 @@ def gather_merge_facts(
             if status is FindingStatus.VERIFIED:
                 open_blocking += 1
         elif finding.claim_type in _JUDGED_TYPES:
-            fresh = finding.status in _BLOCKING_STATUSES and finding.checked_at_sha == head_sha
-            if fresh:
-                open_blocking += 1
+            open_blocking += 1
     return _assemble_facts(
         db_path,
         pr_number=pr_number,
@@ -251,8 +258,10 @@ def summarise_ledger_facts(
 
     A blocking finding counts as open when it is not settled and its
     stored status still confirms the problem: mechanical findings when
-    ``status == verified``; judged findings when ``status == verified``
-    and the verification was computed at ``head_sha``. ``ci_green`` is
+    ``status == verified``; judged findings whenever they are past
+    ``proposed`` — ``open``, or ``verified``/``stuck`` at ANY sha, the
+    same fail-closed rule as the authoritative gate
+    (SP-GATE-JUDGED-FAIL-CLOSED). ``ci_green`` is
     derived from the ledger too — a red CI is materialised as a verified
     ``broken_behavior`` finding (slice 8b), so CI is treated as red while
     any such finding is unsettled.
@@ -276,11 +285,13 @@ def summarise_ledger_facts(
             continue
         if finding.severity is not Severity.BLOCKING:
             continue
+        if finding.claim_type in _JUDGED_TYPES:
+            if finding.status is not FindingStatus.PROPOSED:
+                open_blocking += 1
+            continue
         if finding.status not in _BLOCKING_STATUSES:
             continue
-        if finding.claim_type in _MECHANICAL_TYPES or (
-            finding.claim_type in _JUDGED_TYPES and finding.checked_at_sha == head_sha
-        ):
+        if finding.claim_type in _MECHANICAL_TYPES:
             open_blocking += 1
     return _assemble_facts(
         db_path,
@@ -304,10 +315,18 @@ def _assemble_facts(
 
     Shared by :func:`gather_merge_facts` (re-verified ``open_blocking``)
     and :func:`summarise_ledger_facts` (recorded ``open_blocking``) so
-    the non-finding facts can never drift between the two.
+    the non-finding facts can never drift between the two. Spec
+    coverage is pinned to ``head_sha`` exactly like review integrity:
+    only a record computed at the decided head can satisfy
+    ``spec_covered``, so a stale ``covered=True`` from an earlier push
+    no longer carries the gate after a regressing push
+    (SP-GATE-JUDGED-FAIL-CLOSED, audit finding M8). A head with older
+    coverage records but none at head reads as coverage-unknown — safe,
+    because such a head has no fresh review-integrity row either and
+    is already refused via ``review_complete``.
     """
     init_spec_coverage_schema(db_path)
-    coverage = fetch_spec_coverage(db_path, pr_number)
+    coverage = fetch_spec_coverage(db_path, pr_number, head_sha=head_sha)
     integrity = fetch_review_integrity(db_path, pr_number)
     fresh = [r for r in integrity if r["head_sha"] == head_sha]
     review_complete = any(

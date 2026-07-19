@@ -46,18 +46,69 @@ def test_allowed_transitions_law() -> None:
     assert ALLOWED_TRANSITIONS[FindingStatus.OPEN] == frozenset(
         {FindingStatus.RESOLVED, FindingStatus.STUCK}
     )
-    assert ALLOWED_TRANSITIONS[FindingStatus.REFUTED] == frozenset()
+    assert ALLOWED_TRANSITIONS[FindingStatus.REFUTED] == frozenset({FindingStatus.PROPOSED})
     assert ALLOWED_TRANSITIONS[FindingStatus.RESOLVED] == frozenset()
     assert ALLOWED_TRANSITIONS[FindingStatus.STUCK] == frozenset()
 
 
 def test_terminal_states_have_no_exits() -> None:
-    """Refuted, resolved, and stuck must map to empty frozensets."""
-    terminal = {FindingStatus.REFUTED, FindingStatus.RESOLVED, FindingStatus.STUCK}
+    """Resolved and stuck must map to empty frozensets.
+
+    REFUTED left this set with SP-REFUTER-INJECTION-HARDEN: it re-opens
+    to PROPOSED on a reviewer re-raise so an injected refutation can
+    never bury a blocking finding permanently.
+    """
+    terminal = {FindingStatus.RESOLVED, FindingStatus.STUCK}
     for state in terminal:
         assert ALLOWED_TRANSITIONS[state] == frozenset(), (
             f"{state} should be terminal but has exits"
         )
+
+
+def test_refuted_is_reopenable_on_reraise(tmp_path: Path) -> None:
+    """REFUTED -> PROPOSED is legal, and a bridge re-raise performs it."""
+    assert is_valid_transition(FindingStatus.REFUTED, FindingStatus.PROPOSED) is True
+
+    from ferova.review.findings_bridge import record_findings_for_outcomes
+    from ferova.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
+
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    buried = Finding(
+        pr_number=1,
+        head_sha="abc123",
+        round=1,
+        finder="sentinel",
+        claim_type=ClaimType.SECURITY,
+        severity=Severity.BLOCKING,
+        file="src/app.py",
+        line_start=5,
+        line_end=5,
+        claim="security: unsanitised input reaches the SQL sink",
+        evidence_pointer="src/app.py:5",
+    )
+    fid = record_finding(db, buried)
+    assert update_finding_status(db, fid, FindingStatus.REFUTED, verification_method="refuter")
+
+    reraise = ReviewerOutcome(
+        role=BotRole.SENTINEL,
+        verdict=ReviewVerdict.REQUEST_CHANGES,
+        summary="re-raising",
+        comments=[
+            ReviewComment(
+                file="src/app.py",
+                line=5,
+                severity="blocker",
+                body="security: unsanitised input reaches the SQL sink",
+            )
+        ],
+    )
+    record_findings_for_outcomes(
+        db, pr_number=1, head_sha="def456", outcomes=[reraise], round_n=2, diff=""
+    )
+    reopened = [f for f in fetch_findings(db, 1) if f.id == fid]
+    assert reopened and reopened[0].status is FindingStatus.PROPOSED
+    assert reopened[0].verification_method == "reraise"
 
 
 def test_is_valid_transition_accepts_legal_move() -> None:

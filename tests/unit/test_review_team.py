@@ -434,8 +434,14 @@ def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
     assert findings[0].status.value == "proposed"
 
 
-def test_findings_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None:
-    """A findings-bridge crash is logged and the verdict flow survives."""
+def test_findings_failure_survives_but_fails_closed(monkeypatch, tmp_path: Path) -> None:
+    """A findings-bridge crash never crashes the review — but fails closed.
+
+    SP-FINDINGS-WRITE-FAIL-CLOSED: the integrity row is skipped when the
+    findings write fails, so the ledger has no complete review at head
+    and the verdict is REQUEST_CHANGES — a head whose findings were lost
+    must never read as reviewed-and-clean (audit finding H3).
+    """
     fake_outcomes = [
         _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE),
         _outcome(BotRole.SENTINEL, ReviewVerdict.APPROVE),
@@ -472,7 +478,7 @@ def test_findings_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> No
     )
     team = orch.review_pr(pr_number=99)
     assert isinstance(team, TeamOutcome)
-    assert team.final_verdict == ReviewVerdict.APPROVE
+    assert team.final_verdict == ReviewVerdict.REQUEST_CHANGES
 
 
 def test_verify_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None:

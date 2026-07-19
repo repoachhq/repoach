@@ -101,13 +101,15 @@ def acceptance_selectors(plan: ActionPlan) -> list[str]:
 def promised_present(repo_root: Path, selector: str) -> bool:
     r"""Return whether *selector*'s trailing function name is defined at head.
 
-    The promise is satisfied by any ``def <name>(`` in the file at any
-    indentation (flat or class-nested), regardless of intermediate
-    class segments. A word-boundary regex (``def\s+NAME\s*\(``)
-    replaces the previous substring scan, so a promise ``test_foo`` is
-    no longer satisfied by ``def test_foobar(`` and a class-scoped
+    The promise is satisfied by any ``def <name>(`` or
+    ``async def <name>(`` in the file at any indentation (flat or
+    class-nested), regardless of intermediate class segments. A
+    word-boundary regex (``(?:async\s+)?def\s+NAME\s*\(``) replaces
+    the previous substring scan, so a promise ``test_foo`` is no
+    longer satisfied by ``def test_foobar(`` and a class-scoped
     promise no longer requires every intermediate ``class <C>`` to be
-    present (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10).
+    present (SP-DEV-PROMISE-TRAILING-NAME, 2026-07-10;
+    SP-GATE-ASYNC-DEF-SELECTOR, 2026-07-18).
 
     Args:
         repo_root: Root the selector path resolves against (the PR head).
@@ -118,7 +120,8 @@ def promised_present(repo_root: Path, selector: str) -> bool:
 
     Returns:
         ``True`` when the file exists and, for a node id, the file
-        defines ``def <trailing_name>(`` at any indentation; ``False``
+        defines ``def <trailing_name>(`` or
+        ``async def <trailing_name>(`` at any indentation; ``False``
         when the file is absent, the file cannot be read, or the
         trailing name is not defined.
     """
@@ -136,7 +139,7 @@ def promised_present(repo_root: Path, selector: str) -> bool:
     except (OSError, UnicodeDecodeError) as exc:
         _log.debug("spec_gate.selector_read_failed", selector=selector, error=str(exc)[:120])
         return False
-    pattern = r"(?m)^\s*def\s+" + re.escape(segments[-1]) + r"\s*\("
+    pattern = r"(?m)^\s*(?:async\s+)?def\s+" + re.escape(segments[-1]) + r"\s*\("
     return re.search(pattern, source) is not None
 
 
@@ -228,15 +231,22 @@ def record_spec_coverage(
         )
 
 
-def fetch_spec_coverage(db_path: Path, pr_number: int) -> list[SpecCoverage]:
-    """Return every recorded coverage report for a PR, ordered by id.
+def fetch_spec_coverage(
+    db_path: Path, pr_number: int, *, head_sha: str | None = None
+) -> list[SpecCoverage]:
+    """Return recorded coverage reports for a PR, ordered by id.
 
     Args:
         db_path: Path to the SQLite database.
         pr_number: The PR number to fetch reports for.
+        head_sha: When given, only reports recorded at this exact head
+            are returned — the merge gate pins coverage to the decided
+            head so a stale ``covered=True`` from an earlier push can
+            never carry the gate (SP-GATE-JUDGED-FAIL-CLOSED, audit
+            finding M8).
 
     Returns:
-        List of coverage reports for the PR, ordered by insertion id.
+        List of matching coverage reports, ordered by insertion id.
     """
     engine = _engine_for(db_path)
     stmt = (
@@ -244,6 +254,8 @@ def fetch_spec_coverage(db_path: Path, pr_number: int) -> list[SpecCoverage]:
         .where(_pr_spec_coverage.c.pr_number == pr_number)
         .order_by(_pr_spec_coverage.c.id)
     )
+    if head_sha is not None:
+        stmt = stmt.where(_pr_spec_coverage.c.head_sha == head_sha)
     with engine.connect() as conn:
         rows = list(conn.execute(stmt).mappings())
         return [

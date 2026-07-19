@@ -167,7 +167,7 @@ def test_gather_reverifies_mechanical_findings_at_head(tmp_path: Path) -> None:
     assert len(facts.blocking_unverified) == 2
 
 
-def test_gather_judged_counts_only_when_fresh(tmp_path: Path) -> None:
+def test_gather_judged_counts_fresh_and_stale(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
     fresh_id = record_finding(db, _finding(ClaimType.DESIGN, claim="fresh"))
@@ -186,7 +186,7 @@ def test_gather_judged_counts_only_when_fresh(tmp_path: Path) -> None:
     facts = gather_merge_facts(
         db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
     )
-    assert facts.open_blocking_findings == 1
+    assert facts.open_blocking_findings == 2
 
 
 def test_gather_skips_settled_and_advisory(tmp_path: Path) -> None:
@@ -207,6 +207,18 @@ def test_gather_skips_settled_and_advisory(tmp_path: Path) -> None:
         db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
     )
     assert facts.open_blocking_findings == 0
+
+
+def test_incomplete_review_not_approved(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 0
+    assert facts.review_complete is False
+    assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
+    assert compute_merge_decision(facts).merge is False
 
 
 def test_gather_review_integrity_fresh_and_complete(tmp_path: Path) -> None:
@@ -276,7 +288,7 @@ def test_summarise_trusts_recorded_status_without_disk(tmp_path: Path) -> None:
     assert facts.open_blocking_findings == 1
 
 
-def test_summarise_judged_only_when_fresh_and_skips_settled(tmp_path: Path) -> None:
+def test_summarise_judged_counts_stale_and_skips_settled(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
     fresh = record_finding(db, _finding(ClaimType.DESIGN, claim="fresh"))
@@ -291,7 +303,72 @@ def test_summarise_judged_only_when_fresh_and_skips_settled(tmp_path: Path) -> N
     update_finding_status(db, refuted, FindingStatus.REFUTED, verification_method="refuter")
 
     facts = summarise_ledger_facts(db, pr_number=1, head_sha="head123")
+    assert facts.open_blocking_findings == 2
+
+
+def test_open_judged_blocking_fails_closed(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    fid = record_finding(db, _finding(ClaimType.SECURITY, claim="unresolved by failed fix"))
+    update_finding_status(
+        db, fid, FindingStatus.VERIFIED, verification_method="refuter", checked_at_sha="head123"
+    )
+    update_finding_status(db, fid, FindingStatus.OPEN, verification_method="coder")
+
+    gathered = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert gathered.open_blocking_findings == 1
+    assert compute_merge_decision(gathered).merge is False
+    assert verdict_from_facts(gathered) is ReviewVerdict.REQUEST_CHANGES
+
+    summarised = summarise_ledger_facts(db, pr_number=1, head_sha="head123")
+    assert summarised.open_blocking_findings == 1
+
+
+def test_stale_sha_judged_blocking_fails_closed(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    fid = record_finding(db, _finding(ClaimType.SECURITY, claim="verified before the push"))
+    update_finding_status(
+        db, fid, FindingStatus.VERIFIED, verification_method="refuter", checked_at_sha="old999"
+    )
+    record_review_integrity(db, pr_number=1, head_sha="newhead", n_reviewers=4, n_unparsed=0)
+
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="newhead", ci_green=True
+    )
     assert facts.open_blocking_findings == 1
+    assert compute_merge_decision(facts).merge is False
+    assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
+
+
+def test_spec_coverage_pinned_to_head(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_spec_coverage(
+        db,
+        pr_number=1,
+        head_sha="old999",
+        coverage=SpecCoverage(spec_id="SP-X", n_promised=2, n_present=2, missing=[], covered=True),
+    )
+    stale = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert stale.spec_covered is False
+    assert stale.spec_coverage_known is False
+
+    record_spec_coverage(
+        db,
+        pr_number=1,
+        head_sha="head123",
+        coverage=SpecCoverage(spec_id="SP-X", n_promised=2, n_present=2, missing=[], covered=True),
+    )
+    fresh = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert fresh.spec_covered is True
+    assert fresh.spec_coverage_known is True
 
 
 def test_summarise_ci_green_from_broken_behavior(tmp_path: Path) -> None:
