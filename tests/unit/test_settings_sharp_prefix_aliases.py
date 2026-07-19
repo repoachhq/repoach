@@ -76,6 +76,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "CHAINPILOT_MAX_MUTATIONS": "chainpilot_max_mutations",
     "CREDITS_FLOOR_USD": "credits_floor_usd",
     "CREDITS_HEALTH_CACHE_TTL_S": "credits_health_cache_ttl_s",
+    "CHAIN_STATUS_WINDOW_H": "chain_status_window_h",
 }
 """Legacy env key → Pydantic field name, kept in lockstep with
 :data:`_LEGACY_TO_FEROVA_ALIAS` to give the read-through tests a
@@ -231,6 +232,23 @@ def test_uses_process_anthropic_auth_token_false_when_neither_set(
     _clean_env_for_settings(monkeypatch)
     settings = _build_settings(monkeypatch)
     assert settings.uses_process_anthropic_auth_token() is False
+
+
+def test_chain_status_window_h_alias_and_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default is 24.0 and FEROVA_CHAIN_STATUS_WINDOW_H overrides it."""
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.chain_status_window_h == 24.0, (
+        f"default should be 24.0, got {settings.chain_status_window_h}"
+    )
+
+    monkeypatch.setenv("FEROVA_CHAIN_STATUS_WINDOW_H", "6")
+    settings = _build_settings(monkeypatch)
+    assert settings.chain_status_window_h == 6.0, (
+        f"set to 6 should yield 6.0, got {settings.chain_status_window_h}"
+    )
 
 
 @pytest.mark.parametrize("dotenv_key", ["ANTHROPIC_AUTH_TOKEN", "FEROVA_ANTHROPIC_AUTH_TOKEN"])

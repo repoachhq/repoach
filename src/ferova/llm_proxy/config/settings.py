@@ -136,6 +136,7 @@ _LEGACY_TO_FEROVA_ALIAS: dict[str, str] = {
     "BREAKER_QUARANTINE_THRESHOLD": "FEROVA_BREAKER_QUARANTINE_THRESHOLD",
     "CREDITS_FLOOR_USD": "FEROVA_CREDITS_FLOOR_USD",
     "CREDITS_HEALTH_CACHE_TTL_S": "FEROVA_CREDITS_HEALTH_CACHE_TTL_S",
+    "CHAIN_STATUS_WINDOW_H": "FEROVA_CHAIN_STATUS_WINDOW_H",
 }
 
 
@@ -276,6 +277,9 @@ class Settings(BaseSettings):
     credits_floor_usd: float = Field(default=2.0, validation_alias=_aliases("CREDITS_FLOOR_USD"))
     credits_health_cache_ttl_s: float = Field(
         default=3600.0, validation_alias=_aliases("CREDITS_HEALTH_CACHE_TTL_S")
+    )
+    chain_status_window_h: float = Field(
+        default=24.0, validation_alias=_aliases("CHAIN_STATUS_WINDOW_H")
     )
     breaker_probe_seed_enabled: bool = Field(
         default=True, validation_alias=_aliases("BREAKER_PROBE_SEED_ENABLED")
