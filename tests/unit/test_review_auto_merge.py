@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 from sqlalchemy import create_engine, text
 
-from ferova.review.auto_merge import (
+from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_ALREADY_MERGED,
     OUTCOME_FAILED,
@@ -27,8 +27,8 @@ from ferova.review.auto_merge import (
     required_checks_green,
     run_auto_merge,
 )
-from ferova.review.findings import record_review_integrity
-from ferova.review.gh_client import GhResult
+from repoach.review.findings import record_review_integrity
+from repoach.review.gh_client import GhResult
 
 
 def _all_green_rollup() -> list[dict]:

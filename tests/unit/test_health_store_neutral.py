@@ -12,15 +12,15 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ferova.health.model_health import ModelHealth
-from ferova.health.store import fetch_probes, record_probes
+from repoach.health.model_health import ModelHealth
+from repoach.health.store import fetch_probes, record_probes
 
 
 def test_health_store_imports_no_llm_proxy_or_review() -> None:
     code = (
-        "import sys, ferova.health.store, ferova.health.model_health\n"
+        "import sys, repoach.health.store, repoach.health.model_health\n"
         "bad = [m for m in sys.modules "
-        "if m.startswith('ferova.llm_proxy') or m.startswith('ferova.review')]\n"
+        "if m.startswith('repoach.llm_proxy') or m.startswith('repoach.review')]\n"
         "assert not bad, bad\n"
         "print('clean')\n"
     )
@@ -47,7 +47,7 @@ def test_record_and_fetch_round_trip(tmp_path: Path) -> None:
 
 
 def test_shim_reexports_from_health_store() -> None:
-    from ferova.review import chain_health_store
+    from repoach.review import chain_health_store
 
     assert chain_health_store.fetch_probes is fetch_probes
     assert chain_health_store.record_probes is record_probes

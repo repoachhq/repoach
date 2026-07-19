@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import ferova.review.dev_runner as dev_runner
-from ferova.review.dev_runner import execute_plan_step
-from ferova.review.plan import ActionPlan, PlanStep
+import repoach.review.dev_runner as dev_runner
+from repoach.review.dev_runner import execute_plan_step
+from repoach.review.plan import ActionPlan, PlanStep
 
 
 def _plan() -> ActionPlan:
@@ -30,7 +30,7 @@ def _plan() -> ActionPlan:
 
 
 def _developer() -> MagicMock:
-    from ferova.review.devagent_loop import DevLoopResult
+    from repoach.review.devagent_loop import DevLoopResult
 
     dev = MagicMock()
     dev.develop_step.return_value = DevLoopResult(

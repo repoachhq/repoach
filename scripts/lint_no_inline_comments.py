@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI wrapper around ``ferova.lint.no_inline_comments``.
+"""CLI wrapper around ``repoach.lint.no_inline_comments``.
 
 SP-NO-INLINE-COMMENTS-GATE.
 
@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ferova.lint.no_inline_comments import (
+from repoach.lint.no_inline_comments import (
     DEFAULT_ROOTS,
     scan,
     summarise,

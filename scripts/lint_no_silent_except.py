@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI wrapper around ``ferova.lint.no_silent_except``.
+"""CLI wrapper around ``repoach.lint.no_silent_except``.
 
 SP-LINT-LOG-CATCH-ALL.
 
@@ -23,7 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ferova.lint.no_silent_except import (
+from repoach.lint.no_silent_except import (
     DEFAULT_ROOTS,
     MAX_SILENT_EXCEPT,
     scan,

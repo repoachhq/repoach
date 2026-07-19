@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.routing.tier import Tier, classify_tier
+from repoach.llm_proxy.routing.tier import Tier, classify_tier
 
 
 @pytest.mark.parametrize(

@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ferova.review.plan import (
+from repoach.review.plan import (
     PLAN_MARKER,
     ActionPlan,
     PlanStep,
@@ -28,7 +28,7 @@ def _step(**overrides) -> PlanStep:
         "index": 1,
         "title": "Add the module",
         "files": [
-            "src/ferova/demo.py",
+            "src/repoach/demo.py",
             "tests/unit/test_demo.py",
             "tests/integration/test_demo_flow.py",
         ],
@@ -143,7 +143,7 @@ class TestActionPlanValidation:
     def test_forward_test_reference_rejected(self) -> None:
         code_step = _step(
             index=1,
-            files=["src/ferova/feature.py"],
+            files=["src/repoach/feature.py"],
             unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         test_step = _step(
@@ -157,7 +157,7 @@ class TestActionPlanValidation:
     def test_promised_test_created_nowhere_rejected(self) -> None:
         step = _step(
             index=1,
-            files=["src/ferova/feature.py"],
+            files=["src/repoach/feature.py"],
             unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         with pytest.raises(ValidationError, match="no step up to 1 creates"):
@@ -167,7 +167,7 @@ class TestActionPlanValidation:
         step = _step(
             index=1,
             files=[
-                "src/ferova/feature.py",
+                "src/repoach/feature.py",
                 "tests/unit/test_feature.py",
                 "tests/integration/test_demo_flow.py",
             ],
@@ -202,7 +202,7 @@ class TestActionPlanValidation:
     def test_integration_promise_without_creating_step_is_rejected(self) -> None:
         step = _step(
             index=1,
-            files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+            files=["src/repoach/feature.py", "tests/unit/test_feature.py"],
             unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         with pytest.raises(ValidationError) as excinfo:
@@ -214,7 +214,7 @@ class TestActionPlanValidation:
     def test_integration_promise_created_by_any_step_is_accepted(self) -> None:
         first = _step(
             index=1,
-            files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+            files=["src/repoach/feature.py", "tests/unit/test_feature.py"],
             unit_tests=["tests/unit/test_feature.py::test_it"],
         )
         second = _step(
@@ -231,7 +231,7 @@ class TestActionPlanValidation:
     def test_integration_promise_node_id_resolves_file_part(self) -> None:
         step = _step(
             index=1,
-            files=["src/ferova/feature.py", "tests/integration/test_feature_e2e.py"],
+            files=["src/repoach/feature.py", "tests/integration/test_feature_e2e.py"],
             unit_tests=["tests/integration/test_feature_e2e.py::test_smoke"],
         )
         plan = _plan(
@@ -315,7 +315,7 @@ class TestNodeIdAndIntegrationTreeLints:
     def test_unit_path_integration_promise_is_rejected(self) -> None:
         step = _step(
             files=[
-                "src/ferova/demo.py",
+                "src/repoach/demo.py",
                 "tests/unit/test_demo.py",
             ],
             unit_tests=["tests/unit/test_demo.py::test_new_thing"],
@@ -326,7 +326,7 @@ class TestNodeIdAndIntegrationTreeLints:
     def test_integration_tree_promise_is_accepted(self) -> None:
         step = _step(
             files=[
-                "src/ferova/demo.py",
+                "src/repoach/demo.py",
                 "tests/unit/test_demo.py",
                 "tests/integration/test_x.py",
             ],

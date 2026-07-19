@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.llm_proxy.config.settings import _LEGACY_TO_FEROVA_ALIAS, Settings, _env_files
+from repoach.llm_proxy.config.settings import _LEGACY_TO_FEROVA_ALIAS, Settings, _env_files
 
 _CHAIN_KEYS = ("MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU")
 

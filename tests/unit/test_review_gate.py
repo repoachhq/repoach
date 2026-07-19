@@ -15,16 +15,16 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
-from ferova.cli import review_cmds
-from ferova.review.auto_merge import (
+from repoach.cli import review_cmds
+from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     GateEvaluation,
     decide_at_head,
     evaluate_merge_gate,
 )
-from ferova.review.findings import record_review_integrity
-from ferova.review.gh_client import GhResult
-from ferova.review.merge_gate import MergeDecision, MergeFacts
+from repoach.review.findings import record_review_integrity
+from repoach.review.gh_client import GhResult
+from repoach.review.merge_gate import MergeDecision, MergeFacts
 
 _HEAD = "head_abc123"
 

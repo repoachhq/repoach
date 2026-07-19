@@ -18,9 +18,9 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
-from ferova.cli import review_cmds
-from ferova.review import coder_findings, coder_loop
-from ferova.review.coder_findings import (
+from repoach.cli import review_cmds
+from repoach.review import coder_findings, coder_loop
+from repoach.review.coder_findings import (
     CoderFindingsResult,
     fetch_open_blocking_findings,
     open_verified_blocking,
@@ -29,7 +29,7 @@ from ferova.review.coder_findings import (
     reverify_resolution_for_pr,
     run_coder_fix_from_findings,
 )
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -38,7 +38,7 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.stuck import MAX_CODER_ROUNDS, fetch_coder_rounds, record_coder_round
+from repoach.review.stuck import MAX_CODER_ROUNDS, fetch_coder_rounds, record_coder_round
 
 
 def _finding(
@@ -190,7 +190,7 @@ class _FakeLoop:
 
 
 def test_respond_to_findings_parses_fix_plan(tmp_path: Path) -> None:
-    from ferova.review.reviewer import Coder
+    from repoach.review.reviewer import Coder
 
     plan = {
         "fixes": [
@@ -212,7 +212,7 @@ def test_respond_to_findings_parses_fix_plan(tmp_path: Path) -> None:
 
 
 def test_respond_to_findings_parse_failure_is_graceful(tmp_path: Path) -> None:
-    from ferova.review.reviewer import Coder
+    from repoach.review.reviewer import Coder
 
     coder = Coder(loop=_FakeLoop("not json at all"), logs_dir=tmp_path)
     out = coder.respond_to_findings(

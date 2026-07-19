@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.dev_runner import (
+from repoach.review.dev_runner import (
     _BRIEF_SPEC_CAP_CHARS,
     build_step_brief,
     run_repo_lint_gates,
 )
-from ferova.review.import_gate import check_imports
-from ferova.review.plan import ActionPlan, PlanStep
+from repoach.review.import_gate import check_imports
+from repoach.review.plan import ActionPlan, PlanStep
 
 
 def _seed_module(repo: Path, rel: str, content: str) -> str:
@@ -29,11 +29,11 @@ def _seed_module(repo: Path, rel: str, content: str) -> str:
 
 
 def _seed_findings_package(repo: Path) -> None:
-    _seed_module(repo, "src/ferova/__init__.py", "")
-    _seed_module(repo, "src/ferova/review/__init__.py", "")
+    _seed_module(repo, "src/repoach/__init__.py", "")
+    _seed_module(repo, "src/repoach/review/__init__.py", "")
     _seed_module(
         repo,
-        "src/ferova/review/findings.py",
+        "src/repoach/review/findings.py",
         "class Finding:\n    pass\n\n\nTAXONOMY = ()\n",
     )
 
@@ -42,12 +42,12 @@ def test_missing_module_directive_report(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.review.models import Finding\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.review.models import Finding\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is False
-    assert "ferova.review.models" in report
+    assert "repoach.review.models" in report
     assert "findings" in report
 
 
@@ -55,20 +55,20 @@ def test_missing_name_located(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.review.findings import Verdict\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.review.findings import Verdict\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is False
-    assert "'Verdict' is not defined in 'ferova.review.findings'" in report
+    assert "'Verdict' is not defined in 'repoach.review.findings'" in report
 
 
 def test_clean_imports_pass(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.review.findings import TAXONOMY, Finding\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.review.findings import TAXONOMY, Finding\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True
@@ -79,25 +79,25 @@ def test_relative_imports_resolved(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     good = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
+        "src/repoach/review/bridge.py",
         "from .findings import Finding\n",
     )
     bad = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge_bad.py",
+        "src/repoach/review/bridge_bad.py",
         "from .models import Finding\n",
     )
     assert check_imports(tmp_path, [good])[0] is True
     ok, report = check_imports(tmp_path, [bad])
     assert ok is False
-    assert "ferova.review.models" in report
+    assert "repoach.review.models" in report
 
 
 def test_third_party_ignored(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
+        "src/repoach/review/bridge.py",
         "import json\nfrom pydantic import BaseModel\nfrom nonexistent_pkg import thing\n",
     )
     assert check_imports(tmp_path, [candidate])[0] is True
@@ -106,7 +106,7 @@ def test_third_party_ignored(tmp_path: Path) -> None:
 def test_lint_gate_flags_inline_comment_and_silent_except(tmp_path: Path) -> None:
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/dirty.py",
+        "src/repoach/review/dirty.py",
         "x = 1  # inline comment\ntry:\n    y = 2\nexcept Exception:\n    pass\n",
     )
     ok, report = run_repo_lint_gates(tmp_path, [candidate])
@@ -119,7 +119,7 @@ def test_lint_gate_flags_inline_comment_and_silent_except(tmp_path: Path) -> Non
 def test_lint_gate_passes_clean_file(tmp_path: Path) -> None:
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/clean.py",
+        "src/repoach/review/clean.py",
         '"""Clean module."""\n\nx = 1\n',
     )
     ok, report = run_repo_lint_gates(tmp_path, [candidate])
@@ -132,7 +132,7 @@ def _one_step_plan() -> tuple[ActionPlan, PlanStep]:
         index=1,
         title="Do the step",
         files=[
-            "src/ferova/foo.py",
+            "src/repoach/foo.py",
             "tests/unit/test_foo.py",
             "tests/integration/test_foo_flow.py",
         ],
@@ -183,7 +183,7 @@ def test_submodule_from_import_is_accepted(tmp_path: Path) -> None:
     candidate = _seed_module(
         tmp_path,
         "tests/unit/test_probe.py",
-        "from ferova.review import findings\n",
+        "from repoach.review import findings\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True
@@ -191,12 +191,12 @@ def test_submodule_from_import_is_accepted(tmp_path: Path) -> None:
 
 
 def test_subpackage_from_import_is_accepted(tmp_path: Path) -> None:
-    """``from ferova import review`` resolves via the package __init__."""
+    """``from repoach import review`` resolves via the package __init__."""
     _seed_findings_package(tmp_path)
     candidate = _seed_module(
         tmp_path,
         "tests/unit/test_probe.py",
-        "from ferova import review\n",
+        "from repoach import review\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True
@@ -209,7 +209,7 @@ def test_missing_name_is_still_reported(tmp_path: Path) -> None:
     candidate = _seed_module(
         tmp_path,
         "tests/unit/test_probe.py",
-        "from ferova.review import does_not_exist\n",
+        "from repoach.review import does_not_exist\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is False
@@ -219,7 +219,7 @@ def test_missing_name_is_still_reported(tmp_path: Path) -> None:
 def test_facade_reexported_name_is_accepted(tmp_path: Path) -> None:
     """A name imported through a package façade counts as defined there.
 
-    The gate once refused ``from ferova.arch import load_registry`` —
+    The gate once refused ``from repoach.arch import load_registry`` —
     an explicit ``__init__.py`` re-export listed in ``__all__`` that
     pytest imported fine — and killed a green Developer step over a
     pre-existing import (SP-DEV-STEP-PREFLIGHT, 2026-07-04).
@@ -227,18 +227,18 @@ def test_facade_reexported_name_is_accepted(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     _seed_module(
         tmp_path,
-        "src/ferova/arch/registry.py",
+        "src/repoach/arch/registry.py",
         "def load_registry(root):\n    return root\n",
     )
     _seed_module(
         tmp_path,
-        "src/ferova/arch/__init__.py",
-        'from ferova.arch.registry import load_registry\n\n__all__ = ["load_registry"]\n',
+        "src/repoach/arch/__init__.py",
+        'from repoach.arch.registry import load_registry\n\n__all__ = ["load_registry"]\n',
     )
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.arch import load_registry\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.arch import load_registry\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True
@@ -248,16 +248,16 @@ def test_facade_reexported_name_is_accepted(tmp_path: Path) -> None:
 def test_facade_aliased_and_plain_imports_count(tmp_path: Path) -> None:
     """``import x as y`` and plain ``import x`` aliases are facade names too."""
     _seed_findings_package(tmp_path)
-    _seed_module(tmp_path, "src/ferova/arch/graph.py", "class Graph:\n    pass\n")
+    _seed_module(tmp_path, "src/repoach/arch/graph.py", "class Graph:\n    pass\n")
     _seed_module(
         tmp_path,
-        "src/ferova/arch/__init__.py",
-        "import json\nfrom ferova.arch.graph import Graph as ArchGraph\n",
+        "src/repoach/arch/__init__.py",
+        "import json\nfrom repoach.arch.graph import Graph as ArchGraph\n",
     )
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.arch import ArchGraph, json\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.arch import ArchGraph, json\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True
@@ -269,22 +269,22 @@ def test_name_absent_from_the_facade_is_still_reported(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     _seed_module(
         tmp_path,
-        "src/ferova/arch/registry.py",
+        "src/repoach/arch/registry.py",
         "def load_registry(root):\n    return root\n",
     )
     _seed_module(
         tmp_path,
-        "src/ferova/arch/__init__.py",
-        "from ferova.arch.registry import load_registry\n",
+        "src/repoach/arch/__init__.py",
+        "from repoach.arch.registry import load_registry\n",
     )
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.arch import save_registry\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.arch import save_registry\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is False
-    assert "'save_registry' is not defined in 'ferova.arch'" in report
+    assert "'save_registry' is not defined in 'repoach.arch'" in report
 
 
 def test_try_guarded_name_is_accepted(tmp_path: Path) -> None:
@@ -298,14 +298,14 @@ def test_try_guarded_name_is_accepted(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     _seed_module(
         tmp_path,
-        "src/ferova/review/tokens.py",
+        "src/repoach/review/tokens.py",
         "try:\n    import tiktoken\n\n    ENCODER = tiktoken.get_encoding()\n"
         "except Exception:\n    ENCODER = None\n",
     )
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.review.tokens import ENCODER\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.review.tokens import ENCODER\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True
@@ -317,13 +317,13 @@ def test_if_guarded_name_is_accepted(tmp_path: Path) -> None:
     _seed_findings_package(tmp_path)
     _seed_module(
         tmp_path,
-        "src/ferova/review/flags.py",
+        "src/repoach/review/flags.py",
         "import os\n\nif os.environ.get('X'):\n    MODE = 'x'\nelse:\n    MODE = 'y'\n",
     )
     candidate = _seed_module(
         tmp_path,
-        "src/ferova/review/bridge.py",
-        "from ferova.review.flags import MODE\n",
+        "src/repoach/review/bridge.py",
+        "from repoach.review.flags import MODE\n",
     )
     ok, report = check_imports(tmp_path, [candidate])
     assert ok is True

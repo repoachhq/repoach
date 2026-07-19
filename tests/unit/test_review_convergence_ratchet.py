@@ -14,15 +14,15 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
-from ferova.review.orchestrator import (
+from repoach.review.orchestrator import (
     TeamOutcome,
     _build_prior_review_context,
     _compute_diff_hash,
     _dialogue_payload,
     team_outcome_to_dict,
 )
-from ferova.review.persistence import record_dialogue
-from ferova.review.reviewer import (
+from repoach.review.persistence import record_dialogue
+from repoach.review.reviewer import (
     BotRole,
     PriorReviewContext,
     ReviewComment,
@@ -41,7 +41,7 @@ def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     underlying AgentLoop — these tests target convergence, not auth.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),
@@ -157,7 +157,7 @@ def test_render_prior_review_changed_diff() -> None:
 
 def test_render_prior_review_first_review() -> None:
     """No prior context renders a first-review stub."""
-    from ferova.review.reviewer import Scribe
+    from repoach.review.reviewer import Scribe
 
     reviewer = Scribe()
     prompt = reviewer._render_prompt(

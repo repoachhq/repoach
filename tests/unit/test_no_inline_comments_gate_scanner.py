@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.lint.no_inline_comments import (
+from repoach.lint.no_inline_comments import (
     Violation,
     scan_file,
     summarise,

@@ -10,12 +10,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ferova.llm_proxy.providers.benchmark_equivalences import (
+from repoach.llm_proxy.providers.benchmark_equivalences import (
     EquivalenceTable,
     load_equivalence_table,
     parse_equivalence_table,
 )
-from ferova.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
+from repoach.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
 
 _FIXTURE = {
     "equivalences": [

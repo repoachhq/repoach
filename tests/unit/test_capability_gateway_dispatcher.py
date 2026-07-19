@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.responses import StreamingResponse
 
-from ferova.llm_proxy.api.agent_dispatcher import (
+from repoach.llm_proxy.api.agent_dispatcher import (
     _aggregate_sse_stream,
     _serialise_tool_result,
     _translate_message,
@@ -24,7 +24,7 @@ from ferova.llm_proxy.api.agent_dispatcher import (
     _translate_tool,
     dispatch_agent_request,
 )
-from ferova.llm_proxy.api.models.agent_v1 import (
+from repoach.llm_proxy.api.models.agent_v1 import (
     AgentRequest,
     TextBlock,
     ToolCallBlock,
@@ -33,7 +33,7 @@ from ferova.llm_proxy.api.models.agent_v1 import (
     ToolResultOk,
     ToolSpec,
 )
-from ferova.llm_proxy.api.models.agent_v1 import (
+from repoach.llm_proxy.api.models.agent_v1 import (
     Message as AgentMessage,
 )
 

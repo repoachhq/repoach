@@ -1,6 +1,6 @@
 """Tests for the SP-REVIEW-DIALOGUE-C persistence layer.
 
-Exercises :func:`ferova.review.persistence.record_dialogue` /
+Exercises :func:`repoach.review.persistence.record_dialogue` /
 :func:`fetch_dialogue` end-to-end, plus the orchestrator wire-in
 (round-1 outcomes recorded, round-2 only for re-running reviewers,
 Coder challenges recorded under ``round="challenge"``) and the
@@ -18,18 +18,18 @@ from typing import Any
 
 import pytest
 
-from ferova.review.gh_client import GhResult
-from ferova.review.orchestrator import (
+from repoach.review.gh_client import GhResult
+from repoach.review.orchestrator import (
     ReviewTeamOrchestrator,
     _render_dialogue_transcript,
 )
-from ferova.review.persistence import (
+from repoach.review.persistence import (
     DialogueEntry,
     fetch_dialogue,
     init_schema,
     record_dialogue,
 )
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     BotRole,
     ReviewComment,
     ReviewerOutcome,
@@ -151,7 +151,7 @@ def test_record_dialogue_persists_round_1_outcomes(
     }
     for cls, role in cls_to_role.items():
         monkeypatch.setattr(
-            f"ferova.review.orchestrator.{cls}",
+            f"repoach.review.orchestrator.{cls}",
             lambda r=role, **_kw: _StubReviewer([outs[r]]),
         )
 
@@ -179,7 +179,7 @@ def test_record_dialogue_persists_round_2_only_for_rerun_reviewers(
     )
     arch_round2 = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer([arch_blocker, arch_round2]),
     )
     for cls, role in [
@@ -188,7 +188,7 @@ def test_record_dialogue_persists_round_2_only_for_rerun_reviewers(
         ("Scribe", BotRole.SCRIBE),
     ]:
         monkeypatch.setattr(
-            f"ferova.review.orchestrator.{cls}",
+            f"repoach.review.orchestrator.{cls}",
             lambda r=role, **_kw: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
         )
 
@@ -248,7 +248,7 @@ def test_archive_comment_renders_dialogue_section_when_db_has_rows(
         ("Scribe", BotRole.SCRIBE),
     ]:
         monkeypatch.setattr(
-            f"ferova.review.orchestrator.{cls}",
+            f"repoach.review.orchestrator.{cls}",
             lambda r=role, **_kw: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
         )
     gh = _StubGhCli()

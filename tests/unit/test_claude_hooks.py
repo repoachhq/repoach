@@ -158,7 +158,7 @@ def test_strip_comments_flags_generic_patterns(tmp_path: Path) -> None:
 
 def test_strip_comments_stays_silent_on_clean_files() -> None:
     """A clean repo source file produces no output and exit 0."""
-    clean = _REPO / "src" / "ferova" / "health" / "model_health.py"
+    clean = _REPO / "src" / "repoach" / "health" / "model_health.py"
     result = _run_hook(
         "strip-useless-comments.py",
         {"tool_input": {"file_path": str(clean)}},

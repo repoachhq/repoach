@@ -6,7 +6,7 @@ policy. Purely additive — no transport is wired in this slice.
 
 from __future__ import annotations
 
-from ferova.llm_proxy.providers.reasoning import (
+from repoach.llm_proxy.providers.reasoning import (
     REASONING_CONTROLS,
     KnobType,
     bounded_reasoning_budget,

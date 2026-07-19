@@ -7,7 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import insert
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -15,8 +15,8 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.persistence import _engine_for, _pr_reviews, init_schema
-from ferova.review.reviewer_outcomes import (
+from repoach.review.persistence import _engine_for, _pr_reviews, init_schema
+from repoach.review.reviewer_outcomes import (
     ReviewerModelOutcome,
     harvest_reviewer_outcomes,
 )

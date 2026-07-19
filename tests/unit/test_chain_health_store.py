@@ -14,9 +14,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli.main import app
-from ferova.review.chain_health import ModelHealth
-from ferova.review.chain_health_store import (
+from repoach.cli.main import app
+from repoach.review.chain_health import ModelHealth
+from repoach.review.chain_health_store import (
     fetch_probes,
     init_nim_health_schema,
     record_probes,
@@ -85,7 +85,7 @@ def test_cli_persists_probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return _sweep()
 
-    monkeypatch.setattr("ferova.review.chain_health.check_tier_heads", _fake_check)
+    monkeypatch.setattr("repoach.review.chain_health.check_tier_heads", _fake_check)
     result = CliRunner().invoke(app, ["monitor-chains", "--db-path", str(db), "--json"])
 
     rows = fetch_probes(db)
@@ -100,7 +100,7 @@ def test_cli_no_persist_skips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [ModelHealth("sonnet", "m", "ok", 0.4, 2, "ok")]
 
-    monkeypatch.setattr("ferova.review.chain_health.check_tier_heads", _fake_check)
+    monkeypatch.setattr("repoach.review.chain_health.check_tier_heads", _fake_check)
     result = CliRunner().invoke(app, ["monitor-chains", "--db-path", str(db), "--no-persist"])
 
     assert result.exit_code == 0

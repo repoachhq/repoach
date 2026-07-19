@@ -6,8 +6,8 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
-from ferova.review.coder_outcomes import CoderModelOutcome, harvest_coder_outcomes
-from ferova.review.findings import (
+from repoach.review.coder_outcomes import CoderModelOutcome, harvest_coder_outcomes
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -15,14 +15,14 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.persistence import (
+from repoach.review.persistence import (
     _engine_for,
     _pr_coder_responses,
     init_schema,
     record_coder_response,
     record_merge,
 )
-from ferova.review.stuck import pr_coder_rounds, record_coder_round
+from repoach.review.stuck import pr_coder_rounds, record_coder_round
 
 
 def _coder(db: Path, *, pr_number: int, model: str) -> None:

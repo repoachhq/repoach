@@ -10,7 +10,7 @@ A plan whose step promises a nonexistent node id in an EXISTING test
 file must be rejected end to end: nothing written under
 ``docs/plans/``, and the loud ``PlannerOutcome.error`` names both the
 offending selector and the two remedies
-(:func:`ferova.review.spec_gate.selector_present` resolving it, or
+(:func:`repoach.review.spec_gate.selector_present` resolving it, or
 declaring creation verbatim in the step's action text). The same plan
 with the node id declared in the action text must be accepted.
 """
@@ -20,8 +20,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.planner import Planner, run_planner_session
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.planner import Planner, run_planner_session
 
 _SPEC_ID = "SP-TEST-SELECTOR-CHECK-INT"
 
@@ -62,7 +62,7 @@ def _repo_with_spec(tmp_path: Path) -> Path:
         "## Definition of Done\n\n- it works\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
     unit_dir = tmp_path / "tests" / "unit"
     unit_dir.mkdir(parents=True)
     (tmp_path / "tests" / "integration").mkdir(parents=True)
@@ -96,7 +96,7 @@ def _plan_payload(*, declare_ghost_in_action: bool) -> dict:
                 "index": 1,
                 "title": "Add the demo module",
                 "files": [
-                    "src/ferova/demo_selector_check.py",
+                    "src/repoach/demo_selector_check.py",
                     "tests/unit/test_review_planner.py",
                     "tests/integration/test_demo_selector_check_flow.py",
                 ],

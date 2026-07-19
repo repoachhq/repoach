@@ -16,10 +16,10 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 
-import ferova.core.config as config
-import ferova.review.orchestrator as orchestrator_module
-from ferova.review import review_memory
-from ferova.review.reviewer import Scribe
+import repoach.core.config as config
+import repoach.review.orchestrator as orchestrator_module
+from repoach.review import review_memory
+from repoach.review.reviewer import Scribe
 
 
 @pytest.fixture()
@@ -40,7 +40,7 @@ def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     AgentLoop — this flow targets memory wiring, not auth.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),
@@ -74,7 +74,7 @@ def test_seed_recall_inject_end_to_end(
     assert review_memory.seed_review_memory() == 6
     assert len(fake_store["ferova-review"]) == 6
 
-    diff = "diff --git a/src/ferova/review/foo.py b/src/ferova/review/foo.py\n"
+    diff = "diff --git a/src/repoach/review/foo.py b/src/repoach/review/foo.py\n"
     block = orchestrator_module._build_review_lessons_block("fix review foo", diff)
     assert "## Review lessons (agentmemory)" in block
 

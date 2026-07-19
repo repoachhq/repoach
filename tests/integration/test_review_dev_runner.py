@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.dev_runner import build_step_brief
-from ferova.review.plan import ActionPlan, PlanStep
+from repoach.review.dev_runner import build_step_brief
+from repoach.review.plan import ActionPlan, PlanStep
 
 
 def _one_step_plan(files: list[str]) -> tuple[ActionPlan, PlanStep]:
@@ -55,17 +55,17 @@ def test_build_step_brief_embeds_source_and_lists_to_create(tmp_path: Path, monk
     The brief must carry the source file's content under a heading and
     list the test file under 'Files to create'.
     """
-    src = tmp_path / "src" / "ferova"
+    src = tmp_path / "src" / "repoach"
     src.mkdir(parents=True)
     (src / "foo.py").write_text("def foo():\n    return 42\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
-    plan, step = _one_step_plan(["src/ferova/foo.py", "tests/unit/test_foo_new.py"])
+    plan, step = _one_step_plan(["src/repoach/foo.py", "tests/unit/test_foo_new.py"])
 
     brief = build_step_brief(plan, step)
 
     assert "## Contract files" in brief
-    assert "### `src/ferova/foo.py`" in brief
+    assert "### `src/repoach/foo.py`" in brief
     assert "def foo():" in brief
     assert "return 42" in brief
     assert "## Files to create" in brief

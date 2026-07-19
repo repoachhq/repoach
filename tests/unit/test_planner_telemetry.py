@@ -22,13 +22,13 @@ import pytest
 from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
-from ferova.review.findings import init_findings_schema
-from ferova.review.planner_telemetry import (
+from repoach.review.findings import init_findings_schema
+from repoach.review.planner_telemetry import (
     fetch_planner_attempts,
     init_planner_telemetry_schema,
     record_planner_attempt,
 )
-from ferova.review.review_lessons import gather_insights
+from repoach.review.review_lessons import gather_insights
 
 _SPEC_ID = "SP-TEST-TELEMETRY"
 
@@ -98,7 +98,7 @@ def test_insights_reports_rule_violations(tmp_path: Path, monkeypatch: pytest.Mo
     """
     import json
 
-    from ferova.cli import review_cmds
+    from repoach.cli import review_cmds
 
     db_path = tmp_path / "ledger.db"
     init_planner_telemetry_schema(db_path)

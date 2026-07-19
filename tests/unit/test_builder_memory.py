@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-import ferova.core.config as config
-from ferova.review import builder_memory
+import repoach.core.config as config
+from repoach.review import builder_memory
 
 
 @pytest.fixture()

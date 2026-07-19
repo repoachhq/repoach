@@ -13,19 +13,19 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import (
+from repoach.review.dev_runner import (
     _test_function_names_in_file,
     execute_plan_step,
 )
-from ferova.review.devagent_loop import DevLoopResult
-from ferova.review.devagent_selfverify import (
+from repoach.review.devagent_loop import DevLoopResult
+from repoach.review.devagent_selfverify import (
     JudgeVerdict,
     SelfVerifyResult,
     run_self_verify,
 )
-from ferova.review.persistence import init_schema
-from ferova.review.plan import ActionPlan, PlanStep
-from ferova.review.spec_gate import SpecCoverage
+from repoach.review.persistence import init_schema
+from repoach.review.plan import ActionPlan, PlanStep
+from repoach.review.spec_gate import SpecCoverage
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -184,7 +184,7 @@ def test_step_gate_and_self_verify_agree(tmp_path: Path) -> None:
     names = _test_function_names_in_file(repo, test_file)
     assert "test_foo" in names
 
-    from ferova.review.spec import SpecPlan
+    from repoach.review.spec import SpecPlan
 
     spec = SpecPlan(
         id="SP-FANOUT-TEST",
@@ -218,7 +218,7 @@ def test_step_gate_and_self_verify_agree(tmp_path: Path) -> None:
     def _fake_run_self_verify(repo_root, *, spec, plan, suite_green, base="develop", judge):
         return self_verify
 
-    import ferova.review.dev_runner as dr
+    import repoach.review.dev_runner as dr
 
     dr.run_self_verify = _fake_run_self_verify
     try:

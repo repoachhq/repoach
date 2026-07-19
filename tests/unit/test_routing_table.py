@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.routing.table import RoutingTable
-from ferova.llm_proxy.routing.tier import Tier
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.routing.table import RoutingTable
+from repoach.llm_proxy.routing.tier import Tier
 
 _ENV_KEYS = [
     "MODEL",

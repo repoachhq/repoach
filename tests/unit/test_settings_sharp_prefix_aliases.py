@@ -29,8 +29,8 @@ from pathlib import Path
 
 import pytest
 
-from ferova.llm_proxy.config import settings as settings_module
-from ferova.llm_proxy.config.settings import (
+from repoach.llm_proxy.config import settings as settings_module
+from repoach.llm_proxy.config.settings import (
     _LEGACY_TO_FEROVA_ALIAS,
     Settings,
 )

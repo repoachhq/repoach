@@ -21,13 +21,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.hallucination_guard import GuardEvent
-from ferova.review.orchestrator import (
+from repoach.review.hallucination_guard import GuardEvent
+from repoach.review.orchestrator import (
     ReviewTeamOrchestrator,
     _drop_retracted_comments,
     _locate_comment_index,
 )
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     Architect,
     BotRole,
     DialogueContext,

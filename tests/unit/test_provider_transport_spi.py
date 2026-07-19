@@ -10,10 +10,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.error_mapping import provider_error_message
-from ferova.llm_proxy.providers.openai_generic import GenericOpenAIProvider
-from ferova.llm_proxy.providers.registry import create_provider
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.error_mapping import provider_error_message
+from repoach.llm_proxy.providers.openai_generic import GenericOpenAIProvider
+from repoach.llm_proxy.providers.registry import create_provider
 
 
 def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
@@ -45,7 +45,7 @@ def test_error_message_non_405_falls_back_to_user_facing_message() -> None:
 
 
 def test_create_provider_builds_bespoke_nvidia_nim(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ferova.llm_proxy.providers.nvidia_nim import NvidiaNimProvider
+    from repoach.llm_proxy.providers.nvidia_nim import NvidiaNimProvider
 
     monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "test-key")
     provider = create_provider("nvidia_nim", Settings(_env_file=None))

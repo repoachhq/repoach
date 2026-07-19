@@ -1,7 +1,7 @@
 """Pin the orchestrator module docstring to the evidence-first pipeline (SP-ORCH-DOCSTRING).
 
 These tests guard against the retired verdict-first narrative silently
-returning to ``src/ferova/review/orchestrator.py``.  They only inspect
+returning to ``src/repoach/review/orchestrator.py``.  They only inspect
 the module docstring and the source file's text — no executable line
 of the orchestrator is touched.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import ferova.review.orchestrator as orchestrator
+import repoach.review.orchestrator as orchestrator
 
 _ORCHESTRATOR_PATH = Path(orchestrator.__file__).resolve()
 _RETIRED_SUBSTRINGS = (

@@ -12,7 +12,7 @@ time.  This module pins two contracts:
 
 from __future__ import annotations
 
-from ferova.review.plan import (
+from repoach.review.plan import (
     _BANNED_DOUBLE_KEYWORDS,
     _FORM_RULES,
     _STRICT_FORM_RULES,
@@ -80,7 +80,7 @@ def _step(**overrides) -> PlanStep:
         "index": 1,
         "title": "Add the module",
         "files": [
-            "src/ferova/demo.py",
+            "src/repoach/demo.py",
             "tests/unit/test_demo.py",
             "tests/integration/test_demo_flow.py",
         ],
@@ -118,10 +118,10 @@ class TestStepSizeCap:
         oversized_files_step = _step(
             index=1,
             files=[
-                "src/ferova/a.py",
-                "src/ferova/b.py",
-                "src/ferova/c.py",
-                "src/ferova/d.py",
+                "src/repoach/a.py",
+                "src/repoach/b.py",
+                "src/repoach/c.py",
+                "src/repoach/d.py",
                 "tests/unit/test_demo.py",
                 "tests/integration/test_demo_flow.py",
             ],
@@ -135,7 +135,7 @@ class TestStepSizeCap:
         oversized_selectors_step = _step(
             index=1,
             files=[
-                "src/ferova/demo.py",
+                "src/repoach/demo.py",
                 "tests/unit/test_demo.py",
                 "tests/integration/test_demo_flow.py",
             ],

@@ -16,10 +16,10 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
-from ferova.review.gh_client import GhCli, GhResult
-from ferova.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
-from ferova.review.persistence import init_schema, record_review
-from ferova.review.reviewer import (
+from repoach.review.gh_client import GhCli, GhResult
+from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
+from repoach.review.persistence import init_schema, record_review
+from repoach.review.reviewer import (
     BotRole,
     ReviewComment,
     ReviewerOutcome,
@@ -376,19 +376,19 @@ def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
     # Patch the four reviewer classes used inside the orchestrator so
     # they return our canned outcomes without touching NIM.
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(fake_outcomes[0]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(fake_outcomes[1]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(fake_outcomes[2]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
@@ -426,7 +426,7 @@ def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
 
     # SP-FINDER-OUTPUT dual-run: the Architect's one nit comment must
     # land in the findings ledger as a proposed advisory finding.
-    from ferova.review.findings import fetch_findings
+    from repoach.review.findings import fetch_findings
 
     findings = fetch_findings(tmp_path / "review.db", 99)
     assert len(findings) == 1
@@ -449,26 +449,26 @@ def test_findings_failure_survives_but_fails_closed(monkeypatch, tmp_path: Path)
         _outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE),
     ]
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(fake_outcomes[0]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(fake_outcomes[1]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(fake_outcomes[2]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("ledger unavailable")
 
-    monkeypatch.setattr("ferova.review.orchestrator.record_findings_for_outcomes", _boom)
+    monkeypatch.setattr("repoach.review.orchestrator.record_findings_for_outcomes", _boom)
 
     orch = ReviewTeamOrchestrator(
         gh=_StubGhCli(),
@@ -486,26 +486,26 @@ def test_verify_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None
     fake = [_outcome(r, ReviewVerdict.APPROVE) for r in BotRole]
     by_role = {o.role: o for o in fake}
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(by_role[BotRole.ARCHITECT]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(by_role[BotRole.SENTINEL]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(by_role[BotRole.TESTER]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(by_role[BotRole.SCRIBE]),
     )
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("verifier unavailable")
 
-    monkeypatch.setattr("ferova.review.orchestrator.verify_findings_for_pr", _boom)
+    monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", _boom)
 
     orch = ReviewTeamOrchestrator(
         gh=_StubGhCli(), db_path=tmp_path / "review.db", post_to_github=True, max_workers=2
@@ -518,26 +518,26 @@ def test_judge_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None:
     fake = [_outcome(r, ReviewVerdict.APPROVE) for r in BotRole]
     by_role = {o.role: o for o in fake}
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(by_role[BotRole.ARCHITECT]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(by_role[BotRole.SENTINEL]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(by_role[BotRole.TESTER]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(by_role[BotRole.SCRIBE]),
     )
 
     def _boom(*_args, **_kwargs):
         raise RuntimeError("refuter unavailable")
 
-    monkeypatch.setattr("ferova.review.orchestrator.judge_findings_for_pr", _boom)
+    monkeypatch.setattr("repoach.review.orchestrator.judge_findings_for_pr", _boom)
 
     orch = ReviewTeamOrchestrator(
         gh=_StubGhCli(), db_path=tmp_path / "review.db", post_to_github=True, max_workers=2
@@ -562,16 +562,16 @@ def test_orchestrator_verifies_findings(monkeypatch, tmp_path: Path) -> None:
         BotRole.SCRIBE: _outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE),
     }
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(others[BotRole.ARCHITECT]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(others[BotRole.SENTINEL]),
     )
-    monkeypatch.setattr("ferova.review.orchestrator.Tester", lambda **_kw: _StubReviewer(tester))
+    monkeypatch.setattr("repoach.review.orchestrator.Tester", lambda **_kw: _StubReviewer(tester))
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe", lambda **_kw: _StubReviewer(others[BotRole.SCRIBE])
+        "repoach.review.orchestrator.Scribe", lambda **_kw: _StubReviewer(others[BotRole.SCRIBE])
     )
 
     orch = ReviewTeamOrchestrator(
@@ -583,7 +583,7 @@ def test_orchestrator_verifies_findings(monkeypatch, tmp_path: Path) -> None:
     )
     orch.review_pr(pr_number=99)
 
-    from ferova.review.findings import FindingStatus, fetch_findings
+    from repoach.review.findings import FindingStatus, fetch_findings
 
     verified = fetch_findings(tmp_path / "review.db", 99, status=FindingStatus.VERIFIED)
     assert len(verified) == 1
@@ -617,19 +617,19 @@ def test_review_pr_writes_archive_comment_when_posting(tmp_path, monkeypatch):
         _outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE),
     ]
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(fake_outcomes[0]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(fake_outcomes[1]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(fake_outcomes[2]),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
@@ -650,19 +650,19 @@ def test_review_pr_skips_archive_when_dry_run(tmp_path, monkeypatch):
     """Dry-run runs must not push any archive comment."""
     out = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(out),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _StubReviewer(out),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(out),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(out),
     )
 
@@ -678,7 +678,7 @@ def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
     out = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     for cls in ("Architect", "Sentinel", "Tester", "Scribe"):
         monkeypatch.setattr(
-            f"ferova.review.orchestrator.{cls}",
+            f"repoach.review.orchestrator.{cls}",
             lambda o=out, **_kw: _StubReviewer(o),
         )
 
@@ -714,19 +714,19 @@ def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
 
     out_ok = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Architect",
+        "repoach.review.orchestrator.Architect",
         lambda **_kw: _StubReviewer(out_ok),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Sentinel",
+        "repoach.review.orchestrator.Sentinel",
         lambda **_kw: _BoomReviewer(),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Tester",
+        "repoach.review.orchestrator.Tester",
         lambda **_kw: _StubReviewer(_outcome(BotRole.TESTER, ReviewVerdict.APPROVE)),
     )
     monkeypatch.setattr(
-        "ferova.review.orchestrator.Scribe",
+        "repoach.review.orchestrator.Scribe",
         lambda **_kw: _StubReviewer(_outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE)),
     )
 
@@ -748,7 +748,7 @@ def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
 
 def test_team_outcome_to_dict_shape():
     """The serialised payload exposes the per-bot comments in full."""
-    from ferova.review.orchestrator import team_outcome_to_dict
+    from repoach.review.orchestrator import team_outcome_to_dict
 
     team = TeamOutcome(
         pr_number=99,
@@ -783,7 +783,7 @@ def test_respond_to_findings_substitutes_spec_plan_placeholder() -> None:
     """When spec_plan is provided, ``{SPEC_PLAN}`` is replaced in the prompt."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Coder
+    from repoach.review.reviewer import Coder
 
     loop = MagicMock()
     result = MagicMock()
@@ -809,7 +809,7 @@ def test_respond_to_findings_with_no_spec_plan_uses_placeholder() -> None:
     """When spec_plan is None, the prompt carries the fallback line."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Coder
+    from repoach.review.reviewer import Coder
 
     loop = MagicMock()
     result = MagicMock()
@@ -831,7 +831,7 @@ def test_reviewer_render_prompt_substitutes_spec_plan_placeholder() -> None:
     """When spec_plan is provided, every reviewer's rendered prompt carries it."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Architect, Scribe, Sentinel, Tester
+    from repoach.review.reviewer import Architect, Scribe, Sentinel, Tester
 
     for cls in (Architect, Sentinel, Tester, Scribe):
         loop = MagicMock()
@@ -856,7 +856,7 @@ def test_reviewer_render_prompt_with_no_spec_plan_uses_placeholder() -> None:
     """When spec_plan is None, the prompt has the no-context fallback line."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Architect
+    from repoach.review.reviewer import Architect
 
     loop = MagicMock()
     result = MagicMock()
@@ -877,7 +877,7 @@ def test_run_team_review_loads_spec_from_branch_name(tmp_path) -> None:
     """orchestrator.review_pr forwards the spec markdown to every reviewer."""
     from unittest.mock import MagicMock, patch
 
-    from ferova.review.orchestrator import ReviewTeamOrchestrator
+    from repoach.review.orchestrator import ReviewTeamOrchestrator
 
     gh = MagicMock()
     diff_res = MagicMock()
@@ -897,12 +897,12 @@ def test_run_team_review_loads_spec_from_branch_name(tmp_path) -> None:
     # Patch AgentLoop in the reviewer module so Reviewer.__init__
     # does not try to validate the NIM API key (CI has no secret).
     with (
-        patch("ferova.review.reviewer.AgentLoop", return_value=MagicMock()),
-        patch("ferova.review.spec.maybe_load_active_spec", return_value=fake_plan) as mloader,
-        patch("ferova.review.reviewer.Architect.review_diff") as march,
-        patch("ferova.review.reviewer.Sentinel.review_diff") as msent,
-        patch("ferova.review.reviewer.Tester.review_diff") as mtest,
-        patch("ferova.review.reviewer.Scribe.review_diff") as mscribe,
+        patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
+        patch("repoach.review.spec.maybe_load_active_spec", return_value=fake_plan) as mloader,
+        patch("repoach.review.reviewer.Architect.review_diff") as march,
+        patch("repoach.review.reviewer.Sentinel.review_diff") as msent,
+        patch("repoach.review.reviewer.Tester.review_diff") as mtest,
+        patch("repoach.review.reviewer.Scribe.review_diff") as mscribe,
     ):
         for m in (march, msent, mtest, mscribe):
             m.return_value = MagicMock(
@@ -928,8 +928,8 @@ def test_run_team_review_anchors_to_sub_specs_for_decomposed_parent(tmp_path) ->
     """A decomposed (superseded-parent) PR feeds reviewers the anchored sub-spec inputs."""
     from unittest.mock import MagicMock, patch
 
-    from ferova.review.orchestrator import ReviewTeamOrchestrator
-    from ferova.review.subspec_anchor import AnchoredReview
+    from repoach.review.orchestrator import ReviewTeamOrchestrator
+    from repoach.review.subspec_anchor import AnchoredReview
 
     gh = MagicMock()
     diff_res = MagicMock()
@@ -951,16 +951,16 @@ def test_run_team_review_anchors_to_sub_specs_for_decomposed_parent(tmp_path) ->
 
     orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=False)
     with (
-        patch("ferova.review.reviewer.AgentLoop", return_value=MagicMock()),
-        patch("ferova.review.spec.maybe_load_active_spec", return_value=None),
+        patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
+        patch("repoach.review.spec.maybe_load_active_spec", return_value=None),
         patch(
-            "ferova.review.subspec_anchor.maybe_anchor_decomposed_parent",
+            "repoach.review.subspec_anchor.maybe_anchor_decomposed_parent",
             return_value=anchored,
         ) as manchor,
-        patch("ferova.review.reviewer.Architect.review_diff") as march,
-        patch("ferova.review.reviewer.Sentinel.review_diff") as msent,
-        patch("ferova.review.reviewer.Tester.review_diff") as mtest,
-        patch("ferova.review.reviewer.Scribe.review_diff") as mscribe,
+        patch("repoach.review.reviewer.Architect.review_diff") as march,
+        patch("repoach.review.reviewer.Sentinel.review_diff") as msent,
+        patch("repoach.review.reviewer.Tester.review_diff") as mtest,
+        patch("repoach.review.reviewer.Scribe.review_diff") as mscribe,
     ):
         for m in (march, msent, mtest, mscribe):
             m.return_value = MagicMock(

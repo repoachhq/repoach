@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ferova.llm_proxy.providers.benchmark_prior import (
+from repoach.llm_proxy.providers.benchmark_prior import (
     BenchmarkRanking,
     load_benchmark_ranking,
     parse_benchmark_ranking,

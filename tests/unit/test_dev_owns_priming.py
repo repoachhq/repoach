@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.dev_runner import build_step_brief
-from ferova.review.governed_spec import (
+from repoach.review.dev_runner import build_step_brief
+from repoach.review.governed_spec import (
     GovernedSpec,
     load_governed_spec,
     render_owns_brief,
 )
-from ferova.review.plan import ActionPlan, PlanStep
+from repoach.review.plan import ActionPlan, PlanStep
 
 
 def _governed(spec_id: str, *, depends_on: str = "", owns_code: str = "src/x/") -> str:

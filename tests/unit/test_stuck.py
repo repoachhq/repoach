@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -19,7 +19,7 @@ from ferova.review.findings import (
     record_finding,
     update_finding_status,
 )
-from ferova.review.stuck import (
+from repoach.review.stuck import (
     MAX_CODER_ROUNDS,
     PROPOSED_ESCALATION_ATTEMPTS,
     STALL_WINDOW,
@@ -254,8 +254,8 @@ def test_orchestrator_escalation_seam_is_guarded(monkeypatch) -> None:
     """
     from types import SimpleNamespace
 
-    from ferova.review import orchestrator
-    from ferova.review.findings import (
+    from repoach.review import orchestrator
+    from repoach.review.findings import (
         ClaimType,
         Finding,
         FindingStatus,

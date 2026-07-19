@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.coder_loop import run_ruff_gate
+from repoach.review.coder_loop import run_ruff_gate
 
 _NESTED_IF = (
     '"""Module with a collapsible nested if (SIM102)."""\n'

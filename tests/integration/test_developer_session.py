@@ -18,8 +18,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import run_developer_session
-from ferova.review.plan import ActionPlan, PlanStep, plan_relpath, render_plan_markdown
+from repoach.review.dev_runner import run_developer_session
+from repoach.review.plan import ActionPlan, PlanStep, plan_relpath, render_plan_markdown
 
 _SPEC_ID = "SP-INT-DEMO"
 
@@ -75,7 +75,7 @@ def _scripted_developer() -> MagicMock:
     syntax → retry fix-forward), step 2 attempt 2 (clean). Each writes its files
     to disk, mirroring the agentic loop's ``write_file`` tool calls.
     """
-    from ferova.review.devagent_loop import DevLoopResult
+    from repoach.review.devagent_loop import DevLoopResult
 
     attempts = [
         [("src/one.py", _MODULE_ONE), ("tests/unit/test_one.py", _TEST_ONE)],
@@ -127,7 +127,7 @@ def test_full_session_plan_first_one_commit_per_step_with_retry(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_plan_markdown(plan), encoding="utf-8")
 
-    monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+    monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
     dev = _scripted_developer()
 
     result = run_developer_session(

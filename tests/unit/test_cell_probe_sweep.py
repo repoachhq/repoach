@@ -10,11 +10,11 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
-from ferova.llm_proxy.providers.cell_probe_sweep import sweep_cell_health
-from ferova.llm_proxy.providers.model_catalog import ListedModel, ProviderModelListing
-from ferova.llm_proxy.providers.model_matrix import assemble_matrix
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
+from repoach.llm_proxy.providers.cell_probe_sweep import sweep_cell_health
+from repoach.llm_proxy.providers.model_catalog import ListedModel, ProviderModelListing
+from repoach.llm_proxy.providers.model_matrix import assemble_matrix
 
 _OK_BODY = {"choices": [{"message": {"content": "ok"}}]}
 

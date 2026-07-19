@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from ferova.cli.review_cmds import review_app
-from ferova.review.gh_client import ArchiveFetch, GhCli, GhResult
+from repoach.cli.review_cmds import review_app
+from repoach.review.gh_client import ArchiveFetch, GhCli, GhResult
 
 _MARKER = GhCli.ARCHIVE_MARKER
 _ARCHIVE_BODY = f'{_MARKER}\n### archive\n```json\n{{"final_verdict": "APPROVE"}}\n```'
@@ -89,7 +89,7 @@ def test_legacy_fetch_delegates_to_sibling() -> None:
 
 def test_api_failure_logs_warning() -> None:
     fake_log = MagicMock()
-    with patch("ferova.review.gh_client._log", fake_log):
+    with patch("repoach.review.gh_client._log", fake_log):
         _CannedGhCli(_result(1, stderr="HTTP 403")).fetch_archive_comment_with_status(7)
     events = [call.args[0] for call in fake_log.warning.call_args_list]
     assert "gh_client.archive_fetch_api_failed" in events
@@ -97,7 +97,7 @@ def test_api_failure_logs_warning() -> None:
 
 def test_find_archive_api_failure_logs_warning() -> None:
     fake_log = MagicMock()
-    with patch("ferova.review.gh_client._log", fake_log):
+    with patch("repoach.review.gh_client._log", fake_log):
         _CannedGhCli(_result(1, stderr="HTTP 403")).find_archive_comment(7)
     events = [call.args[0] for call in fake_log.warning.call_args_list]
     assert "gh_client.find_archive_api_failed" in events
@@ -108,7 +108,7 @@ def _invoke_report_with(fetch: ArchiveFetch):
     fake_cli = MagicMock()
     fake_cli.fetch_archive_comment_with_status.return_value = fetch
     fake_cli.ARCHIVE_MARKER = _MARKER
-    with patch("ferova.cli.review_cmds.GhCli", return_value=fake_cli):
+    with patch("repoach.cli.review_cmds.GhCli", return_value=fake_cli):
         return runner.invoke(review_app, ["report", "42"])
 
 

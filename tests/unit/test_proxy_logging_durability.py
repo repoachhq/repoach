@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from loguru import logger as loguru_logger
 
-import ferova.llm_proxy.config.logging_config as logging_config
+import repoach.llm_proxy.config.logging_config as logging_config
 
 
 @pytest.fixture()

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import json
 
-from ferova.llm_proxy.core.anthropic.tools import HeuristicToolParser
-from ferova.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
+from repoach.llm_proxy.core.anthropic.tools import HeuristicToolParser
+from repoach.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
 
 
 def _feed_all(parser: HeuristicToolParser, *chunks: str) -> tuple[str, list[dict]]:
@@ -242,7 +242,7 @@ class TestLiveCapturedShape:
     _LIVE_RESULT_TEXT = (
         "Let me use the correct tool call format for this environment:\n\n"
         '<tool_use>{"name": "read_file", '
-        '"args": {"path": "src/ferova/llm/__init__.py"}}</tool_use>'
+        '"args": {"path": "src/repoach/llm/__init__.py"}}</tool_use>'
     )
 
     def test_live_captured_response_parses_to_single_tool_call(self) -> None:
@@ -250,6 +250,6 @@ class TestLiveCapturedShape:
         text, tools = parser.feed(self._LIVE_RESULT_TEXT)
         assert len(tools) == 1
         assert tools[0]["name"] == "read_file"
-        assert tools[0]["input"] == {"path": "src/ferova/llm/__init__.py"}
+        assert tools[0]["input"] == {"path": "src/repoach/llm/__init__.py"}
         assert "<tool_use>" not in text
         assert parser.flush() == []

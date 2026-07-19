@@ -13,9 +13,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import run_developer_session
-from ferova.review.persistence import init_schema
-from ferova.review.plan import (
+from repoach.review.dev_runner import run_developer_session
+from repoach.review.persistence import init_schema
+from repoach.review.plan import (
     ActionPlan,
     PlanStep,
     plan_relpath,
@@ -125,7 +125,7 @@ def test_preflight_skip_path_end_to_end(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "test.db"
     init_schema(db_path)
 
-    monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+    monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
 
     dev = _recording_developer()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.inline_comment_heal import heal_inline_comments
+from repoach.review.inline_comment_heal import heal_inline_comments
 
 
 def _write(root: Path, rel: str, body: str) -> Path:

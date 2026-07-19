@@ -10,7 +10,7 @@ strict production-time layer (step 2):
 * every REFINE turn keeps the existing full error history exactly as
   before AND carries the same catalog;
 * a payload that passes ``ActionPlan`` pydantic validation but violates
-  the strict layer (:func:`ferova.review.plan.validate_plan_form_strict`)
+  the strict layer (:func:`repoach.review.plan.validate_plan_form_strict`)
   is refused and refined exactly like a ``plan_invalid`` failure, never
   written;
 * ``_parse_attempts`` reads ``FEROVA_PLANNER_PARSE_ATTEMPTS`` with the
@@ -28,9 +28,9 @@ from pathlib import Path
 
 import pytest
 
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.plan import PLAN_STEP_MAX_FILES, render_plan_form_rules
-from ferova.review.planner import Planner, _parse_attempts, run_planner_session
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.plan import PLAN_STEP_MAX_FILES, render_plan_form_rules
+from repoach.review.planner import Planner, _parse_attempts, run_planner_session
 
 _SPEC_ID = "SP-TEST-PROMPT-RULES"
 _HEADING = "Plan-form rules (all of them — every attempt is validated against every rule)"
@@ -47,7 +47,7 @@ def _valid_plan_payload(spec_id: str = _SPEC_ID) -> dict:
                 "index": 1,
                 "title": "Add the demo module",
                 "files": [
-                    "src/ferova/prompt_rules_demo.py",
+                    "src/repoach/prompt_rules_demo.py",
                     "tests/unit/test_prompt_rules_demo.py",
                     "tests/integration/test_prompt_rules_demo_flow.py",
                 ],
@@ -65,10 +65,10 @@ def _oversized_plan_payload(spec_id: str = _SPEC_ID) -> dict:
     """Return a payload that passes pydantic validation but trips the size cap."""
     payload = _valid_plan_payload(spec_id)
     payload["steps"][0]["files"] = [
-        "src/ferova/a.py",
-        "src/ferova/b.py",
-        "src/ferova/c.py",
-        "src/ferova/d.py",
+        "src/repoach/a.py",
+        "src/repoach/b.py",
+        "src/repoach/c.py",
+        "src/repoach/d.py",
         "tests/unit/test_prompt_rules_demo.py",
         "tests/integration/test_prompt_rules_demo_flow.py",
     ]
@@ -84,7 +84,7 @@ def _seed_repo(tmp_path: Path) -> Path:
         "## Definition of Done\n\n- it works\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "integration").mkdir(parents=True)
     return tmp_path

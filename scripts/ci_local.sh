@@ -54,7 +54,7 @@ proxy_smoke() {
     FEROVA_ANTHROPIC_AUTH_TOKEN="ci-smoke-token" \
     FEROVA_PROXY_HOST="127.0.0.1" \
     FEROVA_PROXY_PORT="8082" \
-        python -m ferova.llm_proxy > logs/proxy_smoke.log 2>&1 &
+        python -m repoach.llm_proxy > logs/proxy_smoke.log 2>&1 &
     local proxy_pid=$!
     local i
     for i in $(seq 1 15) ; do

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.coder_loop import apply_fixes
-from ferova.review.patch_apply import apply_search_replace_edits
-from ferova.review.reviewer import _normalise_fixes
+from repoach.review.coder_loop import apply_fixes
+from repoach.review.patch_apply import apply_search_replace_edits
+from repoach.review.reviewer import _normalise_fixes
 
 
 def test_single_edit_applies() -> None:

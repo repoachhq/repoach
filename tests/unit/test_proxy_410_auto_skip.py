@@ -25,8 +25,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from ferova.llm_proxy.api._failover import peek_for_content
-from ferova.llm_proxy.core.anthropic.sse import (
+from repoach.llm_proxy.api._failover import peek_for_content
+from repoach.llm_proxy.core.anthropic.sse import (
     STOP_REASON_MAP,
     map_stop_reason,
 )

@@ -21,9 +21,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.plan import PLAN_STEP_MAX_ACTION_DENSITY
-from ferova.review.planner import Planner, run_planner_session
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.plan import PLAN_STEP_MAX_ACTION_DENSITY
+from repoach.review.planner import Planner, run_planner_session
 
 _SPEC_ID = "SP-TEST-DENSITY-GATE"
 
@@ -39,7 +39,7 @@ def _valid_plan_payload(spec_id: str = _SPEC_ID) -> dict:
                 "index": 1,
                 "title": "Add the demo module",
                 "files": [
-                    "src/ferova/density_gate_demo.py",
+                    "src/repoach/density_gate_demo.py",
                     "tests/unit/test_density_gate_demo.py",
                     "tests/integration/test_density_gate_demo_flow.py",
                 ],
@@ -125,7 +125,7 @@ def _seed_repo(tmp_path: Path) -> Path:
         "## Definition of Done\n\n- it works\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "integration").mkdir(parents=True)
     return tmp_path

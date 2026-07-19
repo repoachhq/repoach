@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from ferova.llm_proxy.routing.chain import Chain
-from ferova.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.routing.chain import Chain
+from repoach.llm_proxy.routing.refs import ModelRef
 
 _CHAINS_ENV = Path(__file__).resolve().parents[2] / "chains.env"
 

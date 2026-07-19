@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ferova.agent_engine.agent_loop import AgentLoop
-from ferova.llm.capability import CapabilityTier
+from repoach.agent_engine.agent_loop import AgentLoop
+from repoach.llm.capability import CapabilityTier
 
 
 class _MockSecret:
@@ -30,7 +30,7 @@ class _MockSecret:
 
 @pytest.fixture
 def mock_settings():
-    with patch("ferova.agent_engine.agent_loop.get_settings") as mock:
+    with patch("repoach.agent_engine.agent_loop.get_settings") as mock:
         settings = MagicMock()
         settings.llm_proxy_base_url = "http://localhost:8082"
         settings.llm_proxy_auth_token = _MockSecret("test-token")
@@ -128,8 +128,8 @@ def test_agent_loop_rejects_none_proxy_token(mock_settings):
 
 def test_extract_text_concatenates_every_text_block(mock_settings):
     """Multiple ``TextBlock`` blocks join in order; ``ToolCallBlock``s are skipped."""
-    from ferova.agent_engine.agent_loop import _extract_text
-    from ferova.llm_proxy.api.models.agent_v1 import (
+    from repoach.agent_engine.agent_loop import _extract_text
+    from repoach.llm_proxy.api.models.agent_v1 import (
         AgentResponse,
         TextBlock,
         ToolCallBlock,
@@ -154,8 +154,8 @@ def test_extract_text_concatenates_every_text_block(mock_settings):
 
 def test_extract_text_returns_empty_for_tool_only_response(mock_settings):
     """A turn that emits only ``ToolCallBlock``s produces an empty text body."""
-    from ferova.agent_engine.agent_loop import _extract_text
-    from ferova.llm_proxy.api.models.agent_v1 import (
+    from repoach.agent_engine.agent_loop import _extract_text
+    from repoach.llm_proxy.api.models.agent_v1 import (
         AgentResponse,
         ToolCallBlock,
         Usage,
@@ -175,8 +175,8 @@ def test_extract_text_returns_empty_for_tool_only_response(mock_settings):
 
 def test_extract_tool_calls_filters_blocks(mock_settings):
     """Only ``ToolCallBlock`` instances come through, in declared order."""
-    from ferova.agent_engine.agent_loop import _extract_tool_calls
-    from ferova.llm_proxy.api.models.agent_v1 import (
+    from repoach.agent_engine.agent_loop import _extract_tool_calls
+    from repoach.llm_proxy.api.models.agent_v1 import (
         AgentResponse,
         TextBlock,
         ToolCallBlock,
@@ -215,8 +215,8 @@ def test_run_propagates_chain_exhausted_from_client(mock_settings):
     lets the caller (Reviewer / Coder / etc.) decide how to handle
     a ``stop_reason="error"`` outcome.
     """
-    from ferova.agent_engine.adapters import GatewayChainExhausted
-    from ferova.agent_engine.agent_loop import AgentLoop
+    from repoach.agent_engine.adapters import GatewayChainExhausted
+    from repoach.agent_engine.agent_loop import AgentLoop
 
     loop = AgentLoop(capability=CapabilityTier.SONNET)
     with (
@@ -232,8 +232,8 @@ def test_run_propagates_chain_exhausted_from_client(mock_settings):
 
 def test_run_propagates_transport_error_from_client(mock_settings):
     """``GatewayTransportError`` (5xx, ConnectError, ReadTimeout) propagates too."""
-    from ferova.agent_engine.adapters import GatewayTransportError
-    from ferova.agent_engine.agent_loop import AgentLoop
+    from repoach.agent_engine.adapters import GatewayTransportError
+    from repoach.agent_engine.agent_loop import AgentLoop
 
     loop = AgentLoop(capability=CapabilityTier.SONNET)
     with (
@@ -260,8 +260,8 @@ def test_run_wraps_up_when_max_turns_exhausted(mock_settings):
     naturally exits; on turn ``max_turns + 1`` the wrap-up call
     (no tools) returns the final answer.
     """
-    from ferova.agent_engine.agent_loop import AgentLoop, ToolDef
-    from ferova.llm_proxy.api.models.agent_v1 import (
+    from repoach.agent_engine.agent_loop import AgentLoop, ToolDef
+    from repoach.llm_proxy.api.models.agent_v1 import (
         AgentResponse,
         TextBlock,
         ToolCallBlock,

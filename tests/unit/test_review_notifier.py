@@ -1,4 +1,4 @@
-"""Tests for :mod:`ferova.review.notifier`.
+"""Tests for :mod:`repoach.review.notifier`.
 
 We never hit the real Anthropic endpoint here — every external call
 goes through ``httpx.MockTransport`` so the assertions can verify the
@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ferova.review import notifier
+from repoach.review import notifier
 
 
 def _stub_transport(callback) -> httpx.MockTransport:

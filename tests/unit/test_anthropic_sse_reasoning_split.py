@@ -8,7 +8,7 @@ never leaks into the Anthropic-shaped ``usage`` dict.
 
 import json
 
-from ferova.llm_proxy.core.anthropic.sse import ENCODER, SSEBuilder
+from repoach.llm_proxy.core.anthropic.sse import ENCODER, SSEBuilder
 
 
 def _expected_token_estimate(text: str) -> int:

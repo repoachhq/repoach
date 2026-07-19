@@ -15,11 +15,11 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from ferova.cli.review_cmds import review_app
-from ferova.review.dev_runner import DevSessionResult, load_or_produce_plan
-from ferova.review.persistence import init_schema
-from ferova.review.plan import ActionPlan, PlanStep, plan_relpath, render_plan_markdown
-from ferova.review.spec import load_spec
+from repoach.cli.review_cmds import review_app
+from repoach.review.dev_runner import DevSessionResult, load_or_produce_plan
+from repoach.review.persistence import init_schema
+from repoach.review.plan import ActionPlan, PlanStep, plan_relpath, render_plan_markdown
+from repoach.review.spec import load_spec
 
 _SPEC_ID = "SP-CCWIRE-DEMO"
 
@@ -96,7 +96,7 @@ class TestLoadOrProduceForwarding:
             target.write_text(render_plan_markdown(_plan()), encoding="utf-8")
             return _Outcome()
 
-        with patch("ferova.review.planner.run_planner_session", side_effect=fake_session):
+        with patch("repoach.review.planner.run_planner_session", side_effect=fake_session):
             plan, error = load_or_produce_plan(
                 spec, repo_root=repo, explore_via="claude_cli", cc_model="opus"
             )
@@ -116,7 +116,7 @@ class TestLoadOrProduceForwarding:
         def fake_session(*a, **kw):
             raise AssertionError("planning must not run when a plan is committed")
 
-        with patch("ferova.review.planner.run_planner_session", side_effect=fake_session):
+        with patch("repoach.review.planner.run_planner_session", side_effect=fake_session):
             plan, error = load_or_produce_plan(spec, repo_root=repo, explore_via="claude_cli")
 
         assert error is None
@@ -137,7 +137,7 @@ class TestDevelopCli:
             captured.update(kwargs)
             return _result(no_op_reason="dry-run: push=False")
 
-        with patch("ferova.cli.review_cmds.run_developer_session", side_effect=fake_session):
+        with patch("repoach.cli.review_cmds.run_developer_session", side_effect=fake_session):
             runner.invoke(
                 review_app,
                 [
@@ -178,8 +178,8 @@ class TestDevelopCli:
             return "https://github.test/pr/1"
 
         with (
-            patch("ferova.cli.review_cmds.run_developer_session", side_effect=fake_session),
-            patch("ferova.cli.review_cmds.open_pr", side_effect=fake_open_pr),
+            patch("repoach.cli.review_cmds.run_developer_session", side_effect=fake_session),
+            patch("repoach.cli.review_cmds.open_pr", side_effect=fake_open_pr),
         ):
             result = runner.invoke(review_app, ["develop", "SP-MULTI"])
 

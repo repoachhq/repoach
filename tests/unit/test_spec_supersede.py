@@ -11,8 +11,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from ferova.review.spec import SpecPlan
-from ferova.review.spec_supersede import supersede_parent_on_decompose
+from repoach.review.spec import SpecPlan
+from repoach.review.spec_supersede import supersede_parent_on_decompose
 
 
 def _git(repo: Path, *args: str) -> str:

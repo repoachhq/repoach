@@ -13,12 +13,12 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from ferova.llm_proxy.api.app import create_app
-from ferova.llm_proxy.config.settings import get_settings
-from ferova.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from ferova.llm_proxy.providers.registry import ProviderRegistry
-from ferova.llm_proxy.routing import get_breaker, reset_breaker
-from ferova.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.api.app import create_app
+from repoach.llm_proxy.config.settings import get_settings
+from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
+from repoach.llm_proxy.providers.registry import ProviderRegistry
+from repoach.llm_proxy.routing import get_breaker, reset_breaker
+from repoach.llm_proxy.routing.refs import ModelRef
 
 
 class _EmptyProvider(BaseProvider):

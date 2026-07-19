@@ -21,9 +21,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ferova.llm_proxy.api._failover import peek_for_content
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.open_router.client import OpenRouterProvider
+from repoach.llm_proxy.api._failover import peek_for_content
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.open_router.client import OpenRouterProvider
 
 _ERROR_MESSAGE = (
     "Client error '402 Payment Required': "

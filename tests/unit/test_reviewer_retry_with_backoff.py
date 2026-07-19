@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     Architect,
     ReviewComment,
     ReviewVerdict,
@@ -217,7 +217,7 @@ class TestReviewDiffIntegratesRetry:
         ]
         persona = tmp_path / Architect.persona_filename
         persona.write_text("Review this diff:\n{DIFF}\n{SPEC_PLAN}\n")
-        monkeypatch.setattr("ferova.review.reviewer._PROMPTS_DIR", tmp_path)
+        monkeypatch.setattr("repoach.review.reviewer._PROMPTS_DIR", tmp_path)
 
         reviewer = Architect(loop=loop)
         outcome = reviewer.review_diff("--- a.py\n+++ b.py\n", pr_number=123)

@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -25,7 +25,7 @@ from ferova.review.findings import (
     record_finding,
     update_finding_status,
 )
-from ferova.review.reviewer import Scribe, Sentinel
+from repoach.review.reviewer import Scribe, Sentinel
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +37,7 @@ def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     AgentLoop — this flow targets db_path wiring, not auth.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),
@@ -62,7 +62,7 @@ def tmp_ledger_with_sentinel_refutations() -> Path:
         finder="sentinel",
         claim_type=ClaimType.SECURITY,
         severity=Severity.BLOCKING,
-        file="src/ferova/app.py",
+        file="src/repoach/app.py",
         line_start=5,
         line_end=5,
         claim="Unvalidated redirect in login handler",
@@ -85,7 +85,7 @@ def tmp_ledger_with_sentinel_refutations() -> Path:
         finder="sentinel",
         claim_type=ClaimType.SECURITY,
         severity=Severity.BLOCKING,
-        file="src/ferova/app.py",
+        file="src/repoach/app.py",
         line_start=10,
         line_end=10,
         claim="Hardcoded secret in app.py",
@@ -108,7 +108,7 @@ def tmp_ledger_with_sentinel_refutations() -> Path:
         finder="sentinel",
         claim_type=ClaimType.SECURITY,
         severity=Severity.ADVISORY,
-        file="src/ferova/utils.py",
+        file="src/repoach/utils.py",
         line_start=42,
         line_end=42,
         claim="eval() usage without sanitisation",

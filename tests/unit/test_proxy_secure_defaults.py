@@ -18,10 +18,10 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-import ferova.core.config as core_config
-import ferova.llm_proxy.config.settings as proxy_settings_module
-from ferova.llm_proxy.api.dependencies import require_api_key
-from ferova.llm_proxy.config.settings import Settings as ProxySettings
+import repoach.core.config as core_config
+import repoach.llm_proxy.config.settings as proxy_settings_module
+from repoach.llm_proxy.api.dependencies import require_api_key
+from repoach.llm_proxy.config.settings import Settings as ProxySettings
 
 _PROXY_ENV_KEYS = (
     "FEROVA_PROXY_HOST",
@@ -38,7 +38,14 @@ def _clean_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _clean_core_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("FEROVA_ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "FEROVA_ENV", "ENV"):
+    for key in (
+        "REPOACH_ANTHROPIC_AUTH_TOKEN",
+        "FEROVA_ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_AUTH_TOKEN",
+        "REPOACH_ENV",
+        "FEROVA_ENV",
+        "ENV",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 

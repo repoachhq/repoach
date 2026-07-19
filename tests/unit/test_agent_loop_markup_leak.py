@@ -17,8 +17,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
-from ferova.agent_engine.agent_loop import AgentLoop, ToolDef
-from ferova.llm_proxy.api.models.agent_v1 import (
+from repoach.agent_engine.agent_loop import AgentLoop, ToolDef
+from repoach.llm_proxy.api.models.agent_v1 import (
     AgentResponse,
     TextBlock,
     Usage,
@@ -29,7 +29,7 @@ from ferova.llm_proxy.api.models.agent_v1 import (
 def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep AgentLoop constructible without the operator ``.env``."""
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),

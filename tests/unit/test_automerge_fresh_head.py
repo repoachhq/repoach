@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine, text
 
-from ferova.review.auto_merge import (
+from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_GATE,
     OUTCOME_SKIP_STALE_HEAD,
@@ -26,8 +26,8 @@ from ferova.review.auto_merge import (
     resolve_verified_head,
     run_auto_merge,
 )
-from ferova.review.gh_client import GhResult
-from ferova.review.merge_gate import MergeDecision, MergeFacts
+from repoach.review.gh_client import GhResult
+from repoach.review.merge_gate import MergeDecision, MergeFacts
 
 _FRESH_SHA = "abc123def456abc123def456abc123def456abc1"
 _STALE_SHA = "1111111111111111111111111111111111111111"
@@ -211,7 +211,7 @@ def test_auto_merge_refuses_on_stale_head_and_does_not_merge(tmp_path: Path) -> 
     gh.pr_head_sha.return_value = _STALE_SHA
     gh._run_git.return_value = _ls_remote_result(_OTHER_SHA)
 
-    with patch("ferova.review.auto_merge.squash_merge") as mocked_squash:
+    with patch("repoach.review.auto_merge.squash_merge") as mocked_squash:
         res = run_auto_merge(1, gh=gh, db_path=db, sleep=MagicMock())
 
     assert res.outcome == OUTCOME_SKIP_STALE_HEAD
@@ -296,7 +296,7 @@ def test_gate_facts_computed_at_verified_head(tmp_path: Path) -> None:
     decision = MergeDecision(merge=False, reasons=["stub refusal so the test never reaches squash"])
 
     with patch(
-        "ferova.review.auto_merge.decide_at_head",
+        "repoach.review.auto_merge.decide_at_head",
         return_value=(_FRESH_SHA, facts, decision),
     ) as mocked_decide:
         res = run_auto_merge(1, gh=gh, db_path=db, sleep=MagicMock())
@@ -322,10 +322,10 @@ def test_auto_merge_refuses_when_head_moves_mid_gate(tmp_path: Path) -> None:
 
     with (
         patch(
-            "ferova.review.auto_merge.decide_at_head",
+            "repoach.review.auto_merge.decide_at_head",
             return_value=(_FRESH_SHA, facts, decision),
         ),
-        patch("ferova.review.auto_merge.squash_merge") as mocked_squash,
+        patch("repoach.review.auto_merge.squash_merge") as mocked_squash,
     ):
         res = run_auto_merge(1, gh=gh, db_path=db, sleep=MagicMock())
 

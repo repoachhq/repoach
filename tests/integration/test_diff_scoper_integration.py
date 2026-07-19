@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ferova.review.diff_scoper import scope_diff, split_diff
+from repoach.review.diff_scoper import scope_diff, split_diff
 
 
 def test_scope_diff_three_unit_end_to_end() -> None:

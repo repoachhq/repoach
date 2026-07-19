@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ferova.llm_proxy.routing.chain import Chain
-from ferova.llm_proxy.routing.model_centric import ModelCentricChain, ModelGroup
-from ferova.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.routing.chain import Chain
+from repoach.llm_proxy.routing.model_centric import ModelCentricChain, ModelGroup
+from repoach.llm_proxy.routing.refs import ModelRef
 
 _INTERLEAVED = "nvidia_nim/mistralai/x,open_router/mistralai/x,nvidia_nim/qwen/y"
 _SINGLE = "nvidia_nim/mistralai/a,open_router/mistralai/b,claude_code/opus"

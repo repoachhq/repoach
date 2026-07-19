@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -18,7 +18,7 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.refuter import (
+from repoach.review.refuter import (
     _parse_verdict,
     judge_findings_for_pr,
     refute_finding,

@@ -10,13 +10,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ferova.review.decompose import (
+from repoach.review.decompose import (
     SubSpec,
     decompose_spec,
     render_sub_spec_markdown,
 )
-from ferova.review.governed_spec import GovernedSpec, load_governed_spec
-from ferova.review.spec import SpecPlan
+from repoach.review.governed_spec import GovernedSpec, load_governed_spec
+from repoach.review.spec import SpecPlan
 
 
 def _spec() -> SpecPlan:
@@ -81,7 +81,7 @@ def _sub(
 def test_identity_passthrough_does_not_call_proposer() -> None:
     proposer = _Proposer("should not be called")
     result = decompose_spec(
-        _spec(), _governed(["src/ferova/x.py"]), proposer=proposer, repo_root=Path(".")
+        _spec(), _governed(["src/repoach/x.py"]), proposer=proposer, repo_root=Path(".")
     )
     assert result.identity is True
     assert result.error is None
