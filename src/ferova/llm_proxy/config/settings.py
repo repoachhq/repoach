@@ -141,16 +141,17 @@ _LEGACY_TO_FEROVA_ALIAS: dict[str, str] = {
 
 
 def _aliases(legacy: str) -> AliasChoices:
-    """Return ``AliasChoices(FEROVA_*, legacy)`` for ``legacy``.
+    """Return ``AliasChoices(REPOACH_*, FEROVA_*, legacy)`` for ``legacy``.
 
-    The FEROVA_ alias is listed first so Pydantic v2 prefers it when
-    both names happen to be set in the environment ; the legacy
-    bare alias keeps every existing deployment working unchanged.
-    The :data:`_LEGACY_TO_FEROVA_ALIAS` dict above is the source of
-    truth for every dual-read alias declared on :class:`Settings` :
-    update the dict + the corresponding Field declaration in
-    lockstep so a single grep over either name surfaces the
-    pairing.  Tests in
+    The REPOACH_ alias is listed first so Pydantic v2 prefers it when
+    several names happen to be set in the environment; the FEROVA_
+    name stays second (the pre-rename prefix, kept so every existing
+    deployment works unchanged through the Repoach migration) and the
+    legacy bare alias last. The REPOACH_ name is derived mechanically
+    from the FEROVA_ one, so :data:`_LEGACY_TO_FEROVA_ALIAS` above
+    remains the single source of truth: update the dict + the
+    corresponding Field declaration in lockstep so a single grep over
+    either name surfaces the pairing. Tests in
     ``tests/unit/test_settings_sharp_prefix_aliases.py`` pin the
     mapping so a typo cannot land silently.
 
@@ -159,16 +160,18 @@ def _aliases(legacy: str) -> AliasChoices:
             Must be a key of :data:`_LEGACY_TO_FEROVA_ALIAS`.
 
     Returns:
-        A :class:`pydantic.AliasChoices` ordered ``(FEROVA_*, legacy)``
-        so the FEROVA_ name wins precedence in Pydantic v2 settings
-        resolution.
+        A :class:`pydantic.AliasChoices` ordered
+        ``(REPOACH_*, FEROVA_*, legacy)`` so the REPOACH_ name wins
+        precedence in Pydantic v2 settings resolution.
 
     Raises:
         KeyError: When ``legacy`` is not declared in
             :data:`_LEGACY_TO_FEROVA_ALIAS` — keeps the call sites
             honest so a typo at the Field declaration cannot land.
     """
-    return AliasChoices(_LEGACY_TO_FEROVA_ALIAS[legacy], legacy)
+    ferova_name = _LEGACY_TO_FEROVA_ALIAS[legacy]
+    repoach_name = "REPOACH_" + ferova_name.removeprefix("FEROVA_")
+    return AliasChoices(repoach_name, ferova_name, legacy)
 
 
 def _removed_env_var_message(model_config: Mapping[str, Any]) -> str | None:
