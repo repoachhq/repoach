@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.gh_client import GhCli, GhResult
-from ferova.review.release_gate import (
+from repoach.review.gh_client import GhCli, GhResult
+from repoach.review.release_gate import (
     ReleaseDecision,
     ReleaseFacts,
     classify_release_range,
@@ -135,7 +135,7 @@ def test_release_verify_detects_squash_divergence(tmp_path: Path) -> None:
 
 
 def test_release_gate_never_calls_merge() -> None:
-    source = Path(__file__).resolve().parents[2] / "src" / "ferova" / "review" / "release_gate.py"
+    source = Path(__file__).resolve().parents[2] / "src" / "repoach" / "review" / "release_gate.py"
     text = source.read_text(encoding="utf-8")
     assert "pr merge" not in text
     assert "gh pr merge" not in text

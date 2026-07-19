@@ -10,7 +10,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli.main import app
+from repoach.cli.main import app
 
 
 class _MockTransport(httpx.MockTransport):
@@ -53,7 +53,7 @@ def test_cli_credits_low_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
         credits_payload=_credits_payload(20.0, 18.5),
     )
     monkeypatch.setattr(
-        "ferova.cli.main._probe_client",
+        "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
@@ -63,7 +63,7 @@ def test_cli_credits_low_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_ferova.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -81,7 +81,7 @@ def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
     Asserts exit code 0, the expected degraded digest lines, and no
     traceback on stderr (fail-open contract G4 of SP-CHAIN-STATUS-DIGEST).
     """
-    db_path = tmp_path / "db" / "ferova.db"
+    db_path = tmp_path / "db" / "repoach.db"
     db_path.parent.mkdir()
 
     result = subprocess.run(

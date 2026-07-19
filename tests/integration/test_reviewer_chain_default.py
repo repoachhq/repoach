@@ -14,9 +14,9 @@ original singleton afterwards).
 
 import pytest
 
-import ferova.core.config as core_config
-from ferova.agent_engine.agent_loop import PROXY_SONNET_CHAIN
-from ferova.review.reviewer import Architect
+import repoach.core.config as core_config
+from repoach.agent_engine.agent_loop import PROXY_SONNET_CHAIN
+from repoach.review.reviewer import Architect
 
 
 def test_concrete_reviewer_default_chain_unchanged(

@@ -15,9 +15,9 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli.chain_status import build_chain_status
-from ferova.cli.main import app
-from ferova.health.model_health import (
+from repoach.cli.chain_status import build_chain_status
+from repoach.cli.main import app
+from repoach.health.model_health import (
     STATUS_EMPTY,
     STATUS_ERROR,
     STATUS_OK,
@@ -25,8 +25,8 @@ from ferova.health.model_health import (
     STATUS_SLOW,
     ModelHealth,
 )
-from ferova.health.store import record_probes
-from ferova.llm_proxy.config.settings import Settings
+from repoach.health.store import record_probes
+from repoach.llm_proxy.config.settings import Settings
 
 
 def _make_handler(

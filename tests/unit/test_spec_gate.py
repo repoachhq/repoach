@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.plan import ActionPlan, PlanStep
-from ferova.review.spec_gate import (
+from repoach.review.plan import ActionPlan, PlanStep
+from repoach.review.spec_gate import (
     acceptance_selectors,
     compute_spec_coverage,
     fetch_spec_coverage,
@@ -26,7 +26,7 @@ def _plan(*, unit_tests: list[str], integration_tests: list[str]) -> ActionPlan:
     step = PlanStep(
         index=1,
         title="Do the step",
-        files=["src/ferova/foo.py", *promised_files],
+        files=["src/repoach/foo.py", *promised_files],
         action="Implement.",
         commit_message="feat(foo): step",
         done_when="gates green",
@@ -144,8 +144,8 @@ def test_promised_present_word_boundary(tmp_path: Path) -> None:
 
 
 def test_compute_coverage_fully_covered(tmp_path: Path) -> None:
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
-    (tmp_path / "src" / "ferova" / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
+    (tmp_path / "src" / "repoach" / "foo.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "unit" / "test_foo.py").write_text(
         "def test_foo():\n    assert True\n", encoding="utf-8"
@@ -166,8 +166,8 @@ def test_compute_coverage_fully_covered(tmp_path: Path) -> None:
 
 
 def test_compute_coverage_partial_when_promised_test_absent(tmp_path: Path) -> None:
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
-    (tmp_path / "src" / "ferova" / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
+    (tmp_path / "src" / "repoach" / "foo.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "unit" / "test_foo.py").write_text(
         "def test_foo():\n    assert True\n", encoding="utf-8"
@@ -184,8 +184,8 @@ def test_compute_coverage_partial_when_promised_test_absent(tmp_path: Path) -> N
 def test_coverage_round_trip(tmp_path: Path) -> None:
     db = tmp_path / "c.db"
     init_spec_coverage_schema(db)
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
-    (tmp_path / "src" / "ferova" / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
+    (tmp_path / "src" / "repoach" / "foo.py").write_text("x = 1\n", encoding="utf-8")
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "unit" / "test_foo.py").write_text(
         "def test_foo():\n    assert True\n", encoding="utf-8"

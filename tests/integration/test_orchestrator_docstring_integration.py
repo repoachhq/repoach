@@ -1,6 +1,6 @@
 """Pin SP-ORCH-DOCSTRING acceptance via the import path.
 
-This integration test imports ``ferova.review.orchestrator`` and asserts
+This integration test imports ``repoach.review.orchestrator`` and asserts
 on the live module ``__doc__``, complementing the unit-level source-file
 pins in ``tests/unit/test_orchestrator_docstring.py``.  Together they
 guard against the retired verdict-first narrative silently returning.
@@ -8,7 +8,7 @@ guard against the retired verdict-first narrative silently returning.
 
 from __future__ import annotations
 
-import ferova.review.orchestrator as orchestrator
+import repoach.review.orchestrator as orchestrator
 
 _RETIRED_SUBSTRINGS = (
     "Aggregates their verdicts",

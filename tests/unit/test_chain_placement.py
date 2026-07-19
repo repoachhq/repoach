@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ferova.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
-from ferova.review.chain_placement import (
+from repoach.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
+from repoach.review.chain_placement import (
     TIER_DIRECTIONS,
     CandidateProfile,
     Placement,

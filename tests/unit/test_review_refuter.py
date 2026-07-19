@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -17,7 +17,7 @@ from ferova.review.findings import (
     record_finding,
     record_verification_attempt,
 )
-from ferova.review.refuter import _MAX_JUDGED, JUDGED_CLAIM_TYPES, judge_findings_for_pr
+from repoach.review.refuter import _MAX_JUDGED, JUDGED_CLAIM_TYPES, judge_findings_for_pr
 
 
 def _spec_gap_finding() -> Finding:

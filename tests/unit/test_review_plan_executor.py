@@ -15,7 +15,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import (
+from repoach.review.dev_runner import (
     DevSessionResult,
     _step_already_committed,
     build_step_brief,
@@ -25,9 +25,9 @@ from ferova.review.dev_runner import (
     run_developer_session,
     step_preflight_complete,
 )
-from ferova.review.devagent_loop import DevLoopResult
-from ferova.review.persistence import init_schema
-from ferova.review.plan import (
+from repoach.review.devagent_loop import DevLoopResult
+from repoach.review.persistence import init_schema
+from repoach.review.plan import (
     ActionPlan,
     PlanStep,
     plan_relpath,
@@ -169,7 +169,7 @@ class TestLoadOrGeneratePlan:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        from ferova.review.spec import load_spec
+        from repoach.review.spec import load_spec
 
         spec = load_spec(_SPEC_ID, root=repo)
         loaded, error = load_or_produce_plan(spec, repo_root=repo)
@@ -179,7 +179,7 @@ class TestLoadOrGeneratePlan:
     def test_absent_plan_produced_by_injected_planner(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
-        from ferova.review.spec import load_spec
+        from repoach.review.spec import load_spec
 
         spec = load_spec(_SPEC_ID, root=repo)
 
@@ -194,7 +194,7 @@ class TestLoadOrGeneratePlan:
 
     def test_planning_failure_is_loud(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
-        from ferova.review.spec import load_spec
+        from repoach.review.spec import load_spec
 
         spec = load_spec(_SPEC_ID, root=repo)
 
@@ -377,7 +377,7 @@ class TestContractBackstop:
             (repo_root / "src" / "escaped.py").write_text('"""E."""\n\nE = 1\n', encoding="utf-8")
             return True, ""
 
-        monkeypatch.setattr("ferova.review.dev_runner.run_ruff_gate", _ruff_that_escapes)
+        monkeypatch.setattr("repoach.review.dev_runner.run_ruff_gate", _ruff_that_escapes)
 
         outcome = execute_plan_step(
             plan.steps[0],
@@ -398,7 +398,7 @@ class TestSessionWrapup:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         dev = _developer_writing([_good_attempt()])
 
         result = run_developer_session(
@@ -429,7 +429,7 @@ class TestSessionWrapup:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         broken = [("src/mini.py", _BROKEN_MODULE)]
         dev = _developer_writing([broken, broken])
 
@@ -476,9 +476,9 @@ class TestGateAndSessionEdges:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
-            "ferova.review.dev_runner.push_branch",
+            "repoach.review.dev_runner.push_branch",
             lambda *a, **kw: (False, "git push failed: timeout"),
         )
         dev = _developer_writing([_good_attempt()])
@@ -499,7 +499,7 @@ class TestGateAndSessionEdges:
 
     def test_invalid_committed_plan_returns_error(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
-        from ferova.review.spec import load_spec
+        from repoach.review.spec import load_spec
 
         target = repo / plan_relpath(_SPEC_ID)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -516,9 +516,9 @@ class TestGateAndSessionEdges:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
-            "ferova.review.dev_runner.commit_plan_document",
+            "repoach.review.dev_runner.commit_plan_document",
             lambda *a, **kw: (False, "permission denied"),
         )
         dev = _developer_writing([_good_attempt()])
@@ -538,7 +538,7 @@ class TestGateAndSessionEdges:
         dev.develop_step.assert_not_called()
 
     def test_flag_like_selector_refused_by_runner(self, tmp_path: Path) -> None:
-        from ferova.review.dev_runner import run_pytest_selectors
+        from repoach.review.dev_runner import run_pytest_selectors
 
         repo = _init_repo(tmp_path)
         ok, tail = run_pytest_selectors(repo, ["--pdb", "tests/unit"])
@@ -546,10 +546,10 @@ class TestGateAndSessionEdges:
         assert "refused flag-like" in tail
 
     def test_run_pytest_selectors_scrubs_secret_env(self, tmp_path: Path, monkeypatch) -> None:
-        import ferova.review.dev_runner as dr
+        import repoach.review.dev_runner as dr
 
         monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "live-secret")
-        monkeypatch.setenv("FEROVA_DB_PATH", "data/x.db")
+        monkeypatch.setenv("REPOACH_DB_PATH", "data/x.db")
         captured: dict[str, object] = {}
 
         class _Proc:
@@ -567,7 +567,7 @@ class TestGateAndSessionEdges:
         env = captured["env"]
         assert env is not None
         assert "FEROVA_OPENROUTER_API_KEY" not in env
-        assert env.get("FEROVA_DB_PATH") == "data/x.db"
+        assert env.get("REPOACH_DB_PATH") == "data/x.db"
 
     def test_omitted_in_contract_promise_is_retried_and_heals(self, tmp_path: Path) -> None:
         """An unwritten promised test inside the contract retries like any gate.
@@ -650,9 +650,9 @@ class TestSelfVerifyGate:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
-            "ferova.review.dev_runner.run_self_verify",
+            "repoach.review.dev_runner.run_self_verify",
             lambda *a, **k: types.SimpleNamespace(ok=False, reasons=["judge: not compliant — gap"]),
         )
         dev = _developer_writing([_good_attempt()])
@@ -676,9 +676,9 @@ class TestSelfVerifyGate:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
-            "ferova.review.dev_runner.run_self_verify",
+            "repoach.review.dev_runner.run_self_verify",
             lambda *a, **k: types.SimpleNamespace(ok=True, reasons=[]),
         )
         dev = _developer_writing([_good_attempt()])
@@ -700,9 +700,9 @@ class TestSelfVerifyGate:
         plan = _one_step_plan()
         _seed_plan(repo, plan)
         _git(repo, "branch", "develop")
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
-            "ferova.review.dev_runner.push_branch", lambda *a, **kw: (True, "pushed")
+            "repoach.review.dev_runner.push_branch", lambda *a, **kw: (True, "pushed")
         )
         calls: list[str] = []
 
@@ -729,14 +729,14 @@ class TestSelfVerifyGate:
         plan = _one_step_plan()
         _seed_plan(repo, plan)
         _git(repo, "branch", "develop")
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         pushed = {"called": False}
 
         def _push(*a, **kw):
             pushed["called"] = True
             return True, "pushed"
 
-        monkeypatch.setattr("ferova.review.dev_runner.push_branch", _push)
+        monkeypatch.setattr("repoach.review.dev_runner.push_branch", _push)
         dev = _developer_writing([_good_attempt()])
 
         result = run_developer_session(
@@ -799,7 +799,7 @@ class TestDecomposeWiring:
     ) -> None:
         import json
 
-        import ferova.review.dev_runner as dr
+        import repoach.review.dev_runner as dr
 
         repo = self._init_governed_repo(tmp_path)
         proposal = json.dumps(
@@ -863,7 +863,7 @@ class TestDecomposeWiring:
         assert "2026-06-28_SP-MULTI-1_sub.md" in head_tree
         assert "2026-06-28_SP-MULTI-2_sub.md" in head_tree
 
-        from ferova.arch import load_registry
+        from repoach.arch import load_registry
 
         registry = load_registry(repo / "docs" / "specs")
         assert registry.disjointness_violations() == []
@@ -871,7 +871,7 @@ class TestDecomposeWiring:
     def test_real_multi_sub_spec_development_in_order(self, tmp_path: Path, monkeypatch) -> None:
         import json
 
-        import ferova.review.dev_runner as dr
+        import repoach.review.dev_runner as dr
 
         repo = self._init_governed_repo(tmp_path)
         _git(repo, "branch", "develop")
@@ -970,7 +970,7 @@ class TestDecomposeWiring:
         assert a_pos > b_pos
 
     def test_failed_decompose_stops_session(self, tmp_path: Path, monkeypatch) -> None:
-        import ferova.review.dev_runner as dr
+        import repoach.review.dev_runner as dr
 
         repo = self._init_governed_repo(tmp_path)
         monkeypatch.setattr(dr, "ensure_branch", lambda *a, **kw: True)
@@ -1282,7 +1282,7 @@ class TestSessionPreflight:
         plan = _one_step_plan()
         _seed_plan(repo, plan)
         _git(repo, "branch", "develop")
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
         (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
@@ -1320,7 +1320,7 @@ class TestSessionPreflight:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "chore: pre-seed test only")
@@ -1342,7 +1342,7 @@ class TestSessionPreflight:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
         (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
@@ -1378,7 +1378,7 @@ class TestSessionPreflight:
             unit_tests=["tests/unit/test_mini.py::test_value"],
         )
         _seed_plan(repo, plan)
-        monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+        monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         (repo / "src" / "mini.py").write_text(_CLEAN_MODULE, encoding="utf-8")
         (repo / "tests" / "unit" / "test_mini.py").write_text(_CLEAN_TEST, encoding="utf-8")
         (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
@@ -1580,7 +1580,7 @@ class TestPromisedTestGateG1G2:
             [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._DRIFTED_TEST)]]
         )
         monkeypatch.setattr(
-            "ferova.review.dev_runner._attempt_mechanical_rename",
+            "repoach.review.dev_runner._attempt_mechanical_rename",
             lambda *args, **kwargs: ("error", ""),
         )
 

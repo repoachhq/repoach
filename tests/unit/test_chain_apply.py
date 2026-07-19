@@ -10,11 +10,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ferova.review.audit_log import fetch_mutations
-from ferova.review.chain_apply import apply_chain_rewrite
-from ferova.review.chain_plan import ChainRewritePlan, mutation_to_edit
-from ferova.review.chain_rewrite import ChainEdit, RewriteResult
-from ferova.review.decision import MutationKind, PlannedMutation
+from repoach.review.audit_log import fetch_mutations
+from repoach.review.chain_apply import apply_chain_rewrite
+from repoach.review.chain_plan import ChainRewritePlan, mutation_to_edit
+from repoach.review.chain_rewrite import ChainEdit, RewriteResult
+from repoach.review.decision import MutationKind, PlannedMutation
 
 _NOW = datetime(2026, 6, 26, 12, 0, tzinfo=UTC)
 

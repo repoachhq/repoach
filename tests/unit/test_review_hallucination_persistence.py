@@ -12,17 +12,17 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
-from ferova.review.hallucination_guard import GuardEvent
-from ferova.review.orchestrator import (
+from repoach.review.hallucination_guard import GuardEvent
+from repoach.review.orchestrator import (
     TeamOutcome,
     _render_guard_section,
     team_outcome_to_dict,
 )
-from ferova.review.persistence import (
+from repoach.review.persistence import (
     init_schema,
     record_hallucination,
 )
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     BotRole,
     ReviewerOutcome,
     ReviewVerdict,
@@ -60,7 +60,7 @@ def test_record_hallucination_round_trip(tmp_path: Path):
         event=_event(
             role=BotRole.SCRIBE,
             reason="missing_token_found_in_file",
-            file="src/ferova/foo.py",
+            file="src/repoach/foo.py",
             line=42,
             tokens=("Args",),
             body="Args section is missing on respond.",
@@ -132,7 +132,7 @@ def test_render_guard_section_lists_events_with_breakdown():
             _event(
                 role=BotRole.SCRIBE,
                 reason="missing_token_found_in_file",
-                file="src/ferova/foo.py",
+                file="src/repoach/foo.py",
                 line=42,
                 tokens=("Args", "Returns"),
             ),

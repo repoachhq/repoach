@@ -13,8 +13,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from ferova.llm_proxy.api.agent_dispatcher import _aggregate_sse_stream
-from ferova.llm_proxy.core.anthropic.sse import SSEBuilder
+from repoach.llm_proxy.api.agent_dispatcher import _aggregate_sse_stream
+from repoach.llm_proxy.core.anthropic.sse import SSEBuilder
 
 
 def _sse(events: list[dict]) -> str:

@@ -9,8 +9,8 @@ comment forced the call.
 
 from __future__ import annotations
 
-from ferova.review.persistence import derive_decision_pivot
-from ferova.review.reviewer import (
+from repoach.review.persistence import derive_decision_pivot
+from repoach.review.reviewer import (
     BotRole,
     ReviewComment,
     ReviewerOutcome,

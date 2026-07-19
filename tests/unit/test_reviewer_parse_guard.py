@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from ferova.review.reviewer import Architect, ReviewVerdict
+from repoach.review.reviewer import Architect, ReviewVerdict
 
 
 def _new_architect() -> Architect:

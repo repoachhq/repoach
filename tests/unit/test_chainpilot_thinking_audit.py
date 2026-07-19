@@ -20,11 +20,11 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from ferova.llm_proxy.api._failover import peek_for_content
-from ferova.llm_proxy.api.models.anthropic import Message, MessagesRequest
-from ferova.llm_proxy.config.nim import NimSettings
-from ferova.llm_proxy.core.anthropic import build_base_request_body
-from ferova.llm_proxy.providers.nvidia_nim.request import build_request_body
+from repoach.llm_proxy.api._failover import peek_for_content
+from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest
+from repoach.llm_proxy.config.nim import NimSettings
+from repoach.llm_proxy.core.anthropic import build_base_request_body
+from repoach.llm_proxy.providers.nvidia_nim.request import build_request_body
 
 
 def _sse(event: str, data: dict | None) -> str:

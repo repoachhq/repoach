@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 import typer
 
-from ferova.cli import release_cmds
-from ferova.review.release_gate import (
+from repoach.cli import release_cmds
+from repoach.review.release_gate import (
     ReleaseDecision,
     ReleaseFacts,
     ReleaseVerifyResult,

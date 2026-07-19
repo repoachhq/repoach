@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.review.mcp_whitelist import (
+from repoach.review.mcp_whitelist import (
     MCP_TOOL_WHITELIST_BY_ROLE,
     allowed_tools_for,
 )
-from ferova.review.reviewer import BotRole
+from repoach.review.reviewer import BotRole
 
 _HOSTILE_PATTERNS = (
     "send_whatsapp",

@@ -6,7 +6,7 @@ reporting, empty-chain no-findings, and malformed-chain reporting.
 
 from __future__ import annotations
 
-from ferova.llm_proxy.providers.thinking_audit import audit_chain_thinking
+from repoach.llm_proxy.providers.thinking_audit import audit_chain_thinking
 
 
 def test_reasoner_head_is_reported() -> None:

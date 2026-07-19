@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from ferova.llm_proxy.api.model_router import ResolvedModel
-from ferova.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.api.model_router import ResolvedModel
+from repoach.llm_proxy.routing.refs import ModelRef
 
 _CHAINS_ENV = Path(__file__).resolve().parents[2] / "chains.env"
 

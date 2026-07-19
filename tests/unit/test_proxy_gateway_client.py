@@ -31,14 +31,14 @@ from typing import Any
 import httpx
 import pytest
 
-from ferova.agent_engine.adapters import (
+from repoach.agent_engine.adapters import (
     GatewayChainExhausted,
     GatewayError,
     GatewayTransportError,
     ProxyGatewayClient,
 )
-from ferova.llm.capability import CapabilityTier
-from ferova.llm_proxy.api.models.agent_v1 import (
+from repoach.llm.capability import CapabilityTier
+from repoach.llm_proxy.api.models.agent_v1 import (
     AgentResponse,
     Message,
     TextBlock,
@@ -134,7 +134,7 @@ def test_call_posts_agent_request_to_v1_agent(monkeypatch) -> None:
     """The client POSTs to ``/v1/agent`` with the canonical AgentRequest body."""
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
 
@@ -164,7 +164,7 @@ def test_call_omits_system_field_when_none(monkeypatch) -> None:
     """``system=None`` is dropped from the body (gateway requires absent, not null)."""
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     _client().call(
@@ -182,7 +182,7 @@ def test_call_carries_tools_into_body(monkeypatch) -> None:
     """``ToolSpec`` list is serialised verbatim into ``tools``."""
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     _client().call(
@@ -213,7 +213,7 @@ def test_call_sets_both_auth_headers(monkeypatch) -> None:
     """Bearer + X-Api-Key both carry the token (proxy accepts either)."""
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     _client().call(
@@ -239,7 +239,7 @@ def test_call_returns_pydantic_response_with_text_blocks(monkeypatch) -> None:
     """Successful response parses to AgentResponse with TextBlock content."""
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload(text="PONG")))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     response = _client().call(
@@ -274,7 +274,7 @@ def test_call_returns_response_with_tool_call_blocks(monkeypatch) -> None:
     ]
     stub = _StubClient(_StubResponse(status_code=200, payload=payload))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     response = _client().call(
@@ -304,7 +304,7 @@ def test_call_raises_transport_error_on_retryable_status(monkeypatch, status: in
     """5xx, 408, 429 raise ``GatewayTransportError`` (loop's retry path)."""
     stub = _StubClient(_StubResponse(status_code=status, text="bad"))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     with pytest.raises(GatewayTransportError):
@@ -322,7 +322,7 @@ def test_call_raises_transport_error_on_connect_error(monkeypatch) -> None:
     """``httpx.ConnectError`` (proxy not running) is a transport failure."""
     raising = _RaisingClient(httpx.ConnectError("connection refused"))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: raising,
     )
     with pytest.raises(GatewayTransportError, match="proxy unreachable"):
@@ -340,7 +340,7 @@ def test_call_raises_transport_error_on_read_timeout(monkeypatch) -> None:
     """``httpx.ReadTimeout`` (proxy hung mid-request) is also transport-level."""
     raising = _RaisingClient(httpx.ReadTimeout("timed out"))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: raising,
     )
     with pytest.raises(GatewayTransportError):
@@ -358,7 +358,7 @@ def test_call_raises_gateway_error_on_non_retryable_4xx(monkeypatch) -> None:
     """A 400 (bad request) raises plain ``GatewayError`` — no retry."""
     stub = _StubClient(_StubResponse(status_code=400, text="bad request"))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     with pytest.raises(GatewayError, match="400"):
@@ -384,7 +384,7 @@ def test_call_raises_chain_exhausted_on_stop_reason_error(monkeypatch) -> None:
     }
     stub = _StubClient(_StubResponse(status_code=200, payload=err_payload))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     with pytest.raises(GatewayChainExhausted, match="chain_exhausted"):
@@ -403,7 +403,7 @@ def test_call_raises_gateway_error_on_validation_failure(monkeypatch) -> None:
     bad_payload = {"this": "is not", "valid": "agent v1"}
     stub = _StubClient(_StubResponse(status_code=200, payload=bad_payload))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
     with pytest.raises(GatewayError, match="validation"):

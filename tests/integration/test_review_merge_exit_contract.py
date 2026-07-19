@@ -12,8 +12,8 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli import review_cmds
-from ferova.review.auto_merge import (
+from repoach.cli import review_cmds
+from repoach.review.auto_merge import (
     OUTCOME_FAILED,
     OUTCOME_SKIP_CI_TIMEOUT,
     AutoMergeResult,

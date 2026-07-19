@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -18,8 +18,8 @@ from ferova.review.findings import (
     record_finding,
     update_finding_status,
 )
-from ferova.review.merge_gate import MergeDecision, MergeFacts
-from ferova.review.report import render_ledger_report
+from repoach.review.merge_gate import MergeDecision, MergeFacts
+from repoach.review.report import render_ledger_report
 
 
 def _facts(**over: object) -> MergeFacts:

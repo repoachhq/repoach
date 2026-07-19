@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
-from ferova.memory import agentmemory_client
+from repoach.memory import agentmemory_client
 
 
 class _FakeResponse:

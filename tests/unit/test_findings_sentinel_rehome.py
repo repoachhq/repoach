@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -31,8 +31,8 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.reviewer import BotRole
-from ferova.review.thread_context import (
+from repoach.review.reviewer import BotRole
+from repoach.review.thread_context import (
     EVIDENCE_REPLY_SENTINEL,
     _format_finding_evidence_reply,
     _match_finding_thread,

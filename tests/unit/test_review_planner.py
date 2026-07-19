@@ -16,9 +16,9 @@ from unittest.mock import patch
 
 import pytest
 
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.plan import PLAN_MARKER, load_plan
-from ferova.review.planner import Planner, run_planner_session
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.plan import PLAN_MARKER, load_plan
+from repoach.review.planner import Planner, run_planner_session
 
 _SPEC_ID = "SP-TEST-PLANNER"
 
@@ -71,7 +71,7 @@ def _valid_plan_payload() -> dict:
                 "index": 1,
                 "title": "Add the module",
                 "files": [
-                    "src/ferova/demo.py",
+                    "src/repoach/demo.py",
                     "tests/unit/test_demo.py",
                     "tests/integration/test_demo_flow.py",
                 ],
@@ -170,7 +170,7 @@ class TestRunPlannerSession:
 
 class TestJsonExtraction:
     def test_braces_inside_string_values_do_not_break_balance(self) -> None:
-        from ferova.review.planner import _extract_plan_json
+        from repoach.review.planner import _extract_plan_json
 
         payload = dict(_valid_plan_payload())
         payload["steps"][0]["done_when"] = "ruff check {src} exits 0 and {tests}"
@@ -180,7 +180,7 @@ class TestJsonExtraction:
         assert json.loads(raw)["steps"][0]["done_when"] == "ruff check {src} exits 0 and {tests}"
 
     def test_only_plan_shaped_object_is_picked(self) -> None:
-        from ferova.review.planner import _extract_plan_json
+        from repoach.review.planner import _extract_plan_json
 
         text = (
             'First a config blob {"foo": 1, "bar": 2} then the real one:\n'
@@ -191,7 +191,7 @@ class TestJsonExtraction:
         assert json.loads(raw)["spec_id"] == _SPEC_ID
 
     def test_prose_with_no_json_returns_none(self) -> None:
-        from ferova.review.planner import _extract_plan_json
+        from repoach.review.planner import _extract_plan_json
 
         assert _extract_plan_json("I could not produce a plan, sorry.") is None
 
@@ -244,7 +244,7 @@ class TestProxyGracefulFailure:
             self.calls = 0
 
         def run(self, prompt, *, system=None, tools=None):
-            from ferova.agent_engine.adapters import GatewayTransportError
+            from repoach.agent_engine.adapters import GatewayTransportError
 
             self.calls += 1
             if self.calls == self._raise_on:
@@ -354,7 +354,7 @@ class TestPlanRetry:
 class TestClaudeCliMode:
     @staticmethod
     def _cc_result(text: str, *, is_error: bool = False):
-        from ferova.review.planner_cc import CcExploreResult
+        from repoach.review.planner_cc import CcExploreResult
 
         return CcExploreResult(
             text=text,
@@ -374,7 +374,7 @@ class TestClaudeCliMode:
             return self._cc_result(valid)
 
         planner = Planner(repo_root=repo, explore_via="claude_cli", cc_model="opus")
-        with patch("ferova.review.planner.run_cc_exploration", side_effect=fake_cc):
+        with patch("repoach.review.planner.run_cc_exploration", side_effect=fake_cc):
             plan, error, audit = planner.plan(
                 spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="unused"
             )
@@ -402,7 +402,7 @@ class TestClaudeCliMode:
             return outputs[len(calls) - 1]
 
         planner = Planner(repo_root=repo, explore_via="claude_cli")
-        with patch("ferova.review.planner.run_cc_exploration", side_effect=fake_cc):
+        with patch("repoach.review.planner.run_cc_exploration", side_effect=fake_cc):
             plan, _error, _audit = planner.plan(
                 spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="unused"
             )
@@ -417,7 +417,7 @@ class TestClaudeCliMode:
             return self._cc_result("", is_error=True)
 
         planner = Planner(repo_root=repo, explore_via="claude_cli")
-        with patch("ferova.review.planner.run_cc_exploration", side_effect=fake_cc):
+        with patch("repoach.review.planner.run_cc_exploration", side_effect=fake_cc):
             plan, error, _audit = planner.plan(
                 spec_id=_SPEC_ID, spec_markdown="# spec", repo_tree="unused"
             )
@@ -580,7 +580,7 @@ class TestErrorHistory:
     """SP-PLANNER-REFINE-HISTORY — full error history in the refine loop."""
 
     def test_refine_prompt_carries_full_error_history(self) -> None:
-        from ferova.review.planner import _refine_prompt
+        from repoach.review.planner import _refine_prompt
 
         errors = ["first failure: missing commit_message", "second failure: bad selector"]
         prompt = _refine_prompt("previous candidate text", errors)
@@ -590,7 +590,7 @@ class TestErrorHistory:
         assert prompt.index("first failure") < prompt.index("second failure")
 
     def test_single_error_history_matches_previous_behaviour(self) -> None:
-        from ferova.review.planner import _refine_prompt
+        from repoach.review.planner import _refine_prompt
 
         prompt = _refine_prompt("previous candidate text", ["only failure"])
 

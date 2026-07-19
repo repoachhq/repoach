@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -16,7 +16,7 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     BotRole,
     Reviewer,
     ReviewVerdict,
@@ -83,7 +83,7 @@ def _hermetic_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     ``.env``, so the test must not depend on one.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SimpleNamespace(get_secret_value=lambda: "test-token"),

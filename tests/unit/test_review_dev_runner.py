@@ -7,14 +7,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.dev_runner import (
+from repoach.review.dev_runner import (
     DEFAULT_BRANCH_TEMPLATE,
     DevSessionResult,
     read_existing_files,
     run_developer_session,
     spec_to_branch_slug,
 )
-from ferova.review.spec import SPECS_DIR
+from repoach.review.spec import SPECS_DIR
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,7 +36,7 @@ This spec adds a single helper.
 
 ## Files
 
-- modify `src/ferova/foo.py`
+- modify `src/repoach/foo.py`
 - add `tests/unit/test_foo_new.py`
 - doc in `docs/runbooks/foo.md`
 """
@@ -72,35 +72,35 @@ def test_default_branch_template_renders() -> None:
 
 def test_read_existing_files_returns_only_existing(tmp_path: Path) -> None:
     """Only paths that exist on disk are returned; missing ones silently dropped."""
-    src = tmp_path / "src" / "ferova"
+    src = tmp_path / "src" / "repoach"
     src.mkdir(parents=True)
     (src / "foo.py").write_text("def foo(): ...\n", encoding="utf-8")
 
     _seed_spec(tmp_path, "2026-04-29_SP-FOO_sample.md", _SAMPLE_PLAN)
-    from ferova.review.spec import load_spec
+    from repoach.review.spec import load_spec
 
     plan = load_spec("FOO", root=tmp_path)
     files = read_existing_files(plan, repo_root=tmp_path)
     # foo.py exists → returned; test_foo_new.py and runbook don't → skipped.
-    assert "src/ferova/foo.py" in files
-    assert files["src/ferova/foo.py"].startswith("def foo")
+    assert "src/repoach/foo.py" in files
+    assert files["src/repoach/foo.py"].startswith("def foo")
     assert "tests/unit/test_foo_new.py" not in files
     assert "docs/runbooks/foo.md" not in files
 
 
 def test_read_existing_files_rejects_traversal(tmp_path: Path) -> None:
     """Plans referencing escape paths get filtered (defence in depth)."""
-    src = tmp_path / "src" / "ferova"
+    src = tmp_path / "src" / "repoach"
     src.mkdir(parents=True)
     (src / "foo.py").write_text("ok", encoding="utf-8")
-    plan_md = "# SP-X\n\nadd `../../escape.py` and `src/ferova/foo.py`\n"
+    plan_md = "# SP-X\n\nadd `../../escape.py` and `src/repoach/foo.py`\n"
     _seed_spec(tmp_path, "2026-04-29_SP-X_t.md", plan_md)
-    from ferova.review.spec import load_spec
+    from repoach.review.spec import load_spec
 
     plan = load_spec("X", root=tmp_path)
     files = read_existing_files(plan, repo_root=tmp_path)
     # Only the in-tree file ends up in the dict.
-    assert "src/ferova/foo.py" in files
+    assert "src/repoach/foo.py" in files
     assert all(".." not in p for p in files)
 
 
@@ -115,7 +115,7 @@ def _writing_developer(writes: list[tuple[str, str]]) -> MagicMock:
     Mirrors the agentic loop's ``write_file`` tool calls (SP-DEVAGENT-LOOP); an
     empty list models a loop that ended without authoring anything.
     """
-    from ferova.review.devagent_loop import DevLoopResult
+    from repoach.review.devagent_loop import DevLoopResult
 
     def _step(*, brief, repo_root, allowed_paths, repo_tree="", spec_id=None):
         for rel, content in writes:
@@ -153,7 +153,7 @@ def _init_git_repo_with_plan(tmp_path: Path, *, step_files: list[str]) -> Path:
     """
     import subprocess
 
-    from ferova.review.plan import ActionPlan, PlanStep, plan_relpath, render_plan_markdown
+    from repoach.review.plan import ActionPlan, PlanStep, plan_relpath, render_plan_markdown
 
     _seed_spec(tmp_path, "2026-04-29_SP-FOO_t.md", _SAMPLE_PLAN)
     (tmp_path / "src").mkdir(exist_ok=True)
@@ -199,10 +199,10 @@ def test_run_developer_session_no_fixes_returned(
 ) -> None:
     """Developer writes nothing twice → step fails with a 'no writes' reason."""
     repo = _init_git_repo_with_plan(
-        tmp_path, step_files=["src/ferova/foo.py", "tests/unit/test_foo_new.py"]
+        tmp_path, step_files=["src/repoach/foo.py", "tests/unit/test_foo_new.py"]
     )
-    monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
-    monkeypatch.setattr("ferova.review.dev_runner.render_repo_tree", lambda **kw: "")
+    monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+    monkeypatch.setattr("repoach.review.dev_runner.render_repo_tree", lambda **kw: "")
     dev = _writing_developer([])
     res = run_developer_session(
         "FOO",
@@ -222,11 +222,11 @@ def test_run_developer_session_all_fixes_rejected_by_whitelist(
 ) -> None:
     """Developer writes only out-of-contract paths → contract rejection."""
     repo = _init_git_repo_with_plan(
-        tmp_path, step_files=["src/ferova/foo.py", "tests/unit/test_foo_new.py"]
+        tmp_path, step_files=["src/repoach/foo.py", "tests/unit/test_foo_new.py"]
     )
-    monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
-    monkeypatch.setattr("ferova.review.dev_runner.render_repo_tree", lambda **kw: "")
-    dev = _writing_developer([(".env", "EVIL=1\n"), ("src/ferova/rogue.py", "x = 1\n")])
+    monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+    monkeypatch.setattr("repoach.review.dev_runner.render_repo_tree", lambda **kw: "")
+    dev = _writing_developer([(".env", "EVIL=1\n"), ("src/repoach/rogue.py", "x = 1\n")])
     res = run_developer_session(
         "FOO",
         repo_root=repo,
@@ -256,7 +256,7 @@ def test_dev_session_result_default_fields() -> None:
 
 def test_check_python_syntax_passes_on_valid_files(tmp_path: Path) -> None:
     """Two valid .py files → (True, '')."""
-    from ferova.review.dev_runner import check_python_syntax
+    from repoach.review.dev_runner import check_python_syntax
 
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "ok1.py").write_text("def foo(): return 1\n", encoding="utf-8")
@@ -269,7 +269,7 @@ def test_check_python_syntax_passes_on_valid_files(tmp_path: Path) -> None:
 
 def test_check_python_syntax_fails_on_invalid_indentation(tmp_path: Path) -> None:
     """Broken indentation → (False, '<path>:<line>: SyntaxError: ...')."""
-    from ferova.review.dev_runner import check_python_syntax
+    from repoach.review.dev_runner import check_python_syntax
 
     (tmp_path / "src").mkdir()
     bad = "def foo():\n    return 1\n  return 2\n"
@@ -283,7 +283,7 @@ def test_check_python_syntax_fails_on_invalid_indentation(tmp_path: Path) -> Non
 
 def test_check_python_syntax_skips_non_python_paths(tmp_path: Path) -> None:
     """Non-.py paths are skipped silently — no crash on .md / missing files."""
-    from ferova.review.dev_runner import check_python_syntax
+    from repoach.review.dev_runner import check_python_syntax
 
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "README.md").write_text("# hi\n", encoding="utf-8")
@@ -303,7 +303,7 @@ def test_check_python_syntax_catches_top_level_function_call(tmp_path: Path) -> 
     triggers NameError at collection.  ``compile()`` doesn't catch
     that — but it DOES catch the variant where the body is missing.
     """
-    from ferova.review.dev_runner import check_python_syntax
+    from repoach.review.dev_runner import check_python_syntax
 
     (tmp_path / "src").mkdir()
     # def with no body → SyntaxError
@@ -317,7 +317,7 @@ def test_check_python_syntax_catches_top_level_function_call(tmp_path: Path) -> 
 
 def test_check_python_syntax_empty_paths_returns_ok(tmp_path: Path) -> None:
     """No paths to check → ``(True, '')`` — common case when only docs change."""
-    from ferova.review.dev_runner import check_python_syntax
+    from repoach.review.dev_runner import check_python_syntax
 
     ok, tail = check_python_syntax(tmp_path, [])
     assert ok is True
@@ -326,7 +326,7 @@ def test_check_python_syntax_empty_paths_returns_ok(tmp_path: Path) -> None:
 
 def test_check_python_syntax_handles_unicode_filename(tmp_path: Path) -> None:
     """UTF-8 file paths and contents are read without crashing."""
-    from ferova.review.dev_runner import check_python_syntax
+    from repoach.review.dev_runner import check_python_syntax
 
     (tmp_path / "src").mkdir()
     # Non-ASCII filename + non-ASCII content (Google docstring style ok).

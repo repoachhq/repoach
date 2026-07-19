@@ -1,6 +1,6 @@
 """Settings-sourced automerge CI-gate wait/poll knobs (SP-AUTOMERGE-EVENT-DRIVEN G1).
 
-``FEROVA_AUTOMERGE_CI_WAIT_SECONDS`` / ``FEROVA_AUTOMERGE_CI_POLL_INTERVAL``
+``REPOACH_AUTOMERGE_CI_WAIT_SECONDS`` / ``REPOACH_AUTOMERGE_CI_POLL_INTERVAL``
 tune the total CI-gate wait budget and the poll cadence within it.  Always
 build ``Settings(_env_file=None)`` so this test is immune to env-file
 anchoring changes landing in the same region (SP-CONFIG-ENV-ANCHOR).
@@ -16,9 +16,9 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine, text
 
-import ferova.core.config as config
-from ferova.core.config import Settings
-from ferova.review.auto_merge import (
+import repoach.core.config as config
+from repoach.core.config import Settings
+from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_CI_TIMEOUT,
     evaluate_ci_gate,
@@ -26,29 +26,29 @@ from ferova.review.auto_merge import (
     required_checks_green,
     run_auto_merge,
 )
-from ferova.review.gh_client import GhResult
+from repoach.review.gh_client import GhResult
 
 
 def test_settings_env_overrides_wait_and_poll(monkeypatch: pytest.MonkeyPatch) -> None:
-    """FEROVA_AUTOMERGE_CI_* env vars override the defaults, else 720/30."""
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", "0")
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_POLL_INTERVAL", "5")
+    """REPOACH_AUTOMERGE_CI_* env vars override the defaults, else 720/30."""
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", "0")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_POLL_INTERVAL", "5")
     overridden = Settings(_env_file=None)
     assert overridden.automerge_ci_wait_seconds == 0
     assert overridden.automerge_ci_poll_interval == 5
 
-    monkeypatch.delenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", raising=False)
-    monkeypatch.delenv("FEROVA_AUTOMERGE_CI_POLL_INTERVAL", raising=False)
+    monkeypatch.delenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", raising=False)
+    monkeypatch.delenv("REPOACH_AUTOMERGE_CI_POLL_INTERVAL", raising=False)
     defaults = Settings(_env_file=None)
     assert defaults.automerge_ci_wait_seconds == 720
     assert defaults.automerge_ci_poll_interval == 30
 
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", "-1")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", "-1")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
-    monkeypatch.delenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", raising=False)
+    monkeypatch.delenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", raising=False)
 
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_POLL_INTERVAL", "0")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_POLL_INTERVAL", "0")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
 
@@ -147,7 +147,7 @@ def test_run_auto_merge_wait_zero_persists_fail_fast_skip(tmp_path: Path) -> Non
 
 def test_explicit_wait_argument_beats_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """An explicit ``wait_seconds`` always wins over the settings default."""
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", "0")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", "0")
     config._settings = None
     try:
         gh = _pending_gh()
@@ -180,8 +180,8 @@ def test_gate_functions_source_defaults_from_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """With no explicit wait/poll, the gate functions read Settings (wait=0)."""
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", "0")
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_POLL_INTERVAL", "30")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", "0")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_POLL_INTERVAL", "30")
     config._settings = None
     try:
         sleeps: list[float] = []

@@ -11,13 +11,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.benchmark_equivalences import load_equivalence_table
-from ferova.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
-from ferova.llm_proxy.providers.cell_probe import CellHealth
-from ferova.llm_proxy.providers.cell_probe_store import CellProbeRow, record_cell_probes
-from ferova.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
-from ferova.review.chain_loop import (
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.benchmark_equivalences import load_equivalence_table
+from repoach.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
+from repoach.llm_proxy.providers.cell_probe import CellHealth
+from repoach.llm_proxy.providers.cell_probe_store import CellProbeRow, record_cell_probes
+from repoach.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
+from repoach.review.chain_loop import (
     CycleReport,
     plan_and_apply,
     run_autopilot_cycle,

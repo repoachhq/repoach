@@ -8,8 +8,8 @@ underlying value is byte-identical to the pre-rename behaviour
 (``PROXY_SONNET_CHAIN``).
 """
 
-from ferova.agent_engine.agent_loop import DEFAULT_REVIEWER_CHAIN, PROXY_SONNET_CHAIN
-from ferova.review.reviewer import Reviewer
+from repoach.agent_engine.agent_loop import DEFAULT_REVIEWER_CHAIN, PROXY_SONNET_CHAIN
+from repoach.review.reviewer import Reviewer
 
 
 def test_reviewer_imports_resolve() -> None:

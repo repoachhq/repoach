@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.aa_ingest import (
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.aa_ingest import (
     AaIngestError,
     fetch_aa_ranking,
     normalize_model_name,

@@ -11,8 +11,8 @@ chains — a per-machine ``.env`` can no longer shadow the canonical file.
 
 from __future__ import annotations
 
-from ferova.core.config import Settings
-from ferova.llm_proxy.config import settings as proxy_settings_module
+from repoach.core.config import Settings
+from repoach.llm_proxy.config import settings as proxy_settings_module
 
 
 def test_core_settings_env_file_tuple_has_chains_env_first() -> None:

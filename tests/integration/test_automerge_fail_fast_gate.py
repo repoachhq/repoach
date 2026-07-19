@@ -1,8 +1,8 @@
 """End-to-end integration test for SP-AUTOMERGE-EVENT-DRIVEN Lane 1.
 
-Exercises the WHOLE settings-to-outcome path: ``FEROVA_AUTOMERGE_CI_WAIT_SECONDS=0``
+Exercises the WHOLE settings-to-outcome path: ``REPOACH_AUTOMERGE_CI_WAIT_SECONDS=0``
 in the environment, through the settings singleton, into
-:func:`ferova.review.auto_merge.run_auto_merge` called with no explicit
+:func:`repoach.review.auto_merge.run_auto_merge` called with no explicit
 ``wait_seconds`` / ``poll_interval`` arguments. Proves the fail-fast
 contract end to end — a still-pending required check yields exactly one
 rollup evaluation, zero sleeps, ``SKIP_CI_TIMEOUT``, a persisted L4 row,
@@ -18,13 +18,13 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import create_engine, text
 
-import ferova.core.config as config
-from ferova.review.auto_merge import (
+import repoach.core.config as config
+from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_CI_TIMEOUT,
     run_auto_merge,
 )
-from ferova.review.gh_client import GhResult
+from repoach.review.gh_client import GhResult
 
 _HEAD = "head_abc123"
 """The head SHA the mocked PR resolves to; the pure gate decides at it."""
@@ -106,14 +106,14 @@ def _last_outcome(db_path: Path) -> str:
 def test_automerge_fail_fast_settings_end_to_end(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Env FEROVA_AUTOMERGE_CI_WAIT_SECONDS=0 through settings to a real skip.
+    """Env REPOACH_AUTOMERGE_CI_WAIT_SECONDS=0 through settings to a real skip.
 
     No ``wait_seconds`` / ``poll_interval`` argument reaches
     ``run_auto_merge`` — the fail-fast budget is sourced entirely from the
     ``Settings`` singleton, which is rebuilt from the process environment
     after being reset to ``None``.
     """
-    monkeypatch.setenv("FEROVA_AUTOMERGE_CI_WAIT_SECONDS", "0")
+    monkeypatch.setenv("REPOACH_AUTOMERGE_CI_WAIT_SECONDS", "0")
     config._settings = None
     try:
         db = tmp_path / "test.db"

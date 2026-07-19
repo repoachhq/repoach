@@ -4,19 +4,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from ferova.health.model_health import STATUS_EMPTY, STATUS_ERROR, STATUS_OK, STATUS_SLOW
-from ferova.llm_proxy.providers.attribution import (
+from repoach.health.model_health import STATUS_EMPTY, STATUS_ERROR, STATUS_OK, STATUS_SLOW
+from repoach.llm_proxy.providers.attribution import (
     CellFault,
     FaultClass,
     FaultScope,
     attribute_faults,
     summarize_cells,
 )
-from ferova.llm_proxy.providers.benchmark_equivalences import (
+from repoach.llm_proxy.providers.benchmark_equivalences import (
     EquivalenceTable,
     ModelEquivalence,
 )
-from ferova.llm_proxy.providers.cell_probe_store import CellProbeRow
+from repoach.llm_proxy.providers.cell_probe_store import CellProbeRow
 
 _WHEN = datetime(2026, 1, 1, tzinfo=UTC)
 

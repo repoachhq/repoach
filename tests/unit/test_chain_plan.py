@@ -10,19 +10,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ferova.llm_proxy.providers.benchmark_equivalences import load_equivalence_table
-from ferova.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
-from ferova.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
-from ferova.review.chain_placement import Placement, place_candidates, profiles_from_ranking
-from ferova.review.chain_plan import (
+from repoach.llm_proxy.providers.benchmark_equivalences import load_equivalence_table
+from repoach.llm_proxy.providers.benchmark_prior import load_benchmark_ranking
+from repoach.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
+from repoach.review.chain_placement import Placement, place_candidates, profiles_from_ranking
+from repoach.review.chain_plan import (
     in_chain_canonicals,
     mutation_to_edit,
     plan_chain_rewrite,
     resolve_provider_cell,
     select_cold_starts,
 )
-from ferova.review.chain_rewrite import EditOp
-from ferova.review.decision import MutationKind, PlannedMutation
+from repoach.review.chain_rewrite import EditOp
+from repoach.review.decision import MutationKind, PlannedMutation
 
 _CHAINS = """# Chain config.
 MODEL_OPUS=nvidia_nim/mistralai/mistral-medium-3.5-128b,claude_code/opus

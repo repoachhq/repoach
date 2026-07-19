@@ -12,17 +12,17 @@ from pathlib import Path
 
 import pytest
 
-from ferova.health.model_health import ModelHealth
-from ferova.health.store import record_probes
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.routing import get_breaker
-from ferova.llm_proxy.routing.probe_seed import (
+from repoach.health.model_health import ModelHealth
+from repoach.health.store import record_probes
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.routing import get_breaker
+from repoach.llm_proxy.routing.probe_seed import (
     parse_tier,
     reason_from_detail,
     seed_breaker_from_probes,
 )
-from ferova.llm_proxy.routing.refs import ModelRef
-from ferova.llm_proxy.routing.tier import Tier
+from repoach.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.routing.tier import Tier
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Settings:

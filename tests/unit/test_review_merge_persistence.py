@@ -13,7 +13,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, inspect, text
 
-from ferova.review.persistence import init_schema, record_merge
+from repoach.review.persistence import init_schema, record_merge
 
 
 def _legacy_pr_merges(db: Path) -> None:

@@ -10,17 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from ferova.llm_proxy.providers.aa_ingest import (
+from repoach.llm_proxy.providers.aa_ingest import (
     AaRanking,
     ModelCapability,
     normalize_model_name,
 )
-from ferova.llm_proxy.providers.benchmark_equivalences import (
+from repoach.llm_proxy.providers.benchmark_equivalences import (
     EquivalenceTable,
     ModelEquivalence,
 )
-from ferova.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
-from ferova.llm_proxy.routing.chain_generate import (
+from repoach.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
+from repoach.llm_proxy.routing.chain_generate import (
     GenerateError,
     assemble_chains,
     regenerate,

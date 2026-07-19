@@ -12,7 +12,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from ferova.health.credits import (
+from repoach.health.credits import (
     CreditsSnapshot,
     fetch_openrouter_credits,
     get_cached_credits,
@@ -103,7 +103,7 @@ async def test_cache_ttl_expiry_and_reset() -> None:
     assert snapshot2 is snapshot1
 
     cached_time = time.monotonic()
-    from ferova.health import credits as credits_module
+    from repoach.health import credits as credits_module
 
     credits_module._cached_fetched_at = cached_time - ttl_s - 1.0
 

@@ -1,6 +1,6 @@
 """Unit tests for the AST-based silent-except scanner.
 
-Exercises :mod:`ferova.lint.no_silent_except` against in-memory
+Exercises :mod:`repoach.lint.no_silent_except` against in-memory
 fixtures so the rule itself is tested independently of the ratchet
 baseline.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.lint.no_silent_except import scan_file, summarise
+from repoach.lint.no_silent_except import scan_file, summarise
 
 
 def _write(tmp_path: Path, name: str, body: str) -> Path:
@@ -458,13 +458,13 @@ class TestScanRoots:
     """``scan`` is robust to missing roots and excludes ``__pycache__``."""
 
     def test_non_existent_root_is_skipped(self, tmp_path: Path) -> None:
-        from ferova.lint.no_silent_except import scan
+        from repoach.lint.no_silent_except import scan
 
         missing = tmp_path / "does_not_exist"
         assert scan([missing]) == []
 
     def test_pycache_files_are_excluded(self, tmp_path: Path) -> None:
-        from ferova.lint.no_silent_except import scan
+        from repoach.lint.no_silent_except import scan
 
         pycache = tmp_path / "__pycache__"
         pycache.mkdir()
@@ -476,7 +476,7 @@ class TestScanRoots:
         assert scan([tmp_path]) == []
 
     def test_scan_aggregates_across_files(self, tmp_path: Path) -> None:
-        from ferova.lint.no_silent_except import scan
+        from repoach.lint.no_silent_except import scan
 
         _write(
             tmp_path,

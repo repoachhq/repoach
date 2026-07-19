@@ -19,8 +19,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from ferova.review.gh_client import GhCli
-from ferova.review.release_gate import (
+from repoach.review.gh_client import GhCli
+from repoach.review.release_gate import (
     compute_release_decision,
     gather_release_facts,
     verify_release,

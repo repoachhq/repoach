@@ -19,8 +19,8 @@ from unittest.mock import patch
 
 from loguru import logger as loguru_logger
 
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
 
 
 def _provider() -> ClaudeCodeProvider:
@@ -94,7 +94,7 @@ def _collect_sse_and_capture(
         async def run() -> list[str]:
             events: list[str] = []
             with patch(
-                "ferova.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
+                "repoach.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
                 side_effect=fake_exec,
             ):
                 async for event in provider.stream_response(_request(system_text)):
@@ -264,7 +264,7 @@ def _build_provider_and_capture_loguru(
     )
     try:
         with patch(
-            "ferova.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
+            "repoach.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
         ):
             provider = ClaudeCodeProvider(
                 ProviderConfig(api_key="unused"),
@@ -327,7 +327,7 @@ def test_concurrent_requests_get_distinct_sysprompt_files() -> None:
 
     async def run_concurrent() -> None:
         with patch(
-            "ferova.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
+            "repoach.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
             side_effect=fake_exec,
         ):
             await asyncio.gather(drive(system_a), drive(system_b))

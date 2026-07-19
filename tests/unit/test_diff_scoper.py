@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from ferova.review.diff_scoper import scope_diff, split_diff
-from ferova.review.reviewer import _DIFF_HARD_CAP_CHARS, Architect, ReviewVerdict
+from repoach.review.diff_scoper import scope_diff, split_diff
+from repoach.review.reviewer import _DIFF_HARD_CAP_CHARS, Architect, ReviewVerdict
 
 FIXTURE_DIFF = """\npreamble: changes in this batch
 diff --git a/src/alpha.py b/src/alpha.py
@@ -148,7 +148,7 @@ def test_review_diff_uses_scoper() -> None:
 
 def test_review_diff_logs_scoping() -> None:
     """Oversized diff: _log.warning fired with event='review.diff_scoped' and n_omitted>0."""
-    import ferova.review.reviewer as _mod
+    import repoach.review.reviewer as _mod
 
     big_diff = _make_oversized_diff(_DIFF_HARD_CAP_CHARS)
     assert len(big_diff) > _DIFF_HARD_CAP_CHARS

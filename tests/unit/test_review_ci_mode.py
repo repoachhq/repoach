@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 from typer.testing import CliRunner
 
-from ferova.cli.review_cmds import review_app
+from repoach.cli.review_cmds import review_app
 
 
 @dataclass
@@ -71,7 +71,7 @@ _REQUIRED_REVIEW_ENTRY = {
 
 def _build_fake_team() -> _FakeTeam:
     """Build a fake :class:`TeamOutcome` covering every verdict + comment severity."""
-    from ferova.review.reviewer import BotRole, ReviewVerdict
+    from repoach.review.reviewer import BotRole, ReviewVerdict
 
     outcomes = [
         _FakeOutcome(
@@ -107,7 +107,7 @@ def test_review_pr_json_payload_matches_documented_schema() -> None:
 
     runner = CliRunner()
     fake_team = _build_fake_team()
-    with patch("ferova.cli.review_cmds.run_review", return_value=fake_team):
+    with patch("repoach.cli.review_cmds.run_review", return_value=fake_team):
         result = runner.invoke(review_app, ["pr", "999", "--dry-run"])
 
     assert result.exit_code == 2, f"REQUEST_CHANGES must exit 2 ; got {result.exit_code}"
@@ -148,12 +148,12 @@ def test_review_pr_dry_run_and_live_emit_identical_schema() -> None:
     runner = CliRunner()
     fake_team = _build_fake_team()
 
-    with patch("ferova.cli.review_cmds.run_review", return_value=fake_team):
+    with patch("repoach.cli.review_cmds.run_review", return_value=fake_team):
         dry_result = runner.invoke(review_app, ["pr", "999", "--dry-run"])
     fake_team_live = _build_fake_team()
     fake_team_live.posted_comments = 3
     fake_team_live.posted_reviews = 4
-    with patch("ferova.cli.review_cmds.run_review", return_value=fake_team_live):
+    with patch("repoach.cli.review_cmds.run_review", return_value=fake_team_live):
         live_result = runner.invoke(review_app, ["pr", "999"])
 
     dry_payload = json.loads(dry_result.stdout)
@@ -167,7 +167,7 @@ def test_review_pr_dry_run_and_live_emit_identical_schema() -> None:
 
 def test_review_pr_exit_zero_on_approve_or_comment() -> None:
     """APPROVE and COMMENT verdicts must both exit 0 (only REQUEST_CHANGES exits 2)."""
-    from ferova.review.reviewer import BotRole, ReviewVerdict
+    from repoach.review.reviewer import BotRole, ReviewVerdict
 
     runner = CliRunner()
     for verdict in (ReviewVerdict.APPROVE, ReviewVerdict.COMMENT):
@@ -182,6 +182,6 @@ def test_review_pr_exit_zero_on_approve_or_comment() -> None:
                 _FakeOutcome(role=BotRole.ARCHITECT, verdict=verdict, summary=""),
             ],
         )
-        with patch("ferova.cli.review_cmds.run_review", return_value=team):
+        with patch("repoach.cli.review_cmds.run_review", return_value=team):
             result = runner.invoke(review_app, ["pr", "42", "--dry-run"])
         assert result.exit_code == 0, f"{verdict.value} must exit 0 ; got {result.exit_code}"

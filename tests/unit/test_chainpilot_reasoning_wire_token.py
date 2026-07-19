@@ -10,14 +10,14 @@ NIM and OpenRouter now route their reasoning bound through the shared
 
 from __future__ import annotations
 
-from ferova.llm_proxy.api.models.anthropic import Message, MessagesRequest, ThinkingConfig
-from ferova.llm_proxy.config.nim import NimSettings
-from ferova.llm_proxy.providers import nvidia_nim
-from ferova.llm_proxy.providers.nvidia_nim.request import build_request_body as nim_build
-from ferova.llm_proxy.providers.open_router.request import (
+from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest, ThinkingConfig
+from repoach.llm_proxy.config.nim import NimSettings
+from repoach.llm_proxy.providers import nvidia_nim
+from repoach.llm_proxy.providers.nvidia_nim.request import build_request_body as nim_build
+from repoach.llm_proxy.providers.open_router.request import (
     build_request_body as openrouter_build,
 )
-from ferova.llm_proxy.providers.reasoning import bounded_reasoning_budget
+from repoach.llm_proxy.providers.reasoning import bounded_reasoning_budget
 
 
 def _request(max_tokens: int, thinking: ThinkingConfig | None = None) -> MessagesRequest:

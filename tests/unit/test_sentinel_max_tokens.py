@@ -13,7 +13,7 @@ cannot silently return on any role.
 
 from __future__ import annotations
 
-from ferova.review.reviewer import Architect, Reviewer, Scribe, Sentinel, Tester
+from repoach.review.reviewer import Architect, Reviewer, Scribe, Sentinel, Tester
 
 
 def test_sentinel_inherits_base_max_tokens() -> None:

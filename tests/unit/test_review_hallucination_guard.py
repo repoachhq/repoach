@@ -15,12 +15,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.hallucination_guard import (
+from repoach.review.hallucination_guard import (
     apply_hallucination_guard,
     make_repo_file_reader,
     make_repo_symbol_searcher,
 )
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     BotRole,
     ReviewComment,
     ReviewerOutcome,
@@ -55,7 +55,7 @@ def _reader(mapping: dict[str, str]):
 
 def test_missing_x_claim_downgraded_when_token_in_file():
     comment = ReviewComment(
-        file="src/ferova/foo.py",
+        file="src/repoach/foo.py",
         line=42,
         severity="major",
         body="Args: section header is missing on `respond` — please add a Google-style docstring.",
@@ -63,7 +63,7 @@ def test_missing_x_claim_downgraded_when_token_in_file():
     out = _outcome(verdict=ReviewVerdict.REQUEST_CHANGES, comments=[comment])
     reader = _reader(
         {
-            "src/ferova/foo.py": (
+            "src/repoach/foo.py": (
                 'def respond(x):\n    """Do a thing.\n\n    Args:\n        x: input.\n    """\n    return x\n'
             )
         }
@@ -82,7 +82,7 @@ def test_missing_x_claim_downgraded_when_token_in_file():
 
 def test_missing_x_claim_preserved_when_token_truly_absent():
     comment = ReviewComment(
-        file="src/ferova/foo.py",
+        file="src/repoach/foo.py",
         line=10,
         severity="major",
         body="Returns section is missing on `respond`.",
@@ -90,7 +90,7 @@ def test_missing_x_claim_preserved_when_token_truly_absent():
     out = _outcome(verdict=ReviewVerdict.REQUEST_CHANGES, comments=[comment])
     reader = _reader(
         {
-            "src/ferova/foo.py": "def respond(x):\n    return x\n",
+            "src/repoach/foo.py": "def respond(x):\n    return x\n",
         }
     )
 
@@ -145,7 +145,7 @@ def test_domain_vocab_french_rename_downgraded():
 
 def test_unreadable_file_leaves_comment_untouched():
     comment = ReviewComment(
-        file="src/ferova/foo.py",
+        file="src/repoach/foo.py",
         line=1,
         severity="major",
         body="Args: section is missing.",
@@ -161,13 +161,13 @@ def test_unreadable_file_leaves_comment_untouched():
 
 def test_partial_downgrade_keeps_request_changes():
     real_blocker = ReviewComment(
-        file="src/ferova/foo.py",
+        file="src/repoach/foo.py",
         line=20,
         severity="blocker",
         body="Hard-coded credential in source — security risk.",
     )
     halluc_blocker = ReviewComment(
-        file="src/ferova/foo.py",
+        file="src/repoach/foo.py",
         line=42,
         severity="major",
         body="Args: section header is missing.",
@@ -178,7 +178,7 @@ def test_partial_downgrade_keeps_request_changes():
     )
     reader = _reader(
         {
-            "src/ferova/foo.py": (
+            "src/repoach/foo.py": (
                 'def respond(x):\n    """Do a thing.\n\n    Args:\n        x: input.\n    """\n    return x\n'
             )
         }
@@ -195,7 +195,7 @@ def test_partial_downgrade_keeps_request_changes():
 
 def test_no_blocker_or_major_returns_outcome_unchanged():
     nit = ReviewComment(
-        file="src/ferova/foo.py",
+        file="src/repoach/foo.py",
         line=1,
         severity="nit",
         body="Returns section is missing.",
@@ -215,7 +215,7 @@ def test_pr20_spec_embed_claim_downgraded_when_file_has_no_markers():
     has zero ``## Pourquoi`` / ``# SP-`` headers, so the claim is false.
     """
     comment = ReviewComment(
-        file="src/ferova/review/reviewer.py",
+        file="src/repoach/review/reviewer.py",
         line=192,
         severity="blocker",
         body=(
@@ -231,7 +231,7 @@ def test_pr20_spec_embed_claim_downgraded_when_file_has_no_markers():
     )
     reader = _reader(
         {
-            "src/ferova/review/reviewer.py": (
+            "src/repoach/review/reviewer.py": (
                 "class Reviewer:\n    def _render_prompt(self, diff, *, spec_plan=None):\n"
                 '        return template.replace("{SPEC_PLAN}", spec_plan or "")\n'
             )
@@ -252,7 +252,7 @@ def test_spec_embed_claim_preserved_when_file_actually_embeds_doc():
     real leak in that case).
     """
     comment = ReviewComment(
-        file="src/ferova/review/leak.py",
+        file="src/repoach/review/leak.py",
         line=1,
         severity="blocker",
         body="This file embeds the full spec doc.",
@@ -264,7 +264,7 @@ def test_spec_embed_claim_preserved_when_file_actually_embeds_doc():
     )
     reader = _reader(
         {
-            "src/ferova/review/leak.py": (
+            "src/repoach/review/leak.py": (
                 '"""# SP-FAKE-EXAMPLE\n\n## Why\nleaked content here.\n"""\n'
             )
         }
@@ -299,7 +299,7 @@ def _searcher(known: set[str]):
 def test_missing_test_claim_downgraded_when_test_exists_on_disk():
     """SP-CODER-EVIDENCE-CHALLENGE — Tester hallucination caught by symbol search."""
     comment = ReviewComment(
-        file="src/ferova/snapshots.py",
+        file="src/repoach/snapshots.py",
         line=87,
         severity="major",
         body=(
@@ -330,7 +330,7 @@ def test_missing_test_claim_downgraded_when_test_exists_on_disk():
 def test_missing_test_claim_preserved_when_test_truly_absent():
     """Genuinely missing test → no downgrade, verdict stays REQUEST_CHANGES."""
     comment = ReviewComment(
-        file="src/ferova/snapshots.py",
+        file="src/repoach/snapshots.py",
         line=87,
         severity="major",
         body="No test for performance_7d — add test_performance_7d_happy.",
@@ -355,7 +355,7 @@ def test_missing_test_claim_preserved_when_test_truly_absent():
 def test_missing_test_check_skipped_when_no_searcher_provided():
     """Backwards-compat — call sites without the optional searcher still work."""
     comment = ReviewComment(
-        file="src/ferova/snapshots.py",
+        file="src/repoach/snapshots.py",
         line=87,
         severity="major",
         body="No test for performance_7d — add test_performance_7d_happy.",

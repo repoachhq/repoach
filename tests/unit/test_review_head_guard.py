@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.orchestrator import resolve_fresh_head
+from repoach.review.orchestrator import resolve_fresh_head
 
 
 @pytest.fixture

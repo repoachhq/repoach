@@ -6,13 +6,13 @@ and de-duplication. Pure — matrix, equivalences and speed are constructed inli
 
 from __future__ import annotations
 
-from ferova.llm_proxy.providers.aa_ingest import ModelCapability, normalize_model_name
-from ferova.llm_proxy.providers.benchmark_equivalences import (
+from repoach.llm_proxy.providers.aa_ingest import ModelCapability, normalize_model_name
+from repoach.llm_proxy.providers.benchmark_equivalences import (
     EquivalenceTable,
     ModelEquivalence,
 )
-from ferova.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
-from ferova.llm_proxy.routing.chain_expand import (
+from repoach.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
+from repoach.llm_proxy.routing.chain_expand import (
     build_servable_index,
     expand_chains,
     expand_tier,

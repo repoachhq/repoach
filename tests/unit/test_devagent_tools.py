@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from ferova.review.devagent_tools import make_developer_tools
-from ferova.review.secret_env import scrubbed_env
+from repoach.review.devagent_tools import make_developer_tools
+from repoach.review.secret_env import scrubbed_env
 
 
 def _tools(repo_root: Path) -> dict:
@@ -29,9 +29,9 @@ def test_toolbox_shape() -> None:
 
 def test_write_file_creates_parent_dirs(tmp_path: Path) -> None:
     write = _tools(tmp_path)["write_file"]
-    result = write("src/ferova/foo/bar.py", "x = 1\n")
+    result = write("src/repoach/foo/bar.py", "x = 1\n")
     assert result.startswith("ok:")
-    assert (tmp_path / "src/ferova/foo/bar.py").read_text() == "x = 1\n"
+    assert (tmp_path / "src/repoach/foo/bar.py").read_text() == "x = 1\n"
 
 
 def test_write_file_rejects_forbidden_path(tmp_path: Path) -> None:
@@ -182,8 +182,8 @@ def test_allowed_paths_jails_edit_too(tmp_path: Path) -> None:
 def test_scrubbed_env_strips_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "live")
     monkeypatch.setenv("CLAUDE_CODE_ROUTINE_TOKEN", "live")
-    monkeypatch.setenv("FEROVA_DB_PATH", "data/x.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "data/x.db")
     env = scrubbed_env()
     assert "FEROVA_OPENROUTER_API_KEY" not in env
     assert "CLAUDE_CODE_ROUTINE_TOKEN" not in env
-    assert env.get("FEROVA_DB_PATH") == "data/x.db"
+    assert env.get("REPOACH_DB_PATH") == "data/x.db"

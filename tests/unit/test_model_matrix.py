@@ -10,10 +10,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
-from ferova.llm_proxy.providers.model_catalog import ListedModel, ProviderModelListing
-from ferova.llm_proxy.providers.model_matrix import (
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
+from repoach.llm_proxy.providers.model_catalog import ListedModel, ProviderModelListing
+from repoach.llm_proxy.providers.model_matrix import (
     ModelCell,
     assemble_matrix,
     sweep_model_matrix,

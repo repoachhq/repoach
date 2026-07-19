@@ -12,8 +12,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
 
 
 def test_oversized_system_prompt_survives_real_spawn(tmp_path: Path) -> None:

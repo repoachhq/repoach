@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from ferova.llm_proxy.providers.cell_probe import CellHealth
-from ferova.llm_proxy.providers.effort_map import (
+from repoach.llm_proxy.providers.cell_probe import CellHealth
+from repoach.llm_proxy.providers.effort_map import (
     EffortMap,
     get_effort_map,
     reset_effort_map,
     seed_effort_map,
 )
-from ferova.llm_proxy.providers.effort_probe_store import record_effort_probes
-from ferova.llm_proxy.providers.effort_sweep import EffortProbe
+from repoach.llm_proxy.providers.effort_probe_store import record_effort_probes
+from repoach.llm_proxy.providers.effort_sweep import EffortProbe
 
 _T0 = datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC)
 

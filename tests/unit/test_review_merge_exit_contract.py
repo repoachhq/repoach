@@ -10,7 +10,7 @@ import inspect
 
 import pytest
 
-import ferova.review.auto_merge as am
+import repoach.review.auto_merge as am
 
 
 def test_every_outcome_constant_is_classified() -> None:
@@ -78,8 +78,8 @@ def test_cli_review_merge_exit_code_mapping(
 
     from typer.testing import CliRunner
 
-    from ferova.cli import review_cmds
-    from ferova.review.auto_merge import AutoMergeResult
+    from repoach.cli import review_cmds
+    from repoach.review.auto_merge import AutoMergeResult
 
     monkeypatch.setattr(
         review_cmds,

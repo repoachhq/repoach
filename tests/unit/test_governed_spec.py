@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from ferova.arch import MalformedFrontmatterError
-from ferova.review.governed_spec import (
+from repoach.arch import MalformedFrontmatterError
+from repoach.review.governed_spec import (
     GovernedSpec,
     load_governed_spec,
     render_arch_edges,

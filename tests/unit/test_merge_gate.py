@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -20,15 +20,15 @@ from ferova.review.findings import (
     record_review_integrity,
     update_finding_status,
 )
-from ferova.review.merge_gate import (
+from repoach.review.merge_gate import (
     MergeFacts,
     compute_merge_decision,
     gather_merge_facts,
     summarise_ledger_facts,
     verdict_from_facts,
 )
-from ferova.review.reviewer import ReviewVerdict
-from ferova.review.spec_gate import SpecCoverage, record_spec_coverage
+from repoach.review.reviewer import ReviewVerdict
+from repoach.review.spec_gate import SpecCoverage, record_spec_coverage
 
 
 def _facts(**over: object) -> MergeFacts:

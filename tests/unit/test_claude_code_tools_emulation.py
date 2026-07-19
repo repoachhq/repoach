@@ -17,8 +17,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
 
 _READ_FILE_TOOL = {
     "name": "read_file",
@@ -71,7 +71,7 @@ def _collect_sse(
     async def run() -> list[str]:
         events: list[str] = []
         with patch(
-            "ferova.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
+            "repoach.llm_proxy.providers.claude_code.client.asyncio.create_subprocess_exec",
             side_effect=fake_exec,
         ):
             async for event in provider.stream_response(_request(tools)):

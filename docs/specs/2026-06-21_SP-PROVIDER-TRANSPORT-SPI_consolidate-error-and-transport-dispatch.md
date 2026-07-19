@@ -13,7 +13,9 @@ owns:
     - src/ferova/llm_proxy/providers/registry.py         # provider factory (transport-driven dispatch)
   resources: N/A                                             # code-only: no shared table/topic/format
 
-depends_on: []                                               # imports only frontier code (core.anthropic, catalog, exceptions, rate_limit, config)
+depends_on:                                                  # remaining imports are frontier code (core.anthropic, exceptions, rate_limit, config)
+  - SP-CHAINS-THINKING-CLASS                                 # imports providers.catalog
+  - SP-CHAINPILOT-REASONING-WIRE-GENERIC                     # imports providers.openai_generic
 provides_to: []                                              # AUTO-maintained
 
 constraints: {}

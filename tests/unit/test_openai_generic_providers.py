@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers import catalog
-from ferova.llm_proxy.providers.openai_generic import GenericOpenAIProvider
-from ferova.llm_proxy.providers.registry import create_provider
-from ferova.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers import catalog
+from repoach.llm_proxy.providers.openai_generic import GenericOpenAIProvider
+from repoach.llm_proxy.providers.registry import create_provider
+from repoach.llm_proxy.routing.refs import ModelRef
 
 _PROVIDERS = [
     ("kimi", "FEROVA_KIMI_API_KEY", "https://api.moonshot.ai/v1"),

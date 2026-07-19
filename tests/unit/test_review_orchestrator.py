@@ -15,14 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from ferova.review import orchestrator
-from ferova.review.merge_gate import (
+from repoach.review import orchestrator
+from repoach.review.merge_gate import (
     compute_merge_decision,
     gather_merge_facts,
     verdict_from_facts,
 )
-from ferova.review.orchestrator import record_review_ledger
-from ferova.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
+from repoach.review.orchestrator import record_review_ledger
+from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
 
 
 def _bench() -> list[ReviewerOutcome]:

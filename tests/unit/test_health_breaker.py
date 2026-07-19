@@ -15,22 +15,22 @@ from fastapi.testclient import TestClient
 from loguru import logger as loguru_logger
 from pydantic import ValidationError
 
-from ferova.health.credits import reset_credits_cache
-from ferova.llm_proxy.api.app import create_app
-from ferova.llm_proxy.api.dependencies import get_credits_client, get_settings
-from ferova.llm_proxy.api.model_router import ModelRouter, ResolvedModel
-from ferova.llm_proxy.api.services import ClaudeProxyService
-from ferova.llm_proxy.config import settings as settings_module
-from ferova.llm_proxy.config.settings import (
+from repoach.health.credits import reset_credits_cache
+from repoach.llm_proxy.api.app import create_app
+from repoach.llm_proxy.api.dependencies import get_credits_client, get_settings
+from repoach.llm_proxy.api.model_router import ModelRouter, ResolvedModel
+from repoach.llm_proxy.api.services import ClaudeProxyService
+from repoach.llm_proxy.config import settings as settings_module
+from repoach.llm_proxy.config.settings import (
     Settings,
 )
-from ferova.llm_proxy.routing import get_breaker, reset_breaker
-from ferova.llm_proxy.routing.breaker import (
+from repoach.llm_proxy.routing import get_breaker, reset_breaker
+from repoach.llm_proxy.routing.breaker import (
     BreakerState,
     escalated_ttl,
     ttl_for_reason,
 )
-from ferova.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.routing.refs import ModelRef
 
 
 def _ref(spec: str) -> ModelRef:

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import ClaimType, FindingStatus, Severity, fetch_findings
-from ferova.review.findings_bridge import record_findings_for_outcomes
-from ferova.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
+from repoach.review.findings import ClaimType, FindingStatus, Severity, fetch_findings
+from repoach.review.findings_bridge import record_findings_for_outcomes
+from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 
 
 def _make_outcome(
