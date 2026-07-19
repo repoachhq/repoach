@@ -28,15 +28,11 @@ Add a chain_status_window_h settings knob, implement the pure async build_chain_
 
 ## Step 4 — Wire chain-status into the tracked SessionStart hook with e2e coverage
 
-- **Files**: `.claude/settings.json`, `tests/unit/test_chain_status_hook.py`, `tests/integration/test_chain_status_cli.py`
-- **Action**: In .claude/settings.json add a SessionStart hook command that runs the digest (e.g. `ferova chain-status || true`) alongside the existing dream_check.py hook, so a broken venv can never block a session (G3, G4). Add tests/unit/test_chain_status_hook.py with a test named test_session_start_hook_includes_chain_status_command that resolves the repo root, `json.load`s the tracked .claude/settings.json, and asserts a SessionStart hook command contains both `chain-status` and `|| true`, following the repo-file-assertion pattern of tests/unit/test_dream_check_hook.py. Add tests/integration/test_chain_status_cli.py with a test named test_chain_status_end_to_end_degraded_environment that invokes the installed `ferova chain-status` command as a subprocess against a fresh tmp-path db and an unbound localhost proxy port, asserting exit code 0, the expected degraded digest lines (`no probes in window`, `proxy: unreachable`), and no traceback on stderr.
+- **Files**: `.claude/settings.json`, `tests/unit/test_chain_status.py`, `tests/integration/test_credits_integration.py`
+- **Action**: In .claude/settings.json add a SessionStart hook command that runs the digest (e.g. `ferova chain-status || true`) alongside the existing dream_check.py hook, so a broken venv can never block a session (G3, G4). Add to tests/unit/test_chain_status.py a test named test_session_start_hook_includes_chain_status_command that resolves the repo root, `json.load`s the tracked .claude/settings.json, and asserts a SessionStart hook command contains both `chain-status` and `|| true`, following the repo-file-assertion pattern of tests/unit/test_dream_check_hook.py. Add to the existing tests/integration/test_credits_integration.py a test named test_chain_status_end_to_end_degraded_environment that invokes the installed `ferova chain-status` command as a subprocess against a fresh tmp-path db and an unbound localhost proxy port, asserting exit code 0, the degraded digest lines (`no probes in window`, `proxy: unreachable`), and no traceback on stderr. AC6 caps the diff at two NEW files (chain_status.py + its test module), so the hook assertion lives in the unit module and the e2e test extends an existing integration module.
 - **Commit**: `feat(cli): wire chain-status into SessionStart hook with e2e coverage`
-- **Done when**: pytest tests/unit/test_chain_status_hook.py tests/integration/test_chain_status_cli.py -q passes
-- **Unit tests**: `tests/unit/test_chain_status_hook.py::test_session_start_hook_includes_chain_status_command`
-
-## Integration tests
-
-- `tests/integration/test_chain_status_cli.py::test_chain_status_end_to_end_degraded_environment`
+- **Done when**: pytest tests/unit/test_chain_status.py tests/integration/test_credits_integration.py -q passes
+- **Unit tests**: `tests/unit/test_chain_status.py::test_session_start_hook_includes_chain_status_command`
 
 <!-- ferova-action-plan -->
 ```json
@@ -97,19 +93,19 @@ Add a chain_status_window_h settings knob, implement the pure async build_chain_
       "title": "Wire chain-status into the tracked SessionStart hook with e2e coverage",
       "files": [
         ".claude/settings.json",
-        "tests/unit/test_chain_status_hook.py",
-        "tests/integration/test_chain_status_cli.py"
+        "tests/unit/test_chain_status.py",
+        "tests/integration/test_credits_integration.py"
       ],
-      "action": "In .claude/settings.json add a SessionStart hook command that runs the digest (e.g. `ferova chain-status || true`) alongside the existing dream_check.py hook, so a broken venv can never block a session (G3, G4). Add tests/unit/test_chain_status_hook.py with a test named test_session_start_hook_includes_chain_status_command that resolves the repo root, `json.load`s the tracked .claude/settings.json, and asserts a SessionStart hook command contains both `chain-status` and `|| true`, following the repo-file-assertion pattern of tests/unit/test_dream_check_hook.py. Add tests/integration/test_chain_status_cli.py with a test named test_chain_status_end_to_end_degraded_environment that invokes the installed `ferova chain-status` command as a subprocess against a fresh tmp-path db and an unbound localhost proxy port, asserting exit code 0, the expected degraded digest lines (`no probes in window`, `proxy: unreachable`), and no traceback on stderr.",
+      "action": "In .claude/settings.json add a SessionStart hook command that runs the digest (e.g. `ferova chain-status || true`) alongside the existing dream_check.py hook, so a broken venv can never block a session (G3, G4). Add to tests/unit/test_chain_status.py a test named test_session_start_hook_includes_chain_status_command that resolves the repo root, `json.load`s the tracked .claude/settings.json, and asserts a SessionStart hook command contains both `chain-status` and `|| true`, following the repo-file-assertion pattern of tests/unit/test_dream_check_hook.py. Add to the existing tests/integration/test_credits_integration.py a test named test_chain_status_end_to_end_degraded_environment that invokes the installed `ferova chain-status` command as a subprocess against a fresh tmp-path db and an unbound localhost proxy port, asserting exit code 0, the degraded digest lines (`no probes in window`, `proxy: unreachable`), and no traceback on stderr. AC6 caps the diff at two NEW files (chain_status.py + its test module), so the hook assertion lives in the unit module and the e2e test extends an existing integration module.",
       "commit_message": "feat(cli): wire chain-status into SessionStart hook with e2e coverage",
-      "done_when": "pytest tests/unit/test_chain_status_hook.py tests/integration/test_chain_status_cli.py -q passes",
+      "done_when": "pytest tests/unit/test_chain_status.py tests/integration/test_credits_integration.py -q passes",
       "unit_tests": [
-        "tests/unit/test_chain_status_hook.py::test_session_start_hook_includes_chain_status_command"
+        "tests/unit/test_chain_status.py::test_session_start_hook_includes_chain_status_command"
       ]
     }
   ],
   "integration_tests": [
-    "tests/integration/test_chain_status_cli.py::test_chain_status_end_to_end_degraded_environment"
+    "tests/integration/test_credits_integration.py::test_chain_status_end_to_end_degraded_environment"
   ]
 }
 ```

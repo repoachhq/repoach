@@ -6,6 +6,7 @@ truthful boundary fake for /health and credits — no monkeypatching of ferova c
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -278,3 +279,26 @@ def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -
     assert "proxy: unreachable" in result.stdout
     assert "no probes in window" in result.stdout
     assert "Traceback" not in result.stderr
+
+
+_REPO = Path(__file__).resolve().parents[2]
+_SETTINGS = _REPO / ".claude" / "settings.json"
+
+
+def test_session_start_hook_includes_chain_status_command() -> None:
+    """The tracked settings.json SessionStart hooks must contain a
+    chain-status command guarded by ``|| true`` for fail-open semantics.
+    """
+    doc = json.loads(_SETTINGS.read_text(encoding="utf-8"))
+
+    session_start = doc["hooks"]["SessionStart"]
+    assert isinstance(session_start, list)
+    assert len(session_start) > 0
+
+    all_commands = [
+        hook.get("command", "") for entry in session_start for hook in entry.get("hooks", [])
+    ]
+    chain_cmds = [c for c in all_commands if "chain-status" in c]
+    assert len(chain_cmds) > 0, "SessionStart hooks must include a chain-status command"
+    for cmd in chain_cmds:
+        assert "|| true" in cmd, f"chain-status hook must be fail-open with || true, got: {cmd!r}"

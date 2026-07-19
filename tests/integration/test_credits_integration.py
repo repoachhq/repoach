@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+from pathlib import Path
+
 import httpx
 import pytest
 from typer.testing import CliRunner
@@ -66,3 +70,39 @@ def test_cli_credits_low_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 1
     assert "LOW" in result.stdout
     assert len(transport.get_requests) >= 1
+
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
+    """Invoke ``ferova chain-status`` against a fresh db and an unbound proxy.
+
+    Asserts exit code 0, the expected degraded digest lines, and no
+    traceback on stderr (fail-open contract G4 of SP-CHAIN-STATUS-DIGEST).
+    """
+    db_path = tmp_path / "db" / "ferova.db"
+    db_path.parent.mkdir()
+
+    result = subprocess.run(
+        [
+            "ferova",
+            "chain-status",
+            "--db-path",
+            str(db_path),
+            "--proxy-url",
+            "http://127.0.0.1:19999",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=30,
+        env={**os.environ, "FEROVA_OPENROUTER_API_KEY": ""},
+    )
+
+    assert result.returncode == 0, (
+        f"expected exit 0, got {result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "no probes in window" in result.stdout
+    assert "proxy: unreachable" in result.stdout
+    assert "Traceback (most recent call last)" not in result.stderr
