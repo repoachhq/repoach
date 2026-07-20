@@ -6,11 +6,6 @@ requires-python = ">=3.11"
 readme = "README.md"
 authors = [{ name = "Joseph Faye" }]
 
-[project.urls]
-Homepage = "https://github.com/repoachhq/repoach"
-Repository = "https://github.com/repoachhq/repoach"
-Issues = "https://github.com/repoachhq/repoach/issues"
-
 # Genesis reset: dependencies cover the surviving review factory only
 # (review/ + agent_engine/ + llm/ + llm_proxy/ + core/ + cli/ + lint/).
 # The rebuilt system reintroduces its own dependencies as it lands.
@@ -41,6 +36,11 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+
+[project.urls]
+Homepage = "https://github.com/repoachhq/repoach"
+Repository = "https://github.com/repoachhq/repoach"
+Issues = "https://github.com/repoachhq/repoach/issues"
 
 [project.scripts]
 repoach = "repoach.cli:app"
