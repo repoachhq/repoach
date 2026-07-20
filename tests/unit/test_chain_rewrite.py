@@ -16,7 +16,7 @@ from repoach.review.chain_rewrite import (
 )
 
 _FIXTURE = """# Chain config header comment.
-FEROVA_SOMETHING=keep-me
+REPOACH_SOMETHING=keep-me
 
 # OPUS comment line.
 MODEL_OPUS=nvidia_nim/mistralai/mistral-medium-3.5-128b,nvidia_nim/deepseek-ai/deepseek-v4-pro,claude_code/opus
@@ -67,7 +67,7 @@ def test_evict_preserves_comments_and_other_keys() -> None:
 
     for line in (
         "# Chain config header comment.",
-        "FEROVA_SOMETHING=keep-me",
+        "REPOACH_SOMETHING=keep-me",
         "# OPUS comment line.",
         "# Trailing comment.",
     ):

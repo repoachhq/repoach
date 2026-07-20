@@ -9,7 +9,7 @@ updated: 2026-06-28
 
 owns:
   code:
-    - src/ferova/review/spec_supersede.py
+    - src/repoach/review/spec_supersede.py
   resources: []
 
 depends_on:

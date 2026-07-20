@@ -8,7 +8,7 @@ created: 2026-06-24
 updated: 2026-06-24
 
 owns:
-  code: [src/ferova/llm_proxy/providers/effort_knob.py]   # the reasoning_effort wire-fragment builder + single-pass effort resolver
+  code: [src/repoach/llm_proxy/providers/effort_knob.py]   # the reasoning_effort wire-fragment builder + single-pass effort resolver
   resources: N/A                                              # pure policy; reads REASONING_CONTROLS, no state
 
 depends_on:

@@ -9,7 +9,7 @@ updated: 2026-06-28
 
 owns:
   code:
-    - src/ferova/review/decompose.py
+    - src/repoach/review/decompose.py
   resources:
     - prompts/review/decomposer_0.1.0.md
 

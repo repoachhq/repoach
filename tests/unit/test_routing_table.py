@@ -2,7 +2,7 @@
 
 Characterises ``RoutingTable.chain_for`` — the single chain resolver that
 replaced ``Settings.resolve_models`` at the switchover. The ``settings``
-fixture builds a deterministic Settings from explicit ``FEROVA_MODEL_*``
+fixture builds a deterministic Settings from explicit bare ``MODEL_*``
 env vars with the dotenv files disabled, so the real ``chains.env``
 cannot leak into the assertions.
 """
@@ -20,10 +20,10 @@ _ENV_KEYS = [
     "MODEL_OPUS",
     "MODEL_SONNET",
     "MODEL_HAIKU",
-    "FEROVA_PROXY_DEFAULT_MODEL",
-    "FEROVA_MODEL_OPUS",
-    "FEROVA_MODEL_SONNET",
-    "FEROVA_MODEL_HAIKU",
+    "REPOACH_PROXY_DEFAULT_MODEL",
+    "REPOACH_MODEL_OPUS",
+    "REPOACH_MODEL_SONNET",
+    "REPOACH_MODEL_HAIKU",
 ]
 
 
@@ -31,7 +31,7 @@ _ENV_KEYS = [
 def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     for key in _ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("FEROVA_PROXY_DEFAULT_MODEL", "nvidia_nim/default/model")
+    monkeypatch.setenv("REPOACH_PROXY_DEFAULT_MODEL", "nvidia_nim/default/model")
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus-1,claude_code/opus")
     monkeypatch.setenv("MODEL_SONNET", "open_router/sonnet-1")
     return Settings(_env_file=None)

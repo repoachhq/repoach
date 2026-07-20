@@ -9,8 +9,8 @@ updated: 2026-06-23
 
 owns:
   code:
-    - src/ferova/llm_proxy/providers/cell_probe_sweep.py    # the matrix probe orchestrator
-    - src/ferova/llm_proxy/providers/cell_probe_store.py    # the cell-health persistence leaf
+    - src/repoach/llm_proxy/providers/cell_probe_sweep.py    # the matrix probe orchestrator
+    - src/repoach/llm_proxy/providers/cell_probe_store.py    # the cell-health persistence leaf
   resources:
     - db:table:cell_health_probe                                # the per-cell probe time-series
 

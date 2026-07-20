@@ -46,7 +46,7 @@ def _row(
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     """A settings instance with the key set via env and no env-file pollution."""
-    monkeypatch.setenv("FEROVA_ARTIFICIAL_ANALYSIS_API_KEY", "test-key")
+    monkeypatch.setenv("REPOACH_ARTIFICIAL_ANALYSIS_API_KEY", "test-key")
     return Settings(_env_file=None)
 
 
@@ -135,7 +135,7 @@ def test_negative_price_raises() -> None:
 
 def test_missing_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """A missing API key raises before any fetch is attempted."""
-    monkeypatch.delenv("FEROVA_ARTIFICIAL_ANALYSIS_API_KEY", raising=False)
+    monkeypatch.delenv("REPOACH_ARTIFICIAL_ANALYSIS_API_KEY", raising=False)
     monkeypatch.delenv("ARTIFICIAL_ANALYSIS_API_KEY", raising=False)
     settings = Settings(_env_file=None)
 

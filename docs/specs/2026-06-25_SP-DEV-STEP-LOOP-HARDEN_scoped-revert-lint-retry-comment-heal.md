@@ -8,7 +8,7 @@ created: 2026-06-25
 updated: 2026-06-25
 
 owns:
-  code: src/ferova/review/inline_comment_heal.py
+  code: src/repoach/review/inline_comment_heal.py
   resources: N/A
 
 depends_on: []                    # new leaf imports the frontier lint scanner; amends frontier coder_loop.py / dev_runner.py

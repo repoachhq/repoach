@@ -148,10 +148,6 @@ jobs:
           gh api "repos/${{ github.repository }}/actions/artifacts/${artifact_id}/zip" \
             > "${RUNNER_TEMP}/ledger.zip"
           python -m zipfile -e "${RUNNER_TEMP}/ledger.zip" "${RUNNER_TEMP}"
-          # Rename transition (Ferova → Repoach): by the time this
-          # version runs (post develop→main release), auto-review.yml
-          # has been producing ``repoach_review.db`` for the whole
-          # artifact window — accept the new name only.
           if [ ! -f "${RUNNER_TEMP}/repoach_review.db" ]; then
             echo "::notice::artifact ${artifact_id} did not contain repoach_review.db — skipping."
             exit 0

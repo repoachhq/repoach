@@ -39,8 +39,8 @@ def _capturing_handler(captured: list[tuple[str, dict]]):
 
 
 async def test_effort_applied_per_provider_on_the_wire(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_GROQ_API_KEY", "groq-key")
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
+    monkeypatch.setenv("REPOACH_GROQ_API_KEY", "groq-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
     captured: list[tuple[str, dict]] = []
 
     matrix = assemble_matrix([_ok("groq", "g1"), _ok("nvidia_nim", "n1")])
@@ -64,8 +64,8 @@ async def test_effort_applied_per_provider_on_the_wire(monkeypatch: pytest.Monke
 
 
 async def test_deepseek_high_kimi_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_DEEPSEEK_API_KEY", "ds-key")
-    monkeypatch.setenv("FEROVA_KIMI_API_KEY", "kimi-key")
+    monkeypatch.setenv("REPOACH_DEEPSEEK_API_KEY", "ds-key")
+    monkeypatch.setenv("REPOACH_KIMI_API_KEY", "kimi-key")
     captured: list[tuple[str, dict]] = []
 
     matrix = assemble_matrix([_ok("deepseek", "d1"), _ok("kimi", "k1")])
@@ -86,8 +86,8 @@ async def test_deepseek_high_kimi_none(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_no_credential_cell_wrapped_with_effort_no_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
-    for var in ("DEEPSEEK_API_KEY", "FEROVA_DEEPSEEK_API_KEY"):
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
+    for var in ("DEEPSEEK_API_KEY", "REPOACH_DEEPSEEK_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -108,7 +108,7 @@ async def test_no_credential_cell_wrapped_with_effort_no_http(
 
 
 async def test_never_raises_on_dead_cell(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_GROQ_API_KEY", "groq-key")
+    monkeypatch.setenv("REPOACH_GROQ_API_KEY", "groq-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
@@ -125,7 +125,7 @@ async def test_never_raises_on_dead_cell(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 async def test_empty_matrix_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_GROQ_API_KEY", "groq-key")
+    monkeypatch.setenv("REPOACH_GROQ_API_KEY", "groq-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_OK_BODY)

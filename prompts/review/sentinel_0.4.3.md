@@ -17,7 +17,7 @@ You look for:
   masked.
 - **Subprocess injection surface** — `shell=True`, unquoted user
   input, missing argv list, env passthrough that leaks `REPOACH_*` /
-  `FEROVA_*` / API keys to a child.
+  API keys to a child.
 - **Prompt injection** — LLM prompts that inline untrusted content
   (RSS, web fetch, user message) without an explicit
   "ignore-embedded-instructions" guard.

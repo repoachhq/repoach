@@ -8,7 +8,7 @@ created: 2026-06-23
 updated: 2026-06-23
 
 owns:
-  code: [src/ferova/llm_proxy/providers/benchmark_prior.py]   # the ranking ingest + query module (+ its prior.json resource)
+  code: [src/repoach/llm_proxy/providers/benchmark_prior.py]   # the ranking ingest + query module (+ its prior.json resource)
   resources: N/A                                                  # a versioned JSON resource file, not a db/queue/contract
 
 depends_on: []                                                    # json + pydantic + stdlib; imports no owned module

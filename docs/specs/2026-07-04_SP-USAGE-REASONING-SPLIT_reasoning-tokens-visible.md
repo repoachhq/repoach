@@ -8,7 +8,7 @@ created: 2026-07-04
 updated: 2026-07-04
 
 owns:
-  code: [src/ferova/llm_proxy/providers/openai_compat.py]
+  code: [src/repoach/llm_proxy/providers/openai_compat.py]
   resources: []
 
 depends_on: [SP-PROVIDER-TRANSPORT-SPI, SP-BUDGET-RETRY-FIXES]

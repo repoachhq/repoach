@@ -283,7 +283,7 @@ class _StubReviewer:
 class _StubGhCli:
     """Capture publish calls without hitting the network."""
 
-    ARCHIVE_MARKER = "<!-- ferova-review-archive -->"
+    ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
 
     def __init__(
         self,
@@ -639,7 +639,7 @@ def test_review_pr_writes_archive_comment_when_posting(tmp_path, monkeypatch):
 
     assert len(gh.archive_calls) == 1
     body = gh.archive_calls[0]["body"]
-    assert "ferova-review-archive" in body or "Full TeamOutcome" in body
+    assert "repoach-review-archive" in body or "Full TeamOutcome" in body
     # The body includes a JSON fence with the team payload.
     assert "```json" in body
     assert '"pr_number": 42' in body

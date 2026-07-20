@@ -8,7 +8,7 @@ created: 2026-06-22
 updated: 2026-06-22
 
 owns:
-  code: [src/ferova/llm_proxy/providers/model_catalog.py]   # the per-provider /v1/models lister (new leaf)
+  code: [src/repoach/llm_proxy/providers/model_catalog.py]   # the per-provider /v1/models lister (new leaf)
   resources: N/A                                                # discovery only; no persistence (2a persists)
 
 depends_on: []                                                  # httpx + stdlib; reads no owned module (catalog.py is frontier and is not imported here)

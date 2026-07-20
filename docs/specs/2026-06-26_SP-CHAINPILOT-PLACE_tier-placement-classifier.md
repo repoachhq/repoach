@@ -8,7 +8,7 @@ created: 2026-06-26
 updated: 2026-06-26
 
 owns:
-  code: src/ferova/review/chain_placement.py
+  code: src/repoach/review/chain_placement.py
   resources: N/A
 
 depends_on:

@@ -115,7 +115,7 @@ def review_report(
 
     Works whether the bots ran locally or on the GitHub Actions
     runner — the source of truth is the PR comment carrying the
-    ``ferova-review-archive`` marker.
+    ``repoach-review-archive`` marker.
 
     Exit codes (SP-SAFE-MERGE-ARCHIVE-RETRY — gating callers such as
     ``safe_merge.sh`` retry code ``6`` but treat ``1`` as final):

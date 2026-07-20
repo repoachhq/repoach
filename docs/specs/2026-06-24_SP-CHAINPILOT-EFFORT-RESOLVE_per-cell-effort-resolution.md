@@ -8,7 +8,7 @@ created: 2026-06-24
 updated: 2026-06-24
 
 owns:
-  code: [src/ferova/llm_proxy/providers/effort_resolve.py]   # aggregate cell_effort_probe rows -> per-cell effort map
+  code: [src/repoach/llm_proxy/providers/effort_resolve.py]   # aggregate cell_effort_probe rows -> per-cell effort map
   resources: N/A                                                 # reads cell_effort_probe; owns no table
 
 depends_on:

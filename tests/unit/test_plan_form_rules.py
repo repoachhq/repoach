@@ -209,7 +209,7 @@ class TestActionDensityCap:
             f"- **Unit tests**: `tests/unit/test_a.py::test_foo`\n\n"
             f"## Integration tests\n\n"
             f"_(none promised)_\n\n"
-            f"<!-- ferova-action-plan -->\n"
+            f"<!-- repoach-action-plan -->\n"
             f"```json\n{rendered}\n```\n"
         )
         round_tripped = parse_plan_markdown(markdown)

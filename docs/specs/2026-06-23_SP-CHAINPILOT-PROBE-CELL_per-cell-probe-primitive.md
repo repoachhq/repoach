@@ -8,7 +8,7 @@ created: 2026-06-23
 updated: 2026-06-23
 
 owns:
-  code: [src/ferova/llm_proxy/providers/cell_probe.py]   # the per-cell probe + its CellHealth record
+  code: [src/repoach/llm_proxy/providers/cell_probe.py]   # the per-cell probe + its CellHealth record
   resources: N/A                                             # in-memory only; persistence is 2a-2 (probe sweep)
 
 depends_on:

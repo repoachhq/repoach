@@ -28,7 +28,7 @@ def _descriptors(*provider_ids: str) -> dict:
 
 
 async def test_one_health_per_cell_in_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_OK_BODY)
@@ -50,8 +50,8 @@ async def test_one_health_per_cell_in_order(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_unkeyed_provider_cells_are_no_credential_without_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
-    for var in ("DEEPSEEK_API_KEY", "FEROVA_DEEPSEEK_API_KEY"):
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
+    for var in ("DEEPSEEK_API_KEY", "REPOACH_DEEPSEEK_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -75,7 +75,7 @@ async def test_unkeyed_provider_cells_are_no_credential_without_http(
 
 
 async def test_concurrency_never_exceeds_bound(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
     state = {"in_flight": 0, "peak": 0}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -103,7 +103,7 @@ async def test_concurrency_never_exceeds_bound(monkeypatch: pytest.MonkeyPatch) 
 
 
 async def test_empty_matrix_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_OK_BODY)
@@ -118,7 +118,7 @@ async def test_empty_matrix_returns_empty(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 async def test_all_cells_error_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")

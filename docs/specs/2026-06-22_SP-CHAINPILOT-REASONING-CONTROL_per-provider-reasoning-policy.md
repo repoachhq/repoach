@@ -8,7 +8,7 @@ created: 2026-06-22
 updated: 2026-06-22
 
 owns:
-  code: [src/ferova/llm_proxy/providers/reasoning.py]   # the pure reasoning-control policy module
+  code: [src/repoach/llm_proxy/providers/reasoning.py]   # the pure reasoning-control policy module
   resources: N/A                                            # pure logic; no shared state
 
 depends_on: []                                              # stdlib only; transports consume it (frontier)

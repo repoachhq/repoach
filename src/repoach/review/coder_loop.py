@@ -578,8 +578,7 @@ def run_pytest(repo_root: Path, *, python: str | None = None) -> tuple[bool, str
 def _pytest_pythons() -> list[str | None]:
     """Return the list of Python interpreters the local gate should run.
 
-    Reads the ``REPOACH_CODER_PYTHONS`` env var, falling back to the
-    pre-rename ``FEROVA_CODER_PYTHONS`` name (CSV of executable names
+    Reads the ``REPOACH_CODER_PYTHONS`` env var (CSV of executable names
     or paths, e.g. ``"python3.11,python3.13"``).  Each entry is
     validated against :func:`shutil.which`; missing interpreters are
     silently skipped (so a developer running locally on a single
@@ -591,9 +590,7 @@ def _pytest_pythons() -> list[str | None]:
         which case :func:`run_pytest` falls back to the bare
         ``pytest`` binary on PATH.
     """
-    raw = (
-        os.environ.get("REPOACH_CODER_PYTHONS") or os.environ.get("FEROVA_CODER_PYTHONS", "")
-    ).strip()
+    raw = os.environ.get("REPOACH_CODER_PYTHONS", "").strip()
     if not raw:
         return [None]
     candidates = [s.strip() for s in raw.split(",") if s.strip()]

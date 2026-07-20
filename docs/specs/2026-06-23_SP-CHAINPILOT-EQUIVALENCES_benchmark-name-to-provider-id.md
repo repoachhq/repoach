@@ -8,7 +8,7 @@ created: 2026-06-23
 updated: 2026-06-23
 
 owns:
-  code: [src/ferova/llm_proxy/providers/benchmark_equivalences.py]   # the name↔id resolver (+ its equivalences.json)
+  code: [src/repoach/llm_proxy/providers/benchmark_equivalences.py]   # the name↔id resolver (+ its equivalences.json)
   resources: N/A                                                         # a versioned JSON mapping, not a db/queue/contract
 
 depends_on: []                                                          # pure string resolver over its own store; imports no owned module

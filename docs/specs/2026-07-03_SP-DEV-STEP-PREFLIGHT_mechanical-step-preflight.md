@@ -8,7 +8,7 @@ created: 2026-07-03
 updated: 2026-07-03
 
 owns:
-  code: [src/ferova/review/dev_runner.py]
+  code: [src/repoach/review/dev_runner.py]
   resources: []
 
 depends_on: [SP-ARCH-REVIEW-WIRE, SP-DEV-STEP-LOOP-HARDEN, SP-DEVAGENT-DECOMPOSE,

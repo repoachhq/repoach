@@ -8,7 +8,7 @@ created: 2026-07-04
 updated: 2026-07-04
 
 owns:
-  code: [src/ferova/llm_proxy/providers/catalog.py]
+  code: [src/repoach/llm_proxy/providers/catalog.py]
   resources: []
 
 depends_on: []

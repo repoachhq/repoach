@@ -8,7 +8,7 @@ created: 2026-06-21
 updated: 2026-07-11
 
 owns:
-  code: [src/ferova/health/__init__.py, src/ferova/health/model_health.py, src/ferova/health/store.py]   # narrowed from src/ferova/health/ (2026-07-11): SP-CREDITS-CHECK owns credits.py; subtree ownership becomes per-module
+  code: [src/repoach/health/__init__.py, src/repoach/health/model_health.py, src/repoach/health/store.py]   # narrowed from src/repoach/health/ (2026-07-11): SP-CREDITS-CHECK owns credits.py; subtree ownership becomes per-module
   resources: [db:table:nim_health_probe]   # the probe store owns this table (moved here)
 
 depends_on: []                        # leaf: pure dataclass + sqlalchemy + core.logging; imports no governed component

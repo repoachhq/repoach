@@ -321,7 +321,7 @@ class TestPlanRetry:
     def test_three_invalid_attempts_give_up_loudly(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "3")
+        monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "3")
         repo = _repo_with_spec(tmp_path)
         bad = dict(_valid_plan_payload())
         del bad["steps"][0]["commit_message"]
@@ -601,7 +601,7 @@ class TestErrorHistory:
     def test_parse_attempts_setting_is_honored(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "2")
+        monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "2")
         repo = _repo_with_spec(tmp_path)
         bad = dict(_valid_plan_payload())
         del bad["steps"][0]["commit_message"]
@@ -619,7 +619,7 @@ class TestErrorHistory:
     def test_exhausted_session_reports_full_history(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "3")
+        monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "3")
         repo = _repo_with_spec(tmp_path)
         bad_a = dict(_valid_plan_payload())
         del bad_a["steps"][0]["commit_message"]
@@ -653,7 +653,7 @@ class TestErrorHistory:
         del bad["steps"][0]["commit_message"]
 
         for value in ("0", "-1"):
-            monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", value)
+            monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", value)
             loop = _ScriptedLoop([f"```json\n{json.dumps(bad)}\n```"])
             planner = Planner(loop=loop, repo_root=repo)
 

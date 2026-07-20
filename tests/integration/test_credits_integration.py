@@ -56,8 +56,8 @@ def test_cli_credits_low_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
         "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "5.0")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("REPOACH_CREDITS_FLOOR_USD", "5.0")
     monkeypatch.setenv("MODEL", "nvidia_nim/x")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
@@ -97,7 +97,7 @@ def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
         text=True,
         cwd=str(_REPO),
         timeout=30,
-        env={**os.environ, "FEROVA_OPENROUTER_API_KEY": ""},
+        env={**os.environ, "REPOACH_OPENROUTER_API_KEY": ""},
     )
 
     assert result.returncode == 0, (

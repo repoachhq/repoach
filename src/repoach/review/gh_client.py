@@ -484,7 +484,7 @@ class GhCli:
             )
             return None
 
-    ARCHIVE_MARKER = "<!-- ferova-review-archive -->"
+    ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
 
     def find_archive_comment(self, pr_number: int) -> int | None:
         """Return the id of the existing archive comment on a PR, if any.

@@ -8,7 +8,7 @@ created: 2026-06-30
 updated: 2026-07-11
 
 owns:
-  code: [src/ferova/llm_proxy/routing/chain_regen.py]
+  code: [src/repoach/llm_proxy/routing/chain_regen.py]
   resources: []
 depends_on: [SP-MFC-AA-INGEST, SP-MFC-GENERATE, SP-CHAINPILOT-MATRIX, SP-CHAINPILOT-EQUIVALENCES, SP-CHAINPILOT-PROBE-SWEEP, SP-CREDITS-CHECK]
 provides_to: []

@@ -8,7 +8,7 @@ created: 2026-07-11
 updated: 2026-07-11
 
 owns:
-  code: [src/ferova/cli/chain_status.py]
+  code: [src/repoach/cli/chain_status.py]
   resources: []
 
 depends_on: [SP-CREDITS-CHECK, SP-HEALTH-STORE-NEUTRALIZE, SP-CHAINPILOT-PROBE-SWEEP]

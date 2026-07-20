@@ -9,8 +9,8 @@ updated: 2026-06-21
 
 owns:
   code:
-    - src/ferova/llm_proxy/providers/error_mapping.py   # provider error mapping (gains the shared user-facing helper)
-    - src/ferova/llm_proxy/providers/registry.py         # provider factory (transport-driven dispatch)
+    - src/repoach/llm_proxy/providers/error_mapping.py   # provider error mapping (gains the shared user-facing helper)
+    - src/repoach/llm_proxy/providers/registry.py         # provider factory (transport-driven dispatch)
   resources: N/A                                             # code-only: no shared table/topic/format
 
 depends_on:                                                  # remaining imports are frontier code (core.anthropic, exceptions, rate_limit, config)

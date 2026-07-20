@@ -46,8 +46,8 @@ def test_assemble_preserves_failed_listing_without_cells() -> None:
 
 
 async def test_sweep_lists_keyed_and_skips_unkeyed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
-    for var in ("DEEPSEEK_API_KEY", "FEROVA_DEEPSEEK_API_KEY"):
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
+    for var in ("DEEPSEEK_API_KEY", "REPOACH_DEEPSEEK_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -66,7 +66,7 @@ async def test_sweep_lists_keyed_and_skips_unkeyed(monkeypatch: pytest.MonkeyPat
 
 
 async def test_sweep_excludes_claude_code(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nim-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "only"}]})

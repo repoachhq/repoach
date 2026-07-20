@@ -8,7 +8,7 @@ created: 2026-06-27
 updated: 2026-06-27
 
 owns:
-  code: [src/ferova/review/devagent_tools.py]
+  code: [src/repoach/review/devagent_tools.py]
   resources: []
 
 depends_on: []

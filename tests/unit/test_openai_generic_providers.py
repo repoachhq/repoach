@@ -4,7 +4,7 @@ kimi / groq / cerebras / deepseek are registered as OpenAI-compatible
 providers sharing :class:`GenericOpenAIProvider`. Verifies their catalog
 descriptors, that the factory builds the shared transport with the probed
 base URL, that the catalog unfreeze now lets :class:`ModelRef` accept
-them, and that their credentials read from ``FEROVA_*_API_KEY``.
+them, and that their credentials read from ``REPOACH_*_API_KEY``.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from repoach.llm_proxy.providers.registry import create_provider
 from repoach.llm_proxy.routing.refs import ModelRef
 
 _PROVIDERS = [
-    ("kimi", "FEROVA_KIMI_API_KEY", "https://api.moonshot.ai/v1"),
-    ("groq", "FEROVA_GROQ_API_KEY", "https://api.groq.com/openai/v1"),
-    ("cerebras", "FEROVA_CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
-    ("deepseek", "FEROVA_DEEPSEEK_API_KEY", "https://api.deepseek.com/v1"),
+    ("kimi", "REPOACH_KIMI_API_KEY", "https://api.moonshot.ai/v1"),
+    ("groq", "REPOACH_GROQ_API_KEY", "https://api.groq.com/openai/v1"),
+    ("cerebras", "REPOACH_CEREBRAS_API_KEY", "https://api.cerebras.ai/v1"),
+    ("deepseek", "REPOACH_DEEPSEEK_API_KEY", "https://api.deepseek.com/v1"),
 ]
 
 

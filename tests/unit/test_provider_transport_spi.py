@@ -47,7 +47,7 @@ def test_error_message_non_405_falls_back_to_user_facing_message() -> None:
 def test_create_provider_builds_bespoke_nvidia_nim(monkeypatch: pytest.MonkeyPatch) -> None:
     from repoach.llm_proxy.providers.nvidia_nim import NvidiaNimProvider
 
-    monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "test-key")
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "test-key")
     provider = create_provider("nvidia_nim", Settings(_env_file=None))
     assert isinstance(provider, NvidiaNimProvider)
 
@@ -55,6 +55,6 @@ def test_create_provider_builds_bespoke_nvidia_nim(monkeypatch: pytest.MonkeyPat
 def test_create_provider_builds_generic_via_transport_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FEROVA_KIMI_API_KEY", "test-key")
+    monkeypatch.setenv("REPOACH_KIMI_API_KEY", "test-key")
     provider = create_provider("kimi", Settings(_env_file=None))
     assert isinstance(provider, GenericOpenAIProvider)

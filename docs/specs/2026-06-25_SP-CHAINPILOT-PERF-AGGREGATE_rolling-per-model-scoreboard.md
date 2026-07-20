@@ -8,7 +8,7 @@ created: 2026-06-25
 updated: 2026-06-25
 
 owns:
-  code: src/ferova/review/perf_aggregate.py
+  code: src/repoach/review/perf_aggregate.py
   resources: N/A
 
 depends_on:

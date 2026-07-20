@@ -13,7 +13,7 @@ strict production-time layer (step 2):
   the strict layer (:func:`repoach.review.plan.validate_plan_form_strict`)
   is refused and refined exactly like a ``plan_invalid`` failure, never
   written;
-* ``_parse_attempts`` reads ``FEROVA_PLANNER_PARSE_ATTEMPTS`` with the
+* ``_parse_attempts`` reads ``REPOACH_PLANNER_PARSE_ATTEMPTS`` with the
   documented clamp-to-1 and fallback-to-5 behavior.
 
 The recording fake loop follows the ``_ScriptedLoop`` pattern from
@@ -206,24 +206,24 @@ def test_strict_rules_gate_planner_emission(tmp_path: Path) -> None:
 
 
 def test_attempt_budget_setting(monkeypatch: pytest.MonkeyPatch) -> None:
-    """FEROVA_PLANNER_PARSE_ATTEMPTS clamps low values to 1; unset/non-integer fall back to 5."""
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "0")
+    """REPOACH_PLANNER_PARSE_ATTEMPTS clamps low values to 1; unset/non-integer fall back to 5."""
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "0")
     assert _parse_attempts() == 1
 
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "-5")
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "-5")
     assert _parse_attempts() == 1
 
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "1")
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "1")
     assert _parse_attempts() == 1
 
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "7")
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "7")
     assert _parse_attempts() == 7
 
-    monkeypatch.delenv("FEROVA_PLANNER_PARSE_ATTEMPTS", raising=False)
+    monkeypatch.delenv("REPOACH_PLANNER_PARSE_ATTEMPTS", raising=False)
     assert _parse_attempts() == 5
 
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "not-a-number")
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "not-a-number")
     assert _parse_attempts() == 5
 
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "   ")
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "   ")
     assert _parse_attempts() == 5
