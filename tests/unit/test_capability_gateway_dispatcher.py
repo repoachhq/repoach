@@ -45,7 +45,7 @@ from repoach.llm_proxy.api.models.agent_v1 import (
 def _build_request(
     *,
     capability: str = "sonnet",
-    system: str | None = "You are Ferova's WhatsApp assistant.",
+    system: str | None = "You are Repoach's WhatsApp assistant.",
     messages: list[AgentMessage] | None = None,
     tools: list[ToolSpec] | None = None,
 ) -> AgentRequest:
@@ -81,7 +81,7 @@ def test_translate_request_maps_capability_to_alias() -> None:
     req = _build_request(capability="sonnet")
     out = _translate_request(req, "claude-sonnet-4-6")
     assert out.model == "claude-sonnet-4-6"
-    assert out.system == "You are Ferova's WhatsApp assistant."
+    assert out.system == "You are Repoach's WhatsApp assistant."
     assert out.stream is True
 
 

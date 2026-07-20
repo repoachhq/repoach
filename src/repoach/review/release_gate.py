@@ -10,13 +10,13 @@ the operator alone holds the authority to actually merge ``main``.
 This module is the leaf slice of the design (step 1 of 5): the pure
 classifier and decision core. Fact-gathering (shelling out to
 ``git``/``gh``/``scripts/ci_local.sh``) and the receipt round-trip for
-``ferova release verify`` land in later steps.
+``repoach release verify`` land in later steps.
 
 Code-shape guarantee (not a runtime assertion -- verified by
 ``test_release_gate_never_calls_merge`` reading this file's source):
 this module never invokes a merge or push operation anywhere. It
 only ever gathers facts, decides, prints, and round-trips a receipt
-between ``ferova release gate`` and ``ferova release verify``.
+between ``repoach release gate`` and ``repoach release verify``.
 """
 
 from __future__ import annotations
@@ -204,7 +204,7 @@ def gather_release_facts(
 
 
 class ReleaseVerifyResult(BaseModel):
-    """Outcome of a post-merge ``ferova release verify`` run.
+    """Outcome of a post-merge ``repoach release verify`` run.
 
     Attributes:
         verified: True when the live ``main`` tip matches the
@@ -221,7 +221,7 @@ class ReleaseVerifyResult(BaseModel):
 
 
 def write_gate_receipt(path: Path, *, develop_sha: str, decision: ReleaseDecision) -> None:
-    """Write the gate receipt that ``ferova release verify`` reads back.
+    """Write the gate receipt that ``repoach release verify`` reads back.
 
     Args:
         path: Destination file for the receipt (parent directories are

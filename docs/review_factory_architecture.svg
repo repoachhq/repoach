@@ -14,7 +14,7 @@
 
   <rect width="1500" height="1180" fill="#0a0e17"/>
 
-  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Review Factory</text>
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Repoach — Review Factory</text>
   <text x="45" y="73" font-size="12.5" fill="#9ca3af">A spec's life, top to bottom: build → review → ship — the Coder loops fixes until the bench validates. Infrastructure stays in the basement.</text>
 
   <!-- Legend top-right -->

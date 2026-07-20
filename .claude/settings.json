@@ -39,7 +39,7 @@
           },
           {
             "type": "command",
-            "command": "ferova chain-status || true",
+            "command": "repoach chain-status || true",
             "timeout": 15
           }
         ]

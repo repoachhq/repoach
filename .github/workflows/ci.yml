@@ -60,7 +60,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
-          ferova arch check --base "origin/${{ github.base_ref }}"
+          repoach arch check --base "origin/${{ github.base_ref }}"
 
       - name: Pytest
         run: pytest -q tests/unit
@@ -79,9 +79,9 @@ jobs:
           # Loopback + dummy token so the smoke exercises the
           # authenticated configuration (SP-PROXY-SECURE-DEFAULTS
           # refuses tokenless non-loopback binds).
-          FEROVA_ANTHROPIC_AUTH_TOKEN: "ci-smoke-token"
-          FEROVA_PROXY_HOST: "127.0.0.1"
-          FEROVA_PROXY_PORT: "8083"
+          REPOACH_ANTHROPIC_AUTH_TOKEN: "ci-smoke-token"
+          REPOACH_PROXY_HOST: "127.0.0.1"
+          REPOACH_PROXY_PORT: "8083"
         run: |
           set -e
           mkdir -p logs

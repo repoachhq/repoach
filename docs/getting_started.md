@@ -1,7 +1,7 @@
 # Getting started
 
 This guide takes you from `git clone` to a live, authenticated request
-through Ferova's LLM gateway, then through the CLI and (optionally) the
+through Repoach's LLM gateway, then through the CLI and (optionally) the
 GitHub review factory. Every command is copy-pasteable; expected output
 is shown where it matters.
 
@@ -32,7 +32,7 @@ optional, chains work without it).
 ## 2. Clone and install
 
 ```bash
-git clone https://github.com/ferovahq/ferova && cd ferova
+git clone https://github.com/repoachhq/repoach && cd repoach
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
@@ -40,11 +40,11 @@ pip install -e ".[dev]"
 Verify:
 
 ```bash
-ferova version
-ferova --help
+repoach version
+repoach --help
 ```
 
-`ferova --help` lists the CLI surface; every subcommand has its own
+`repoach --help` lists the CLI surface; every subcommand has its own
 `--help`.
 
 ## 3. Activate the guardrails (one-time)
@@ -56,7 +56,7 @@ git config core.hooksPath .githooks
 This wires two hooks:
 
 - **pre-commit** — `ruff check` + `ruff format --check`, the
-  no-inline-comments and no-silent-except gates, `ferova arch check
+  no-inline-comments and no-silent-except gates, `repoach arch check
   --staged`, and shellcheck on staged shell files (skipped if
   shellcheck is not installed).
 - **pre-push** — refuses direct pushes to `develop`/`main` (PR-only)
@@ -76,11 +76,11 @@ cp .env.example .env
 The two values you must set for a live test:
 
 ```dotenv
-FEROVA_ANTHROPIC_AUTH_TOKEN=pick-any-long-random-string
+REPOACH_ANTHROPIC_AUTH_TOKEN=pick-any-long-random-string
 NVIDIA_NIM_API_KEY=nvapi-...
 ```
 
-- **`FEROVA_ANTHROPIC_AUTH_TOKEN`** is the gateway's shared secret —
+- **`REPOACH_ANTHROPIC_AUTH_TOKEN`** is the gateway's shared secret —
   the "login" of this stack. You invent it (e.g. `openssl rand -hex
   32`); every client of the gateway (curl, the agents, the CLI)
   authenticates with this exact value. The agent engine refuses to
@@ -88,7 +88,7 @@ NVIDIA_NIM_API_KEY=nvapi-...
   without it.
 - **One provider key** matching the chain heads you will route to
   (section 5). All provider keys accept both spellings — bare
-  (`NVIDIA_NIM_API_KEY`) and prefixed (`FEROVA_NVIDIA_NIM_API_KEY`):
+  (`NVIDIA_NIM_API_KEY`) and prefixed (`REPOACH_NVIDIA_NIM_API_KEY`):
 
 | Provider | Key variable | Where to get one |
 |---|---|---|
@@ -102,12 +102,12 @@ NVIDIA_NIM_API_KEY=nvapi-...
 Useful knobs already in `.env.example` (defaults shown):
 
 ```dotenv
-FEROVA_ENV=dev                    # prod additionally REQUIRES the auth token at boot
-FEROVA_LOG_LEVEL=INFO
-FEROVA_DB_PATH=./data/ferova.db   # SQLite; auto-created on first use
-FEROVA_PROXY_HOST=127.0.0.1       # non-loopback binds refuse to boot without a token
-FEROVA_PROXY_PORT=8082
-FEROVA_LLM_PROXY_BASE_URL=http://localhost:8082
+REPOACH_ENV=dev                    # prod additionally REQUIRES the auth token at boot
+REPOACH_LOG_LEVEL=INFO
+REPOACH_DB_PATH=./data/repoach.db   # SQLite; auto-created on first use
+REPOACH_PROXY_HOST=127.0.0.1       # non-loopback binds refuse to boot without a token
+REPOACH_PROXY_PORT=8082
+REPOACH_LLM_PROXY_BASE_URL=http://localhost:8082
 ```
 
 Precedence, lowest to highest: `chains.env` → `.env` → real
@@ -150,7 +150,7 @@ providers behind it, automatic failover, circuit breakers, telemetry.
 **Terminal 1 — start it:**
 
 ```bash
-python -m ferova.llm_proxy
+python -m repoach.llm_proxy
 ```
 
 It binds `127.0.0.1:8082` by default (from your `.env`).
@@ -166,18 +166,18 @@ curl -sf http://127.0.0.1:8082/health
 ```
 
 **Make your first authenticated, live completion.** Authentication is
-your `FEROVA_ANTHROPIC_AUTH_TOKEN`, sent as `x-api-key` (also
+your `REPOACH_ANTHROPIC_AUTH_TOKEN`, sent as `x-api-key` (also
 accepted: `Authorization: Bearer <token>`):
 
 ```bash
 source .env
 curl -sS http://127.0.0.1:8082/v1/messages \
-  -H "x-api-key: $FEROVA_ANTHROPIC_AUTH_TOKEN" \
+  -H "x-api-key: $REPOACH_ANTHROPIC_AUTH_TOKEN" \
   -H "content-type: application/json" \
   -d '{
         "model": "sonnet",
         "max_tokens": 128,
-        "messages": [{"role": "user", "content": "Reply with exactly: ferova gateway live"}]
+        "messages": [{"role": "user", "content": "Reply with exactly: repoach gateway live"}]
       }'
 ```
 
@@ -185,12 +185,12 @@ You get an Anthropic-style streaming response served by whatever
 provider heads your `MODEL_SONNET` chain. A wrong token returns 401 —
 that's your login check.
 
-The capability-native endpoint used by Ferova's own agents is
+The capability-native endpoint used by Repoach's own agents is
 `POST /v1/agent` and takes a tier instead of a model name:
 
 ```bash
 curl -sS http://127.0.0.1:8082/v1/agent \
-  -H "x-api-key: $FEROVA_ANTHROPIC_AUTH_TOKEN" \
+  -H "x-api-key: $REPOACH_ANTHROPIC_AUTH_TOKEN" \
   -H "content-type: application/json" \
   -d '{"capability": "haiku", "messages": [{"role": "user", "content": "ping"}]}'
 ```
@@ -200,18 +200,18 @@ curl -sS http://127.0.0.1:8082/v1/agent \
 With the gateway running and no GitHub configured:
 
 ```bash
-ferova chains-audit        # classify each chain head (offline, always exits 0)
-ferova monitor-chains      # LIVE probe of each tier's head; persists to SQLite
-ferova review insights     # findings-ledger stats from the local DB
-ferova arch check          # spec-governance gate over your working tree
+repoach chains-audit        # classify each chain head (offline, always exits 0)
+repoach monitor-chains      # LIVE probe of each tier's head; persists to SQLite
+repoach review insights     # findings-ledger stats from the local DB
+repoach arch check          # spec-governance gate over your working tree
 ```
 
-`ferova monitor-chains` is the best live smoke test: it sends one real
+`repoach monitor-chains` is the best live smoke test: it sends one real
 probe per tier and prints a per-tier status line (`ok` / `slow` /
 `error`), then exits non-zero if any tier is degraded — the same
 command the production timer runs every 15 minutes.
 
-The SQLite database (`./data/ferova.db`) is created automatically on
+The SQLite database (`./data/repoach.db`) is created automatically on
 first use — there is no migration or init step.
 
 ## 8. Verify the installation
@@ -238,14 +238,14 @@ gh auth login
 Then, from a checkout of a repository with an open PR:
 
 ```bash
-ferova review pr <N>       # run the 4 reviewers (Architect/Sentinel/Tester/Scribe)
-ferova review report <N>   # fetch the sticky review archive comment
-ferova review gate <N>     # evidence-first merge gate — read-only, fact by fact
-ferova plan <SP-ID>        # Planner: spec -> docs/plans/<SP-ID>.md (no GitHub needed)
-ferova develop <SP-ID>     # Planner -> Developer -> branch -> PR
+repoach review pr <N>       # run the 4 reviewers (Architect/Sentinel/Tester/Scribe)
+repoach review report <N>   # fetch the sticky review archive comment
+repoach review gate <N>     # evidence-first merge gate — read-only, fact by fact
+repoach plan <SP-ID>        # Planner: spec -> docs/plans/<SP-ID>.md (no GitHub needed)
+repoach develop <SP-ID>     # Planner -> Developer -> branch -> PR
 ```
 
-`ferova develop --no-push` runs the whole build without touching
+`repoach develop --no-push` runs the whole build without touching
 GitHub — useful for a first try.
 
 To run the **CI-side automation on your own fork** (auto-review on PR
@@ -264,11 +264,11 @@ open, event-driven merge), you additionally need:
 
 | Symptom | Cause / fix |
 |---|---|
-| `401` on `/v1/messages` | token mismatch — the `x-api-key` you send must equal `FEROVA_ANTHROPIC_AUTH_TOKEN` in the proxy's environment. Restart the proxy after editing `.env`. |
-| Proxy refuses to boot on a non-loopback host | by design: set `FEROVA_ANTHROPIC_AUTH_TOKEN` before exposing beyond `127.0.0.1`. |
-| `FEROVA_ENV=prod` boot failure | prod requires the auth token at construction time. |
-| Port 8082 already bound | another instance (or another service) owns it — set `FEROVA_PROXY_PORT` and `FEROVA_LLM_PROXY_BASE_URL` together. |
+| `401` on `/v1/messages` | token mismatch — the `x-api-key` you send must equal `REPOACH_ANTHROPIC_AUTH_TOKEN` in the proxy's environment. Restart the proxy after editing `.env`. |
+| Proxy refuses to boot on a non-loopback host | by design: set `REPOACH_ANTHROPIC_AUTH_TOKEN` before exposing beyond `127.0.0.1`. |
+| `REPOACH_ENV=prod` boot failure | prod requires the auth token at construction time. |
+| Port 8082 already bound | another instance (or another service) owns it — set `REPOACH_PROXY_PORT` and `REPOACH_LLM_PROXY_BASE_URL` together. |
 | Hard error mentioning `NIM_ENABLE_THINKING` | the variable was renamed — use `ENABLE_THINKING`. |
-| `AgentLoop` raises `FEROVA_ANTHROPIC_AUTH_TOKEN is missing` | any agent command (`review pr`, `develop`, …) needs the token even in dev — set it in `.env`. |
+| `AgentLoop` raises `REPOACH_ANTHROPIC_AUTH_TOKEN is missing` | any agent command (`review pr`, `develop`, …) needs the token even in dev — set it in `.env`. |
 | All chain probes `error` in `monitor-chains` | the head provider's key is missing/invalid in `.env`, or the provider is down — try `curl /health` and check the breaker list. |
 | A commit is rejected with an inline-comment error | the repo enforces a zero-inline-comments gate (`CLAUDE.md`) — move the *why* into a docstring. |

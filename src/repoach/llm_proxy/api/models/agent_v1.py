@@ -1,9 +1,9 @@
-"""Pydantic models for the ``ferova/v1`` capability gateway shape.
+"""Pydantic models for the ``repoach/v1`` capability gateway shape.
 
 Schema authority: ``docs/specs/2026-05-05_SP-CAPABILITY-FORMAT_response_shape.md``.
 
 The shape is provider-agnostic and forms the contract between the
-capability gateway endpoint (``POST /v1/agent``) and every ferova
+capability gateway endpoint (``POST /v1/agent``) and every repoach
 client (WA chat, review bots, data-analyst, future agents).
 """
 

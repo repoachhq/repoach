@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: enforce ferova's PR-only protected-branch policy.
+"""PreToolUse hook: enforce repoach's PR-only protected-branch policy.
 
-Ferova adaptation of the sharp-agent original (operator-approved
+Repoach adaptation of the sharp-agent original (operator-approved
 2026-07-02). Rules — mirrors .githooks/pre-push, but fires at the
 Claude tool layer even when core.hooksPath is not configured:
   1. NO direct commit on main / master / develop. Create a feature

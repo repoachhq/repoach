@@ -86,7 +86,7 @@ opus) as relabeling weaker models "opus".
 
 ## Artificial Analysis API (verified live 2026-06-30)
 
-- Key: `.env` → `FEROVA_ARTIFICIAL_ANALYSIS_API_KEY`. Auth header **`x-api-key`**
+- Key: `.env` → `REPOACH_ARTIFICIAL_ANALYSIS_API_KEY`. Auth header **`x-api-key`**
   (not Bearer).
 - Free endpoint: `GET https://artificialanalysis.ai/api/v2/language/models/free`
   — HTTP 200, **paginated** (`page`/`page_size`; ~518 models across 3 pages).

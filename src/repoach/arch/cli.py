@@ -1,6 +1,6 @@
-"""The ``ferova arch`` command group.
+"""The ``repoach arch`` command group.
 
-``ferova arch graph`` derives the architecture dependency graph from
+``repoach arch graph`` derives the architecture dependency graph from
 spec frontmatter and renders it; with ``--check`` it validates the corpus
 (disjoint ownership, no cycles, well-formed frontmatter) and exits non-zero
 on a violation. Frontier (un-owned) specs and dangling edges are reported

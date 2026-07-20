@@ -89,7 +89,7 @@ class ClaudeCodeProvider(BaseProvider):
         self._cli_path = resolved_cli
         self._default_model = default_model
         self._subprocess_timeout = subprocess_timeout
-        self._workdir = Path(tempfile.mkdtemp(prefix="ferova_claude_code_"))
+        self._workdir = Path(tempfile.mkdtemp(prefix="repoach_claude_code_"))
         self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
             "claude_code",
             rate_limit=config.rate_limit,

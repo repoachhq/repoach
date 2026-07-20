@@ -9,7 +9,7 @@ letting an exception escape into the planner's refine loop.
 Step 5/6 adds the insights side: ``gather_insights`` aggregates
 ``violated_rule -> count`` across every planner attempt in the
 telemetry ledger (deliberately ignoring PR scoping — planner attempts
-are keyed by spec_id, not PR), and the ``ferova review insights`` CLI
+are keyed by spec_id, not PR), and the ``repoach review insights`` CLI
 command renders the aggregate under a ``planner_rule_violations`` key.
 """
 

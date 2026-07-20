@@ -1,7 +1,7 @@
 """SQLite persistence for NIM chain head-health probes (neutral leaf).
 
 `SP-HEALTH-STORE-NEUTRALIZE` (moved from ``review.chain_health_store``).
-Each ``ferova monitor-chains`` sweep appends one row per tier to the
+Each ``repoach monitor-chains`` sweep appends one row per tier to the
 ``nim_health_probe`` table in the shared review DB, building a
 cross-session time-series of NIM head behaviour (status, latency) for
 later analysis. It imports only ``sqlalchemy``, ``core.logging`` and the

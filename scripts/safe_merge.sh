@@ -14,10 +14,10 @@
 #    could be on ``develop`` instead of the PR's branch and would
 #    silently test the wrong code).
 # 3. ``scripts/ci_local.sh`` (full parity with .github/workflows/ci.yml).
-# 4. ``ferova review pr <N>`` (review-bot team runs locally over NIM)
+# 4. ``repoach review pr <N>`` (review-bot team runs locally over NIM)
 #    — refreshes the findings ledger at head before the gate reads it.
 # 5. Pure evidence-first merge gate (SP-VERDICT-FLIP 10a):
-#    ``ferova review gate <N>`` re-verifies the ledger at head and
+#    ``repoach review gate <N>`` re-verifies the ledger at head and
 #    decides on facts (CI green, zero blocking findings surviving
 #    re-verification, complete review, spec coverage), NOT the forgeable
 #    archive 4/4-APPROVE verdict the prior version parsed. Exit 0 →
@@ -161,14 +161,14 @@ else
     ./scripts/ci_local.sh
 fi
 
-bold "[4/7] ferova review pr $pr_number"
+bold "[4/7] repoach review pr $pr_number"
 if [[ "$skip_review" == "yes" ]] ; then
     echo "  (skipped via --skip-review — verdict check also skipped)"
 else
-    ferova review pr "$pr_number"
+    repoach review pr "$pr_number"
 fi
 
-bold "[5/7] pure merge gate (ferova review gate)"
+bold "[5/7] pure merge gate (repoach review gate)"
 if [[ "$skip_review" == "yes" ]] ; then
     echo "  (skipped — --skip-review implies the user accepts no automated gate)"
 else
@@ -179,7 +179,7 @@ else
     gate_err="tmp/safe_merge_gate_err_${pr_number}.txt"
     while : ; do
         set +e
-        gate_json=$(ferova review gate "$pr_number" 2>"$gate_err")
+        gate_json=$(repoach review gate "$pr_number" 2>"$gate_err")
         gate_rc=$?
         set -e
 

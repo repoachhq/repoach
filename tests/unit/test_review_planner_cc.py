@@ -80,7 +80,7 @@ class TestSuccess:
         _, _cmd, cwd = _run_capturing_cwd(_envelope("{}"))
         assert cwd is not None
         assert str(cwd) != "/repo"
-        assert "ferova_planner_cc_" in str(cwd)
+        assert "repoach_planner_cc_" in str(cwd)
 
     def test_refinement_omits_tools_and_add_dir(self) -> None:
         def fake_run(cmd, **kwargs):

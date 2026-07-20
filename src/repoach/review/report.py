@@ -7,7 +7,7 @@ findings ledger and the re-verified merge facts. The pure gate
 module only presents it.
 
 An optional ``archive_appendix`` carries the machine-readable
-``TeamOutcome`` JSON (consumed by ``ferova review report``), the
+``TeamOutcome`` JSON (consumed by ``repoach review report``), the
 hallucination-guard section, and the dialogue transcript below the
 report. The legacy per-reviewer verdict framing was dropped in 10b-4
 (SP-RETIRE-VERDICT-ARCHIVE) — the verdict is no longer the authority.
@@ -20,7 +20,7 @@ from pathlib import Path
 from .findings import Finding, fetch_findings
 from .merge_gate import MergeDecision, MergeFacts
 
-LEDGER_REPORT_HEADER: str = "### Ferova review report"
+LEDGER_REPORT_HEADER: str = "### Repoach review report"
 
 
 def _short_sha(head_sha: str) -> str:

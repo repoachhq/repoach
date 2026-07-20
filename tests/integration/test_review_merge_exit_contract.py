@@ -1,6 +1,6 @@
 """Integration tests for the merge exit-code contract (SP-MERGE-EXIT-CONTRACT).
 
-Exercises ``ferova review merge`` through ``CliRunner`` with
+Exercises ``repoach review merge`` through ``CliRunner`` with
 ``run_auto_merge`` replaced at the CLI seam to verify that every
 non-fatal skip outcome exits 5 and FAILED exits 1.
 """

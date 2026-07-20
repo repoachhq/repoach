@@ -19,7 +19,7 @@ line.
 
 The sonnet has no prior context. Include in the prompt:
 
-- **One sentence project context** (ferova, autonomous software factory,
+- **One sentence project context** (repoach, autonomous software factory,
   CLAUDE.md conventions).
 - **ISOLATION CHECK** — call out the worktree branch verification (see
   the `agent-isolation-respect` skill).

@@ -103,7 +103,7 @@ async def create_agent_turn(
 ):
     """Capability-gateway endpoint (SP-CAPABILITY-GATEWAY).
 
-    Accepts a ``ferova/v1`` request, walks the chain stored in
+    Accepts a ``repoach/v1`` request, walks the chain stored in
     MODEL_<capability.upper()>, and returns a single-turn
     ``AgentResponse``.  The agentic loop (multi-turn tool_use ↔
     tool_result) lives in the client SDK, not here.

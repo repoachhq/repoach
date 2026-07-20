@@ -17,10 +17,10 @@ from repoach.review.reviewer import BotRole
 
 _HOSTILE_PATTERNS = (
     "send_whatsapp",
-    "mcp__ferova__send_whatsapp",
+    "mcp__repoach__send_whatsapp",
     "proxy_restart",
     "git_open_pr",
-    "run_ferova_command",
+    "run_repoach_command",
 )
 
 #: All roles process diffs / PRs and must remain fail-closed against

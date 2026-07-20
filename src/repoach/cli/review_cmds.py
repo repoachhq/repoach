@@ -1,15 +1,15 @@
 """CLI subcommands for the review-bot team.
 
-Exposed as ``ferova review …`` once the typer subapp is mounted on
+Exposed as ``repoach review …`` once the typer subapp is mounted on
 the main app in :mod:`repoach.cli.main`.
 
 Subcommands:
 
-* ``ferova review pr <N>`` — run the four reviewer bots on PR
+* ``repoach review pr <N>`` — run the four reviewer bots on PR
   ``<N>`` and (by default) post their findings to GitHub.
-* ``ferova review pr <N> --dry-run`` — same but never publish to
+* ``repoach review pr <N> --dry-run`` — same but never publish to
   GitHub; only persist to L4.  Useful for local previews and tests.
-* ``ferova review report <N>`` — pull the sticky archive comment
+* ``repoach review report <N>`` — pull the sticky archive comment
   off PR ``<N>`` and emit the full TeamOutcome as JSON.  Works
   regardless of where the workflow ran (local machine vs. Actions
   runner) — the comment lives on the PR itself.
@@ -306,7 +306,7 @@ def review_gate(
     head, waits on required CI, and emits the decision as JSON. It does
     not post and does not merge — ``safe_merge.sh`` keeps ownership of
     the actual ``gh pr merge``. The decision is byte-identical to the
-    one ``ferova review merge`` would reach (both go through
+    one ``repoach review merge`` would reach (both go through
     :func:`decide_at_head`).
 
     Exit codes:

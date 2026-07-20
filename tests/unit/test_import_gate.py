@@ -1,6 +1,6 @@
 """Unit tests for SP-DEV-STEP-CONTEXT — import gate, lint gate, spec-in-brief.
 
-The import gate must turn a hallucinated ``ferova`` import into
+The import gate must turn a hallucinated ``repoach`` import into
 directive feedback (what exists, where the names live); the repo lint
 gate must surface the house rules before the commit hook does; the
 step brief must carry the spec verbatim so plan actions that reference

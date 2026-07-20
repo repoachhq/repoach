@@ -37,6 +37,11 @@ dev = [
     "mypy>=1.10",
 ]
 
+[project.urls]
+Homepage = "https://github.com/repoachhq/repoach"
+Repository = "https://github.com/repoachhq/repoach"
+Issues = "https://github.com/repoachhq/repoach/issues"
+
 [project.scripts]
 repoach = "repoach.cli:app"
 ferova = "repoach.cli:app"

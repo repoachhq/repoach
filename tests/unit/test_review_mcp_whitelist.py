@@ -19,7 +19,7 @@ from repoach.review.reviewer import BotRole
 #: Read-only MCP tools available to inspect the working tree / persisted
 #: state without touching the outside world.  Reviewers + Coder + Developer
 #: get a curated subset of these; mutating tools (``proxy_restart``,
-#: ``run_ferova_command``…) are explicitly excluded.
+#: ``run_repoach_command``…) are explicitly excluded.
 _READ_ONLY_TOOLS = frozenset(
     {
         "git_status",
@@ -32,10 +32,10 @@ _READ_ONLY_TOOLS = frozenset(
 #: process restarts).  Forbidden for any review-bot role.
 _MUTATING_TOOLS = (
     "send_whatsapp",
-    "mcp__ferova__send_whatsapp",
+    "mcp__repoach__send_whatsapp",
     "proxy_restart",
     "git_open_pr",
-    "run_ferova_command",
+    "run_repoach_command",
 )
 
 #: Bot roles whose threat model is "process a diff" — they must never

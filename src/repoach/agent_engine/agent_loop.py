@@ -1,8 +1,8 @@
-"""Proxy-only ``ferova/v1`` client.
+"""Proxy-only ``repoach/v1`` client.
 
 SP-LLM-NATIVE-FORMAT (2026-05-06): every call from the agent process
 goes through the proxy's capability gateway (``POST /v1/agent``)
-using the native ``ferova/v1`` shape.  No more OpenAI-format
+using the native ``repoach/v1`` shape.  No more OpenAI-format
 translation in the middle — :class:`Message`, :class:`ToolSpec`,
 :class:`AgentResponse` Pydantic models flow end-to-end.
 
@@ -123,7 +123,7 @@ class ToolDef:
     callable_fn: Callable[..., Any]
 
     def to_tool_spec(self) -> ToolSpec:
-        """Serialise as a ``ferova/v1`` :class:`ToolSpec`."""
+        """Serialise as a ``repoach/v1`` :class:`ToolSpec`."""
         return ToolSpec(
             name=self.name,
             description=self.description,
@@ -267,7 +267,7 @@ def _budget_nudge_text(remaining: int, max_turns: int) -> str:
 
 
 class AgentLoop:
-    """Proxy-only ``ferova/v1`` tool-using agent loop."""
+    """Proxy-only ``repoach/v1`` tool-using agent loop."""
 
     def __init__(
         self,
@@ -376,7 +376,7 @@ class AgentLoop:
             system: Optional system message.
             json_response: When True, prepend an instruction to the
                 prompt so reviewers requesting strict JSON get it.
-                ``ferova/v1`` carries no structured-output flag,
+                ``repoach/v1`` carries no structured-output flag,
                 so we honour the contract by promoting the
                 instruction at the prompt level.
             accept_response: Optional callback inspecting the

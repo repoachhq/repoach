@@ -1,4 +1,4 @@
-"""Ferova agent engine — provider-agnostic agent loop.
+"""Repoach agent engine — provider-agnostic agent loop.
 
 The engine exposes :class:`agent_loop.AgentLoop`, a chain-failover
 loop over the local llm_proxy sidecar (NIM, OpenRouter, claude_code).

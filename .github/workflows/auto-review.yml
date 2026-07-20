@@ -10,7 +10,7 @@ on:
   # Re-fire the pipeline when a new comment or review lands on the PR.
   # The original pull_request trigger fires only on opened/synchronize,
   # so a verdict that flips later (after a manual reviewer comment, an
-  # archive-comment update from a fresh ``ferova review pr <N>``
+  # archive-comment update from a fresh ``repoach review pr <N>``
   # run, or a human pushing back) was previously stranded — the
   # auto_merge job could not see the new APPROVE.  This trigger lets
   # any conversational signal re-evaluate the gate.
@@ -149,12 +149,12 @@ jobs:
         # — agent_loop never touches them directly.
         env:
           # Provider credentials — consumed by the proxy.
-          FEROVA_NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
-          FEROVA_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          FEROVA_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          FEROVA_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
-          FEROVA_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          FEROVA_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          REPOACH_NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          REPOACH_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REPOACH_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          REPOACH_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          REPOACH_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          REPOACH_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           # Capability chains.  These are not secret — they reference
           # public model names — so we can declare them inline.
           # Match the production .env used on the developer box.
@@ -164,9 +164,9 @@ jobs:
           # flows into both local and CI.
           # Proxy auth — random per-run token shared between the
           # sidecar and the agent process.
-          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FEROVA_PROXY_HOST: "127.0.0.1"
-          FEROVA_PROXY_PORT: "8083"
+          REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOACH_PROXY_HOST: "127.0.0.1"
+          REPOACH_PROXY_PORT: "8083"
           # SP-PROXY-CHAIN-FAILOVER (2026-05-09): per-attempt read
           # timeout. Defaults to 120s in settings.py — too long for the
           # bot client, which also caps at ~120s, so the bot kills the
@@ -181,11 +181,7 @@ jobs:
           set -a
           source chains.env
           set +a
-          # Rename transition: this job runs the BASE-ref install
-          # (secrets isolation), which is the pre-rename ``ferova``
-          # package exactly once — on the rename PR itself.  The
-          # fallback dies with the transition and PR 3 removes it.
-          nohup bash -c 'python -m repoach.llm_proxy || exec python -m ferova.llm_proxy' > logs/llm_proxy.log 2>&1 &
+          nohup python -m repoach.llm_proxy > logs/llm_proxy.log 2>&1 &
           echo "$!" > logs/llm_proxy.pid
           # Wait up to 20s for /health to respond.
           for i in $(seq 1 40); do
@@ -203,20 +199,15 @@ jobs:
         id: run_review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Agent process talks to the local proxy only.  Core-config
-          # names are set under BOTH prefixes while this job's base-ref
-          # install straddles the ferova→repoach rename (the FEROVA_
-          # duplicates die with PR 3).
-          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Agent process talks to the local proxy only.
+          REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
-          FEROVA_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           # Optional: when both are set in repo secrets the orchestrator
           # fires a Claude Code routine after posting reviews, delivering
           # the report straight to the user's assistant session.
-          FEROVA_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
-          FEROVA_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
+          REPOACH_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
+          REPOACH_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
           REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
-          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
         run: |
           # SP-AUTO-REVIEW-V2-MIGRATION : capture the V2-gateway JSON
           # payload to a file so the operator can fetch the structured
@@ -229,12 +220,9 @@ jobs:
           artifact="$GITHUB_WORKSPACE/logs/review_ci/review_pr_${{ steps.pr.outputs.number }}.json"
           # cwd = the data-only PR head checkout: guard/excerpt/spec
           # reads see the PR's files while the interpreter runs the
-          # base-ref install (SP-CI-SECRETS-ISOLATION layer 2).  The
-          # ``ferova`` console script resolves in BOTH eras of the
-          # rename (base install pre-rename, transition alias after);
-          # PR 3 flips it to ``repoach`` once the base carries it.
+          # base-ref install (SP-CI-SECRETS-ISOLATION layer 2).
           cd pr_head
-          ferova review pr "${{ steps.pr.outputs.number }}" | tee "$artifact"
+          python -m repoach.cli.main review pr "${{ steps.pr.outputs.number }}" | tee "$artifact"
           rc=${PIPESTATUS[0]}
           # Exit code 2 == REQUEST_CHANGES (gate the merge); 0 == APPROVE/COMMENT.
           # Anything else is an actual failure of the bot pipeline.
@@ -389,19 +377,19 @@ jobs:
         # sidecar pattern as the review job — Coder is a proxy-only
         # client now.
         env:
-          FEROVA_NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
-          FEROVA_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          FEROVA_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          FEROVA_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
-          FEROVA_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          FEROVA_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          REPOACH_NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          REPOACH_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REPOACH_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          REPOACH_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          REPOACH_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          REPOACH_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
           # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): chains live in
           # the version-controlled ``chains.env`` at the repo root.
           # The startup step below sources it so the same definition
           # flows into both local and CI.
-          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FEROVA_PROXY_HOST: "127.0.0.1"
-          FEROVA_PROXY_PORT: "8083"
+          REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOACH_PROXY_HOST: "127.0.0.1"
+          REPOACH_PROXY_PORT: "8083"
           # SP-PROXY-CHAIN-FAILOVER (2026-05-09): see review job above.
           HTTP_READ_TIMEOUT: "30"
         run: |
@@ -426,14 +414,14 @@ jobs:
         id: coder
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
           # Local pre-push gate runs pytest under both interpreters
           # so a fix that works on 3.13 but breaks 3.11 is reverted
           # here, not surfaced via a red CI run that burns minutes
           # and routine quota.
-          FEROVA_CODER_PYTHONS: python3.11,python3.13
+          REPOACH_CODER_PYTHONS: python3.11,python3.13
         run: |
           set +e
           python -m repoach.cli.main review fix "${{ needs.review.outputs.pr_number }}"
@@ -499,10 +487,10 @@ jobs:
         if: steps.coder.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FEROVA_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
-          FEROVA_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
-          FEROVA_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
+          REPOACH_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
+          REPOACH_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
           REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
         run: |
           # SP-CI-FIX-LOOP-CLOSURE: the run that pushed the fix

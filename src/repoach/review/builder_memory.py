@@ -19,7 +19,7 @@ SEED_LESSONS: tuple[str, ...] = (
     "between steps eats anything under it.",
     "Every test a plan step promises must be CREATED by that same step; the gate "
     "reverts a step whose promised test file is absent. No forward references.",
-    "Launch `ferova develop` FROM the checkout that carries the spec — load_spec "
+    "Launch `repoach develop` FROM the checkout that carries the spec — load_spec "
     "reads cwd before the branch is created.",
     "The proxy is an editable install: merge develop into the impl branch (or restart) "
     "so it imports the current client code, not a stale checkout.",

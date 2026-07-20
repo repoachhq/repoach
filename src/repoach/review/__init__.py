@@ -1,4 +1,4 @@
-"""Review-bot team for Ferova pull requests.
+"""Review-bot team for Repoach pull requests.
 
 Five specialised bots, all running on NVIDIA NIM via :mod:`agent_engine.agent_loop`
 (zero Anthropic / Claude Code Pro quota consumption):

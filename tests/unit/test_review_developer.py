@@ -23,7 +23,7 @@ from repoach.review.reviewer import (
 def test_developer_has_correct_role() -> None:
     dev = Developer(loop=MagicMock())
     assert dev.role == BotRole.DEVELOPER
-    assert dev.persona_filename == "developer_0.2.0.md"
+    assert dev.persona_filename == "developer_0.2.1.md"
 
 
 # ---------------------------------------------------------------------------

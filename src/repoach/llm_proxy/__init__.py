@@ -1,4 +1,4 @@
-"""Ferova local LLM proxy.
+"""Repoach local LLM proxy.
 
 Ingested from ``lsdefine/free-claude-code`` and trimmed to the
 serving path only (messaging platforms and the interactive CLI are

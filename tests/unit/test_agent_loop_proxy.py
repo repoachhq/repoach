@@ -1,7 +1,7 @@
 """Proxy-only AgentLoop smoke tests.
 
 SP-LLM-NATIVE-FORMAT (2026-05-06): :class:`AgentLoop` now speaks
-``ferova/v1`` natively — it stores a :class:`CapabilityTier`
+``repoach/v1`` natively — it stores a :class:`CapabilityTier`
 (not a model alias chain) and constructs :class:`AgentRequest`
 directly.  These tests pin the construction surface:
 
@@ -78,7 +78,7 @@ def test_agent_loop_legacy_model_chain_classifies_by_substring(mock_settings):
         ("CLAUDE-OPUS-anything", CapabilityTier.OPUS),
         ("claude-sonnet-4-6", CapabilityTier.SONNET),
         ("claude-haiku-4-5", CapabilityTier.HAIKU),
-        ("claude-coder-ferova", CapabilityTier.SONNET),
+        ("claude-coder-repoach", CapabilityTier.SONNET),
         ("garbage-no-tier", CapabilityTier.SONNET),
     ]
     for first_entry, expected in cases:

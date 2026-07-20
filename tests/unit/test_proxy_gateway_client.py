@@ -1,8 +1,8 @@
-"""Native ``ferova/v1`` HTTP-client tests for ``ProxyGatewayClient``.
+"""Native ``repoach/v1`` HTTP-client tests for ``ProxyGatewayClient``.
 
 SP-LLM-NATIVE-FORMAT (2026-05-06): the previous file
 (``test_proxy_gateway_adapter.py``) tested the OpenAI ⇄
-ferova/v1 translation layer that PR #98 added — that
+repoach/v1 translation layer that PR #98 added — that
 translation has been deleted along with ``ProxyGatewayAdapter``.
 The agent loop now constructs :class:`AgentRequest` directly and
 reads :class:`AgentResponse` directly; this file pins the new

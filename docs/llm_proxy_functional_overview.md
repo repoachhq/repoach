@@ -6,7 +6,7 @@
 > expect sections to deepen over time. Diagram:
 > `llm_proxy_functional_overview.svg` (+ `.png`). For implementation
 > detail see `proxy_routing_redesign_architecture.md` and the code
-> under `src/ferova/llm_proxy/`.
+> under `src/repoach/llm_proxy/`.
 
 ## What the proxy is
 
@@ -29,12 +29,12 @@ The proxy is the `llm_proxy` subtree. A standard, async Python stack:
 | API / server | **FastAPI** + **uvicorn** | ASGI; Anthropic-compatible endpoints; **SSE** streaming |
 | HTTP client (to providers) | **httpx** (`[http2]`) | `AsyncClient`, HTTP/2 |
 | Models / validation | **Pydantic v2** | every value object (`ModelRef`, `Chain`, request/response models), frozen and validated |
-| Config | **pydantic-settings** | `Settings`, env files `chains.env` + `.env`, `FEROVA_*` aliases, `lru_cache` |
+| Config | **pydantic-settings** | `Settings`, env files `chains.env` + `.env`, `REPOACH_*` aliases, `lru_cache` |
 | Storage | **SQLAlchemy 2** + **SQLite** | the health history that seeds the breaker at startup |
-| Logging | **loguru** | (the rest of ferova uses `structlog`; the proxy subtree uses loguru) |
-| CLI | **Typer** | the `ferova …` commands; the proxy itself runs as `python -m ferova.llm_proxy` |
+| Logging | **loguru** | (the rest of repoach uses `structlog`; the proxy subtree uses loguru) |
+| CLI | **Typer** | the `repoach …` commands; the proxy itself runs as `python -m repoach.llm_proxy` |
 
-**Deployment.** A systemd **user** service (`ferova-llm-proxy.service`)
+**Deployment.** A systemd **user** service (`repoach-llm-proxy.service`)
 runs `uvicorn.run(app)` on `127.0.0.1:8082` with a 5 s graceful
 shutdown — a **local sidecar**, not internet-facing (hence the simple
 shared-secret door at `AUTHENTICATE`).
@@ -50,7 +50,7 @@ Three things about the nature of this stack:
    not mid-failover in production.
 3. **SQLite is read-mostly on the proxy side** — the proxy only *reads*
    the health history to seed the breaker; the health probe (on the
-   ferova side) *writes* it. The database is shared between the two.
+   repoach side) *writes* it. The database is shared between the two.
 
 ## How a request flows
 
@@ -77,13 +77,13 @@ ends here.
 
 The door check. It reads only the **token on the envelope** — never the
 body — and compares it against the configured secret
-(`FEROVA_ANTHROPIC_AUTH_TOKEN`). Valid → the request continues; missing
+(`REPOACH_ANTHROPIC_AUTH_TOKEN`). Valid → the request continues; missing
 or wrong → rejected immediately with `401`, before reaching any model.
 If no secret is configured, the door is open (no-op). It is a simple
 shared secret because the proxy is a private, local sidecar, not an
 internet-facing service.
 
-Code: `require_api_key` in `src/ferova/llm_proxy/api/dependencies.py`,
+Code: `require_api_key` in `src/repoach/llm_proxy/api/dependencies.py`,
 wired per-route via `Depends(require_api_key)` in `api/routes.py`
 (opt-in, which is why `GET /health` deliberately omits it).
 
@@ -180,7 +180,7 @@ unauthenticated, for inspection (`state exposed`).
 
 ## Circuit breaker internals
 
-Implementation: `src/ferova/llm_proxy/routing/breaker.py` (~60 lines)
+Implementation: `src/repoach/llm_proxy/routing/breaker.py` (~60 lines)
 plus the fault classifier in `api/services.py`.
 
 ### Three tables
