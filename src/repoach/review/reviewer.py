@@ -899,7 +899,7 @@ class Sentinel(Reviewer):
     """
 
     role = BotRole.SENTINEL
-    persona_filename = "sentinel_0.4.1.md"
+    persona_filename = "sentinel_0.4.2.md"
     model_chain = PROXY_OPUS_CHAIN
 
 

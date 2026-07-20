@@ -207,7 +207,7 @@ jobs:
           # the report straight to the user's assistant session.
           REPOACH_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
           REPOACH_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
-          REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
         run: |
           # SP-AUTO-REVIEW-V2-MIGRATION : capture the V2-gateway JSON
           # payload to a file so the operator can fetch the structured
@@ -249,12 +249,28 @@ jobs:
       # artifact so the auto_merge job's pure gate can re-verify it at
       # head (cross-run continuity). Written by this trusted base-ref
       # job — not forgeable by PR code.
+      #
+      # Rename-transition bridge (Ferova → Repoach): merge-on-ci.yml is
+      # a workflow_run workflow, so the version that RUNS is main's,
+      # which still looks for the literal ``ferova_review.db`` inside
+      # this artifact until the next develop→main release. Ship the
+      # ledger under BOTH names so the dormant gate keeps its evidence;
+      # drop the legacy copy + dual path once that release ships.
+      - name: Bridge ledger to legacy filename (rename transition)
+        if: always()
+        run: |
+          if [ -f "${RUNNER_TEMP}/repoach_review.db" ]; then
+            cp "${RUNNER_TEMP}/repoach_review.db" "${RUNNER_TEMP}/ferova_review.db"
+          fi
+
       - name: Upload findings ledger
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: findings-ledger-${{ steps.pr.outputs.number }}
-          path: ${{ runner.temp }}/ferova_review.db
+          path: |
+            ${{ runner.temp }}/repoach_review.db
+            ${{ runner.temp }}/ferova_review.db
           overwrite: true
           if-no-files-found: ignore
 
@@ -416,7 +432,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
-          REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
           # Local pre-push gate runs pytest under both interpreters
           # so a fix that works on 3.13 but breaks 3.11 is reverted
           # here, not surfaced via a red CI run that burns minutes
@@ -491,7 +507,7 @@ jobs:
           REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           REPOACH_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
           REPOACH_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
-          REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
         run: |
           # SP-CI-FIX-LOOP-CLOSURE: the run that pushed the fix
           # re-reviews it — no new event needed, the original run's
@@ -516,12 +532,26 @@ jobs:
       # SP-LEDGER-TRANSPORT: after a fix + in-run re-review, THIS db
       # holds the post-fix findings — supersede the review job's
       # ledger artifact so auto_merge re-verifies the fresh head.
+      #
+      # Rename-transition bridge (Ferova → Repoach): same as the review
+      # job's upload — main's merge-on-ci.yml reads the legacy
+      # ``ferova_review.db`` name until the next develop→main release,
+      # so publish both names. Drop after that release ships.
+      - name: Bridge ledger to legacy filename (rename transition)
+        if: steps.coder.outputs.pushed == 'true'
+        run: |
+          if [ -f "${RUNNER_TEMP}/repoach_review.db" ]; then
+            cp "${RUNNER_TEMP}/repoach_review.db" "${RUNNER_TEMP}/ferova_review.db"
+          fi
+
       - name: Upload findings ledger (post-fix)
         if: steps.coder.outputs.pushed == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: findings-ledger-${{ needs.review.outputs.pr_number }}
-          path: ${{ runner.temp }}/ferova_review.db
+          path: |
+            ${{ runner.temp }}/repoach_review.db
+            ${{ runner.temp }}/ferova_review.db
           overwrite: true
           if-no-files-found: ignore
 
@@ -659,7 +689,7 @@ jobs:
       - name: Run auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
           # SP-AUTOMERGE-EVENT-DRIVEN (G4): single CI evaluation, no
           # slot-holding poll; merge-on-ci.yml retries on completion.
           # CAVEAT: workflow_run only fires from the DEFAULT branch —

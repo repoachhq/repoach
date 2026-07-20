@@ -302,7 +302,7 @@ class AgentLoop:
 
         Raises:
             ValueError: If ``model_chain`` is provided but empty,
-                or if ``FEROVA_ANTHROPIC_AUTH_TOKEN`` is missing.
+                or if ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing.
         """
         if capability is not None:
             self._capability = capability
@@ -325,7 +325,7 @@ class AgentLoop:
         )
         if not api_key:
             raise ValueError(
-                "FEROVA_ANTHROPIC_AUTH_TOKEN is missing — the proxy gateway "
+                "REPOACH_ANTHROPIC_AUTH_TOKEN is missing — the proxy gateway "
                 "requires a shared secret.  Set it in .env."
             )
 

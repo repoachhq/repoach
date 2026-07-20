@@ -62,7 +62,7 @@ if [[ ${#staged_py[@]} -gt 0 ]] ; then
     fi
 
     bold "lint — edge honesty (SP-ARCH-EDGE-GATE)"
-    if ferova arch check --staged ; then
+    if repoach arch check --staged ; then
         ok "edge-honesty"
     else
         fail "edge-honesty  (declare the missing depends_on edge in the spec frontmatter)"
