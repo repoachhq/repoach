@@ -8,7 +8,7 @@ created: 2026-06-26
 updated: 2026-06-26
 
 owns:
-  code: src/ferova/review/chain_rewrite.py
+  code: src/repoach/review/chain_rewrite.py
   resources: N/A
 
 depends_on: []                   # Chain / ModelRef are frontier/pre-template (like 1e)

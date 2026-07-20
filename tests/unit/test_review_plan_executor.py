@@ -548,7 +548,7 @@ class TestGateAndSessionEdges:
     def test_run_pytest_selectors_scrubs_secret_env(self, tmp_path: Path, monkeypatch) -> None:
         import repoach.review.dev_runner as dr
 
-        monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "live-secret")
+        monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "live-secret")
         monkeypatch.setenv("REPOACH_DB_PATH", "data/x.db")
         captured: dict[str, object] = {}
 
@@ -566,7 +566,7 @@ class TestGateAndSessionEdges:
 
         env = captured["env"]
         assert env is not None
-        assert "FEROVA_OPENROUTER_API_KEY" not in env
+        assert "REPOACH_OPENROUTER_API_KEY" not in env
         assert env.get("REPOACH_DB_PATH") == "data/x.db"
 
     def test_omitted_in_contract_promise_is_retried_and_heals(self, tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ created: 2026-06-25
 updated: 2026-06-26
 
 owns:
-  code: src/ferova/review/decision.py
+  code: src/repoach/review/decision.py
   resources: N/A
 
 depends_on:

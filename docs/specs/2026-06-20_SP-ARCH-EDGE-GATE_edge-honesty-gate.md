@@ -8,7 +8,7 @@ created: 2026-06-20
 updated: 2026-06-20
 
 owns:
-  code: [src/ferova/lint/edge_honesty.py]   # new lint gate, sibling of the no-inline / no-silent gates
+  code: [src/repoach/lint/edge_honesty.py]   # new lint gate, sibling of the no-inline / no-silent gates
   resources: N/A                                # consumes the registry; owns no table/topic
 
 depends_on: [SP-ARCH-GRAPH]           # imports Registry + owner_of (tier-1a code edge); NOT the template (transitive)

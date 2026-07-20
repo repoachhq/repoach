@@ -8,7 +8,7 @@ created: 2026-06-25
 updated: 2026-06-25
 
 owns:
-  code: src/ferova/review/reviewer_outcomes.py
+  code: src/repoach/review/reviewer_outcomes.py
   resources: N/A                  # read-only over existing findings + pr_reviews tables
 
 depends_on: []                    # reads frontier review modules (findings / persistence); no governed cross-owns edge

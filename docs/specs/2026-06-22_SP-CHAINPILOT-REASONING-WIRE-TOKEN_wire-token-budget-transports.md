@@ -9,8 +9,8 @@ updated: 2026-06-22
 
 owns:
   code:
-    - src/ferova/llm_proxy/providers/nvidia_nim/request.py    # NIM request builder (token-budget transport)
-    - src/ferova/llm_proxy/providers/open_router/request.py   # OpenRouter request builder (token-budget transport)
+    - src/repoach/llm_proxy/providers/nvidia_nim/request.py    # NIM request builder (token-budget transport)
+    - src/repoach/llm_proxy/providers/open_router/request.py   # OpenRouter request builder (token-budget transport)
   resources: N/A
 
 depends_on: [SP-CHAINPILOT-REASONING-CONTROL]   # both builders import the shared bounded_reasoning_budget

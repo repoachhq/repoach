@@ -8,7 +8,7 @@ created: 2026-06-25
 updated: 2026-06-25
 
 owns:
-  code: src/ferova/llm_proxy/providers/attribution.py
+  code: src/repoach/llm_proxy/providers/attribution.py
   resources: N/A
 
 depends_on:

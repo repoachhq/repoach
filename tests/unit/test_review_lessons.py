@@ -127,7 +127,7 @@ def test_remember_writes_to_builder_project(
     written = review_lessons.remember_verified_findings(db, 1, remember_fn=_fake_remember)
 
     assert written == 1
-    assert seen[0][0] == "ferova-builder"
+    assert seen[0][0] == "repoach-builder"
     assert "real blocker" in seen[0][1]
 
 

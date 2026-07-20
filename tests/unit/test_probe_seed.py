@@ -26,9 +26,9 @@ from repoach.llm_proxy.routing.tier import Tier
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    for key in ("MODEL", "FEROVA_MODEL_HAIKU", "MODEL_HAIKU", "FEROVA_PROXY_DEFAULT_MODEL"):
+    for key in ("MODEL", "REPOACH_MODEL_HAIKU", "MODEL_HAIKU", "REPOACH_PROXY_DEFAULT_MODEL"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("FEROVA_PROXY_DEFAULT_MODEL", "nvidia_nim/default/model")
+    monkeypatch.setenv("REPOACH_PROXY_DEFAULT_MODEL", "nvidia_nim/default/model")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/test/haiku-head,claude_code/haiku")
     return Settings(_env_file=None)
 

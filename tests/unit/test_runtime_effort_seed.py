@@ -46,7 +46,7 @@ def _runtime(settings: Settings) -> AppRuntime:
 def test_seed_populates_map_when_enabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     db = tmp_path / "effort.db"
     _record_handled_groq(db)
-    monkeypatch.setenv("FEROVA_BREAKER_PROBE_SEED_DB", str(db))
+    monkeypatch.setenv("REPOACH_BREAKER_PROBE_SEED_DB", str(db))
 
     _runtime(Settings(_env_file=None))._seed_effort_map()
 
@@ -56,8 +56,8 @@ def test_seed_populates_map_when_enabled(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_seed_skipped_when_disabled(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     db = tmp_path / "effort.db"
     _record_handled_groq(db)
-    monkeypatch.setenv("FEROVA_BREAKER_PROBE_SEED_DB", str(db))
-    monkeypatch.setenv("FEROVA_EFFORT_MAP_SEED_ENABLED", "false")
+    monkeypatch.setenv("REPOACH_BREAKER_PROBE_SEED_DB", str(db))
+    monkeypatch.setenv("REPOACH_EFFORT_MAP_SEED_ENABLED", "false")
 
     _runtime(Settings(_env_file=None))._seed_effort_map()
 

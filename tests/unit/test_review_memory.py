@@ -90,7 +90,7 @@ def test_recall_enabled_calls_client_with_review_project(
     monkeypatch.setattr(review_memory.agentmemory_client, "recall", _fake_recall)
 
     assert review_memory.recall_review_lessons("q") == ["recalled trap"]
-    assert seen["project"] == "ferova-review"
+    assert seen["project"] == "repoach-review"
 
 
 def test_seed_writes_all_lessons(monkeypatch: pytest.MonkeyPatch, fresh_settings: None) -> None:
@@ -104,11 +104,11 @@ def test_seed_writes_all_lessons(monkeypatch: pytest.MonkeyPatch, fresh_settings
 
     assert review_memory.seed_review_memory() == len(review_memory.SEED_REVIEW_LESSONS)
     assert len(written) == 6
-    assert all(project == "ferova-review" for project, _ in written)
+    assert all(project == "repoach-review" for project, _ in written)
 
 
 def test_config_kill_switch_defaults_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in ("FEROVA_REVIEW_MEMORY_ENABLED", "REVIEW_MEMORY_ENABLED"):
+    for key in ("REPOACH_REVIEW_MEMORY_ENABLED", "REVIEW_MEMORY_ENABLED"):
         monkeypatch.delenv(key, raising=False)
     settings = config.Settings(_env_file=None)
     assert settings.review_memory_enabled is True

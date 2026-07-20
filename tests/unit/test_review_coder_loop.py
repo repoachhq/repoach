@@ -327,7 +327,7 @@ def test_pytest_pythons_returns_default_when_env_unset(monkeypatch: pytest.Monke
     """No env → single ``[None]`` slot (uses bare ``pytest`` on PATH)."""
     from repoach.review.coder_loop import _pytest_pythons
 
-    monkeypatch.delenv("FEROVA_CODER_PYTHONS", raising=False)
+    monkeypatch.delenv("REPOACH_CODER_PYTHONS", raising=False)
     assert _pytest_pythons() == [None]
 
 
@@ -339,7 +339,7 @@ def test_pytest_pythons_filters_missing_interpreters(
 
     from repoach.review.coder_loop import _pytest_pythons
 
-    monkeypatch.setenv("FEROVA_CODER_PYTHONS", "python3.11,python-does-not-exist,python3.13")
+    monkeypatch.setenv("REPOACH_CODER_PYTHONS", "python3.11,python-does-not-exist,python3.13")
 
     def _fake_which(name: str) -> str | None:
         if name == "python3.11":
@@ -360,7 +360,7 @@ def test_pytest_pythons_falls_back_when_none_resolve(
 
     from repoach.review.coder_loop import _pytest_pythons
 
-    monkeypatch.setenv("FEROVA_CODER_PYTHONS", "python-no,python-also-no")
+    monkeypatch.setenv("REPOACH_CODER_PYTHONS", "python-no,python-also-no")
     monkeypatch.setattr(_shutil, "which", lambda _name: None)
     assert _pytest_pythons() == [None]
 
@@ -414,7 +414,7 @@ def test_run_pytest_scrubs_secret_env(tmp_path: Path, monkeypatch: pytest.Monkey
     """run_pytest runs agent-authored tests with a secret-scrubbed env (S4)."""
     import repoach.review.coder_loop as cl
 
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "live-secret")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "live-secret")
     monkeypatch.setenv("REPOACH_DB_PATH", "data/x.db")
     captured: dict[str, object] = {}
 
@@ -432,5 +432,5 @@ def test_run_pytest_scrubs_secret_env(tmp_path: Path, monkeypatch: pytest.Monkey
 
     env = captured["env"]
     assert env is not None
-    assert "FEROVA_OPENROUTER_API_KEY" not in env
+    assert "REPOACH_OPENROUTER_API_KEY" not in env
     assert env.get("REPOACH_DB_PATH") == "data/x.db"

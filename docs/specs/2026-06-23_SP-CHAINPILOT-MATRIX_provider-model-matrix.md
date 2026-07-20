@@ -8,7 +8,7 @@ created: 2026-06-23
 updated: 2026-06-23
 
 owns:
-  code: [src/ferova/llm_proxy/providers/model_matrix.py]   # the matrix value objects + sweep builder
+  code: [src/repoach/llm_proxy/providers/model_matrix.py]   # the matrix value objects + sweep builder
   resources: N/A                                               # in-memory only; persistence is 2a (probe matrix)
 
 depends_on:

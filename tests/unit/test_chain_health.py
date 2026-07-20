@@ -144,7 +144,7 @@ def test_empty_content_head_classified_empty(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_cli_exit_code_reflects_worst_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "")
 
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [
@@ -160,7 +160,7 @@ def test_cli_exit_code_reflects_worst_status(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_cli_exit_zero_when_all_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "")
 
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [ModelHealth("sonnet", "thinker", "ok", 0.4, 2, "ok")]
@@ -214,8 +214,8 @@ def test_credits_low_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
         "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "5.0")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("REPOACH_CREDITS_FLOOR_USD", "5.0")
     monkeypatch.setenv("MODEL", "nvidia_nim/x")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
@@ -241,8 +241,8 @@ def test_credits_ok_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
         "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "2.0")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("REPOACH_CREDITS_FLOOR_USD", "2.0")
     monkeypatch.setenv("MODEL", "nvidia_nim/x")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
@@ -264,7 +264,7 @@ def test_credits_skipped_when_key_empty(monkeypatch: pytest.MonkeyPatch) -> None
         "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "")
     monkeypatch.setenv("MODEL", "nvidia_nim/x")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
@@ -289,8 +289,8 @@ def test_credits_json_output_shape(monkeypatch: pytest.MonkeyPatch) -> None:
         "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "2.0")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("REPOACH_CREDITS_FLOOR_USD", "2.0")
     monkeypatch.setenv("MODEL", "nvidia_nim/x")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")

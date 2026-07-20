@@ -8,7 +8,7 @@ created: 2026-06-23
 updated: 2026-06-23
 
 owns:
-  code: [src/ferova/llm_proxy/routing/model_centric.py]   # the model-centric chain view (new leaf)
+  code: [src/repoach/llm_proxy/routing/model_centric.py]   # the model-centric chain view (new leaf)
   resources: N/A                                              # pure types; no shared state
 
 depends_on: []                                                # derives from Chain/ModelRef (routing, frontier/pre-template); imports no owned module

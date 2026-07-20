@@ -26,7 +26,7 @@ updated: 2026-06-20
 # how frozen legacy and ungoverned tables stay VISIBLE instead of silent.
 # `resources: []` is fine (say so) for a code-only component.
 owns:
-  code: []                            # [src/ferova/...] source paths
+  code: []                            # [src/repoach/...] source paths
   resources: []                       # [db:table:<name>, queue:topic:<name>]
 
 # --- Architecture edges: the source for the system-level dependency graph ---

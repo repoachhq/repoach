@@ -101,7 +101,7 @@ class TestSuccess:
 
 class TestEnvScrubbing:
     def test_default_env_strips_sharp_secrets(self, monkeypatch) -> None:
-        monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nvapi-secret")
+        monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nvapi-secret")
         monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/db")
         monkeypatch.setenv("PATH", "/usr/bin")
         captured: dict[str, object] = {}
@@ -118,7 +118,7 @@ class TestEnvScrubbing:
         env = captured["env"]
         assert env is not None
         assert "PATH" in env
-        assert not any(k.startswith(("REPOACH_", "FEROVA_")) for k in env)
+        assert not any(k.startswith("REPOACH_") for k in env)
 
     def test_explicit_env_is_passed_through(self) -> None:
         captured: dict[str, object] = {}

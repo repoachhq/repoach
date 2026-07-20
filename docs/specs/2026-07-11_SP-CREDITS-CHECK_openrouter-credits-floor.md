@@ -8,7 +8,7 @@ created: 2026-07-11
 updated: 2026-07-11
 
 owns:
-  code: [src/ferova/health/credits.py]
+  code: [src/repoach/health/credits.py]
   resources: []
 
 depends_on: []

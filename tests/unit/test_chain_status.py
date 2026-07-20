@@ -68,8 +68,8 @@ def _settings(monkeypatch: pytest.MonkeyPatch, **overrides: object) -> Settings:
     monkeypatch.setenv("MODEL_OPUS", "")
     monkeypatch.setenv("MODEL_SONNET", "")
     monkeypatch.setenv("MODEL_HAIKU", "")
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
-    monkeypatch.setenv("FEROVA_CREDITS_FLOOR_USD", "2.0")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("REPOACH_CREDITS_FLOOR_USD", "2.0")
     for key, value in overrides.items():
         monkeypatch.setenv(key, str(value) if value is not None else "")
     return Settings()
@@ -143,7 +143,7 @@ async def test_nominal_tier_mix_and_avg_slow_line(
     settings = _settings(
         monkeypatch,
         MODEL_SONNET="nvidia_nim/sonnet-model",
-        FEROVA_OPENROUTER_API_KEY="test-key",
+        REPOACH_OPENROUTER_API_KEY="test-key",
     )
 
     result = await build_chain_status(
@@ -167,7 +167,7 @@ async def test_unmonitored_head_warning(tmp_path: Path, monkeypatch: pytest.Monk
     settings = _settings(
         monkeypatch,
         MODEL_SONNET="open_router/anthropic/claude-sonnet-4-20250514",
-        FEROVA_OPENROUTER_API_KEY="test-key",
+        REPOACH_OPENROUTER_API_KEY="test-key",
     )
 
     result = await build_chain_status(
@@ -205,7 +205,7 @@ async def test_breaker_mapping_chained_and_unchained(
     settings = _settings(
         monkeypatch,
         model_sonnet="nvidia_nim/sonnet-degraded,claude_code/sonnet",
-        FEROVA_OPENROUTER_API_KEY="test-key",
+        REPOACH_OPENROUTER_API_KEY="test-key",
     )
 
     result = await build_chain_status(
@@ -230,7 +230,7 @@ async def test_credits_none_renders_unavailable(
     settings = _settings(
         monkeypatch,
         model_sonnet="nvidia_nim/sonnet-model",
-        FEROVA_OPENROUTER_API_KEY="test-key",
+        REPOACH_OPENROUTER_API_KEY="test-key",
     )
 
     result = await build_chain_status(
@@ -255,7 +255,7 @@ def test_cli_argv_parsing_and_exit_zero(tmp_path: Path) -> None:
             "--proxy-url",
             "http://127.0.0.1:9099",
         ],
-        env={**os.environ, "FEROVA_OPENROUTER_API_KEY": ""},
+        env={**os.environ, "REPOACH_OPENROUTER_API_KEY": ""},
     )
     assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
 
@@ -273,7 +273,7 @@ def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -
             "--db-path",
             str(db),
         ],
-        env={**os.environ, "FEROVA_OPENROUTER_API_KEY": ""},
+        env={**os.environ, "REPOACH_OPENROUTER_API_KEY": ""},
     )
     assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
     assert "proxy: unreachable" in result.stdout

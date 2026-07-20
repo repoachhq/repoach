@@ -180,10 +180,10 @@ def test_allowed_paths_jails_edit_too(tmp_path: Path) -> None:
 
 
 def test_scrubbed_env_strips_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "live")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "live")
     monkeypatch.setenv("CLAUDE_CODE_ROUTINE_TOKEN", "live")
     monkeypatch.setenv("REPOACH_DB_PATH", "data/x.db")
     env = scrubbed_env()
-    assert "FEROVA_OPENROUTER_API_KEY" not in env
+    assert "REPOACH_OPENROUTER_API_KEY" not in env
     assert "CLAUDE_CODE_ROUTINE_TOKEN" not in env
     assert env.get("REPOACH_DB_PATH") == "data/x.db"

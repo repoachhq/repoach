@@ -91,13 +91,12 @@ _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 _AUTH_TOKEN_ALIASES = (
     "REPOACH_ANTHROPIC_AUTH_TOKEN",
-    "FEROVA_ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_AUTH_TOKEN",
 )
 """Auth-token env names in precedence order: canonical REPOACH_ first,
-pre-rename FEROVA_ second, bare legacy last — the same order the field's
-``AliasChoices`` resolves, so dotenv-precedence probing stays in lockstep
-with validation."""
+bare legacy second — the same order the field's ``AliasChoices``
+resolves, so dotenv-precedence probing stays in lockstep with
+validation."""
 """Bind addresses reachable from this machine only — the secure default.
 
 A non-loopback bind without an auth token is refused at construction
@@ -105,83 +104,79 @@ A non-loopback bind without an auth token is refused at construction
 must not serve an unauthenticated LLM proxy on all interfaces.
 """
 
-_LEGACY_TO_FEROVA_ALIAS: dict[str, str] = {
-    "OPENROUTER_API_KEY": "FEROVA_OPENROUTER_API_KEY",
-    "NVIDIA_NIM_API_KEY": "FEROVA_NVIDIA_NIM_API_KEY",
-    "KIMI_API_KEY": "FEROVA_KIMI_API_KEY",
-    "GROQ_API_KEY": "FEROVA_GROQ_API_KEY",
-    "CEREBRAS_API_KEY": "FEROVA_CEREBRAS_API_KEY",
-    "DEEPSEEK_API_KEY": "FEROVA_DEEPSEEK_API_KEY",
-    "ARTIFICIAL_ANALYSIS_API_KEY": "FEROVA_ARTIFICIAL_ANALYSIS_API_KEY",
-    "BREAKER_ENABLED": "FEROVA_BREAKER_ENABLED",
-    "BREAKER_TTL_S": "FEROVA_BREAKER_TTL_S",
-    "BREAKER_TTL_TERMINAL_S": "FEROVA_BREAKER_TTL_TERMINAL_S",
-    "BREAKER_PROBE_SEED_ENABLED": "FEROVA_BREAKER_PROBE_SEED_ENABLED",
-    "BREAKER_PROBE_SEED_DB": "FEROVA_BREAKER_PROBE_SEED_DB",
-    "EFFORT_MAP_SEED_ENABLED": "FEROVA_EFFORT_MAP_SEED_ENABLED",
-    "CLAUDE_CODE_CLI_PATH": "FEROVA_CLAUDE_CODE_CLI_PATH",
-    "CLAUDE_CODE_DEFAULT_MODEL": "FEROVA_CLAUDE_CODE_DEFAULT_MODEL",
-    "CLAUDE_CODE_SUBPROCESS_TIMEOUT": "FEROVA_CLAUDE_CODE_SUBPROCESS_TIMEOUT",
-    "MODEL": "FEROVA_PROXY_DEFAULT_MODEL",
-    "NVIDIA_NIM_PROXY": "FEROVA_NVIDIA_NIM_PROXY",
-    "OPENROUTER_PROXY": "FEROVA_OPENROUTER_PROXY",
-    "PROVIDER_RATE_LIMIT": "FEROVA_PROXY_PROVIDER_RATE_LIMIT",
-    "PROVIDER_RATE_WINDOW": "FEROVA_PROXY_PROVIDER_RATE_WINDOW",
-    "PROVIDER_MAX_CONCURRENCY": "FEROVA_PROXY_PROVIDER_MAX_CONCURRENCY",
-    "ENABLE_THINKING": "FEROVA_PROXY_ENABLE_THINKING",
-    "BUDGET_RETRY_ENABLED": "FEROVA_PROXY_BUDGET_RETRY_ENABLED",
-    "BUDGET_RETRY_FACTOR": "FEROVA_PROXY_BUDGET_RETRY_FACTOR",
-    "BUDGET_RETRY_FLOOR": "FEROVA_PROXY_BUDGET_RETRY_FLOOR",
-    "BUDGET_RETRY_CAP": "FEROVA_PROXY_BUDGET_RETRY_CAP",
-    "HTTP_READ_TIMEOUT": "FEROVA_PROXY_HTTP_READ_TIMEOUT",
-    "HTTP_WRITE_TIMEOUT": "FEROVA_PROXY_HTTP_WRITE_TIMEOUT",
-    "HTTP_CONNECT_TIMEOUT": "FEROVA_PROXY_HTTP_CONNECT_TIMEOUT",
-    "HOST": "FEROVA_PROXY_HOST",
-    "PORT": "FEROVA_PROXY_PORT",
-    "LOG_FILE": "FEROVA_PROXY_LOG_FILE",
-    "ANTHROPIC_AUTH_TOKEN": "FEROVA_ANTHROPIC_AUTH_TOKEN",
-    "CHAINPILOT_APPLY_ENABLED": "FEROVA_CHAINPILOT_APPLY_ENABLED",
-    "CHAINPILOT_MAX_MUTATIONS": "FEROVA_CHAINPILOT_MAX_MUTATIONS",
-    "BREAKER_TTL_QUARANTINE_S": "FEROVA_BREAKER_TTL_QUARANTINE_S",
-    "BREAKER_QUARANTINE_THRESHOLD": "FEROVA_BREAKER_QUARANTINE_THRESHOLD",
-    "CREDITS_FLOOR_USD": "FEROVA_CREDITS_FLOOR_USD",
-    "CREDITS_HEALTH_CACHE_TTL_S": "FEROVA_CREDITS_HEALTH_CACHE_TTL_S",
-    "CHAIN_STATUS_WINDOW_H": "FEROVA_CHAIN_STATUS_WINDOW_H",
+_LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
+    "OPENROUTER_API_KEY": "REPOACH_OPENROUTER_API_KEY",
+    "NVIDIA_NIM_API_KEY": "REPOACH_NVIDIA_NIM_API_KEY",
+    "KIMI_API_KEY": "REPOACH_KIMI_API_KEY",
+    "GROQ_API_KEY": "REPOACH_GROQ_API_KEY",
+    "CEREBRAS_API_KEY": "REPOACH_CEREBRAS_API_KEY",
+    "DEEPSEEK_API_KEY": "REPOACH_DEEPSEEK_API_KEY",
+    "ARTIFICIAL_ANALYSIS_API_KEY": "REPOACH_ARTIFICIAL_ANALYSIS_API_KEY",
+    "BREAKER_ENABLED": "REPOACH_BREAKER_ENABLED",
+    "BREAKER_TTL_S": "REPOACH_BREAKER_TTL_S",
+    "BREAKER_TTL_TERMINAL_S": "REPOACH_BREAKER_TTL_TERMINAL_S",
+    "BREAKER_PROBE_SEED_ENABLED": "REPOACH_BREAKER_PROBE_SEED_ENABLED",
+    "BREAKER_PROBE_SEED_DB": "REPOACH_BREAKER_PROBE_SEED_DB",
+    "EFFORT_MAP_SEED_ENABLED": "REPOACH_EFFORT_MAP_SEED_ENABLED",
+    "CLAUDE_CODE_CLI_PATH": "REPOACH_CLAUDE_CODE_CLI_PATH",
+    "CLAUDE_CODE_DEFAULT_MODEL": "REPOACH_CLAUDE_CODE_DEFAULT_MODEL",
+    "CLAUDE_CODE_SUBPROCESS_TIMEOUT": "REPOACH_CLAUDE_CODE_SUBPROCESS_TIMEOUT",
+    "MODEL": "REPOACH_PROXY_DEFAULT_MODEL",
+    "NVIDIA_NIM_PROXY": "REPOACH_NVIDIA_NIM_PROXY",
+    "OPENROUTER_PROXY": "REPOACH_OPENROUTER_PROXY",
+    "PROVIDER_RATE_LIMIT": "REPOACH_PROXY_PROVIDER_RATE_LIMIT",
+    "PROVIDER_RATE_WINDOW": "REPOACH_PROXY_PROVIDER_RATE_WINDOW",
+    "PROVIDER_MAX_CONCURRENCY": "REPOACH_PROXY_PROVIDER_MAX_CONCURRENCY",
+    "ENABLE_THINKING": "REPOACH_PROXY_ENABLE_THINKING",
+    "BUDGET_RETRY_ENABLED": "REPOACH_PROXY_BUDGET_RETRY_ENABLED",
+    "BUDGET_RETRY_FACTOR": "REPOACH_PROXY_BUDGET_RETRY_FACTOR",
+    "BUDGET_RETRY_FLOOR": "REPOACH_PROXY_BUDGET_RETRY_FLOOR",
+    "BUDGET_RETRY_CAP": "REPOACH_PROXY_BUDGET_RETRY_CAP",
+    "HTTP_READ_TIMEOUT": "REPOACH_PROXY_HTTP_READ_TIMEOUT",
+    "HTTP_WRITE_TIMEOUT": "REPOACH_PROXY_HTTP_WRITE_TIMEOUT",
+    "HTTP_CONNECT_TIMEOUT": "REPOACH_PROXY_HTTP_CONNECT_TIMEOUT",
+    "HOST": "REPOACH_PROXY_HOST",
+    "PORT": "REPOACH_PROXY_PORT",
+    "LOG_FILE": "REPOACH_PROXY_LOG_FILE",
+    "ANTHROPIC_AUTH_TOKEN": "REPOACH_ANTHROPIC_AUTH_TOKEN",
+    "CHAINPILOT_APPLY_ENABLED": "REPOACH_CHAINPILOT_APPLY_ENABLED",
+    "CHAINPILOT_MAX_MUTATIONS": "REPOACH_CHAINPILOT_MAX_MUTATIONS",
+    "BREAKER_TTL_QUARANTINE_S": "REPOACH_BREAKER_TTL_QUARANTINE_S",
+    "BREAKER_QUARANTINE_THRESHOLD": "REPOACH_BREAKER_QUARANTINE_THRESHOLD",
+    "CREDITS_FLOOR_USD": "REPOACH_CREDITS_FLOOR_USD",
+    "CREDITS_HEALTH_CACHE_TTL_S": "REPOACH_CREDITS_HEALTH_CACHE_TTL_S",
+    "CHAIN_STATUS_WINDOW_H": "REPOACH_CHAIN_STATUS_WINDOW_H",
 }
 
 
 def _aliases(legacy: str) -> AliasChoices:
-    """Return ``AliasChoices(REPOACH_*, FEROVA_*, legacy)`` for ``legacy``.
+    """Return ``AliasChoices(REPOACH_*, legacy)`` for ``legacy``.
 
     The REPOACH_ alias is listed first so Pydantic v2 prefers it when
-    several names happen to be set in the environment; the FEROVA_
-    name stays second (the pre-rename prefix, kept so every existing
-    deployment works unchanged through the Repoach migration) and the
-    legacy bare alias last. The REPOACH_ name is derived mechanically
-    from the FEROVA_ one, so :data:`_LEGACY_TO_FEROVA_ALIAS` above
-    remains the single source of truth: update the dict + the
-    corresponding Field declaration in lockstep so a single grep over
-    either name surfaces the pairing. Tests in
+    both names happen to be set in the environment; the legacy bare
+    alias comes last (kept for pre-prefix deployments and CI secrets
+    that use the bare names). :data:`_LEGACY_TO_REPOACH_ALIAS` above is
+    the single source of truth: update the dict + the corresponding
+    Field declaration in lockstep so a single grep over either name
+    surfaces the pairing. Tests in
     ``tests/unit/test_settings_sharp_prefix_aliases.py`` pin the
     mapping so a typo cannot land silently.
 
     Args:
         legacy: The legacy bare env key (e.g. ``"OPENROUTER_API_KEY"``).
-            Must be a key of :data:`_LEGACY_TO_FEROVA_ALIAS`.
+            Must be a key of :data:`_LEGACY_TO_REPOACH_ALIAS`.
 
     Returns:
-        A :class:`pydantic.AliasChoices` ordered
-        ``(REPOACH_*, FEROVA_*, legacy)`` so the REPOACH_ name wins
-        precedence in Pydantic v2 settings resolution.
+        A :class:`pydantic.AliasChoices` ordered ``(REPOACH_*, legacy)``
+        so the REPOACH_ name wins precedence in Pydantic v2 settings
+        resolution.
 
     Raises:
         KeyError: When ``legacy`` is not declared in
-            :data:`_LEGACY_TO_FEROVA_ALIAS` — keeps the call sites
+            :data:`_LEGACY_TO_REPOACH_ALIAS` — keeps the call sites
             honest so a typo at the Field declaration cannot land.
     """
-    ferova_name = _LEGACY_TO_FEROVA_ALIAS[legacy]
-    repoach_name = "REPOACH_" + ferova_name.removeprefix("FEROVA_")
-    return AliasChoices(repoach_name, ferova_name, legacy)
+    return AliasChoices(_LEGACY_TO_REPOACH_ALIAS[legacy], legacy)
 
 
 def _removed_env_var_message(model_config: Mapping[str, Any]) -> str | None:
@@ -221,7 +216,7 @@ class Settings(BaseSettings):
 
     ``anthropic_auth_token`` is the Anthropic-style server API key
     used to protect the proxy endpoints.  Set it via the
-    ``FEROVA_ANTHROPIC_AUTH_TOKEN`` environment variable; when empty,
+    ``REPOACH_ANTHROPIC_AUTH_TOKEN`` environment variable; when empty,
     no auth is required — which is why an empty token is only
     accepted together with a loopback ``host``
     (see :meth:`require_token_for_public_bind`).
@@ -364,10 +359,9 @@ class Settings(BaseSettings):
     def prefer_dotenv_anthropic_auth_token(self) -> Settings:
         """Let explicit .env auth config override stale shell/client tokens.
 
-        Probes :data:`_AUTH_TOKEN_ALIASES` in order (REPOACH_, then
-        FEROVA_ per SP-ENV-PREFIX Phase A1, then the legacy bare
-        ``ANTHROPIC_AUTH_TOKEN``) so existing deployments keep working
-        through the rename migration.
+        Probes :data:`_AUTH_TOKEN_ALIASES` in order (REPOACH_, then the
+        legacy bare ``ANTHROPIC_AUTH_TOKEN``) so pre-prefix deployments
+        keep working.
 
         Returns:
             The same :class:`Settings` instance, with
@@ -413,8 +407,8 @@ class Settings(BaseSettings):
     def uses_process_anthropic_auth_token(self) -> bool:
         """Return whether proxy auth came from process env, not dotenv config.
 
-        Checks the REPOACH_, FEROVA_ and legacy aliases in lockstep
-        with :meth:`prefer_dotenv_anthropic_auth_token`.
+        Checks the REPOACH_ and legacy aliases in lockstep with
+        :meth:`prefer_dotenv_anthropic_auth_token`.
 
         Returns:
             ``True`` when no alias is defined in any configured

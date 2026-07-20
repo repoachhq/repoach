@@ -8,7 +8,7 @@ created: 2026-06-25
 updated: 2026-06-25
 
 owns:
-  code: src/ferova/review/audit_log.py
+  code: src/repoach/review/audit_log.py
   resources: db:table:chain_mutation_log
 
 depends_on:

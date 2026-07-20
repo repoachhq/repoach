@@ -28,6 +28,7 @@ htmlcov/
 .env.local
 .env.*.local
 .env.llm_proxy
+.env.backup*
 keys
 keys.txt
 *.db

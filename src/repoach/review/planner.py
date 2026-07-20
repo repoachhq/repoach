@@ -47,22 +47,18 @@ _SPEC_HARD_CAP_CHARS: int = 12_000
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 _DEFAULT_PARSE_ATTEMPTS: int = 5
 _PARSE_ATTEMPTS_ENV: str = "REPOACH_PLANNER_PARSE_ATTEMPTS"
-_PARSE_ATTEMPTS_ENV_LEGACY: str = "FEROVA_PLANNER_PARSE_ATTEMPTS"
 
 
 def _parse_attempts() -> int:
     """Read the per-session parse-attempt budget from the environment.
 
-    ``REPOACH_PLANNER_PARSE_ATTEMPTS`` (default 5; the pre-rename
-    ``FEROVA_`` name is read as a fallback) governs how many
+    ``REPOACH_PLANNER_PARSE_ATTEMPTS`` (default 5) governs how many
     times a session tries to get a valid plan out of the model: one
     initial attempt plus N-1 refinements. A value below 1 is clamped
     to 1 (initial attempt only, no refinements). Read once per
     :class:`Planner` instance, i.e. once per planning session.
     """
-    raw = (
-        os.environ.get(_PARSE_ATTEMPTS_ENV) or os.environ.get(_PARSE_ATTEMPTS_ENV_LEGACY, "")
-    ).strip()
+    raw = os.environ.get(_PARSE_ATTEMPTS_ENV, "").strip()
     if not raw:
         return _DEFAULT_PARSE_ATTEMPTS
     try:

@@ -7,7 +7,7 @@ subprocess that runs such code must be denied the operator's live credentials:
 this strips every environment variable whose name carries a secret marker
 (``*TOKEN*`` / ``*KEY*`` / ``*SECRET*`` / ``*PASSWORD*`` / ``*PASSWD*`` /
 ``*CREDENTIAL*``) while leaving the non-secret config (``PATH``, ``PYTHONPATH``,
-``REPOACH_DB_PATH``, ``FEROVA_CODER_PYTHONS``, …) the tests need.
+``REPOACH_DB_PATH``, ``REPOACH_CODER_PYTHONS``, …) the tests need.
 
 It lives in its own leaf module (imports only :mod:`os`) so both the in-loop tools
 (:mod:`review.devagent_tools`) and the runner's authoritative reruns

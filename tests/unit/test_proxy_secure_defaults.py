@@ -24,9 +24,9 @@ from repoach.llm_proxy.api.dependencies import require_api_key
 from repoach.llm_proxy.config.settings import Settings as ProxySettings
 
 _PROXY_ENV_KEYS = (
-    "FEROVA_PROXY_HOST",
+    "REPOACH_PROXY_HOST",
     "HOST",
-    "FEROVA_ANTHROPIC_AUTH_TOKEN",
+    "REPOACH_ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_AUTH_TOKEN",
 )
 
@@ -40,10 +40,8 @@ def _clean_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _clean_core_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         "REPOACH_ANTHROPIC_AUTH_TOKEN",
-        "FEROVA_ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_AUTH_TOKEN",
         "REPOACH_ENV",
-        "FEROVA_ENV",
         "ENV",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -57,15 +55,15 @@ def test_default_host_is_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_public_bind_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_proxy_env(monkeypatch)
-    monkeypatch.setenv("FEROVA_PROXY_HOST", "0.0.0.0")
+    monkeypatch.setenv("REPOACH_PROXY_HOST", "0.0.0.0")
     with pytest.raises(ValidationError, match="REPOACH_ANTHROPIC_AUTH_TOKEN"):
         ProxySettings(_env_file=None)
 
 
 def test_public_bind_with_token_constructs(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_proxy_env(monkeypatch)
-    monkeypatch.setenv("FEROVA_PROXY_HOST", "0.0.0.0")
-    monkeypatch.setenv("FEROVA_ANTHROPIC_AUTH_TOKEN", "tok")
+    monkeypatch.setenv("REPOACH_PROXY_HOST", "0.0.0.0")
+    monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "tok")
     settings = ProxySettings(_env_file=None)
     assert settings.host == "0.0.0.0"
     assert settings.anthropic_auth_token == "tok"
@@ -74,7 +72,7 @@ def test_public_bind_with_token_constructs(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
 def test_loopback_bind_allows_empty_token(host: str, monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_proxy_env(monkeypatch)
-    monkeypatch.setenv("FEROVA_PROXY_HOST", host)
+    monkeypatch.setenv("REPOACH_PROXY_HOST", host)
     settings = ProxySettings(_env_file=None)
     assert settings.host == host
     assert settings.anthropic_auth_token == ""
@@ -137,7 +135,7 @@ def test_prod_boot_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_prod_with_token_constructs(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_core_env(monkeypatch)
-    monkeypatch.setenv("FEROVA_ANTHROPIC_AUTH_TOKEN", "tok")
+    monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "tok")
     settings = core_config.Settings(_env_file=None, env="prod")
     assert settings.llm_proxy_auth_token is not None
     assert settings.llm_proxy_auth_token.get_secret_value() == "tok"

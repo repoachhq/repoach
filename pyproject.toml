@@ -44,7 +44,6 @@ Issues = "https://github.com/repoachhq/repoach/issues"
 
 [project.scripts]
 repoach = "repoach.cli:app"
-ferova = "repoach.cli:app"
 
 [build-system]
 requires = ["hatchling"]

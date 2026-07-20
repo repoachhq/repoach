@@ -8,7 +8,7 @@ created: 2026-06-27
 updated: 2026-06-27
 
 owns:
-  code: src/ferova/review/chain_loop.py
+  code: src/repoach/review/chain_loop.py
   resources: N/A
 
 depends_on:

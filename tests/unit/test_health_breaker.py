@@ -70,9 +70,9 @@ def test_trip_extends_but_never_shortens() -> None:
 
 @pytest.fixture
 def router(monkeypatch: pytest.MonkeyPatch) -> ModelRouter:
-    for key in ("MODEL", "MODEL_SONNET", "FEROVA_PROXY_DEFAULT_MODEL", "FEROVA_MODEL_SONNET"):
+    for key in ("MODEL", "MODEL_SONNET", "REPOACH_PROXY_DEFAULT_MODEL", "REPOACH_MODEL_SONNET"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("FEROVA_PROXY_DEFAULT_MODEL", "nvidia_nim/default/model")
+    monkeypatch.setenv("REPOACH_PROXY_DEFAULT_MODEL", "nvidia_nim/default/model")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/a/b,open_router/c,claude_code/sonnet")
     return ModelRouter(Settings(_env_file=None))
 
@@ -93,7 +93,7 @@ def test_resolve_chain_all_down_falls_back_to_head(router: ModelRouter) -> None:
 
 
 def _service(monkeypatch: pytest.MonkeyPatch, *, enabled: bool) -> ClaudeProxyService:
-    monkeypatch.setenv("FEROVA_BREAKER_ENABLED", "true" if enabled else "false")
+    monkeypatch.setenv("REPOACH_BREAKER_ENABLED", "true" if enabled else "false")
     return ClaudeProxyService(
         settings=Settings(_env_file=None),
         provider_getter=lambda _provider_id: None,
@@ -257,9 +257,9 @@ def _clean_env_for_quarantine_test(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip quarantine-related env vars and disable env-file loading."""
     for key in (
         "BREAKER_TTL_QUARANTINE_S",
-        "FEROVA_BREAKER_TTL_QUARANTINE_S",
+        "REPOACH_BREAKER_TTL_QUARANTINE_S",
         "BREAKER_QUARANTINE_THRESHOLD",
-        "FEROVA_BREAKER_QUARANTINE_THRESHOLD",
+        "REPOACH_BREAKER_QUARANTINE_THRESHOLD",
     ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(settings_module, "_env_files", lambda: ())
@@ -274,7 +274,7 @@ def _build_settings() -> Settings:
 def test_quarantine_settings_defaults_and_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Defaults are 21600.0 and 3; FEROVA_ and bare aliases override;
+    """Defaults are 21600.0 and 3; REPOACH_ and bare aliases override;
     threshold 0 is rejected."""
     _clean_env_for_quarantine_test(monkeypatch)
     settings = _build_settings()
@@ -282,8 +282,8 @@ def test_quarantine_settings_defaults_and_aliases(
     assert settings.breaker_quarantine_threshold == 3
 
     _clean_env_for_quarantine_test(monkeypatch)
-    monkeypatch.setenv("FEROVA_BREAKER_TTL_QUARANTINE_S", "3600.0")
-    monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "5")
+    monkeypatch.setenv("REPOACH_BREAKER_TTL_QUARANTINE_S", "3600.0")
+    monkeypatch.setenv("REPOACH_BREAKER_QUARANTINE_THRESHOLD", "5")
     settings = _build_settings()
     assert settings.breaker_ttl_quarantine_s == 3600.0
     assert settings.breaker_quarantine_threshold == 5
@@ -296,7 +296,7 @@ def test_quarantine_settings_defaults_and_aliases(
     assert settings.breaker_quarantine_threshold == 7
 
     _clean_env_for_quarantine_test(monkeypatch)
-    monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "0")
+    monkeypatch.setenv("REPOACH_BREAKER_QUARANTINE_THRESHOLD", "0")
     with pytest.raises(ValidationError):
         _build_settings()
 
@@ -323,10 +323,10 @@ def test_trip_breaker_composes_escalation(
     """
     records, sink_id = _capture_loguru()
     try:
-        monkeypatch.setenv("FEROVA_BREAKER_ENABLED", "true")
-        monkeypatch.setenv("FEROVA_BREAKER_TTL_S", "120")
-        monkeypatch.setenv("FEROVA_BREAKER_TTL_QUARANTINE_S", "3600")
-        monkeypatch.setenv("FEROVA_BREAKER_QUARANTINE_THRESHOLD", "3")
+        monkeypatch.setenv("REPOACH_BREAKER_ENABLED", "true")
+        monkeypatch.setenv("REPOACH_BREAKER_TTL_S", "120")
+        monkeypatch.setenv("REPOACH_BREAKER_TTL_QUARANTINE_S", "3600")
+        monkeypatch.setenv("REPOACH_BREAKER_QUARANTINE_THRESHOLD", "3")
         settings = Settings(_env_file=None)
         service = ClaudeProxyService(
             settings=settings,
@@ -475,7 +475,7 @@ def _make_credits_app(
     credits_client = httpx.AsyncClient(transport=transport)
 
     app = create_app()
-    monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REPOACH_OPENROUTER_API_KEY", "test-key")
     app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
     app.dependency_overrides[get_credits_client] = lambda: credits_client
 
