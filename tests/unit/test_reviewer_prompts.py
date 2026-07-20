@@ -79,7 +79,7 @@ def _hermetic_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the agent-loop settings so no .env / real proxy token is needed.
 
     ``Reviewer.__init__`` constructs an :class:`AgentLoop`, which refuses
-    to build without ``FEROVA_ANTHROPIC_AUTH_TOKEN``. CI runs without a
+    to build without ``REPOACH_ANTHROPIC_AUTH_TOKEN``. CI runs without a
     ``.env``, so the test must not depend on one.
     """
     monkeypatch.setattr(

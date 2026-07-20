@@ -200,7 +200,7 @@ def autopilot(
 
     Shadow by default — the planned mutations + cold-starts are journalled to the
     audit log with ``applied=False`` and ``chains.env`` is left untouched. Pass
-    ``--apply`` (or set ``FEROVA_CHAINPILOT_APPLY_ENABLED=true``) to actually write,
+    ``--apply`` (or set ``REPOACH_CHAINPILOT_APPLY_ENABLED=true``) to actually write,
     atomically and with a ``.bak`` backup.
     """
     import asyncio
@@ -300,7 +300,7 @@ def regenerate_chains(
     equivalence table and the per-cell probe latency, then rebuilds each tier
     chain (Claude-anchored selection → NIM-first provider expansion → claude_code
     tail). Shadow by default — pass ``--apply`` (or set
-    ``FEROVA_CHAINPILOT_APPLY_ENABLED=true``) to write atomically with a ``.bak``.
+    ``REPOACH_CHAINPILOT_APPLY_ENABLED=true``) to write atomically with a ``.bak``.
 
     Runs alongside the Chain Autopilot; it does not modify the autopilot loop.
     """

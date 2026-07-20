@@ -316,7 +316,7 @@ def maybe_load_active_spec(
     """Best-effort spec discovery for the AgentLoop.
 
     Resolution order:
-    1. ``explicit_id`` if provided (e.g. ``FEROVA_SPEC_ID`` env).
+    1. ``explicit_id`` if provided (e.g. ``REPOACH_SPEC_ID`` env).
     2. ``branch`` parsed via :func:`detect_spec_from_branch`.
 
     Returns ``None`` (instead of raising) when no spec is detected
