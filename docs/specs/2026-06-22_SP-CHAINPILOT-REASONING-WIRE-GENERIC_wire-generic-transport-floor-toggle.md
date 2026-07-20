@@ -8,7 +8,7 @@ created: 2026-06-22
 updated: 2026-06-22
 
 owns:
-  code: [src/ferova/llm_proxy/providers/openai_generic.py]   # the generic OpenAI transport
+  code: [src/repoach/llm_proxy/providers/openai_generic.py]   # the generic OpenAI transport
   resources: N/A
 
 depends_on:

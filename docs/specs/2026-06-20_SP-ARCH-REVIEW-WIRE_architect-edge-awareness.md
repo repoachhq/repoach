@@ -8,7 +8,7 @@ created: 2026-06-20
 updated: 2026-06-20
 
 owns:
-  code: [src/ferova/review/governed_spec.py]   # new accessor; review/ is otherwise frontier
+  code: [src/repoach/review/governed_spec.py]   # new accessor; review/ is otherwise frontier
   resources: N/A
 
 depends_on: [SP-ARCH-GRAPH]           # imports load_registry to read a spec's owns/depends_on

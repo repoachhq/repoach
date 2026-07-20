@@ -9,7 +9,7 @@ updated: 2026-06-28
 
 owns:
   code:
-    - src/ferova/review/subspec_anchor.py
+    - src/repoach/review/subspec_anchor.py
   resources: []
 
 depends_on:

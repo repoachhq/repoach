@@ -9,8 +9,8 @@ updated: 2026-06-24
 
 owns:
   code:
-    - src/ferova/llm_proxy/providers/effort_sweep.py         # effort-aware sweep over the matrix
-    - src/ferova/llm_proxy/providers/effort_probe_store.py   # the reasoned-at-effort persistence leaf
+    - src/repoach/llm_proxy/providers/effort_sweep.py         # effort-aware sweep over the matrix
+    - src/repoach/llm_proxy/providers/effort_probe_store.py   # the reasoned-at-effort persistence leaf
   resources:
     - db:table:cell_effort_probe                                 # the per-cell reasoned-at-effort time-series
 

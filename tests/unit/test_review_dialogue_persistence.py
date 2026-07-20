@@ -76,7 +76,7 @@ class _StubReviewer:
 class _StubGhCli:
     """Capture archive bodies; returns canned diff."""
 
-    ARCHIVE_MARKER = "<!-- ferova-review-archive -->"
+    ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
 
     def __init__(self) -> None:
         self.archive_calls: list[dict] = []

@@ -8,7 +8,7 @@ created: 2026-06-30
 updated: 2026-06-30
 
 owns:
-  code: [src/ferova/llm_proxy/routing/chain_generate.py]
+  code: [src/repoach/llm_proxy/routing/chain_generate.py]
   resources: []
 depends_on: [SP-MFC-AA-INGEST, SP-MFC-SELECT, SP-MFC-EXPAND, SP-CHAINPILOT-MATRIX, SP-CHAINPILOT-EQUIVALENCES]
 provides_to: []

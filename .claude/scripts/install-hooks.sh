@@ -20,8 +20,8 @@ fi
 chmod +x "$WRAPPER"
 
 BASHRC="$HOME/.bashrc"
-MARKER_BEGIN="# tier2-wrapper-ferova BEGIN"
-MARKER_END="# tier2-wrapper-ferova END"
+MARKER_BEGIN="# tier2-wrapper-repoach BEGIN"
+MARKER_END="# tier2-wrapper-repoach END"
 
 if grep -qF "$MARKER_BEGIN" "$BASHRC" 2>/dev/null; then
     echo "git-wrapper.sh already present in $BASHRC (skipping)."

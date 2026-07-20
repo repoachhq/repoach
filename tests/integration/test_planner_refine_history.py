@@ -12,7 +12,7 @@ call that produced the accepted plan) contains BOTH prior errors
 numbered oldest first, and that the ``planner.plan_invalid`` log lines
 carry ``errors_so_far`` counts of 1 then 2.
 
-A sibling test sets ``FEROVA_PLANNER_PARSE_ATTEMPTS=2`` with a
+A sibling test sets ``REPOACH_PLANNER_PARSE_ATTEMPTS=2`` with a
 never-valid candidate and asserts exactly 2 attempts with the
 exhausted-session error naming both failures.
 """
@@ -106,7 +106,7 @@ def test_two_error_session_converges_with_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A two-error session converges and the third prompt carries full history."""
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "5")
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "5")
     repo = _seed_repo(tmp_path)
 
     valid = _valid_plan_payload()
@@ -149,8 +149,8 @@ def test_two_error_session_converges_with_history(
 def test_exhausted_session_with_two_attempts_names_both_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FEROVA_PLANNER_PARSE_ATTEMPTS=2 → exactly 2 attempts, error names both."""
-    monkeypatch.setenv("FEROVA_PLANNER_PARSE_ATTEMPTS", "2")
+    """REPOACH_PLANNER_PARSE_ATTEMPTS=2 → exactly 2 attempts, error names both."""
+    monkeypatch.setenv("REPOACH_PLANNER_PARSE_ATTEMPTS", "2")
     repo = _seed_repo(tmp_path)
 
     bad_a = dict(_valid_plan_payload())

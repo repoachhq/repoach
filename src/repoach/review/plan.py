@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, field_validator, model_validator
 
-PLAN_MARKER: str = "<!-- ferova-action-plan -->"
+PLAN_MARKER: str = "<!-- repoach-action-plan -->"
 
 _SPEC_ID_RE = re.compile(r"^SP-[A-Z0-9-]+$")
 _PLAN_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)

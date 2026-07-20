@@ -51,21 +51,15 @@ _CC_TIMEOUT_S: int = 600
 
 
 def _scrubbed_env() -> dict[str, str]:
-    """Return the parent environment with this app's own prefixes stripped.
+    """Return the parent environment with this app's ``REPOACH_*`` stripped.
 
     The ``claude`` CLI authenticates via its own Max session and never
     needs Repoach's config or provider API keys; passing them to the
-    child would needlessly widen the secret surface. Both the canonical
-    ``REPOACH_*`` names and the pre-rename ``FEROVA_*`` fallbacks are
-    stripped — dual-prefix deployments define both. Everything else
+    child would needlessly widen the secret surface. Everything else
     (``HOME``, ``PATH``, the CLI's own auth) is preserved so the CLI
     still runs.
     """
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith(("REPOACH_", "FEROVA_"))
-    }
+    return {key: value for key, value in os.environ.items() if not key.startswith("REPOACH_")}
 
 
 @dataclass
@@ -129,7 +123,7 @@ def run_cc_exploration(
         timeout_s: Hard cap on the subprocess.
         env: Optional environment for the subprocess. ``None`` (the
             default) hands the CLI a :func:`_scrubbed_env` — the parent
-            environment minus this app's ``FEROVA_*`` secrets, which the
+            environment minus this app's ``REPOACH_*`` secrets, which the
             CLI never needs. Pass an explicit dict to override.
 
     Returns:

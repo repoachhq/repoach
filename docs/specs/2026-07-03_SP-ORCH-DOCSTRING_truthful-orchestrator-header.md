@@ -8,7 +8,7 @@ created: 2026-07-03
 updated: 2026-07-03
 
 owns:
-  code: [src/ferova/review/orchestrator.py]
+  code: [src/repoach/review/orchestrator.py]
   resources: []
 
 depends_on: []

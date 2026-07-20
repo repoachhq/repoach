@@ -8,7 +8,7 @@ created: 2026-07-02
 updated: 2026-07-02
 
 owns:
-  code: [src/ferova/review/findings_bridge.py]
+  code: [src/repoach/review/findings_bridge.py]
   resources: []
 
 depends_on: []

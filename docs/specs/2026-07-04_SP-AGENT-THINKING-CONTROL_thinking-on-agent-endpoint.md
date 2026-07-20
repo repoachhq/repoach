@@ -8,7 +8,7 @@ created: 2026-07-04
 updated: 2026-07-04
 
 owns:
-  code: [src/ferova/llm_proxy/api/agent_dispatcher.py]
+  code: [src/repoach/llm_proxy/api/agent_dispatcher.py]
   resources: []
 
 depends_on: []

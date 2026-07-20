@@ -9,8 +9,8 @@ updated: 2026-06-27
 
 owns:
   code:
-    - src/ferova/review/devagent_loop.py
-    - src/ferova/review/secret_env.py
+    - src/repoach/review/devagent_loop.py
+    - src/repoach/review/secret_env.py
   resources:
     - prompts/review/developer_agentic_0.1.0.md
 

@@ -8,7 +8,7 @@ created: 2026-06-20
 updated: 2026-06-20
 
 owns:
-  code: [src/ferova/arch/]        # the new arch package (parser, registry, graph, CLI)
+  code: [src/repoach/arch/]        # the new arch package (parser, registry, graph, CLI)
   resources: N/A                      # code-only: reads spec files, owns no table/topic
 
 depends_on: [SP-SPEC-TEMPLATE]        # via the format:spec-frontmatter resource it owns (tier 2)

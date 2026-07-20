@@ -7,10 +7,8 @@ instead of fixing the import. This gate runs before pytest and turns
 the failure into directive feedback — which module is missing, what
 the package actually contains, and where the wanted names really
 live — so even an improvised import converges on retry. Only
-first-party imports are checked (``repoach``, plus the legacy
-``ferova`` top so a habit-driven old-name import is flagged as
-missing rather than silently skipped); stdlib and third-party
-resolution stays pytest's job.
+``repoach`` imports are checked; stdlib and third-party resolution
+stays pytest's job.
 """
 
 from __future__ import annotations
@@ -26,11 +24,6 @@ _log = get_logger(__name__)
 
 _MAX_NAME_HOMES = 3
 """Cap on the "found in" suggestions per missing name."""
-
-_FIRST_PARTY_TOPS = ("repoach", "ferova")
-"""Top-level package names the gate resolves; ``ferova`` is the
-pre-rename legacy top, kept so an old-name import is reported as a
-missing module instead of escaping the gate."""
 
 
 def _module_file(src_root: Path, dotted: str) -> Path | None:
@@ -161,7 +154,7 @@ def _module_violation(src_root: Path, path_str: str, dotted: str) -> str:
 
 
 def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
-    """Resolve every first-party import of the given files against ``src/``.
+    """Resolve every ``repoach`` import of the given files against ``src/``.
 
     Args:
         repo_root: Repository root.
@@ -189,16 +182,16 @@ def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.split(".")[0] in _FIRST_PARTY_TOPS and not _module_file(
+                    if alias.name.split(".")[0] == "repoach" and not _module_file(
                         src_root, alias.name
                     ):
                         violations.append(_module_violation(src_root, path_str, alias.name))
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
                     dotted = _resolve_relative(path_str, node.level, node.module)
-                    if dotted is None or dotted.split(".")[0] not in _FIRST_PARTY_TOPS:
+                    if dotted is None or dotted.split(".")[0] != "repoach":
                         continue
-                elif (node.module or "").split(".")[0] in _FIRST_PARTY_TOPS:
+                elif (node.module or "").split(".")[0] == "repoach":
                     dotted = node.module or ""
                 else:
                     continue

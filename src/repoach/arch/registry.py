@@ -20,8 +20,6 @@ import yaml
 from repoach.arch.graph import Graph
 
 _RESOURCE_PREFIXES = ("db:table:", "queue:topic:", "format:")
-_LEGACY_CODE_PREFIX = "src/ferova/"
-_CODE_PREFIX = "src/repoach/"
 _REQUIRED_KEYS = ("id", "title", "version", "status", "owns", "depends_on")
 
 
@@ -115,24 +113,6 @@ def _as_tuple(value: object) -> tuple[str, ...]:
     return ()
 
 
-def _normalise_owned_code(value: object) -> tuple[str, ...]:
-    """Coerce ``owns.code`` entries, mapping the pre-rename package prefix.
-
-    Governed specs written before the ferova→repoach rename own paths
-    under the legacy ``src/ferova/`` prefix; the artifacts they govern
-    now live under ``src/repoach/``. Rewriting at load time keeps the
-    historical spec
-    documents untouched while the ownership map keeps resolving against
-    the real tree.
-    """
-    return tuple(
-        _CODE_PREFIX + path[len(_LEGACY_CODE_PREFIX) :]
-        if path.startswith(_LEGACY_CODE_PREFIX)
-        else path
-        for path in _as_tuple(value)
-    )
-
-
 def _frontier_id(path: Path) -> str:
     """Derive a frontier node's id from its ``<date>_<SP-ID>_<slug>`` name."""
     for part in path.stem.split("_"):
@@ -174,7 +154,7 @@ def _parse_node(path: Path) -> SpecNode:
     return SpecNode(
         id=str(data["id"]),
         path=path,
-        owns_code=_normalise_owned_code(owns.get("code")),
+        owns_code=_as_tuple(owns.get("code")),
         owns_resources=_as_tuple(owns.get("resources")),
         depends_on=_as_tuple(data.get("depends_on")),
     )

@@ -8,7 +8,7 @@ created: 2026-06-21
 updated: 2026-06-21
 
 owns:
-  code: [src/ferova/llm_proxy/routing/probe_seed.py]   # the seed bridge
+  code: [src/repoach/llm_proxy/routing/probe_seed.py]   # the seed bridge
   resources: N/A
 
 depends_on: [SP-HEALTH-STORE-NEUTRALIZE]   # imports fetch_probes from the neutral health store

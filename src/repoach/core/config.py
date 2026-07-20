@@ -32,12 +32,9 @@ class Settings(BaseSettings):
 
     Values are read from environment variables with the ``REPOACH_`` prefix
     or from a ``.env`` file at the project root.  Fields carrying an
-    explicit ``AliasChoices`` also accept the pre-rename ``FEROVA_`` name
-    and the bare legacy name, ``REPOACH_`` winning precedence; a pydantic
-    ``env_prefix`` is single-valued, so plain fields read ``REPOACH_``
-    only and deployments migrate their env files by duplicating the
-    prefix. Provider API keys live in the llm_proxy's own settings
-    module, not here.
+    explicit ``AliasChoices`` also accept the bare legacy name (CI
+    secrets use it), ``REPOACH_`` winning precedence. Provider API keys
+    live in the llm_proxy's own settings module, not here.
     """
 
     model_config = SettingsConfigDict(
@@ -82,7 +79,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices(
             "REPOACH_CLAUDE_CODE_ROUTINE_ID",
-            "FEROVA_CLAUDE_CODE_ROUTINE_ID",
             "CLAUDE_CODE_ROUTINE_ID",
         ),
     )
@@ -90,7 +86,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices(
             "REPOACH_CLAUDE_CODE_ROUTINE_TOKEN",
-            "FEROVA_CLAUDE_CODE_ROUTINE_TOKEN",
             "CLAUDE_CODE_ROUTINE_TOKEN",
         ),
     )
@@ -100,7 +95,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices(
             "REPOACH_ANTHROPIC_AUTH_TOKEN",
-            "FEROVA_ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_AUTH_TOKEN",
         ),
         description=(
@@ -113,16 +107,13 @@ class Settings(BaseSettings):
 
     agentmemory_url: str = Field(
         default="http://localhost:3111",
-        validation_alias=AliasChoices(
-            "REPOACH_AGENTMEMORY_URL", "FEROVA_AGENTMEMORY_URL", "AGENTMEMORY_URL"
-        ),
+        validation_alias=AliasChoices("REPOACH_AGENTMEMORY_URL", "AGENTMEMORY_URL"),
         description="Base URL of the local agentmemory service (the builder memory layer).",
     )
     builder_memory_enabled: bool = Field(
         default=True,
         validation_alias=AliasChoices(
             "REPOACH_BUILDER_MEMORY_ENABLED",
-            "FEROVA_BUILDER_MEMORY_ENABLED",
             "BUILDER_MEMORY_ENABLED",
         ),
         description=(
@@ -134,7 +125,6 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices(
             "REPOACH_REVIEW_MEMORY_ENABLED",
-            "FEROVA_REVIEW_MEMORY_ENABLED",
             "REVIEW_MEMORY_ENABLED",
         ),
         description=(
@@ -146,7 +136,6 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices(
             "REPOACH_REVIEW_LESSONS_ENABLED",
-            "FEROVA_REVIEW_LESSONS_ENABLED",
             "REVIEW_LESSONS_ENABLED",
         ),
         description=(

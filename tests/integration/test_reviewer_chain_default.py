@@ -23,7 +23,7 @@ def test_concrete_reviewer_default_chain_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An ``Architect()`` built with defaults routes via ``PROXY_SONNET_CHAIN``."""
-    monkeypatch.setenv("FEROVA_ANTHROPIC_AUTH_TOKEN", "test-shared-secret")
+    monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "test-shared-secret")
     monkeypatch.setattr(core_config, "_settings", None)
     architect = Architect()
     assert architect.model_chain is PROXY_SONNET_CHAIN

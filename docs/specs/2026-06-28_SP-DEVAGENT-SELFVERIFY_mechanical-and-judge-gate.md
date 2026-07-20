@@ -9,7 +9,7 @@ updated: 2026-06-28
 
 owns:
   code:
-    - src/ferova/review/devagent_selfverify.py
+    - src/repoach/review/devagent_selfverify.py
   resources:
     - prompts/review/judge_selfverify_0.1.0.md
 

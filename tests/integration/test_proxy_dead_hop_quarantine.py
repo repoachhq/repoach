@@ -113,8 +113,8 @@ def test_dead_hop_quarantined_and_reported_on_health(
     """
     reset_breaker()
 
-    monkeypatch.setenv("FEROVA_ANTHROPIC_AUTH_TOKEN", "test-token")
-    monkeypatch.setenv("FEROVA_PROXY_DEFAULT_MODEL", "nvidia_nim/good-model")
+    monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("REPOACH_PROXY_DEFAULT_MODEL", "nvidia_nim/good-model")
     monkeypatch.setenv(
         "MODEL_SONNET",
         "nvidia_nim/dead-model,kimi/healthy-model",

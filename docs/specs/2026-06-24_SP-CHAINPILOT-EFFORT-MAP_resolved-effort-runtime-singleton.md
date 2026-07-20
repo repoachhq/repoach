@@ -8,7 +8,7 @@ created: 2026-06-24
 updated: 2026-06-24
 
 owns:
-  code: [src/ferova/llm_proxy/providers/effort_map.py]   # the process-singleton resolved-effort map + its seeder
+  code: [src/repoach/llm_proxy/providers/effort_map.py]   # the process-singleton resolved-effort map + its seeder
   resources: N/A                                             # reads cell_effort_probe via effort_resolve; owns no table
 
 depends_on:
