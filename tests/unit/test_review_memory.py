@@ -18,10 +18,10 @@ import pytest
 from pydantic import SecretStr
 from typer.testing import CliRunner
 
-import ferova.core.config as config
-import ferova.review.orchestrator as orchestrator_module
-from ferova.review import review_memory
-from ferova.review.reviewer import Scribe
+import repoach.core.config as config
+import repoach.review.orchestrator as orchestrator_module
+from repoach.review import review_memory
+from repoach.review.reviewer import Scribe
 
 
 @pytest.fixture()
@@ -42,7 +42,7 @@ def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     AgentLoop — these tests target memory wiring, not auth.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),
@@ -126,14 +126,14 @@ def test_build_review_lessons_block_queries_title_and_paths(
     monkeypatch.setattr(orchestrator_module, "recall_review_lessons", _fake_recall)
 
     diff = (
-        "diff --git a/src/ferova/foo.py b/src/ferova/foo.py\n"
-        "+++ b/src/ferova/foo.py\n"
+        "diff --git a/src/repoach/foo.py b/src/repoach/foo.py\n"
+        "+++ b/src/repoach/foo.py\n"
         "diff --git a/tests/unit/test_foo.py b/tests/unit/test_foo.py\n"
     )
     block = orchestrator_module._build_review_lessons_block("My PR title", diff)
     assert "trap lesson" in block
     assert "My PR title" in seen["query"]
-    assert "src/ferova/foo.py" in seen["query"]
+    assert "src/repoach/foo.py" in seen["query"]
     assert "tests/unit/test_foo.py" in seen["query"]
 
 
@@ -177,11 +177,11 @@ def test_review_diff_without_section_is_unchanged(monkeypatch: pytest.MonkeyPatc
 
 
 def test_cli_commands_call_correct_functions(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ferova.cli.main import app
+    from repoach.cli.main import app
 
-    monkeypatch.setattr("ferova.review.review_memory.seed_review_memory", lambda: 6)
+    monkeypatch.setattr("repoach.review.review_memory.seed_review_memory", lambda: 6)
     monkeypatch.setattr(
-        "ferova.review.review_memory.recall_review_lessons",
+        "repoach.review.review_memory.recall_review_lessons",
         lambda query: [f"lesson for {query}"],
     )
 

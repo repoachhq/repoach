@@ -2,7 +2,7 @@
 
 Cover three layers:
 
-1. The pure peek helpers in :mod:`ferova.llm_proxy.api._failover`.
+1. The pure peek helpers in :mod:`repoach.llm_proxy.api._failover`.
 2. ``ModelRouter.resolve_chain`` returning the filtered ordered chain.
 3. ``ClaudeProxyService._stream_with_failover`` driving the chain walk
    end-to-end with mocked providers.
@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from ferova.llm_proxy.api._failover import (
+from repoach.llm_proxy.api._failover import (
     PeekResult,
     chunk_is_tool_use_start,
     chunk_message_delta_stop_reason,
@@ -25,15 +25,15 @@ from ferova.llm_proxy.api._failover import (
     chunk_text_delta,
     peek_for_content,
 )
-from ferova.llm_proxy.api.model_router import ModelRouter
-from ferova.llm_proxy.api.models.anthropic import (
+from repoach.llm_proxy.api.model_router import ModelRouter
+from repoach.llm_proxy.api.models.anthropic import (
     Message,
     MessagesRequest,
     Tool,
 )
-from ferova.llm_proxy.api.services import ClaudeProxyService
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.base import BaseProvider, ProviderConfig
+from repoach.llm_proxy.api.services import ClaudeProxyService
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 
 # ---------------------------------------------------------------------------
 # SSE chunk fixtures

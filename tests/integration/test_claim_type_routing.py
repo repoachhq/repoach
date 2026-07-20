@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     init_findings_schema,
     record_finding,
     record_review_integrity,
 )
-from ferova.review.findings_bridge import comment_to_finding
-from ferova.review.merge_gate import compute_merge_decision, gather_merge_facts
-from ferova.review.reviewer import BotRole, ReviewComment
+from repoach.review.findings_bridge import comment_to_finding
+from repoach.review.merge_gate import compute_merge_decision, gather_merge_facts
+from repoach.review.reviewer import BotRole, ReviewComment
 
 
 def test_content_cue_routes_to_correct_verifier_and_gate(tmp_path: Path) -> None:

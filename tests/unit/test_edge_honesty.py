@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.arch import load_registry
-from ferova.lint.edge_honesty import check_diff, load_frontier_suppress, report_lines
+from repoach.arch import load_registry
+from repoach.lint.edge_honesty import check_diff, load_frontier_suppress, report_lines
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,12 +52,12 @@ def test_tier1a_undeclared_import_is_a_violation(tmp_path: Path) -> None:
     specs = _corpus(
         tmp_path,
         {
-            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"'),
-            "01_SP-B_b.md": _spec("SP-B", owns_code="src/ferova/b/"),
+            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"'),
+            "01_SP-B_b.md": _spec("SP-B", owns_code="src/repoach/b/"),
         },
     )
     registry = load_registry(specs)
-    changed = _src(tmp_path, "src/ferova/a/mod.py", "from ferova.b.thing import X\n")
+    changed = _src(tmp_path, "src/repoach/a/mod.py", "from repoach.b.thing import X\n")
 
     report = check_diff(registry, [changed], tmp_path)
 
@@ -71,12 +71,12 @@ def test_tier1a_declared_import_passes(tmp_path: Path) -> None:
     specs = _corpus(
         tmp_path,
         {
-            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"', depends_on="SP-B"),
-            "01_SP-B_b.md": _spec("SP-B", owns_code="src/ferova/b/"),
+            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"', depends_on="SP-B"),
+            "01_SP-B_b.md": _spec("SP-B", owns_code="src/repoach/b/"),
         },
     )
     registry = load_registry(specs)
-    changed = _src(tmp_path, "src/ferova/a/mod.py", "from ferova.b.thing import X\n")
+    changed = _src(tmp_path, "src/repoach/a/mod.py", "from repoach.b.thing import X\n")
 
     assert check_diff(registry, [changed], tmp_path).ok
 
@@ -85,14 +85,14 @@ def test_tier1b_table_backchannel(tmp_path: Path) -> None:
     specs = _corpus(
         tmp_path,
         {
-            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"'),
+            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"'),
             "01_SP-DB_db.md": _spec(
-                "SP-DB", owns_code="src/ferova/db/", owns_resources='"db:table:orders"'
+                "SP-DB", owns_code="src/repoach/db/", owns_resources='"db:table:orders"'
             ),
         },
     )
     registry = load_registry(specs)
-    changed = _src(tmp_path, "src/ferova/a/mod.py", 'Table("orders", meta)\n')
+    changed = _src(tmp_path, "src/repoach/a/mod.py", 'Table("orders", meta)\n')
 
     report = check_diff(registry, [changed], tmp_path)
     assert not report.ok
@@ -105,22 +105,22 @@ def test_tier1b_literal_in_owner_is_fine(tmp_path: Path) -> None:
         tmp_path,
         {
             "01_SP-DB_db.md": _spec(
-                "SP-DB", owns_code="src/ferova/db/", owns_resources='"db:table:orders"'
+                "SP-DB", owns_code="src/repoach/db/", owns_resources='"db:table:orders"'
             ),
         },
     )
     registry = load_registry(specs)
-    changed = _src(tmp_path, "src/ferova/db/store.py", 'Table("orders", meta)\n')
+    changed = _src(tmp_path, "src/repoach/db/store.py", 'Table("orders", meta)\n')
 
     assert check_diff(registry, [changed], tmp_path).ok
 
 
 def test_frontier_is_non_blocking_and_aggregated(tmp_path: Path) -> None:
-    specs = _corpus(tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"')})
+    specs = _corpus(tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"')})
     registry = load_registry(specs)
     changed = _src(
         tmp_path,
-        "src/ferova/a/mod.py",
+        "src/repoach/a/mod.py",
         'Table("legacy_one", m)\nTable("legacy_two", m)\nTable("legacy_three", m)\n',
     )
 
@@ -132,9 +132,9 @@ def test_frontier_is_non_blocking_and_aggregated(tmp_path: Path) -> None:
 
 
 def test_frontier_suppression(tmp_path: Path) -> None:
-    specs = _corpus(tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"')})
+    specs = _corpus(tmp_path, {"01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"')})
     registry = load_registry(specs)
-    changed = _src(tmp_path, "src/ferova/a/mod.py", 'Table("legacy_one", m)\n')
+    changed = _src(tmp_path, "src/repoach/a/mod.py", 'Table("legacy_one", m)\n')
 
     suppress = frozenset({"db:table:legacy_one"})
     report = check_diff(registry, [changed], tmp_path, suppress=suppress)
@@ -146,13 +146,13 @@ def test_direct_import_not_transitive(tmp_path: Path) -> None:
     specs = _corpus(
         tmp_path,
         {
-            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"', depends_on="SP-B"),
-            "01_SP-B_b.md": _spec("SP-B", owns_code="src/ferova/b/"),
-            "01_SP-C_c.md": _spec("SP-C", owns_code="src/ferova/c/"),
+            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"', depends_on="SP-B"),
+            "01_SP-B_b.md": _spec("SP-B", owns_code="src/repoach/b/"),
+            "01_SP-C_c.md": _spec("SP-C", owns_code="src/repoach/c/"),
         },
     )
     registry = load_registry(specs)
-    changed = _src(tmp_path, "src/ferova/a/mod.py", "from ferova.b.reexport import X\n")
+    changed = _src(tmp_path, "src/repoach/a/mod.py", "from repoach.b.reexport import X\n")
 
     assert check_diff(registry, [changed], tmp_path).ok
 
@@ -161,14 +161,14 @@ def test_tier2_runtime_topic_and_non_literal_table_not_enforced(tmp_path: Path) 
     specs = _corpus(
         tmp_path,
         {
-            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/ferova/a/mod.py"'),
+            "01_SP-A_a.md": _spec("SP-A", owns_code='"src/repoach/a/mod.py"'),
             "01_SP-DB_db.md": _spec("SP-DB", owns_resources='"db:table:orders"'),
         },
     )
     registry = load_registry(specs)
     changed = _src(
         tmp_path,
-        "src/ferova/a/mod.py",
+        "src/repoach/a/mod.py",
         'name = "orders"\nTable(name, meta)\npublish("queue:topic:" + name)\n',
     )
 
@@ -179,6 +179,6 @@ def test_self_application_on_real_gate_passes() -> None:
     registry = load_registry(_REPO_ROOT / "docs" / "specs")
     suppress = load_frontier_suppress(_REPO_ROOT)
     report = check_diff(
-        registry, ["src/ferova/lint/edge_honesty.py"], _REPO_ROOT, suppress=suppress
+        registry, ["src/repoach/lint/edge_honesty.py"], _REPO_ROOT, suppress=suppress
     )
     assert report.ok

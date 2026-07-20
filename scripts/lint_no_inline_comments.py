@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI wrapper around ``ferova.lint.no_inline_comments``.
+"""CLI wrapper around ``repoach.lint.no_inline_comments``.
 
 SP-NO-INLINE-COMMENTS-GATE.
 
@@ -7,7 +7,7 @@ Usage examples::
 
     python scripts/lint_no_inline_comments.py
     python scripts/lint_no_inline_comments.py --summary
-    python scripts/lint_no_inline_comments.py --root src/ferova/lint
+    python scripts/lint_no_inline_comments.py --root src/repoach/lint
     python scripts/lint_no_inline_comments.py --max 200
 
 The pytest binding (``tests/unit/test_no_inline_comments_gate.py``)
@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ferova.lint.no_inline_comments import (
+from repoach.lint.no_inline_comments import (
     DEFAULT_ROOTS,
     scan,
     summarise,

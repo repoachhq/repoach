@@ -6,7 +6,7 @@ from pathlib import Path
 
 from structlog.testing import capture_logs
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ALLOWED_TRANSITIONS,
     ClaimType,
     Finding,
@@ -29,7 +29,7 @@ def _make_finding(*, pr_number: int = 1) -> Finding:
         finder="test-agent",
         claim_type=ClaimType.MISSING_TEST,
         severity=Severity.BLOCKING,
-        file="src/ferova/review/findings.py",
+        file="src/repoach/review/findings.py",
         line_start=1,
         line_end=10,
         claim="Missing unit test coverage.",
@@ -69,8 +69,8 @@ def test_refuted_is_reopenable_on_reraise(tmp_path: Path) -> None:
     """REFUTED -> PROPOSED is legal, and a bridge re-raise performs it."""
     assert is_valid_transition(FindingStatus.REFUTED, FindingStatus.PROPOSED) is True
 
-    from ferova.review.findings_bridge import record_findings_for_outcomes
-    from ferova.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
+    from repoach.review.findings_bridge import record_findings_for_outcomes
+    from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 
     db = tmp_path / "f.db"
     init_findings_schema(db)
@@ -130,7 +130,7 @@ def test_finding_default_status_is_proposed() -> None:
         finder="test-agent",
         claim_type=ClaimType.MISSING_TEST,
         severity=Severity.BLOCKING,
-        file="src/ferova/review/findings.py",
+        file="src/repoach/review/findings.py",
         line_start=1,
         line_end=10,
         claim="Missing unit test coverage.",
@@ -148,7 +148,7 @@ def test_finding_requires_claim_fields() -> None:
         finder="nim-reviewer",
         claim_type=ClaimType.MISSING_TEST,
         severity=Severity.BLOCKING,
-        file="src/ferova/review/findings.py",
+        file="src/repoach/review/findings.py",
         line_start=1,
         line_end=10,
         claim="No test for the greet() helper.",
@@ -160,7 +160,7 @@ def test_finding_requires_claim_fields() -> None:
     assert finding.finder == "nim-reviewer"
     assert finding.claim_type == ClaimType.MISSING_TEST
     assert finding.severity == Severity.BLOCKING
-    assert finding.file == "src/ferova/review/findings.py"
+    assert finding.file == "src/repoach/review/findings.py"
     assert finding.line_start == 1
     assert finding.line_end == 10
     assert finding.claim == "No test for the greet() helper."

@@ -159,15 +159,15 @@ jobs:
         working-directory: ${{ runner.temp }}/head-tree
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FEROVA_DB_PATH: ${{ runner.temp }}/ferova_review.db
+          REPOACH_DB_PATH: ${{ runner.temp }}/ferova_review.db
           # Fail fast here too: the trigger already guarantees CI
           # completed at the resolved head; a mid-flight push fails
           # fast and defers to that push's own CI-completion event.
-          FEROVA_AUTOMERGE_CI_WAIT_SECONDS: "0"
+          REPOACH_AUTOMERGE_CI_WAIT_SECONDS: "0"
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
         run: |
           set +e
-          python -m ferova.cli.main review merge "$PR_NUMBER"
+          python -m repoach.cli.main review merge "$PR_NUMBER"
           rc=$?
           # Exit 0 == merged or already-merged (idempotent).
           # Exit 5 == a non-fatal gate skip (SP-MERGE-EXIT-CONTRACT) —

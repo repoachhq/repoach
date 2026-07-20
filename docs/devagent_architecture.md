@@ -61,7 +61,7 @@ SP-CODER-TIER-RETIRE-AGENT).
 4. **SP-DEVAGENT-DECOMPOSE** — the always-on front-end: governed spec → ordered
    governed sub-specs whose `owns` partition the parent's (honouring disjointness,
    `depends_on`, and edge-honesty); feeds the loop per sub-spec.
-5. **SP-DEVAGENT-WIRE** — wire into `ferova develop` + the review handoff;
+5. **SP-DEVAGENT-WIRE** — wire into `repoach develop` + the review handoff;
    commit-per-sub-spec; **remove the destructive revert-on-red** that wipes
    untracked files (a known `dev_runner` bug).
 

@@ -10,16 +10,16 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.review.mcp_whitelist import (
+from repoach.review.mcp_whitelist import (
     MCP_TOOL_WHITELIST_BY_ROLE,
     allowed_tools_for,
 )
-from ferova.review.reviewer import BotRole
+from repoach.review.reviewer import BotRole
 
 #: Read-only MCP tools available to inspect the working tree / persisted
 #: state without touching the outside world.  Reviewers + Coder + Developer
 #: get a curated subset of these; mutating tools (``proxy_restart``,
-#: ``run_ferova_command``…) are explicitly excluded.
+#: ``run_repoach_command``…) are explicitly excluded.
 _READ_ONLY_TOOLS = frozenset(
     {
         "git_status",
@@ -32,10 +32,10 @@ _READ_ONLY_TOOLS = frozenset(
 #: process restarts).  Forbidden for any review-bot role.
 _MUTATING_TOOLS = (
     "send_whatsapp",
-    "mcp__ferova__send_whatsapp",
+    "mcp__repoach__send_whatsapp",
     "proxy_restart",
     "git_open_pr",
-    "run_ferova_command",
+    "run_repoach_command",
 )
 
 #: Bot roles whose threat model is "process a diff" — they must never
@@ -127,7 +127,7 @@ def test_reviewer_exposes_allowed_tools_attribute() -> None:
     """Architect's __init__ wires self._allowed_tools from the whitelist."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Architect
+    from repoach.review.reviewer import Architect
 
     architect = Architect(loop=MagicMock())
     assert architect._allowed_tools == allowed_tools_for(BotRole.ARCHITECT)
@@ -137,7 +137,7 @@ def test_coder_exposes_allowed_tools_attribute() -> None:
     """Coder's __init__ wires self._allowed_tools from the whitelist."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Coder
+    from repoach.review.reviewer import Coder
 
     coder = Coder(loop=MagicMock())
     assert coder._allowed_tools == allowed_tools_for(BotRole.CODER)
@@ -147,7 +147,7 @@ def test_developer_exposes_allowed_tools_attribute() -> None:
     """Developer's __init__ wires self._allowed_tools from the whitelist."""
     from unittest.mock import MagicMock
 
-    from ferova.review.reviewer import Developer
+    from repoach.review.reviewer import Developer
 
     developer = Developer(loop=MagicMock())
     assert developer._allowed_tools == allowed_tools_for(BotRole.DEVELOPER)

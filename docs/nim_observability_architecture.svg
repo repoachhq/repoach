@@ -17,7 +17,7 @@
 
   <rect width="1500" height="850" fill="#0a0e17"/>
 
-  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — NIM Observability</text>
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Repoach — NIM Observability</text>
   <text x="45" y="73" font-size="12.5" fill="#9ca3af">Two independent streams record NIM behaviour for later analysis. The hosted NIM is volatile and the chain self-heals (budget-retry + Max failover), which HIDES drift — so we measure it from both sides.</text>
 
   <!-- Legend -->
@@ -45,13 +45,13 @@
   <rect x="352" y="230" width="44" height="18" rx="9" fill="#f59e0b"/>
   <text x="374" y="243" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">TOOL</text>
   <text x="108" y="250" font-size="14" font-weight="bold" fill="#fbbf24">systemd timer (every 15 min)</text>
-  <text x="108" y="271" font-size="11.5" fill="#cbd5e1">ferova-nim-health.timer</text>
+  <text x="108" y="271" font-size="11.5" fill="#cbd5e1">repoach-nim-health.timer</text>
 
   <!-- monitor-chains -->
   <rect x="90" y="312" width="615" height="135" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
   <rect x="637" y="324" width="46" height="18" rx="9" fill="#94a3b8"/>
   <text x="660" y="337" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
-  <text x="108" y="342" font-size="15.5" font-weight="bold" fill="#93c5fd">ferova monitor-chains</text>
+  <text x="108" y="342" font-size="15.5" font-weight="bold" fill="#93c5fd">repoach monitor-chains</text>
   <text x="108" y="367" font-size="12" fill="#cbd5e1">check_tier_heads — probe each tier's HEAD model DIRECTLY</text>
   <text x="108" y="386" font-size="12" fill="#9ca3af">(bypasses the proxy on purpose — measures the raw NIM head)</text>
   <text x="108" y="411" font-size="12" fill="#cbd5e1">classify →  ok · slow · empty (thinking-leak) · error · skipped</text>

@@ -2,12 +2,12 @@
 
 ## Project context
 
-Ferova — an autonomous, self-evolving software factory. You plug it
+Repoach — an autonomous, self-evolving software factory. You plug it
 into a repository and it ships changes through a multi-agent review
 pipeline that verifies its own work before merging, and it improves
 its own infrastructure as it goes.
 
-The operational core is the **PR review factory** (`src/ferova/review/`)
+The operational core is the **PR review factory** (`src/repoach/review/`)
 — the system that builds the system. New capabilities are designed with
 the maintainer and land PR by PR through the factory.
 
@@ -21,7 +21,7 @@ exist, are bilingual FR/EN — reply in the operator's language.)
 - Strict type hints everywhere.
 - Pydantic models for all data crossing module boundaries.
 - No secrets in code — everything via `.env`. All env vars use the
-  `FEROVA_*` prefix.
+  `REPOACH_*` prefix.
 
 ## Golden rule — zero inline comments, zero `# noqa`
 
@@ -41,7 +41,7 @@ layers:
 
 ## Stack
 
-- Python 3.11+ (Conda env `ferova`).
+- Python 3.11+ (Conda env `repoach`).
 - Pydantic v2 + pydantic-settings for models and config.
 - SQLAlchemy + SQLite for storage.
 - Typer for the CLI, FastAPI/uvicorn for the llm_proxy sidecar.
@@ -59,7 +59,7 @@ layers:
 ## Layout
 
 ```
-src/ferova/
+src/repoach/
   agent_engine/    # provider-agnostic AgentLoop (runs the review bots)
   cli/             # Typer CLI (review factory only)
   core/            # config, logging
@@ -84,25 +84,25 @@ tests/unit/        # the suite CI requires green
 
 ## Review-bot team
 
-- Module: `src/ferova/review/` — 4 reviewers (Architect /
+- Module: `src/repoach/review/` — 4 reviewers (Architect /
   Sentinel / Tester / Scribe) + Coder owner + **Developer** (SP-DEV),
   all via `agent_engine/agent_loop.py` over the local proxy (no
   Anthropic quota burn).
 - Workflow: `.github/workflows/auto-review.yml` runs on
   `pull_request {opened,synchronize,reopened,ready_for_review}`
   against `develop`.
-- CLI: `ferova review pr <N>` (run team), `ferova
+- CLI: `repoach review pr <N>` (run team), `repoach
   review report <N>` (fetch sticky archive comment),
-  `ferova review fix <N>` (one Coder iteration),
-  `ferova review merge <N>` (squash-merge gate),
-  `ferova plan <spec-id>` (Planner agent → `docs/plans/<id>.md`;
+  `repoach review fix <N>` (one Coder iteration),
+  `repoach review merge <N>` (squash-merge gate),
+  `repoach plan <spec-id>` (Planner agent → `docs/plans/<id>.md`;
   `--explore-via {proxy,claude_cli}` picks the exploration backend —
   proxy chain vs one read-only `claude -p` session on the Max quota),
-  `ferova develop <spec-id>` (plan-driven Developer session
+  `repoach develop <spec-id>` (plan-driven Developer session
   from a spec: Planner → plan → step-by-step execution, one commit
-  per step; also reachable as `ferova review develop`).
+  per step; also reachable as `repoach review develop`).
 - Persistence: `pr_reviews` + `pr_coder_responses` + `pr_merges`
-  tables (SQLite, `FEROVA_DB_PATH`).
+  tables (SQLite, `REPOACH_DB_PATH`).
 - Push notification: when `CLAUDE_CODE_ROUTINE_ID` +
   `CLAUDE_CODE_ROUTINE_TOKEN` repo secrets are set, the
   orchestrator fires a routine that spawns a fresh Claude Code
@@ -113,7 +113,7 @@ tests/unit/        # the suite CI requires green
 ```
 docs/specs/<id>.md      ← human writes specification
         │
-        │  ferova develop <id>
+        │  repoach develop <id>
         ▼
 Developer → push branch → PR(develop)
         │
@@ -145,7 +145,7 @@ pytest tests/unit
 ruff check src tests scripts && ruff format --check src tests scripts
 python scripts/lint_no_inline_comments.py --summary
 python scripts/lint_no_silent_except.py --summary
-ferova --help
+repoach --help
 ```
 
 ## Local CI mirror (GitHub Actions budget conservation)
@@ -159,7 +159,7 @@ scripts/ci_local.sh --tests   # pytest-only
 scripts/ci_local.sh --integration # run integration tests
 ```
 
-Pair with `ferova review pr <N>` to run the review-bot team
+Pair with `repoach review pr <N>` to run the review-bot team
 locally too.
 
 ## Branch-protection equivalent (client-side)
@@ -178,8 +178,8 @@ git config core.hooksPath .githooks
   repairs with `git push --no-verify`.
 
 Use **`scripts/safe_merge.sh <PR>`** instead of `gh pr merge`. It
-enforces: base = `develop`, full local CI, `ferova review pr`, the
-**pure evidence-first merge gate** (`ferova review gate <N>` —
+enforces: base = `develop`, full local CI, `repoach review pr`, the
+**pure evidence-first merge gate** (`repoach review gate <N>` —
 re-verifies the findings ledger at head: CI green, zero blocking
 findings surviving re-verification, complete review, spec coverage;
 SP-VERDICT-FLIP 10a replaced the forgeable archive 4/4-APPROVE check),

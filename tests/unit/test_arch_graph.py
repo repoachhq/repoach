@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.arch import (
+from repoach.arch import (
     Graph,
     MalformedFrontmatterError,
     OwnershipConflictError,
@@ -151,5 +151,5 @@ def test_health_credits_ownership_is_disjoint() -> None:
     store.py is SP-HEALTH-STORE-NEUTRALIZE, proving the narrowing holds."""
     registry = load_registry(_REPO_ROOT / "docs" / "specs")
 
-    assert registry.owner_of("src/ferova/health/credits.py") == "SP-CREDITS-CHECK"
-    assert registry.owner_of("src/ferova/health/store.py") == "SP-HEALTH-STORE-NEUTRALIZE"
+    assert registry.owner_of("src/repoach/health/credits.py") == "SP-CREDITS-CHECK"
+    assert registry.owner_of("src/repoach/health/store.py") == "SP-HEALTH-STORE-NEUTRALIZE"

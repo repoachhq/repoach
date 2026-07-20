@@ -3,7 +3,7 @@
 Pins a maximum number of silent-``except`` handlers across ``src/``,
 ``tests/``, ``scripts/``, ``agents/``. The baseline starts at the
 count measured at gate-introduction time (see
-:data:`~ferova.lint.no_silent_except.MAX_SILENT_EXCEPT`) and can
+:data:`~repoach.lint.no_silent_except.MAX_SILENT_EXCEPT`) and can
 only ratchet **down**: each follow-up logging spec
 (SP-COLLECTORS-LOGGING, ...) removes a batch of
 silent excepts and lowers the constant by the same amount. Adding a
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.lint.no_silent_except import (
+from repoach.lint.no_silent_except import (
     DEFAULT_ROOTS,
     MAX_SILENT_EXCEPT,
     SilentExceptViolation,

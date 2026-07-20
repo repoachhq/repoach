@@ -20,8 +20,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from ferova.review.auto_merge import resolve_verified_head
-from ferova.review.gh_client import GhCli
+from repoach.review.auto_merge import resolve_verified_head
+from repoach.review.gh_client import GhCli
 
 _BRANCH = "feat/fresh-head-e2e"
 _ABSENT_SHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"

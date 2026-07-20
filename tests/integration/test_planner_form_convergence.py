@@ -23,9 +23,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.plan import render_plan_form_rules
-from ferova.review.planner import Planner, run_planner_session
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.plan import render_plan_form_rules
+from repoach.review.planner import Planner, run_planner_session
 
 _SPEC_ID = "SP-TEST-FORM-CONVERGENCE"
 _HEADING = "Plan-form rules (all of them — every attempt is validated against every rule)"
@@ -42,7 +42,7 @@ def _valid_plan_payload(spec_id: str = _SPEC_ID) -> dict:
                 "index": 1,
                 "title": "Add the demo module",
                 "files": [
-                    "src/ferova/form_convergence_demo.py",
+                    "src/repoach/form_convergence_demo.py",
                     "tests/unit/test_form_convergence_demo.py",
                     "tests/integration/test_form_convergence_demo_flow.py",
                 ],
@@ -94,7 +94,7 @@ def _seed_repo(tmp_path: Path) -> Path:
         "## Definition of Done\n\n- it works\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "integration").mkdir(parents=True)
     return tmp_path

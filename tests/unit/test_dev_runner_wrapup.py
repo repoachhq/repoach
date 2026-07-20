@@ -19,16 +19,16 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import (
+from repoach.review.dev_runner import (
     DevSessionResult,
     _collect_failing_wrapup_selectors,
     _develop_one_spec,
     _step_commits_for_plan,
     repair_wrapup_failures,
 )
-from ferova.review.devagent_loop import DevLoopResult
-from ferova.review.persistence import init_schema
-from ferova.review.plan import ActionPlan, PlanStep
+from repoach.review.devagent_loop import DevLoopResult
+from repoach.review.persistence import init_schema
+from repoach.review.plan import ActionPlan, PlanStep
 
 _PASSING_TEST = '"""Demo test module."""\n\n\ndef test_ok() -> None:\n    assert 1 == 1\n'
 

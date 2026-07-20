@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -18,8 +18,8 @@ from ferova.review.findings import (
     record_finding,
     update_finding_status,
 )
-from ferova.review.merge_gate import MergeDecision, MergeFacts
-from ferova.review.report import render_ledger_report
+from repoach.review.merge_gate import MergeDecision, MergeFacts
+from repoach.review.report import render_ledger_report
 
 
 def _facts(**over: object) -> MergeFacts:
@@ -119,7 +119,7 @@ def test_findings_grouped_by_status(tmp_path: Path) -> None:
 def test_archive_appendix_preserved(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
-    appendix = "### Ferova review archive\n\n```json\n{}\n```"
+    appendix = "### Repoach review archive\n\n```json\n{}\n```"
     body = render_ledger_report(
         db,
         pr_number=1,

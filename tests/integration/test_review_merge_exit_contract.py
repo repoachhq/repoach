@@ -1,6 +1,6 @@
 """Integration tests for the merge exit-code contract (SP-MERGE-EXIT-CONTRACT).
 
-Exercises ``ferova review merge`` through ``CliRunner`` with
+Exercises ``repoach review merge`` through ``CliRunner`` with
 ``run_auto_merge`` replaced at the CLI seam to verify that every
 non-fatal skip outcome exits 5 and FAILED exits 1.
 """
@@ -12,8 +12,8 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli import review_cmds
-from ferova.review.auto_merge import (
+from repoach.cli import review_cmds
+from repoach.review.auto_merge import (
     OUTCOME_FAILED,
     OUTCOME_SKIP_CI_TIMEOUT,
     AutoMergeResult,

@@ -9,7 +9,7 @@ failure-soft rationale is still documented.
 
 from __future__ import annotations
 
-from ferova.review import findings_bridge
+from repoach.review import findings_bridge
 
 
 def test_no_coder_loop_reference() -> None:

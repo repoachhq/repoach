@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.review.planner_tools import make_planner_tools
+from repoach.review.planner_tools import make_planner_tools
 
 
 @pytest.fixture()

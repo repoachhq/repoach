@@ -36,11 +36,11 @@ from typing import Any
 import pytest
 from fastapi.exceptions import HTTPException
 
-from ferova.llm_proxy.api.model_router import ModelRouter
-from ferova.llm_proxy.api.models.anthropic import Message, MessagesRequest
-from ferova.llm_proxy.api.services import ClaudeProxyService
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.base import BaseProvider, ProviderConfig
+from repoach.llm_proxy.api.model_router import ModelRouter
+from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest
+from repoach.llm_proxy.api.services import ClaudeProxyService
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 
 
 def _sse(event_type: str, payload: dict[str, Any]) -> str:

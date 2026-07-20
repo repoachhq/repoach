@@ -10,9 +10,9 @@ with no back-compat alias, and the base ``Reviewer.model_chain`` default
 still resolves to ``PROXY_SONNET_CHAIN``.
 """
 
-from ferova.agent_engine import agent_loop
-from ferova.agent_engine.agent_loop import DEFAULT_REVIEWER_CHAIN, PROXY_SONNET_CHAIN
-from ferova.review.reviewer import Reviewer
+from repoach.agent_engine import agent_loop
+from repoach.agent_engine.agent_loop import DEFAULT_REVIEWER_CHAIN, PROXY_SONNET_CHAIN
+from repoach.review.reviewer import Reviewer
 
 
 def test_default_reviewer_chain_importable() -> None:

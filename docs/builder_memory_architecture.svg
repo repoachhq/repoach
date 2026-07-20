@@ -17,7 +17,7 @@
 
   <rect width="1500" height="980" fill="#0a0e17"/>
 
-  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Ferova — Builder Memory</text>
+  <text x="45" y="50" font-size="24" font-weight="bold" fill="#f3f4f6">Repoach — Builder Memory</text>
   <text x="45" y="73" font-size="12.5" fill="#9ca3af">The BUILD agents recall past lessons before planning and remember the outcome after building — scoped to project=&quot;builder&quot; only. A self-improving loop, gracefully degrading.</text>
 
   <!-- Legend top-right -->
@@ -32,7 +32,7 @@
 
   <!-- ════════════════ ZONE : BUILD FLOW ════════════════ -->
   <rect x="45" y="95" width="1410" height="205" rx="14" fill="#0d1117" stroke="#1f2937" stroke-width="1.2"/>
-  <text x="70" y="127" font-size="15" font-weight="bold" fill="#9ca3af">BUILD  ·  one  `ferova develop &lt;SP-ID&gt;`  run</text>
+  <text x="70" y="127" font-size="15" font-weight="bold" fill="#9ca3af">BUILD  ·  one  `repoach develop &lt;SP-ID&gt;`  run</text>
 
   <!-- review_develop -->
   <rect x="70" y="150" width="245" height="120" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
@@ -80,7 +80,7 @@
   <rect x="70" y="372" width="230" height="118" rx="10" fill="#0d1626" stroke="#60a5fa" stroke-width="1.8"/>
   <rect x="246" y="384" width="44" height="18" rx="9" fill="#60a5fa"/>
   <text x="268" y="397" font-size="10.5" font-weight="bold" fill="#0a0e17" text-anchor="middle">CODE</text>
-  <text x="90" y="408" font-size="14.5" font-weight="bold" fill="#93c5fd">ferova memory</text>
+  <text x="90" y="408" font-size="14.5" font-weight="bold" fill="#93c5fd">repoach memory</text>
   <text x="90" y="433" font-size="12" fill="#cbd5e1">seed-builder  (load 7 traps)</text>
   <text x="90" y="455" font-size="12" fill="#cbd5e1">recall-builder &lt;q&gt;  (inspect)</text>
   <text x="90" y="478" font-size="11" fill="#9ca3af">cli/main.py — operator tools</text>

@@ -5,12 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ferova.review.audit_log import (
+from repoach.review.audit_log import (
     fetch_mutations,
     record_mutations,
     render_changelog,
 )
-from ferova.review.decision import MutationKind, PlannedMutation
+from repoach.review.decision import MutationKind, PlannedMutation
 
 _T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 

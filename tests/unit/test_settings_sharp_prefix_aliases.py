@@ -29,8 +29,8 @@ from pathlib import Path
 
 import pytest
 
-from ferova.llm_proxy.config import settings as settings_module
-from ferova.llm_proxy.config.settings import (
+from repoach.llm_proxy.config import settings as settings_module
+from repoach.llm_proxy.config.settings import (
     _LEGACY_TO_FEROVA_ALIAS,
     Settings,
 )
@@ -76,6 +76,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "CHAINPILOT_MAX_MUTATIONS": "chainpilot_max_mutations",
     "CREDITS_FLOOR_USD": "credits_floor_usd",
     "CREDITS_HEALTH_CACHE_TTL_S": "credits_health_cache_ttl_s",
+    "CHAIN_STATUS_WINDOW_H": "chain_status_window_h",
 }
 """Legacy env key → Pydantic field name, kept in lockstep with
 :data:`_LEGACY_TO_FEROVA_ALIAS` to give the read-through tests a
@@ -233,6 +234,23 @@ def test_uses_process_anthropic_auth_token_false_when_neither_set(
     assert settings.uses_process_anthropic_auth_token() is False
 
 
+def test_chain_status_window_h_alias_and_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default is 24.0 and FEROVA_CHAIN_STATUS_WINDOW_H overrides it."""
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.chain_status_window_h == 24.0, (
+        f"default should be 24.0, got {settings.chain_status_window_h}"
+    )
+
+    monkeypatch.setenv("FEROVA_CHAIN_STATUS_WINDOW_H", "6")
+    settings = _build_settings(monkeypatch)
+    assert settings.chain_status_window_h == 6.0, (
+        f"set to 6 should yield 6.0, got {settings.chain_status_window_h}"
+    )
+
+
 @pytest.mark.parametrize("dotenv_key", ["ANTHROPIC_AUTH_TOKEN", "FEROVA_ANTHROPIC_AUTH_TOKEN"])
 def test_uses_process_anthropic_auth_token_false_when_dotenv_provides_either(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dotenv_key: str
@@ -259,4 +277,50 @@ def test_uses_process_anthropic_auth_token_false_when_dotenv_provides_either(
     assert settings.anthropic_auth_token == "from-dotenv", (
         f"prefer_dotenv_anthropic_auth_token must update the field with the dotenv "
         f"value, not just flag the source ; got {settings.anthropic_auth_token!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "legacy,field,value",
+    [
+        ("OPENROUTER_API_KEY", "open_router_api_key", "or-token-repoach"),
+        ("HOST", "host", "localhost"),
+        ("ANTHROPIC_AUTH_TOKEN", "anthropic_auth_token", "anth-repoach"),
+    ],
+)
+def test_repoach_alias_read_through(
+    legacy: str, field: str, value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setting the REPOACH_ name lands on the same Settings field."""
+    _clean_env_for_settings(monkeypatch)
+    repoach_key = "REPOACH_" + _LEGACY_TO_FEROVA_ALIAS[legacy].removeprefix("FEROVA_")
+    monkeypatch.setenv(repoach_key, value)
+    settings = _build_settings(monkeypatch)
+    assert getattr(settings, field) == value, (
+        f"REPOACH {repoach_key}={value!r} should land on settings.{field}, "
+        f"got {getattr(settings, field)!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "legacy,field",
+    [
+        ("OPENROUTER_API_KEY", "open_router_api_key"),
+        ("ANTHROPIC_AUTH_TOKEN", "anthropic_auth_token"),
+    ],
+)
+def test_repoach_wins_over_ferova_and_legacy(
+    legacy: str, field: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When all three names are present, the REPOACH_ value takes precedence."""
+    _clean_env_for_settings(monkeypatch)
+    ferova_key = _LEGACY_TO_FEROVA_ALIAS[legacy]
+    repoach_key = "REPOACH_" + ferova_key.removeprefix("FEROVA_")
+    monkeypatch.setenv(legacy, "legacy-value")
+    monkeypatch.setenv(ferova_key, "ferova-value")
+    monkeypatch.setenv(repoach_key, "repoach-value")
+    settings = _build_settings(monkeypatch)
+    assert getattr(settings, field) == "repoach-value", (
+        f"with all three of {legacy}/{ferova_key}/{repoach_key} set, "
+        f"REPOACH_ must win for field {field!r}"
     )

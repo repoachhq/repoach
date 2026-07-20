@@ -13,14 +13,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ferova.review.plan import ActionPlan, PlanStep, parse_plan_markdown, render_plan_markdown
+from repoach.review.plan import ActionPlan, PlanStep, parse_plan_markdown, render_plan_markdown
 
 
 def _violating_plan() -> ActionPlan:
     step = PlanStep(
         index=1,
         title="Add the feature",
-        files=["src/ferova/feature.py", "tests/unit/test_feature.py"],
+        files=["src/repoach/feature.py", "tests/unit/test_feature.py"],
         action="Create the feature module with its unit test.",
         commit_message="feat(feature): add module",
         done_when="pytest tests/unit/test_feature.py is green",
@@ -48,7 +48,7 @@ def test_node_id_and_integration_tree_lints_fire_on_round_trip() -> None:
         index=1,
         title="Add the feature",
         files=[
-            "src/ferova/feature.py",
+            "src/repoach/feature.py",
             "tests/unit/test_feature.py",
             "tests/integration/test_feature.py",
         ],
@@ -87,7 +87,7 @@ def test_integration_promise_lint_fires_on_round_trip() -> None:
     """A violating plan raises the same directive error after a render/parse round trip.
 
     A plan document is authored once, committed to disk as rendered
-    Markdown, and re-read at ``ferova develop`` time via
+    Markdown, and re-read at ``repoach develop`` time via
     :func:`parse_plan_markdown`. This test proves the integration-promise
     lint fires on THAT path — not merely at direct construction — by
     first building an in-memory violating payload with
@@ -102,7 +102,7 @@ def test_integration_promise_lint_fires_on_round_trip() -> None:
         index=1,
         title="Add the feature",
         files=[
-            "src/ferova/feature.py",
+            "src/repoach/feature.py",
             "tests/unit/test_feature.py",
             "tests/integration/test_feature_e2e.py",
         ],

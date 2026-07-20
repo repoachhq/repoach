@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.agent_engine.adapters import GatewayError
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.devagent_loop import DevLoopResult, run_agentic_step
+from repoach.agent_engine.adapters import GatewayError
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.devagent_loop import DevLoopResult, run_agentic_step
 
 
 class _FakeLoop:

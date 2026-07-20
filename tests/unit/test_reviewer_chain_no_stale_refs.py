@@ -6,9 +6,9 @@ base ``Reviewer`` default agrees, and the old ``DEFAULT_NIM_CHAIN``
 name is gone from the module surface with no back-compat alias.
 """
 
-from ferova.agent_engine import agent_loop
-from ferova.agent_engine.agent_loop import DEFAULT_REVIEWER_CHAIN, PROXY_SONNET_CHAIN
-from ferova.review.reviewer import Reviewer
+from repoach.agent_engine import agent_loop
+from repoach.agent_engine.agent_loop import DEFAULT_REVIEWER_CHAIN, PROXY_SONNET_CHAIN
+from repoach.review.reviewer import Reviewer
 
 
 def test_default_reviewer_chain_resolves_to_proxy_sonnet() -> None:

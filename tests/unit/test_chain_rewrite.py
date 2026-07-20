@@ -8,7 +8,7 @@ preserved verbatim.
 
 from __future__ import annotations
 
-from ferova.review.chain_rewrite import (
+from repoach.review.chain_rewrite import (
     ChainEdit,
     EditOp,
     RewriteResult,

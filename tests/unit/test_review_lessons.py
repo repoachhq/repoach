@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-import ferova.core.config as config
-from ferova.review import review_lessons
-from ferova.review.findings import (
+import repoach.core.config as config
+from repoach.review import review_lessons
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -178,7 +178,7 @@ def test_gather_insights_scopes_to_pr(tmp_path: Path) -> None:
 def test_cli_insights_outputs_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
-    from ferova.cli import review_cmds
+    from repoach.cli import review_cmds
 
     db = tmp_path / "f.db"
     init_findings_schema(db)

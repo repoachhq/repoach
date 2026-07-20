@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from ferova.llm_proxy.providers import model_catalog
-from ferova.llm_proxy.providers.model_catalog import (
+from repoach.llm_proxy.providers import model_catalog
+from repoach.llm_proxy.providers.model_catalog import (
     UNSWEPT_PROVIDERS,
     ListedModel,
     ProviderModelListing,

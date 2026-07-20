@@ -1,7 +1,7 @@
 """Tests for SP-VERDICT-FLIP (10a) — the read-only pure merge gate.
 
 Covers the shared :func:`decide_at_head` unit (so the CI auto-merge and
-the local ``ferova review gate`` can never drift), the non-blocking
+the local ``repoach review gate`` can never drift), the non-blocking
 :func:`ci_snapshot_green`, and the CLI exit-code routing (0 merge-ready /
 5 refused / 1 could-not-evaluate).
 """
@@ -15,16 +15,16 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
-from ferova.cli import review_cmds
-from ferova.review.auto_merge import (
+from repoach.cli import review_cmds
+from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     GateEvaluation,
     decide_at_head,
     evaluate_merge_gate,
 )
-from ferova.review.findings import record_review_integrity
-from ferova.review.gh_client import GhResult
-from ferova.review.merge_gate import MergeDecision, MergeFacts
+from repoach.review.findings import record_review_integrity
+from repoach.review.gh_client import GhResult
+from repoach.review.merge_gate import MergeDecision, MergeFacts
 
 _HEAD = "head_abc123"
 

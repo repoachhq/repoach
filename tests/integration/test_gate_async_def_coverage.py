@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.findings import init_findings_schema, record_review_integrity
-from ferova.review.merge_gate import compute_merge_decision, gather_merge_facts
-from ferova.review.plan import ActionPlan, PlanStep
-from ferova.review.spec_gate import compute_spec_coverage, record_spec_coverage
+from repoach.review.findings import init_findings_schema, record_review_integrity
+from repoach.review.merge_gate import compute_merge_decision, gather_merge_facts
+from repoach.review.plan import ActionPlan, PlanStep
+from repoach.review.spec_gate import compute_spec_coverage, record_spec_coverage
 
 
 def _plan_with_async_selectors(unit_tests: list[str], integration_tests: list[str]) -> ActionPlan:
@@ -23,7 +23,7 @@ def _plan_with_async_selectors(unit_tests: list[str], integration_tests: list[st
     step = PlanStep(
         index=1,
         title="Deliver async def tests",
-        files=["src/ferova/foo.py", *promised_files],
+        files=["src/repoach/foo.py", *promised_files],
         action="Implement async test delivery.",
         commit_message="feat(async-tests): deliver",
         done_when="gates green",
@@ -42,8 +42,8 @@ def test_async_promises_yield_covered_and_gate_reason_free(tmp_path: Path) -> No
     """Build a head with only async def tests, compute coverage, record
     it, gather merge facts, and assert the gate is clean."""
     repo = tmp_path / "repo"
-    (repo / "src" / "ferova").mkdir(parents=True)
-    (repo / "src" / "ferova" / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "src" / "repoach").mkdir(parents=True)
+    (repo / "src" / "repoach" / "foo.py").write_text("x = 1\n", encoding="utf-8")
     (repo / "tests" / "unit").mkdir(parents=True)
     (repo / "tests" / "integration").mkdir(parents=True)
 

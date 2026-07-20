@@ -10,8 +10,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ferova.llm_proxy.providers.cell_probe import CellHealth
-from ferova.llm_proxy.providers.cell_probe_store import (
+from repoach.llm_proxy.providers.cell_probe import CellHealth
+from repoach.llm_proxy.providers.cell_probe_store import (
     fetch_cell_probes,
     init_cell_health_schema,
     record_cell_probes,

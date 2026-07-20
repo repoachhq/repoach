@@ -7,16 +7,16 @@ from pathlib import Path
 
 from sqlalchemy import insert
 
-from ferova.llm_proxy.providers.benchmark_equivalences import (
+from repoach.llm_proxy.providers.benchmark_equivalences import (
     EquivalenceTable,
     ModelEquivalence,
 )
-from ferova.llm_proxy.providers.benchmark_prior import (
+from repoach.llm_proxy.providers.benchmark_prior import (
     BenchmarkEntry,
     BenchmarkRanking,
     BenchmarkSourceMeta,
 )
-from ferova.review.findings import (
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,
@@ -24,19 +24,19 @@ from ferova.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from ferova.review.perf_aggregate import (
+from repoach.review.perf_aggregate import (
     GuardedMetric,
     ModelPerformance,
     aggregate_model_performance,
 )
-from ferova.review.persistence import (
+from repoach.review.persistence import (
     _engine_for,
     _pr_reviews,
     init_schema,
     record_coder_response,
     record_merge,
 )
-from ferova.review.stuck import record_coder_round
+from repoach.review.stuck import record_coder_round
 
 
 def _coder(db: Path, *, pr_number: int, model: str, merged: bool, rounds: int) -> None:

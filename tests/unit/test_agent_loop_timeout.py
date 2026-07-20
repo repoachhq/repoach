@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
-from ferova.agent_engine.agent_loop import LONG_OUTPUT_TIMEOUT_S, AgentLoop
-from ferova.review.reviewer import Developer
+from repoach.agent_engine.agent_loop import LONG_OUTPUT_TIMEOUT_S, AgentLoop
+from repoach.review.reviewer import Developer
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     loop — these tests target timeouts, not auth.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),

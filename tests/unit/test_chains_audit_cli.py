@@ -6,7 +6,7 @@ returns ``None`` (no exception path) — the report-only slice always exits 0.
 
 from __future__ import annotations
 
-from ferova.cli.main import app
+from repoach.cli.main import app
 
 
 def test_chains_audit_command_is_registered() -> None:

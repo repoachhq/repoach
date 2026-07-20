@@ -17,11 +17,11 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.responses import StreamingResponse
 
-from ferova.llm_proxy.api.agent_dispatcher import dispatch_agent_request
-from ferova.llm_proxy.api.models.agent_v1 import AgentRequest, TextBlock
-from ferova.llm_proxy.api.models.agent_v1 import Message as AgentMessage
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.openai_compat import OpenAIChatTransport
+from repoach.llm_proxy.api.agent_dispatcher import dispatch_agent_request
+from repoach.llm_proxy.api.models.agent_v1 import AgentRequest, TextBlock
+from repoach.llm_proxy.api.models.agent_v1 import Message as AgentMessage
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.openai_compat import OpenAIChatTransport
 
 
 class _FakeCompletionTokensDetails:

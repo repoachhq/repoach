@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.coder_findings import (
+from repoach.review.coder_findings import (
     open_verified_blocking,
     record_ci_failures_as_findings,
     resolve_broken_behavior_findings,
 )
-from ferova.review.merge_gate import compute_merge_decision, summarise_ledger_facts
-from ferova.review.report import render_ledger_report
+from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
+from repoach.review.report import render_ledger_report
 
 
 def test_red_ci_finding_flips_ledger_to_blocked_then_resolves_to_merge_ready(

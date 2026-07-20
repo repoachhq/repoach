@@ -14,8 +14,8 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli.main import app
-from ferova.review.chain_health import (
+from repoach.cli.main import app
+from repoach.review.chain_health import (
     ModelHealth,
     chain_head,
     check_tier_heads,
@@ -109,7 +109,7 @@ def test_api_key_redacted_in_error_detail() -> None:
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Any:
-    from ferova.llm_proxy.config.settings import Settings
+    from repoach.llm_proxy.config.settings import Settings
 
     monkeypatch.setenv("MODEL", "nvidia_nim/x")
     monkeypatch.setenv("MODEL_SONNET", "nvidia_nim/thinker,claude_code/sonnet")
@@ -152,7 +152,7 @@ def test_cli_exit_code_reflects_worst_status(monkeypatch: pytest.MonkeyPatch) ->
             ModelHealth("sonnet", "thinker", "empty", 0.4, 0, "http=200"),
         ]
 
-    monkeypatch.setattr("ferova.review.chain_health.check_tier_heads", _fake_check)
+    monkeypatch.setattr("repoach.review.chain_health.check_tier_heads", _fake_check)
     result = CliRunner().invoke(app, ["monitor-chains", "--json"])
 
     assert result.exit_code == 1
@@ -165,7 +165,7 @@ def test_cli_exit_zero_when_all_healthy(monkeypatch: pytest.MonkeyPatch) -> None
     async def _fake_check(*args: Any, **kwargs: Any) -> list[ModelHealth]:
         return [ModelHealth("sonnet", "thinker", "ok", 0.4, 2, "ok")]
 
-    monkeypatch.setattr("ferova.review.chain_health.check_tier_heads", _fake_check)
+    monkeypatch.setattr("repoach.review.chain_health.check_tier_heads", _fake_check)
     result = CliRunner().invoke(app, ["monitor-chains"])
 
     assert result.exit_code == 0
@@ -211,7 +211,7 @@ def test_credits_low_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
         credits_payload=_credits_payload(20.0, 19.0),
     )
     monkeypatch.setattr(
-        "ferova.cli.main._probe_client",
+        "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
@@ -221,7 +221,7 @@ def test_credits_low_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -238,7 +238,7 @@ def test_credits_ok_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
         credits_payload=_credits_payload(20.0, 0.0),
     )
     monkeypatch.setattr(
-        "ferova.cli.main._probe_client",
+        "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
@@ -248,7 +248,7 @@ def test_credits_ok_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -261,7 +261,7 @@ def test_credits_skipped_when_key_empty(monkeypatch: pytest.MonkeyPatch) -> None
     """Empty key -> skipped line, no credits GET recorded."""
     transport = _MockTransport()
     monkeypatch.setattr(
-        "ferova.cli.main._probe_client",
+        "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "")
@@ -270,7 +270,7 @@ def test_credits_skipped_when_key_empty(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -286,7 +286,7 @@ def test_credits_json_output_shape(monkeypatch: pytest.MonkeyPatch) -> None:
         credits_payload=_credits_payload(20.0, 10.0),
     )
     monkeypatch.setattr(
-        "ferova.cli.main._probe_client",
+        "repoach.cli.main._probe_client",
         lambda: httpx.AsyncClient(transport=transport),
     )
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "k")
@@ -296,7 +296,7 @@ def test_credits_json_output_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     import json
 

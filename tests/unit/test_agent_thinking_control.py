@@ -12,17 +12,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from ferova.agent_engine.adapters import ProxyGatewayClient
-from ferova.llm.capability import CapabilityTier
-from ferova.llm_proxy.api.models.agent_v1 import AgentRequest, Message, TextBlock
-from ferova.llm_proxy.api.models.anthropic import ThinkingConfig
+from repoach.agent_engine.adapters import ProxyGatewayClient
+from repoach.llm.capability import CapabilityTier
+from repoach.llm_proxy.api.models.agent_v1 import AgentRequest, Message, TextBlock
+from repoach.llm_proxy.api.models.anthropic import ThinkingConfig
 
 
 def _build_request(*, thinking: ThinkingConfig | None = None) -> AgentRequest:
     return AgentRequest(
         schema_version="1",
         capability="sonnet",
-        system="You are Ferova's WhatsApp assistant.",
+        system="You are Repoach's WhatsApp assistant.",
         messages=[Message(role="user", content=[TextBlock(type="text", text="ping")])],
         tools=[],
         thinking=thinking,
@@ -87,7 +87,7 @@ def test_thinking_field_reaches_the_translated_request() -> None:
 
     AC1 from SP-AGENT-THINKING-CONTROL.
     """
-    from ferova.llm_proxy.api.agent_dispatcher import _translate_request
+    from repoach.llm_proxy.api.agent_dispatcher import _translate_request
 
     thinking = ThinkingConfig(type="enabled", budget_tokens=1024)
     request = _build_request(thinking=thinking)
@@ -104,7 +104,7 @@ def test_absent_thinking_field_translates_to_none() -> None:
 
     AC2 from SP-AGENT-THINKING-CONTROL.
     """
-    from ferova.llm_proxy.api.agent_dispatcher import _translate_request
+    from repoach.llm_proxy.api.agent_dispatcher import _translate_request
 
     request = _build_request()
     translated = _translate_request(request, "test-model")
@@ -117,7 +117,7 @@ def test_disabled_thinking_round_trips() -> None:
 
     AC3 from SP-AGENT-THINKING-CONTROL.
     """
-    from ferova.llm_proxy.api.agent_dispatcher import _translate_request
+    from repoach.llm_proxy.api.agent_dispatcher import _translate_request
 
     thinking = ThinkingConfig(type="disabled")
     request = _build_request(thinking=thinking)
@@ -193,7 +193,7 @@ def test_proxy_client_threads_thinking_to_body(monkeypatch) -> None:
     """
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
 
@@ -222,7 +222,7 @@ def test_proxy_client_omits_thinking_when_unset(monkeypatch) -> None:
     """
     stub = _StubClient(_StubResponse(status_code=200, payload=_ok_payload()))
     monkeypatch.setattr(
-        "ferova.agent_engine.adapters.httpx.Client",
+        "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
 
@@ -252,15 +252,15 @@ def test_agent_loop_threads_thinking_to_every_turn(monkeypatch) -> None:
 
     from pydantic import SecretStr
 
-    from ferova.agent_engine.agent_loop import AgentLoop, ToolDef
-    from ferova.llm_proxy.api.models.agent_v1 import (
+    from repoach.agent_engine.agent_loop import AgentLoop, ToolDef
+    from repoach.llm_proxy.api.models.agent_v1 import (
         AgentResponse,
         ToolCallBlock,
         Usage,
     )
 
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),

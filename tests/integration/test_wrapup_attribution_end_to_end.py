@@ -1,6 +1,6 @@
 """SP-DEV-WRAPUP-ATTRIBUTION end-to-end integration test.
 
-Exercises :func:`ferova.review.dev_runner.repair_wrapup_failures` against a
+Exercises :func:`repoach.review.dev_runner.repair_wrapup_failures` against a
 real throwaway git repository and a real pytest invocation: a two-step plan
 whose second step breaks an unpromised unit test, attributed to that step
 via a real git-worktree selector runner, then repaired by a fake Developer
@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import DevSessionResult, repair_wrapup_failures
-from ferova.review.devagent_loop import DevLoopResult
-from ferova.review.persistence import init_schema
-from ferova.review.plan import ActionPlan, PlanStep
+from repoach.review.dev_runner import DevSessionResult, repair_wrapup_failures
+from repoach.review.devagent_loop import DevLoopResult
+from repoach.review.persistence import init_schema
+from repoach.review.plan import ActionPlan, PlanStep
 
 _WRAP_E2E_GREEN = (
     '"""Wrap-up end-to-end demo module — both tests pass."""\n\n\n'
@@ -110,7 +110,7 @@ def _fake_wrapup_repair_developer() -> MagicMock:
 
     Mirrors the real Developer's ``develop_step`` keyword shape.  Only a
     ``spec_id`` containing ``"wrapup-repair"`` (the marker
-    :func:`ferova.review.dev_runner.repair_wrapup_failures` stamps on every
+    :func:`repoach.review.dev_runner.repair_wrapup_failures` stamps on every
     repair dispatch) triggers the write — any other call is a wiring bug.
     """
     dev = MagicMock()

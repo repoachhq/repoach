@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.routing.tier import Tier, classify_tier
+from repoach.llm_proxy.routing.tier import Tier, classify_tier
 
 
 @pytest.mark.parametrize(
     ("name", "tier"),
     [
-        ("claude-coder-ferova", Tier.DEFAULT),
+        ("claude-coder-repoach", Tier.DEFAULT),
         ("claude-opus-4-7", Tier.OPUS),
         ("claude-3-5-haiku", Tier.HAIKU),
         ("claude-sonnet-4", Tier.SONNET),

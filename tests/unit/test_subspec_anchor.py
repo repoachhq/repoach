@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.subspec_anchor import (
+from repoach.review.subspec_anchor import (
     AnchoredReview,
     discover_sub_specs,
     maybe_anchor_decomposed_parent,

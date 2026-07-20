@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.providers.effort_knob import (
+from repoach.llm_proxy.providers.effort_knob import (
     REASONING_EFFORT_FIELD,
     effort_extra_body,
     probe_effort_for,

@@ -192,7 +192,7 @@ hand-implemented slice.
 
 ## Out of scope
 
-- Multi-turn agent loop (lives in `ferova.llm.gateway`, unchanged).
+- Multi-turn agent loop (lives in `repoach.llm.gateway`, unchanged).
 - The peek-then-replay buffering strategy (`_failover.py`) — noted as a
   latency cost, not addressed by this arc.
 - The `.env`/`chains.env` precedence machinery, except slice E.

@@ -7,11 +7,11 @@ and the legacy import paths re-export the same value.
 
 from __future__ import annotations
 
-from ferova.llm_proxy.config.provider_ids import (
+from repoach.llm_proxy.config.provider_ids import (
     SUPPORTED_PROVIDER_IDS as CONFIG_SUPPORTED,
 )
-from ferova.llm_proxy.providers import catalog, registry
-from ferova.llm_proxy.providers.registry import (
+from repoach.llm_proxy.providers import catalog, registry
+from repoach.llm_proxy.providers.registry import (
     SUPPORTED_PROVIDER_IDS as REGISTRY_SUPPORTED,
 )
 

@@ -11,21 +11,21 @@ from datetime import UTC, datetime
 
 from typer.testing import CliRunner
 
-from ferova.cli.main import app
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.aa_ingest import (
+from repoach.cli.main import app
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.aa_ingest import (
     AaRanking,
     ModelCapability,
     normalize_model_name,
 )
-from ferova.llm_proxy.providers.benchmark_equivalences import (
+from repoach.llm_proxy.providers.benchmark_equivalences import (
     EquivalenceTable,
     ModelEquivalence,
 )
-from ferova.llm_proxy.providers.cell_probe_store import CellProbeRow
-from ferova.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
-from ferova.llm_proxy.routing import chain_regen
-from ferova.llm_proxy.routing.chain_regen import (
+from repoach.llm_proxy.providers.cell_probe_store import CellProbeRow
+from repoach.llm_proxy.providers.model_matrix import ModelCell, ProviderModelMatrix
+from repoach.llm_proxy.routing import chain_regen
+from repoach.llm_proxy.routing.chain_regen import (
     gather_and_regenerate,
     speed_for_from_rows,
 )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI wrapper around ``ferova.lint.no_silent_except``.
+"""CLI wrapper around ``repoach.lint.no_silent_except``.
 
 SP-LINT-LOG-CATCH-ALL.
 
@@ -7,7 +7,7 @@ Usage examples::
 
     python scripts/lint_no_silent_except.py
     python scripts/lint_no_silent_except.py --summary
-    python scripts/lint_no_silent_except.py --root src/ferova/lint
+    python scripts/lint_no_silent_except.py --root src/repoach/lint
     python scripts/lint_no_silent_except.py --max 100
 
 Mirrors :mod:`scripts.lint_no_inline_comments` so the operator
@@ -23,7 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ferova.lint.no_silent_except import (
+from repoach.lint.no_silent_except import (
     DEFAULT_ROOTS,
     MAX_SILENT_EXCEPT,
     scan,

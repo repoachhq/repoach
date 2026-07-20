@@ -17,12 +17,12 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import execute_plan_step
-from ferova.review.devagent_loop import DevLoopResult
-from ferova.review.devagent_selfverify import run_self_verify
-from ferova.review.persistence import init_schema
-from ferova.review.plan import ActionPlan, PlanStep
-from ferova.review.spec import SpecPlan
+from repoach.review.dev_runner import execute_plan_step
+from repoach.review.devagent_loop import DevLoopResult
+from repoach.review.devagent_selfverify import run_self_verify
+from repoach.review.persistence import init_schema
+from repoach.review.plan import ActionPlan, PlanStep
+from repoach.review.spec import SpecPlan
 
 _SPEC_ID = "SP-FANOUT-INT"
 

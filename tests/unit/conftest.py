@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.routing import reset_breaker
+from repoach.llm_proxy.routing import reset_breaker
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +29,7 @@ def _reset_health_breaker() -> None:
 @pytest.fixture(autouse=True)
 def _no_live_review_memory_recall(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "ferova.review.orchestrator.recall_review_lessons",
+        "repoach.review.orchestrator.recall_review_lessons",
         lambda _query: [],
     )
 
@@ -42,6 +42,6 @@ def _no_live_refuter(monkeypatch: pytest.MonkeyPatch) -> None:
     directly; orchestrator tests that need the call override this.
     """
     monkeypatch.setattr(
-        "ferova.review.orchestrator.judge_findings_for_pr",
+        "repoach.review.orchestrator.judge_findings_for_pr",
         lambda *_args, **_kwargs: {"verified": 0, "refuted": 0, "deferred": 0},
     )

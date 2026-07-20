@@ -14,10 +14,10 @@ import json
 
 import pytest
 
-from ferova.llm_proxy.api.models.anthropic import Message, MessagesRequest, ThinkingConfig
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.effort_map import get_effort_map, reset_effort_map
-from ferova.llm_proxy.providers.openai_generic import GenericOpenAIProvider
+from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest, ThinkingConfig
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.effort_map import get_effort_map, reset_effort_map
+from repoach.llm_proxy.providers.openai_generic import GenericOpenAIProvider
 
 
 @pytest.fixture(autouse=True)

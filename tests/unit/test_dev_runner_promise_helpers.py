@@ -1,14 +1,14 @@
 """Unit tests for promise-delivery gate helpers.
 
 Covers :func:`_promised_test_files` and
-:func:`_attempt_mechanical_rename` in ``ferova.review.dev_runner``.
+:func:`_attempt_mechanical_rename` in ``repoach.review.dev_runner``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.dev_runner import _attempt_mechanical_rename, _promised_test_files
+from repoach.review.dev_runner import _attempt_mechanical_rename, _promised_test_files
 
 
 class TestPromisedTestFiles:

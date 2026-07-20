@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.lint.no_inline_comments import (
+from repoach.lint.no_inline_comments import (
     DEFAULT_ROOTS,
     Violation,
     scan,

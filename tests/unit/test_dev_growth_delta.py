@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.coder_loop import apply_fixes, is_placeholder_content
+from repoach.review.coder_loop import apply_fixes, is_placeholder_content
 
 _REAL_LINE = "x{} = {}\n"
 

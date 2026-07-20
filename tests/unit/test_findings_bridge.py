@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ferova.review.findings import ClaimType, FindingStatus, Severity, fetch_findings
-from ferova.review.findings_bridge import (
+from repoach.review.findings import ClaimType, FindingStatus, Severity, fetch_findings
+from repoach.review.findings_bridge import (
     LENS_DEFAULT_CLAIM_TYPE,
     SEVERITY_MAP,
     comment_to_finding,
     record_findings_for_outcomes,
 )
-from ferova.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
+from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 
 _DIFF_TOUCHING_FOO = (
     "diff --git a/src/foo.py b/src/foo.py\n"
@@ -147,7 +147,7 @@ def test_none_head_sha_empty(tmp_path: Path) -> None:
 def test_off_diff_comment_skipped(tmp_path: Path) -> None:
     in_diff = ReviewComment(file="src/foo.py", line=3, severity="blocker", body="real")
     off_diff = ReviewComment(
-        file="src/ferova/review/coder_loop.py",
+        file="src/repoach/review/coder_loop.py",
         line=9,
         severity="blocker",
         body="hallucinated on an untouched file",
@@ -226,7 +226,7 @@ def test_unparsed_skipped_with_diff(tmp_path: Path) -> None:
 def test_off_diff_skip_emits_positive_event(tmp_path: Path) -> None:
     off_diff = ReviewComment(file="src/elsewhere.py", line=1, severity="blocker", body="x")
     outcome = _make_outcome(BotRole.ARCHITECT, comments=[off_diff])
-    with patch("ferova.review.findings_bridge._log", MagicMock()) as mock_log:
+    with patch("repoach.review.findings_bridge._log", MagicMock()) as mock_log:
         record_findings_for_outcomes(
             tmp_path / "findings.db",
             pr_number=7,
@@ -243,7 +243,7 @@ def test_off_diff_skip_emits_positive_event(tmp_path: Path) -> None:
 def test_no_skip_no_log(tmp_path: Path) -> None:
     on_diff = ReviewComment(file="src/foo.py", line=3, severity="blocker", body="x")
     outcome = _make_outcome(BotRole.ARCHITECT, comments=[on_diff])
-    with patch("ferova.review.findings_bridge._log", MagicMock()) as mock_log:
+    with patch("repoach.review.findings_bridge._log", MagicMock()) as mock_log:
         record_findings_for_outcomes(
             tmp_path / "findings.db",
             pr_number=8,

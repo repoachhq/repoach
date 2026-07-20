@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from ferova.llm_proxy.providers.aa_ingest import (
+from repoach.llm_proxy.providers.aa_ingest import (
     AaRanking,
     ModelCapability,
     normalize_model_name,
 )
-from ferova.llm_proxy.routing.model_select import (
+from repoach.llm_proxy.routing.model_select import (
     SelectError,
     resolve_anchors,
     select_models,

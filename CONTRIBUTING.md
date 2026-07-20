@@ -1,12 +1,12 @@
-# Contributing to Ferova
+# Contributing to Repoach
 
-Thanks for your interest in Ferova! This repo works a little
+Thanks for your interest in Repoach! This repo works a little
 differently from most open-source projects, so please read this page
 before opening a PR — it will save you (and the bots) a round-trip.
 
 ## How this repo is built
 
-Ferova is built *by* Ferova. The primary developer is the factory
+Repoach is built *by* Repoach. The primary developer is the factory
 itself: substantive changes start as a **governed spec** in
 `docs/specs/`, a Planner turns the spec into a step-by-step action
 plan, and an autonomous Developer implements it branch-by-branch,
@@ -46,7 +46,7 @@ The best ways to contribute, in increasing order of ceremony:
 ## Local setup
 
 ```bash
-git clone https://github.com/ferovahq/ferova && cd ferova
+git clone https://github.com/repoachhq/repoach && cd repoach
 pip install -e ".[dev]"            # Python 3.11+
 git config core.hooksPath .githooks   # pre-commit + pre-push gates
 cp .env.example .env               # fill in your provider keys
@@ -74,7 +74,7 @@ The gates that will actually bite you:
 - **English everywhere** — code, comments, docstrings, log messages,
   specs, tests, commit messages.
 - **No secrets in code** — everything via `.env`; env vars use the
-  `FEROVA_*` prefix. Never put a real key in a test fixture.
+  `REPOACH_*` prefix. Never put a real key in a test fixture.
 - `pytest tests/unit` must be green; integration tests live under
   `tests/integration/`.
 
@@ -82,18 +82,18 @@ The gates that will actually bite you:
 
 Substantive changes are anchored to a spec:
 `docs/specs/<date>_<SP-ID>_<slug>.md`, with YAML frontmatter declaring
-`owns` (the modules the spec owns) and `depends_on`. Ferova *derives*
+`owns` (the modules the spec owns) and `depends_on`. Repoach *derives*
 the dependency graph from these declarations and *enforces* it in CI
 — an import crossing an undeclared boundary fails the build. Browse
-recent specs in `docs/specs/` for the format; `ferova plan <SP-ID>`
-and `ferova develop <SP-ID>` are how the factory builds from one.
+recent specs in `docs/specs/` for the format; `repoach plan <SP-ID>`
+and `repoach develop <SP-ID>` are how the factory builds from one.
 
 ## What reviewers (bots and humans) will hold you to
 
 - The diff matches a spec's acceptance criteria, or is a genuinely
   minor fix.
 - Tests are real: truthful boundary fakes (a fake HTTP transport, a
-  fake CLI executable) are fine; monkeypatching Ferova's own
+  fake CLI executable) are fine; monkeypatching Repoach's own
   behavior to make a test pass is not.
 - CI green at head, no surviving blocking findings — the merge gate
   re-checks this mechanically; there is no human override in the

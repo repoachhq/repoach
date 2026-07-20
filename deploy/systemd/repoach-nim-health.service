@@ -1,0 +1,15 @@
+[Unit]
+Description=Repoach — NIM chain-head health probe (feeds nim_health_probe)
+Documentation=https://github.com/repoachhq/repoach
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/work/repoach
+# ``repoach monitor-chains`` exits 1 when any chain head is empty/error
+# — that is telemetry, not a unit failure, hence SuccessExitStatus.
+ExecStart=%h/Documents/work/repoach/.venv/bin/repoach monitor-chains
+SuccessExitStatus=0 1
+StandardOutput=append:%h/Documents/work/repoach/logs/nim_health.log
+StandardError=append:%h/Documents/work/repoach/logs/nim_health.log

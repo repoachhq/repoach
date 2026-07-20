@@ -1,7 +1,7 @@
 """Smoke tests pinning the SP-SILENT-EXCEPT-REVIEW-LAYER contract.
 
 Each of the 39 silent ``except`` handlers in
-``src/ferova/review/`` now emits a structured log before
+``src/repoach/review/`` now emits a structured log before
 swallowing. Same template as
 ``tests/unit/test_orchestrator_silent_except_logging.py``: anchor
 guards (lint baseline + zero ``review/`` residual) plus
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_REVIEW_DIR = Path(__file__).resolve().parents[2] / "src" / "ferova" / "review"
+_REVIEW_DIR = Path(__file__).resolve().parents[2] / "src" / "repoach" / "review"
 
 
 def _read(name: str) -> str:
@@ -34,7 +34,7 @@ class TestLintBaselineRatchet:
     """
 
     def test_baseline_at_or_below_87(self) -> None:
-        from ferova.lint.no_silent_except import MAX_SILENT_EXCEPT
+        from repoach.lint.no_silent_except import MAX_SILENT_EXCEPT
 
         assert MAX_SILENT_EXCEPT <= 87
 
@@ -43,10 +43,10 @@ class TestReviewLayerHasZeroResidual:
     """``review/`` contributes 0 silent-except violations after this PR."""
 
     def test_zero_review_residual(self) -> None:
-        from ferova.lint.no_silent_except import scan
+        from repoach.lint.no_silent_except import scan
 
         repo_root = Path(__file__).resolve().parents[2]
-        violations = scan([repo_root / "src" / "ferova" / "review"])
+        violations = scan([repo_root / "src" / "repoach" / "review"])
         assert violations == [], (
             f"review/ should have 0 silent-excepts; got {[v.format() for v in violations]}"
         )

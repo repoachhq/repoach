@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from ferova.llm_proxy.providers import cell_probe
-from ferova.llm_proxy.providers.cell_probe import (
+from repoach.llm_proxy.providers import cell_probe
+from repoach.llm_proxy.providers.cell_probe import (
     CellHealth,
     classify_cell,
     probe_cell,

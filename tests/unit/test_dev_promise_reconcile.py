@@ -17,9 +17,9 @@ from unittest.mock import MagicMock
 import pytest
 from structlog.testing import capture_logs
 
-from ferova.review.dev_runner import execute_plan_step, run_promised_tests
-from ferova.review.persistence import init_schema
-from ferova.review.plan import ActionPlan, PlanStep
+from repoach.review.dev_runner import execute_plan_step, run_promised_tests
+from repoach.review.persistence import init_schema
+from repoach.review.plan import ActionPlan, PlanStep
 
 
 def test_exact_promised_ids_stay_happy_path(tmp_path: Path) -> None:
@@ -105,7 +105,7 @@ def test_step_commits_on_reconciled_tests(tmp_path: Path) -> None:
         steps=[step],
         integration_tests=[],
     )
-    from ferova.review.devagent_loop import DevLoopResult
+    from repoach.review.devagent_loop import DevLoopResult
 
     def _step(*, brief, repo_root, allowed_paths, repo_tree="", spec_id=None):
         target = Path(repo_root) / "tests" / "unit" / "test_x.py"

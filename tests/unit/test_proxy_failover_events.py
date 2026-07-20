@@ -22,10 +22,10 @@ import pytest
 from fastapi import HTTPException
 from loguru import logger as loguru_logger
 
-from ferova.llm_proxy.api.models.anthropic import Message, MessagesRequest, Tool
-from ferova.llm_proxy.api.services import ClaudeProxyService
-from ferova.llm_proxy.config.settings import Settings
-from ferova.llm_proxy.providers.base import BaseProvider, ProviderConfig
+from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest, Tool
+from repoach.llm_proxy.api.services import ClaudeProxyService
+from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 
 
 def _sse(event_type: str, payload: dict[str, Any]) -> str:
@@ -190,7 +190,7 @@ class TestPrimaryReasonClassifier:
     """``_classify_failover_reason`` maps exception types to spec vocabulary."""
 
     def test_timeout_class_returns_timeout(self) -> None:
-        from ferova.llm_proxy.api.services import _classify_failover_reason
+        from repoach.llm_proxy.api.services import _classify_failover_reason
 
         class _ReadTimeoutError(Exception):
             pass
@@ -198,19 +198,19 @@ class TestPrimaryReasonClassifier:
         assert _classify_failover_reason(_ReadTimeoutError("slow upstream")) == "timeout"
 
     def test_rate_limit_returns_rate_limited(self) -> None:
-        from ferova.llm_proxy.api.services import _classify_failover_reason
-        from ferova.llm_proxy.providers.exceptions import RateLimitError
+        from repoach.llm_proxy.api.services import _classify_failover_reason
+        from repoach.llm_proxy.providers.exceptions import RateLimitError
 
         assert _classify_failover_reason(RateLimitError("429")) == "rate_limited"
 
     def test_authentication_returns_auth_failed(self) -> None:
-        from ferova.llm_proxy.api.services import _classify_failover_reason
-        from ferova.llm_proxy.providers.exceptions import AuthenticationError
+        from repoach.llm_proxy.api.services import _classify_failover_reason
+        from repoach.llm_proxy.providers.exceptions import AuthenticationError
 
         assert _classify_failover_reason(AuthenticationError("bad token")) == "auth_failed"
 
     def test_transport_returns_transport_error(self) -> None:
-        from ferova.llm_proxy.api.services import _classify_failover_reason
+        from repoach.llm_proxy.api.services import _classify_failover_reason
 
         class _RemoteProtocolError(Exception):
             pass
@@ -218,7 +218,7 @@ class TestPrimaryReasonClassifier:
         assert _classify_failover_reason(_RemoteProtocolError("disconnect")) == "transport_error"
 
     def test_unclassified_falls_back_to_exception_prefix(self) -> None:
-        from ferova.llm_proxy.api.services import _classify_failover_reason
+        from repoach.llm_proxy.api.services import _classify_failover_reason
 
         assert _classify_failover_reason(RuntimeError("oops")) == "exception:RuntimeError"
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ferova.review.spec import (
+from repoach.review.spec import (
     SPECS_DIR,
     SpecPlan,
     detect_spec_from_branch,
@@ -132,7 +132,7 @@ plain English so we can humans triage at a glance.
 
 ## Plan
 
-- Modify `src/ferova/foo.py` to add a method.
+- Modify `src/repoach/foo.py` to add a method.
 - Add `tests/unit/test_foo.py` with three tests.
 - See also `docs/runbooks/foo_runbook.md` for ops notes.
 """
@@ -145,7 +145,7 @@ def test_load_spec_returns_plan_with_title_summary_and_paths(tmp_path: Path) -> 
     assert "SP-FOO" in plan.title
     assert "first paragraph" in plan.summary
     # Referenced paths picked up from backticks.
-    assert "src/ferova/foo.py" in plan.referenced_paths
+    assert "src/repoach/foo.py" in plan.referenced_paths
     assert "tests/unit/test_foo.py" in plan.referenced_paths
     assert "docs/runbooks/foo_runbook.md" in plan.referenced_paths
     # raw_markdown carries the full content.
@@ -285,10 +285,10 @@ def test_scan_referenced_paths_ignores_non_repo_paths(tmp_path: Path) -> None:
     plan_md = (
         "# SP-X\n\n"
         "See `/etc/passwd` and `~/.ssh/id_rsa` and `random/path/foo.py`\n"
-        "but DO read `src/ferova/foo.py`.\n"
+        "but DO read `src/repoach/foo.py`.\n"
     )
     _seed_spec(tmp_path, "2026-04-29_SP-X_t.md", plan_md)
     plan = load_spec("X", root=tmp_path)
-    assert "src/ferova/foo.py" in plan.referenced_paths
+    assert "src/repoach/foo.py" in plan.referenced_paths
     assert "/etc/passwd" not in plan.referenced_paths
     assert "random/path/foo.py" not in plan.referenced_paths

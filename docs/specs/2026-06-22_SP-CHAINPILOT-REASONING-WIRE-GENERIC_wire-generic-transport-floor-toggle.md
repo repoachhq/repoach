@@ -15,6 +15,7 @@ depends_on:
   - SP-CHAINPILOT-REASONING-CONTROL   # imports plan_reasoning
   - SP-CHAINPILOT-EFFORT-MAP          # get_effort_map — 2a-3-iv-b closed the effort deferral
   - SP-CHAINPILOT-EFFORT-KNOB         # effort_extra_body — the reasoning_effort wire fragment
+  - SP-USAGE-REASONING-SPLIT          # imports providers.openai_compat
 provides_to: []                                  # AUTO-maintained
 
 constraints: {}

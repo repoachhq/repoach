@@ -33,7 +33,7 @@
   <rect x="65" y="152" width="480" height="90" rx="10" fill="#101622" stroke="#263041"/>
   <rect x="497" y="160" width="36" height="18" rx="4" fill="#86efac" fill-opacity="0.15" stroke="#86efac" stroke-opacity="0.5"/>
   <text x="515" y="173" font-size="11" font-weight="bold" fill="#86efac" text-anchor="middle">W1</text>
-  <text x="81" y="180" font-size="14" font-weight="bold" fill="#cbd5e1">Session-start digest — ferova chain-status</text>
+  <text x="81" y="180" font-size="14" font-weight="bold" fill="#cbd5e1">Session-start digest — repoach chain-status</text>
   <text x="81" y="202" font-size="11" fill="#9ca3af">per-tier 24 h rates (slow counted in the bad column) · breaker state</text>
   <text x="81" y="220" font-size="11" fill="#9ca3af">cell freshness age · credits · “tier unmonitored” warning</text>
 

@@ -1,0 +1,31 @@
+[Unit]
+Description=Repoach — LLM proxy (Anthropic-compatible chain-failover gateway)
+Documentation=https://github.com/repoachhq/repoach
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/work/repoach
+# SP-DEPLOY-SHELL-HARDENING: no ``EnvironmentFile=`` here.
+# Pydantic-settings reads ``.env`` and ``chains.env`` itself (with
+# proper inline-comment stripping). systemd's EnvironmentFile would
+# pass ``LOG_LEVEL=INFO  # DEBUG | INFO | …`` literally to the python
+# process, which then fails the Literal validation and crashloops.
+#
+# Port 8084 while the sharp-agent proxy still owns 127.0.0.1:8082 on
+# this machine (extraction-transition setup, 2026-07-02). Pair with
+# ``REPOACH_LLM_PROXY_BASE_URL=http://127.0.0.1:8084`` in the repoach
+# ``.env`` so the factory targets THIS proxy (repoach's own chains.env
+# and provider keys) instead of sharp-agent's. When the sharp stack is
+# retired, drop both overrides to reclaim the default 8082.
+Environment=REPOACH_PROXY_HOST=127.0.0.1 REPOACH_PROXY_PORT=8084
+ExecStart=%h/Documents/work/repoach/.venv/bin/python -m repoach.llm_proxy
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:%h/Documents/work/repoach/logs/llm_proxy.log
+StandardError=append:%h/Documents/work/repoach/logs/llm_proxy.log
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target

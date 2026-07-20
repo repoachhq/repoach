@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from ferova.cli.main import app
+from repoach.cli.main import app
 
 
 def test_chains_audit_reports_reasoner_head(

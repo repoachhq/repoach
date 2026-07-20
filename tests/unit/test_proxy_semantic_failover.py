@@ -23,10 +23,10 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import SecretStr
 
-from ferova.agent_engine.agent_loop import AgentLoop
-from ferova.llm_proxy.api.model_router import ModelRouter
-from ferova.llm_proxy.config.settings import Settings
-from ferova.review.reviewer import Architect
+from repoach.agent_engine.agent_loop import AgentLoop
+from repoach.llm_proxy.api.model_router import ModelRouter
+from repoach.llm_proxy.config.settings import Settings
+from repoach.review.reviewer import Architect
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ def _stub_proxy_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     loop — these tests target semantic failover, not auth.
     """
     monkeypatch.setattr(
-        "ferova.agent_engine.agent_loop.get_settings",
+        "repoach.agent_engine.agent_loop.get_settings",
         lambda: SimpleNamespace(
             llm_proxy_base_url="http://localhost:8082",
             llm_proxy_auth_token=SecretStr("test-token"),
@@ -174,15 +174,15 @@ def _install_fake_httpx(
             captured["headers"] = headers
             return _FakeResp()
 
-    monkeypatch.setattr("ferova.agent_engine.adapters.httpx.Client", _FakeHttp)
+    monkeypatch.setattr("repoach.agent_engine.adapters.httpx.Client", _FakeHttp)
 
 
 def test_proxy_gateway_forwards_skip_models_in_request_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from ferova.agent_engine.adapters import ProxyGatewayClient
-    from ferova.llm.capability import CapabilityTier
-    from ferova.llm_proxy.api.models.agent_v1 import AgentResponse, Message, TextBlock
+    from repoach.agent_engine.adapters import ProxyGatewayClient
+    from repoach.llm.capability import CapabilityTier
+    from repoach.llm_proxy.api.models.agent_v1 import AgentResponse, Message, TextBlock
 
     captured: dict[str, Any] = {}
     _install_fake_httpx(monkeypatch, captured)
@@ -207,9 +207,9 @@ def test_proxy_gateway_omits_skip_models_when_empty(
     """An empty skip-list still serialises to ``skip_models: []`` —
     this is the conservative default that the proxy treats as
     no-filter (per ModelRouter test above)."""
-    from ferova.agent_engine.adapters import ProxyGatewayClient
-    from ferova.llm.capability import CapabilityTier
-    from ferova.llm_proxy.api.models.agent_v1 import Message, TextBlock
+    from repoach.agent_engine.adapters import ProxyGatewayClient
+    from repoach.llm.capability import CapabilityTier
+    from repoach.llm_proxy.api.models.agent_v1 import Message, TextBlock
 
     captured: dict[str, Any] = {}
     _install_fake_httpx(monkeypatch, captured)

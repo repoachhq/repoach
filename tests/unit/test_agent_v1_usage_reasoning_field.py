@@ -9,7 +9,7 @@ many existing callers that build ``Usage(...)`` without one, with
 
 from __future__ import annotations
 
-from ferova.llm_proxy.api.models.agent_v1 import Usage
+from repoach.llm_proxy.api.models.agent_v1 import Usage
 
 
 def test_usage_reasoning_tokens_defaults_to_zero() -> None:

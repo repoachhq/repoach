@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import ferova.review.devagent_selfverify as sv
-from ferova.review.devagent_selfverify import (
+import repoach.review.devagent_selfverify as sv
+from repoach.review.devagent_selfverify import (
     JudgeVerdict,
     _extract_acceptance_criteria,
     _parse_judge_verdict,
     run_self_verify,
 )
-from ferova.review.plan import ActionPlan, PlanStep
-from ferova.review.spec import SpecPlan
+from repoach.review.plan import ActionPlan, PlanStep
+from repoach.review.spec import SpecPlan
 
 _AC_MD = (
     "# SP-T — demo\n\n## Goals\n\n- G1: do it\n\n"

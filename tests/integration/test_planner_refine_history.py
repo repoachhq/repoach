@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 from structlog.testing import capture_logs
 
-from ferova.agent_engine.agent_loop import NimAgentOutput
-from ferova.review.planner import Planner, run_planner_session
+from repoach.agent_engine.agent_loop import NimAgentOutput
+from repoach.review.planner import Planner, run_planner_session
 
 _SPEC_ID = "SP-TEST-REFINE-HIST-INT"
 
@@ -45,7 +45,7 @@ def _valid_plan_payload(spec_id: str = _SPEC_ID) -> dict:
                 "index": 1,
                 "title": "Add the demo module",
                 "files": [
-                    "src/ferova/refine_demo.py",
+                    "src/repoach/refine_demo.py",
                     "tests/unit/test_refine_demo.py",
                     "tests/integration/test_refine_demo_flow.py",
                 ],
@@ -96,7 +96,7 @@ def _seed_repo(tmp_path: Path) -> Path:
         "## Definition of Done\n\n- it works\n",
         encoding="utf-8",
     )
-    (tmp_path / "src" / "ferova").mkdir(parents=True)
+    (tmp_path / "src" / "repoach").mkdir(parents=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "tests" / "integration").mkdir(parents=True)
     return tmp_path

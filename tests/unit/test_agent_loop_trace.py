@@ -14,12 +14,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ferova.agent_engine.agent_loop import (
+from repoach.agent_engine.agent_loop import (
     AgentLoop,
     _trace_to_dicts,
 )
-from ferova.llm.capability import CapabilityTier
-from ferova.llm_proxy.api.models.agent_v1 import (
+from repoach.llm.capability import CapabilityTier
+from repoach.llm_proxy.api.models.agent_v1 import (
     AgentResponse,
     TextBlock,
     TraceEntry,
@@ -37,7 +37,7 @@ class _MockSecret:
 
 @pytest.fixture
 def mock_settings():
-    with patch("ferova.agent_engine.agent_loop.get_settings") as mock:
+    with patch("repoach.agent_engine.agent_loop.get_settings") as mock:
         settings = MagicMock()
         settings.llm_proxy_base_url = "http://localhost:8082"
         settings.llm_proxy_auth_token = _MockSecret("test-token")

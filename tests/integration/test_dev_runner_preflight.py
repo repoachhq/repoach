@@ -13,9 +13,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from ferova.review.dev_runner import run_developer_session
-from ferova.review.persistence import init_schema
-from ferova.review.plan import (
+from repoach.review.dev_runner import run_developer_session
+from repoach.review.persistence import init_schema
+from repoach.review.plan import (
     ActionPlan,
     PlanStep,
     plan_relpath,
@@ -25,7 +25,7 @@ from ferova.review.plan import (
 _SPEC_ID = "SP-PREFLIGHT-INT"
 
 _MARKER_MODULE = '"""Preflight marker module — exists so the preflight predicate sees the file."""\n\nMARKER = "preflight"\n'
-_MARKER_TEST = '"""Preflight marker test — hermetic: reads the sibling file, imports nothing.\n\nImporting the marker as a package module would resolve against the\ninstalled ferova (the editable install), not this seeded repo; and a\nstep file under src/ would trip the plan-form interlock requiring an\nintegration test promise. Both traps killed the first version.\n"""\n\nfrom pathlib import Path\n\n\ndef test_marker() -> None:\n    """Assert the marker module sits beside this test."""\n    marker = Path(__file__).with_name("preflight_marker.py")\n    assert \'MARKER = "preflight"\' in marker.read_text(encoding="utf-8")\n'
+_MARKER_TEST = '"""Preflight marker test — hermetic: reads the sibling file, imports nothing.\n\nImporting the marker as a package module would resolve against the\ninstalled repoach (the editable install), not this seeded repo; and a\nstep file under src/ would trip the plan-form interlock requiring an\nintegration test promise. Both traps killed the first version.\n"""\n\nfrom pathlib import Path\n\n\ndef test_marker() -> None:\n    """Assert the marker module sits beside this test."""\n    marker = Path(__file__).with_name("preflight_marker.py")\n    assert \'MARKER = "preflight"\' in marker.read_text(encoding="utf-8")\n'
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -125,7 +125,7 @@ def test_preflight_skip_path_end_to_end(tmp_path: Path, monkeypatch) -> None:
     db_path = tmp_path / "test.db"
     init_schema(db_path)
 
-    monkeypatch.setattr("ferova.review.dev_runner.ensure_branch", lambda *a, **kw: True)
+    monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
 
     dev = _recording_developer()
 

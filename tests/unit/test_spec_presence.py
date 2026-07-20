@@ -10,8 +10,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from ferova.arch import has_frontmatter
-from ferova.lint.edge_honesty import (
+from repoach.arch import has_frontmatter
+from repoach.lint.edge_honesty import (
     Report,
     SpecPresenceViolation,
     _is_pre_template,

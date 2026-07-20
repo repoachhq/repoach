@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ferova.review.finding_verifiers import verify_finding, verify_findings_for_pr
-from ferova.review.findings import (
+from repoach.review.finding_verifiers import verify_finding, verify_findings_for_pr
+from repoach.review.findings import (
     ClaimType,
     Finding,
     FindingStatus,

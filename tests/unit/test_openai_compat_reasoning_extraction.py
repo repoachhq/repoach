@@ -11,8 +11,8 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ferova.llm_proxy.providers.base import ProviderConfig
-from ferova.llm_proxy.providers.openai_compat import (
+from repoach.llm_proxy.providers.base import ProviderConfig
+from repoach.llm_proxy.providers.openai_compat import (
     OpenAIChatTransport,
     _extract_reasoning_tokens,
 )

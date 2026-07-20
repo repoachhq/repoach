@@ -4,7 +4,7 @@
 Ferova adaptation of the sharp-agent original, two layers:
 
 1. The repo's own SP-NO-INLINE-COMMENTS-GATE scanner
-   (ferova.lint.no_inline_comments) runs on edited ``.py`` files under
+   (repoach.lint.no_inline_comments) runs on edited ``.py`` files under
    src/, tests/, scripts/ — the same scanner pre-commit and CI run, so
    inline-comment and ``noqa`` violations surface at edit time instead
    of commit time.
@@ -54,7 +54,7 @@ PRAGMA_TS_RE = re.compile(
 GOLDEN_RULE_ROOTS = {"src", "tests", "scripts"}
 
 
-def check_ferova_gate(path: Path) -> list[tuple[int, str, str]]:
+def check_repoach_gate(path: Path) -> list[tuple[int, str, str]]:
     """Run the repo's no-inline-comments scanner on one edited file.
 
     Returns an empty list outside the golden-rule roots or when the
@@ -73,7 +73,7 @@ def check_ferova_gate(path: Path) -> list[tuple[int, str, str]]:
     src_dir = str(root / "src")
     sys.path.insert(0, src_dir)
     try:
-        from ferova.lint.no_inline_comments import scan_file
+        from repoach.lint.no_inline_comments import scan_file
     except ImportError:
         return []
     finally:
@@ -151,7 +151,7 @@ def main() -> None:
 
     lines = source.splitlines()
     if suffix == ".py":
-        issues = check_ferova_gate(path) + check_python(lines)
+        issues = check_repoach_gate(path) + check_python(lines)
     else:
         issues = check_typescript(lines)
 

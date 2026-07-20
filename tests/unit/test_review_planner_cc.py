@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ferova.review.planner_cc import run_cc_exploration
+from repoach.review.planner_cc import run_cc_exploration
 
 
 def _envelope(result: str, *, is_error: bool = False, num_turns: int = 3) -> str:
@@ -47,7 +47,7 @@ def _run_capturing_cwd(stdout: str, **kw) -> tuple[object, list[str], object]:
         captured["cwd"] = kwargs.get("cwd")
         return _completed(stdout, **kw)
 
-    with patch("ferova.review.planner_cc.subprocess.run", side_effect=fake_run):
+    with patch("repoach.review.planner_cc.subprocess.run", side_effect=fake_run):
         res = run_cc_exploration(
             prompt="plan it", repo_root=Path("/repo"), model="sonnet", cli_path="claude-stub"
         )
@@ -80,14 +80,14 @@ class TestSuccess:
         _, _cmd, cwd = _run_capturing_cwd(_envelope("{}"))
         assert cwd is not None
         assert str(cwd) != "/repo"
-        assert "ferova_planner_cc_" in str(cwd)
+        assert "repoach_planner_cc_" in str(cwd)
 
     def test_refinement_omits_tools_and_add_dir(self) -> None:
         def fake_run(cmd, **kwargs):
             fake_run.cmd = cmd
             return _completed(_envelope("{}"))
 
-        with patch("ferova.review.planner_cc.subprocess.run", side_effect=fake_run):
+        with patch("repoach.review.planner_cc.subprocess.run", side_effect=fake_run):
             run_cc_exploration(
                 prompt="fix",
                 repo_root=Path("/repo"),
@@ -102,7 +102,7 @@ class TestSuccess:
 class TestEnvScrubbing:
     def test_default_env_strips_sharp_secrets(self, monkeypatch) -> None:
         monkeypatch.setenv("FEROVA_NVIDIA_NIM_API_KEY", "nvapi-secret")
-        monkeypatch.setenv("FEROVA_DB_PATH", "/tmp/db")
+        monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/db")
         monkeypatch.setenv("PATH", "/usr/bin")
         captured: dict[str, object] = {}
 
@@ -110,7 +110,7 @@ class TestEnvScrubbing:
             captured["env"] = kwargs.get("env")
             return _completed(_envelope("{}"))
 
-        with patch("ferova.review.planner_cc.subprocess.run", side_effect=fake_run):
+        with patch("repoach.review.planner_cc.subprocess.run", side_effect=fake_run):
             run_cc_exploration(
                 prompt="x", repo_root=Path("/repo"), model="sonnet", cli_path="claude-stub"
             )
@@ -127,7 +127,7 @@ class TestEnvScrubbing:
             captured["env"] = kwargs.get("env")
             return _completed(_envelope("{}"))
 
-        with patch("ferova.review.planner_cc.subprocess.run", side_effect=fake_run):
+        with patch("repoach.review.planner_cc.subprocess.run", side_effect=fake_run):
             run_cc_exploration(
                 prompt="x",
                 repo_root=Path("/repo"),
@@ -159,7 +159,7 @@ class TestFailureModes:
         def fake_run(cmd, **kwargs):
             raise subprocess.TimeoutExpired(cmd, 600)
 
-        with patch("ferova.review.planner_cc.subprocess.run", side_effect=fake_run):
+        with patch("repoach.review.planner_cc.subprocess.run", side_effect=fake_run):
             res = run_cc_exploration(
                 prompt="x", repo_root=Path("/repo"), model="sonnet", cli_path="claude-stub"
             )
@@ -168,7 +168,7 @@ class TestFailureModes:
 
     def test_spawn_oserror_is_error(self) -> None:
         with patch(
-            "ferova.review.planner_cc.subprocess.run",
+            "repoach.review.planner_cc.subprocess.run",
             side_effect=OSError("no such binary"),
         ):
             res = run_cc_exploration(

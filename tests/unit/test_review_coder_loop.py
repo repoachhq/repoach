@@ -1,4 +1,4 @@
-"""Tests for the shared Coder primitives in :mod:`ferova.review.coder_loop`.
+"""Tests for the shared Coder primitives in :mod:`repoach.review.coder_loop`.
 
 The legacy ``run_coder_fix`` archive-verdict loop was deleted in redesign
 slice 10b; this exercises the toolbox the findings-driven Coder
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.coder_loop import (
+from repoach.review.coder_loop import (
     CI_GREEN,
     CI_PENDING,
     CI_RED,
@@ -33,7 +33,7 @@ from ferova.review.coder_loop import (
     fetch_failed_check_logs,
     is_path_allowed,
 )
-from ferova.review.gh_client import GhResult
+from repoach.review.gh_client import GhResult
 
 # ---------------------------------------------------------------------------
 # Whitelist
@@ -43,7 +43,7 @@ from ferova.review.gh_client import GhResult
 @pytest.mark.parametrize(
     "path",
     [
-        "src/ferova/foo.py",
+        "src/repoach/foo.py",
         "tests/unit/test_x.py",
         "docs/open_work.md",
         "prompts/wa_chat/0.3.0.md",
@@ -122,7 +122,7 @@ def test_is_path_allowed_rejects_github_and_githooks(path: str) -> None:
 def test_apply_fixes_writes_files(tmp_path: Path) -> None:
     fixes = [
         {
-            "path": "src/ferova/foo.py",
+            "path": "src/repoach/foo.py",
             "new_content": "print('hi')\n",
         },
         {
@@ -133,7 +133,7 @@ def test_apply_fixes_writes_files(tmp_path: Path) -> None:
     applied, rejected = apply_fixes(fixes, repo_root=tmp_path)
     assert applied == 2
     assert rejected == []
-    assert (tmp_path / "src/ferova/foo.py").read_text() == "print('hi')\n"
+    assert (tmp_path / "src/repoach/foo.py").read_text() == "print('hi')\n"
     assert (tmp_path / "tests/unit/test_foo.py").read_text() == "def test_x(): pass\n"
 
 
@@ -325,7 +325,7 @@ def test_fetch_failed_check_logs_pulls_run_view_log() -> None:
 
 def test_pytest_pythons_returns_default_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     """No env → single ``[None]`` slot (uses bare ``pytest`` on PATH)."""
-    from ferova.review.coder_loop import _pytest_pythons
+    from repoach.review.coder_loop import _pytest_pythons
 
     monkeypatch.delenv("FEROVA_CODER_PYTHONS", raising=False)
     assert _pytest_pythons() == [None]
@@ -337,7 +337,7 @@ def test_pytest_pythons_filters_missing_interpreters(
     """Only interpreters resolvable by ``shutil.which`` are kept."""
     import shutil as _shutil
 
-    from ferova.review.coder_loop import _pytest_pythons
+    from repoach.review.coder_loop import _pytest_pythons
 
     monkeypatch.setenv("FEROVA_CODER_PYTHONS", "python3.11,python-does-not-exist,python3.13")
 
@@ -358,7 +358,7 @@ def test_pytest_pythons_falls_back_when_none_resolve(
     """All listed interpreters missing → fall back to ``[None]``."""
     import shutil as _shutil
 
-    from ferova.review.coder_loop import _pytest_pythons
+    from repoach.review.coder_loop import _pytest_pythons
 
     monkeypatch.setenv("FEROVA_CODER_PYTHONS", "python-no,python-also-no")
     monkeypatch.setattr(_shutil, "which", lambda _name: None)
@@ -369,7 +369,7 @@ def test_run_pytest_matrix_short_circuits_on_first_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Matrix iterates; first red slot returns immediately."""
-    from ferova.review import coder_loop as cl
+    from repoach.review import coder_loop as cl
 
     monkeypatch.setattr(cl, "_pytest_pythons", lambda: ["python3.11", "python3.13"])
 
@@ -393,7 +393,7 @@ def test_run_pytest_matrix_runs_all_slots_when_green(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """All slots green → runs every slot and reports the summary."""
-    from ferova.review import coder_loop as cl
+    from repoach.review import coder_loop as cl
 
     monkeypatch.setattr(cl, "_pytest_pythons", lambda: ["python3.11", "python3.13"])
 
@@ -412,10 +412,10 @@ def test_run_pytest_matrix_runs_all_slots_when_green(
 
 def test_run_pytest_scrubs_secret_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """run_pytest runs agent-authored tests with a secret-scrubbed env (S4)."""
-    import ferova.review.coder_loop as cl
+    import repoach.review.coder_loop as cl
 
     monkeypatch.setenv("FEROVA_OPENROUTER_API_KEY", "live-secret")
-    monkeypatch.setenv("FEROVA_DB_PATH", "data/x.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "data/x.db")
     captured: dict[str, object] = {}
 
     class _Proc:
@@ -433,4 +433,4 @@ def test_run_pytest_scrubs_secret_env(tmp_path: Path, monkeypatch: pytest.Monkey
     env = captured["env"]
     assert env is not None
     assert "FEROVA_OPENROUTER_API_KEY" not in env
-    assert env.get("FEROVA_DB_PATH") == "data/x.db"
+    assert env.get("REPOACH_DB_PATH") == "data/x.db"

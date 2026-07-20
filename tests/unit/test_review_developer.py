@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ferova.review.reviewer import (
+from repoach.review.reviewer import (
     BotRole,
     Developer,
     _format_existing_files,
@@ -23,7 +23,7 @@ from ferova.review.reviewer import (
 def test_developer_has_correct_role() -> None:
     dev = Developer(loop=MagicMock())
     assert dev.role == BotRole.DEVELOPER
-    assert dev.persona_filename == "developer_0.2.0.md"
+    assert dev.persona_filename == "developer_0.2.1.md"
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ def _redirect_parse_failed_dumps_to_tmp(monkeypatch: pytest.MonkeyPatch, tmp_pat
     ``logs_dir`` kwarg : even legacy tests that don't pass
     ``logs_dir=tmp_path`` cannot leak onto disk.
     """
-    from ferova.review import reviewer
+    from repoach.review import reviewer
 
     real = reviewer._persist_parse_failed_response
 
@@ -206,7 +206,7 @@ def test_developer_respond_returns_parsed_plan() -> None:
     payload = {
         "fixes": [
             {
-                "path": "src/ferova/foo.py",
+                "path": "src/repoach/foo.py",
                 "new_content": "def foo(): return 1\n",
                 "rationale": "implements spec requirement A",
             }
@@ -218,11 +218,11 @@ def test_developer_respond_returns_parsed_plan() -> None:
     dev = Developer(loop=loop)
     out = dev.respond(
         spec_plan="# SP-FOO\n\nAdd foo.",
-        existing_files={"src/ferova/__init__.py": "# package"},
+        existing_files={"src/repoach/__init__.py": "# package"},
         spec_id="SP-FOO",
     )
     assert len(out["fixes"]) == 1
-    assert out["fixes"][0]["path"] == "src/ferova/foo.py"
+    assert out["fixes"][0]["path"] == "src/repoach/foo.py"
     assert "SP-FOO" in out["commit_message"]
     assert out["model_used"] == "stub-model"
 
@@ -459,6 +459,6 @@ def test_developer_loop_carries_the_thirty_turn_budget() -> None:
     dev_runner.py before writing anything; this pin keeps the raised
     budget from silently regressing.
     """
-    import ferova.review.reviewer as reviewer_module
+    import repoach.review.reviewer as reviewer_module
 
     assert reviewer_module._DEVELOPER_MAX_TURNS == 30

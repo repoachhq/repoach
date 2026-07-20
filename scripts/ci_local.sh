@@ -51,10 +51,10 @@ failures=()
 # with a bounded retry loop, and dumps the captured log on failure.
 proxy_smoke() {
     mkdir -p logs
-    FEROVA_ANTHROPIC_AUTH_TOKEN="ci-smoke-token" \
-    FEROVA_PROXY_HOST="127.0.0.1" \
-    FEROVA_PROXY_PORT="8082" \
-        python -m ferova.llm_proxy > logs/proxy_smoke.log 2>&1 &
+    REPOACH_ANTHROPIC_AUTH_TOKEN="ci-smoke-token" \
+    REPOACH_PROXY_HOST="127.0.0.1" \
+    REPOACH_PROXY_PORT="8082" \
+        python -m repoach.llm_proxy > logs/proxy_smoke.log 2>&1 &
     local proxy_pid=$!
     local i
     for i in $(seq 1 15) ; do
@@ -87,9 +87,9 @@ if [[ "$mode" == "review" ]] ; then
     artifact_dir="logs/review_ci"
     mkdir -p "$artifact_dir"
     artifact_path="$artifact_dir/review_pr_${review_pr}.json"
-    bold "ferova review pr $review_pr (--ci-mode mirror)"
+    bold "repoach review pr $review_pr (--ci-mode mirror)"
     set +e
-    ferova review pr "$review_pr" --dry-run > "$artifact_path"
+    repoach review pr "$review_pr" --dry-run > "$artifact_path"
     rc=$?
     set -e
     if [[ $rc -eq 0 ]] ; then
@@ -98,7 +98,7 @@ if [[ "$mode" == "review" ]] ; then
         ok "review pr exited 2 (REQUEST_CHANGES — verdict captured)"
     else
         fail "review pr exited $rc (pipeline error)"
-        failures+=("ferova review pr $review_pr")
+        failures+=("repoach review pr $review_pr")
     fi
     echo "  artifact: $artifact_path"
     bold "Summary"
