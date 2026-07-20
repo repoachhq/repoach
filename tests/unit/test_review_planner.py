@@ -427,7 +427,7 @@ class TestClaudeCliMode:
 
 
 class TestCcPersonaFile:
-    _persona = Path(__file__).resolve().parents[2] / "prompts" / "review" / "planner_cc_0.1.0.md"
+    _persona = Path(__file__).resolve().parents[2] / "prompts" / "review" / "planner_cc_0.1.1.md"
 
     def test_cc_persona_exists_with_spec_placeholder(self) -> None:
         text = self._persona.read_text(encoding="utf-8")
@@ -457,7 +457,7 @@ class TestPersonaInjection:
         repo = _repo_with_spec(tmp_path)
         prompts = tmp_path / "prompts"
         prompts.mkdir()
-        (prompts / "planner_0.2.0.md").write_text(
+        (prompts / "planner_0.2.1.md").write_text(
             "You are Planner. {SPEC_PLAN} {REPO_TREE}", encoding="utf-8"
         )
         text = f"```json\n{json.dumps(_valid_plan_payload())}\n```"
@@ -473,7 +473,7 @@ class TestPersonaInjection:
 
 
 class TestPersonaFile:
-    _persona = Path(__file__).resolve().parents[2] / "prompts" / "review" / "planner_0.2.0.md"
+    _persona = Path(__file__).resolve().parents[2] / "prompts" / "review" / "planner_0.2.1.md"
 
     def test_persona_exists_with_placeholders(self) -> None:
         text = self._persona.read_text(encoding="utf-8")
@@ -492,7 +492,7 @@ class TestPersonaFile:
             assert token in text, f"persona lost the {token!r} contract vocabulary"
 
     def test_planner_class_defaults(self) -> None:
-        assert Planner.persona_filename == "planner_0.2.0.md"
+        assert Planner.persona_filename == "planner_0.2.1.md"
         assert Planner.role.value == "planner"
 
 

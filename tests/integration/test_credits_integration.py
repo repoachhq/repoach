@@ -63,7 +63,7 @@ def test_cli_credits_low_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -76,7 +76,7 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
-    """Invoke ``ferova chain-status`` against a fresh db and an unbound proxy.
+    """Invoke ``repoach chain-status`` against a fresh db and an unbound proxy.
 
     Asserts exit code 0, the expected degraded digest lines, and no
     traceback on stderr (fail-open contract G4 of SP-CHAIN-STATUS-DIGEST).
@@ -86,7 +86,7 @@ def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
 
     result = subprocess.run(
         [
-            "ferova",
+            "repoach",
             "chain-status",
             "--db-path",
             str(db_path),

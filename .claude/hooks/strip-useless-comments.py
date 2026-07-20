@@ -54,7 +54,7 @@ PRAGMA_TS_RE = re.compile(
 GOLDEN_RULE_ROOTS = {"src", "tests", "scripts"}
 
 
-def check_ferova_gate(path: Path) -> list[tuple[int, str, str]]:
+def check_repoach_gate(path: Path) -> list[tuple[int, str, str]]:
     """Run the repo's no-inline-comments scanner on one edited file.
 
     Returns an empty list outside the golden-rule roots or when the
@@ -151,7 +151,7 @@ def main() -> None:
 
     lines = source.splitlines()
     if suffix == ".py":
-        issues = check_ferova_gate(path) + check_python(lines)
+        issues = check_repoach_gate(path) + check_python(lines)
     else:
         issues = check_typescript(lines)
 

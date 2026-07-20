@@ -642,7 +642,7 @@ def evaluate_merge_gate(
 ) -> GateEvaluation:
     """Run the CI gate and the pure merge decision, without merging.
 
-    The read-only evaluation behind ``ferova review gate <N>``: it
+    The read-only evaluation behind ``repoach review gate <N>``: it
     waits on required CI the same way the auto-merge does, then reaches
     :func:`decide_at_head`. It performs no base/state check and never
     merges or posts — ``safe_merge.sh`` keeps ownership of the actual
@@ -655,7 +655,7 @@ def evaluate_merge_gate(
     A stale or unverifiable head short-circuits with a refused
     decision (``merge`` False, a reason containing "stale head" and
     both 12-char SHA prefixes) instead of reaching
-    :func:`decide_at_head` at all, so ``ferova review gate`` exits 5
+    :func:`decide_at_head` at all, so ``repoach review gate`` exits 5
     through the existing exit-code mapping and ``safe_merge.sh``
     aborts on the same signal the CI auto-merge would refuse on.
     """
@@ -751,7 +751,7 @@ def run_auto_merge(
 ) -> AutoMergeResult:
     """Evaluate the merge gates and (if all green) squash-merge.
 
-    The function is the unit invoked by ``ferova review merge
+    The function is the unit invoked by ``repoach review merge
     <N>`` and the ``auto_merge`` job in the GitHub Actions workflow.
 
     SP-PURE-MERGE-GATE (redesign slice 7b, the flip): the archive's

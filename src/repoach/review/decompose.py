@@ -44,7 +44,7 @@ from .spec import SpecPlan
 _log = get_logger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
-_PERSONA = "decomposer_0.1.0.md"
+_PERSONA = "decomposer_0.1.1.md"
 _MAX_ATTEMPTS = 3
 _SUB_ID_RE = re.compile(r"^SP-[A-Z0-9-]+$")
 """A sub-spec id must be a clean SP-ID — it becomes a filename, so any path

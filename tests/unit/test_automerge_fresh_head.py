@@ -248,7 +248,7 @@ def test_safe_merge_script_contains_fresh_head_guard() -> None:
     assert "headRefOid" in content
     assert "ls-remote" in content
 
-    gate_index = content.index('ferova review gate "$pr_number"')
+    gate_index = content.index('repoach review gate "$pr_number"')
     guard_index = content.index("remote_head=$(git ls-remote origin")
     merge_index = content.index('gh pr merge "$pr_number" --squash')
 
@@ -269,8 +269,8 @@ def test_evaluate_merge_gate_stale_head_refuses(tmp_path: Path) -> None:
 
     OPERATOR RULE -- no stubs: this drives the real resolve_verified_head
     end to end (no monkeypatching of it) so evaluate_merge_gate's stale-head
-    refusal is exercised exactly as ferova review gate would hit it, and
-    ferova review gate exits 5 through the existing exit-code mapping.
+    refusal is exercised exactly as repoach review gate would hit it, and
+    repoach review gate exits 5 through the existing exit-code mapping.
     """
     db = tmp_path / "test.db"
     gh = _make_gh(base="develop", head="feat/x")

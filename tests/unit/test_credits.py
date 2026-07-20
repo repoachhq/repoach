@@ -1,7 +1,7 @@
 """Unit tests for SP-CREDITS-CHECK — the OpenRouter credits floor probe.
 
 Uses ``httpx.AsyncClient(transport=httpx.MockTransport(...))`` as the
-truthful boundary fake — no monkeypatching of ferova code.
+truthful boundary fake — no monkeypatching of repoach code.
 """
 
 from __future__ import annotations

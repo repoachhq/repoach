@@ -43,7 +43,7 @@ from .spec_gate import SpecCoverage, compute_spec_coverage, selector_present
 _log = get_logger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
-_PERSONA = "judge_selfverify_0.1.0.md"
+_PERSONA = "judge_selfverify_0.1.1.md"
 _DIFF_CAP_CHARS = 100_000
 
 ComplianceJudge = Callable[[str], str]

@@ -54,7 +54,7 @@ def _scrubbed_env() -> dict[str, str]:
     """Return the parent environment with this app's ``FEROVA_*`` stripped.
 
     The ``claude`` CLI authenticates via its own Max session and never
-    needs Ferova's config or provider API keys; passing them to the
+    needs Repoach's config or provider API keys; passing them to the
     child would needlessly widen the secret surface. Everything else
     (``HOME``, ``PATH``, the CLI's own auth) is preserved so the CLI
     still runs.
@@ -154,7 +154,7 @@ def run_cc_exploration(
         prompt_chars=len(full_prompt),
     )
     try:
-        with tempfile.TemporaryDirectory(prefix="ferova_planner_cc_") as workdir:
+        with tempfile.TemporaryDirectory(prefix="repoach_planner_cc_") as workdir:
             proc = subprocess.run(
                 cmd,
                 cwd=workdir,

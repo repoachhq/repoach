@@ -7,7 +7,7 @@ Usage examples::
 
     python scripts/lint_no_inline_comments.py
     python scripts/lint_no_inline_comments.py --summary
-    python scripts/lint_no_inline_comments.py --root src/ferova/lint
+    python scripts/lint_no_inline_comments.py --root src/repoach/lint
     python scripts/lint_no_inline_comments.py --max 200
 
 The pytest binding (``tests/unit/test_no_inline_comments_gate.py``)

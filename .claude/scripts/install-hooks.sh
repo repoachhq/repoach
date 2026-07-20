@@ -29,7 +29,7 @@ else
     cat >> "$BASHRC" <<BASHRC_BLOCK
 
 $MARKER_BEGIN
-# Non-bypassable Tier 2 pre-push enforcement for ferova.
+# Non-bypassable Tier 2 pre-push enforcement for repoach.
 # Installed by: $REPO_ROOT/.claude/scripts/install-hooks.sh
 # To uninstall: remove this block (BEGIN..END inclusive).
 if [ -f "$WRAPPER" ]; then

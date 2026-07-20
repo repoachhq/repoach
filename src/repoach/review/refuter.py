@@ -38,7 +38,7 @@ from .hallucination_guard import make_repo_file_reader
 _log = get_logger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
-_PERSONA = "refuter_0.2.0.md"
+_PERSONA = "refuter_0.2.1.md"
 
 _VERDICT_LINE = re.compile(r"^VERDICT:\s*(\{.*\})\s*$")
 """The judge's verdict line — column one, nothing after the object.

@@ -1,15 +1,15 @@
 """CLI subcommands for the operator-only ``develop -> main`` release gate.
 
-Exposed as ``ferova release ...`` once the typer subapp is mounted on
+Exposed as ``repoach release ...`` once the typer subapp is mounted on
 the main app in :mod:`repoach.cli.main` (SP-RELEASE-GATE).
 
 Subcommands:
 
-* ``ferova release gate [--pr N]`` -- gather the release-range
+* ``repoach release gate [--pr N]`` -- gather the release-range
   provenance, head-freshness and CI facts, print the pure decision,
   and write a local receipt. Never merges -- the operator alone holds
   the authority to run ``gh pr merge``.
-* ``ferova release verify`` -- post-merge check that the live
+* ``repoach release verify`` -- post-merge check that the live
   ``origin/main`` tip matches the ``develop`` head the gate approved.
 """
 
@@ -53,7 +53,7 @@ def release_gate(
     ``origin/develop`` (and the release PR's ``headRefOid`` when
     ``--pr`` is given), and the local CI mirror outcome, then prints
     the pure decision and writes a local receipt consumed by
-    ``ferova release verify``. The gate only ever prints facts and a
+    ``repoach release verify``. The gate only ever prints facts and a
     decision -- it never shells out to ``gh pr merge``; the operator
     keeps sole authority over the actual merge.
 
@@ -92,7 +92,7 @@ def release_gate(
 def release_verify() -> None:
     """Verify the live ``main`` tip matches the release the gate approved.
 
-    Reads back the receipt written by ``ferova release gate`` and
+    Reads back the receipt written by ``repoach release gate`` and
     compares its recorded ``develop_sha`` against the live
     ``origin/main`` tip. A squash-merge or a stale merge diverges the
     two SHAs immediately, while the mistake is still one revert away.

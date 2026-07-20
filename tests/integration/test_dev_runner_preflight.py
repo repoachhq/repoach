@@ -25,7 +25,7 @@ from repoach.review.plan import (
 _SPEC_ID = "SP-PREFLIGHT-INT"
 
 _MARKER_MODULE = '"""Preflight marker module — exists so the preflight predicate sees the file."""\n\nMARKER = "preflight"\n'
-_MARKER_TEST = '"""Preflight marker test — hermetic: reads the sibling file, imports nothing.\n\nImporting the marker as a package module would resolve against the\ninstalled ferova (the editable install), not this seeded repo; and a\nstep file under src/ would trip the plan-form interlock requiring an\nintegration test promise. Both traps killed the first version.\n"""\n\nfrom pathlib import Path\n\n\ndef test_marker() -> None:\n    """Assert the marker module sits beside this test."""\n    marker = Path(__file__).with_name("preflight_marker.py")\n    assert \'MARKER = "preflight"\' in marker.read_text(encoding="utf-8")\n'
+_MARKER_TEST = '"""Preflight marker test — hermetic: reads the sibling file, imports nothing.\n\nImporting the marker as a package module would resolve against the\ninstalled repoach (the editable install), not this seeded repo; and a\nstep file under src/ would trip the plan-form interlock requiring an\nintegration test promise. Both traps killed the first version.\n"""\n\nfrom pathlib import Path\n\n\ndef test_marker() -> None:\n    """Assert the marker module sits beside this test."""\n    marker = Path(__file__).with_name("preflight_marker.py")\n    assert \'MARKER = "preflight"\' in marker.read_text(encoding="utf-8")\n'
 
 
 def _git(repo: Path, *args: str) -> str:

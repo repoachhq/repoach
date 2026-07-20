@@ -87,7 +87,7 @@ def test_integration_promise_lint_fires_on_round_trip() -> None:
     """A violating plan raises the same directive error after a render/parse round trip.
 
     A plan document is authored once, committed to disk as rendered
-    Markdown, and re-read at ``ferova develop`` time via
+    Markdown, and re-read at ``repoach develop`` time via
     :func:`parse_plan_markdown`. This test proves the integration-promise
     lint fires on THAT path — not merely at direct construction — by
     first building an in-memory violating payload with

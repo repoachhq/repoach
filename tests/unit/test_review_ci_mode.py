@@ -1,4 +1,4 @@
-"""Pin the JSON payload shape emitted by ``ferova review pr <N>``.
+"""Pin the JSON payload shape emitted by ``repoach review pr <N>``.
 
 The :file:`.github/workflows/auto-review.yml` workflow and the
 ``auto_fix`` / ``auto_merge`` downstream gates consume this JSON via

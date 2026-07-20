@@ -184,13 +184,13 @@ def _scan_referenced_paths(markdown: str) -> tuple[str, ...]:
 
     1. Backtick paths matching ``src/`` or ``tests/`` or ``docs/``
        prefixes — almost always real file references.
-    2. Inline ``"src/ferova/<...>"`` style mentions.
+    2. Inline ``"src/repoach/<...>"`` style mentions.
     3. Bare paths ending in ``.py`` or ``.md`` inside backticks.
 
     The pattern matches backtick-wrapped paths whose body contains
     one of the known top-level prefixes (``src``, ``tests``, ``docs``,
     ``prompts``, ``.github``), so deeper references such as
-    ``src/ferova/...`` are also captured.
+    ``src/repoach/...`` are also captured.
 
     Returns a deduplicated tuple, preserving first-occurrence order.
     """

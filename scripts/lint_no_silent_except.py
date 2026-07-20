@@ -7,7 +7,7 @@ Usage examples::
 
     python scripts/lint_no_silent_except.py
     python scripts/lint_no_silent_except.py --summary
-    python scripts/lint_no_silent_except.py --root src/ferova/lint
+    python scripts/lint_no_silent_except.py --root src/repoach/lint
     python scripts/lint_no_silent_except.py --max 100
 
 Mirrors :mod:`scripts.lint_no_inline_comments` so the operator

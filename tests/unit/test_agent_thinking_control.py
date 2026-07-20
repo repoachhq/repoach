@@ -22,7 +22,7 @@ def _build_request(*, thinking: ThinkingConfig | None = None) -> AgentRequest:
     return AgentRequest(
         schema_version="1",
         capability="sonnet",
-        system="You are Ferova's WhatsApp assistant.",
+        system="You are Repoach's WhatsApp assistant.",
         messages=[Message(role="user", content=[TextBlock(type="text", text="ping")])],
         tools=[],
         thinking=thinking,

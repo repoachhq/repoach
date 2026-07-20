@@ -1,7 +1,7 @@
 """Top-level Typer CLI — the PR review factory.
 
-One operational capability: ``ferova review pr/report/fix/merge``
-plus the ``ferova develop`` alias used to run an autonomous
+One operational capability: ``repoach review pr/report/fix/merge``
+plus the ``repoach develop`` alias used to run an autonomous
 Developer session from a spec. The rest of the system is rebuilt on
 top of this factory.
 """
@@ -21,7 +21,7 @@ from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
 
 app = typer.Typer(
-    help="Ferova CLI (genesis reset — review factory only)",
+    help="Repoach CLI (genesis reset — review factory only)",
     no_args_is_help=True,
 )
 app.add_typer(review_app, name="review")
@@ -61,7 +61,7 @@ def _bootstrap() -> None:
 
 @app.command("version")
 def show_version() -> None:
-    """Print the installed Ferova version."""
+    """Print the installed Repoach version."""
     from .. import __version__
 
     typer.echo(__version__)
@@ -397,7 +397,7 @@ def memory_recall_review(
 
 
 def main() -> None:
-    """Entry point used by the ``ferova`` console script."""
+    """Entry point used by the ``repoach`` console script."""
     app()
 
 

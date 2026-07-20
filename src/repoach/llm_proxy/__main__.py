@@ -1,10 +1,10 @@
-"""Ferova LLM proxy entrypoint.
+"""Repoach LLM proxy entrypoint.
 
 Run with::
 
     python -m repoach.llm_proxy
 
-The host / port / .env are picked up from the Ferova root .env
+The host / port / .env are picked up from the Repoach root .env
 file via :class:`Settings`. The proxy speaks the Anthropic Messages
 protocol on the configured port (default 8082) and routes calls to
 the upstream provider implied by the model name (NVIDIA NIM /

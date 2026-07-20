@@ -1,8 +1,8 @@
 """Tests for the release-gate CLI wiring (SP-RELEASE-GATE step 4).
 
-Covers the ``ferova release gate`` and ``ferova release verify``
+Covers the ``repoach release gate`` and ``repoach release verify``
 exit-code routing: 0 merge-ready / 5 refused / 1 could-not-evaluate,
-mirroring the ``ferova review gate`` semantics.
+mirroring the ``repoach review gate`` semantics.
 """
 
 from __future__ import annotations

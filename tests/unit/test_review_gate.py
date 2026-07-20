@@ -1,7 +1,7 @@
 """Tests for SP-VERDICT-FLIP (10a) — the read-only pure merge gate.
 
 Covers the shared :func:`decide_at_head` unit (so the CI auto-merge and
-the local ``ferova review gate`` can never drift), the non-blocking
+the local ``repoach review gate`` can never drift), the non-blocking
 :func:`ci_snapshot_green`, and the CLI exit-code routing (0 merge-ready /
 5 refused / 1 could-not-evaluate).
 """

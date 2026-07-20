@@ -1,7 +1,7 @@
 """Review-team orchestration: the evidence-first pipeline from diff to posted findings.
 
 ``ReviewTeamOrchestrator.review_pr`` is the entry point invoked by the
-CLI command (``ferova review pr``) and the auto-review GitHub Actions
+CLI command (``repoach review pr``) and the auto-review GitHub Actions
 workflow.  Given a PR number, it drives the following pipeline, in
 order:
 
@@ -835,7 +835,7 @@ class ReviewTeamOrchestrator:
         for comment in outcome.comments:
             body = (
                 f"**[{outcome.role.value}/{comment.severity}]** "
-                f"{comment.body}\n\n_— Ferova review-bot ({outcome.model_used})_"
+                f"{comment.body}\n\n_— Repoach review-bot ({outcome.model_used})_"
             )
             res = self._gh.pr_review_comment(
                 pr_number,
@@ -863,7 +863,7 @@ class ReviewTeamOrchestrator:
             f"### {outcome.role.value.title()} review\n\n"
             f"**Verdict:** {outcome.verdict.value}\n\n"
             f"{outcome.summary}\n\n"
-            f"_— Ferova review bot, {outcome.model_used}, "
+            f"_— Repoach review bot, {outcome.model_used}, "
             f"{outcome.tokens_used} tokens, {outcome.elapsed_s}s_"
         )
         res = self._gh.pr_review_submit(
@@ -1093,7 +1093,7 @@ class ReviewTeamOrchestrator:
         payload = team_outcome_to_dict(team)
         body_json = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         archive_appendix = (
-            f"### Ferova review archive\n\n"
+            f"### Repoach review archive\n\n"
             f"{_render_guard_section(team)}"
             f"<details>\n<summary>Full TeamOutcome (JSON)</summary>\n\n"
             f"```json\n{body_json}\n```\n\n"
@@ -1121,7 +1121,7 @@ class ReviewTeamOrchestrator:
         state at this head; the machine-readable ``TeamOutcome`` JSON, guard
         section, and transcript ride below in ``archive_appendix``. The
         authoritative merge decision is the pure gate re-verifying at a
-        checked-out head (``ferova review gate`` / auto-merge), never
+        checked-out head (``repoach review gate`` / auto-merge), never
         this report — the review job runs from the base ref, so on-disk
         re-verification here would be wrong (hence
         :func:`summarise_ledger_facts`, not :func:`gather_merge_facts`).

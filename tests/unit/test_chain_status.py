@@ -1,7 +1,7 @@
 """Unit tests for chain-status digest (SP-CHAIN-STATUS-DIGEST).
 
 Uses ``httpx.AsyncClient(transport=httpx.MockTransport(...))`` as the
-truthful boundary fake for /health and credits — no monkeypatching of ferova code.
+truthful boundary fake for /health and credits — no monkeypatching of repoach code.
 """
 
 from __future__ import annotations

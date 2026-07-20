@@ -299,7 +299,7 @@ class AutoChallengeMatch:
 
 
 _ROLE_TAG_STRIP_RE = re.compile(r"\*\*\[[a-z]+/[a-z]+\]\*\*\s*", re.IGNORECASE)
-_TRAILING_FOOTER_RE = re.compile(r"\n_— Ferova.*$", re.DOTALL)
+_TRAILING_FOOTER_RE = re.compile(r"\n_— Repoach.*$", re.DOTALL)
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
@@ -307,7 +307,7 @@ def _normalise_for_similarity(body: str) -> str:
     """Strip the role tag + trailing model-used footer, lowercase, collapse ws.
 
     The published reviewer comment carries a ``**[role/severity]**``
-    prefix and a ``_— Ferova review-bot (model)_`` suffix that
+    prefix and a ``_— Repoach review-bot (model)_`` suffix that
     weren't part of the original ``ReviewComment.body``; the resolved
     body fetched from GitHub does carry both.  Stripping them lets
     the similarity score reflect the actual critique content rather
@@ -431,7 +431,7 @@ def format_auto_challenge_reply(match: AutoChallengeMatch) -> str:
         "it is wrong; this comment does not.\n\n"
         "**Prior evidence (verbatim):**\n\n"
         "> " + match.resolved.coder_evidence.replace("\n", "\n> ") + "\n\n"
-        "🤖 Ferova orchestrator (ferova review-team) — "
+        "🤖 Repoach orchestrator (repoach review-team) — "
         "this disagreement is marked "
         "``resolved-by-prior-challenge`` in the dialogue archive."
     )
@@ -456,7 +456,7 @@ def _format_finding_evidence_reply(finding: Finding) -> str:
             reason,
             "",
             (
-                f"🤖 Ferova review-team — this `{finding.claim_type.value}` "
+                f"🤖 Repoach review-team — this `{finding.claim_type.value}` "
                 f"finding was refuted by the `{method}` check and marked "
                 "``refuted`` in the findings ledger; retained for operator "
                 "review.  To re-raise it, quote the cited path/line/snippet "

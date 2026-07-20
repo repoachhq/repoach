@@ -119,8 +119,9 @@ def _normalise_owned_code(value: object) -> tuple[str, ...]:
     """Coerce ``owns.code`` entries, mapping the pre-rename package prefix.
 
     Governed specs written before the ferova→repoach rename own paths
-    under ``src/ferova/``; the artifacts they govern now live under
-    ``src/repoach/``. Rewriting at load time keeps the historical spec
+    under the legacy ``src/ferova/`` prefix; the artifacts they govern
+    now live under ``src/repoach/``. Rewriting at load time keeps the
+    historical spec
     documents untouched while the ownership map keeps resolving against
     the real tree.
     """

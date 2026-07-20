@@ -400,7 +400,7 @@ class Reviewer:
     """
 
     role: BotRole = BotRole.ARCHITECT
-    persona_filename: str = "architect_0.5.0.md"
+    persona_filename: str = "architect_0.5.1.md"
     model_chain: tuple[str, ...] = DEFAULT_REVIEWER_CHAIN
     max_tokens: int = 4096
     temperature: float = 0.1
@@ -880,7 +880,7 @@ class Architect(Reviewer):
     """
 
     role = BotRole.ARCHITECT
-    persona_filename = "architect_0.5.0.md"
+    persona_filename = "architect_0.5.1.md"
     model_chain = PROXY_SONNET_CHAIN
 
 
@@ -899,7 +899,7 @@ class Sentinel(Reviewer):
     """
 
     role = BotRole.SENTINEL
-    persona_filename = "sentinel_0.4.0.md"
+    persona_filename = "sentinel_0.4.1.md"
     model_chain = PROXY_OPUS_CHAIN
 
 
@@ -907,7 +907,7 @@ class Tester(Reviewer):
     """Test coverage / edge case / fixture reviewer."""
 
     role = BotRole.TESTER
-    persona_filename = "tester_0.4.0.md"
+    persona_filename = "tester_0.4.1.md"
     model_chain = PROXY_SONNET_CHAIN
 
 
@@ -915,7 +915,7 @@ class Scribe(Reviewer):
     """Docstring / commit message / README consistency reviewer."""
 
     role = BotRole.SCRIBE
-    persona_filename = "scribe_0.5.0.md"
+    persona_filename = "scribe_0.5.1.md"
     model_chain = PROXY_SONNET_CHAIN
 
 
@@ -927,7 +927,7 @@ class Coder:
     adversarial refuter) and emits a list of targeted fixes the runner
     will apply.  The Coder itself does NOT execute git operations — it
     only proposes them.  The single live entry point is
-    :meth:`respond_to_findings` (``coder_findings_0.1.0.md``);
+    :meth:`respond_to_findings` (``coder_findings_0.1.1.md``);
     ``fixes[].new_content`` is the complete UTF-8 contents of the file at
     ``fixes[].path`` after the fix.  Diff-hunk patches were tried in an
     early revision and proved too fragile to apply reliably (context
@@ -1038,7 +1038,7 @@ class Coder:
         else:
             spec_block = "_(no spec context — improvise from diff + findings)_"
 
-        template = (_PROMPTS_DIR / "coder_findings_0.1.0.md").read_text(encoding="utf-8")
+        template = (_PROMPTS_DIR / "coder_findings_0.1.1.md").read_text(encoding="utf-8")
         prompt = (
             template.replace("{DIFF}", truncated_diff)
             .replace("{FINDINGS_JSON}", findings_json)
@@ -1541,7 +1541,7 @@ class Developer:
     """
 
     role = BotRole.DEVELOPER
-    persona_filename = "developer_0.2.0.md"
+    persona_filename = "developer_0.2.1.md"
     model_chain = PROXY_SONNET_CHAIN
     max_tokens = 32000
     temperature = 0.05
@@ -1736,7 +1736,7 @@ class Developer:
             "tokens_used": result.tokens_used,
         }
 
-    agentic_persona_filename = "developer_agentic_0.1.0.md"
+    agentic_persona_filename = "developer_agentic_0.1.1.md"
 
     def develop_step(
         self,

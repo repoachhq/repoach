@@ -1,6 +1,6 @@
 """Capability gateway dispatcher (SP-CAPABILITY-GATEWAY).
 
-Translates an incoming :class:`AgentRequest` (``ferova/v1`` shape)
+Translates an incoming :class:`AgentRequest` (``repoach/v1`` shape)
 into the Anthropic-style :class:`MessagesRequest` consumed by the
 existing proxy pipeline, runs it through
 :class:`ClaudeProxyService.create_message`, consumes the resulting
@@ -75,7 +75,7 @@ async def dispatch_agent_request(
     """Run a single capability-gateway turn and return a :class:`AgentResponse`.
 
     Args:
-        request: ``ferova/v1`` request body.
+        request: ``repoach/v1`` request body.
         service: The existing proxy service that knows how to walk the
             chain stored in MODEL_<CAPABILITY>.
 
@@ -158,7 +158,7 @@ def _translate_request(request: AgentRequest, model_alias: str) -> MessagesReque
 
 
 def _translate_message(message: AgentMessage) -> AnthropicMessage:
-    """Translate a ferova/v1 message → Anthropic message."""
+    """Translate a repoach/v1 message → Anthropic message."""
     role = message.role
     blocks: list[Any] = []
     for block in message.content:
@@ -299,10 +299,10 @@ def _parse_sse_data(raw_event: str) -> dict[str, Any] | None:
 
 
 def _translate_content_blocks(blocks: list[dict[str, Any]]) -> list[Any]:
-    """Translate raw aggregated blocks → typed ferova/v1 content.
+    """Translate raw aggregated blocks → typed repoach/v1 content.
 
     Unknown block types (``thinking``, ``redacted_thinking``, …) are
-    silently dropped because they don't fit the ``ferova/v1``
+    silently dropped because they don't fit the ``repoach/v1``
     vocabulary and never carry actionable signal for the client.
     """
     out: list[Any] = []

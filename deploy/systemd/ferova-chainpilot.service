@@ -1,9 +1,0 @@
-[Unit]
-Description=Ferova Chain Autopilot — one model-first chains.env regeneration cycle (shadow)
-After=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=%h/Documents/work/ferova
-ExecStart=%h/Documents/work/ferova/.venv/bin/ferova regenerate-chains
-SuccessExitStatus=0 1

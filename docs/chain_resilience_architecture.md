@@ -67,7 +67,7 @@ alerts terminate in another log repeats the failure.
 ```
                      OPERATOR SURFACES (wave-1 terminus)
       session-start digest        GET /health            GitHub PRs
-        `ferova chain-status`      (+ breaker,             (factory
+        `repoach chain-status`      (+ breaker,             (factory
              ▲    ▲                 + credits)              review)
              │    │                     ▲                      ▲
  ┌───────────┼────┼─────────────────────┼──────────────────────┼───────┐
@@ -119,7 +119,7 @@ alerts terminate in another log repeats the failure.
 
 Every item is a single spec well inside autonomous-Developer capacity.
 
-### W1.1 `ferova chain-status` digest → session-start hook
+### W1.1 `repoach chain-status` digest → session-start hook
 
 One command that reads what already exists and prints a per-tier
 digest: last-24h probe rates from `nim_health_probe` **counting slow
@@ -159,7 +159,7 @@ Constraints from panel review:
 Root cause fix for `changed=False` on 10-day-old cells: the deployed
 6-h timer runs `regenerate-chains`, a pure *reader* of
 `cell_health_probe`; the only writer lives in the unscheduled
-`ferova autopilot` path (`chain_loop.py:212-214`). Fix inline, not
+`repoach autopilot` path (`chain_loop.py:212-214`). Fix inline, not
 with a new CLI/unit: `gather_and_regenerate` already holds the
 matrix, the client and `db_path` — sweep before reading. Panel
 constraints:
@@ -184,7 +184,7 @@ constraints:
 No new table, no new timer, no descriptor extension: one OpenRouter
 `GET /api/v1/credits` inside the existing monitor-chains cycle (every
 run — one GET per 15 min is negligible and keeps the CLI stateless),
-two flat `FEROVA_*` threshold settings, a `credits` field on
+two flat `REPOACH_*` threshold settings, a `credits` field on
 `GET /health`, a digest line, degraded exit + loud log below floor.
 History has no consumer today; current-value-vs-threshold is the whole
 job.
@@ -255,7 +255,7 @@ transport, with requirements already learned from panel review:
   restore-PR re-promoting a previously-quarantined ref is silently
   filtered back out for up to 6 h — the "human role: nothing" loop
   visibly merges a fix that has no effect. Until wave 3, the runbook
-  is one command: `systemctl --user restart ferova-llm-proxy`.
+  is one command: `systemctl --user restart repoach-llm-proxy`.
 
 ## Parking lot — provider-scope quarantine (C1)
 

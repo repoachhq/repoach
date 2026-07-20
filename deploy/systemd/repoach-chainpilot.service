@@ -1,0 +1,9 @@
+[Unit]
+Description=Repoach Chain Autopilot — one model-first chains.env regeneration cycle (shadow)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/work/repoach
+ExecStart=%h/Documents/work/repoach/.venv/bin/repoach regenerate-chains
+SuccessExitStatus=0 1

@@ -8,7 +8,7 @@ upstream provider to the next on rate-limit or error.
 
 This module holds the **only** mapping between capability tier and
 the alias the proxy understands.  The mapping is hardcoded — these
-aliases are the protocol vocabulary between Ferova and the proxy,
+aliases are the protocol vocabulary between Repoach and the proxy,
 not user-facing config.  Renaming an alias would require a matching
 update on the proxy's tier classifier (``routing.classify_tier``).
 
@@ -20,7 +20,7 @@ configuration in the project.  Every other surface declares a
 Module-level constants :
     - :data:`CAPABILITY_TO_ALIAS` maps each tier to the
       Anthropic-style alias the proxy's ``ModelRouter`` recognises.
-      These names are the protocol vocabulary between ferova
+      These names are the protocol vocabulary between repoach
       and the proxy — they are NOT user-facing config.  An operator
       who wants to swap the actual model for a tier edits the
       ``MODEL_<CAPABILITY>`` chain in ``.env``, not these aliases.

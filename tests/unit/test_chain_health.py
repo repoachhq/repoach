@@ -221,7 +221,7 @@ def test_credits_low_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -248,7 +248,7 @@ def test_credits_ok_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -270,7 +270,7 @@ def test_credits_skipped_when_key_empty(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     result = CliRunner().invoke(app, ["monitor-chains"])
 
@@ -296,7 +296,7 @@ def test_credits_json_output_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MODEL_OPUS", "nvidia_nim/opus")
     monkeypatch.setenv("MODEL_HAIKU", "nvidia_nim/haiku")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "k")
-    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_ferova.db")
+    monkeypatch.setenv("REPOACH_DB_PATH", "/tmp/test_repoach.db")
 
     import json
 

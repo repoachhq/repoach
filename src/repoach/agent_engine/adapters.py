@@ -1,7 +1,7 @@
-"""Thin HTTP client for the proxy's ``ferova/v1`` capability gateway.
+"""Thin HTTP client for the proxy's ``repoach/v1`` capability gateway.
 
 SP-LLM-NATIVE-FORMAT (2026-05-06): the agent process speaks
-``ferova/v1`` natively — :class:`AgentRequest` /
+``repoach/v1`` natively — :class:`AgentRequest` /
 :class:`AgentResponse` Pydantic models flow end-to-end with no
 OpenAI-shape translation in the middle.  This module is just the
 HTTP transport for that protocol.
@@ -54,7 +54,7 @@ class GatewayChainExhausted(GatewayError):
 
 
 class ProxyGatewayClient:
-    """Native ``ferova/v1`` HTTP client.
+    """Native ``repoach/v1`` HTTP client.
 
     :meth:`call` POSTs an :class:`AgentRequest` to
     ``{base_url}/v1/agent`` and parses the response as an

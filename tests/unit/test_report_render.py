@@ -119,7 +119,7 @@ def test_findings_grouped_by_status(tmp_path: Path) -> None:
 def test_archive_appendix_preserved(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
-    appendix = "### Ferova review archive\n\n```json\n{}\n```"
+    appendix = "### Repoach review archive\n\n```json\n{}\n```"
     body = render_ledger_report(
         db,
         pr_number=1,

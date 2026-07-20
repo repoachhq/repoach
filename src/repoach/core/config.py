@@ -104,7 +104,7 @@ class Settings(BaseSettings):
             "ANTHROPIC_AUTH_TOKEN",
         ),
         description=(
-            "Shared secret with the local llm_proxy sidecar.  Used by ferova "
+            "Shared secret with the local llm_proxy sidecar.  Used by repoach "
             "(as bearer) and the proxy (to authenticate inbound calls).  When "
             "``env=prod`` we refuse to boot if this is unset, otherwise the proxy "
             "might be running open."
