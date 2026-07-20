@@ -20,6 +20,12 @@ WorkingDirectory=%h/Documents/work/repoach
 # and provider keys) instead of sharp-agent's. When the sharp stack is
 # retired, drop both overrides to reclaim the default 8082.
 Environment=REPOACH_PROXY_HOST=127.0.0.1 REPOACH_PROXY_PORT=8084
+# The claude_code provider hop spawns the ``claude`` CLI from the
+# proxy process. A systemd user unit starts with a minimal PATH that
+# misses ~/.local/bin (where the claude binary lives), so the hop
+# fails with command-not-found. Backport of the 2026-07-19 ops fix
+# applied to the installed unit.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/Documents/work/repoach/.venv/bin/python -m repoach.llm_proxy
 Restart=on-failure
 RestartSec=10

@@ -88,6 +88,16 @@ def _env_file_override(model_config: Mapping[str, Any], key: str) -> str | None:
 
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+_AUTH_TOKEN_ALIASES = (
+    "REPOACH_ANTHROPIC_AUTH_TOKEN",
+    "FEROVA_ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",
+)
+"""Auth-token env names in precedence order: canonical REPOACH_ first,
+pre-rename FEROVA_ second, bare legacy last — the same order the field's
+``AliasChoices`` resolves, so dotenv-precedence probing stays in lockstep
+with validation."""
 """Bind addresses reachable from this machine only — the secure default.
 
 A non-loopback bind without an auth token is refused at construction
@@ -354,18 +364,21 @@ class Settings(BaseSettings):
     def prefer_dotenv_anthropic_auth_token(self) -> Settings:
         """Let explicit .env auth config override stale shell/client tokens.
 
-        Reads the FEROVA_ name first per SP-ENV-PREFIX Phase A1 ; falls
-        back to the legacy bare ``ANTHROPIC_AUTH_TOKEN`` so existing
-        deployments keep working through the migration.
+        Probes :data:`_AUTH_TOKEN_ALIASES` in order (REPOACH_, then
+        FEROVA_ per SP-ENV-PREFIX Phase A1, then the legacy bare
+        ``ANTHROPIC_AUTH_TOKEN``) so existing deployments keep working
+        through the rename migration.
 
         Returns:
             The same :class:`Settings` instance, with
-            ``self.anthropic_auth_token`` overwritten when either
-            alias is defined in a configured dotenv file.
+            ``self.anthropic_auth_token`` overwritten when any of the
+            aliases is defined in a configured dotenv file.
         """
-        dotenv_value = _env_file_override(self.model_config, "FEROVA_ANTHROPIC_AUTH_TOKEN")
-        if dotenv_value is None:
-            dotenv_value = _env_file_override(self.model_config, "ANTHROPIC_AUTH_TOKEN")
+        dotenv_value = None
+        for alias in _AUTH_TOKEN_ALIASES:
+            dotenv_value = _env_file_override(self.model_config, alias)
+            if dotenv_value is not None:
+                break
         if dotenv_value is not None:
             self.anthropic_auth_token = dotenv_value
         return self
@@ -392,7 +405,7 @@ class Settings(BaseSettings):
         if self.host not in _LOOPBACK_HOSTS and not self.anthropic_auth_token:
             raise ValueError(
                 f"host={self.host!r} is not loopback: a non-loopback bind "
-                "requires FEROVA_ANTHROPIC_AUTH_TOKEN, otherwise the proxy "
+                "requires REPOACH_ANTHROPIC_AUTH_TOKEN, otherwise the proxy "
                 "would serve unauthenticated on a public interface."
             )
         return self
@@ -400,22 +413,20 @@ class Settings(BaseSettings):
     def uses_process_anthropic_auth_token(self) -> bool:
         """Return whether proxy auth came from process env, not dotenv config.
 
-        Checks both FEROVA_ and legacy aliases in lockstep with
-        :meth:`prefer_dotenv_anthropic_auth_token`.
+        Checks the REPOACH_, FEROVA_ and legacy aliases in lockstep
+        with :meth:`prefer_dotenv_anthropic_auth_token`.
 
         Returns:
-            ``True`` when neither alias is defined in any configured
+            ``True`` when no alias is defined in any configured
             dotenv file and at least one is present in
             :data:`os.environ` — i.e. auth was injected by a shell
             session rather than a deployment-time config file.
             ``False`` otherwise.
         """
-        for key in ("FEROVA_ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):
+        for key in _AUTH_TOKEN_ALIASES:
             if _env_file_override(self.model_config, key) is not None:
                 return False
-        return bool(
-            os.environ.get("FEROVA_ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        )
+        return any(os.environ.get(key) for key in _AUTH_TOKEN_ALIASES)
 
     @property
     def provider_type(self) -> str:

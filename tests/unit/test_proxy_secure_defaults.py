@@ -58,7 +58,7 @@ def test_default_host_is_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_public_bind_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
     _clean_proxy_env(monkeypatch)
     monkeypatch.setenv("FEROVA_PROXY_HOST", "0.0.0.0")
-    with pytest.raises(ValidationError, match="FEROVA_ANTHROPIC_AUTH_TOKEN"):
+    with pytest.raises(ValidationError, match="REPOACH_ANTHROPIC_AUTH_TOKEN"):
         ProxySettings(_env_file=None)
 
 

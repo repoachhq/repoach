@@ -105,7 +105,7 @@ def test_agent_loop_rejects_empty_model_chain(mock_settings):
 def test_agent_loop_rejects_missing_proxy_token(mock_settings):
     """No auth token → loud refusal at construction (proxy auth is required)."""
     mock_settings.llm_proxy_auth_token = _MockSecret("")
-    with pytest.raises(ValueError, match="FEROVA_ANTHROPIC_AUTH_TOKEN"):
+    with pytest.raises(ValueError, match="REPOACH_ANTHROPIC_AUTH_TOKEN"):
         AgentLoop()
 
 
@@ -116,7 +116,7 @@ def test_agent_loop_rejects_none_proxy_token(mock_settings):
     the None case silently authenticate; it must now refuse loudly.
     """
     mock_settings.llm_proxy_auth_token = None
-    with pytest.raises(ValueError, match="FEROVA_ANTHROPIC_AUTH_TOKEN"):
+    with pytest.raises(ValueError, match="REPOACH_ANTHROPIC_AUTH_TOKEN"):
         AgentLoop()
 
 

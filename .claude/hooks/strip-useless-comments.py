@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PostToolUse hook: warn on comment-policy violations in edited files.
 
-Ferova adaptation of the sharp-agent original, two layers:
+Repoach adaptation of the sharp-agent original, two layers:
 
 1. The repo's own SP-NO-INLINE-COMMENTS-GATE scanner
    (repoach.lint.no_inline_comments) runs on edited ``.py`` files under

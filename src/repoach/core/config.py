@@ -182,7 +182,7 @@ class Settings(BaseSettings):
             self.llm_proxy_auth_token is None or not self.llm_proxy_auth_token.get_secret_value()
         ):
             raise ValueError(
-                "env=prod requires FEROVA_ANTHROPIC_AUTH_TOKEN — refusing "
+                "env=prod requires REPOACH_ANTHROPIC_AUTH_TOKEN — refusing "
                 "to boot without the llm_proxy shared secret."
             )
         return self

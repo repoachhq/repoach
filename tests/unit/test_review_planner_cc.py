@@ -118,7 +118,7 @@ class TestEnvScrubbing:
         env = captured["env"]
         assert env is not None
         assert "PATH" in env
-        assert not any(k.startswith("FEROVA_") for k in env)
+        assert not any(k.startswith(("REPOACH_", "FEROVA_")) for k in env)
 
     def test_explicit_env_is_passed_through(self) -> None:
         captured: dict[str, object] = {}
