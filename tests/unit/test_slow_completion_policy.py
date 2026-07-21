@@ -1,19 +1,25 @@
-"""Unit tests for SP-BREAKER-SLOW-STRIKE — PeekResult carries output tokens.
+"""Unit tests for SP-BREAKER-SLOW-STRIKE.
 
-These tests verify that :class:`PeekResult` exposes the
-``usage.output_tokens`` from the final ``message_delta`` emitted by an
-SSE stream, so the slow-completion policy in the services layer can
-compute tokens-per-second without re-parsing the buffered events.
+Covers two things: the pure ``is_slow_completion`` gate/floor policy
+(:mod:`repoach.llm_proxy.routing.slow_policy`), and that
+:class:`PeekResult` exposes the ``usage.output_tokens`` from the final
+``message_delta`` emitted by an SSE stream, so the slow-completion
+policy in the services layer can compute tokens-per-second without
+re-parsing the buffered events.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections.abc import AsyncIterator
 from typing import Any
 
+import pytest
+
 from repoach.llm_proxy.api._failover import PeekResult, peek_for_content
+from repoach.llm_proxy.routing.slow_policy import is_slow_completion
 
 
 def _sse(event_type: str, payload: dict[str, Any]) -> str:
@@ -76,3 +82,48 @@ def test_peek_result_output_tokens_none_on_absent_delta() -> None:
 
     result = asyncio.run(runner())
     assert result.final_output_tokens is None
+
+
+def test_is_slow_below_gate_returns_false() -> None:
+    """A completion at or under the latency gate is never slow, no matter
+    how thin its tokens-per-second is."""
+    assert is_slow_completion(5.0, 1, gate_s=10.0, tps_floor=1.0) is False
+    assert is_slow_completion(10.0, 1, gate_s=10.0, tps_floor=1.0) is False
+
+
+def test_is_slow_slow_when_above_gate_and_low_tps() -> None:
+    """Past the gate with thin tokens-per-second is a slow-completion strike."""
+    assert is_slow_completion(15.0, 7, gate_s=10.0, tps_floor=1.0) is True
+
+
+def test_is_slow_none_tokens_returns_false() -> None:
+    """Unknown output tokens is conservative: never strike blind."""
+    assert is_slow_completion(30.0, None, gate_s=10.0, tps_floor=1.0) is False
+
+
+def test_is_slow_boundaries() -> None:
+    """Exact gate is not slow; equal tps to the floor is not slow (strict
+    inequalities on both sides)."""
+    assert is_slow_completion(10.0, 0, gate_s=10.0, tps_floor=1.0) is False
+    assert is_slow_completion(10.0001, 1000, gate_s=10.0, tps_floor=1.0) is False
+    assert is_slow_completion(10.0001, 9, gate_s=10.0, tps_floor=1.0) is True
+    assert is_slow_completion(10.0001, 5, gate_s=10.0, tps_floor=1.0) is True
+
+
+@pytest.mark.parametrize(
+    "latency_s,output_tokens,gate_s,tps_floor",
+    [
+        (0.0, 0, 0.0, 1.0),
+        (-5.0, 3, 10.0, 1.0),
+        (1e12, 1, 1.0, 1.0),
+        (0.0, None, -1.0, 1.0),
+        (math.inf, 5, 10.0, 1.0),
+        (10.0, 0, -10.0, 0.0),
+    ],
+)
+def test_is_slow_never_raises(
+    latency_s: float, output_tokens: int | None, gate_s: float, tps_floor: float
+) -> None:
+    """The policy is total: no exotic finite/edge input raises."""
+    result = is_slow_completion(latency_s, output_tokens, gate_s=gate_s, tps_floor=tps_floor)
+    assert isinstance(result, bool)
