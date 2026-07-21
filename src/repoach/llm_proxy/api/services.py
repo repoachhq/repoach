@@ -27,9 +27,11 @@ from repoach.llm_proxy.routing import ModelRef, get_breaker, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
 
 from ._failover import PeekResult, peek_for_content
-from .model_router import ModelRouter, ResolvedModel
+from .model_router import ModelRouter, ResolvedModel, compute_credits_gate_skip_models
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
+
+__all__ = ["ClaudeProxyService", "compute_credits_gate_skip_models"]
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
 
@@ -91,6 +93,23 @@ class ClaudeProxyService:
         self._provider_getter = provider_getter
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
+
+    def open_router_refs_for(self, claude_model_name: str) -> frozenset[str]:
+        """Return the ``open_router`` refs configured for ``claude_model_name``.
+
+        Thin passthrough to :meth:`ModelRouter.open_router_refs_for` that
+        keeps ``_model_router`` private while giving route handlers
+        (SP-BREAKER-PROVIDER-SCOPE) a seam to compute the proactive
+        credits-gate exclusion set ahead of dispatch.
+
+        Args:
+            claude_model_name: The client-supplied alias to resolve.
+
+        Returns:
+            The ``provider/model`` ref strings of every ``open_router``
+            entry in the configured chain for ``claude_model_name``.
+        """
+        return self._model_router.open_router_refs_for(claude_model_name)
 
     def create_message(
         self,

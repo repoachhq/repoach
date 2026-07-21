@@ -16,6 +16,7 @@ import pytest
 
 from repoach.health.credits import reset_credits_cache
 from repoach.llm_proxy.api.model_router import compute_credits_gate_skip_models
+from repoach.llm_proxy.api.services import ClaudeProxyService
 from repoach.llm_proxy.config.settings import Settings
 
 _OPEN_ROUTER_REFS = frozenset({"open_router/qwen/qwen3.7-max", "open_router/x-ai/grok-4"})
@@ -110,3 +111,13 @@ async def test_recovered_balance_lifts_gate_without_restart() -> None:
     second = await compute_credits_gate_skip_models(settings, recovered_client, _OPEN_ROUTER_REFS)
 
     assert second == frozenset()
+
+
+def test_service_open_router_refs_for_delegates_to_router() -> None:
+    """ClaudeProxyService.open_router_refs_for delegates to ModelRouter."""
+    settings = _settings(MODEL_SONNET="open_router/qwen/qwen3.7-max,nvidia_nim/z-ai/glm4.7")
+    service = ClaudeProxyService(settings, provider_getter=lambda provider_type: None)
+
+    result = service.open_router_refs_for("claude-sonnet-4-20250514")
+
+    assert result == frozenset({"open_router/qwen/qwen3.7-max"})
