@@ -12,11 +12,14 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
 from repoach.cli.main import app
+from repoach.core.logging import get_logger
 from repoach.health.credits import reset_credits_cache
 from repoach.llm_proxy.config.settings import Settings
+from repoach.llm_proxy.providers import cell_probe, cell_probe_sweep
 from repoach.llm_proxy.providers.aa_ingest import (
     AaRanking,
     ModelCapability,
@@ -33,6 +36,22 @@ from repoach.llm_proxy.routing.chain_regen import (
     gather_and_regenerate,
     speed_for_from_rows,
 )
+
+
+def _reset_module_loggers(monkeypatch) -> None:
+    """Rebind fresh, uncached structlog proxies so capture_logs sees this test's events.
+
+    A module-level ``_log`` proxy latches onto whatever processor chain was
+    active at its first real use (``cache_logger_on_first_use``); once any
+    earlier test in this session has logged through it under a different
+    configuration, a later ``capture_logs()`` block never observes its
+    events. Rebinding a brand-new proxy here forces its first use to happen
+    inside the caller's ``capture_logs()`` context.
+    """
+    monkeypatch.setattr(chain_regen, "_log", get_logger(chain_regen.__name__))
+    monkeypatch.setattr(cell_probe_sweep, "_log", get_logger(cell_probe_sweep.__name__))
+    monkeypatch.setattr(cell_probe, "_log", get_logger(cell_probe.__name__))
+
 
 _CHAINS = "\n".join(
     [
@@ -365,3 +384,106 @@ def test_cli_stale_cells_exit_1(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 1
     assert "regenerate-chains: refused" in result.output
     assert "no cell-probe rows fresher than 12.0h" in result.output
+
+
+async def test_bounded_sweep_logs_planned_count(tmp_path, monkeypatch) -> None:
+    """AC2: gather_and_regenerate logs regen_sweep_planned with the exact bounded cell count.
+
+    The three chain-ref cells parsed from ``_CHAINS`` (provider ``old``) plus the
+    one ranking-matched candidate cell (``nvidia_nim/x/alpha-model``) sum to a
+    planned set of 4 cells, with no per-provider cap or credits skip in play under
+    the default Settings.
+    """
+    _patch_gatherers(monkeypatch)
+    _reset_module_loggers(monkeypatch)
+    target = tmp_path / "chains.env"
+    target.write_text(_CHAINS, encoding="utf-8")
+
+    with capture_logs() as logs:
+        await gather_and_regenerate(
+            Settings(_env_file=None),
+            client=None,
+            chains_path=target,
+            db_path=tmp_path / "db.sqlite",
+            enabled=False,
+        )
+
+    planned = [entry for entry in logs if entry["event"] == "regen_sweep_planned"]
+    assert len(planned) == 1
+    assert planned[0]["cells"] == 4
+    assert planned[0]["skipped_paid"] == 0
+
+
+async def test_429_logs_rate_limited_once(monkeypatch) -> None:
+    """AC3: a twice-429 cell logs cell_probe_rate_limited exactly once; the peer persists."""
+    _reset_module_loggers(monkeypatch)
+    calls = {"a": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        model = body["model"]
+        if model == "a":
+            calls["a"] += 1
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    settings = Settings(_env_file=None, NVIDIA_NIM_API_KEY="test-token")
+    cells = (ModelCell("nvidia_nim", "a"), ModelCell("nvidia_nim", "b"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with capture_logs() as logs:
+            results = await chain_regen._probe_bounded_cells(
+                cells,
+                settings,
+                client,
+                max_concurrency=2,
+                pacing_s=0.0,
+                retry_backoff_s=0.0,
+            )
+
+    assert calls["a"] == 2
+    assert [(r.provider_id, r.model_id) for r in results] == [("nvidia_nim", "b")]
+    rate_limited_events = [entry for entry in logs if entry["event"] == "cell_probe_rate_limited"]
+    assert len(rate_limited_events) == 1
+    assert rate_limited_events[0]["provider"] == "nvidia_nim"
+    assert rate_limited_events[0]["model"] == "a"
+
+
+async def test_credits_skip_transport_silent_and_logged(tmp_path) -> None:
+    """AC4: a below-floor credits snapshot drops open_router cells before any probe
+    reaches the transport, and the drop count is logged on regen_sweep_planned.
+    """
+    reset_credits_cache()
+    calls = {"total": 0, "credits": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["total"] += 1
+        if request.url.path.endswith("/credits"):
+            calls["credits"] += 1
+            return httpx.Response(200, json={"data": {"total_credits": 1.0, "total_usage": 0.5}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    settings = Settings(_env_file=None, OPENROUTER_API_KEY="test-token", CREDITS_FLOOR_USD=1.0)
+    current_content = "MODEL_OPUS=open_router/free-model\n"
+    matrix = ProviderModelMatrix(cells=(), listings=())
+    monkeypatch = pytest.MonkeyPatch()
+    _reset_module_loggers(monkeypatch)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with capture_logs() as logs:
+            await chain_regen._sweep_and_persist_bounded_cells(
+                settings,
+                client,
+                matrix,
+                _equivalences(),
+                _ranking(),
+                current_content,
+                tmp_path / "db.sqlite",
+            )
+
+    assert calls["total"] == 1
+    assert calls["credits"] == 1
+    planned = [entry for entry in logs if entry["event"] == "regen_sweep_planned"]
+    assert len(planned) == 1
+    assert planned[0]["cells"] == 0
+    assert planned[0]["skipped_paid"] == 1

@@ -17,12 +17,16 @@ from pathlib import Path
 
 import httpx
 import pytest
+import structlog
+from structlog.testing import capture_logs
 
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.aa_ingest import AaRanking, ModelCapability, normalize_model_name
 from repoach.llm_proxy.providers.cell_probe_store import record_cell_probes
 from repoach.llm_proxy.providers.cell_probe_sweep import CellHealth
 from repoach.llm_proxy.routing.chain_regen import StaleCellsError, gather_and_regenerate
+
+structlog.configure(cache_logger_on_first_use=False)
 
 _CHAINS = "\n".join(
     [
@@ -101,3 +105,41 @@ async def test_end_to_end_freshness_refusal(tmp_path: Path) -> None:
             )
 
     assert chains_path.read_text(encoding="utf-8") == _CHAINS
+
+
+async def test_stale_cells_event_logged(tmp_path: Path) -> None:
+    """AC1: the refusal path logs chain_regen_stale_cells before raising StaleCellsError."""
+    chains_path = tmp_path / "chains.env"
+    chains_path.write_text(_CHAINS, encoding="utf-8")
+    db_path = tmp_path / "cell_health.sqlite"
+
+    stale_health = CellHealth("nvidia_nim", "x/alpha-model", "ok", 1.0, 10, 0, "")
+    record_cell_probes(
+        db_path,
+        [stale_health],
+        recorded_at=datetime.now(UTC) - timedelta(hours=48),
+    )
+
+    settings = Settings(
+        _env_file=None,
+        NVIDIA_NIM_API_KEY="test-token",
+        REGEN_MAX_CELL_AGE_H=1.0,
+        REGEN_SWEEP_PER_PROVIDER_CAP=0,
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client:
+        with capture_logs() as logs:
+            with pytest.raises(StaleCellsError):
+                await gather_and_regenerate(
+                    settings,
+                    client=client,
+                    chains_path=chains_path,
+                    db_path=db_path,
+                    enabled=True,
+                    ranking=_ranking(),
+                )
+
+    assert chains_path.read_text(encoding="utf-8") == _CHAINS
+    stale_events = [entry for entry in logs if entry["event"] == "chain_regen_stale_cells"]
+    assert len(stale_events) == 1
+    assert stale_events[0]["max_age_h"] == 1.0

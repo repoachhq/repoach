@@ -1,11 +1,11 @@
 ---
 id: SP-MFC-REGEN
 title: Model-first chains — live gather + regenerate entrypoint
-version: 0.2
+version: 0.3
 status: draft
 author: operator (design dialogue)
 created: 2026-06-30
-updated: 2026-07-11
+updated: 2026-07-21
 
 owns:
   code: [src/repoach/llm_proxy/routing/chain_regen.py]
