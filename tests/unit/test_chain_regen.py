@@ -7,11 +7,14 @@ apply gate, and the CLI command registration.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
+import httpx
 from typer.testing import CliRunner
 
 from repoach.cli.main import app
+from repoach.health.credits import reset_credits_cache
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.aa_ingest import (
     AaRanking,
@@ -161,3 +164,80 @@ def test_regenerate_chains_command_registered() -> None:
     result = CliRunner().invoke(app, ["regenerate-chains", "--help"])
     assert result.exit_code == 0
     assert "regenerate" in result.output.lower()
+
+
+def test_bounded_sweep() -> None:
+    """Chain-ref cells win priority within the cap; the cap holds per provider."""
+    chain_ref_cells = (
+        ModelCell("nvidia_nim", "a"),
+        ModelCell("nvidia_nim", "b"),
+    )
+    candidate_cells = (
+        *tuple(ModelCell("nvidia_nim", f"c{i}") for i in range(5)),
+        ModelCell("open_router", "x"),
+        ModelCell("open_router", "y"),
+    )
+
+    bounded = chain_regen._bounded_cell_set(chain_ref_cells, candidate_cells, per_provider_cap=3)
+
+    nim_cells = [cell for cell in bounded if cell.provider_id == "nvidia_nim"]
+    open_router_cells = [cell for cell in bounded if cell.provider_id == "open_router"]
+    assert nim_cells[:2] == list(chain_ref_cells)
+    assert len(nim_cells) == 3
+    assert len(open_router_cells) == 2
+    assert len(bounded) <= 2 * 3
+
+
+async def test_429_handling() -> None:
+    """A cell 429s twice: retried once, still rate-limited, and dropped; peers persist."""
+    calls = {"a": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        model = body["model"]
+        if model == "a":
+            calls["a"] += 1
+            return httpx.Response(429, json={"error": "rate limited"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    settings = Settings(_env_file=None, NVIDIA_NIM_API_KEY="test-token")
+    cells = (ModelCell("nvidia_nim", "a"), ModelCell("nvidia_nim", "b"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        results = await chain_regen._probe_bounded_cells(
+            cells,
+            settings,
+            client,
+            max_concurrency=2,
+            pacing_s=0.0,
+            retry_backoff_s=0.0,
+        )
+
+    assert calls["a"] == 2
+    assert [(r.provider_id, r.model_id) for r in results] == [("nvidia_nim", "b")]
+
+
+async def test_credits_skip() -> None:
+    """A below-floor snapshot drops open_router cells; an unavailable snapshot keeps them."""
+    cells = (ModelCell("nvidia_nim", "a"), ModelCell("open_router", "x"))
+    settings = Settings(_env_file=None, OPENROUTER_API_KEY="test-token", CREDITS_FLOOR_USD=1.0)
+
+    def low_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"total_credits": 1.0, "total_usage": 0.5}})
+
+    reset_credits_cache()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(low_handler)) as client:
+        kept, skipped = await chain_regen._drop_paid_cells_if_low_credits(cells, settings, client)
+    assert kept == (ModelCell("nvidia_nim", "a"),)
+    assert skipped == 1
+
+    def error_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "down"})
+
+    reset_credits_cache()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(error_handler)) as client:
+        kept_none, skipped_none = await chain_regen._drop_paid_cells_if_low_credits(
+            cells, settings, client
+        )
+    assert kept_none == cells
+    assert skipped_none == 0
