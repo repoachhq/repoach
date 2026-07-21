@@ -450,6 +450,89 @@ def test_counter_survives_ttl_lapse_prune() -> None:
     assert count3 == 1, f"counter should reset on recover, got {count3} expected 1"
 
 
+def test_record_success_k_of_n_window() -> None:
+    """Three slow among the last five triggers; a fourth is still a
+    trigger; the window truncates to exactly n."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert breaker.record_success(ref, True, k=3, n=5)
+
+    assert breaker.record_success(ref, True, k=3, n=5)
+
+    assert len(breaker._slow_history[ref]) == 4
+
+
+def test_record_success_below_k_returns_false() -> None:
+    """Two slow among five never trips when k=3."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert not breaker.record_success(ref, False, k=3, n=5)
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert not breaker.record_success(ref, False, k=3, n=5)
+    assert not breaker.record_success(ref, False, k=3, n=5)
+
+    assert not breaker.record_success(ref, False, k=3, n=5)
+
+    assert len(breaker._slow_history[ref]) == 5
+
+
+def test_recover_clears_slow_history() -> None:
+    """recover() pops the ref from _slow_history."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+    assert ref in breaker._slow_history
+
+    breaker.recover(ref)
+    assert ref not in breaker._slow_history
+
+
+def test_trip_slow_behavior() -> None:
+    """trip_slow sets _down_until and _down_reason but does not touch
+    _consecutive_failures; the ref is down after trip."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker._consecutive_failures[ref] = 7
+
+    breaker.trip_slow(ref, now=100.0, ttl_s=60.0)
+
+    assert breaker._consecutive_failures.get(ref) == 7
+    assert breaker._down_reason[ref] == "slow_completion"
+    assert breaker.is_down(ref, now=120.0)
+    assert not breaker.is_down(ref, now=161.0)
+
+    breaker.trip_slow(ref, now=200.0, ttl_s=30.0, reason="custom_slow")
+    assert breaker._down_reason[ref] == "custom_slow"
+    assert breaker._consecutive_failures.get(ref) == 7
+
+
+def test_slow_history_survives_down_refs_prune() -> None:
+    """down_refs() prunes the trip window but leaves _slow_history intact."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+
+    breaker.trip(ref, now=100.0, ttl_s=10.0, reason="timeout")
+    assert breaker.is_down(ref, now=105.0)
+
+    breaker.down_refs(now=120.0)
+    assert not breaker.is_down(ref, now=120.0)
+
+    assert ref in breaker._slow_history
+    assert len(breaker._slow_history[ref]) == 3
+
+
 _CREDITS_PAYLOAD = {"data": {"total_credits": 20.0, "total_usage": 10.0}}
 
 
