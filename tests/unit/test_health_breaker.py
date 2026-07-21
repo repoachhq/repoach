@@ -514,6 +514,34 @@ def test_trip_slow_behavior() -> None:
     assert breaker._consecutive_failures.get(ref) == 7
 
 
+def test_slow_history_survives_slow_ttl_lapse() -> None:
+    """AC2: a slow-completion trip's TTL lapse does NOT erase the ref's
+    slow history. Trip via ``trip_slow`` with a tiny TTL, advance ``now``
+    past the TTL, call ``down_refs`` to prune the lapsed trip window,
+    then assert the ref's ``_slow_history`` is still populated and the
+    next ``record_success`` call folds into the surviving window.
+    """
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+
+    breaker.trip_slow(ref, now=100.0, ttl_s=10.0)
+    assert breaker.is_down(ref, now=105.0)
+
+    breaker.down_refs(now=120.0)
+    assert not breaker.is_down(ref, now=120.0)
+
+    assert ref in breaker._slow_history
+    assert len(breaker._slow_history[ref]) == 3
+
+    triggered = breaker.record_success(ref, True, k=3, n=5)
+    assert triggered
+    assert len(breaker._slow_history[ref]) == 4
+
+
 def test_slow_history_survives_down_refs_prune() -> None:
     """down_refs() prunes the trip window but leaves _slow_history intact."""
     breaker = BreakerState()

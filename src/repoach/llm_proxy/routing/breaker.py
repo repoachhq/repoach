@@ -10,6 +10,23 @@ recovered one re-enters automatically once its cool-down expires.
 The breaker is a process-level singleton (:func:`get_breaker`) so its
 state survives across requests; ``time.monotonic`` timestamps are passed
 in by the caller, keeping the state itself clock-free and testable.
+
+SP-BREAKER-SLOW-STRIKE extends this module's judgment of what counts as
+a fault: chronic slowness on a content-bearing completion is ALSO a
+strike here, and that is a deliberate divergence from the offline-probe
+doctrine ("slowness is not a fault",
+``src/repoach/llm_proxy/providers/attribution.py``). An offline probe
+assesses a model's capability in isolation — a slow-but-content-bearing
+response there is still healthy evidence, because nobody is waiting on
+the wire. Live dispatch through this breaker protects a caller who IS
+waiting: a completion that is both past the latency gate and thin in
+tokens-per-second (:func:`repoach.llm_proxy.routing.slow_policy.
+is_slow_completion`) is a caller-facing failure mode, not capability
+evidence, so :meth:`BreakerState.record_success` folds it into a
+dedicated k-of-n slow-success window and :meth:`BreakerState.trip_slow`
+can bench the ref for ``breaker_slow_ttl_s`` — bypassing the hard-failure
+escalation path entirely, since a slow success is not the same fault
+class as a transport error, a 5xx, or an empty completion.
 """
 
 from __future__ import annotations

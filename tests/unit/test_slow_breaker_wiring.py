@@ -358,3 +358,207 @@ def test_slow_policy_fast_success_recovers(monkeypatch: pytest.MonkeyPatch) -> N
     assert not breaker.is_down(ref, now=time.monotonic())
     assert ref not in breaker._consecutive_failures
     assert ref not in breaker._slow_history
+
+
+_FAT_MESSAGE_DELTA = _sse(
+    "message_delta",
+    {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": {"input_tokens": 10, "output_tokens": 1000},
+    },
+)
+
+_FAT_CONTENT_CHUNKS: list[str] = [
+    _MESSAGE_START,
+    _TEXT_CONTENT_START,
+    _REAL_TEXT_DELTA,
+    _CONTENT_BLOCK_STOP,
+    _FAT_MESSAGE_DELTA,
+    _MESSAGE_STOP,
+]
+
+
+class _BudgetThenSlowProvider(BaseProvider):
+    """Instant budget-starved empty completion on the starved first call;
+    the enlarged-budget retry call delays then yields ``retry_chunks``.
+
+    Isolates timing to the retry leg only, so a test can assert the
+    recover-or-strike hook at the budget-retry success point reads the
+    RETRY's latency and tokens — never the starved first attempt's
+    (which is fast and carries no usable tokens by definition).
+    """
+
+    SUPPORTS_NATIVE_TOOLS: bool = True
+
+    def __init__(
+        self,
+        config: ProviderConfig,
+        *,
+        threshold: int,
+        retry_delay_s: float,
+        retry_chunks: list[str],
+    ) -> None:
+        super().__init__(config)
+        self._threshold = threshold
+        self._retry_delay_s = retry_delay_s
+        self._retry_chunks = retry_chunks
+        self.calls: list[int | None] = []
+
+    async def cleanup(self) -> None:
+        return None
+
+    async def stream_response(
+        self,
+        request: Any,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+    ) -> AsyncIterator[str]:
+        self.calls.append(request.max_tokens)
+        if request.max_tokens is None or request.max_tokens < self._threshold:
+            for chunk in _EMPTY_CONTENT_CHUNKS:
+                yield chunk
+            return
+        if self._retry_delay_s > 0:
+            await asyncio.sleep(self._retry_delay_s)
+        for chunk in self._retry_chunks:
+            yield chunk
+
+
+def test_hard_failures_then_slow_takes_slow_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (panel finding): two hard failures then one
+    slow-but-served completion must NOT produce a quarantine-TTL trip.
+
+    Seeds the ref's hard-failure count to 2 via the real ``trip()``,
+    clears only the trip window (not the counter) so the head is
+    dispatched again, then drives a genuinely slow real completion
+    through the real service. The slow-completion trip must land at
+    ``breaker_slow_ttl_s`` with reason ``slow_completion`` and must
+    leave ``_consecutive_failures`` untouched — proving ``trip_slow``
+    bypasses ``escalated_ttl`` regardless of the ref's prior hard-
+    failure count.
+    """
+    ref = ModelRef.parse("nvidia_nim/meta/llama-3.3-70b-instruct")
+    breaker = get_breaker()
+
+    breaker.trip(ref, now=time.monotonic(), ttl_s=0.001, reason="timeout")
+    breaker.trip(ref, now=time.monotonic(), ttl_s=0.001, reason="timeout")
+    assert breaker._consecutive_failures.get(ref) == 2
+    breaker._down_until.pop(ref, None)
+    breaker._down_reason.pop(ref, None)
+
+    providers = {
+        "nvidia_nim": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            chunks=_REAL_CONTENT_CHUNKS,
+            delay_s=0.08,
+        ),
+        "kimi": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(
+        monkeypatch,
+        providers,
+        slow_shadow=False,
+        slow_latency_gate_s=0.001,
+        slow_tps_floor=100.0,
+        slow_k=1,
+        slow_n=5,
+        slow_ttl_s=300.0,
+    )
+
+    response = service.create_message(_make_request())
+    _drain_stream_response(response)
+
+    assert breaker._consecutive_failures.get(ref) == 2
+    snap = breaker.snapshot(now=time.monotonic())
+    by_ref = {str(e.ref): e for e in snap}
+    entry = by_ref[str(ref)]
+    assert entry.reason == "slow_completion"
+    assert entry.ttl_remaining_s <= service._settings.breaker_slow_ttl_s
+    assert entry.ttl_remaining_s != service._settings.breaker_ttl_quarantine_s
+
+
+def test_budget_retry_slow_thin_strikes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Budget-retry success hook uses the RETRY's latency/tokens, not the
+    starved first attempt's: a fast/thin starved first attempt followed by
+    a slow-and-thin retry records a slow strike.
+
+    An implementation that reads the pre-retry ``:288`` latency (fast,
+    measured on the starved first attempt) would wrongly classify this as
+    fast and call ``recover()`` instead of striking.
+    """
+    monkeypatch.setenv("BUDGET_RETRY_ENABLED", "true")
+    provider = _BudgetThenSlowProvider(
+        ProviderConfig(api_key="x"),
+        threshold=200,
+        retry_delay_s=0.08,
+        retry_chunks=_REAL_CONTENT_CHUNKS,
+    )
+    providers = {
+        "nvidia_nim": provider,
+        "kimi": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(
+        monkeypatch,
+        providers,
+        slow_shadow=False,
+        slow_latency_gate_s=0.001,
+        slow_tps_floor=100.0,
+        slow_k=1,
+        slow_n=5,
+    )
+
+    response = service.create_message(_make_request())
+    _drain_stream_response(response)
+
+    assert provider.calls == [128, 1024]
+
+    ref = ModelRef.parse("nvidia_nim/meta/llama-3.3-70b-instruct")
+    breaker = get_breaker()
+    assert ref in breaker._slow_history
+    assert breaker._slow_history[ref] == [True]
+    assert breaker.is_down(ref, now=time.monotonic())
+    assert breaker._down_reason.get(ref) == "slow_completion"
+
+
+def test_budget_retry_slow_fat_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A starved first attempt followed by a slow-but-FAT retry (tokens per
+    second above the floor) recovers the breaker using the retry peek's
+    own tokens — not the starved first peek's ``final_output_tokens``,
+    which is 0/``None`` by definition of budget starvation and would
+    wrongly count as slow (0 tokens-per-second) if read instead.
+    """
+    monkeypatch.setenv("BUDGET_RETRY_ENABLED", "true")
+    provider = _BudgetThenSlowProvider(
+        ProviderConfig(api_key="x"),
+        threshold=200,
+        retry_delay_s=0.08,
+        retry_chunks=_FAT_CONTENT_CHUNKS,
+    )
+    providers = {
+        "nvidia_nim": provider,
+        "kimi": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(
+        monkeypatch,
+        providers,
+        slow_shadow=False,
+        slow_latency_gate_s=0.001,
+        slow_tps_floor=1.0,
+        slow_k=1,
+        slow_n=5,
+    )
+
+    response = service.create_message(_make_request())
+    _drain_stream_response(response)
+
+    assert provider.calls == [128, 1024]
+
+    ref = ModelRef.parse("nvidia_nim/meta/llama-3.3-70b-instruct")
+    breaker = get_breaker()
+    assert not breaker.is_down(ref, now=time.monotonic())
+    assert ref not in breaker._slow_history
