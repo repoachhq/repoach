@@ -42,6 +42,14 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
 - **Done when**: pytest tests/unit/test_chain_regen.py::test_cli_stale_cells_exit_1 passes and ruff check src/repoach/cli/main.py exits 0
 - **Unit tests**: `tests/unit/test_chain_regen.py::test_cli_stale_cells_exit_1`
 
+## Step 6 — Close the judge gaps: SP-MFC-REGEN edge declaration + the promised log assertions
+
+- **Files**: `docs/specs/2026-06-30_SP-MFC-REGEN_live-gather-and-cli.md`, `tests/unit/test_chain_regen.py`, `tests/integration/test_chain_regen_freshness.py`
+- **Action**: (a) In docs/specs/2026-06-30_SP-MFC-REGEN_live-gather-and-cli.md FRONTMATTER only: add SP-CREDITS-CHECK to depends_on and bump version — chain_regen.py (owned by SP-MFC-REGEN) now imports repoach.health.credits (owned by SP-CREDITS-CHECK) and the edge-honesty gate requires the declared edge; the spec's Architecture Impact mandates this same-PR change. (b) Strengthen the existing tests with the AC-promised log/transport assertions, using the structlog.testing capture_logs idiom (see tests/unit/test_dev_promise_reconcile.py): test_credits_skip additionally asserts at the transport layer that ZERO open_router probes were issued and that the skipped_paid count is logged; test_bounded_sweep additionally captures regen_sweep_planned and asserts the exact planned cell count; test_429_handling additionally asserts cell_probe_rate_limited is logged exactly once for the twice-429 cell; test_end_to_end_freshness_refusal additionally asserts the chain_regen_stale_cells event. No behavior change to src — assertions only (fix src only if an assertion exposes a real defect).
+- **Commit**: `test(chain-regen): close judge gaps — MFC-REGEN edge declaration + promised log assertions`
+- **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes and repoach arch check --staged reports edge-honesty ok
+- **Unit tests**: `tests/unit/test_chain_regen.py::test_credits_skip`, `tests/unit/test_chain_regen.py::test_bounded_sweep`, `tests/unit/test_chain_regen.py::test_429_handling`
+
 ## Integration tests
 
 - `tests/integration/test_chain_regen_freshness.py::test_end_to_end_freshness_refusal`
@@ -125,6 +133,23 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
       "done_when": "pytest tests/unit/test_chain_regen.py::test_cli_stale_cells_exit_1 passes and ruff check src/repoach/cli/main.py exits 0",
       "unit_tests": [
         "tests/unit/test_chain_regen.py::test_cli_stale_cells_exit_1"
+      ]
+    },
+    {
+      "index": 6,
+      "title": "Close the judge gaps: SP-MFC-REGEN edge declaration + the promised log assertions",
+      "files": [
+        "docs/specs/2026-06-30_SP-MFC-REGEN_live-gather-and-cli.md",
+        "tests/unit/test_chain_regen.py",
+        "tests/integration/test_chain_regen_freshness.py"
+      ],
+      "action": "(a) In docs/specs/2026-06-30_SP-MFC-REGEN_live-gather-and-cli.md FRONTMATTER only: add SP-CREDITS-CHECK to depends_on and bump version — chain_regen.py (owned by SP-MFC-REGEN) now imports repoach.health.credits (owned by SP-CREDITS-CHECK) and the edge-honesty gate requires the declared edge; the spec's Architecture Impact mandates this same-PR change. (b) Strengthen the existing tests with the AC-promised log/transport assertions, using the structlog.testing capture_logs idiom (see tests/unit/test_dev_promise_reconcile.py): test_credits_skip additionally asserts at the transport layer that ZERO open_router probes were issued and that the skipped_paid count is logged; test_bounded_sweep additionally captures regen_sweep_planned and asserts the exact planned cell count; test_429_handling additionally asserts cell_probe_rate_limited is logged exactly once for the twice-429 cell; test_end_to_end_freshness_refusal additionally asserts the chain_regen_stale_cells event. No behavior change to src — assertions only (fix src only if an assertion exposes a real defect).",
+      "commit_message": "test(chain-regen): close judge gaps — MFC-REGEN edge declaration + promised log assertions",
+      "done_when": "pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes and repoach arch check --staged reports edge-honesty ok",
+      "unit_tests": [
+        "tests/unit/test_chain_regen.py::test_credits_skip",
+        "tests/unit/test_chain_regen.py::test_bounded_sweep",
+        "tests/unit/test_chain_regen.py::test_429_handling"
       ]
     }
   ],
