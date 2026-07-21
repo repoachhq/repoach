@@ -348,6 +348,10 @@ def test_slow_policy_fast_success_recovers(monkeypatch: pytest.MonkeyPatch) -> N
         slow_k=1,
         slow_n=5,
     )
+
+    frozen_now = time.monotonic() + 130.0
+    monkeypatch.setattr(time, "monotonic", lambda: frozen_now)
+
     response = service.create_message(_make_request())
     _drain_stream_response(response)
 
