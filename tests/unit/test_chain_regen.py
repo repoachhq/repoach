@@ -449,6 +449,45 @@ async def test_429_logs_rate_limited_once(monkeypatch) -> None:
     assert rate_limited_events[0]["model"] == "a"
 
 
+async def test_sweep_failure_folds_into_stale_refusal(tmp_path, monkeypatch) -> None:
+    """A sweep that raises mid-cycle yields StaleCellsError, not the original exception.
+
+    The ``chain_regen_sweep_failed`` event is captured and the freshness guard
+    raises ``StaleCellsError`` rather than letting the raw exception escape.
+    """
+    _patch_gatherers(monkeypatch)
+    _reset_module_loggers(monkeypatch)
+
+    async def _failing_sweep(*args, **kwargs):
+        raise RuntimeError("probe transport down")
+
+    monkeypatch.setattr(chain_regen, "_sweep_and_persist_bounded_cells", _failing_sweep)
+
+    stale_row = _row("nvidia_nim", "x/alpha-model", 1.0, day=1)
+
+    def _fake_fetch_stale(db_path, *, since=None, provider_id=None, model_id=None, limit=None):
+        return [stale_row]
+
+    monkeypatch.setattr(chain_regen, "fetch_cell_probes", _fake_fetch_stale)
+
+    target = tmp_path / "chains.env"
+    target.write_text(_CHAINS, encoding="utf-8")
+    settings = Settings(_env_file=None, REGEN_MAX_CELL_AGE_H=1.0)
+
+    with capture_logs() as logs, pytest.raises(chain_regen.StaleCellsError):
+        await gather_and_regenerate(
+            settings,
+            client=None,
+            chains_path=target,
+            db_path=tmp_path / "db.sqlite",
+            enabled=True,
+        )
+
+    sweep_failed = [e for e in logs if e["event"] == "chain_regen_sweep_failed"]
+    assert len(sweep_failed) == 1
+    assert "probe transport down" in sweep_failed[0]["error"]
+
+
 async def test_credits_skip_transport_silent_and_logged(tmp_path) -> None:
     """AC4: a below-floor credits snapshot drops open_router cells before any probe
     reaches the transport, and the drop count is logged on regen_sweep_planned.
