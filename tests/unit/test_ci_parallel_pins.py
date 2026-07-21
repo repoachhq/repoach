@@ -33,3 +33,19 @@ def test_addopts_stays_serial_neutral() -> None:
 
     addopts: str = data["tool"]["pytest"]["ini_options"]["addopts"]
     assert "-n" not in addopts, f"addopts must not contain -n: {addopts!r}"
+
+
+def test_ci_local_full_suite_runs_parallel() -> None:
+    """Every full-suite pytest invocation in ci_local.sh carries -n auto --dist worksteal."""
+    ci_path = Path(__file__).resolve().parents[2] / "scripts" / "ci_local.sh"
+    lines = ci_path.read_text().splitlines()
+
+    invocation_lines = [
+        ln.strip()
+        for ln in lines
+        if "python -m pytest" in ln and ("tests/unit" in ln or "tests/integration" in ln)
+    ]
+    assert invocation_lines, "no full-suite pytest invocations found in ci_local.sh"
+    for ln in invocation_lines:
+        assert "-n auto" in ln, f"ci_local.sh invocation missing -n auto: {ln!r}"
+        assert "--dist worksteal" in ln, f"ci_local.sh invocation missing --dist worksteal: {ln!r}"
