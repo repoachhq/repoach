@@ -24,12 +24,14 @@ from repoach.llm_proxy.providers.exceptions import (
     RateLimitError,
 )
 from repoach.llm_proxy.routing import ModelRef, get_breaker, ttl_for_reason
-from repoach.llm_proxy.routing.breaker import escalated_ttl
+from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
 
 from ._failover import PeekResult, peek_for_content
-from .model_router import ModelRouter, ResolvedModel
+from .model_router import ModelRouter, ResolvedModel, compute_credits_gate_skip_models
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
+
+__all__ = ["ClaudeProxyService", "compute_credits_gate_skip_models"]
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
 
@@ -91,6 +93,23 @@ class ClaudeProxyService:
         self._provider_getter = provider_getter
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
+
+    def open_router_refs_for(self, claude_model_name: str) -> frozenset[str]:
+        """Return the ``open_router`` refs configured for ``claude_model_name``.
+
+        Thin passthrough to :meth:`ModelRouter.open_router_refs_for` that
+        keeps ``_model_router`` private while giving route handlers
+        (SP-BREAKER-PROVIDER-SCOPE) a seam to compute the proactive
+        credits-gate exclusion set ahead of dispatch.
+
+        Args:
+            claude_model_name: The client-supplied alias to resolve.
+
+        Returns:
+            The ``provider/model`` ref strings of every ``open_router``
+            entry in the configured chain for ``claude_model_name``.
+        """
+        return self._model_router.open_router_refs_for(claude_model_name)
 
     def create_message(
         self,
@@ -173,7 +192,13 @@ class ClaudeProxyService:
                 detail=get_user_facing_error_message(e),
             ) from e
 
-    def _trip_breaker(self, candidate: ResolvedModel, reason: str) -> None:
+    def _trip_breaker(
+        self,
+        candidate: ResolvedModel,
+        reason: str,
+        *,
+        chain: list[ResolvedModel] | None = None,
+    ) -> None:
         """Mark a failed candidate down so the next request skips it.
 
         Gated by ``breaker_enabled``.  Composes the quarantine escalation
@@ -186,9 +211,15 @@ class ClaudeProxyService:
            apply :func:`repoach.llm_proxy.routing.breaker.escalated_ttl`
            so the Nth consecutive failure escalates to the quarantine
            TTL regardless of the original reason.
-        3. Trip once at the effective TTL (no double-increment).
-        4. Emit a structured ``breaker_quarantined`` log event exactly
-           when the applied TTL is the quarantine one.
+        3. When ``reason`` is an account-class fault and ``chain`` is
+           supplied, propagate to every sibling ref of the same provider
+           via :meth:`BreakerState.trip_provider` and return early
+           with a single ``breaker_provider_propagated`` log event
+           (SP-BREAKER-PROVIDER-SCOPE G1).
+        4. Otherwise, trip once at the effective TTL (no
+           double-increment) and emit a structured
+           ``breaker_quarantined`` log event exactly when the applied
+           TTL is the quarantine one.
 
         Closes the health loop — see :mod:`repoach.llm_proxy.routing.breaker`.
         """
@@ -210,6 +241,26 @@ class ClaudeProxyService:
             quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
             threshold=self._settings.breaker_quarantine_threshold,
         )
+        if reason in ACCOUNT_FAULT_REASONS and chain is not None:
+            sibling_refs = {
+                ModelRef.parse(c.provider_model_ref)
+                for c in chain
+                if c.provider_id == ref.provider_id
+            }
+            breaker.trip_provider(
+                ref.provider_id,
+                sibling_refs,
+                now=time.monotonic(),
+                ttl_s=effective_ttl,
+                reason=f"{reason}_propagated",
+            )
+            logger.warning(
+                "breaker_provider_propagated",
+                provider=ref.provider_id,
+                ref_count=len(sibling_refs),
+                ttl_s=effective_ttl,
+            )
+            return
         breaker.trip(ref, now=time.monotonic(), ttl_s=effective_ttl, reason=reason)
         if effective_ttl == self._settings.breaker_ttl_quarantine_s:
             logger.warning(
@@ -242,6 +293,15 @@ class ClaudeProxyService:
         last_error: Exception | None = None
         prior_failures: list[tuple[str, str]] = []
         for attempt_index, candidate in enumerate(chain):
+            candidate_ref = ModelRef.parse(candidate.provider_model_ref)
+            if get_breaker().is_down(candidate_ref, time.monotonic()):
+                logger.info(
+                    "proxy_chain_skip_tripped",
+                    dispatch_id=dispatch_id,
+                    candidate=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                )
+                continue
             request_id = f"req_{uuid.uuid4().hex[:12]}"
             attempt_request = original_request.model_copy(
                 update={"model": candidate.provider_model}, deep=True
@@ -282,7 +342,7 @@ class ClaudeProxyService:
                     primary_error=str(exc)[:200],
                     latency_s=attempt_latency_s,
                 )
-                self._trip_breaker(candidate, primary_reason)
+                self._trip_breaker(candidate, primary_reason, chain=chain)
                 continue
 
             attempt_latency_s = round(time.monotonic() - attempt_started, 3)
@@ -333,7 +393,7 @@ class ClaudeProxyService:
                 buffered_events=len(peek.buffered),
                 latency_s=attempt_latency_s,
             )
-            self._trip_breaker(candidate, "empty_completion")
+            self._trip_breaker(candidate, "empty_completion", chain=chain)
 
         logger.error(
             "proxy_chain_exhausted",

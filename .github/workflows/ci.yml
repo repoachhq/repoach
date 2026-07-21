@@ -63,10 +63,10 @@ jobs:
           repoach arch check --base "origin/${{ github.base_ref }}"
 
       - name: Pytest
-        run: pytest -q tests/unit
+        run: pytest -q tests/unit -n auto --dist worksteal
 
       - name: Pytest — integration
-        run: pytest -q tests/integration
+        run: pytest -q tests/integration -n auto --dist worksteal
 
       - name: Smoke — llm_proxy boots
         if: matrix.python-version == '3.13'

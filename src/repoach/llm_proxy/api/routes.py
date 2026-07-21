@@ -16,7 +16,7 @@ from .dependencies import get_credits_client, get_settings, require_api_key
 from .models.agent_v1 import AgentRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import ModelResponse, ModelsListResponse
-from .services import ClaudeProxyService
+from .services import ClaudeProxyService, compute_credits_gate_skip_models
 
 router = APIRouter()
 
@@ -83,10 +83,22 @@ def _probe_response(allow: str) -> Response:
 async def create_message(
     request_data: MessagesRequest,
     service: ClaudeProxyService = Depends(get_proxy_service),
+    settings: Settings = Depends(get_settings),
+    client: httpx.AsyncClient = Depends(get_credits_client),
     _auth=Depends(require_api_key),
 ):
-    """Create a message (always streaming)."""
-    return service.create_message(request_data)
+    """Create a message (always streaming).
+
+    Before the first dispatch attempt, SP-BREAKER-PROVIDER-SCOPE's
+    proactive credits gate consults the cached OpenRouter balance
+    snapshot and, when it is below the configured floor, excludes
+    every ``open_router`` ref configured for this model from the
+    chain via the existing ``skip_models`` seam — keeping a dead
+    account out of dispatch before it pays a single 402 round-trip.
+    """
+    open_router_refs = service.open_router_refs_for(request_data.model)
+    gated_skip = await compute_credits_gate_skip_models(settings, client, open_router_refs)
+    return service.create_message(request_data, skip_models=gated_skip)
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])

@@ -515,6 +515,133 @@ def test_health_credits_null_on_upstream_failure(monkeypatch: pytest.MonkeyPatch
     assert isinstance(body["breaker"], list)
 
 
+def test_trip_breaker_propagates_account_fault_to_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider_402 on one open_router ref benches every sibling
+    open_router ref in the resolved chain with reason
+    provider_402_propagated, and emits exactly one
+    breaker_provider_propagated log event."""
+    records, sink_id = _capture_loguru()
+    try:
+        monkeypatch.setenv("REPOACH_BREAKER_ENABLED", "true")
+        monkeypatch.setenv("REPOACH_BREAKER_TTL_S", "120")
+        monkeypatch.setenv("REPOACH_BREAKER_TTL_QUARANTINE_S", "3600")
+        settings = Settings(_env_file=None)
+        service = ClaudeProxyService(
+            settings=settings,
+            provider_getter=lambda _provider_id: None,
+            token_counter=lambda *_args, **_kwargs: 0,
+        )
+        chain = [
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="open_router",
+                provider_model="qwen/qwen3.7-max",
+                provider_model_ref="open_router/qwen/qwen3.7-max",
+            ),
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="open_router",
+                provider_model="anthropic/claude-sonnet-4",
+                provider_model_ref="open_router/anthropic/claude-sonnet-4",
+            ),
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="open_router",
+                provider_model="google/gemini-2.5-pro",
+                provider_model_ref="open_router/google/gemini-2.5-pro",
+            ),
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="claude_code",
+                provider_model="sonnet",
+                provider_model_ref="claude_code/sonnet",
+            ),
+        ]
+        service._trip_breaker(chain[0], "provider_402", chain=chain)
+
+        now = time.monotonic()
+        for c in chain[:3]:
+            ref = _ref(c.provider_model_ref)
+            assert get_breaker().is_down(ref, now), (
+                f"{ref} should be down after account-fault propagation"
+            )
+            assert get_breaker()._down_reason.get(ref) == "provider_402_propagated"
+        claude_ref = _ref("claude_code/sonnet")
+        assert not get_breaker().is_down(claude_ref, now), (
+            "claude_code ref must not be affected by open_router propagation"
+        )
+
+        propagated_logs = [r for r in records if r["message"] == "breaker_provider_propagated"]
+        assert len(propagated_logs) == 1
+        assert propagated_logs[0]["extra"]["provider"] == "open_router"
+        assert propagated_logs[0]["extra"]["ref_count"] == 3
+        assert propagated_logs[0]["extra"]["ttl_s"] == 3600.0
+
+        quarantined_logs = [r for r in records if r["message"] == "breaker_quarantined"]
+        assert len(quarantined_logs) == 0, "account-fault path must not emit breaker_quarantined"
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+def test_trip_breaker_404_stays_single_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider_404 on an open_router ref benches only that ref;
+    siblings of the same provider are untouched (G2)."""
+    records, sink_id = _capture_loguru()
+    try:
+        monkeypatch.setenv("REPOACH_BREAKER_ENABLED", "true")
+        monkeypatch.setenv("REPOACH_BREAKER_TTL_S", "120")
+        monkeypatch.setenv("REPOACH_BREAKER_TTL_QUARANTINE_S", "3600")
+        settings = Settings(_env_file=None)
+        service = ClaudeProxyService(
+            settings=settings,
+            provider_getter=lambda _provider_id: None,
+            token_counter=lambda *_args, **_kwargs: 0,
+        )
+        chain = [
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="open_router",
+                provider_model="qwen/qwen3.7-max",
+                provider_model_ref="open_router/qwen/qwen3.7-max",
+            ),
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="open_router",
+                provider_model="anthropic/claude-sonnet-4",
+                provider_model_ref="open_router/anthropic/claude-sonnet-4",
+            ),
+            ResolvedModel(
+                original_model="claude-sonnet-4",
+                provider_id="open_router",
+                provider_model="google/gemini-2.5-pro",
+                provider_model_ref="open_router/google/gemini-2.5-pro",
+            ),
+        ]
+        service._trip_breaker(chain[0], "provider_404", chain=chain)
+
+        now = time.monotonic()
+        first_ref = _ref(chain[0].provider_model_ref)
+        assert get_breaker().is_down(first_ref, now), "the failing ref must be down"
+        assert get_breaker()._down_reason.get(first_ref) == "provider_404"
+
+        for c in chain[1:]:
+            ref = _ref(c.provider_model_ref)
+            assert not get_breaker().is_down(ref, now), (
+                f"{ref} must not be affected by provider_404 on a sibling"
+            )
+
+        propagated_logs = [r for r in records if r["message"] == "breaker_provider_propagated"]
+        assert len(propagated_logs) == 0, (
+            "provider_404 is not an account fault; propagation must not fire"
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+
 def test_get_credits_client_returns_async_client() -> None:
     """The dependency returns an httpx.AsyncClient."""
     client = get_credits_client()
