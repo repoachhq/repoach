@@ -339,3 +339,29 @@ async def test_nominal_fresh_sweep_concludes(tmp_path, monkeypatch) -> None:
     assert "MODEL_OPUS=nvidia_nim/x/alpha-model,claude_code/opus" in target.read_text(
         encoding="utf-8"
     )
+
+
+def test_cli_stale_cells_exit_1(tmp_path, monkeypatch) -> None:
+    """The CLI catches StaleCellsError, prints the reason, and exits 1."""
+
+    async def _fake_gather_and_regenerate(*args, **kwargs):
+        raise chain_regen.StaleCellsError("no cell-probe rows fresher than 12.0h (newest=none)")
+
+    monkeypatch.setattr(chain_regen, "gather_and_regenerate", _fake_gather_and_regenerate)
+    chains_path = tmp_path / "chains.env"
+    chains_path.write_text(_CHAINS, encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "regenerate-chains",
+            "--chains-path",
+            str(chains_path),
+            "--db-path",
+            str(tmp_path / "db.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "regenerate-chains: refused" in result.output
+    assert "no cell-probe rows fresher than 12.0h" in result.output
