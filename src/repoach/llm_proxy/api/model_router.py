@@ -5,8 +5,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+import httpx
 from loguru import logger
 
+from repoach.health.credits import CreditsSnapshot, get_cached_credits
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.routing import ModelRef, RoutingTable, get_breaker
 
@@ -33,11 +35,88 @@ class RoutedTokenCountRequest:
     resolved: ResolvedModel
 
 
+_last_logged_credits_snapshot: CreditsSnapshot | None = None
+
+
+async def compute_credits_gate_skip_models(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    open_router_refs: frozenset[str],
+) -> frozenset[str]:
+    """Compute the ``open_router`` refs to exclude before the first dispatch attempt.
+
+    SP-BREAKER-PROVIDER-SCOPE G3/G4: reads the cached OpenRouter credits
+    snapshot (:func:`repoach.health.credits.get_cached_credits`, never a
+    fresh poll) and, when the account balance has dropped below the
+    configured floor, returns every ``open_router`` ref so the caller can
+    feed them into the existing ``skip_models`` seam — keeping
+    ``open_router/*`` out of dispatch before it pays a single 402
+    round-trip. Fails open (returns an empty set) whenever the gate
+    cannot form an opinion: no API key configured, no ``open_router``
+    refs in the chain, or the snapshot is unavailable.
+
+    Args:
+        settings: Proxy settings carrying ``open_router_api_key``,
+            ``credits_floor_usd``, and ``credits_health_cache_ttl_s``.
+        client: The ``httpx.AsyncClient`` used to (re)fetch the snapshot
+            on cache expiry.
+        open_router_refs: The ``open_router`` refs present in the
+            resolved chain, from :meth:`ModelRouter.open_router_refs_for`.
+
+    Returns:
+        ``open_router_refs`` unchanged when the gate should close
+        (``remaining < credits_floor_usd``), otherwise an empty
+        frozenset.
+    """
+    global _last_logged_credits_snapshot
+    if not settings.open_router_api_key or not open_router_refs:
+        return frozenset()
+    snapshot = await get_cached_credits(
+        settings.open_router_api_key,
+        client=client,
+        ttl_s=settings.credits_health_cache_ttl_s,
+    )
+    if snapshot is None:
+        return frozenset()
+    if snapshot.remaining < settings.credits_floor_usd:
+        if _last_logged_credits_snapshot is not snapshot:
+            _last_logged_credits_snapshot = snapshot
+            logger.warning(
+                "credits_gate_closed",
+                remaining=snapshot.remaining,
+                floor=settings.credits_floor_usd,
+            )
+        return open_router_refs
+    return frozenset()
+
+
 class ModelRouter:
     """Resolve incoming Claude model names to configured provider/model pairs."""
 
     def __init__(self, settings: Settings):
         self._table = RoutingTable.from_settings(settings)
+
+    def open_router_refs_for(self, claude_model_name: str) -> frozenset[str]:
+        """Return the ``open_router`` refs present in the unfiltered configured chain.
+
+        Reads the chain straight from the routing table — no breaker
+        state, no ``skip_models`` filtering — so the credits gate
+        (SP-BREAKER-PROVIDER-SCOPE) can compute its exclusion set from
+        the chain's static shape, independent of whatever is currently
+        tripped or already skipped for this request.
+
+        Args:
+            claude_model_name: The client-supplied alias to resolve.
+
+        Returns:
+            The ``provider/model`` ref strings of every ``open_router``
+            entry in the configured chain for ``claude_model_name``.
+        """
+        return frozenset(
+            str(ref)
+            for ref in self._table.chain_for(claude_model_name).refs
+            if ref.provider_id == "open_router"
+        )
 
     def resolve(self, claude_model_name: str) -> ResolvedModel:
         """Resolve ``claude_model_name`` to the head of its configured chain."""
