@@ -34,15 +34,23 @@ Add a slow-completion breaker policy that treats chronic slowness as a strike. A
 - **Done when**: pytest tests/unit/test_slow_completion_policy.py::test_slow_settings_defaults passes
 - **Unit tests**: `tests/unit/test_slow_completion_policy.py::test_slow_settings_defaults`
 
-## Step 5 — Apply slow-completion policy hook in services.py (primary and budget-retry paths)
+## Step 5 — Slow-policy hook on the primary success path
 
 - **Files**: `src/repoach/llm_proxy/api/services.py`, `tests/unit/test_slow_breaker_wiring.py`
-- **Action**: In services.py, import is_slow_completion from routing.slow_policy and the slow settings from config. At the primary success hook (after current recover call), add logic: compute slow = is_slow_completion(attempt_latency_s, peek.final_output_tokens, gate_s=settings.breaker_slow_latency_gate_s, tps_floor=settings.breaker_slow_tps_floor); call breaker.record_success(...) and branch on shadow vs. enforcement. At the budget-retry success point (after retry_peek success), compute retry latency as time.monotonic() - attempt_started and use retry_peek.final_output_tokens; apply the same slow/recover logic. Create tests/unit/test_slow_breaker_wiring.py with test_slow_policy_hook_shadow_mode, test_slow_policy_hook_enforcing_mode, test_slow_policy_below_k_no_trip, test_slow_policy_fast_success_recovers driving the REAL is_slow_completion and a REAL BreakerState — fake only the provider/stream boundary (controlled-latency fake streams carrying chosen output_tokens) and the clock where needed; never replace repoach functions.
-- **Commit**: `feat(proxy): apply slow-completion breaker policy in success paths`
-- **Done when**: pytest tests/unit/test_slow_breaker_wiring.py passes
-- **Unit tests**: `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_shadow_mode`, `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_enforcing_mode`, `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_below_k_no_trip`, `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_fast_success_recovers`
+- **Action**: NOTE: a previous attempt left work in place — services.py already carries partial wiring and tests/unit/test_slow_breaker_wiring.py exists with 2 of 4 tests passing; REPAIR and complete that work with write_file/edit_file (the step gate requires writes). In services.py, the primary success hook lives right after the existing get_breaker().recover(ref) call near line 389 inside _stream_with_failover: compute slow = is_slow_completion(attempt_latency_s, peek.final_output_tokens, gate_s=settings.breaker_slow_latency_gate_s, tps_floor=settings.breaker_slow_tps_floor); call breaker.record_success(...) and branch shadow (log would_trip only) vs enforcement (trip_slow). Make test_slow_policy_hook_shadow_mode and test_slow_policy_hook_enforcing_mode pass, driving the REAL is_slow_completion and a REAL BreakerState — fake only the provider/stream boundary and the clock; never replace repoach functions.
+- **Commit**: `feat(proxy): apply slow-completion policy on the primary success path`
+- **Done when**: pytest tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_shadow_mode tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_enforcing_mode passes
+- **Unit tests**: `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_shadow_mode`, `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_enforcing_mode`
 
-## Step 6 — Integration test for slow-completion breaker end-to-end
+## Step 6 — Slow-policy hook on the budget-retry success path
+
+- **Files**: `src/repoach/llm_proxy/api/services.py`, `tests/unit/test_slow_breaker_wiring.py`
+- **Action**: In services.py, the budget-retry success point follows retry_peek = await self._retry_with_more_budget(...) near line 408 (the retry_peek.got_content branch): compute the retry latency as time.monotonic() - attempt_started, use retry_peek.final_output_tokens, and apply the same slow/record_success/shadow-vs-enforce logic as the primary path (reuse the step-5 code path or a shared private helper). Make test_slow_policy_below_k_no_trip and test_slow_policy_fast_success_recovers pass, same REAL-policy/REAL-breaker rule, boundary fakes only.
+- **Commit**: `feat(proxy): apply slow-completion policy on the budget-retry path`
+- **Done when**: pytest tests/unit/test_slow_breaker_wiring.py passes
+- **Unit tests**: `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_below_k_no_trip`, `tests/unit/test_slow_breaker_wiring.py::test_slow_policy_fast_success_recovers`
+
+## Step 7 — Integration test for slow-completion breaker end-to-end
 
 - **Files**: `tests/integration/test_slow_breaker.py`
 - **Action**: Create tests/integration/test_slow_breaker.py following the truthful-boundary-fake pattern of test_proxy_dead_hop_quarantine.py. Implement test_slow_breaker_integration_shadow_mode that verifies shadow logging without tripping, and test_slow_breaker_integration_enforcing_mode that verifies a slow_completion trip in /health after k slow completions with shrunk gate.
@@ -130,23 +138,36 @@ Add a slow-completion breaker policy that treats chronic slowness as a strike. A
     },
     {
       "index": 5,
-      "title": "Apply slow-completion policy hook in services.py (primary and budget-retry paths)",
+      "title": "Slow-policy hook on the primary success path",
       "files": [
         "src/repoach/llm_proxy/api/services.py",
         "tests/unit/test_slow_breaker_wiring.py"
       ],
-      "action": "In services.py, import is_slow_completion from routing.slow_policy and the slow settings from config. At the primary success hook (after current recover call), add logic: compute slow = is_slow_completion(attempt_latency_s, peek.final_output_tokens, gate_s=settings.breaker_slow_latency_gate_s, tps_floor=settings.breaker_slow_tps_floor); call breaker.record_success(...) and branch on shadow vs. enforcement. At the budget-retry success point (after retry_peek success), compute retry latency as time.monotonic() - attempt_started and use retry_peek.final_output_tokens; apply the same slow/recover logic. Create tests/unit/test_slow_breaker_wiring.py with test_slow_policy_hook_shadow_mode, test_slow_policy_hook_enforcing_mode, test_slow_policy_below_k_no_trip, test_slow_policy_fast_success_recovers driving the REAL is_slow_completion and a REAL BreakerState — fake only the provider/stream boundary (controlled-latency fake streams carrying chosen output_tokens) and the clock where needed; never replace repoach functions.",
-      "commit_message": "feat(proxy): apply slow-completion breaker policy in success paths",
-      "done_when": "pytest tests/unit/test_slow_breaker_wiring.py passes",
+      "action": "NOTE: a previous attempt left work in place — services.py already carries partial wiring and tests/unit/test_slow_breaker_wiring.py exists with 2 of 4 tests passing; REPAIR and complete that work with write_file/edit_file (the step gate requires writes). In services.py, the primary success hook lives right after the existing get_breaker().recover(ref) call near line 389 inside _stream_with_failover: compute slow = is_slow_completion(attempt_latency_s, peek.final_output_tokens, gate_s=settings.breaker_slow_latency_gate_s, tps_floor=settings.breaker_slow_tps_floor); call breaker.record_success(...) and branch shadow (log would_trip only) vs enforcement (trip_slow). Make test_slow_policy_hook_shadow_mode and test_slow_policy_hook_enforcing_mode pass, driving the REAL is_slow_completion and a REAL BreakerState — fake only the provider/stream boundary and the clock; never replace repoach functions.",
+      "commit_message": "feat(proxy): apply slow-completion policy on the primary success path",
+      "done_when": "pytest tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_shadow_mode tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_enforcing_mode passes",
       "unit_tests": [
         "tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_shadow_mode",
-        "tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_enforcing_mode",
+        "tests/unit/test_slow_breaker_wiring.py::test_slow_policy_hook_enforcing_mode"
+      ]
+    },
+    {
+      "index": 6,
+      "title": "Slow-policy hook on the budget-retry success path",
+      "files": [
+        "src/repoach/llm_proxy/api/services.py",
+        "tests/unit/test_slow_breaker_wiring.py"
+      ],
+      "action": "In services.py, the budget-retry success point follows retry_peek = await self._retry_with_more_budget(...) near line 408 (the retry_peek.got_content branch): compute the retry latency as time.monotonic() - attempt_started, use retry_peek.final_output_tokens, and apply the same slow/record_success/shadow-vs-enforce logic as the primary path (reuse the step-5 code path or a shared private helper). Make test_slow_policy_below_k_no_trip and test_slow_policy_fast_success_recovers pass, same REAL-policy/REAL-breaker rule, boundary fakes only.",
+      "commit_message": "feat(proxy): apply slow-completion policy on the budget-retry path",
+      "done_when": "pytest tests/unit/test_slow_breaker_wiring.py passes",
+      "unit_tests": [
         "tests/unit/test_slow_breaker_wiring.py::test_slow_policy_below_k_no_trip",
         "tests/unit/test_slow_breaker_wiring.py::test_slow_policy_fast_success_recovers"
       ]
     },
     {
-      "index": 6,
+      "index": 7,
       "title": "Integration test for slow-completion breaker end-to-end",
       "files": [
         "tests/integration/test_slow_breaker.py"
