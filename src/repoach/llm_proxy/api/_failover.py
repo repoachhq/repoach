@@ -78,12 +78,19 @@ class PeekResult:
             retried.  The dispatcher retries a budget-starved candidate
             with a larger budget before failing over
             (SP-PROXY-THINKING-BUDGET-RETRY).
+        final_output_tokens: The ``usage.output_tokens`` from the final
+            ``message_delta`` emitted by the stream, if any.
+            ``None`` when no ``message_delta`` arrived before
+            ``message_stop`` (or stream exhaustion).  Exposed so
+            callers can compute tokens-per-second for slow-completion
+            policies without re-parsing the buffered stream.
     """
 
     buffered: list[str]
     got_content: bool
     stream_done: bool
     looks_budget_starved: bool = False
+    final_output_tokens: int | None = None
 
 
 _EVENT_TYPE_PATTERN = re.compile(r"^event:\s*(\S+)", re.MULTILINE)
@@ -296,4 +303,5 @@ async def peek_for_content(stream: AsyncIterator[str]) -> PeekResult:
         got_content=got_content,
         stream_done=stream_done,
         looks_budget_starved=looks_budget_starved,
+        final_output_tokens=final_output_tokens,
     )

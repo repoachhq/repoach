@@ -143,6 +143,12 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "CHAINPILOT_MAX_MUTATIONS": "REPOACH_CHAINPILOT_MAX_MUTATIONS",
     "BREAKER_TTL_QUARANTINE_S": "REPOACH_BREAKER_TTL_QUARANTINE_S",
     "BREAKER_QUARANTINE_THRESHOLD": "REPOACH_BREAKER_QUARANTINE_THRESHOLD",
+    "BREAKER_SLOW_LATENCY_GATE_S": "REPOACH_BREAKER_SLOW_LATENCY_GATE_S",
+    "BREAKER_SLOW_TPS_FLOOR": "REPOACH_BREAKER_SLOW_TPS_FLOOR",
+    "BREAKER_SLOW_K": "REPOACH_BREAKER_SLOW_K",
+    "BREAKER_SLOW_N": "REPOACH_BREAKER_SLOW_N",
+    "BREAKER_SLOW_TTL_S": "REPOACH_BREAKER_SLOW_TTL_S",
+    "BREAKER_SLOW_SHADOW": "REPOACH_BREAKER_SLOW_SHADOW",
     "CREDITS_FLOOR_USD": "REPOACH_CREDITS_FLOOR_USD",
     "CREDITS_HEALTH_CACHE_TTL_S": "REPOACH_CREDITS_HEALTH_CACHE_TTL_S",
     "CHAIN_STATUS_WINDOW_H": "REPOACH_CHAIN_STATUS_WINDOW_H",
@@ -281,6 +287,20 @@ class Settings(BaseSettings):
     )
     breaker_quarantine_threshold: int = Field(
         default=3, ge=1, validation_alias=_aliases("BREAKER_QUARANTINE_THRESHOLD")
+    )
+    breaker_slow_latency_gate_s: float = Field(
+        default=10.0, validation_alias=_aliases("BREAKER_SLOW_LATENCY_GATE_S")
+    )
+    breaker_slow_tps_floor: float = Field(
+        default=1.0, validation_alias=_aliases("BREAKER_SLOW_TPS_FLOOR")
+    )
+    breaker_slow_k: int = Field(default=3, validation_alias=_aliases("BREAKER_SLOW_K"))
+    breaker_slow_n: int = Field(default=5, validation_alias=_aliases("BREAKER_SLOW_N"))
+    breaker_slow_ttl_s: float = Field(
+        default=300.0, validation_alias=_aliases("BREAKER_SLOW_TTL_S")
+    )
+    breaker_slow_shadow: bool = Field(
+        default=True, validation_alias=_aliases("BREAKER_SLOW_SHADOW")
     )
     credits_floor_usd: float = Field(default=2.0, validation_alias=_aliases("CREDITS_FLOOR_USD"))
     credits_health_cache_ttl_s: float = Field(

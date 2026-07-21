@@ -23,7 +23,7 @@ from repoach.llm_proxy.providers.exceptions import (
     ProviderError,
     RateLimitError,
 )
-from repoach.llm_proxy.routing import ModelRef, get_breaker, ttl_for_reason
+from repoach.llm_proxy.routing import ModelRef, get_breaker, is_slow_completion, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
 
 from ._failover import PeekResult, peek_for_content
@@ -288,6 +288,22 @@ class ClaudeProxyService:
         response, a single ``proxy_chain_exhausted`` event is emitted
         before the HTTP error propagates — see SP-LLM-PROXY-FAILOVER-LOG
         for the rationale.
+
+        Both the primary success path and the budget-retry success path
+        (SP-BREAKER-SLOW-STRIKE) apply the same recover-or-strike policy
+        to every content-bearing completion: :func:`is_slow_completion`
+        classifies the attempt from its full-completion latency and
+        final output tokens, :meth:`BreakerState.record_success` folds
+        that outcome into the ref's k-of-n slow-success window, and a
+        window that reaches ``breaker_slow_k`` either logs
+        ``breaker_slow_strike_shadow`` (shadow mode) or trips the ref
+        via :meth:`BreakerState.trip_slow` for ``breaker_slow_ttl_s`` —
+        a dedicated cool-down that never escalates through
+        ``_consecutive_failures``. This is a deliberate divergence from
+        the offline-probe doctrine (`slowness is not a fault`,
+        ``providers/attribution.py``): live dispatch protects the
+        caller waiting on the wire, so a slow-but-served completion is
+        a strike, not recovery evidence.
         """
         dispatch_id = f"disp_{uuid.uuid4().hex[:12]}"
         last_error: Exception | None = None
@@ -348,7 +364,45 @@ class ClaudeProxyService:
             attempt_latency_s = round(time.monotonic() - attempt_started, 3)
 
             if peek.got_content:
-                get_breaker().recover(ModelRef.parse(candidate.provider_model_ref))
+                ref = ModelRef.parse(candidate.provider_model_ref)
+                slow = is_slow_completion(
+                    attempt_latency_s,
+                    peek.final_output_tokens,
+                    gate_s=self._settings.breaker_slow_latency_gate_s,
+                    tps_floor=self._settings.breaker_slow_tps_floor,
+                )
+                if slow:
+                    should_trip = get_breaker().record_success(
+                        ref,
+                        True,
+                        k=self._settings.breaker_slow_k,
+                        n=self._settings.breaker_slow_n,
+                    )
+                    if should_trip:
+                        if self._settings.breaker_slow_shadow:
+                            logger.warning(
+                                "breaker_slow_strike_shadow",
+                                ref=str(ref),
+                                latency_s=attempt_latency_s,
+                                output_tokens=peek.final_output_tokens,
+                                would_trip=True,
+                            )
+                        else:
+                            get_breaker().trip_slow(
+                                ref,
+                                now=time.monotonic(),
+                                ttl_s=self._settings.breaker_slow_ttl_s,
+                            )
+                    else:
+                        logger.warning(
+                            "breaker_slow_strike",
+                            ref=str(ref),
+                            latency_s=attempt_latency_s,
+                            output_tokens=peek.final_output_tokens,
+                            strikes=sum(1 for v in get_breaker()._slow_history.get(ref, []) if v),
+                        )
+                else:
+                    get_breaker().recover(ref)
                 if attempt_index > 0:
                     logger.info(
                         "proxy_chain_failover_recovered",
@@ -375,6 +429,48 @@ class ClaudeProxyService:
                     attempt_index=attempt_index,
                 )
                 if retry_peek is not None and retry_peek.got_content:
+                    retry_latency_s = round(time.monotonic() - attempt_started, 3)
+                    ref = ModelRef.parse(candidate.provider_model_ref)
+                    slow = is_slow_completion(
+                        retry_latency_s,
+                        retry_peek.final_output_tokens,
+                        gate_s=self._settings.breaker_slow_latency_gate_s,
+                        tps_floor=self._settings.breaker_slow_tps_floor,
+                    )
+                    if slow:
+                        should_trip = get_breaker().record_success(
+                            ref,
+                            True,
+                            k=self._settings.breaker_slow_k,
+                            n=self._settings.breaker_slow_n,
+                        )
+                        if should_trip:
+                            if self._settings.breaker_slow_shadow:
+                                logger.warning(
+                                    "breaker_slow_strike_shadow",
+                                    ref=str(ref),
+                                    latency_s=retry_latency_s,
+                                    output_tokens=retry_peek.final_output_tokens,
+                                    would_trip=True,
+                                )
+                            else:
+                                get_breaker().trip_slow(
+                                    ref,
+                                    now=time.monotonic(),
+                                    ttl_s=self._settings.breaker_slow_ttl_s,
+                                )
+                        else:
+                            logger.warning(
+                                "breaker_slow_strike",
+                                ref=str(ref),
+                                latency_s=retry_latency_s,
+                                output_tokens=retry_peek.final_output_tokens,
+                                strikes=sum(
+                                    1 for v in get_breaker()._slow_history.get(ref, []) if v
+                                ),
+                            )
+                    else:
+                        get_breaker().recover(ref)
                     for buffered_chunk in retry_peek.buffered:
                         yield buffered_chunk
                     return
