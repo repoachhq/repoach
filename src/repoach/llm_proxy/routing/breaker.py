@@ -14,6 +14,7 @@ in by the caller, keeping the state itself clock-free and testable.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from repoach.llm_proxy.routing.refs import ModelRef
@@ -44,6 +45,18 @@ or a 404 (bad model id) will not self-heal — the operator must fund the
 account, rotate the key, or fix the model id.  These earn the quarantine
 TTL on the first occurrence so dispatch stops paying the round-trip every
 transient window.
+"""
+
+ACCOUNT_FAULT_REASONS: frozenset[str] = frozenset(
+    {"auth_failed", "provider_401", "provider_402", "provider_403"}
+)
+"""Quarantine reasons that are account-class faults, not per-model.
+
+When one ref of a provider earns an account-class reason (e.g. a 402
+because the account has no credits), every other ref of the same
+provider will fail the same way.  ``provider_404`` is deliberately
+excluded — a missing model id is a per-model property, not an account
+property, and must stay per-ref.
 """
 
 
@@ -150,6 +163,36 @@ class BreakerState:
         count = self._consecutive_failures.get(ref, 0) + 1
         self._consecutive_failures[ref] = count
         return count
+
+    def trip_provider(
+        self,
+        provider_id: str,
+        refs: Iterable[ModelRef],
+        *,
+        now: float,
+        ttl_s: float,
+        reason: str,
+    ) -> None:
+        """Bench every ref in ``refs`` whose provider matches ``provider_id``.
+
+        Delegates to :meth:`trip` for each matching ref, reusing its
+        extend-never-shorten semantics (idempotent on re-bench).  Non-
+        matching refs are silently skipped so callers can pass the full
+        set of resolved-chain refs without pre-filtering.
+
+        Args:
+            provider_id: The provider whose refs should all be benched
+                (e.g. ``"open_router"``).
+            refs: The set of refs to scan — typically every ref present
+                in the resolved chains for the current call.
+            now: ``time.monotonic`` timestamp.
+            ttl_s: Cool-down window in seconds.
+            reason: The failover reason string (stored for snapshot on
+                every benched ref).
+        """
+        for ref in refs:
+            if ref.provider_id == provider_id:
+                self.trip(ref, now=now, ttl_s=ttl_s, reason=reason)
 
     def recover(self, ref: ModelRef) -> None:
         """Clear ``ref`` immediately — it just served real content.
