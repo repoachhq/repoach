@@ -5,7 +5,7 @@ version: 0.1
 status: approved
 author: jfaye (2026-07-10 incident PR #76; architecture docs/chain_resilience_architecture.md W1.3; adversarial panel 2026-07-11)
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-21
 
 owns:
   code: []
@@ -29,23 +29,23 @@ constraints:
 Make the scheduled chain regeneration reason on live data, loudly
 refusing to conclude otherwise. Root cause of the 2026-07-10
 blindness: the 6-h timer runs `regenerate-chains`
-(`deploy/systemd/ferova-chainpilot.service`), a pure READER of
+(`deploy/systemd/repoach-chainpilot.service`), a pure READER of
 `cell_health_probe`; the only writer (the cell sweep) lives in the
-unscheduled `ferova autopilot` path. The table froze at 2026-06-30,
+unscheduled `repoach autopilot` path. The table froze at 2026-06-30,
 and `gather_and_regenerate` consumed 10-day-old latencies as current
 — reporting `changed=False` throughout the incident.
 
 ## Context
 
 `gather_and_regenerate`
-(`src/ferova/llm_proxy/routing/chain_regen.py:65-114`) already runs
+(`src/repoach/llm_proxy/routing/chain_regen.py:65-114`) already runs
 `sweep_model_matrix` (discovery; the `cells=501` journal figure) at
 `:92` and calls `fetch_cell_probes(db_path)` with NO `since` window
 at `:94`. The health sweep pieces exist: `sweep_cell_health`
-(`src/ferova/llm_proxy/providers/cell_probe_sweep.py:73-85`, takes
+(`src/repoach/llm_proxy/providers/cell_probe_sweep.py:73-85`, takes
 the matrix as first argument) and `record_cell_probes`
-(`src/ferova/llm_proxy/providers/cell_probe_store.py:107`); their
-only chain-cycle caller is `src/ferova/review/chain_loop.py:212-214`
+(`src/repoach/llm_proxy/providers/cell_probe_store.py:107`); their
+only chain-cycle caller is `src/repoach/review/chain_loop.py:212-214`
 (`effort_sweep.py:116` also reuses `sweep_cell_health` once per
 provider on filtered sub-matrices — exactly the mechanism this spec
 sanctions).
@@ -75,7 +75,7 @@ The service unit already tolerates exit 1 (`SuccessExitStatus=0 1`).
 
 ## Non-Goals
 
-- NG1: no change to the `ferova autopilot` legacy path or its
+- NG1: no change to the `repoach autopilot` legacy path or its
   freshness gate (`chain_loop.py:225`).
 - NG2: no change to any reader's scoring semantics
   (`speed_for_from_rows`, attribution) — G3 keeps 429s OUT of the
@@ -198,7 +198,7 @@ else: proceed exactly as today
 - Adds ENFORCED edge (same PR): SP-MFC-REGEN -> SP-CREDITS-CHECK.
   `chain_regen.py` is owned by SP-MFC-REGEN and the edge-honesty gate
   resolves a changed file's imports through the FILE OWNER's
-  `depends_on` (`src/ferova/lint/edge_honesty.py:140-158`) — so the
+  `depends_on` (`src/repoach/lint/edge_honesty.py:140-158`) — so the
   credits import lands only if SP-MFC-REGEN declares it. This PR
   amends SP-MFC-REGEN's frontmatter accordingly (version bump). The
   sweep-pieces imports are already covered there
@@ -230,7 +230,7 @@ flowchart TD
 - [ ] AC1: freshness refusal — `gather_and_regenerate` driven
   directly with an injected `client` carrying `httpx.MockTransport`
   and a pre-built `ranking=` (the Interface's two designed seams; no
-  monkeypatched ferova functions), against a tmp-path SQLite whose
+  monkeypatched repoach functions), against a tmp-path SQLite whose
   rows are older than `max_cell_age_h` and a transport whose probes
   yield no fresh rows: raises `StaleCellsError`, logs
   `chain_regen_stale_cells`, writes no chains output even with apply

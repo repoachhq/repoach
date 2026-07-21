@@ -5,7 +5,7 @@ version: 0.1
 status: approved
 author: jfaye (2026-07-10 incident PR #76; architecture docs/chain_resilience_architecture.md W1.2; adversarial panel 2026-07-11)
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-21
 
 owns:
   code: []
@@ -38,29 +38,29 @@ tokens-per-second) must count as a strike, not a recovery.
 
 This deliberately diverges from the offline-probe doctrine
 ("slowness is not a fault",
-`src/ferova/llm_proxy/providers/attribution.py:26`): offline probes
+`src/repoach/llm_proxy/providers/attribution.py:26`): offline probes
 assess capability; live dispatch protects callers. The divergence is
 documented in the touched module docstrings.
 
 ## Context
 
-In `_stream_with_failover` (`src/ferova/llm_proxy/api/services.py`):
+In `_stream_with_failover` (`src/repoach/llm_proxy/api/services.py`):
 `attempt_started` at `:258`; on the peek-complete path
 `attempt_latency_s` is computed at `:288` — a FULL-completion wall
 clock, because `peek_for_content` drains the stream to
-`message_stop` (`src/ferova/llm_proxy/api/_failover.py:238-255`) —
+`message_stop` (`src/repoach/llm_proxy/api/_failover.py:238-255`) —
 and `recover()` is called at `:291` when `peek.got_content`.
 `peek_for_content` computes `final_output_tokens` as a local
 (`_failover.py:234, 242-246`) but `PeekResult`
 (`_failover.py:56-87`) does not carry it. The budget-retry success
 path (`services.py:309-320`) yields content WITHOUT calling
-`recover()` today. The breaker (`src/ferova/llm_proxy/routing/
+`recover()` today. The breaker (`src/repoach/llm_proxy/routing/
 breaker.py`) tracks `_consecutive_failures` whose escalation
 (`escalated_ttl`, `breaker.py:93`; applied `services.py:205-213`)
 must NOT be fed by slow strikes (panel finding: two timeouts + one
 slow-but-served completion must not produce a 6-h quarantine).
 Breaker settings live at
-`src/ferova/llm_proxy/config/settings.py:263-271`.
+`src/repoach/llm_proxy/config/settings.py:263-271`.
 
 ## Goals
 
@@ -102,7 +102,7 @@ Breaker settings live at
 ## Interface
 
 New pure policy (module of the Developer's choice under
-`src/ferova/llm_proxy/routing/`, exported next to the breaker):
+`src/repoach/llm_proxy/routing/`, exported next to the breaker):
 
 - `is_slow_completion(latency_s: float, output_tokens: int | None, *, gate_s: float, tps_floor: float) -> bool`
   — `True` iff `latency_s > gate_s` AND `output_tokens` is not `None`
@@ -196,7 +196,7 @@ mechanism is the Developer's choice; the OBSERVABLE contract is AC4).
   field (additive, default `None` — existing constructors
   unaffected).
 - Governance posture: the new policy module under
-  `src/ferova/llm_proxy/routing/` is deliberately left frontier
+  `src/repoach/llm_proxy/routing/` is deliberately left frontier
   (unowned) — `services.py` imports it, and owning it here would
   force a `depends_on` amendment on that file's owning spec for a
   pure policy helper; the edge-honesty gate does not police imports
