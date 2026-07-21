@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from repoach.llm_proxy.api._failover import PeekResult, peek_for_content
+from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.routing.slow_policy import is_slow_completion
 
 
@@ -127,3 +128,15 @@ def test_is_slow_never_raises(
     """The policy is total: no exotic finite/edge input raises."""
     result = is_slow_completion(latency_s, output_tokens, gate_s=gate_s, tps_floor=tps_floor)
     assert isinstance(result, bool)
+
+
+def test_slow_settings_defaults() -> None:
+    """Settings carries the six breaker_slow_* knobs with the defaults
+    declared in the spec (SP-BREAKER-SLOW-STRIKE)."""
+    settings = Settings()
+    assert settings.breaker_slow_latency_gate_s == 10.0
+    assert settings.breaker_slow_tps_floor == 1.0
+    assert settings.breaker_slow_k == 3
+    assert settings.breaker_slow_n == 5
+    assert settings.breaker_slow_ttl_s == 300.0
+    assert settings.breaker_slow_shadow is True
