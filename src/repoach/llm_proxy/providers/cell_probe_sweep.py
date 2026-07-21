@@ -82,6 +82,7 @@ async def sweep_cell_health(
     max_tokens: int = 64,
     timeout_s: float = 30.0,
     slow_threshold_s: float = 8.0,
+    pacing_s: float = 0.0,
 ) -> list[CellHealth]:
     """Probe every cell of *matrix* under a concurrency bound. Never raises.
 
@@ -102,6 +103,10 @@ async def sweep_cell_health(
         max_tokens: Per-probe completion budget.
         timeout_s: Per-probe hard cap.
         slow_threshold_s: Latency above which a probe is reported ``slow``.
+        pacing_s: Optional inter-probe delay in seconds; when > 0 an
+            ``asyncio.sleep(pacing_s)`` is inserted after the semaphore
+            acquisition and before the ``probe_cell`` call. Default 0.0
+            (no pacing).
 
     Returns:
         One :class:`CellHealth` per cell, in ``matrix.cells`` order.
@@ -117,6 +122,8 @@ async def sweep_cell_health(
             )
         base_url, api_key = endpoint
         async with semaphore:
+            if pacing_s > 0:
+                await asyncio.sleep(pacing_s)
             return await probe_cell(
                 client,
                 provider_id=cell.provider_id,
