@@ -119,12 +119,12 @@ if [[ "$mode" != "tests" && "$mode" != "integration" ]] ; then
 fi
 
 if [[ "$mode" == "full" || "$mode" == "tests" ]] ; then
-    run_step "pytest tests/unit" python -m pytest -q tests/unit
+    run_step "pytest tests/unit" python -m pytest -q tests/unit -n auto --dist worksteal
 fi
 
 if [[ "$mode" == "full" || "$mode" == "integration" ]] ; then
     if [[ -n "$(find tests/integration -name 'test_*.py' 2>/dev/null)" ]] ; then
-        run_step "pytest tests/integration" python -m pytest -q tests/integration
+        run_step "pytest tests/integration" python -m pytest -q tests/integration -n auto --dist worksteal
     else
         bold "pytest tests/integration"
         ok "no integration tests found — stage skipped"
