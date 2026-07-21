@@ -11,6 +11,7 @@ import json
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from repoach.cli.main import app
@@ -112,16 +113,40 @@ def _equivalences() -> EquivalenceTable:
     )
 
 
+def _fresh_row(provider: str, model: str, latency: float | None) -> CellProbeRow:
+    """A CellProbeRow stamped at the current instant (always inside the freshness window)."""
+    return CellProbeRow(
+        recorded_at=datetime.now(UTC),
+        provider_id=provider,
+        model_id=model,
+        status="ok",
+        latency_s=latency,
+        content_chars=10,
+        reasoning_chars=0,
+        detail="",
+    )
+
+
 def _patch_gatherers(monkeypatch) -> None:
-    """Stub every live gather function in the chain_regen namespace."""
+    """Stub every live gather function in the chain_regen namespace.
+
+    ``fetch_cell_probes`` returns one fresh (now-stamped) row, so the G5
+    freshness read this step adds does not change the pre-existing
+    shadow/apply tests' outcome.
+    """
 
     async def _fake_sweep(settings, client):
         return _matrix()
 
+    def _fake_fetch_cell_probes(
+        db_path, *, since=None, provider_id=None, model_id=None, limit=None
+    ):
+        return [_fresh_row("nvidia_nim", "x/alpha-model", 1.0)]
+
     monkeypatch.setattr(chain_regen, "fetch_aa_ranking", lambda settings: _ranking())
     monkeypatch.setattr(chain_regen, "sweep_model_matrix", _fake_sweep)
     monkeypatch.setattr(chain_regen, "load_equivalence_table", lambda: _equivalences())
-    monkeypatch.setattr(chain_regen, "fetch_cell_probes", lambda db_path: [])
+    monkeypatch.setattr(chain_regen, "fetch_cell_probes", _fake_fetch_cell_probes)
 
 
 async def test_gather_and_regenerate_shadow_does_not_write(tmp_path, monkeypatch) -> None:
@@ -241,3 +266,76 @@ async def test_credits_skip() -> None:
         )
     assert kept_none == cells
     assert skipped_none == 0
+
+
+async def test_freshness_refusal(tmp_path, monkeypatch) -> None:
+    """Stale rows and zero rows both raise StaleCellsError; chains.env is untouched."""
+    _patch_gatherers(monkeypatch)
+    target = tmp_path / "chains.env"
+    target.write_text(_CHAINS, encoding="utf-8")
+    settings = Settings(_env_file=None, REGEN_MAX_CELL_AGE_H=1.0)
+
+    stale_row = _row("nvidia_nim", "x/alpha-model", 1.0, day=1)
+
+    def _fake_fetch_stale(db_path, *, since=None, provider_id=None, model_id=None, limit=None):
+        return [stale_row]
+
+    monkeypatch.setattr(chain_regen, "fetch_cell_probes", _fake_fetch_stale)
+    with pytest.raises(chain_regen.StaleCellsError):
+        await gather_and_regenerate(
+            settings,
+            client=None,
+            chains_path=target,
+            db_path=tmp_path / "db.sqlite",
+            enabled=True,
+        )
+    assert target.read_text(encoding="utf-8") == _CHAINS
+
+    def _fake_fetch_empty(db_path, *, since=None, provider_id=None, model_id=None, limit=None):
+        return []
+
+    monkeypatch.setattr(chain_regen, "fetch_cell_probes", _fake_fetch_empty)
+    with pytest.raises(chain_regen.StaleCellsError):
+        await gather_and_regenerate(
+            settings,
+            client=None,
+            chains_path=target,
+            db_path=tmp_path / "db2.sqlite",
+            enabled=True,
+        )
+    assert target.read_text(encoding="utf-8") == _CHAINS
+
+
+async def test_nominal_fresh_sweep_concludes(tmp_path, monkeypatch) -> None:
+    """Fresh probe rows let gather_and_regenerate conclude a normal regeneration."""
+    _patch_gatherers(monkeypatch)
+    target = tmp_path / "chains.env"
+    target.write_text(_CHAINS, encoding="utf-8")
+
+    fresh_row = CellProbeRow(
+        recorded_at=datetime.now(UTC),
+        provider_id="nvidia_nim",
+        model_id="x/alpha-model",
+        status="ok",
+        latency_s=1.2,
+        content_chars=10,
+        reasoning_chars=0,
+        detail="",
+    )
+
+    def _fake_fetch_fresh(db_path, *, since=None, provider_id=None, model_id=None, limit=None):
+        return [fresh_row]
+
+    monkeypatch.setattr(chain_regen, "fetch_cell_probes", _fake_fetch_fresh)
+
+    result = await gather_and_regenerate(
+        Settings(_env_file=None),
+        client=None,
+        chains_path=target,
+        db_path=tmp_path / "db.sqlite",
+        enabled=True,
+    )
+    assert result.written is True
+    assert "MODEL_OPUS=nvidia_nim/x/alpha-model,claude_code/opus" in target.read_text(
+        encoding="utf-8"
+    )

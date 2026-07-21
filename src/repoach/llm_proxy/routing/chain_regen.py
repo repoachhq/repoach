@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -56,9 +56,23 @@ _log = get_logger(__name__)
 _RATE_LIMITED_DETAIL = "http=429"
 
 __all__ = [
+    "StaleCellsError",
     "gather_and_regenerate",
     "speed_for_from_rows",
 ]
+
+
+class StaleCellsError(Exception):
+    """Raised when the freshness-windowed cell-probe read finds no fresh rows.
+
+    Signals the G5 refusal (SP-REGEN-FRESH-CELLS): the bounded in-cycle sweep
+    ran, but the ``since``-windowed read of the cell-probe store came back
+    empty, or its newest row is older than ``regen_max_cell_age_h`` — the exact
+    2026-07-10 incident condition, caught here before a regeneration
+    conclusion is drawn from a stale table. The ``regenerate-chains`` CLI
+    command is expected to catch this, print a one-line reason, and exit
+    non-zero rather than let it propagate as an unhandled traceback.
+    """
 
 
 def speed_for_from_rows(
@@ -401,7 +415,22 @@ async def gather_and_regenerate(
     await _sweep_and_persist_bounded_cells(
         settings, client, matrix, equivalences, ranking, current, db_path
     )
-    speed_for = speed_for_from_rows(fetch_cell_probes(db_path))
+    now = datetime.now(UTC)
+    max_age = timedelta(hours=settings.regen_max_cell_age_h)
+    since = now - max_age
+    rows = fetch_cell_probes(db_path, since=since)
+    newest = max((row.recorded_at for row in rows), default=None)
+    if newest is None or newest < since:
+        _log.warning(
+            "chain_regen_stale_cells",
+            newest=newest.isoformat() if newest is not None else None,
+            max_age_h=settings.regen_max_cell_age_h,
+        )
+        raise StaleCellsError(
+            f"no cell-probe rows fresher than {settings.regen_max_cell_age_h}h "
+            f"(newest={newest.isoformat() if newest is not None else 'none'})"
+        )
+    speed_for = speed_for_from_rows(rows)
     result = regenerate(
         current,
         ranking,
