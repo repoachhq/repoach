@@ -50,6 +50,22 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
 - **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes and repoach arch check --staged reports edge-honesty ok
 - **Unit tests**: `tests/unit/test_chain_regen.py::test_bounded_sweep_logs_planned_count`, `tests/unit/test_chain_regen.py::test_429_logs_rate_limited_once`, `tests/unit/test_chain_regen.py::test_credits_skip_transport_silent_and_logged`, `tests/integration/test_chain_regen_freshness.py::test_stale_cells_event_logged`
 
+## Step 7 — Guard the sweep failure path and condense to the AC6 LOC budget
+
+- **Files**: `src/repoach/llm_proxy/routing/chain_regen.py`, `tests/unit/test_chain_regen.py`
+- **Action**: (a) Wrap the bounded-sweep phase of gather_and_regenerate so ANY exception raised inside it (credits fetch, probe transport, record_cell_probes) is caught, logged as chain_regen_sweep_failed, and treated as zero fresh rows — the G5 freshness guard then raises StaleCellsError as designed; no raw exception may escape toward the CLI. Add NEW unit test test_sweep_failure_folds_into_stale_refusal: a gatherer/transport that raises mid-sweep yields StaleCellsError (not the original exception) and the chain_regen_sweep_failed event is captured. (b) Condense chain_regen.py toward the spec's AC6 budget (≤250 net new non-test lines vs develop): inline single-use helpers, deduplicate the bounded-set/persist plumbing, tighten docstrings — behavior unchanged, every existing test stays green. Report the resulting net LOC (git diff --stat develop -- src/repoach/llm_proxy/routing/chain_regen.py) in the step summary.
+- **Commit**: `fix(chain-regen): fold sweep failures into the loud refusal; condense to the AC6 budget`
+- **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes
+- **Unit tests**: `tests/unit/test_chain_regen.py::test_sweep_failure_folds_into_stale_refusal`
+
+## Step 8 — Rework AC1/AC5 tests against the designed seams
+
+- **Files**: `tests/unit/test_chain_regen.py`, `tests/integration/test_chain_regen_freshness.py`
+- **Action**: (a) NEW unit test test_nominal_via_injected_client_and_ranking implementing AC5 as specified: a real httpx.AsyncClient over httpx.MockTransport injected through the client seam plus a pre-built AaRanking passed via ranking= — NO monkeypatching of any repoach function; assert the regeneration completes on fresh rows. Then DELETE test_nominal_fresh_sweep_concludes and the _patch_gatherers helper if no remaining test uses it. (b) NEW integration test test_stale_after_real_sweep_refuses implementing AC1's construction: a cap > 0 sweep whose transport probes yield NO fresh rows (failing/stale probes), asserting StaleCellsError end to end with untouched chains output and the chain_regen_stale_cells event; replace the REGEN_SWEEP_PER_PROVIDER_CAP=0 escape-hatch construction in the existing refusal tests with this one (keep a cap=0 variant only if it pins a distinct behavior, otherwise delete it).
+- **Commit**: `test(chain-regen): AC1/AC5 against real seams — injected client, ranking=, real-sweep staleness`
+- **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes and grep -c "_patch_gatherers\|monkeypatch.setattr" tests/unit/test_chain_regen.py reports only boundary-safe uses
+- **Unit tests**: `tests/unit/test_chain_regen.py::test_nominal_via_injected_client_and_ranking`, `tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses`
+
 ## Integration tests
 
 - `tests/integration/test_chain_regen_freshness.py::test_end_to_end_freshness_refusal`
@@ -151,6 +167,35 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
         "tests/unit/test_chain_regen.py::test_429_logs_rate_limited_once",
         "tests/unit/test_chain_regen.py::test_credits_skip_transport_silent_and_logged",
         "tests/integration/test_chain_regen_freshness.py::test_stale_cells_event_logged"
+      ]
+    },
+    {
+      "index": 7,
+      "title": "Guard the sweep failure path and condense to the AC6 LOC budget",
+      "files": [
+        "src/repoach/llm_proxy/routing/chain_regen.py",
+        "tests/unit/test_chain_regen.py"
+      ],
+      "action": "(a) Wrap the bounded-sweep phase of gather_and_regenerate so ANY exception raised inside it (credits fetch, probe transport, record_cell_probes) is caught, logged as chain_regen_sweep_failed, and treated as zero fresh rows — the G5 freshness guard then raises StaleCellsError as designed; no raw exception may escape toward the CLI. Add NEW unit test test_sweep_failure_folds_into_stale_refusal: a gatherer/transport that raises mid-sweep yields StaleCellsError (not the original exception) and the chain_regen_sweep_failed event is captured. (b) Condense chain_regen.py toward the spec's AC6 budget (no more than 250 net new non-test lines vs develop): inline single-use helpers, deduplicate the bounded-set/persist plumbing, tighten docstrings — behavior unchanged, every existing test stays green. Report the resulting net LOC (git diff --stat develop -- src/repoach/llm_proxy/routing/chain_regen.py) in the step summary.",
+      "commit_message": "fix(chain-regen): fold sweep failures into the loud refusal; condense to the AC6 budget",
+      "done_when": "pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes",
+      "unit_tests": [
+        "tests/unit/test_chain_regen.py::test_sweep_failure_folds_into_stale_refusal"
+      ]
+    },
+    {
+      "index": 8,
+      "title": "Rework AC1/AC5 tests against the designed seams",
+      "files": [
+        "tests/unit/test_chain_regen.py",
+        "tests/integration/test_chain_regen_freshness.py"
+      ],
+      "action": "(a) NEW unit test test_nominal_via_injected_client_and_ranking implementing AC5 as specified: a real httpx.AsyncClient over httpx.MockTransport injected through the client seam plus a pre-built AaRanking passed via ranking= — NO monkeypatching of any repoach function; assert the regeneration completes on fresh rows. Then DELETE test_nominal_fresh_sweep_concludes and the _patch_gatherers helper if no remaining test uses it. (b) NEW integration test test_stale_after_real_sweep_refuses implementing AC1's construction: a cap > 0 sweep whose transport probes yield NO fresh rows (failing/stale probes), asserting StaleCellsError end to end with untouched chains output and the chain_regen_stale_cells event; replace the REGEN_SWEEP_PER_PROVIDER_CAP=0 escape-hatch construction in the existing refusal tests with this one (keep a cap=0 variant only if it pins a distinct behavior, otherwise delete it).",
+      "commit_message": "test(chain-regen): AC1/AC5 against real seams — injected client, ranking=, real-sweep staleness",
+      "done_when": "pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes",
+      "unit_tests": [
+        "tests/unit/test_chain_regen.py::test_nominal_via_injected_client_and_ranking",
+        "tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses"
       ]
     }
   ],
