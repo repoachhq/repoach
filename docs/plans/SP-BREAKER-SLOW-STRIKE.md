@@ -58,6 +58,14 @@ Add a slow-completion breaker policy that treats chronic slowness as a strike. A
 - **Done when**: pytest tests/integration/test_slow_breaker.py passes
 - **Unit tests**: `tests/integration/test_slow_breaker.py::test_slow_breaker_integration_shadow_mode`, `tests/integration/test_slow_breaker.py::test_slow_breaker_integration_enforcing_mode`
 
+## Step 8 — Close the judge gaps: AC4/AC5 regression tests, AC2 slow-TTL survival, AC7 breaker docstring
+
+- **Files**: `tests/unit/test_slow_breaker_wiring.py`, `tests/unit/test_health_breaker.py`, `src/repoach/llm_proxy/routing/breaker.py`
+- **Action**: Deliver the spec ACs the self-verify judge found unmet. In tests/unit/test_slow_breaker_wiring.py add: test_hard_failures_then_slow_takes_slow_ttl (AC4 — breaker_slow_shadow=false, breaker_slow_k=1, two hard failures then one slow-but-served completion; assert the ref's breaker entry reason is 'slow_completion' with ttl_remaining <= breaker_slow_ttl_s, never breaker_ttl_quarantine_s), test_budget_retry_slow_thin_strikes (AC5a — a budget-starved fast/thin FIRST attempt then a slow-and-thin _retry_with_more_budget success records a strike; catches an implementation reading the pre-retry latency) and test_budget_retry_slow_fat_recovers (AC5b — starved first attempt then a slow-but-fat retry recovers; catches one reading the starved first peek's tokens). In tests/unit/test_health_breaker.py add test_slow_history_survives_slow_ttl_lapse (AC2 — trip via trip_slow, let the TTL lapse, assert the slow history survives). In src/repoach/llm_proxy/routing/breaker.py extend the MODULE docstring with the live-dispatch-vs-offline-probe slowness divergence statement (AC7) — no code change. All tests drive the REAL policy and a REAL BreakerState; fake only the provider/stream boundary and the clock; never replace repoach functions.
+- **Commit**: `test(breaker): close slow-strike judge gaps — AC4/AC5 regressions, slow-TTL survival, breaker docstring`
+- **Done when**: pytest tests/unit/test_slow_breaker_wiring.py tests/unit/test_health_breaker.py passes
+- **Unit tests**: `tests/unit/test_slow_breaker_wiring.py::test_hard_failures_then_slow_takes_slow_ttl`, `tests/unit/test_slow_breaker_wiring.py::test_budget_retry_slow_thin_strikes`, `tests/unit/test_slow_breaker_wiring.py::test_budget_retry_slow_fat_recovers`, `tests/unit/test_health_breaker.py::test_slow_history_survives_slow_ttl_lapse`
+
 ## Integration tests
 
 - `tests/integration/test_slow_breaker.py::test_slow_breaker_integration_shadow_mode`
@@ -178,6 +186,24 @@ Add a slow-completion breaker policy that treats chronic slowness as a strike. A
       "unit_tests": [
         "tests/integration/test_slow_breaker.py::test_slow_breaker_integration_shadow_mode",
         "tests/integration/test_slow_breaker.py::test_slow_breaker_integration_enforcing_mode"
+      ]
+    },
+    {
+      "index": 8,
+      "title": "Close the judge gaps: AC4/AC5 regression tests, AC2 slow-TTL survival, AC7 breaker docstring",
+      "files": [
+        "tests/unit/test_slow_breaker_wiring.py",
+        "tests/unit/test_health_breaker.py",
+        "src/repoach/llm_proxy/routing/breaker.py"
+      ],
+      "action": "Deliver the spec ACs the self-verify judge found unmet. In tests/unit/test_slow_breaker_wiring.py add: test_hard_failures_then_slow_takes_slow_ttl (AC4 — breaker_slow_shadow=false, breaker_slow_k=1, two hard failures then one slow-but-served completion; assert the ref's breaker entry reason is 'slow_completion' with ttl_remaining <= breaker_slow_ttl_s, never breaker_ttl_quarantine_s), test_budget_retry_slow_thin_strikes (AC5a — a budget-starved fast/thin FIRST attempt then a slow-and-thin _retry_with_more_budget success records a strike; catches an implementation reading the pre-retry latency) and test_budget_retry_slow_fat_recovers (AC5b — starved first attempt then a slow-but-fat retry recovers; catches one reading the starved first peek's tokens). In tests/unit/test_health_breaker.py add test_slow_history_survives_slow_ttl_lapse (AC2 — trip via trip_slow, let the TTL lapse, assert the slow history survives). In src/repoach/llm_proxy/routing/breaker.py extend the MODULE docstring with the live-dispatch-vs-offline-probe slowness divergence statement (AC7) — no code change. All tests drive the REAL policy and a REAL BreakerState; fake only the provider/stream boundary and the clock; never replace repoach functions.",
+      "commit_message": "test(breaker): close slow-strike judge gaps — AC4/AC5 regressions, slow-TTL survival, breaker docstring",
+      "done_when": "pytest tests/unit/test_slow_breaker_wiring.py tests/unit/test_health_breaker.py passes",
+      "unit_tests": [
+        "tests/unit/test_slow_breaker_wiring.py::test_hard_failures_then_slow_takes_slow_ttl",
+        "tests/unit/test_slow_breaker_wiring.py::test_budget_retry_slow_thin_strikes",
+        "tests/unit/test_slow_breaker_wiring.py::test_budget_retry_slow_fat_recovers",
+        "tests/unit/test_health_breaker.py::test_slow_history_survives_slow_ttl_lapse"
       ]
     }
   ],
