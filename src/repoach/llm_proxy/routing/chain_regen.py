@@ -412,9 +412,13 @@ async def gather_and_regenerate(
     matrix = await sweep_model_matrix(settings, client)
     equivalences = load_equivalence_table()
     current = chains_path.read_text(encoding="utf-8")
-    await _sweep_and_persist_bounded_cells(
-        settings, client, matrix, equivalences, ranking, current, db_path
-    )
+    try:
+        await _sweep_and_persist_bounded_cells(
+            settings, client, matrix, equivalences, ranking, current, db_path
+        )
+    except Exception as exc:
+        _log.warning("chain_regen_sweep_failed", error=str(exc))
+        raise StaleCellsError(f"in-cycle cell sweep failed: {exc}") from exc
     now = datetime.now(UTC)
     max_age = timedelta(hours=settings.regen_max_cell_age_h)
     since = now - max_age
