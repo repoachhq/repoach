@@ -29,7 +29,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
 ## Step 4 — Freshness-windowed read, StaleCellsError and end-to-end refusal test
 
 - **Files**: `src/repoach/llm_proxy/routing/chain_regen.py`, `tests/unit/test_chain_regen.py`, `tests/integration/test_chain_regen_freshness.py`
-- **Action**: In chain_regen.py: (a) Define StaleCellsError exception. (b) After the step-3 sweep, call fetch_cell_probes with since=now - max_cell_age_h. (c) If no rows or newest recorded_at < (now - max_cell_age_h), raise StaleCellsError with log chain_regen_stale_cells. (d) Otherwise proceed with speed_for_from_rows and regenerate as today. Add unit tests in test_chain_regen.py: test_freshness_refusal (stale rows and zero rows), test_nominal_fresh_sweep_concludes (fresh rows → regeneration completes). Add tests/integration/test_chain_regen_freshness.py::test_end_to_end_freshness_refusal — fake HTTP transport and tmp-path SQLite, asserting StaleCellsError propagation and no chains output.
+- **Action**: In chain_regen.py: (a) Define StaleCellsError exception. (b) After the step-3 sweep, call fetch_cell_probes with since=now - max_cell_age_h. (c) If no rows or newest recorded_at < (now - max_cell_age_h), raise StaleCellsError with log chain_regen_stale_cells. (d) Otherwise proceed with speed_for_from_rows and regenerate as today. Add unit tests in test_chain_regen.py: test_freshness_refusal (stale rows and zero rows), test_nominal_fresh_sweep_concludes (fresh rows → regeneration completes). Add tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses (superseded name; see step 8) — fake HTTP transport and tmp-path SQLite, asserting StaleCellsError propagation and no chains output.
 - **Commit**: `feat(chain-regen): freshness-windowed read with loud StaleCellsError refusal`
 - **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes
 - **Unit tests**: `tests/unit/test_chain_regen.py::test_freshness_refusal`, `tests/unit/test_chain_regen.py::test_nominal_fresh_sweep_concludes`
@@ -48,7 +48,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
 - **Action**: (a) In docs/specs/2026-06-30_SP-MFC-REGEN_live-gather-and-cli.md FRONTMATTER only: add SP-CREDITS-CHECK to depends_on and bump version — chain_regen.py (owned by SP-MFC-REGEN) now imports repoach.health.credits (owned by SP-CREDITS-CHECK) and the edge-honesty gate requires the declared edge; the spec's Architecture Impact mandates this same-PR change. (b) Add FOUR NEW test functions carrying the AC-promised log/transport assertions, using the structlog.testing capture_logs idiom (see tests/unit/test_dev_promise_reconcile.py). In tests/unit/test_chain_regen.py: test_bounded_sweep_logs_planned_count (AC2 — captures regen_sweep_planned and asserts the exact planned cell count), test_429_logs_rate_limited_once (AC3 — the twice-429 cell logs cell_probe_rate_limited exactly once), test_credits_skip_transport_silent_and_logged (AC4 — at the transport layer ZERO open_router probes are issued and the skipped_paid count is logged). In tests/integration/test_chain_regen_freshness.py: test_stale_cells_event_logged (AC1 — the refusal path logs chain_regen_stale_cells). No behavior change to src expected — fix src only if an assertion exposes a real defect.
 - **Commit**: `test(chain-regen): close judge gaps — MFC-REGEN edge declaration + promised log assertions`
 - **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes and repoach arch check --staged reports edge-honesty ok
-- **Unit tests**: `tests/unit/test_chain_regen.py::test_bounded_sweep_logs_planned_count`, `tests/unit/test_chain_regen.py::test_429_logs_rate_limited_once`, `tests/unit/test_chain_regen.py::test_credits_skip_transport_silent_and_logged`, `tests/integration/test_chain_regen_freshness.py::test_stale_cells_event_logged`
+- **Unit tests**: `tests/unit/test_chain_regen.py::test_bounded_sweep_logs_planned_count`, `tests/unit/test_chain_regen.py::test_429_logs_rate_limited_once`, `tests/unit/test_chain_regen.py::test_credits_skip_transport_silent_and_logged`, `tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses`
 
 ## Step 7 — Guard the sweep failure path and condense to the AC6 LOC budget
 
@@ -68,7 +68,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
 
 ## Integration tests
 
-- `tests/integration/test_chain_regen_freshness.py::test_end_to_end_freshness_refusal`
+- `tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses`
 
 <!-- repoach-action-plan -->
 ```json
@@ -129,7 +129,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
         "tests/unit/test_chain_regen.py",
         "tests/integration/test_chain_regen_freshness.py"
       ],
-      "action": "In chain_regen.py: (a) Define StaleCellsError exception. (b) After the step-3 sweep, call fetch_cell_probes with since=now - max_cell_age_h. (c) If no rows or newest recorded_at < (now - max_cell_age_h), raise StaleCellsError with log chain_regen_stale_cells. (d) Otherwise proceed with speed_for_from_rows and regenerate as today. Add unit tests in test_chain_regen.py: test_freshness_refusal (stale rows and zero rows), test_nominal_fresh_sweep_concludes (fresh rows lead to a completed regeneration). Add tests/integration/test_chain_regen_freshness.py::test_end_to_end_freshness_refusal — fake HTTP transport and tmp-path SQLite, asserting StaleCellsError propagation and no chains output.",
+      "action": "In chain_regen.py: (a) Define StaleCellsError exception. (b) After the step-3 sweep, call fetch_cell_probes with since=now - max_cell_age_h. (c) If no rows or newest recorded_at < (now - max_cell_age_h), raise StaleCellsError with log chain_regen_stale_cells. (d) Otherwise proceed with speed_for_from_rows and regenerate as today. Add unit tests in test_chain_regen.py: test_freshness_refusal (stale rows and zero rows), test_nominal_fresh_sweep_concludes (fresh rows lead to a completed regeneration). Add tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses (superseded name; see step 8) — fake HTTP transport and tmp-path SQLite, asserting StaleCellsError propagation and no chains output.",
       "commit_message": "feat(chain-regen): freshness-windowed read with loud StaleCellsError refusal",
       "done_when": "pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes",
       "unit_tests": [
@@ -166,7 +166,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
         "tests/unit/test_chain_regen.py::test_bounded_sweep_logs_planned_count",
         "tests/unit/test_chain_regen.py::test_429_logs_rate_limited_once",
         "tests/unit/test_chain_regen.py::test_credits_skip_transport_silent_and_logged",
-        "tests/integration/test_chain_regen_freshness.py::test_stale_cells_event_logged"
+        "tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses"
       ]
     },
     {
@@ -200,7 +200,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
     }
   ],
   "integration_tests": [
-    "tests/integration/test_chain_regen_freshness.py::test_end_to_end_freshness_refusal"
+    "tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses"
   ]
 }
 ```
