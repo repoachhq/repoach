@@ -257,7 +257,7 @@ def test_parse_judge_verdict() -> None:
     bad = _parse_judge_verdict('{"compliant": false, "reasons": "r", "gaps": ["a", "b"]}')
     assert bad is not None
     assert bad.compliant is False
-    assert bad.gaps == ["a", "b"]
+    assert [gap.claim for gap in bad.gaps] == ["a", "b"]
 
     assert _parse_judge_verdict("not json") is None
     assert _parse_judge_verdict('{"reasons": "no compliant key"}') is None
@@ -273,7 +273,7 @@ def test_parse_judge_verdict() -> None:
     )
     assert multi is not None
     assert multi.compliant is False
-    assert multi.gaps == ["G1"]
+    assert [gap.claim for gap in multi.gaps] == ["G1"]
 
 
 def test_judge_verdict_defaults_fail_open() -> None:
