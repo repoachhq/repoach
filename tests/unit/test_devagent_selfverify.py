@@ -273,7 +273,7 @@ def test_parse_judge_verdict() -> None:
     )
     assert multi is not None
     assert multi.compliant is False
-    assert multi.gaps == ["G1"]
+    assert [gap.claim for gap in multi.gaps] == ["G1"]
 
 
 def test_judge_verdict_defaults_fail_open() -> None:
