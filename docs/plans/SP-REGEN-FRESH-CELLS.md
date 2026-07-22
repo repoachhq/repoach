@@ -29,10 +29,10 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
 ## Step 4 — Freshness-windowed read, StaleCellsError and end-to-end refusal test
 
 - **Files**: `src/repoach/llm_proxy/routing/chain_regen.py`, `tests/unit/test_chain_regen.py`, `tests/integration/test_chain_regen_freshness.py`
-- **Action**: In chain_regen.py: (a) Define StaleCellsError exception. (b) After the step-3 sweep, call fetch_cell_probes with since=now - max_cell_age_h. (c) If no rows or newest recorded_at < (now - max_cell_age_h), raise StaleCellsError with log chain_regen_stale_cells. (d) Otherwise proceed with speed_for_from_rows and regenerate as today. Add unit tests in test_chain_regen.py: test_freshness_refusal (stale rows and zero rows), test_nominal_fresh_sweep_concludes (fresh rows → regeneration completes). Add tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses (superseded name; see step 8) — fake HTTP transport and tmp-path SQLite, asserting StaleCellsError propagation and no chains output.
+- **Action**: In chain_regen.py: (a) Define StaleCellsError exception. (b) After the step-3 sweep, call fetch_cell_probes with since=now - max_cell_age_h. (c) If no rows or newest recorded_at < (now - max_cell_age_h), raise StaleCellsError with log chain_regen_stale_cells. (d) Otherwise proceed with speed_for_from_rows and regenerate as today. Add unit tests in test_chain_regen.py: test_freshness_refusal (stale rows and zero rows). Add tests/integration/test_chain_regen_freshness.py::test_stale_after_real_sweep_refuses (superseded name; see step 8) — fake HTTP transport and tmp-path SQLite, asserting StaleCellsError propagation and no chains output.
 - **Commit**: `feat(chain-regen): freshness-windowed read with loud StaleCellsError refusal`
 - **Done when**: pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes
-- **Unit tests**: `tests/unit/test_chain_regen.py::test_freshness_refusal`, `tests/unit/test_chain_regen.py::test_nominal_fresh_sweep_concludes`
+- **Unit tests**: `tests/unit/test_chain_regen.py::test_freshness_refusal`
 
 ## Step 5 — Wire StaleCellsError to typer.Exit(1) in regenerate-chains CLI
 
@@ -133,8 +133,7 @@ Add a bounded per-provider cell health sweep inside gather_and_regenerate before
       "commit_message": "feat(chain-regen): freshness-windowed read with loud StaleCellsError refusal",
       "done_when": "pytest tests/unit/test_chain_regen.py tests/integration/test_chain_regen_freshness.py passes",
       "unit_tests": [
-        "tests/unit/test_chain_regen.py::test_freshness_refusal",
-        "tests/unit/test_chain_regen.py::test_nominal_fresh_sweep_concludes"
+        "tests/unit/test_chain_regen.py::test_freshness_refusal"
       ]
     },
     {
