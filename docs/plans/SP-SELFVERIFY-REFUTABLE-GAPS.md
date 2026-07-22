@@ -26,6 +26,14 @@ Bump the self-verify judge persona to 0.2.0 with an evidence contract on absence
 - **Done when**: pytest tests/unit/test_selfverify_refutation.py::test_invalid_regex_keeps_gap tests/unit/test_selfverify_refutation.py::test_missing_file_keeps_gap tests/unit/test_selfverify_refutation.py::test_plain_string_gaps_still_parse tests/unit/test_selfverify_refutation.py::test_gap_cap_beyond_ten_honored_as_is tests/integration/test_selfverify_refutation_flow.py::test_false_absence_verdict_overturned_end_to_end exits 0
 - **Unit tests**: `tests/unit/test_selfverify_refutation.py::test_invalid_regex_keeps_gap`, `tests/unit/test_selfverify_refutation.py::test_missing_file_keeps_gap`, `tests/unit/test_selfverify_refutation.py::test_plain_string_gaps_still_parse`, `tests/unit/test_selfverify_refutation.py::test_gap_cap_beyond_ten_honored_as_is`
 
+## Step 4 — Deliver the promised end-to-end integration test
+
+- **Files**: `tests/integration/test_selfverify_refutation_flow.py`
+- **Action**: The step-3 commit delivered the edge-case unit tests but NOT the promised integration file — create tests/integration/test_selfverify_refutation_flow.py with test_false_absence_verdict_overturned_end_to_end exactly as AC4 states: a tmp repo whose file CONTAINS the pattern, a boundary-fake judge callable (the run_self_verify judge= parameter — external LLM boundary, legitimate fake) replying non-compliant with an evidence gap claiming that pattern absent, run_self_verify returns ok=True, and both selfverify.gap_refuted and selfverify.verdict_overturned_by_refutation events are captured via structlog.testing capture_logs. Follow the run_self_verify call shape used in tests/unit/test_devagent_selfverify.py (spec/plan fixtures, suite_green=True, run_ruff_gate and _branch_diff handled the way that suite does at the boundary).
+- **Commit**: `test(review): end-to-end overturn of a false-absence verdict`
+- **Done when**: pytest tests/integration/test_selfverify_refutation_flow.py passes
+- **Unit tests**: `tests/integration/test_selfverify_refutation_flow.py::test_false_absence_verdict_overturned_end_to_end`
+
 ## Integration tests
 
 - `tests/integration/test_selfverify_refutation_flow.py::test_false_absence_verdict_overturned_end_to_end`
@@ -84,6 +92,19 @@ Bump the self-verify judge persona to 0.2.0 with an evidence contract on absence
         "tests/unit/test_selfverify_refutation.py::test_missing_file_keeps_gap",
         "tests/unit/test_selfverify_refutation.py::test_plain_string_gaps_still_parse",
         "tests/unit/test_selfverify_refutation.py::test_gap_cap_beyond_ten_honored_as_is"
+      ]
+    },
+    {
+      "index": 4,
+      "title": "Deliver the promised end-to-end integration test",
+      "files": [
+        "tests/integration/test_selfverify_refutation_flow.py"
+      ],
+      "action": "The step-3 commit delivered the edge-case unit tests but NOT the promised integration file — create tests/integration/test_selfverify_refutation_flow.py with test_false_absence_verdict_overturned_end_to_end exactly as AC4 states: a tmp repo whose file CONTAINS the pattern, a boundary-fake judge callable (the run_self_verify judge= parameter — external LLM boundary, legitimate fake) replying non-compliant with an evidence gap claiming that pattern absent, run_self_verify returns ok=True, and both selfverify.gap_refuted and selfverify.verdict_overturned_by_refutation events are captured via structlog.testing capture_logs. Follow the run_self_verify call shape used in tests/unit/test_devagent_selfverify.py (spec/plan fixtures, suite_green=True, run_ruff_gate and _branch_diff handled the way that suite does at the boundary).",
+      "commit_message": "test(review): end-to-end overturn of a false-absence verdict",
+      "done_when": "pytest tests/integration/test_selfverify_refutation_flow.py passes",
+      "unit_tests": [
+        "tests/integration/test_selfverify_refutation_flow.py::test_false_absence_verdict_overturned_end_to_end"
       ]
     }
   ],
