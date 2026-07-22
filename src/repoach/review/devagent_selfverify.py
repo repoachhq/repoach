@@ -43,11 +43,31 @@ from .spec_gate import SpecCoverage, compute_spec_coverage, selector_present
 _log = get_logger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
-_PERSONA = "judge_selfverify_0.1.1.md"
+_PERSONA = "judge_selfverify_0.2.0.md"
 _DIFF_CAP_CHARS = 100_000
+_MAX_REFUTABLE_GAPS = 10
 
 ComplianceJudge = Callable[[str], str]
 """A judge takes the rendered prompt and returns the raw model reply."""
+
+
+@dataclass
+class JudgeGap:
+    """One unmet-requirement gap reported by the semantic judge.
+
+    Attributes:
+        claim: The shortfall in words, spec-anchored.
+        file: Repo-relative file the claim is about, present only when the gap
+            asserts an absence with checkable evidence (see
+            :func:`_refute_gaps`); ``None`` for a plain semantic gap.
+        absent_pattern: A Python regex (matched with ``re.M`` against ``file``'s
+            full text) that would match the thing claimed absent; ``None`` for a
+            plain semantic gap.
+    """
+
+    claim: str
+    file: str | None = None
+    absent_pattern: str | None = None
 
 
 @dataclass
@@ -60,13 +80,15 @@ class JudgeVerdict:
             was unparseable) — in which case the gate fails open and does not block.
         compliant: The judge's verdict (meaningful only when ``available``).
         reasons: Short rationale (<= 300 chars).
-        gaps: Concrete unmet requirements when not compliant.
+        gaps: Concrete unmet requirements when not compliant, each optionally
+            carrying evidence a mechanical refutation pass can check (see
+            :func:`_refute_gaps`).
     """
 
     available: bool = False
     compliant: bool = False
     reasons: str = ""
-    gaps: list[str] = field(default_factory=list)
+    gaps: list[JudgeGap] = field(default_factory=list)
 
 
 @dataclass
@@ -207,7 +229,22 @@ def _parse_judge_verdict(raw: str) -> JudgeVerdict | None:
     if chosen is None:
         return None
     raw_gaps = chosen.get("gaps", [])
-    gaps = [str(g) for g in raw_gaps] if isinstance(raw_gaps, list) else []
+    gaps: list[JudgeGap] = []
+    if isinstance(raw_gaps, list):
+        for g in raw_gaps:
+            if isinstance(g, dict):
+                claim = str(g.get("claim", ""))
+                file_value = g.get("file")
+                pattern_value = g.get("absent_pattern")
+                gaps.append(
+                    JudgeGap(
+                        claim=claim,
+                        file=str(file_value) if file_value is not None else None,
+                        absent_pattern=str(pattern_value) if pattern_value is not None else None,
+                    )
+                )
+            else:
+                gaps.append(JudgeGap(claim=str(g)))
     return JudgeVerdict(
         available=True,
         compliant=chosen["compliant"],
@@ -243,6 +280,102 @@ def _judge_compliance(
         return JudgeVerdict(reasons="verdict unparseable")
     _log.info("selfverify.judge_verdict", compliant=verdict.compliant, n_gaps=len(verdict.gaps))
     return verdict
+
+
+def _refute_gaps(verdict: JudgeVerdict, repo_root: Path) -> JudgeVerdict:
+    """Mechanically refute evidence-bearing gaps and overturn when all fall.
+
+    For at most :data:`_MAX_REFUTABLE_GAPS` evidence-bearing gaps (those carrying
+    both ``file`` and ``absent_pattern``), attempt refutation: if ``file`` exists
+    under *repo_root* and ``absent_pattern`` (compiled with ``re.M``) matches its
+    text, the judge's absence claim is false — the gap is dropped and
+    ``selfverify.gap_refuted`` is logged. A gap whose evidence is malformed (regex
+    does not compile, path escapes the repo, or the file is missing/unreadable) is
+    KEPT as blocking and logged as ``selfverify.gap_evidence_invalid`` (fail-closed,
+    G4). Plain semantic gaps (no evidence) and gaps beyond the cap pass through
+    unchecked.
+
+    When the original verdict was non-compliant and every one of its gaps was
+    refuted, the returned verdict is overturned to ``compliant=True`` with an empty
+    gap list, and ``selfverify.verdict_overturned_by_refutation`` logs the full
+    original verdict for audit. Any unexpected exception during the pass returns
+    the ORIGINAL verdict unchanged, logging ``selfverify.refutation_failed``
+    (fail-closed to the judge's word).
+
+    Args:
+        verdict: The parsed judge verdict (only acted on when ``available``).
+        repo_root: Root evidence file paths resolve against.
+
+    Returns:
+        The verdict, with refuted gaps dropped and possibly overturned.
+    """
+    try:
+        surviving: list[JudgeGap] = []
+        checked = 0
+        refuted_count = 0
+        for gap in verdict.gaps:
+            has_evidence = gap.file is not None and gap.absent_pattern is not None
+            if not has_evidence or checked >= _MAX_REFUTABLE_GAPS:
+                surviving.append(gap)
+                continue
+            checked += 1
+            try:
+                candidate = (repo_root / gap.file).resolve()
+                repo_resolved = repo_root.resolve()
+                if repo_resolved not in candidate.parents or not candidate.is_file():
+                    raise ValueError("evidence file missing or outside repo")
+                text = candidate.read_text(encoding="utf-8")
+                pattern = re.compile(gap.absent_pattern, re.M)
+            except (OSError, ValueError, re.error) as exc:
+                _log.warning(
+                    "selfverify.gap_evidence_invalid",
+                    claim=gap.claim,
+                    file=gap.file,
+                    pattern=gap.absent_pattern,
+                    error=str(exc)[:160],
+                )
+                surviving.append(gap)
+                continue
+            if pattern.search(text) is not None:
+                refuted_count += 1
+                _log.info(
+                    "selfverify.gap_refuted",
+                    claim=gap.claim,
+                    file=gap.file,
+                    pattern=gap.absent_pattern,
+                )
+            else:
+                surviving.append(gap)
+        if (
+            not verdict.compliant
+            and verdict.gaps
+            and refuted_count == len(verdict.gaps)
+            and not surviving
+        ):
+            _log.info(
+                "selfverify.verdict_overturned_by_refutation",
+                original_compliant=verdict.compliant,
+                original_reasons=verdict.reasons,
+                original_gaps=[
+                    {"claim": g.claim, "file": g.file, "absent_pattern": g.absent_pattern}
+                    for g in verdict.gaps
+                ],
+            )
+            return JudgeVerdict(
+                available=verdict.available,
+                compliant=True,
+                reasons=verdict.reasons,
+                gaps=[],
+            )
+        return JudgeVerdict(
+            available=verdict.available,
+            compliant=verdict.compliant,
+            reasons=verdict.reasons,
+            gaps=surviving,
+        )
+    except Exception as exc:
+        _log.warning("selfverify.refutation_failed", error=str(exc)[:160])
+        return verdict
 
 
 def run_self_verify(
@@ -297,7 +430,10 @@ def run_self_verify(
     else:
         verdict = _judge_compliance(repo_root, spec=spec, base=base, judge=judge)
         if verdict.available and not verdict.compliant:
-            reasons.append(f"judge: not compliant — {verdict.reasons}; gaps={verdict.gaps}")
+            verdict = _refute_gaps(verdict, repo_root)
+        if verdict.available and not verdict.compliant:
+            gap_claims = [g.claim for g in verdict.gaps]
+            reasons.append(f"judge: not compliant — {verdict.reasons}; gaps={gap_claims}")
 
     ok = mechanical_ok and (not verdict.available or verdict.compliant)
     _log.info(
@@ -320,6 +456,7 @@ def run_self_verify(
 
 __all__ = [
     "ComplianceJudge",
+    "JudgeGap",
     "JudgeVerdict",
     "SelfVerifyResult",
     "make_compliance_judge",
