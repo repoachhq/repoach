@@ -152,6 +152,11 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "CREDITS_FLOOR_USD": "REPOACH_CREDITS_FLOOR_USD",
     "CREDITS_HEALTH_CACHE_TTL_S": "REPOACH_CREDITS_HEALTH_CACHE_TTL_S",
     "CHAIN_STATUS_WINDOW_H": "REPOACH_CHAIN_STATUS_WINDOW_H",
+    "REGEN_MAX_CELL_AGE_H": "REPOACH_REGEN_MAX_CELL_AGE_H",
+    "REGEN_SWEEP_PER_PROVIDER_CAP": "REPOACH_REGEN_SWEEP_PER_PROVIDER_CAP",
+    "REGEN_SWEEP_PER_PROVIDER_CONCURRENCY": "REPOACH_REGEN_SWEEP_PER_PROVIDER_CONCURRENCY",
+    "REGEN_SWEEP_PACING_S": "REPOACH_REGEN_SWEEP_PACING_S",
+    "REGEN_SWEEP_RETRY_BACKOFF_S": "REPOACH_REGEN_SWEEP_RETRY_BACKOFF_S",
 }
 
 
@@ -309,6 +314,23 @@ class Settings(BaseSettings):
     chain_status_window_h: float = Field(
         default=24.0, validation_alias=_aliases("CHAIN_STATUS_WINDOW_H")
     )
+
+    regen_max_cell_age_h: float = Field(
+        default=12.0, validation_alias=_aliases("REGEN_MAX_CELL_AGE_H")
+    )
+    regen_sweep_per_provider_cap: int = Field(
+        default=12, validation_alias=_aliases("REGEN_SWEEP_PER_PROVIDER_CAP")
+    )
+    regen_sweep_per_provider_concurrency: int = Field(
+        default=2, validation_alias=_aliases("REGEN_SWEEP_PER_PROVIDER_CONCURRENCY")
+    )
+    regen_sweep_pacing_s: float = Field(
+        default=0.5, validation_alias=_aliases("REGEN_SWEEP_PACING_S")
+    )
+    regen_sweep_retry_backoff_s: float = Field(
+        default=2.0, validation_alias=_aliases("REGEN_SWEEP_RETRY_BACKOFF_S")
+    )
+
     breaker_probe_seed_enabled: bool = Field(
         default=True, validation_alias=_aliases("BREAKER_PROBE_SEED_ENABLED")
     )

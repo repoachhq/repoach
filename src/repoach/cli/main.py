@@ -311,7 +311,7 @@ def regenerate_chains(
     from ..core.config import get_settings
     from ..core.logging import get_logger
     from ..llm_proxy.config.settings import Settings
-    from ..llm_proxy.routing.chain_regen import gather_and_regenerate
+    from ..llm_proxy.routing.chain_regen import StaleCellsError, gather_and_regenerate
 
     settings = Settings()
     enabled = apply or settings.chainpilot_apply_enabled
@@ -327,7 +327,11 @@ def regenerate_chains(
                 enabled=enabled,
             )
 
-    result = asyncio.run(_run())
+    try:
+        result = asyncio.run(_run())
+    except StaleCellsError as exc:
+        typer.echo(f"regenerate-chains: refused — {exc}")
+        raise typer.Exit(code=1) from exc
     get_logger(__name__).info(
         "regenerate_chains",
         changed=result.changed,

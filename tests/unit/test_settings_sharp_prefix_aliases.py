@@ -77,6 +77,11 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "CREDITS_FLOOR_USD": "credits_floor_usd",
     "CREDITS_HEALTH_CACHE_TTL_S": "credits_health_cache_ttl_s",
     "CHAIN_STATUS_WINDOW_H": "chain_status_window_h",
+    "REGEN_MAX_CELL_AGE_H": "regen_max_cell_age_h",
+    "REGEN_SWEEP_PER_PROVIDER_CAP": "regen_sweep_per_provider_cap",
+    "REGEN_SWEEP_PER_PROVIDER_CONCURRENCY": "regen_sweep_per_provider_concurrency",
+    "REGEN_SWEEP_PACING_S": "regen_sweep_pacing_s",
+    "REGEN_SWEEP_RETRY_BACKOFF_S": "regen_sweep_retry_backoff_s",
 }
 """Legacy env key → Pydantic field name, kept in lockstep with
 :data:`_LEGACY_TO_REPOACH_ALIAS` to give the read-through tests a
@@ -279,3 +284,32 @@ def test_uses_process_anthropic_auth_token_false_when_dotenv_provides_either(
         f"prefer_dotenv_anthropic_auth_token must update the field with the dotenv "
         f"value, not just flag the source ; got {settings.anthropic_auth_token!r}"
     )
+
+
+def test_regen_sweep_aliases_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The five regen-sweep fields expose defaults and resolve their REPOACH_ aliases.
+
+    Pins the new Settings fields added for SP-REGEN-FRESH-CELLS: default
+    values match the spec's ``constraints`` block, and each field reads
+    through its ``REPOACH_*`` alias exactly like the existing dual-read
+    fields above.
+    """
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.regen_max_cell_age_h == 12.0
+    assert settings.regen_sweep_per_provider_cap == 12
+    assert settings.regen_sweep_per_provider_concurrency == 2
+    assert settings.regen_sweep_pacing_s == 0.5
+    assert settings.regen_sweep_retry_backoff_s == 2.0
+
+    monkeypatch.setenv("REPOACH_REGEN_MAX_CELL_AGE_H", "6")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_PER_PROVIDER_CAP", "20")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_PER_PROVIDER_CONCURRENCY", "4")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_PACING_S", "1.5")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_RETRY_BACKOFF_S", "3.0")
+    settings = _build_settings(monkeypatch)
+    assert settings.regen_max_cell_age_h == 6.0
+    assert settings.regen_sweep_per_provider_cap == 20
+    assert settings.regen_sweep_per_provider_concurrency == 4
+    assert settings.regen_sweep_pacing_s == 1.5
+    assert settings.regen_sweep_retry_backoff_s == 3.0
