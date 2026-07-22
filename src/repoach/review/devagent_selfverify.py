@@ -309,6 +309,16 @@ def _refute_gaps(verdict: JudgeVerdict, repo_root: Path) -> JudgeVerdict:
     Returns:
         The verdict, with refuted gaps dropped and possibly overturned.
     """
+    evidence_count = sum(
+        1 for g in verdict.gaps if g.file is not None and g.absent_pattern is not None
+    )
+    if evidence_count > _MAX_REFUTABLE_GAPS:
+        _log.warning(
+            "selfverify.refutation_capped",
+            evidence_count=evidence_count,
+            cap=_MAX_REFUTABLE_GAPS,
+        )
+        return verdict
     try:
         surviving: list[JudgeGap] = []
         checked = 0

@@ -149,3 +149,83 @@ def test_semantic_gap_survives_refutation(tmp_path: Path) -> None:
     assert result.ok is False
     assert len(result.judge.gaps) == 1
     assert result.judge.gaps[0].claim == "the retry backoff logic is semantically wrong"
+
+
+def test_invalid_regex_keeps_gap(tmp_path: Path) -> None:
+    reply = (
+        '{"compliant": false, "reasons": "bad regex", "gaps": ['
+        '{"claim": "no chain_regen_sweep_failed log", '
+        '"file": "src/chain_regen.py", '
+        '"absent_pattern": "chain_regen_sweep_failed("}'
+        "]}"
+    )
+    with capture_logs() as logs:
+        result = _run(tmp_path, reply)
+
+    events = [entry for entry in logs if entry["event"] == "selfverify.gap_evidence_invalid"]
+    assert len(events) == 1
+    assert events[0]["claim"] == "no chain_regen_sweep_failed log"
+    assert events[0]["file"] == "src/chain_regen.py"
+    assert events[0]["pattern"] == "chain_regen_sweep_failed("
+    assert result.judge.compliant is False
+    assert result.ok is False
+    assert len(result.judge.gaps) == 1
+    assert result.judge.gaps[0].claim == "no chain_regen_sweep_failed log"
+
+
+def test_missing_file_keeps_gap(tmp_path: Path) -> None:
+    reply = (
+        '{"compliant": false, "reasons": "missing evidence file", "gaps": ['
+        '{"claim": "no frobnicate helper", '
+        '"file": "src/does_not_exist.py", '
+        '"absent_pattern": "frobnicate"}'
+        "]}"
+    )
+    with capture_logs() as logs:
+        result = _run(tmp_path, reply)
+
+    events = [entry for entry in logs if entry["event"] == "selfverify.gap_evidence_invalid"]
+    assert len(events) == 1
+    assert events[0]["claim"] == "no frobnicate helper"
+    assert events[0]["file"] == "src/does_not_exist.py"
+    assert events[0]["pattern"] == "frobnicate"
+    assert result.judge.compliant is False
+    assert result.ok is False
+    assert len(result.judge.gaps) == 1
+    assert result.judge.gaps[0].claim == "no frobnicate helper"
+
+
+def test_plain_string_gaps_still_parse(tmp_path: Path) -> None:
+    reply = (
+        '{"compliant": false, "reasons": "two plain gaps", '
+        '"gaps": ["gap one is a bare string", "gap two is also bare"]}'
+    )
+    result = _run(tmp_path, reply)
+
+    assert result.judge.compliant is False
+    assert result.ok is False
+    assert len(result.judge.gaps) == 2
+    assert result.judge.gaps[0].claim == "gap one is a bare string"
+    assert result.judge.gaps[0].file is None
+    assert result.judge.gaps[0].absent_pattern is None
+    assert result.judge.gaps[1].claim == "gap two is also bare"
+    assert result.judge.gaps[1].file is None
+    assert result.judge.gaps[1].absent_pattern is None
+
+
+def test_gap_cap_beyond_ten_honored_as_is(tmp_path: Path) -> None:
+    gap_objs = ",".join(
+        f'{{"claim": "gap {i}", "file": "src/chain_regen.py", '
+        '"absent_pattern": "chain_regen_sweep_failed"}'
+        for i in range(11)
+    )
+    reply = f'{{"compliant": false, "reasons": "eleven gaps", "gaps": [{gap_objs}]}}'
+
+    with capture_logs() as logs:
+        result = _run(tmp_path, reply)
+
+    refuted_events = [entry for entry in logs if entry["event"] == "selfverify.gap_refuted"]
+    assert refuted_events == []
+    assert result.judge.compliant is False
+    assert result.ok is False
+    assert len(result.judge.gaps) == 11
