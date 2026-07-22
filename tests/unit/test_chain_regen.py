@@ -325,39 +325,52 @@ async def test_freshness_refusal(tmp_path, monkeypatch) -> None:
     assert target.read_text(encoding="utf-8") == _CHAINS
 
 
-async def test_nominal_fresh_sweep_concludes(tmp_path, monkeypatch) -> None:
-    """Fresh probe rows let gather_and_regenerate conclude a normal regeneration."""
-    _patch_gatherers(monkeypatch)
+async def test_nominal_via_injected_client_and_ranking(tmp_path) -> None:
+    """AC5: a real httpx client over MockTransport plus a pre-built ranking conclude.
+
+    Drives ``gather_and_regenerate`` through its two designed seams — an
+    injected ``client`` and a ``ranking=`` keyword — with no monkeypatched
+    repoach function. The transport lists a model whose id pattern matches
+    the real equivalence table (``deepseek-v4-pro``) and 200s every probe,
+    so the in-cycle sweep records a fresh row and the regeneration concludes.
+    """
     target = tmp_path / "chains.env"
     target.write_text(_CHAINS, encoding="utf-8")
+    db_path = tmp_path / "db.sqlite"
 
-    fresh_row = CellProbeRow(
-        recorded_at=datetime.now(UTC),
-        provider_id="nvidia_nim",
-        model_id="x/alpha-model",
-        status="ok",
-        latency_s=1.2,
-        content_chars=10,
-        reasoning_chars=0,
-        detail="",
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "deepseek-ai/deepseek-v4-pro"}]})
+        body = json.loads(request.content or b"{}")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": f"ok {body.get('model', '')}"}}]},
+        )
+
+    settings = Settings(_env_file=None, NVIDIA_NIM_API_KEY="test-token")
+    ranking = AaRanking(
+        index_version="v4.1",
+        models=(
+            _cap("Claude Opus 4.7", 53.5),
+            _cap("Claude Sonnet 4.6", 47.2),
+            _cap("Claude 4.5 Haiku", 29.6),
+            _cap("DeepSeek V4 Pro (Max)", 50.0),
+        ),
     )
 
-    def _fake_fetch_fresh(db_path, *, since=None, provider_id=None, model_id=None, limit=None):
-        return [fresh_row]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await gather_and_regenerate(
+            settings,
+            client=client,
+            chains_path=target,
+            db_path=db_path,
+            enabled=True,
+            ranking=ranking,
+        )
 
-    monkeypatch.setattr(chain_regen, "fetch_cell_probes", _fake_fetch_fresh)
-
-    result = await gather_and_regenerate(
-        Settings(_env_file=None),
-        client=None,
-        chains_path=target,
-        db_path=tmp_path / "db.sqlite",
-        enabled=True,
-    )
     assert result.written is True
-    assert "MODEL_OPUS=nvidia_nim/x/alpha-model,claude_code/opus" in target.read_text(
-        encoding="utf-8"
-    )
+    output = target.read_text(encoding="utf-8")
+    assert "MODEL_OPUS=nvidia_nim/deepseek-ai/deepseek-v4-pro,claude_code/opus" in output
 
 
 def test_cli_stale_cells_exit_1(tmp_path, monkeypatch) -> None:
