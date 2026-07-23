@@ -74,6 +74,39 @@ _TRANSPORT_ERROR_RE = re.compile(
 )
 
 
+def _substitute_placeholders(template: str, replacements: dict[str, str]) -> str:
+    """Fill every ``{TOKEN}`` placeholder in *template* in a single pass.
+
+    Chained ``str.replace`` calls (``template.replace("{A}", a).replace("{B}",
+    b)``) re-scan the WHOLE string, including text just inserted by an earlier
+    ``.replace``. When one of the substituted values is untrusted (a PR diff,
+    a finding body, arbitrary file content) and happens to contain the literal
+    text of a placeholder token processed later in the chain, that token gets
+    expanded — a prompt-injection vector (SP-PROMPT-PLACEHOLDER-ORDER).
+
+    This helper instead compiles every key into one alternation and calls
+    :func:`re.sub` once against the ORIGINAL template. ``re.sub`` locates all
+    matches in the input before any substitution happens and never re-scans
+    the text a replacement callback returns, so a substituted value's own
+    content can never trigger a further placeholder expansion — independent
+    of which argument happens to carry untrusted content, and independent of
+    the order the caller lists the replacements in.
+
+    Args:
+        template: Persona/prompt template text containing ``{TOKEN}`` markers.
+        replacements: Mapping of literal ``{TOKEN}`` markers (including the
+            braces) to their substitution text.
+
+    Returns:
+        *template* with every recognised token replaced exactly once by its
+        mapped value; unrecognised ``{...}`` text is left untouched.
+    """
+    if not replacements:
+        return template
+    pattern = re.compile("|".join(re.escape(token) for token in replacements))
+    return pattern.sub(lambda match: replacements[match.group(0)], template)
+
+
 class BotRole(enum.StrEnum):
     """Identifier for each persona in the review team."""
 
@@ -746,13 +779,16 @@ class Reviewer:
 
         path = _PROMPTS_DIR / self.persona_filename
         template = path.read_text(encoding="utf-8")
-        return (
-            template.replace("{DIFF}", diff)
-            .replace("{SPEC_PLAN}", spec_block)
-            .replace("{DIALOGUE_CONTEXT}", dialogue_block)
-            .replace("{RESOLVED_DISAGREEMENTS}", disagreements_block)
-            .replace("{PRIOR_REVIEW}", prior_block)
-            .replace("{ARCH_EDGES}", arch_edges)
+        return _substitute_placeholders(
+            template,
+            {
+                "{SPEC_PLAN}": spec_block,
+                "{DIALOGUE_CONTEXT}": dialogue_block,
+                "{RESOLVED_DISAGREEMENTS}": disagreements_block,
+                "{PRIOR_REVIEW}": prior_block,
+                "{ARCH_EDGES}": arch_edges,
+                "{DIFF}": diff,
+            },
         )
 
     def _parse_response(self, raw: str) -> tuple[ReviewVerdict, str, list[ReviewComment]]:
@@ -1039,10 +1075,13 @@ class Coder:
             spec_block = "_(no spec context — improvise from diff + findings)_"
 
         template = (_PROMPTS_DIR / "coder_findings_0.1.1.md").read_text(encoding="utf-8")
-        prompt = (
-            template.replace("{DIFF}", truncated_diff)
-            .replace("{FINDINGS_JSON}", findings_json)
-            .replace("{SPEC_PLAN}", spec_block)
+        prompt = _substitute_placeholders(
+            template,
+            {
+                "{SPEC_PLAN}": spec_block,
+                "{FINDINGS_JSON}": findings_json,
+                "{DIFF}": truncated_diff,
+            },
         )
 
         _log.info(
@@ -1677,10 +1716,13 @@ class Developer:
 
         path = _PROMPTS_DIR / self.persona_filename
         template = path.read_text(encoding="utf-8")
-        prompt = (
-            template.replace("{SPEC_PLAN}", spec_plan[:_DIFF_HARD_CAP_CHARS])
-            .replace("{EXISTING_FILES}", existing_block)
-            .replace("{REPO_TREE}", repo_tree[:4000])
+        prompt = _substitute_placeholders(
+            template,
+            {
+                "{SPEC_PLAN}": spec_plan[:_DIFF_HARD_CAP_CHARS],
+                "{REPO_TREE}": repo_tree[:4000],
+                "{EXISTING_FILES}": existing_block,
+            },
         )
 
         _log.info(
