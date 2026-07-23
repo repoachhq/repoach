@@ -95,4 +95,4 @@ async def test_peek_classifies_openrouter_error_as_failure() -> None:
 
     result = await peek_for_content(_stream())
     assert result.got_content is False
-    assert result.stream_done is True
+    assert result.stream_done is False

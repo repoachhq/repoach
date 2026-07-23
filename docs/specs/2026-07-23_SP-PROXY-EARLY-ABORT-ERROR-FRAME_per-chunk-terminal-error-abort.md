@@ -56,10 +56,14 @@ Two of those signals are already knowable mid-stream:
   `output_tokens == 0` (lines 274-276), i.e. after the whole stream is
   read.
 
-`_failover.py` is currently frontier (no spec's `owns.code` claims it —
+`_failover.py` is owned by `SP-PROXY-FIRST-BYTE-DEADLINE` (`owns.code`,
 verified by grepping every `docs/specs/*.md` frontmatter for
-`llm_proxy/api/_failover.py`); `services.py`, its only caller, is owned
-by `SP-BUDGET-RETRY-FIXES`.
+`llm_proxy/api/_failover.py`) — this spec's `depends_on` names that
+spec and this diff edits `_failover.py` under that coupling, exactly
+as `SP-PROXY-FIRST-BYTE-DEADLINE` itself edited it under its own
+`depends_on: [SP-BUDGET-RETRY-FIXES]` coupling to `services.py`.
+`services.py`, `_failover.py`'s only caller, remains owned by
+`SP-BUDGET-RETRY-FIXES` and is untouched by this diff (NG4).
 
 ## Goals
 
@@ -309,12 +313,14 @@ else:
 
 ## Architecture Impact
 
-- No new `depends_on` edge. `_failover.py` was frontier (unowned);
-  this spec is its first claim. `services.py` (owned by
-  `SP-BUDGET-RETRY-FIXES`) already imports `PeekResult`/
+- `_failover.py` is owned by `SP-PROXY-FIRST-BYTE-DEADLINE`
+  (`owns.code`), not frontier. This spec's `depends_on:
+  [SP-PROXY-FIRST-BYTE-DEADLINE]` is the edge that authorizes editing
+  it — no additional edge is introduced by this diff. `services.py`
+  (owned by `SP-BUDGET-RETRY-FIXES`) already imports `PeekResult`/
   `peek_for_content` from it (`services.py:29`) — that import is
   pre-existing and untouched by this diff, so no new cross-owns edge
-  is introduced.
+  is introduced there either.
 - Behavioral coupling worth flagging to `SP-BUDGET-RETRY-FIXES`
   without a code change on its side: a disguised-error-text stream's
   `peek.looks_budget_starved` now reliably reads `False` (G5), so

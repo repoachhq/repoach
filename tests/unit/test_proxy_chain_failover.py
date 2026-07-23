@@ -220,7 +220,7 @@ def test_peek_for_content_treats_fake_error_text_as_failure() -> None:
 
     result = asyncio.run(runner())
     assert result.got_content is False
-    assert result.stream_done is True
+    assert result.stream_done is False
 
 
 def test_peek_for_content_treats_error_stop_reason_as_failure() -> None:
