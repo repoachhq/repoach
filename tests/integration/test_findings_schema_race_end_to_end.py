@@ -11,20 +11,27 @@ threads, reproducing the exact call path that raced
 production the first time a review ran against a brand-new findings
 ledger.
 
-Only the network/subprocess boundary is faked: ``GhCli`` is replaced by
-a truthful stand-in returning a canned diff (mirroring the existing
-``_StubGhCli`` pattern in ``tests/unit/test_review_team.py``),
-``Reviewer._call_with_retry`` — the LLM call boundary — returns a
-canned ``APPROVE`` outcome instantly, and ``recall_review_lessons`` —
-the ``agentmemory`` HTTP boundary — returns ``[]``. Every other code
-path (schema init, findings/review persistence, hallucination guard,
-mechanical verification, judging) runs for real.
+Only the network/subprocess/LLM-gateway boundary is faked: ``GhCli`` is
+replaced by a truthful stand-in returning a canned diff (mirroring the
+existing ``_StubGhCli`` pattern in ``tests/unit/test_review_team.py``),
+each reviewer's real ``AgentLoop`` is replaced by a ``MagicMock`` at
+construction (the same hermetic pattern
+``test_fresh_head_concurrent.py`` uses, so the test never depends on
+``REPOACH_ANTHROPIC_AUTH_TOKEN``), ``Reviewer._call_with_retry`` — the
+LLM call boundary — returns a canned ``APPROVE`` outcome instantly, and
+``recall_review_lessons`` — the ``agentmemory`` HTTP boundary —
+returns ``[]``. Every other code path (schema init, findings/review
+persistence, hallucination guard, mechanical verification, judging)
+runs for real, including ``db_path``, which every reviewer still
+receives so ``render_lens_track_record`` -> ``fetch_all_findings`` ->
+``init_findings_schema`` genuinely races from four threads.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import structlog
 from sqlalchemy import create_engine, inspect, text
@@ -33,7 +40,14 @@ from structlog.testing import capture_logs
 import repoach.review.review_lessons as review_lessons
 from repoach.review.gh_client import GhResult
 from repoach.review.orchestrator import ReviewTeamOrchestrator
-from repoach.review.reviewer import Reviewer, ReviewVerdict
+from repoach.review.reviewer import (
+    Architect,
+    Reviewer,
+    ReviewVerdict,
+    Scribe,
+    Sentinel,
+    Tester,
+)
 
 _CANNED_DIFF = (
     "diff --git a/a.py b/a.py\n"
@@ -81,6 +95,30 @@ def _canned_call_with_retry(
     return ReviewVerdict.APPROVE, "canned approve, nothing to flag", [], result
 
 
+def _patch_reviewer_construction(monkeypatch: object) -> None:
+    """Make every reviewer class the orchestrator builds hermetic to the LLM gateway.
+
+    Mirrors the ``loop=MagicMock()`` pattern proven in
+    ``test_fresh_head_concurrent.py``: the real ``Architect`` /
+    ``Sentinel`` / ``Tester`` / ``Scribe`` classes are instantiated for
+    real, with the real ``AgentLoop`` construction (and its
+    ``REPOACH_ANTHROPIC_AUTH_TOKEN`` validation) replaced by a
+    ``MagicMock`` that ``_canned_call_with_retry`` never exercises.
+    ``db_path`` is forwarded untouched so the real findings-schema race
+    this test reproduces still runs against a real, shared database.
+    """
+    for cls_name, real_cls in (
+        ("Architect", Architect),
+        ("Sentinel", Sentinel),
+        ("Tester", Tester),
+        ("Scribe", Scribe),
+    ):
+        monkeypatch.setattr(
+            f"repoach.review.orchestrator.{cls_name}",
+            lambda *, db_path=None, real_cls=real_cls: real_cls(loop=MagicMock(), db_path=db_path),
+        )
+
+
 def test_review_pr_four_reviewer_threads_do_not_race_pr_findings_creation(
     tmp_path: Path, monkeypatch: object
 ) -> None:
@@ -93,6 +131,7 @@ def test_review_pr_four_reviewer_threads_do_not_race_pr_findings_creation(
     monkeypatch.setattr(review_lessons, "_log", structlog.get_logger("test.review_lessons"))
     monkeypatch.setattr(Reviewer, "_call_with_retry", _canned_call_with_retry)
     monkeypatch.setattr("repoach.review.orchestrator.recall_review_lessons", lambda _query: [])
+    _patch_reviewer_construction(monkeypatch)
 
     db_path = tmp_path / "review.db"
     assert not db_path.exists()
