@@ -7,6 +7,8 @@ import time
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -26,6 +28,7 @@ from repoach.llm_proxy.providers.exceptions import (
 )
 from repoach.llm_proxy.routing import ModelRef, get_breaker, is_slow_completion, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
+from repoach.llm_proxy.routing.breaker_persist import persist_state
 
 from ._failover import FirstByteTimeoutError, PeekResult, peek_for_content
 from .model_router import ModelRouter, ResolvedModel, compute_credits_gate_skip_models
@@ -268,8 +271,11 @@ class ClaudeProxyService:
                 ref_count=len(sibling_refs),
                 ttl_s=effective_ttl,
             )
+            for sibling_ref in sibling_refs:
+                self._persist_breaker_state(sibling_ref)
             return
         breaker.trip(ref, now=time.monotonic(), ttl_s=effective_ttl, reason=reason)
+        self._persist_breaker_state(ref)
         if effective_ttl == self._settings.breaker_ttl_quarantine_s:
             logger.warning(
                 "breaker_quarantined",
@@ -278,6 +284,25 @@ class ClaudeProxyService:
                 count=would_be_count,
                 ttl_s=effective_ttl,
             )
+
+    def _persist_breaker_state(self, ref: ModelRef) -> None:
+        """Write-through *ref*'s current breaker state (SP-PROXY-STATE-PERSIST).
+
+        Gated by ``breaker_state_persist_enabled`` — mirrors how
+        ``breaker_enabled`` already gates :meth:`_trip_breaker`, so
+        disabling persistence stops every write-through call site at
+        once; :func:`persist_state` itself carries no internal enable
+        check.
+        """
+        if not self._settings.breaker_state_persist_enabled:
+            return
+        persist_state(
+            get_breaker(),
+            ref,
+            db_path=Path(self._settings.breaker_probe_seed_db),
+            monotonic_now=time.monotonic(),
+            wall_clock_now=datetime.now(UTC),
+        )
 
     async def _stream_with_failover(
         self,
@@ -484,6 +509,7 @@ class ClaudeProxyService:
                                 now=time.monotonic(),
                                 ttl_s=self._settings.breaker_slow_ttl_s,
                             )
+                            self._persist_breaker_state(ref)
                     else:
                         logger.warning(
                             "breaker_slow_strike",
@@ -494,6 +520,7 @@ class ClaudeProxyService:
                         )
                 else:
                     get_breaker().recover(ref)
+                    self._persist_breaker_state(ref)
                 if attempt_index > 0:
                     logger.info(
                         "proxy_chain_failover_recovered",
@@ -551,6 +578,7 @@ class ClaudeProxyService:
                                     now=time.monotonic(),
                                     ttl_s=self._settings.breaker_slow_ttl_s,
                                 )
+                                self._persist_breaker_state(ref)
                         else:
                             logger.warning(
                                 "breaker_slow_strike",
@@ -563,6 +591,7 @@ class ClaudeProxyService:
                             )
                     else:
                         get_breaker().recover(ref)
+                        self._persist_breaker_state(ref)
                     for buffered_chunk in retry_peek.buffered:
                         yield buffered_chunk
                     return

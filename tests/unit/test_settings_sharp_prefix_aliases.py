@@ -44,6 +44,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "BREAKER_QUARANTINE_THRESHOLD": "breaker_quarantine_threshold",
     "BREAKER_PROBE_SEED_ENABLED": "breaker_probe_seed_enabled",
     "BREAKER_PROBE_SEED_DB": "breaker_probe_seed_db",
+    "BREAKER_STATE_PERSIST_ENABLED": "breaker_state_persist_enabled",
     "BREAKER_SLOW_LATENCY_GATE_S": "breaker_slow_latency_gate_s",
     "BREAKER_SLOW_TPS_FLOOR": "breaker_slow_tps_floor",
     "BREAKER_SLOW_K": "breaker_slow_k",
@@ -315,6 +316,22 @@ def test_regen_sweep_aliases_present(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.regen_sweep_per_provider_concurrency == 4
     assert settings.regen_sweep_pacing_s == 1.5
     assert settings.regen_sweep_retry_backoff_s == 3.0
+
+
+def test_breaker_state_persist_enabled_alias_and_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``breaker_state_persist_enabled`` defaults to ``True`` and dual-reads its alias.
+
+    Pins the new Settings field added for SP-PROXY-STATE-PERSIST.
+    """
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.breaker_state_persist_enabled is True
+
+    monkeypatch.setenv("REPOACH_BREAKER_STATE_PERSIST_ENABLED", "false")
+    settings = _build_settings(monkeypatch)
+    assert settings.breaker_state_persist_enabled is False
 
 
 def test_first_byte_deadline_s_alias_and_default(monkeypatch: pytest.MonkeyPatch) -> None:

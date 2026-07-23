@@ -117,6 +117,7 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "BREAKER_TTL_TERMINAL_S": "REPOACH_BREAKER_TTL_TERMINAL_S",
     "BREAKER_PROBE_SEED_ENABLED": "REPOACH_BREAKER_PROBE_SEED_ENABLED",
     "BREAKER_PROBE_SEED_DB": "REPOACH_BREAKER_PROBE_SEED_DB",
+    "BREAKER_STATE_PERSIST_ENABLED": "REPOACH_BREAKER_STATE_PERSIST_ENABLED",
     "EFFORT_MAP_SEED_ENABLED": "REPOACH_EFFORT_MAP_SEED_ENABLED",
     "CLAUDE_CODE_CLI_PATH": "REPOACH_CLAUDE_CODE_CLI_PATH",
     "CLAUDE_CODE_DEFAULT_MODEL": "REPOACH_CLAUDE_CODE_DEFAULT_MODEL",
@@ -338,6 +339,9 @@ class Settings(BaseSettings):
     )
     breaker_probe_seed_db: str = Field(
         default="data/repoach.db", validation_alias=_aliases("BREAKER_PROBE_SEED_DB")
+    )
+    breaker_state_persist_enabled: bool = Field(
+        default=True, validation_alias=_aliases("BREAKER_STATE_PERSIST_ENABLED")
     )
     effort_map_seed_enabled: bool = Field(
         default=True, validation_alias=_aliases("EFFORT_MAP_SEED_ENABLED")
