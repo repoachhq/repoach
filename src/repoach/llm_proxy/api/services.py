@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import traceback
 import uuid
@@ -311,10 +312,29 @@ class ClaudeProxyService:
         ``providers/attribution.py``): live dispatch protects the
         caller waiting on the wire, so a slow-but-served completion is
         a strike, not recovery evidence.
+
+        SP-CHAIN-REQUEST-BUDGET wraps the whole walk in a single
+        wall-clock deadline (``settings.dispatch_total_budget_s``,
+        computed once here) so a fully-exhausted chain cannot cost the
+        caller the sum of every hop's own timeout. Each candidate's
+        ``peek_for_content`` await is clamped to the remaining budget
+        via an outer ``asyncio.wait_for`` ; a candidate that would start
+        after the budget is already gone is skipped without ever being
+        dispatched. ``claude_code`` is exempt from starvation — it
+        always gets at least ``claude_code_subprocess_timeout`` seconds
+        regardless of how much the earlier hops consumed, since a
+        genuine cold start/long generation can exceed 2 minutes before
+        the first token. When the chain is exhausted purely because the
+        budget ran out, the caller gets a loud ``504`` carrying a
+        per-hop breakdown instead of the ordinary ``502``/re-raised
+        exhaustion path.
         """
         dispatch_id = f"disp_{uuid.uuid4().hex[:12]}"
+        deadline = time.monotonic() + self._settings.dispatch_total_budget_s
         last_error: Exception | None = None
         prior_failures: list[tuple[str, str]] = []
+        hop_breakdown: list[dict[str, Any]] = []
+        budget_exhausted = False
         for attempt_index, candidate in enumerate(chain):
             candidate_ref = ModelRef.parse(candidate.provider_model_ref)
             if get_breaker().is_down(candidate_ref, time.monotonic()):
@@ -325,6 +345,30 @@ class ClaudeProxyService:
                     attempt=attempt_index + 1,
                 )
                 continue
+
+            remaining = deadline - time.monotonic()
+            if candidate.provider_id == "claude_code":
+                effective_timeout = max(remaining, self._settings.claude_code_subprocess_timeout)
+            elif remaining <= 0:
+                budget_exhausted = True
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": "dispatch_budget_exhausted_before_dispatch",
+                        "elapsed_s": 0.0,
+                    }
+                )
+                logger.warning(
+                    "proxy_dispatch_budget_exhausted_before_dispatch",
+                    dispatch_id=dispatch_id,
+                    candidate=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    budget_s=self._settings.dispatch_total_budget_s,
+                )
+                continue
+            else:
+                effective_timeout = remaining
+
             request_id = f"req_{uuid.uuid4().hex[:12]}"
             attempt_request = original_request.model_copy(
                 update={"model": candidate.provider_model}, deep=True
@@ -346,14 +390,52 @@ class ClaudeProxyService:
                     input_tokens=input_tokens,
                     request_id=request_id,
                 )
-                peek = await peek_for_content(
-                    stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+                peek = await asyncio.wait_for(
+                    peek_for_content(
+                        stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+                    ),
+                    timeout=effective_timeout,
                 )
+            except TimeoutError as exc:
+                attempt_latency_s = round(time.monotonic() - attempt_started, 3)
+                last_error = exc
+                budget_exhausted = True
+                reason = "dispatch_budget_exhausted"
+                prior_failures.append((candidate.provider_model_ref, reason))
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": reason,
+                        "elapsed_s": attempt_latency_s,
+                    }
+                )
+                logger.warning(
+                    "proxy_chain_failover_fired",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    attempt=attempt_index + 1,
+                    chain_length=len(chain),
+                    chain_remaining=len(chain) - attempt_index - 1,
+                    primary=candidate.provider_model_ref,
+                    primary_reason=reason,
+                    primary_error_type=type(exc).__name__,
+                    primary_error=str(exc)[:200],
+                    latency_s=attempt_latency_s,
+                )
+                self._trip_breaker(candidate, reason, chain=chain)
+                continue
             except Exception as exc:
                 attempt_latency_s = round(time.monotonic() - attempt_started, 3)
                 last_error = exc
                 primary_reason = _classify_failover_reason(exc)
                 prior_failures.append((candidate.provider_model_ref, primary_reason))
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": primary_reason,
+                        "elapsed_s": attempt_latency_s,
+                    }
+                )
                 logger.warning(
                     "proxy_chain_failover_fired",
                     dispatch_id=dispatch_id,
@@ -436,6 +518,7 @@ class ClaudeProxyService:
                     input_tokens=input_tokens,
                     dispatch_id=dispatch_id,
                     attempt_index=attempt_index,
+                    deadline=deadline,
                 )
                 if retry_peek is not None and retry_peek.got_content:
                     retry_latency_s = round(time.monotonic() - attempt_started, 3)
@@ -485,6 +568,13 @@ class ClaudeProxyService:
                     return
 
             prior_failures.append((candidate.provider_model_ref, "empty_completion"))
+            hop_breakdown.append(
+                {
+                    "provider_model_ref": candidate.provider_model_ref,
+                    "reason": "empty_completion",
+                    "elapsed_s": attempt_latency_s,
+                }
+            )
             logger.warning(
                 "proxy_chain_failover_fired",
                 dispatch_id=dispatch_id,
@@ -509,7 +599,24 @@ class ClaudeProxyService:
             failures=prior_failures,
             last_error_type=type(last_error).__name__ if last_error else None,
             last_error_message=str(last_error)[:200] if last_error else None,
+            budget_exhausted=budget_exhausted,
         )
+        if budget_exhausted:
+            logger.error(
+                "proxy_dispatch_budget_exhausted",
+                dispatch_id=dispatch_id,
+                budget_s=self._settings.dispatch_total_budget_s,
+                hops=hop_breakdown,
+            )
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "error": "dispatch_budget_exhausted",
+                    "dispatch_id": dispatch_id,
+                    "budget_s": self._settings.dispatch_total_budget_s,
+                    "hops": hop_breakdown,
+                },
+            )
         if last_error is not None:
             raise last_error
         raise HTTPException(
@@ -529,6 +636,7 @@ class ClaudeProxyService:
         input_tokens: int,
         dispatch_id: str,
         attempt_index: int,
+        deadline: float,
     ) -> PeekResult | None:
         """Re-issue a budget-starved candidate once with a larger ``max_tokens``.
 
@@ -539,7 +647,18 @@ class ClaudeProxyService:
         with ``max_tokens`` enlarged by ``budget_retry_factor`` (floored
         and capped).  Returns the retry's :class:`PeekResult`, or ``None``
         when no enlargement is possible or the retry raised.
+
+        SP-CHAIN-REQUEST-BUDGET: before issuing the retry, ``deadline`` is
+        checked against the current clock ; a dispatch whose total budget
+        has already run out returns ``None`` immediately without ever
+        re-invoking the provider, so this retry cannot silently spend more
+        wall clock than the dispatch has left.  When the deadline still has
+        headroom, the retry's own ``peek_for_content`` await is clamped to
+        the remaining budget the same way the primary attempt is.
         """
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
         original_max = attempt_request.max_tokens
         if original_max is None:
             enlarged = self._settings.budget_retry_cap
@@ -561,8 +680,11 @@ class ClaudeProxyService:
             stream = provider.stream_response(
                 retry_request, input_tokens=input_tokens, request_id=request_id
             )
-            retry_peek = await peek_for_content(
-                stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+            retry_peek = await asyncio.wait_for(
+                peek_for_content(
+                    stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+                ),
+                timeout=remaining,
             )
         except Exception as exc:
             logger.warning(

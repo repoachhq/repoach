@@ -69,6 +69,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "HTTP_WRITE_TIMEOUT": "http_write_timeout",
     "HTTP_CONNECT_TIMEOUT": "http_connect_timeout",
     "FIRST_BYTE_DEADLINE_S": "first_byte_deadline_s",
+    "DISPATCH_TOTAL_BUDGET_S": "dispatch_total_budget_s",
     "HOST": "host",
     "PORT": "port",
     "LOG_FILE": "log_file",

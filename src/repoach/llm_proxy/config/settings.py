@@ -158,6 +158,7 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "REGEN_SWEEP_PER_PROVIDER_CONCURRENCY": "REPOACH_REGEN_SWEEP_PER_PROVIDER_CONCURRENCY",
     "REGEN_SWEEP_PACING_S": "REPOACH_REGEN_SWEEP_PACING_S",
     "REGEN_SWEEP_RETRY_BACKOFF_S": "REPOACH_REGEN_SWEEP_RETRY_BACKOFF_S",
+    "DISPATCH_TOTAL_BUDGET_S": "REPOACH_DISPATCH_TOTAL_BUDGET_S",
 }
 
 
@@ -356,6 +357,19 @@ class Settings(BaseSettings):
     first_byte_deadline_s: float = Field(
         default=20.0, ge=0, validation_alias=_aliases("FIRST_BYTE_DEADLINE_S")
     )
+    dispatch_total_budget_s: float = Field(
+        default=900.0, validation_alias=_aliases("DISPATCH_TOTAL_BUDGET_S")
+    )
+    """Wall-clock budget for one ``_stream_with_failover`` call
+    (SP-CHAIN-REQUEST-BUDGET), shared across the WHOLE chain walk rather
+    than replacing any hop's own timeout.  ``900.0`` = 120 + 120 (both
+    native hops genuinely hang to their read timeout,
+    ``http_read_timeout``) + 600 (``claude_code_subprocess_timeout``
+    floor) + 60s headroom for scheduling/SSE-peek overhead.  Do not
+    configure below ~660s (600s ``claude_code`` floor + one native
+    hop's worth of margin) or a legitimately slow-but-successful
+    ``claude_code`` cold start risks truncation on a chain where an
+    earlier hop already spent budget."""
 
     nim: NimSettings = Field(default_factory=NimSettings)
 
