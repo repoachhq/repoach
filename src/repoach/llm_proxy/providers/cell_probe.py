@@ -38,6 +38,7 @@ from repoach.health.model_health import (
     STATUS_OK,
     STATUS_SLOW,
 )
+from repoach.llm_proxy.providers.model_catalog import redact_secret
 
 _log = get_logger(__name__)
 
@@ -95,11 +96,6 @@ class CellHealth:
         consumed the whole completion budget, leaving no visible output.
         """
         return self.reasoning_chars > 0 and self.content_chars == 0
-
-
-def _redact(text: str, secret: str) -> str:
-    """Mask ``secret`` in ``text`` so the api key can never reach a log sink."""
-    return text.replace(secret, "***") if secret else text
 
 
 def classify_cell(
@@ -218,7 +214,7 @@ async def probe_cell(
     try:
         resp = await client.post(url, json=body, headers=headers, timeout=timeout_s)
     except httpx.HTTPError as exc:
-        detail = _redact(f"{type(exc).__name__}: {str(exc)[:120]}", api_key)
+        detail = redact_secret(f"{type(exc).__name__}: {exc}", api_key)
         _log.warning(
             "cell_probe_transport_failed", provider=provider_id, model=model, detail=detail
         )

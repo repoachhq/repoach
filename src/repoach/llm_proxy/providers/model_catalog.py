@@ -36,6 +36,7 @@ __all__ = [
     "ProviderModelListing",
     "is_sweepable",
     "list_provider_models",
+    "redact_secret",
 ]
 
 
@@ -78,9 +79,31 @@ def is_sweepable(provider_id: str) -> bool:
     return provider_id not in UNSWEPT_PROVIDERS
 
 
-def _redact(text: str, secret: str) -> str:
-    """Mask ``secret`` in ``text`` so the api key can never reach a log sink."""
-    return text.replace(secret, "***") if secret else text
+def redact_secret(text: str, secret: str, *, limit: int = 120) -> str:
+    """Mask ``secret`` in ``text``, then truncate the masked result.
+
+    Redaction always runs BEFORE truncation (SP-REDACT-UNIFY): the previous
+    per-site copies sliced the raw exception text to a display cap first and
+    redacted second, so a secret straddling the slice boundary was cut into a
+    leaking prefix that ``str.replace`` could no longer match. Redacting the
+    full text first closes that leak for every ordering.
+
+    This is the single shared owner of the redact-then-truncate contract;
+    :mod:`repoach.llm_proxy.providers.cell_probe` and
+    :mod:`repoach.review.chain_health` import it rather than keep their own
+    copies.
+
+    Args:
+        text: The text to sanitize, typically a stringified exception.
+        secret: The credential to mask; an empty/falsy value is a no-op
+            redaction (truncation still applies).
+        limit: The display cap applied to the already-redacted string.
+
+    Returns:
+        ``text`` with every occurrence of ``secret`` replaced by ``"***"``,
+        truncated to at most ``limit`` characters.
+    """
+    return (text.replace(secret, "***") if secret else text)[:limit]
 
 
 def _parse_models(payload: object) -> tuple[tuple[ListedModel, ...], str | None]:
@@ -144,7 +167,7 @@ async def list_provider_models(
     try:
         resp = await client.get(url, headers=headers, timeout=timeout_s)
     except httpx.HTTPError as exc:
-        detail = _redact(f"{type(exc).__name__}: {str(exc)[:120]}", api_key)
+        detail = redact_secret(f"{type(exc).__name__}: {exc}", api_key)
         _log.warning("catalog_list_transport_failed", provider=provider_id, detail=detail)
         return ProviderModelListing(provider_id, (), False, detail)
     if not 200 <= resp.status_code < 300:

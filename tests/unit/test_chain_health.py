@@ -108,6 +108,36 @@ def test_api_key_redacted_in_error_detail() -> None:
     assert "***" in result.detail
 
 
+def test_probe_error_detail_never_leaks_key() -> None:
+    """A key straddling the 120-char display cap is fully redacted (SP-REDACT-UNIFY).
+
+    Drives the real transport-failure branch of ``probe_nim_model`` through
+    an ``httpx.MockTransport`` whose handler raises a connect error carrying
+    the full API key positioned so a truncate-first ordering would have cut
+    it mid-string and leaked its prefix.
+    """
+    full_key = "sk-" + ("z" * 40) + "-secret"
+    message = ("p" * 80) + full_key + ("s" * 80)
+    key_start = message.index(full_key)
+    detail_prefix_len = len("ConnectError: ")
+    assert key_start + detail_prefix_len < 120 < key_start + detail_prefix_len + len(full_key)
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(message, request=request)
+
+    transport = httpx.MockTransport(_handler)
+    client = httpx.AsyncClient(transport=transport)
+
+    result = asyncio.run(
+        probe_nim_model(client, "https://nim/v1", full_key, "m", tier="opus", timeout_s=1.0)
+    )
+
+    assert result.status == "error"
+    assert full_key not in result.detail
+    for index in range(0, len(full_key) - 8):
+        assert full_key[index : index + 8] not in result.detail
+
+
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Any:
     from repoach.llm_proxy.config.settings import Settings
 
