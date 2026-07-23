@@ -41,7 +41,7 @@ import json
 import re
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -328,9 +328,14 @@ class ReviewTeamOrchestrator:
         diff = diff_res.stdout
         diff_hash = _compute_diff_hash(diff)
 
-        head_sha = (
-            resolve_fresh_head(self._gh, pr_number, repo_root=Path.cwd()) if self._post else None
-        )
+        head_guard_pool: ThreadPoolExecutor | None = None
+        head_guard_future: Future[str | None] | None = None
+        if self._post:
+            head_guard_pool = ThreadPoolExecutor(max_workers=1)
+            head_guard_future = head_guard_pool.submit(
+                resolve_fresh_head, self._gh, pr_number, repo_root=self._repo_root
+            )
+        head_sha: str | None = None
 
         spec_plan_md: str | None = None
         spec_id: str | None = None
@@ -523,6 +528,8 @@ class ReviewTeamOrchestrator:
         n_blockers = sum(1 for o in outcomes for c in o.comments if c.severity == "blocker")
         n_majors = sum(1 for o in outcomes for c in o.comments if c.severity == "major")
 
+        head_sha = self._join_head_guard(head_guard_pool, head_guard_future, pr_number=pr_number)
+
         record_review_ledger(
             self._db_path,
             pr_number=pr_number,
@@ -670,6 +677,37 @@ class ReviewTeamOrchestrator:
             posted=team.posted_reviews,
         )
         return team
+
+    def _join_head_guard(
+        self,
+        pool: ThreadPoolExecutor | None,
+        future: Future[str | None] | None,
+        *,
+        pr_number: int,
+    ) -> str | None:
+        """Join the background head-freshness poll started in review_pr.
+
+        Returns the resolved head SHA, or ``None`` when no guard was
+        started (``post_to_github=False``) or the background poll
+        raised unexpectedly. The review always proceeds either way,
+        matching resolve_fresh_head's own evidence-first contract of
+        never letting this check block or crash the pipeline.
+        """
+        if pool is None or future is None:
+            return None
+        try:
+            result = future.result()
+        except Exception as exc:
+            _log.warning(
+                "review_team.head_guard_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+            result = None
+        finally:
+            pool.shutdown(wait=False)
+        return result
 
     def _round_two(
         self,

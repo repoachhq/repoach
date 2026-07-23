@@ -11,12 +11,16 @@ API never catches up.
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-from repoach.review.orchestrator import resolve_fresh_head
+from repoach.review.orchestrator import (
+    ReviewTeamOrchestrator,
+    resolve_fresh_head,
+)
 
 
 @pytest.fixture
@@ -99,3 +103,32 @@ def test_pr_view_exception_returns_the_served_head(
     resolved = resolve_fresh_head(gh, 3, repo_root=root, attempts=3, delay_s=0.0)
     assert resolved == "served" * 6
     assert gh.pr_head_sha.call_count == 1
+
+
+def test_join_head_guard_returns_none_when_no_pool() -> None:
+    """When pool and future are both None, _join_head_guard returns None."""
+    orch = ReviewTeamOrchestrator(post_to_github=False)
+    result = orch._join_head_guard(None, None, pr_number=42)
+    assert result is None
+
+
+def test_join_head_guard_returns_future_result() -> None:
+    """A completed future's result is returned unchanged."""
+    orch = ReviewTeamOrchestrator(post_to_github=False)
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(lambda: "abc123")
+    result = orch._join_head_guard(pool, future, pr_number=42)
+    assert result == "abc123"
+
+
+def test_join_head_guard_catches_exception_and_logs() -> None:
+    """An exception from the future is caught, logged, and degraded to None."""
+    orch = ReviewTeamOrchestrator(post_to_github=False)
+
+    def _boom() -> str:
+        raise RuntimeError("simulated crash")
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_boom)
+    result = orch._join_head_guard(pool, future, pr_number=99)
+    assert result is None
