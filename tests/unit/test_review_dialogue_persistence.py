@@ -100,6 +100,13 @@ class _StubGhCli:
         self.posted_reviews.append({"pr": pr_number, **kw})
         return GhResult(0, "", "", argv=["gh"])
 
+    def pr_review_submit_batch(self, pr_number: int, **kw: Any) -> GhResult:
+        self.posted_reviews.append({"pr": pr_number, **kw})
+        return GhResult(0, "{}", "", argv=["gh"])
+
+    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+        return []
+
     def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
         self.archive_calls.append({"pr": pr_number, "body": body})
         return GhResult(0, "", "", argv=["gh"])
