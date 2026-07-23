@@ -6,27 +6,34 @@ workflow.  Given a PR number, it drives the following pipeline, in
 order:
 
 1. Fetches the diff via ``gh pr diff``.
-2. Runs the four reviewer bots (Architect, Sentinel, Tester, Scribe)
+2. Submits the fresh-head guard (:func:`resolve_fresh_head`) to a
+   background thread so its up-to-30-second poll against the GitHub
+   API overlaps with the four-reviewer fan-out instead of blocking
+   it (SP-FRESH-HEAD-CONCURRENT).  The resolved head SHA is joined
+   immediately before the findings ledger write.
+3. Auto-loads the active spec from the PR's head branch.
+4. Fetches resolved disagreements per reviewer.
+5. Runs the four reviewer bots (Architect, Sentinel, Tester, Scribe)
    concurrently.
-3. Applies the hallucination guard to disprove unsupported "missing
+6. Applies the hallucination guard to disprove unsupported "missing
    X" claims before they reach a human.
-4. Optionally runs a round-2 confirm-or-retract dialogue for every
+7. Optionally runs a round-2 confirm-or-retract dialogue for every
    reviewer that flagged a blocker or major, so a challenged claim
    can be retracted with evidence.
-5. Records each finding plus a review-integrity row, so every claim
+8. Records each finding plus a review-integrity row, so every claim
    is traceable back to its origin.
-6. Runs mechanical verification (``finding_verifiers``) and the
+9. Runs mechanical verification (``finding_verifiers``) and the
    adversarial refuter over judged claims, advancing each finding
    through its lifecycle in the findings ledger.
-7. Derives the team verdict from the findings ledger via
-   :func:`merge_gate.verdict_from_facts` — the verdict is *derived*
-   from the ledger's open findings, not aggregated from per-bot
-   verdicts.
-8. Posts inline comments, per-bot reviews, and a sticky archive
-   comment on the PR.  The archive comment is report-only: a
-   human-readable snapshot of the run, not the retrievable source of
-   truth (that remains the findings ledger and ``pr_reviews`` in L4).
-9. Persists every outcome in L4 ``pr_reviews``.
+10. Derives the team verdict from the findings ledger via
+    :func:`merge_gate.verdict_from_facts` — the verdict is *derived*
+    from the ledger's open findings, not aggregated from per-bot
+    verdicts.
+11. Posts inline comments, per-bot reviews, and a sticky archive
+    comment on the PR.  The archive comment is report-only: a
+    human-readable snapshot of the run, not the retrievable source of
+    truth (that remains the findings ledger and ``pr_reviews`` in L4).
+12. Persists every outcome in L4 ``pr_reviews``.
 
 Auto-merge and the findings-driven Coder fix loop are separate,
 workflow-driven follow-ups hosted in ``auto_merge.py`` and
@@ -274,29 +281,40 @@ class ReviewTeamOrchestrator:
             1. **Fetch diff.**  Failure to read the PR diff is fatal —
                we return a degraded ``COMMENT`` outcome rather than
                crash the workflow.
-            2. **Auto-load active spec** (SP-DEV-V2-B2) from the PR's
+            2. **Submit fresh-head guard to background thread**
+               (SP-FRESH-HEAD-CONCURRENT) — when posting to GitHub,
+               :func:`resolve_fresh_head` is submitted to a dedicated
+               ``ThreadPoolExecutor(max_workers=1)`` so its
+               up-to-30-second poll against the GitHub API overlaps
+               with the four-reviewer fan-out (step 5) instead of
+               blocking it.  The resolved head SHA is joined
+               immediately before the findings ledger write and passed
+               to :func:`record_review_ledger`.  When
+               ``post_to_github=False`` no background thread is
+               created and ``head_sha`` stays ``None``.
+            3. **Auto-load active spec** (SP-DEV-V2-B2) from the PR's
                head branch so every reviewer reads the spec alongside
                the diff.  Spec lookup failures are logged and treated
                as "no spec" — never fatal.
-            3. **Fetch resolved disagreements per reviewer** (SP-CODER-
+            4. **Fetch resolved disagreements per reviewer** (SP-CODER-
                EVIDENCE-CHALLENGE phase 3B) — root threads the Coder
                has already answered with "Verified — challenge with
                evidence".  Logging + integration in production traffic
                ; the prompt-template bump that makes the model act on
                them ships in a follow-up.
-            4. **Run the four reviewers in parallel** through a
+            5. **Run the four reviewers in parallel** through a
                :class:`ThreadPoolExecutor`.  A single bot blowing up
                (NIM chain exhaustion, parser crash) records a degraded
                ``COMMENT`` outcome — the team continues without it.
-            5. **Hallucination guard** (SP-DEV-V2-B3) — post-process
+            6. **Hallucination guard** (SP-DEV-V2-B3) — post-process
                each outcome to disprove "missing X" claims by grepping
                the working tree, and to catch the self-referential
                prompt-template hallucination mode.  Defence in depth
                alongside the anti-hallucination paragraphs in the
                persona files.
-            6. **Persist round-1 verdicts** to L4 ``review_dialogue``
+            7. **Persist round-1 verdicts** to L4 ``review_dialogue``
                so the dialogue transcript can be replayed later.
-            7. **Round 2** (SP-REVIEW-DIALOGUE-A) — when at least one
+            8. **Round 2** (SP-REVIEW-DIALOGUE-A) — when at least one
                reviewer flagged a blocker / major, every flagging
                reviewer gets a second pass with peer outcomes + its
                own guard verdicts + live file excerpts.  Comments
@@ -304,7 +322,7 @@ class ReviewTeamOrchestrator:
                At most one round 2 per PR.  Only the reviewers whose
                outcome was actually replaced get a round-2 dialogue
                row (crashes keep the round-1 object in place).
-            8. **Ledger-sourced team verdict** (SP-VERDICT-RESOURCE-LEDGER)
+            9. **Ledger-sourced team verdict** (SP-VERDICT-RESOURCE-LEDGER)
                — ``final_verdict`` is derived from the findings ledger via
                :func:`merge_gate.verdict_from_facts` (REQUEST_CHANGES on an
                open blocking finding or an incomplete review), not the
