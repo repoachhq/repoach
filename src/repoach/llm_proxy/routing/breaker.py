@@ -272,6 +272,43 @@ class BreakerState:
         window = self._slow_history[ref]
         return sum(1 for v in window if v) >= k
 
+    def restore(
+        self,
+        ref: ModelRef,
+        *,
+        now: float,
+        ttl_s: float,
+        reason: str,
+        consecutive_failures: int,
+        slow_history: list[bool],
+    ) -> None:
+        """Rehydrate a persisted trip verbatim (SP-PROXY-STATE-PERSIST).
+
+        Sets ``_down_until``, ``_down_reason``, ``_consecutive_failures``,
+        and ``_slow_history`` for ``ref`` to the given values exactly —
+        never incrementing the failure count and never appending to the
+        slow-history window, unlike :meth:`trip`. ``_down_until`` still
+        extends-never-shortens an already-live in-process trip exactly
+        like :meth:`trip` does, so a rehydration racing a live request
+        can never shorten a fresher trip.
+
+        Args:
+            ref: The provider/model reference being restored.
+            now: ``time.monotonic`` timestamp the caller projected the
+                persisted wall-clock expiry onto.
+            ttl_s: The remaining cool-down window in seconds.
+            reason: The stored reason string, set verbatim.
+            consecutive_failures: The stored failure count, set verbatim.
+            slow_history: The stored slow-success window, set verbatim.
+        """
+        until = now + ttl_s
+        current = self._down_until.get(ref)
+        if current is None or until > current:
+            self._down_until[ref] = until
+        self._down_reason[ref] = reason
+        self._consecutive_failures[ref] = consecutive_failures
+        self._slow_history[ref] = list(slow_history)
+
     def trip_slow(
         self,
         ref: ModelRef,

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from repoach.llm_proxy.config.settings import get_settings
 from repoach.llm_proxy.routing import reset_breaker
 
 
@@ -24,6 +25,30 @@ def _reset_health_breaker() -> None:
     one test would leak into the next and reshape its resolved chain.
     """
     reset_breaker()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_breaker_state_db(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+):
+    """Point ``breaker_probe_seed_db`` at an isolated tmp file by default.
+
+    `SP-PROXY-STATE-PERSIST` gives the failover breaker a write-through to
+    ``settings.breaker_probe_seed_db`` — the SAME shared SQLite file
+    (``data/repoach.db`` by default) the deployed proxy uses. A unit test
+    that builds a real app (e.g. ``test_health_breaker.py``'s
+    ``create_app()`` calls) without overriding this setting would
+    otherwise mutate that real, out-of-repo file. Clearing
+    ``get_settings``'s cache is required too: ``repoach.llm_proxy.api.app``
+    calls ``get_settings()`` at MODULE IMPORT time, priming the
+    ``lru_cache`` with the real environment's default before any per-test
+    fixture — including this one — has run.
+    """
+    db = tmp_path_factory.mktemp("breaker_state") / "repoach.db"
+    monkeypatch.setenv("REPOACH_BREAKER_PROBE_SEED_DB", str(db))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)
