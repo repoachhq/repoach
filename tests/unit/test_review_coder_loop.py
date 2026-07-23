@@ -114,6 +114,32 @@ def test_is_path_allowed_rejects_github_and_githooks(path: str) -> None:
     assert is_path_allowed(path) is False
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "chains.env",
+        "a/b/chains.env",
+    ],
+)
+def test_is_path_allowed_rejects_chains_env(path: str) -> None:
+    assert is_path_allowed(path) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/repoach/x.py",
+        "tests/unit/x.py",
+        "docs/x.md",
+        "chains.env.bak",
+        "mychains.env",
+        "Chains.env",
+    ],
+)
+def test_is_path_allowed_accepts_chains_env_lookalikes(path: str) -> None:
+    assert is_path_allowed(path) is True
+
+
 # ---------------------------------------------------------------------------
 # apply_fixes
 # ---------------------------------------------------------------------------
@@ -156,6 +182,18 @@ def test_apply_fixes_rejects_forbidden_paths(tmp_path: Path) -> None:
     # The forbidden ones did NOT write.
     assert not (tmp_path / "memory/L0_meta_rules.md").exists()
     assert not (tmp_path / ".env").exists()
+
+
+def test_apply_fixes_rejects_chains_env(tmp_path: Path) -> None:
+    fixes = [
+        {"path": "chains.env", "new_content": "REPOACH_CHAINS=evil\n"},
+        {"path": "src/legit.py", "new_content": "ok\n"},
+    ]
+    applied, rejected = apply_fixes(fixes, repo_root=tmp_path)
+    assert applied == 1
+    assert rejected == ["chains.env"]
+    assert (tmp_path / "src/legit.py").exists()
+    assert not (tmp_path / "chains.env").exists()
 
 
 def test_apply_fixes_rejects_traversal(tmp_path: Path) -> None:

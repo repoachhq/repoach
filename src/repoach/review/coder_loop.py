@@ -89,6 +89,9 @@ def is_path_allowed(path: str) -> bool:
     * Its final component is not an env file — exactly ``.env``, any
       ``.env.*`` variant, or ``.envrc`` — anywhere in the tree, not
       just at repo root (SP-CODER-WHITELIST-HARDEN).
+    * Its final component is not exactly ``chains.env`` — the
+      authoritative chain-selection config, human- or
+      chainpilot-written only (SP-CODER-CHAINS-GUARD).
     * It is not in :data:`FORBIDDEN_PATHS`.
     * It does not start with any prefix in :data:`FORBIDDEN_PREFIXES`.
 
@@ -107,6 +110,8 @@ def is_path_allowed(path: str) -> bool:
         return False
     basename = parts[-1]
     if basename == ".env" or basename.startswith(".env.") or basename == ".envrc":
+        return False
+    if basename == "chains.env":
         return False
     norm = path.replace("\\", "/")
     if norm in FORBIDDEN_PATHS:
