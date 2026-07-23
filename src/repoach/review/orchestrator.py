@@ -57,7 +57,7 @@ from ..core.config import get_settings
 from ..core.logging import get_logger
 from .finding_verifiers import verify_findings_for_pr
 from .findings_bridge import record_findings_for_outcomes
-from .gh_client import GhCli
+from .gh_client import GhCli, GhResult
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
@@ -85,6 +85,7 @@ from .reviewer import (
     GuardEventSummary,
     PeerOutcome,
     PriorReviewContext,
+    ReviewComment,
     Reviewer,
     ReviewerOutcome,
     ReviewVerdict,
@@ -99,12 +100,18 @@ _log = get_logger(__name__)
 
 
 def _parse_comment_id(stdout: str) -> int | None:
-    """Extract the GitHub comment id from a ``pr_review_comment`` response.
+    """Extract the integer ``id`` field from a gh API JSON response.
 
-    The ``gh api`` invocation echoes the JSON of the created comment
-    on stdout.  Tolerant of empty / non-JSON output (returns ``None``)
-    so a missing id never crashes the review pass — the auto-challenge
-    pass simply can't target that comment.
+    The ``gh api`` invocation echoes the JSON of the created resource
+    on stdout — a single inline comment
+    (:meth:`~repoach.review.gh_client.GhCli.pr_review_comment`) or,
+    since SP-REVIEW-POST-BATCH, a whole batched review
+    (:meth:`~repoach.review.gh_client.GhCli.pr_review_submit_batch`).
+    Both shapes carry their own id under the same top-level ``"id"``
+    key, so one parser covers both callers.  Tolerant of empty /
+    non-JSON output (returns ``None``) so a missing id never crashes
+    the review pass — the auto-challenge pass simply can't target that
+    comment/review.
     """
     if not stdout:
         return None
@@ -123,6 +130,36 @@ def _parse_comment_id(stdout: str) -> int | None:
             "orchestrator.comment_id_int_cast_failed", raw=str(raw)[:50], error=str(exc)[:120]
         )
         return None
+
+
+def _render_comment_body(outcome: ReviewerOutcome, comment: ReviewComment) -> str:
+    """Render one inline comment's markdown body for posting.
+
+    Shared by :meth:`ReviewTeamOrchestrator._publish_batched_review`
+    and :meth:`ReviewTeamOrchestrator._publish_per_comment` so both the
+    batched and the pre-batching fallback path render the exact same
+    ``**[{role}/{severity}]** {body}`` template.
+    """
+    return (
+        f"**[{outcome.role.value}/{comment.severity}]** "
+        f"{comment.body}\n\n_— Repoach review-bot ({outcome.model_used})_"
+    )
+
+
+def _render_review_body(outcome: ReviewerOutcome) -> str:
+    """Render one reviewer's verdict + summary footer as review body markdown.
+
+    Shared by :meth:`ReviewTeamOrchestrator._publish_batched_review`
+    and :meth:`ReviewTeamOrchestrator._publish_per_comment` so both
+    paths submit the exact same review body.
+    """
+    return (
+        f"### {outcome.role.value.title()} review\n\n"
+        f"**Verdict:** {outcome.verdict.value}\n\n"
+        f"{outcome.summary}\n\n"
+        f"_— Repoach review bot, {outcome.model_used}, "
+        f"{outcome.tokens_used} tokens, {outcome.elapsed_s}s_"
+    )
 
 
 def record_review_ledger(
@@ -872,6 +909,16 @@ class ReviewTeamOrchestrator:
     ) -> None:
         """Post inline comments + final review verdict for one reviewer.
 
+        SP-REVIEW-POST-BATCH: when ``head_sha`` is known, every inline
+        comment and the verdict are submitted together through
+        :meth:`_publish_batched_review` — one ``gh`` subprocess for the
+        whole reviewer's output instead of one per comment. When
+        ``head_sha`` is ``None`` (fresh-head resolution failed) there is
+        no commit to anchor inline comments to, so batching is skipped
+        entirely and :meth:`_publish_per_comment` runs directly — the
+        pre-batching degrade behavior for an unresolved head, preserved
+        verbatim.
+
         Failures here are logged but never raised — we want partial
         success rather than aborting the whole team.
 
@@ -879,6 +926,155 @@ class ReviewTeamOrchestrator:
         successfully posted inline comment is recorded so the
         orchestrator's auto-challenge pass can target replies on the
         right thread.
+        """
+        if head_sha is None:
+            self._publish_per_comment(
+                pr_number=pr_number,
+                outcome=outcome,
+                head_sha=head_sha,
+                team=team,
+                posted_ids=posted_ids,
+            )
+            return
+        self._publish_batched_review(
+            pr_number=pr_number,
+            outcome=outcome,
+            head_sha=head_sha,
+            team=team,
+            posted_ids=posted_ids,
+        )
+
+    def _publish_batched_review(
+        self,
+        *,
+        pr_number: int,
+        outcome: ReviewerOutcome,
+        head_sha: str,
+        team: TeamOutcome,
+        posted_ids: dict[tuple[str, int], int] | None,
+    ) -> None:
+        """Submit one reviewer's verdict + inline comments as a single review.
+
+        ``GITHUB_TOKEN``-authenticated bots cannot submit APPROVE /
+        REQUEST_CHANGES reviews on a PR (only humans / PATs can —
+        observed live on PR #1 from the auto-review workflow). When the
+        batched submission is rejected while ``outcome.verdict`` is
+        APPROVE or REQUEST_CHANGES, it is retried exactly once with the
+        event downgraded to COMMENT (SP-REVIEW-POST-BATCH NG4 — at most
+        one retry). When that retry (or the original call, when the
+        verdict was already COMMENT) also fails — e.g. a comment's line
+        no longer resolves against ``head_sha`` after a force-push,
+        HTTP 422 — this falls back to
+        :meth:`_publish_per_comment`'s pre-batching sequence, so a
+        single bad anchor degrades in isolation rather than losing the
+        whole reviewer's output.
+        """
+        comments_payload = [
+            {
+                "file": comment.file,
+                "line": comment.line,
+                "body": _render_comment_body(outcome, comment),
+            }
+            for comment in outcome.comments
+        ]
+        review_body = _render_review_body(outcome)
+        verdict = outcome.verdict.value
+        res = self._gh.pr_review_submit_batch(
+            pr_number,
+            commit_sha=head_sha,
+            verdict=verdict,
+            body=review_body,
+            comments=comments_payload,
+        )
+        if not res.ok and verdict != ReviewVerdict.COMMENT.value:
+            _log.warning(
+                "review_team.batch_review_rejected",
+                role=outcome.role.value,
+                verdict=verdict,
+                stderr=res.stderr[:200],
+            )
+            res = self._gh.pr_review_submit_batch(
+                pr_number,
+                commit_sha=head_sha,
+                verdict=ReviewVerdict.COMMENT.value,
+                body=review_body,
+                comments=comments_payload,
+            )
+        if not res.ok:
+            _log.warning(
+                "review_team.batch_review_fully_rejected",
+                role=outcome.role.value,
+                stderr=res.stderr[:200],
+            )
+            self._publish_per_comment(
+                pr_number=pr_number,
+                outcome=outcome,
+                head_sha=head_sha,
+                team=team,
+                posted_ids=posted_ids,
+            )
+            return
+
+        team.posted_reviews += 1
+        team.posted_comments += len(outcome.comments)
+        if posted_ids is not None and comments_payload:
+            self._recover_batched_posted_ids(
+                pr_number=pr_number,
+                res=res,
+                posted_ids=posted_ids,
+            )
+
+    def _recover_batched_posted_ids(
+        self,
+        *,
+        pr_number: int,
+        res: GhResult,
+        posted_ids: dict[tuple[str, int], int],
+    ) -> None:
+        """Populate ``posted_ids`` from a successful batched review's comments.
+
+        Parses the created review's own ``id`` out of ``res.stdout``,
+        fetches that review's comments scoped to its id (not the
+        whole-PR comment list), and records ``(file, line) -> comment
+        id`` for every entry whose ``path``/``line``/``id`` are present
+        and well-typed — the same shape
+        :meth:`_run_auto_challenge_pass` already consumes today.
+        Malformed / unparseable JSON no-ops (``posted_ids`` unchanged,
+        logged at debug) rather than raising — the auto-challenge pass
+        simply can't target this reviewer's threads this round.
+        """
+        review_id = _parse_comment_id(res.stdout)
+        if review_id is None:
+            _log.debug(
+                "review_team.batch_review_id_parse_failed",
+                pr_number=pr_number,
+            )
+            return
+        for entry in self._gh.list_review_id_comments(pr_number, review_id):
+            path = entry.get("path")
+            line = entry.get("line")
+            comment_id = entry.get("id")
+            if isinstance(path, str) and isinstance(line, int) and isinstance(comment_id, int):
+                posted_ids[(path, line)] = comment_id
+
+    def _publish_per_comment(
+        self,
+        *,
+        pr_number: int,
+        outcome: ReviewerOutcome,
+        head_sha: str | None,
+        team: TeamOutcome,
+        posted_ids: dict[tuple[str, int], int] | None,
+    ) -> None:
+        """Post one gh subprocess call per inline comment, then the verdict.
+
+        The pre-SP-REVIEW-POST-BATCH posting sequence, kept as the
+        degrade path for two cases: ``head_sha`` unresolved (no commit
+        to anchor a batched review to) and a batched review rejected
+        for every event tried by :meth:`_publish_batched_review`. A bad
+        comment anchor fails in isolation here — siblings still post —
+        which is exactly why this sequence is preserved rather than
+        replaced outright.
 
         Note:
             ``GITHUB_TOKEN``-authenticated bots cannot submit APPROVE
@@ -889,10 +1085,7 @@ class ReviewTeamOrchestrator:
             verdict still surfaces on the PR conversation.
         """
         for comment in outcome.comments:
-            body = (
-                f"**[{outcome.role.value}/{comment.severity}]** "
-                f"{comment.body}\n\n_— Repoach review-bot ({outcome.model_used})_"
-            )
+            body = _render_comment_body(outcome, comment)
             res = self._gh.pr_review_comment(
                 pr_number,
                 body=body,
@@ -915,13 +1108,7 @@ class ReviewTeamOrchestrator:
                     stderr=res.stderr[:200],
                 )
 
-        review_body = (
-            f"### {outcome.role.value.title()} review\n\n"
-            f"**Verdict:** {outcome.verdict.value}\n\n"
-            f"{outcome.summary}\n\n"
-            f"_— Repoach review bot, {outcome.model_used}, "
-            f"{outcome.tokens_used} tokens, {outcome.elapsed_s}s_"
-        )
+        review_body = _render_review_body(outcome)
         res = self._gh.pr_review_submit(
             pr_number,
             verdict=outcome.verdict.value,
