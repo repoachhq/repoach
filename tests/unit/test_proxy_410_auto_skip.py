@@ -94,7 +94,7 @@ async def test_disguised_error_with_error_stop_reason_is_failure() -> None:
     result = await peek_for_content(_stream_from(chunks))
 
     assert result.got_content is False
-    assert result.stream_done is True
+    assert result.stream_done is False
 
 
 @pytest.mark.asyncio

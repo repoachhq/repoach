@@ -79,9 +79,13 @@ class PeekResult:
             upstream response — either a ``tool_use`` content block
             was emitted, or the final ``message_delta`` reported a
             non-zero ``usage.output_tokens``.
-        stream_done: ``True`` once the stream emitted ``message_stop``
-            (or was drained on terminal failure).  Always ``True``
-            after :func:`peek_for_content` returns.
+        stream_done: ``True`` once the stream emitted ``message_stop``.
+            ``False`` when :func:`peek_for_content` exited early after a
+            per-chunk terminal-error signal fired (``stop_reason == "error"``
+            on a ``message_delta``, or the documented disguised-error text
+            pattern) — in that case the remaining chunks were never read and
+            the caller's ``stream`` was explicitly closed via ``aclose()``
+            instead of drained to completion.
         looks_budget_starved: ``True`` when ``got_content`` is ``False``
             because the stream completed normally but produced no usable
             text (``output_tokens`` was zero, or the text was
@@ -108,6 +112,7 @@ class PeekResult:
 
 _EVENT_TYPE_PATTERN = re.compile(r"^event:\s*(\S+)", re.MULTILINE)
 _DATA_LINE_PATTERN = re.compile(r"^data:\s*(.*)$", re.MULTILINE)
+_DISGUISED_ERROR_TEXT_PATTERN = re.compile(r"^Connection error\.\s*\(request_id=")
 
 
 def _parse_event(chunk: str) -> tuple[str | None, dict | None]:
@@ -203,6 +208,19 @@ def chunk_text_delta(chunk: str) -> str | None:
     return text if isinstance(text, str) else None
 
 
+def text_is_disguised_error(text: str) -> bool:
+    """Return whether accumulated ``text_delta`` content opens with the
+    documented NIM disguised-connection-error signature.
+
+    Matches the literal shape observed live on 2026-05-04 17:31 (module
+    docstring above): a synthetic ``"Connection error. (request_id=…)"``
+    text block a broken upstream emits in place of a real completion.
+    Any other text, including partial prefixes still arriving, returns
+    ``False``.
+    """
+    return _DISGUISED_ERROR_TEXT_PATTERN.match(text) is not None
+
+
 async def peek_for_content(
     stream: AsyncIterator[str],
     *,
@@ -210,22 +228,30 @@ async def peek_for_content(
 ) -> PeekResult:
     """Drain the stream and decide whether it carried real content.
 
-    Reads every chunk until ``message_stop`` (or the iterator is
-    exhausted) and buffers them so the caller can replay them on
-    success.
+    Reads chunks until ``message_stop``, the iterator is exhausted, or
+    a per-chunk terminal-error signal fires, buffering them so the
+    caller can replay them on success.
 
     Decision rule (in order):
 
     1. If any ``message_delta`` carried ``stop_reason == "error"``,
-       the stream is a failure regardless of any prior content.
-    2. If any chunk is a ``content_block_start`` of type ``tool_use``,
+       the stream is a failure regardless of any prior content. This
+       signal is checked per-chunk and breaks the drain the instant it
+       fires, without waiting for ``message_stop``.
+    2. If the accumulated ``text_delta`` content matches
+       :func:`text_is_disguised_error`, the stream is a failure. Also
+       checked per-chunk and breaks the drain immediately — this is
+       the common case for the disguised NIM connection error, which
+       previously required draining to the terminal ``message_delta``
+       to see ``output_tokens == 0``.
+    3. If any chunk is a ``content_block_start`` of type ``tool_use``,
        the response is real (NIM never disguises errors as tool_use).
-    3. Otherwise, the final ``message_delta.usage.output_tokens`` is
+    4. Otherwise, the final ``message_delta.usage.output_tokens`` is
        authoritative: ``> 0`` means real model output ; ``0`` (or no
        ``message_delta`` at all) means transient failure — even if
        earlier ``content_block_*`` events appeared, those are the
        provider's synthetic error placeholder.
-    4. **SP-PROXY-FAILOVER-WHITESPACE** : when ``output_tokens > 0``
+    5. **SP-PROXY-FAILOVER-WHITESPACE** : when ``output_tokens > 0``
        *and* no ``tool_use`` block was seen, the accumulated
        ``text_delta`` content must contain at least one
        non-whitespace character.  Otherwise the upstream produced
@@ -255,9 +281,10 @@ async def peek_for_content(
     Returns:
         A :class:`PeekResult` carrying the buffered events (so the
         caller can replay them on success), a ``got_content``
-        boolean computed per the four-step decision rule above,
-        and ``stream_done=True`` once the iterator yielded
-        ``message_stop`` or was drained.
+        boolean computed per the decision rule above, and
+        ``stream_done`` reflecting whether ``message_stop`` was
+        reached (``False`` on an early terminal-error abort — see
+        :attr:`PeekResult.stream_done`).
 
     Raises:
         FirstByteTimeoutError: ``first_byte_deadline_s`` elapsed before
@@ -271,11 +298,14 @@ async def peek_for_content(
     saw_tool_use = False
     final_output_tokens: int | None = None
     saw_error_stop_reason = False
+    saw_disguised_error_text = False
+    exited_on_terminal_error = False
     accumulated_text: list[str] = []
     stream_done = False
 
     def _absorb(chunk: str) -> bool:
         nonlocal saw_tool_use, final_output_tokens, saw_error_stop_reason
+        nonlocal saw_disguised_error_text, exited_on_terminal_error
         buffered.append(chunk)
         if chunk_is_tool_use_start(chunk):
             saw_tool_use = True
@@ -287,9 +317,15 @@ async def peek_for_content(
         stop_reason = chunk_message_delta_stop_reason(chunk)
         if stop_reason == "error":
             saw_error_stop_reason = True
+            exited_on_terminal_error = True
+            return False
         text = chunk_text_delta(chunk)
         if text is not None:
             accumulated_text.append(text)
+            if text_is_disguised_error("".join(accumulated_text)):
+                saw_disguised_error_text = True
+                exited_on_terminal_error = True
+                return False
         return chunk_marks_stream_end(chunk)
 
     stream_iter = stream.__aiter__()
@@ -308,11 +344,18 @@ async def peek_for_content(
             if _absorb(first_chunk):
                 stream_done = True
 
-    if not stream_done:
+    if not stream_done and not exited_on_terminal_error:
         async for chunk in stream_iter:
             if _absorb(chunk):
                 stream_done = True
                 break
+            if exited_on_terminal_error:
+                break
+
+    if exited_on_terminal_error:
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
     text_buffer = "".join(accumulated_text)
     text_chars = len(text_buffer)
@@ -321,6 +364,9 @@ async def peek_for_content(
     if saw_error_stop_reason:
         got_content = False
         decision_reason = "stop_reason_error"
+    elif saw_disguised_error_text:
+        got_content = False
+        decision_reason = "disguised_error_text"
     elif saw_tool_use:
         got_content = True
         decision_reason = "tool_use"
