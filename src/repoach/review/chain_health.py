@@ -27,6 +27,7 @@ from repoach.health.model_health import (
 )
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.defaults import NVIDIA_NIM_BASE_URL
+from repoach.llm_proxy.providers.model_catalog import redact_secret
 
 _log = get_logger(__name__)
 
@@ -45,11 +46,6 @@ __all__ = [
     "classify",
     "is_degraded",
 ]
-
-
-def _redact(text: str, secret: str) -> str:
-    """Mask ``secret`` in ``text`` so the api key can never reach a log sink."""
-    return text.replace(secret, "***") if secret else text
 
 
 def chain_head(chain_value: str) -> tuple[str, str]:
@@ -140,7 +136,7 @@ async def probe_nim_model(
     try:
         resp = await client.post(url, json=body, headers=headers, timeout=timeout_s)
     except httpx.HTTPError as exc:
-        detail = _redact(f"{type(exc).__name__}: {str(exc)[:120]}", api_key)
+        detail = redact_secret(f"{type(exc).__name__}: {exc}", api_key)
         _log.warning("nim_chain_probe_transport_failed", tier=tier, model=model, detail=detail)
         return ModelHealth(tier, model, STATUS_ERROR, None, 0, detail)
     latency_s = time.monotonic() - start
