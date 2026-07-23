@@ -45,12 +45,25 @@ Failure modes **not** triggering failover (genuine model output):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 from loguru import logger
+
+
+class FirstByteTimeoutError(Exception):
+    """Raised when a stream's first SSE chunk misses its deadline.
+
+    Distinct from the transport-level ``http_read_timeout``
+    (``providers/base.py``), which only bounds the gap between two
+    already-started reads: this error fires when a hop accepts the
+    connection and then sends nothing at all, a state otherwise
+    indistinguishable from a legitimately slow-but-alive stream until
+    the full read timeout elapses.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +203,11 @@ def chunk_text_delta(chunk: str) -> str | None:
     return text if isinstance(text, str) else None
 
 
-async def peek_for_content(stream: AsyncIterator[str]) -> PeekResult:
+async def peek_for_content(
+    stream: AsyncIterator[str],
+    *,
+    first_byte_deadline_s: float | None = None,
+) -> PeekResult:
     """Drain the stream and decide whether it carried real content.
 
     Reads every chunk until ``message_stop`` (or the iterator is
@@ -228,6 +245,12 @@ async def peek_for_content(stream: AsyncIterator[str]) -> PeekResult:
             iterator must terminate (either via ``message_stop`` or
             natural exhaustion) ; long-running streams without a
             terminator are not supported by this peek window.
+        first_byte_deadline_s: Bounds the wait for the stream's FIRST
+            chunk, distinct from the transport-level
+            ``http_read_timeout`` that bounds gaps between reads once
+            streaming has started. ``None`` or any value ``<= 0``
+            disables enforcement (byte-for-byte identical to the
+            behavior before this parameter existed). SP-PROXY-FIRST-BYTE-DEADLINE.
 
     Returns:
         A :class:`PeekResult` carrying the buffered events (so the
@@ -235,6 +258,14 @@ async def peek_for_content(stream: AsyncIterator[str]) -> PeekResult:
         boolean computed per the four-step decision rule above,
         and ``stream_done=True`` once the iterator yielded
         ``message_stop`` or was drained.
+
+    Raises:
+        FirstByteTimeoutError: ``first_byte_deadline_s`` elapsed before
+            the stream yielded a single chunk. An immediately-exhausted
+            stream (``StopAsyncIteration`` on the very first
+            ``__anext__()``, itself within the deadline) is NOT this
+            error — it falls through to the ordinary empty-completion
+            decision rules below.
     """
     buffered: list[str] = []
     saw_tool_use = False
@@ -242,7 +273,9 @@ async def peek_for_content(stream: AsyncIterator[str]) -> PeekResult:
     saw_error_stop_reason = False
     accumulated_text: list[str] = []
     stream_done = False
-    async for chunk in stream:
+
+    def _absorb(chunk: str) -> bool:
+        nonlocal saw_tool_use, final_output_tokens, saw_error_stop_reason
         buffered.append(chunk)
         if chunk_is_tool_use_start(chunk):
             saw_tool_use = True
@@ -257,9 +290,29 @@ async def peek_for_content(stream: AsyncIterator[str]) -> PeekResult:
         text = chunk_text_delta(chunk)
         if text is not None:
             accumulated_text.append(text)
-        if chunk_marks_stream_end(chunk):
+        return chunk_marks_stream_end(chunk)
+
+    stream_iter = stream.__aiter__()
+    if first_byte_deadline_s is not None and first_byte_deadline_s > 0:
+        try:
+            first_chunk = await asyncio.wait_for(
+                stream_iter.__anext__(), timeout=first_byte_deadline_s
+            )
+        except StopAsyncIteration:
             stream_done = True
-            break
+        except TimeoutError as exc:
+            raise FirstByteTimeoutError(
+                f"no SSE chunk within first_byte_deadline_s={first_byte_deadline_s}"
+            ) from exc
+        else:
+            if _absorb(first_chunk):
+                stream_done = True
+
+    if not stream_done:
+        async for chunk in stream_iter:
+            if _absorb(chunk):
+                stream_done = True
+                break
 
     text_buffer = "".join(accumulated_text)
     text_chars = len(text_buffer)

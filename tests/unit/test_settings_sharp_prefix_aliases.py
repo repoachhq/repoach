@@ -68,6 +68,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "HTTP_READ_TIMEOUT": "http_read_timeout",
     "HTTP_WRITE_TIMEOUT": "http_write_timeout",
     "HTTP_CONNECT_TIMEOUT": "http_connect_timeout",
+    "FIRST_BYTE_DEADLINE_S": "first_byte_deadline_s",
     "HOST": "host",
     "PORT": "port",
     "LOG_FILE": "log_file",
@@ -313,3 +314,25 @@ def test_regen_sweep_aliases_present(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.regen_sweep_per_provider_concurrency == 4
     assert settings.regen_sweep_pacing_s == 1.5
     assert settings.regen_sweep_retry_backoff_s == 3.0
+
+
+def test_first_byte_deadline_s_alias_and_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``first_byte_deadline_s`` defaults to 20.0 and dual-reads its alias.
+
+    Pins the new Settings field added for SP-PROXY-FIRST-BYTE-DEADLINE:
+    the default matches the spec's ``constraints`` block, the canonical
+    ``REPOACH_PROXY_FIRST_BYTE_DEADLINE_S`` and legacy bare
+    ``FIRST_BYTE_DEADLINE_S`` both resolve, and REPOACH_ wins when both
+    are set.
+    """
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.first_byte_deadline_s == 20.0
+
+    monkeypatch.setenv("FIRST_BYTE_DEADLINE_S", "5")
+    settings = _build_settings(monkeypatch)
+    assert settings.first_byte_deadline_s == 5.0
+
+    monkeypatch.setenv("REPOACH_PROXY_FIRST_BYTE_DEADLINE_S", "8")
+    settings = _build_settings(monkeypatch)
+    assert settings.first_byte_deadline_s == 8.0
