@@ -135,6 +135,7 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "HTTP_READ_TIMEOUT": "REPOACH_PROXY_HTTP_READ_TIMEOUT",
     "HTTP_WRITE_TIMEOUT": "REPOACH_PROXY_HTTP_WRITE_TIMEOUT",
     "HTTP_CONNECT_TIMEOUT": "REPOACH_PROXY_HTTP_CONNECT_TIMEOUT",
+    "FIRST_BYTE_DEADLINE_S": "REPOACH_PROXY_FIRST_BYTE_DEADLINE_S",
     "HOST": "REPOACH_PROXY_HOST",
     "PORT": "REPOACH_PROXY_PORT",
     "LOG_FILE": "REPOACH_PROXY_LOG_FILE",
@@ -351,6 +352,9 @@ class Settings(BaseSettings):
     http_write_timeout: float = Field(default=10.0, validation_alias=_aliases("HTTP_WRITE_TIMEOUT"))
     http_connect_timeout: float = Field(
         default=2.0, validation_alias=_aliases("HTTP_CONNECT_TIMEOUT")
+    )
+    first_byte_deadline_s: float = Field(
+        default=20.0, ge=0, validation_alias=_aliases("FIRST_BYTE_DEADLINE_S")
     )
 
     nim: NimSettings = Field(default_factory=NimSettings)

@@ -26,7 +26,7 @@ from repoach.llm_proxy.providers.exceptions import (
 from repoach.llm_proxy.routing import ModelRef, get_breaker, is_slow_completion, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
 
-from ._failover import PeekResult, peek_for_content
+from ._failover import FirstByteTimeoutError, PeekResult, peek_for_content
 from .model_router import ModelRouter, ResolvedModel, compute_credits_gate_skip_models
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
@@ -41,14 +41,21 @@ ProviderGetter = Callable[[str], BaseProvider]
 def _classify_failover_reason(exc: BaseException) -> str:
     """Classify a failover-triggering exception into a spec-vocabulary reason.
 
-    Returns one of: ``timeout``, ``rate_limited``, ``provider_5xx``,
-    ``provider_4xx``, ``auth_failed``, ``invalid_request``,
-    ``transport_error``, or ``exception:<TypeName>`` as the fallback.
+    Returns one of: ``first_byte_timeout``, ``timeout``, ``rate_limited``,
+    ``provider_5xx``, ``provider_4xx``, ``auth_failed``,
+    ``invalid_request``, ``transport_error``, or
+    ``exception:<TypeName>`` as the fallback.
 
     The vocabulary mirrors SP-LLM-PROXY-FAILOVER-LOG so operator
     dashboards can group fallbacks by upstream symptom regardless of
-    which provider raised them.
+    which provider raised them. ``FirstByteTimeoutError`` is checked
+    BEFORE the generic ``"timeout"`` substring test — per
+    SP-PROXY-FIRST-BYTE-DEADLINE its class name itself contains
+    "Timeout", so testing the substring first would silently collapse
+    every first-byte timeout into the generic ``"timeout"`` reason.
     """
+    if isinstance(exc, FirstByteTimeoutError):
+        return "first_byte_timeout"
     exc_name = type(exc).__name__
     name_lower = exc_name.lower()
     if "timeout" in name_lower:
@@ -339,7 +346,9 @@ class ClaudeProxyService:
                     input_tokens=input_tokens,
                     request_id=request_id,
                 )
-                peek = await peek_for_content(stream)
+                peek = await peek_for_content(
+                    stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+                )
             except Exception as exc:
                 attempt_latency_s = round(time.monotonic() - attempt_started, 3)
                 last_error = exc
@@ -552,7 +561,9 @@ class ClaudeProxyService:
             stream = provider.stream_response(
                 retry_request, input_tokens=input_tokens, request_id=request_id
             )
-            retry_peek = await peek_for_content(stream)
+            retry_peek = await peek_for_content(
+                stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+            )
         except Exception as exc:
             logger.warning(
                 "proxy_budget_retry_failed",
