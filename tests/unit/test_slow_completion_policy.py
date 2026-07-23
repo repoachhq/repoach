@@ -14,6 +14,7 @@ import asyncio
 import json
 import math
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -132,11 +133,31 @@ def test_is_slow_never_raises(
 
 def test_slow_settings_defaults() -> None:
     """Settings carries the six breaker_slow_* knobs with the defaults
-    declared in the spec (SP-BREAKER-SLOW-STRIKE)."""
-    settings = Settings()
+    declared in the spec (SP-BREAKER-SLOW-STRIKE).
+
+    Constructs with ``_env_file=None`` so these assertions exercise the
+    CODE default, never the operator's deployed ``.env``
+    (SP-SLOW-DEFAULTS-TEST-ISOLATION) -- arming the slow-strike breaker
+    (``REPOACH_BREAKER_SLOW_SHADOW=false``) must never flip this test.
+    """
+    settings = Settings(_env_file=None)
     assert settings.breaker_slow_latency_gate_s == 10.0
     assert settings.breaker_slow_tps_floor == 1.0
     assert settings.breaker_slow_k == 3
     assert settings.breaker_slow_n == 5
     assert settings.breaker_slow_ttl_s == 300.0
     assert settings.breaker_slow_shadow is True
+
+
+def test_slow_settings_defaults_survives_deployed_shadow_arm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Arming the slow-strike breaker in the deployed .env
+    (REPOACH_BREAKER_SLOW_SHADOW=false) must never break
+    test_slow_settings_defaults: it isolates via
+    Settings(_env_file=None), so it keeps reading the CODE default
+    regardless of what the operator wrote to disk.
+    """
+    (tmp_path / ".env").write_text("REPOACH_BREAKER_SLOW_SHADOW=false\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    test_slow_settings_defaults()
