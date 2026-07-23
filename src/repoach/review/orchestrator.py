@@ -817,17 +817,18 @@ class ReviewTeamOrchestrator:
             return round1_outcomes
 
         revised = list(round1_outcomes)
-        for i in triggers:
-            reviewer = reviewers[i]
-            outcome = round1_outcomes[i]
-            ctx = self._build_dialogue_context(
-                reviewer_role=reviewer.role,
-                reviewer_outcome=outcome,
-                round1_outcomes=round1_outcomes,
-                guard_events=guard_events,
-            )
-            try:
-                new_outcome = reviewer.review_diff(
+        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
+            futures: dict[int, Future[ReviewerOutcome]] = {}
+            for i in triggers:
+                reviewer = reviewers[i]
+                ctx = self._build_dialogue_context(
+                    reviewer_role=reviewer.role,
+                    reviewer_outcome=round1_outcomes[i],
+                    round1_outcomes=round1_outcomes,
+                    guard_events=guard_events,
+                )
+                futures[i] = pool.submit(
+                    reviewer.review_diff,
                     diff,
                     pr_number=pr_number,
                     spec_plan=spec_plan,
@@ -835,25 +836,30 @@ class ReviewTeamOrchestrator:
                     extra_prompt_section=extra_prompt_section,
                     arch_edges=arch_edges,
                 )
-            except Exception as exc:
-                _log.warning(
-                    "review_team.round_two_failed",
+            for i, fut in futures.items():
+                reviewer = reviewers[i]
+                outcome = round1_outcomes[i]
+                try:
+                    new_outcome = fut.result()
+                except Exception as exc:
+                    _log.warning(
+                        "review_team.round_two_failed",
+                        role=reviewer.role.value,
+                        pr_number=pr_number,
+                        exc=type(exc).__name__,
+                        message=str(exc)[:200],
+                    )
+                    continue
+                _log.info(
+                    "review_team.round_two_done",
                     role=reviewer.role.value,
                     pr_number=pr_number,
-                    exc=type(exc).__name__,
-                    message=str(exc)[:200],
+                    round1_verdict=outcome.verdict.value,
+                    round2_verdict=new_outcome.verdict.value,
+                    n_round1_comments=len(outcome.comments),
+                    n_round2_comments=len(new_outcome.comments),
                 )
-                continue
-            _log.info(
-                "review_team.round_two_done",
-                role=reviewer.role.value,
-                pr_number=pr_number,
-                round1_verdict=outcome.verdict.value,
-                round2_verdict=new_outcome.verdict.value,
-                n_round1_comments=len(outcome.comments),
-                n_round2_comments=len(new_outcome.comments),
-            )
-            revised[i] = new_outcome
+                revised[i] = new_outcome
         return revised
 
     @staticmethod
