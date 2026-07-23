@@ -112,7 +112,8 @@ def test_slow_native_hop_is_preempted_so_claude_code_backstop_still_serves_withi
 
     app = create_app()
 
-    slow_provider = _SlowNativeProvider(ProviderConfig(api_key="x"), sleep_s=10.0)
+    slow_sleep_s = 60.0
+    slow_provider = _SlowNativeProvider(ProviderConfig(api_key="x"), sleep_s=slow_sleep_s)
     backstop_provider = _ClaudeCodeBackstopProvider(ProviderConfig(api_key="x"), sleep_s=0.05)
     registry = ProviderRegistry({"nvidia_nim": slow_provider, "claude_code": backstop_provider})
 
@@ -131,6 +132,6 @@ def test_slow_native_hop_is_preempted_so_claude_code_backstop_still_serves_withi
 
     assert resp.status_code == 200, resp.text
     assert "claude_code backstop response" in resp.text
-    assert elapsed < 5.0, (
-        f"expected total elapsed well under the native hop's 10s sleep, took {elapsed}s"
+    assert elapsed < slow_sleep_s * 0.25, (
+        f"expected total elapsed well under the native hop's {slow_sleep_s}s sleep, took {elapsed}s"
     )

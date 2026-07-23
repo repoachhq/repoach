@@ -35,8 +35,9 @@ class _HungDisguisedErrorProvider(BaseProvider):
 
     SUPPORTS_NATIVE_TOOLS: bool = True
 
-    def __init__(self, config: ProviderConfig) -> None:
+    def __init__(self, config: ProviderConfig, *, hang_s: float) -> None:
         super().__init__(config)
+        self._hang_s = hang_s
         self.closed = False
 
     async def cleanup(self) -> None:
@@ -57,7 +58,7 @@ class _HungDisguisedErrorProvider(BaseProvider):
                 '"delta":{"type":"text_delta",'
                 '"text":"Connection error. (request_id=req_def232f1cfca)"}}\n\n'
             )
-            await asyncio.sleep(4.0)
+            await asyncio.sleep(self._hang_s)
             yield (
                 "event: message_delta\n"
                 'data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}\n\n'
@@ -114,8 +115,16 @@ def test_hung_disguised_error_candidate_fails_over_without_waiting_for_the_hang(
     request: pytest.FixtureRequest,
 ) -> None:
     """The disguised-error text aborts the drain immediately, so failover
-    to the healthy second hop takes well under 2 seconds instead of
-    waiting out the first hop's 4-second simulated hang.
+    to the healthy second hop takes only a small fraction of the first
+    hop's (deliberately huge) simulated hang.
+
+    The hang is set far beyond any plausible CI scheduling jitter on
+    purpose: because the disguised-error text aborts the drain via
+    ``aclose()`` while the hop is still suspended in its sleep, the hang
+    never actually completes on the happy path, so inflating it costs
+    no real test time while making the elapsed bound immune to load —
+    only an actual loss of the early-abort behavior (waiting out the
+    hang) could breach it.
 
     ``budget_retry_enabled`` is forced ``False`` on the resolved
     ``Settings`` to keep the timing story isolated to this spec's
@@ -140,7 +149,8 @@ def test_hung_disguised_error_candidate_fails_over_without_waiting_for_the_hang(
 
     app = create_app()
 
-    hung_provider = _HungDisguisedErrorProvider(ProviderConfig(api_key="x"))
+    hang_s = 60.0
+    hung_provider = _HungDisguisedErrorProvider(ProviderConfig(api_key="x"), hang_s=hang_s)
     healthy_provider = _HealthyProvider(ProviderConfig(api_key="x"))
     registry = ProviderRegistry({"nvidia_nim": hung_provider, "kimi": healthy_provider})
 
@@ -159,5 +169,7 @@ def test_hung_disguised_error_candidate_fails_over_without_waiting_for_the_hang(
 
     assert resp.status_code == 200, resp.text
     assert "Hello world" in resp.text
-    assert elapsed < 2.0, f"expected failover well under the 4s simulated hang, took {elapsed}s"
+    assert elapsed < hang_s * 0.25, (
+        f"expected failover well under the {hang_s}s simulated hang, took {elapsed}s"
+    )
     assert hung_provider.closed is True

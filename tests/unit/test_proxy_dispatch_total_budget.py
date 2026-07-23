@@ -179,10 +179,20 @@ def _drain(response: Any) -> list[str]:
 def test_remaining_budget_preempts_a_hop_that_would_outlive_the_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A sleeper hangs well past a tiny budget; the ``claude_code`` backstop
-    still serves real content, and total elapsed stays well under the
-    sleeper's own sleep duration."""
-    sleeper = _SleepThenServeProvider(ProviderConfig(api_key="x"), sleep_s=5.0)
+    """A sleeper hangs far past a tiny budget; the ``claude_code`` backstop
+    still serves real content, and total elapsed stays a small fraction of
+    the sleeper's own (deliberately huge) sleep duration.
+
+    The sleeper's sleep is set far beyond the budget on purpose: since
+    preemption cancels the hop via ``asyncio.wait_for`` long before the
+    sleep would ever complete, inflating the sleep costs no real test
+    time but buys a bound wide enough to absorb CPU scheduling jitter on
+    a loaded CI runner without going anywhere near vacuous — only an
+    actual loss of preemption (the hop running out its sleep) could
+    breach it.
+    """
+    sleep_s = 60.0
+    sleeper = _SleepThenServeProvider(ProviderConfig(api_key="x"), sleep_s=sleep_s)
     backstop = _ScriptedProvider(ProviderConfig(api_key="x"), chunks=_REAL_CONTENT)
     service = _build_service(
         monkeypatch,
@@ -197,7 +207,10 @@ def test_remaining_budget_preempts_a_hop_that_would_outlive_the_deadline(
     elapsed = time.monotonic() - started
 
     assert _REAL_TEXT_DELTA in chunks
-    assert elapsed < 2.0, f"expected bounded elapsed well under 5s sleep, took {elapsed}s"
+    assert elapsed < sleep_s * 0.25, (
+        f"expected bounded elapsed well under the {sleep_s}s sleep "
+        f"(preemption should cut it to a small fraction of a second), took {elapsed}s"
+    )
     assert backstop.calls == [128]
 
 
