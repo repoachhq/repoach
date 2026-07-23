@@ -62,6 +62,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "PROVIDER_RATE_WINDOW": "provider_rate_window",
     "PROVIDER_MAX_CONCURRENCY": "provider_max_concurrency",
     "ENABLE_THINKING": "enable_thinking",
+    "PROXY_LOG_FULL_CONTENT": "proxy_log_full_content",
     "BUDGET_RETRY_ENABLED": "budget_retry_enabled",
     "BUDGET_RETRY_FACTOR": "budget_retry_factor",
     "BUDGET_RETRY_FLOOR": "budget_retry_floor",

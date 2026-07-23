@@ -126,6 +126,7 @@ def build_provider_config(descriptor: ProviderDescriptor, settings: Settings) ->
         http_write_timeout=settings.http_write_timeout,
         http_connect_timeout=settings.http_connect_timeout,
         enable_thinking=settings.enable_thinking,
+        log_full_content=settings.proxy_log_full_content,
         proxy=proxy,
     )
 
