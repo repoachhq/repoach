@@ -28,10 +28,12 @@ from sqlalchemy import (
     Table,
     create_engine,
     insert,
+    inspect,
     select,
     update,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 from ..core.logging import get_logger
 
@@ -177,11 +179,30 @@ def _engine_for(db_path: Path) -> Engine:
 def init_findings_schema(db_path: Path) -> None:
     """Create the findings + review-integrity tables if absent (idempotent).
 
+    Concurrent first-creation is race-proof: ``checkfirst=True`` runs a
+    conditional check-then-create that is not atomic across independent
+    SQLite connections, so two or more callers racing the very first
+    creation of ``pr_findings`` / ``pr_review_integrity`` can each
+    observe "missing" before either commits, and every loser then sees
+    the winner's ``CREATE TABLE`` as
+    ``OperationalError: table ... already exists``. SQLite DDL is
+    transactional, so a losing ``CREATE`` never leaves a partially
+    built table behind -- catching the error and re-checking both
+    tables via ``inspect().has_table`` distinguishes "someone else
+    already finished this" (swallow, continue) from a genuine database
+    failure (re-raise). Once both tables exist for a given database
+    file this check costs nothing extra.
+
     Also self-heals existing databases by ALTER-ing columns introduced
     post-creation (SQLite has no DDL-versioning).
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    try:
+        _metadata.create_all(engine, checkfirst=True)
+    except OperationalError:
+        inspector = inspect(engine)
+        if not (inspector.has_table("pr_findings") and inspector.has_table("pr_review_integrity")):
+            raise
     _migrate_missing_findings_columns(engine)
 
 
@@ -194,7 +215,7 @@ def _migrate_missing_findings_columns(engine: Engine) -> None:
     Args:
         engine: SQLAlchemy engine bound to the findings database.
     """
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
 
     migrations = (
         (
