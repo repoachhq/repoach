@@ -406,7 +406,15 @@ class ClaudeProxyService:
                 attempt_index + 1,
                 len(chain),
             )
-            logger.debug("FULL_PAYLOAD [{}]: {}", request_id, attempt_request.model_dump())
+            if self._settings.proxy_log_full_content:
+                logger.debug("FULL_PAYLOAD [{}]: {}", request_id, attempt_request.model_dump())
+            else:
+                logger.debug(
+                    "FULL_PAYLOAD [{}]: <redacted> model={} messages={}",
+                    request_id,
+                    attempt_request.model,
+                    len(attempt_request.messages),
+                )
             attempt_started = time.monotonic()
             try:
                 provider = self._provider_getter(candidate.provider_id)

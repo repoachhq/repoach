@@ -129,6 +129,7 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "PROVIDER_RATE_WINDOW": "REPOACH_PROXY_PROVIDER_RATE_WINDOW",
     "PROVIDER_MAX_CONCURRENCY": "REPOACH_PROXY_PROVIDER_MAX_CONCURRENCY",
     "ENABLE_THINKING": "REPOACH_PROXY_ENABLE_THINKING",
+    "PROXY_LOG_FULL_CONTENT": "REPOACH_PROXY_LOG_FULL_CONTENT",
     "BUDGET_RETRY_ENABLED": "REPOACH_PROXY_BUDGET_RETRY_ENABLED",
     "BUDGET_RETRY_FACTOR": "REPOACH_PROXY_BUDGET_RETRY_FACTOR",
     "BUDGET_RETRY_FLOOR": "REPOACH_PROXY_BUDGET_RETRY_FLOOR",
@@ -277,6 +278,16 @@ class Settings(BaseSettings):
         default=5, validation_alias=_aliases("PROVIDER_MAX_CONCURRENCY")
     )
     enable_thinking: bool = Field(default=True, validation_alias=_aliases("ENABLE_THINKING"))
+
+    proxy_log_full_content: bool = Field(
+        default=False, validation_alias=_aliases("PROXY_LOG_FULL_CONTENT")
+    )
+    """Off-by-default opt-in gating verbatim request/response body logging
+    (SP-PROXY-LOG-CONTENT-GUARD).  ``False`` (the fail-closed default) keeps
+    ``FULL_PAYLOAD`` (:mod:`repoach.llm_proxy.api.services`) and
+    ``SSE_EVENT`` (:mod:`repoach.llm_proxy.core.anthropic.sse`) logs to
+    non-content metadata only ; set ``True`` to restore the legacy verbatim
+    payload/event-body logging for operator debugging."""
 
     budget_retry_enabled: bool = Field(
         default=True, validation_alias=_aliases("BUDGET_RETRY_ENABLED")

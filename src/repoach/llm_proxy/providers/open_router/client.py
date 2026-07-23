@@ -253,7 +253,12 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         chain entry. Mirrors the ``finish_reason="error"`` signal the
         OpenAI-compatible transport already emits on upstream failure.
         """
-        sse = SSEBuilder(f"msg_{uuid.uuid4()}", request.model, input_tokens)
+        sse = SSEBuilder(
+            f"msg_{uuid.uuid4()}",
+            request.model,
+            input_tokens,
+            log_full_content=self._config.log_full_content,
+        )
         if not sent_any_event:
             yield sse.message_start()
         yield from sse.emit_error(error_message)

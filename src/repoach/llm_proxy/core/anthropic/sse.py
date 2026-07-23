@@ -128,19 +128,36 @@ class ContentBlockManager:
 
 
 class SSEBuilder:
-    """Builder for Anthropic SSE streaming events."""
+    """Builder for Anthropic SSE streaming events.
 
-    def __init__(self, message_id: str, model: str, input_tokens: int = 0):
+    ``log_full_content`` (SP-PROXY-LOG-CONTENT-GUARD, off by default)
+    gates whether ``SSE_EVENT`` debug logs carry the serialized event
+    body ; when ``False`` only the event type and byte length are
+    logged.
+    """
+
+    def __init__(
+        self,
+        message_id: str,
+        model: str,
+        input_tokens: int = 0,
+        *,
+        log_full_content: bool = False,
+    ):
         self.message_id = message_id
         self.model = model
         self.input_tokens = input_tokens
         self.blocks = ContentBlockManager()
         self._accumulated_text_parts: list[str] = []
         self._accumulated_reasoning_parts: list[str] = []
+        self._log_full_content = log_full_content
 
     def _format_event(self, event_type: str, data: dict) -> str:
         event_str = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-        logger.debug("SSE_EVENT: {} - {}", event_type, event_str.strip())
+        if self._log_full_content:
+            logger.debug("SSE_EVENT: {} - {}", event_type, event_str.strip())
+        else:
+            logger.debug("SSE_EVENT: {} (bytes={})", event_type, len(event_str))
         return event_str
 
     def message_start(self) -> str:

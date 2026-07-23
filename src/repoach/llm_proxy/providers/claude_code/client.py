@@ -119,7 +119,12 @@ class ClaudeCodeProvider(BaseProvider):
         :class:`ProviderError` like every other provider failure.
         """
         message_id = f"msg_{uuid.uuid4()}"
-        sse = SSEBuilder(message_id, request.model, input_tokens)
+        sse = SSEBuilder(
+            message_id,
+            request.model,
+            input_tokens,
+            log_full_content=self._config.log_full_content,
+        )
 
         prompt, system_prompt = self._build_prompt(request)
         cli_model = self._cli_model_for(request.model)

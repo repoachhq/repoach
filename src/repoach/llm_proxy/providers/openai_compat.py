@@ -228,7 +228,12 @@ class OpenAIChatTransport(BaseProvider):
         """
         tag = self._provider_name
         message_id = f"msg_{uuid.uuid4()}"
-        sse = SSEBuilder(message_id, request.model, input_tokens)
+        sse = SSEBuilder(
+            message_id,
+            request.model,
+            input_tokens,
+            log_full_content=self._config.log_full_content,
+        )
 
         body = self._build_request_body(request)
         req_tag = f" request_id={request_id}" if request_id else ""
