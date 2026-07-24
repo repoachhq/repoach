@@ -26,6 +26,42 @@ from ..core.logging import get_logger
 _log = get_logger(__name__)
 
 
+def flatten_paginated_pages(pages: object) -> list[object]:
+    """Flatten a decoded ``gh api --paginate --slurp`` payload into one list.
+
+    ``gh api --paginate`` alone emits one JSON array per page
+    concatenated back to back (``[...][...]``), which ``json.loads``
+    cannot parse past the first page. Adding ``--slurp`` wraps the
+    per-page arrays into a single outer JSON array of page arrays —
+    this helper flattens that shape into the full merged list.
+
+    A single-page response ``--slurp``s to a one-element outer array
+    and flattens back to that page's own list unchanged, so nominal
+    single-page behaviour is preserved exactly.
+
+    Args:
+        pages: The value produced by ``json.loads`` on the raw
+            ``--slurp``-wrapped stdout — expected to be a JSON array
+            whose entries are themselves JSON arrays (one per page).
+
+    Returns:
+        The concatenation of every page's elements, in page order.
+
+    Raises:
+        ValueError: ``pages`` is not a JSON array of page arrays — a
+            genuine parse failure that callers must surface loudly
+            rather than collapse into an empty result.
+    """
+    if not isinstance(pages, list):
+        raise ValueError("expected a JSON array of pages from --paginate --slurp")
+    flattened: list[object] = []
+    for page in pages:
+        if not isinstance(page, list):
+            raise ValueError("expected each paginated page to be a JSON array")
+        flattened.extend(page)
+    return flattened
+
+
 def comment_author_login(comment: object) -> str | None:
     """Return a GitHub comment payload's ``user.login``, or ``None``.
 
@@ -593,21 +629,21 @@ class GhCli:
             [
                 "api",
                 "--paginate",
+                "--slurp",
                 f"repos/:owner/:repo/pulls/{pr_number}/comments",
             ]
         )
         if not res.ok:
             return []
         try:
-            data = json.loads(res.stdout) if res.stdout.strip() else []
-        except json.JSONDecodeError as exc:
+            pages = json.loads(res.stdout) if res.stdout.strip() else []
+            data = flatten_paginated_pages(pages)
+        except (json.JSONDecodeError, ValueError) as exc:
             _log.warning(
                 "gh_client.review_comments_decode_failed",
                 pr_number=pr_number,
                 error=str(exc)[:200],
             )
-            return []
-        if not isinstance(data, list):
             return []
         return data
 
@@ -676,6 +712,7 @@ class GhCli:
             [
                 "api",
                 "--paginate",
+                "--slurp",
                 f"repos/:owner/:repo/issues/{pr_number}/comments",
             ]
         )
@@ -688,8 +725,8 @@ class GhCli:
             )
             return None
         try:
-            comments = json.loads(res.stdout) or []
-        except json.JSONDecodeError as exc:
+            comments = flatten_paginated_pages(json.loads(res.stdout))
+        except (json.JSONDecodeError, ValueError) as exc:
             _log.warning(
                 "gh_client.find_archive_decode_failed",
                 pr_number=pr_number,
@@ -782,6 +819,7 @@ class GhCli:
             [
                 "api",
                 "--paginate",
+                "--slurp",
                 f"repos/:owner/:repo/issues/{pr_number}/comments",
             ]
         )
@@ -795,8 +833,8 @@ class GhCli:
             )
             return ArchiveFetch(body=None, api_error=error)
         try:
-            comments = json.loads(res.stdout) or []
-        except json.JSONDecodeError as exc:
+            comments = flatten_paginated_pages(json.loads(res.stdout))
+        except (json.JSONDecodeError, ValueError) as exc:
             _log.warning(
                 "gh_client.archive_body_decode_failed",
                 pr_number=pr_number,

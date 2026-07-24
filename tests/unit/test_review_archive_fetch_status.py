@@ -54,7 +54,7 @@ def test_api_failure_without_stderr_reports_exit_code() -> None:
 
 
 def test_absent_marker_yields_both_none() -> None:
-    cli = _CannedGhCli(_result(0, stdout='[{"body": "unrelated comment"}]'))
+    cli = _CannedGhCli(_result(0, stdout='[[{"body": "unrelated comment"}]]'))
     fetch = cli.fetch_archive_comment_with_status(42)
     assert fetch == ArchiveFetch(body=None, api_error=None)
 
@@ -63,7 +63,9 @@ def test_found_marker_yields_body_without_error() -> None:
     import json
 
     bot_login = GhCli().bot_login
-    stdout = json.dumps([{"body": "noise"}, {"body": _ARCHIVE_BODY, "user": {"login": bot_login}}])
+    stdout = json.dumps(
+        [[{"body": "noise"}, {"body": _ARCHIVE_BODY, "user": {"login": bot_login}}]]
+    )
     cli = _CannedGhCli(_result(0, stdout=stdout))
     fetch = cli.fetch_archive_comment_with_status(42)
     assert fetch.api_error is None
@@ -86,7 +88,7 @@ def test_legacy_fetch_delegates_to_sibling() -> None:
     assert failing.fetch_archive_comment(42) is None
     bot_login = GhCli().bot_login
     found = _CannedGhCli(
-        _result(0, stdout=json.dumps([{"body": _ARCHIVE_BODY, "user": {"login": bot_login}}]))
+        _result(0, stdout=json.dumps([[{"body": _ARCHIVE_BODY, "user": {"login": bot_login}}]]))
     )
     assert found.fetch_archive_comment(42) == _ARCHIVE_BODY
 
