@@ -1,11 +1,13 @@
-"""SP-DEV-PROMISE-DELIVERY integration — end-to-end promise-delivery gate flow.
+"""SP-DEV-PROMISE-DELIVERY / SP-PROMISE-RENAME-RETIRE integration —
+end-to-end promise-delivery gate flow.
 
 Exercises :func:`execute_plan_step` against a real temp git repo with a
 scripted fake Developer: nominal exact-match, G1 untouched-file refusal,
-and G2 single-drift mechanical rename.  The unit suite
-(``TestPromisedTestGateG1G2``) already covers the AC1-AC3 behaviour;
-this file guards against regressions that only a real git worktree +
-pytest invocation can catch.
+and the SP-PROMISE-RENAME-RETIRE single-drift case, which now FAILS the
+promise gate instead of being mechanically renamed into the promise.
+The unit suite (``TestPromisedTestGateG1G2``) already covers the AC1
+behaviour; this file guards against regressions that only a real git
+worktree + pytest invocation can catch.
 """
 
 from __future__ import annotations
@@ -164,9 +166,11 @@ class TestPromiseDeliveryIntegration:
         assert "tests/unit/test_mini.py::test_value" in retry_brief
         assert (repo / "tests" / "unit" / "test_mini.py").read_text() == _PROMISED_TEST
 
-    def test_single_drift_renamed_and_green(self, tmp_path: Path) -> None:
-        """G2 case: Developer writes the promised file with a single drifted test name,
-        step green in one attempt and the promised node id is present in the committed file.
+    def test_single_drift_fails_promise_not_renamed(self, tmp_path: Path) -> None:
+        """SP-PROMISE-RENAME-RETIRE: Developer writes the promised file with a
+        single drifted (unrelated but green) test name across every attempt;
+        the step FAILS the promise gate and the file on disk never gets
+        mechanically rewritten to carry the promised name.
         """
         repo = _init_repo(tmp_path)
         plan = _one_step_plan(
@@ -185,8 +189,8 @@ class TestPromiseDeliveryIntegration:
             db=repo.parent / "test.db",
         )
 
-        assert outcome.ok is True
-        assert dev.develop_step.call_count == 1
+        assert outcome.ok is False
+        assert dev.develop_step.call_count >= 2
         committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
-        assert "def test_value(" in committed
-        assert "def test_drifted(" not in committed
+        assert "def test_value(" not in committed
+        assert "def test_drifted(" in committed
