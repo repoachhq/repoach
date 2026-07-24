@@ -510,21 +510,26 @@ def make_repo_file_reader(repo_root: Path | str) -> FileReader:
     return _default_file_reader(Path(repo_root))
 
 
-def make_repo_symbol_searcher(repo_root: Path | str) -> SymbolSearcher:
-    """Build a SymbolSearcher that greps ``tests/`` and ``src/`` for a symbol.
+def _make_subtree_symbol_searcher(
+    repo_root: Path | str, subtrees: tuple[str, ...]
+) -> SymbolSearcher:
+    """Build a SymbolSearcher scoped to the given top-level subtrees.
 
-    The searcher iterates over the existing Python files under both
-    trees and returns ``True`` as soon as ``def <symbol>``,
-    ``class <symbol>``, or the raw token surrounded by word boundaries
-    appears.  No subprocess dependency — works in restricted
-    environments without ``rg``.
+    Shared by :func:`make_repo_symbol_searcher` (``tests`` + ``src``) and
+    :func:`make_tests_symbol_searcher` (``tests`` only,
+    SP-MISSING-TEST-VERIFIER-SCOPE) so the scoping lives in one place and
+    neither caller regresses when the other's subtree list changes.
 
     Args:
-        repo_root: Path to the repo root containing ``tests/`` and ``src/``.
+        repo_root: Path to the repo root the subtrees resolve against.
+        subtrees: Top-level directory names to scan, relative to
+            ``repo_root``.
 
     Returns:
-        A :class:`SymbolSearcher` ready for
-        :func:`apply_hallucination_guard`.
+        A :class:`SymbolSearcher` that returns ``True`` as soon as
+        ``def <symbol>`` or ``class <symbol>`` appears in any ``.py``
+        file under one of ``subtrees``.  No subprocess dependency —
+        works in restricted environments without ``rg``.
     """
     root = Path(repo_root)
 
@@ -535,7 +540,7 @@ def make_repo_symbol_searcher(repo_root: Path | str) -> SymbolSearcher:
             rf"^\s*(?:async\s+)?(?:def|class)\s+{re.escape(symbol)}\b",
             re.MULTILINE,
         )
-        for sub in ("tests", "src"):
+        for sub in subtrees:
             sub_dir = root / sub
             if not sub_dir.is_dir():
                 continue
@@ -554,3 +559,38 @@ def make_repo_symbol_searcher(repo_root: Path | str) -> SymbolSearcher:
         return False
 
     return _search
+
+
+def make_repo_symbol_searcher(repo_root: Path | str) -> SymbolSearcher:
+    """Build a SymbolSearcher that greps ``tests/`` and ``src/`` for a symbol.
+
+    The searcher iterates over the existing Python files under both
+    trees and returns ``True`` as soon as ``def <symbol>`` or
+    ``class <symbol>`` appears.  No subprocess dependency — works in
+    restricted environments without ``rg``.
+
+    Args:
+        repo_root: Path to the repo root containing ``tests/`` and ``src/``.
+
+    Returns:
+        A :class:`SymbolSearcher` ready for
+        :func:`apply_hallucination_guard`.
+    """
+    return _make_subtree_symbol_searcher(repo_root, ("tests", "src"))
+
+
+def make_tests_symbol_searcher(repo_root: Path | str) -> SymbolSearcher:
+    """Build a SymbolSearcher that greps ``tests/`` ONLY for a symbol.
+
+    SP-MISSING-TEST-VERIFIER-SCOPE : the missing-test verifier must
+    never let a symbol's existence in ``src/`` (the code under review)
+    refute a "no test for X" claim.  This searcher scopes the grep to
+    ``tests/`` so only a genuine covering test counts as evidence.
+
+    Args:
+        repo_root: Path to the repo root containing ``tests/``.
+
+    Returns:
+        A :class:`SymbolSearcher` scoped to ``tests/`` only.
+    """
+    return _make_subtree_symbol_searcher(repo_root, ("tests",))

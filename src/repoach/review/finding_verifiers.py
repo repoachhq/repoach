@@ -29,7 +29,7 @@ from .findings import (
 from .hallucination_guard import (
     _extract_missing_test_symbols,
     make_repo_file_reader,
-    make_repo_symbol_searcher,
+    make_tests_symbol_searcher,
 )
 
 _DOCSTRING_EXEMPT_PREFIXES = ("tests/", "scripts/", "src/repoach/llm_proxy/")
@@ -41,15 +41,46 @@ SP-MERGE-GATE-SHADOW dry-run on PR #378)."""
 _DEFERRED_RESULT = "not mechanically verifiable — slices 5-6"
 
 
+def _missing_test_search_targets(symbols: list[str]) -> list[str]:
+    """Map extracted missing-test symbols to ``tests/``-searchable targets.
+
+    A bare underscore-prefixed symbol (e.g. ``_parse_verdict``) names the
+    code under review, not the test that would cover it, so it is
+    translated to its ``test_``-prefixed counterpart before the
+    tests-only searcher runs — the search target is always the covering
+    test's expected name, never the src symbol itself
+    (SP-MISSING-TEST-VERIFIER-SCOPE G2).
+
+    Args:
+        symbols: Ordered, de-duplicated symbols from
+            :func:`_extract_missing_test_symbols`.
+
+    Returns:
+        Ordered, de-duplicated ``test_``-prefixed search targets.
+    """
+    targets: list[str] = []
+    for symbol in symbols:
+        target = symbol if symbol.startswith("test_") else f"test_{symbol.lstrip('_')}"
+        if target not in targets:
+            targets.append(target)
+    return targets
+
+
 def _verify_missing_test(finding: Finding, repo_root: Path) -> tuple[FindingStatus, str, str]:
-    """Refute a missing-test claim when the symbol already exists in the repo."""
+    """Refute a missing-test claim only when a covering test exists under ``tests/``.
+
+    The search is scoped to ``tests/`` alone — the existence of the
+    code-under-test in ``src/`` must never refute a "no test for X"
+    claim (SP-MISSING-TEST-VERIFIER-SCOPE).
+    """
     symbols = _extract_missing_test_symbols(finding.claim)
     if not symbols:
         return FindingStatus.PROPOSED, "symbol_search", "no checkable symbol"
-    searcher = make_repo_symbol_searcher(repo_root)
-    found = [s for s in symbols if searcher(s)]
+    targets = _missing_test_search_targets(symbols)
+    searcher = make_tests_symbol_searcher(repo_root)
+    found = [target for target in targets if searcher(target)]
     if found:
-        return FindingStatus.REFUTED, "symbol_search", f"{found[0]} exists in tests/src"
+        return FindingStatus.REFUTED, "symbol_search", f"{found[0]} exists in tests/"
     return FindingStatus.VERIFIED, "symbol_search", f"no test for {', '.join(symbols)}"
 
 
