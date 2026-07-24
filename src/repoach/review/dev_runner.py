@@ -231,6 +231,12 @@ class DevSessionResult:
     SP-DEV-WRAPUP-ATTRIBUTION adds ``wrapup_dossier``, carrying the attribution
     block (introducing step / pre-existing / error per failing selector) for
     a wrap-up that stayed red after the bounded repair attempt.
+
+    SP-RUFF-PASSED-TRUTHFUL: ``ruff_passed`` stays at its non-optimistic
+    default until the session-level self-verify gate actually runs
+    ``run_ruff_gate`` over the tree; it is never asserted ahead of that
+    real result, so an early return before self-verify reports the last
+    truthful value known at that point rather than a stale ``True``.
     """
 
     spec_id: str
@@ -1828,7 +1834,6 @@ def _develop_one_spec(
         result.steps_completed += 1
 
     full_ok, full_tail = run_pytest_matrix(repo)
-    result.ruff_passed = True
     result.pytest_passed = full_ok
     if not full_ok:
         promised = _promised_selectors_for_plan(action_plan)
@@ -1880,6 +1885,7 @@ def _develop_one_spec(
     except Exception as exc:
         _log.warning("dev_runner.self_verify_crashed", spec_id=spec.id, error=str(exc)[:200])
         return f"self-verify gate crashed: {type(exc).__name__}: {str(exc)[:160]}"
+    result.ruff_passed = self_verify.ruff_ok
     result.self_verified = self_verify.ok
     if not self_verify.ok:
         _log.warning("dev_runner.self_verify_failed", spec_id=spec.id, reasons=self_verify.reasons)
