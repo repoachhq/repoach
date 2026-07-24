@@ -16,7 +16,10 @@ changes here.
 
 from __future__ import annotations
 
+import ast
 import re
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -32,7 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
-from .plan import ActionPlan
+from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
 _log = get_logger(__name__)
 
@@ -166,22 +169,113 @@ def selector_present(repo_root: Path, selector: str) -> bool:
     return promised_present(repo_root, selector)
 
 
+def _body_is_trivial(body: list[ast.stmt]) -> bool:
+    """Return whether every statement in *body* is a no-op placeholder.
+
+    A statement is a no-op placeholder when it is ``pass``, a bare
+    ``...`` expression, or a bare string literal (a docstring with no
+    accompanying code). Any other statement (an ``assert``, a call, a
+    ``return``, ...) makes the body non-trivial.
+    """
+    for stmt in body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and (stmt.value.value is Ellipsis or isinstance(stmt.value.value, str))
+        ):
+            continue
+        return False
+    return True
+
+
+def promised_body_non_trivial(repo_root: Path, selector: str) -> bool:
+    r"""Return whether *selector*'s promised test has a non-trivial body.
+
+    Complements :func:`promised_present`'s presence-only check with a
+    structural body check, kept as a separate predicate so the
+    presence-only callers (the dev preflight, the planner's
+    step-satisfied check, the self-verify unit-missing check) are
+    unaffected and keep resolving selectors via :func:`promised_present`
+    / :func:`selector_present` exactly as before. Only
+    :func:`compute_spec_coverage` composes the two, so a hollow ``def
+    test_x(): pass`` (or an ellipsis-only / docstring-only body) does
+    not satisfy the acceptance contract even though the file and
+    symbol are present (SP-SPEC-CONTRACT-BASE, G3).
+
+    Args:
+        repo_root: Root the selector path resolves against.
+        selector: A pytest selector, as accepted by
+            :func:`promised_present`.
+
+    Returns:
+        ``True`` for a bare file selector (no body to inspect), or for
+        a node id whose trailing function has at least one non-trivial
+        statement, or when the file fails to parse (a syntax error is
+        a separate, unrelated concern from an empty promise). ``False``
+        when the file is absent, the trailing name is not defined, or
+        its body is empty / ``pass`` / ``...`` / a bare docstring only.
+    """
+    file_part, _, node = selector.partition("::")
+    target = repo_root / file_part
+    if not target.is_file():
+        return False
+    if not node:
+        return True
+    segments = [part.split("[", 1)[0] for part in node.split("::") if part]
+    if not segments:
+        return False
+    try:
+        source = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        _log.debug("spec_gate.body_read_failed", selector=selector, error=str(exc)[:120])
+        return False
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        _log.debug("spec_gate.body_parse_failed", selector=selector, error=str(exc)[:120])
+        return True
+    name = segments[-1]
+    for candidate in ast.walk(tree):
+        if (
+            isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and candidate.name == name
+        ):
+            return not _body_is_trivial(candidate.body)
+    return False
+
+
 def compute_spec_coverage(repo_root: Path, *, spec_id: str, plan: ActionPlan) -> SpecCoverage:
     """Build the presence coverage report for *plan* against the head tree.
+
+    *plan* supplies the GRADED acceptance contract — the caller loads
+    it from the PR's BASE ref (``develop``) via :func:`resolve_contract_
+    plan` / :func:`load_plan_from_ref`, so a PR cannot weaken the
+    selectors it is judged against by editing its own
+    ``docs/plans/<id>.md`` (SP-SPEC-CONTRACT-BASE). *repo_root* is
+    always the PR head: every base-contract selector's presence AND
+    non-trivial body are checked there, so the PR must still actually
+    add the promised test (G2).
 
     Args:
         repo_root: The PR head checkout the selectors resolve against.
         spec_id: The spec whose plan is being checked (recorded on the
             report).
-        plan: The loaded action plan supplying the acceptance selectors.
+        plan: The loaded action plan supplying the acceptance
+            selectors — the BASE-ref plan in normal operation.
 
     Returns:
         A :class:`SpecCoverage` whose ``covered`` is ``True`` only when
         the plan promised at least one selector and every promised
-        selector is present in the head.
+        selector is present, with a non-trivial body, in the head.
     """
     selectors = acceptance_selectors(plan)
-    missing = [s for s in selectors if not selector_present(repo_root, s)]
+    missing = [
+        s
+        for s in selectors
+        if not (selector_present(repo_root, s) and promised_body_non_trivial(repo_root, s))
+    ]
     n_present = len(selectors) - len(missing)
     covered = bool(selectors) and not missing
     return SpecCoverage(
@@ -191,6 +285,160 @@ def compute_spec_coverage(repo_root: Path, *, spec_id: str, plan: ActionPlan) ->
         missing=missing,
         covered=covered,
     )
+
+
+class BaseRefUnavailableError(RuntimeError):
+    """*ref* itself does not resolve to a commit in the local clone.
+
+    Raised by :func:`load_plan_from_ref` when the git revision cannot
+    be resolved at all — as opposed to resolving but carrying no plan
+    file. The caller MUST fail CLOSED on this (SP-SPEC-CONTRACT-BASE
+    Failure scenarios: treat coverage as NOT covered), never falling
+    back to the PR-head contract, which is exactly the attackable path
+    this spec closes.
+    """
+
+
+def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> ActionPlan:
+    """Load and parse *spec_id*'s committed plan as it exists at *ref*.
+
+    Reads the plan via ``git show <ref>:docs/plans/<SPEC-ID>.md``
+    against the working tree at *root* — no checkout, no working-tree
+    mutation, so the PR-head checkout backing the review job is left
+    untouched. This is the base-ref half of SP-SPEC-CONTRACT-BASE: the
+    caller passes the PR's base ref (``develop``) so the acceptance
+    contract graded by :func:`compute_spec_coverage` is the one the PR
+    cannot itself have edited.
+
+    Args:
+        spec_id: Spec identifier whose plan to read.
+        ref: A git revision — branch name, remote-tracking ref
+            (``origin/develop``), or commit — to read the plan from.
+        root: Repository root the git commands run against (defaults
+            to ``Path.cwd()``).
+
+    Returns:
+        The validated plan as committed at *ref*.
+
+    Raises:
+        BaseRefUnavailableError: *ref* itself does not resolve to a
+            commit in *root*.
+        FileNotFoundError: *ref* resolves but carries no
+            ``docs/plans/<SPEC-ID>.md`` — a genuinely new spec/plan
+            introduced only on the PR head.
+        ValueError: The file exists at *ref* but fails to parse (see
+            :func:`repoach.review.plan.parse_plan_markdown`).
+    """
+    base = (root or Path.cwd()).resolve()
+    verify = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+        cwd=base,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verify.returncode != 0:
+        raise BaseRefUnavailableError(
+            f"base ref {ref!r} does not resolve to a commit in {base}: "
+            f"{verify.stderr.strip()[:200]}"
+        )
+    relpath = plan_relpath(spec_id)
+    show = subprocess.run(
+        ["git", "show", f"{ref}:{relpath}"],
+        cwd=base,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if show.returncode != 0:
+        raise FileNotFoundError(
+            f"no committed plan at {relpath!r} on ref {ref!r}: {show.stderr.strip()[:200]}"
+        )
+    return parse_plan_markdown(show.stdout)
+
+
+@dataclass(frozen=True)
+class ContractResolution:
+    """Outcome of resolving the BASE-ref acceptance-contract plan.
+
+    Attributes:
+        plan: The plan to grade coverage against — the base plan when
+            *base_available* is True, the head plan when
+            *fell_back_to_head* is also True, or ``None`` when the
+            base ref could not be resolved at all (the caller must
+            fail CLOSED rather than grade against anything).
+        base_available: Whether *base_ref* resolved to a commit.
+            ``False`` is the fail-CLOSED trigger (SP-SPEC-CONTRACT-BASE
+            Failure scenarios): the caller must still record a
+            NOT-covered report, never skip recording.
+        fell_back_to_head: True when the base ref resolved but carried
+            no plan for this spec — a spec/plan introduced only on the
+            PR head — so the head plan is graded instead (logged by
+            the caller as a fallback, SP-SPEC-CONTRACT-BASE Edge cases).
+    """
+
+    plan: ActionPlan | None
+    base_available: bool
+    fell_back_to_head: bool
+
+
+def resolve_contract_plan(
+    spec_id: str,
+    *,
+    repo_root: Path,
+    base_ref: str | None,
+) -> ContractResolution:
+    """Resolve the acceptance-contract plan to grade *spec_id* against.
+
+    Tries :func:`load_plan_from_ref` against *base_ref* first. A
+    genuinely new spec/plan (present at head, absent at base) falls
+    back to the head plan for THIS call only, per the spec's documented
+    first-introduction policy. A *base_ref* that does not resolve at
+    all is reported as unavailable and NOT retried here — the caller
+    (which owns the git remote / fetch policy) decides whether to fetch
+    and call this again with a remote-tracking ref.
+
+    Args:
+        spec_id: The spec whose plan is the acceptance contract.
+        repo_root: The PR-head checkout — used for the head-plan
+            fallback and passed through to the base-ref git commands.
+        base_ref: The git ref to read the base plan from (a branch
+            name or an already-fetched ``origin/<branch>``), or
+            ``None`` when the PR's base ref could not be determined.
+
+    Returns:
+        A :class:`ContractResolution`.
+    """
+    if not base_ref:
+        return ContractResolution(plan=None, base_available=False, fell_back_to_head=False)
+    try:
+        plan = load_plan_from_ref(spec_id, base_ref, root=repo_root)
+        return ContractResolution(plan=plan, base_available=True, fell_back_to_head=False)
+    except BaseRefUnavailableError as exc:
+        _log.warning(
+            "spec_gate.base_ref_unavailable",
+            spec_id=spec_id,
+            base_ref=base_ref,
+            error=str(exc)[:200],
+        )
+        return ContractResolution(plan=None, base_available=False, fell_back_to_head=False)
+    except FileNotFoundError as exc:
+        _log.info(
+            "spec_gate.base_plan_absent_fallback_to_head",
+            spec_id=spec_id,
+            base_ref=base_ref,
+            error=str(exc)[:200],
+        )
+        try:
+            head_plan = load_plan(spec_id, root=repo_root)
+        except (FileNotFoundError, ValueError) as head_exc:
+            _log.info(
+                "spec_gate.head_plan_also_unavailable",
+                spec_id=spec_id,
+                error=str(head_exc)[:200],
+            )
+            return ContractResolution(plan=None, base_available=True, fell_back_to_head=True)
+        return ContractResolution(plan=head_plan, base_available=True, fell_back_to_head=True)
 
 
 def _engine_for(db_path: Path) -> Engine:
