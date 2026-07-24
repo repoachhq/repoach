@@ -44,6 +44,7 @@ class _FakeProcess:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
         self.returncode = 0
+        self.pid = 424242
         self.stdin_received: bytes | None = None
 
     async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:

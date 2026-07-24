@@ -30,6 +30,7 @@ class _FakeProcess:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
         self.returncode = 0
+        self.pid = 424242
 
     async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
         return json.dumps(self._payload).encode(), b""
