@@ -16,6 +16,7 @@ STUCK stay terminal.
 
 from __future__ import annotations
 
+import threading
 from enum import StrEnum
 from pathlib import Path
 
@@ -187,33 +188,99 @@ def _engine_for(db_path: Path) -> Engine:
     return create_engine(f"sqlite:///{db_path}")
 
 
+_INIT_SCHEMA_LOCK = threading.Lock()
+"""Serializes concurrent first-creation within one process.
+
+``create_all(checkfirst=True)`` builds ``pr_findings`` and
+``pr_review_integrity`` sequentially, so two in-process threads racing
+the very first creation can interleave: the loser's ``CREATE
+pr_findings`` fails against the winner's already-committed table, and
+if the loser's failure is observed before the winner has gone on to
+create ``pr_review_integrity``, a re-check of *both* tables at that
+instant still reports one missing. Holding this lock around the whole
+``create_all`` call makes every in-process caller either run the
+sequence to completion before the next one starts, or find both
+tables already there and no-op through ``checkfirst`` -- turning the
+in-process race into deterministic serialization rather than relying
+on retries to paper over interleavings. Cross-process races (separate
+SQLite connections in separate interpreters, which no in-process lock
+can reach) are still handled by :func:`_create_all_with_retries`.
+"""
+
+_INIT_SCHEMA_MAX_ATTEMPTS = 5
+"""Bound on ``create_all`` retries in :func:`_create_all_with_retries`.
+
+Tables are only ever added, never dropped, so each retry's
+``checkfirst=True`` skips whatever the previous attempt (or a racing
+process) already committed and creates only what is still missing --
+the sequence converges to a no-op within a handful of attempts. Five
+is comfortably above the two-table depth of this schema; it exists
+only to keep a genuine, persistent failure (e.g. an unwritable
+database file) from retrying forever.
+"""
+
+
+def _create_all_with_retries(engine: Engine) -> None:
+    """Run ``create_all(checkfirst=True)`` to convergence across racing creators.
+
+    A losing ``CREATE TABLE`` from a racing SQLite connection surfaces
+    as ``OperationalError`` even though SQLite DDL is transactional
+    and never leaves a half-built table behind. Retrying re-enters
+    ``checkfirst=True``, which skips every table that now exists
+    (whichever process created it) and creates only what is still
+    missing, so at most one retry per remaining table is needed before
+    both are present. The bounded loop re-raises the last
+    ``OperationalError`` only if, after exhausting
+    :data:`_INIT_SCHEMA_MAX_ATTEMPTS`, at least one of the two tables
+    genuinely never came to exist -- the signal that this was a real
+    database failure rather than a resolved creation race.
+
+    Args:
+        engine: SQLAlchemy engine bound to the findings database.
+
+    Raises:
+        OperationalError: The database remains unusable after every
+            retry -- both tables still absent.
+    """
+    last_error: OperationalError | None = None
+    for attempt in range(_INIT_SCHEMA_MAX_ATTEMPTS):
+        try:
+            _metadata.create_all(engine, checkfirst=True)
+            return
+        except OperationalError as exc:
+            last_error = exc
+            logger.info(
+                "review.track_record.schema_init_retry",
+                attempt=attempt,
+                error=str(exc),
+            )
+    inspector = inspect(engine)
+    if inspector.has_table("pr_findings") and inspector.has_table("pr_review_integrity"):
+        return
+    assert last_error is not None
+    raise last_error
+
+
 def init_findings_schema(db_path: Path) -> None:
     """Create the findings + review-integrity tables if absent (idempotent).
 
-    Concurrent first-creation is race-proof: ``checkfirst=True`` runs a
-    conditional check-then-create that is not atomic across independent
-    SQLite connections, so two or more callers racing the very first
-    creation of ``pr_findings`` / ``pr_review_integrity`` can each
-    observe "missing" before either commits, and every loser then sees
-    the winner's ``CREATE TABLE`` as
-    ``OperationalError: table ... already exists``. SQLite DDL is
-    transactional, so a losing ``CREATE`` never leaves a partially
-    built table behind -- catching the error and re-checking both
-    tables via ``inspect().has_table`` distinguishes "someone else
-    already finished this" (swallow, continue) from a genuine database
-    failure (re-raise). Once both tables exist for a given database
-    file this check costs nothing extra.
+    Concurrent first-creation is race-proof at two layers. In-process
+    callers (e.g. the reviewer thread pool) serialize on
+    :data:`_INIT_SCHEMA_LOCK` so ``create_all`` runs to completion
+    before the next caller starts, or finds both tables already there
+    and no-ops. Cross-process callers (separate SQLite connections
+    with no shared lock) are handled by
+    :func:`_create_all_with_retries`, which retries the bounded,
+    convergent ``checkfirst=True`` sequence and re-raises only a
+    genuine, persistent failure -- one where a table never comes to
+    exist even after every retry.
 
     Also self-heals existing databases by ALTER-ing columns introduced
     post-creation (SQLite has no DDL-versioning).
     """
     engine = _engine_for(db_path)
-    try:
-        _metadata.create_all(engine, checkfirst=True)
-    except OperationalError:
-        inspector = inspect(engine)
-        if not (inspector.has_table("pr_findings") and inspector.has_table("pr_review_integrity")):
-            raise
+    with _INIT_SCHEMA_LOCK:
+        _create_all_with_retries(engine)
     _migrate_missing_findings_columns(engine)
 
 
