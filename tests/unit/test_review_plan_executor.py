@@ -655,7 +655,9 @@ class TestSelfVerifyGate:
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
             "repoach.review.dev_runner.run_self_verify",
-            lambda *a, **k: types.SimpleNamespace(ok=False, reasons=["judge: not compliant — gap"]),
+            lambda *a, **k: types.SimpleNamespace(
+                ok=False, ruff_ok=True, reasons=["judge: not compliant — gap"]
+            ),
         )
         dev = _developer_writing([_good_attempt()])
 
@@ -681,7 +683,7 @@ class TestSelfVerifyGate:
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
             "repoach.review.dev_runner.run_self_verify",
-            lambda *a, **k: types.SimpleNamespace(ok=True, reasons=[]),
+            lambda *a, **k: types.SimpleNamespace(ok=True, ruff_ok=True, reasons=[]),
         )
         dev = _developer_writing([_good_attempt()])
 
@@ -695,6 +697,7 @@ class TestSelfVerifyGate:
         )
 
         assert result.self_verified is True
+        assert result.ruff_passed is True
         assert result.no_op_reason == "dry-run: push=False"
 
     def test_real_gate_compliant_judge_passes(self, tmp_path: Path, monkeypatch) -> None:
