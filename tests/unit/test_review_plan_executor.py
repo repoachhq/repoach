@@ -398,6 +398,7 @@ class TestSessionWrapup:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
+        _git(repo, "branch", "develop")
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         dev = _developer_writing([_good_attempt()])
 
@@ -476,6 +477,7 @@ class TestGateAndSessionEdges:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
+        _git(repo, "branch", "develop")
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
             "repoach.review.dev_runner.push_branch",
