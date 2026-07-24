@@ -25,8 +25,10 @@ decisions #2/#3/#4 — the monolithic 32K one-shot dispatch, its
    CLI's responsibility via :func:`open_pr`.
 
 The runner never raises on a gate failure — it returns a structured
-:class:`DevSessionResult` and the CLI maps ``no_op_reason`` keywords
-to exit codes.
+:class:`DevSessionResult` carrying both a free-text ``no_op_reason``
+(for logs/PR comments) and a structured ``reason_code``
+(:class:`~repoach.review.coder_findings.ReasonCode`); the CLI maps
+``reason_code -> exit code`` by identity (SP-CONSISTENCY-SWEEP).
 
 Module-level constants :
     :data:`DEFAULT_BRANCH_TEMPLATE` is the canonical branch-name
@@ -48,6 +50,7 @@ from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..lint.no_inline_comments import scan_file as scan_inline_comments
 from ..lint.no_silent_except import scan_file as scan_silent_except
+from .coder_findings import ReasonCode
 from .coder_loop import (
     run_pytest_matrix,
     run_ruff_gate,
@@ -179,6 +182,7 @@ class DevSessionResult:
     pr_title: str = ""
     pr_summary: str = ""
     wrapup_dossier: str = ""
+    reason_code: ReasonCode = ReasonCode.NONE
 
 
 def read_existing_files(plan: SpecPlan, *, repo_root: Path | None = None) -> dict[str, str]:
@@ -1717,6 +1721,7 @@ def _develop_one_spec(
             full_ok, full_tail = run_pytest_matrix(repo)
             result.pytest_passed = full_ok
     if not full_ok:
+        result.reason_code = ReasonCode.PYTEST_RED
         return f"full unit suite pytest red after all steps ({full_tail[:160]})"
 
     integration_present = [
@@ -1735,6 +1740,7 @@ def _develop_one_spec(
         int_ok, int_tail = run_pytest_selectors(repo, integration_present)
         if not int_ok:
             result.pytest_passed = False
+            result.reason_code = ReasonCode.PYTEST_RED
             return f"integration tests pytest red ({int_tail[:160]})"
 
     try:
@@ -1748,11 +1754,13 @@ def _develop_one_spec(
         )
     except Exception as exc:
         _log.warning("dev_runner.self_verify_crashed", spec_id=spec.id, error=str(exc)[:200])
+        result.reason_code = ReasonCode.SELF_VERIFY
         return f"self-verify gate crashed: {type(exc).__name__}: {str(exc)[:160]}"
     result.ruff_passed = self_verify.ruff_ok
     result.self_verified = self_verify.ok
     if not self_verify.ok:
         _log.warning("dev_runner.self_verify_failed", spec_id=spec.id, reasons=self_verify.reasons)
+        result.reason_code = ReasonCode.SELF_VERIFY
         return "self-verify gate failed: " + " | ".join(self_verify.reasons)[:240]
     return None
 
@@ -1817,8 +1825,8 @@ def run_developer_session(
 
     Returns:
         A :class:`DevSessionResult`.  No exception raised on gate
-        failures — the caller (CLI) maps ``no_op_reason`` keywords to
-        exit codes.
+        failures — the caller (CLI) maps ``reason_code`` to an exit code
+        by identity.
     """
     repo = (repo_root or Path.cwd()).resolve()
     settings = get_settings()
@@ -1831,6 +1839,7 @@ def run_developer_session(
         return DevSessionResult(
             spec_id=spec_id,
             no_op_reason=f"spec not found: {exc}",
+            reason_code=ReasonCode.SPEC_NOT_FOUND,
         )
 
     target_branch = branch or DEFAULT_BRANCH_TEMPLATE.format(slug=spec_to_branch_slug(spec.id))
@@ -1853,6 +1862,7 @@ def run_developer_session(
     sub_targets, decompose_error = _resolve_sub_specs(spec, repo=repo, decomposer=decomposer)
     if decompose_error is not None:
         result.no_op_reason = decompose_error
+        result.reason_code = ReasonCode.DECOMPOSE_OR_SUPERSEDE
         return result
     result.decomposed = not (len(sub_targets) == 1 and sub_targets[0].id == spec.id)
     if result.decomposed:
@@ -1891,6 +1901,7 @@ def run_developer_session(
     pushed, push_log = push_branch(repo, target_branch)
     if not pushed:
         result.no_op_reason = f"commit/push failed: {push_log}"
+        result.reason_code = ReasonCode.PUSH_FAILED
         return result
     result.pushed = True
     return result

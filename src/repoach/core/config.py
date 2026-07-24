@@ -235,6 +235,29 @@ class Settings(BaseSettings):
         ),
     )
 
+    planner_parse_attempts: str = Field(
+        default="",
+        description=(
+            "Raw override for the Planner's per-session parse-attempt budget "
+            "(REPOACH_PLANNER_PARSE_ATTEMPTS). Kept as a raw string -- an "
+            "empty/unset value or a non-integer falls back to the built-in "
+            "default of 5, and any parsed value is clamped to >=1 -- both at "
+            "the read site in review/planner.py, exactly as before this moved "
+            "off a raw os.environ read (SP-CONSISTENCY-SWEEP)."
+        ),
+    )
+    coder_pythons: str = Field(
+        default="",
+        description=(
+            "CSV of pytest interpreter names/paths for the Coder's local gate "
+            "matrix (REPOACH_CODER_PYTHONS), e.g. 'python3.11,python3.13'. "
+            "Empty/unset resolves to [None] (bare pytest on PATH); each listed "
+            "entry is validated against shutil.which at the read site in "
+            "review/coder_loop.py, exactly as before this moved off a raw "
+            "os.environ read (SP-CONSISTENCY-SWEEP)."
+        ),
+    )
+
     automerge_ci_wait_seconds: int = Field(
         default=720,
         ge=0,

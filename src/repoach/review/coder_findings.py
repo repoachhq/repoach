@@ -26,6 +26,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from ..core.config import get_settings
@@ -320,6 +321,32 @@ def resolve_broken_behavior_findings(db_path: Path, *, pr_number: int, head_sha:
     return resolved
 
 
+class ReasonCode(StrEnum):
+    """Structured counterpart of a ``no_op_reason`` free-text string.
+
+    Audit 2026-07-13 finding C4: the CLI used to map ``typer.Exit``
+    codes by substring-matching the free-text ``no_op_reason`` (e.g.
+    ``"ruff" in reason``), which a coincidental substring inside an
+    unrelated message (a contract-violation reason that happens to
+    quote a ``ruff``-reformatted path, say) could mismap to the wrong
+    exit code. Every ``no_op_reason=`` site now also sets the matching
+    ``reason_code``, and the CLI maps ``reason_code -> exit code`` by
+    identity instead of scanning text. ``NONE`` is the neutral default
+    for reasons with no dedicated exit-code branch (they fall through
+    to the caller's catch-all).
+    """
+
+    NONE = "none"
+    SPEC_NOT_FOUND = "spec_not_found"
+    NO_FIXES = "no_fixes"
+    WHITELIST_REJECTED = "whitelist_rejected"
+    SELF_VERIFY = "self_verify"
+    DECOMPOSE_OR_SUPERSEDE = "decompose_or_supersede"
+    RUFF_RED = "ruff_red"
+    PYTEST_RED = "pytest_red"
+    PUSH_FAILED = "push_failed"
+
+
 @dataclass
 class CoderFindingsResult:
     """Outcome of one :func:`run_coder_fix_from_findings` invocation."""
@@ -335,7 +362,9 @@ class CoderFindingsResult:
     still_open: int = 0
     placeholder_rejected: bool = False
     stuck: bool = False
+    wrong_base: bool = False
     no_op_reason: str | None = None
+    reason_code: ReasonCode = ReasonCode.NONE
 
 
 def _local_head_sha(repo_root: Path) -> str:
@@ -461,6 +490,7 @@ def run_coder_fix_from_findings(
         _log.warning("coder_findings.refuse_non_develop_base", pr_number=pr_number, base=base)
         return CoderFindingsResult(
             pr_number=pr_number,
+            wrong_base=True,
             no_op_reason=f"base={base!r}, refusing (only develop is allowed)",
         )
 
@@ -482,6 +512,7 @@ def run_coder_fix_from_findings(
         return CoderFindingsResult(
             pr_number=pr_number,
             no_op_reason="no open blocking findings to resolve",
+            reason_code=ReasonCode.NO_FIXES,
         )
 
     init_stuck_schema(db)
@@ -552,6 +583,7 @@ def run_coder_fix_from_findings(
             pr_number=pr_number,
             n_open_findings=len(findings),
             no_op_reason="coder produced no fixes",
+            reason_code=ReasonCode.NO_FIXES,
         )
 
     placeholder_rejections: list[dict[str, str]] = []
@@ -590,6 +622,7 @@ def run_coder_fix_from_findings(
             fixes_rejected=len(rejected),
             rejected_paths=rejected,
             no_op_reason="all proposed fixes rejected (whitelist)",
+            reason_code=ReasonCode.WHITELIST_REJECTED,
         )
 
     ruff_ok, ruff_tail = run_ruff_gate(repo)
@@ -601,6 +634,7 @@ def run_coder_fix_from_findings(
             fixes_rejected=len(rejected),
             rejected_paths=rejected,
             no_op_reason=f"ruff gate red; fixes left uncommitted ({ruff_tail[:160]})",
+            reason_code=ReasonCode.RUFF_RED,
         )
 
     pytest_ok, log_tail = run_pytest_matrix(repo)
@@ -613,6 +647,7 @@ def run_coder_fix_from_findings(
             rejected_paths=rejected,
             pytest_passed=False,
             no_op_reason=f"pytest red; fixes left uncommitted ({log_tail[:160]})",
+            reason_code=ReasonCode.PYTEST_RED,
         )
 
     commit_msg = str(plan.get("commit_message") or "").strip() or (
@@ -642,6 +677,7 @@ def run_coder_fix_from_findings(
             rejected_paths=rejected,
             pytest_passed=True,
             no_op_reason=f"commit/push failed: {push_log}",
+            reason_code=ReasonCode.PUSH_FAILED,
         )
 
     new_head = _local_head_sha(repo)

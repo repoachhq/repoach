@@ -108,9 +108,8 @@ def _scan_known_spec_ids(root: Path | None = None) -> tuple[str, ...]:
     if not base.is_dir():
         return ()
     ids: set[str] = set()
-    pattern = re.compile(r"_(SP-[A-Z0-9-]+)_")
     for p in base.glob("*.md"):
-        m = pattern.search(p.stem)
+        m = _SPEC_ID_IN_FILENAME_RE.search(p.stem)
         if m:
             ids.add(m.group(1))
     return tuple(sorted(ids, key=lambda s: (-len(s), s)))
@@ -207,12 +206,22 @@ def _scan_referenced_paths(markdown: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+_SPEC_ID_IN_FILENAME_RE = re.compile(r"_(SP-[A-Z0-9-]+)_")
+
+
 def _resolve_plan_file(spec_id: str, *, root: Path | None = None) -> Path | None:
     """Find the plan file for *spec_id* under :data:`SPECS_DIR`.
 
     Convention: ``docs/specs/<date>_<SP-ID>_<slug>.md``.  Multiple
     files matching the same id (e.g. follow-up plans) → the most recent
     by lexicographic sort wins.
+
+    A file is a match only when its extracted ``_(SP-…)_`` segment
+    (the same boundary extraction :func:`_scan_known_spec_ids` uses)
+    equals *spec_id* exactly — a loose ``*{spec_id}*.md`` glob would
+    also match a sibling like ``SP-SECURITY-FOO`` for ``spec_id ==
+    "SP-SEC"``, silently loading the wrong spec (audit 2026-07-13
+    finding C3). A filename with no ``_SP-…_`` segment never matches.
 
     Args:
         spec_id: Canonical id, e.g. ``"SP-SEC"``.
@@ -224,10 +233,16 @@ def _resolve_plan_file(spec_id: str, *, root: Path | None = None) -> Path | None
     base = (root or Path.cwd()) / SPECS_DIR
     if not base.is_dir():
         return None
-    matches = sorted(p for p in base.glob(f"*{spec_id}*.md") if p.is_file())
+    matches: list[Path] = []
+    for p in base.glob("*.md"):
+        if not p.is_file():
+            continue
+        m = _SPEC_ID_IN_FILENAME_RE.search(p.stem)
+        if m is not None and m.group(1) == spec_id:
+            matches.append(p)
     if not matches:
         return None
-    return matches[-1]
+    return sorted(matches)[-1]
 
 
 def load_spec(spec_id: str, *, root: Path | None = None) -> SpecPlan:
