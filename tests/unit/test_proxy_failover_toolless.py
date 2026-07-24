@@ -18,8 +18,9 @@ Reproduces five contractual cases :
    shape) → falls over to candidate 2.
 3. tools-less request + first candidate yields real content → only
    one provider is instantiated, no failover loop.
-4. tools-less request + every candidate fails → 502 surfaced with
-   the chain length in the detail.
+4. tools-less request + every candidate fails → a terminal SSE
+   ``error`` event carrying the ``chain_exhausted`` type and the
+   chain length in its message (SP-STREAM-EXHAUST-ERROR).
 5. every request resolves the ONE universal chain that keeps
    ``claude_code/*`` as the last-resort backstop — there is no
    native-tools filter, so tools and tools-less requests are identical
@@ -34,7 +35,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from fastapi.exceptions import HTTPException
 
 from repoach.llm_proxy.api.model_router import ModelRouter
 from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest
@@ -287,12 +287,14 @@ def test_first_candidate_serves_no_extra_calls_when_no_tools(
     assert "should-not-be-reached" not in chunks
 
 
-def test_all_candidates_fail_re_raises_last_error_when_no_tools(
+def test_all_candidates_fail_emits_terminal_sse_error_when_no_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Case 4a — every candidate raises an exception ; the service
-    re-raises the last error (the ``raise last_error`` path of
-    ``_stream_with_failover``, services.py:212-213)."""
+    """Case 4a — every candidate raises an exception. SP-STREAM-EXHAUST-ERROR:
+    headers are already committed 200 by then, so the service can only
+    surface the failure as a terminal SSE ``error`` event carrying the
+    last raised error's message, never by raising from the body
+    iterator."""
     providers = {
         "nvidia_nim": _ScriptedProvider(
             ProviderConfig(api_key="x"),
@@ -306,20 +308,23 @@ def test_all_candidates_fail_re_raises_last_error_when_no_tools(
     service = _build_service(monkeypatch, providers)
     response = service.create_message(_toolless_request())
 
-    with pytest.raises(RuntimeError, match="transport down 2"):
-        _drain(response)
+    chunks = _drain(response)
 
+    error_chunk = next(c for c in chunks if "event: error" in c)
+    payload = json.loads(error_chunk.split("data: ", 1)[1].strip())
+    assert payload["error"]["type"] == "chain_exhausted"
+    assert "transport down 2" in payload["error"]["message"]
     assert providers["nvidia_nim"].call_count == 1
     assert providers["kimi"].call_count == 1
 
 
-def test_all_candidates_empty_completion_raises_502_when_no_tools(
+def test_all_candidates_empty_completion_emits_terminal_sse_error_when_no_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Case 4b — every candidate yields an empty completion (no
-    exception, ``output_tokens=0``) ; the service surfaces a 502 with
-    the chain length in the detail (services.py:214-221, the
-    ``raise HTTPException(502)`` path)."""
+    exception, ``output_tokens=0``). SP-STREAM-EXHAUST-ERROR: the
+    service surfaces a terminal SSE ``error`` event carrying the
+    chain length in its message, not a raised ``HTTPException``."""
     providers = {
         "nvidia_nim": _ScriptedProvider(
             ProviderConfig(api_key="x"),
@@ -347,11 +352,12 @@ def test_all_candidates_empty_completion_raises_502_when_no_tools(
     service = _build_service(monkeypatch, providers)
     response = service.create_message(_toolless_request())
 
-    with pytest.raises(HTTPException) as exc_info:
-        _drain(response)
+    chunks = _drain(response)
 
-    assert exc_info.value.status_code == 502
-    assert "2 provider candidate" in str(exc_info.value.detail)
+    error_chunk = next(c for c in chunks if "event: error" in c)
+    payload = json.loads(error_chunk.split("data: ", 1)[1].strip())
+    assert payload["error"]["type"] == "chain_exhausted"
+    assert "2 provider candidate" in payload["error"]["message"]
     assert providers["nvidia_nim"].call_count == 1
     assert providers["kimi"].call_count == 1
 

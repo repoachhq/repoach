@@ -16,7 +16,11 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from repoach.llm_proxy.config.settings import Settings
-from repoach.llm_proxy.core.anthropic import get_token_count, get_user_facing_error_message
+from repoach.llm_proxy.core.anthropic import (
+    format_error_event,
+    get_token_count,
+    get_user_facing_error_message,
+)
 from repoach.llm_proxy.providers.base import BaseProvider
 from repoach.llm_proxy.providers.exceptions import (
     APIError,
@@ -157,10 +161,15 @@ class ClaudeProxyService:
 
         Raises:
             HTTPException: ``400`` for invalid requests (e.g. empty
-                ``messages``), ``502`` when every chain candidate
-                returns an empty completion, or the status code
-                carried by the underlying provider exception when
-                one is raised.
+                ``messages``); ``502`` when every chain candidate is
+                already breaker-tripped before the first dispatch
+                attempt (SP-STREAM-EXHAUST-ERROR G2 pre-flight,
+                headers not yet committed); or the status code carried
+                by the underlying provider exception when one is
+                raised. A chain that becomes exhausted only AFTER
+                streaming has started instead surfaces as a terminal
+                SSE ``error`` event inside the 200 response body — see
+                :meth:`_stream_with_failover`.
             ProviderError: Surfaced unchanged so the caller can
                 distinguish provider-level failures from generic
                 server errors.
@@ -184,6 +193,28 @@ class ClaudeProxyService:
                 len(chain),
                 ", ".join(c.provider_model_ref for c in chain),
             )
+            if self._chain_preflight_exhausted(chain):
+                logger.error(
+                    "proxy_chain_exhausted",
+                    dispatch_id=f"disp_{uuid.uuid4().hex[:12]}",
+                    chain_length=len(chain),
+                    attempts=0,
+                    attempted=[c.provider_model_ref for c in chain],
+                    failures=[],
+                    last_error_type=None,
+                    last_error_message=None,
+                    budget_exhausted=False,
+                    preflight=True,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "All "
+                        f"{len(chain)} provider candidate(s) are currently breaker-tripped; "
+                        "the chain is exhausted before dispatch. See proxy logs "
+                        "(proxy_chain_exhausted) for the per-attempt outcome."
+                    ),
+                )
             return StreamingResponse(
                 self._stream_with_failover(request_data, chain, input_tokens=input_tokens),
                 media_type="text/event-stream",
@@ -196,12 +227,46 @@ class ClaudeProxyService:
 
         except ProviderError:
             raise
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error: {e!s}\n{traceback.format_exc()}")
             raise HTTPException(
                 status_code=getattr(e, "status_code", 500),
                 detail=get_user_facing_error_message(e),
             ) from e
+
+    def _chain_preflight_exhausted(self, chain: list[ResolvedModel]) -> bool:
+        """Return whether ``chain`` is already known-exhausted before dispatch.
+
+        SP-STREAM-EXHAUST-ERROR G2: a chain is pre-flight exhausted
+        when it is empty or every one of its candidates is currently
+        breaker-tripped (:meth:`BreakerState.is_down`) — the same
+        breaker read :meth:`_stream_with_failover`'s own walk performs
+        per-candidate, just evaluated synchronously up front. When
+        this is true the walk is guaranteed to skip every candidate
+        without ever dispatching a request, so ``create_message`` can
+        return a real HTTP 502 here — before the ``StreamingResponse``
+        is even constructed and its 200 headers committed — instead of
+        surfacing the eventual exhaustion as an in-band terminal SSE
+        error (G1's fallback for the case headers are already on the
+        wire).
+
+        Args:
+            chain: The chain :meth:`ModelRouter.resolve_chain` just
+                resolved for this request.
+
+        Returns:
+            ``True`` when no candidate in ``chain`` could possibly be
+            dispatched right now.
+        """
+        if not chain:
+            return True
+        now = time.monotonic()
+        return all(
+            get_breaker().is_down(ModelRef.parse(candidate.provider_model_ref), now)
+            for candidate in chain
+        )
 
     def _trip_breaker(
         self,
@@ -319,8 +384,21 @@ class ClaudeProxyService:
         ``proxy_chain_failover_fired`` event and tries the next
         entry. When the whole chain is exhausted without a usable
         response, a single ``proxy_chain_exhausted`` event is emitted
-        before the HTTP error propagates — see SP-LLM-PROXY-FAILOVER-LOG
-        for the rationale.
+        — see SP-LLM-PROXY-FAILOVER-LOG for the rationale — and (unless
+        the exhaustion is purely budget-driven, see below) a terminal
+        Anthropic-shaped SSE ``error`` event carrying an explicit
+        ``chain_exhausted`` type is yielded so the client can detect
+        the failure deterministically (SP-STREAM-EXHAUST-ERROR).
+        Raising here instead would be silently truncated: this
+        method is the body iterator of a ``StreamingResponse`` whose
+        200 headers Starlette has already committed to the wire
+        before the first ``__anext__`` call, so any exception raised
+        from inside it can never become the documented HTTP error the
+        caller expects — it only aborts the body after a 200 already
+        went out. :meth:`ClaudeProxyService.create_message` pre-flights
+        the one sub-case that IS knowable before headers are
+        committed — every candidate already breaker-tripped — and
+        returns a real 502 there instead.
 
         Both the primary success path and the budget-retry success path
         (SP-BREAKER-SLOW-STRIKE) apply the same recover-or-strike policy
@@ -655,14 +733,15 @@ class ClaudeProxyService:
                 },
             )
         if last_error is not None:
-            raise last_error
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "All "
-                f"{len(chain)} provider candidate(s) returned empty completions. "
-                "See proxy logs (proxy_chain_exhausted) for the per-attempt outcome."
-            ),
+            exhaustion_message = str(last_error)[:200]
+        else:
+            exhaustion_message = (
+                f"All {len(chain)} provider candidate(s) returned empty completions."
+            )
+        yield format_error_event(
+            "chain_exhausted",
+            f"{exhaustion_message} (dispatch_id={dispatch_id}, "
+            "see proxy logs for the per-attempt outcome)",
         )
 
     async def _retry_with_more_budget(
