@@ -172,6 +172,7 @@ def _attempt_mechanical_rename(
     try:
         target.write_text(rewritten, encoding="utf-8")
     except OSError:
+        # repoach: allow-silent-except reason="best-effort restore after the rewrite write already failed; a second OSError here is already covered by the error return below"
         with contextlib.suppress(OSError):
             target.write_text(original, encoding="utf-8")
         return "error", ""
@@ -187,6 +188,7 @@ def _restore_file_contents(repo_root: Path, originals: dict[str, str]) -> None:
     not leave mechanically-renamed content in the retry's working tree.
     """
     for file_path, content in originals.items():
+        # repoach: allow-silent-except reason="best-effort restore across a failed multi-file rename; a stuck file is caught by the strict test re-run, not by this write"
         with contextlib.suppress(OSError):
             (repo_root / file_path).write_text(content, encoding="utf-8")
 
