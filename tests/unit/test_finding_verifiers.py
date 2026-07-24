@@ -68,6 +68,49 @@ def test_missing_test_proposed_without_symbol(tmp_path: Path) -> None:
     assert "no checkable symbol" in result
 
 
+def test_missing_test_not_refuted_by_src_symbol(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "verdicts.py").write_text(
+        "def _parse_verdict(text):\n    return text\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    status, method, _ = verify_finding(
+        _finding(ClaimType.MISSING_TEST, claim="no test for `_parse_verdict`"),
+        repo_root=tmp_path,
+    )
+    assert status is FindingStatus.VERIFIED
+    assert method == "symbol_search"
+
+
+def test_missing_test_refuted_by_real_tests_dir_test(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "verdicts.py").write_text(
+        "def _parse_verdict(text):\n    return text\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_verdicts.py").write_text(
+        "def test_parse_verdict():\n    assert True\n", encoding="utf-8"
+    )
+    status, _, _ = verify_finding(
+        _finding(ClaimType.MISSING_TEST, claim="no test for `_parse_verdict`"),
+        repo_root=tmp_path,
+    )
+    assert status is FindingStatus.REFUTED
+
+
+def test_src_planted_test_does_not_refute(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "planted.py").write_text(
+        "def test_foo():\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    status, _, _ = verify_finding(
+        _finding(ClaimType.MISSING_TEST, claim="no test for `test_foo`"),
+        repo_root=tmp_path,
+    )
+    assert status is FindingStatus.VERIFIED
+
+
 def test_missing_docstring_refuted_when_documented(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "m.py").write_text(
