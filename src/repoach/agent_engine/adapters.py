@@ -129,7 +129,8 @@ class ProxyGatewayClient:
 
         Raises:
             GatewayTransportError: 5xx, 429, 408, connect refused,
-                read timeout.
+                any httpx timeout (connect/read/write/pool), or a
+                transport/protocol fault.
             GatewayChainExhausted: HTTP 200 with
                 ``stop_reason="error"`` — the proxy walked its own
                 chain and every upstream failed.
@@ -164,7 +165,11 @@ class ProxyGatewayClient:
         try:
             with httpx.Client(timeout=httpx.Timeout(self._timeout_s, connect=5.0)) as client:
                 resp = client.post(url, json=body, headers=headers)
-        except (httpx.ConnectError, httpx.ReadTimeout) as exc:
+        except (
+            httpx.TimeoutException,
+            httpx.TransportError,
+            httpx.RemoteProtocolError,
+        ) as exc:
             _log.warning(
                 "proxy_gateway.transport_failed",
                 url=url,
