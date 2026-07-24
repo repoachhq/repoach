@@ -30,6 +30,7 @@ from typing import Any
 
 from loguru import logger
 
+from repoach.llm_proxy.cli.process_registry import register_pid, unregister_pid
 from repoach.llm_proxy.core.anthropic import (
     HeuristicToolParser,
     SSEBuilder,
@@ -155,6 +156,7 @@ class ClaudeCodeProvider(BaseProvider):
 
         yield sse.message_start()
 
+        proc: asyncio.subprocess.Process | None = None
         async with self._global_rate_limiter.concurrency_slot():
             try:
                 await self._global_rate_limiter.wait_if_blocked()
@@ -165,6 +167,7 @@ class ClaudeCodeProvider(BaseProvider):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self._workdir),
                 )
+                register_pid(proc.pid)
                 stdout_b, stderr_b = await asyncio.wait_for(
                     proc.communicate(input=prompt.encode("utf-8")),
                     timeout=self._subprocess_timeout,
@@ -267,6 +270,8 @@ class ClaudeCodeProvider(BaseProvider):
                     yield event
                 raise
             finally:
+                if proc is not None:
+                    unregister_pid(proc.pid)
                 if sysprompt_path is not None:
                     try:
                         sysprompt_path.unlink(missing_ok=True)
