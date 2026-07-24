@@ -35,8 +35,11 @@ Module-level constants :
 
 * :data:`EVIDENCE_REPLY_SENTINEL` is the substring
   :func:`coder_loop._format_evidence_reply` writes into every Coder
-  evidence reply.  Any reply containing this marker is treated as a
-  Coder evidence challenge for the purpose of resolving the thread.
+  evidence reply.  A reply containing this marker is treated as a
+  Coder evidence challenge for the purpose of resolving the thread
+  only when its ``user.login`` matches the trusted bot identity
+  (SP-EVIDENCE-SENTINEL-AUTHOR) — otherwise it is ignored, so a PR
+  author cannot forge one by pasting the marker verbatim.
 * :data:`_ROLE_TAG_RE` matches the reviewer-side tag prefix the
   orchestrator's inline-comment poster writes :
   ``**[<role>/<severity>]**`` (case-insensitive).
@@ -63,9 +66,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..core.config import get_settings
 from ..core.logging import get_logger
 from .findings import Finding, FindingStatus, fetch_findings
-from .gh_client import GhCli
+from .gh_client import GhCli, comment_author_login
 from .reviewer import BotRole, ReviewComment
 
 _log = get_logger(__name__)
@@ -167,12 +171,16 @@ def fetch_resolved_disagreements(
     pr_number: int,
     *,
     role: BotRole,
+    bot_login: str | None = None,
 ) -> list[ResolvedDisagreement]:
     """Return resolved-disagreement threads for ``role``.
 
     A "resolved" thread is one whose root comment was tagged by this
-    reviewer role AND received a Coder reply containing the
-    :data:`EVIDENCE_REPLY_SENTINEL` substring.
+    reviewer role AND received a reply, authored by the trusted bot
+    identity, containing the :data:`EVIDENCE_REPLY_SENTINEL` substring
+    (SP-EVIDENCE-SENTINEL-AUTHOR). A sentinel-bearing reply from any
+    other ``user.login`` — e.g. the PR author forging the sentinel
+    string — is ignored, so it never resolves the thread.
 
     Args:
         gh: GitHub CLI wrapper used to fetch the PR's review comments.
@@ -180,12 +188,20 @@ def fetch_resolved_disagreements(
         role: Reviewer role to filter on; only threads whose root
             comment is tagged with this role's ``[<role>/...]`` prefix
             are returned.
+        bot_login: The GitHub login a sentinel reply must carry to be
+            trusted.  Defaults to
+            :attr:`~repoach.core.config.Settings.review_bot_login`
+            when omitted. A falsy value (including the resolved
+            default being empty) fails closed — no reply is ever
+            trusted rather than trusting all of them.
 
     Returns:
         Up to :data:`_MAX_DISAGREEMENTS_PER_ROLE` resolved threads,
         most recent first (thread root ``id`` descending).  Empty
         list when no thread matches or the gh call fails.
     """
+    expected_login = bot_login if bot_login is not None else get_settings().review_bot_login
+
     threads = gh.list_review_comments(pr_number)
     if not threads:
         return []
@@ -208,9 +224,12 @@ def fetch_resolved_disagreements(
         evidence_reply: str | None = None
         for reply in replies_by_root.get(root_id, []):
             reply_body = str(reply.get("body") or "")
-            if EVIDENCE_REPLY_SENTINEL in reply_body:
-                evidence_reply = reply_body
-                break
+            if EVIDENCE_REPLY_SENTINEL not in reply_body:
+                continue
+            if not expected_login or comment_author_login(reply) != expected_login:
+                continue
+            evidence_reply = reply_body
+            break
         if evidence_reply is None:
             continue
         path = str(root.get("path") or "")

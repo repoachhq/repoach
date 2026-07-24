@@ -31,6 +31,7 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
 )
+from repoach.review.gh_client import GhCli
 from repoach.review.reviewer import BotRole
 from repoach.review.thread_context import (
     EVIDENCE_REPLY_SENTINEL,
@@ -102,6 +103,7 @@ class _FakeGh:
                 "path": "",
                 "line": None,
                 "body": body,
+                "user": {"login": GhCli().bot_login},
             }
         )
         return SimpleNamespace(ok=True)

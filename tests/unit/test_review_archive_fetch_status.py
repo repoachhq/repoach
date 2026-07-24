@@ -62,7 +62,8 @@ def test_absent_marker_yields_both_none() -> None:
 def test_found_marker_yields_body_without_error() -> None:
     import json
 
-    stdout = json.dumps([{"body": "noise"}, {"body": _ARCHIVE_BODY}])
+    bot_login = GhCli().bot_login
+    stdout = json.dumps([{"body": "noise"}, {"body": _ARCHIVE_BODY, "user": {"login": bot_login}}])
     cli = _CannedGhCli(_result(0, stdout=stdout))
     fetch = cli.fetch_archive_comment_with_status(42)
     assert fetch.api_error is None
@@ -83,7 +84,10 @@ def test_legacy_fetch_delegates_to_sibling() -> None:
 
     failing = _CannedGhCli(_result(1, stderr="HTTP 502"))
     assert failing.fetch_archive_comment(42) is None
-    found = _CannedGhCli(_result(0, stdout=json.dumps([{"body": _ARCHIVE_BODY}])))
+    bot_login = GhCli().bot_login
+    found = _CannedGhCli(
+        _result(0, stdout=json.dumps([{"body": _ARCHIVE_BODY, "user": {"login": bot_login}}]))
+    )
     assert found.fetch_archive_comment(42) == _ARCHIVE_BODY
 
 
