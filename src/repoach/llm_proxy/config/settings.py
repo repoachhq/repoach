@@ -32,7 +32,6 @@ def _env_files() -> tuple[Path, ...]:
     ``source chains.env`` sets the same value).
     """
     files: list[Path] = [
-        Path.home() / ".config" / "free-claude-code" / ".env",
         Path(".env"),
     ]
     if explicit := os.environ.get("FCC_ENV_FILE"):

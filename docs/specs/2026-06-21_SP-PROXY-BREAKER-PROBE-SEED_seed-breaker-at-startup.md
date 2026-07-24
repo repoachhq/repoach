@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/routing/probe_seed.py]   # the seed bridge
   resources: N/A
 
-depends_on: [SP-HEALTH-STORE-NEUTRALIZE]   # imports fetch_probes from the neutral health store
+depends_on: [SP-HEALTH-STORE-NEUTRALIZE, SP-PROXY-FIRST-BYTE-DEADLINE]   # fetch_probes from the neutral health store; Settings from the proxy config module
 
 constraints: {}
 ---
