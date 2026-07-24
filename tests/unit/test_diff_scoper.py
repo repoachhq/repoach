@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from repoach.review.diff_scoper import scope_diff, split_diff
+from repoach.review.findings import ClaimType, Severity, fetch_findings, init_findings_schema
+from repoach.review.findings_bridge import record_oversized_findings
 from repoach.review.reviewer import _DIFF_HARD_CAP_CHARS, Architect, ReviewVerdict
 
 FIXTURE_DIFF = """\npreamble: changes in this batch
@@ -94,6 +97,41 @@ def test_scope_diff_announcement_lists_omitted() -> None:
     result = scope_diff(FIXTURE_DIFF, cap_one)
     assert "src/beta.py" in result.prompt_diff
     assert "src/gamma.py" in result.prompt_diff
+
+
+def test_oversized_file_records_blocking_finding(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    units = split_diff(FIXTURE_DIFF)
+    cap_tiny = min(u.chars for u in units) - 1
+    scoped = scope_diff(FIXTURE_DIFF, cap_tiny)
+    assert scoped.oversized
+
+    n_recorded = record_oversized_findings(
+        db, pr_number=7, head_sha="headabc", round_n=1, scoped=scoped
+    )
+    assert n_recorded == len(scoped.oversized)
+
+    findings = fetch_findings(db, 7)
+    assert {f.file for f in findings} == set(scoped.oversized)
+    for finding in findings:
+        assert finding.severity is Severity.BLOCKING
+        assert finding.claim_type is ClaimType.SPEC_GAP
+
+
+def test_no_oversized_files_records_no_blocking_finding(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    units = split_diff(FIXTURE_DIFF)
+    cap_all = sum(u.chars for u in units) + 100
+    scoped = scope_diff(FIXTURE_DIFF, cap_all)
+    assert scoped.oversized == []
+
+    n_recorded = record_oversized_findings(
+        db, pr_number=8, head_sha="headabc", round_n=1, scoped=scoped
+    )
+    assert n_recorded == 0
+    assert fetch_findings(db, 8) == []
 
 
 def _make_oversized_diff(cap: int) -> str:
