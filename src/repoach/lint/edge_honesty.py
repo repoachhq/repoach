@@ -137,15 +137,47 @@ def _table_literals(tree: ast.AST) -> set[str]:
     return names
 
 
+def _read_source(rel_path: str, *, staged: bool, repo_root: Path) -> str:
+    """Return the content to analyze for one changed file.
+
+    In staged mode this is the STAGED BLOB (``git show :<rel_path>``) — the
+    bytes that will actually be committed — rather than the worktree copy,
+    which may have been reverted or further edited after ``git add``.
+
+    Args:
+        rel_path: Repo-relative path, as listed by the ``--cached`` diff.
+        staged: When true, read the staged blob; else the worktree copy.
+        repo_root: The repository root.
+
+    Returns:
+        The file's text content.
+
+    Raises:
+        subprocess.CalledProcessError: ``git show`` failed for a path the
+            ``--cached`` listing claimed was staged — surfaced rather than
+            silently skipping the file.
+    """
+    if staged:
+        completed = subprocess.run(
+            ["git", "show", f":{rel_path}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return completed.stdout
+    return (repo_root / rel_path).read_text(encoding="utf-8")
+
+
 def _check_file(
-    registry: Registry, repo_root: Path, rel_path: str
+    registry: Registry, repo_root: Path, rel_path: str, *, staged: bool
 ) -> tuple[list[EdgeViolation], list[FrontierRef]]:
     """Check one changed file's couplings against its owner's ``depends_on``."""
     owner = registry.owner_of(rel_path)
     if owner is None or registry.nodes[owner].frontier:
         return [], []
     declared = set(registry.nodes[owner].depends_on)
-    tree = ast.parse((repo_root / rel_path).read_text(encoding="utf-8"))
+    tree = ast.parse(_read_source(rel_path, staged=staged, repo_root=repo_root))
 
     violations: list[EdgeViolation] = []
     frontier: list[FrontierRef] = []
@@ -195,6 +227,7 @@ def check_diff(
     changed_files: Iterable[str],
     repo_root: Path,
     *,
+    staged: bool = False,
     suppress: frozenset[str] = frozenset(),
 ) -> Report:
     """Check every changed Python file owned by a governed spec.
@@ -203,6 +236,9 @@ def check_diff(
         registry: The parsed spec registry.
         changed_files: Repo-relative paths changed by the diff.
         repo_root: The repository root.
+        staged: When true, each file is read from the staged blob (the
+            content that will actually be committed) rather than the
+            worktree copy.
         suppress: Frontier artifacts to silence (known legacy).
 
     Returns:
@@ -213,7 +249,7 @@ def check_diff(
     for rel_path in changed_files:
         if not rel_path.endswith(".py"):
             continue
-        file_violations, file_frontier = _check_file(registry, repo_root, rel_path)
+        file_violations, file_frontier = _check_file(registry, repo_root, rel_path, staged=staged)
         violations.extend(file_violations)
         frontier.extend(ref for ref in file_frontier if ref.artifact not in suppress)
     return Report(violations=tuple(violations), frontier=tuple(frontier))
@@ -238,7 +274,7 @@ def gather_changed_files(*, base: str, staged: bool, repo_root: Path) -> list[st
     if staged:
         command = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
     else:
-        command = ["git", "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD"]
+        command = ["git", "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD", "--"]
     completed = subprocess.run(command, cwd=repo_root, capture_output=True, text=True, check=True)
     return [line for line in completed.stdout.splitlines() if line]
 
@@ -285,7 +321,7 @@ def gather_added_specs(*, base: str, staged: bool, repo_root: Path) -> list[str]
     if staged:
         command = ["git", "diff", "--cached", "--name-only", "--diff-filter=A"]
     else:
-        command = ["git", "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD"]
+        command = ["git", "diff", "--name-only", "--diff-filter=A", f"{base}...HEAD", "--"]
     completed = subprocess.run(command, cwd=repo_root, capture_output=True, text=True, check=True)
     out: list[str] = []
     for line in completed.stdout.splitlines():
@@ -300,7 +336,9 @@ def gather_added_specs(*, base: str, staged: bool, repo_root: Path) -> list[str]
     return out
 
 
-def check_added_specs(added_specs: Iterable[str], repo_root: Path) -> list[SpecPresenceViolation]:
+def check_added_specs(
+    added_specs: Iterable[str], repo_root: Path, *, staged: bool = False
+) -> list[SpecPresenceViolation]:
     """Flag each ADDED spec that carries no frontmatter fence.
 
     A fence-less new spec would become an un-graphed frontier node
@@ -311,13 +349,16 @@ def check_added_specs(added_specs: Iterable[str], repo_root: Path) -> list[SpecP
     Args:
         added_specs: Repo-relative added spec paths.
         repo_root: The repository root.
+        staged: When true, each spec is read from the staged blob (the
+            content that will actually be committed) rather than the
+            worktree copy.
 
     Returns:
         One violation per fence-less added spec.
     """
     violations: list[SpecPresenceViolation] = []
     for rel_path in added_specs:
-        text = (repo_root / rel_path).read_text(encoding="utf-8")
+        text = _read_source(rel_path, staged=staged, repo_root=repo_root)
         if not has_frontmatter(text):
             violations.append(SpecPresenceViolation(path=rel_path))
     return violations
@@ -328,9 +369,9 @@ def run(*, base: str, staged: bool, specs_dir: Path, repo_root: Path) -> Report:
     registry = load_registry(specs_dir)
     changed = gather_changed_files(base=base, staged=staged, repo_root=repo_root)
     suppress = load_frontier_suppress(repo_root)
-    report = check_diff(registry, changed, repo_root, suppress=suppress)
+    report = check_diff(registry, changed, repo_root, staged=staged, suppress=suppress)
     added_specs = gather_added_specs(base=base, staged=staged, repo_root=repo_root)
-    spec_violations = check_added_specs(added_specs, repo_root)
+    spec_violations = check_added_specs(added_specs, repo_root, staged=staged)
     return Report(
         violations=report.violations,
         frontier=report.frontier,
