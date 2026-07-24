@@ -207,19 +207,35 @@ class SSEBuilder:
             },
         )
 
-    def message_delta(self, stop_reason: str, output_tokens: int, reasoning_tokens: int = 0) -> str:
-        return self._format_event(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                "usage": {
-                    "input_tokens": self.input_tokens,
-                    "output_tokens": output_tokens,
-                },
-                "reasoning_tokens": reasoning_tokens,
+    def message_delta(
+        self,
+        stop_reason: str,
+        output_tokens: int,
+        reasoning_tokens: int = 0,
+        *,
+        error_status_code: int | None = None,
+    ) -> str:
+        """Build the terminal ``message_delta`` event.
+
+        ``error_status_code`` is the real upstream HTTP status a
+        transport recovered before degrading a caught exception to this
+        error-shaped delta (SP-BREAKER-LIVE-REASONS); it is omitted from
+        the payload entirely when ``None`` (every success-path call),
+        so well-behaved clients see the exact same shape as before this
+        field existed.
+        """
+        payload: dict = {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": output_tokens,
             },
-        )
+            "reasoning_tokens": reasoning_tokens,
+        }
+        if error_status_code is not None:
+            payload["error_status_code"] = error_status_code
+        return self._format_event("message_delta", payload)
 
     def message_stop(self) -> str:
         return self._format_event("message_stop", {"type": "message_stop"})
