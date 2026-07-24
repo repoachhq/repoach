@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..core.logging import get_logger
 from .findings import (
+    JUDGED_CLAIM_TYPES,
     ClaimType,
     Finding,
     FindingStatus,
@@ -47,30 +48,45 @@ _SPEC_GAP_CUE = re.compile(r"(?i)spec gap|not in spec|specification gap")
 _SECURITY_CUE = re.compile(r"(?i)security|vulnerability|injection|auth bypass")
 _DESIGN_CUE = re.compile(r"(?i)design|architecture|pattern")
 
-_CLAIM_TYPE_CUES: list[tuple[ClaimType, re.Pattern[str]]] = [
-    (ClaimType.MISSING_TEST, _MISSING_TEST_CUE),
-    (ClaimType.MISSING_DOCSTRING, _MISSING_DOCSTRING_CUE),
-    (ClaimType.LINT_CONVENTION, _LINT_CONVENTION_CUE),
-    (ClaimType.BROKEN_BEHAVIOR, _BROKEN_BEHAVIOR_CUE),
+_JUDGED_CUES: list[tuple[ClaimType, re.Pattern[str]]] = [
     (ClaimType.SPEC_GAP, _SPEC_GAP_CUE),
     (ClaimType.SECURITY, _SECURITY_CUE),
     (ClaimType.DESIGN, _DESIGN_CUE),
 ]
+_MECHANICAL_CUES: list[tuple[ClaimType, re.Pattern[str]]] = [
+    (ClaimType.MISSING_TEST, _MISSING_TEST_CUE),
+    (ClaimType.MISSING_DOCSTRING, _MISSING_DOCSTRING_CUE),
+    (ClaimType.LINT_CONVENTION, _LINT_CONVENTION_CUE),
+]
+
+_CLAIM_TYPE_CUES: list[tuple[ClaimType, re.Pattern[str]]] = [
+    *_JUDGED_CUES,
+    *_MECHANICAL_CUES,
+    (ClaimType.BROKEN_BEHAVIOR, _BROKEN_BEHAVIOR_CUE),
+]
 """Ordered (claim_type, cue) pairs; first match wins.
 
-Mechanical claim types (missing_test, missing_docstring, lint_convention)
-are checked before the judged types (security, design), with the
-under-triaged broken_behavior / spec_gap cues sitting in between so a
-clearly-mechanical cue never loses to a vaguer judged-sounding word
-appearing later in the same comment.
+Judged claim types (:data:`JUDGED_CLAIM_TYPES` — spec_gap, security,
+design) are checked BEFORE the mechanical ones (missing_test,
+missing_docstring, lint_convention), the reverse of the pre-
+SP-CLAIM-TYPE-PARTITION-ALIGN order. An explicit judged-type signal
+must not be overridden by an incidental mechanical keyword sharing the
+same comment — e.g. a security finding whose body happens to mention
+"lint" routes to SECURITY, never LINT_CONVENTION. broken_behavior sits
+outside both partitions (its own CI-derived verifier, see
+:mod:`merge_gate`) and is checked last, unchanged from before.
 """
+
+assert {claim_type for claim_type, _ in _JUDGED_CUES} == JUDGED_CLAIM_TYPES, (
+    "cue precedence has drifted from the judged-type partition"
+)
 
 
 def classify_claim_type(body: str, role: BotRole) -> ClaimType:
     """Classify a comment body into a ClaimType by content, falling back to the lens.
 
     Scans ``body`` against :data:`_CLAIM_TYPE_CUES` in priority order
-    (mechanical types before judged types) and returns the first cue
+    (judged types before mechanical types) and returns the first cue
     that fires. When no cue fires, returns the lens default for
     ``role`` (today's behaviour), defaulting to ClaimType.DESIGN for an
     unmapped role.

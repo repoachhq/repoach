@@ -812,6 +812,16 @@ class Reviewer:
           (output capped at 1500 tokens with a chain-of-thought
           reasoner emitting > 2k tokens) silently merge ; failing loud
           keeps the consensus gate strict.
+        * **Unknown verdict value** — the ``verdict`` key is present
+          but does not map to a known :class:`ReviewVerdict` (e.g. a
+          typo like ``"BLOCK"``).  We mark the outcome
+          ``[parse_failed:unknown_verdict:<raw>]`` (verdict =
+          ``REQUEST_CHANGES``) and log a warning
+          (SP-CLAIM-TYPE-PARTITION-ALIGN).  The historic silent
+          coercion to ``COMMENT`` let a mistyped verdict merge as a
+          non-blocking outcome with no trace ; failing loud on the
+          blocking side keeps consensus strict exactly like the
+          missing-``verdict`` case above.
         * **Truncation** — when the response started like JSON (first
           non-whitespace char is ``{``, optionally preceded by markdown
           fences) but never reached a closing ``}``, we mark the
@@ -845,11 +855,18 @@ class Reviewer:
             if "verdict" not in data:
                 continue
             verdict_raw = str(data.get("verdict", "")).upper()
+            raw_summary = str(data.get("summary", ""))[:240]
             try:
                 verdict = ReviewVerdict(verdict_raw)
+                summary = raw_summary
             except ValueError:
-                verdict = ReviewVerdict.COMMENT
-            summary = str(data.get("summary", ""))[:240]
+                _log.warning(
+                    "review.bot.unknown_verdict",
+                    role=self.role.value,
+                    raw_verdict=verdict_raw[:80],
+                )
+                verdict = ReviewVerdict.REQUEST_CHANGES
+                summary = f"[parse_failed:unknown_verdict:{verdict_raw}] {raw_summary}"
             comments_raw = data.get("comments", []) or []
             comments: list[ReviewComment] = []
             for c in comments_raw:
