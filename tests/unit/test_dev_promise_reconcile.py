@@ -1,11 +1,14 @@
 """Tests for run_promised_tests promise-reconciliation logic.
 
 Includes the end-to-end case: a step whose Developer delivers a
-passing test under a mismatched name commits anyway. Since
-SP-DEV-PROMISE-DELIVERY the one-to-one drift is renamed to the
-promised selector before committing (``promised_tests_renamed``) —
-the plan is a hint for exploration, but the promised node id is the
-mechanically checkable contract self-verify will resolve literally.
+passing test under a mismatched name does NOT commit. SP-DEV-PROMISE-
+DELIVERY used to rename the one-to-one drift to the promised selector
+before committing; SP-PROMISE-RENAME-RETIRE retires that mechanical
+rename because it laundered an unrelated green test into the promised
+name without ever checking what the test asserted — the plan is a hint
+for exploration, but the promised node id is the mechanically checkable
+contract self-verify resolves literally, and only a test genuinely
+named after the promise satisfies it.
 """
 
 from __future__ import annotations
@@ -73,8 +76,8 @@ def _git_commit_count(repo: Path) -> int:
     return len(out.stdout.strip().splitlines())
 
 
-def test_step_commits_on_reconciled_tests(tmp_path: Path) -> None:
-    """A mismatched-but-green delivery commits, with the reconcile warning."""
+def test_step_fails_promise_gate_on_reconciled_tests(tmp_path: Path) -> None:
+    """A mismatched-but-green delivery FAILS the promise gate, no commit, no rename."""
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     (repo / "tests" / "unit").mkdir(parents=True)
@@ -123,10 +126,11 @@ def test_step_commits_on_reconciled_tests(tmp_path: Path) -> None:
             step, plan=plan, repo_root=repo, developer=developer, repo_tree="", db=db
         )
 
-    assert outcome.ok is True
-    assert _git_commit_count(repo) == initial_commits + 1
+    assert outcome.ok is False
+    assert _git_commit_count(repo) == initial_commits
     events = {entry["event"] for entry in logs}
-    assert "dev_runner.promised_tests_renamed" in events
-    committed = (repo / "tests" / "unit" / "test_x.py").read_text(encoding="utf-8")
-    assert "def test_promised_name" in committed
-    assert "def test_delivered_name" not in committed
+    assert "dev_runner.promised_tests_fanout_refused" in events
+    assert "dev_runner.promised_tests_renamed" not in events
+    on_disk = (repo / "tests" / "unit" / "test_x.py").read_text(encoding="utf-8")
+    assert "def test_promised_name" not in on_disk
+    assert "def test_delivered_name" in on_disk
