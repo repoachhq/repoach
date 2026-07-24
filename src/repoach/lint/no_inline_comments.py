@@ -25,7 +25,15 @@ Implicitly allowed (because they sit on their own line and have no
 * Shebang on line 1 (``#!/usr/bin/env python3``).
 * Source encoding declaration on lines 1-2
   (``# -*- coding: utf-8 -*-`` or ``# coding: utf-8``).
-* Any standalone line comment, anywhere.
+* Any standalone line comment, anywhere — including the
+  ``no_silent_except`` escape hatch
+  (``# repoach: allow-silent-except reason="..."``), which is a
+  whole-line comment by construction.
+
+A file that fails to tokenise (syntax error, unsupported encoding,
+...) FAILS the gate: a single ``kind="unparseable"`` violation is
+reported rather than the file being silently skipped
+(SP-LINT-GATE-SOUNDNESS, G4).
 """
 
 from __future__ import annotations
@@ -64,11 +72,15 @@ class Violation:
     Attributes:
         path: Source file containing the violation, relative to the
             scan root.
-        line: 1-based line number of the offending ``#`` token.
-        col: 1-based column of the offending ``#`` token.
-        kind: Either ``"inline"`` (code sits to the left of the
-            ``#``) or ``"noqa"`` (body matches ``\bnoqa\b``).
-        body: Raw comment text, including the leading ``#``.
+        line: 1-based line number of the offending ``#`` token, or
+            ``1`` for an ``"unparseable"`` violation.
+        col: 1-based column of the offending ``#`` token, or ``1``
+            for an ``"unparseable"`` violation.
+        kind: One of ``"inline"`` (code sits to the left of the
+            ``#``), ``"noqa"`` (body matches ``\bnoqa\b``), or
+            ``"unparseable"`` (the file failed to tokenise).
+        body: Raw comment text, including the leading ``#``, or a
+            short failure description for ``"unparseable"``.
     """
 
     path: Path
@@ -89,20 +101,28 @@ def scan_file(path: Path) -> list[Violation]:
         path: Filesystem path of the file to scan.
 
     Returns:
-        List of :class:`Violation` instances. Empty for files that
-        fail to tokenise (syntax error, unsupported encoding, …) —
-        such files are silently skipped because they would also
-        crash any downstream tool.
+        List of :class:`Violation` instances. A file that fails to
+        tokenise (syntax error, unsupported encoding, …) reports a
+        single ``kind="unparseable"`` violation instead of being
+        silently skipped (SP-LINT-GATE-SOUNDNESS, G4).
     """
     try:
         with path.open("rb") as fh:
             tokens = list(tokenize.tokenize(fh.readline))
     except (tokenize.TokenError, SyntaxError, OSError, IndentationError) as exc:
-        _log.debug(
+        _log.warning(
             "no_inline_comments.tokenize_failed",
             extra={"path": str(path), "error_type": type(exc).__name__},
         )
-        return []
+        return [
+            Violation(
+                path=path,
+                line=1,
+                col=1,
+                kind="unparseable",
+                body=f"tokenize failed: {type(exc).__name__}: {exc}",
+            )
+        ]
 
     code_lines: set[int] = set()
     for tok in tokens:
@@ -153,12 +173,13 @@ def summarise(violations: Iterable[Violation]) -> dict[str, int]:
     """Bucket violations by kind plus total file count.
 
     Returns:
-        Dict with keys ``"inline"``, ``"noqa"``, ``"total"``, and
-        ``"files"`` (number of distinct files with at least one
-        violation).
+        Dict with keys ``"inline"``, ``"noqa"``, ``"unparseable"``,
+        ``"total"``, and ``"files"`` (number of distinct files with
+        at least one violation).
     """
     inline = 0
     noqa = 0
+    unparseable = 0
     files: set[Path] = set()
     total = 0
     for v in violations:
@@ -166,6 +187,14 @@ def summarise(violations: Iterable[Violation]) -> dict[str, int]:
         files.add(v.path)
         if v.kind == "noqa":
             noqa += 1
+        elif v.kind == "unparseable":
+            unparseable += 1
         else:
             inline += 1
-    return {"inline": inline, "noqa": noqa, "total": total, "files": len(files)}
+    return {
+        "inline": inline,
+        "noqa": noqa,
+        "unparseable": unparseable,
+        "total": total,
+        "files": len(files),
+    }

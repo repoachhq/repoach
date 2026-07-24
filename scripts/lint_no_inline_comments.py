@@ -29,6 +29,19 @@ from repoach.lint.no_inline_comments import (
 )
 
 
+def _find_repo_root(start: Path) -> Path:
+    """Walk upward from *start* to the nearest ancestor containing ``pyproject.toml``.
+
+    Falls back to *start* itself when no ancestor has one (e.g. the
+    module was copied out of the repo), so root resolution degrades
+    to CWD-relative behavior rather than raising.
+    """
+    for candidate in (start, *start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return start
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="lint_no_inline_comments",
@@ -65,19 +78,35 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns the desired process exit code."""
     args = _build_parser().parse_args(argv)
     raw_roots = args.root if args.root else DEFAULT_ROOTS
-    roots = [Path(r) for r in raw_roots]
+    repo_root = _find_repo_root(Path(__file__).resolve().parent)
+    candidate_roots = [repo_root / r for r in raw_roots]
+    roots = [r for r in candidate_roots if r.is_dir()]
+
+    if not roots:
+        missing = ", ".join(str(r) for r in candidate_roots)
+        print(
+            f"error: no configured scan roots exist (resolved against repo root "
+            f"{repo_root}): {missing}"
+        )
+        return 2
 
     violations = scan(roots)
     counts = summarise(violations)
 
+    summary_line = (
+        "inline={inline} noqa={noqa} unparseable={unparseable} total={total} files={files}".format(
+            **counts
+        )
+    )
+
     if args.summary:
-        print("inline={inline} noqa={noqa} total={total} files={files}".format(**counts))
+        print(summary_line)
     else:
         for v in violations:
             print(v.format())
         if violations:
             print("---")
-        print("inline={inline} noqa={noqa} total={total} files={files}".format(**counts))
+        print(summary_line)
 
     return 1 if counts["total"] > args.max else 0
 
