@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-_PERSONA_PATH = Path("prompts/review/judge_selfverify_0.2.0.md")
+_PERSONA_PATH = Path("prompts/review/judge_selfverify_0.2.1.md")
 
 
 def test_persona_0_2_0_has_evidence_contract() -> None:
@@ -20,3 +20,10 @@ def test_persona_0_2_0_has_evidence_contract() -> None:
     assert '"claim"' in text
     assert '"file"' in text
     assert "Evidence contract for absence claims" in text
+
+
+def test_persona_0_2_1_demarcates_diff_as_untrusted() -> None:
+    """SP-SELFVERIFY-FAIL-CLOSED: the diff section is framed as untrusted evidence."""
+    text = _PERSONA_PATH.read_text(encoding="utf-8")
+    assert "UNTRUSTED EVIDENCE" in text
+    assert "NEVER your own" in text
