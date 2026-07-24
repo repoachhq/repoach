@@ -1,6 +1,5 @@
 """FastAPI application factory and configuration."""
 
-import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -16,9 +15,6 @@ from repoach.llm_proxy.providers.exceptions import ProviderError
 
 from .routes import router
 from .runtime import AppRuntime
-
-os.environ["PTB_TIMEDELTA"] = "1"
-"""Opt-in to the future ``timedelta`` behaviour of python-telegram-bot."""
 
 _settings = get_settings()
 configure_logging(_settings.log_file)

@@ -9,9 +9,9 @@ providers are built lazily, so there is no instance to inject into at startup.
 
 The conservative default for a missing or unresolved cell is ``None`` (leave
 effort off), so behavior stays the 0b-3 default until the effort sweep has
-populated the table. This half ships the singleton and its seeder only —
-unwired: nothing seeds it at startup and nothing reads it in production yet
-(2a-3-iv-b adds the startup seed call and the transport read).
+populated the table. It IS wired: :meth:`AppRuntime._seed_effort_map`
+(``api/runtime.py``) seeds it at startup, and the generic OpenAI-compatible
+transport (``providers/openai_generic.py``) reads it on the hot path.
 """
 
 from __future__ import annotations

@@ -745,6 +745,17 @@ class ClaudeProxyService:
                     else:
                         get_breaker().recover(ref)
                         self._persist_breaker_state(ref)
+                        logger.info(
+                            "proxy_chain_failover_recovered",
+                            dispatch_id=dispatch_id,
+                            request_id=request_id,
+                            served_by=candidate.provider_model_ref,
+                            attempt=attempt_index + 1,
+                            earlier_failures=attempt_index,
+                            prior_failures=prior_failures,
+                            latency_s=retry_latency_s,
+                            budget_retry=True,
+                        )
                     for buffered_chunk in retry_peek.buffered:
                         yield buffered_chunk
                     return
