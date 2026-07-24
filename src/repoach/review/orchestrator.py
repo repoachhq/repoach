@@ -419,11 +419,18 @@ class ReviewTeamOrchestrator:
         pr_title = ""
         arch_edges_block = ""
         anchored = False
+        base_ref: str | None = None
         try:
             view = self._gh.pr_view(pr_number)
             if isinstance(view, dict):
                 pr_title = str(view.get("title") or "")
             head_ref = (view or {}).get("headRefName") if isinstance(view, dict) else None
+            resolved_base_ref = (view or {}).get("baseRefName") if isinstance(view, dict) else None
+            base_ref = (
+                resolved_base_ref
+                if isinstance(resolved_base_ref, str) and resolved_base_ref
+                else None
+            )
             if isinstance(head_ref, str) and head_ref:
                 from .spec import maybe_load_active_spec
 
@@ -677,11 +684,43 @@ class ReviewTeamOrchestrator:
 
         if spec_id is not None:
             try:
-                from .plan import load_plan
-                from .spec_gate import compute_spec_coverage, record_spec_coverage
+                from .spec_gate import (
+                    SpecCoverage,
+                    compute_spec_coverage,
+                    record_spec_coverage,
+                    resolve_contract_plan,
+                )
 
-                plan = load_plan(spec_id, root=self._repo_root)
-                coverage = compute_spec_coverage(self._repo_root, spec_id=spec_id, plan=plan)
+                resolution = resolve_contract_plan(
+                    spec_id, repo_root=self._repo_root, base_ref=base_ref
+                )
+                if not resolution.base_available and base_ref:
+                    self._gh._run_git(
+                        [
+                            "fetch",
+                            "--quiet",
+                            "origin",
+                            f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
+                        ]
+                    )
+                    resolution = resolve_contract_plan(
+                        spec_id,
+                        repo_root=self._repo_root,
+                        base_ref=f"origin/{base_ref}",
+                    )
+
+                if resolution.plan is not None:
+                    coverage = compute_spec_coverage(
+                        self._repo_root, spec_id=spec_id, plan=resolution.plan
+                    )
+                else:
+                    coverage = SpecCoverage(
+                        spec_id=spec_id,
+                        n_promised=0,
+                        n_present=0,
+                        missing=["base-ref-unavailable"],
+                        covered=False,
+                    )
                 record_spec_coverage(
                     self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
                 )
@@ -691,6 +730,8 @@ class ReviewTeamOrchestrator:
                     covered=coverage.covered,
                     n_promised=coverage.n_promised,
                     n_present=coverage.n_present,
+                    base_available=resolution.base_available,
+                    fell_back_to_head=resolution.fell_back_to_head,
                 )
             except Exception as exc:
                 _log.info(
