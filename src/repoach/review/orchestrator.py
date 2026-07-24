@@ -55,8 +55,9 @@ from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
-from .findings_bridge import record_findings_for_outcomes
+from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
 from .gh_client import GhCli, GhResult
 from .hallucination_guard import (
     GuardEvent,
@@ -79,6 +80,7 @@ from .report import render_ledger_report
 from .review_lessons import remember_verified_findings
 from .review_memory import recall_review_lessons, review_lessons_section
 from .reviewer import (
+    _DIFF_HARD_CAP_CHARS,
     Architect,
     BotRole,
     DialogueContext,
@@ -185,6 +187,17 @@ def record_review_ledger(
     head can never merge on the strength of a review whose findings
     were lost.
 
+    The same re-scoping the reviewer bots ran the diff through
+    (:func:`diff_scoper.scope_diff` at ``_DIFF_HARD_CAP_CHARS``) is
+    re-run here so any file whose diff exceeded the cap — never shown
+    to any reviewer lens — gets its own fail-closed BLOCKING finding
+    via :func:`findings_bridge.record_oversized_findings`
+    (SP-DIFF-SCOPER-OVERSIZE-BLOCK): padding a hostile change past the
+    cap no longer removes it from every review lens while keeping the
+    PR mergeable. This runs inside the same fail-closed write as the
+    comment-derived findings, so a failure here also skips the
+    integrity row.
+
     Args:
         db_path: The findings + integrity ledger database.
         pr_number: The PR reviewed.
@@ -206,10 +219,19 @@ def record_review_ledger(
             round_n=round_n,
             diff=diff,
         )
+        scoped = scope_diff(diff, _DIFF_HARD_CAP_CHARS)
+        n_oversized = record_oversized_findings(
+            db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            round_n=round_n,
+            scoped=scoped,
+        )
         _log.info(
             "review_team.findings_recorded",
             pr_number=pr_number,
             n_findings=n_findings,
+            n_oversized_blocking=n_oversized,
         )
     except Exception as exc:
         _log.error(

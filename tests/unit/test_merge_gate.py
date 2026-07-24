@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from repoach.review.diff_scoper import ScopedDiff
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -20,6 +21,7 @@ from repoach.review.findings import (
     record_review_integrity,
     update_finding_status,
 )
+from repoach.review.findings_bridge import record_oversized_findings
 from repoach.review.merge_gate import (
     _JUDGED_TYPES,
     MergeFacts,
@@ -485,3 +487,55 @@ def test_verified_spec_gap_blocks_merge(tmp_path: Path) -> None:
     assert facts.blocking_unverified == []
     assert compute_merge_decision(facts).merge is False
     assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
+
+
+def test_oversized_omitted_file_blocks_merge(tmp_path: Path) -> None:
+    """SP-DIFF-SCOPER-OVERSIZE-BLOCK AC2: an oversized-omitted file fails closed.
+
+    A `ScopedDiff` naming one file too large to show any reviewer
+    records a BLOCKING finding via :func:`record_oversized_findings`;
+    :func:`gather_merge_facts` + :func:`compute_merge_decision` at head
+    must then refuse the merge — an unreviewed file cannot be padded
+    past the cap and merged anyway.
+    """
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
+
+    scoped = ScopedDiff(
+        prompt_diff="",
+        included=[],
+        omitted=["src/huge.py"],
+        oversized=["src/huge.py"],
+    )
+    record_oversized_findings(db, pr_number=1, head_sha="head123", round_n=1, scoped=scoped)
+
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 1
+    assert compute_merge_decision(facts).merge is False
+
+
+def test_cap_fit_only_files_not_blocked_by_oversized_rule(tmp_path: Path) -> None:
+    """Companion to AC2: a diff with only cap-fit files records nothing and merges clean."""
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
+
+    scoped = ScopedDiff(
+        prompt_diff="diff --git a/src/small.py b/src/small.py\n",
+        included=["src/small.py"],
+        omitted=[],
+        oversized=[],
+    )
+    n_recorded = record_oversized_findings(
+        db, pr_number=1, head_sha="head123", round_n=1, scoped=scoped
+    )
+    assert n_recorded == 0
+
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 0
+    assert compute_merge_decision(facts).merge is True

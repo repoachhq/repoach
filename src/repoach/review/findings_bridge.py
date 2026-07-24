@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from ..core.logging import get_logger
+from .diff_scoper import ScopedDiff
 from .findings import (
     JUDGED_CLAIM_TYPES,
     ClaimType,
@@ -25,6 +26,9 @@ from .reviewer import BotRole, ReviewComment, ReviewerOutcome
 from .thread_context import REPEAT_SIMILARITY_THRESHOLD, similarity
 
 _log = get_logger(__name__)
+
+_OVERSIZED_FINDER = "diff_scoper"
+"""Finder identifier stamped on oversized-omission findings (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
 
 LENS_DEFAULT_CLAIM_TYPE: dict[BotRole, ClaimType] = {
     BotRole.ARCHITECT: ClaimType.DESIGN,
@@ -184,6 +188,114 @@ def comment_to_finding(
         claim=comment.body[:500],
         evidence_pointer=f"{comment.file}:{comment.line} — {comment.body[:200]}",
     )
+
+
+def oversized_finding(
+    path: str,
+    *,
+    pr_number: int,
+    head_sha: str,
+    round_n: int,
+) -> Finding:
+    """Build the fail-closed BLOCKING finding for one oversized-omitted file.
+
+    `scope_diff` already confirmed, by measuring `unit.chars` against
+    `cap_chars`, that ``path`` is unreviewable at this size and never
+    shown to any reviewer lens (SP-DIFF-SCOPER-OVERSIZE-BLOCK). That
+    measurement is the verification, so the finding is recorded
+    ``verified`` directly rather than ``proposed`` — no further judging
+    round is needed before it counts as an open blocking finding in
+    :func:`merge_gate.gather_merge_facts`. ``claim_type`` is
+    ``spec_gap`` (a member of
+    :data:`~repoach.review.findings.JUDGED_CLAIM_TYPES`, per the gate's
+    blocking partition), so the finding clears the same way any other
+    judged finding does — through the findings-driven Coder/refuter
+    lifecycle — once the file is split or shrunk below the cap.
+
+    Args:
+        path: Repo-relative path dropped from every reviewer prompt
+            because its diff exceeds the scoping cap
+            (``ScopedDiff.oversized``).
+        pr_number: GitHub PR number.
+        head_sha: Commit SHA the diff was scoped at.
+        round_n: Review round index.
+
+    Returns:
+        A `spec_gap`/BLOCKING :class:`Finding` naming ``path``.
+    """
+    return Finding(
+        pr_number=pr_number,
+        head_sha=head_sha,
+        round=round_n,
+        finder=_OVERSIZED_FINDER,
+        claim_type=ClaimType.SPEC_GAP,
+        severity=Severity.BLOCKING,
+        file=path,
+        line_start=0,
+        line_end=0,
+        claim=(
+            f"{path} exceeds the diff-scoping character cap and was omitted "
+            "from every reviewer's prompt — unreviewed content cannot merge."
+        ),
+        evidence_pointer=f"{path}: oversized, omitted by diff_scoper.scope_diff",
+        status=FindingStatus.VERIFIED,
+        verification_method="diff_scoper",
+        verification_result="file size exceeds cap_chars at this head",
+        checked_at_sha=head_sha,
+    )
+
+
+def record_oversized_findings(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str | None,
+    round_n: int,
+    scoped: ScopedDiff,
+) -> int:
+    """Persist one fail-closed BLOCKING finding per oversized-omitted file.
+
+    `scope_diff` stays a pure function (SP-DIFF-SCOPER-OVERSIZE-BLOCK
+    NG3); this is the caller's recording step, given the `ScopedDiff`
+    it already produced. `ScopedDiff.oversized` names files whose
+    individual diff exceeds the cap — never shown to any reviewer lens
+    — so each one gets its own finding via :func:`oversized_finding`.
+    A merely budget-omitted file (fits the cap alone, dropped only
+    because the running total was exceeded) is never in ``oversized``
+    and never blocks here (NG2) — the nominal case with no oversized
+    file records nothing and leaves the gate unaffected.
+
+    Args:
+        db_path: The findings ledger database.
+        pr_number: GitHub PR number.
+        head_sha: Commit SHA the diff was scoped at (``None`` becomes ``""``).
+        round_n: Review round index.
+        scoped: The `ScopedDiff` the reviewer pass just produced.
+
+    Returns:
+        Number of oversized-blocking findings recorded.
+    """
+    if not scoped.oversized:
+        return 0
+    init_findings_schema(db_path)
+    effective_sha = head_sha or ""
+    for path in scoped.oversized:
+        record_finding(
+            db_path,
+            oversized_finding(
+                path,
+                pr_number=pr_number,
+                head_sha=effective_sha,
+                round_n=round_n,
+            ),
+        )
+    _log.warning(
+        "findings_bridge.oversized_blocking_recorded",
+        pr_number=pr_number,
+        n_oversized=len(scoped.oversized),
+        oversized=scoped.oversized[:10],
+    )
+    return len(scoped.oversized)
 
 
 def _reopen_refuted_matches(
