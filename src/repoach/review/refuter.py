@@ -32,7 +32,13 @@ from pathlib import Path
 from ..agent_engine.agent_loop import AgentLoop
 from ..core.logging import get_logger
 from ..llm.capability import CapabilityTier
-from .findings import ClaimType, Finding, FindingStatus, fetch_findings, update_finding_status
+from .findings import (
+    JUDGED_CLAIM_TYPES,
+    Finding,
+    FindingStatus,
+    fetch_findings,
+    update_finding_status,
+)
 from .hallucination_guard import make_repo_file_reader
 
 _log = get_logger(__name__)
@@ -48,9 +54,6 @@ every evidence line is prefixed with its line number by
 :func:`_evidence_excerpt`, so PR-head content can never produce a line
 that starts with ``VERDICT:`` at column one inside the prompt or an
 echoed reply."""
-
-JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
-"""Claim types the mechanical verifiers defer to the refuter."""
 
 _MAX_JUDGED = 10
 """Cap on refuter calls per PR — judged findings are few; this bounds

@@ -54,6 +54,17 @@ class ClaimType(StrEnum):
     SECURITY = "security"
 
 
+JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
+"""Claim types too subjective for a mechanical on-disk check — the
+refuter adversarially judges them instead (SP-REFUTER). The single
+source of truth for "judged" membership (SP-CLAIM-TYPE-PARTITION-ALIGN):
+:mod:`refuter` and :mod:`merge_gate` both import this constant rather
+than keeping their own copies, so a claim type the refuter judges can
+never silently fall outside what the merge gate counts as an open
+blocking finding.
+"""
+
+
 class Severity(StrEnum):
     """Severity level of a finding."""
 
