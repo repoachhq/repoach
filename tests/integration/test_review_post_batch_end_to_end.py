@@ -94,7 +94,7 @@ def main() -> int:
             if token == "--input":
                 i += 2
                 continue
-            if token == "--paginate":
+            if token in ("--paginate", "--slurp"):
                 i += 1
                 continue
             if token in ("-f", "-F"):
@@ -110,7 +110,7 @@ def main() -> int:
             json.dump({"id": 1}, sys.stdout)
             return 0
         if path is not None and "/comments" in path and method is None:
-            sys.stdout.write("[]")
+            sys.stdout.write("[[]]")
             return 0
     return 1
 
