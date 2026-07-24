@@ -31,6 +31,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .gh_client import GhCli
+from .persistence import fetch_merged_pr_shas
 
 _SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)$")
 """Matches GitHub's default squash-merge subject suffix, e.g. ``(#42)``."""
@@ -38,15 +39,24 @@ _SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)$")
 _DEFAULT_CI_SCRIPT = "scripts/ci_local.sh"
 """Repo-relative path to the local CI parity mirror the gate shells out to."""
 
+_PROVENANCE_LEDGER_UNREADABLE = "pr_merges ledger unreadable: {error}"
+_PROVENANCE_LEDGER_EMPTY = (
+    "pr_merges ledger has no recorded merges but the release range has "
+    "{count} commit(s) -- provenance unverifiable"
+)
+
 
 def classify_release_range(subjects: list[str]) -> list[str]:
     """Return the commit subjects that are NOT gated-PR squashes.
 
-    A clean release range has every commit in ``main..develop`` as the
-    squash of a gated PR, recognisable by GitHub's default squash title
-    suffix ``(#N)``. Any subject without that suffix is out-of-band --
-    a hotfix or manual commit pushed straight to ``develop`` bypassing a
-    PR -- and is returned so the caller can name it in a refusal.
+    Weaker, subject-only heuristic kept as a fallback for callers with
+    no access to the ``pr_merges`` ledger (see
+    :func:`classify_release_range_against_ledger` for the authoritative
+    check SP-RELEASE-PROVENANCE-LEDGER introduced): a subject ending in
+    GitHub's default squash title suffix ``(#N)`` is *assumed* to be a
+    gated-PR squash. That suffix is plain commit-message text, so a
+    hand-crafted commit can forge it -- prefer the ledger-backed
+    classifier wherever the ledger is reachable.
 
     Args:
         subjects: Commit subjects in ``main..develop``, one per commit.
@@ -57,6 +67,38 @@ def classify_release_range(subjects: list[str]) -> list[str]:
         gated-PR squash.
     """
     return [subject for subject in subjects if not _SQUASH_SUBJECT_RE.search(subject.strip())]
+
+
+def classify_release_range_against_ledger(
+    commits: list[tuple[str, str]], merged_shas: set[str]
+) -> list[str]:
+    """Return commit subjects whose SHA has no ``pr_merges`` merge record.
+
+    The authoritative provenance check (SP-RELEASE-PROVENANCE-LEDGER): a
+    commit in ``main..develop`` is a legitimate gated-PR squash only
+    when its own SHA is a member of *merged_shas* -- the recorded
+    ``pr_merges.merged_sha`` values (see
+    :func:`repoach.review.persistence.fetch_merged_pr_shas`). The
+    commit subject's ``(#N)`` suffix is corroborating text only, never
+    authoritative by itself: a forged ``hotfix ... (#99)`` subject
+    whose SHA has no ledger record is out-of-band even though it
+    matches :data:`_SQUASH_SUBJECT_RE`, while a legitimate squash whose
+    subject was hand-edited to drop the suffix is still accepted
+    because its SHA is recorded -- the SHA check is strictly stronger
+    than the regex it replaces.
+
+    Args:
+        commits: Release-range commits as ``(sha, subject)`` pairs, one
+            per commit in ``main..develop``.
+        merged_shas: Recorded ``pr_merges.merged_sha`` values for real
+            gated-PR merges.
+
+    Returns:
+        The subset of commit subjects whose SHA is absent from
+        *merged_shas*. Empty when every commit in the range has a
+        matching ledger record.
+    """
+    return [subject for sha, subject in commits if sha not in merged_shas]
 
 
 class ReleaseFacts(BaseModel):
@@ -77,6 +119,12 @@ class ReleaseFacts(BaseModel):
             when evaluation itself failed (missing/non-executable
             script, transport error) rather than ran and reported red;
             reserved for the fact-gatherer landing in step 2.
+        provenance_error: Set when the ``pr_merges`` ledger could not be
+            read, or was empty, while classifying a non-empty release
+            range (SP-RELEASE-PROVENANCE-LEDGER) -- an explicit refusal
+            reason rather than a silently-empty ``out_of_band_commits``.
+            ``None`` when provenance was verified (or the caller did not
+            request ledger verification at all).
     """
 
     develop_sha: str
@@ -85,6 +133,7 @@ class ReleaseFacts(BaseModel):
     pr_head_sha: str | None = None
     ci_green: bool
     ci_checked: bool = True
+    provenance_error: str | None = None
 
 
 class ReleaseDecision(BaseModel):
@@ -115,6 +164,8 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
         is green.
     """
     reasons: list[str] = []
+    if facts.provenance_error is not None:
+        reasons.append(f"provenance unverifiable: {facts.provenance_error}")
     for subject in facts.out_of_band_commits:
         reasons.append(f"out-of-band commit not a gated-PR squash: {subject}")
     if facts.develop_sha != facts.remote_sha:
@@ -157,6 +208,7 @@ def gather_release_facts(
     gh: GhCli,
     pr_number: int | None = None,
     ci_runner: Callable[[Path], subprocess.CompletedProcess] | None = None,
+    db_path: Path | None = None,
 ) -> ReleaseFacts:
     """Gather the facts the pure release gate decides on.
 
@@ -170,6 +222,14 @@ def gather_release_facts(
         ci_runner: Injectable CI runner for tests; defaults to
             :func:`_default_ci_runner`, which shells out to
             :data:`_DEFAULT_CI_SCRIPT`.
+        db_path: Review ledger SQLite path. When given, release-range
+            provenance is verified against the ``pr_merges`` ledger
+            (:func:`classify_release_range_against_ledger`) -- the
+            authoritative SP-RELEASE-PROVENANCE-LEDGER check, fail-closed
+            on an unreadable or empty ledger via ``provenance_error``.
+            When ``None``, the caller opted out of ledger verification
+            and provenance falls back to the weaker subject-only
+            :func:`classify_release_range` heuristic.
 
     Returns:
         The assembled :class:`ReleaseFacts`.
@@ -182,9 +242,30 @@ def gather_release_facts(
             an evaluation error, never a fact.
     """
     develop_sha = gh._run_git(["rev-parse", "develop"]).stdout.strip()
-    log_result = gh._run_git(["log", "main..develop", "--format=%s"])
-    subjects = [line for line in log_result.stdout.splitlines() if line.strip()]
-    out_of_band_commits = classify_release_range(subjects)
+    log_result = gh._run_git(["log", "main..develop", "--format=%H%x09%s"])
+    commits: list[tuple[str, str]] = []
+    for line in log_result.stdout.splitlines():
+        if not line.strip():
+            continue
+        sha, _tab, subject = line.partition("\t")
+        commits.append((sha, subject))
+    out_of_band_commits: list[str]
+    provenance_error: str | None = None
+    if db_path is None:
+        out_of_band_commits = classify_release_range([subject for _sha, subject in commits])
+    else:
+        try:
+            merged_shas = fetch_merged_pr_shas(db_path)
+        except Exception as exc:
+            merged_shas = set()
+            provenance_error = _PROVENANCE_LEDGER_UNREADABLE.format(error=exc)
+        if provenance_error is None and not merged_shas and commits:
+            provenance_error = _PROVENANCE_LEDGER_EMPTY.format(count=len(commits))
+        out_of_band_commits = (
+            []
+            if provenance_error is not None
+            else classify_release_range_against_ledger(commits, merged_shas)
+        )
     ls_remote_result = gh._run_git(["ls-remote", "origin", "develop"])
     remote_sha = ""
     first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
@@ -200,6 +281,7 @@ def gather_release_facts(
         remote_sha=remote_sha,
         pr_head_sha=pr_head_sha,
         ci_green=ci_green,
+        provenance_error=provenance_error,
     )
 
 

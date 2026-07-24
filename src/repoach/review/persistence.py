@@ -305,6 +305,40 @@ def record_merge(
         )
 
 
+def fetch_merged_pr_shas(db_path: Path) -> set[str]:
+    """Return every recorded ``pr_merges.merged_sha`` in *db_path*.
+
+    Consumed by the release gate's provenance check
+    (SP-RELEASE-PROVENANCE-LEDGER): a commit in a ``develop -> main``
+    release range is a legitimate gated-PR squash only when its own SHA
+    is a member of this set.  Only rows with a non-null ``merged_sha``
+    qualify -- :func:`record_merge` sets it exclusively alongside a
+    real green-CI merge (``OUTCOME_MERGED``/``OUTCOME_ALREADY_MERGED``
+    style outcomes); ``SKIP_*`` and ``FAILED`` attempts never carry
+    one and are not provenance evidence.
+
+    Args:
+        db_path: SQLite path for the review ledger.
+
+    Returns:
+        The set of recorded merge SHAs.  Empty when the ledger has no
+        such row yet, including a brand-new database.
+
+    Raises:
+        Exception: Any failure reading or initialising the ledger
+            propagates unchanged -- the caller must treat a failure to
+            read this ledger as an evaluation error, never as an empty
+            (and therefore silently permissive) result.
+    """
+    init_schema(db_path)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(_pr_merges.c.merged_sha).where(_pr_merges.c.merged_sha.is_not(None))
+        ).all()
+    return {row.merged_sha for row in rows if row.merged_sha}
+
+
 def record_hallucination(
     db_path: Path,
     *,
