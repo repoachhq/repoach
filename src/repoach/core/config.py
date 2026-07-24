@@ -27,6 +27,51 @@ when reading the file itself; env-vars already in ``os.environ`` bypass
 that path."""
 
 
+def _repo_root() -> Path:
+    """Locate the repository root by walking up from this module's file.
+
+    Returns the nearest ancestor directory containing ``pyproject.toml``
+    (the same anchor the lint CLIs walk to), so ``.env``/``chains.env``
+    resolution never depends on the process's current working
+    directory (SP-CONFIG-ENV-ANCHOR).  A systemd unit, a cron timer or
+    any foreign CWD must load the same files a repo-root invocation
+    would.  Falls back to the installed package's own top-level
+    directory when no ``pyproject.toml`` is found above it (e.g. a
+    wheel install with no source checkout alongside it) -- kept as a
+    plain module-level function, rather than a constant baked at
+    import time, so tests can monkeypatch it to point at an isolated
+    fixture tree.
+
+    Returns:
+        The absolute anchor directory for env-file resolution.
+    """
+    here = Path(__file__).resolve()
+    for candidate in here.parents:
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    return here.parents[1]
+
+
+def _anchored_env_files(root: Path | None = None) -> tuple[Path, Path]:
+    """Return the anchored ``(chains.env, .env)`` pair, in load order.
+
+    ``chains.env`` first so its canonical ``MODEL_<CAPABILITY>``
+    definitions become the baseline that ``.env`` layers per-machine
+    secrets/overrides on top of (module docstring rationale).
+
+    Args:
+        root: Anchor directory; defaults to :func:`_repo_root`.  Exposed
+            as a parameter (rather than inlining ``_repo_root()``) so
+            tests can point resolution at an isolated fixture tree
+            without touching the real deployed ``.env``.
+
+    Returns:
+        Absolute paths to ``chains.env`` and ``.env`` under ``root``.
+    """
+    base = root if root is not None else _repo_root()
+    return (base / "chains.env", base / ".env")
+
+
 class Settings(BaseSettings):
     """Global runtime settings.
 
@@ -38,12 +83,32 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=("chains.env", ".env"),
+        env_file=(),
         env_prefix="REPOACH_",
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
     )
+
+    def __init__(self, **data: Any) -> None:
+        """Construct :class:`Settings`, anchoring env-file discovery.
+
+        ``model_config.env_file`` is baked in once, at class-definition
+        time, so it cannot itself be recomputed against a monkeypatched
+        :func:`_repo_root` inside a test.  The anchor is therefore
+        applied here instead, through pydantic-settings' per-instance
+        ``_env_file`` override, at the moment a :class:`Settings` is
+        actually built.
+
+        Args:
+            **data: Forwarded to
+                :class:`~pydantic_settings.BaseSettings`.  A caller
+                that already passes an explicit ``_env_file`` (tests
+                disabling file loading altogether) is honoured as-is.
+        """
+        if "_env_file" not in data:
+            data["_env_file"] = _anchored_env_files()
+        super().__init__(**data)
 
     @model_validator(mode="before")
     @classmethod
@@ -90,7 +155,18 @@ class Settings(BaseSettings):
         ),
     )
 
-    llm_proxy_base_url: str = "http://localhost:8082"
+    llm_proxy_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Base URL of the local llm_proxy sidecar -- the bearer target "
+            "for llm_proxy_auth_token.  Resolved from the anchored "
+            "chains.env/.env pair or an explicit REPOACH_LLM_PROXY_BASE_URL "
+            "environment variable; carries no baked-in host default, "
+            "because a wrong guess would silently ship the bearer secret "
+            "to an unconfigured, possibly wrong, proxy "
+            "(SP-CONFIG-ENV-ANCHOR)."
+        ),
+    )
     llm_proxy_auth_token: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -169,6 +245,28 @@ class Settings(BaseSettings):
         ge=1,
         description="Seconds between CI rollup polls when the budget allows waiting.",
     )
+
+    @model_validator(mode="after")
+    def require_llm_proxy_base_url(self) -> Settings:
+        """Fail loud instead of silently defaulting the proxy base URL.
+
+        Returns:
+            The same :class:`Settings` instance.
+
+        Raises:
+            ValueError: When neither an anchored env file nor an
+                explicit ``REPOACH_LLM_PROXY_BASE_URL`` resolved a
+                value.  Booting anyway would POST the
+                ``llm_proxy_auth_token`` bearer secret at an
+                unconfigured, possibly wrong, host (SP-CONFIG-ENV-ANCHOR).
+        """
+        if not self.llm_proxy_base_url:
+            raise ValueError(
+                "llm_proxy_base_url unresolved -- no anchored env file and "
+                "no REPOACH_LLM_PROXY_BASE_URL; refusing to default to a "
+                "wrong proxy"
+            )
+        return self
 
     @model_validator(mode="after")
     def require_proxy_token_in_prod(self) -> Settings:
