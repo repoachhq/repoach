@@ -2,7 +2,11 @@
 
 The :data:`MCP_TOOL_WHITELIST_BY_ROLE` mapping is the single source of
 truth for "which MCP tools is each review bot allowed to call".  The
-default policy is **fail-closed**: every role maps to an empty tuple.
+lookup is **fail-closed by default**: :func:`allowed_tools_for` returns
+an empty tuple for any role absent from the mapping.  Within the
+mapping, Architect / Sentinel / Tester / Scribe are each granted
+``git_status``; Coder and Developer are additionally granted
+``git_log``; Planner is granted no tools (``()``).
 
 This module ships only the lookup mechanism — wiring into the bot
 ``__init__`` methods is SP-MCP-EXT-B; a prompt-injection regression

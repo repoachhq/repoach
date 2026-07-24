@@ -152,7 +152,8 @@ class NimAgentOutput:
             forwarded here as a list of plain dicts (one entry per
             chain attempt) so downstream callers can serialise it
             without depending on the proxy's pydantic surface.
-            Empty when the loop fell through to a transport-level stub.
+            Empty when the proxy response itself carried no trace
+            entries (e.g. an older proxy build predating this field).
     """
 
     text: str = ""
