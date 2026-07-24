@@ -214,6 +214,51 @@ def test_consecutive_failures_escalate_to_quarantine() -> None:
     assert not breaker.is_down(ref, now=500.0 + 21_600.0 + 1.0)
 
 
+def test_trip_escalating_is_atomic() -> None:
+    """trip_escalating computes the escalated TTL from its own state and
+    trips in a single call — no external read of _consecutive_failures
+    is needed to reproduce the same escalation the caller-side
+    peek-then-trip pattern used to require (SP-BREAKER-LIVE-REASONS G4)."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    count1 = breaker.trip_escalating(
+        ref,
+        now=100.0,
+        base_ttl_s=120.0,
+        quarantine_ttl_s=21_600.0,
+        threshold=3,
+        reason="empty_completion",
+    )
+    assert count1 == 1
+    assert breaker.is_down(ref, now=150.0)
+    assert not breaker.is_down(ref, now=230.0)
+
+    count2 = breaker.trip_escalating(
+        ref,
+        now=300.0,
+        base_ttl_s=120.0,
+        quarantine_ttl_s=21_600.0,
+        threshold=3,
+        reason="empty_completion",
+    )
+    assert count2 == 2
+    assert not breaker.is_down(ref, now=430.0)
+
+    count3 = breaker.trip_escalating(
+        ref,
+        now=500.0,
+        base_ttl_s=120.0,
+        quarantine_ttl_s=21_600.0,
+        threshold=3,
+        reason="empty_completion",
+    )
+    assert count3 == 3
+    assert breaker.is_down(ref, now=500.0 + 130.0)
+    assert not breaker.is_down(ref, now=500.0 + 21_600.0 + 1.0)
+    assert breaker._down_reason[ref] == "empty_completion"
+
+
 def test_recover_resets_counter() -> None:
     """Trip, trip, recover, trip — count restarts at 1."""
     breaker = BreakerState()

@@ -90,6 +90,29 @@ class APIError(ProviderError):
         )
 
 
+class UpstreamStatusError(ProviderError):
+    """A recovered-status-only error rebuilt on the dispatcher side of the wire.
+
+    The HTTP transports (``openai_compat.py``, ``anthropic_messages.py``)
+    already map the real upstream exception via
+    :func:`repoach.llm_proxy.providers.error_mapping.map_error` and thread
+    its ``status_code`` onto the terminal SSE ``message_delta`` before
+    degrading to an in-band error event (SP-BREAKER-LIVE-REASONS); by the
+    time the chain-failover dispatcher inspects the drained stream, the
+    original exception object itself is gone. This type lets
+    ``_classify_failover_reason`` recover the same failover vocabulary a
+    live raised exception would have produced from just that recovered
+    integer, without re-deriving it from unstructured SSE text.
+    """
+
+    def __init__(self, status_code: int):
+        super().__init__(
+            f"Upstream request failed with HTTP {status_code}.",
+            status_code=status_code,
+            error_type="upstream_status_error",
+        )
+
+
 class UnknownProviderTypeError(ValueError):
     """Raised when ``provider_id`` is not registered in the provider map."""
 

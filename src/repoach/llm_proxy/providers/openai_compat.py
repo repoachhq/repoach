@@ -24,7 +24,7 @@ from repoach.llm_proxy.core.anthropic import (
     map_stop_reason,
 )
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from repoach.llm_proxy.providers.error_mapping import provider_error_message
+from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
 from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
 
@@ -256,6 +256,7 @@ class OpenAIChatTransport(BaseProvider):
         usage_info = None
         error_occurred = False
         error_message = ""
+        error_status_code: int | None = None
 
         async with self._global_rate_limiter.concurrency_slot():
             try:
@@ -348,6 +349,9 @@ class OpenAIChatTransport(BaseProvider):
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(e).__name__, e)
                 error_occurred = True
                 finish_reason = "error"
+                error_status_code = getattr(
+                    map_error(e, rate_limiter=self._global_rate_limiter), "status_code", None
+                )
                 base_message = provider_error_message(
                     e,
                     provider_name=tag,
@@ -432,6 +436,9 @@ class OpenAIChatTransport(BaseProvider):
             reasoning_tokens_value = sse.estimate_reasoning_tokens()
 
         yield sse.message_delta(
-            map_stop_reason(finish_reason), output_tokens, reasoning_tokens=reasoning_tokens_value
+            map_stop_reason(finish_reason),
+            output_tokens,
+            reasoning_tokens=reasoning_tokens_value,
+            error_status_code=error_status_code,
         )
         yield sse.message_stop()

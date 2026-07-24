@@ -29,6 +29,7 @@ from repoach.llm_proxy.providers.exceptions import (
     OverloadedError,
     ProviderError,
     RateLimitError,
+    UpstreamStatusError,
 )
 from repoach.llm_proxy.routing import ModelRef, get_breaker, is_slow_completion, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
@@ -61,9 +62,24 @@ def _classify_failover_reason(exc: BaseException) -> str:
     SP-PROXY-FIRST-BYTE-DEADLINE its class name itself contains
     "Timeout", so testing the substring first would silently collapse
     every first-byte timeout into the generic ``"timeout"`` reason.
+    ``UpstreamStatusError`` is checked before the generic
+    ``ProviderError`` branch so a status recovered off the SSE wire
+    (SP-BREAKER-LIVE-REASONS) gets the same granular reason a live
+    raised exception of the matching type would have produced.
     """
     if isinstance(exc, FirstByteTimeoutError):
         return "first_byte_timeout"
+    if isinstance(exc, UpstreamStatusError):
+        status = exc.status_code
+        if status in (401, 403):
+            return "auth_failed"
+        if status == 429:
+            return "rate_limited"
+        if 500 <= status < 600:
+            return "provider_5xx"
+        if 400 <= status < 500:
+            return f"provider_{status}"
+        return "api_error"
     exc_name = type(exc).__name__
     name_lower = exc_name.lower()
     if "timeout" in name_lower:
@@ -92,6 +108,31 @@ def _classify_failover_reason(exc: BaseException) -> str:
     ):
         return "transport_error"
     return f"exception:{exc_name}"
+
+
+def _classify_empty_peek(peek: PeekResult) -> str:
+    """Classify a content-less :class:`PeekResult` into a failover reason.
+
+    The HTTP transports catch every upstream exception inside the
+    streaming generator and degrade it to an in-band SSE error rather
+    than raising, so it never reaches :func:`_classify_failover_reason`
+    as a live exception (SP-BREAKER-LIVE-REASONS context). When the
+    transport recovered the real upstream status onto the wire,
+    :attr:`PeekResult.upstream_status_code` carries it here; rebuilding
+    an :class:`UpstreamStatusError` from that recovered integer and
+    feeding it through the existing classifier recovers the same
+    ``provider_402`` / ``auth_failed`` / ``rate_limited`` vocabulary a
+    live raised exception would have produced, so
+    SP-CHAIN-DEAD-HOP-QUARANTINE's TTL escalation fires on real live
+    faults instead of always landing on the generic transient TTL.
+
+    Falls back to ``empty_completion`` — unchanged from before this
+    field existed — for a genuinely content-less, non-errored stream,
+    or when no status could be recovered.
+    """
+    if peek.upstream_status_code is not None:
+        return _classify_failover_reason(UpstreamStatusError(peek.upstream_status_code))
+    return "empty_completion"
 
 
 class ClaudeProxyService:
@@ -283,14 +324,19 @@ class ClaudeProxyService:
         1. Compute a reason-aware base TTL via
            :func:`repoach.llm_proxy.routing.breaker.ttl_for_reason`
            (terminal beats quarantine beats default).
-        2. Peek at the ref's current consecutive-failure count, then
-           apply :func:`repoach.llm_proxy.routing.breaker.escalated_ttl`
-           so the Nth consecutive failure escalates to the quarantine
-           TTL regardless of the original reason.
+        2. Trip via :meth:`BreakerState.trip_escalating`, which reads
+           the ref's consecutive-failure count and applies
+           :func:`repoach.llm_proxy.routing.breaker.escalated_ttl` in
+           one atomic call — this method never reads
+           ``breaker._consecutive_failures`` itself (SP-BREAKER-LIVE-REASONS
+           G4 / audit 2026-07-13 M21).
         3. When ``reason`` is an account-class fault and ``chain`` is
-           supplied, propagate to every sibling ref of the same provider
-           via :meth:`BreakerState.trip_provider` and return early
-           with a single ``breaker_provider_propagated`` log event
+           supplied, the primary ref is tripped (with the
+           ``_propagated`` reason suffix) via that same call, and the
+           identical effective TTL is then applied to every OTHER
+           sibling ref of the same provider via
+           :meth:`BreakerState.trip_provider`, with a single
+           ``breaker_provider_propagated`` log event
            (SP-BREAKER-PROVIDER-SCOPE G1).
         4. Otherwise, trip once at the effective TTL (no
            double-increment) and emit a structured
@@ -309,26 +355,34 @@ class ClaudeProxyService:
             terminal_ttl_s=self._settings.breaker_ttl_terminal_s,
             quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
         )
-        current_count = breaker._consecutive_failures.get(ref, 0)
-        would_be_count = current_count + 1
-        effective_ttl = escalated_ttl(
-            would_be_count,
-            base_ttl_s=reason_ttl,
-            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
-            threshold=self._settings.breaker_quarantine_threshold,
-        )
         if reason in ACCOUNT_FAULT_REASONS and chain is not None:
+            propagated_reason = f"{reason}_propagated"
             sibling_refs = {
                 ModelRef.parse(c.provider_model_ref)
                 for c in chain
                 if c.provider_id == ref.provider_id
             }
+            now = time.monotonic()
+            count = breaker.trip_escalating(
+                ref,
+                now=now,
+                base_ttl_s=reason_ttl,
+                quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+                threshold=self._settings.breaker_quarantine_threshold,
+                reason=propagated_reason,
+            )
+            effective_ttl = escalated_ttl(
+                count,
+                base_ttl_s=reason_ttl,
+                quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+                threshold=self._settings.breaker_quarantine_threshold,
+            )
             breaker.trip_provider(
                 ref.provider_id,
-                sibling_refs,
-                now=time.monotonic(),
+                sibling_refs - {ref},
+                now=now,
                 ttl_s=effective_ttl,
-                reason=f"{reason}_propagated",
+                reason=propagated_reason,
             )
             logger.warning(
                 "breaker_provider_propagated",
@@ -339,14 +393,27 @@ class ClaudeProxyService:
             for sibling_ref in sibling_refs:
                 self._persist_breaker_state(sibling_ref)
             return
-        breaker.trip(ref, now=time.monotonic(), ttl_s=effective_ttl, reason=reason)
+        count = breaker.trip_escalating(
+            ref,
+            now=time.monotonic(),
+            base_ttl_s=reason_ttl,
+            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+            threshold=self._settings.breaker_quarantine_threshold,
+            reason=reason,
+        )
         self._persist_breaker_state(ref)
+        effective_ttl = escalated_ttl(
+            count,
+            base_ttl_s=reason_ttl,
+            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+            threshold=self._settings.breaker_quarantine_threshold,
+        )
         if effective_ttl == self._settings.breaker_ttl_quarantine_s:
             logger.warning(
                 "breaker_quarantined",
                 ref=str(ref),
                 reason=reason,
-                count=would_be_count,
+                count=count,
                 ttl_s=effective_ttl,
             )
 
@@ -682,11 +749,12 @@ class ClaudeProxyService:
                         yield buffered_chunk
                     return
 
-            prior_failures.append((candidate.provider_model_ref, "empty_completion"))
+            empty_reason = _classify_empty_peek(peek)
+            prior_failures.append((candidate.provider_model_ref, empty_reason))
             hop_breakdown.append(
                 {
                     "provider_model_ref": candidate.provider_model_ref,
-                    "reason": "empty_completion",
+                    "reason": empty_reason,
                     "elapsed_s": attempt_latency_s,
                 }
             )
@@ -698,12 +766,12 @@ class ClaudeProxyService:
                 chain_length=len(chain),
                 chain_remaining=len(chain) - attempt_index - 1,
                 primary=candidate.provider_model_ref,
-                primary_reason="empty_completion",
+                primary_reason=empty_reason,
                 stream_done=peek.stream_done,
                 buffered_events=len(peek.buffered),
                 latency_s=attempt_latency_s,
             )
-            self._trip_breaker(candidate, "empty_completion", chain=chain)
+            self._trip_breaker(candidate, empty_reason, chain=chain)
 
         logger.error(
             "proxy_chain_exhausted",

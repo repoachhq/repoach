@@ -182,6 +182,52 @@ class BreakerState:
         self._consecutive_failures[ref] = count
         return count
 
+    def trip_escalating(
+        self,
+        ref: ModelRef,
+        *,
+        now: float,
+        base_ttl_s: float,
+        quarantine_ttl_s: float,
+        threshold: int,
+        reason: str = "",
+    ) -> int:
+        """Atomically compute the escalated TTL and trip ``ref`` with it.
+
+        Replaces the caller-side peek-then-trip pattern (audit 2026-07-13
+        M21): a caller used to read ``_consecutive_failures`` directly,
+        compute the escalated TTL via :func:`escalated_ttl`, and only
+        then call :meth:`trip` — two separate breaker interactions with
+        no way to guarantee nothing observes the ref between them. This
+        method folds both steps into one call: the ref's current count
+        and the trip that increments it happen inside a single,
+        non-yielding method body, so no caller can read the
+        intermediate (pre-trip) state, and the private
+        ``_consecutive_failures`` mapping never has to leave the
+        breaker.
+
+        Args:
+            ref: The provider/model reference to trip.
+            now: ``time.monotonic`` timestamp.
+            base_ttl_s: The TTL that would apply without escalation
+                (typically :func:`ttl_for_reason`'s result).
+            quarantine_ttl_s: The long quarantine cool-down applied once
+                ``threshold`` consecutive failures is reached.
+            threshold: How many consecutive failures trigger escalation.
+            reason: The failover reason string (stored for snapshot).
+
+        Returns:
+            The ref's consecutive-failure count AFTER this trip.
+        """
+        would_be_count = self._consecutive_failures.get(ref, 0) + 1
+        effective_ttl = escalated_ttl(
+            would_be_count,
+            base_ttl_s=base_ttl_s,
+            quarantine_ttl_s=quarantine_ttl_s,
+            threshold=threshold,
+        )
+        return self.trip(ref, now=now, ttl_s=effective_ttl, reason=reason)
+
     def trip_provider(
         self,
         provider_id: str,
