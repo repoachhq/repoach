@@ -20,9 +20,29 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..core.config import get_settings
 from ..core.logging import get_logger
 
 _log = get_logger(__name__)
+
+
+def comment_author_login(comment: object) -> str | None:
+    """Return a GitHub comment payload's ``user.login``, or ``None``.
+
+    Handles the shapes :meth:`GhCli.list_review_comments` /
+    :meth:`GhCli.find_archive_comment` actually see: a non-dict
+    comment, a missing/null ``user`` field, or a missing/non-string
+    ``login`` all resolve to ``None`` rather than raising — the
+    SP-EVIDENCE-SENTINEL-AUTHOR author check treats every one of these
+    as untrusted.
+    """
+    if not isinstance(comment, dict):
+        return None
+    user = comment.get("user")
+    if not isinstance(user, dict):
+        return None
+    login = user.get("login")
+    return login if isinstance(login, str) and login else None
 
 
 @dataclass(frozen=True)
@@ -80,6 +100,7 @@ class GhCli:
         cwd: Path | None = None,
         gh_path: str | None = None,
         timeout_s: int = 60,
+        bot_login: str | None = None,
     ) -> None:
         """Initialise the wrapper.
 
@@ -89,15 +110,34 @@ class GhCli:
             gh_path: Override the ``gh`` binary location.  When
                 ``None``, look up via ``shutil.which``.
             timeout_s: Per-call timeout.
+            bot_login: The GitHub login trust-bearing markers must be
+                authored by to be honoured (SP-EVIDENCE-SENTINEL-AUTHOR).
+                Defaults to :attr:`~repoach.core.config.Settings.review_bot_login`
+                when omitted, so production call sites need no change.
         """
         self._cwd = cwd or Path.cwd()
         self._gh = gh_path or shutil.which("gh") or shutil.which(str(Path.home() / ".local/bin/gh"))
         self._timeout = timeout_s
+        self._bot_login = bot_login if bot_login is not None else get_settings().review_bot_login
 
     @property
     def available(self) -> bool:
         """True if a ``gh`` binary is reachable."""
         return self._gh is not None and Path(self._gh).is_file()
+
+    @property
+    def bot_login(self) -> str:
+        """The GitHub login trust-bearing markers must be authored by."""
+        return self._bot_login
+
+    def _is_trusted_author(self, comment: object) -> bool:
+        """True when ``comment`` was authored by :attr:`bot_login`.
+
+        Fails closed: an empty/unresolvable :attr:`bot_login` never
+        matches, and a missing/null author never matches — a missing
+        identity must never widen trust (SP-EVIDENCE-SENTINEL-AUTHOR).
+        """
+        return bool(self._bot_login) and comment_author_login(comment) == self._bot_login
 
     def _spawn(self, argv: list[str], *, input_data: str | None = None) -> GhResult:
         """Run a subprocess in ``cwd`` and capture output as a GhResult.
@@ -627,7 +667,10 @@ class GhCli:
 
         Walks the PR's issue-comments and matches on the marker
         :attr:`ARCHIVE_MARKER`.  Returns ``None`` if no comment carries
-        the marker or the API call fails.
+        the marker, no marker-bearing comment was authored by
+        :attr:`bot_login` (SP-EVIDENCE-SENTINEL-AUTHOR — a forged
+        marker from any other author is ignored), or the API call
+        fails.
         """
         res = self._run(
             [
@@ -654,10 +697,13 @@ class GhCli:
             )
             return None
         for c in comments:
-            if isinstance(c, dict) and self.ARCHIVE_MARKER in (c.get("body") or ""):
-                cid = c.get("id")
-                if isinstance(cid, int):
-                    return cid
+            if not isinstance(c, dict) or self.ARCHIVE_MARKER not in (c.get("body") or ""):
+                continue
+            if not self._is_trusted_author(c):
+                continue
+            cid = c.get("id")
+            if isinstance(cid, int):
+                return cid
         return None
 
     def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
@@ -724,10 +770,13 @@ class GhCli:
             pr_number: PR number.
 
         Returns:
-            :class:`ArchiveFetch` — ``body`` set when the comment was
-            found, ``api_error`` set when the fetch failed, both
-            ``None`` when the API succeeded but no comment carries the
-            marker.
+            :class:`ArchiveFetch` — ``body`` set when a comment
+            carrying :attr:`ARCHIVE_MARKER` **and** authored by
+            :attr:`bot_login` was found, ``api_error`` set when the
+            fetch failed, both ``None`` when the API succeeded but no
+            trusted archive comment exists (including a forged
+            marker-bearing comment from another author —
+            SP-EVIDENCE-SENTINEL-AUTHOR).
         """
         res = self._run(
             [
@@ -755,8 +804,9 @@ class GhCli:
             )
             return ArchiveFetch(body=None, api_error=f"JSON decode failed: {str(exc)[:160]}")
         for c in comments:
-            body = (c or {}).get("body") or ""
-            if self.ARCHIVE_MARKER in body:
+            comment = c if isinstance(c, dict) else {}
+            body = comment.get("body") or ""
+            if self.ARCHIVE_MARKER in body and self._is_trusted_author(comment):
                 return ArchiveFetch(body=body, api_error=None)
         return ArchiveFetch(body=None, api_error=None)
 

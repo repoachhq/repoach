@@ -144,6 +144,21 @@ class Settings(BaseSettings):
         ),
     )
 
+    review_bot_login: str = Field(
+        default="github-actions[bot]",
+        validation_alias=AliasChoices(
+            "REPOACH_REVIEW_BOT_LOGIN",
+            "REVIEW_BOT_LOGIN",
+        ),
+        description=(
+            "GitHub login the review-bot writers authenticate as when posting "
+            "comments and replies. Trust-bearing markers (the evidence-reply "
+            "sentinel, the review-archive HTML marker) are honoured only on "
+            "comments whose ``user.login`` matches this value "
+            "(SP-EVIDENCE-SENTINEL-AUTHOR) — any other author is untrusted."
+        ),
+    )
+
     automerge_ci_wait_seconds: int = Field(
         default=720,
         ge=0,
