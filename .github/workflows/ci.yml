@@ -15,6 +15,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# SP-CONFIG-ENV-ANCHOR made llm_proxy_base_url fail-loud: Settings now
+# refuses to default to a wrong proxy, so every environment must anchor
+# the value. CI checks out no .env, so it is anchored here for the whole
+# workflow (loopback; the suite mocks the gateway, the smoke boots the
+# server which never dials this URL). Step-level env blocks inherit it.
+env:
+  REPOACH_LLM_PROXY_BASE_URL: http://127.0.0.1:8082
+
 jobs:
   test:
     name: Test suite (Python ${{ matrix.python-version }})

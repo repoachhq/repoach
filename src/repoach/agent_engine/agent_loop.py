@@ -329,7 +329,7 @@ class AgentLoop:
                 "requires a shared secret.  Set it in .env."
             )
 
-        base_url = (settings.llm_proxy_base_url or "http://localhost:8082").rstrip("/")
+        base_url = settings.llm_proxy_base_url.rstrip("/")
 
         self._max_turns = max_turns
         self._max_tokens = max_tokens

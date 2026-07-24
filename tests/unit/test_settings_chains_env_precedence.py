@@ -1,8 +1,11 @@
 """Config env-file precedence for chains.env.
 
-The MAIN settings (``core.config``) keep ``env_file=("chains.env",
-".env")`` — it has no ``MODEL_*`` fields, so the order is moot for the
-chains and ``.env`` still wins for everything else.
+The MAIN settings (``core.config``) load ``chains.env`` then ``.env`` —
+it has no ``MODEL_*`` fields, so the order is moot for the chains and
+``.env`` still wins for everything else. SP-CONFIG-ENV-ANCHOR (2026-07-13)
+anchored that pair to the repo root (``_anchored_env_files``) instead of
+baking a CWD-relative tuple into ``model_config``, so the order guarantee
+now lives in that helper rather than in a literal ``env_file=(...)``.
 
 The PROXY settings flipped under SP-CHAINS-SINGLE-SOURCE (2026-06-21):
 ``chains.env`` is read LAST so it is AUTHORITATIVE for the four capability
@@ -11,20 +14,18 @@ chains — a per-machine ``.env`` can no longer shadow the canonical file.
 
 from __future__ import annotations
 
-from repoach.core.config import Settings
+from repoach.core.config import _anchored_env_files
 from repoach.llm_proxy.config import settings as proxy_settings_module
 
 
 def test_core_settings_env_file_tuple_has_chains_env_first() -> None:
     """``chains.env`` must precede ``.env`` so .env wins on overlap."""
-    env_file = Settings.model_config.get("env_file")
-    assert env_file is not None
-    # Pydantic-settings accepts str / Path / tuple thereof; we declare a tuple.
-    assert isinstance(env_file, tuple), "env_file must be a tuple to load multiple files"
-    paths = [str(p) for p in env_file]
-    assert paths == ["chains.env", ".env"], (
-        f"env_file order matters — chains.env first then .env on top, got {paths}"
-    )
+    chains_env, dotenv = _anchored_env_files()
+    assert chains_env.name == "chains.env"
+    assert dotenv.name == ".env"
+    assert chains_env.is_absolute(), "anchored paths must be absolute (SP-CONFIG-ENV-ANCHOR)"
+    assert dotenv.is_absolute(), "anchored paths must be absolute (SP-CONFIG-ENV-ANCHOR)"
+    assert chains_env.parent == dotenv.parent, "both files anchor to the same root"
 
 
 def test_proxy_env_files_reads_chains_env_after_dotenv() -> None:

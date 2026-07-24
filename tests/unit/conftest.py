@@ -52,6 +52,24 @@ def _hermetic_breaker_state_db(
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_llm_proxy_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default ``REPOACH_LLM_PROXY_BASE_URL`` so ``core.config.Settings``
+    always resolves without touching the real deployed ``.env``.
+
+    SP-CONFIG-ENV-ANCHOR: ``Settings`` now fails loud at construction
+    when neither an anchored env file nor the process environment
+    resolves ``llm_proxy_base_url`` (the retired ``:8082`` fallback is
+    gone, on purpose). CI checks out no ``.env`` (it is gitignored) and
+    the committed ``chains.env`` never carried this key, so without a
+    default here the first test in a worker process to reach a real
+    ``core.config.Settings()``/``get_settings()`` would raise. A test
+    exercising the unresolved-raise path itself deletes the var later
+    on the same ``monkeypatch`` fixture instance, which wins.
+    """
+    monkeypatch.setenv("REPOACH_LLM_PROXY_BASE_URL", "http://llm-proxy.test.invalid:9999")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_review_memory_recall(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "repoach.review.orchestrator.recall_review_lessons",
