@@ -20,6 +20,7 @@ from pathlib import Path
 
 import typer
 
+from ..core.config import get_settings
 from ..review.gh_client import GhCli
 from ..review.release_gate import (
     compute_release_decision,
@@ -66,7 +67,12 @@ def release_gate(
     """
     gh = GhCli(cwd=_repo_root())
     try:
-        facts = gather_release_facts(repo_root=_repo_root(), gh=gh, pr_number=pr_number)
+        facts = gather_release_facts(
+            repo_root=_repo_root(),
+            gh=gh,
+            pr_number=pr_number,
+            db_path=Path(get_settings().db_path),
+        )
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc

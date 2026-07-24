@@ -38,7 +38,7 @@ def test_cli_release_gate_exit_zero_when_merge_ready(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number: _all_green_facts(),
+        lambda *, repo_root, gh, pr_number, db_path: _all_green_facts(),
     )
     release_cmds.release_gate(None)
 
@@ -56,7 +56,7 @@ def test_cli_release_gate_exit_five_when_refused(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number: facts,
+        lambda *, repo_root, gh, pr_number, db_path: facts,
     )
     with pytest.raises(typer.Exit) as exc:
         release_cmds.release_gate(None)
