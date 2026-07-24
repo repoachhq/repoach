@@ -430,8 +430,6 @@ class AgentLoop:
             api_key=api_key,
             timeout_s=per_call_timeout_s,
         )
-        self._base_url = f"{base_url}/v1"
-        self._api_key = api_key
 
     def run_oneshot(
         self,

@@ -56,7 +56,7 @@ def test_base_url_has_no_hardcoded_fallback(mock_settings) -> None:
     rather than silently substituting a literal of its own.
     """
     loop = AgentLoop(capability=CapabilityTier.SONNET)
-    assert loop._base_url == "http://sentinel-host:9999/v1"
+    assert loop._client._base_url == "http://sentinel-host:9999"
 
 
 def test_base_url_never_falls_back_to_the_retired_8082_default(mock_settings) -> None:
@@ -69,8 +69,8 @@ def test_base_url_never_falls_back_to_the_retired_8082_default(mock_settings) ->
     """
     mock_settings.llm_proxy_base_url = ""
     loop = AgentLoop(capability=CapabilityTier.SONNET)
-    assert "8082" not in loop._base_url
-    assert loop._base_url == "/v1"
+    assert "8082" not in loop._client._base_url
+    assert loop._client._base_url == ""
 
 
 class TestValidateToolArgs:

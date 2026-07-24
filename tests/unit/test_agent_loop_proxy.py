@@ -41,8 +41,8 @@ def mock_settings():
 def test_agent_loop_routes_to_proxy(mock_settings):
     """The loop wires the proxy URL + token onto its gateway client."""
     loop = AgentLoop(capability=CapabilityTier.SONNET)
-    assert loop._base_url == "http://localhost:8082/v1"
-    assert loop._api_key == "test-token"
+    assert loop._client._base_url == "http://localhost:8082"
+    assert loop._client._api_key == "test-token"
     assert loop._capability is CapabilityTier.SONNET
     assert loop._model_chain == ("claude-sonnet-4-6",)
 

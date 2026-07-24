@@ -25,7 +25,6 @@ Developer session (:mod:`dev_runner`) build on:
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -34,6 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..core.config import Settings
 from ..core.logging import get_logger
 from .gh_client import GhCli
 from .patch_apply import apply_search_replace_edits
@@ -580,27 +580,36 @@ def run_pytest(repo_root: Path, *, python: str | None = None) -> tuple[bool, str
     return rc == 0, tail
 
 
-def _pytest_pythons() -> list[str | None]:
+def _pytest_pythons(settings: Settings | None = None) -> list[str | None]:
     """Return the list of Python interpreters the local gate should run.
 
-    Reads the ``REPOACH_CODER_PYTHONS`` env var (CSV of executable names
-    or paths, e.g. ``"python3.11,python3.13"``).  Each entry is
+    Reads ``settings.coder_pythons`` (aliased to the
+    ``REPOACH_CODER_PYTHONS`` environment variable — CSV of executable
+    names or paths, e.g. ``"python3.11,python3.13"``).  Each entry is
     validated against :func:`shutil.which`; missing interpreters are
     silently skipped (so a developer running locally on a single
     Python doesn't get spurious failures).
 
+    Args:
+        settings: Optional pre-built :class:`Settings` (tests inject an
+            override); ``None`` builds a fresh instance so this call
+            always observes the current process environment, matching
+            the read-per-call semantics of the raw ``os.environ`` read
+            it replaces (SP-CONSISTENCY-SWEEP).
+
     Returns:
         A non-empty list of interpreter strings, or ``[None]`` when
-        the env is unset or no listed interpreter resolves — in
+        the setting is unset or no listed interpreter resolves — in
         which case :func:`run_pytest` falls back to the bare
         ``pytest`` binary on PATH.
     """
-    raw = os.environ.get("REPOACH_CODER_PYTHONS", "").strip()
+    resolved = settings or Settings()
+    raw = (resolved.coder_pythons or "").strip()
     if not raw:
         return [None]
     candidates = [s.strip() for s in raw.split(",") if s.strip()]
-    resolved = [c for c in candidates if shutil.which(c)]
-    return resolved or [None]
+    interpreters = [c for c in candidates if shutil.which(c)]
+    return interpreters or [None]
 
 
 def run_pytest_matrix(repo_root: Path) -> tuple[bool, str]:
