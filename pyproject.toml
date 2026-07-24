@@ -104,6 +104,9 @@ known-first-party = ["repoach"]
 # Test fixtures need late imports / unused imports for stub plumbing.
 "tests/unit/test_review_notifier.py" = ["E731"]
 
+[tool.repoach.arch]
+frontier_suppress = []
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
