@@ -383,10 +383,27 @@ def _hermetic_breaker() -> None:
     reset_breaker()
 
 
+@pytest.fixture(autouse=True)
+def _no_configured_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralize the real ``.env``'s ``anthropic_auth_token`` for this file.
+
+    This file's ``/health`` tests exercise the breaker/credits mechanics,
+    not auth (SP-PROXY-EDGE-HARDEN gates the detailed body behind
+    ``require_api_key``); with no token configured that check stays a
+    no-op, so every unauthenticated call here keeps seeing the full body
+    regardless of the developer's local ``.env``.
+    """
+    monkeypatch.delenv("REPOACH_ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setattr(settings_module, "_configured_env_files", lambda _cfg: ())
+    settings_module.get_settings.cache_clear()
+
+
 def test_health_reports_breaker_entries() -> None:
     """GET /health returns a breaker array with each down ref's reason,
     ttl_remaining_s, and consecutive_failures; empty when nothing is down."""
     app = create_app()
+    app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
     client = TestClient(app)
 
     resp = client.get("/health")
