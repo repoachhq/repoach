@@ -36,6 +36,34 @@ def map_stop_reason(openai_reason: str | None) -> str:
     return STOP_REASON_MAP.get(openai_reason, "end_turn") if openai_reason else "end_turn"
 
 
+def format_error_event(error_type: str, message: str) -> str:
+    """Build a genuine terminal Anthropic-shaped SSE ``error`` event.
+
+    Mirrors the ``event: error`` frame the native Anthropic-passthrough
+    providers already emit per-attempt
+    (``providers/anthropic_messages.py::_emit_error_events``) rather
+    than the content-block-based :meth:`SSEBuilder.emit_error` hack
+    used to surface a disguised per-attempt failure as visible
+    assistant text. SP-STREAM-EXHAUST-ERROR reuses this exact shape
+    as the chain-failover layer's terminal frame: once a
+    ``StreamingResponse``'s 200 headers are already committed, this is
+    the only honest way left to tell the client the turn failed —
+    a client parsing the stream sees an explicit ``error`` event with
+    a ``type`` it can branch on, instead of the stream just ending.
+
+    Args:
+        error_type: The Anthropic-vocabulary error type, e.g.
+            ``"chain_exhausted"`` or ``"overloaded_error"``.
+        message: Human-readable detail, already truncated/redacted by
+            the caller.
+
+    Returns:
+        The formatted ``event: error\\ndata: ...\\n\\n`` frame.
+    """
+    payload = {"type": "error", "error": {"type": error_type, "message": message}}
+    return f"event: error\ndata: {json.dumps(payload)}\n\n"
+
+
 @dataclass
 class ToolCallState:
     """State for a single streaming tool call."""
