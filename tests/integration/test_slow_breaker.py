@@ -197,7 +197,7 @@ def test_slow_breaker_integration_shadow_mode(
             "shadow mode must never trip the ref regardless of strike count"
         )
 
-        health_resp = client.get("/health")
+        health_resp = client.get("/health", headers=_HEADERS)
         assert health_resp.status_code == 200
         breaker_entries = health_resp.json()["breaker"]
         assert not any(e["ref"] == "nvidia_nim/slow-model" for e in breaker_entries), (
@@ -253,7 +253,7 @@ def test_slow_breaker_integration_enforcing_mode(
             "the slow ref should be tripped after k slow completions"
         )
 
-        health_resp = client.get("/health")
+        health_resp = client.get("/health", headers=_HEADERS)
         assert health_resp.status_code == 200
         breaker_entries = health_resp.json()["breaker"]
         slow_entry = next(

@@ -149,7 +149,7 @@ def test_dead_hop_quarantined_and_reported_on_health(
         now = time.monotonic()
         assert breaker.is_down(dead_ref, now), "dead hop should be down after three failures"
 
-        health_resp = client.get("/health")
+        health_resp = client.get("/health", headers=headers)
         assert health_resp.status_code == 200
         health_body = health_resp.json()
         breaker_entries = health_body["breaker"]

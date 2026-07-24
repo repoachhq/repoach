@@ -12,7 +12,7 @@ from repoach.llm_proxy.routing import get_breaker
 
 from . import dependencies
 from .agent_dispatcher import dispatch_agent_request
-from .dependencies import get_credits_client, get_settings, require_api_key
+from .dependencies import get_credits_client, get_settings, is_authenticated, require_api_key
 from .models.agent_v1 import AgentRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import ModelResponse, ModelsListResponse
@@ -165,21 +165,30 @@ async def probe_root(_auth=Depends(require_api_key)):
 async def health(
     settings: Settings = Depends(get_settings),
     client: httpx.AsyncClient = Depends(get_credits_client),
+    authenticated: bool = Depends(is_authenticated),
 ):
     """Health check endpoint.
 
-    Surfaces the failover breaker's current state (SP-CHAIN-DEAD-HOP-QUARANTINE)
-    so operators can see which chain hops are down, why, and for how long.
-    The ``breaker`` array is built from :meth:`BreakerState.snapshot` and
-    carries one entry per currently-down ref with ``ref``, ``reason``,
-    ``ttl_remaining_s``, and ``consecutive_failures``. Empty when nothing
-    is tripped.
+    Anonymous callers get liveness only — ``{"status": "healthy"}`` —
+    never the breaker/credits internals (SP-PROXY-EDGE-HARDEN F-HEALTH:
+    those internals disclose live routing topology and failure state, an
+    unauthenticated-disclosure surface on a public bind). A caller that
+    presents a valid API key (or any caller when no
+    ``anthropic_auth_token`` is configured, matching
+    :func:`~repoach.llm_proxy.api.dependencies.require_api_key`'s
+    no-op-when-unconfigured rule) additionally gets:
 
-    The ``credits`` field carries the OpenRouter account balance
-    (SP-CREDITS-CHECK) when ``open_router_api_key`` is configured and a
-    snapshot is available; ``null`` when the key is absent or the fetch
-    fails.
+    * ``breaker`` — the failover breaker's current state
+      (SP-CHAIN-DEAD-HOP-QUARANTINE), one entry per currently-down ref
+      with ``ref``, ``reason``, ``ttl_remaining_s``, and
+      ``consecutive_failures``; empty when nothing is tripped.
+    * ``credits`` — the OpenRouter account balance (SP-CREDITS-CHECK)
+      when ``open_router_api_key`` is configured and a snapshot is
+      available; ``null`` when the key is absent or the fetch fails.
     """
+    if not authenticated:
+        return {"status": "healthy"}
+
     breaker_entries = get_breaker().snapshot(time.monotonic())
     credits = None
     if settings.open_router_api_key:

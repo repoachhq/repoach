@@ -81,10 +81,16 @@ def require_api_key(request: Request, settings: Settings = Depends(get_settings)
     ``ANTHROPIC_AUTH_TOKEN`` is empty, this is a no-op (no API key
     configured → every request is allowed).  Both raw keys in
     ``X-API-Key`` and bearer tokens in ``Authorization`` are
-    supported, and any suffix after the first ``:`` is stripped to
-    accept tokens with appended model names.  The comparison is
-    constant-time (``secrets.compare_digest``) so the token cannot
-    be recovered byte-by-byte through timing.
+    supported.  A presented credential of the form
+    ``f"{token}:{suffix}"`` also authenticates, but only when the
+    leading ``len(token)`` characters are an exact, constant-time
+    match for the configured token and ``suffix`` is non-empty —
+    a colon anywhere else in the candidate is not a delimiter
+    (SP-PROXY-EDGE-HARDEN tightens the prior first-colon truncation,
+    which matched the presented value against the configured token
+    after cutting at the FIRST ``:`` regardless of where it fell).
+    Every comparison is constant-time (``secrets.compare_digest``)
+    so the token cannot be recovered byte-by-byte through timing.
     """
     anthropic_auth_token = settings.anthropic_auth_token
     if not anthropic_auth_token:
@@ -102,11 +108,35 @@ def require_api_key(request: Request, settings: Settings = Depends(get_settings)
     if header.lower().startswith("bearer "):
         token = header.split(" ", 1)[1]
 
-    if token and ":" in token:
-        token = token.split(":", 1)[0]
+    if secrets.compare_digest(token.encode(), anthropic_auth_token.encode()):
+        return
 
-    if not secrets.compare_digest(token.encode(), anthropic_auth_token.encode()):
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    suffix_prefix = f"{anthropic_auth_token}:"
+    candidate_prefix = token[: len(suffix_prefix)]
+    if len(token) > len(suffix_prefix) and secrets.compare_digest(
+        candidate_prefix.encode(), suffix_prefix.encode()
+    ):
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def is_authenticated(request: Request, settings: Settings = Depends(get_settings)) -> bool:
+    """Return whether the request would pass :func:`require_api_key`.
+
+    Reuses the same header/token matching without raising — used by
+    endpoints such as ``GET /health`` that expose a minimal
+    unauthenticated liveness surface plus authenticated detail
+    (SP-PROXY-EDGE-HARDEN F-HEALTH): an anonymous caller sees liveness
+    only, an authenticated one (or any caller when no token is
+    configured) sees the full body.
+    """
+    try:
+        require_api_key(request, settings)
+    except HTTPException as exc:
+        logger.debug("proxy_health_detail_denied: status_code={}", exc.status_code)
+        return False
+    return True
 
 
 def get_credits_client() -> httpx.AsyncClient:

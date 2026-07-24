@@ -453,6 +453,33 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def reject_colon_bearing_auth_token(self) -> Settings:
+        """Refuse a configured token that itself contains ``:``.
+
+        SP-PROXY-EDGE-HARDEN: :func:`~repoach.llm_proxy.api.dependencies.require_api_key`
+        strips a trailing ``:<suffix>`` only when the remaining prefix is an
+        exact match for the configured token, so a token containing ``:``
+        would be un-presentable in full (the suffix strip would always
+        apply, and the shortened prefix would never equal the configured
+        secret). Declared after :meth:`prefer_dotenv_anthropic_auth_token`
+        so the dotenv override is checked too.
+
+        Returns:
+            The same :class:`Settings` instance.
+
+        Raises:
+            ValueError: When ``anthropic_auth_token`` contains ``:``.
+        """
+        if ":" in self.anthropic_auth_token:
+            raise ValueError(
+                "anthropic_auth_token must not contain ':' — the "
+                "'<token>:<model-suffix>' matching form reserves ':' as "
+                "the suffix delimiter, so a ':'-bearing secret would be "
+                "un-presentable in full."
+            )
+        return self
+
+    @model_validator(mode="after")
     def require_token_for_public_bind(self) -> Settings:
         """Refuse a non-loopback bind without an auth token.
 
