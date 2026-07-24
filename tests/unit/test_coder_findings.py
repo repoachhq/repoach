@@ -337,6 +337,45 @@ def test_run_coder_fix_records_round_on_push(tmp_path: Path, monkeypatch) -> Non
     assert rounds[0].open_blocking_after == 0
 
 
+def test_push_refuses_when_no_head_branch(tmp_path: Path, monkeypatch) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_y.py").write_text(
+        "def test_resolved():\n    assert True\n", encoding="utf-8"
+    )
+    record_finding(
+        db,
+        _finding(
+            ClaimType.MISSING_TEST,
+            status=FindingStatus.VERIFIED,
+            file="tests/test_y.py",
+            claim="missing test_resolved",
+        ),
+    )
+    monkeypatch.setattr(coder_loop, "fetch_ci_status", lambda *a, **k: (coder_loop.CI_GREEN, []))
+    monkeypatch.setattr(coder_loop, "apply_fixes", lambda *a, **k: (1, []))
+    monkeypatch.setattr(coder_loop, "run_ruff_gate", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(coder_loop, "run_pytest_matrix", lambda *a, **k: (True, ""))
+    push_mock = MagicMock(return_value=(True, "ok"))
+    monkeypatch.setattr(coder_loop, "git_commit_and_push", push_mock)
+
+    plan = {
+        "fixes": [{"path": "tests/test_y.py", "new_content": "...", "rationale": "r"}],
+        "commit_message": "fix(tests): add test",
+        "summary": "added test_resolved",
+    }
+    res = run_coder_fix_from_findings(
+        1, gh=_gh_mock(head=""), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+    )
+
+    assert res.pushed is False
+    push_mock.assert_not_called()
+    assert res.no_op_reason is not None
+    assert "head" in res.no_op_reason.lower()
+    assert "refus" in res.no_op_reason.lower()
+
+
 def _settings_with_routine(db: Path) -> SimpleNamespace:
     return SimpleNamespace(
         db_path=str(db),

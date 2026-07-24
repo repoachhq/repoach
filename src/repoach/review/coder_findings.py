@@ -618,9 +618,21 @@ def run_coder_fix_from_findings(
     commit_msg = str(plan.get("commit_message") or "").strip() or (
         f"fix(review): resolve open findings on PR #{pr_number}"
     )
-    pushed, push_log = git_commit_and_push(
-        repo_root=repo, commit_message=commit_msg, branch=head or "develop"
-    )
+    if not head:
+        _log.warning("coder_findings.refuse_push_unknown_head", pr_number=pr_number)
+        return CoderFindingsResult(
+            pr_number=pr_number,
+            n_open_findings=len(findings),
+            fixes_applied=applied,
+            fixes_rejected=len(rejected),
+            rejected_paths=rejected,
+            pytest_passed=True,
+            no_op_reason=(
+                f"head branch unresolved for PR #{pr_number}, refusing push "
+                "(never falls back to develop)"
+            ),
+        )
+    pushed, push_log = git_commit_and_push(repo_root=repo, commit_message=commit_msg, branch=head)
     if not pushed:
         return CoderFindingsResult(
             pr_number=pr_number,
