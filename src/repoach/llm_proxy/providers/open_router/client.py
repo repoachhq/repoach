@@ -240,6 +240,7 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         input_tokens: int,
         error_message: str,
         sent_any_event: bool,
+        status_code: int | None = None,
     ) -> Iterator[str]:
         """Emit the Anthropic SSE error shape expected by Claude clients.
 
@@ -252,6 +253,11 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         model's answer and the failover loop would never advance to the next
         chain entry. Mirrors the ``finish_reason="error"`` signal the
         OpenAI-compatible transport already emits on upstream failure.
+
+        ``status_code`` threads the real recovered upstream HTTP status
+        (SP-BREAKER-LIVE-REASONS) onto that same terminal ``message_delta``
+        so the dispatcher can classify the failover reason from the
+        genuine fault instead of the generic ``empty_completion`` catch-all.
         """
         sse = SSEBuilder(
             f"msg_{uuid.uuid4()}",
@@ -262,5 +268,5 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         if not sent_any_event:
             yield sse.message_start()
         yield from sse.emit_error(error_message)
-        yield sse.message_delta("error", 0)
+        yield sse.message_delta("error", 0, error_status_code=status_code)
         yield sse.message_stop()

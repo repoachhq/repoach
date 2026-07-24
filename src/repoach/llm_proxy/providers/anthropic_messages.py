@@ -10,7 +10,7 @@ import httpx
 from loguru import logger
 
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from repoach.llm_proxy.providers.error_mapping import provider_error_message
+from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
 from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 81920
@@ -175,12 +175,20 @@ class AnthropicMessagesTransport(BaseProvider):
         input_tokens: int,
         error_message: str,
         sent_any_event: bool,
+        status_code: int | None = None,
     ) -> Iterator[str]:
-        """Emit a native Anthropic error event."""
-        error_event = {
-            "type": "error",
-            "error": {"type": "api_error", "message": error_message},
-        }
+        """Emit a native Anthropic error event.
+
+        ``status_code`` is the real upstream HTTP status recovered via
+        :func:`repoach.llm_proxy.providers.error_mapping.map_error`
+        (SP-BREAKER-LIVE-REASONS); included in the error payload only
+        when recovered so a caller unable to derive it sees the exact
+        same shape as before this field existed.
+        """
+        error_payload: dict[str, Any] = {"type": "api_error", "message": error_message}
+        if status_code is not None:
+            error_payload["status_code"] = status_code
+        error_event = {"type": "error", "error": error_payload}
         yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
     async def _iter_stream_chunks(
@@ -251,6 +259,9 @@ class AnthropicMessagesTransport(BaseProvider):
             except Exception as error:
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(error).__name__, error)
                 error_message = self._get_error_message(error, request_id)
+                status_code = getattr(
+                    map_error(error, rate_limiter=self._global_rate_limiter), "status_code", None
+                )
 
                 if response is not None and not response.is_closed:
                     await response.aclose()
@@ -266,6 +277,7 @@ class AnthropicMessagesTransport(BaseProvider):
                     input_tokens=input_tokens,
                     error_message=error_message,
                     sent_any_event=sent_any_event,
+                    status_code=status_code,
                 ):
                     yield event
                 return

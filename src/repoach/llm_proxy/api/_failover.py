@@ -101,6 +101,14 @@ class PeekResult:
             ``message_stop`` (or stream exhaustion).  Exposed so
             callers can compute tokens-per-second for slow-completion
             policies without re-parsing the buffered stream.
+        upstream_status_code: The real upstream HTTP status code recovered
+            from the terminal ``message_delta``'s ``error_status_code``
+            field, when the transport carried one through
+            (SP-BREAKER-LIVE-REASONS).  ``None`` for a genuinely
+            content-less, non-errored stream, or when the transport could
+            not recover a status — callers must fall back to the generic
+            ``empty_completion`` reason in that case, never worse than
+            before this field existed.
     """
 
     buffered: list[str]
@@ -108,6 +116,7 @@ class PeekResult:
     stream_done: bool
     looks_budget_starved: bool = False
     final_output_tokens: int | None = None
+    upstream_status_code: int | None = None
 
 
 _EVENT_TYPE_PATTERN = re.compile(r"^event:\s*(\S+)", re.MULTILINE)
@@ -156,6 +165,22 @@ def chunk_message_delta_usage(chunk: str) -> dict | None:
         return None
     usage = data.get("usage")
     return usage if isinstance(usage, dict) else None
+
+
+def chunk_message_delta_error_status(chunk: str) -> int | None:
+    """Return the recovered upstream HTTP status of a terminal ``message_delta``.
+
+    ``None`` for any other event type, an unparseable chunk, or a
+    ``message_delta`` whose ``error_status_code`` field is absent or not
+    an integer — the transport only sets this field when it caught a
+    real upstream exception it could map to a status
+    (SP-BREAKER-LIVE-REASONS).
+    """
+    event_type, data = _parse_event(chunk)
+    if event_type != "message_delta" or data is None:
+        return None
+    status = data.get("error_status_code")
+    return status if isinstance(status, int) else None
 
 
 def chunk_message_delta_stop_reason(chunk: str) -> str | None:
@@ -302,10 +327,11 @@ async def peek_for_content(
     exited_on_terminal_error = False
     accumulated_text: list[str] = []
     stream_done = False
+    upstream_status_code: int | None = None
 
     def _absorb(chunk: str) -> bool:
         nonlocal saw_tool_use, final_output_tokens, saw_error_stop_reason
-        nonlocal saw_disguised_error_text, exited_on_terminal_error
+        nonlocal saw_disguised_error_text, exited_on_terminal_error, upstream_status_code
         buffered.append(chunk)
         if chunk_is_tool_use_start(chunk):
             saw_tool_use = True
@@ -314,6 +340,9 @@ async def peek_for_content(
             tokens = usage.get("output_tokens")
             if isinstance(tokens, int):
                 final_output_tokens = tokens
+        error_status = chunk_message_delta_error_status(chunk)
+        if error_status is not None:
+            upstream_status_code = error_status
         stop_reason = chunk_message_delta_stop_reason(chunk)
         if stop_reason == "error":
             saw_error_stop_reason = True
@@ -403,4 +432,5 @@ async def peek_for_content(
         stream_done=stream_done,
         looks_budget_starved=looks_budget_starved,
         final_output_tokens=final_output_tokens,
+        upstream_status_code=upstream_status_code,
     )
