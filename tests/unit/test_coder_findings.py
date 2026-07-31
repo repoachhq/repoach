@@ -381,6 +381,7 @@ def _settings_with_routine(db: Path) -> SimpleNamespace:
         db_path=str(db),
         claude_code_routine_id="rid",
         claude_code_routine_token=SimpleNamespace(get_secret_value=lambda: "tok"),
+        integration_branch="develop",
     )
 
 

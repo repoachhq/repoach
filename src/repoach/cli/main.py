@@ -14,6 +14,7 @@ import httpx
 import typer
 
 from ..arch.cli import arch_app
+from ..core.config import get_settings
 from ..core.logging import configure_logging
 from ..lint import edge_honesty
 from .chain_status import chain_status
@@ -31,7 +32,9 @@ app.add_typer(release_app, name="release")
 
 @arch_app.command("check")
 def arch_check(
-    base: str = typer.Option("develop", "--base", help="Diff against this ref (three-dot)."),
+    base: str | None = typer.Option(
+        None, "--base", help="Diff against this ref (three-dot); defaults to integration_branch."
+    ),
     staged: bool = typer.Option(False, "--staged", help="Check the staged index (pre-commit)."),
     specs_dir: Path = typer.Option(
         Path("docs/specs"), "--specs-dir", help="Directory of spec markdown files."
@@ -39,6 +42,7 @@ def arch_check(
 ) -> None:
     """Fail when a changed file's couplings are missing from its depends_on."""
     repo_root = Path(__file__).resolve().parents[3]
+    base = base if base is not None else get_settings().integration_branch
     report = edge_honesty.run(base=base, staged=staged, specs_dir=specs_dir, repo_root=repo_root)
     for line in edge_honesty.report_lines(report):
         typer.echo(line, err=True)

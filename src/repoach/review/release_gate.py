@@ -30,6 +30,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ..core.config import get_settings
 from .gh_client import GhCli
 from .persistence import fetch_merged_pr_shas
 
@@ -241,8 +242,13 @@ def gather_release_facts(
             unchanged -- fail-closed: the caller must treat this as
             an evaluation error, never a fact.
     """
-    develop_sha = gh._run_git(["rev-parse", "develop"]).stdout.strip()
-    log_result = gh._run_git(["log", "main..develop", "--format=%H%x09%s"])
+    settings = get_settings()
+    integration_branch = settings.integration_branch
+    release_branch = settings.release_branch
+    develop_sha = gh._run_git(["rev-parse", integration_branch]).stdout.strip()
+    log_result = gh._run_git(
+        ["log", f"{release_branch}..{integration_branch}", "--format=%H%x09%s"]
+    )
     commits: list[tuple[str, str]] = []
     for line in log_result.stdout.splitlines():
         if not line.strip():
@@ -266,7 +272,7 @@ def gather_release_facts(
             if provenance_error is not None
             else classify_release_range_against_ledger(commits, merged_shas)
         )
-    ls_remote_result = gh._run_git(["ls-remote", "origin", "develop"])
+    ls_remote_result = gh._run_git(["ls-remote", "origin", integration_branch])
     remote_sha = ""
     first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
     if ls_remote_result.returncode == 0 and first_line:
@@ -411,14 +417,22 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
             ``origin/main..origin/develop`` reads are only trustworthy
             against freshly-fetched remote-tracking refs.
     """
+    settings = get_settings()
+    integration_branch = settings.integration_branch
+    release_branch = settings.release_branch
     data = json.loads(path.read_text())
     expected_sha = data["develop_sha"]
-    fetch_result = gh._run_git(["fetch", "--quiet", "origin", "main", "develop"])
+    fetch_result = gh._run_git(["fetch", "--quiet", "origin", release_branch, integration_branch])
     if not fetch_result.ok:
-        raise RuntimeError(f"git fetch origin main develop failed: {fetch_result.stderr.strip()}")
-    main_sha = _ls_remote_sha(gh, "main")
-    second_parent = gh._run_git(["rev-parse", "origin/main^2"]).stdout.strip()
-    distance = gh._run_git(["rev-list", "--count", "origin/main..origin/develop"]).stdout.strip()
+        raise RuntimeError(
+            f"git fetch origin {release_branch} {integration_branch} failed: "
+            f"{fetch_result.stderr.strip()}"
+        )
+    main_sha = _ls_remote_sha(gh, release_branch)
+    second_parent = gh._run_git(["rev-parse", f"origin/{release_branch}^2"]).stdout.strip()
+    distance = gh._run_git(
+        ["rev-list", "--count", f"origin/{release_branch}..origin/{integration_branch}"]
+    ).stdout.strip()
     return _sanctioned_shape_result(
         expected_sha=expected_sha,
         main_sha=main_sha,
@@ -452,13 +466,21 @@ def verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
         RuntimeError: When ``git fetch origin main develop`` fails --
             fail-closed, mirroring :func:`verify_release`.
     """
-    fetch_result = gh._run_git(["fetch", "--quiet", "origin", "main", "develop"])
+    settings = get_settings()
+    integration_branch = settings.integration_branch
+    release_branch = settings.release_branch
+    fetch_result = gh._run_git(["fetch", "--quiet", "origin", release_branch, integration_branch])
     if not fetch_result.ok:
-        raise RuntimeError(f"git fetch origin main develop failed: {fetch_result.stderr.strip()}")
-    expected_sha = _ls_remote_sha(gh, "develop")
-    main_sha = _ls_remote_sha(gh, "main")
-    second_parent = gh._run_git(["rev-parse", "origin/main^2"]).stdout.strip()
-    distance = gh._run_git(["rev-list", "--count", "origin/main..origin/develop"]).stdout.strip()
+        raise RuntimeError(
+            f"git fetch origin {release_branch} {integration_branch} failed: "
+            f"{fetch_result.stderr.strip()}"
+        )
+    expected_sha = _ls_remote_sha(gh, integration_branch)
+    main_sha = _ls_remote_sha(gh, release_branch)
+    second_parent = gh._run_git(["rev-parse", f"origin/{release_branch}^2"]).stdout.strip()
+    distance = gh._run_git(
+        ["rev-list", "--count", f"origin/{release_branch}..origin/{integration_branch}"]
+    ).stdout.strip()
     return _sanctioned_shape_result(
         expected_sha=expected_sha,
         main_sha=main_sha,

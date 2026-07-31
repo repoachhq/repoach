@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_branch_config.py]
   resources: N/A
 
-depends_on: [SP-CONFIG-ENV-ANCHOR, SP-RELEASE-GATE]
+depends_on: [SP-CONFIG-ENV-ANCHOR, SP-RELEASE-GATE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-DEV-STEP-PREFLIGHT, SP-REVIEW-POST-BATCH]
 provides_to: []
 
 constraints: {}

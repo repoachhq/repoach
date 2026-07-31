@@ -295,18 +295,21 @@ def spec_to_branch_slug(spec_id: str) -> str:
     return s.lower()
 
 
-def ensure_branch(branch: str, *, base: str = "develop", repo_root: Path | None = None) -> bool:
+def ensure_branch(branch: str, *, base: str | None = None, repo_root: Path | None = None) -> bool:
     """Create or check out *branch* off *base*.
 
     Args:
         branch: Target branch name.
-        base: Source ref to branch from when creating.
+        base: Source ref to branch from when creating. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         repo_root: Repo working tree.
 
     Returns:
         ``True`` when the branch is ready (created or already current),
         ``False`` on a git error.
     """
+    base = base if base is not None else get_settings().integration_branch
     git = shutil.which("git") or "git"
     root = (repo_root or Path.cwd()).resolve()
     proc = subprocess.run(
@@ -1851,7 +1854,7 @@ def run_developer_session(
     *,
     repo_root: Path | None = None,
     branch: str | None = None,
-    base: str = "develop",
+    base: str | None = None,
     push: bool = True,
     developer: Developer | None = None,
     planner: object | None = None,
@@ -1884,7 +1887,9 @@ def run_developer_session(
         repo_root: Working tree root (defaults to ``cwd``).
         branch: Override branch name (defaults to the
             :data:`DEFAULT_BRANCH_TEMPLATE` rendering).
-        base: Source ref for the new branch (defaults to ``develop``).
+        base: Source ref for the new branch. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         push: When ``False`` the runner stops after committing
             locally — useful for tests / dry-runs.
         developer: Optional pre-built :class:`Developer` (tests
@@ -1911,6 +1916,7 @@ def run_developer_session(
     """
     repo = (repo_root or Path.cwd()).resolve()
     settings = get_settings()
+    base = base if base is not None else settings.integration_branch
     db = db_path or Path(settings.db_path)
     init_schema(db)
 
@@ -1995,7 +2001,7 @@ def open_pr(
     summary: str,
     spec_ref: str,
     branch: str,
-    base: str = "develop",
+    base: str | None = None,
     gh: GhCli | None = None,
 ) -> str:
     """Open a draft-quality PR for *branch* via the ``gh`` CLI.
@@ -2012,13 +2018,16 @@ def open_pr(
         spec_ref: A human reference to the spec source — the parent spec path for a
             single-spec run, or a note that the parent was decomposed for a multi run.
         branch: The head branch to open the PR from.
-        base: The PR base (defaults to ``develop``).
+        base: The PR base. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         gh: Optional :class:`GhCli` (tests inject a fake).
 
     Returns:
         The PR URL on success, empty string on failure.
     """
     gh = gh or GhCli()
+    base = base if base is not None else get_settings().integration_branch
     title = title[:200]
     body = (
         f"Autonomous NIM Developer implementation of **{spec_id}**.\n\n"

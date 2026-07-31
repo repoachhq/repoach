@@ -377,10 +377,10 @@ def review_develop(
         ...,
         help='Spec identifier — accepts "sec", "SP-SEC", "sp-sec", etc.',
     ),
-    base: str = typer.Option(
-        "develop",
+    base: str | None = typer.Option(
+        None,
         "--base",
-        help="Source ref the new branch is created from. Defaults to develop.",
+        help="Source ref the new branch is created from. Defaults to integration_branch.",
     ),
     branch: str | None = typer.Option(
         None,

@@ -380,7 +380,7 @@ class GhCli:
         self,
         *,
         head: str,
-        base: str = "main",
+        base: str | None = None,
         title: str,
         body: str,
         draft: bool = False,
@@ -389,7 +389,9 @@ class GhCli:
 
         Args:
             head: Source branch name (without ``origin/`` prefix).
-            base: Target branch (defaults to ``main``).
+            base: Target branch. Defaults to
+                :attr:`~repoach.core.config.Settings.release_branch`,
+                resolved at call time so an env/test override takes effect.
             title: PR title.
             body: PR body (markdown).
             draft: When True, create a draft PR.
@@ -398,6 +400,7 @@ class GhCli:
             :class:`GhResult` whose ``stdout`` ends with the PR URL on
             success.
         """
+        base = base if base is not None else get_settings().release_branch
         args = [
             "pr",
             "create",
