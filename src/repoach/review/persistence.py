@@ -202,6 +202,7 @@ def record_review(
     *,
     pr_number: int,
     outcome: ReviewerOutcome,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one reviewer's outcome to L4."""
     engine = _engine_for(db_path)
@@ -233,7 +234,7 @@ def record_review(
                 elapsed_s=outcome.elapsed_s,
                 tokens_used=outcome.tokens_used,
                 comments_json=comments_json,
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
                 decision_pivot=decision_pivot,
             )
         )
@@ -279,6 +280,7 @@ def record_merge(
     head_ref: str,
     merged_sha: str | None,
     notes: str,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one auto-merge attempt to L4 ``pr_merges``.
 
@@ -290,6 +292,8 @@ def record_merge(
         head_ref: PR source branch.
         merged_sha: Merge commit SHA on success, ``None`` otherwise.
         notes: Free-form context string (truncated to 1000 chars).
+        recorded_at: Timestamp to stamp on ``created_at``; defaults to
+            ``datetime.now(UTC)`` captured at call time when omitted.
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -301,7 +305,7 @@ def record_merge(
                 head_ref=head_ref,
                 merged_sha=merged_sha,
                 notes=notes[:1000],
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
 
@@ -345,6 +349,7 @@ def record_hallucination(
     *,
     pr_number: int,
     event: GuardEvent,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one :class:`GuardEvent` to L4 ``pr_hallucinations``.
 
@@ -353,6 +358,8 @@ def record_hallucination(
         pr_number: PR number the downgrade applies to.
         event: The :class:`GuardEvent` produced by
             :func:`apply_hallucination_guard`.
+        recorded_at: Timestamp to stamp on ``created_at``; defaults to
+            ``datetime.now(UTC)`` captured at call time when omitted.
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -366,7 +373,7 @@ def record_hallucination(
                 reason=event.reason,
                 tokens_found=json.dumps(list(event.tokens_found)),
                 original_body=event.original_body[:2000],
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
 
@@ -399,6 +406,7 @@ def record_dialogue(
     round: str,
     speaker: str,
     payload: Mapping[str, Any],
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one dialogue turn to ``pr_review_dialogue``.
 
@@ -412,6 +420,8 @@ def record_dialogue(
             ``"scribe"``, or ``"coder"``.
         payload: JSON-serialisable mapping carrying the verdict,
             comments, or challenge record body.
+        recorded_at: Timestamp to stamp on ``created_at``; defaults to
+            ``datetime.now(UTC)`` captured at call time when omitted.
     """
     init_schema(db_path)
     engine = _engine_for(db_path)
@@ -422,7 +432,7 @@ def record_dialogue(
                 round=round,
                 speaker=speaker,
                 payload_json=json.dumps(dict(payload), default=str)[:32000],
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
 
@@ -484,6 +494,7 @@ def record_coder_response(
     model_used: str,
     elapsed_s: float,
     tokens_used: int,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist the Coder's fix-plan to L4."""
     engine = _engine_for(db_path)
@@ -498,6 +509,6 @@ def record_coder_response(
                 elapsed_s=elapsed_s,
                 tokens_used=tokens_used,
                 fixes_json=json.dumps(plan.get("fixes", []) or [])[:32000],
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
