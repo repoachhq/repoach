@@ -25,7 +25,6 @@ from repoach.llm_proxy.core.anthropic import (
 )
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
-from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
 
 def _extract_reasoning_tokens(usage_info: Any, tag: str) -> int:
@@ -87,33 +86,18 @@ class OpenAIChatTransport(BaseProvider):
         self._provider_name = provider_name
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
-            provider_name.lower(),
-            rate_limit=config.rate_limit,
-            rate_window=config.rate_window,
-            max_concurrency=config.max_concurrency,
-        )
+        self._global_rate_limiter = self._scoped_rate_limiter(provider_name)
         http_client = None
         if config.proxy:
             http_client = httpx.AsyncClient(
                 proxy=config.proxy,
-                timeout=httpx.Timeout(
-                    config.http_read_timeout,
-                    connect=config.http_connect_timeout,
-                    read=config.http_read_timeout,
-                    write=config.http_write_timeout,
-                ),
+                timeout=self._build_timeout(),
             )
         self._client = AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,
             max_retries=0,
-            timeout=httpx.Timeout(
-                config.http_read_timeout,
-                connect=config.http_connect_timeout,
-                read=config.http_read_timeout,
-                write=config.http_write_timeout,
-            ),
+            timeout=self._build_timeout(),
             http_client=http_client,
         )
 
