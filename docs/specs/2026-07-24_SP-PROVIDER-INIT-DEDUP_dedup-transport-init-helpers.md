@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/providers/base.py, src/repoach/llm_proxy/providers/anthropic_messages.py]
   resources: N/A
 
-depends_on: [SP-USAGE-REASONING-SPLIT]
+depends_on: [SP-USAGE-REASONING-SPLIT, SP-PROVIDER-TRANSPORT-SPI]
 provides_to: []
 
 constraints: {}
