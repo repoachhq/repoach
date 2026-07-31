@@ -143,16 +143,56 @@ def _parse_event(chunk: str) -> tuple[str | None, dict | None]:
         return type_match.group(1), None
 
 
+def _is_tool_use_start(event_type: str | None, data: dict | None) -> bool:
+    if event_type != "content_block_start" or data is None:
+        return False
+    block = data.get("content_block") or {}
+    return block.get("type") == "tool_use"
+
+
+def _message_delta_usage(event_type: str | None, data: dict | None) -> dict | None:
+    if event_type != "message_delta" or data is None:
+        return None
+    usage = data.get("usage")
+    return usage if isinstance(usage, dict) else None
+
+
+def _message_delta_error_status(event_type: str | None, data: dict | None) -> int | None:
+    if event_type != "message_delta" or data is None:
+        return None
+    status = data.get("error_status_code")
+    return status if isinstance(status, int) else None
+
+
+def _message_delta_stop_reason(event_type: str | None, data: dict | None) -> str | None:
+    if event_type != "message_delta" or data is None:
+        return None
+    delta = data.get("delta") or {}
+    reason = delta.get("stop_reason")
+    return reason if isinstance(reason, str) else None
+
+
+def _marks_stream_end(event_type: str | None) -> bool:
+    return event_type == "message_stop"
+
+
+def _text_delta(event_type: str | None, data: dict | None) -> str | None:
+    if event_type != "content_block_delta" or data is None:
+        return None
+    delta = data.get("delta") or {}
+    if delta.get("type") != "text_delta":
+        return None
+    text = delta.get("text")
+    return text if isinstance(text, str) else None
+
+
 def chunk_is_tool_use_start(chunk: str) -> bool:
     """Return whether an SSE chunk is a ``content_block_start`` for a
     ``tool_use`` block.  These cannot be faked by transport-error
     handlers (NIM disguises errors as text, never as tool_use), so
     they are an unambiguous success signal."""
     event_type, data = _parse_event(chunk)
-    if event_type != "content_block_start" or data is None:
-        return False
-    block = data.get("content_block") or {}
-    return block.get("type") == "tool_use"
+    return _is_tool_use_start(event_type, data)
 
 
 def chunk_message_delta_usage(chunk: str) -> dict | None:
@@ -161,10 +201,7 @@ def chunk_message_delta_usage(chunk: str) -> dict | None:
     Returns ``None`` for any other event type or unparseable chunk.
     """
     event_type, data = _parse_event(chunk)
-    if event_type != "message_delta" or data is None:
-        return None
-    usage = data.get("usage")
-    return usage if isinstance(usage, dict) else None
+    return _message_delta_usage(event_type, data)
 
 
 def chunk_message_delta_error_status(chunk: str) -> int | None:
@@ -177,26 +214,19 @@ def chunk_message_delta_error_status(chunk: str) -> int | None:
     (SP-BREAKER-LIVE-REASONS).
     """
     event_type, data = _parse_event(chunk)
-    if event_type != "message_delta" or data is None:
-        return None
-    status = data.get("error_status_code")
-    return status if isinstance(status, int) else None
+    return _message_delta_error_status(event_type, data)
 
 
 def chunk_message_delta_stop_reason(chunk: str) -> str | None:
     """Return the ``stop_reason`` of a terminal ``message_delta`` chunk."""
     event_type, data = _parse_event(chunk)
-    if event_type != "message_delta" or data is None:
-        return None
-    delta = data.get("delta") or {}
-    reason = delta.get("stop_reason")
-    return reason if isinstance(reason, str) else None
+    return _message_delta_stop_reason(event_type, data)
 
 
 def chunk_marks_stream_end(chunk: str) -> bool:
     """Return whether a chunk is a normal ``message_stop`` terminator."""
     event_type, _ = _parse_event(chunk)
-    return event_type == "message_stop"
+    return _marks_stream_end(event_type)
 
 
 def chunk_text_delta(chunk: str) -> str | None:
@@ -224,13 +254,7 @@ def chunk_text_delta(chunk: str) -> str | None:
         ``input_json_delta`` for tool calls).
     """
     event_type, data = _parse_event(chunk)
-    if event_type != "content_block_delta" or data is None:
-        return None
-    delta = data.get("delta") or {}
-    if delta.get("type") != "text_delta":
-        return None
-    text = delta.get("text")
-    return text if isinstance(text, str) else None
+    return _text_delta(event_type, data)
 
 
 def text_is_disguised_error(text: str) -> bool:
@@ -333,29 +357,30 @@ async def peek_for_content(
         nonlocal saw_tool_use, final_output_tokens, saw_error_stop_reason
         nonlocal saw_disguised_error_text, exited_on_terminal_error, upstream_status_code
         buffered.append(chunk)
-        if chunk_is_tool_use_start(chunk):
+        event_type, data = _parse_event(chunk)
+        if _is_tool_use_start(event_type, data):
             saw_tool_use = True
-        usage = chunk_message_delta_usage(chunk)
+        usage = _message_delta_usage(event_type, data)
         if usage is not None:
             tokens = usage.get("output_tokens")
             if isinstance(tokens, int):
                 final_output_tokens = tokens
-        error_status = chunk_message_delta_error_status(chunk)
+        error_status = _message_delta_error_status(event_type, data)
         if error_status is not None:
             upstream_status_code = error_status
-        stop_reason = chunk_message_delta_stop_reason(chunk)
+        stop_reason = _message_delta_stop_reason(event_type, data)
         if stop_reason == "error":
             saw_error_stop_reason = True
             exited_on_terminal_error = True
             return False
-        text = chunk_text_delta(chunk)
+        text = _text_delta(event_type, data)
         if text is not None:
             accumulated_text.append(text)
             if text_is_disguised_error("".join(accumulated_text)):
                 saw_disguised_error_text = True
                 exited_on_terminal_error = True
                 return False
-        return chunk_marks_stream_end(chunk)
+        return _marks_stream_end(event_type)
 
     stream_iter = stream.__aiter__()
     if first_byte_deadline_s is not None and first_byte_deadline_s > 0:
