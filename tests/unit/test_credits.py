@@ -6,12 +6,14 @@ truthful boundary fake — no monkeypatching of repoach code.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
 import pytest
 from pydantic import ValidationError
 
+from repoach.health import credits as credits_module
 from repoach.health.credits import (
     CreditsSnapshot,
     fetch_openrouter_credits,
@@ -41,8 +43,17 @@ def _make_client(
 
 @pytest.fixture(autouse=True)
 def _cold_cache() -> None:
-    """Reset the credits cache before each test."""
+    """Reset the credits cache and its coalescing lock before each test.
+
+    `pytest-asyncio` gives each async test its own event loop, but the
+    production `_cache_lock` is a module-level singleton that permanently
+    binds to whichever loop first acquires it (`asyncio.Lock` semantics
+    since Python 3.10). Rebuilding it per test keeps every test's lock
+    bound to that test's own loop, matching how `reset_credits_cache()`
+    already rebuilds the other cache globals for isolation.
+    """
     reset_credits_cache()
+    credits_module._cache_lock = asyncio.Lock()
 
 
 async def test_fetch_nominal_returns_snapshot() -> None:
@@ -103,8 +114,6 @@ async def test_cache_ttl_expiry_and_reset() -> None:
     assert snapshot2 is snapshot1
 
     cached_time = time.monotonic()
-    from repoach.health import credits as credits_module
-
     credits_module._cached_fetched_at = cached_time - ttl_s - 1.0
 
     updated_payload = {"data": {"total_credits": 25.0, "total_usage": 20.0}}
@@ -160,3 +169,42 @@ async def test_snapshot_is_frozen() -> None:
         snapshot.total_credits = 15.0
 
     assert snapshot.total_credits == 10.0
+
+
+def _make_stampede_client(call_count: list[int]) -> httpx.AsyncClient:
+    """Boundary fake that records each invocation and overlaps via a real await."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        call_count.append(1)
+        await asyncio.sleep(0.01)
+        return httpx.Response(200, json=_NOMINAL_PAYLOAD, request=request)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def test_concurrent_callers_coalesce_onto_one_fetch() -> None:
+    """Two concurrent callers against a cold cache issue a single live fetch."""
+    call_count: list[int] = []
+    client = _make_stampede_client(call_count)
+
+    result1, result2 = await asyncio.gather(
+        get_cached_credits("test-key", client=client, ttl_s=3600.0, timeout_s=10.0),
+        get_cached_credits("test-key", client=client, ttl_s=3600.0, timeout_s=10.0),
+    )
+
+    assert len(call_count) == 1
+    assert result1 is not None
+    assert result2 is not None
+
+
+async def test_concurrent_callers_share_the_same_snapshot_identity() -> None:
+    """The second caller reads back the first caller's snapshot, not a new one."""
+    call_count: list[int] = []
+    client = _make_stampede_client(call_count)
+
+    result1, result2 = await asyncio.gather(
+        get_cached_credits("test-key", client=client, ttl_s=3600.0, timeout_s=10.0),
+        get_cached_credits("test-key", client=client, ttl_s=3600.0, timeout_s=10.0),
+    )
+
+    assert result1 is result2
