@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/persistence.py, tests/unit/test_review_persistence_recorded_at.py]
   resources: N/A
 
-depends_on: []
+depends_on: [SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints: {}
