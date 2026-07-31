@@ -11,28 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-import structlog
 from structlog.testing import capture_logs
 
 import repoach.review.devagent_selfverify as sv
 from repoach.review.devagent_selfverify import run_self_verify
 from repoach.review.plan import ActionPlan, PlanStep
 from repoach.review.spec import SpecPlan
-
-
-@pytest.fixture(autouse=True)
-def _fresh_selfverify_logger(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rebind the module logger so ``capture_logs`` sees its events.
-
-    ``configure_logging`` (exercised by earlier suites in serial order)
-    sets ``cache_logger_on_first_use=True``; a proxy cached before this
-    test keeps its materialized processor chain and bypasses the
-    ``capture_logs`` swap. A fresh lazy proxy binds inside the capture
-    context instead.
-    """
-    monkeypatch.setattr(sv, "_log", structlog.get_logger("selfverify.refutation.test"))
-
 
 _AC_MD = (
     "# SP-T — demo\n\n## Goals\n\n- G1: do it\n\n"

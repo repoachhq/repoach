@@ -23,11 +23,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
-import pytest
-import structlog
 from structlog.testing import capture_logs
 
-import repoach.review.orchestrator as orchestrator_module
 from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.reviewer import (
     Architect,
@@ -79,21 +76,6 @@ def _orchestrator(tmp_path, max_workers: int = 4) -> ReviewTeamOrchestrator:
         db_path=tmp_path / "l4.db",
         post_to_github=False,
         max_workers=max_workers,
-    )
-
-
-@pytest.fixture(autouse=True)
-def _fresh_orchestrator_logger(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Rebind the module logger so ``capture_logs`` sees its events.
-
-    ``configure_logging`` (exercised by earlier suites in serial order)
-    sets ``cache_logger_on_first_use=True``; a proxy cached before this
-    test keeps its materialized processor chain and bypasses the
-    ``capture_logs`` swap. A fresh lazy proxy binds inside the capture
-    context instead.
-    """
-    monkeypatch.setattr(
-        orchestrator_module, "_log", structlog.get_logger("review.orchestrator.test")
     )
 
 
