@@ -38,6 +38,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
+from ..core.sqlite_schema_init import ensure_schema_created
 from .findings import Finding, FindingStatus, Severity, fetch_findings, update_finding_status
 
 _log = get_logger(__name__)
@@ -118,7 +119,7 @@ def _engine_for(db_path: Path) -> Engine:
 def init_stuck_schema(db_path: Path) -> None:
     """Create the ``pr_coder_rounds`` table if absent (idempotent)."""
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
 
 
 def record_coder_round(

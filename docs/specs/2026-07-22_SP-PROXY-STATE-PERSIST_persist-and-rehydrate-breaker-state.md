@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/routing/breaker.py, src/repoach/llm_proxy/routing/breaker_persist.py]
   resources: [db:table:breaker_trip_state]
 
-depends_on: [SP-PROXY-BREAKER-PROBE-SEED]
+depends_on: [SP-PROXY-BREAKER-PROBE-SEED, SP-SCHEMA-INIT-RACE-GENERALIZE]
 provides_to: []
 
 constraints:

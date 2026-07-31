@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/health/__init__.py, src/repoach/health/model_health.py, src/repoach/health/store.py]   # narrowed from src/repoach/health/ (2026-07-11): SP-CREDITS-CHECK owns credits.py; subtree ownership becomes per-module
   resources: [db:table:nim_health_probe]   # the probe store owns this table (moved here)
 
-depends_on: []                        # leaf: pure dataclass + sqlalchemy + core.logging; imports no governed component
+depends_on: [SP-SCHEMA-INIT-RACE-GENERALIZE]   # store.py now routes create_all through the shared helper
 
 constraints: {}
 ---

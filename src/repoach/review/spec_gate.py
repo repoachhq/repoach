@@ -35,6 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
+from ..core.sqlite_schema_init import ensure_schema_created
 from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
 _log = get_logger(__name__)
@@ -449,7 +450,7 @@ def _engine_for(db_path: Path) -> Engine:
 
 def init_spec_coverage_schema(db_path: Path) -> None:
     """Create the ``pr_spec_coverage`` table if it does not exist (idempotent)."""
-    _metadata.create_all(_engine_for(db_path), checkfirst=True)
+    ensure_schema_created(_engine_for(db_path), _metadata)
 
 
 def record_spec_coverage(

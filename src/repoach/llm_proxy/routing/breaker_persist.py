@@ -39,6 +39,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from repoach.core.sqlite_schema_init import ensure_schema_created
 from repoach.llm_proxy.routing.breaker import BreakerState
 from repoach.llm_proxy.routing.refs import ModelRef
 
@@ -72,7 +73,7 @@ def _engine_for(db_path: Path):
 def init_breaker_state_schema(db_path: Path) -> None:
     """Create the ``breaker_trip_state`` table if it does not exist (idempotent)."""
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -110,7 +111,7 @@ def persist_state(
     """
     try:
         engine = _engine_for(db_path)
-        _metadata.create_all(engine, checkfirst=True)
+        ensure_schema_created(engine, _metadata)
         down_until = breaker._down_until.get(ref)
         if down_until is None or down_until <= monotonic_now:
             with engine.begin() as conn:
@@ -180,7 +181,7 @@ def rehydrate_breaker_from_state(
         The number of rows restored.
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     restored = 0
     stale_refs: list[str] = []
     with engine.begin() as conn:
