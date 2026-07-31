@@ -37,11 +37,14 @@ def _make_handler(
     credits_body: object = None,
     credits_raises: Exception | None = None,
     health_raises: Exception | None = None,
+    requested_urls: list[str] | None = None,
 ):
     """Build an httpx MockTransport handler with configurable responses."""
 
     async def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
+        if requested_urls is not None:
+            requested_urls.append(url)
         if health_raises is not None and "/health" in url and "openrouter" not in url:
             raise health_raises
         if "/health" in url and "openrouter" not in url:
@@ -279,6 +282,85 @@ def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -
     assert "proxy: unreachable" in result.stdout
     assert "no probes in window" in result.stdout
     assert "Traceback" not in result.stderr
+
+
+def test_cli_proxy_url_default_resolves_from_settings_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--proxy-url omitted resolves the breaker-fetch target from
+    ``settings.host``/``settings.port`` rather than the stale ``:8082``
+    literal default.
+    """
+    db = tmp_path / "test.db"
+    requested_urls: list[str] = []
+    real_async_client = httpx.AsyncClient
+
+    def _mock_async_client(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_async_client(
+            transport=httpx.MockTransport(
+                _make_handler(
+                    health_body={"status": "healthy", "breaker": []},
+                    credits_body={"data": {"total_credits": 20.0, "total_usage": 0.0}},
+                    requested_urls=requested_urls,
+                )
+            )
+        )
+
+    monkeypatch.setattr("repoach.cli.chain_status.httpx.AsyncClient", _mock_async_client)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["chain-status", "--db-path", str(db)],
+        env={**os.environ, "REPOACH_PROXY_PORT": "9321", "REPOACH_OPENROUTER_API_KEY": ""},
+    )
+
+    assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
+    assert requested_urls, "expected the digest to have issued at least one request"
+    assert any("http://127.0.0.1:9321" in url for url in requested_urls)
+    assert not any(":8082" in url for url in requested_urls)
+
+
+def test_cli_proxy_url_explicit_wins_over_settings_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit ``--proxy-url`` still wins verbatim regardless of
+    ``settings.port``.
+    """
+    db = tmp_path / "test.db"
+    requested_urls: list[str] = []
+    real_async_client = httpx.AsyncClient
+
+    def _mock_async_client(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return real_async_client(
+            transport=httpx.MockTransport(
+                _make_handler(
+                    health_body={"status": "healthy", "breaker": []},
+                    credits_body={"data": {"total_credits": 20.0, "total_usage": 0.0}},
+                    requested_urls=requested_urls,
+                )
+            )
+        )
+
+    monkeypatch.setattr("repoach.cli.chain_status.httpx.AsyncClient", _mock_async_client)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "chain-status",
+            "--db-path",
+            str(db),
+            "--proxy-url",
+            "http://explicit-host:7777",
+        ],
+        env={**os.environ, "REPOACH_PROXY_PORT": "9321", "REPOACH_OPENROUTER_API_KEY": ""},
+    )
+
+    assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
+    assert requested_urls, "expected the digest to have issued at least one request"
+    assert any("http://explicit-host:7777" in url for url in requested_urls)
+    assert not any(":9321" in url for url in requested_urls)
 
 
 _REPO = Path(__file__).resolve().parents[2]
