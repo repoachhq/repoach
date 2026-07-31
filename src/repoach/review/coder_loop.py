@@ -718,7 +718,12 @@ CI_UNKNOWN: str = "UNKNOWN"
 
 
 def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]]]:
-    """Return the aggregated required-check state on a PR.
+    """Return the aggregated check state on a PR.
+
+    Classifies every check ``gh pr checks`` reports, not only checks
+    marked as required by branch protection — this repo has none
+    configured, so a required-only filter always returns an empty row
+    set (SP-CI-STATUS-CLIENT-CLASSIFY).
 
     Args:
         gh: A :class:`GhCli` wrapper.
@@ -736,7 +741,6 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
             "pr",
             "checks",
             str(pr_number),
-            "--required",
             "--json",
             "name,state,bucket,link,workflow",
         ]
@@ -752,9 +756,15 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
     if not rows:
         return CI_GREEN, []
 
-    buckets = [str(r.get("bucket", "")).lower() for r in rows]
-    if any(b in {"pending", ""} for b in buckets):
-        return CI_PENDING, []
+    for row in rows:
+        bucket = str(row.get("bucket", "")).lower()
+        if bucket in {"skipping", "cancel"}:
+            _log.info(
+                "coder.ci_check_non_blocking",
+                name=str(row.get("name", "")),
+                bucket=bucket,
+            )
+
     failed_rows = [
         {
             "name": str(r.get("name", "")),
@@ -766,6 +776,10 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
     ]
     if failed_rows:
         return CI_RED, failed_rows
+
+    buckets = [str(r.get("bucket", "")).lower() for r in rows]
+    if any(b in {"pending", ""} for b in buckets):
+        return CI_PENDING, []
     return CI_GREEN, []
 
 
