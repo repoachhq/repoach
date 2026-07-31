@@ -325,18 +325,71 @@ def write_gate_receipt(path: Path, *, develop_sha: str, decision: ReleaseDecisio
     )
 
 
+def _ls_remote_sha(gh: GhCli, ref: str) -> str:
+    """Return the live SHA ``git ls-remote origin <ref>`` reports.
+
+    Args:
+        gh: A :class:`~repoach.review.gh_client.GhCli`-like wrapper used
+            for the ``git ls-remote`` invocation.
+        ref: The remote ref name (e.g. ``"main"`` or ``"develop"``).
+
+    Returns:
+        The first token of ``ls-remote``'s first output line, or
+        ``""`` when the ref could not be resolved.
+    """
+    ls_remote_result = gh._run_git(["ls-remote", "origin", ref])
+    first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
+    return first_line.split()[0] if first_line.split() else ""
+
+
+def _sanctioned_shape_result(
+    *, expected_sha: str, main_sha: str, second_parent: str, distance: str
+) -> ReleaseVerifyResult:
+    """Decide whether ``main``'s tip matches the sanctioned release shape.
+
+    The one place the sanctioned-shape definition lives, shared by
+    :func:`verify_release` (receipt-based ``expected_sha``) and
+    :func:`verify_release_live` (live ``origin/develop``-tip
+    ``expected_sha``): a fast-forward (the expected SHA is the
+    ``main`` tip itself) or a merge commit (the expected SHA is the
+    ``main`` tip's second parent, with ``main..develop`` distance
+    zero -- the shape "Create a merge commit" produces).
+
+    Args:
+        expected_sha: The ``develop`` head the shape is checked
+            against, whether sourced from a receipt or a live
+            ``ls-remote``.
+        main_sha: The live ``origin/main`` tip.
+        second_parent: ``origin/main``'s second parent (``origin/main^2``).
+        distance: ``git rev-list --count origin/main..origin/develop``,
+            as a string.
+
+    Returns:
+        The assembled :class:`ReleaseVerifyResult`.
+    """
+    verified = bool(expected_sha) and (
+        main_sha == expected_sha or (second_parent == expected_sha and distance == "0")
+    )
+    detail = (
+        "main tip matches the approved develop head"
+        if verified
+        else "main tip does not match the approved develop head -- squash or stale merge? "
+        "revert and re-merge as a merge commit"
+    )
+    return ReleaseVerifyResult(
+        verified=verified, main_sha=main_sha, expected_sha=expected_sha, detail=detail
+    )
+
+
 def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
     """Verify that the live ``main`` tip matches the sanctioned release shape.
 
     Reads back the receipt written by :func:`write_gate_receipt` and
     checks the live ``origin/main`` tip against the two shapes
     ``release gate`` sanctions for landing the approved ``develop``
-    head: a fast-forward (the approved SHA is the ``main`` tip
-    itself) or a merge commit (the approved SHA is the ``main`` tip's
-    second parent, with ``main..develop`` distance zero -- the shape
-    "Create a merge commit" produces). A squash-merge or a stale merge
-    satisfies neither shape, while the mistake is still one revert
-    away.
+    head (see :func:`_sanctioned_shape_result`). A squash-merge or a
+    stale merge satisfies neither shape, while the mistake is still
+    one revert away.
 
     Args:
         path: The gate receipt written by :func:`write_gate_receipt`.
@@ -363,23 +416,52 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
     fetch_result = gh._run_git(["fetch", "--quiet", "origin", "main", "develop"])
     if not fetch_result.ok:
         raise RuntimeError(f"git fetch origin main develop failed: {fetch_result.stderr.strip()}")
-    ls_remote_result = gh._run_git(["ls-remote", "origin", "main"])
-    first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
-    main_sha = first_line.split()[0] if first_line.split() else ""
+    main_sha = _ls_remote_sha(gh, "main")
     second_parent = gh._run_git(["rev-parse", "origin/main^2"]).stdout.strip()
     distance = gh._run_git(["rev-list", "--count", "origin/main..origin/develop"]).stdout.strip()
-    verified = bool(expected_sha) and (
-        main_sha == expected_sha or (second_parent == expected_sha and distance == "0")
-    )
-    detail = (
-        "main tip matches the approved develop head"
-        if verified
-        else "main tip does not match the approved develop head -- squash or stale merge? "
-        "revert and re-merge as a merge commit"
-    )
-    return ReleaseVerifyResult(
-        verified=verified,
-        main_sha=main_sha,
+    return _sanctioned_shape_result(
         expected_sha=expected_sha,
-        detail=detail,
+        main_sha=main_sha,
+        second_parent=second_parent,
+        distance=distance,
+    )
+
+
+def verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
+    """Verify main's tip against the sanctioned shape using develop's live tip.
+
+    The receipt-free sibling of :func:`verify_release`: instead of
+    reading ``expected_sha`` back from a gate receipt that only ever
+    exists on the operator's own machine, it fetches ``origin/develop``
+    fresh and uses its live tip as the expected SHA -- so the check can
+    run unattended on a fresh CI checkout with no receipt file anywhere
+    on disk. Shares the shape comparison itself with
+    :func:`verify_release` through :func:`_sanctioned_shape_result`.
+
+    Args:
+        gh: A :class:`~repoach.review.gh_client.GhCli`-like wrapper used
+            for the ``git ls-remote``/``rev-parse``/``rev-list``
+            invocations.
+
+    Returns:
+        The assembled :class:`ReleaseVerifyResult`, with
+        ``expected_sha`` set to ``origin/develop``'s live tip rather
+        than a value read from any receipt file.
+
+    Raises:
+        RuntimeError: When ``git fetch origin main develop`` fails --
+            fail-closed, mirroring :func:`verify_release`.
+    """
+    fetch_result = gh._run_git(["fetch", "--quiet", "origin", "main", "develop"])
+    if not fetch_result.ok:
+        raise RuntimeError(f"git fetch origin main develop failed: {fetch_result.stderr.strip()}")
+    expected_sha = _ls_remote_sha(gh, "develop")
+    main_sha = _ls_remote_sha(gh, "main")
+    second_parent = gh._run_git(["rev-parse", "origin/main^2"]).stdout.strip()
+    distance = gh._run_git(["rev-list", "--count", "origin/main..origin/develop"]).stdout.strip()
+    return _sanctioned_shape_result(
+        expected_sha=expected_sha,
+        main_sha=main_sha,
+        second_parent=second_parent,
+        distance=distance,
     )

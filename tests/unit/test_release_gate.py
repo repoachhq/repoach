@@ -26,6 +26,7 @@ from repoach.review.release_gate import (
     compute_release_decision,
     gather_release_facts,
     verify_release,
+    verify_release_live,
     write_gate_receipt,
 )
 
@@ -553,3 +554,71 @@ def test_verify_release_fetches_stale_local_refs_before_merge_check(tmp_path: Pa
     result = verify_release(receipt_path, gh=gh)
 
     assert result.verified is True
+
+
+def test_verify_release_live_accepts_merge_commit_shape(tmp_path: Path) -> None:
+    """``verify_release_live`` verifies True on a sanctioned merge shape, no receipt.
+
+    Builds a real throwaway origin/work pair, seeds ``main`` with an
+    initial commit and ``develop`` with one extra commit, performs the
+    exact sanctioned ``git merge --no-ff`` shape onto ``main`` and
+    pushes -- then calls ``verify_release_live`` directly, without
+    ever writing a receipt file anywhere in the test.
+    """
+    _origin_dir, work_dir = _init_origin_and_work(tmp_path)
+
+    (work_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "chore: init")
+    _git(work_dir, "push", "-q", "-u", "origin", "main")
+
+    _git(work_dir, "switch", "-c", "develop")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1)")
+    _git(work_dir, "push", "-q", "-u", "origin", "develop")
+
+    _git(work_dir, "switch", "main")
+    _git(work_dir, "merge", "--no-ff", "-q", "-m", "Merge develop into main", "develop")
+    _git(work_dir, "push", "-q", "origin", "main")
+
+    gh = GhCli(cwd=work_dir)
+    result = verify_release_live(gh=gh)
+
+    assert result.verified is True
+    assert not (tmp_path / "release_gate_receipt.json").exists()
+
+
+def test_verify_release_live_rejects_squash_shape(tmp_path: Path) -> None:
+    """``verify_release_live`` verifies False on a squash-style advance of ``main``.
+
+    ``main`` advances by a plain commit that is neither
+    ``origin/develop``'s live tip nor a merge commit whose second
+    parent is that tip -- the shape a squash merge produces -- with no
+    receipt file involved at any point.
+    """
+    _origin_dir, work_dir = _init_origin_and_work(tmp_path)
+
+    (work_dir / "README.md").write_text("hello\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "chore: init")
+    _git(work_dir, "push", "-q", "-u", "origin", "main")
+
+    _git(work_dir, "switch", "-c", "develop")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1)")
+    _git(work_dir, "push", "-q", "-u", "origin", "develop")
+
+    _git(work_dir, "switch", "main")
+    (work_dir / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(work_dir, "add", "-A")
+    _git(work_dir, "commit", "-q", "-m", "Add feature (#1) (squashed)")
+    _git(work_dir, "push", "-q", "origin", "main")
+
+    gh = GhCli(cwd=work_dir)
+    result = verify_release_live(gh=gh)
+
+    assert result.verified is False
+    assert "squash" in result.detail or "stale" in result.detail
+    assert not (tmp_path / "release_gate_receipt.json").exists()
