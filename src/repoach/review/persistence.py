@@ -123,6 +123,18 @@ _pr_merges = Table(
 )
 
 
+_PERSISTED_JSON_TRUNCATE_CHARS = 32000
+"""Anti-bloat cap, in characters, on serialized JSON before a write to
+either ``pr_review_dialogue.payload_json`` (:func:`record_dialogue`) or
+``pr_coder_responses.fixes_json`` (:func:`record_coder_response`).
+
+Both columns are declared ``String`` with no length, which SQLAlchemy
+maps to an unbounded SQLite ``TEXT`` column — this constant is a
+hand-picked application-level cap, not an enforced database
+column-width limit.
+"""
+
+
 def _engine_for(db_path: Path):
     """Build a SQLAlchemy engine pointing at *db_path* (created if needed)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,7 +443,9 @@ def record_dialogue(
                 pr_number=pr_number,
                 round=round,
                 speaker=speaker,
-                payload_json=json.dumps(dict(payload), default=str)[:32000],
+                payload_json=json.dumps(dict(payload), default=str)[
+                    :_PERSISTED_JSON_TRUNCATE_CHARS
+                ],
                 created_at=recorded_at or datetime.now(UTC),
             )
         )
@@ -508,7 +522,7 @@ def record_coder_response(
                 model_used=model_used,
                 elapsed_s=elapsed_s,
                 tokens_used=tokens_used,
-                fixes_json=json.dumps(plan.get("fixes", []) or [])[:32000],
+                fixes_json=json.dumps(plan.get("fixes", []) or [])[:_PERSISTED_JSON_TRUNCATE_CHARS],
                 created_at=recorded_at or datetime.now(UTC),
             )
         )
