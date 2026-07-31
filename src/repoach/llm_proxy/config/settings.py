@@ -111,6 +111,9 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "CEREBRAS_API_KEY": "REPOACH_CEREBRAS_API_KEY",
     "DEEPSEEK_API_KEY": "REPOACH_DEEPSEEK_API_KEY",
     "ARTIFICIAL_ANALYSIS_API_KEY": "REPOACH_ARTIFICIAL_ANALYSIS_API_KEY",
+    "OPENAI_API_KEY": "REPOACH_OPENAI_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY": "REPOACH_OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_BASE_URL": "REPOACH_OPENAI_COMPATIBLE_BASE_URL",
     "BREAKER_ENABLED": "REPOACH_BREAKER_ENABLED",
     "BREAKER_TTL_S": "REPOACH_BREAKER_TTL_S",
     "BREAKER_TTL_TERMINAL_S": "REPOACH_BREAKER_TTL_TERMINAL_S",
@@ -141,6 +144,7 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "PORT": "REPOACH_PROXY_PORT",
     "LOG_FILE": "REPOACH_PROXY_LOG_FILE",
     "ANTHROPIC_AUTH_TOKEN": "REPOACH_ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY": "REPOACH_ANTHROPIC_API_KEY",
     "CHAINPILOT_APPLY_ENABLED": "REPOACH_CHAINPILOT_APPLY_ENABLED",
     "CHAINPILOT_MAX_MUTATIONS": "REPOACH_CHAINPILOT_MAX_MUTATIONS",
     "BREAKER_TTL_QUARANTINE_S": "REPOACH_BREAKER_TTL_QUARANTINE_S",
@@ -244,6 +248,15 @@ class Settings(BaseSettings):
     groq_api_key: str = Field(default="", validation_alias=_aliases("GROQ_API_KEY"))
     cerebras_api_key: str = Field(default="", validation_alias=_aliases("CEREBRAS_API_KEY"))
     deepseek_api_key: str = Field(default="", validation_alias=_aliases("DEEPSEEK_API_KEY"))
+
+    openai_api_key: str = Field(default="", validation_alias=_aliases("OPENAI_API_KEY"))
+    anthropic_api_key: str = Field(default="", validation_alias=_aliases("ANTHROPIC_API_KEY"))
+    openai_compatible_api_key: str = Field(
+        default="", validation_alias=_aliases("OPENAI_COMPATIBLE_API_KEY")
+    )
+    openai_compatible_base_url: str = Field(
+        default="", validation_alias=_aliases("OPENAI_COMPATIBLE_BASE_URL")
+    )
 
     artificial_analysis_api_key: str = Field(
         default="", validation_alias=_aliases("ARTIFICIAL_ANALYSIS_API_KEY")

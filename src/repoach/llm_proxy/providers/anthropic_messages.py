@@ -13,6 +13,7 @@ from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 81920
+ANTHROPIC_MESSAGES_API_VERSION = "2023-06-01"
 StreamChunkMode = Literal["line", "event"]
 
 
@@ -44,8 +45,19 @@ class AnthropicMessagesTransport(BaseProvider):
         await self._client.aclose()
 
     def _request_headers(self) -> dict[str, str]:
-        """Return headers for the native messages request."""
-        return {"Content-Type": "application/json"}
+        """Return headers for the native messages request.
+
+        The default shape authenticates against a genuine Anthropic
+        Messages endpoint (``x-api-key`` + ``anthropic-version``) — the
+        credential-bearing header shape a direct ``anthropic`` provider
+        needs. Subclasses whose upstream expects a different auth scheme
+        (e.g. OpenRouter's ``Authorization: Bearer``) override this.
+        """
+        return {
+            "Content-Type": "application/json",
+            "x-api-key": self._api_key,
+            "anthropic-version": ANTHROPIC_MESSAGES_API_VERSION,
+        }
 
     def _build_request_body(self, request: Any) -> dict:
         """Build a native Anthropic request body."""
