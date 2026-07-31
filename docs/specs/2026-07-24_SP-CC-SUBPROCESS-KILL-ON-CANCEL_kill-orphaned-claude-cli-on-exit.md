@@ -12,7 +12,7 @@ owns:
     - tests/unit/test_claude_code_client_kill_on_cancel.py
   resources: []
 
-depends_on: [SP-CC-SYSPROMPT-FILE, SP-PROCESS-REGISTRY-WIRE]
+depends_on: [SP-CC-SYSPROMPT-FILE, SP-PROCESS-REGISTRY-WIRE, SP-PROVIDER-INIT-DEDUP]
 provides_to: []
 
 constraints: {}
@@ -81,6 +81,11 @@ Finding #8 (implementable findings sweep), re-verified live against
   frontmatter (`owns.code: []` on both); this spec is an in-place
   addition to the same block, tracked as a dependency rather than a
   claimed file per the existing convention on this module.
+- Implementation reconciliation: the promised test file imports
+  `ProviderConfig` from `providers/base.py`, which
+  SP-PROVIDER-INIT-DEDUP owns; `SP-ARCH-EDGE-GATE` flagged the
+  undeclared edge at commit time, so `SP-PROVIDER-INIT-DEDUP` was
+  added to `depends_on` alongside the two above.
 
 This is a live resource/cost leak today — independent of any future
 hedging work — and it is the concrete blocker for ever safely
