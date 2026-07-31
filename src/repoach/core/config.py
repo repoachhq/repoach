@@ -270,6 +270,26 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
+    def _anchor_relative_db_path(self) -> Settings:
+        """Anchor a relative ``db_path`` against :func:`_repo_root`.
+
+        Mirrors ``_anchored_env_files``: a bare relative value (the
+        built-in default or an operator-supplied relative
+        ``REPOACH_DB_PATH`` override) must resolve identically
+        regardless of the process's current working directory. An
+        already-absolute value (the CI shape) passes through
+        untouched.
+
+        Returns:
+            The same :class:`Settings` instance, with ``db_path``
+            replaced by its anchored, resolved, absolute form when it
+            started out relative.
+        """
+        if not self.db_path.is_absolute():
+            self.db_path = (_repo_root() / self.db_path).resolve()
+        return self
+
+    @model_validator(mode="after")
     def require_llm_proxy_base_url(self) -> Settings:
         """Fail loud instead of silently defaulting the proxy base URL.
 
