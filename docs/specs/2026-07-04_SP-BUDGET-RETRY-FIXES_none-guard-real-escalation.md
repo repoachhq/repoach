@@ -5,13 +5,13 @@ version: 0.1
 status: approved
 author: jfaye (thinking-handling audit, 2026-07-04)
 created: 2026-07-04
-updated: 2026-07-23
+updated: 2026-07-31
 
 owns:
   code: [src/repoach/llm_proxy/api/services.py]
   resources: []
 
-depends_on: [SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROXY-STATE-PERSIST]
+depends_on: [SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROXY-STATE-PERSIST, SP-PROVIDER-INIT-DEDUP]
 provides_to: []
 
 constraints: {}

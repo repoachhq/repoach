@@ -436,6 +436,116 @@ class ClaudeProxyService:
             wall_clock_now=datetime.now(UTC),
         )
 
+    def _record_completion_outcome(
+        self,
+        ref: ModelRef,
+        latency_s: float,
+        output_tokens: int | None,
+        *,
+        dispatch_id: str,
+        request_id: str,
+        candidate: ResolvedModel,
+        attempt_index: int,
+        prior_failures: list[tuple[str, str]],
+        budget_retry: bool,
+    ) -> None:
+        """Apply the slow-strike completion-outcome policy to one content-bearing attempt.
+
+        Shared by both the primary success path and the budget-retry
+        success path of :meth:`_stream_with_failover` (SP-BREAKER-SLOW-STRIKE):
+        :func:`is_slow_completion` classifies *latency_s*/*output_tokens*,
+        :meth:`BreakerState.record_success` folds that outcome into
+        *ref*'s k-of-n slow-success window, and a window that reaches
+        ``breaker_slow_k`` either logs ``breaker_slow_strike_shadow``
+        (shadow mode) or trips *ref* via :meth:`BreakerState.trip_slow`;
+        otherwise the attempt logs ``breaker_slow_strike``. A not-slow
+        attempt recovers the breaker and persists that state.
+
+        The two call sites differ only in whether/how
+        ``proxy_chain_failover_recovered`` fires, captured here by
+        *budget_retry* (SP-SLOW-STRIKE-OUTCOME-DEDUP): the primary path
+        (``budget_retry=False``) logs it unconditionally whenever
+        ``attempt_index > 0``, regardless of the slow/not-slow outcome
+        above; the budget-retry path (``budget_retry=True``) logs it
+        only from the not-slow branch, with an extra ``budget_retry=True``
+        field — both asymmetries are preserved exactly as they existed
+        before this method was extracted.
+        """
+        slow = is_slow_completion(
+            latency_s,
+            output_tokens,
+            gate_s=self._settings.breaker_slow_latency_gate_s,
+            tps_floor=self._settings.breaker_slow_tps_floor,
+        )
+        if slow:
+            should_trip = get_breaker().record_success(
+                ref,
+                True,
+                k=self._settings.breaker_slow_k,
+                n=self._settings.breaker_slow_n,
+            )
+            if should_trip:
+                if self._settings.breaker_slow_shadow:
+                    logger.warning(
+                        "breaker_slow_strike_shadow",
+                        ref=str(ref),
+                        latency_s=latency_s,
+                        output_tokens=output_tokens,
+                        would_trip=True,
+                    )
+                else:
+                    get_breaker().trip_slow(
+                        ref,
+                        now=time.monotonic(),
+                        ttl_s=self._settings.breaker_slow_ttl_s,
+                    )
+                    self._persist_breaker_state(ref)
+            else:
+                logger.warning(
+                    "breaker_slow_strike",
+                    ref=str(ref),
+                    latency_s=latency_s,
+                    output_tokens=output_tokens,
+                    strikes=sum(1 for v in get_breaker()._slow_history.get(ref, []) if v),
+                )
+            if not budget_retry and attempt_index > 0:
+                logger.info(
+                    "proxy_chain_failover_recovered",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    served_by=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    earlier_failures=attempt_index,
+                    prior_failures=prior_failures,
+                    latency_s=latency_s,
+                )
+        else:
+            get_breaker().recover(ref)
+            self._persist_breaker_state(ref)
+            if budget_retry:
+                logger.info(
+                    "proxy_chain_failover_recovered",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    served_by=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    earlier_failures=attempt_index,
+                    prior_failures=prior_failures,
+                    latency_s=latency_s,
+                    budget_retry=True,
+                )
+            elif attempt_index > 0:
+                logger.info(
+                    "proxy_chain_failover_recovered",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    served_by=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    earlier_failures=attempt_index,
+                    prior_failures=prior_failures,
+                    latency_s=latency_s,
+                )
+
     async def _stream_with_failover(
         self,
         original_request: MessagesRequest,
@@ -469,19 +579,20 @@ class ClaudeProxyService:
 
         Both the primary success path and the budget-retry success path
         (SP-BREAKER-SLOW-STRIKE) apply the same recover-or-strike policy
-        to every content-bearing completion: :func:`is_slow_completion`
-        classifies the attempt from its full-completion latency and
-        final output tokens, :meth:`BreakerState.record_success` folds
-        that outcome into the ref's k-of-n slow-success window, and a
-        window that reaches ``breaker_slow_k`` either logs
-        ``breaker_slow_strike_shadow`` (shadow mode) or trips the ref
-        via :meth:`BreakerState.trip_slow` for ``breaker_slow_ttl_s`` —
-        a dedicated cool-down that never escalates through
-        ``_consecutive_failures``. This is a deliberate divergence from
-        the offline-probe doctrine (`slowness is not a fault`,
-        ``providers/attribution.py``): live dispatch protects the
-        caller waiting on the wire, so a slow-but-served completion is
-        a strike, not recovery evidence.
+        to every content-bearing completion, implemented once by
+        :meth:`_record_completion_outcome` (SP-SLOW-STRIKE-OUTCOME-DEDUP):
+        :func:`is_slow_completion` classifies the attempt from its
+        full-completion latency and final output tokens,
+        :meth:`BreakerState.record_success` folds that outcome into the
+        ref's k-of-n slow-success window, and a window that reaches
+        ``breaker_slow_k`` either logs ``breaker_slow_strike_shadow``
+        (shadow mode) or trips the ref via :meth:`BreakerState.trip_slow`
+        for ``breaker_slow_ttl_s`` — a dedicated cool-down that never
+        escalates through ``_consecutive_failures``. This is a
+        deliberate divergence from the offline-probe doctrine
+        (`slowness is not a fault`, ``providers/attribution.py``): live
+        dispatch protects the caller waiting on the wire, so a
+        slow-but-served completion is a strike, not recovery evidence.
 
         SP-CHAIN-REQUEST-BUDGET wraps the whole walk in a single
         wall-clock deadline (``settings.dispatch_total_budget_s``,
@@ -634,57 +745,17 @@ class ClaudeProxyService:
 
             if peek.got_content:
                 ref = ModelRef.parse(candidate.provider_model_ref)
-                slow = is_slow_completion(
+                self._record_completion_outcome(
+                    ref,
                     attempt_latency_s,
                     peek.final_output_tokens,
-                    gate_s=self._settings.breaker_slow_latency_gate_s,
-                    tps_floor=self._settings.breaker_slow_tps_floor,
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    candidate=candidate,
+                    attempt_index=attempt_index,
+                    prior_failures=prior_failures,
+                    budget_retry=False,
                 )
-                if slow:
-                    should_trip = get_breaker().record_success(
-                        ref,
-                        True,
-                        k=self._settings.breaker_slow_k,
-                        n=self._settings.breaker_slow_n,
-                    )
-                    if should_trip:
-                        if self._settings.breaker_slow_shadow:
-                            logger.warning(
-                                "breaker_slow_strike_shadow",
-                                ref=str(ref),
-                                latency_s=attempt_latency_s,
-                                output_tokens=peek.final_output_tokens,
-                                would_trip=True,
-                            )
-                        else:
-                            get_breaker().trip_slow(
-                                ref,
-                                now=time.monotonic(),
-                                ttl_s=self._settings.breaker_slow_ttl_s,
-                            )
-                            self._persist_breaker_state(ref)
-                    else:
-                        logger.warning(
-                            "breaker_slow_strike",
-                            ref=str(ref),
-                            latency_s=attempt_latency_s,
-                            output_tokens=peek.final_output_tokens,
-                            strikes=sum(1 for v in get_breaker()._slow_history.get(ref, []) if v),
-                        )
-                else:
-                    get_breaker().recover(ref)
-                    self._persist_breaker_state(ref)
-                if attempt_index > 0:
-                    logger.info(
-                        "proxy_chain_failover_recovered",
-                        dispatch_id=dispatch_id,
-                        request_id=request_id,
-                        served_by=candidate.provider_model_ref,
-                        attempt=attempt_index + 1,
-                        earlier_failures=attempt_index,
-                        prior_failures=prior_failures,
-                        latency_s=attempt_latency_s,
-                    )
                 for buffered_chunk in peek.buffered:
                     yield buffered_chunk
                 async for chunk in stream:
@@ -703,59 +774,17 @@ class ClaudeProxyService:
                 if retry_peek is not None and retry_peek.got_content:
                     retry_latency_s = round(time.monotonic() - attempt_started, 3)
                     ref = ModelRef.parse(candidate.provider_model_ref)
-                    slow = is_slow_completion(
+                    self._record_completion_outcome(
+                        ref,
                         retry_latency_s,
                         retry_peek.final_output_tokens,
-                        gate_s=self._settings.breaker_slow_latency_gate_s,
-                        tps_floor=self._settings.breaker_slow_tps_floor,
+                        dispatch_id=dispatch_id,
+                        request_id=request_id,
+                        candidate=candidate,
+                        attempt_index=attempt_index,
+                        prior_failures=prior_failures,
+                        budget_retry=True,
                     )
-                    if slow:
-                        should_trip = get_breaker().record_success(
-                            ref,
-                            True,
-                            k=self._settings.breaker_slow_k,
-                            n=self._settings.breaker_slow_n,
-                        )
-                        if should_trip:
-                            if self._settings.breaker_slow_shadow:
-                                logger.warning(
-                                    "breaker_slow_strike_shadow",
-                                    ref=str(ref),
-                                    latency_s=retry_latency_s,
-                                    output_tokens=retry_peek.final_output_tokens,
-                                    would_trip=True,
-                                )
-                            else:
-                                get_breaker().trip_slow(
-                                    ref,
-                                    now=time.monotonic(),
-                                    ttl_s=self._settings.breaker_slow_ttl_s,
-                                )
-                                self._persist_breaker_state(ref)
-                        else:
-                            logger.warning(
-                                "breaker_slow_strike",
-                                ref=str(ref),
-                                latency_s=retry_latency_s,
-                                output_tokens=retry_peek.final_output_tokens,
-                                strikes=sum(
-                                    1 for v in get_breaker()._slow_history.get(ref, []) if v
-                                ),
-                            )
-                    else:
-                        get_breaker().recover(ref)
-                        self._persist_breaker_state(ref)
-                        logger.info(
-                            "proxy_chain_failover_recovered",
-                            dispatch_id=dispatch_id,
-                            request_id=request_id,
-                            served_by=candidate.provider_model_ref,
-                            attempt=attempt_index + 1,
-                            earlier_failures=attempt_index,
-                            prior_failures=prior_failures,
-                            latency_s=retry_latency_s,
-                            budget_retry=True,
-                        )
                     for buffered_chunk in retry_peek.buffered:
                         yield buffered_chunk
                     return
