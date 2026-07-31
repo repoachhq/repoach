@@ -37,7 +37,7 @@ from .planner_telemetry import record_planner_attempt
 from .planner_tools import make_planner_tools
 from .reviewer import BotRole
 from .spec import load_spec
-from .spec_gate import selector_present
+from .spec_gate import audit_plan_selectors
 
 _log = get_logger(__name__)
 
@@ -112,28 +112,7 @@ def _check_promised_selectors(plan: ActionPlan, repo_root: Path) -> str | None:
         ``None`` when all selectors are valid; otherwise a directive
         message listing each offending selector and the two remedies.
     """
-    offenders: list[str] = []
-    for step in plan.steps:
-        for selector in step.unit_tests:
-            file_part, _, node = selector.partition("::")
-            target = repo_root / file_part
-            if not target.is_file():
-                continue
-            if selector_present(repo_root, selector):
-                continue
-            if node and node in step.action:
-                continue
-            offenders.append(selector)
-    for selector in plan.integration_tests:
-        file_part, _, node = selector.partition("::")
-        target = repo_root / file_part
-        if not target.is_file():
-            continue
-        if selector_present(repo_root, selector):
-            continue
-        # Integration tests are not tied to a single step's action,
-        # so the "declared creation" remedy does not apply here.
-        offenders.append(selector)
+    offenders = audit_plan_selectors(plan, repo_root)
     if not offenders:
         return None
     remedies = (

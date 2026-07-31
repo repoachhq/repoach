@@ -67,7 +67,7 @@ from .plan import ActionPlan, PlanStep, load_plan, plan_relpath
 from .reviewer import Developer
 from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
-from .spec_gate import promised_present, selector_present
+from .spec_gate import audit_plan_selectors, promised_present, selector_present
 from .spec_supersede import supersede_parent_on_decompose
 from .wrapup_attribution import StepCommit, attribute_failure_to_step
 
@@ -535,7 +535,14 @@ def load_or_produce_plan(
     ``docs/plans/<SP-ID>.md`` wins (the operator or a previous Planner
     session wrote it); otherwise one Planner session runs. Both paths
     re-read through :func:`load_plan` so the executor only ever
-    consumes a validated document.
+    consumes a validated document. The existing-plan-doc branch also
+    re-audits the loaded document's promised selectors against the
+    tree at head (:func:`~repoach.review.spec_gate.audit_plan_selectors`)
+    before handing it to step execution — a document produced fresh by
+    the Planner already passed the same check inside its own refine
+    loop, but a previously-committed document (a resumed session, or a
+    plan hand-consolidated outside that loop) was trusted verbatim
+    until now (SP-PLAN-SELECTOR-AUDIT-WIRE).
 
     Args:
         spec: Loaded spec the session runs for.
@@ -551,11 +558,16 @@ def load_or_produce_plan(
         ``(plan, error)`` — exactly one side is set.
     """
     try:
-        return load_plan(spec.id, root=repo_root), None
+        loaded = load_plan(spec.id, root=repo_root)
     except FileNotFoundError:
         _log.info("dev_runner.plan_absent_producing", spec_id=spec.id)
     except ValueError as exc:
         return None, f"committed plan is invalid: {str(exc)[:300]}"
+    else:
+        offenders = audit_plan_selectors(loaded, repo_root)
+        if offenders:
+            return None, f"committed plan has orphaned promised selectors: {offenders}"
+        return loaded, None
 
     from .planner import run_planner_session
 

@@ -170,6 +170,51 @@ def selector_present(repo_root: Path, selector: str) -> bool:
     return promised_present(repo_root, selector)
 
 
+def audit_plan_selectors(plan: ActionPlan, repo_root: Path) -> list[str]:
+    """Return every promised selector orphaned relative to the tree at head.
+
+    A selector is orphaned when its file already exists at *repo_root*
+    but the selector does not satisfy :func:`selector_present` and,
+    for a step-scoped selector, its node id is not declared verbatim in
+    the promising step's ``action`` text. A selector whose file does
+    not yet exist is exempt — the file is an undelivered deliverable,
+    not a drift. Checks every ``step.unit_tests`` entry and every
+    ``plan.integration_tests`` entry (plan-level selectors have no
+    declared-creation exemption, matching the existing planner-time
+    check).
+
+    Args:
+        plan: The plan whose promised selectors to audit.
+        repo_root: Repository root the selectors resolve against.
+
+    Returns:
+        The offending selectors, in plan order; empty when every
+        promised selector is either undelivered-and-exempt or
+        satisfied/declared.
+    """
+    offenders: list[str] = []
+    for step in plan.steps:
+        for selector in step.unit_tests:
+            file_part, _, node = selector.partition("::")
+            target = repo_root / file_part
+            if not target.is_file():
+                continue
+            if selector_present(repo_root, selector):
+                continue
+            if node and node in step.action:
+                continue
+            offenders.append(selector)
+    for selector in plan.integration_tests:
+        file_part, _, node = selector.partition("::")
+        target = repo_root / file_part
+        if not target.is_file():
+            continue
+        if selector_present(repo_root, selector):
+            continue
+        offenders.append(selector)
+    return offenders
+
+
 def _body_is_trivial(body: list[ast.stmt]) -> bool:
     """Return whether every statement in *body* is a no-op placeholder.
 
