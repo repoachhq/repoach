@@ -13,6 +13,7 @@ owns:
 
 depends_on:
   - SP-CHAINPILOT-DECISION          # PlannedMutation / MutationKind (3b)
+  - SP-SCHEMA-INIT-RACE-GENERALIZE  # audit_log.py routes create_all through the shared helper
 
 provides_to: []                  # AUTO-maintained (consumed by SP-CHAINPILOT-APPLY, 3d)
 constraints: {}

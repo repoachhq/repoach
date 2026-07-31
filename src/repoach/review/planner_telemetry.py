@@ -43,6 +43,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
+from ..core.sqlite_schema_init import ensure_schema_created
 
 logger = get_logger(__name__)
 
@@ -74,7 +75,7 @@ def init_planner_telemetry_schema(db_path: Path) -> None:
     entries here.
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     _migrate_missing_columns(engine)
 
 

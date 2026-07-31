@@ -35,6 +35,7 @@ from sqlalchemy import (
     select,
 )
 
+from repoach.core.sqlite_schema_init import ensure_schema_created
 from repoach.review.decision import PlannedMutation
 
 _metadata = MetaData()
@@ -76,7 +77,7 @@ def _engine_for(db_path: Path):
 def init_audit_schema(db_path: Path) -> None:
     """Create the ``chain_mutation_log`` table if it does not exist (idempotent)."""
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
 
 
 @dataclass(frozen=True)

@@ -40,6 +40,7 @@ from sqlalchemy import (
 )
 
 from ..core.logging import get_logger
+from ..core.sqlite_schema_init import ensure_schema_created
 from .hallucination_guard import GuardEvent
 from .reviewer import ReviewerOutcome
 
@@ -139,7 +140,7 @@ def init_schema(db_path: Path) -> None:
     post-creation (SQLite has no DDL-versioning).
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     _migrate_missing_columns(engine)
     _drop_retired_columns(engine)
 
@@ -443,7 +444,7 @@ def fetch_dialogue(
         recorded for this PR.
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     stmt = (
         select(_pr_review_dialogue)
         .where(_pr_review_dialogue.c.pr_number == pr_number)

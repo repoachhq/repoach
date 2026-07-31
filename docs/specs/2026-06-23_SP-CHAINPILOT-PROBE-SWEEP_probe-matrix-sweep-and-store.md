@@ -19,6 +19,7 @@ depends_on:
   - SP-CHAINPILOT-MATRIX           # consumes ProviderModelMatrix / ModelCell (1b)
   - SP-PROVIDER-TRANSPORT-SPI      # resolves (base_url, api_key) via build_provider_config (registry.py)
   - SP-HEALTH-STORE-NEUTRALIZE     # reuses the neutral STATUS_ERROR for the no-credential cell
+  - SP-SCHEMA-INIT-RACE-GENERALIZE # cell_probe_store.py routes create_all through the shared helper
 
 provides_to: []                    # AUTO-maintained
 constraints: {}
