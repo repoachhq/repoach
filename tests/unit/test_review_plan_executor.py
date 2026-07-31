@@ -192,6 +192,30 @@ class TestLoadOrGeneratePlan:
         assert loaded == plan
         assert (repo / plan_relpath(_SPEC_ID)).is_file()
 
+    def test_existing_plan_with_orphaned_selector_fails_loud(self, tmp_path: Path) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        _seed_plan(repo, plan)
+        (repo / "tests" / "unit" / "test_mini.py").write_text("x = 1\n", encoding="utf-8")
+        from repoach.review.spec import load_spec
+
+        spec = load_spec(_SPEC_ID, root=repo)
+
+        loaded, error = load_or_produce_plan(spec, repo_root=repo)
+
+        assert loaded is None
+        assert error is not None
+        assert "tests/unit/test_mini.py::test_value" in error
+
+        (repo / "tests" / "unit" / "test_mini.py").write_text(
+            "def test_value() -> None:\n    assert 1 == 1\n", encoding="utf-8"
+        )
+
+        loaded, error = load_or_produce_plan(spec, repo_root=repo)
+
+        assert error is None
+        assert loaded == plan
+
     def test_planning_failure_is_loud(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
         from repoach.review.spec import load_spec

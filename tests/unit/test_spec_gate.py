@@ -16,6 +16,7 @@ from repoach.review.plan import ActionPlan, PlanStep, render_plan_markdown
 from repoach.review.spec_gate import (
     BaseRefUnavailableError,
     acceptance_selectors,
+    audit_plan_selectors,
     compute_spec_coverage,
     fetch_spec_coverage,
     init_spec_coverage_schema,
@@ -164,6 +165,63 @@ def test_promised_present_word_boundary(tmp_path: Path) -> None:
 
     (tmp_path / "tests" / "test_empty.py").write_text("x = 1\n", encoding="utf-8")
     assert promised_present(tmp_path, "tests/test_empty.py::test_foo") is False
+
+
+def test_audit_plan_selectors_flags_selector_whose_file_exists_but_def_absent(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "test_a.py").write_text("x = 1\n", encoding="utf-8")
+    plan = _plan(
+        unit_tests=["tests/unit/test_a.py::test_missing"],
+        integration_tests=["tests/integration/test_flow.py::test_flow"],
+    )
+
+    offenders = audit_plan_selectors(plan, tmp_path)
+
+    assert offenders == ["tests/unit/test_a.py::test_missing"]
+
+
+def test_audit_plan_selectors_exempts_selector_declared_in_step_action(tmp_path: Path) -> None:
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "test_a.py").write_text("x = 1\n", encoding="utf-8")
+    step = PlanStep(
+        index=1,
+        title="Do the step",
+        files=[
+            "src/repoach/foo.py",
+            "tests/unit/test_a.py",
+            "tests/integration/test_flow.py",
+        ],
+        action="Create test_missing in test_a.py.",
+        commit_message="feat(foo): step",
+        done_when="gates green",
+        unit_tests=["tests/unit/test_a.py::test_missing"],
+    )
+    plan = ActionPlan(
+        spec_id="SP-FOO",
+        title="Sample",
+        summary="One step.",
+        steps=[step],
+        integration_tests=["tests/integration/test_flow.py::test_flow"],
+    )
+
+    offenders = audit_plan_selectors(plan, tmp_path)
+
+    assert offenders == []
+
+
+def test_audit_plan_selectors_exempts_selector_in_undelivered_file(tmp_path: Path) -> None:
+    (tmp_path / "tests" / "integration").mkdir(parents=True)
+    (tmp_path / "tests" / "integration" / "test_flow.py").write_text("x = 1\n", encoding="utf-8")
+    plan = _plan(
+        unit_tests=["tests/unit/test_missing_file.py::test_new"],
+        integration_tests=["tests/integration/test_flow.py::test_flow"],
+    )
+
+    offenders = audit_plan_selectors(plan, tmp_path)
+
+    assert offenders == ["tests/integration/test_flow.py::test_flow"]
 
 
 def test_compute_coverage_fully_covered(tmp_path: Path) -> None:
