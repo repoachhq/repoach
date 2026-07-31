@@ -17,6 +17,7 @@ from ..arch.cli import arch_app
 from ..core.logging import configure_logging
 from ..lint import edge_honesty
 from .chain_status import chain_status
+from .init_cmds import init
 from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
 
@@ -51,6 +52,7 @@ app.add_typer(arch_app, name="arch")
 app.command(name="develop")(review_develop)
 app.command(name="plan")(review_plan)
 app.command(name="chain-status")(chain_status)
+app.command(name="init")(init)
 
 
 @app.callback()
