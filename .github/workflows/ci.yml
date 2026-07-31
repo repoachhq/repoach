@@ -32,8 +32,8 @@ jobs:
     # as collaborators are added — mirrors auto-review.yml.
     if: >-
       github.event_name != 'pull_request'
-      || contains(fromJSON('["jwfaye"]'), github.actor)
-    runs-on: self-hosted
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     strategy:
       fail-fast: false
       matrix:
