@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -26,6 +27,7 @@ from ..review.release_gate import (
     compute_release_decision,
     gather_release_facts,
     verify_release,
+    verify_release_live,
     write_gate_receipt,
 )
 
@@ -95,13 +97,29 @@ def release_gate(
 
 
 @release_app.command("verify")
-def release_verify() -> None:
+def release_verify(
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live",
+            help=(
+                "Skip the local gate receipt; compare against origin/develop's "
+                "live tip instead (the mode the push-triggered CI check uses)."
+            ),
+        ),
+    ] = False,
+) -> None:
     """Verify the live ``main`` tip matches the release the gate approved.
 
-    Reads back the receipt written by ``repoach release gate`` and
-    compares its recorded ``develop_sha`` against the live
-    ``origin/main`` tip. A squash-merge or a stale merge diverges the
-    two SHAs immediately, while the mistake is still one revert away.
+    Without ``--live``, reads back the receipt written by
+    ``repoach release gate`` and compares its recorded ``develop_sha``
+    against the live ``origin/main`` tip -- the operator's manual
+    post-merge check, unchanged. With ``--live``, skips the receipt
+    entirely and compares against ``origin/develop``'s live tip
+    instead, so a fresh CI checkout with no receipt file on disk can
+    still run the check (the mode the push-triggered workflow uses). A
+    squash-merge or a stale merge diverges the two SHAs immediately,
+    while the mistake is still one revert away.
 
     Exit codes:
       * ``0`` -- verified: ``main`` tip matches the approved release.
@@ -111,7 +129,7 @@ def release_verify() -> None:
     """
     gh = GhCli(cwd=_repo_root())
     try:
-        result = verify_release(_RECEIPT_PATH, gh=gh)
+        result = verify_release_live(gh=gh) if live else verify_release(_RECEIPT_PATH, gh=gh)
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc
