@@ -143,8 +143,18 @@ async def probe_nim_model(
     try:
         content = _extract_content(resp.json())
     except ValueError as exc:
-        detail = f"json_decode: {type(exc).__name__}"
-        _log.warning("nim_chain_probe_unparseable", tier=tier, model=model, detail=detail)
+        body_snippet = redact_secret(resp.text, api_key, limit=200)
+        detail = (
+            f"json_decode: {type(exc).__name__} status={resp.status_code} body={body_snippet!r}"
+        )
+        _log.warning(
+            "nim_chain_probe_unparseable",
+            tier=tier,
+            model=model,
+            status_code=resp.status_code,
+            body_snippet=body_snippet,
+            detail=detail,
+        )
         return ModelHealth(tier, model, STATUS_ERROR, latency_s, 0, detail)
     status = classify(resp.status_code, latency_s, content, slow_threshold_s=slow_threshold_s)
     detail = content.strip()[:40] if content.strip() else f"http={resp.status_code}"
