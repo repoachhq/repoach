@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/cli/chain_status.py]
   resources: []
 
-depends_on: [SP-CREDITS-CHECK, SP-HEALTH-STORE-NEUTRALIZE, SP-CHAINPILOT-PROBE-SWEEP]
+depends_on: [SP-CREDITS-CHECK, SP-HEALTH-STORE-NEUTRALIZE, SP-CHAINPILOT-PROBE-SWEEP, SP-PROXY-FIRST-BYTE-DEADLINE]
 provides_to: []
 
 constraints:

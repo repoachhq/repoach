@@ -182,8 +182,10 @@ def chain_status(
     db_path: str | None = typer.Option(
         None, "--db-path", help="Override the SQLite path (default: the review DB)."
     ),
-    proxy_url: str = typer.Option(
-        "http://127.0.0.1:8082", "--proxy-url", help="Base URL of the running llm_proxy."
+    proxy_url: str | None = typer.Option(
+        None,
+        "--proxy-url",
+        help="Base URL of the running llm_proxy (default: settings host:port).",
     ),
 ) -> None:
     """Print the chain-status digest and always exit 0.
@@ -200,11 +202,12 @@ def chain_status(
     settings = LSettings()
     window = window_hours if window_hours is not None else settings.chain_status_window_h
     target_db = db_path if db_path else get_settings().db_path
+    target_proxy_url = proxy_url if proxy_url else f"http://{settings.host}:{settings.port}"
 
     async def _run() -> str:
         async with httpx.AsyncClient() as client:
             return await build_chain_status(
-                target_db, window, proxy_url=proxy_url, client=client, settings=settings
+                target_db, window, proxy_url=target_proxy_url, client=client, settings=settings
             )
 
     try:
