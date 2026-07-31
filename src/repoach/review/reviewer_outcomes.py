@@ -31,17 +31,15 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from .findings import FindingStatus, fetch_all_findings, init_findings_schema
+from .findings import (
+    CONFIRMED_REAL_STATUSES,
+    FindingStatus,
+    fetch_all_findings,
+    init_findings_schema,
+)
 from .persistence import _engine_for, _pr_reviews, init_schema
 
-_CONFIRMED_REAL: frozenset[FindingStatus] = frozenset(
-    {
-        FindingStatus.VERIFIED,
-        FindingStatus.OPEN,
-        FindingStatus.RESOLVED,
-        FindingStatus.STUCK,
-    }
-)
+_CONFIRMED_REAL = CONFIRMED_REAL_STATUSES
 """Statuses downstream of VERIFIED — the finding was confirmed a real problem.
 
 Mirrors slice 11's ``review_lessons._CONFIRMED_REAL`` so the per-model precision

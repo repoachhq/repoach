@@ -65,6 +65,14 @@ never silently fall outside what the merge gate counts as an open
 blocking finding.
 """
 
+MECHANICAL_CLAIM_TYPES = frozenset(
+    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
+)
+"""Claim types resolved by a mechanical on-disk re-check rather than
+adversarial judging. The single source of truth (mirrors
+JUDGED_CLAIM_TYPES): merge_gate and coder_findings both import this
+constant rather than keeping their own copies."""
+
 
 class Severity(StrEnum):
     """Severity level of a finding."""
@@ -82,6 +90,15 @@ class FindingStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
     STUCK = "stuck"
+
+
+CONFIRMED_REAL_STATUSES: frozenset[FindingStatus] = frozenset(
+    {FindingStatus.VERIFIED, FindingStatus.OPEN, FindingStatus.RESOLVED, FindingStatus.STUCK}
+)
+"""Statuses downstream of VERIFIED — the finding was confirmed a real
+problem. The single source of truth: reviewer_outcomes and
+review_lessons both import this constant rather than keeping their own
+copies."""
 
 
 ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
