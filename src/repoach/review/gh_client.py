@@ -873,3 +873,65 @@ class GhCli:
         except json.JSONDecodeError as exc:
             _log.warning("gh_client.list_open_prs_decode_failed", error=str(exc)[:200])
             return []
+
+    def merged_pr_merge_shas(self, base: str) -> set[str]:
+        """Return every merge-commit SHA GitHub reports for PRs merged into *base*.
+
+        Wraps ``gh pr list --state merged --base <base> --json
+        mergeCommitOid`` -- read-only, issues no merge or push
+        operation. For a squash-merge, a PR's ``mergeCommitOid`` is
+        exactly the resulting commit SHA landed on *base*, so this set
+        is the GitHub-verified equivalent of the ``pr_merges.merged_sha``
+        ledger (SP-RELEASE-PROVENANCE-GH-FALLBACK): feeding it to
+        :func:`repoach.review.release_gate.classify_release_range_against_ledger`
+        verifies release-range provenance without the SQLite ledger.
+
+        Args:
+            base: The base branch merged PRs are listed against (the
+                integration branch, e.g. ``"develop"``).
+
+        Returns:
+            The set of non-empty ``mergeCommitOid`` values GitHub
+            reports. Empty when no PR has merged into *base* yet, the
+            API call failed, or the response could not be decoded.
+        """
+        res = self._run(
+            [
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--base",
+                base,
+                "--json",
+                "mergeCommitOid",
+                "--limit",
+                "500",
+            ]
+        )
+        if not res.ok:
+            _log.warning(
+                "gh_client.merged_pr_merge_shas_failed",
+                base=base,
+                stderr=res.stderr[:200],
+            )
+            return set()
+        try:
+            data = json.loads(res.stdout) if res.stdout.strip() else []
+        except json.JSONDecodeError as exc:
+            _log.warning(
+                "gh_client.merged_pr_merge_shas_decode_failed",
+                base=base,
+                error=str(exc)[:200],
+            )
+            return set()
+        if not isinstance(data, list):
+            return set()
+        merge_shas: set[str] = set()
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            sha = entry.get("mergeCommitOid")
+            if isinstance(sha, str) and sha:
+                merge_shas.add(sha)
+        return merge_shas

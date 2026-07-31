@@ -24,6 +24,7 @@ import typer
 from ..core.config import get_settings
 from ..review.gh_client import GhCli
 from ..review.release_gate import (
+    ProvenanceSource,
     compute_release_decision,
     gather_release_facts,
     verify_release,
@@ -38,6 +39,23 @@ release_app = typer.Typer(
 
 _RECEIPT_PATH = Path("tmp/release_gate_receipt.json")
 
+_PROVENANCE_OPTION = typer.Option(
+    ProvenanceSource.LEDGER,
+    "--provenance",
+    help=(
+        "Release-range provenance source: 'ledger' (default, the "
+        "pr_merges SQLite ledger populated by the factory merge path) "
+        "or 'github' (gh pr list --state merged, for the control-tower "
+        "manual-merge regime where the ledger stays empty)."
+    ),
+)
+"""Module-level singleton (SP-RELEASE-PROVENANCE-GH-FALLBACK): ruff's B008
+flags a ``typer.Option(...)`` call in an enum-typed parameter default
+(unlike the builtin-typed ``pr_number`` option above, ``ProvenanceSource``
+is not a type ruff recognises as immutable) -- hoisting the call to a
+module-level constant is ruff's own documented fix.
+"""
+
 
 def _repo_root() -> Path:
     """Resolve the repository root the same way ``arch_check`` does."""
@@ -49,6 +67,7 @@ def release_gate(
     pr_number: int | None = typer.Option(
         None, "--pr", help="Release PR number (adds PR head-freshness check)."
     ),
+    provenance: ProvenanceSource = _PROVENANCE_OPTION,
 ) -> None:
     """Evaluate the pure release gate -- read-only, never merges.
 
@@ -74,6 +93,7 @@ def release_gate(
             gh=gh,
             pr_number=pr_number,
             db_path=Path(get_settings().db_path),
+            provenance=provenance,
         )
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
