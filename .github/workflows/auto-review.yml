@@ -323,12 +323,38 @@ jobs:
       pushed: ${{ steps.coder.outputs.pushed }}
       re_verdict: ${{ steps.rereview.outputs.re_verdict }}
     steps:
+      # SP-VERIFIER-PR-TREE: resolve the PR's real head branch once via
+      # gh, so the writable checkout targets the right branch on every
+      # trigger shape (pull_request / issue_comment / pull_request_review),
+      # not only the shape that carries pull_request.head.ref.  --repo is
+      # explicit because this runs before any checkout.
+      - name: Resolve PR head branch
+        id: pr_branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="$(gh pr view "${{ needs.review.outputs.pr_number }}" \
+            --repo "${{ github.repository }}" \
+            --json headRefName --jq .headRefName)"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout PR head (writable)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ steps.pr_branch.outputs.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # SP-AUTOFIX-LEDGER-HYDRATE: hydrate REPOACH_DB_PATH with the review
+      # job's findings ledger before the Coder runs, using the identical
+      # download idiom as the auto_merge job.  Missing artifact (first run
+      # / failed review upload) degrades to an empty db, not a job failure.
+      - name: Download findings ledger
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: findings-ledger-${{ needs.review.outputs.pr_number }}
+          path: ${{ runner.temp }}
 
       # Set up BOTH Python versions the CI matrix tests so the local
       # pre-push gate (run_pytest_matrix) can validate each before
