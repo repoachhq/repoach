@@ -488,6 +488,45 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
         return False
 
 
+def _step_tests_already_green(repo_root: Path, step: PlanStep) -> bool:
+    """Return True when every promised test in *step* strictly passes right now.
+
+    Mirrors the strict-pass rule :func:`step_preflight_complete` already
+    applies: every promised test file must exist, every node-id
+    selector must resolve, and :func:`run_promised_tests` must return
+    ``reconciled=False``. Wrapped in a broad try/except (subprocess and
+    filesystem errors) that logs ``dev_runner.step_baseline_error`` and
+    returns ``False`` (fail-open — an unreadable baseline never blocks
+    a step, it only forfeits the zero-value check for that step).
+
+    Args:
+        repo_root: Repository working tree root, read as it stands right
+            now (before the step's Developer loop has run).
+        step: The plan step whose ``unit_tests`` form the baseline set.
+
+    Returns:
+        ``True`` only when the step promises at least one test, every
+        promised file already exists, every ``::`` node id already
+        resolves, and the promised selectors already pass without
+        falling back to the file-level reconciliation.
+    """
+    if not step.unit_tests:
+        return False
+    file_paths = {s.split("::", 1)[0] for s in step.unit_tests}
+    for file_path in file_paths:
+        if not (repo_root / file_path).is_file():
+            return False
+    node_selectors = [s for s in step.unit_tests if "::" in s]
+    if any(not selector_present(repo_root, s) for s in node_selectors):
+        return False
+    try:
+        ok, _tail, reconciled = run_promised_tests(repo_root, list(step.unit_tests))
+    except Exception as exc:
+        _log.warning("dev_runner.step_baseline_error", error=str(exc)[:200])
+        return False
+    return ok and not reconciled
+
+
 def commit_paths(repo_root: Path, paths: list[str], message: str) -> tuple[bool, str]:
     """Stage exactly *paths* and commit; ``(False, why)`` when nothing staged.
 
@@ -1294,6 +1333,7 @@ def execute_plan_step(
     totals = StepOutcome(ok=False)
     gate_feedback = ""
     last_gate_kind = ""
+    baseline_green = _step_tests_already_green(repo_root, step)
 
     for attempt in range(1, _MAX_STEP_ATTEMPTS + 1):
         if attempt == _MAX_STEP_ATTEMPTS and last_gate_kind != _LINT_GATE_KIND:
@@ -1504,6 +1544,27 @@ def execute_plan_step(
                 paths=escaped,
             )
             return totals
+
+        if baseline_green:
+            promised_files = {s.split("::", 1)[0] for s in step.unit_tests}
+            non_test_changes = [p for p in step_changes if p not in promised_files]
+            if not non_test_changes:
+                totals.reason = (
+                    f"step {step.index} ({step.title!r}) promised tests "
+                    f"{list(step.unit_tests)} were already green before this step ran, "
+                    f"and its commit touches nothing beyond the promised test file(s) "
+                    f"{sorted(promised_files)} — the work was already delivered "
+                    "elsewhere; fold the credit back into whichever earlier step "
+                    "actually made the tests pass; not retried (work left in place)"
+                )
+                _log.warning(
+                    "dev_runner.step_zero_value_diff",
+                    spec_id=plan.spec_id,
+                    step=step.index,
+                    promised=list(step.unit_tests),
+                    step_changes=step_changes,
+                )
+                return totals
 
         committed, commit_detail = commit_paths(repo_root, step_changes, step.commit_message)
         if not committed:
