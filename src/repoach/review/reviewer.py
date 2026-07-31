@@ -39,6 +39,7 @@ from ..agent_engine.agent_loop import (
 from ..core.logging import get_logger
 from .diff_scoper import scope_diff
 from .findings import Finding
+from .retry_backoff import AttemptOutcome, RetryResult, retry_with_backoff
 
 if TYPE_CHECKING:
     from .devagent_loop import DevLoopResult
@@ -523,71 +524,36 @@ class Reviewer:
         """
         import time as _time
 
-        last_error: Exception | None = None
-        last_outcome: tuple[ReviewVerdict, str, list[ReviewComment], Any] | None = None
-        for attempt, wait_s in enumerate(self._RETRY_BACKOFFS_S, start=1):
-            if wait_s > 0:
-                _log.info(
-                    "review.bot.retry_wait",
-                    role=self.role.value,
-                    pr_number=pr_number,
-                    attempt=attempt,
-                    wait_s=wait_s,
-                    last_error=type(last_error).__name__ if last_error else None,
-                )
-                _time.sleep(wait_s)
-            try:
-                result = self._loop.run_oneshot(
-                    prompt,
-                    json_response=True,
-                    accept_response=self._response_is_parsable,
-                )
-            except Exception as exc:
-                last_error = exc
-                _log.warning(
-                    "review.bot.attempt_failed",
-                    role=self.role.value,
-                    pr_number=pr_number,
-                    attempt=attempt,
-                    of=len(self._RETRY_BACKOFFS_S),
-                    error=type(exc).__name__,
-                    message=str(exc)[:200],
-                )
-                continue
+        def _attempt(
+            attempt_no: int,
+        ) -> AttemptOutcome[tuple[ReviewVerdict, str, list[ReviewComment], Any]]:
+            result = self._loop.run_oneshot(
+                prompt,
+                json_response=True,
+                accept_response=self._response_is_parsable,
+            )
             verdict, summary, comments = self._parse_response(result.text)
-            last_outcome = (verdict, summary, comments, result)
-            if not summary.startswith("[parse_failed:"):
-                return last_outcome
-            _log.warning(
-                "review.bot.parse_failed_retry",
-                role=self.role.value,
-                pr_number=pr_number,
-                attempt=attempt,
-                of=len(self._RETRY_BACKOFFS_S),
-                marker=summary[:80],
+            return AttemptOutcome(
+                value=(verdict, summary, comments, result),
+                accept=not summary.startswith("[parse_failed:"),
             )
 
-        if last_outcome is not None:
-            _log.error(
-                "review.bot.exhausted_returning_last_parse_failed",
-                role=self.role.value,
-                pr_number=pr_number,
-                attempts=len(self._RETRY_BACKOFFS_S),
-                marker=last_outcome[1][:80],
+        result: RetryResult[tuple[ReviewVerdict, str, list[ReviewComment], Any]] = (
+            retry_with_backoff(
+                _attempt,
+                backoffs=self._RETRY_BACKOFFS_S,
+                log_scope="review.bot",
+                log_context={"role": self.role.value, "pr_number": pr_number},
+                sleep=_time.sleep,
             )
-            return last_outcome
-
-        _log.error(
-            "review.bot.exhausted_transport_exception",
-            role=self.role.value,
-            pr_number=pr_number,
-            attempts=len(self._RETRY_BACKOFFS_S),
-            final_error=type(last_error).__name__ if last_error else "Unknown",
         )
-        stub = _FailedRunResult(error=str(last_error) if last_error else "Unknown")
+        if result.value is not None:
+            return result.value
+
+        stub = _FailedRunResult(error=str(result.error) if result.error else "Unknown")
         return (
             ReviewVerdict.COMMENT,
-            f"[parse_failed:TRANSPORT] all {len(self._RETRY_BACKOFFS_S)} attempts raised — last={type(last_error).__name__ if last_error else 'Unknown'}",
+            f"[parse_failed:TRANSPORT] all {len(self._RETRY_BACKOFFS_S)} attempts raised — last={type(result.error).__name__ if result.error else 'Unknown'}",
             [],
             stub,
         )
@@ -1669,40 +1635,24 @@ class Developer:
         """
         import time as _time
 
-        last_exc: Exception | None = None
-        for attempt, wait_s in enumerate(self._RETRY_BACKOFFS_S, start=1):
-            if wait_s > 0:
-                _log.info(
-                    "review.developer.retry_wait",
-                    spec_id=spec_id,
-                    attempt=attempt,
-                    wait_s=wait_s,
-                    last_error=type(last_exc).__name__ if last_exc else None,
-                )
-                _time.sleep(wait_s)
-            try:
-                return self._loop.run_oneshot(
+        def _attempt(attempt_no: int) -> AttemptOutcome[Any]:
+            return AttemptOutcome(
+                value=self._loop.run_oneshot(
                     prompt,
                     json_response=True,
                     accept_response=_developer_response_has_fixes,
-                )
-            except Exception as exc:
-                last_exc = exc
-                _log.warning(
-                    "review.developer.attempt_failed",
-                    spec_id=spec_id,
-                    attempt=attempt,
-                    of=len(self._RETRY_BACKOFFS_S),
-                    error=type(exc).__name__,
-                    message=str(exc)[:200],
-                )
-        _log.error(
-            "review.developer.exhausted",
-            spec_id=spec_id,
-            attempts=len(self._RETRY_BACKOFFS_S),
-            final_error=type(last_exc).__name__ if last_exc else "Unknown",
+                ),
+                accept=True,
+            )
+
+        result = retry_with_backoff(
+            _attempt,
+            backoffs=self._RETRY_BACKOFFS_S,
+            log_scope="review.developer",
+            log_context={"spec_id": spec_id},
+            sleep=_time.sleep,
         )
-        return None
+        return result.value
 
     def respond(
         self,
