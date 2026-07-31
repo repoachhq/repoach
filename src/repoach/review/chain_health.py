@@ -31,7 +31,7 @@ from repoach.llm_proxy.providers.model_catalog import redact_secret
 
 _log = get_logger(__name__)
 
-_TIERS: tuple[str, ...] = ("opus", "sonnet", "haiku")
+CHAIN_TIERS: tuple[str, ...] = ("opus", "sonnet", "haiku")
 _PROBE_PROMPT = "Reply with the single word: ok"
 
 __all__ = [
@@ -209,7 +209,7 @@ async def check_tier_heads(
 
     The per-tier probes run under :func:`asyncio.gather`, so a fully
     degraded NIM costs one ``timeout_s`` window rather than the sum of
-    four; the returned list still preserves ``_TIERS`` order.
+    four; the returned list still preserves ``CHAIN_TIERS`` order.
 
     Args:
         settings: Proxy settings carrying the per-tier chains and the
@@ -221,7 +221,7 @@ async def check_tier_heads(
         timeout_s: Per-probe hard cap.
 
     Returns:
-        One :class:`ModelHealth` per tier, in ``_TIERS`` order.
+        One :class:`ModelHealth` per tier, in ``CHAIN_TIERS`` order.
     """
     chains: dict[str, str | None] = {
         "opus": settings.model_opus,
@@ -238,6 +238,6 @@ async def check_tier_heads(
             max_tokens=max_tokens,
             timeout_s=timeout_s,
         )
-        for tier in _TIERS
+        for tier in CHAIN_TIERS
     ]
     return list(await asyncio.gather(*probes))
