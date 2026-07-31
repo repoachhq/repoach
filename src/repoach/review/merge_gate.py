@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from .finding_verifiers import verify_finding
 from .findings import (
     JUDGED_CLAIM_TYPES,
+    MECHANICAL_CLAIM_TYPES,
     ClaimType,
     FindingStatus,
     Severity,
@@ -38,9 +39,7 @@ from .spec_gate import fetch_spec_coverage, init_spec_coverage_schema
 _MIN_REVIEWERS = 4
 """A complete review has at least four reviewers parsed (the bench)."""
 
-_MECHANICAL_TYPES = frozenset(
-    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
-)
+_MECHANICAL_TYPES = MECHANICAL_CLAIM_TYPES
 _JUDGED_TYPES = JUDGED_CLAIM_TYPES
 """Alias of :data:`findings.JUDGED_CLAIM_TYPES` (SP-CLAIM-TYPE-PARTITION-ALIGN).
 

@@ -33,6 +33,7 @@ from ..core.config import get_settings
 from ..core.logging import get_logger
 from .finding_verifiers import verify_finding
 from .findings import (
+    MECHANICAL_CLAIM_TYPES,
     ClaimType,
     Finding,
     FindingStatus,
@@ -57,9 +58,7 @@ from .stuck import (
 
 _log = get_logger(__name__)
 
-_MECHANICAL_TYPES = frozenset(
-    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
-)
+_MECHANICAL_TYPES = MECHANICAL_CLAIM_TYPES
 """Claim types whose resolution is re-checked mechanically on disk."""
 
 _OPEN_QUEUE_STATUSES = frozenset({FindingStatus.VERIFIED, FindingStatus.OPEN})

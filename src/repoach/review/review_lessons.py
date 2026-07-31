@@ -27,19 +27,18 @@ from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..memory import agentmemory_client
 from .builder_memory import BUILDER_PROJECT
-from .findings import Finding, FindingStatus, fetch_all_findings, fetch_findings
+from .findings import (
+    CONFIRMED_REAL_STATUSES,
+    Finding,
+    FindingStatus,
+    fetch_all_findings,
+    fetch_findings,
+)
 from .planner_telemetry import fetch_planner_attempts
 
 _log = get_logger(__name__)
 
-_CONFIRMED_REAL: frozenset[FindingStatus] = frozenset(
-    {
-        FindingStatus.VERIFIED,
-        FindingStatus.OPEN,
-        FindingStatus.RESOLVED,
-        FindingStatus.STUCK,
-    }
-)
+_CONFIRMED_REAL = CONFIRMED_REAL_STATUSES
 """Statuses downstream of VERIFIED — the finding was confirmed a real problem."""
 
 
