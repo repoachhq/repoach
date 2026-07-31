@@ -51,8 +51,11 @@ class AttributionOutcome:
             plan base, or ``"error"`` when the runner raised or the walk
             was inconclusive.
         step: The blamed :class:`StepCommit` for ``"introduced_by_step"``
-            (the introducing step) or ``"pre_existing"`` (the plan base);
-            ``None`` for ``"error"``.
+            (the introducing step) or ``"pre_existing"`` (the plan base).
+            For ``"error"``, the :class:`StepCommit` being probed when
+            ``run_selector`` raised (the base or the current step commit);
+            ``None`` only for the no-exception "green at every recorded
+            commit" inconclusive-exhaustion ``"error"``.
         error: The runner's error message (truncated) for ``"error"``;
             ``None`` otherwise.
     """
@@ -105,7 +108,7 @@ def attribute_failure_to_step(
     try:
         base_green = run_selector(base.sha, selector)
     except Exception as exc:
-        return AttributionOutcome(selector, status="error", error=str(exc)[:300])
+        return AttributionOutcome(selector, status="error", step=base, error=str(exc)[:300])
 
     if not base_green:
         return AttributionOutcome(selector, status="pre_existing", step=base)
@@ -114,7 +117,7 @@ def attribute_failure_to_step(
         try:
             commit_green = run_selector(commit.sha, selector)
         except Exception as exc:
-            return AttributionOutcome(selector, status="error", error=str(exc)[:300])
+            return AttributionOutcome(selector, status="error", step=commit, error=str(exc)[:300])
         if not commit_green:
             return AttributionOutcome(selector, status="introduced_by_step", step=commit)
 

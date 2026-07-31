@@ -169,3 +169,80 @@ def test_attribution_runner_error_fails_closed() -> None:
     assert result.status == "error"
     assert result.error is not None
     assert "worktree exploded" in result.error
+
+
+def test_attribution_error_carries_probed_base_commit() -> None:
+    """A ``run_selector`` crash while checking the base carries ``step=base``.
+
+    Must FAIL on pre-change code — today the base-check exception path
+    returns ``step is None`` regardless of which commit was being probed.
+    """
+
+    def _explode(sha: str, selector: str) -> bool:
+        raise RuntimeError("worktree exploded at base")
+
+    base = StepCommit(0, "plan base", "deadbeef")
+    step_commits = [base, StepCommit(1, "step one", "cafef00d")]
+
+    result = attribute_failure_to_step(
+        "tests/unit/test_demo.py::test_ok",
+        step_commits,
+        run_selector=_explode,
+    )
+
+    assert result.status == "error"
+    assert result.step == base
+
+
+def test_attribution_error_carries_probed_step_commit() -> None:
+    """A ``run_selector`` crash on the first real step carries that step's ``StepCommit``.
+
+    The base check returns green; the first step's check raises. Must FAIL
+    on pre-change code — today the per-step exception path returns ``step is
+    None`` regardless of which commit was being probed.
+    """
+    calls: list[str] = []
+
+    def _green_then_explode(sha: str, selector: str) -> bool:
+        calls.append(sha)
+        if len(calls) == 1:
+            return True
+        raise RuntimeError("worktree exploded at step")
+
+    base = StepCommit(0, "plan base", "deadbeef")
+    step_one = StepCommit(1, "step one", "cafef00d")
+    step_commits = [base, step_one]
+
+    result = attribute_failure_to_step(
+        "tests/unit/test_demo.py::test_ok",
+        step_commits,
+        run_selector=_green_then_explode,
+    )
+
+    assert result.status == "error"
+    assert result.step == step_one
+
+
+def test_attribution_error_inconclusive_exhaustion_keeps_step_none() -> None:
+    """The no-exception "green everywhere" fallback still yields ``step is None``.
+
+    Regression guard for NG3/G1's carve-out: this path never raised, so
+    there is no probed commit to carry.
+    """
+
+    def _always_green(sha: str, selector: str) -> bool:
+        return True
+
+    step_commits = [
+        StepCommit(0, "plan base", "deadbeef"),
+        StepCommit(1, "step one", "cafef00d"),
+    ]
+
+    result = attribute_failure_to_step(
+        "tests/unit/test_demo.py::test_ok",
+        step_commits,
+        run_selector=_always_green,
+    )
+
+    assert result.status == "error"
+    assert result.step is None

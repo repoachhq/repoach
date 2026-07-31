@@ -19,6 +19,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
+import repoach.review.dev_runner as dev_runner
 from repoach.review.dev_runner import (
     DevSessionResult,
     _collect_failing_wrapup_selectors,
@@ -309,6 +312,90 @@ def test_wrapup_dossier_carries_diff_stat(tmp_path: Path) -> None:
     assert "Step one" in result.wrapup_dossier
     assert "tests/unit/test_wrap_demo.py::test_b" in result.wrapup_dossier
     assert "files changed" in result.wrapup_dossier
+
+
+def test_wrapup_error_dossier_names_plan_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``run_selector`` crash at the plan base names ``"plan base"`` in the dossier.
+
+    Monkeypatches :func:`_run_selector_at_commit` to raise on every call — the
+    base check runs first, so the resulting error outcome carries
+    ``step=step_commits[0]`` and the dossier line names the plan base.
+    Must FAIL on pre-change code (today the dossier line is the unqualified
+    ``error: <selector>: <message>``, naming neither the base nor a step).
+    """
+    repo = _init_repo_with_wrap_demo(tmp_path)
+    _commit_breaking_step(repo)
+    plan = _one_step_plan_breaking_wrap_demo()
+    db = tmp_path / "test.db"
+    init_schema(db)
+
+    def _raise_always(repo_root: Path, sha: str, selector: str) -> bool:
+        raise RuntimeError("worktree exploded at base")
+
+    monkeypatch.setattr(dev_runner, "_run_selector_at_commit", _raise_always)
+
+    dev = MagicMock()
+    result = DevSessionResult(spec_id=plan.spec_id)
+    reason = repair_wrapup_failures(
+        repo,
+        plan,
+        dev=dev,
+        db=db,
+        base="develop",
+        failing_selectors=["tests/unit/test_wrap_demo.py::test_b"],
+        result=result,
+    )
+
+    dev.develop_step.assert_not_called()
+    assert "plan base" in result.wrapup_dossier
+    assert reason is not None
+    assert "plan base" in reason
+
+
+def test_wrapup_error_dossier_names_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``run_selector`` crash on the first real step names that step in the dossier.
+
+    Monkeypatches :func:`_run_selector_at_commit` to return green on its first
+    call (the base check) then raise on every subsequent call (the step
+    check) — the resulting error outcome carries the step's ``StepCommit``
+    and the dossier line names it by title. Must FAIL on pre-change code
+    (today the dossier line is the unqualified ``error: <selector>:
+    <message>``, naming neither the base nor a step).
+    """
+    repo = _init_repo_with_wrap_demo(tmp_path)
+    _commit_breaking_step(repo)
+    plan = _one_step_plan_breaking_wrap_demo()
+    db = tmp_path / "test.db"
+    init_schema(db)
+
+    calls = {"n": 0}
+
+    def _green_then_raise(repo_root: Path, sha: str, selector: str) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return True
+        raise RuntimeError("worktree exploded at step")
+
+    monkeypatch.setattr(dev_runner, "_run_selector_at_commit", _green_then_raise)
+
+    dev = MagicMock()
+    result = DevSessionResult(spec_id=plan.spec_id)
+    reason = repair_wrapup_failures(
+        repo,
+        plan,
+        dev=dev,
+        db=db,
+        base="develop",
+        failing_selectors=["tests/unit/test_wrap_demo.py::test_b"],
+        result=result,
+    )
+
+    dev.develop_step.assert_not_called()
+    assert "Step one" in result.wrapup_dossier
+    assert reason is not None
+    assert "Step one" in reason
 
 
 def test_wrapup_wiring_invokes_repair_path() -> None:

@@ -1141,7 +1141,15 @@ def repair_wrapup_failures(
             continue
 
         if outcome.status == "error":
-            line = f"error: {selector}: {outcome.error}"
+            if outcome.step is not None:
+                step_label = (
+                    outcome.step.title
+                    if outcome.step.index == 0
+                    else f"step {outcome.step.index} ({outcome.step.title})"
+                )
+                line = f"error: {selector}: crashed at {step_label}: {outcome.error}"
+            else:
+                line = f"error: {selector}: {outcome.error}"
             dossier_lines.append(line)
             unrepaired.append((None, "", line))
             continue
