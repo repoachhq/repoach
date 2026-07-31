@@ -353,9 +353,16 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
             contract of :func:`_default_ci_runner`.
         json.JSONDecodeError: When the receipt is not valid JSON --
             likewise an evaluation error, never a silent pass.
+        RuntimeError: When ``git fetch origin main develop`` fails --
+            fail-closed, since the subsequent ``origin/main^2``/
+            ``origin/main..origin/develop`` reads are only trustworthy
+            against freshly-fetched remote-tracking refs.
     """
     data = json.loads(path.read_text())
     expected_sha = data["develop_sha"]
+    fetch_result = gh._run_git(["fetch", "--quiet", "origin", "main", "develop"])
+    if not fetch_result.ok:
+        raise RuntimeError(f"git fetch origin main develop failed: {fetch_result.stderr.strip()}")
     ls_remote_result = gh._run_git(["ls-remote", "origin", "main"])
     first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
     main_sha = first_line.split()[0] if first_line.split() else ""
