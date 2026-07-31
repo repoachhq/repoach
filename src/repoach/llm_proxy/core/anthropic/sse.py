@@ -36,6 +36,34 @@ def map_stop_reason(openai_reason: str | None) -> str:
     return STOP_REASON_MAP.get(openai_reason, "end_turn") if openai_reason else "end_turn"
 
 
+def format_error_event(error_type: str, message: str) -> str:
+    """Build a genuine terminal Anthropic-shaped SSE ``error`` event.
+
+    Mirrors the ``event: error`` frame the native Anthropic-passthrough
+    providers already emit per-attempt
+    (``providers/anthropic_messages.py::_emit_error_events``) rather
+    than the content-block-based :meth:`SSEBuilder.emit_error` hack
+    used to surface a disguised per-attempt failure as visible
+    assistant text. SP-STREAM-EXHAUST-ERROR reuses this exact shape
+    as the chain-failover layer's terminal frame: once a
+    ``StreamingResponse``'s 200 headers are already committed, this is
+    the only honest way left to tell the client the turn failed —
+    a client parsing the stream sees an explicit ``error`` event with
+    a ``type`` it can branch on, instead of the stream just ending.
+
+    Args:
+        error_type: The Anthropic-vocabulary error type, e.g.
+            ``"chain_exhausted"`` or ``"overloaded_error"``.
+        message: Human-readable detail, already truncated/redacted by
+            the caller.
+
+    Returns:
+        The formatted ``event: error\\ndata: ...\\n\\n`` frame.
+    """
+    payload = {"type": "error", "error": {"type": error_type, "message": message}}
+    return f"event: error\ndata: {json.dumps(payload)}\n\n"
+
+
 @dataclass
 class ToolCallState:
     """State for a single streaming tool call."""
@@ -128,19 +156,36 @@ class ContentBlockManager:
 
 
 class SSEBuilder:
-    """Builder for Anthropic SSE streaming events."""
+    """Builder for Anthropic SSE streaming events.
 
-    def __init__(self, message_id: str, model: str, input_tokens: int = 0):
+    ``log_full_content`` (SP-PROXY-LOG-CONTENT-GUARD, off by default)
+    gates whether ``SSE_EVENT`` debug logs carry the serialized event
+    body ; when ``False`` only the event type and byte length are
+    logged.
+    """
+
+    def __init__(
+        self,
+        message_id: str,
+        model: str,
+        input_tokens: int = 0,
+        *,
+        log_full_content: bool = False,
+    ):
         self.message_id = message_id
         self.model = model
         self.input_tokens = input_tokens
         self.blocks = ContentBlockManager()
         self._accumulated_text_parts: list[str] = []
         self._accumulated_reasoning_parts: list[str] = []
+        self._log_full_content = log_full_content
 
     def _format_event(self, event_type: str, data: dict) -> str:
         event_str = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-        logger.debug("SSE_EVENT: {} - {}", event_type, event_str.strip())
+        if self._log_full_content:
+            logger.debug("SSE_EVENT: {} - {}", event_type, event_str.strip())
+        else:
+            logger.debug("SSE_EVENT: {} (bytes={})", event_type, len(event_str))
         return event_str
 
     def message_start(self) -> str:
@@ -162,19 +207,35 @@ class SSEBuilder:
             },
         )
 
-    def message_delta(self, stop_reason: str, output_tokens: int, reasoning_tokens: int = 0) -> str:
-        return self._format_event(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                "usage": {
-                    "input_tokens": self.input_tokens,
-                    "output_tokens": output_tokens,
-                },
-                "reasoning_tokens": reasoning_tokens,
+    def message_delta(
+        self,
+        stop_reason: str,
+        output_tokens: int,
+        reasoning_tokens: int = 0,
+        *,
+        error_status_code: int | None = None,
+    ) -> str:
+        """Build the terminal ``message_delta`` event.
+
+        ``error_status_code`` is the real upstream HTTP status a
+        transport recovered before degrading a caught exception to this
+        error-shaped delta (SP-BREAKER-LIVE-REASONS); it is omitted from
+        the payload entirely when ``None`` (every success-path call),
+        so well-behaved clients see the exact same shape as before this
+        field existed.
+        """
+        payload: dict = {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+            "usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": output_tokens,
             },
-        )
+            "reasoning_tokens": reasoning_tokens,
+        }
+        if error_status_code is not None:
+            payload["error_status_code"] = error_status_code
+        return self._format_event("message_delta", payload)
 
     def message_stop(self) -> str:
         return self._format_event("message_stop", {"type": "message_stop"})

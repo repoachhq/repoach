@@ -6,27 +6,34 @@ workflow.  Given a PR number, it drives the following pipeline, in
 order:
 
 1. Fetches the diff via ``gh pr diff``.
-2. Runs the four reviewer bots (Architect, Sentinel, Tester, Scribe)
+2. Submits the fresh-head guard (:func:`resolve_fresh_head`) to a
+   background thread so its up-to-30-second poll against the GitHub
+   API overlaps with the four-reviewer fan-out instead of blocking
+   it (SP-FRESH-HEAD-CONCURRENT).  The resolved head SHA is joined
+   immediately before the findings ledger write.
+3. Auto-loads the active spec from the PR's head branch.
+4. Fetches resolved disagreements per reviewer.
+5. Runs the four reviewer bots (Architect, Sentinel, Tester, Scribe)
    concurrently.
-3. Applies the hallucination guard to disprove unsupported "missing
+6. Applies the hallucination guard to disprove unsupported "missing
    X" claims before they reach a human.
-4. Optionally runs a round-2 confirm-or-retract dialogue for every
+7. Optionally runs a round-2 confirm-or-retract dialogue for every
    reviewer that flagged a blocker or major, so a challenged claim
    can be retracted with evidence.
-5. Records each finding plus a review-integrity row, so every claim
+8. Records each finding plus a review-integrity row, so every claim
    is traceable back to its origin.
-6. Runs mechanical verification (``finding_verifiers``) and the
+9. Runs mechanical verification (``finding_verifiers``) and the
    adversarial refuter over judged claims, advancing each finding
    through its lifecycle in the findings ledger.
-7. Derives the team verdict from the findings ledger via
-   :func:`merge_gate.verdict_from_facts` — the verdict is *derived*
-   from the ledger's open findings, not aggregated from per-bot
-   verdicts.
-8. Posts inline comments, per-bot reviews, and a sticky archive
-   comment on the PR.  The archive comment is report-only: a
-   human-readable snapshot of the run, not the retrievable source of
-   truth (that remains the findings ledger and ``pr_reviews`` in L4).
-9. Persists every outcome in L4 ``pr_reviews``.
+10. Derives the team verdict from the findings ledger via
+    :func:`merge_gate.verdict_from_facts` — the verdict is *derived*
+    from the ledger's open findings, not aggregated from per-bot
+    verdicts.
+11. Posts inline comments, per-bot reviews, and a sticky archive
+    comment on the PR.  The archive comment is report-only: a
+    human-readable snapshot of the run, not the retrievable source of
+    truth (that remains the findings ledger and ``pr_reviews`` in L4).
+12. Persists every outcome in L4 ``pr_reviews``.
 
 Auto-merge and the findings-driven Coder fix loop are separate,
 workflow-driven follow-ups hosted in ``auto_merge.py`` and
@@ -41,16 +48,17 @@ import json
 import re
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
-from .findings_bridge import record_findings_for_outcomes
-from .gh_client import GhCli
+from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
+from .gh_client import GhCli, GhResult
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
@@ -72,12 +80,14 @@ from .report import render_ledger_report
 from .review_lessons import remember_verified_findings
 from .review_memory import recall_review_lessons, review_lessons_section
 from .reviewer import (
+    _DIFF_HARD_CAP_CHARS,
     Architect,
     BotRole,
     DialogueContext,
     GuardEventSummary,
     PeerOutcome,
     PriorReviewContext,
+    ReviewComment,
     Reviewer,
     ReviewerOutcome,
     ReviewVerdict,
@@ -92,12 +102,18 @@ _log = get_logger(__name__)
 
 
 def _parse_comment_id(stdout: str) -> int | None:
-    """Extract the GitHub comment id from a ``pr_review_comment`` response.
+    """Extract the integer ``id`` field from a gh API JSON response.
 
-    The ``gh api`` invocation echoes the JSON of the created comment
-    on stdout.  Tolerant of empty / non-JSON output (returns ``None``)
-    so a missing id never crashes the review pass — the auto-challenge
-    pass simply can't target that comment.
+    The ``gh api`` invocation echoes the JSON of the created resource
+    on stdout — a single inline comment
+    (:meth:`~repoach.review.gh_client.GhCli.pr_review_comment`) or,
+    since SP-REVIEW-POST-BATCH, a whole batched review
+    (:meth:`~repoach.review.gh_client.GhCli.pr_review_submit_batch`).
+    Both shapes carry their own id under the same top-level ``"id"``
+    key, so one parser covers both callers.  Tolerant of empty /
+    non-JSON output (returns ``None``) so a missing id never crashes
+    the review pass — the auto-challenge pass simply can't target that
+    comment/review.
     """
     if not stdout:
         return None
@@ -116,6 +132,36 @@ def _parse_comment_id(stdout: str) -> int | None:
             "orchestrator.comment_id_int_cast_failed", raw=str(raw)[:50], error=str(exc)[:120]
         )
         return None
+
+
+def _render_comment_body(outcome: ReviewerOutcome, comment: ReviewComment) -> str:
+    """Render one inline comment's markdown body for posting.
+
+    Shared by :meth:`ReviewTeamOrchestrator._publish_batched_review`
+    and :meth:`ReviewTeamOrchestrator._publish_per_comment` so both the
+    batched and the pre-batching fallback path render the exact same
+    ``**[{role}/{severity}]** {body}`` template.
+    """
+    return (
+        f"**[{outcome.role.value}/{comment.severity}]** "
+        f"{comment.body}\n\n_— Repoach review-bot ({outcome.model_used})_"
+    )
+
+
+def _render_review_body(outcome: ReviewerOutcome) -> str:
+    """Render one reviewer's verdict + summary footer as review body markdown.
+
+    Shared by :meth:`ReviewTeamOrchestrator._publish_batched_review`
+    and :meth:`ReviewTeamOrchestrator._publish_per_comment` so both
+    paths submit the exact same review body.
+    """
+    return (
+        f"### {outcome.role.value.title()} review\n\n"
+        f"**Verdict:** {outcome.verdict.value}\n\n"
+        f"{outcome.summary}\n\n"
+        f"_— Repoach review bot, {outcome.model_used}, "
+        f"{outcome.tokens_used} tokens, {outcome.elapsed_s}s_"
+    )
 
 
 def record_review_ledger(
@@ -141,6 +187,17 @@ def record_review_ledger(
     head can never merge on the strength of a review whose findings
     were lost.
 
+    The same re-scoping the reviewer bots ran the diff through
+    (:func:`diff_scoper.scope_diff` at ``_DIFF_HARD_CAP_CHARS``) is
+    re-run here so any file whose diff exceeded the cap — never shown
+    to any reviewer lens — gets its own fail-closed BLOCKING finding
+    via :func:`findings_bridge.record_oversized_findings`
+    (SP-DIFF-SCOPER-OVERSIZE-BLOCK): padding a hostile change past the
+    cap no longer removes it from every review lens while keeping the
+    PR mergeable. This runs inside the same fail-closed write as the
+    comment-derived findings, so a failure here also skips the
+    integrity row.
+
     Args:
         db_path: The findings + integrity ledger database.
         pr_number: The PR reviewed.
@@ -162,10 +219,19 @@ def record_review_ledger(
             round_n=round_n,
             diff=diff,
         )
+        scoped = scope_diff(diff, _DIFF_HARD_CAP_CHARS)
+        n_oversized = record_oversized_findings(
+            db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            round_n=round_n,
+            scoped=scoped,
+        )
         _log.info(
             "review_team.findings_recorded",
             pr_number=pr_number,
             n_findings=n_findings,
+            n_oversized_blocking=n_oversized,
         )
     except Exception as exc:
         _log.error(
@@ -274,29 +340,40 @@ class ReviewTeamOrchestrator:
             1. **Fetch diff.**  Failure to read the PR diff is fatal —
                we return a degraded ``COMMENT`` outcome rather than
                crash the workflow.
-            2. **Auto-load active spec** (SP-DEV-V2-B2) from the PR's
+            2. **Submit fresh-head guard to background thread**
+               (SP-FRESH-HEAD-CONCURRENT) — when posting to GitHub,
+               :func:`resolve_fresh_head` is submitted to a dedicated
+               ``ThreadPoolExecutor(max_workers=1)`` so its
+               up-to-30-second poll against the GitHub API overlaps
+               with the four-reviewer fan-out (step 5) instead of
+               blocking it.  The resolved head SHA is joined
+               immediately before the findings ledger write and passed
+               to :func:`record_review_ledger`.  When
+               ``post_to_github=False`` no background thread is
+               created and ``head_sha`` stays ``None``.
+            3. **Auto-load active spec** (SP-DEV-V2-B2) from the PR's
                head branch so every reviewer reads the spec alongside
                the diff.  Spec lookup failures are logged and treated
                as "no spec" — never fatal.
-            3. **Fetch resolved disagreements per reviewer** (SP-CODER-
+            4. **Fetch resolved disagreements per reviewer** (SP-CODER-
                EVIDENCE-CHALLENGE phase 3B) — root threads the Coder
                has already answered with "Verified — challenge with
                evidence".  Logging + integration in production traffic
                ; the prompt-template bump that makes the model act on
                them ships in a follow-up.
-            4. **Run the four reviewers in parallel** through a
+            5. **Run the four reviewers in parallel** through a
                :class:`ThreadPoolExecutor`.  A single bot blowing up
                (NIM chain exhaustion, parser crash) records a degraded
                ``COMMENT`` outcome — the team continues without it.
-            5. **Hallucination guard** (SP-DEV-V2-B3) — post-process
+            6. **Hallucination guard** (SP-DEV-V2-B3) — post-process
                each outcome to disprove "missing X" claims by grepping
                the working tree, and to catch the self-referential
                prompt-template hallucination mode.  Defence in depth
                alongside the anti-hallucination paragraphs in the
                persona files.
-            6. **Persist round-1 verdicts** to L4 ``review_dialogue``
+            7. **Persist round-1 verdicts** to L4 ``review_dialogue``
                so the dialogue transcript can be replayed later.
-            7. **Round 2** (SP-REVIEW-DIALOGUE-A) — when at least one
+            8. **Round 2** (SP-REVIEW-DIALOGUE-A) — when at least one
                reviewer flagged a blocker / major, every flagging
                reviewer gets a second pass with peer outcomes + its
                own guard verdicts + live file excerpts.  Comments
@@ -304,7 +381,7 @@ class ReviewTeamOrchestrator:
                At most one round 2 per PR.  Only the reviewers whose
                outcome was actually replaced get a round-2 dialogue
                row (crashes keep the round-1 object in place).
-            8. **Ledger-sourced team verdict** (SP-VERDICT-RESOURCE-LEDGER)
+            9. **Ledger-sourced team verdict** (SP-VERDICT-RESOURCE-LEDGER)
                — ``final_verdict`` is derived from the findings ledger via
                :func:`merge_gate.verdict_from_facts` (REQUEST_CHANGES on an
                open blocking finding or an incomplete review), not the
@@ -328,20 +405,32 @@ class ReviewTeamOrchestrator:
         diff = diff_res.stdout
         diff_hash = _compute_diff_hash(diff)
 
-        head_sha = (
-            resolve_fresh_head(self._gh, pr_number, repo_root=Path.cwd()) if self._post else None
-        )
+        head_guard_pool: ThreadPoolExecutor | None = None
+        head_guard_future: Future[str | None] | None = None
+        if self._post:
+            head_guard_pool = ThreadPoolExecutor(max_workers=1)
+            head_guard_future = head_guard_pool.submit(
+                resolve_fresh_head, self._gh, pr_number, repo_root=self._repo_root
+            )
+        head_sha: str | None = None
 
         spec_plan_md: str | None = None
         spec_id: str | None = None
         pr_title = ""
         arch_edges_block = ""
         anchored = False
+        base_ref: str | None = None
         try:
             view = self._gh.pr_view(pr_number)
             if isinstance(view, dict):
                 pr_title = str(view.get("title") or "")
             head_ref = (view or {}).get("headRefName") if isinstance(view, dict) else None
+            resolved_base_ref = (view or {}).get("baseRefName") if isinstance(view, dict) else None
+            base_ref = (
+                resolved_base_ref
+                if isinstance(resolved_base_ref, str) and resolved_base_ref
+                else None
+            )
             if isinstance(head_ref, str) and head_ref:
                 from .spec import maybe_load_active_spec
 
@@ -523,6 +612,8 @@ class ReviewTeamOrchestrator:
         n_blockers = sum(1 for o in outcomes for c in o.comments if c.severity == "blocker")
         n_majors = sum(1 for o in outcomes for c in o.comments if c.severity == "major")
 
+        head_sha = self._join_head_guard(head_guard_pool, head_guard_future, pr_number=pr_number)
+
         record_review_ledger(
             self._db_path,
             pr_number=pr_number,
@@ -593,11 +684,43 @@ class ReviewTeamOrchestrator:
 
         if spec_id is not None:
             try:
-                from .plan import load_plan
-                from .spec_gate import compute_spec_coverage, record_spec_coverage
+                from .spec_gate import (
+                    SpecCoverage,
+                    compute_spec_coverage,
+                    record_spec_coverage,
+                    resolve_contract_plan,
+                )
 
-                plan = load_plan(spec_id, root=self._repo_root)
-                coverage = compute_spec_coverage(self._repo_root, spec_id=spec_id, plan=plan)
+                resolution = resolve_contract_plan(
+                    spec_id, repo_root=self._repo_root, base_ref=base_ref
+                )
+                if not resolution.base_available and base_ref:
+                    self._gh._run_git(
+                        [
+                            "fetch",
+                            "--quiet",
+                            "origin",
+                            f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
+                        ]
+                    )
+                    resolution = resolve_contract_plan(
+                        spec_id,
+                        repo_root=self._repo_root,
+                        base_ref=f"origin/{base_ref}",
+                    )
+
+                if resolution.plan is not None:
+                    coverage = compute_spec_coverage(
+                        self._repo_root, spec_id=spec_id, plan=resolution.plan
+                    )
+                else:
+                    coverage = SpecCoverage(
+                        spec_id=spec_id,
+                        n_promised=0,
+                        n_present=0,
+                        missing=["base-ref-unavailable"],
+                        covered=False,
+                    )
                 record_spec_coverage(
                     self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
                 )
@@ -607,6 +730,8 @@ class ReviewTeamOrchestrator:
                     covered=coverage.covered,
                     n_promised=coverage.n_promised,
                     n_present=coverage.n_present,
+                    base_available=resolution.base_available,
+                    fell_back_to_head=resolution.fell_back_to_head,
                 )
             except Exception as exc:
                 _log.info(
@@ -671,6 +796,37 @@ class ReviewTeamOrchestrator:
         )
         return team
 
+    def _join_head_guard(
+        self,
+        pool: ThreadPoolExecutor | None,
+        future: Future[str | None] | None,
+        *,
+        pr_number: int,
+    ) -> str | None:
+        """Join the background head-freshness poll started in review_pr.
+
+        Returns the resolved head SHA, or ``None`` when no guard was
+        started (``post_to_github=False``) or the background poll
+        raised unexpectedly. The review always proceeds either way,
+        matching resolve_fresh_head's own evidence-first contract of
+        never letting this check block or crash the pipeline.
+        """
+        if pool is None or future is None:
+            return None
+        try:
+            result = future.result()
+        except Exception as exc:
+            _log.warning(
+                "review_team.head_guard_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+            result = None
+        finally:
+            pool.shutdown(wait=False)
+        return result
+
     def _round_two(
         self,
         *,
@@ -724,17 +880,18 @@ class ReviewTeamOrchestrator:
             return round1_outcomes
 
         revised = list(round1_outcomes)
-        for i in triggers:
-            reviewer = reviewers[i]
-            outcome = round1_outcomes[i]
-            ctx = self._build_dialogue_context(
-                reviewer_role=reviewer.role,
-                reviewer_outcome=outcome,
-                round1_outcomes=round1_outcomes,
-                guard_events=guard_events,
-            )
-            try:
-                new_outcome = reviewer.review_diff(
+        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
+            futures: dict[int, Future[ReviewerOutcome]] = {}
+            for i in triggers:
+                reviewer = reviewers[i]
+                ctx = self._build_dialogue_context(
+                    reviewer_role=reviewer.role,
+                    reviewer_outcome=round1_outcomes[i],
+                    round1_outcomes=round1_outcomes,
+                    guard_events=guard_events,
+                )
+                futures[i] = pool.submit(
+                    reviewer.review_diff,
                     diff,
                     pr_number=pr_number,
                     spec_plan=spec_plan,
@@ -742,25 +899,30 @@ class ReviewTeamOrchestrator:
                     extra_prompt_section=extra_prompt_section,
                     arch_edges=arch_edges,
                 )
-            except Exception as exc:
-                _log.warning(
-                    "review_team.round_two_failed",
+            for i, fut in futures.items():
+                reviewer = reviewers[i]
+                outcome = round1_outcomes[i]
+                try:
+                    new_outcome = fut.result()
+                except Exception as exc:
+                    _log.warning(
+                        "review_team.round_two_failed",
+                        role=reviewer.role.value,
+                        pr_number=pr_number,
+                        exc=type(exc).__name__,
+                        message=str(exc)[:200],
+                    )
+                    continue
+                _log.info(
+                    "review_team.round_two_done",
                     role=reviewer.role.value,
                     pr_number=pr_number,
-                    exc=type(exc).__name__,
-                    message=str(exc)[:200],
+                    round1_verdict=outcome.verdict.value,
+                    round2_verdict=new_outcome.verdict.value,
+                    n_round1_comments=len(outcome.comments),
+                    n_round2_comments=len(new_outcome.comments),
                 )
-                continue
-            _log.info(
-                "review_team.round_two_done",
-                role=reviewer.role.value,
-                pr_number=pr_number,
-                round1_verdict=outcome.verdict.value,
-                round2_verdict=new_outcome.verdict.value,
-                n_round1_comments=len(outcome.comments),
-                n_round2_comments=len(new_outcome.comments),
-            )
-            revised[i] = new_outcome
+                revised[i] = new_outcome
         return revised
 
     @staticmethod
@@ -816,6 +978,16 @@ class ReviewTeamOrchestrator:
     ) -> None:
         """Post inline comments + final review verdict for one reviewer.
 
+        SP-REVIEW-POST-BATCH: when ``head_sha`` is known, every inline
+        comment and the verdict are submitted together through
+        :meth:`_publish_batched_review` — one ``gh`` subprocess for the
+        whole reviewer's output instead of one per comment. When
+        ``head_sha`` is ``None`` (fresh-head resolution failed) there is
+        no commit to anchor inline comments to, so batching is skipped
+        entirely and :meth:`_publish_per_comment` runs directly — the
+        pre-batching degrade behavior for an unresolved head, preserved
+        verbatim.
+
         Failures here are logged but never raised — we want partial
         success rather than aborting the whole team.
 
@@ -823,6 +995,155 @@ class ReviewTeamOrchestrator:
         successfully posted inline comment is recorded so the
         orchestrator's auto-challenge pass can target replies on the
         right thread.
+        """
+        if head_sha is None:
+            self._publish_per_comment(
+                pr_number=pr_number,
+                outcome=outcome,
+                head_sha=head_sha,
+                team=team,
+                posted_ids=posted_ids,
+            )
+            return
+        self._publish_batched_review(
+            pr_number=pr_number,
+            outcome=outcome,
+            head_sha=head_sha,
+            team=team,
+            posted_ids=posted_ids,
+        )
+
+    def _publish_batched_review(
+        self,
+        *,
+        pr_number: int,
+        outcome: ReviewerOutcome,
+        head_sha: str,
+        team: TeamOutcome,
+        posted_ids: dict[tuple[str, int], int] | None,
+    ) -> None:
+        """Submit one reviewer's verdict + inline comments as a single review.
+
+        ``GITHUB_TOKEN``-authenticated bots cannot submit APPROVE /
+        REQUEST_CHANGES reviews on a PR (only humans / PATs can —
+        observed live on PR #1 from the auto-review workflow). When the
+        batched submission is rejected while ``outcome.verdict`` is
+        APPROVE or REQUEST_CHANGES, it is retried exactly once with the
+        event downgraded to COMMENT (SP-REVIEW-POST-BATCH NG4 — at most
+        one retry). When that retry (or the original call, when the
+        verdict was already COMMENT) also fails — e.g. a comment's line
+        no longer resolves against ``head_sha`` after a force-push,
+        HTTP 422 — this falls back to
+        :meth:`_publish_per_comment`'s pre-batching sequence, so a
+        single bad anchor degrades in isolation rather than losing the
+        whole reviewer's output.
+        """
+        comments_payload = [
+            {
+                "file": comment.file,
+                "line": comment.line,
+                "body": _render_comment_body(outcome, comment),
+            }
+            for comment in outcome.comments
+        ]
+        review_body = _render_review_body(outcome)
+        verdict = outcome.verdict.value
+        res = self._gh.pr_review_submit_batch(
+            pr_number,
+            commit_sha=head_sha,
+            verdict=verdict,
+            body=review_body,
+            comments=comments_payload,
+        )
+        if not res.ok and verdict != ReviewVerdict.COMMENT.value:
+            _log.warning(
+                "review_team.batch_review_rejected",
+                role=outcome.role.value,
+                verdict=verdict,
+                stderr=res.stderr[:200],
+            )
+            res = self._gh.pr_review_submit_batch(
+                pr_number,
+                commit_sha=head_sha,
+                verdict=ReviewVerdict.COMMENT.value,
+                body=review_body,
+                comments=comments_payload,
+            )
+        if not res.ok:
+            _log.warning(
+                "review_team.batch_review_fully_rejected",
+                role=outcome.role.value,
+                stderr=res.stderr[:200],
+            )
+            self._publish_per_comment(
+                pr_number=pr_number,
+                outcome=outcome,
+                head_sha=head_sha,
+                team=team,
+                posted_ids=posted_ids,
+            )
+            return
+
+        team.posted_reviews += 1
+        team.posted_comments += len(outcome.comments)
+        if posted_ids is not None and comments_payload:
+            self._recover_batched_posted_ids(
+                pr_number=pr_number,
+                res=res,
+                posted_ids=posted_ids,
+            )
+
+    def _recover_batched_posted_ids(
+        self,
+        *,
+        pr_number: int,
+        res: GhResult,
+        posted_ids: dict[tuple[str, int], int],
+    ) -> None:
+        """Populate ``posted_ids`` from a successful batched review's comments.
+
+        Parses the created review's own ``id`` out of ``res.stdout``,
+        fetches that review's comments scoped to its id (not the
+        whole-PR comment list), and records ``(file, line) -> comment
+        id`` for every entry whose ``path``/``line``/``id`` are present
+        and well-typed — the same shape
+        :meth:`_run_auto_challenge_pass` already consumes today.
+        Malformed / unparseable JSON no-ops (``posted_ids`` unchanged,
+        logged at debug) rather than raising — the auto-challenge pass
+        simply can't target this reviewer's threads this round.
+        """
+        review_id = _parse_comment_id(res.stdout)
+        if review_id is None:
+            _log.debug(
+                "review_team.batch_review_id_parse_failed",
+                pr_number=pr_number,
+            )
+            return
+        for entry in self._gh.list_review_id_comments(pr_number, review_id):
+            path = entry.get("path")
+            line = entry.get("line")
+            comment_id = entry.get("id")
+            if isinstance(path, str) and isinstance(line, int) and isinstance(comment_id, int):
+                posted_ids[(path, line)] = comment_id
+
+    def _publish_per_comment(
+        self,
+        *,
+        pr_number: int,
+        outcome: ReviewerOutcome,
+        head_sha: str | None,
+        team: TeamOutcome,
+        posted_ids: dict[tuple[str, int], int] | None,
+    ) -> None:
+        """Post one gh subprocess call per inline comment, then the verdict.
+
+        The pre-SP-REVIEW-POST-BATCH posting sequence, kept as the
+        degrade path for two cases: ``head_sha`` unresolved (no commit
+        to anchor a batched review to) and a batched review rejected
+        for every event tried by :meth:`_publish_batched_review`. A bad
+        comment anchor fails in isolation here — siblings still post —
+        which is exactly why this sequence is preserved rather than
+        replaced outright.
 
         Note:
             ``GITHUB_TOKEN``-authenticated bots cannot submit APPROVE
@@ -833,10 +1154,7 @@ class ReviewTeamOrchestrator:
             verdict still surfaces on the PR conversation.
         """
         for comment in outcome.comments:
-            body = (
-                f"**[{outcome.role.value}/{comment.severity}]** "
-                f"{comment.body}\n\n_— Repoach review-bot ({outcome.model_used})_"
-            )
+            body = _render_comment_body(outcome, comment)
             res = self._gh.pr_review_comment(
                 pr_number,
                 body=body,
@@ -859,13 +1177,7 @@ class ReviewTeamOrchestrator:
                     stderr=res.stderr[:200],
                 )
 
-        review_body = (
-            f"### {outcome.role.value.title()} review\n\n"
-            f"**Verdict:** {outcome.verdict.value}\n\n"
-            f"{outcome.summary}\n\n"
-            f"_— Repoach review bot, {outcome.model_used}, "
-            f"{outcome.tokens_used} tokens, {outcome.elapsed_s}s_"
-        )
+        review_body = _render_review_body(outcome)
         res = self._gh.pr_review_submit(
             pr_number,
             verdict=outcome.verdict.value,

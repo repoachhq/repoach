@@ -10,10 +10,10 @@ import httpx
 from loguru import logger
 
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from repoach.llm_proxy.providers.error_mapping import provider_error_message
-from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
+from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 81920
+ANTHROPIC_MESSAGES_API_VERSION = "2023-06-01"
 StreamChunkMode = Literal["line", "event"]
 
 
@@ -33,21 +33,11 @@ class AnthropicMessagesTransport(BaseProvider):
         self._provider_name = provider_name
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
-        self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
-            provider_name.lower(),
-            rate_limit=config.rate_limit,
-            rate_window=config.rate_window,
-            max_concurrency=config.max_concurrency,
-        )
+        self._global_rate_limiter = self._scoped_rate_limiter(provider_name)
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             proxy=config.proxy or None,
-            timeout=httpx.Timeout(
-                config.http_read_timeout,
-                connect=config.http_connect_timeout,
-                read=config.http_read_timeout,
-                write=config.http_write_timeout,
-            ),
+            timeout=self._build_timeout(),
         )
 
     async def cleanup(self) -> None:
@@ -55,8 +45,19 @@ class AnthropicMessagesTransport(BaseProvider):
         await self._client.aclose()
 
     def _request_headers(self) -> dict[str, str]:
-        """Return headers for the native messages request."""
-        return {"Content-Type": "application/json"}
+        """Return headers for the native messages request.
+
+        The default shape authenticates against a genuine Anthropic
+        Messages endpoint (``x-api-key`` + ``anthropic-version``) — the
+        credential-bearing header shape a direct ``anthropic`` provider
+        needs. Subclasses whose upstream expects a different auth scheme
+        (e.g. OpenRouter's ``Authorization: Bearer``) override this.
+        """
+        return {
+            "Content-Type": "application/json",
+            "x-api-key": self._api_key,
+            "anthropic-version": ANTHROPIC_MESSAGES_API_VERSION,
+        }
 
     def _build_request_body(self, request: Any) -> dict:
         """Build a native Anthropic request body."""
@@ -175,12 +176,20 @@ class AnthropicMessagesTransport(BaseProvider):
         input_tokens: int,
         error_message: str,
         sent_any_event: bool,
+        status_code: int | None = None,
     ) -> Iterator[str]:
-        """Emit a native Anthropic error event."""
-        error_event = {
-            "type": "error",
-            "error": {"type": "api_error", "message": error_message},
-        }
+        """Emit a native Anthropic error event.
+
+        ``status_code`` is the real upstream HTTP status recovered via
+        :func:`repoach.llm_proxy.providers.error_mapping.map_error`
+        (SP-BREAKER-LIVE-REASONS); included in the error payload only
+        when recovered so a caller unable to derive it sees the exact
+        same shape as before this field existed.
+        """
+        error_payload: dict[str, Any] = {"type": "api_error", "message": error_message}
+        if status_code is not None:
+            error_payload["status_code"] = status_code
+        error_event = {"type": "error", "error": error_payload}
         yield f"event: error\ndata: {json.dumps(error_event)}\n\n"
 
     async def _iter_stream_chunks(
@@ -251,6 +260,9 @@ class AnthropicMessagesTransport(BaseProvider):
             except Exception as error:
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(error).__name__, error)
                 error_message = self._get_error_message(error, request_id)
+                status_code = getattr(
+                    map_error(error, rate_limiter=self._global_rate_limiter), "status_code", None
+                )
 
                 if response is not None and not response.is_closed:
                     await response.aclose()
@@ -266,6 +278,7 @@ class AnthropicMessagesTransport(BaseProvider):
                     input_tokens=input_tokens,
                     error_message=error_message,
                     sent_any_event=sent_any_event,
+                    status_code=status_code,
                 ):
                     yield event
                 return

@@ -106,7 +106,16 @@ def test_multiple_violations_in_one_file(tmp_path: Path) -> None:
     out = scan_file(f)
     assert len(out) == 3
     counts = summarise(out)
-    assert counts == {"inline": 2, "noqa": 1, "total": 3, "files": 1}
+    assert counts == {"inline": 2, "noqa": 1, "unparseable": 0, "total": 3, "files": 1}
+
+
+def test_standalone_allow_directive_permitted(tmp_path: Path) -> None:
+    """The ``no_silent_except`` escape hatch is a whole-line comment; not itself flagged."""
+    f = _write(
+        tmp_path,
+        '# repoach: allow-silent-except reason="narrow FS race, best-effort cleanup"\nx = 1\n',
+    )
+    assert scan_file(f) == []
 
 
 def test_comment_inside_string_is_not_a_comment(tmp_path: Path) -> None:
@@ -124,13 +133,15 @@ def test_violation_format_round_trip(tmp_path: Path) -> None:
     assert "# message" in formatted
 
 
-def test_unparseable_file_is_skipped_silently(tmp_path: Path) -> None:
-    """Tokenize failures must not crash the gate; offending files emit zero
-    violations rather than propagating the exception.
+def test_unparseable_file_fails(tmp_path: Path) -> None:
+    """Tokenize failures must not crash the gate but must FAIL it loudly:
+    the file reports a single ``kind="unparseable"`` violation rather
+    than being silently skipped.
     """
     f = _write(tmp_path, "def broken(:\n")
     out = scan_file(f)
-    assert out == []
+    assert len(out) == 1
+    assert out[0].kind == "unparseable"
 
 
 def test_violation_dataclass_is_frozen() -> None:

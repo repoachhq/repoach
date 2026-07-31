@@ -19,6 +19,7 @@ from repoach.review.hallucination_guard import (
     apply_hallucination_guard,
     make_repo_file_reader,
     make_repo_symbol_searcher,
+    make_tests_symbol_searcher,
 )
 from repoach.review.reviewer import (
     BotRole,
@@ -386,3 +387,24 @@ def test_make_repo_symbol_searcher_finds_existing_test_function(tmp_path: Path):
     assert searcher("test_real_one") is True
     assert searcher("test_phantom") is False
     assert searcher("") is False
+
+
+def test_make_tests_symbol_searcher_ignores_src_scoped_symbols(tmp_path: Path):
+    """SP-MISSING-TEST-VERIFIER-SCOPE : ``src/`` never counts as a match."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "verdicts.py").write_text(
+        "def _parse_verdict(text):\n    return text\n",
+        encoding="utf-8",
+    )
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_verdicts.py").write_text(
+        "def test_parse_verdict():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    searcher = make_tests_symbol_searcher(tmp_path)
+
+    assert searcher("_parse_verdict") is False
+    assert searcher("test_parse_verdict") is True

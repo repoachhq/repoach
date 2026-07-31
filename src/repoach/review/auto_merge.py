@@ -819,12 +819,13 @@ def run_auto_merge(
         )
         return result
 
-    if base != "develop":
+    integration_branch = settings.integration_branch
+    if base != integration_branch:
         return _persist(
             AutoMergeResult(
                 pr_number=pr_number,
                 outcome=OUTCOME_SKIP_BASE,
-                notes=f"base={base!r}, refusing (only develop is allowed)",
+                notes=f"base={base!r}, refusing (only {integration_branch} is allowed)",
             )
         )
 

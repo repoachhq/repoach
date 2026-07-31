@@ -35,7 +35,6 @@ the working tree.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import tempfile
@@ -43,23 +42,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.logging import get_logger
+from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
 
 _CC_READ_ONLY_TOOLS: str = "Read,Glob,Grep,LS"
 _CC_TIMEOUT_S: int = 600
-
-
-def _scrubbed_env() -> dict[str, str]:
-    """Return the parent environment with this app's ``REPOACH_*`` stripped.
-
-    The ``claude`` CLI authenticates via its own Max session and never
-    needs Repoach's config or provider API keys; passing them to the
-    child would needlessly widen the secret surface. Everything else
-    (``HOME``, ``PATH``, the CLI's own auth) is preserved so the CLI
-    still runs.
-    """
-    return {key: value for key, value in os.environ.items() if not key.startswith("REPOACH_")}
 
 
 @dataclass
@@ -122,9 +110,12 @@ def run_cc_exploration(
         cli_path: Override the ``claude`` executable (tests).
         timeout_s: Hard cap on the subprocess.
         env: Optional environment for the subprocess. ``None`` (the
-            default) hands the CLI a :func:`_scrubbed_env` — the parent
-            environment minus this app's ``REPOACH_*`` secrets, which the
-            CLI never needs. Pass an explicit dict to override.
+            default) hands the CLI :func:`review.secret_env.scrubbed_env`
+            — the parent environment minus every secret-marked variable
+            (provider keys, ``GITHUB_TOKEN``/``GH_TOKEN``, auth/bearer
+            names, the ledger DSN), since this CLI reads
+            attacker-influenceable repository content. Pass an explicit
+            dict to override.
 
     Returns:
         A :class:`CcExploreResult`. Never raises — every failure mode
@@ -132,7 +123,7 @@ def run_cc_exploration(
         stays in control.
     """
     claude = cli_path or shutil.which("claude") or "claude"
-    child_env = env if env is not None else _scrubbed_env()
+    child_env = env if env is not None else scrubbed_env()
     full_prompt = prompt
     cmd = [claude, "-p"]
     if allow_tools:

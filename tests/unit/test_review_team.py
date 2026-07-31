@@ -12,6 +12,7 @@ scope here.  We exercise:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -251,6 +252,51 @@ def test_pr_diff_fallback_returns_api_error_when_git_diff_fails():
     assert "maximum number of files" in res.stderr
 
 
+# ---------- SP-REVIEW-POST-BATCH: GhCli.pr_review_submit_batch ----------
+
+
+def test_pr_review_submit_batch_posts_single_call_with_comments_array(monkeypatch, tmp_path):
+    """AC1: one gh subprocess carries the verdict + every comment via stdin JSON."""
+    gh_path = tmp_path / "gh"
+    gh_path.write_text("#!/bin/sh\n")
+    gh_path.chmod(0o755)
+
+    calls: list[dict[str, object]] = []
+
+    def _fake_run(argv, **kwargs):
+        calls.append({"argv": argv, "input": kwargs.get("input")})
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"id": 777}), stderr="")
+
+    monkeypatch.setattr("repoach.review.gh_client.subprocess.run", _fake_run)
+    cli = GhCli(cwd=tmp_path, gh_path=str(gh_path))
+
+    res = cli.pr_review_submit_batch(
+        42,
+        commit_sha="deadbeef",
+        verdict="APPROVE",
+        body="Looks good",
+        comments=[{"file": "a.py", "line": 3, "body": "nit"}],
+    )
+
+    assert res.ok
+    assert len(calls) == 1
+    argv = calls[0]["argv"]
+    assert argv == [
+        str(gh_path),
+        "api",
+        "--method",
+        "POST",
+        "repos/:owner/:repo/pulls/42/reviews",
+        "--input",
+        "-",
+    ]
+    assert not any(arg in ("-f", "-F") for arg in argv)
+    payload = json.loads(calls[0]["input"])
+    assert payload["event"] == "APPROVE"
+    assert payload["commit_id"] == "deadbeef"
+    assert payload["comments"] == [{"path": "a.py", "line": 3, "side": "RIGHT", "body": "nit"}]
+
+
 # ---------- End-to-end orchestrator with stubs ----------
 
 
@@ -295,7 +341,9 @@ class _StubGhCli:
         self.review_submit_fail = review_submit_fail
         self.posted_comments: list[dict] = []
         self.posted_reviews: list[dict] = []
+        self.batch_calls: list[dict] = []
         self.archive_calls: list[dict] = []
+        self._next_review_id = 1000
 
     def pr_diff(self, pr_number: int) -> GhResult:
         if not self._diff_ok:
@@ -342,6 +390,22 @@ class _StubGhCli:
                 argv=["gh", "pr", "review"],
             )
         return GhResult(0, "", "", argv=["gh", "pr", "review"])
+
+    def pr_review_submit_batch(self, pr_number: int, **kw) -> GhResult:
+        self.batch_calls.append({"pr": pr_number, **kw})
+        if self.review_submit_fail:
+            return GhResult(
+                1,
+                "",
+                "GraphQL: GITHUB_TOKEN cannot submit APPROVE",
+                argv=["gh", "api"],
+            )
+        review_id = self._next_review_id
+        self._next_review_id += 1
+        return GhResult(0, json.dumps({"id": review_id}), "", argv=["gh", "api"])
+
+    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+        return []
 
     def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
         self.archive_calls.append({"pr": pr_number, "body": body})
@@ -409,9 +473,10 @@ def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
     assert len(team.reviews) == 4
     # 1 inline comment from Architect, 0 from the others.
     assert team.posted_comments == 1
-    # Each of the 4 reviewers submits a final review.
+    # Each of the 4 reviewers submits one batched review (verdict + comments).
     assert team.posted_reviews == 4
-    assert len(gh.posted_reviews) == 4
+    assert len(gh.batch_calls) == 4
+    assert gh.posted_reviews == []
 
     # L4 should hold one row per reviewer.
     engine = create_engine(f"sqlite:///{tmp_path / 'review.db'}")
@@ -674,7 +739,15 @@ def test_review_pr_skips_archive_when_dry_run(tmp_path, monkeypatch):
 
 
 def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
-    """When GitHub rejects APPROVE/REQUEST_CHANGES from a bot, post a comment instead."""
+    """GitHub rejecting every event on the batched review falls back to a comment.
+
+    SP-REVIEW-POST-BATCH: ``review_submit_fail=True`` now makes the stub's
+    batched call (:meth:`_StubGhCli.pr_review_submit_batch`) fail for every
+    event, not just the legacy ``pr_review_submit`` — so each bot still
+    exhausts the full fallback chain: batched APPROVE attempt, batched
+    COMMENT-downgrade retry, legacy ``pr_review_submit``, then the fallback
+    issue comment.
+    """
     out = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
     for cls in ("Architect", "Sentinel", "Tester", "Scribe"):
         monkeypatch.setattr(
@@ -686,13 +759,174 @@ def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
     orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
     team = orch.review_pr(pr_number=21)
 
-    # Each of the 4 bots tried to submit a review (and failed)...
+    # Each of the 4 bots tried a batched review (APPROVE, then a
+    # COMMENT-downgrade retry) — both rejected.
+    assert len(gh.batch_calls) == 8
+    # ...then each fell back to the legacy per-comment path's verdict submit
+    # (also rejected)...
     assert len(gh.posted_reviews) == 4
     assert team.posted_reviews == 0
     # ...then posted a fallback issue comment that succeeded.
     assert team.posted_comments == 4
     fallback_bodies = [c["body"] for c in gh.posted_comments]
     assert all("verdict submission rejected" in b for b in fallback_bodies)
+
+
+# ---------- SP-REVIEW-POST-BATCH: _publish_outcome batching + fallback ----------
+
+
+class _BatchGhCli:
+    """Truthful gh stub exercising ``_publish_outcome``'s batching contract.
+
+    ``batch_results`` is consumed in call order — one entry per
+    :meth:`pr_review_submit_batch` invocation — so a test can script an
+    initial rejection followed by a downgraded-event success (or a
+    second rejection, to drive the full-fallback path). The legacy
+    ``pr_review_comment`` / ``pr_review_submit`` methods always succeed
+    unless overridden by a subclass, matching the pre-batching stub's
+    own baseline behavior.
+    """
+
+    def __init__(
+        self,
+        *,
+        batch_results: list[GhResult],
+        review_id_comments: list[dict[str, object]] | None = None,
+    ) -> None:
+        self._batch_results = iter(batch_results)
+        self._review_id_comments = review_id_comments or []
+        self.batch_calls: list[dict[str, object]] = []
+        self.legacy_comment_calls: list[dict[str, object]] = []
+        self.legacy_submit_calls: list[dict[str, object]] = []
+        self.list_review_id_calls: list[tuple[int, int]] = []
+
+    def pr_review_submit_batch(
+        self,
+        pr_number: int,
+        *,
+        commit_sha: str,
+        verdict: str,
+        body: str,
+        comments: list[dict[str, object]],
+    ) -> GhResult:
+        self.batch_calls.append(
+            {
+                "pr": pr_number,
+                "commit_sha": commit_sha,
+                "verdict": verdict,
+                "body": body,
+                "comments": comments,
+            }
+        )
+        return next(self._batch_results)
+
+    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+        self.list_review_id_calls.append((pr_number, review_id))
+        return self._review_id_comments
+
+    def pr_review_comment(self, pr_number: int, **kw) -> GhResult:
+        self.legacy_comment_calls.append({"pr": pr_number, **kw})
+        return GhResult(0, "", "", argv=["gh", "api"])
+
+    def pr_review_submit(self, pr_number: int, **kw) -> GhResult:
+        self.legacy_submit_calls.append({"pr": pr_number, **kw})
+        return GhResult(0, "", "", argv=["gh", "pr", "review"])
+
+
+def _team_outcome(pr_number: int = 1) -> TeamOutcome:
+    """Build a bare TeamOutcome for direct ``_publish_outcome`` tests."""
+    return TeamOutcome(
+        pr_number=pr_number,
+        final_verdict=ReviewVerdict.APPROVE,
+        n_blockers=0,
+        n_majors=0,
+    )
+
+
+def test_publish_outcome_downgrades_to_comment_event_on_batch_rejection(tmp_path):
+    """AC2: a rejected APPROVE/REQUEST_CHANGES batch retries once as COMMENT."""
+    outcome = _outcome(
+        BotRole.SENTINEL,
+        ReviewVerdict.REQUEST_CHANGES,
+        comments=[ReviewComment(file="a.py", line=1, severity="major", body="fix this")],
+    )
+    gh = _BatchGhCli(
+        batch_results=[
+            GhResult(
+                1, "", "GraphQL: GITHUB_TOKEN cannot submit REQUEST_CHANGES", argv=["gh", "api"]
+            ),
+            GhResult(0, json.dumps({"id": 555}), "", argv=["gh", "api"]),
+        ]
+    )
+    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    team = _team_outcome()
+
+    orch._publish_outcome(
+        pr_number=1, outcome=outcome, head_sha="deadbeef", team=team, posted_ids={}
+    )
+
+    assert len(gh.batch_calls) == 2
+    assert gh.batch_calls[0]["verdict"] == "REQUEST_CHANGES"
+    assert gh.batch_calls[1]["verdict"] == "COMMENT"
+    assert gh.legacy_comment_calls == []
+    assert gh.legacy_submit_calls == []
+    assert team.posted_reviews == 1
+    assert team.posted_comments == 1
+
+
+def test_publish_outcome_falls_back_to_per_comment_when_batch_fully_rejected(tmp_path):
+    """AC3: a batch rejected on both events falls back to the legacy sequence."""
+    outcome = _outcome(
+        BotRole.SENTINEL,
+        ReviewVerdict.REQUEST_CHANGES,
+        comments=[ReviewComment(file="a.py", line=1, severity="major", body="fix this")],
+    )
+    rejection = GhResult(1, "", "422 Unprocessable Entity", argv=["gh", "api"])
+    gh = _BatchGhCli(batch_results=[rejection, rejection])
+    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    team = _team_outcome()
+
+    orch._publish_outcome(
+        pr_number=1, outcome=outcome, head_sha="deadbeef", team=team, posted_ids={}
+    )
+
+    assert len(gh.batch_calls) == 2
+    assert len(gh.legacy_comment_calls) == 1
+    assert len(gh.legacy_submit_calls) == 1
+    assert team.posted_comments == 1
+    assert team.posted_reviews == 1
+
+
+def test_publish_outcome_recovers_posted_ids_from_batched_review(tmp_path):
+    """AC4: a successful batch's comment ids populate posted_ids via its own review id."""
+    outcome = _outcome(
+        BotRole.SENTINEL,
+        ReviewVerdict.APPROVE,
+        comments=[
+            ReviewComment(file="a.py", line=1, severity="minor", body="nit one"),
+            ReviewComment(file="b.py", line=9, severity="minor", body="nit two"),
+        ],
+    )
+    gh = _BatchGhCli(
+        batch_results=[GhResult(0, json.dumps({"id": 900}), "", argv=["gh", "api"])],
+        review_id_comments=[
+            {"id": 11, "path": "a.py", "line": 1},
+            {"id": 12, "path": "b.py", "line": 9},
+        ],
+    )
+    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    team = _team_outcome()
+    posted_ids: dict[tuple[str, int], int] = {}
+
+    orch._publish_outcome(
+        pr_number=1, outcome=outcome, head_sha="deadbeef", team=team, posted_ids=posted_ids
+    )
+
+    assert len(gh.batch_calls) == 1
+    assert gh.list_review_id_calls == [(1, 900)]
+    assert posted_ids == {("a.py", 1): 11, ("b.py", 9): 12}
+    assert team.posted_reviews == 1
+    assert team.posted_comments == 2
 
 
 def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):

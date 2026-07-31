@@ -24,6 +24,8 @@ from pydantic import BaseModel
 
 from .finding_verifiers import verify_finding
 from .findings import (
+    JUDGED_CLAIM_TYPES,
+    MECHANICAL_CLAIM_TYPES,
     ClaimType,
     FindingStatus,
     Severity,
@@ -37,10 +39,20 @@ from .spec_gate import fetch_spec_coverage, init_spec_coverage_schema
 _MIN_REVIEWERS = 4
 """A complete review has at least four reviewers parsed (the bench)."""
 
-_MECHANICAL_TYPES = frozenset(
-    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
-)
-_JUDGED_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY})
+_MECHANICAL_TYPES = MECHANICAL_CLAIM_TYPES
+_JUDGED_TYPES = JUDGED_CLAIM_TYPES
+"""Alias of :data:`findings.JUDGED_CLAIM_TYPES` (SP-CLAIM-TYPE-PARTITION-ALIGN).
+
+The gate and the refuter used to keep drifting, independently-defined
+copies of this set — the refuter judged ``spec_gap`` while the gate's
+copy omitted it, so a refuter-VERIFIED blocking ``spec_gap`` fell
+through both ``_MECHANICAL_TYPES`` and ``_JUDGED_TYPES`` and landed in
+``blocking_unverified`` as a misleading "no verifier" reason instead of
+counting as an open blocking finding. Importing the shared constant
+instead of redeclaring it makes that drift structurally impossible:
+every claim type the refuter judges is, by construction, also judged
+here.
+"""
 _SETTLED = frozenset({FindingStatus.RESOLVED, FindingStatus.REFUTED})
 _BLOCKING_STATUSES = frozenset({FindingStatus.VERIFIED, FindingStatus.STUCK})
 """Statuses that confirm a live blocking problem (SP-STUCK-ESCALATION).

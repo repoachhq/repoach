@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import httpx
@@ -12,6 +13,7 @@ _log = structlog.get_logger(__name__)
 _cached_snapshot: CreditsSnapshot | None = None
 _cached_fetched_at: float | None = None
 _cached_is_failure: bool = False
+_cache_lock: asyncio.Lock = asyncio.Lock()
 
 
 class CreditsSnapshot(BaseModel):
@@ -62,30 +64,48 @@ async def fetch_openrouter_credits(
         return None
 
 
+def _cache_lookup(now: float, ttl_s: float) -> tuple[bool, CreditsSnapshot | None]:
+    """Pure read of the cache globals; returns ``(hit, value)``."""
+    if _cached_fetched_at is None:
+        return False, None
+    if _cached_is_failure and (now - _cached_fetched_at) < min(60.0, ttl_s):
+        return True, None
+    if (
+        not _cached_is_failure
+        and _cached_snapshot is not None
+        and (now - _cached_fetched_at) < ttl_s
+    ):
+        return True, _cached_snapshot
+    return False, None
+
+
 async def get_cached_credits(
     api_key: str, *, client: httpx.AsyncClient, ttl_s: float, timeout_s: float = 3.0
 ) -> CreditsSnapshot | None:
-    """TTL-cached credits snapshot; caches failures for ``min(60, ttl_s)`` s."""
+    """TTL-cached credits snapshot; caches failures for ``min(60, ttl_s)`` s.
+
+    Concurrent callers that both observe an expired cache coalesce onto a
+    single in-flight ``fetch_openrouter_credits`` call via a module-level
+    ``asyncio.Lock`` with a double-checked re-read after acquiring it.
+    """
     global _cached_snapshot, _cached_fetched_at, _cached_is_failure
-    now = time.monotonic()
-    if _cached_fetched_at is not None:
-        if _cached_is_failure and (now - _cached_fetched_at) < min(60.0, ttl_s):
+    hit, value = _cache_lookup(time.monotonic(), ttl_s)
+    if hit:
+        return value
+    async with _cache_lock:
+        hit, value = _cache_lookup(time.monotonic(), ttl_s)
+        if hit:
+            return value
+        now = time.monotonic()
+        result = await fetch_openrouter_credits(api_key, client=client, timeout_s=timeout_s)
+        _cached_fetched_at = now
+        if result is None:
+            _cached_is_failure = True
+            _cached_snapshot = None
             return None
-        if (
-            not _cached_is_failure
-            and _cached_snapshot is not None
-            and (now - _cached_fetched_at) < ttl_s
-        ):
-            return _cached_snapshot
-    result = await fetch_openrouter_credits(api_key, client=client, timeout_s=timeout_s)
-    _cached_fetched_at = now
-    if result is None:
-        _cached_is_failure = True
-        _cached_snapshot = None
-        return None
-    _cached_is_failure = False
-    _cached_snapshot = result
-    return result
+        _cached_is_failure = False
+        _cached_snapshot = result
+        return result
 
 
 def reset_credits_cache() -> None:

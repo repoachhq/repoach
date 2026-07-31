@@ -20,6 +20,7 @@ depends_on:
   - SP-CHAINPILOT-PROBE-CELL         # CellHealth (the per-cell observation it wraps)
   - SP-CHAINPILOT-MATRIX             # ProviderModelMatrix / ModelCell (the matrix it sweeps + sub-slices)
   - SP-PROVIDER-TRANSPORT-SPI        # PROVIDER_DESCRIPTORS / ProviderDescriptor (passed through to the sweep)
+  - SP-SCHEMA-INIT-RACE-GENERALIZE    # effort_probe_store.py routes create_all through the shared helper
 
 provides_to: []                  # AUTO-maintained
 constraints: {}

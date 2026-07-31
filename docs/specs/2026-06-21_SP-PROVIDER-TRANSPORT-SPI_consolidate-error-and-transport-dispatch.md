@@ -16,6 +16,8 @@ owns:
 depends_on:                                                  # remaining imports are frontier code (core.anthropic, exceptions, rate_limit, config)
   - SP-CHAINS-THINKING-CLASS                                 # imports providers.catalog
   - SP-CHAINPILOT-REASONING-WIRE-GENERIC                     # imports providers.openai_generic
+  - SP-PROXY-FIRST-BYTE-DEADLINE                             # imports config.settings (SP-PROXY-LOG-CONTENT-GUARD reconciliation)
+  - SP-PROVIDER-INIT-DEDUP                                   # imports providers.anthropic_messages + providers.base (SP-BYO-PROVIDERS reconciliation)
 provides_to: []                                              # AUTO-maintained
 
 constraints: {}

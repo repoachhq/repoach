@@ -5,13 +5,13 @@ version: 0.1
 status: approved
 author: jfaye (thinking-handling audit, 2026-07-04)
 created: 2026-07-04
-updated: 2026-07-04
+updated: 2026-07-31
 
 owns:
   code: [src/repoach/llm_proxy/api/services.py]
   resources: []
 
-depends_on: []
+depends_on: [SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROXY-STATE-PERSIST, SP-PROVIDER-INIT-DEDUP]
 provides_to: []
 
 constraints: {}
@@ -106,6 +106,19 @@ retried at 4096 (×8) exactly as today.
 
 - No edge added or removed. `services.py` moves from the frontier
   into this spec's `owns.code`.
+- 2026-07-23 addendum (SP-PROXY-FIRST-BYTE-DEADLINE): `services.py`'s
+  existing import of `repoach.llm_proxy.config.settings` became a
+  governed edge once that module moved from the frontier into
+  SP-PROXY-FIRST-BYTE-DEADLINE's `owns.code` — no new import was
+  written, but SP-ARCH-EDGE-GATE now requires the coupling declared
+  here. `depends_on` updated accordingly.
+- 2026-07-23 addendum (SP-PROXY-STATE-PERSIST): `services.py` gains a
+  new import of `repoach.llm_proxy.routing.breaker_persist` (the
+  write-through call sites) and its pre-existing import of
+  `repoach.llm_proxy.routing.breaker` becomes a governed edge for the
+  first time — `breaker.py` moves from the frontier into
+  SP-PROXY-STATE-PERSIST's `owns.code` (its first formal owner).
+  `depends_on` updated accordingly.
 
 ## Diagram
 

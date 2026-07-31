@@ -25,8 +25,10 @@ decisions #2/#3/#4 — the monolithic 32K one-shot dispatch, its
    CLI's responsibility via :func:`open_pr`.
 
 The runner never raises on a gate failure — it returns a structured
-:class:`DevSessionResult` and the CLI maps ``no_op_reason`` keywords
-to exit codes.
+:class:`DevSessionResult` carrying both a free-text ``no_op_reason``
+(for logs/PR comments) and a structured ``reason_code``
+(:class:`~repoach.review.coder_findings.ReasonCode`); the CLI maps
+``reason_code -> exit code`` by identity (SP-CONSISTENCY-SWEEP).
 
 Module-level constants :
     :data:`DEFAULT_BRANCH_TEMPLATE` is the canonical branch-name
@@ -36,7 +38,6 @@ Module-level constants :
 
 from __future__ import annotations
 
-import contextlib
 import re
 import shutil
 import subprocess
@@ -49,6 +50,7 @@ from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..lint.no_inline_comments import scan_file as scan_inline_comments
 from ..lint.no_silent_except import scan_file as scan_silent_except
+from .coder_findings import ReasonCode
 from .coder_loop import (
     run_pytest_matrix,
     run_ruff_gate,
@@ -65,7 +67,7 @@ from .plan import ActionPlan, PlanStep, load_plan, plan_relpath
 from .reviewer import Developer
 from .secret_env import scrubbed_env
 from .spec import SpecPlan, load_spec
-from .spec_gate import promised_present, selector_present
+from .spec_gate import audit_plan_selectors, promised_present, selector_present
 from .spec_supersede import supersede_parent_on_decompose
 from .wrapup_attribution import StepCommit, attribute_failure_to_step
 
@@ -114,83 +116,6 @@ def _test_function_names_in_file(repo_root: Path, file_path: str) -> list[str]:
     return sorted(set(re.findall(r"(?m)^\s*(?:async\s+)?def\s+(test_\w+)\s*\(", source)))
 
 
-def _attempt_mechanical_rename(
-    repo_root: Path,
-    file_path: str,
-    promised: list[str],
-    delivered: list[str],
-) -> tuple[str, str]:
-    """Attempt to mechanically rename one delivered test function to its promised name.
-
-    When exactly one promised node id is missing from *file_path* and exactly
-    one test function is present in the file that no plan step promises, the
-    function is renamed by rewriting ``def <delivered>(...)`` to
-    ``def <promised>(...)`` in place.  Decorators and body are preserved.
-
-    The three outcomes are distinct because the gate must treat them
-    differently (SP-DEV-PROMISE-DELIVERY Errors: a failed rename falls
-    back to the retryable G1 gate, while an ambiguous drift keeps the
-    reconciled-accept — the first implementation conflated them into
-    one ``False`` and the judge refused the push, 2026-07-05).
-
-    Args:
-        repo_root: Repository root the *file_path* resolves against.
-        file_path: Repo-relative path to the test file.
-        promised: Node-id names (the ``::name`` part) the step promised.
-        delivered: Test function names actually defined in the file that no
-            plan step promises.
-
-    Returns:
-        ``("renamed", original_content)`` when the rename succeeded (the
-        caller restores *original_content* if the strict re-run stays
-        red); ``("ambiguous", "")`` when the drift is not one-to-one
-        (file untouched); ``("error", "")`` on any parse/IO failure
-        (the file is restored to its original content when a write
-        already happened).
-    """
-    if len(promised) != 1 or len(delivered) != 1:
-        return "ambiguous", ""
-
-    target = (repo_root / file_path).resolve()
-    try:
-        original = target.read_text(encoding="utf-8")
-    except OSError:
-        return "error", ""
-
-    promised_name = promised[0]
-    delivered_name = delivered[0]
-
-    rewritten = original.replace(f"def {delivered_name}(", f"def {promised_name}(")
-    if rewritten == original:
-        return "error", ""
-
-    try:
-        compile(rewritten, str(target), "exec")
-    except SyntaxError:
-        return "error", ""
-
-    try:
-        target.write_text(rewritten, encoding="utf-8")
-    except OSError:
-        with contextlib.suppress(OSError):
-            target.write_text(original, encoding="utf-8")
-        return "error", ""
-
-    return "renamed", original
-
-
-def _restore_file_contents(repo_root: Path, originals: dict[str, str]) -> None:
-    """Write back pre-rename contents after a failed mechanical rename.
-
-    SP-DEV-PROMISE-DELIVERY's failure contract: a rename whose strict
-    re-run stays red (or that errors midway across several files) must
-    not leave mechanically-renamed content in the retry's working tree.
-    """
-    for file_path, content in originals.items():
-        with contextlib.suppress(OSError):
-            (repo_root / file_path).write_text(content, encoding="utf-8")
-
-
 DEFAULT_BRANCH_TEMPLATE: str = "feat/sp-{slug}-impl"
 
 _MAX_STEP_ATTEMPTS: int = 3
@@ -229,6 +154,12 @@ class DevSessionResult:
     SP-DEV-WRAPUP-ATTRIBUTION adds ``wrapup_dossier``, carrying the attribution
     block (introducing step / pre-existing / error per failing selector) for
     a wrap-up that stayed red after the bounded repair attempt.
+
+    SP-RUFF-PASSED-TRUTHFUL: ``ruff_passed`` stays at its non-optimistic
+    default until the session-level self-verify gate actually runs
+    ``run_ruff_gate`` over the tree; it is never asserted ahead of that
+    real result, so an early return before self-verify reports the last
+    truthful value known at that point rather than a stale ``True``.
     """
 
     spec_id: str
@@ -251,6 +182,7 @@ class DevSessionResult:
     pr_title: str = ""
     pr_summary: str = ""
     wrapup_dossier: str = ""
+    reason_code: ReasonCode = ReasonCode.NONE
 
 
 def read_existing_files(plan: SpecPlan, *, repo_root: Path | None = None) -> dict[str, str]:
@@ -363,18 +295,21 @@ def spec_to_branch_slug(spec_id: str) -> str:
     return s.lower()
 
 
-def ensure_branch(branch: str, *, base: str = "develop", repo_root: Path | None = None) -> bool:
+def ensure_branch(branch: str, *, base: str | None = None, repo_root: Path | None = None) -> bool:
     """Create or check out *branch* off *base*.
 
     Args:
         branch: Target branch name.
-        base: Source ref to branch from when creating.
+        base: Source ref to branch from when creating. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         repo_root: Repo working tree.
 
     Returns:
         ``True`` when the branch is ready (created or already current),
         ``False`` on a git error.
     """
+    base = base if base is not None else get_settings().integration_branch
     git = shutil.which("git") or "git"
     root = (repo_root or Path.cwd()).resolve()
     proc = subprocess.run(
@@ -556,6 +491,45 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
         return False
 
 
+def _step_tests_already_green(repo_root: Path, step: PlanStep) -> bool:
+    """Return True when every promised test in *step* strictly passes right now.
+
+    Mirrors the strict-pass rule :func:`step_preflight_complete` already
+    applies: every promised test file must exist, every node-id
+    selector must resolve, and :func:`run_promised_tests` must return
+    ``reconciled=False``. Wrapped in a broad try/except (subprocess and
+    filesystem errors) that logs ``dev_runner.step_baseline_error`` and
+    returns ``False`` (fail-open — an unreadable baseline never blocks
+    a step, it only forfeits the zero-value check for that step).
+
+    Args:
+        repo_root: Repository working tree root, read as it stands right
+            now (before the step's Developer loop has run).
+        step: The plan step whose ``unit_tests`` form the baseline set.
+
+    Returns:
+        ``True`` only when the step promises at least one test, every
+        promised file already exists, every ``::`` node id already
+        resolves, and the promised selectors already pass without
+        falling back to the file-level reconciliation.
+    """
+    if not step.unit_tests:
+        return False
+    file_paths = {s.split("::", 1)[0] for s in step.unit_tests}
+    for file_path in file_paths:
+        if not (repo_root / file_path).is_file():
+            return False
+    node_selectors = [s for s in step.unit_tests if "::" in s]
+    if any(not selector_present(repo_root, s) for s in node_selectors):
+        return False
+    try:
+        ok, _tail, reconciled = run_promised_tests(repo_root, list(step.unit_tests))
+    except Exception as exc:
+        _log.warning("dev_runner.step_baseline_error", error=str(exc)[:200])
+        return False
+    return ok and not reconciled
+
+
 def commit_paths(repo_root: Path, paths: list[str], message: str) -> tuple[bool, str]:
     """Stage exactly *paths* and commit; ``(False, why)`` when nothing staged.
 
@@ -603,7 +577,14 @@ def load_or_produce_plan(
     ``docs/plans/<SP-ID>.md`` wins (the operator or a previous Planner
     session wrote it); otherwise one Planner session runs. Both paths
     re-read through :func:`load_plan` so the executor only ever
-    consumes a validated document.
+    consumes a validated document. The existing-plan-doc branch also
+    re-audits the loaded document's promised selectors against the
+    tree at head (:func:`~repoach.review.spec_gate.audit_plan_selectors`)
+    before handing it to step execution — a document produced fresh by
+    the Planner already passed the same check inside its own refine
+    loop, but a previously-committed document (a resumed session, or a
+    plan hand-consolidated outside that loop) was trusted verbatim
+    until now (SP-PLAN-SELECTOR-AUDIT-WIRE).
 
     Args:
         spec: Loaded spec the session runs for.
@@ -619,11 +600,16 @@ def load_or_produce_plan(
         ``(plan, error)`` — exactly one side is set.
     """
     try:
-        return load_plan(spec.id, root=repo_root), None
+        loaded = load_plan(spec.id, root=repo_root)
     except FileNotFoundError:
         _log.info("dev_runner.plan_absent_producing", spec_id=spec.id)
     except ValueError as exc:
         return None, f"committed plan is invalid: {str(exc)[:300]}"
+    else:
+        offenders = audit_plan_selectors(loaded, repo_root)
+        if offenders:
+            return None, f"committed plan has orphaned promised selectors: {offenders}"
+        return loaded, None
 
     from .planner import run_planner_session
 
@@ -1209,7 +1195,15 @@ def repair_wrapup_failures(
             continue
 
         if outcome.status == "error":
-            line = f"error: {selector}: {outcome.error}"
+            if outcome.step is not None:
+                step_label = (
+                    outcome.step.title
+                    if outcome.step.index == 0
+                    else f"step {outcome.step.index} ({outcome.step.title})"
+                )
+                line = f"error: {selector}: crashed at {step_label}: {outcome.error}"
+            else:
+                line = f"error: {selector}: {outcome.error}"
             dossier_lines.append(line)
             unrepaired.append((None, "", line))
             continue
@@ -1342,6 +1336,7 @@ def execute_plan_step(
     totals = StepOutcome(ok=False)
     gate_feedback = ""
     last_gate_kind = ""
+    baseline_green = _step_tests_already_green(repo_root, step)
 
     for attempt in range(1, _MAX_STEP_ATTEMPTS + 1):
         if attempt == _MAX_STEP_ATTEMPTS and last_gate_kind != _LINT_GATE_KIND:
@@ -1494,102 +1489,46 @@ def execute_plan_step(
                         promised=list(step.unit_tests),
                     )
                     continue
-                rename_errored = False
-                renamed_originals: dict[str, str] = {}
-                for file_path in sorted(touched_promised):
-                    promised_names = [
-                        s.rsplit("::", 1)[-1].split("[", 1)[0]
-                        for s in step.unit_tests
-                        if s.split("::", 1)[0] == file_path
-                    ]
-                    defined = _test_function_names_in_file(repo_root, file_path)
-                    delivered_names = [n for n in defined if n not in promised_names]
-                    outcome, original = _attempt_mechanical_rename(
-                        repo_root, file_path, promised_names, delivered_names
+                absent_promises: list[str] = []
+                for selector in step.unit_tests:
+                    if selector.split("::", 1)[0] not in touched_promised:
+                        continue
+                    if not promised_present(repo_root, selector):
+                        absent_promises.append(selector)
+                if absent_promises:
+                    delivered_listing: list[str] = []
+                    for file_path in sorted(touched_promised):
+                        names = _test_function_names_in_file(repo_root, file_path)
+                        if names:
+                            delivered_listing.append(f"{file_path}: {', '.join(names)}")
+                    delivered_block = (
+                        "\n".join(delivered_listing)
+                        if delivered_listing
+                        else "(no test_* functions found in the touched file)"
                     )
-                    if outcome == "renamed":
-                        renamed_originals[file_path] = original
-                    elif outcome == "error":
-                        rename_errored = True
-                        break
-
-                if rename_errored:
-                    _restore_file_contents(repo_root, renamed_originals)
+                    absent_names = ", ".join(absent_promises)
                     gate_feedback = (
-                        "promised-test gate: mechanical rename failed \u2014 write "
-                        "tests named exactly: " + ", ".join(step.unit_tests)
+                        "promised-test gate: the loop touched the promised test "
+                        "file(s) but the promised trailing name(s) are absent "
+                        f"({absent_names}). Delivered test functions found in the "
+                        f"touched file(s):\n{delivered_block}\n"
+                        "add a test named exactly <name>, or correct the plan "
+                        "promise."
                     )
                     _log.warning(
-                        "dev_runner.promised_tests_rename_failed",
+                        "dev_runner.promised_tests_fanout_refused",
                         spec_id=plan.spec_id,
                         step=step.index,
-                        promised=list(step.unit_tests),
+                        absent=absent_promises,
+                        delivered=delivered_listing,
                     )
                     continue
-                if renamed_originals:
-                    re_ok, re_tail = run_pytest_selectors(repo_root, list(step.unit_tests))
-                    if re_ok:
-                        _log.info(
-                            "dev_runner.promised_tests_renamed",
-                            spec_id=plan.spec_id,
-                            step=step.index,
-                            promised=list(step.unit_tests),
-                        )
-                    else:
-                        _restore_file_contents(repo_root, renamed_originals)
-                        gate_feedback = (
-                            "promised-test gate: the mechanical rename did not make "
-                            "the promised selectors green \u2014 write tests named "
-                            "exactly: " + ", ".join(step.unit_tests)
-                        )
-                        _log.warning(
-                            "dev_runner.promised_tests_rename_rerun_red",
-                            spec_id=plan.spec_id,
-                            step=step.index,
-                            tail=re_tail[:200],
-                        )
-                        continue
-                else:
-                    absent_promises: list[str] = []
-                    for selector in step.unit_tests:
-                        if selector.split("::", 1)[0] not in touched_promised:
-                            continue
-                        if not promised_present(repo_root, selector):
-                            absent_promises.append(selector)
-                    if absent_promises:
-                        delivered_listing: list[str] = []
-                        for file_path in sorted(touched_promised):
-                            names = _test_function_names_in_file(repo_root, file_path)
-                            if names:
-                                delivered_listing.append(f"{file_path}: {', '.join(names)}")
-                        delivered_block = (
-                            "\n".join(delivered_listing)
-                            if delivered_listing
-                            else "(no test_* functions found in the touched file)"
-                        )
-                        absent_names = ", ".join(absent_promises)
-                        gate_feedback = (
-                            "promised-test gate: the loop touched the promised test "
-                            "file(s) but the promised trailing name(s) are absent "
-                            f"({absent_names}). Delivered test functions found in the "
-                            f"touched file(s):\n{delivered_block}\n"
-                            "add a test named exactly <name>, or correct the plan "
-                            "promise."
-                        )
-                        _log.warning(
-                            "dev_runner.promised_tests_fanout_refused",
-                            spec_id=plan.spec_id,
-                            step=step.index,
-                            absent=absent_promises,
-                            delivered=delivered_listing,
-                        )
-                        continue
-                    _log.warning(
-                        "dev_runner.promised_tests_reconciled",
-                        spec_id=plan.spec_id,
-                        step=step.index,
-                        promised=list(step.unit_tests),
-                    )
+                _log.warning(
+                    "dev_runner.promised_tests_reconciled",
+                    spec_id=plan.spec_id,
+                    step=step.index,
+                    promised=list(step.unit_tests),
+                )
 
         step_changes = [p for p in _changed_paths(repo_root) if p not in pre_existing]
         escaped = [p for p in step_changes if p not in contract]
@@ -1608,6 +1547,27 @@ def execute_plan_step(
                 paths=escaped,
             )
             return totals
+
+        if baseline_green:
+            promised_files = {s.split("::", 1)[0] for s in step.unit_tests}
+            non_test_changes = [p for p in step_changes if p not in promised_files]
+            if not non_test_changes:
+                totals.reason = (
+                    f"step {step.index} ({step.title!r}) promised tests "
+                    f"{list(step.unit_tests)} were already green before this step ran, "
+                    f"and its commit touches nothing beyond the promised test file(s) "
+                    f"{sorted(promised_files)} — the work was already delivered "
+                    "elsewhere; fold the credit back into whichever earlier step "
+                    "actually made the tests pass; not retried (work left in place)"
+                )
+                _log.warning(
+                    "dev_runner.step_zero_value_diff",
+                    spec_id=plan.spec_id,
+                    step=step.index,
+                    promised=list(step.unit_tests),
+                    step_changes=step_changes,
+                )
+                return totals
 
         committed, commit_detail = commit_paths(repo_root, step_changes, step.commit_message)
         if not committed:
@@ -1826,7 +1786,6 @@ def _develop_one_spec(
         result.steps_completed += 1
 
     full_ok, full_tail = run_pytest_matrix(repo)
-    result.ruff_passed = True
     result.pytest_passed = full_ok
     if not full_ok:
         promised = _promised_selectors_for_plan(action_plan)
@@ -1846,6 +1805,7 @@ def _develop_one_spec(
             full_ok, full_tail = run_pytest_matrix(repo)
             result.pytest_passed = full_ok
     if not full_ok:
+        result.reason_code = ReasonCode.PYTEST_RED
         return f"full unit suite pytest red after all steps ({full_tail[:160]})"
 
     integration_present = [
@@ -1864,6 +1824,7 @@ def _develop_one_spec(
         int_ok, int_tail = run_pytest_selectors(repo, integration_present)
         if not int_ok:
             result.pytest_passed = False
+            result.reason_code = ReasonCode.PYTEST_RED
             return f"integration tests pytest red ({int_tail[:160]})"
 
     try:
@@ -1877,10 +1838,13 @@ def _develop_one_spec(
         )
     except Exception as exc:
         _log.warning("dev_runner.self_verify_crashed", spec_id=spec.id, error=str(exc)[:200])
+        result.reason_code = ReasonCode.SELF_VERIFY
         return f"self-verify gate crashed: {type(exc).__name__}: {str(exc)[:160]}"
+    result.ruff_passed = self_verify.ruff_ok
     result.self_verified = self_verify.ok
     if not self_verify.ok:
         _log.warning("dev_runner.self_verify_failed", spec_id=spec.id, reasons=self_verify.reasons)
+        result.reason_code = ReasonCode.SELF_VERIFY
         return "self-verify gate failed: " + " | ".join(self_verify.reasons)[:240]
     return None
 
@@ -1890,7 +1854,7 @@ def run_developer_session(
     *,
     repo_root: Path | None = None,
     branch: str | None = None,
-    base: str = "develop",
+    base: str | None = None,
     push: bool = True,
     developer: Developer | None = None,
     planner: object | None = None,
@@ -1923,7 +1887,9 @@ def run_developer_session(
         repo_root: Working tree root (defaults to ``cwd``).
         branch: Override branch name (defaults to the
             :data:`DEFAULT_BRANCH_TEMPLATE` rendering).
-        base: Source ref for the new branch (defaults to ``develop``).
+        base: Source ref for the new branch. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         push: When ``False`` the runner stops after committing
             locally — useful for tests / dry-runs.
         developer: Optional pre-built :class:`Developer` (tests
@@ -1945,11 +1911,12 @@ def run_developer_session(
 
     Returns:
         A :class:`DevSessionResult`.  No exception raised on gate
-        failures — the caller (CLI) maps ``no_op_reason`` keywords to
-        exit codes.
+        failures — the caller (CLI) maps ``reason_code`` to an exit code
+        by identity.
     """
     repo = (repo_root or Path.cwd()).resolve()
     settings = get_settings()
+    base = base if base is not None else settings.integration_branch
     db = db_path or Path(settings.db_path)
     init_schema(db)
 
@@ -1959,6 +1926,7 @@ def run_developer_session(
         return DevSessionResult(
             spec_id=spec_id,
             no_op_reason=f"spec not found: {exc}",
+            reason_code=ReasonCode.SPEC_NOT_FOUND,
         )
 
     target_branch = branch or DEFAULT_BRANCH_TEMPLATE.format(slug=spec_to_branch_slug(spec.id))
@@ -1981,6 +1949,7 @@ def run_developer_session(
     sub_targets, decompose_error = _resolve_sub_specs(spec, repo=repo, decomposer=decomposer)
     if decompose_error is not None:
         result.no_op_reason = decompose_error
+        result.reason_code = ReasonCode.DECOMPOSE_OR_SUPERSEDE
         return result
     result.decomposed = not (len(sub_targets) == 1 and sub_targets[0].id == spec.id)
     if result.decomposed:
@@ -2019,6 +1988,7 @@ def run_developer_session(
     pushed, push_log = push_branch(repo, target_branch)
     if not pushed:
         result.no_op_reason = f"commit/push failed: {push_log}"
+        result.reason_code = ReasonCode.PUSH_FAILED
         return result
     result.pushed = True
     return result
@@ -2031,7 +2001,7 @@ def open_pr(
     summary: str,
     spec_ref: str,
     branch: str,
-    base: str = "develop",
+    base: str | None = None,
     gh: GhCli | None = None,
 ) -> str:
     """Open a draft-quality PR for *branch* via the ``gh`` CLI.
@@ -2048,13 +2018,16 @@ def open_pr(
         spec_ref: A human reference to the spec source — the parent spec path for a
             single-spec run, or a note that the parent was decomposed for a multi run.
         branch: The head branch to open the PR from.
-        base: The PR base (defaults to ``develop``).
+        base: The PR base. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         gh: Optional :class:`GhCli` (tests inject a fake).
 
     Returns:
         The PR URL on success, empty string on failure.
     """
     gh = gh or GhCli()
+    base = base if base is not None else get_settings().integration_branch
     title = title[:200]
     body = (
         f"Autonomous NIM Developer implementation of **{spec_id}**.\n\n"

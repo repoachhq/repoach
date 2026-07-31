@@ -30,7 +30,7 @@ from ..review.auto_merge import (
     merge_exit_code,
     run_auto_merge,
 )
-from ..review.coder_findings import run_coder_fix_from_findings
+from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.gh_client import GhCli
 from ..review.orchestrator import run_review
@@ -39,6 +39,27 @@ review_app = typer.Typer(
     help="Review-bot team operations (NIM-only, no Anthropic quota).",
     no_args_is_help=True,
 )
+
+_DEV_SESSION_REASON_EXIT_CODES: dict[ReasonCode, int] = {
+    ReasonCode.SPEC_NOT_FOUND: 5,
+    ReasonCode.NO_FIXES: 4,
+    ReasonCode.WHITELIST_REJECTED: 4,
+    ReasonCode.SELF_VERIFY: 6,
+    ReasonCode.DECOMPOSE_OR_SUPERSEDE: 7,
+    ReasonCode.RUFF_RED: 3,
+    ReasonCode.PYTEST_RED: 3,
+}
+"""``repoach review develop`` exit codes, keyed by identity on ``reason_code``.
+
+Audit 2026-07-13 finding C4: this used to be a chain of
+``substring in result.no_op_reason.lower()`` checks — brittle, since a
+coincidental substring inside an unrelated message (e.g. a
+contract-violation reason that happens to quote a ``ruff``-reformatted
+path) could mismap to the wrong exit code. ``ReasonCode.PUSH_FAILED``
+and ``ReasonCode.NONE`` are intentionally absent: both fall through to
+the caller's ``not result.pushed`` catch-all (exit ``1``), matching the
+pre-fix behaviour for every reason with no dedicated branch.
+"""
 
 
 @review_app.command("pr")
@@ -207,7 +228,7 @@ def review_fix(
             ensure_ascii=False,
         )
     )
-    if fr.no_op_reason and "base=" in fr.no_op_reason:
+    if fr.wrong_base:
         raise typer.Exit(code=5)
     if fr.placeholder_rejected:
         raise typer.Exit(code=9)
@@ -356,10 +377,10 @@ def review_develop(
         ...,
         help='Spec identifier — accepts "sec", "SP-SEC", "sp-sec", etc.',
     ),
-    base: str = typer.Option(
-        "develop",
+    base: str | None = typer.Option(
+        None,
         "--base",
-        help="Source ref the new branch is created from. Defaults to develop.",
+        help="Source ref the new branch is created from. Defaults to integration_branch.",
     ),
     branch: str | None = typer.Option(
         None,
@@ -472,17 +493,9 @@ def review_develop(
 
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
 
-    reason = (result.no_op_reason or "").lower()
-    if "spec not found" in reason:
-        raise typer.Exit(code=5)
-    if "no fixes" in reason or "rejected by whitelist" in reason:
-        raise typer.Exit(code=4)
-    if "self-verify" in reason:
-        raise typer.Exit(code=6)
-    if "decompose" in reason or "supersede" in reason:
-        raise typer.Exit(code=7)
-    if "ruff" in reason or "pytest" in reason:
-        raise typer.Exit(code=3)
+    exit_code = _DEV_SESSION_REASON_EXIT_CODES.get(result.reason_code)
+    if exit_code is not None:
+        raise typer.Exit(code=exit_code)
     if not result.pushed and not no_push:
         raise typer.Exit(code=1)
 
@@ -544,8 +557,7 @@ def review_plan(
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
 
-    reason = (outcome.error or "").lower()
-    if "spec not found" in reason:
+    if outcome.reason_code is ReasonCode.SPEC_NOT_FOUND:
         raise typer.Exit(code=5)
     if not outcome.written:
         raise typer.Exit(code=1)

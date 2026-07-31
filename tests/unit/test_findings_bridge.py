@@ -9,6 +9,7 @@ from repoach.review.findings import ClaimType, FindingStatus, Severity, fetch_fi
 from repoach.review.findings_bridge import (
     LENS_DEFAULT_CLAIM_TYPE,
     SEVERITY_MAP,
+    classify_claim_type,
     comment_to_finding,
     record_findings_for_outcomes,
 )
@@ -59,6 +60,20 @@ def test_content_cues_override_lens_default() -> None:
         test_comment, role=BotRole.SENTINEL, pr_number=1, head_sha="sha", round_n=1
     )
     assert finding.claim_type == ClaimType.MISSING_TEST
+
+
+def test_judged_signal_not_overridden_by_incidental_mechanical_keyword() -> None:
+    """SP-CLAIM-TYPE-PARTITION-ALIGN G2: a security-flavoured comment
+
+    carrying an incidental mechanical word ("lint") must still route to
+    the judged bucket (SECURITY), not to LINT_CONVENTION by
+    first-match-regex-on-prose.
+    """
+    body = (
+        "This is a security vulnerability — auth bypass on the login "
+        "path. The lint config could also use some cleanup."
+    )
+    assert classify_claim_type(body, BotRole.TESTER) == ClaimType.SECURITY
 
 
 def test_no_cue_keeps_lens_default() -> None:

@@ -152,7 +152,8 @@ class NimAgentOutput:
             forwarded here as a list of plain dicts (one entry per
             chain attempt) so downstream callers can serialise it
             without depending on the proxy's pydantic surface.
-            Empty when the loop fell through to a transport-level stub.
+            Empty when the proxy response itself carried no trace
+            entries (e.g. an older proxy build predating this field).
     """
 
     text: str = ""
@@ -244,6 +245,95 @@ def _extract_tool_calls(response: AgentResponse) -> list[ToolCallBlock]:
     return [b for b in response.content if isinstance(b, ToolCallBlock)]
 
 
+_MAX_TOOL_ARG_BYTES: int = 16000
+"""Upper bound, in UTF-8 bytes, on a serialised tool-call argument payload.
+
+SP-TOOL-DISPATCH-VALIDATE (audit 2026-07-13 finding M16): the loop runs
+untrusted chain models, and ``tc.args`` used to be splatted straight
+into ``callable_fn`` with no cap of its own — only the tool RESULT was
+capped. This bounds the incoming payload before it ever reaches a
+callable, independently of that result cap."""
+
+_JSON_SCHEMA_TYPE_PYTHON_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "number": (int, float),
+    "integer": (int,),
+    "boolean": (bool,),
+    "object": (dict,),
+    "array": (list,),
+    "null": (type(None),),
+}
+"""Maps the JSON-Schema ``type`` names the factory's tool schemas
+actually use to the Python types :func:`_validate_tool_args` accepts.
+Not a full JSON-Schema draft implementation (NG1) — just the subset
+:meth:`ToolDef.to_tool_spec` emits."""
+
+
+def _validate_tool_args(schema: dict[str, Any], args: Any, *, max_bytes: int) -> str | None:
+    """Validate model-supplied tool-call args against the declared schema.
+
+    Args:
+        schema: the tool's declared ``parameters_schema`` (an object
+            schema with ``properties`` and optionally ``required`` /
+            ``additionalProperties``, per A1).
+        args: the model-supplied ``tc.args`` value to validate.
+        max_bytes: cap on the UTF-8 length of ``args`` once serialised.
+
+    Returns:
+        ``None`` when ``args`` satisfies the schema and size cap;
+        otherwise a human-readable rejection reason.
+
+    A pragmatic validator (NG1): object schemas with typed properties,
+    ``required``, and ``additionalProperties`` only — not a
+    spec-complete JSON-Schema implementation.
+    """
+    if not isinstance(args, dict):
+        return f"tool args must be a JSON object, got {type(args).__name__}"
+    try:
+        serialised = json.dumps(args)
+    except TypeError as exc:
+        return f"tool args are not JSON-serialisable: {exc}"
+    if len(serialised.encode("utf-8")) > max_bytes:
+        return f"tool args exceed the {max_bytes}-byte cap"
+
+    properties = schema.get("properties") or {}
+    required = schema.get("required") or []
+    additional_properties = schema.get("additionalProperties", True)
+
+    for key in required:
+        if key not in args:
+            return f"missing required argument {key!r}"
+
+    if additional_properties is False:
+        unknown = sorted(set(args) - set(properties))
+        if unknown:
+            return f"unknown argument(s) not permitted: {', '.join(unknown)}"
+
+    for key, value in args.items():
+        prop_schema = properties.get(key)
+        if not isinstance(prop_schema, dict):
+            continue
+        declared_type = prop_schema.get("type")
+        if declared_type is None:
+            continue
+        declared_type_names = declared_type if isinstance(declared_type, list) else [declared_type]
+        python_types: tuple[type, ...] = tuple()
+        for type_name in declared_type_names:
+            python_types += _JSON_SCHEMA_TYPE_PYTHON_TYPES.get(type_name, ())
+        if not python_types:
+            continue
+        if isinstance(value, bool):
+            if "boolean" not in declared_type_names:
+                return f"argument {key!r} has wrong type: expected {declared_type}, got bool"
+        elif not isinstance(value, python_types):
+            return (
+                f"argument {key!r} has wrong type: expected "
+                f"{declared_type}, got {type(value).__name__}"
+            )
+
+    return None
+
+
 _BUDGET_NUDGE_REMAINING_TURNS: frozenset[int] = frozenset({8, 3})
 """Remaining-turn counts at which the loop warns the model in-band.
 
@@ -329,7 +419,7 @@ class AgentLoop:
                 "requires a shared secret.  Set it in .env."
             )
 
-        base_url = (settings.llm_proxy_base_url or "http://localhost:8082").rstrip("/")
+        base_url = settings.llm_proxy_base_url.rstrip("/")
 
         self._max_turns = max_turns
         self._max_tokens = max_tokens
@@ -341,8 +431,6 @@ class AgentLoop:
             api_key=api_key,
             timeout_s=per_call_timeout_s,
         )
-        self._base_url = f"{base_url}/v1"
-        self._api_key = api_key
 
     def run_oneshot(
         self,
@@ -720,6 +808,28 @@ class AgentLoop:
                     tool_name=tool_name,
                     arg_keys=sorted(tc.args.keys()) if isinstance(tc.args, dict) else [],
                 )
+                rejection_reason = _validate_tool_args(
+                    tools_by_name[tool_name].parameters_schema,
+                    tc.args,
+                    max_bytes=_MAX_TOOL_ARG_BYTES,
+                )
+                if rejection_reason is not None:
+                    _log.warning(
+                        "agent_loop.tool_args_rejected",
+                        turn=turn,
+                        tool_name=tool_name,
+                        reason=rejection_reason,
+                    )
+                    result_blocks.append(
+                        ToolResultBlock(
+                            tool_call_id=tc.id,
+                            result=ToolResultError(
+                                ok=False,
+                                error={"message": rejection_reason},
+                            ),
+                        )
+                    )
+                    continue
                 try:
                     raw = tools_by_name[tool_name].callable_fn(**tc.args)
                     capped = raw if isinstance(raw, str) else json.dumps(raw)

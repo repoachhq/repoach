@@ -24,8 +24,7 @@ from repoach.llm_proxy.core.anthropic import (
     map_stop_reason,
 )
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from repoach.llm_proxy.providers.error_mapping import provider_error_message
-from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
+from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
 
 
 def _extract_reasoning_tokens(usage_info: Any, tag: str) -> int:
@@ -87,33 +86,18 @@ class OpenAIChatTransport(BaseProvider):
         self._provider_name = provider_name
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
-            provider_name.lower(),
-            rate_limit=config.rate_limit,
-            rate_window=config.rate_window,
-            max_concurrency=config.max_concurrency,
-        )
+        self._global_rate_limiter = self._scoped_rate_limiter(provider_name)
         http_client = None
         if config.proxy:
             http_client = httpx.AsyncClient(
                 proxy=config.proxy,
-                timeout=httpx.Timeout(
-                    config.http_read_timeout,
-                    connect=config.http_connect_timeout,
-                    read=config.http_read_timeout,
-                    write=config.http_write_timeout,
-                ),
+                timeout=self._build_timeout(),
             )
         self._client = AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,
             max_retries=0,
-            timeout=httpx.Timeout(
-                config.http_read_timeout,
-                connect=config.http_connect_timeout,
-                read=config.http_read_timeout,
-                write=config.http_write_timeout,
-            ),
+            timeout=self._build_timeout(),
             http_client=http_client,
         )
 
@@ -228,7 +212,12 @@ class OpenAIChatTransport(BaseProvider):
         """
         tag = self._provider_name
         message_id = f"msg_{uuid.uuid4()}"
-        sse = SSEBuilder(message_id, request.model, input_tokens)
+        sse = SSEBuilder(
+            message_id,
+            request.model,
+            input_tokens,
+            log_full_content=self._config.log_full_content,
+        )
 
         body = self._build_request_body(request)
         req_tag = f" request_id={request_id}" if request_id else ""
@@ -251,6 +240,7 @@ class OpenAIChatTransport(BaseProvider):
         usage_info = None
         error_occurred = False
         error_message = ""
+        error_status_code: int | None = None
 
         async with self._global_rate_limiter.concurrency_slot():
             try:
@@ -343,6 +333,9 @@ class OpenAIChatTransport(BaseProvider):
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(e).__name__, e)
                 error_occurred = True
                 finish_reason = "error"
+                error_status_code = getattr(
+                    map_error(e, rate_limiter=self._global_rate_limiter), "status_code", None
+                )
                 base_message = provider_error_message(
                     e,
                     provider_name=tag,
@@ -427,6 +420,9 @@ class OpenAIChatTransport(BaseProvider):
             reasoning_tokens_value = sse.estimate_reasoning_tokens()
 
         yield sse.message_delta(
-            map_stop_reason(finish_reason), output_tokens, reasoning_tokens=reasoning_tokens_value
+            map_stop_reason(finish_reason),
+            output_tokens,
+            reasoning_tokens=reasoning_tokens_value,
+            error_status_code=error_status_code,
         )
         yield sse.message_stop()

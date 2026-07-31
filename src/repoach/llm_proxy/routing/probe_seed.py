@@ -97,6 +97,6 @@ def seed_breaker_from_probes(settings: Settings, *, now: float, db_path: Path) -
             default_ttl_s=settings.breaker_ttl_s,
             terminal_ttl_s=settings.breaker_ttl_terminal_s,
         )
-        breaker.trip(head, now=now, ttl_s=ttl_s)
+        breaker.trip(head, now=now, ttl_s=ttl_s, reason=reason)
         tripped += 1
     return tripped

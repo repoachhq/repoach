@@ -25,7 +25,6 @@ Developer session (:mod:`dev_runner`) build on:
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -34,6 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..core.config import Settings
 from ..core.logging import get_logger
 from .gh_client import GhCli
 from .patch_apply import apply_search_replace_edits
@@ -89,6 +89,9 @@ def is_path_allowed(path: str) -> bool:
     * Its final component is not an env file — exactly ``.env``, any
       ``.env.*`` variant, or ``.envrc`` — anywhere in the tree, not
       just at repo root (SP-CODER-WHITELIST-HARDEN).
+    * Its final component is not exactly ``chains.env`` — the
+      authoritative chain-selection config, human- or
+      chainpilot-written only (SP-CODER-CHAINS-GUARD).
     * It is not in :data:`FORBIDDEN_PATHS`.
     * It does not start with any prefix in :data:`FORBIDDEN_PREFIXES`.
 
@@ -107,6 +110,8 @@ def is_path_allowed(path: str) -> bool:
         return False
     basename = parts[-1]
     if basename == ".env" or basename.startswith(".env.") or basename == ".envrc":
+        return False
+    if basename == "chains.env":
         return False
     norm = path.replace("\\", "/")
     if norm in FORBIDDEN_PATHS:
@@ -575,27 +580,36 @@ def run_pytest(repo_root: Path, *, python: str | None = None) -> tuple[bool, str
     return rc == 0, tail
 
 
-def _pytest_pythons() -> list[str | None]:
+def _pytest_pythons(settings: Settings | None = None) -> list[str | None]:
     """Return the list of Python interpreters the local gate should run.
 
-    Reads the ``REPOACH_CODER_PYTHONS`` env var (CSV of executable names
-    or paths, e.g. ``"python3.11,python3.13"``).  Each entry is
+    Reads ``settings.coder_pythons`` (aliased to the
+    ``REPOACH_CODER_PYTHONS`` environment variable — CSV of executable
+    names or paths, e.g. ``"python3.11,python3.13"``).  Each entry is
     validated against :func:`shutil.which`; missing interpreters are
     silently skipped (so a developer running locally on a single
     Python doesn't get spurious failures).
 
+    Args:
+        settings: Optional pre-built :class:`Settings` (tests inject an
+            override); ``None`` builds a fresh instance so this call
+            always observes the current process environment, matching
+            the read-per-call semantics of the raw ``os.environ`` read
+            it replaces (SP-CONSISTENCY-SWEEP).
+
     Returns:
         A non-empty list of interpreter strings, or ``[None]`` when
-        the env is unset or no listed interpreter resolves — in
+        the setting is unset or no listed interpreter resolves — in
         which case :func:`run_pytest` falls back to the bare
         ``pytest`` binary on PATH.
     """
-    raw = os.environ.get("REPOACH_CODER_PYTHONS", "").strip()
+    resolved = settings or Settings()
+    raw = (resolved.coder_pythons or "").strip()
     if not raw:
         return [None]
     candidates = [s.strip() for s in raw.split(",") if s.strip()]
-    resolved = [c for c in candidates if shutil.which(c)]
-    return resolved or [None]
+    interpreters = [c for c in candidates if shutil.which(c)]
+    return interpreters or [None]
 
 
 def run_pytest_matrix(repo_root: Path) -> tuple[bool, str]:
@@ -704,7 +718,12 @@ CI_UNKNOWN: str = "UNKNOWN"
 
 
 def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]]]:
-    """Return the aggregated required-check state on a PR.
+    """Return the aggregated check state on a PR.
+
+    Classifies every check ``gh pr checks`` reports, not only checks
+    marked as required by branch protection — this repo has none
+    configured, so a required-only filter always returns an empty row
+    set (SP-CI-STATUS-CLIENT-CLASSIFY).
 
     Args:
         gh: A :class:`GhCli` wrapper.
@@ -722,7 +741,6 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
             "pr",
             "checks",
             str(pr_number),
-            "--required",
             "--json",
             "name,state,bucket,link,workflow",
         ]
@@ -738,9 +756,15 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
     if not rows:
         return CI_GREEN, []
 
-    buckets = [str(r.get("bucket", "")).lower() for r in rows]
-    if any(b in {"pending", ""} for b in buckets):
-        return CI_PENDING, []
+    for row in rows:
+        bucket = str(row.get("bucket", "")).lower()
+        if bucket in {"skipping", "cancel"}:
+            _log.info(
+                "coder.ci_check_non_blocking",
+                name=str(row.get("name", "")),
+                bucket=bucket,
+            )
+
     failed_rows = [
         {
             "name": str(r.get("name", "")),
@@ -752,6 +776,10 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
     ]
     if failed_rows:
         return CI_RED, failed_rows
+
+    buckets = [str(r.get("bucket", "")).lower() for r in rows]
+    if any(b in {"pending", ""} for b in buckets):
+        return CI_PENDING, []
     return CI_GREEN, []
 
 

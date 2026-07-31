@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from repoach.review.diff_scoper import ScopedDiff
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -20,13 +21,16 @@ from repoach.review.findings import (
     record_review_integrity,
     update_finding_status,
 )
+from repoach.review.findings_bridge import record_oversized_findings
 from repoach.review.merge_gate import (
+    _JUDGED_TYPES,
     MergeFacts,
     compute_merge_decision,
     gather_merge_facts,
     summarise_ledger_facts,
     verdict_from_facts,
 )
+from repoach.review.refuter import JUDGED_CLAIM_TYPES
 from repoach.review.reviewer import ReviewVerdict
 from repoach.review.spec_gate import SpecCoverage, record_spec_coverage
 
@@ -445,3 +449,93 @@ def test_blocking_unverified_refuses_merge() -> None:
     decision = compute_merge_decision(facts)
     assert decision.merge is False
     assert any("finding 42" in r for r in decision.reasons)
+
+
+def test_gate_judged_partition_matches_refuter() -> None:
+    """SP-CLAIM-TYPE-PARTITION-ALIGN AC1: one shared judged-type partition.
+
+    The gate's ``_JUDGED_TYPES`` must equal the refuter's
+    ``JUDGED_CLAIM_TYPES`` exactly — including ``spec_gap`` — so a claim
+    type the refuter judges can never silently fall outside what the
+    gate counts as an open blocking finding.
+    """
+    assert _JUDGED_TYPES == JUDGED_CLAIM_TYPES
+    assert frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP}) == _JUDGED_TYPES
+
+
+def test_verified_spec_gap_blocks_merge(tmp_path: Path) -> None:
+    """SP-CLAIM-TYPE-PARTITION-ALIGN AC2: a refuter-VERIFIED blocking
+
+    ``spec_gap`` finding, fresh at head, counts as an open blocking
+    finding and refuses the merge — it must never land in
+    ``blocking_unverified`` as "no verifier" (the pre-fix behaviour,
+    since ``spec_gap`` sat outside the gate's misaligned partition).
+    """
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    fid = record_finding(
+        db, _finding(ClaimType.SPEC_GAP, claim="acceptance selector missing from the diff")
+    )
+    update_finding_status(
+        db, fid, FindingStatus.VERIFIED, verification_method="refuter", checked_at_sha="head123"
+    )
+
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 1
+    assert facts.blocking_unverified == []
+    assert compute_merge_decision(facts).merge is False
+    assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
+
+
+def test_oversized_omitted_file_blocks_merge(tmp_path: Path) -> None:
+    """SP-DIFF-SCOPER-OVERSIZE-BLOCK AC2: an oversized-omitted file fails closed.
+
+    A `ScopedDiff` naming one file too large to show any reviewer
+    records a BLOCKING finding via :func:`record_oversized_findings`;
+    :func:`gather_merge_facts` + :func:`compute_merge_decision` at head
+    must then refuse the merge — an unreviewed file cannot be padded
+    past the cap and merged anyway.
+    """
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
+
+    scoped = ScopedDiff(
+        prompt_diff="",
+        included=[],
+        omitted=["src/huge.py"],
+        oversized=["src/huge.py"],
+    )
+    record_oversized_findings(db, pr_number=1, head_sha="head123", round_n=1, scoped=scoped)
+
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 1
+    assert compute_merge_decision(facts).merge is False
+
+
+def test_cap_fit_only_files_not_blocked_by_oversized_rule(tmp_path: Path) -> None:
+    """Companion to AC2: a diff with only cap-fit files records nothing and merges clean."""
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
+
+    scoped = ScopedDiff(
+        prompt_diff="diff --git a/src/small.py b/src/small.py\n",
+        included=["src/small.py"],
+        omitted=[],
+        oversized=[],
+    )
+    n_recorded = record_oversized_findings(
+        db, pr_number=1, head_sha="head123", round_n=1, scoped=scoped
+    )
+    assert n_recorded == 0
+
+    facts = gather_merge_facts(
+        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
+    )
+    assert facts.open_blocking_findings == 0
+    assert compute_merge_decision(facts).merge is True

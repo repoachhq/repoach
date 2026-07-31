@@ -29,8 +29,8 @@ jobs:
     # fromJSON list as collaborators are added.
     if: >-
       github.event_name != 'pull_request'
-      || contains(fromJSON('["jwfaye"]'), github.actor)
-    runs-on: self-hosted
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 

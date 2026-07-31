@@ -10,9 +10,12 @@ comment and strips it from the ``#`` to end-of-line, leaving the code to its
 left and the file's other lines untouched.
 
 Only ``kind == "inline"`` violations are healed — code sits to the left of the
-``#``, so cutting at the comment column never removes code. ``noqa`` and
-standalone full-line comments are deliberately left for the gate to reject:
-removing a whole line is not safe to automate.
+``#``, so cutting at the comment column never removes code. ``noqa``
+violations are deliberately left in place for the gate to reject outright:
+removing a whole line is not safe to automate. Standalone full-line
+comments are left untouched for a different reason — the gate itself
+(:func:`repoach.lint.no_inline_comments.scan_file`) implicitly allows them,
+so there is nothing to heal.
 """
 
 from __future__ import annotations

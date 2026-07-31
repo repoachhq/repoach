@@ -10,6 +10,23 @@ recovered one re-enters automatically once its cool-down expires.
 The breaker is a process-level singleton (:func:`get_breaker`) so its
 state survives across requests; ``time.monotonic`` timestamps are passed
 in by the caller, keeping the state itself clock-free and testable.
+
+SP-BREAKER-SLOW-STRIKE extends this module's judgment of what counts as
+a fault: chronic slowness on a content-bearing completion is ALSO a
+strike here, and that is a deliberate divergence from the offline-probe
+doctrine ("slowness is not a fault",
+``src/repoach/llm_proxy/providers/attribution.py``). An offline probe
+assesses a model's capability in isolation — a slow-but-content-bearing
+response there is still healthy evidence, because nobody is waiting on
+the wire. Live dispatch through this breaker protects a caller who IS
+waiting: a completion that is both past the latency gate and thin in
+tokens-per-second (:func:`repoach.llm_proxy.routing.slow_policy.
+is_slow_completion`) is a caller-facing failure mode, not capability
+evidence, so :meth:`BreakerState.record_success` folds it into a
+dedicated k-of-n slow-success window and :meth:`BreakerState.trip_slow`
+can bench the ref for ``breaker_slow_ttl_s`` — bypassing the hard-failure
+escalation path entirely, since a slow success is not the same fault
+class as a transport error, a 5xx, or an empty completion.
 """
 
 from __future__ import annotations
@@ -138,6 +155,7 @@ class BreakerState:
         self._down_until: dict[ModelRef, float] = {}
         self._down_reason: dict[ModelRef, str] = {}
         self._consecutive_failures: dict[ModelRef, int] = {}
+        self._slow_history: dict[ModelRef, list[bool]] = {}
 
     def trip(self, ref: ModelRef, *, now: float, ttl_s: float, reason: str = "") -> int:
         """Mark ``ref`` down until ``now + ttl_s`` and record the reason.
@@ -163,6 +181,52 @@ class BreakerState:
         count = self._consecutive_failures.get(ref, 0) + 1
         self._consecutive_failures[ref] = count
         return count
+
+    def trip_escalating(
+        self,
+        ref: ModelRef,
+        *,
+        now: float,
+        base_ttl_s: float,
+        quarantine_ttl_s: float,
+        threshold: int,
+        reason: str = "",
+    ) -> int:
+        """Atomically compute the escalated TTL and trip ``ref`` with it.
+
+        Replaces the caller-side peek-then-trip pattern (audit 2026-07-13
+        M21): a caller used to read ``_consecutive_failures`` directly,
+        compute the escalated TTL via :func:`escalated_ttl`, and only
+        then call :meth:`trip` — two separate breaker interactions with
+        no way to guarantee nothing observes the ref between them. This
+        method folds both steps into one call: the ref's current count
+        and the trip that increments it happen inside a single,
+        non-yielding method body, so no caller can read the
+        intermediate (pre-trip) state, and the private
+        ``_consecutive_failures`` mapping never has to leave the
+        breaker.
+
+        Args:
+            ref: The provider/model reference to trip.
+            now: ``time.monotonic`` timestamp.
+            base_ttl_s: The TTL that would apply without escalation
+                (typically :func:`ttl_for_reason`'s result).
+            quarantine_ttl_s: The long quarantine cool-down applied once
+                ``threshold`` consecutive failures is reached.
+            threshold: How many consecutive failures trigger escalation.
+            reason: The failover reason string (stored for snapshot).
+
+        Returns:
+            The ref's consecutive-failure count AFTER this trip.
+        """
+        would_be_count = self._consecutive_failures.get(ref, 0) + 1
+        effective_ttl = escalated_ttl(
+            would_be_count,
+            base_ttl_s=base_ttl_s,
+            quarantine_ttl_s=quarantine_ttl_s,
+            threshold=threshold,
+        )
+        return self.trip(ref, now=now, ttl_s=effective_ttl, reason=reason)
 
     def trip_provider(
         self,
@@ -197,12 +261,14 @@ class BreakerState:
     def recover(self, ref: ModelRef) -> None:
         """Clear ``ref`` immediately — it just served real content.
 
-        Resets the trip, the stored reason, and the consecutive-failure
-        counter so a subsequent failure starts a fresh count.
+        Resets the trip, the stored reason, the consecutive-failure
+        counter, and the slow-success history so a subsequent failure
+        starts a fresh count.
         """
         self._down_until.pop(ref, None)
         self._down_reason.pop(ref, None)
         self._consecutive_failures.pop(ref, None)
+        self._slow_history.pop(ref, None)
 
     def is_down(self, ref: ModelRef, now: float) -> bool:
         """Return whether ``ref`` is tripped at ``now``."""
@@ -227,6 +293,93 @@ class BreakerState:
         for ref in expired:
             self._down_reason.pop(ref, None)
         return frozenset(self._down_until)
+
+    def record_success(self, ref: ModelRef, slow: bool, *, k: int, n: int) -> bool:
+        """Record a slow/fast outcome for ``ref`` and evaluate k-of-n.
+
+        Appends ``slow`` to the ref's rolling window, truncates to the
+        last ``n`` entries, and returns ``True`` when at least ``k`` of
+        the last ``n`` recorded successes are slow.
+
+        Args:
+            ref: The provider/model reference.
+            slow: ``True`` when this completion was slow.
+            k: How many slow outcomes among the last ``n`` trigger.
+            n: The window size.
+
+        Returns:
+            ``True`` when the ref has ≥ ``k`` slow among its last ``n``
+            recorded successes.
+        """
+        history = self._slow_history.setdefault(ref, [])
+        history.append(slow)
+        if len(history) > n:
+            self._slow_history[ref] = history[-n:]
+        window = self._slow_history[ref]
+        return sum(1 for v in window if v) >= k
+
+    def restore(
+        self,
+        ref: ModelRef,
+        *,
+        now: float,
+        ttl_s: float,
+        reason: str,
+        consecutive_failures: int,
+        slow_history: list[bool],
+    ) -> None:
+        """Rehydrate a persisted trip verbatim (SP-PROXY-STATE-PERSIST).
+
+        Sets ``_down_until``, ``_down_reason``, ``_consecutive_failures``,
+        and ``_slow_history`` for ``ref`` to the given values exactly —
+        never incrementing the failure count and never appending to the
+        slow-history window, unlike :meth:`trip`. ``_down_until`` still
+        extends-never-shortens an already-live in-process trip exactly
+        like :meth:`trip` does, so a rehydration racing a live request
+        can never shorten a fresher trip.
+
+        Args:
+            ref: The provider/model reference being restored.
+            now: ``time.monotonic`` timestamp the caller projected the
+                persisted wall-clock expiry onto.
+            ttl_s: The remaining cool-down window in seconds.
+            reason: The stored reason string, set verbatim.
+            consecutive_failures: The stored failure count, set verbatim.
+            slow_history: The stored slow-success window, set verbatim.
+        """
+        until = now + ttl_s
+        current = self._down_until.get(ref)
+        if current is None or until > current:
+            self._down_until[ref] = until
+        self._down_reason[ref] = reason
+        self._consecutive_failures[ref] = consecutive_failures
+        self._slow_history[ref] = list(slow_history)
+
+    def trip_slow(
+        self,
+        ref: ModelRef,
+        *,
+        now: float,
+        ttl_s: float,
+        reason: str = "slow_completion",
+    ) -> None:
+        """Trip ``ref`` for chronic slowness without touching hard-failure counters.
+
+        Sets the trip window and reason for ``ref`` directly, bypassing
+        the consecutive-failure escalation path so a slow strike does not
+        count toward quarantine escalation.
+
+        Args:
+            ref: The provider/model reference to trip.
+            now: ``time.monotonic`` timestamp.
+            ttl_s: Cool-down window in seconds.
+            reason: The stored reason string (default ``slow_completion``).
+        """
+        until = now + ttl_s
+        current = self._down_until.get(ref)
+        if current is None or until > current:
+            self._down_until[ref] = until
+        self._down_reason[ref] = reason
 
     def snapshot(self, now: float) -> list[BreakerEntry]:
         """Return a read-only list of entries for each currently-down ref.
@@ -256,6 +409,7 @@ class BreakerState:
         self._down_until.clear()
         self._down_reason.clear()
         self._consecutive_failures.clear()
+        self._slow_history.clear()
 
 
 _BREAKER = BreakerState()

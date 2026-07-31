@@ -41,11 +41,19 @@
 #   scripts/safe_merge.sh <PR_NUMBER>
 #   scripts/safe_merge.sh <PR_NUMBER> --skip-tests   # skip pytest (lint-only)
 #   scripts/safe_merge.sh <PR_NUMBER> --skip-review  # skip review-bot team
+#   scripts/safe_merge.sh <PR_NUMBER> --skip-review --i-understand-skip-review
+#                                                     # non-interactive opt-in,
+#                                                     # see SP-SAFE-MERGE-SKIP-WARN
 #
-# --skip-tests and --skip-review each disable part of the gate. When
-# either is set the script prints a loud bypass warning and refuses to
-# proceed until the operator types 'I understand' at the prompt; a
-# non-interactive run (no tty) reads EOF and aborts (fails closed).
+# --skip-tests and --skip-review each disable part of the gate
+# (SP-SAFE-MERGE-SKIP-WARN, audit 2026-07-13). --skip-review disables
+# BOTH the review-bot team run (step 4) AND the pure evidence-first
+# merge gate (step 5) — no automated gate evaluates the PR at all. When
+# either flag is set the script prints a loud bypass warning naming
+# exactly what is disabled and refuses to proceed until the operator
+# either types 'I understand' at the prompt or (for --skip-review only)
+# passed --i-understand-skip-review up front; a non-interactive run
+# (no tty, no opt-in flag) reads EOF and aborts (fails closed).
 #
 # Exit codes :
 #   0 — merged successfully.
@@ -57,7 +65,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ $# -lt 1 ]] ; then
-    echo "usage: $0 <PR_NUMBER> [--skip-tests | --skip-review]" >&2
+    echo "usage: $0 <PR_NUMBER> [--skip-tests | --skip-review [--i-understand-skip-review]]" >&2
     exit 2
 fi
 
@@ -66,10 +74,12 @@ shift
 
 skip_tests="no"
 skip_review="no"
+understand_skip_review="no"
 while [[ $# -gt 0 ]] ; do
     case "$1" in
         --skip-tests)  skip_tests="yes" ;;
         --skip-review) skip_review="yes" ;;
+        --i-understand-skip-review) understand_skip_review="yes" ;;
         *) echo "unknown arg: $1" >&2 ; exit 2 ;;
     esac
     shift
@@ -82,20 +92,24 @@ fail() { printf "\033[31m  ✗ %s\033[0m\n" "$1" ; }
 if [[ "$skip_review" == "yes" || "$skip_tests" == "yes" ]] ; then
     printf "\n\033[1;31m!! merge-gate bypass requested !!\033[0m\n"
     if [[ "$skip_review" == "yes" ]] ; then
-        printf "  --skip-review disables the review-bot team AND the evidence-first\n"
-        printf "  merge gate — NO automated gate will evaluate PR #%s.\n" "$pr_number"
+        printf "  --skip-review disables the review-bot run (step 4) AND the pure\n"
+        printf "  evidence gate (step 5) — NO automated gate will evaluate PR #%s.\n" "$pr_number"
     fi
     if [[ "$skip_tests" == "yes" ]] ; then
-        printf "  --skip-tests runs CI lint-only (the pytest matrix is skipped).\n"
+        printf "  --skip-tests runs CI lint-only (step 3 — the pytest matrix is skipped).\n"
     fi
     printf "This merges into \033[1mdevelop\033[0m with the checks above DISABLED.\n"
-    printf "Type '\033[1mI understand\033[0m' to proceed, anything else aborts: "
-    read -r bypass_ack || bypass_ack=""
-    if [[ "$bypass_ack" != "I understand" ]] ; then
-        echo "Aborted — bypass not confirmed."
-        exit 1
+    if [[ "$skip_review" == "yes" && "$understand_skip_review" == "yes" ]] ; then
+        printf "\033[33m--i-understand-skip-review passed — bypass confirmed, proceeding.\033[0m\n"
+    else
+        printf "Type '\033[1mI understand\033[0m' to proceed, anything else aborts: "
+        read -r bypass_ack || bypass_ack=""
+        if [[ "$bypass_ack" != "I understand" ]] ; then
+            echo "Aborted — bypass not confirmed."
+            exit 1
+        fi
+        printf "\033[33mBypass confirmed by operator — proceeding.\033[0m\n"
     fi
-    printf "\033[33mBypass confirmed by operator — proceeding.\033[0m\n"
 fi
 
 original_branch=$(git symbolic-ref --short -q HEAD || echo "")

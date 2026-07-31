@@ -27,7 +27,9 @@ from enum import StrEnum
 from repoach.llm_proxy.routing.chain import Chain
 from repoach.llm_proxy.routing.refs import ModelRef
 
-_TIERS = ("opus", "sonnet", "haiku")
+from .chain_health import CHAIN_TIERS
+
+_TIERS = CHAIN_TIERS
 _SLOT_PREFIX = "MODEL_"
 _BACKSTOP_PROVIDER = "claude_code"
 

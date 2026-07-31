@@ -18,11 +18,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 from repoach.llm_proxy.providers.defaults import (
+    ANTHROPIC_DEFAULT_BASE,
     CEREBRAS_DEFAULT_BASE,
     DEEPSEEK_DEFAULT_BASE,
     GROQ_DEFAULT_BASE,
     KIMI_DEFAULT_BASE,
     NVIDIA_NIM_DEFAULT_BASE,
+    OPENAI_DEFAULT_BASE,
     OPENROUTER_DEFAULT_BASE,
 )
 
@@ -145,6 +147,32 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = {
         credential_url="https://platform.deepseek.com/api_keys",
         credential_attr="deepseek_api_key",
         default_base_url=DEEPSEEK_DEFAULT_BASE,
+        capabilities=("chat", "streaming", "tools"),
+    ),
+    "openai": ProviderDescriptor(
+        provider_id="openai",
+        transport_type="openai_chat",
+        credential_env="OPENAI_API_KEY",
+        credential_url="https://platform.openai.com/api-keys",
+        credential_attr="openai_api_key",
+        default_base_url=OPENAI_DEFAULT_BASE,
+        capabilities=("chat", "streaming", "tools"),
+    ),
+    "anthropic": ProviderDescriptor(
+        provider_id="anthropic",
+        transport_type="anthropic_messages",
+        credential_env="ANTHROPIC_API_KEY",
+        credential_url="https://console.anthropic.com/settings/keys",
+        credential_attr="anthropic_api_key",
+        default_base_url=ANTHROPIC_DEFAULT_BASE,
+        capabilities=("chat", "streaming", "tools", "native_anthropic"),
+    ),
+    "openai_compatible": ProviderDescriptor(
+        provider_id="openai_compatible",
+        transport_type="openai_chat",
+        credential_env="OPENAI_COMPATIBLE_API_KEY",
+        credential_attr="openai_compatible_api_key",
+        base_url_attr="openai_compatible_base_url",
         capabilities=("chat", "streaming", "tools"),
     ),
 }

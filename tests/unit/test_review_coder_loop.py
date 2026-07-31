@@ -22,7 +22,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import structlog
+from structlog.testing import capture_logs
 
+from repoach.review import coder_loop
 from repoach.review.coder_loop import (
     CI_GREEN,
     CI_PENDING,
@@ -114,6 +117,32 @@ def test_is_path_allowed_rejects_github_and_githooks(path: str) -> None:
     assert is_path_allowed(path) is False
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "chains.env",
+        "a/b/chains.env",
+    ],
+)
+def test_is_path_allowed_rejects_chains_env(path: str) -> None:
+    assert is_path_allowed(path) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/repoach/x.py",
+        "tests/unit/x.py",
+        "docs/x.md",
+        "chains.env.bak",
+        "mychains.env",
+        "Chains.env",
+    ],
+)
+def test_is_path_allowed_accepts_chains_env_lookalikes(path: str) -> None:
+    assert is_path_allowed(path) is True
+
+
 # ---------------------------------------------------------------------------
 # apply_fixes
 # ---------------------------------------------------------------------------
@@ -156,6 +185,18 @@ def test_apply_fixes_rejects_forbidden_paths(tmp_path: Path) -> None:
     # The forbidden ones did NOT write.
     assert not (tmp_path / "memory/L0_meta_rules.md").exists()
     assert not (tmp_path / ".env").exists()
+
+
+def test_apply_fixes_rejects_chains_env(tmp_path: Path) -> None:
+    fixes = [
+        {"path": "chains.env", "new_content": "REPOACH_CHAINS=evil\n"},
+        {"path": "src/legit.py", "new_content": "ok\n"},
+    ]
+    applied, rejected = apply_fixes(fixes, repo_root=tmp_path)
+    assert applied == 1
+    assert rejected == ["chains.env"]
+    assert (tmp_path / "src/legit.py").exists()
+    assert not (tmp_path / "chains.env").exists()
 
 
 def test_apply_fixes_rejects_traversal(tmp_path: Path) -> None:
@@ -297,6 +338,160 @@ def test_fetch_ci_status_red_when_a_check_failed() -> None:
 def test_fetch_ci_status_unknown_when_gh_errored() -> None:
     state, failed = fetch_ci_status(_ci_only_gh(CI_UNKNOWN), 1)
     assert state == CI_UNKNOWN
+    assert failed == []
+
+
+@pytest.fixture(autouse=True)
+def _fresh_coder_loop_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rebind the module logger so ``capture_logs`` sees its events.
+
+    ``configure_logging`` (exercised by earlier suites in serial order)
+    sets ``cache_logger_on_first_use=True``; a proxy cached before this
+    test keeps its materialized processor chain and bypasses the
+    ``capture_logs`` swap. A fresh lazy proxy binds inside the capture
+    context instead.
+    """
+    monkeypatch.setattr(coder_loop, "_log", structlog.get_logger("coder_loop.test"))
+
+
+def test_fetch_ci_status_drops_required_flag() -> None:
+    captured_argv: list[list[str]] = []
+    gh = MagicMock()
+
+    def _run_side(args: list[str]) -> GhResult:
+        captured_argv.append(args)
+        return GhResult(returncode=0, stdout="[]", stderr="", argv=args)
+
+    gh._run.side_effect = _run_side
+
+    fetch_ci_status(gh, 1)
+
+    assert captured_argv
+    assert "--required" not in captured_argv[0]
+
+
+def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
+    """``--required`` on this repo's real unprotected branch errors out
+    (no required checks configured to filter on); the full ``gh pr
+    checks`` row set carries the actual RED/GREEN/PENDING signal.  A
+    fake command runner distinguishes the two invocations exactly as
+    the real ``gh`` binary would on this repo, rather than
+    monkeypatching the classifier directly.
+    """
+    gh = MagicMock()
+
+    def _run_side(args: list[str]) -> GhResult:
+        if "--required" in args:
+            return GhResult(
+                returncode=1,
+                stdout="",
+                stderr="no required checks found for this pull request",
+                argv=args,
+            )
+        return GhResult(
+            returncode=8,
+            stdout=json.dumps(
+                [
+                    {
+                        "name": "Test suite (Python 3.12)",
+                        "state": "SUCCESS",
+                        "bucket": "pass",
+                        "link": "https://github.com/o/r/actions/runs/42/job/101",
+                        "workflow": "CI",
+                    },
+                    {
+                        "name": "Test suite (Python 3.13)",
+                        "state": "FAILURE",
+                        "bucket": "fail",
+                        "link": "https://github.com/o/r/actions/runs/42/job/100",
+                        "workflow": "CI",
+                    },
+                ]
+            ),
+            stderr="",
+            argv=args,
+        )
+
+    gh._run.side_effect = _run_side
+
+    state, failed = fetch_ci_status(gh, 1)
+
+    assert state == CI_RED
+    assert failed == [
+        {
+            "name": "Test suite (Python 3.13)",
+            "link": "https://github.com/o/r/actions/runs/42/job/100",
+            "workflow": "CI",
+        }
+    ]
+
+
+def test_fetch_ci_status_green_with_skipped_check_logs_it() -> None:
+    gh = MagicMock()
+    gh._run.return_value = GhResult(
+        returncode=0,
+        stdout=json.dumps(
+            [
+                {
+                    "name": "Test suite (Python 3.13)",
+                    "state": "SUCCESS",
+                    "bucket": "pass",
+                    "link": "",
+                    "workflow": "CI",
+                },
+                {
+                    "name": "Docs build",
+                    "state": "SKIPPED",
+                    "bucket": "skipping",
+                    "link": "",
+                    "workflow": "CI",
+                },
+            ]
+        ),
+        stderr="",
+        argv=[],
+    )
+
+    with capture_logs() as logs:
+        state, failed = fetch_ci_status(gh, 1)
+
+    assert state == CI_GREEN
+    assert failed == []
+    skip_events = [e for e in logs if e.get("event") == "coder.ci_check_non_blocking"]
+    assert len(skip_events) == 1
+    assert skip_events[0]["name"] == "Docs build"
+    assert skip_events[0]["bucket"] == "skipping"
+
+
+def test_fetch_ci_status_green_with_cancelled_check() -> None:
+    gh = MagicMock()
+    gh._run.return_value = GhResult(
+        returncode=0,
+        stdout=json.dumps(
+            [
+                {
+                    "name": "Test suite (Python 3.13)",
+                    "state": "SUCCESS",
+                    "bucket": "pass",
+                    "link": "",
+                    "workflow": "CI",
+                },
+                {
+                    "name": "Deploy preview",
+                    "state": "CANCELLED",
+                    "bucket": "cancel",
+                    "link": "",
+                    "workflow": "CI",
+                },
+            ]
+        ),
+        stderr="",
+        argv=[],
+    )
+
+    state, failed = fetch_ci_status(gh, 1)
+
+    assert state == CI_GREEN
     assert failed == []
 
 

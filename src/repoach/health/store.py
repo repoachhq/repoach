@@ -31,6 +31,7 @@ from sqlalchemy import (
 )
 
 from repoach.core.logging import get_logger
+from repoach.core.sqlite_schema_init import ensure_schema_created
 from repoach.health.model_health import ModelHealth
 
 _log = get_logger(__name__)
@@ -65,7 +66,7 @@ def _engine_for(db_path: Path):
 def init_nim_health_schema(db_path: Path) -> None:
     """Create the ``nim_health_probe`` table if it does not exist (idempotent)."""
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
 
 
 @dataclass(frozen=True)
@@ -150,7 +151,7 @@ def fetch_probes(
         Matching :class:`ProbeRow` records, newest first.
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     stmt = select(_nim_health_probe).order_by(_nim_health_probe.c.id.desc())
     if since is not None:
         stmt = stmt.where(_nim_health_probe.c.recorded_at >= since)

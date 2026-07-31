@@ -4,15 +4,16 @@ import time
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
+from loguru import logger
 
 from repoach.health.credits import get_cached_credits
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.core.anthropic import get_token_count
-from repoach.llm_proxy.routing import get_breaker
+from repoach.llm_proxy.routing import RoutingTable, Tier, get_breaker
 
 from . import dependencies
 from .agent_dispatcher import dispatch_agent_request
-from .dependencies import get_credits_client, get_settings, require_api_key
+from .dependencies import get_credits_client, get_settings, is_authenticated, require_api_key
 from .models.agent_v1 import AgentRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import ModelResponse, ModelsListResponse
@@ -21,43 +22,51 @@ from .services import ClaudeProxyService, compute_credits_gate_skip_models
 router = APIRouter()
 
 
-SUPPORTED_CLAUDE_MODELS = [
-    ModelResponse(
-        id="claude-opus-4-20250514",
-        display_name="Claude Opus 4",
-        created_at="2025-05-14T00:00:00Z",
-    ),
-    ModelResponse(
-        id="claude-sonnet-4-20250514",
-        display_name="Claude Sonnet 4",
-        created_at="2025-05-14T00:00:00Z",
-    ),
-    ModelResponse(
-        id="claude-haiku-4-20250514",
-        display_name="Claude Haiku 4",
-        created_at="2025-05-14T00:00:00Z",
-    ),
-    ModelResponse(
-        id="claude-3-opus-20240229",
-        display_name="Claude 3 Opus",
-        created_at="2024-02-29T00:00:00Z",
-    ),
-    ModelResponse(
-        id="claude-3-5-sonnet-20241022",
-        display_name="Claude 3.5 Sonnet",
-        created_at="2024-10-22T00:00:00Z",
-    ),
-    ModelResponse(
-        id="claude-3-haiku-20240307",
-        display_name="Claude 3 Haiku",
-        created_at="2024-03-07T00:00:00Z",
-    ),
-    ModelResponse(
-        id="claude-3-5-haiku-20241022",
-        display_name="Claude 3.5 Haiku",
-        created_at="2024-10-22T00:00:00Z",
-    ),
-]
+_MODEL_ENDPOINT_TIERS: tuple[Tier, ...] = (Tier.DEFAULT, Tier.OPUS, Tier.SONNET, Tier.HAIKU)
+
+_UNKNOWN_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
+
+
+def _configured_model_ids(settings: Settings) -> list[str]:
+    """Enumerate the model ids the proxy is actually configured to route to.
+
+    Builds the same :class:`~repoach.llm_proxy.routing.RoutingTable` the
+    dispatch path resolves against (SP-MODELS-ENDPOINT-TRUTHFUL) and walks
+    every configured tier's full failover chain — not just its head — so
+    the advertised set matches every ref the proxy could actually dispatch
+    to. ``Tier.DEFAULT`` is always present (``Settings.model`` carries a
+    default); ``OPUS`` / ``SONNET`` / ``HAIKU`` only contribute when their
+    ``MODEL_*`` slot is configured. Ids are de-duplicated, first occurrence
+    wins, preserving a stable tier-then-chain order.
+
+    Fails closed to an empty list when the table cannot be built from the
+    current settings (a malformed ``MODEL_*`` slot) rather than ever
+    fabricating an id.
+
+    Args:
+        settings: The injected proxy settings.
+
+    Returns:
+        The ordered, de-duplicated ``provider/model`` ref strings.
+    """
+    try:
+        table = RoutingTable.from_settings(settings)
+    except ValueError as exc:
+        logger.warning("models_endpoint_routing_table_unbuildable: {}", exc)
+        return []
+    seen: set[str] = set()
+    model_ids: list[str] = []
+    for tier in _MODEL_ENDPOINT_TIERS:
+        chain = table.chains.get(tier)
+        if chain is None:
+            continue
+        for ref in chain.refs:
+            ref_id = str(ref)
+            if ref_id in seen:
+                continue
+            seen.add(ref_id)
+            model_ids.append(ref_id)
+    return model_ids
 
 
 def get_proxy_service(
@@ -165,21 +174,30 @@ async def probe_root(_auth=Depends(require_api_key)):
 async def health(
     settings: Settings = Depends(get_settings),
     client: httpx.AsyncClient = Depends(get_credits_client),
+    authenticated: bool = Depends(is_authenticated),
 ):
     """Health check endpoint.
 
-    Surfaces the failover breaker's current state (SP-CHAIN-DEAD-HOP-QUARANTINE)
-    so operators can see which chain hops are down, why, and for how long.
-    The ``breaker`` array is built from :meth:`BreakerState.snapshot` and
-    carries one entry per currently-down ref with ``ref``, ``reason``,
-    ``ttl_remaining_s``, and ``consecutive_failures``. Empty when nothing
-    is tripped.
+    Anonymous callers get liveness only — ``{"status": "healthy"}`` —
+    never the breaker/credits internals (SP-PROXY-EDGE-HARDEN F-HEALTH:
+    those internals disclose live routing topology and failure state, an
+    unauthenticated-disclosure surface on a public bind). A caller that
+    presents a valid API key (or any caller when no
+    ``anthropic_auth_token`` is configured, matching
+    :func:`~repoach.llm_proxy.api.dependencies.require_api_key`'s
+    no-op-when-unconfigured rule) additionally gets:
 
-    The ``credits`` field carries the OpenRouter account balance
-    (SP-CREDITS-CHECK) when ``open_router_api_key`` is configured and a
-    snapshot is available; ``null`` when the key is absent or the fetch
-    fails.
+    * ``breaker`` — the failover breaker's current state
+      (SP-CHAIN-DEAD-HOP-QUARANTINE), one entry per currently-down ref
+      with ``ref``, ``reason``, ``ttl_remaining_s``, and
+      ``consecutive_failures``; empty when nothing is tripped.
+    * ``credits`` — the OpenRouter account balance (SP-CREDITS-CHECK)
+      when ``open_router_api_key`` is configured and a snapshot is
+      available; ``null`` when the key is absent or the fetch fails.
     """
+    if not authenticated:
+        return {"status": "healthy"}
+
     breaker_entries = get_breaker().snapshot(time.monotonic())
     credits = None
     if settings.open_router_api_key:
@@ -219,11 +237,29 @@ async def probe_health():
 
 
 @router.get("/v1/models", response_model=ModelsListResponse)
-async def list_models(_auth=Depends(require_api_key)):
-    """List the Claude model ids this proxy advertises for compatibility."""
+async def list_models(
+    settings: Settings = Depends(get_settings),
+    _auth=Depends(require_api_key),
+):
+    """List the model ids this proxy is actually configured to route to.
+
+    Derived from the configured ``MODEL_*`` routing chains
+    (SP-MODELS-ENDPOINT-TRUTHFUL) via :func:`_configured_model_ids`
+    instead of a static literal, so a client never sees an id this
+    proxy cannot actually dispatch to.
+    """
+    model_ids = _configured_model_ids(settings)
+    data = [
+        ModelResponse(
+            id=model_id,
+            display_name=model_id,
+            created_at=_UNKNOWN_MODEL_CREATED_AT,
+        )
+        for model_id in model_ids
+    ]
     return ModelsListResponse(
-        data=SUPPORTED_CLAUDE_MODELS,
-        first_id=SUPPORTED_CLAUDE_MODELS[0].id if SUPPORTED_CLAUDE_MODELS else None,
+        data=data,
+        first_id=data[0].id if data else None,
         has_more=False,
-        last_id=SUPPORTED_CLAUDE_MODELS[-1].id if SUPPORTED_CLAUDE_MODELS else None,
+        last_id=data[-1].id if data else None,
     )

@@ -61,6 +61,14 @@ if [[ ${#staged_py[@]} -gt 0 ]] ; then
         failures+=("no-silent-except")
     fi
 
+    bold "lint — no duplicate test basenames (SP-TEST-BASENAME-GATE)"
+    if python scripts/lint_no_duplicate_test_basenames.py --summary ; then
+        ok "no-duplicate-test-basenames"
+    else
+        fail "no-duplicate-test-basenames  (rename the new test file to a unique basename, or lower MAX_DUPLICATES if you just resolved one of the 6 baseline pairs)"
+        failures+=("no-duplicate-test-basenames")
+    fi
+
     bold "lint — edge honesty (SP-ARCH-EDGE-GATE)"
     if repoach arch check --staged ; then
         ok "edge-honesty"

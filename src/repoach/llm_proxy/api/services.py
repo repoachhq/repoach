@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -13,7 +16,11 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from repoach.llm_proxy.config.settings import Settings
-from repoach.llm_proxy.core.anthropic import get_token_count, get_user_facing_error_message
+from repoach.llm_proxy.core.anthropic import (
+    format_error_event,
+    get_token_count,
+    get_user_facing_error_message,
+)
 from repoach.llm_proxy.providers.base import BaseProvider
 from repoach.llm_proxy.providers.exceptions import (
     APIError,
@@ -22,11 +29,13 @@ from repoach.llm_proxy.providers.exceptions import (
     OverloadedError,
     ProviderError,
     RateLimitError,
+    UpstreamStatusError,
 )
-from repoach.llm_proxy.routing import ModelRef, get_breaker, ttl_for_reason
+from repoach.llm_proxy.routing import ModelRef, get_breaker, is_slow_completion, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
+from repoach.llm_proxy.routing.breaker_persist import persist_state
 
-from ._failover import PeekResult, peek_for_content
+from ._failover import FirstByteTimeoutError, PeekResult, peek_for_content
 from .model_router import ModelRouter, ResolvedModel, compute_credits_gate_skip_models
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
@@ -41,14 +50,36 @@ ProviderGetter = Callable[[str], BaseProvider]
 def _classify_failover_reason(exc: BaseException) -> str:
     """Classify a failover-triggering exception into a spec-vocabulary reason.
 
-    Returns one of: ``timeout``, ``rate_limited``, ``provider_5xx``,
-    ``provider_4xx``, ``auth_failed``, ``invalid_request``,
-    ``transport_error``, or ``exception:<TypeName>`` as the fallback.
+    Returns one of: ``first_byte_timeout``, ``timeout``, ``rate_limited``,
+    ``provider_5xx``, ``provider_4xx``, ``auth_failed``,
+    ``invalid_request``, ``transport_error``, or
+    ``exception:<TypeName>`` as the fallback.
 
     The vocabulary mirrors SP-LLM-PROXY-FAILOVER-LOG so operator
     dashboards can group fallbacks by upstream symptom regardless of
-    which provider raised them.
+    which provider raised them. ``FirstByteTimeoutError`` is checked
+    BEFORE the generic ``"timeout"`` substring test — per
+    SP-PROXY-FIRST-BYTE-DEADLINE its class name itself contains
+    "Timeout", so testing the substring first would silently collapse
+    every first-byte timeout into the generic ``"timeout"`` reason.
+    ``UpstreamStatusError`` is checked before the generic
+    ``ProviderError`` branch so a status recovered off the SSE wire
+    (SP-BREAKER-LIVE-REASONS) gets the same granular reason a live
+    raised exception of the matching type would have produced.
     """
+    if isinstance(exc, FirstByteTimeoutError):
+        return "first_byte_timeout"
+    if isinstance(exc, UpstreamStatusError):
+        status = exc.status_code
+        if status in (401, 403):
+            return "auth_failed"
+        if status == 429:
+            return "rate_limited"
+        if 500 <= status < 600:
+            return "provider_5xx"
+        if 400 <= status < 500:
+            return f"provider_{status}"
+        return "api_error"
     exc_name = type(exc).__name__
     name_lower = exc_name.lower()
     if "timeout" in name_lower:
@@ -77,6 +108,31 @@ def _classify_failover_reason(exc: BaseException) -> str:
     ):
         return "transport_error"
     return f"exception:{exc_name}"
+
+
+def _classify_empty_peek(peek: PeekResult) -> str:
+    """Classify a content-less :class:`PeekResult` into a failover reason.
+
+    The HTTP transports catch every upstream exception inside the
+    streaming generator and degrade it to an in-band SSE error rather
+    than raising, so it never reaches :func:`_classify_failover_reason`
+    as a live exception (SP-BREAKER-LIVE-REASONS context). When the
+    transport recovered the real upstream status onto the wire,
+    :attr:`PeekResult.upstream_status_code` carries it here; rebuilding
+    an :class:`UpstreamStatusError` from that recovered integer and
+    feeding it through the existing classifier recovers the same
+    ``provider_402`` / ``auth_failed`` / ``rate_limited`` vocabulary a
+    live raised exception would have produced, so
+    SP-CHAIN-DEAD-HOP-QUARANTINE's TTL escalation fires on real live
+    faults instead of always landing on the generic transient TTL.
+
+    Falls back to ``empty_completion`` — unchanged from before this
+    field existed — for a genuinely content-less, non-errored stream,
+    or when no status could be recovered.
+    """
+    if peek.upstream_status_code is not None:
+        return _classify_failover_reason(UpstreamStatusError(peek.upstream_status_code))
+    return "empty_completion"
 
 
 class ClaudeProxyService:
@@ -146,10 +202,15 @@ class ClaudeProxyService:
 
         Raises:
             HTTPException: ``400`` for invalid requests (e.g. empty
-                ``messages``), ``502`` when every chain candidate
-                returns an empty completion, or the status code
-                carried by the underlying provider exception when
-                one is raised.
+                ``messages``); ``502`` when every chain candidate is
+                already breaker-tripped before the first dispatch
+                attempt (SP-STREAM-EXHAUST-ERROR G2 pre-flight,
+                headers not yet committed); or the status code carried
+                by the underlying provider exception when one is
+                raised. A chain that becomes exhausted only AFTER
+                streaming has started instead surfaces as a terminal
+                SSE ``error`` event inside the 200 response body — see
+                :meth:`_stream_with_failover`.
             ProviderError: Surfaced unchanged so the caller can
                 distinguish provider-level failures from generic
                 server errors.
@@ -173,6 +234,28 @@ class ClaudeProxyService:
                 len(chain),
                 ", ".join(c.provider_model_ref for c in chain),
             )
+            if self._chain_preflight_exhausted(chain):
+                logger.error(
+                    "proxy_chain_exhausted",
+                    dispatch_id=f"disp_{uuid.uuid4().hex[:12]}",
+                    chain_length=len(chain),
+                    attempts=0,
+                    attempted=[c.provider_model_ref for c in chain],
+                    failures=[],
+                    last_error_type=None,
+                    last_error_message=None,
+                    budget_exhausted=False,
+                    preflight=True,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "All "
+                        f"{len(chain)} provider candidate(s) are currently breaker-tripped; "
+                        "the chain is exhausted before dispatch. See proxy logs "
+                        "(proxy_chain_exhausted) for the per-attempt outcome."
+                    ),
+                )
             return StreamingResponse(
                 self._stream_with_failover(request_data, chain, input_tokens=input_tokens),
                 media_type="text/event-stream",
@@ -185,12 +268,46 @@ class ClaudeProxyService:
 
         except ProviderError:
             raise
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error: {e!s}\n{traceback.format_exc()}")
             raise HTTPException(
                 status_code=getattr(e, "status_code", 500),
                 detail=get_user_facing_error_message(e),
             ) from e
+
+    def _chain_preflight_exhausted(self, chain: list[ResolvedModel]) -> bool:
+        """Return whether ``chain`` is already known-exhausted before dispatch.
+
+        SP-STREAM-EXHAUST-ERROR G2: a chain is pre-flight exhausted
+        when it is empty or every one of its candidates is currently
+        breaker-tripped (:meth:`BreakerState.is_down`) — the same
+        breaker read :meth:`_stream_with_failover`'s own walk performs
+        per-candidate, just evaluated synchronously up front. When
+        this is true the walk is guaranteed to skip every candidate
+        without ever dispatching a request, so ``create_message`` can
+        return a real HTTP 502 here — before the ``StreamingResponse``
+        is even constructed and its 200 headers committed — instead of
+        surfacing the eventual exhaustion as an in-band terminal SSE
+        error (G1's fallback for the case headers are already on the
+        wire).
+
+        Args:
+            chain: The chain :meth:`ModelRouter.resolve_chain` just
+                resolved for this request.
+
+        Returns:
+            ``True`` when no candidate in ``chain`` could possibly be
+            dispatched right now.
+        """
+        if not chain:
+            return True
+        now = time.monotonic()
+        return all(
+            get_breaker().is_down(ModelRef.parse(candidate.provider_model_ref), now)
+            for candidate in chain
+        )
 
     def _trip_breaker(
         self,
@@ -207,14 +324,19 @@ class ClaudeProxyService:
         1. Compute a reason-aware base TTL via
            :func:`repoach.llm_proxy.routing.breaker.ttl_for_reason`
            (terminal beats quarantine beats default).
-        2. Peek at the ref's current consecutive-failure count, then
-           apply :func:`repoach.llm_proxy.routing.breaker.escalated_ttl`
-           so the Nth consecutive failure escalates to the quarantine
-           TTL regardless of the original reason.
+        2. Trip via :meth:`BreakerState.trip_escalating`, which reads
+           the ref's consecutive-failure count and applies
+           :func:`repoach.llm_proxy.routing.breaker.escalated_ttl` in
+           one atomic call — this method never reads
+           ``breaker._consecutive_failures`` itself (SP-BREAKER-LIVE-REASONS
+           G4 / audit 2026-07-13 M21).
         3. When ``reason`` is an account-class fault and ``chain`` is
-           supplied, propagate to every sibling ref of the same provider
-           via :meth:`BreakerState.trip_provider` and return early
-           with a single ``breaker_provider_propagated`` log event
+           supplied, the primary ref is tripped (with the
+           ``_propagated`` reason suffix) via that same call, and the
+           identical effective TTL is then applied to every OTHER
+           sibling ref of the same provider via
+           :meth:`BreakerState.trip_provider`, with a single
+           ``breaker_provider_propagated`` log event
            (SP-BREAKER-PROVIDER-SCOPE G1).
         4. Otherwise, trip once at the effective TTL (no
            double-increment) and emit a structured
@@ -233,26 +355,34 @@ class ClaudeProxyService:
             terminal_ttl_s=self._settings.breaker_ttl_terminal_s,
             quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
         )
-        current_count = breaker._consecutive_failures.get(ref, 0)
-        would_be_count = current_count + 1
-        effective_ttl = escalated_ttl(
-            would_be_count,
-            base_ttl_s=reason_ttl,
-            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
-            threshold=self._settings.breaker_quarantine_threshold,
-        )
         if reason in ACCOUNT_FAULT_REASONS and chain is not None:
+            propagated_reason = f"{reason}_propagated"
             sibling_refs = {
                 ModelRef.parse(c.provider_model_ref)
                 for c in chain
                 if c.provider_id == ref.provider_id
             }
+            now = time.monotonic()
+            count = breaker.trip_escalating(
+                ref,
+                now=now,
+                base_ttl_s=reason_ttl,
+                quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+                threshold=self._settings.breaker_quarantine_threshold,
+                reason=propagated_reason,
+            )
+            effective_ttl = escalated_ttl(
+                count,
+                base_ttl_s=reason_ttl,
+                quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+                threshold=self._settings.breaker_quarantine_threshold,
+            )
             breaker.trip_provider(
                 ref.provider_id,
-                sibling_refs,
-                now=time.monotonic(),
+                sibling_refs - {ref},
+                now=now,
                 ttl_s=effective_ttl,
-                reason=f"{reason}_propagated",
+                reason=propagated_reason,
             )
             logger.warning(
                 "breaker_provider_propagated",
@@ -260,16 +390,161 @@ class ClaudeProxyService:
                 ref_count=len(sibling_refs),
                 ttl_s=effective_ttl,
             )
+            for sibling_ref in sibling_refs:
+                self._persist_breaker_state(sibling_ref)
             return
-        breaker.trip(ref, now=time.monotonic(), ttl_s=effective_ttl, reason=reason)
+        count = breaker.trip_escalating(
+            ref,
+            now=time.monotonic(),
+            base_ttl_s=reason_ttl,
+            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+            threshold=self._settings.breaker_quarantine_threshold,
+            reason=reason,
+        )
+        self._persist_breaker_state(ref)
+        effective_ttl = escalated_ttl(
+            count,
+            base_ttl_s=reason_ttl,
+            quarantine_ttl_s=self._settings.breaker_ttl_quarantine_s,
+            threshold=self._settings.breaker_quarantine_threshold,
+        )
         if effective_ttl == self._settings.breaker_ttl_quarantine_s:
             logger.warning(
                 "breaker_quarantined",
                 ref=str(ref),
                 reason=reason,
-                count=would_be_count,
+                count=count,
                 ttl_s=effective_ttl,
             )
+
+    def _persist_breaker_state(self, ref: ModelRef) -> None:
+        """Write-through *ref*'s current breaker state (SP-PROXY-STATE-PERSIST).
+
+        Gated by ``breaker_state_persist_enabled`` — mirrors how
+        ``breaker_enabled`` already gates :meth:`_trip_breaker`, so
+        disabling persistence stops every write-through call site at
+        once; :func:`persist_state` itself carries no internal enable
+        check.
+        """
+        if not self._settings.breaker_state_persist_enabled:
+            return
+        persist_state(
+            get_breaker(),
+            ref,
+            db_path=Path(self._settings.breaker_probe_seed_db),
+            monotonic_now=time.monotonic(),
+            wall_clock_now=datetime.now(UTC),
+        )
+
+    def _record_completion_outcome(
+        self,
+        ref: ModelRef,
+        latency_s: float,
+        output_tokens: int | None,
+        *,
+        dispatch_id: str,
+        request_id: str,
+        candidate: ResolvedModel,
+        attempt_index: int,
+        prior_failures: list[tuple[str, str]],
+        budget_retry: bool,
+    ) -> None:
+        """Apply the slow-strike completion-outcome policy to one content-bearing attempt.
+
+        Shared by both the primary success path and the budget-retry
+        success path of :meth:`_stream_with_failover` (SP-BREAKER-SLOW-STRIKE):
+        :func:`is_slow_completion` classifies *latency_s*/*output_tokens*,
+        :meth:`BreakerState.record_success` folds that outcome into
+        *ref*'s k-of-n slow-success window, and a window that reaches
+        ``breaker_slow_k`` either logs ``breaker_slow_strike_shadow``
+        (shadow mode) or trips *ref* via :meth:`BreakerState.trip_slow`;
+        otherwise the attempt logs ``breaker_slow_strike``. A not-slow
+        attempt recovers the breaker and persists that state.
+
+        The two call sites differ only in whether/how
+        ``proxy_chain_failover_recovered`` fires, captured here by
+        *budget_retry* (SP-SLOW-STRIKE-OUTCOME-DEDUP): the primary path
+        (``budget_retry=False``) logs it unconditionally whenever
+        ``attempt_index > 0``, regardless of the slow/not-slow outcome
+        above; the budget-retry path (``budget_retry=True``) logs it
+        only from the not-slow branch, with an extra ``budget_retry=True``
+        field — both asymmetries are preserved exactly as they existed
+        before this method was extracted.
+        """
+        slow = is_slow_completion(
+            latency_s,
+            output_tokens,
+            gate_s=self._settings.breaker_slow_latency_gate_s,
+            tps_floor=self._settings.breaker_slow_tps_floor,
+        )
+        if slow:
+            should_trip = get_breaker().record_success(
+                ref,
+                True,
+                k=self._settings.breaker_slow_k,
+                n=self._settings.breaker_slow_n,
+            )
+            if should_trip:
+                if self._settings.breaker_slow_shadow:
+                    logger.warning(
+                        "breaker_slow_strike_shadow",
+                        ref=str(ref),
+                        latency_s=latency_s,
+                        output_tokens=output_tokens,
+                        would_trip=True,
+                    )
+                else:
+                    get_breaker().trip_slow(
+                        ref,
+                        now=time.monotonic(),
+                        ttl_s=self._settings.breaker_slow_ttl_s,
+                    )
+                    self._persist_breaker_state(ref)
+            else:
+                logger.warning(
+                    "breaker_slow_strike",
+                    ref=str(ref),
+                    latency_s=latency_s,
+                    output_tokens=output_tokens,
+                    strikes=sum(1 for v in get_breaker()._slow_history.get(ref, []) if v),
+                )
+            if not budget_retry and attempt_index > 0:
+                logger.info(
+                    "proxy_chain_failover_recovered",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    served_by=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    earlier_failures=attempt_index,
+                    prior_failures=prior_failures,
+                    latency_s=latency_s,
+                )
+        else:
+            get_breaker().recover(ref)
+            self._persist_breaker_state(ref)
+            if budget_retry:
+                logger.info(
+                    "proxy_chain_failover_recovered",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    served_by=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    earlier_failures=attempt_index,
+                    prior_failures=prior_failures,
+                    latency_s=latency_s,
+                    budget_retry=True,
+                )
+            elif attempt_index > 0:
+                logger.info(
+                    "proxy_chain_failover_recovered",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    served_by=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    earlier_failures=attempt_index,
+                    prior_failures=prior_failures,
+                    latency_s=latency_s,
+                )
 
     async def _stream_with_failover(
         self,
@@ -286,12 +561,61 @@ class ClaudeProxyService:
         ``proxy_chain_failover_fired`` event and tries the next
         entry. When the whole chain is exhausted without a usable
         response, a single ``proxy_chain_exhausted`` event is emitted
-        before the HTTP error propagates — see SP-LLM-PROXY-FAILOVER-LOG
-        for the rationale.
+        — see SP-LLM-PROXY-FAILOVER-LOG for the rationale — and (unless
+        the exhaustion is purely budget-driven, see below) a terminal
+        Anthropic-shaped SSE ``error`` event carrying an explicit
+        ``chain_exhausted`` type is yielded so the client can detect
+        the failure deterministically (SP-STREAM-EXHAUST-ERROR).
+        Raising here instead would be silently truncated: this
+        method is the body iterator of a ``StreamingResponse`` whose
+        200 headers Starlette has already committed to the wire
+        before the first ``__anext__`` call, so any exception raised
+        from inside it can never become the documented HTTP error the
+        caller expects — it only aborts the body after a 200 already
+        went out. :meth:`ClaudeProxyService.create_message` pre-flights
+        the one sub-case that IS knowable before headers are
+        committed — every candidate already breaker-tripped — and
+        returns a real 502 there instead.
+
+        Both the primary success path and the budget-retry success path
+        (SP-BREAKER-SLOW-STRIKE) apply the same recover-or-strike policy
+        to every content-bearing completion, implemented once by
+        :meth:`_record_completion_outcome` (SP-SLOW-STRIKE-OUTCOME-DEDUP):
+        :func:`is_slow_completion` classifies the attempt from its
+        full-completion latency and final output tokens,
+        :meth:`BreakerState.record_success` folds that outcome into the
+        ref's k-of-n slow-success window, and a window that reaches
+        ``breaker_slow_k`` either logs ``breaker_slow_strike_shadow``
+        (shadow mode) or trips the ref via :meth:`BreakerState.trip_slow`
+        for ``breaker_slow_ttl_s`` — a dedicated cool-down that never
+        escalates through ``_consecutive_failures``. This is a
+        deliberate divergence from the offline-probe doctrine
+        (`slowness is not a fault`, ``providers/attribution.py``): live
+        dispatch protects the caller waiting on the wire, so a
+        slow-but-served completion is a strike, not recovery evidence.
+
+        SP-CHAIN-REQUEST-BUDGET wraps the whole walk in a single
+        wall-clock deadline (``settings.dispatch_total_budget_s``,
+        computed once here) so a fully-exhausted chain cannot cost the
+        caller the sum of every hop's own timeout. Each candidate's
+        ``peek_for_content`` await is clamped to the remaining budget
+        via an outer ``asyncio.wait_for`` ; a candidate that would start
+        after the budget is already gone is skipped without ever being
+        dispatched. ``claude_code`` is exempt from starvation — it
+        always gets at least ``claude_code_subprocess_timeout`` seconds
+        regardless of how much the earlier hops consumed, since a
+        genuine cold start/long generation can exceed 2 minutes before
+        the first token. When the chain is exhausted purely because the
+        budget ran out, the caller gets a loud ``504`` carrying a
+        per-hop breakdown instead of the ordinary ``502``/re-raised
+        exhaustion path.
         """
         dispatch_id = f"disp_{uuid.uuid4().hex[:12]}"
+        deadline = time.monotonic() + self._settings.dispatch_total_budget_s
         last_error: Exception | None = None
         prior_failures: list[tuple[str, str]] = []
+        hop_breakdown: list[dict[str, Any]] = []
+        budget_exhausted = False
         for attempt_index, candidate in enumerate(chain):
             candidate_ref = ModelRef.parse(candidate.provider_model_ref)
             if get_breaker().is_down(candidate_ref, time.monotonic()):
@@ -302,6 +626,30 @@ class ClaudeProxyService:
                     attempt=attempt_index + 1,
                 )
                 continue
+
+            remaining = deadline - time.monotonic()
+            if candidate.provider_id == "claude_code":
+                effective_timeout = max(remaining, self._settings.claude_code_subprocess_timeout)
+            elif remaining <= 0:
+                budget_exhausted = True
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": "dispatch_budget_exhausted_before_dispatch",
+                        "elapsed_s": 0.0,
+                    }
+                )
+                logger.warning(
+                    "proxy_dispatch_budget_exhausted_before_dispatch",
+                    dispatch_id=dispatch_id,
+                    candidate=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    budget_s=self._settings.dispatch_total_budget_s,
+                )
+                continue
+            else:
+                effective_timeout = remaining
+
             request_id = f"req_{uuid.uuid4().hex[:12]}"
             attempt_request = original_request.model_copy(
                 update={"model": candidate.provider_model}, deep=True
@@ -314,7 +662,15 @@ class ClaudeProxyService:
                 attempt_index + 1,
                 len(chain),
             )
-            logger.debug("FULL_PAYLOAD [{}]: {}", request_id, attempt_request.model_dump())
+            if self._settings.proxy_log_full_content:
+                logger.debug("FULL_PAYLOAD [{}]: {}", request_id, attempt_request.model_dump())
+            else:
+                logger.debug(
+                    "FULL_PAYLOAD [{}]: <redacted> model={} messages={}",
+                    request_id,
+                    attempt_request.model,
+                    len(attempt_request.messages),
+                )
             attempt_started = time.monotonic()
             try:
                 provider = self._provider_getter(candidate.provider_id)
@@ -323,12 +679,52 @@ class ClaudeProxyService:
                     input_tokens=input_tokens,
                     request_id=request_id,
                 )
-                peek = await peek_for_content(stream)
+                peek = await asyncio.wait_for(
+                    peek_for_content(
+                        stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+                    ),
+                    timeout=effective_timeout,
+                )
+            except TimeoutError as exc:
+                attempt_latency_s = round(time.monotonic() - attempt_started, 3)
+                last_error = exc
+                budget_exhausted = True
+                reason = "dispatch_budget_exhausted"
+                prior_failures.append((candidate.provider_model_ref, reason))
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": reason,
+                        "elapsed_s": attempt_latency_s,
+                    }
+                )
+                logger.warning(
+                    "proxy_chain_failover_fired",
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    attempt=attempt_index + 1,
+                    chain_length=len(chain),
+                    chain_remaining=len(chain) - attempt_index - 1,
+                    primary=candidate.provider_model_ref,
+                    primary_reason=reason,
+                    primary_error_type=type(exc).__name__,
+                    primary_error=str(exc)[:200],
+                    latency_s=attempt_latency_s,
+                )
+                self._trip_breaker(candidate, reason, chain=chain)
+                continue
             except Exception as exc:
                 attempt_latency_s = round(time.monotonic() - attempt_started, 3)
                 last_error = exc
                 primary_reason = _classify_failover_reason(exc)
                 prior_failures.append((candidate.provider_model_ref, primary_reason))
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": primary_reason,
+                        "elapsed_s": attempt_latency_s,
+                    }
+                )
                 logger.warning(
                     "proxy_chain_failover_fired",
                     dispatch_id=dispatch_id,
@@ -348,18 +744,18 @@ class ClaudeProxyService:
             attempt_latency_s = round(time.monotonic() - attempt_started, 3)
 
             if peek.got_content:
-                get_breaker().recover(ModelRef.parse(candidate.provider_model_ref))
-                if attempt_index > 0:
-                    logger.info(
-                        "proxy_chain_failover_recovered",
-                        dispatch_id=dispatch_id,
-                        request_id=request_id,
-                        served_by=candidate.provider_model_ref,
-                        attempt=attempt_index + 1,
-                        earlier_failures=attempt_index,
-                        prior_failures=prior_failures,
-                        latency_s=attempt_latency_s,
-                    )
+                ref = ModelRef.parse(candidate.provider_model_ref)
+                self._record_completion_outcome(
+                    ref,
+                    attempt_latency_s,
+                    peek.final_output_tokens,
+                    dispatch_id=dispatch_id,
+                    request_id=request_id,
+                    candidate=candidate,
+                    attempt_index=attempt_index,
+                    prior_failures=prior_failures,
+                    budget_retry=False,
+                )
                 for buffered_chunk in peek.buffered:
                     yield buffered_chunk
                 async for chunk in stream:
@@ -373,13 +769,35 @@ class ClaudeProxyService:
                     input_tokens=input_tokens,
                     dispatch_id=dispatch_id,
                     attempt_index=attempt_index,
+                    deadline=deadline,
                 )
                 if retry_peek is not None and retry_peek.got_content:
+                    retry_latency_s = round(time.monotonic() - attempt_started, 3)
+                    ref = ModelRef.parse(candidate.provider_model_ref)
+                    self._record_completion_outcome(
+                        ref,
+                        retry_latency_s,
+                        retry_peek.final_output_tokens,
+                        dispatch_id=dispatch_id,
+                        request_id=request_id,
+                        candidate=candidate,
+                        attempt_index=attempt_index,
+                        prior_failures=prior_failures,
+                        budget_retry=True,
+                    )
                     for buffered_chunk in retry_peek.buffered:
                         yield buffered_chunk
                     return
 
-            prior_failures.append((candidate.provider_model_ref, "empty_completion"))
+            empty_reason = _classify_empty_peek(peek)
+            prior_failures.append((candidate.provider_model_ref, empty_reason))
+            hop_breakdown.append(
+                {
+                    "provider_model_ref": candidate.provider_model_ref,
+                    "reason": empty_reason,
+                    "elapsed_s": attempt_latency_s,
+                }
+            )
             logger.warning(
                 "proxy_chain_failover_fired",
                 dispatch_id=dispatch_id,
@@ -388,12 +806,12 @@ class ClaudeProxyService:
                 chain_length=len(chain),
                 chain_remaining=len(chain) - attempt_index - 1,
                 primary=candidate.provider_model_ref,
-                primary_reason="empty_completion",
+                primary_reason=empty_reason,
                 stream_done=peek.stream_done,
                 buffered_events=len(peek.buffered),
                 latency_s=attempt_latency_s,
             )
-            self._trip_breaker(candidate, "empty_completion", chain=chain)
+            self._trip_breaker(candidate, empty_reason, chain=chain)
 
         logger.error(
             "proxy_chain_exhausted",
@@ -404,16 +822,34 @@ class ClaudeProxyService:
             failures=prior_failures,
             last_error_type=type(last_error).__name__ if last_error else None,
             last_error_message=str(last_error)[:200] if last_error else None,
+            budget_exhausted=budget_exhausted,
         )
+        if budget_exhausted:
+            logger.error(
+                "proxy_dispatch_budget_exhausted",
+                dispatch_id=dispatch_id,
+                budget_s=self._settings.dispatch_total_budget_s,
+                hops=hop_breakdown,
+            )
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "error": "dispatch_budget_exhausted",
+                    "dispatch_id": dispatch_id,
+                    "budget_s": self._settings.dispatch_total_budget_s,
+                    "hops": hop_breakdown,
+                },
+            )
         if last_error is not None:
-            raise last_error
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "All "
-                f"{len(chain)} provider candidate(s) returned empty completions. "
-                "See proxy logs (proxy_chain_exhausted) for the per-attempt outcome."
-            ),
+            exhaustion_message = str(last_error)[:200]
+        else:
+            exhaustion_message = (
+                f"All {len(chain)} provider candidate(s) returned empty completions."
+            )
+        yield format_error_event(
+            "chain_exhausted",
+            f"{exhaustion_message} (dispatch_id={dispatch_id}, "
+            "see proxy logs for the per-attempt outcome)",
         )
 
     async def _retry_with_more_budget(
@@ -424,6 +860,7 @@ class ClaudeProxyService:
         input_tokens: int,
         dispatch_id: str,
         attempt_index: int,
+        deadline: float,
     ) -> PeekResult | None:
         """Re-issue a budget-starved candidate once with a larger ``max_tokens``.
 
@@ -434,7 +871,18 @@ class ClaudeProxyService:
         with ``max_tokens`` enlarged by ``budget_retry_factor`` (floored
         and capped).  Returns the retry's :class:`PeekResult`, or ``None``
         when no enlargement is possible or the retry raised.
+
+        SP-CHAIN-REQUEST-BUDGET: before issuing the retry, ``deadline`` is
+        checked against the current clock ; a dispatch whose total budget
+        has already run out returns ``None`` immediately without ever
+        re-invoking the provider, so this retry cannot silently spend more
+        wall clock than the dispatch has left.  When the deadline still has
+        headroom, the retry's own ``peek_for_content`` await is clamped to
+        the remaining budget the same way the primary attempt is.
         """
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
         original_max = attempt_request.max_tokens
         if original_max is None:
             enlarged = self._settings.budget_retry_cap
@@ -456,7 +904,12 @@ class ClaudeProxyService:
             stream = provider.stream_response(
                 retry_request, input_tokens=input_tokens, request_id=request_id
             )
-            retry_peek = await peek_for_content(stream)
+            retry_peek = await asyncio.wait_for(
+                peek_for_content(
+                    stream, first_byte_deadline_s=self._settings.first_byte_deadline_s
+                ),
+                timeout=remaining,
+            )
         except Exception as exc:
             logger.warning(
                 "proxy_budget_retry_failed",

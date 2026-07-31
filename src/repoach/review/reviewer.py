@@ -39,6 +39,7 @@ from ..agent_engine.agent_loop import (
 from ..core.logging import get_logger
 from .diff_scoper import scope_diff
 from .findings import Finding
+from .retry_backoff import AttemptOutcome, RetryResult, retry_with_backoff
 
 if TYPE_CHECKING:
     from .devagent_loop import DevLoopResult
@@ -72,6 +73,39 @@ _TRANSPORT_ERROR_RE = re.compile(
     r"|request_id=req_[A-Za-z0-9]+)",
     re.IGNORECASE,
 )
+
+
+def _substitute_placeholders(template: str, replacements: dict[str, str]) -> str:
+    """Fill every ``{TOKEN}`` placeholder in *template* in a single pass.
+
+    Chained ``str.replace`` calls (``template.replace("{A}", a).replace("{B}",
+    b)``) re-scan the WHOLE string, including text just inserted by an earlier
+    ``.replace``. When one of the substituted values is untrusted (a PR diff,
+    a finding body, arbitrary file content) and happens to contain the literal
+    text of a placeholder token processed later in the chain, that token gets
+    expanded — a prompt-injection vector (SP-PROMPT-PLACEHOLDER-ORDER).
+
+    This helper instead compiles every key into one alternation and calls
+    :func:`re.sub` once against the ORIGINAL template. ``re.sub`` locates all
+    matches in the input before any substitution happens and never re-scans
+    the text a replacement callback returns, so a substituted value's own
+    content can never trigger a further placeholder expansion — independent
+    of which argument happens to carry untrusted content, and independent of
+    the order the caller lists the replacements in.
+
+    Args:
+        template: Persona/prompt template text containing ``{TOKEN}`` markers.
+        replacements: Mapping of literal ``{TOKEN}`` markers (including the
+            braces) to their substitution text.
+
+    Returns:
+        *template* with every recognised token replaced exactly once by its
+        mapped value; unrecognised ``{...}`` text is left untouched.
+    """
+    if not replacements:
+        return template
+    pattern = re.compile("|".join(re.escape(token) for token in replacements))
+    return pattern.sub(lambda match: replacements[match.group(0)], template)
 
 
 class BotRole(enum.StrEnum):
@@ -490,71 +524,36 @@ class Reviewer:
         """
         import time as _time
 
-        last_error: Exception | None = None
-        last_outcome: tuple[ReviewVerdict, str, list[ReviewComment], Any] | None = None
-        for attempt, wait_s in enumerate(self._RETRY_BACKOFFS_S, start=1):
-            if wait_s > 0:
-                _log.info(
-                    "review.bot.retry_wait",
-                    role=self.role.value,
-                    pr_number=pr_number,
-                    attempt=attempt,
-                    wait_s=wait_s,
-                    last_error=type(last_error).__name__ if last_error else None,
-                )
-                _time.sleep(wait_s)
-            try:
-                result = self._loop.run_oneshot(
-                    prompt,
-                    json_response=True,
-                    accept_response=self._response_is_parsable,
-                )
-            except Exception as exc:
-                last_error = exc
-                _log.warning(
-                    "review.bot.attempt_failed",
-                    role=self.role.value,
-                    pr_number=pr_number,
-                    attempt=attempt,
-                    of=len(self._RETRY_BACKOFFS_S),
-                    error=type(exc).__name__,
-                    message=str(exc)[:200],
-                )
-                continue
+        def _attempt(
+            attempt_no: int,
+        ) -> AttemptOutcome[tuple[ReviewVerdict, str, list[ReviewComment], Any]]:
+            result = self._loop.run_oneshot(
+                prompt,
+                json_response=True,
+                accept_response=self._response_is_parsable,
+            )
             verdict, summary, comments = self._parse_response(result.text)
-            last_outcome = (verdict, summary, comments, result)
-            if not summary.startswith("[parse_failed:"):
-                return last_outcome
-            _log.warning(
-                "review.bot.parse_failed_retry",
-                role=self.role.value,
-                pr_number=pr_number,
-                attempt=attempt,
-                of=len(self._RETRY_BACKOFFS_S),
-                marker=summary[:80],
+            return AttemptOutcome(
+                value=(verdict, summary, comments, result),
+                accept=not summary.startswith("[parse_failed:"),
             )
 
-        if last_outcome is not None:
-            _log.error(
-                "review.bot.exhausted_returning_last_parse_failed",
-                role=self.role.value,
-                pr_number=pr_number,
-                attempts=len(self._RETRY_BACKOFFS_S),
-                marker=last_outcome[1][:80],
+        result: RetryResult[tuple[ReviewVerdict, str, list[ReviewComment], Any]] = (
+            retry_with_backoff(
+                _attempt,
+                backoffs=self._RETRY_BACKOFFS_S,
+                log_scope="review.bot",
+                log_context={"role": self.role.value, "pr_number": pr_number},
+                sleep=_time.sleep,
             )
-            return last_outcome
-
-        _log.error(
-            "review.bot.exhausted_transport_exception",
-            role=self.role.value,
-            pr_number=pr_number,
-            attempts=len(self._RETRY_BACKOFFS_S),
-            final_error=type(last_error).__name__ if last_error else "Unknown",
         )
-        stub = _FailedRunResult(error=str(last_error) if last_error else "Unknown")
+        if result.value is not None:
+            return result.value
+
+        stub = _FailedRunResult(error=str(result.error) if result.error else "Unknown")
         return (
             ReviewVerdict.COMMENT,
-            f"[parse_failed:TRANSPORT] all {len(self._RETRY_BACKOFFS_S)} attempts raised — last={type(last_error).__name__ if last_error else 'Unknown'}",
+            f"[parse_failed:TRANSPORT] all {len(self._RETRY_BACKOFFS_S)} attempts raised — last={type(result.error).__name__ if result.error else 'Unknown'}",
             [],
             stub,
         )
@@ -746,13 +745,16 @@ class Reviewer:
 
         path = _PROMPTS_DIR / self.persona_filename
         template = path.read_text(encoding="utf-8")
-        return (
-            template.replace("{DIFF}", diff)
-            .replace("{SPEC_PLAN}", spec_block)
-            .replace("{DIALOGUE_CONTEXT}", dialogue_block)
-            .replace("{RESOLVED_DISAGREEMENTS}", disagreements_block)
-            .replace("{PRIOR_REVIEW}", prior_block)
-            .replace("{ARCH_EDGES}", arch_edges)
+        return _substitute_placeholders(
+            template,
+            {
+                "{SPEC_PLAN}": spec_block,
+                "{DIALOGUE_CONTEXT}": dialogue_block,
+                "{RESOLVED_DISAGREEMENTS}": disagreements_block,
+                "{PRIOR_REVIEW}": prior_block,
+                "{ARCH_EDGES}": arch_edges,
+                "{DIFF}": diff,
+            },
         )
 
     def _parse_response(self, raw: str) -> tuple[ReviewVerdict, str, list[ReviewComment]]:
@@ -776,6 +778,16 @@ class Reviewer:
           (output capped at 1500 tokens with a chain-of-thought
           reasoner emitting > 2k tokens) silently merge ; failing loud
           keeps the consensus gate strict.
+        * **Unknown verdict value** — the ``verdict`` key is present
+          but does not map to a known :class:`ReviewVerdict` (e.g. a
+          typo like ``"BLOCK"``).  We mark the outcome
+          ``[parse_failed:unknown_verdict:<raw>]`` (verdict =
+          ``REQUEST_CHANGES``) and log a warning
+          (SP-CLAIM-TYPE-PARTITION-ALIGN).  The historic silent
+          coercion to ``COMMENT`` let a mistyped verdict merge as a
+          non-blocking outcome with no trace ; failing loud on the
+          blocking side keeps consensus strict exactly like the
+          missing-``verdict`` case above.
         * **Truncation** — when the response started like JSON (first
           non-whitespace char is ``{``, optionally preceded by markdown
           fences) but never reached a closing ``}``, we mark the
@@ -809,11 +821,18 @@ class Reviewer:
             if "verdict" not in data:
                 continue
             verdict_raw = str(data.get("verdict", "")).upper()
+            raw_summary = str(data.get("summary", ""))[:240]
             try:
                 verdict = ReviewVerdict(verdict_raw)
+                summary = raw_summary
             except ValueError:
-                verdict = ReviewVerdict.COMMENT
-            summary = str(data.get("summary", ""))[:240]
+                _log.warning(
+                    "review.bot.unknown_verdict",
+                    role=self.role.value,
+                    raw_verdict=verdict_raw[:80],
+                )
+                verdict = ReviewVerdict.REQUEST_CHANGES
+                summary = f"[parse_failed:unknown_verdict:{verdict_raw}] {raw_summary}"
             comments_raw = data.get("comments", []) or []
             comments: list[ReviewComment] = []
             for c in comments_raw:
@@ -1039,10 +1058,13 @@ class Coder:
             spec_block = "_(no spec context — improvise from diff + findings)_"
 
         template = (_PROMPTS_DIR / "coder_findings_0.1.1.md").read_text(encoding="utf-8")
-        prompt = (
-            template.replace("{DIFF}", truncated_diff)
-            .replace("{FINDINGS_JSON}", findings_json)
-            .replace("{SPEC_PLAN}", spec_block)
+        prompt = _substitute_placeholders(
+            template,
+            {
+                "{SPEC_PLAN}": spec_block,
+                "{FINDINGS_JSON}": findings_json,
+                "{DIFF}": truncated_diff,
+            },
         )
 
         _log.info(
@@ -1613,40 +1635,24 @@ class Developer:
         """
         import time as _time
 
-        last_exc: Exception | None = None
-        for attempt, wait_s in enumerate(self._RETRY_BACKOFFS_S, start=1):
-            if wait_s > 0:
-                _log.info(
-                    "review.developer.retry_wait",
-                    spec_id=spec_id,
-                    attempt=attempt,
-                    wait_s=wait_s,
-                    last_error=type(last_exc).__name__ if last_exc else None,
-                )
-                _time.sleep(wait_s)
-            try:
-                return self._loop.run_oneshot(
+        def _attempt(attempt_no: int) -> AttemptOutcome[Any]:
+            return AttemptOutcome(
+                value=self._loop.run_oneshot(
                     prompt,
                     json_response=True,
                     accept_response=_developer_response_has_fixes,
-                )
-            except Exception as exc:
-                last_exc = exc
-                _log.warning(
-                    "review.developer.attempt_failed",
-                    spec_id=spec_id,
-                    attempt=attempt,
-                    of=len(self._RETRY_BACKOFFS_S),
-                    error=type(exc).__name__,
-                    message=str(exc)[:200],
-                )
-        _log.error(
-            "review.developer.exhausted",
-            spec_id=spec_id,
-            attempts=len(self._RETRY_BACKOFFS_S),
-            final_error=type(last_exc).__name__ if last_exc else "Unknown",
+                ),
+                accept=True,
+            )
+
+        result = retry_with_backoff(
+            _attempt,
+            backoffs=self._RETRY_BACKOFFS_S,
+            log_scope="review.developer",
+            log_context={"spec_id": spec_id},
+            sleep=_time.sleep,
         )
-        return None
+        return result.value
 
     def respond(
         self,
@@ -1677,10 +1683,13 @@ class Developer:
 
         path = _PROMPTS_DIR / self.persona_filename
         template = path.read_text(encoding="utf-8")
-        prompt = (
-            template.replace("{SPEC_PLAN}", spec_plan[:_DIFF_HARD_CAP_CHARS])
-            .replace("{EXISTING_FILES}", existing_block)
-            .replace("{REPO_TREE}", repo_tree[:4000])
+        prompt = _substitute_placeholders(
+            template,
+            {
+                "{SPEC_PLAN}": spec_plan[:_DIFF_HARD_CAP_CHARS],
+                "{REPO_TREE}": repo_tree[:4000],
+                "{EXISTING_FILES}": existing_block,
+            },
         )
 
         _log.info(
@@ -1789,24 +1798,33 @@ class Developer:
         )
 
 
+_EXISTING_FILE_PROMPT_TRUNCATE_CHARS = 32000
+"""Prompt-size budget, in characters, per file rendered by
+:func:`_format_existing_files` into the reviewer/developer prompt.
+
+Bumped from 8 KB after the first SP-MCP-EXT dispatch: truncating
+mid-class made the Developer drop docstrings on classes whose
+definitions started past the cut, which broke the ruff gate (``D101
+Missing docstring in public class``) and forced two revert+retry
+cycles.  32 KB covers every existing file in the review module (~16 KB
+peak) and stays well under the NIM prompt budget when combined with
+the spec + repo tree.  This is an LLM prompt-context budget, distinct
+from and not shared with any database-write truncation cap.
+"""
+
+
 def _format_existing_files(files: dict[str, str]) -> str:
     """Render ``{path: contents}`` as a labelled block for the prompt.
 
     Each file is wrapped in ``=== <path> ===`` markers and capped at
-    32 KB.  Bumped from 8 KB after the first SP-MCP-EXT dispatch:
-    truncating mid-class made the Developer drop docstrings on classes
-    whose definitions started past the cut, which broke the ruff gate
-    (``D101 Missing docstring in public class``) and forced two
-    revert+retry cycles.  32 KB covers every existing file in the
-    review module (~16 KB peak) and stays well under the NIM prompt
-    budget when combined with the spec + repo tree.
+    :data:`_EXISTING_FILE_PROMPT_TRUNCATE_CHARS`.
     """
     if not files:
         return "_(no existing files referenced — fresh feature)_"
     chunks: list[str] = []
     for path, contents in files.items():
-        capped = contents[:32000]
-        if len(contents) > 32000:
+        capped = contents[:_EXISTING_FILE_PROMPT_TRUNCATE_CHARS]
+        if len(contents) > _EXISTING_FILE_PROMPT_TRUNCATE_CHARS:
             capped += "\n# [... file truncated; see repo for the full version ...]\n"
         chunks.append(f"=== {path} ===\n{capped}")
     return "\n\n".join(chunks)

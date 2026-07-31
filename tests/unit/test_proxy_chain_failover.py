@@ -220,7 +220,7 @@ def test_peek_for_content_treats_fake_error_text_as_failure() -> None:
 
     result = asyncio.run(runner())
     assert result.got_content is False
-    assert result.stream_done is True
+    assert result.stream_done is False
 
 
 def test_peek_for_content_treats_error_stop_reason_as_failure() -> None:
@@ -711,7 +711,14 @@ def test_failover_on_whitespace_only_text_completion(monkeypatch: pytest.MonkeyP
     assert _WHITESPACE_TEXT_DELTA not in chunks
 
 
-def test_all_candidates_failing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_all_candidates_failing_emits_terminal_sse_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SP-STREAM-EXHAUST-ERROR: exhaustion surfaces as a terminal SSE error.
+
+    Headers are already committed 200 by the time the walk gives up, so
+    the body iterator must never raise — it yields a well-formed
+    terminal ``error`` event carrying the ``chain_exhausted`` type and
+    ``kimi down`` (the captured ``last_error``) instead.
+    """
     providers = {
         "nvidia_nim": _ScriptedProvider(
             ProviderConfig(api_key="x"),
@@ -726,10 +733,10 @@ def test_all_candidates_failing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     service = _build_service(monkeypatch, providers)
 
     response = service.create_message(_make_request())
-    with pytest.raises(Exception) as excinfo:
-        _drain_stream_response(response)
-    # Either the last raised exception, or the synthesised 502 if none
-    # raised.  In this scenario kimi raised RuntimeError which is the
-    # last_error captured at the end of the walk.
-    msg = str(excinfo.value)
-    assert "kimi down" in msg or "502" in msg or "empty completions" in msg
+    chunks = _drain_stream_response(response)
+
+    assert any("event: error" in c for c in chunks)
+    error_chunk = next(c for c in chunks if "event: error" in c)
+    payload = json.loads(error_chunk.split("data: ", 1)[1].strip())
+    assert payload["error"]["type"] == "chain_exhausted"
+    assert "kimi down" in payload["error"]["message"]

@@ -13,6 +13,7 @@ owns:
 
 depends_on:
   - SP-HEALTH-STORE-NEUTRALIZE   # reuses the neutral STATUS_* vocabulary from health.model_health
+  - SP-CHAINPILOT-CATALOG-MODELS   # imports redact_secret (SP-REDACT-UNIFY consolidation)
 
 provides_to: []                  # AUTO-maintained
 constraints: {}

@@ -5,7 +5,8 @@ falls back from one candidate to the next, it must emit a
 structured ``proxy_chain_failover_fired`` event so the operator can
 alert on per-hour fallback frequency. When the chain is fully
 exhausted without producing a usable completion, a single
-``proxy_chain_exhausted`` ERROR event must precede the HTTP error.
+``proxy_chain_exhausted`` ERROR event must precede the terminal SSE
+``error`` event (SP-STREAM-EXHAUST-ERROR).
 
 The proxy uses ``loguru`` rather than structlog, so the tests
 install a small sink that buffers structured records for assertion.
@@ -19,7 +20,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
 from loguru import logger as loguru_logger
 
 from repoach.llm_proxy.api.models.anthropic import Message, MessagesRequest, Tool
@@ -352,9 +352,10 @@ class TestProxyChainExhausted:
         }
         service = _build_service(monkeypatch, providers)
 
-        with pytest.raises((RuntimeError, HTTPException)):
-            response = service.create_message(_make_request())
-            _drain(response)
+        response = service.create_message(_make_request())
+        chunks = _drain(response)
+
+        assert any("event: error" in c for c in chunks)
 
         exhausted = _find(captured_loguru, "proxy_chain_exhausted")
         extra = exhausted["extra"]
@@ -390,9 +391,10 @@ class TestProxyChainExhausted:
         }
         service = _build_service(monkeypatch, providers)
 
-        with pytest.raises((RuntimeError, HTTPException)):
-            response = service.create_message(_make_request())
-            _drain(response)
+        response = service.create_message(_make_request())
+        chunks = _drain(response)
+
+        assert any("event: error" in c for c in chunks)
 
         fired = [r for r in captured_loguru if r["message"] == "proxy_chain_failover_fired"]
         reasons = {r["extra"]["primary_reason"] for r in fired}

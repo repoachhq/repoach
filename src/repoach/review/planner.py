@@ -15,7 +15,6 @@ nothing is written, no partial object escapes.
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,8 +22,9 @@ from typing import Literal
 
 from ..agent_engine.adapters import GatewayError
 from ..agent_engine.agent_loop import PROXY_SONNET_CHAIN, AgentLoop
-from ..core.config import get_settings
+from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
+from .coder_findings import ReasonCode
 from .plan import (
     ActionPlan,
     plan_relpath,
@@ -37,7 +37,7 @@ from .planner_telemetry import record_planner_attempt
 from .planner_tools import make_planner_tools
 from .reviewer import BotRole
 from .spec import load_spec
-from .spec_gate import selector_present
+from .spec_gate import audit_plan_selectors
 
 _log = get_logger(__name__)
 
@@ -46,19 +46,28 @@ _PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
 _SPEC_HARD_CAP_CHARS: int = 12_000
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 _DEFAULT_PARSE_ATTEMPTS: int = 5
-_PARSE_ATTEMPTS_ENV: str = "REPOACH_PLANNER_PARSE_ATTEMPTS"
 
 
-def _parse_attempts() -> int:
-    """Read the per-session parse-attempt budget from the environment.
+def _parse_attempts(settings: Settings | None = None) -> int:
+    """Read the per-session parse-attempt budget through :class:`Settings`.
 
-    ``REPOACH_PLANNER_PARSE_ATTEMPTS`` (default 5) governs how many
-    times a session tries to get a valid plan out of the model: one
-    initial attempt plus N-1 refinements. A value below 1 is clamped
-    to 1 (initial attempt only, no refinements). Read once per
-    :class:`Planner` instance, i.e. once per planning session.
+    ``settings.planner_parse_attempts`` (aliased to the
+    ``REPOACH_PLANNER_PARSE_ATTEMPTS`` environment variable, default
+    unset) governs how many times a session tries to get a valid plan
+    out of the model: one initial attempt plus N-1 refinements. A value
+    below 1 is clamped to 1 (initial attempt only, no refinements).
+    Read once per :class:`Planner` instance, i.e. once per planning
+    session.
+
+    Args:
+        settings: Optional pre-built :class:`Settings` (tests inject an
+            override); ``None`` builds a fresh instance so this call
+            always observes the current process environment, matching
+            the read-per-call semantics of the raw ``os.environ`` read
+            it replaces (SP-CONSISTENCY-SWEEP).
     """
-    raw = os.environ.get(_PARSE_ATTEMPTS_ENV, "").strip()
+    resolved = settings or Settings()
+    raw = (resolved.planner_parse_attempts or "").strip()
     if not raw:
         return _DEFAULT_PARSE_ATTEMPTS
     try:
@@ -103,28 +112,7 @@ def _check_promised_selectors(plan: ActionPlan, repo_root: Path) -> str | None:
         ``None`` when all selectors are valid; otherwise a directive
         message listing each offending selector and the two remedies.
     """
-    offenders: list[str] = []
-    for step in plan.steps:
-        for selector in step.unit_tests:
-            file_part, _, node = selector.partition("::")
-            target = repo_root / file_part
-            if not target.is_file():
-                continue
-            if selector_present(repo_root, selector):
-                continue
-            if node and node in step.action:
-                continue
-            offenders.append(selector)
-    for selector in plan.integration_tests:
-        file_part, _, node = selector.partition("::")
-        target = repo_root / file_part
-        if not target.is_file():
-            continue
-        if selector_present(repo_root, selector):
-            continue
-        # Integration tests are not tied to a single step's action,
-        # so the "declared creation" remedy does not apply here.
-        offenders.append(selector)
+    offenders = audit_plan_selectors(plan, repo_root)
     if not offenders:
         return None
     remedies = (
@@ -191,6 +179,10 @@ class PlannerOutcome:
         plan_path: Repo-relative path of the rendered plan document.
         written: Whether the plan file was written.
         error: Loud failure description, ``None`` on success.
+        reason_code: Structured counterpart of ``error`` — the CLI maps
+            it to an exit code by identity rather than substring-matching
+            ``error`` (SP-CONSISTENCY-SWEEP); ``ReasonCode.NONE`` when
+            ``error`` has no dedicated exit-code branch.
         n_steps: Number of steps in the accepted plan.
         tool_calls: Names of every exploration tool call, in order.
         turns: Model round-trips consumed.
@@ -203,6 +195,7 @@ class PlannerOutcome:
     plan_path: str = ""
     written: bool = False
     error: str | None = None
+    reason_code: ReasonCode = ReasonCode.NONE
     n_steps: int = 0
     tool_calls: list[str] = field(default_factory=list)
     turns: int = 0
@@ -590,7 +583,11 @@ def run_planner_session(
     try:
         spec = load_spec(spec_id, root=repo)
     except FileNotFoundError as exc:
-        return PlannerOutcome(spec_id=spec_id, error=f"spec not found: {exc}")
+        return PlannerOutcome(
+            spec_id=spec_id,
+            error=f"spec not found: {exc}",
+            reason_code=ReasonCode.SPEC_NOT_FOUND,
+        )
 
     from .dev_runner import render_repo_tree
 

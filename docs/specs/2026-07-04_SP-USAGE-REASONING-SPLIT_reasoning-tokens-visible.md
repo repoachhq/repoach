@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/providers/openai_compat.py]
   resources: []
 
-depends_on: [SP-PROVIDER-TRANSPORT-SPI, SP-BUDGET-RETRY-FIXES]
+depends_on: [SP-PROVIDER-TRANSPORT-SPI, SP-BUDGET-RETRY-FIXES, SP-PROVIDER-INIT-DEDUP]
 provides_to: []
 
 constraints: {}

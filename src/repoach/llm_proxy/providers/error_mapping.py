@@ -17,7 +17,7 @@ from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 def map_error(e: Exception, *, rate_limiter: GlobalRateLimiter | None = None) -> Exception:
     """Map OpenAI or HTTPX exception to specific ProviderError."""
     message = get_user_facing_error_message(e)
-    limiter = rate_limiter or GlobalRateLimiter.get_instance()
+    limiter = rate_limiter or GlobalRateLimiter.get_scoped_instance("error_mapping_default")
 
     if isinstance(e, openai.AuthenticationError):
         return AuthenticationError(message, raw_error=str(e))

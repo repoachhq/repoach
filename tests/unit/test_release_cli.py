@@ -14,6 +14,7 @@ import pytest
 import typer
 
 from repoach.cli import release_cmds
+from repoach.review.gh_client import GhCli
 from repoach.review.release_gate import (
     ReleaseDecision,
     ReleaseFacts,
@@ -38,7 +39,7 @@ def test_cli_release_gate_exit_zero_when_merge_ready(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number: _all_green_facts(),
+        lambda *, repo_root, gh, pr_number, db_path: _all_green_facts(),
     )
     release_cmds.release_gate(None)
 
@@ -56,7 +57,7 @@ def test_cli_release_gate_exit_five_when_refused(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number: facts,
+        lambda *, repo_root, gh, pr_number, db_path: facts,
     )
     with pytest.raises(typer.Exit) as exc:
         release_cmds.release_gate(None)
@@ -79,6 +80,51 @@ def test_cli_release_verify_exit_five_on_divergence(
     with pytest.raises(typer.Exit) as exc:
         release_cmds.release_verify()
     assert exc.value.exit_code == 5
+
+
+def test_cli_release_verify_live_flag_skips_receipt_and_detects_divergence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--live`` routes to ``verify_release_live`` and never touches the receipt path.
+
+    AC3: monkeypatching ``verify_release_live`` to report a divergence
+    proves the CLI exits 5 and that the receipt-based ``verify_release``
+    is never called. The regression guard on the other half (default
+    ``live=False`` still calling ``verify_release`` unchanged, NG1) is
+    also pinned here.
+    """
+    live_calls: list[GhCli] = []
+    receipt_calls: list[Path] = []
+
+    def _fake_verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
+        live_calls.append(gh)
+        return ReleaseVerifyResult(
+            verified=False,
+            main_sha="def456",
+            expected_sha="abc123",
+            detail="main tip does not match the approved develop head",
+        )
+
+    def _fake_verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
+        receipt_calls.append(path)
+        return ReleaseVerifyResult(
+            verified=True,
+            main_sha="abc123",
+            expected_sha="abc123",
+            detail="main tip matches the approved develop head",
+        )
+
+    monkeypatch.setattr(release_cmds, "verify_release_live", _fake_verify_release_live)
+    monkeypatch.setattr(release_cmds, "verify_release", _fake_verify_release)
+
+    with pytest.raises(typer.Exit) as exc:
+        release_cmds.release_verify(live=True)
+    assert exc.value.exit_code == 5
+    assert len(live_calls) == 1
+    assert receipt_calls == []
+
+    release_cmds.release_verify(live=False)
+    assert receipt_calls == [release_cmds._RECEIPT_PATH]
 
 
 def _git(repo: Path, *args: str) -> str:

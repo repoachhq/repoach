@@ -27,10 +27,11 @@ from repoach.health.model_health import (
 )
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.defaults import NVIDIA_NIM_BASE_URL
+from repoach.llm_proxy.providers.model_catalog import redact_secret
 
 _log = get_logger(__name__)
 
-_TIERS: tuple[str, ...] = ("opus", "sonnet", "haiku")
+CHAIN_TIERS: tuple[str, ...] = ("opus", "sonnet", "haiku")
 _PROBE_PROMPT = "Reply with the single word: ok"
 
 __all__ = [
@@ -45,11 +46,6 @@ __all__ = [
     "classify",
     "is_degraded",
 ]
-
-
-def _redact(text: str, secret: str) -> str:
-    """Mask ``secret`` in ``text`` so the api key can never reach a log sink."""
-    return text.replace(secret, "***") if secret else text
 
 
 def chain_head(chain_value: str) -> tuple[str, str]:
@@ -140,15 +136,25 @@ async def probe_nim_model(
     try:
         resp = await client.post(url, json=body, headers=headers, timeout=timeout_s)
     except httpx.HTTPError as exc:
-        detail = _redact(f"{type(exc).__name__}: {str(exc)[:120]}", api_key)
+        detail = redact_secret(f"{type(exc).__name__}: {exc}", api_key)
         _log.warning("nim_chain_probe_transport_failed", tier=tier, model=model, detail=detail)
         return ModelHealth(tier, model, STATUS_ERROR, None, 0, detail)
     latency_s = time.monotonic() - start
     try:
         content = _extract_content(resp.json())
     except ValueError as exc:
-        detail = f"json_decode: {type(exc).__name__}"
-        _log.warning("nim_chain_probe_unparseable", tier=tier, model=model, detail=detail)
+        body_snippet = redact_secret(resp.text, api_key, limit=200)
+        detail = (
+            f"json_decode: {type(exc).__name__} status={resp.status_code} body={body_snippet!r}"
+        )
+        _log.warning(
+            "nim_chain_probe_unparseable",
+            tier=tier,
+            model=model,
+            status_code=resp.status_code,
+            body_snippet=body_snippet,
+            detail=detail,
+        )
         return ModelHealth(tier, model, STATUS_ERROR, latency_s, 0, detail)
     status = classify(resp.status_code, latency_s, content, slow_threshold_s=slow_threshold_s)
     detail = content.strip()[:40] if content.strip() else f"http={resp.status_code}"
@@ -203,7 +209,7 @@ async def check_tier_heads(
 
     The per-tier probes run under :func:`asyncio.gather`, so a fully
     degraded NIM costs one ``timeout_s`` window rather than the sum of
-    four; the returned list still preserves ``_TIERS`` order.
+    four; the returned list still preserves ``CHAIN_TIERS`` order.
 
     Args:
         settings: Proxy settings carrying the per-tier chains and the
@@ -215,7 +221,7 @@ async def check_tier_heads(
         timeout_s: Per-probe hard cap.
 
     Returns:
-        One :class:`ModelHealth` per tier, in ``_TIERS`` order.
+        One :class:`ModelHealth` per tier, in ``CHAIN_TIERS`` order.
     """
     chains: dict[str, str | None] = {
         "opus": settings.model_opus,
@@ -232,6 +238,6 @@ async def check_tier_heads(
             max_tokens=max_tokens,
             timeout_s=timeout_s,
         )
-        for tier in _TIERS
+        for tier in CHAIN_TIERS
     ]
     return list(await asyncio.gather(*probes))

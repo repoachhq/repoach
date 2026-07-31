@@ -131,3 +131,36 @@ async def test_all_cells_error_never_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert len(results) == 2
     assert all(r.status == "error" for r in results)
+
+
+async def test_pacing_s_delays_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With pacing_s > 0, elapsed wall-clock time reflects the inter-probe delay.
+
+    A small matrix of 3 cells probed with max_concurrency=1 and pacing_s=0.05
+    should take at least 2 * 0.05 = 0.10 s of cumulative pacing (the first
+    probe has no predecessor delay, the remaining two each wait). The measured
+    elapsed time must be >= 0.08 s to allow for timer jitter.
+    """
+    import time
+
+    monkeypatch.setenv("REPOACH_NVIDIA_NIM_API_KEY", "nim-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_OK_BODY)
+
+    matrix = assemble_matrix([_ok("nvidia_nim", "a", "b", "c")])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        t0 = time.monotonic()
+        results = await sweep_cell_health(
+            matrix,
+            Settings(_env_file=None),
+            client,
+            descriptors=_descriptors("nvidia_nim"),
+            max_concurrency=1,
+            pacing_s=0.05,
+        )
+        elapsed = time.monotonic() - t0
+
+    assert len(results) == 3
+    assert all(r.status == "ok" for r in results)
+    assert elapsed >= 0.08, f"expected >= 0.08 s pacing delay, got {elapsed:.3f} s"

@@ -192,6 +192,30 @@ class TestLoadOrGeneratePlan:
         assert loaded == plan
         assert (repo / plan_relpath(_SPEC_ID)).is_file()
 
+    def test_existing_plan_with_orphaned_selector_fails_loud(self, tmp_path: Path) -> None:
+        repo = _init_repo(tmp_path)
+        plan = _one_step_plan()
+        _seed_plan(repo, plan)
+        (repo / "tests" / "unit" / "test_mini.py").write_text("x = 1\n", encoding="utf-8")
+        from repoach.review.spec import load_spec
+
+        spec = load_spec(_SPEC_ID, root=repo)
+
+        loaded, error = load_or_produce_plan(spec, repo_root=repo)
+
+        assert loaded is None
+        assert error is not None
+        assert "tests/unit/test_mini.py::test_value" in error
+
+        (repo / "tests" / "unit" / "test_mini.py").write_text(
+            "def test_value() -> None:\n    assert 1 == 1\n", encoding="utf-8"
+        )
+
+        loaded, error = load_or_produce_plan(spec, repo_root=repo)
+
+        assert error is None
+        assert loaded == plan
+
     def test_planning_failure_is_loud(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
         from repoach.review.spec import load_spec
@@ -398,6 +422,7 @@ class TestSessionWrapup:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
+        _git(repo, "branch", "develop")
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         dev = _developer_writing([_good_attempt()])
 
@@ -476,6 +501,7 @@ class TestGateAndSessionEdges:
         repo = _init_repo(tmp_path)
         plan = _one_step_plan()
         _seed_plan(repo, plan)
+        _git(repo, "branch", "develop")
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
             "repoach.review.dev_runner.push_branch",
@@ -653,7 +679,9 @@ class TestSelfVerifyGate:
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
             "repoach.review.dev_runner.run_self_verify",
-            lambda *a, **k: types.SimpleNamespace(ok=False, reasons=["judge: not compliant — gap"]),
+            lambda *a, **k: types.SimpleNamespace(
+                ok=False, ruff_ok=True, reasons=["judge: not compliant — gap"]
+            ),
         )
         dev = _developer_writing([_good_attempt()])
 
@@ -679,7 +707,7 @@ class TestSelfVerifyGate:
         monkeypatch.setattr("repoach.review.dev_runner.ensure_branch", lambda *a, **kw: True)
         monkeypatch.setattr(
             "repoach.review.dev_runner.run_self_verify",
-            lambda *a, **k: types.SimpleNamespace(ok=True, reasons=[]),
+            lambda *a, **k: types.SimpleNamespace(ok=True, ruff_ok=True, reasons=[]),
         )
         dev = _developer_writing([_good_attempt()])
 
@@ -693,6 +721,7 @@ class TestSelfVerifyGate:
         )
 
         assert result.self_verified is True
+        assert result.ruff_passed is True
         assert result.no_op_reason == "dry-run: push=False"
 
     def test_real_gate_compliant_judge_passes(self, tmp_path: Path, monkeypatch) -> None:
@@ -1418,7 +1447,11 @@ class TestSessionPreflight:
 
 
 class TestPromisedTestGateG1G2:
-    """SP-DEV-PROMISE-DELIVERY — G1 (untouched-file refusal) and G2 (mechanical rename)."""
+    """SP-DEV-PROMISE-DELIVERY G1 (untouched-file refusal); SP-PROMISE-RENAME-RETIRE
+    retired G2's mechanical rename — a touched file whose promised selector is
+    absent now fails the promise gate outright, never laundered by renaming
+    whatever unrelated test the loop wrote.
+    """
 
     _DRIFTED_TEST = '"""Demo test."""\n\n\ndef test_drifted() -> None:\n    assert 1 == 1\n'
     _PROMISED_TEST = '"""Demo test."""\n\n\ndef test_value() -> None:\n    assert 1 == 1\n'
@@ -1460,8 +1493,11 @@ class TestPromisedTestGateG1G2:
         assert "tests/unit/test_mini.py::test_value" in retry_brief
         assert (repo / "tests" / "unit" / "test_mini.py").read_text() == self._PROMISED_TEST
 
-    def test_touched_file_with_drifted_name_is_renamed_to_promise(self, tmp_path: Path) -> None:
-        """AC2 — single drifted test in a touched file, step green in one attempt."""
+    def test_touched_file_with_drifted_name_fails_promise_not_renamed(self, tmp_path: Path) -> None:
+        """SP-PROMISE-RENAME-RETIRE — a single drifted test in a touched file no
+        longer gets mechanically renamed into the promise; the step fails the
+        promise gate and the file on disk keeps the delivered (unrelated) name.
+        """
         repo = _init_repo(tmp_path)
         plan = _one_step_plan(
             unit_tests=["tests/unit/test_mini.py::test_value"],
@@ -1479,11 +1515,11 @@ class TestPromisedTestGateG1G2:
             db=repo.parent / "test.db",
         )
 
-        assert outcome.ok is True
-        assert dev.develop_step.call_count == 1
+        assert outcome.ok is False
+        assert "tests/unit/test_mini.py::test_value" in outcome.reason
         committed = (repo / "tests" / "unit" / "test_mini.py").read_text()
-        assert "def test_value(" in committed
-        assert "def test_drifted(" not in committed
+        assert "def test_value(" not in committed
+        assert "def test_drifted(" in committed
 
     def test_ambiguous_drift_absent_names_refused(self, tmp_path: Path) -> None:
         """SP-DEV-PROMISE-TRAILING-NAME — two missing + two candidates, step refused.
@@ -1520,15 +1556,10 @@ class TestPromisedTestGateG1G2:
         assert "tests/unit/test_mini.py::test_a" in retry_brief
         assert "tests/unit/test_mini.py::test_b" in retry_brief
 
-    def test_red_rename_rerun_restores_the_drifted_file(self, tmp_path: Path) -> None:
-        """A rename whose strict re-run stays red is rolled back before retry.
-
-        The first implementation set the retry feedback but left the
-        mechanically-renamed red file on disk — the semantic judge
-        refused the push over exactly this (2026-07-05). File A's
-        one-to-one drift renames; file B's promised selector stays
-        missing (ambiguous), so the strict re-run is red and A must
-        come back to its delivered content.
+    def test_multi_file_drift_fails_promise_neither_file_rewritten(self, tmp_path: Path) -> None:
+        """Two touched files, both drifted, neither one-to-one nor ambiguous get
+        special-cased any more (SP-PROMISE-RENAME-RETIRE): the step fails the
+        promise gate naming both absent selectors and no file on disk is rewritten.
         """
         repo = _init_repo(tmp_path)
         drifted_a = '"""A."""\n\n\ndef test_drifted(self=None):\n    assert True\n'
@@ -1562,40 +1593,14 @@ class TestPromisedTestGateG1G2:
         )
 
         assert outcome.ok is False
-        assert "did not make the promised selectors green" in outcome.reason
-        restored = (repo / "tests" / "unit" / "test_mini.py").read_text(encoding="utf-8")
-        assert "def test_drifted(" in restored
-        assert "def test_value(" not in restored
-
-    def test_rename_error_falls_back_to_retryable_gate(self, tmp_path: Path, monkeypatch) -> None:
-        """A failed mechanical rename retries with the G1 feedback.
-
-        The first implementation folded the error outcome into the
-        ambiguous one and proceeded via reconciled-accept — the second
-        judge gap (2026-07-05).
-        """
-        repo = _init_repo(tmp_path)
-        plan = _one_step_plan(unit_tests=["tests/unit/test_mini.py::test_value"])
-        dev = _developer_writing(
-            [[("src/mini.py", _CLEAN_MODULE), ("tests/unit/test_mini.py", self._DRIFTED_TEST)]]
-        )
-        monkeypatch.setattr(
-            "repoach.review.dev_runner._attempt_mechanical_rename",
-            lambda *args, **kwargs: ("error", ""),
-        )
-
-        outcome = execute_plan_step(
-            plan.steps[0],
-            plan=plan,
-            repo_root=repo,
-            developer=dev,
-            repo_tree="src/",
-            db=repo.parent / "test.db",
-        )
-
-        assert outcome.ok is False
-        assert "mechanical rename failed" in outcome.reason
-        assert dev.develop_step.call_count >= 2
+        assert "tests/unit/test_mini.py::test_value" in outcome.reason
+        assert "tests/unit/test_mini_b.py::test_promised_b" in outcome.reason
+        untouched_a = (repo / "tests" / "unit" / "test_mini.py").read_text(encoding="utf-8")
+        untouched_b = (repo / "tests" / "unit" / "test_mini_b.py").read_text(encoding="utf-8")
+        assert untouched_a == drifted_a
+        assert untouched_b == two_candidates_b
+        assert "def test_value(" not in untouched_a
+        assert "def test_promised_b(" not in untouched_b
 
 
 def test_preflight_integration_test_file_exists() -> None:

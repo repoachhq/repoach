@@ -22,8 +22,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from repoach.llm_proxy.api.app import create_app
+from repoach.llm_proxy.api.dependencies import get_settings as get_settings_dependency
 from repoach.llm_proxy.api.models.anthropic import MessagesRequest
 from repoach.llm_proxy.api.services import ClaudeProxyService
+from repoach.llm_proxy.config import settings as settings_module
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.exceptions import APIError
@@ -159,7 +161,9 @@ async def test_one_402_skips_sibling_refs_end_to_end(
     assert breaker._down_reason.get(failing_ref) == "provider_402_propagated"
     assert breaker._down_reason.get(second_ref) == "provider_402_propagated"
 
+    monkeypatch.setattr(settings_module, "_configured_env_files", lambda _cfg: ())
     app = create_app()
+    app.dependency_overrides[get_settings_dependency] = lambda: Settings(_env_file=None)
     with TestClient(app) as client:
         health_resp = client.get("/health")
         assert health_resp.status_code == 200

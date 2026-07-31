@@ -338,10 +338,15 @@ class TestNonSilentHandlers:
         assert scan_file(path) == []
 
 
-class TestAllowDirective:
-    """The ``# allow-silent-except`` directive suppresses the violation."""
+class TestNonLoggerCallDoesNotClearHandler:
+    """SP-LINT-GATE-SOUNDNESS G1 — receiver-blind log fallback is closed.
 
-    def test_allow_on_except_line_suppresses(self, tmp_path: Path) -> None:
+    A call whose terminal attribute spells a logging method name no
+    longer clears a handler unless its receiver is rooted in a real
+    logger object.
+    """
+
+    def test_non_logger_call_does_not_clear_handler(self, tmp_path: Path) -> None:
         path = _write(
             tmp_path,
             "a.py",
@@ -349,26 +354,246 @@ class TestAllowDirective:
             def f():
                 try:
                     g()
-                except Exception:  # allow-silent-except: parse failure is best-effort
+                except Exception:
+                    cache.info()
+                    pass
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "pass"
+
+    def test_bare_log_call_on_non_logger_name_does_not_clear_handler(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                except:
+                    q.log(x)
+                    return None
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "return"
+
+    def test_bound_exception_not_referenced_by_logger_call_is_flagged(self, tmp_path: Path) -> None:
+        """A2 tightening: binding ``exc`` but never referencing it is not honest logging."""
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                except Exception as exc:
+                    logger.error("g_failed")
+                    pass
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+
+    def test_logger_call_referencing_bound_exception_clears_handler(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                except ValueError as exc:
+                    _log.warning("x", error=str(exc))
+                    pass
+            """,
+        )
+        assert scan_file(path) == []
+
+    def test_no_binding_logger_call_still_clears_handler(self, tmp_path: Path) -> None:
+        """A1: a handler with no ``as`` binding is cleared by any qualifying logger call."""
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                except Exception:
+                    logger.error("g_failed")
                     return None
             """,
         )
         assert scan_file(path) == []
 
 
+class TestContextlibSuppressFlagged:
+    """SP-LINT-GATE-SOUNDNESS G2 — ``contextlib.suppress`` blindspot is closed."""
+
+    def test_contextlib_suppress_flagged(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            import contextlib
+
+            def f():
+                with contextlib.suppress(Exception):
+                    risky()
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "suppress"
+
+    def test_bare_suppress_import_flagged(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            from contextlib import suppress
+
+            def f():
+                with suppress(OSError):
+                    risky()
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "suppress"
+
+    def test_suppress_with_logging_body_is_ok(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            import contextlib
+
+            def f():
+                with contextlib.suppress(OSError):
+                    _log.warning("risky_failed")
+                    risky()
+            """,
+        )
+        assert scan_file(path) == []
+
+    def test_non_suppress_with_block_is_not_flagged(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                with open("x") as fh:
+                    fh.read()
+            """,
+        )
+        assert scan_file(path) == []
+
+    def test_standalone_allow_directive_above_suppress_suppresses(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            import contextlib
+
+            def f():
+                # repoach: allow-silent-except reason="narrow FS race, best-effort cleanup"
+                with contextlib.suppress(OSError):
+                    risky()
+            """,
+        )
+        assert scan_file(path) == []
+
+
+class TestAllowDirective:
+    """The standalone ``# repoach: allow-silent-except reason="..."`` directive.
+
+    SP-LINT-GATE-SOUNDNESS G3 moved the escape hatch off the
+    ``except`` line (which the no-inline-comments gate forbids) onto
+    a standalone comment line directly above it, and made the reason
+    mandatory.
+    """
+
+    def test_standalone_allow_directive_above_except_suppresses(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                # repoach: allow-silent-except reason="parse failure is best-effort"
+                except Exception:
+                    return None
+            """,
+        )
+        assert scan_file(path) == []
+
+    def test_allow_directive_on_except_line_itself_does_not_suppress(self, tmp_path: Path) -> None:
+        """The old inline placement (on the ``except`` line) no longer counts."""
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                except Exception:  # repoach: allow-silent-except reason="stale placement"
+                    return None
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "return"
+
+    def test_allow_directive_requires_reason(self, tmp_path: Path) -> None:
+        """An empty or missing ``reason=`` fails closed: the violation still reports."""
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                # repoach: allow-silent-except reason=""
+                except Exception:
+                    return None
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "return"
+
+    def test_allow_directive_missing_entirely_does_not_suppress(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path,
+            "a.py",
+            """
+            def f():
+                try:
+                    g()
+                except Exception:
+                    return None
+            """,
+        )
+        violations = scan_file(path)
+        assert len(violations) == 1
+
+
 class TestAllowDirectiveVariants:
-    """The allow directive tolerates case + whitespace variations."""
+    """The standalone allow directive tolerates whitespace variation."""
 
     @pytest.mark.parametrize(
         "directive",
         [
-            "# allow-silent-except: best-effort",
-            "# ALLOW-SILENT-EXCEPT: shouting works too",
-            "#allow-silent-except: no space after hash",
-            "#   allow-silent-except: lots of spaces",
+            '# repoach: allow-silent-except reason="best-effort"',
+            '#   repoach:   allow-silent-except   reason="lots of spaces"',
+            '#repoach: allow-silent-except reason="no space after hash"',
         ],
     )
-    def test_directive_case_and_whitespace_variants(self, tmp_path: Path, directive: str) -> None:
+    def test_directive_whitespace_variants(self, tmp_path: Path, directive: str) -> None:
         path = _write(
             tmp_path,
             "a.py",
@@ -376,7 +601,8 @@ class TestAllowDirectiveVariants:
             def f():
                 try:
                     g()
-                except Exception:  {directive}
+                {directive}
+                except Exception:
                     return None
             """,
         )
@@ -444,14 +670,19 @@ class TestFileResilience:
         )
         assert scan_file(path) == []
 
-    def test_syntax_error_file_is_silently_skipped(self, tmp_path: Path) -> None:
+    def test_unparseable_file_fails(self, tmp_path: Path) -> None:
+        """A syntax-error file FAILS the gate instead of being silently skipped."""
         path = _write(tmp_path, "a.py", "def f(:\n    pass\n")
-        assert scan_file(path) == []
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "unparseable"
 
-    def test_non_utf8_file_is_silently_skipped(self, tmp_path: Path) -> None:
+    def test_non_utf8_file_fails(self, tmp_path: Path) -> None:
         path = tmp_path / "a.py"
         path.write_bytes(b"\xff\xfe\x00\x00bad bytes")
-        assert scan_file(path) == []
+        violations = scan_file(path)
+        assert len(violations) == 1
+        assert violations[0].kind == "unparseable"
 
 
 class TestScanRoots:

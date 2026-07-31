@@ -28,7 +28,6 @@ class GlobalRateLimiter:
     Concurrency limit - caps simultaneously open streams.
     """
 
-    _instance: ClassVar[GlobalRateLimiter | None] = None
     _scoped_instances: ClassVar[dict[str, GlobalRateLimiter]] = {}
 
     def __init__(
@@ -37,9 +36,6 @@ class GlobalRateLimiter:
         rate_window: float = 60.0,
         max_concurrency: int = 5,
     ):
-        if hasattr(self, "_initialized"):
-            return
-
         if rate_limit <= 0:
             raise ValueError("rate_limit must be > 0")
         if rate_window <= 0:
@@ -54,33 +50,10 @@ class GlobalRateLimiter:
         self._blocked_until: float = 0
         self._lock = asyncio.Lock()
         self._concurrency_sem = asyncio.Semaphore(max_concurrency)
-        self._initialized = True
 
         logger.info(
             f"GlobalRateLimiter (Provider) initialized ({rate_limit} req / {rate_window}s, max_concurrency={max_concurrency})"
         )
-
-    @classmethod
-    def get_instance(
-        cls,
-        rate_limit: int | None = None,
-        rate_window: float | None = None,
-        max_concurrency: int = 5,
-    ) -> GlobalRateLimiter:
-        """Get or create the singleton instance.
-
-        Args:
-            rate_limit: Requests per window (only used on first creation)
-            rate_window: Window in seconds (only used on first creation)
-            max_concurrency: Max simultaneous open streams (only used on first creation)
-        """
-        if cls._instance is None:
-            cls._instance = cls(
-                rate_limit=rate_limit or 40,
-                rate_window=rate_window or 60.0,
-                max_concurrency=max_concurrency,
-            )
-        return cls._instance
 
     @classmethod
     def get_scoped_instance(

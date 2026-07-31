@@ -20,7 +20,7 @@ def test_supported_ids_derive_from_descriptors() -> None:
     assert tuple(catalog.PROVIDER_DESCRIPTORS) == catalog.SUPPORTED_PROVIDER_IDS
 
 
-def test_current_registry_is_the_seven_providers() -> None:
+def test_current_registry_is_the_ten_providers() -> None:
     assert catalog.SUPPORTED_PROVIDER_IDS == (
         "nvidia_nim",
         "open_router",
@@ -29,6 +29,9 @@ def test_current_registry_is_the_seven_providers() -> None:
         "groq",
         "cerebras",
         "deepseek",
+        "openai",
+        "anthropic",
+        "openai_compatible",
     )
 
 

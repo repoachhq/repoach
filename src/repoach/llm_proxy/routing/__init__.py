@@ -25,6 +25,7 @@ from repoach.llm_proxy.routing.breaker import (
 )
 from repoach.llm_proxy.routing.chain import Chain
 from repoach.llm_proxy.routing.refs import ModelRef
+from repoach.llm_proxy.routing.slow_policy import is_slow_completion
 from repoach.llm_proxy.routing.table import RoutingTable
 from repoach.llm_proxy.routing.tier import Tier, classify_tier
 
@@ -37,6 +38,7 @@ __all__ = [
     "Tier",
     "classify_tier",
     "get_breaker",
+    "is_slow_completion",
     "reset_breaker",
     "ttl_for_reason",
 ]

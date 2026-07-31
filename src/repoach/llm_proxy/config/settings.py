@@ -32,7 +32,6 @@ def _env_files() -> tuple[Path, ...]:
     ``source chains.env`` sets the same value).
     """
     files: list[Path] = [
-        Path.home() / ".config" / "free-claude-code" / ".env",
         Path(".env"),
     ]
     if explicit := os.environ.get("FCC_ENV_FILE"):
@@ -112,11 +111,15 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "CEREBRAS_API_KEY": "REPOACH_CEREBRAS_API_KEY",
     "DEEPSEEK_API_KEY": "REPOACH_DEEPSEEK_API_KEY",
     "ARTIFICIAL_ANALYSIS_API_KEY": "REPOACH_ARTIFICIAL_ANALYSIS_API_KEY",
+    "OPENAI_API_KEY": "REPOACH_OPENAI_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY": "REPOACH_OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_BASE_URL": "REPOACH_OPENAI_COMPATIBLE_BASE_URL",
     "BREAKER_ENABLED": "REPOACH_BREAKER_ENABLED",
     "BREAKER_TTL_S": "REPOACH_BREAKER_TTL_S",
     "BREAKER_TTL_TERMINAL_S": "REPOACH_BREAKER_TTL_TERMINAL_S",
     "BREAKER_PROBE_SEED_ENABLED": "REPOACH_BREAKER_PROBE_SEED_ENABLED",
     "BREAKER_PROBE_SEED_DB": "REPOACH_BREAKER_PROBE_SEED_DB",
+    "BREAKER_STATE_PERSIST_ENABLED": "REPOACH_BREAKER_STATE_PERSIST_ENABLED",
     "EFFORT_MAP_SEED_ENABLED": "REPOACH_EFFORT_MAP_SEED_ENABLED",
     "CLAUDE_CODE_CLI_PATH": "REPOACH_CLAUDE_CODE_CLI_PATH",
     "CLAUDE_CODE_DEFAULT_MODEL": "REPOACH_CLAUDE_CODE_DEFAULT_MODEL",
@@ -128,6 +131,7 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "PROVIDER_RATE_WINDOW": "REPOACH_PROXY_PROVIDER_RATE_WINDOW",
     "PROVIDER_MAX_CONCURRENCY": "REPOACH_PROXY_PROVIDER_MAX_CONCURRENCY",
     "ENABLE_THINKING": "REPOACH_PROXY_ENABLE_THINKING",
+    "PROXY_LOG_FULL_CONTENT": "REPOACH_PROXY_LOG_FULL_CONTENT",
     "BUDGET_RETRY_ENABLED": "REPOACH_PROXY_BUDGET_RETRY_ENABLED",
     "BUDGET_RETRY_FACTOR": "REPOACH_PROXY_BUDGET_RETRY_FACTOR",
     "BUDGET_RETRY_FLOOR": "REPOACH_PROXY_BUDGET_RETRY_FLOOR",
@@ -135,17 +139,31 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "HTTP_READ_TIMEOUT": "REPOACH_PROXY_HTTP_READ_TIMEOUT",
     "HTTP_WRITE_TIMEOUT": "REPOACH_PROXY_HTTP_WRITE_TIMEOUT",
     "HTTP_CONNECT_TIMEOUT": "REPOACH_PROXY_HTTP_CONNECT_TIMEOUT",
+    "FIRST_BYTE_DEADLINE_S": "REPOACH_PROXY_FIRST_BYTE_DEADLINE_S",
     "HOST": "REPOACH_PROXY_HOST",
     "PORT": "REPOACH_PROXY_PORT",
     "LOG_FILE": "REPOACH_PROXY_LOG_FILE",
     "ANTHROPIC_AUTH_TOKEN": "REPOACH_ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY": "REPOACH_ANTHROPIC_API_KEY",
     "CHAINPILOT_APPLY_ENABLED": "REPOACH_CHAINPILOT_APPLY_ENABLED",
     "CHAINPILOT_MAX_MUTATIONS": "REPOACH_CHAINPILOT_MAX_MUTATIONS",
     "BREAKER_TTL_QUARANTINE_S": "REPOACH_BREAKER_TTL_QUARANTINE_S",
     "BREAKER_QUARANTINE_THRESHOLD": "REPOACH_BREAKER_QUARANTINE_THRESHOLD",
+    "BREAKER_SLOW_LATENCY_GATE_S": "REPOACH_BREAKER_SLOW_LATENCY_GATE_S",
+    "BREAKER_SLOW_TPS_FLOOR": "REPOACH_BREAKER_SLOW_TPS_FLOOR",
+    "BREAKER_SLOW_K": "REPOACH_BREAKER_SLOW_K",
+    "BREAKER_SLOW_N": "REPOACH_BREAKER_SLOW_N",
+    "BREAKER_SLOW_TTL_S": "REPOACH_BREAKER_SLOW_TTL_S",
+    "BREAKER_SLOW_SHADOW": "REPOACH_BREAKER_SLOW_SHADOW",
     "CREDITS_FLOOR_USD": "REPOACH_CREDITS_FLOOR_USD",
     "CREDITS_HEALTH_CACHE_TTL_S": "REPOACH_CREDITS_HEALTH_CACHE_TTL_S",
     "CHAIN_STATUS_WINDOW_H": "REPOACH_CHAIN_STATUS_WINDOW_H",
+    "REGEN_MAX_CELL_AGE_H": "REPOACH_REGEN_MAX_CELL_AGE_H",
+    "REGEN_SWEEP_PER_PROVIDER_CAP": "REPOACH_REGEN_SWEEP_PER_PROVIDER_CAP",
+    "REGEN_SWEEP_PER_PROVIDER_CONCURRENCY": "REPOACH_REGEN_SWEEP_PER_PROVIDER_CONCURRENCY",
+    "REGEN_SWEEP_PACING_S": "REPOACH_REGEN_SWEEP_PACING_S",
+    "REGEN_SWEEP_RETRY_BACKOFF_S": "REPOACH_REGEN_SWEEP_RETRY_BACKOFF_S",
+    "DISPATCH_TOTAL_BUDGET_S": "REPOACH_DISPATCH_TOTAL_BUDGET_S",
 }
 
 
@@ -231,6 +249,15 @@ class Settings(BaseSettings):
     cerebras_api_key: str = Field(default="", validation_alias=_aliases("CEREBRAS_API_KEY"))
     deepseek_api_key: str = Field(default="", validation_alias=_aliases("DEEPSEEK_API_KEY"))
 
+    openai_api_key: str = Field(default="", validation_alias=_aliases("OPENAI_API_KEY"))
+    anthropic_api_key: str = Field(default="", validation_alias=_aliases("ANTHROPIC_API_KEY"))
+    openai_compatible_api_key: str = Field(
+        default="", validation_alias=_aliases("OPENAI_COMPATIBLE_API_KEY")
+    )
+    openai_compatible_base_url: str = Field(
+        default="", validation_alias=_aliases("OPENAI_COMPATIBLE_BASE_URL")
+    )
+
     artificial_analysis_api_key: str = Field(
         default="", validation_alias=_aliases("ARTIFICIAL_ANALYSIS_API_KEY")
     )
@@ -264,6 +291,16 @@ class Settings(BaseSettings):
     )
     enable_thinking: bool = Field(default=True, validation_alias=_aliases("ENABLE_THINKING"))
 
+    proxy_log_full_content: bool = Field(
+        default=False, validation_alias=_aliases("PROXY_LOG_FULL_CONTENT")
+    )
+    """Off-by-default opt-in gating verbatim request/response body logging
+    (SP-PROXY-LOG-CONTENT-GUARD).  ``False`` (the fail-closed default) keeps
+    ``FULL_PAYLOAD`` (:mod:`repoach.llm_proxy.api.services`) and
+    ``SSE_EVENT`` (:mod:`repoach.llm_proxy.core.anthropic.sse`) logs to
+    non-content metadata only ; set ``True`` to restore the legacy verbatim
+    payload/event-body logging for operator debugging."""
+
     budget_retry_enabled: bool = Field(
         default=True, validation_alias=_aliases("BUDGET_RETRY_ENABLED")
     )
@@ -282,6 +319,20 @@ class Settings(BaseSettings):
     breaker_quarantine_threshold: int = Field(
         default=3, ge=1, validation_alias=_aliases("BREAKER_QUARANTINE_THRESHOLD")
     )
+    breaker_slow_latency_gate_s: float = Field(
+        default=10.0, validation_alias=_aliases("BREAKER_SLOW_LATENCY_GATE_S")
+    )
+    breaker_slow_tps_floor: float = Field(
+        default=1.0, validation_alias=_aliases("BREAKER_SLOW_TPS_FLOOR")
+    )
+    breaker_slow_k: int = Field(default=3, validation_alias=_aliases("BREAKER_SLOW_K"))
+    breaker_slow_n: int = Field(default=5, validation_alias=_aliases("BREAKER_SLOW_N"))
+    breaker_slow_ttl_s: float = Field(
+        default=300.0, validation_alias=_aliases("BREAKER_SLOW_TTL_S")
+    )
+    breaker_slow_shadow: bool = Field(
+        default=True, validation_alias=_aliases("BREAKER_SLOW_SHADOW")
+    )
     credits_floor_usd: float = Field(default=2.0, validation_alias=_aliases("CREDITS_FLOOR_USD"))
     credits_health_cache_ttl_s: float = Field(
         default=3600.0, validation_alias=_aliases("CREDITS_HEALTH_CACHE_TTL_S")
@@ -289,11 +340,31 @@ class Settings(BaseSettings):
     chain_status_window_h: float = Field(
         default=24.0, validation_alias=_aliases("CHAIN_STATUS_WINDOW_H")
     )
+
+    regen_max_cell_age_h: float = Field(
+        default=12.0, validation_alias=_aliases("REGEN_MAX_CELL_AGE_H")
+    )
+    regen_sweep_per_provider_cap: int = Field(
+        default=12, validation_alias=_aliases("REGEN_SWEEP_PER_PROVIDER_CAP")
+    )
+    regen_sweep_per_provider_concurrency: int = Field(
+        default=2, validation_alias=_aliases("REGEN_SWEEP_PER_PROVIDER_CONCURRENCY")
+    )
+    regen_sweep_pacing_s: float = Field(
+        default=0.5, validation_alias=_aliases("REGEN_SWEEP_PACING_S")
+    )
+    regen_sweep_retry_backoff_s: float = Field(
+        default=2.0, validation_alias=_aliases("REGEN_SWEEP_RETRY_BACKOFF_S")
+    )
+
     breaker_probe_seed_enabled: bool = Field(
         default=True, validation_alias=_aliases("BREAKER_PROBE_SEED_ENABLED")
     )
     breaker_probe_seed_db: str = Field(
         default="data/repoach.db", validation_alias=_aliases("BREAKER_PROBE_SEED_DB")
+    )
+    breaker_state_persist_enabled: bool = Field(
+        default=True, validation_alias=_aliases("BREAKER_STATE_PERSIST_ENABLED")
     )
     effort_map_seed_enabled: bool = Field(
         default=True, validation_alias=_aliases("EFFORT_MAP_SEED_ENABLED")
@@ -310,6 +381,22 @@ class Settings(BaseSettings):
     http_connect_timeout: float = Field(
         default=2.0, validation_alias=_aliases("HTTP_CONNECT_TIMEOUT")
     )
+    first_byte_deadline_s: float = Field(
+        default=20.0, ge=0, validation_alias=_aliases("FIRST_BYTE_DEADLINE_S")
+    )
+    dispatch_total_budget_s: float = Field(
+        default=900.0, validation_alias=_aliases("DISPATCH_TOTAL_BUDGET_S")
+    )
+    """Wall-clock budget for one ``_stream_with_failover`` call
+    (SP-CHAIN-REQUEST-BUDGET), shared across the WHOLE chain walk rather
+    than replacing any hop's own timeout.  ``900.0`` = 120 + 120 (both
+    native hops genuinely hang to their read timeout,
+    ``http_read_timeout``) + 600 (``claude_code_subprocess_timeout``
+    floor) + 60s headroom for scheduling/SSE-peek overhead.  Do not
+    configure below ~660s (600s ``claude_code`` floor + one native
+    hop's worth of margin) or a legitimately slow-but-successful
+    ``claude_code`` cold start risks truncation on a chain where an
+    earlier hop already spent budget."""
 
     nim: NimSettings = Field(default_factory=NimSettings)
 
@@ -375,6 +462,33 @@ class Settings(BaseSettings):
                 break
         if dotenv_value is not None:
             self.anthropic_auth_token = dotenv_value
+        return self
+
+    @model_validator(mode="after")
+    def reject_colon_bearing_auth_token(self) -> Settings:
+        """Refuse a configured token that itself contains ``:``.
+
+        SP-PROXY-EDGE-HARDEN: :func:`~repoach.llm_proxy.api.dependencies.require_api_key`
+        strips a trailing ``:<suffix>`` only when the remaining prefix is an
+        exact match for the configured token, so a token containing ``:``
+        would be un-presentable in full (the suffix strip would always
+        apply, and the shortened prefix would never equal the configured
+        secret). Declared after :meth:`prefer_dotenv_anthropic_auth_token`
+        so the dotenv override is checked too.
+
+        Returns:
+            The same :class:`Settings` instance.
+
+        Raises:
+            ValueError: When ``anthropic_auth_token`` contains ``:``.
+        """
+        if ":" in self.anthropic_auth_token:
+            raise ValueError(
+                "anthropic_auth_token must not contain ':' — the "
+                "'<token>:<model-suffix>' matching form reserves ':' as "
+                "the suffix delimiter, so a ':'-bearing secret would be "
+                "un-presentable in full."
+            )
         return self
 
     @model_validator(mode="after")

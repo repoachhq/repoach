@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    # develop is always reached through a PR that already ran CI (the
+    # pull_request trigger below), so a push-CI on develop only re-tests
+    # already-gated commits and serialises redundant runs onto the single
+    # self-hosted runner. main is kept for develop -> main release validation.
+    branches: [main]
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
@@ -10,6 +14,14 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+# SP-CONFIG-ENV-ANCHOR made llm_proxy_base_url fail-loud: Settings now
+# refuses to default to a wrong proxy, so every environment must anchor
+# the value. CI checks out no .env, so it is anchored here for the whole
+# workflow (loopback; the suite mocks the gateway, the smoke boots the
+# server which never dials this URL). Step-level env blocks inherit it.
+env:
+  REPOACH_LLM_PROXY_BASE_URL: http://127.0.0.1:8082
 
 jobs:
   test:
@@ -20,8 +32,8 @@ jobs:
     # as collaborators are added — mirrors auto-review.yml.
     if: >-
       github.event_name != 'pull_request'
-      || contains(fromJSON('["jwfaye"]'), github.actor)
-    runs-on: self-hosted
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     strategy:
       fail-fast: false
       matrix:

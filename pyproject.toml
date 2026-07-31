@@ -5,6 +5,32 @@ description = "The self-forging software factory — an autonomous, self-evolvin
 requires-python = ">=3.11"
 readme = "README.md"
 authors = [{ name = "Joseph Faye" }]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "llm",
+    "agents",
+    "multi-agent",
+    "code-review",
+    "pull-request",
+    "automation",
+    "ci",
+    "software-factory",
+    "devtools",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Typing :: Typed",
+]
 
 # Genesis reset: dependencies cover the surviving review factory only
 # (review/ + agent_engine/ + llm/ + llm_proxy/ + core/ + cli/ + lint/).
@@ -103,6 +129,9 @@ known-first-party = ["repoach"]
 "src/repoach/arch/cli.py" = ["B008"]
 # Test fixtures need late imports / unused imports for stub plumbing.
 "tests/unit/test_review_notifier.py" = ["E731"]
+
+[tool.repoach.arch]
+frontier_suppress = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -40,6 +40,7 @@ from sqlalchemy import (
 )
 
 from ..core.logging import get_logger
+from ..core.sqlite_schema_init import ensure_schema_created
 from .hallucination_guard import GuardEvent
 from .reviewer import ReviewerOutcome
 
@@ -122,6 +123,18 @@ _pr_merges = Table(
 )
 
 
+_PERSISTED_JSON_TRUNCATE_CHARS = 32000
+"""Anti-bloat cap, in characters, on serialized JSON before a write to
+either ``pr_review_dialogue.payload_json`` (:func:`record_dialogue`) or
+``pr_coder_responses.fixes_json`` (:func:`record_coder_response`).
+
+Both columns are declared ``String`` with no length, which SQLAlchemy
+maps to an unbounded SQLite ``TEXT`` column — this constant is a
+hand-picked application-level cap, not an enforced database
+column-width limit.
+"""
+
+
 def _engine_for(db_path: Path):
     """Build a SQLAlchemy engine pointing at *db_path* (created if needed)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,7 +152,7 @@ def init_schema(db_path: Path) -> None:
     post-creation (SQLite has no DDL-versioning).
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     _migrate_missing_columns(engine)
     _drop_retired_columns(engine)
 
@@ -201,6 +214,7 @@ def record_review(
     *,
     pr_number: int,
     outcome: ReviewerOutcome,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one reviewer's outcome to L4."""
     engine = _engine_for(db_path)
@@ -232,7 +246,7 @@ def record_review(
                 elapsed_s=outcome.elapsed_s,
                 tokens_used=outcome.tokens_used,
                 comments_json=comments_json,
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
                 decision_pivot=decision_pivot,
             )
         )
@@ -278,6 +292,7 @@ def record_merge(
     head_ref: str,
     merged_sha: str | None,
     notes: str,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one auto-merge attempt to L4 ``pr_merges``.
 
@@ -289,6 +304,8 @@ def record_merge(
         head_ref: PR source branch.
         merged_sha: Merge commit SHA on success, ``None`` otherwise.
         notes: Free-form context string (truncated to 1000 chars).
+        recorded_at: Timestamp to stamp on ``created_at``; defaults to
+            ``datetime.now(UTC)`` captured at call time when omitted.
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -300,9 +317,43 @@ def record_merge(
                 head_ref=head_ref,
                 merged_sha=merged_sha,
                 notes=notes[:1000],
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
+
+
+def fetch_merged_pr_shas(db_path: Path) -> set[str]:
+    """Return every recorded ``pr_merges.merged_sha`` in *db_path*.
+
+    Consumed by the release gate's provenance check
+    (SP-RELEASE-PROVENANCE-LEDGER): a commit in a ``develop -> main``
+    release range is a legitimate gated-PR squash only when its own SHA
+    is a member of this set.  Only rows with a non-null ``merged_sha``
+    qualify -- :func:`record_merge` sets it exclusively alongside a
+    real green-CI merge (``OUTCOME_MERGED``/``OUTCOME_ALREADY_MERGED``
+    style outcomes); ``SKIP_*`` and ``FAILED`` attempts never carry
+    one and are not provenance evidence.
+
+    Args:
+        db_path: SQLite path for the review ledger.
+
+    Returns:
+        The set of recorded merge SHAs.  Empty when the ledger has no
+        such row yet, including a brand-new database.
+
+    Raises:
+        Exception: Any failure reading or initialising the ledger
+            propagates unchanged -- the caller must treat a failure to
+            read this ledger as an evaluation error, never as an empty
+            (and therefore silently permissive) result.
+    """
+    init_schema(db_path)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(_pr_merges.c.merged_sha).where(_pr_merges.c.merged_sha.is_not(None))
+        ).all()
+    return {row.merged_sha for row in rows if row.merged_sha}
 
 
 def record_hallucination(
@@ -310,6 +361,7 @@ def record_hallucination(
     *,
     pr_number: int,
     event: GuardEvent,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one :class:`GuardEvent` to L4 ``pr_hallucinations``.
 
@@ -318,6 +370,8 @@ def record_hallucination(
         pr_number: PR number the downgrade applies to.
         event: The :class:`GuardEvent` produced by
             :func:`apply_hallucination_guard`.
+        recorded_at: Timestamp to stamp on ``created_at``; defaults to
+            ``datetime.now(UTC)`` captured at call time when omitted.
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -331,7 +385,7 @@ def record_hallucination(
                 reason=event.reason,
                 tokens_found=json.dumps(list(event.tokens_found)),
                 original_body=event.original_body[:2000],
-                created_at=datetime.now(UTC),
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
 
@@ -364,6 +418,7 @@ def record_dialogue(
     round: str,
     speaker: str,
     payload: Mapping[str, Any],
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist one dialogue turn to ``pr_review_dialogue``.
 
@@ -377,6 +432,8 @@ def record_dialogue(
             ``"scribe"``, or ``"coder"``.
         payload: JSON-serialisable mapping carrying the verdict,
             comments, or challenge record body.
+        recorded_at: Timestamp to stamp on ``created_at``; defaults to
+            ``datetime.now(UTC)`` captured at call time when omitted.
     """
     init_schema(db_path)
     engine = _engine_for(db_path)
@@ -386,8 +443,10 @@ def record_dialogue(
                 pr_number=pr_number,
                 round=round,
                 speaker=speaker,
-                payload_json=json.dumps(dict(payload), default=str)[:32000],
-                created_at=datetime.now(UTC),
+                payload_json=json.dumps(dict(payload), default=str)[
+                    :_PERSISTED_JSON_TRUNCATE_CHARS
+                ],
+                created_at=recorded_at or datetime.now(UTC),
             )
         )
 
@@ -409,7 +468,7 @@ def fetch_dialogue(
         recorded for this PR.
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    ensure_schema_created(engine, _metadata)
     stmt = (
         select(_pr_review_dialogue)
         .where(_pr_review_dialogue.c.pr_number == pr_number)
@@ -449,6 +508,7 @@ def record_coder_response(
     model_used: str,
     elapsed_s: float,
     tokens_used: int,
+    recorded_at: datetime | None = None,
 ) -> None:
     """Persist the Coder's fix-plan to L4."""
     engine = _engine_for(db_path)
@@ -462,7 +522,7 @@ def record_coder_response(
                 model_used=model_used,
                 elapsed_s=elapsed_s,
                 tokens_used=tokens_used,
-                fixes_json=json.dumps(plan.get("fixes", []) or [])[:32000],
-                created_at=datetime.now(UTC),
+                fixes_json=json.dumps(plan.get("fixes", []) or [])[:_PERSISTED_JSON_TRUNCATE_CHARS],
+                created_at=recorded_at or datetime.now(UTC),
             )
         )

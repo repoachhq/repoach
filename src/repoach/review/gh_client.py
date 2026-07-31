@@ -20,9 +20,65 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..core.config import get_settings
 from ..core.logging import get_logger
 
 _log = get_logger(__name__)
+
+
+def flatten_paginated_pages(pages: object) -> list[object]:
+    """Flatten a decoded ``gh api --paginate --slurp`` payload into one list.
+
+    ``gh api --paginate`` alone emits one JSON array per page
+    concatenated back to back (``[...][...]``), which ``json.loads``
+    cannot parse past the first page. Adding ``--slurp`` wraps the
+    per-page arrays into a single outer JSON array of page arrays —
+    this helper flattens that shape into the full merged list.
+
+    A single-page response ``--slurp``s to a one-element outer array
+    and flattens back to that page's own list unchanged, so nominal
+    single-page behaviour is preserved exactly.
+
+    Args:
+        pages: The value produced by ``json.loads`` on the raw
+            ``--slurp``-wrapped stdout — expected to be a JSON array
+            whose entries are themselves JSON arrays (one per page).
+
+    Returns:
+        The concatenation of every page's elements, in page order.
+
+    Raises:
+        ValueError: ``pages`` is not a JSON array of page arrays — a
+            genuine parse failure that callers must surface loudly
+            rather than collapse into an empty result.
+    """
+    if not isinstance(pages, list):
+        raise ValueError("expected a JSON array of pages from --paginate --slurp")
+    flattened: list[object] = []
+    for page in pages:
+        if not isinstance(page, list):
+            raise ValueError("expected each paginated page to be a JSON array")
+        flattened.extend(page)
+    return flattened
+
+
+def comment_author_login(comment: object) -> str | None:
+    """Return a GitHub comment payload's ``user.login``, or ``None``.
+
+    Handles the shapes :meth:`GhCli.list_review_comments` /
+    :meth:`GhCli.find_archive_comment` actually see: a non-dict
+    comment, a missing/null ``user`` field, or a missing/non-string
+    ``login`` all resolve to ``None`` rather than raising — the
+    SP-EVIDENCE-SENTINEL-AUTHOR author check treats every one of these
+    as untrusted.
+    """
+    if not isinstance(comment, dict):
+        return None
+    user = comment.get("user")
+    if not isinstance(user, dict):
+        return None
+    login = user.get("login")
+    return login if isinstance(login, str) and login else None
 
 
 @dataclass(frozen=True)
@@ -80,6 +136,7 @@ class GhCli:
         cwd: Path | None = None,
         gh_path: str | None = None,
         timeout_s: int = 60,
+        bot_login: str | None = None,
     ) -> None:
         """Initialise the wrapper.
 
@@ -89,18 +146,46 @@ class GhCli:
             gh_path: Override the ``gh`` binary location.  When
                 ``None``, look up via ``shutil.which``.
             timeout_s: Per-call timeout.
+            bot_login: The GitHub login trust-bearing markers must be
+                authored by to be honoured (SP-EVIDENCE-SENTINEL-AUTHOR).
+                Defaults to :attr:`~repoach.core.config.Settings.review_bot_login`
+                when omitted, so production call sites need no change.
         """
         self._cwd = cwd or Path.cwd()
         self._gh = gh_path or shutil.which("gh") or shutil.which(str(Path.home() / ".local/bin/gh"))
         self._timeout = timeout_s
+        self._bot_login = bot_login if bot_login is not None else get_settings().review_bot_login
 
     @property
     def available(self) -> bool:
         """True if a ``gh`` binary is reachable."""
         return self._gh is not None and Path(self._gh).is_file()
 
-    def _spawn(self, argv: list[str]) -> GhResult:
-        """Run a subprocess in ``cwd`` and capture output as a GhResult."""
+    @property
+    def bot_login(self) -> str:
+        """The GitHub login trust-bearing markers must be authored by."""
+        return self._bot_login
+
+    def _is_trusted_author(self, comment: object) -> bool:
+        """True when ``comment`` was authored by :attr:`bot_login`.
+
+        Fails closed: an empty/unresolvable :attr:`bot_login` never
+        matches, and a missing/null author never matches — a missing
+        identity must never widen trust (SP-EVIDENCE-SENTINEL-AUTHOR).
+        """
+        return bool(self._bot_login) and comment_author_login(comment) == self._bot_login
+
+    def _spawn(self, argv: list[str], *, input_data: str | None = None) -> GhResult:
+        """Run a subprocess in ``cwd`` and capture output as a GhResult.
+
+        Args:
+            argv: Full argv to spawn.
+            input_data: Optional stdin payload (SP-REVIEW-POST-BATCH) —
+                forwarded verbatim to ``subprocess.run``'s own ``input``
+                kwarg. ``None`` (the default) reproduces every call
+                site's prior behavior exactly, since that is already
+                ``subprocess.run``'s own default for ``input``.
+        """
         try:
             proc = subprocess.run(
                 argv,
@@ -109,6 +194,7 @@ class GhCli:
                 text=True,
                 timeout=self._timeout,
                 check=False,
+                input=input_data,
             )
             return GhResult(
                 returncode=proc.returncode,
@@ -124,8 +210,18 @@ class GhCli:
                 argv=argv,
             )
 
-    def _run(self, args: list[str]) -> GhResult:
-        """Spawn ``gh`` with the given subargs and capture output."""
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        """Spawn ``gh`` with the given subargs and capture output.
+
+        Args:
+            args: Subargs appended after the ``gh`` binary path.
+            input_data: Optional stdin payload, forwarded to
+                :meth:`_spawn` (SP-REVIEW-POST-BATCH) — needed by
+                :meth:`pr_review_submit_batch`, the first caller in this
+                file whose payload (a nested ``comments`` array) cannot
+                be expressed through the scalar ``-f``/``-F`` flags used
+                everywhere else.
+        """
         if not self.available:
             return GhResult(
                 returncode=127,
@@ -133,7 +229,7 @@ class GhCli:
                 stderr="gh CLI not installed",
                 argv=["gh", *args],
             )
-        return self._spawn([str(self._gh), *args])
+        return self._spawn([str(self._gh), *args], input_data=input_data)
 
     def _run_git(self, args: list[str]) -> GhResult:
         """Spawn ``git`` in ``cwd`` and capture output like :meth:`_run`."""
@@ -284,7 +380,7 @@ class GhCli:
         self,
         *,
         head: str,
-        base: str = "main",
+        base: str | None = None,
         title: str,
         body: str,
         draft: bool = False,
@@ -293,7 +389,9 @@ class GhCli:
 
         Args:
             head: Source branch name (without ``origin/`` prefix).
-            base: Target branch (defaults to ``main``).
+            base: Target branch. Defaults to
+                :attr:`~repoach.core.config.Settings.release_branch`,
+                resolved at call time so an env/test override takes effect.
             title: PR title.
             body: PR body (markdown).
             draft: When True, create a draft PR.
@@ -302,6 +400,7 @@ class GhCli:
             :class:`GhResult` whose ``stdout`` ends with the PR URL on
             success.
         """
+        base = base if base is not None else get_settings().release_branch
         args = [
             "pr",
             "create",
@@ -400,6 +499,122 @@ class GhCli:
             ]
         )
 
+    def pr_review_submit_batch(
+        self,
+        pr_number: int,
+        *,
+        commit_sha: str,
+        verdict: str,
+        body: str,
+        comments: list[dict[str, object]],
+    ) -> GhResult:
+        """Submit a verdict and every inline comment as one review.
+
+        Wraps ``POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews``
+        — the batched-review endpoint (SP-REVIEW-POST-BATCH) that
+        replaces one ``gh`` subprocess per finding with a single call
+        carrying the whole reviewer's output. The scalar ``-f``/``-F``
+        flags used by :meth:`pr_review_comment` and
+        :meth:`pr_review_submit` cannot express a nested array of
+        comment objects, so the payload is fed as JSON over stdin via
+        ``--input -`` instead.
+
+        Args:
+            pr_number: PR number.
+            commit_sha: Commit SHA the inline comments anchor to
+                (``commit_id`` in GitHub's payload).
+            verdict: One of "APPROVE" / "REQUEST_CHANGES" / "COMMENT";
+                forwarded verbatim as the review's ``event``. An
+                unrecognised value falls back to "COMMENT", matching
+                :meth:`pr_review_submit`'s existing
+                ``flag_map.get(..., "--comment")`` fallback style.
+            body: Review body markdown.
+            comments: One dict per inline comment, each carrying
+                ``"file"`` (repo-relative path), ``"line"`` (1-based),
+                and ``"body"`` (already-rendered comment markdown —
+                this method does not add any role/severity prefix).
+
+        Returns:
+            :class:`GhResult`; on success ``stdout`` carries the
+            created review's JSON, including its own ``"id"``.
+        """
+        flag_map = {
+            "APPROVE": "APPROVE",
+            "REQUEST_CHANGES": "REQUEST_CHANGES",
+            "COMMENT": "COMMENT",
+        }
+        event = flag_map.get(verdict.upper(), "COMMENT")
+        payload = {
+            "commit_id": commit_sha,
+            "event": event,
+            "body": body,
+            "comments": [
+                {
+                    "path": comment["file"],
+                    "line": comment["line"],
+                    "side": "RIGHT",
+                    "body": comment["body"],
+                }
+                for comment in comments
+            ],
+        }
+        return self._run(
+            [
+                "api",
+                "--method",
+                "POST",
+                f"repos/:owner/:repo/pulls/{pr_number}/reviews",
+                "--input",
+                "-",
+            ],
+            input_data=json.dumps(payload),
+        )
+
+    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+        """Return the inline comments belonging to one specific review.
+
+        Wraps ``GET /repos/.../pulls/{pr}/reviews/{review_id}/comments``
+        — scoped to a single review's own comments, unlike
+        :meth:`list_review_comments`'s whole-PR scope. Lets a caller
+        recover just the ids of the comments a
+        :meth:`pr_review_submit_batch` call created
+        (SP-REVIEW-POST-BATCH). Follows the same single-page
+        ``json.loads`` convention as :meth:`list_review_comments` and
+        :meth:`find_archive_comment` — the shared multi-page
+        ``--paginate`` JSON-decode limitation is a pre-existing gap
+        this method inherits rather than fixes.
+
+        Args:
+            pr_number: PR number.
+            review_id: The ``id`` of a review previously created by
+                :meth:`pr_review_submit_batch`.
+
+        Returns:
+            JSON-decoded list, each entry carrying at least ``"id"``,
+            ``"path"``, ``"line"``; ``[]`` on any failure.
+        """
+        res = self._run(
+            [
+                "api",
+                f"repos/:owner/:repo/pulls/{pr_number}/reviews/{review_id}/comments",
+            ]
+        )
+        if not res.ok:
+            return []
+        try:
+            data = json.loads(res.stdout) if res.stdout.strip() else []
+        except json.JSONDecodeError as exc:
+            _log.warning(
+                "gh_client.review_id_comments_decode_failed",
+                pr_number=pr_number,
+                review_id=review_id,
+                error=str(exc)[:200],
+            )
+            return []
+        if not isinstance(data, list):
+            return []
+        return data
+
     def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
         """Return every inline review comment on a PR (root + replies).
 
@@ -417,21 +632,21 @@ class GhCli:
             [
                 "api",
                 "--paginate",
+                "--slurp",
                 f"repos/:owner/:repo/pulls/{pr_number}/comments",
             ]
         )
         if not res.ok:
             return []
         try:
-            data = json.loads(res.stdout) if res.stdout.strip() else []
-        except json.JSONDecodeError as exc:
+            pages = json.loads(res.stdout) if res.stdout.strip() else []
+            data = flatten_paginated_pages(pages)
+        except (json.JSONDecodeError, ValueError) as exc:
             _log.warning(
                 "gh_client.review_comments_decode_failed",
                 pr_number=pr_number,
                 error=str(exc)[:200],
             )
-            return []
-        if not isinstance(data, list):
             return []
         return data
 
@@ -491,12 +706,16 @@ class GhCli:
 
         Walks the PR's issue-comments and matches on the marker
         :attr:`ARCHIVE_MARKER`.  Returns ``None`` if no comment carries
-        the marker or the API call fails.
+        the marker, no marker-bearing comment was authored by
+        :attr:`bot_login` (SP-EVIDENCE-SENTINEL-AUTHOR — a forged
+        marker from any other author is ignored), or the API call
+        fails.
         """
         res = self._run(
             [
                 "api",
                 "--paginate",
+                "--slurp",
                 f"repos/:owner/:repo/issues/{pr_number}/comments",
             ]
         )
@@ -509,8 +728,8 @@ class GhCli:
             )
             return None
         try:
-            comments = json.loads(res.stdout) or []
-        except json.JSONDecodeError as exc:
+            comments = flatten_paginated_pages(json.loads(res.stdout))
+        except (json.JSONDecodeError, ValueError) as exc:
             _log.warning(
                 "gh_client.find_archive_decode_failed",
                 pr_number=pr_number,
@@ -518,10 +737,13 @@ class GhCli:
             )
             return None
         for c in comments:
-            if isinstance(c, dict) and self.ARCHIVE_MARKER in (c.get("body") or ""):
-                cid = c.get("id")
-                if isinstance(cid, int):
-                    return cid
+            if not isinstance(c, dict) or self.ARCHIVE_MARKER not in (c.get("body") or ""):
+                continue
+            if not self._is_trusted_author(c):
+                continue
+            cid = c.get("id")
+            if isinstance(cid, int):
+                return cid
         return None
 
     def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
@@ -588,15 +810,19 @@ class GhCli:
             pr_number: PR number.
 
         Returns:
-            :class:`ArchiveFetch` — ``body`` set when the comment was
-            found, ``api_error`` set when the fetch failed, both
-            ``None`` when the API succeeded but no comment carries the
-            marker.
+            :class:`ArchiveFetch` — ``body`` set when a comment
+            carrying :attr:`ARCHIVE_MARKER` **and** authored by
+            :attr:`bot_login` was found, ``api_error`` set when the
+            fetch failed, both ``None`` when the API succeeded but no
+            trusted archive comment exists (including a forged
+            marker-bearing comment from another author —
+            SP-EVIDENCE-SENTINEL-AUTHOR).
         """
         res = self._run(
             [
                 "api",
                 "--paginate",
+                "--slurp",
                 f"repos/:owner/:repo/issues/{pr_number}/comments",
             ]
         )
@@ -610,8 +836,8 @@ class GhCli:
             )
             return ArchiveFetch(body=None, api_error=error)
         try:
-            comments = json.loads(res.stdout) or []
-        except json.JSONDecodeError as exc:
+            comments = flatten_paginated_pages(json.loads(res.stdout))
+        except (json.JSONDecodeError, ValueError) as exc:
             _log.warning(
                 "gh_client.archive_body_decode_failed",
                 pr_number=pr_number,
@@ -619,8 +845,9 @@ class GhCli:
             )
             return ArchiveFetch(body=None, api_error=f"JSON decode failed: {str(exc)[:160]}")
         for c in comments:
-            body = (c or {}).get("body") or ""
-            if self.ARCHIVE_MARKER in body:
+            comment = c if isinstance(c, dict) else {}
+            body = comment.get("body") or ""
+            if self.ARCHIVE_MARKER in body and self._is_trusted_author(comment):
                 return ArchiveFetch(body=body, api_error=None)
         return ArchiveFetch(body=None, api_error=None)
 

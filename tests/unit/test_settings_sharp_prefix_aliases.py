@@ -37,6 +37,10 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "CEREBRAS_API_KEY": "cerebras_api_key",
     "DEEPSEEK_API_KEY": "deepseek_api_key",
     "ARTIFICIAL_ANALYSIS_API_KEY": "artificial_analysis_api_key",
+    "OPENAI_API_KEY": "openai_api_key",
+    "ANTHROPIC_API_KEY": "anthropic_api_key",
+    "OPENAI_COMPATIBLE_API_KEY": "openai_compatible_api_key",
+    "OPENAI_COMPATIBLE_BASE_URL": "openai_compatible_base_url",
     "BREAKER_ENABLED": "breaker_enabled",
     "BREAKER_TTL_S": "breaker_ttl_s",
     "BREAKER_TTL_TERMINAL_S": "breaker_ttl_terminal_s",
@@ -44,6 +48,13 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "BREAKER_QUARANTINE_THRESHOLD": "breaker_quarantine_threshold",
     "BREAKER_PROBE_SEED_ENABLED": "breaker_probe_seed_enabled",
     "BREAKER_PROBE_SEED_DB": "breaker_probe_seed_db",
+    "BREAKER_STATE_PERSIST_ENABLED": "breaker_state_persist_enabled",
+    "BREAKER_SLOW_LATENCY_GATE_S": "breaker_slow_latency_gate_s",
+    "BREAKER_SLOW_TPS_FLOOR": "breaker_slow_tps_floor",
+    "BREAKER_SLOW_K": "breaker_slow_k",
+    "BREAKER_SLOW_N": "breaker_slow_n",
+    "BREAKER_SLOW_TTL_S": "breaker_slow_ttl_s",
+    "BREAKER_SLOW_SHADOW": "breaker_slow_shadow",
     "EFFORT_MAP_SEED_ENABLED": "effort_map_seed_enabled",
     "CLAUDE_CODE_CLI_PATH": "claude_code_cli_path",
     "CLAUDE_CODE_DEFAULT_MODEL": "claude_code_default_model",
@@ -55,6 +66,7 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "PROVIDER_RATE_WINDOW": "provider_rate_window",
     "PROVIDER_MAX_CONCURRENCY": "provider_max_concurrency",
     "ENABLE_THINKING": "enable_thinking",
+    "PROXY_LOG_FULL_CONTENT": "proxy_log_full_content",
     "BUDGET_RETRY_ENABLED": "budget_retry_enabled",
     "BUDGET_RETRY_FACTOR": "budget_retry_factor",
     "BUDGET_RETRY_FLOOR": "budget_retry_floor",
@@ -62,6 +74,8 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "HTTP_READ_TIMEOUT": "http_read_timeout",
     "HTTP_WRITE_TIMEOUT": "http_write_timeout",
     "HTTP_CONNECT_TIMEOUT": "http_connect_timeout",
+    "FIRST_BYTE_DEADLINE_S": "first_byte_deadline_s",
+    "DISPATCH_TOTAL_BUDGET_S": "dispatch_total_budget_s",
     "HOST": "host",
     "PORT": "port",
     "LOG_FILE": "log_file",
@@ -71,6 +85,11 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "CREDITS_FLOOR_USD": "credits_floor_usd",
     "CREDITS_HEALTH_CACHE_TTL_S": "credits_health_cache_ttl_s",
     "CHAIN_STATUS_WINDOW_H": "chain_status_window_h",
+    "REGEN_MAX_CELL_AGE_H": "regen_max_cell_age_h",
+    "REGEN_SWEEP_PER_PROVIDER_CAP": "regen_sweep_per_provider_cap",
+    "REGEN_SWEEP_PER_PROVIDER_CONCURRENCY": "regen_sweep_per_provider_concurrency",
+    "REGEN_SWEEP_PACING_S": "regen_sweep_pacing_s",
+    "REGEN_SWEEP_RETRY_BACKOFF_S": "regen_sweep_retry_backoff_s",
 }
 """Legacy env key → Pydantic field name, kept in lockstep with
 :data:`_LEGACY_TO_REPOACH_ALIAS` to give the read-through tests a
@@ -273,3 +292,70 @@ def test_uses_process_anthropic_auth_token_false_when_dotenv_provides_either(
         f"prefer_dotenv_anthropic_auth_token must update the field with the dotenv "
         f"value, not just flag the source ; got {settings.anthropic_auth_token!r}"
     )
+
+
+def test_regen_sweep_aliases_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The five regen-sweep fields expose defaults and resolve their REPOACH_ aliases.
+
+    Pins the new Settings fields added for SP-REGEN-FRESH-CELLS: default
+    values match the spec's ``constraints`` block, and each field reads
+    through its ``REPOACH_*`` alias exactly like the existing dual-read
+    fields above.
+    """
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.regen_max_cell_age_h == 12.0
+    assert settings.regen_sweep_per_provider_cap == 12
+    assert settings.regen_sweep_per_provider_concurrency == 2
+    assert settings.regen_sweep_pacing_s == 0.5
+    assert settings.regen_sweep_retry_backoff_s == 2.0
+
+    monkeypatch.setenv("REPOACH_REGEN_MAX_CELL_AGE_H", "6")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_PER_PROVIDER_CAP", "20")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_PER_PROVIDER_CONCURRENCY", "4")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_PACING_S", "1.5")
+    monkeypatch.setenv("REPOACH_REGEN_SWEEP_RETRY_BACKOFF_S", "3.0")
+    settings = _build_settings(monkeypatch)
+    assert settings.regen_max_cell_age_h == 6.0
+    assert settings.regen_sweep_per_provider_cap == 20
+    assert settings.regen_sweep_per_provider_concurrency == 4
+    assert settings.regen_sweep_pacing_s == 1.5
+    assert settings.regen_sweep_retry_backoff_s == 3.0
+
+
+def test_breaker_state_persist_enabled_alias_and_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``breaker_state_persist_enabled`` defaults to ``True`` and dual-reads its alias.
+
+    Pins the new Settings field added for SP-PROXY-STATE-PERSIST.
+    """
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.breaker_state_persist_enabled is True
+
+    monkeypatch.setenv("REPOACH_BREAKER_STATE_PERSIST_ENABLED", "false")
+    settings = _build_settings(monkeypatch)
+    assert settings.breaker_state_persist_enabled is False
+
+
+def test_first_byte_deadline_s_alias_and_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``first_byte_deadline_s`` defaults to 20.0 and dual-reads its alias.
+
+    Pins the new Settings field added for SP-PROXY-FIRST-BYTE-DEADLINE:
+    the default matches the spec's ``constraints`` block, the canonical
+    ``REPOACH_PROXY_FIRST_BYTE_DEADLINE_S`` and legacy bare
+    ``FIRST_BYTE_DEADLINE_S`` both resolve, and REPOACH_ wins when both
+    are set.
+    """
+    _clean_env_for_settings(monkeypatch)
+    settings = _build_settings(monkeypatch)
+    assert settings.first_byte_deadline_s == 20.0
+
+    monkeypatch.setenv("FIRST_BYTE_DEADLINE_S", "5")
+    settings = _build_settings(monkeypatch)
+    assert settings.first_byte_deadline_s == 5.0
+
+    monkeypatch.setenv("REPOACH_PROXY_FIRST_BYTE_DEADLINE_S", "8")
+    settings = _build_settings(monkeypatch)
+    assert settings.first_byte_deadline_s == 8.0

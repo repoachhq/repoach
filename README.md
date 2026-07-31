@@ -63,6 +63,63 @@ A spec's life, top to bottom: build → review → ship. Four reviewers and a cl
 ![Repoach — NIM observability](docs/nim_observability_architecture.png)
 </details>
 
+## Watch it work
+
+Here's a spec going from *written* to *shipped* — the same loop every change in this repo travels. The values below are illustrative; the command shapes are exactly what the CLI emits.
+
+**1 · You write a spec, the factory builds it.** The Planner drafts a plan, then executes it one commit per step and opens a PR against `develop`:
+
+```console
+$ repoach develop SP-BUDGET-RETRY-BACKOFF
+planner   ▸ 4 steps · plan docs/plans/SP-BUDGET-RETRY-BACKOFF.md
+step 1/4  ▸ add backoff schedule to RetryPolicy            ✓ committed
+step 2/4  ▸ thread policy through the proxy call site      ✓ committed
+step 3/4  ▸ unit tests for the backoff schedule            ✓ committed
+step 4/4  ▸ integration test: breaker recovers under load  ✓ committed
+pushed feat/sp-budget-retry-backoff-impl · opened PR #42
+```
+
+**2 · Four reviewers judge it — independently.** Architect, Sentinel, Tester, and Scribe each return a verdict. A single `REQUEST_CHANGES` wins:
+
+```console
+$ repoach review pr 42
+{
+  "pr_number": 42,
+  "final_verdict": "REQUEST_CHANGES",
+  "n_blockers": 1,
+  "reviews": [
+    { "role": "architect", "verdict": "APPROVE",         "summary": "Boundary clean; policy owned by the spec." },
+    { "role": "sentinel",  "verdict": "REQUEST_CHANGES", "summary": "Backoff has no jitter cap — a retry storm is reachable." },
+    { "role": "tester",    "verdict": "APPROVE",         "summary": "Integration test exercises breaker recovery." },
+    { "role": "scribe",    "verdict": "APPROVE",         "summary": "Docstrings Google-style; spec cross-referenced." }
+  ]
+}
+```
+
+**3 · The Coder fixes what they found — then they re-verify.** One findings-driven iteration; each resolved finding is re-checked at the new head:
+
+```console
+$ repoach review fix 42
+{ "n_open_findings": 1, "n_resolved": 1, "pytest": "green", "pushed": true }
+```
+
+**4 · The gate re-checks the facts at HEAD — and only then merges.** No "LGTM" is trusted: the gate re-verifies the findings ledger against the exact commit it is about to merge:
+
+```console
+$ repoach review gate 42
+{
+  "pr_number": 42,
+  "head_sha": "9f6cd85",
+  "merge": true,
+  "reasons": ["CI green", "0 blocking findings survive re-verification",
+              "review complete", "spec covered"],
+  "facts": { "ci_green": true, "open_blocking_findings": 0,
+             "spec_covered": true, "review_complete": true }
+}
+```
+
+`merge: true` → the PR squash-merges into `develop`. `merge: false` prints its reasons and blocks. That decision is byte-identical to the one `repoach review merge` acts on — the read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
+
 ## Quickstart
 
 ```bash

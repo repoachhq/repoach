@@ -16,6 +16,7 @@ STUCK stay terminal.
 
 from __future__ import annotations
 
+import threading
 from enum import StrEnum
 from pathlib import Path
 
@@ -28,10 +29,12 @@ from sqlalchemy import (
     Table,
     create_engine,
     insert,
+    inspect,
     select,
     update,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 from ..core.logging import get_logger
 
@@ -52,6 +55,25 @@ class ClaimType(StrEnum):
     SECURITY = "security"
 
 
+JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
+"""Claim types too subjective for a mechanical on-disk check — the
+refuter adversarially judges them instead (SP-REFUTER). The single
+source of truth for "judged" membership (SP-CLAIM-TYPE-PARTITION-ALIGN):
+:mod:`refuter` and :mod:`merge_gate` both import this constant rather
+than keeping their own copies, so a claim type the refuter judges can
+never silently fall outside what the merge gate counts as an open
+blocking finding.
+"""
+
+MECHANICAL_CLAIM_TYPES = frozenset(
+    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
+)
+"""Claim types resolved by a mechanical on-disk re-check rather than
+adversarial judging. The single source of truth (mirrors
+JUDGED_CLAIM_TYPES): merge_gate and coder_findings both import this
+constant rather than keeping their own copies."""
+
+
 class Severity(StrEnum):
     """Severity level of a finding."""
 
@@ -68,6 +90,15 @@ class FindingStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
     STUCK = "stuck"
+
+
+CONFIRMED_REAL_STATUSES: frozenset[FindingStatus] = frozenset(
+    {FindingStatus.VERIFIED, FindingStatus.OPEN, FindingStatus.RESOLVED, FindingStatus.STUCK}
+)
+"""Statuses downstream of VERIFIED — the finding was confirmed a real
+problem. The single source of truth: reviewer_outcomes and
+review_lessons both import this constant rather than keeping their own
+copies."""
 
 
 ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
@@ -174,14 +205,99 @@ def _engine_for(db_path: Path) -> Engine:
     return create_engine(f"sqlite:///{db_path}")
 
 
+_INIT_SCHEMA_LOCK = threading.Lock()
+"""Serializes concurrent first-creation within one process.
+
+``create_all(checkfirst=True)`` builds ``pr_findings`` and
+``pr_review_integrity`` sequentially, so two in-process threads racing
+the very first creation can interleave: the loser's ``CREATE
+pr_findings`` fails against the winner's already-committed table, and
+if the loser's failure is observed before the winner has gone on to
+create ``pr_review_integrity``, a re-check of *both* tables at that
+instant still reports one missing. Holding this lock around the whole
+``create_all`` call makes every in-process caller either run the
+sequence to completion before the next one starts, or find both
+tables already there and no-op through ``checkfirst`` -- turning the
+in-process race into deterministic serialization rather than relying
+on retries to paper over interleavings. Cross-process races (separate
+SQLite connections in separate interpreters, which no in-process lock
+can reach) are still handled by :func:`_create_all_with_retries`.
+"""
+
+_INIT_SCHEMA_MAX_ATTEMPTS = 5
+"""Bound on ``create_all`` retries in :func:`_create_all_with_retries`.
+
+Tables are only ever added, never dropped, so each retry's
+``checkfirst=True`` skips whatever the previous attempt (or a racing
+process) already committed and creates only what is still missing --
+the sequence converges to a no-op within a handful of attempts. Five
+is comfortably above the two-table depth of this schema; it exists
+only to keep a genuine, persistent failure (e.g. an unwritable
+database file) from retrying forever.
+"""
+
+
+def _create_all_with_retries(engine: Engine) -> None:
+    """Run ``create_all(checkfirst=True)`` to convergence across racing creators.
+
+    A losing ``CREATE TABLE`` from a racing SQLite connection surfaces
+    as ``OperationalError`` even though SQLite DDL is transactional
+    and never leaves a half-built table behind. Retrying re-enters
+    ``checkfirst=True``, which skips every table that now exists
+    (whichever process created it) and creates only what is still
+    missing, so at most one retry per remaining table is needed before
+    both are present. The bounded loop re-raises the last
+    ``OperationalError`` only if, after exhausting
+    :data:`_INIT_SCHEMA_MAX_ATTEMPTS`, at least one of the two tables
+    genuinely never came to exist -- the signal that this was a real
+    database failure rather than a resolved creation race.
+
+    Args:
+        engine: SQLAlchemy engine bound to the findings database.
+
+    Raises:
+        OperationalError: The database remains unusable after every
+            retry -- both tables still absent.
+    """
+    last_error: OperationalError | None = None
+    for attempt in range(_INIT_SCHEMA_MAX_ATTEMPTS):
+        try:
+            _metadata.create_all(engine, checkfirst=True)
+            return
+        except OperationalError as exc:
+            last_error = exc
+            logger.info(
+                "review.track_record.schema_init_retry",
+                attempt=attempt,
+                error=str(exc),
+            )
+    inspector = inspect(engine)
+    if inspector.has_table("pr_findings") and inspector.has_table("pr_review_integrity"):
+        return
+    assert last_error is not None
+    raise last_error
+
+
 def init_findings_schema(db_path: Path) -> None:
     """Create the findings + review-integrity tables if absent (idempotent).
+
+    Concurrent first-creation is race-proof at two layers. In-process
+    callers (e.g. the reviewer thread pool) serialize on
+    :data:`_INIT_SCHEMA_LOCK` so ``create_all`` runs to completion
+    before the next caller starts, or finds both tables already there
+    and no-ops. Cross-process callers (separate SQLite connections
+    with no shared lock) are handled by
+    :func:`_create_all_with_retries`, which retries the bounded,
+    convergent ``checkfirst=True`` sequence and re-raises only a
+    genuine, persistent failure -- one where a table never comes to
+    exist even after every retry.
 
     Also self-heals existing databases by ALTER-ing columns introduced
     post-creation (SQLite has no DDL-versioning).
     """
     engine = _engine_for(db_path)
-    _metadata.create_all(engine, checkfirst=True)
+    with _INIT_SCHEMA_LOCK:
+        _create_all_with_retries(engine)
     _migrate_missing_findings_columns(engine)
 
 
@@ -194,7 +310,7 @@ def _migrate_missing_findings_columns(engine: Engine) -> None:
     Args:
         engine: SQLAlchemy engine bound to the findings database.
     """
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
 
     migrations = (
         (

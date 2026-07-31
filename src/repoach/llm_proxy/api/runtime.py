@@ -57,6 +57,7 @@ class AppRuntime:
         self._provider_registry = ProviderRegistry()
         self.app.state.provider_registry = self._provider_registry
         warn_if_process_auth_token(self.settings)
+        self._seed_breaker_from_persisted_state()
         self._seed_breaker_from_probes()
         self._seed_effort_map()
 
@@ -79,6 +80,37 @@ class AppRuntime:
             logger.info("Effort map seeded from probe history: {} cell(s) wired", wired)
         except Exception as exc:
             logger.warning("Effort-map seed skipped: {}", exc)
+
+    def _seed_breaker_from_persisted_state(self) -> None:
+        """Rehydrate the breaker from its durable state (best-effort).
+
+        Gated by ``breaker_state_persist_enabled``. Runs BEFORE
+        :meth:`_seed_breaker_from_probes` so a live persisted trip is
+        never overwritten by a shorter probe-derived one — both extend
+        (never shorten) the same ref's ``_down_until``, so ordering only
+        matters for which one wins when they disagree. Any failure
+        (missing or unreadable DB) is logged and swallowed — rehydration
+        is an optimisation and must never block the proxy from starting.
+        """
+        if not self.settings.breaker_state_persist_enabled:
+            return
+        import time
+        from datetime import UTC, datetime
+        from pathlib import Path
+
+        from repoach.llm_proxy.routing import get_breaker
+        from repoach.llm_proxy.routing.breaker_persist import rehydrate_breaker_from_state
+
+        try:
+            restored = rehydrate_breaker_from_state(
+                get_breaker(),
+                db_path=Path(self.settings.breaker_probe_seed_db),
+                monotonic_now=time.monotonic(),
+                wall_clock_now=datetime.now(UTC),
+            )
+            logger.info("Breaker rehydrated from persisted state: {} row(s) restored", restored)
+        except Exception as exc:
+            logger.warning("Breaker persisted-state seed skipped: {}", exc)
 
     def _seed_breaker_from_probes(self) -> None:
         """Pre-trip the breaker from recent probe history (best-effort).

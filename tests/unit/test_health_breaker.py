@@ -214,6 +214,51 @@ def test_consecutive_failures_escalate_to_quarantine() -> None:
     assert not breaker.is_down(ref, now=500.0 + 21_600.0 + 1.0)
 
 
+def test_trip_escalating_is_atomic() -> None:
+    """trip_escalating computes the escalated TTL from its own state and
+    trips in a single call — no external read of _consecutive_failures
+    is needed to reproduce the same escalation the caller-side
+    peek-then-trip pattern used to require (SP-BREAKER-LIVE-REASONS G4)."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    count1 = breaker.trip_escalating(
+        ref,
+        now=100.0,
+        base_ttl_s=120.0,
+        quarantine_ttl_s=21_600.0,
+        threshold=3,
+        reason="empty_completion",
+    )
+    assert count1 == 1
+    assert breaker.is_down(ref, now=150.0)
+    assert not breaker.is_down(ref, now=230.0)
+
+    count2 = breaker.trip_escalating(
+        ref,
+        now=300.0,
+        base_ttl_s=120.0,
+        quarantine_ttl_s=21_600.0,
+        threshold=3,
+        reason="empty_completion",
+    )
+    assert count2 == 2
+    assert not breaker.is_down(ref, now=430.0)
+
+    count3 = breaker.trip_escalating(
+        ref,
+        now=500.0,
+        base_ttl_s=120.0,
+        quarantine_ttl_s=21_600.0,
+        threshold=3,
+        reason="empty_completion",
+    )
+    assert count3 == 3
+    assert breaker.is_down(ref, now=500.0 + 130.0)
+    assert not breaker.is_down(ref, now=500.0 + 21_600.0 + 1.0)
+    assert breaker._down_reason[ref] == "empty_completion"
+
+
 def test_recover_resets_counter() -> None:
     """Trip, trip, recover, trip — count restarts at 1."""
     breaker = BreakerState()
@@ -383,10 +428,27 @@ def _hermetic_breaker() -> None:
     reset_breaker()
 
 
+@pytest.fixture(autouse=True)
+def _no_configured_auth_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralize the real ``.env``'s ``anthropic_auth_token`` for this file.
+
+    This file's ``/health`` tests exercise the breaker/credits mechanics,
+    not auth (SP-PROXY-EDGE-HARDEN gates the detailed body behind
+    ``require_api_key``); with no token configured that check stays a
+    no-op, so every unauthenticated call here keeps seeing the full body
+    regardless of the developer's local ``.env``.
+    """
+    monkeypatch.delenv("REPOACH_ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setattr(settings_module, "_configured_env_files", lambda _cfg: ())
+    settings_module.get_settings.cache_clear()
+
+
 def test_health_reports_breaker_entries() -> None:
     """GET /health returns a breaker array with each down ref's reason,
     ttl_remaining_s, and consecutive_failures; empty when nothing is down."""
     app = create_app()
+    app.dependency_overrides[get_settings] = lambda: Settings(_env_file=None)
     client = TestClient(app)
 
     resp = client.get("/health")
@@ -448,6 +510,117 @@ def test_counter_survives_ttl_lapse_prune() -> None:
     breaker.recover(ref)
     count3 = breaker.trip(ref, now=now, ttl_s=0.01, reason="timeout")
     assert count3 == 1, f"counter should reset on recover, got {count3} expected 1"
+
+
+def test_record_success_k_of_n_window() -> None:
+    """Three slow among the last five triggers; a fourth is still a
+    trigger; the window truncates to exactly n."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert breaker.record_success(ref, True, k=3, n=5)
+
+    assert breaker.record_success(ref, True, k=3, n=5)
+
+    assert len(breaker._slow_history[ref]) == 4
+
+
+def test_record_success_below_k_returns_false() -> None:
+    """Two slow among five never trips when k=3."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert not breaker.record_success(ref, False, k=3, n=5)
+    assert not breaker.record_success(ref, True, k=3, n=5)
+    assert not breaker.record_success(ref, False, k=3, n=5)
+    assert not breaker.record_success(ref, False, k=3, n=5)
+
+    assert not breaker.record_success(ref, False, k=3, n=5)
+
+    assert len(breaker._slow_history[ref]) == 5
+
+
+def test_recover_clears_slow_history() -> None:
+    """recover() pops the ref from _slow_history."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+    assert ref in breaker._slow_history
+
+    breaker.recover(ref)
+    assert ref not in breaker._slow_history
+
+
+def test_trip_slow_behavior() -> None:
+    """trip_slow sets _down_until and _down_reason but does not touch
+    _consecutive_failures; the ref is down after trip."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker._consecutive_failures[ref] = 7
+
+    breaker.trip_slow(ref, now=100.0, ttl_s=60.0)
+
+    assert breaker._consecutive_failures.get(ref) == 7
+    assert breaker._down_reason[ref] == "slow_completion"
+    assert breaker.is_down(ref, now=120.0)
+    assert not breaker.is_down(ref, now=161.0)
+
+    breaker.trip_slow(ref, now=200.0, ttl_s=30.0, reason="custom_slow")
+    assert breaker._down_reason[ref] == "custom_slow"
+    assert breaker._consecutive_failures.get(ref) == 7
+
+
+def test_slow_history_survives_slow_ttl_lapse() -> None:
+    """AC2: a slow-completion trip's TTL lapse does NOT erase the ref's
+    slow history. Trip via ``trip_slow`` with a tiny TTL, advance ``now``
+    past the TTL, call ``down_refs`` to prune the lapsed trip window,
+    then assert the ref's ``_slow_history`` is still populated and the
+    next ``record_success`` call folds into the surviving window.
+    """
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+
+    breaker.trip_slow(ref, now=100.0, ttl_s=10.0)
+    assert breaker.is_down(ref, now=105.0)
+
+    breaker.down_refs(now=120.0)
+    assert not breaker.is_down(ref, now=120.0)
+
+    assert ref in breaker._slow_history
+    assert len(breaker._slow_history[ref]) == 3
+
+    triggered = breaker.record_success(ref, True, k=3, n=5)
+    assert triggered
+    assert len(breaker._slow_history[ref]) == 4
+
+
+def test_slow_history_survives_down_refs_prune() -> None:
+    """down_refs() prunes the trip window but leaves _slow_history intact."""
+    breaker = BreakerState()
+    ref = _ref("groq/x")
+
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+    breaker.record_success(ref, True, k=3, n=5)
+
+    breaker.trip(ref, now=100.0, ttl_s=10.0, reason="timeout")
+    assert breaker.is_down(ref, now=105.0)
+
+    breaker.down_refs(now=120.0)
+    assert not breaker.is_down(ref, now=120.0)
+
+    assert ref in breaker._slow_history
+    assert len(breaker._slow_history[ref]) == 3
 
 
 _CREDITS_PAYLOAD = {"data": {"total_credits": 20.0, "total_usage": 10.0}}

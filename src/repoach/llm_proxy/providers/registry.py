@@ -58,6 +58,18 @@ def _build_generic_openai(config: ProviderConfig, descriptor: ProviderDescriptor
     return GenericOpenAIProvider(config, provider_name=descriptor.provider_id)
 
 
+def _build_generic_anthropic(
+    config: ProviderConfig, descriptor: ProviderDescriptor
+) -> BaseProvider:
+    from repoach.llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
+
+    return AnthropicMessagesTransport(
+        config,
+        provider_name=descriptor.provider_id,
+        default_base_url=descriptor.default_base_url or "",
+    )
+
+
 _BESPOKE_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -66,6 +78,7 @@ _BESPOKE_FACTORIES: dict[str, ProviderFactory] = {
 
 _GENERIC_TRANSPORT_BUILDERS: dict[TransportType, TransportBuilder] = {
     "openai_chat": _build_generic_openai,
+    "anthropic_messages": _build_generic_anthropic,
 }
 
 
@@ -126,6 +139,7 @@ def build_provider_config(descriptor: ProviderDescriptor, settings: Settings) ->
         http_write_timeout=settings.http_write_timeout,
         http_connect_timeout=settings.http_connect_timeout,
         enable_thinking=settings.enable_thinking,
+        log_full_content=settings.proxy_log_full_content,
         proxy=proxy,
     )
 
