@@ -69,8 +69,8 @@ jobs:
           || github.event.comment.user.type != 'Bot')
       && (github.event_name != 'pull_request_review'
           || github.event.review.user.type != 'Bot')
-      && contains(fromJSON('["jwfaye"]'), github.actor)
-    runs-on: self-hosted
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
     # ONLY in the ``bots`` Environment (no repo-level copies), so this
     # job binds to it too — it boots the proxy sidecar and needs them.
@@ -293,8 +293,8 @@ jobs:
     # defence in depth against a future trigger that bypasses review.
     if: >-
       needs.review.outputs.verdict != 'ERROR'
-      && contains(fromJSON('["jwfaye"]'), github.actor)
-    runs-on: self-hosted
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION layer 3 — residual trust grant: unlike
     # the review job, auto_fix MUST execute PR-authored code by
     # design (the Coder gates run ruff + the pytest matrix on the
@@ -630,12 +630,12 @@ jobs:
     # only, same defence-in-depth rationale as auto_fix.
     if: >-
       !failure() && !cancelled()
-      && contains(fromJSON('["jwfaye"]'), github.actor)
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
       && ((needs.auto_fix.outputs.pushed == 'true'
            && needs.auto_fix.outputs.re_verdict == 'APPROVE_OR_COMMENT')
           || (needs.auto_fix.outputs.pushed != 'true'
            && needs.review.outputs.verdict == 'APPROVE_OR_COMMENT'))
-    runs-on: self-hosted
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     permissions:
       contents: write
       pull-requests: write

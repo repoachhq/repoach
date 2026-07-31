@@ -44,13 +44,34 @@ is immutable.
 ```yaml
 if: >-
   github.event_name != 'pull_request'
-  || contains(fromJSON('["jwfaye"]'), github.actor)
+  || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
 ```
 
 so an untrusted actor cannot run PR code on the self-hosted runner through CI,
-matching `auto-review.yml`. Keep the `fromJSON` array single-entry and
-identical across all four workflows (SP-CI-SUPPLY-CHAIN-HARDEN A2); extend all
-of them together when a collaborator is added.
+matching `auto-review.yml`. The allowlist is sourced from the
+`REPOACH_ALLOWED_ACTORS` repository variable (see *Fork portability* below);
+the `'["jwfaye"]'` literal is only the maintainer-repo default that applies
+when the variable is unset. `tests/unit/test_ci_portability.py` locks the
+wiring so no workflow regresses to a hardcoded actor or runner.
+
+## Fork portability — `REPOACH_RUNNER` and `REPOACH_ALLOWED_ACTORS`
+
+`.github/workflows/*` is bot-forbidden, so its trust boundary must be
+reconfigurable without editing the files. Two GitHub **repository variables**
+(Settings → Secrets and variables → Actions → Variables) carry the
+deployment-specific values; both fall back to the maintainer defaults so this
+repo needs no configuration:
+
+| Variable | Default when unset | Purpose |
+| --- | --- | --- |
+| `REPOACH_RUNNER` | `self-hosted` | Runner label every job targets. A fork on GitHub-hosted runners sets `ubuntu-latest`. |
+| `REPOACH_ALLOWED_ACTORS` | `["jwfaye"]` | JSON array of logins allowed to run PR code on the runner. A fork sets its own maintainers, e.g. `["alice","bob"]`. |
+
+A forker's entire trust setup is therefore two variables in the GitHub UI — no
+workflow edits, which keeps the bot-forbidden files pristine. Set both together
+before enabling PR CI: an empty or wrong `REPOACH_ALLOWED_ACTORS` on a
+self-hosted runner would either lock the maintainer out or admit untrusted PR
+execution.
 
 ## H2 — branch protection: the gap, and how it is now closeable
 
