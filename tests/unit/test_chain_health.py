@@ -12,8 +12,11 @@ from typing import Any
 
 import httpx
 import pytest
+import structlog
+from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
+import repoach.review.chain_health as chain_health
 from repoach.cli.main import app
 from repoach.review.chain_health import (
     ModelHealth,
@@ -26,9 +29,10 @@ from repoach.review.chain_health import (
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, payload: Any) -> None:
+    def __init__(self, status_code: int, payload: Any, text: str = "") -> None:
         self.status_code = status_code
         self._payload = payload
+        self.text = text
 
     def json(self) -> Any:
         if isinstance(self._payload, Exception):
@@ -136,6 +140,86 @@ def test_probe_error_detail_never_leaks_key() -> None:
     assert full_key not in result.detail
     for index in range(0, len(full_key) - 8):
         assert full_key[index : index + 8] not in result.detail
+
+
+def test_probe_includes_status_and_body_snippet_on_unparseable_response() -> None:
+    client = _FakeClient(
+        responses={
+            "m": _FakeResponse(
+                503,
+                ValueError("Expecting value: line 1 column 1 (char 0)"),
+                text="<html>Service Unavailable</html>",
+            )
+        }
+    )
+
+    result = asyncio.run(probe_nim_model(client, "https://nim/v1", "k", "m", tier="sonnet"))
+
+    assert result.status == "error"
+    assert "503" in result.detail
+    assert "Service Unavailable" in result.detail
+
+
+def test_unparseable_response_body_snippet_is_redacted() -> None:
+    key = "sk-secret-999"
+    client = _FakeClient(
+        responses={
+            "m": _FakeResponse(
+                500,
+                ValueError("boom"),
+                text=f"error token {key} in upstream, tail-marker-present",
+            )
+        }
+    )
+
+    result = asyncio.run(probe_nim_model(client, "https://nim/v1", key, "m", tier="sonnet"))
+
+    assert "tail-marker-present" in result.detail
+    assert key not in result.detail
+    assert "***" in result.detail
+
+
+def test_unparseable_response_body_snippet_truncated_to_200_chars() -> None:
+    body = "a" * 250 + "TAIL_BEYOND_200"
+    client = _FakeClient(responses={"m": _FakeResponse(500, ValueError("boom"), text=body)})
+
+    result = asyncio.run(probe_nim_model(client, "https://nim/v1", "k", "m", tier="sonnet"))
+
+    assert "a" * 50 in result.detail
+    assert "TAIL_BEYOND_200" not in result.detail
+
+
+@pytest.fixture(autouse=True)
+def _fresh_chain_health_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rebind the module logger so ``capture_logs`` sees its events.
+
+    ``configure_logging`` (exercised by earlier suites in serial order)
+    sets ``cache_logger_on_first_use=True``; a proxy cached before this
+    test keeps its materialized processor chain and bypasses the
+    ``capture_logs`` swap. A fresh lazy proxy binds inside the capture
+    context instead.
+    """
+    monkeypatch.setattr(chain_health, "_log", structlog.get_logger("chain_health.test"))
+
+
+def test_unparseable_response_status_code_is_a_log_field() -> None:
+    client = _FakeClient(
+        responses={
+            "m": _FakeResponse(
+                503,
+                ValueError("Expecting value: line 1 column 1 (char 0)"),
+                text="<html>Service Unavailable</html>",
+            )
+        }
+    )
+
+    with capture_logs() as logs:
+        result = asyncio.run(probe_nim_model(client, "https://nim/v1", "k", "m", tier="sonnet"))
+
+    assert result.status == "error"
+    events = [e for e in logs if e.get("event") == "nim_chain_probe_unparseable"]
+    assert len(events) == 1
+    assert events[0]["status_code"] == 503
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Any:
