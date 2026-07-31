@@ -1798,24 +1798,33 @@ class Developer:
         )
 
 
+_EXISTING_FILE_PROMPT_TRUNCATE_CHARS = 32000
+"""Prompt-size budget, in characters, per file rendered by
+:func:`_format_existing_files` into the reviewer/developer prompt.
+
+Bumped from 8 KB after the first SP-MCP-EXT dispatch: truncating
+mid-class made the Developer drop docstrings on classes whose
+definitions started past the cut, which broke the ruff gate (``D101
+Missing docstring in public class``) and forced two revert+retry
+cycles.  32 KB covers every existing file in the review module (~16 KB
+peak) and stays well under the NIM prompt budget when combined with
+the spec + repo tree.  This is an LLM prompt-context budget, distinct
+from and not shared with any database-write truncation cap.
+"""
+
+
 def _format_existing_files(files: dict[str, str]) -> str:
     """Render ``{path: contents}`` as a labelled block for the prompt.
 
     Each file is wrapped in ``=== <path> ===`` markers and capped at
-    32 KB.  Bumped from 8 KB after the first SP-MCP-EXT dispatch:
-    truncating mid-class made the Developer drop docstrings on classes
-    whose definitions started past the cut, which broke the ruff gate
-    (``D101 Missing docstring in public class``) and forced two
-    revert+retry cycles.  32 KB covers every existing file in the
-    review module (~16 KB peak) and stays well under the NIM prompt
-    budget when combined with the spec + repo tree.
+    :data:`_EXISTING_FILE_PROMPT_TRUNCATE_CHARS`.
     """
     if not files:
         return "_(no existing files referenced — fresh feature)_"
     chunks: list[str] = []
     for path, contents in files.items():
-        capped = contents[:32000]
-        if len(contents) > 32000:
+        capped = contents[:_EXISTING_FILE_PROMPT_TRUNCATE_CHARS]
+        if len(contents) > _EXISTING_FILE_PROMPT_TRUNCATE_CHARS:
             capped += "\n# [... file truncated; see repo for the full version ...]\n"
         chunks.append(f"=== {path} ===\n{capped}")
     return "\n\n".join(chunks)
