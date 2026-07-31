@@ -11,7 +11,6 @@ from loguru import logger
 
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
-from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 81920
 StreamChunkMode = Literal["line", "event"]
@@ -33,21 +32,11 @@ class AnthropicMessagesTransport(BaseProvider):
         self._provider_name = provider_name
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
-        self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
-            provider_name.lower(),
-            rate_limit=config.rate_limit,
-            rate_window=config.rate_window,
-            max_concurrency=config.max_concurrency,
-        )
+        self._global_rate_limiter = self._scoped_rate_limiter(provider_name)
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             proxy=config.proxy or None,
-            timeout=httpx.Timeout(
-                config.http_read_timeout,
-                connect=config.http_connect_timeout,
-                read=config.http_read_timeout,
-                write=config.http_write_timeout,
-            ),
+            timeout=self._build_timeout(),
         )
 
     async def cleanup(self) -> None:
