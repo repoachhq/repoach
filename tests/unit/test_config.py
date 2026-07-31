@@ -93,3 +93,49 @@ def test_explicit_env_var_wins_with_no_anchored_files(
     settings = config.Settings()
 
     assert settings.llm_proxy_base_url == "http://127.0.0.1:8084"
+
+
+def test_db_path_anchored_from_foreign_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default ``db_path`` follows the anchored root, not the CWD.
+
+    Pre-fix, ``db_path`` stayed the bare relative ``Path("./data/repoach.db")``
+    with no anchoring validator at all, so it never resolved to an
+    absolute path and this assertion fails against pre-change code
+    (SP-DB-PATH-XDG AC1/AC3).
+    """
+    anchored_root = tmp_path / "anchored_repo"
+    anchored_root.mkdir()
+    foreign_cwd = tmp_path / "foreign_cwd"
+    foreign_cwd.mkdir()
+
+    monkeypatch.chdir(foreign_cwd)
+    monkeypatch.setattr(config, "_repo_root", lambda: anchored_root)
+    monkeypatch.delenv("REPOACH_DB_PATH", raising=False)
+
+    settings = config.Settings()
+
+    assert settings.db_path == (anchored_root / "data" / "repoach.db").resolve()
+
+
+def test_db_path_absolute_env_override_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit absolute ``REPOACH_DB_PATH`` passes through unchanged.
+
+    Mirrors the CI shape (``.github/workflows/auto-review.yml`` sets an
+    absolute ``runner.temp`` path) — the anchor must not rewrite an
+    already-absolute value (SP-DB-PATH-XDG AC2/G3/NG2).
+    """
+    anchored_root = tmp_path / "anchored_repo"
+    anchored_root.mkdir()
+    foreign_cwd = tmp_path / "foreign_cwd"
+    foreign_cwd.mkdir()
+    explicit_db_path = tmp_path / "explicit" / "repoach.db"
+
+    monkeypatch.chdir(foreign_cwd)
+    monkeypatch.setattr(config, "_repo_root", lambda: anchored_root)
+    monkeypatch.setenv("REPOACH_DB_PATH", str(explicit_db_path))
+
+    settings = config.Settings()
+
+    assert settings.db_path == explicit_db_path
