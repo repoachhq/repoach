@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..agent_engine.agent_loop import AgentLoop
+from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..llm.capability import CapabilityTier
 from .coder_loop import run_ruff_gate
@@ -440,7 +441,7 @@ def run_self_verify(
     spec: SpecPlan,
     plan: ActionPlan,
     suite_green: bool,
-    base: str = "develop",
+    base: str | None = None,
     judge: ComplianceJudge | None,
 ) -> SelfVerifyResult:
     """Verify the implemented work against the spec before the review handoff.
@@ -454,12 +455,15 @@ def run_self_verify(
         spec: The loaded spec (its ``raw_markdown`` feeds the judge).
         plan: The action plan supplying the acceptance selectors.
         suite_green: Whether the wrap-up unit suite already passed (not re-run).
-        base: The base branch the diff is taken against.
+        base: The base branch the diff is taken against. Defaults to
+            :attr:`~repoach.core.config.Settings.integration_branch`,
+            resolved at call time so an env/test override takes effect.
         judge: The compliance judge, or ``None`` (treated as unavailable).
 
     Returns:
         A :class:`SelfVerifyResult`; ``ok`` gates the push.
     """
+    base = base if base is not None else get_settings().integration_branch
     reasons: list[str] = []
 
     coverage = compute_spec_coverage(repo_root, spec_id=spec.id, plan=plan)

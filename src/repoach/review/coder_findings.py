@@ -478,19 +478,21 @@ def run_coder_fix_from_findings(
 
     repo = (repo_root or Path.cwd()).resolve()
     gh = gh or GhCli(cwd=repo)
-    db = db_path or Path(get_settings().db_path)
+    settings = get_settings()
+    db = db_path or Path(settings.db_path)
     init_schema(db)
     init_findings_schema(db)
 
     pr_meta = gh.pr_view(pr_number) or {}
     base = str(pr_meta.get("baseRefName") or "")
     head = str(pr_meta.get("headRefName") or "")
-    if base != "develop":
+    integration_branch = settings.integration_branch
+    if base != integration_branch:
         _log.warning("coder_findings.refuse_non_develop_base", pr_number=pr_number, base=base)
         return CoderFindingsResult(
             pr_number=pr_number,
             wrong_base=True,
-            no_op_reason=f"base={base!r}, refusing (only develop is allowed)",
+            no_op_reason=f"base={base!r}, refusing (only {integration_branch} is allowed)",
         )
 
     head_sha = gh.pr_head_sha(pr_number) or ""

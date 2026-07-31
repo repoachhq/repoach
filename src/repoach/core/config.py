@@ -258,6 +258,34 @@ class Settings(BaseSettings):
         ),
     )
 
+    integration_branch: str = Field(
+        default="develop",
+        validation_alias=AliasChoices(
+            "REPOACH_INTEGRATION_BRANCH",
+            "INTEGRATION_BRANCH",
+        ),
+        description=(
+            "Name of the integration branch PRs target and the review-bot "
+            "team auto-merges into (default 'develop'). Overriding this lets "
+            "a repo that doesn't use the develop/main two-branch model "
+            "configure its own integration branch name instead of hitting "
+            "the hardcoded 'develop' literal (SP-BRANCH-CONFIG)."
+        ),
+    )
+    release_branch: str = Field(
+        default="main",
+        validation_alias=AliasChoices(
+            "REPOACH_RELEASE_BRANCH",
+            "RELEASE_BRANCH",
+        ),
+        description=(
+            "Name of the release branch the operator manually merges "
+            "integration_branch into (default 'main'). Read by the "
+            "release gate's git ref commands and by release-PR helpers "
+            "(SP-BRANCH-CONFIG)."
+        ),
+    )
+
     automerge_ci_wait_seconds: int = Field(
         default=720,
         ge=0,
