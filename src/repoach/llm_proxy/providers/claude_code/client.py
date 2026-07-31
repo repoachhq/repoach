@@ -40,6 +40,57 @@ from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.exceptions import ProviderError
 from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
+_SUBPROCESS_KILL_GRACE_S: float = 2.0
+
+
+async def _kill_subprocess_on_exit(proc: asyncio.subprocess.Process, req_tag: str) -> None:
+    """Ensure ``proc`` is not left running past the end of a stream call.
+
+    Best-effort, never raises: sends SIGTERM and waits up to
+    ``_SUBPROCESS_KILL_GRACE_S`` seconds for a clean exit; escalates to
+    SIGKILL and waits again if the child is still alive. A no-op if the
+    process has already exited or already vanished.
+
+    Args:
+        proc: The spawned ``claude`` CLI child process.
+        req_tag: Request-id log suffix for correlating cleanup log
+            lines with the originating request.
+    """
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError as exc:
+        logger.debug(
+            "CLAUDE_CODE_SUBPROCESS_KILL_RACE:{} pid={} terminate raced with exit ({})",
+            req_tag,
+            proc.pid,
+            exc,
+        )
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_SUBPROCESS_KILL_GRACE_S)
+        return
+    except asyncio.TimeoutError:
+        logger.warning(
+            "CLAUDE_CODE_SUBPROCESS_KILL_ESCALATE:{} pid={} still alive {}s after SIGTERM, "
+            "sending SIGKILL",
+            req_tag,
+            proc.pid,
+            _SUBPROCESS_KILL_GRACE_S,
+        )
+    try:
+        proc.kill()
+    except ProcessLookupError as exc:
+        logger.debug(
+            "CLAUDE_CODE_SUBPROCESS_KILL_RACE:{} pid={} kill raced with exit ({})",
+            req_tag,
+            proc.pid,
+            exc,
+        )
+        return
+    await proc.wait()
+
 
 class ClaudeCodeProvider(BaseProvider):
     """Wraps ``claude -p`` to expose MAX-billed completions.
@@ -271,6 +322,7 @@ class ClaudeCodeProvider(BaseProvider):
                 raise
             finally:
                 if proc is not None:
+                    await _kill_subprocess_on_exit(proc, req_tag)
                     unregister_pid(proc.pid)
                 if sysprompt_path is not None:
                     try:
