@@ -16,6 +16,7 @@ import typer
 from repoach.cli import release_cmds
 from repoach.review.gh_client import GhCli
 from repoach.review.release_gate import (
+    ProvenanceSource,
     ReleaseDecision,
     ReleaseFacts,
     ReleaseVerifyResult,
@@ -39,9 +40,9 @@ def test_cli_release_gate_exit_zero_when_merge_ready(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number, db_path: _all_green_facts(),
+        lambda *, repo_root, gh, pr_number, db_path, provenance: _all_green_facts(),
     )
-    release_cmds.release_gate(None)
+    release_cmds.release_gate(None, ProvenanceSource.LEDGER)
 
 
 def test_cli_release_gate_exit_five_when_refused(
@@ -57,10 +58,10 @@ def test_cli_release_gate_exit_five_when_refused(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number, db_path: facts,
+        lambda *, repo_root, gh, pr_number, db_path, provenance: facts,
     )
     with pytest.raises(typer.Exit) as exc:
-        release_cmds.release_gate(None)
+        release_cmds.release_gate(None, ProvenanceSource.LEDGER)
     assert exc.value.exit_code == 5
 
 

@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -45,6 +46,33 @@ _PROVENANCE_LEDGER_EMPTY = (
     "pr_merges ledger has no recorded merges but the release range has "
     "{count} commit(s) -- provenance unverifiable"
 )
+_PROVENANCE_GH_EMPTY = (
+    "no PRs merged into {branch} reported by GitHub but the release range has "
+    "{count} commit(s) -- provenance unverifiable"
+)
+
+
+class ProvenanceSource(StrEnum):
+    """Selects the source of merged-PR SHAs for release-range provenance.
+
+    SP-RELEASE-PROVENANCE-GH-FALLBACK: both members feed the same
+    :func:`classify_release_range_against_ledger` and the same
+    empty-set fail-closed rule -- only the SHA source differs, so the
+    security properties are identical.
+
+    Attributes:
+        LEDGER: The ``pr_merges`` SQLite ledger
+            (SP-RELEASE-PROVENANCE-LEDGER), populated only by the
+            factory merge path (``repoach review merge``). The default.
+        GITHUB: Every ``mergeCommitOid`` GitHub reports for PRs merged
+            into the integration branch
+            (:meth:`~repoach.review.gh_client.GhCli.merged_pr_merge_shas`)
+            -- authoritative even when the ledger is empty, e.g. under
+            the control-tower manual-merge regime.
+    """
+
+    LEDGER = "ledger"
+    GITHUB = "github"
 
 
 def classify_release_range(subjects: list[str]) -> list[str]:
@@ -210,6 +238,7 @@ def gather_release_facts(
     pr_number: int | None = None,
     ci_runner: Callable[[Path], subprocess.CompletedProcess] | None = None,
     db_path: Path | None = None,
+    provenance: ProvenanceSource = ProvenanceSource.LEDGER,
 ) -> ReleaseFacts:
     """Gather the facts the pure release gate decides on.
 
@@ -223,14 +252,25 @@ def gather_release_facts(
         ci_runner: Injectable CI runner for tests; defaults to
             :func:`_default_ci_runner`, which shells out to
             :data:`_DEFAULT_CI_SCRIPT`.
-        db_path: Review ledger SQLite path. When given, release-range
-            provenance is verified against the ``pr_merges`` ledger
+        db_path: Review ledger SQLite path. Only consulted when
+            *provenance* is :attr:`ProvenanceSource.LEDGER`. When given,
+            release-range provenance is verified against the
+            ``pr_merges`` ledger
             (:func:`classify_release_range_against_ledger`) -- the
             authoritative SP-RELEASE-PROVENANCE-LEDGER check, fail-closed
             on an unreadable or empty ledger via ``provenance_error``.
             When ``None``, the caller opted out of ledger verification
             and provenance falls back to the weaker subject-only
             :func:`classify_release_range` heuristic.
+        provenance: Which source *merged_shas* comes from
+            (SP-RELEASE-PROVENANCE-GH-FALLBACK). :attr:`ProvenanceSource.LEDGER`
+            (the default) preserves the *db_path*-driven behaviour above
+            unchanged. :attr:`ProvenanceSource.GITHUB` ignores *db_path*
+            and instead verifies against
+            :meth:`~repoach.review.gh_client.GhCli.merged_pr_merge_shas`
+            -- every ``mergeCommitOid`` GitHub reports for PRs merged
+            into the integration branch -- fail-closed the same way on
+            an empty set via ``provenance_error``.
 
     Returns:
         The assembled :class:`ReleaseFacts`.
@@ -257,7 +297,18 @@ def gather_release_facts(
         commits.append((sha, subject))
     out_of_band_commits: list[str]
     provenance_error: str | None = None
-    if db_path is None:
+    if provenance is ProvenanceSource.GITHUB:
+        merged_shas = gh.merged_pr_merge_shas(base=integration_branch)
+        if not merged_shas and commits:
+            provenance_error = _PROVENANCE_GH_EMPTY.format(
+                branch=integration_branch, count=len(commits)
+            )
+        out_of_band_commits = (
+            []
+            if provenance_error is not None
+            else classify_release_range_against_ledger(commits, merged_shas)
+        )
+    elif db_path is None:
         out_of_band_commits = classify_release_range([subject for _sha, subject in commits])
     else:
         try:

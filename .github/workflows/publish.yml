@@ -1,0 +1,57 @@
+name: Publish to PyPI
+
+# Hand-authored (.github/workflows is bot-forbidden). On a v* tag push,
+# build the sdist + wheel and publish to PyPI via trusted publishing
+# (OIDC — no API token is ever stored). A tag push is inherently
+# trusted (only a maintainer can push a tag to the protected repo), so
+# no actor gate is needed — same rationale as release-verify.yml.
+#
+# INERT until the maintainer (a) claims the `repoach` project on PyPI
+# and (b) configures a trusted publisher for this repo + this workflow
+# (https://docs.pypi.org/trusted-publishers/). The version published is
+# whatever `pyproject.toml` declares, so bump it and push `vX.Y.Z`.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    name: Build sdist + wheel and publish to PyPI
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    permissions:
+      # Trusted publishing exchanges this OIDC token with PyPI for a
+      # short-lived upload credential; no long-lived secret is stored.
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout (full history for the version tag)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --wheel --outdir dist/
+
+      - name: Verify distribution metadata
+        run: |
+          python -m pip install twine
+          twine check dist/*
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
