@@ -878,11 +878,14 @@ class GhCli:
         """Return every merge-commit SHA GitHub reports for PRs merged into *base*.
 
         Wraps ``gh pr list --state merged --base <base> --json
-        mergeCommitOid`` -- read-only, issues no merge or push
-        operation. For a squash-merge, a PR's ``mergeCommitOid`` is
-        exactly the resulting commit SHA landed on *base*, so this set
-        is the GitHub-verified equivalent of the ``pr_merges.merged_sha``
-        ledger (SP-RELEASE-PROVENANCE-GH-FALLBACK): feeding it to
+        mergeCommit`` -- read-only, issues no merge or push operation.
+        ``gh pr list`` exposes the merge commit as a nested
+        ``mergeCommit`` object (``{"oid": ...}``), unlike ``gh pr view``
+        which offers a flat ``mergeCommitOid``. For a squash-merge that
+        ``mergeCommit.oid`` is exactly the resulting commit SHA landed
+        on *base*, so this set is the GitHub-verified equivalent of the
+        ``pr_merges.merged_sha`` ledger (SP-RELEASE-PROVENANCE-GH-FALLBACK):
+        feeding it to
         :func:`repoach.review.release_gate.classify_release_range_against_ledger`
         verifies release-range provenance without the SQLite ledger.
 
@@ -891,7 +894,7 @@ class GhCli:
                 integration branch, e.g. ``"develop"``).
 
         Returns:
-            The set of non-empty ``mergeCommitOid`` values GitHub
+            The set of non-empty ``mergeCommit.oid`` values GitHub
             reports. Empty when no PR has merged into *base* yet, the
             API call failed, or the response could not be decoded.
         """
@@ -904,7 +907,7 @@ class GhCli:
                 "--base",
                 base,
                 "--json",
-                "mergeCommitOid",
+                "mergeCommit",
                 "--limit",
                 "500",
             ]
@@ -931,7 +934,10 @@ class GhCli:
         for entry in data:
             if not isinstance(entry, dict):
                 continue
-            sha = entry.get("mergeCommitOid")
+            merge_commit = entry.get("mergeCommit")
+            if not isinstance(merge_commit, dict):
+                continue
+            sha = merge_commit.get("oid")
             if isinstance(sha, str) and sha:
                 merge_shas.add(sha)
         return merge_shas
