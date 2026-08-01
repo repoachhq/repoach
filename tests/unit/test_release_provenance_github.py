@@ -204,7 +204,7 @@ class _RecordingGhCli(GhCli):
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
         self.calls.append(args)
-        payload = [{"mergeCommitOid": sha} for sha in self._merge_commit_oids]
+        payload = [{"mergeCommit": {"oid": sha}} for sha in self._merge_commit_oids]
         return GhResult(returncode=0, stdout=json.dumps(payload), stderr="", argv=args)
 
 
@@ -220,3 +220,22 @@ def test_merged_pr_merge_shas_is_read_only() -> None:
     assert issued[:2] == ["pr", "list"]
     assert "merge" not in issued
     assert "push" not in issued
+
+
+def test_merged_pr_merge_shas_requests_the_list_compatible_json_field() -> None:
+    """Regression: ``gh pr list`` exposes ``mergeCommit`` (nested), not ``mergeCommitOid``.
+
+    Requesting ``--json mergeCommitOid`` makes ``gh pr list`` fail with
+    "Unknown JSON field", which returned an empty set and fail-closed
+    the release gate. The fake mirrors the real nested
+    ``{"mergeCommit": {"oid": ...}}`` shape, and this pins the argv so
+    the flat ``gh pr view`` field can never creep back in.
+    """
+    cli = _RecordingGhCli(merge_commit_oids=["sha-x"])
+
+    cli.merged_pr_merge_shas(base="develop")
+
+    issued = cli.calls[0]
+    json_value = issued[issued.index("--json") + 1]
+    assert json_value == "mergeCommit"
+    assert "mergeCommitOid" not in issued
