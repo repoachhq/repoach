@@ -19,6 +19,7 @@ installed as `gh` first on `PATH`.
 | Tokens (gateway `AGENT_DISPATCH`) | 225 582 across 7 calls: 5 reviewer calls ≈ 44 k each (scribe ran twice), 2 refuter calls 1.3–1.5 k |
 | Forge calls the run made (shim log) | `pr diff 283` ×1, `pr view 283 --json number,title,body,headRefName,baseRefName,author,state,url` ×1, `api --paginate --slurp repos/:owner/:repo/pulls/283/comments` ×5, no write |
 | MR notes before/after | 2 / 2 |
+| Cost | 225 582 tokens / 83 s per review, 0 tool calls: through `claude_code` the reviewers never explored the tree |
 
 Plan: `repoach plan SP-YOOB-TEMPLATE-HONESTY --explore-via claude_cli` in a
 detached Yoob worktree at `develop` `7d93499a` (the merge of !283), spec
