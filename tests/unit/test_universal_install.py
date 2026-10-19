@@ -11,6 +11,7 @@ hands it (``repoach.toml`` and the spec template).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -30,6 +31,12 @@ from repoach.core.paths import (
     user_data_dir,
 )
 from repoach.core.resources import prompts_dir
+
+PLAIN_HELP_ENV = {"NO_COLOR": "1", "TERM": "dumb", "COLUMNS": "200"}
+"""Render Typer/Rich help as plain, wide text so assertions see whole words."""
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+"""CSI escape sequences, stripped in case a renderer emits them regardless."""
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -317,10 +324,11 @@ class TestProjectScopedCommandsRefuseOutsideARepository:
         plain.mkdir()
         monkeypatch.chdir(plain)
 
-        result = CliRunner().invoke(app, ["review", "pr", "--help"])
+        result = CliRunner().invoke(app, ["review", "pr", "--help"], env=PLAIN_HELP_ENV)
 
+        plain_text = ANSI_ESCAPE.sub("", result.stdout)
         assert result.exit_code == 0, result.output
-        assert "PR_NUMBER" in result.stdout
+        assert re.search(r"\bpr_number\b", plain_text, re.IGNORECASE), plain_text
 
 
 def _tree(root: Path) -> list[str]:
