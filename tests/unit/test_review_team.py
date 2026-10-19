@@ -15,6 +15,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, text
 
 from repoach.forge import Diff, PullRequest
@@ -739,6 +740,31 @@ def test_review_pr_skips_archive_when_dry_run(tmp_path, monkeypatch):
     orch.review_pr(pr_number=8)
     assert gh.archive_calls == []
     assert gh.posted_reviews == []
+
+
+@pytest.mark.parametrize("post", [False, True])
+def test_refuted_sentinels_posted_only_when_posting(tmp_path, monkeypatch, post):
+    """A dry run never replies on inline threads (W1: ``--dry-run`` was not write-free).
+
+    ``post_refuted_finding_sentinels`` posts a reply per refuted finding;
+    it used to run outside the posting guard, so ``review pr --dry-run``
+    on a PR with repoach threads posted. It now runs only when posting.
+    """
+    out = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
+    for role in ("Architect", "Sentinel", "Tester", "Scribe"):
+        monkeypatch.setattr(
+            f"repoach.review.orchestrator.{role}",
+            lambda **_kw: _StubReviewer(out),
+        )
+    calls: list[int] = []
+    monkeypatch.setattr(
+        "repoach.review.thread_context.post_refuted_finding_sentinels",
+        lambda _forge, _db, pr_number: calls.append(pr_number) or 0,
+    )
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=post)
+    orch.review_pr(pr_number=8)
+    assert calls == ([8] if post else [])
 
 
 def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):

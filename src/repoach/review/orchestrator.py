@@ -628,12 +628,15 @@ class ReviewTeamOrchestrator:
         try:
             from .thread_context import post_refuted_finding_sentinels
 
-            n_sentinels = post_refuted_finding_sentinels(self._forge, self._db_path, pr_number)
-            _log.info(
-                "review_team.refuted_sentinels_posted",
-                pr_number=pr_number,
-                n_sentinels=n_sentinels,
-            )
+            if self._post:
+                n_sentinels = post_refuted_finding_sentinels(self._forge, self._db_path, pr_number)
+                _log.info(
+                    "review_team.refuted_sentinels_posted",
+                    pr_number=pr_number,
+                    n_sentinels=n_sentinels,
+                )
+            else:
+                _log.info("review_team.refuted_sentinels_skipped_dry_run", pr_number=pr_number)
         except Exception as exc:
             _log.warning(
                 "review_team.refuted_sentinels_failed",
