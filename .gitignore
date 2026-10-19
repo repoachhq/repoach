@@ -26,6 +26,7 @@ htmlcov/
 # Données & secrets
 .env
 .env.local
+.repoach.env
 .env.*.local
 .env.llm_proxy
 .env.backup*

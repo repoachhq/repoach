@@ -24,6 +24,7 @@ from ..agent_engine.adapters import GatewayError
 from ..agent_engine.agent_loop import PROXY_SONNET_CHAIN, AgentLoop
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
+from ..core.resources import prompts_dir
 from .coder_findings import ReasonCode
 from .plan import (
     ActionPlan,
@@ -41,7 +42,7 @@ from .spec_gate import audit_plan_selectors
 
 _log = get_logger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
+_PROMPTS_DIR = prompts_dir()
 
 _SPEC_HARD_CAP_CHARS: int = 12_000
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)

@@ -52,7 +52,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..core.config import get_settings
+from ..core.config import get_settings, require_llm_proxy_base_url
 from ..core.logging import get_logger
 from ..llm.capability import CapabilityTier, alias_for_capability
 from ..llm_proxy.api.models.agent_v1 import (
@@ -392,7 +392,8 @@ class AgentLoop:
 
         Raises:
             ValueError: If ``model_chain`` is provided but empty,
-                or if ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing.
+                if ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing, or if
+                no gateway base URL is configured.
         """
         if capability is not None:
             self._capability = capability
@@ -419,7 +420,7 @@ class AgentLoop:
                 "requires a shared secret.  Set it in .env."
             )
 
-        base_url = settings.llm_proxy_base_url.rstrip("/")
+        base_url = require_llm_proxy_base_url(settings).rstrip("/")
 
         self._max_turns = max_turns
         self._max_tokens = max_tokens
