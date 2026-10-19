@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..core.config import configured_env_value
-from ..core.paths import default_logs_dir, origin_url, resolve_db_path
+from ..core.paths import default_logs_dir, is_repoach_checkout, origin_url, resolve_db_path
 from .config import (
     ConfigError,
     ForgeName,
@@ -158,6 +158,9 @@ def resolve_project_config(root: Path) -> ResolvedProjectConfig:
         ) from exc
     if env_state:
         config = config.model_copy(update={"state": config.state.model_copy(update=env_state)})
+    for name in file_config.commands.named():
+        sources[f"commands.{name}"] = "file"
+    config = config.with_host_defaults(repoach_host=is_repoach_checkout(root))
     if config.repoach.forge is None:
         url = origin_url(root)
         inferred = infer_forge_from_url(url) if url is not None else None

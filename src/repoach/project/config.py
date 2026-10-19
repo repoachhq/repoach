@@ -26,7 +26,16 @@ import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 CONFIG_FILE_NAME = "repoach.toml"
 """File name of the project configuration, at the git toplevel."""
@@ -45,6 +54,15 @@ DEFAULT_LINT_COMMAND = "ruff check src tests && ruff format --check src tests"
 
 DEFAULT_TEST_COMMAND = "pytest -q tests/unit"
 """The Coder's test gate before the file existed (``coder_loop.run_pytest``)."""
+
+DEFAULT_TIMEOUT_S = 900
+"""Seconds a project command may run (``coder_loop`` ran pytest with this budget)."""
+
+DEFAULT_PROMPTS_DIR = "prompts/review"
+"""Where the reviewer personas live; always forbidden to the Coder."""
+
+REPOACH_DOCSTRING_EXEMPT: tuple[str, ...] = ("tests/", "scripts/", "src/repoach/llm_proxy/")
+"""Paths repoach's own pyproject exempts from docstring rules (its host default)."""
 
 SECRET_SUFFIXES: tuple[str, ...] = ("_key", "_token", "_secret")
 """Key-name suffixes refused anywhere in the file (NG1: no secrets, ever)."""
@@ -146,14 +164,47 @@ class ProjectSection(_Section):
     languages: list[str] = Field(default_factory=lambda: ["python"])
     src_roots: list[str] = Field(default_factory=lambda: ["src"])
     test_roots: list[str] = Field(default_factory=lambda: ["tests"])
+    prompts_dir: str = Field(default=DEFAULT_PROMPTS_DIR, min_length=1)
+
+    @field_validator("prompts_dir")
+    @classmethod
+    def _check_prompts_dir(cls, value: str) -> str:
+        """Keep the prompts directory inside the repository."""
+        return _relative_inside(value)
 
 
 class CommandsSection(_Section):
-    """``[commands]``: the project's own lint, test and gate commands (M5)."""
+    """``[commands]``: the project's own lint, test and gate commands.
+
+    Besides ``lint``, ``test``, ``gate`` and ``timeout_s``, any other key
+    is a named command (``e2e = "npm run e2e"``) that a gate selector
+    ``cmd:<name>`` may run; each must be a non-empty string.  A gate
+    needing an environment variable spells it with ``env``:
+    ``gate = "env YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected"``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="allow")
 
     lint: str = DEFAULT_LINT_COMMAND
     test: str = DEFAULT_TEST_COMMAND
     gate: str = ""
+    timeout_s: StrictInt = Field(default=DEFAULT_TIMEOUT_S, gt=0)
+
+    @model_validator(mode="after")
+    def _check_named_commands(self) -> CommandsSection:
+        """Refuse a named command that is not a non-empty string.
+
+        Raises:
+            ValueError: An extra key holds a non-string or a blank string.
+        """
+        for name, value in (self.model_extra or {}).items():
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"commands.{name} must be a non-empty command string")
+        return self
+
+    def named(self) -> dict[str, str]:
+        """Return the named commands (every extra key), in file order."""
+        return {name: str(value) for name, value in (self.model_extra or {}).items()}
 
 
 class CoderSection(_Section):
@@ -179,10 +230,28 @@ class ReviewSection(_Section):
     spec_sources: list[SpecSource] = Field(default_factory=lambda: list(DEFAULT_SPEC_SOURCES))
 
 
+class GatesSection(_Section):
+    """``[gates]``: verifier knobs (SP-UNIVERSAL-GATES).
+
+    ``docstring_exempt`` None means the host default
+    (:meth:`ProjectConfig.with_host_defaults`).
+    """
+
+    docstring_exempt: list[str] | None = None
+    advisory_verifiers: list[str] = Field(default_factory=list)
+    disabled_verifiers: list[str] = Field(default_factory=list)
+    verifier_commands: dict[str, str] = Field(default_factory=dict)
+
+
 class ArchSection(_Section):
-    """``[arch]``: edge-honesty settings (moved from ``[tool.repoach.arch]``, G6)."""
+    """``[arch]``: edge-honesty settings (moved from ``[tool.repoach.arch]``, G6).
+
+    ``require_frontmatter`` None means the host default: required in
+    repoach's own checkout, not on a foreign repository.
+    """
 
     frontier_suppress: list[str] = Field(default_factory=list)
+    require_frontmatter: StrictBool | None = None
 
 
 class StateSection(_Section):
@@ -240,6 +309,7 @@ class ProjectConfig(_Section):
     coder: CoderSection = Field(default_factory=CoderSection)
     provider: ProviderSection = Field(default_factory=ProviderSection)
     review: ReviewSection = Field(default_factory=ReviewSection)
+    gates: GatesSection = Field(default_factory=GatesSection)
     arch: ArchSection = Field(default_factory=ArchSection)
     state: StateSection = Field(default_factory=StateSection)
     conventions: ConventionsSection = Field(default_factory=ConventionsSection)
@@ -258,7 +328,32 @@ class ProjectConfig(_Section):
             return False
         section = getattr(self, section_name)
         field_name = "schema_" if key == "schema" else key
-        return field_name in section.model_fields_set
+        return field_name in section.model_fields_set or field_name in (section.model_extra or {})
+
+    def with_host_defaults(self, *, repoach_host: bool) -> ProjectConfig:
+        """Fill the keys whose default depends on the host repository.
+
+        Args:
+            repoach_host: Whether the host is a checkout of repoach itself.
+
+        Returns:
+            A copy where ``[gates].docstring_exempt`` and
+            ``[arch].require_frontmatter`` hold a value: repoach's own
+            exemptions and ``true`` on repoach, the test roots and
+            ``false`` on a foreign repository.
+        """
+        gates = self.gates
+        if gates.docstring_exempt is None:
+            exempt = (
+                list(REPOACH_DOCSTRING_EXEMPT)
+                if repoach_host
+                else [root.rstrip("/") + "/" for root in self.project.test_roots]
+            )
+            gates = gates.model_copy(update={"docstring_exempt": exempt})
+        arch = self.arch
+        if arch.require_frontmatter is None:
+            arch = arch.model_copy(update={"require_frontmatter": repoach_host})
+        return self.model_copy(update={"gates": gates, "arch": arch})
 
 
 def config_path(root: Path) -> Path:

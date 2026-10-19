@@ -548,3 +548,52 @@ def test_repoach_own_config_is_tagged_file_or_default(monkeypatch: pytest.Monkey
     assert resolved.forge == "github"
     assert resolved.config.repoach.merge_method == "squash"
     assert resolved.config.provider.kind == "gateway"
+
+
+class TestGatesKeys:
+    @pytest.mark.parametrize(
+        ("toml", "key", "reason"),
+        [
+            ("[commands]\ntimeout_s = 0\n", "commands.timeout_s", "greater than 0"),
+            ("[commands]\ntimeout_s = true\n", "commands.timeout_s", "integer"),
+            ("[commands]\ne2e = ''\n", "commands", "commands.e2e"),
+            ("[commands]\ne2e = 3\n", "commands", "commands.e2e"),
+            ("[project]\nprompts_dir = '/srv/prompts'\n", "project.prompts_dir", "relative"),
+            ("[gates]\nverifier_commands = {ruff = 1}\n", "gates.verifier_commands", "string"),
+            ("[gates]\nadvisory = ['x']\n", "gates.advisory", "unknown key"),
+            ("[arch]\nrequire_frontmatter = 'yes'\n", "arch.require_frontmatter", "boolean"),
+        ],
+    )
+    def test_new_keys_are_validated(self, tmp_path: Path, toml: str, key: str, reason: str) -> None:
+        (tmp_path / "repoach.toml").write_text(toml, encoding="utf-8")
+        with pytest.raises(ConfigError) as info:
+            load_project_config(tmp_path)
+        assert info.value.key == key
+        assert reason in str(info.value)
+
+    def test_named_commands_and_gates_keys_are_read(self, tmp_path: Path) -> None:
+        text = (
+            "[commands]\ntimeout_s = 60\ne2e = 'npm run e2e'\n\n"
+            "[gates]\nadvisory_verifiers = ['docstring']\ndisabled_verifiers = ['import']\n"
+            "verifier_commands = {docstring = 'pydocstyle src'}\n"
+        )
+        config = parse_project_config(text, tmp_path / "repoach.toml")
+        assert config.commands.timeout_s == 60
+        assert config.commands.named() == {"e2e": "npm run e2e"}
+        assert config.is_set("commands.e2e")
+        assert config.gates.advisory_verifiers == ["docstring"]
+        assert config.gates.disabled_verifiers == ["import"]
+        assert config.gates.verifier_commands == {"docstring": "pydocstyle src"}
+
+    def test_host_defaults_differ_between_repoach_and_a_foreign_repo(self, tmp_path: Path) -> None:
+        foreign = resolve_project_config(_repo(tmp_path)).config
+        assert foreign.arch.require_frontmatter is False
+        assert foreign.gates.docstring_exempt == ["tests/"]
+        assert foreign.project.prompts_dir == "prompts/review"
+        assert foreign.commands.timeout_s == 900
+
+        checkout = Path(__file__).resolve().parents[2]
+        own = ProjectConfig().with_host_defaults(repoach_host=True)
+        assert own.arch.require_frontmatter is True
+        assert own.gates.docstring_exempt == ["tests/", "scripts/", "src/repoach/llm_proxy/"]
+        assert resolve_project_config(checkout).config.arch.require_frontmatter is True

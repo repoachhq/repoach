@@ -18,7 +18,9 @@ from pathlib import Path
 TEMPLATE_PATH = Path(__file__).with_name("repoach.toml.template")
 """The shipped template, packaged with the module."""
 
-TomlScalar = str | bool | int | list[str]
+TomlScalar = str | bool | int | list[str] | dict[str, str]
+
+_BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 _SECTION_RE = re.compile(r"^\[(?P<name>[a-z_]+)\]\s*$")
 _KEY_RE = re.compile(r"^(?:#\s*)?(?P<key>[a-z_]+)\s*=")
@@ -28,7 +30,8 @@ def toml_value(value: TomlScalar) -> str:
     """Return ``value`` as a TOML literal.
 
     Args:
-        value: A string, boolean, integer or list of strings.
+        value: A string, boolean, integer, list of strings, or a
+            string-to-string table (written inline).
 
     Returns:
         The literal: basic strings use JSON escaping, which TOML basic
@@ -45,6 +48,13 @@ def toml_value(value: TomlScalar) -> str:
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return "[" + ", ".join(json.dumps(item, ensure_ascii=False) for item in value) + "]"
+    if isinstance(value, dict) and all(isinstance(item, str) for item in value.values()):
+        pairs = [
+            f"{key if _BARE_KEY_RE.match(key) else json.dumps(key)} = "
+            f"{json.dumps(item, ensure_ascii=False)}"
+            for key, item in value.items()
+        ]
+        return "{" + ", ".join(pairs) + "}" if pairs else "{}"
     raise TypeError(f"cannot write {type(value).__name__} to repoach.toml")
 
 
