@@ -14,6 +14,7 @@ exactly today's ruff argv.
 from __future__ import annotations
 
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,25 @@ def test_gate_command_timeout_is_red(tmp_path: Path) -> None:
     passed, tail = run_project_gate(tmp_path, _config(gate="./slow.sh", timeout_s=1))
     assert passed is False
     assert "timeout after 1s" in tail
+
+
+def _alive(pid: int) -> bool:
+    stat_file = Path(f"/proc/{pid}/stat")
+    if not stat_file.is_file():
+        return False
+    fields = stat_file.read_text().rsplit(")", 1)[-1].split()
+    return bool(fields) and fields[0] != "Z"
+
+
+def test_timeout_kills_the_children_of_the_command(tmp_path: Path) -> None:
+    _script(tmp_path, "spawn.sh", "sleep 60 &\necho $! > child.pid\nwait\n")
+    passed, tail = run_project_gate(tmp_path, _config(gate="./spawn.sh", timeout_s=1))
+    assert passed is False and "timeout after 1s" in tail
+    child = int((tmp_path / "child.pid").read_text().strip())
+    deadline = time.monotonic() + 5
+    while _alive(child) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _alive(child)
 
 
 def test_leading_assignments_become_environment(tmp_path: Path) -> None:

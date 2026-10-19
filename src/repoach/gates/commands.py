@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import signal
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -110,14 +111,14 @@ def run_argv(
     if env_overrides:
         env.update(env_overrides)
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             list(argv),
             cwd=cwd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_s,
-            check=False,
             env=env,
+            start_new_session=True,
         )
     except FileNotFoundError:
         _log.warning("gates.command_not_found", command=shown)
@@ -125,17 +126,35 @@ def run_argv(
     except PermissionError as exc:
         _log.warning("gates.command_not_executable", command=shown, error=str(exc)[:200])
         return CommandResult(False, None, f"$ {shown}\ncommand not executable: {argv[0]}")
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired as exc:
         _log.warning("gates.command_timeout", command=shown, timeout_s=timeout_s)
-        partial = _decode(exc.stdout) + _decode(exc.stderr)
+        _kill_group(proc)
+        stdout, stderr = proc.communicate()
+        partial = _decode(exc.stdout) + _decode(stdout) + _decode(stderr)
         return CommandResult(
             False, None, f"$ {shown}\n{partial[-TAIL_CHARS:]}\ntimeout after {timeout_s}s"
         )
-    output = (proc.stdout or "") + (proc.stderr or "")
+    output = (stdout or "") + (stderr or "")
     tail = f"$ {shown}\n{output[-TAIL_CHARS:]}"
     if proc.returncode != 0:
         tail += f"\nexit status {proc.returncode}"
-    return CommandResult(proc.returncode == 0, proc.returncode, tail, proc.stdout or "")
+    return CommandResult(proc.returncode == 0, proc.returncode, tail, stdout or "")
+
+
+def _kill_group(proc: subprocess.Popen[str]) -> None:
+    """Kill the whole process group of a timed-out command, children included.
+
+    The command runs in its own session (``start_new_session=True``), so
+    its process group id is its pid; killing the group takes down the
+    background children a script spawned, which a plain ``proc.kill()``
+    would orphan with the output pipes still open.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError as exc:
+        _log.info("gates.command_group_gone", pid=proc.pid, error=str(exc)[:200])
 
 
 def _decode(raw: bytes | str | None) -> str:
