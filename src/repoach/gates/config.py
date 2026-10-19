@@ -48,6 +48,15 @@ DEFAULT_PROMPTS_DIR = "prompts/review"
 """Where the reviewer personas live; always forbidden to the Coder."""
 
 
+class GatesConfigError(ValueError):
+    """A ``repoach.toml`` that cannot be read as gate configuration.
+
+    The message names the file and the dotted key at fault
+    (``repoach.toml: project.languages: unknown language 'cobol' …``);
+    the CLI reports it as a usage error (rc 2), never a traceback.
+    """
+
+
 def _str_tuple(value: object, key: str) -> tuple[str, ...]:
     """Coerce a TOML array of strings to a tuple, refusing any other shape.
 
@@ -95,7 +104,9 @@ def _languages(values: tuple[str, ...]) -> frozenset[Language]:
             out.add(Language(raw.strip().lower()))
         except ValueError as exc:
             known = ", ".join(member.value for member in Language)
-            raise ValueError(f"unknown language {raw!r} (known: {known})") from exc
+            raise ValueError(
+                f"project.languages: unknown language {raw!r} (known: {known})"
+            ) from exc
     return frozenset(out)
 
 
@@ -241,13 +252,17 @@ class GatesConfig:
             The configuration.
 
         Raises:
-            ValueError: The file is not valid TOML or a key is malformed.
+            GatesConfigError: The file is unreadable, not valid TOML, or a
+                key is malformed; the message names the file and the key.
         """
         try:
             data = tomllib.loads(path.read_text(encoding="utf-8"))
-        except tomllib.TOMLDecodeError as exc:
-            raise ValueError(f"{path}: invalid TOML: {exc}") from exc
-        return cls.from_mapping(data, repoach_project=repoach_project)
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+            raise GatesConfigError(f"{path}: invalid TOML: {exc}") from exc
+        try:
+            return cls.from_mapping(data, repoach_project=repoach_project)
+        except ValueError as exc:
+            raise GatesConfigError(f"{path}: {exc}") from exc
 
     @property
     def python_roots(self) -> tuple[str, ...]:
@@ -283,6 +298,9 @@ def load_gates_config(root: Path) -> GatesConfig:
     Returns:
         :meth:`GatesConfig.from_toml_path` when ``root/repoach.toml``
         exists, else :meth:`GatesConfig.builtin_default`.
+
+    Raises:
+        GatesConfigError: ``repoach.toml`` exists but is malformed.
     """
     path = root / CONFIG_FILE_NAME
     if not path.is_file():
@@ -308,6 +326,7 @@ __all__ = [
     "CONFIG_FILE_NAME",
     "DEFAULT_TIMEOUT_S",
     "GatesConfig",
+    "GatesConfigError",
     "applicable",
     "current_gates_config",
     "load_gates_config",

@@ -16,6 +16,7 @@ import typer
 from ..arch.cli import arch_app
 from ..core.config import get_settings
 from ..core.logging import configure_logging
+from ..gates.config import GatesConfigError, current_gates_config
 from ..lint import edge_honesty
 from .chain_status import chain_status
 from .doctor_cmds import doctor, project_root_or_exit
@@ -107,10 +108,21 @@ def _bootstrap(
         help="Print the installed Repoach version and exit.",
     ),
 ) -> None:
-    """Configure logging once for every CLI invocation that needs settings."""
+    """Configure logging once for every CLI invocation that needs settings.
+
+    Also reads the project's ``repoach.toml`` once up front, so a
+    malformed one ends every project command (``arch check``, the
+    Coder, the merge gate, the Developer) with a named usage error and
+    rc 2 instead of a traceback deep inside a gate.
+    """
     if ctx.invoked_subcommand in SETTINGS_FREE_COMMANDS:
         return
     configure_logging()
+    try:
+        current_gates_config()
+    except GatesConfigError as exc:
+        typer.echo(f"repoach: invalid project configuration: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 @app.command("version")

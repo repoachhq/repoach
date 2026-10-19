@@ -22,11 +22,17 @@ import pytest
 from typer.testing import CliRunner
 
 from repoach.cli.main import app
-from repoach.gates.config import GatesConfig, applicable, load_gates_config, python_packages
+from repoach.gates.config import (
+    GatesConfig,
+    GatesConfigError,
+    applicable,
+    load_gates_config,
+    python_packages,
+)
 from repoach.gates.languages import Language, diff_languages, language_of
 from repoach.gates.verifiers import VerifierStatus, run_verifiers
 from repoach.lint import edge_honesty
-from repoach.review.coder_loop import is_path_allowed
+from repoach.review.coder_loop import is_path_allowed, run_ruff_gate
 from repoach.review.finding_verifiers import verify_finding, verify_findings_for_pr
 from repoach.review.findings import (
     ClaimType,
@@ -37,7 +43,7 @@ from repoach.review.findings import (
     record_finding,
 )
 from repoach.review.import_gate import check_imports
-from repoach.review.merge_gate import summarise_ledger_facts
+from repoach.review.merge_gate import gather_merge_facts, summarise_ledger_facts
 
 
 def _finding(claim_type: ClaimType, file: str) -> Finding:
@@ -408,3 +414,41 @@ def test_doctor_gates_prints_the_language_table(
     assert "verilator=missing: verilator" in verilog
     rust = next(line for line in lines if line.startswith("rust "))
     assert " no " in rust and "(none)" in rust
+
+
+_BAD_TOML = '[project]\nlanguages = ["cobol"]\n'
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["arch", "check", "--base", "main"],
+        ["review", "gate", "1"],
+        ["review", "fix", "1"],
+        ["review", "merge", "1"],
+    ],
+)
+def test_bad_repoach_toml_is_a_named_usage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    root = _repo(tmp_path)
+    _write(root, "README.md", "x\n")
+    _commit_all(root, "init")
+    _write(root, "repoach.toml", _BAD_TOML)
+    monkeypatch.chdir(root)
+    result = CliRunner().invoke(app, argv)
+    assert result.exit_code == 2, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "repoach.toml: project.languages: unknown language 'cobol'" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_bad_repoach_toml_raises_a_named_error_in_process(tmp_path: Path) -> None:
+    _write(tmp_path, "repoach.toml", _BAD_TOML)
+    with pytest.raises(GatesConfigError, match=r"repoach\.toml: project\.languages: unknown"):
+        load_gates_config(tmp_path)
+    with pytest.raises(GatesConfigError):
+        run_ruff_gate(tmp_path)
+    db = tmp_path / "f.db"
+    with pytest.raises(GatesConfigError):
+        gather_merge_facts(db, pr_number=1, repo_root=tmp_path, head_sha="h", ci_green=True)
