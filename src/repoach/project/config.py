@@ -176,6 +176,12 @@ class ProjectSection(_Section):
 class CommandsSection(_Section):
     """``[commands]``: the project's own lint, test and gate commands.
 
+    An undeclared ``lint`` / ``test`` (None) means repoach's built-in
+    ruff / pytest command only in repoach's own checkout; on a foreign
+    repository it stays None and the gate skips it, saying why
+    (:meth:`ProjectConfig.with_host_defaults`).  An empty string is a
+    declared "no command".
+
     Besides ``lint``, ``test``, ``gate`` and ``timeout_s``, any other key
     is a named command (``e2e = "npm run e2e"``) that a gate selector
     ``cmd:<name>`` may run; each must be a non-empty string.  A gate
@@ -185,8 +191,8 @@ class CommandsSection(_Section):
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
-    lint: str = DEFAULT_LINT_COMMAND
-    test: str = DEFAULT_TEST_COMMAND
+    lint: str | None = None
+    test: str | None = None
     gate: str = ""
     timeout_s: StrictInt = Field(default=DEFAULT_TIMEOUT_S, gt=0)
 
@@ -359,8 +365,19 @@ class ProjectConfig(_Section):
             A copy where ``[gates].docstring_exempt`` and
             ``[arch].require_frontmatter`` hold a value: repoach's own
             exemptions and ``true`` on repoach, the test roots and
-            ``false`` on a foreign repository.
+            ``false`` on a foreign repository.  An undeclared
+            ``[commands].lint`` / ``test`` becomes the built-in ruff /
+            pytest command on repoach and stays None (skipped) elsewhere.
         """
+        commands = self.commands
+        if repoach_host:
+            filled = {
+                key: default
+                for key, default in (("lint", DEFAULT_LINT_COMMAND), ("test", DEFAULT_TEST_COMMAND))
+                if getattr(commands, key) is None
+            }
+            if filled:
+                commands = commands.model_copy(update=filled)
         gates = self.gates
         if gates.docstring_exempt is None:
             exempt = (
@@ -372,7 +389,7 @@ class ProjectConfig(_Section):
         arch = self.arch
         if arch.require_frontmatter is None:
             arch = arch.model_copy(update={"require_frontmatter": repoach_host})
-        return self.model_copy(update={"gates": gates, "arch": arch})
+        return self.model_copy(update={"commands": commands, "gates": gates, "arch": arch})
 
 
 def config_path(root: Path) -> Path:

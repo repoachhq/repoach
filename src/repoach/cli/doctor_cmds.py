@@ -26,7 +26,12 @@ from ..core.paths import (
     user_data_dir,
 )
 from ..project.config import ConfigError, config_path
-from ..project.resolve import ResolvedProjectConfig, effective_rows, resolve_project_config
+from ..project.resolve import (
+    UNDECLARED_COMMAND_NOTE,
+    ResolvedProjectConfig,
+    effective_rows,
+    resolve_project_config,
+)
 from ..project.toml_write import toml_value
 
 DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
@@ -124,7 +129,8 @@ def doctor() -> None:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=EXIT_UNUSABLE) from exc
     for dotted, value, source in effective_rows(resolved):
-        typer.echo(f"config.{dotted}={toml_value(value)} ({source})")
+        shown = f"<{UNDECLARED_COMMAND_NOTE}>" if value is None else toml_value(value)
+        typer.echo(f"config.{dotted}={shown} ({source})")
 
     problems: list[str] = []
     try:

@@ -101,9 +101,12 @@ class TestGoldenDefaults:
         )
         assert config.repoach.release_branch == "main"
         assert config.repoach.release_branch == Settings.model_fields["release_branch"].default
-        assert config.commands.lint == DEFAULT_LINT_COMMAND
-        assert config.commands.lint == "ruff check src tests && ruff format --check src tests"
-        assert config.commands.test == DEFAULT_TEST_COMMAND == "pytest -q tests/unit"
+        own = config.with_host_defaults(repoach_host=True).commands
+        assert own.lint == DEFAULT_LINT_COMMAND
+        assert own.lint == "ruff check src tests && ruff format --check src tests"
+        assert own.test == DEFAULT_TEST_COMMAND == "pytest -q tests/unit"
+        foreign = config.with_host_defaults(repoach_host=False).commands
+        assert foreign.lint is None and foreign.test is None
         assert config.coder.forbidden_prefixes == []
         assert coder_loop.FORBIDDEN_PREFIXES == (
             ".github/",
@@ -456,7 +459,8 @@ class TestSurfaces:
         result = CliRunner().invoke(app, ["config", "show"])
         assert result.exit_code == 0, result.output
         keyed = [line for line in result.stdout.splitlines() if " = " in line]
-        assert len(keyed) == len(effective_rows(resolve_project_config(root)))
+        rows = effective_rows(resolve_project_config(root))
+        assert len(keyed) == sum(1 for _, value, _ in rows if value is not None)
         assert all(
             line.rsplit("# source: ", 1)[1] in {"default", "file", "env", "origin"}
             for line in keyed
@@ -637,3 +641,19 @@ class TestAsMapping:
         assert "docstring_exempt" not in mapping["gates"]
         assert "require_frontmatter" not in mapping["arch"]
         assert "forge" not in mapping["repoach"]
+
+
+def test_undeclared_commands_are_skipped_with_a_reason_on_a_foreign_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo(tmp_path, "https://github.com/o/r.git", "[commands]\ngate = 'make check'\n")
+    monkeypatch.chdir(root)
+    mapping = resolve_project_config(root).config.as_mapping()
+    assert "lint" not in mapping["commands"] and "test" not in mapping["commands"]
+    assert mapping["commands"]["gate"] == "make check"
+    shown = CliRunner().invoke(app, ["config", "show"]).stdout
+    assert "# lint: not declared in repoach.toml; skipped on this repository" in shown
+    doctor = CliRunner().invoke(app, ["doctor"]).stdout
+    assert (
+        "config.commands.test=<not declared in repoach.toml; skipped on this repository>" in doctor
+    )

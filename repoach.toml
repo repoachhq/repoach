@@ -22,13 +22,21 @@ specs_dir = "docs/specs"
 languages = ["python", "shell"]
 src_roots = ["src"]
 test_roots = ["tests"]
+# Reviewer personas; always forbidden to the Coder.
+prompts_dir = "prompts/review"
 
 [commands]
 # The project's own lint and test commands; an empty string means none.
 lint = "ruff check src tests && ruff format --check src tests && python scripts/lint_no_inline_comments.py --summary && python scripts/lint_no_silent_except.py --summary"
 test = "pytest -q tests/unit"
-# The project's own pre-push barrier, optional.
-# gate = ""
+# The project's own pre-push barrier, optional. A command that needs an
+# environment variable spells it with env, not a VAR= prefix:
+#   (gate = "env YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected")
+gate = ""
+# Seconds each command may run before it is killed.
+timeout_s = 900
+# Any other key is a named command a gate selector cmd:<name> may run:
+# e2e = "npm run e2e"
 
 [coder]
 # Paths added to the Coder's built-in forbidden list.
@@ -50,8 +58,21 @@ kind = "gateway"
 # Where a pull request's spec id comes from, in order.
 # spec_sources = ["flag", "description", "branch"]
 
+[gates]
+# Paths exempt from docstring rules. Default: the test roots
+# (repoach itself: tests/, scripts/, src/repoach/llm_proxy/).
+docstring_exempt = ["tests/", "scripts/", "src/repoach/llm_proxy/"]
+# Verifiers that report without blocking, and verifiers turned off.
+# advisory_verifiers = []
+# disabled_verifiers = []
+# A verifier's command, by verifier name.
+# verifier_commands = {}
+
 [arch]
 # frontier_suppress = []
+# Whether every spec needs YAML frontmatter. Default: true on repoach
+# itself, false on any other repository.
+require_frontmatter = true
 
 [state]
 # Ledger and diagnostic dumps; empty means ~/.local/share/repoach/<project>/.

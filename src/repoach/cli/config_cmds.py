@@ -14,6 +14,7 @@ import typer
 
 from ..project.config import ConfigError, config_path
 from ..project.resolve import (
+    UNDECLARED_COMMAND_NOTE,
     ResolvedProjectConfig,
     effective_rows,
     resolve_project_config,
@@ -40,6 +41,9 @@ def render_show(resolved: ResolvedProjectConfig) -> str:
         if section != current:
             lines.extend(["", f"[{section}]"])
             current = section
+        if value is None:
+            lines.append(f"# {key}: {UNDECLARED_COMMAND_NOTE}")
+            continue
         lines.append(f"{key} = {toml_value(value)}  # source: {source}")
     return "\n".join(lines)
 

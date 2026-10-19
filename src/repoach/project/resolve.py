@@ -217,7 +217,13 @@ def effective_state_paths(resolved: ResolvedProjectConfig) -> tuple[Path, Path]:
     return db_path, logs_dir
 
 
-def effective_rows(resolved: ResolvedProjectConfig) -> list[tuple[str, TomlScalar, str]]:
+UNDECLARED_COMMAND_NOTE = "not declared in repoach.toml; skipped on this repository"
+"""Why an undeclared ``[commands]`` entry does not run on a foreign repository."""
+
+
+def effective_rows(
+    resolved: ResolvedProjectConfig,
+) -> list[tuple[str, TomlScalar | None, str]]:
     """Return ``(dotted key, effective value, source)`` for every key.
 
     The forge, the bot identity and the ``[state]`` paths are shown as
@@ -227,7 +233,8 @@ def effective_rows(resolved: ResolvedProjectConfig) -> list[tuple[str, TomlScala
         resolved: The resolved configuration.
 
     Returns:
-        One row per key, in the file's section order.
+        One row per key, in the file's section order; the value is None
+        for an undeclared command that will be skipped.
     """
     db_path, logs_dir = effective_state_paths(resolved)
     special: dict[str, TomlScalar] = {
@@ -236,7 +243,7 @@ def effective_rows(resolved: ResolvedProjectConfig) -> list[tuple[str, TomlScala
         "state.db_path": str(db_path),
         "state.logs_dir": str(logs_dir),
     }
-    rows: list[tuple[str, TomlScalar, str]] = []
+    rows: list[tuple[str, TomlScalar | None, str]] = []
     for section, values in resolved.config.model_dump(by_alias=True).items():
         for key, value in values.items():
             dotted = f"{section}.{key}"
