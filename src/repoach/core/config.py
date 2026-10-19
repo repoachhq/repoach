@@ -1,10 +1,20 @@
-"""Global configuration loaded from the environment / ``.env`` file.
+"""Global configuration loaded from the environment and repoach's own env files.
 
-Pydantic-settings reads ``chains.env`` first (so its canonical
-``MODEL_<CAPABILITY>`` definitions become defaults), then ``.env`` on
-top so per-machine secrets and overrides win. The local proxy and the
-GitHub Actions workflow share the same definition through this layered
-load.
+The CLI and the agent side read, lowest precedence first,
+``$XDG_CONFIG_HOME/repoach/env``, then ``<project>/.repoach.env``, then
+the process environment (SP-UNIVERSAL-INSTALL G5).  The project is the
+git toplevel of the current working directory
+(:func:`repoach.core.paths.project_root`), never an ancestor of the
+installed package: on a tool install that ancestor is ``site-packages``
+or a foreign project hosting the virtualenv, whose ``.env`` must never
+be taken as repoach's.  The host repository's ``.env`` and ``chains.env``
+are not read here; the llm_proxy gateway keeps its own anchors in
+``repoach.llm_proxy.config.settings``.
+
+Building :class:`Settings` never requires a gateway: the proxy base URL
+is checked by :meth:`Settings.require_llm_proxy_base_url` at the point
+a gateway client is actually built, so ``repoach --version`` and
+``repoach doctor`` work on a machine that runs none.
 """
 
 from __future__ import annotations
@@ -15,6 +25,8 @@ from typing import Any, Literal
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .paths import default_db_path, env_files, project_root
 
 _INLINE_COMMENT_RE = re.compile(r"\s+#\s.*$")
 """Regex used by :meth:`Settings._strip_inline_comments` to scrub trailing
@@ -27,59 +39,39 @@ when reading the file itself; env-vars already in ``os.environ`` bypass
 that path."""
 
 
-def _repo_root() -> Path:
-    """Locate the repository root by walking up from this module's file.
-
-    Returns the nearest ancestor directory containing ``pyproject.toml``
-    (the same anchor the lint CLIs walk to), so ``.env``/``chains.env``
-    resolution never depends on the process's current working
-    directory (SP-CONFIG-ENV-ANCHOR).  A systemd unit, a cron timer or
-    any foreign CWD must load the same files a repo-root invocation
-    would.  Falls back to the installed package's own top-level
-    directory when no ``pyproject.toml`` is found above it (e.g. a
-    wheel install with no source checkout alongside it) -- kept as a
-    plain module-level function, rather than a constant baked at
-    import time, so tests can monkeypatch it to point at an isolated
-    fixture tree.
-
-    Returns:
-        The absolute anchor directory for env-file resolution.
-    """
-    here = Path(__file__).resolve()
-    for candidate in here.parents:
-        if (candidate / "pyproject.toml").is_file():
-            return candidate
-    return here.parents[1]
-
-
 def _anchored_env_files(root: Path | None = None) -> tuple[Path, Path]:
-    """Return the anchored ``(chains.env, .env)`` pair, in load order.
-
-    ``chains.env`` first so its canonical ``MODEL_<CAPABILITY>``
-    definitions become the baseline that ``.env`` layers per-machine
-    secrets/overrides on top of (module docstring rationale).
+    """Return the env files :class:`Settings` reads, lowest precedence first.
 
     Args:
-        root: Anchor directory; defaults to :func:`_repo_root`.  Exposed
-            as a parameter (rather than inlining ``_repo_root()``) so
-            tests can point resolution at an isolated fixture tree
-            without touching the real deployed ``.env``.
+        root: Project root; defaults to :func:`project_root` of the
+            current working directory.  Exposed as a parameter so tests
+            can point resolution at an isolated fixture tree.
 
     Returns:
-        Absolute paths to ``chains.env`` and ``.env`` under ``root``.
+        ``(user_config_dir()/env, root/.repoach.env)`` as absolute paths.
     """
-    base = root if root is not None else _repo_root()
-    return (base / "chains.env", base / ".env")
+    base = root if root is not None else project_root()
+    return env_files(base)
+
+
+def _default_db_path() -> Path:
+    """Return the default ledger path for the current project.
+
+    Returns:
+        ``user_data_dir()/<project-slug>/repoach.db``
+        (see :func:`repoach.core.paths.default_db_path`).
+    """
+    return default_db_path(project_root())
 
 
 class Settings(BaseSettings):
     """Global runtime settings.
 
-    Values are read from environment variables with the ``REPOACH_`` prefix
-    or from a ``.env`` file at the project root.  Fields carrying an
-    explicit ``AliasChoices`` also accept the bare legacy name (CI
-    secrets use it), ``REPOACH_`` winning precedence. Provider API keys
-    live in the llm_proxy's own settings module, not here.
+    Values are read from environment variables with the ``REPOACH_``
+    prefix or from repoach's own env files (module docstring).  Fields
+    carrying an explicit ``AliasChoices`` also accept the bare legacy
+    name (CI secrets use it), ``REPOACH_`` winning precedence. Provider
+    API keys live in the llm_proxy's own settings module, not here.
     """
 
     model_config = SettingsConfigDict(
@@ -94,11 +86,10 @@ class Settings(BaseSettings):
         """Construct :class:`Settings`, anchoring env-file discovery.
 
         ``model_config.env_file`` is baked in once, at class-definition
-        time, so it cannot itself be recomputed against a monkeypatched
-        :func:`_repo_root` inside a test.  The anchor is therefore
-        applied here instead, through pydantic-settings' per-instance
-        ``_env_file`` override, at the moment a :class:`Settings` is
-        actually built.
+        time, so it cannot follow the working directory a command runs
+        from.  The anchor is therefore applied here instead, through
+        pydantic-settings' per-instance ``_env_file`` override, at the
+        moment a :class:`Settings` is actually built.
 
         Args:
             **data: Forwarded to
@@ -136,8 +127,14 @@ class Settings(BaseSettings):
     )
 
     db_path: Path = Field(
-        default=Path("./data/repoach.db"),
-        description="Path to the main SQLite database file (review-team persistence).",
+        default_factory=_default_db_path,
+        description=(
+            "Path to the main SQLite database file (review-team persistence). "
+            "Defaults to $XDG_DATA_HOME/repoach/<project-slug>/repoach.db, "
+            "one ledger per project, never inside the checkout or the "
+            "installed package (SP-UNIVERSAL-INSTALL G4). A relative "
+            "REPOACH_DB_PATH resolves against the project root."
+        ),
     )
 
     claude_code_routine_id: str | None = Field(
@@ -299,14 +296,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _anchor_relative_db_path(self) -> Settings:
-        """Anchor a relative ``db_path`` against :func:`_repo_root`.
+        """Anchor a relative ``db_path`` against the project root.
 
-        Mirrors ``_anchored_env_files``: a bare relative value (the
-        built-in default or an operator-supplied relative
-        ``REPOACH_DB_PATH`` override) must resolve identically
-        regardless of the process's current working directory. An
-        already-absolute value (the CI shape) passes through
-        untouched.
+        A relative ``REPOACH_DB_PATH`` override resolves against
+        :func:`repoach.core.paths.project_root` (the git toplevel of
+        the working directory), never against the installed package.
+        An already-absolute value (the CI shape) and the built-in
+        per-project default pass through untouched.
 
         Returns:
             The same :class:`Settings` instance, with ``db_path``
@@ -314,29 +310,7 @@ class Settings(BaseSettings):
             started out relative.
         """
         if not self.db_path.is_absolute():
-            self.db_path = (_repo_root() / self.db_path).resolve()
-        return self
-
-    @model_validator(mode="after")
-    def require_llm_proxy_base_url(self) -> Settings:
-        """Fail loud instead of silently defaulting the proxy base URL.
-
-        Returns:
-            The same :class:`Settings` instance.
-
-        Raises:
-            ValueError: When neither an anchored env file nor an
-                explicit ``REPOACH_LLM_PROXY_BASE_URL`` resolved a
-                value.  Booting anyway would POST the
-                ``llm_proxy_auth_token`` bearer secret at an
-                unconfigured, possibly wrong, host (SP-CONFIG-ENV-ANCHOR).
-        """
-        if not self.llm_proxy_base_url:
-            raise ValueError(
-                "llm_proxy_base_url unresolved -- no anchored env file and "
-                "no REPOACH_LLM_PROXY_BASE_URL; refusing to default to a "
-                "wrong proxy"
-            )
+            self.db_path = (project_root() / self.db_path).resolve()
         return self
 
     @model_validator(mode="after")
@@ -385,3 +359,35 @@ def get_settings() -> Settings:
         _settings = Settings()
         _settings.ensure_dirs()
     return _settings
+
+
+def require_llm_proxy_base_url(settings: Settings) -> str:
+    """Return the gateway base URL, failing loud when none is configured.
+
+    Called by the code that builds a gateway client, not at
+    :class:`Settings` construction: a command that never talks to the
+    gateway (``repoach --version``, ``repoach doctor``) must not need
+    one (SP-UNIVERSAL-INSTALL G2).  Reads the attribute only, so test
+    doubles standing in for :class:`Settings` keep working.
+
+    Args:
+        settings: The resolved settings (or a stand-in exposing
+            ``llm_proxy_base_url``).
+
+    Returns:
+        The configured ``llm_proxy_base_url``.
+
+    Raises:
+        ValueError: When no env file and no explicit
+            ``REPOACH_LLM_PROXY_BASE_URL`` resolved a value.  Proceeding
+            anyway would POST the ``llm_proxy_auth_token`` bearer secret
+            at an unconfigured, possibly wrong, host (SP-CONFIG-ENV-ANCHOR).
+    """
+    base_url = settings.llm_proxy_base_url
+    if not base_url:
+        raise ValueError(
+            "llm_proxy_base_url unresolved -- set REPOACH_LLM_PROXY_BASE_URL "
+            "in the environment, ~/.config/repoach/env or <project>/.repoach.env; "
+            "refusing to default to a wrong proxy"
+        )
+    return base_url
