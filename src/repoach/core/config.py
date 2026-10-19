@@ -26,7 +26,8 @@ from typing import Any, Literal
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .paths import default_db_path, env_files, project_root
+from . import paths
+from .paths import env_files, project_root
 
 _INLINE_COMMENT_RE = re.compile(r"\s+#\s.*$")
 """Regex used by :meth:`Settings._strip_inline_comments` to scrub trailing
@@ -39,8 +40,12 @@ when reading the file itself; env-vars already in ``os.environ`` bypass
 that path."""
 
 
-def _anchored_env_files(root: Path | None = None) -> tuple[Path, Path]:
+def _anchored_env_files(root: Path | None = None) -> tuple[Path, ...]:
     """Return the env files :class:`Settings` reads, lowest precedence first.
+
+    In a repoach checkout that has not run ``repoach migrate-config``
+    yet, its legacy ``.env`` takes the place of ``.repoach.env``, with a
+    one-line deprecation notice; a foreign project's ``.env`` never does.
 
     Args:
         root: Project root; defaults to :func:`project_root` of the
@@ -48,20 +53,39 @@ def _anchored_env_files(root: Path | None = None) -> tuple[Path, Path]:
             can point resolution at an isolated fixture tree.
 
     Returns:
-        ``(user_config_dir()/env, root/.repoach.env)`` as absolute paths.
+        ``(user_config_dir()/env, root/.repoach.env)`` as absolute
+        paths, the second replaced by ``root/.env`` in the legacy case.
     """
     base = root if root is not None else project_root()
-    return env_files(base)
+    user_env, project_env = env_files(base)
+    legacy = paths.legacy_env_file(base)
+    if legacy is None:
+        return (user_env, project_env)
+    paths.notify_deprecated(
+        f"reading legacy {legacy}; move the CLI settings to {project_env} or {user_env} "
+        "(run 'repoach migrate-config')"
+    )
+    return (user_env, legacy)
 
 
 def _default_db_path() -> Path:
     """Return the default ledger path for the current project.
 
     Returns:
-        ``user_data_dir()/<project-slug>/repoach.db``
-        (see :func:`repoach.core.paths.default_db_path`).
+        The ledger shared with the gateway
+        (see :func:`repoach.core.paths.resolve_db_path`).
     """
-    return default_db_path(project_root())
+    return paths.resolve_db_path(project_root())
+
+
+def _default_logs_dir() -> Path:
+    """Return the default diagnostic-dump directory for the current project.
+
+    Returns:
+        ``user_data_dir()/<project-slug>/logs``
+        (see :func:`repoach.core.paths.default_logs_dir`).
+    """
+    return paths.default_logs_dir(project_root())
 
 
 class Settings(BaseSettings):
@@ -134,6 +158,16 @@ class Settings(BaseSettings):
             "one ledger per project, never inside the checkout or the "
             "installed package (SP-UNIVERSAL-INSTALL G4). A relative "
             "REPOACH_DB_PATH resolves against the project root."
+        ),
+    )
+    logs_dir: Path = Field(
+        default_factory=_default_logs_dir,
+        description=(
+            "Directory for diagnostic dumps (parse failures, rejected Coder "
+            "fixes). Defaults to $XDG_DATA_HOME/repoach/<project-slug>/logs, "
+            "never under the installed package; CI points it at the "
+            "workspace's logs/ so the artifact upload finds the files. A "
+            "relative value resolves against the project root."
         ),
     )
 
@@ -295,22 +329,25 @@ class Settings(BaseSettings):
     )
 
     @model_validator(mode="after")
-    def _anchor_relative_db_path(self) -> Settings:
-        """Anchor a relative ``db_path`` against the project root.
+    def _anchor_relative_paths(self) -> Settings:
+        """Anchor a relative ``db_path`` / ``logs_dir`` against the project root.
 
-        A relative ``REPOACH_DB_PATH`` override resolves against
+        A relative ``REPOACH_DB_PATH`` / ``REPOACH_LOGS_DIR`` resolves against
         :func:`repoach.core.paths.project_root` (the git toplevel of
         the working directory), never against the installed package.
         An already-absolute value (the CI shape) and the built-in
         per-project default pass through untouched.
 
         Returns:
-            The same :class:`Settings` instance, with ``db_path``
+            The same :class:`Settings` instance, with each path
             replaced by its anchored, resolved, absolute form when it
             started out relative.
         """
+        root = project_root()
         if not self.db_path.is_absolute():
-            self.db_path = (project_root() / self.db_path).resolve()
+            self.db_path = (root / self.db_path).resolve()
+        if not self.logs_dir.is_absolute():
+            self.logs_dir = (root / self.logs_dir).resolve()
         return self
 
     @model_validator(mode="after")
@@ -334,13 +371,6 @@ class Settings(BaseSettings):
             )
         return self
 
-    def ensure_dirs(self) -> None:
-        """Create the parent directory of :attr:`db_path`.
-
-        Idempotent and safe to call repeatedly.
-        """
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
 
 _settings: Settings | None = None
 
@@ -348,8 +378,10 @@ _settings: Settings | None = None
 def get_settings() -> Settings:
     """Return the process-wide :class:`Settings` instance.
 
-    The settings object is built lazily on the first call ; persistent
-    directories are created at that point.
+    The settings object is built lazily on the first call.  Building it
+    creates no directory: each store creates its database's parent on
+    first write, so a command that only reads configuration leaves
+    nothing behind in ``$HOME`` (SP-UNIVERSAL-INSTALL).
 
     Returns:
         The cached :class:`Settings` singleton.
@@ -357,7 +389,6 @@ def get_settings() -> Settings:
     global _settings
     if _settings is None:
         _settings = Settings()
-        _settings.ensure_dirs()
     return _settings
 
 

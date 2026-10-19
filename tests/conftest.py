@@ -48,3 +48,17 @@ def _hermetic_xdg_dirs(
     base = tmp_path_factory.getbasetemp()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(base / "xdg_config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(base / "xdg_data"))
+
+
+@pytest.fixture(autouse=True)
+def _no_legacy_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ignore a repoach checkout's legacy ``.env`` and ``data/repoach.db``.
+
+    SP-UNIVERSAL-INSTALL keeps honouring both in repoach's own checkout
+    (with a deprecation notice). The suite runs from such a checkout, so
+    without this every ``Settings()`` would read the developer's real
+    ``.env`` and point at the live ledger. Tests of the legacy path
+    restore the real functions locally.
+    """
+    monkeypatch.setattr("repoach.core.paths.legacy_env_file", lambda _root: None)
+    monkeypatch.setattr("repoach.core.paths.legacy_db_path", lambda _root: None)

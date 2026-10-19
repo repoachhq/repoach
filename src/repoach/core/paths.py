@@ -16,8 +16,14 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
+import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
+
+import structlog
+
+_log = structlog.get_logger(__name__)
 
 APP_DIR_NAME = "repoach"
 """Directory name used under both XDG base directories."""
@@ -30,6 +36,18 @@ USER_ENV_FILE_NAME = "env"
 
 PROJECT_ENV_FILE_NAME = ".repoach.env"
 """Dotenv file read from :func:`project_root`; never the host's ``.env``."""
+
+LOCAL_SLUG_PREFIX = "local"
+"""First slug segment for projects with no forge remote (path hash, ``file://``)."""
+
+LEGACY_ENV_FILE_NAME = ".env"
+"""Pre-SP-UNIVERSAL-INSTALL env file, honoured only in a repoach checkout."""
+
+LEGACY_DB_RELATIVE_PATH = Path("data") / DB_FILE_NAME
+"""Pre-SP-UNIVERSAL-INSTALL ledger location, relative to the project root."""
+
+REPOACH_DISTRIBUTION_NAME = "repoach"
+"""``[project].name`` identifying repoach's own checkout."""
 
 _SCP_REMOTE_RE = re.compile(r"^(?:[^@/]+@)?(?P<host>[^:/]+):(?P<path>.+)$")
 """``user@host:owner/repo.git`` — the scp-like syntax git accepts for SSH."""
@@ -205,10 +223,14 @@ def _origin_url(root: Path) -> str | None:
 
 
 def _slug_from_remote(url: str) -> str | None:
-    """Turn a git remote URL into ``host/owner/.../repo``.
+    """Turn a git remote URL into ``host/owner/.../repo``, lower-cased.
 
     Credentials, ports and the ``.git`` suffix are dropped, so a token
-    embedded in an HTTPS remote never reaches a filesystem path.
+    embedded in an HTTPS remote never reaches a filesystem path.  Every
+    segment is lower-cased (forges treat owner and repository names
+    case-insensitively, so ``Owner/Repo`` and ``owner/repo`` share one
+    ledger), and a ``file://`` remote is filed under ``local/`` so it
+    can never collide with a forge host.
 
     Args:
         url: A remote URL in URL form or scp-like SSH form.
@@ -218,7 +240,7 @@ def _slug_from_remote(url: str) -> str | None:
     """
     if "://" in url:
         parts = urlsplit(url)
-        host = parts.hostname or ""
+        host = LOCAL_SLUG_PREFIX if parts.scheme == "file" else (parts.hostname or "")
         path = parts.path
     else:
         match = _SCP_REMOTE_RE.match(url)
@@ -226,10 +248,11 @@ def _slug_from_remote(url: str) -> str | None:
             return None
         host = match.group("host")
         path = match.group("path")
-    path = path.strip("/")
-    path = path.removesuffix(".git")
-    segments = [host.lower(), *path.split("/")]
-    cleaned = [_SAFE_SEGMENT_RE.sub("-", segment).strip(".-") for segment in segments]
+    if not host:
+        return None
+    path = path.strip("/").removesuffix(".git")
+    segments = [host, *path.split("/")]
+    cleaned = [_SAFE_SEGMENT_RE.sub("-", segment).strip(".-").lower() for segment in segments]
     cleaned = [segment for segment in cleaned if segment]
     if len(cleaned) < 2:
         return None
@@ -259,7 +282,7 @@ def project_slug(root: Path) -> str:
     absolute = root.resolve()
     digest = hashlib.sha256(str(absolute).encode("utf-8")).hexdigest()[:16]
     name = _SAFE_SEGMENT_RE.sub("-", absolute.name).strip(".-") or "root"
-    return f"local/{name}-{digest}"
+    return f"{LOCAL_SLUG_PREFIX}/{name}-{digest}"
 
 
 def default_db_path(root: Path) -> Path:
@@ -275,3 +298,132 @@ def default_db_path(root: Path) -> Path:
         NotARepositoryError: The ``git`` executable is not available.
     """
     return user_data_dir() / project_slug(root) / DB_FILE_NAME
+
+
+def is_repoach_checkout(root: Path) -> bool:
+    """Return whether ``root`` is a checkout of repoach itself.
+
+    Decided by ``[project].name`` in ``root/pyproject.toml``; a missing
+    or unreadable file means "not repoach".  A malformed file is logged
+    and treated as foreign rather than aborting the command.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        True when the project's distribution name is ``repoach``.
+    """
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        _log.warning("paths.pyproject_unreadable", path=str(pyproject), error=str(exc)[:200])
+        return False
+    project = data.get("project")
+    return isinstance(project, dict) and project.get("name") == REPOACH_DISTRIBUTION_NAME
+
+
+def legacy_env_file(root: Path) -> Path | None:
+    """Return the pre-SP-UNIVERSAL-INSTALL ``.env`` still to honour, if any.
+
+    Only a repoach checkout's own ``.env`` qualifies, and only until a
+    ``.repoach.env`` exists: a foreign project's ``.env`` is never
+    repoach's configuration.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        ``root/.env`` when it must still be read, otherwise None.
+    """
+    legacy = root / LEGACY_ENV_FILE_NAME
+    if (root / PROJECT_ENV_FILE_NAME).exists() or not legacy.is_file():
+        return None
+    return legacy if is_repoach_checkout(root) else None
+
+
+def legacy_db_path(root: Path) -> Path | None:
+    """Return the pre-SP-UNIVERSAL-INSTALL ledger still in use, if any.
+
+    A regular ``root/data/repoach.db`` file is a live ledger written
+    before the XDG default; a symlink there is what
+    ``repoach migrate-config`` leaves behind and is not legacy.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        The legacy ledger path, or None.
+    """
+    legacy = root / LEGACY_DB_RELATIVE_PATH
+    if legacy.is_symlink() or not legacy.is_file():
+        return None
+    return legacy
+
+
+def resolve_db_path(root: Path) -> Path:
+    """Return the ledger the CLI and the gateway share for ``root``.
+
+    ``REPOACH_DB_PATH`` from the process environment wins (relative
+    values resolve against ``root``); then a legacy
+    ``root/data/repoach.db``, with a one-line deprecation notice; then
+    :func:`default_db_path`.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        The absolute ledger path.
+
+    Raises:
+        NotARepositoryError: The ``git`` executable is not available.
+    """
+    explicit = os.environ.get("REPOACH_DB_PATH", "")
+    if explicit:
+        candidate = Path(explicit).expanduser()
+        return candidate if candidate.is_absolute() else (root / candidate).resolve()
+    legacy = legacy_db_path(root)
+    if legacy is not None:
+        notify_deprecated(
+            f"using legacy ledger {legacy}; the default is now {default_db_path(root)} "
+            "(run 'repoach migrate-config')"
+        )
+        return legacy
+    return default_db_path(root)
+
+
+_NOTIFIED: set[str] = set()
+"""Deprecation notices already printed by this process."""
+
+
+def notify_deprecated(message: str) -> None:
+    """Print ``repoach: deprecated: <message>`` to stderr once per process.
+
+    Args:
+        message: The notice, naming the new location to move to.
+    """
+    if message in _NOTIFIED:
+        return
+    _NOTIFIED.add(message)
+    print(f"repoach: deprecated: {message}", file=sys.stderr)
+
+
+def default_logs_dir(root: Path) -> Path:
+    """Return the default diagnostic-dump directory for ``root``.
+
+    Parse-failure and rejected-fix dumps land here unless
+    ``REPOACH_LOGS_DIR`` says otherwise (CI points it at the workspace
+    so its artifact upload keeps finding them).
+
+    Args:
+        root: The project root.
+
+    Returns:
+        ``user_data_dir()/<project_slug(root)>/logs``.
+
+    Raises:
+        NotARepositoryError: The ``git`` executable is not available.
+    """
+    return user_data_dir() / project_slug(root) / "logs"
