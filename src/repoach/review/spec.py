@@ -15,7 +15,7 @@ adding a new spec doc is the only step needed to make every NIM
 bot in the loop spec-aware.
 
 Module-level constants :
-    - :data:`SPECS_DIR` is the repository-root-relative directory
+    - :data:`SPECS_DIR` is the default repository-root-relative directory
       holding spec markdown plans.
     - ``_PLAN_HARD_CAP_CHARS`` caps how many characters of a spec
       plan we feed into a NIM prompt.  Each bot's prompt budget is
@@ -36,10 +36,37 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.logging import get_logger
+from ..project.config import DEFAULT_SPECS_DIR
+from ..project.config import specs_dir as configured_specs_dir
 
 _log = get_logger(__name__)
 
-SPECS_DIR = Path("docs/specs")
+SPECS_DIR = Path(DEFAULT_SPECS_DIR)
+
+
+def specs_dir_for(root: Path | None = None) -> Path:
+    """Return the spec directory of the repository at ``root``.
+
+    ``[repoach].specs_dir`` of ``root/repoach.toml``
+    (SP-UNIVERSAL-PROJECT-CONFIG G5), :data:`SPECS_DIR` without a file.
+
+    Args:
+        root: Repository root; defaults to ``Path.cwd()``.
+
+    Returns:
+        The directory, joined onto ``root``.
+
+    Raises:
+        ConfigError: ``root/repoach.toml`` is invalid.
+    """
+    return configured_specs_dir(root or Path.cwd())
+
+
+def _display(root: Path | None) -> str:
+    """Return the configured spec directory as written, for messages."""
+    base = root or Path.cwd()
+    return str(specs_dir_for(base).relative_to(base))
+
 
 _PLAN_HARD_CAP_CHARS: int = 12_000
 
@@ -104,7 +131,7 @@ def _scan_known_spec_ids(root: Path | None = None) -> tuple[str, ...]:
     legal prefixes.  Sorting longest-first deterministically resolves
     multi-scope specs (``SP-WA-AGENT-A2`` vs ``SP-WA-AGENT``).
     """
-    base = (root or Path.cwd()) / SPECS_DIR
+    base = specs_dir_for(root)
     if not base.is_dir():
         return ()
     ids: set[str] = set()
@@ -230,7 +257,7 @@ def _resolve_plan_file(spec_id: str, *, root: Path | None = None) -> Path | None
     Returns:
         Absolute path to the matching markdown file, or ``None``.
     """
-    base = (root or Path.cwd()) / SPECS_DIR
+    base = specs_dir_for(root)
     if not base.is_dir():
         return None
     matches: list[Path] = []
@@ -262,7 +289,7 @@ def load_spec(spec_id: str, *, root: Path | None = None) -> SpecPlan:
     canonical = _normalise_id(spec_id)
     path = _resolve_plan_file(canonical, root=root)
     if path is None:
-        raise FileNotFoundError(f"no spec doc matches {canonical!r} under {SPECS_DIR}")
+        raise FileNotFoundError(f"no spec doc matches {canonical!r} under {_display(root)}")
     raw = path.read_text(encoding="utf-8")
     if len(raw) > _PLAN_HARD_CAP_CHARS:
         raw = (

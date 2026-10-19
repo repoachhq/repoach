@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from repoach.arch import Registry, has_frontmatter, load_registry
+from repoach.project.config import load_project_config
 
 _REPO_TOP = "repoach"
 
@@ -201,19 +202,28 @@ def _check_file(
 
 
 def load_frontier_suppress(repo_root: Path) -> frozenset[str]:
-    """Read the known-legacy suppression list from ``pyproject.toml``.
+    """Read the known-legacy suppression list.
 
-    ``[tool.repoach.arch] frontier_suppress`` lists artifacts (module
-    paths or resource keys) whose frontier reports are silenced — the
-    golden-rule home for exceptions. Keeps the day-one wall of un-owned
-    legacy from drowning the signal.
+    ``[arch].frontier_suppress`` in ``repoach.toml`` lists artifacts
+    (module paths or resource keys) whose frontier reports are silenced
+    — the golden-rule home for exceptions. Keeps the day-one wall of
+    un-owned legacy from drowning the signal. When ``repoach.toml``
+    does not set the key, the pre-SP-UNIVERSAL-PROJECT-CONFIG location
+    ``[tool.repoach.arch] frontier_suppress`` in ``pyproject.toml`` is
+    still read (kept for one release, G6).
 
     Args:
         repo_root: The repository root.
 
     Returns:
         The suppressed artifacts, empty when unconfigured.
+
+    Raises:
+        ConfigError: ``repoach.toml`` is invalid.
     """
+    project = load_project_config(repo_root)
+    if project.is_set("arch.frontier_suppress"):
+        return frozenset(project.arch.frontier_suppress)
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.exists():
         return frozenset()

@@ -17,6 +17,7 @@ from ..arch.cli import arch_app
 from ..core.config import get_settings
 from ..core.logging import configure_logging
 from ..lint import edge_honesty
+from ..project.config import specs_dir as configured_specs_dir
 from .chain_status import chain_status
 from .doctor_cmds import doctor, project_root_or_exit
 from .init_cmds import init
@@ -38,14 +39,21 @@ def arch_check(
         None, "--base", help="Diff against this ref (three-dot); defaults to integration_branch."
     ),
     staged: bool = typer.Option(False, "--staged", help="Check the staged index (pre-commit)."),
-    specs_dir: Path = typer.Option(
-        Path("docs/specs"), "--specs-dir", help="Directory of spec markdown files."
+    specs_dir: Path | None = typer.Option(
+        None,
+        "--specs-dir",
+        help="Directory of spec markdown files (default: [repoach].specs_dir, docs/specs).",
     ),
 ) -> None:
     """Fail when a changed file's couplings are missing from its depends_on."""
     repo_root = project_root_or_exit()
     base = base if base is not None else get_settings().integration_branch
-    report = edge_honesty.run(base=base, staged=staged, specs_dir=specs_dir, repo_root=repo_root)
+    report = edge_honesty.run(
+        base=base,
+        staged=staged,
+        specs_dir=specs_dir or configured_specs_dir(repo_root),
+        repo_root=repo_root,
+    )
     for line in edge_honesty.report_lines(report):
         typer.echo(line, err=True)
     if not report.ok:

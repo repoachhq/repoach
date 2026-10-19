@@ -18,7 +18,7 @@ from pathlib import Path
 
 from repoach.arch import load_registry
 
-from .spec import SPECS_DIR, _normalise_id
+from .spec import _normalise_id, specs_dir_for
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ def load_governed_spec(spec_id: str, *, root: Path | None = None) -> GovernedSpe
             malformed — surfaced loudly, matching the CI gate's stance.
     """
     canonical = _normalise_id(spec_id)
-    specs_dir = (root or Path.cwd()) / SPECS_DIR
+    specs_dir = specs_dir_for(root)
     registry = load_registry(specs_dir)
     node = registry.nodes.get(canonical)
     if node is None or node.frontier:
