@@ -34,6 +34,7 @@ from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.gh_client import GhCli
 from ..review.orchestrator import run_review
+from .doctor_cmds import project_root_or_exit
 
 review_app = typer.Typer(
     help="Review-bot team operations (NIM-only, no Anthropic quota).",
@@ -91,6 +92,7 @@ def review_pr(
     the same shape regardless of which mode they ran in
     (SP-AUTO-REVIEW-V2-MIGRATION).
     """
+    project_root_or_exit()
     team = run_review(pr_number, post=not dry_run)
     payload = {
         "pr_number": team.pr_number,
@@ -146,6 +148,7 @@ def review_report(
     * ``6`` — the GitHub API call itself failed (transient: rate
       limit, network); the archive may well exist.
     """
+    project_root_or_exit()
     gh = GhCli()
     fetch = gh.fetch_archive_comment_with_status(pr_number)
     if fetch.api_error is not None:
@@ -207,6 +210,7 @@ def review_fix(
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
     """
+    project_root_or_exit()
     fr = run_coder_fix_from_findings(pr_number)
     typer.echo(
         json.dumps(
@@ -258,6 +262,7 @@ def review_merge(
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
     """
+    project_root_or_exit()
     result = run_auto_merge(pr_number)
     typer.echo(
         json.dumps(
@@ -288,6 +293,7 @@ def review_insights(
     that reached a verdict and were confirmed real rather than refuted.
     Read-only; always exits 0.
     """
+    project_root_or_exit()
     from ..review.review_lessons import gather_insights
 
     insights = gather_insights(Path(get_settings().db_path), pr_number=pr_number)
@@ -335,6 +341,7 @@ def review_gate(
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
     """
+    project_root_or_exit()
     try:
         evaluation = evaluate_merge_gate(pr_number)
     except Exception as exc:
@@ -434,6 +441,7 @@ def review_develop(
       * ``6`` — self-verify gate failed (mechanical or judge).
       * ``7`` — decomposition / parent supersession failed.
     """
+    project_root_or_exit()
     if explore_via not in ("proxy", "claude_cli"):
         typer.echo(f"--explore-via must be 'proxy' or 'claude_cli', got {explore_via!r}", err=True)
         raise typer.Exit(code=2)
@@ -536,6 +544,7 @@ def review_plan(
       * ``2`` — bad ``--explore-via`` value.
       * ``5`` — spec id not found (no doc matches).
     """
+    project_root_or_exit()
     from ..review.planner import run_planner_session
 
     if explore_via not in ("proxy", "claude_cli"):
@@ -587,7 +596,9 @@ def review_hallucinations(
 
     Exits ``0`` whether or not any rows are present.
     """
+    project_root_or_exit()
     db_path = Path(get_settings().db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     where = "WHERE pr_number = :pr_number" if pr_number is not None else ""
     bind = {"pr_number": pr_number} if pr_number is not None else {}
