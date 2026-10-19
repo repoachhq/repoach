@@ -18,7 +18,7 @@ from repoach.core import config
 from repoach.forge import ForgeError, ForgeUnavailableError, MergeMethod, select_forge
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
-from repoach.forge.select import infer_forge_from_url, load_forge_config
+from repoach.forge.select import infer_forge_from_url, merge_preferences
 
 
 @pytest.fixture(autouse=True)
@@ -134,8 +134,8 @@ def test_bot_username_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         '[review]\nbot_username = "project_1_bot"\n',
     )
     assert select_forge(cwd=root).bot_username == "project_1_bot"
-    cfg = load_forge_config(root)
-    assert cfg.merge_method is MergeMethod.MERGE and cfg.remove_source_branch is False
+    method, remove_branch = merge_preferences(root)
+    assert method is MergeMethod.MERGE and remove_branch is False
 
 
 def test_explicit_env_bot_login_applies_to_gitlab(
