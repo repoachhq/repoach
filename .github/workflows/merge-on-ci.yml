@@ -101,12 +101,19 @@ jobs:
       # tree as read-only DATA via a worktree.  The installed package
       # (the code that EXECUTES) stays main's: cwd never changes
       # import resolution, and ls-remote works from a worktree.
+      # The self-hosted runner wipes _temp between jobs but the
+      # registration lives in the PERSISTENT checkout's .git/worktrees,
+      # so a previous job's head-tree is "missing but already
+      # registered" and ``worktree add`` exits 128.  Prune it first.
       - name: Materialize the PR head tree (data only)
         if: steps.resolve.outputs.pr_number != ''
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           git fetch origin "$HEAD_SHA"
+          git worktree remove --force "${RUNNER_TEMP}/head-tree" 2>/dev/null || true
+          rm -rf "${RUNNER_TEMP}/head-tree"
+          git worktree prune
           git worktree add --detach "${RUNNER_TEMP}/head-tree" "$HEAD_SHA"
 
       # SP-LEDGER-TRANSPORT with PROVENANCE: the artifacts API lists
@@ -161,6 +168,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
+          # This lane runs MAIN's code, whose Settings still refuses to
+          # build without a gateway URL until the release carrying the
+          # build-time guard; the merge gate itself never calls it.
+          REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           REPOACH_LOGS_DIR: ${{ github.workspace }}/logs
           # Fail fast here too: the trigger already guarantees CI
           # completed at the resolved head; a mid-flight push fails
@@ -179,3 +190,11 @@ jobs:
             exit 0
           fi
           exit "$rc"
+
+      # Symmetric cleanup: never leave a registration behind for the
+      # next job on this persistent checkout, whatever happened above.
+      - name: Release the PR head tree
+        if: always()
+        run: |
+          git worktree remove --force "${RUNNER_TEMP}/head-tree" 2>/dev/null || true
+          git worktree prune
