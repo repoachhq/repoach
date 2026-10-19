@@ -18,6 +18,7 @@ from ..core.config import get_settings
 from ..core.logging import configure_logging
 from ..lint import edge_honesty
 from .chain_status import chain_status
+from .doctor_cmds import doctor, project_root_or_exit
 from .init_cmds import init
 from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
@@ -41,7 +42,7 @@ def arch_check(
     ),
 ) -> None:
     """Fail when a changed file's couplings are missing from its depends_on."""
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = project_root_or_exit()
     base = base if base is not None else get_settings().integration_branch
     report = edge_honesty.run(base=base, staged=staged, specs_dir=specs_dir, repo_root=repo_root)
     for line in edge_honesty.report_lines(report):
@@ -57,20 +58,60 @@ app.command(name="develop")(review_develop)
 app.command(name="plan")(review_plan)
 app.command(name="chain-status")(chain_status)
 app.command(name="init")(init)
+app.command(name="doctor")(doctor)
+
+SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset({"version", "doctor"})
+"""Subcommands that must run with no configuration at all.
+
+Logging setup builds :class:`~repoach.core.config.Settings`; these
+commands skip it so a bare tool install answers them
+(SP-UNIVERSAL-INSTALL G1/G6)."""
+
+
+def _version_line() -> str:
+    """Return the one-line version banner, ``repoach <version>``."""
+    from .. import __version__
+
+    return f"repoach {__version__}"
+
+
+def _print_version(requested: bool) -> None:
+    """Eager ``--version`` handler: print the banner and stop.
+
+    Runs before :func:`_bootstrap`'s body, so no settings are built.
+
+    Args:
+        requested: Whether ``--version`` was passed.
+
+    Raises:
+        typer.Exit: Always, with code 0, once the banner is printed.
+    """
+    if requested:
+        typer.echo(_version_line())
+        raise typer.Exit(code=0)
 
 
 @app.callback()
-def _bootstrap() -> None:
-    """Configure logging once for every CLI invocation."""
+def _bootstrap(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_print_version,
+        is_eager=True,
+        help="Print the installed Repoach version and exit.",
+    ),
+) -> None:
+    """Configure logging once for every CLI invocation that needs settings."""
+    if ctx.invoked_subcommand in SETTINGS_FREE_COMMANDS:
+        return
     configure_logging()
 
 
 @app.command("version")
 def show_version() -> None:
-    """Print the installed Repoach version."""
-    from .. import __version__
-
-    typer.echo(__version__)
+    """Print the installed Repoach version (alias of ``--version``)."""
+    typer.echo(_version_line())
 
 
 def _probe_client() -> httpx.AsyncClient:
