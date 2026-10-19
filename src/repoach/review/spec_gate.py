@@ -36,6 +36,8 @@ from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
+from ..gates.selectors import SelectorKind, parse_selector
+from ..gates.selectors import selector_present as gate_selector_present
 from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
 _log = get_logger(__name__)
@@ -127,8 +129,14 @@ def promised_present(repo_root: Path, selector: str) -> bool:
         defines ``def <trailing_name>(`` or
         ``async def <trailing_name>(`` at any indentation; ``False``
         when the file is absent, the file cannot be read, or the
-        trailing name is not defined.
+        trailing name is not defined. Vitest, Go and ``cmd:``
+        selectors are judged by
+        :func:`repoach.gates.selectors.selector_present` instead
+        (SP-UNIVERSAL-GATES G8).
     """
+    parsed = parse_selector(selector)
+    if parsed is not None and parsed.kind is not SelectorKind.PYTEST:
+        return gate_selector_present(repo_root, parsed)
     file_part, _, node = selector.partition("::")
     target = repo_root / file_part
     if not target.is_file():
