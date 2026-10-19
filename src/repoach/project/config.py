@@ -91,7 +91,10 @@ class _Section(BaseModel):
 
 
 def _relative_inside(value: str) -> str:
-    """Refuse a path that is absolute or climbs out of the repository.
+    """Refuse a path that is absolute, home-relative or climbs out of the repository.
+
+    A leading ``~`` is refused like an absolute path: the shell, and
+    ``Path.expanduser`` downstream, would turn it into one.
 
     Args:
         value: A repository-relative path as written in the file.
@@ -100,13 +103,21 @@ def _relative_inside(value: str) -> str:
         The value unchanged.
 
     Raises:
-        ValueError: The path is absolute or has a ``..`` segment.
+        ValueError: The path is absolute, starts with ``~`` or has a
+            ``..`` segment.
     """
     if not value:
         return value
     posix = PurePosixPath(value.replace("\\", "/"))
-    if posix.is_absolute() or Path(value).is_absolute() or ".." in posix.parts:
-        raise ValueError(f"{value!r} must be a path relative to the repository root, without '..'")
+    if (
+        posix.is_absolute()
+        or Path(value).is_absolute()
+        or value.startswith("~")
+        or ".." in posix.parts
+    ):
+        raise ValueError(
+            f"{value!r} must be a path relative to the repository root, without '~' or '..'"
+        )
     return value
 
 

@@ -136,6 +136,8 @@ class TestValidation:
             ("[repoach]\nschema = 2\n", "repoach.schema", 2, "newer"),
             ("[repoach]\nspecs_dir = '/etc'\n", "repoach.specs_dir", 2, "relative"),
             ("[state]\ndb_path = '../elsewhere.db'\n", "state.db_path", 2, "relative"),
+            ("[state]\ndb_path = '~/ledger.db'\n", "state.db_path", 2, "'~'"),
+            ("[state]\nlogs_dir = '~root/logs'\n", "state.logs_dir", 2, "relative"),
             ("[review]\nspec_sources = ['flag', 'title']\n", "review.spec_sources", 2, ""),
             ("[nosuch]\nx = 1\n", "nosuch", None, "unknown key"),
         ],
