@@ -37,7 +37,18 @@ from .runner import CommandResult
 ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
 """HTML marker identifying the sticky review-archive comment / note."""
 
-PullRequestState = Literal["open", "merged", "closed"]
+PullRequestState = Literal["open", "merged", "closed", "locked", "unknown"]
+MergeRefusal = Literal[
+    "pending",
+    "not_approved",
+    "discussions_not_resolved",
+    "conflict",
+    "head_moved",
+    "not_open",
+    "refused",
+]
+WRITABLE_STATES: frozenset[str] = frozenset({"open"})
+"""States a write (post, merge) may target; ``locked``/``unknown`` refuse (G7)."""
 CheckState = Literal["success", "failure", "pending", "missing"]
 
 
@@ -94,13 +105,22 @@ class ForgeMergeRefusedError(ForgeError):
     """The forge refused the merge (pipeline, conflicts, protection).
 
     Attributes:
-        pending: True when the refusal is a pipeline still running — the
-            auto-merge maps that to a non-fatal skip, never ``FAILED``.
+        reason: Why, read from forge facts rather than error text:
+            ``pending`` (pipeline not succeeded yet), ``not_approved``,
+            ``discussions_not_resolved``, ``conflict``, ``head_moved``
+            (the head is not the SHA the gate decided at), ``not_open``
+            (merged / closed / locked / unknown state) or ``refused``
+            (the forge said no and no fact explains why).
     """
 
-    def __init__(self, message: str, *, pending: bool = False) -> None:
+    def __init__(self, message: str, *, reason: MergeRefusal = "refused") -> None:
         super().__init__(message)
-        self.pending = pending
+        self.reason: MergeRefusal = reason
+
+    @property
+    def pending(self) -> bool:
+        """True when the refusal is a pipeline that has not succeeded yet."""
+        return self.reason == "pending"
 
 
 class _Model(BaseModel):
@@ -117,7 +137,9 @@ class PullRequest(_Model):
         title: Title.
         body: Description markdown (``""`` when absent).
         author: Login / username of the author (``""`` when absent).
-        state: ``open``, ``merged`` or ``closed``.
+        state: ``open``, ``merged``, ``closed``, ``locked`` (GitLab, mid
+            merge) or ``unknown`` (a value the forge added); only ``open``
+            accepts writes (:data:`WRITABLE_STATES`).
         head_sha: Head commit SHA (``""`` when not reported).
         head_ref: Source branch name (kept even after deletion).
         base_ref: Target branch name.
@@ -395,8 +417,15 @@ class Forge(Protocol):
         """Read a failed check's log; ``None`` when ``link`` names no log."""
         ...
 
-    def merge(self, number: int, *, method: MergeMethod, delete_branch: bool) -> MergeResult:
-        """Merge the change with ``method``."""
+    def merge(
+        self,
+        number: int,
+        *,
+        method: MergeMethod,
+        delete_branch: bool,
+        head_sha: str | None = None,
+    ) -> MergeResult:
+        """Merge the change with ``method``, only at ``head_sha`` when given."""
         ...
 
     def branch_protection(self, branch: str) -> BranchProtection:

@@ -50,6 +50,7 @@ from .protocol import (
     ForgeNotFoundError,
     ForgeUnavailableError,
     MergeMethod,
+    MergeRefusal,
     MergeResult,
     PullRequest,
     PullRequestState,
@@ -71,7 +72,7 @@ _MR_URL_RE = re.compile(r"/merge_requests/(\d+)")
 
 _STATE_TO_PROTOCOL: dict[str, PullRequestState] = {
     "opened": "open",
-    "locked": "open",
+    "locked": "locked",
     "merged": "merged",
     "closed": "closed",
 }
@@ -98,13 +99,25 @@ _JOB_BUCKETS: dict[str, str] = {
     "manual": "skipping",
 }
 
-_MERGE_PENDING_MARKERS = (
-    "pipeline is running",
-    "pipeline pending",
-    "pipeline must succeed",
-    "ci must pass",
-    "pipeline has not succeeded",
-)
+_DETAILED_STATUS_REFUSALS: dict[str, MergeRefusal] = {
+    "ci_must_pass": "pending",
+    "ci_still_running": "pending",
+    "checking": "pending",
+    "not_approved": "not_approved",
+    "discussions_not_resolved": "discussions_not_resolved",
+    "conflict": "conflict",
+    "need_rebase": "conflict",
+    "not_open": "not_open",
+}
+"""``detailed_merge_status`` values that name why GitLab would refuse a merge.
+
+https://docs.gitlab.com/ee/api/merge_requests.html#merge-status — read
+before merging, because the accept endpoint's refusal is a bare
+``405 Method Not Allowed`` that names no reason.
+"""
+
+_HEAD_MOVED_STATUS = "409"
+"""Accept-MR status when ``sha`` no longer matches the source head (same doc)."""
 
 
 def _username(payload: object) -> str:
@@ -162,7 +175,7 @@ def pull_request_from_gitlab(mr: dict[str, object]) -> PullRequest:
         title=str(mr.get("title") or ""),
         body=str(mr.get("description") or ""),
         author=_username(mr),
-        state=_STATE_TO_PROTOCOL.get(str(mr.get("state") or ""), "open"),
+        state=_STATE_TO_PROTOCOL.get(str(mr.get("state") or ""), "unknown"),
         head_sha=str(mr.get("sha") or ""),
         head_ref=str(mr.get("source_branch") or ""),
         base_ref=str(mr.get("target_branch") or ""),
@@ -720,13 +733,57 @@ class GitLabForge:
             return None
         return self._api_text(f"{self._project}/jobs/{m.group(1)}/trace")
 
-    def merge(self, number: int, *, method: MergeMethod, delete_branch: bool) -> MergeResult:
-        """Merge with ``glab mr merge`` now (no auto-merge), honouring ``method``.
+    @staticmethod
+    def merge_refusal(
+        mr: dict[str, object], head_sha: str | None
+    ) -> tuple[MergeRefusal, str] | None:
+        """Name why GitLab would refuse to merge ``mr`` now, from its own fields.
+
+        Order: a state other than ``opened``, a head that moved off
+        ``head_sha``, then ``detailed_merge_status``, then a head
+        pipeline still running. ``None`` when no read fact predicts a
+        refusal — the merge is then attempted.
+        """
+        state = _STATE_TO_PROTOCOL.get(str(mr.get("state") or ""), "unknown")
+        if state != "open":
+            return "not_open", f"merge request state is {mr.get('state')!r}"
+        current = str(mr.get("sha") or "")
+        if head_sha and current != head_sha:
+            return "head_moved", f"head moved: expected {head_sha[:12]}, now {current[:12]}"
+        detailed = str(mr.get("detailed_merge_status") or "")
+        if detailed in _DETAILED_STATUS_REFUSALS:
+            return _DETAILED_STATUS_REFUSALS[detailed], f"detailed_merge_status={detailed}"
+        pipeline = mr.get("head_pipeline")
+        status = str(pipeline.get("status") or "") if isinstance(pipeline, dict) else ""
+        if status in _PIPELINE_PENDING:
+            return "pending", f"head_pipeline.status={status}"
+        return None
+
+    def merge(
+        self,
+        number: int,
+        *,
+        method: MergeMethod,
+        delete_branch: bool,
+        head_sha: str | None = None,
+    ) -> MergeResult:
+        """Merge with ``glab mr merge`` now (no auto-merge), pinned to the head.
+
+        The MR is read first and :meth:`merge_refusal` decides from its
+        fields; the merge is attempted only when nothing predicts a
+        refusal, with ``--sha`` set to the head it was decided at so
+        GitLab itself refuses (HTTP 409) a head that moved in between.
 
         Raises:
-            ForgeMergeRefusedError: GitLab refused; ``pending`` is set when
-                the refusal is a pipeline that has not succeeded yet.
+            ForgeMergeRefusedError: GitLab would refuse or refused; its
+                ``reason`` comes from the MR's fields, ``head_moved`` for
+                a 409, else ``refused``.
         """
+        mr = self._mr(number)
+        refusal = self.merge_refusal(mr, head_sha)
+        if refusal is not None:
+            raise ForgeMergeRefusedError(refusal[1], reason=refusal[0])
+        pinned = head_sha or str(mr.get("sha") or "")
         args = ["mr", "merge", str(number), "--yes", "--auto-merge=false"]
         resolved = MergeMethod(method)
         if resolved is MergeMethod.SQUASH:
@@ -735,13 +792,18 @@ class GitLabForge:
             args.append("--rebase")
         if delete_branch:
             args.append("--remove-source-branch")
+        if pinned:
+            args += ["--sha", pinned]
         res = self._run(args)
         if self._failed(res):
             if res.returncode == 127:
                 self._raise(res, number=number)
             message = (res.stderr or res.stdout).strip()[-500:]
-            pending = any(marker in message.lower() for marker in _MERGE_PENDING_MARKERS)
-            raise ForgeMergeRefusedError(message, pending=pending)
+            moved = (
+                f" {_HEAD_MOVED_STATUS} " in f" {message} "
+                or f"HTTP {_HEAD_MOVED_STATUS}" in message
+            )
+            raise ForgeMergeRefusedError(message, reason="head_moved" if moved else "refused")
         mr = self._mr(number)
         sha = mr.get("merge_commit_sha") or mr.get("squash_commit_sha")
         return MergeResult(

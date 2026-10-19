@@ -66,6 +66,7 @@ from ..forge import (
     select_forge,
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
+from ..forge.protocol import WRITABLE_STATES
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -96,6 +97,10 @@ OUTCOME_SKIP_CI_FAILED: str = "SKIP_CI_FAILED"
 OUTCOME_SKIP_CI_TIMEOUT: str = "SKIP_CI_TIMEOUT"
 OUTCOME_SKIP_CI_MISSING: str = "SKIP_CI_MISSING"
 OUTCOME_SKIP_CI_PENDING: str = "SKIP_CI_PENDING"
+OUTCOME_SKIP_NOT_APPROVED: str = "SKIP_NOT_APPROVED"
+OUTCOME_SKIP_DISCUSSIONS: str = "SKIP_DISCUSSIONS_UNRESOLVED"
+OUTCOME_SKIP_CONFLICT: str = "SKIP_CONFLICT"
+OUTCOME_SKIP_STATE: str = "SKIP_STATE"
 OUTCOME_SKIP_STALE_HEAD: str = "SKIP_STALE_HEAD"
 OUTCOME_FAILED: str = "FAILED"
 
@@ -109,9 +114,23 @@ NON_FATAL_SKIP_OUTCOMES: frozenset[str] = frozenset(
         OUTCOME_SKIP_CI_TIMEOUT,
         OUTCOME_SKIP_CI_MISSING,
         OUTCOME_SKIP_CI_PENDING,
+        OUTCOME_SKIP_NOT_APPROVED,
+        OUTCOME_SKIP_DISCUSSIONS,
+        OUTCOME_SKIP_CONFLICT,
+        OUTCOME_SKIP_STATE,
         OUTCOME_SKIP_STALE_HEAD,
     }
 )
+
+_REFUSAL_OUTCOMES: dict[str, str] = {
+    "pending": OUTCOME_SKIP_CI_PENDING,
+    "not_approved": OUTCOME_SKIP_NOT_APPROVED,
+    "discussions_not_resolved": OUTCOME_SKIP_DISCUSSIONS,
+    "conflict": OUTCOME_SKIP_CONFLICT,
+    "head_moved": OUTCOME_SKIP_STALE_HEAD,
+    "not_open": OUTCOME_SKIP_STATE,
+}
+"""Forge merge refusals read from facts → non-fatal outcomes; ``refused`` stays FAILED."""
 
 __all__ = [
     "DEFAULT_REQUIRED_CHECK_NAMES",
@@ -326,31 +345,37 @@ def merge_change(
     *,
     method: MergeMethod = MergeMethod.SQUASH,
     delete_branch: bool = True,
-) -> tuple[bool, str | None, str, bool]:
-    """Merge through the forge and return ``(ok, merge_sha, log, pending)``.
+    head_sha: str | None = None,
+) -> tuple[bool, str | None, str, str]:
+    """Merge through the forge and return ``(ok, merge_sha, log, refusal)``.
 
-    On GitHub this runs ``gh pr merge --<method> [--delete-branch]``; the
-    merge commit SHA is extracted from its output when present so
-    callers can persist it to L4 for audit.
+    On GitHub this runs ``gh pr merge --<method> [--match-head-commit
+    <sha>] [--delete-branch]``; the merge commit SHA is extracted from
+    its output when present so callers can persist it to L4 for audit.
 
     Args:
         forge: The forge the PR lives on.
         pr_number: PR / MR to merge.
         method: The configured merge method.
         delete_branch: When True, also delete the head branch.
+        head_sha: The head the gate decided at; the forge refuses to
+            merge any other.
 
     Returns:
-        ``(ok, merge_sha_or_None, log_tail, pending)`` — ``pending`` is
-        True when the forge refused because its pipeline has not
-        succeeded yet (mapped to :data:`OUTCOME_SKIP_CI_PENDING`).
+        ``(ok, merge_sha_or_None, log_tail, refusal)`` — ``refusal`` is
+        ``""`` on success, else the forge's
+        :attr:`~repoach.forge.ForgeMergeRefusedError.reason`
+        (``refused`` for any other forge error).
     """
     try:
-        result = forge.merge(pr_number, method=method, delete_branch=delete_branch)
+        result = forge.merge(
+            pr_number, method=method, delete_branch=delete_branch, head_sha=head_sha
+        )
     except ForgeMergeRefusedError as exc:
-        return False, None, exc.message[-500:], exc.pending
+        return False, None, exc.message[-500:], exc.reason
     except ForgeError as exc:
-        return False, None, exc.message[-500:], False
-    return True, result.sha, result.message[-500:], False
+        return False, None, exc.message[-500:], "refused"
+    return True, result.sha, result.message[-500:], ""
 
 
 def _head_sha_or_empty(forge: Forge, pr_number: int) -> str:
@@ -758,6 +783,14 @@ def run_auto_merge(
                 notes=f"state={state}",
             )
         )
+    if pr is not None and pr.state not in WRITABLE_STATES:
+        return _persist(
+            AutoMergeResult(
+                pr_number=pr_number,
+                outcome=OUTCOME_SKIP_STATE,
+                notes=f"state={state}, refusing to write",
+            )
+        )
 
     verified_head, stale_reason = resolve_verified_head(
         forge,
@@ -851,15 +884,19 @@ def run_auto_merge(
             )
         )
 
-    ok, merge_sha, log, pending = merge_change(
-        forge, pr_number, method=merge_method, delete_branch=delete_branch
+    ok, merge_sha, log, refusal = merge_change(
+        forge,
+        pr_number,
+        method=merge_method,
+        delete_branch=delete_branch,
+        head_sha=verified_head,
     )
-    if not ok and pending:
+    if not ok and refusal in _REFUSAL_OUTCOMES:
         return _persist(
             AutoMergeResult(
                 pr_number=pr_number,
-                outcome=OUTCOME_SKIP_CI_PENDING,
-                notes=f"merge refused, pipeline pending: {log}",
+                outcome=_REFUSAL_OUTCOMES[refusal],
+                notes=f"merge refused ({refusal}): {log}",
             )
         )
     if not ok:

@@ -10,6 +10,8 @@
         "merge",
         "42",
         "--squash",
+        "--match-head-commit",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "--delete-branch"
       ],
       "program": "gh",
@@ -23,6 +25,7 @@
   "forge": "github",
   "kwargs": {
     "delete_branch": true,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "method": "squash"
   },
   "method": "merge",
@@ -32,6 +35,6 @@
     "message": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n",
     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
-  "source": "synthetic: merge call: never executed against a live forge",
+  "source": "synthetic: merge call: never executed against a live forge; gh pins the head with --match-head-commit",
   "trimmed": null
 }

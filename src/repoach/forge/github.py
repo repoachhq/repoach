@@ -88,6 +88,7 @@ _GH_STATE_TO_PROTOCOL: dict[str, PullRequestState] = {
     "MERGED": "merged",
     "CLOSED": "closed",
 }
+"""``gh`` states; anything else maps to ``unknown`` (refuses writes)."""
 
 _MERGE_METHOD_FLAGS: dict[MergeMethod, str] = {
     MergeMethod.SQUASH: "--squash",
@@ -271,7 +272,7 @@ def pull_request_from_github(payload: dict[str, object], *, number: int) -> Pull
         title=str(payload.get("title") or ""),
         body=str(payload.get("body") or ""),
         author=login if isinstance(login, str) else "",
-        state=_GH_STATE_TO_PROTOCOL.get(raw_state, "open"),
+        state=_GH_STATE_TO_PROTOCOL.get(raw_state, "unknown"),
         head_sha=str(payload.get("headRefOid") or ""),
         head_ref=str(payload.get("headRefName") or ""),
         base_ref=str(payload.get("baseRefName") or ""),
@@ -1130,9 +1131,7 @@ class GitHubForge:
         except json.JSONDecodeError as exc:
             raise ForgeError(f"gh pr view returned non-JSON: {str(exc)[:160]}") from exc
         raw = str(data.get("state") or "").upper() if isinstance(data, dict) else ""
-        if raw not in _GH_STATE_TO_PROTOCOL:
-            raise ForgeError(f"unknown PR state {raw!r}")
-        return _GH_STATE_TO_PROTOCOL[raw]
+        return _GH_STATE_TO_PROTOCOL.get(raw, "unknown")
 
     def head_sha(self, number: int) -> str:
         """Read only the PR's head SHA.
@@ -1444,13 +1443,25 @@ class GitHubForge:
             raise ForgeError(res.stderr[:200])
         return res.stdout
 
-    def merge(self, number: int, *, method: MergeMethod, delete_branch: bool) -> MergeResult:
-        """Run ``gh pr merge --<method> [--delete-branch]``.
+    def merge(
+        self,
+        number: int,
+        *,
+        method: MergeMethod,
+        delete_branch: bool,
+        head_sha: str | None = None,
+    ) -> MergeResult:
+        """Run ``gh pr merge --<method> [--match-head-commit <sha>] [--delete-branch]``.
+
+        ``head_sha`` pins the merge: GitHub refuses it when the head moved
+        after the gate decided.
 
         Raises:
             ForgeMergeRefusedError: ``gh`` refused; carries its output tail.
         """
         args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[MergeMethod(method)]]
+        if head_sha:
+            args += ["--match-head-commit", head_sha]
         if delete_branch:
             args.append("--delete-branch")
         res = self._run(args)

@@ -187,6 +187,13 @@ def test_reviews(forge_name: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("forge_name", FORGES)
+def test_reviews_two_approvals(forge_name: str, tmp_path: Path) -> None:
+    """Two approvals become two ``APPROVED`` reviews carrying their authors."""
+    reviews, _ = _replay(forge_name, "reviews_two_approvals", tmp_path)
+    assert [(r.author, r.state) for r in reviews] == [("alice", "APPROVED"), ("bob", "APPROVED")]
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
 def test_post_comment(forge_name: str, tmp_path: Path) -> None:
     """An unanchored comment is posted as a conversation comment / note."""
     comment, _ = _replay(forge_name, "post_comment", tmp_path)
@@ -327,10 +334,10 @@ def test_merge(forge_name: str, tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("forge_name", FORGES)
 def test_merge_refused(forge_name: str, tmp_path: Path) -> None:
-    """A refused merge raises :class:`ForgeMergeRefusedError`; GitLab flags a pending pipeline."""
+    """A refusal no read fact explains (GitLab: a bare 405) is ``refused``, never pending."""
     _, raised = _replay(forge_name, "merge_refused", tmp_path)
     assert isinstance(raised, ForgeMergeRefusedError)
-    assert raised.pending is (forge_name == "gitlab")
+    assert raised.reason == "refused" and raised.pending is False
 
 
 @pytest.mark.parametrize("forge_name", FORGES)

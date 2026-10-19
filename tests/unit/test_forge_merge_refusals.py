@@ -1,0 +1,179 @@
+"""Merge refusals are read from forge facts, and only ``open`` changes accept writes.
+
+GitLab's accept-MR endpoint refuses with a bare ``405 Method Not Allowed``
+that names no reason, so :class:`~repoach.forge.gitlab.GitLabForge`
+reads the MR first (``state``, ``sha``, ``detailed_merge_status``,
+``head_pipeline.status``) and decides from those fields; the auto-merge
+maps each named refusal to a non-fatal outcome and only an unexplained
+refusal to ``FAILED``. Both forges pin the merge to the head the gate
+decided at (``glab mr merge --sha`` / ``gh pr merge --match-head-commit``).
+Unknown and ``locked`` states map to explicit states that refuse writes
+(SP-UNIVERSAL-FORGE G7).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from repoach.forge import ForgeMergeRefusedError, MergeMethod
+from repoach.forge.github import pull_request_from_github
+from repoach.forge.gitlab import GitLabForge, pull_request_from_gitlab
+from repoach.forge.protocol import WRITABLE_STATES
+from repoach.forge.runner import CommandResult
+from repoach.review.auto_merge import (
+    _REFUSAL_OUTCOMES,
+    OUTCOME_SKIP_CI_PENDING,
+    OUTCOME_SKIP_CONFLICT,
+    OUTCOME_SKIP_DISCUSSIONS,
+    OUTCOME_SKIP_NOT_APPROVED,
+    OUTCOME_SKIP_STALE_HEAD,
+    OUTCOME_SKIP_STATE,
+    merge_change,
+)
+from tests.forge_fakes import gh_ok, scripted_github
+
+SHA = "a" * 40
+REAL_405 = (
+    "PUT https://gitlab.com/api/v4/projects/o%2Fr/merge_requests/7/merge: "
+    "405 {message: 405 Method Not Allowed}"
+)
+
+
+def _mr(**over: object) -> dict[str, object]:
+    mr: dict[str, object] = {
+        "iid": 7,
+        "state": "opened",
+        "sha": SHA,
+        "source_branch": "feat/x",
+        "target_branch": "develop",
+        "detailed_merge_status": "mergeable",
+        "head_pipeline": {"id": 1, "status": "success", "sha": SHA},
+    }
+    mr.update(over)
+    return mr
+
+
+def _gitlab(tmp_path: Path, mr: dict[str, object], merge_result: CommandResult | None):
+    """A GitLabForge answering the MR read and (optionally) the merge; records argv."""
+    glab = tmp_path / "glab"
+    glab.write_text("")
+    forge = GitLabForge(cwd=tmp_path, glab_path=str(glab), bot_username="bot")
+    calls: list[list[str]] = []
+
+    def spawn(argv: list[str], *, input_data: str | None = None) -> CommandResult:
+        calls.append(argv[1:])
+        if argv[1:3] == ["mr", "merge"]:
+            assert merge_result is not None, "merge attempted although a fact predicted refusal"
+            return merge_result
+        return CommandResult(0, json.dumps(mr), "", argv)
+
+    forge._spawn = spawn
+    return forge, calls
+
+
+@pytest.mark.parametrize(
+    ("over", "reason", "outcome"),
+    [
+        ({"detailed_merge_status": "ci_must_pass"}, "pending", OUTCOME_SKIP_CI_PENDING),
+        ({"detailed_merge_status": "ci_still_running"}, "pending", OUTCOME_SKIP_CI_PENDING),
+        (
+            {"detailed_merge_status": "mergeable", "head_pipeline": {"status": "running"}},
+            "pending",
+            OUTCOME_SKIP_CI_PENDING,
+        ),
+        ({"detailed_merge_status": "not_approved"}, "not_approved", OUTCOME_SKIP_NOT_APPROVED),
+        (
+            {"detailed_merge_status": "discussions_not_resolved"},
+            "discussions_not_resolved",
+            OUTCOME_SKIP_DISCUSSIONS,
+        ),
+        ({"detailed_merge_status": "conflict"}, "conflict", OUTCOME_SKIP_CONFLICT),
+        ({"sha": "b" * 40}, "head_moved", OUTCOME_SKIP_STALE_HEAD),
+        ({"state": "locked"}, "not_open", OUTCOME_SKIP_STATE),
+    ],
+)
+def test_gitlab_refusal_named_from_mr_fields_without_merging(
+    tmp_path: Path, over: dict[str, object], reason: str, outcome: str
+) -> None:
+    forge, calls = _gitlab(tmp_path, _mr(**over), merge_result=None)
+    with pytest.raises(ForgeMergeRefusedError) as info:
+        forge.merge(7, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA)
+    assert info.value.reason == reason
+    assert all(c[:2] != ["mr", "merge"] for c in calls)
+    assert _REFUSAL_OUTCOMES[reason] == outcome
+
+
+def test_gitlab_bare_405_is_failed_not_pending(tmp_path: Path) -> None:
+    """A 405 with no explaining fact is ``refused`` → FAILED, never SKIP_CI_PENDING."""
+    forge, calls = _gitlab(tmp_path, _mr(), CommandResult(1, "", REAL_405, ["glab"]))
+    ok, sha, log, refusal = merge_change(
+        forge, 7, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA
+    )
+    assert (ok, sha, refusal) == (False, None, "refused")
+    assert refusal not in _REFUSAL_OUTCOMES
+    assert "405" in log
+    merge_argv = next(c for c in calls if c[:2] == ["mr", "merge"])
+    assert merge_argv[-2:] == ["--sha", SHA]
+
+
+def test_gitlab_409_is_head_moved(tmp_path: Path) -> None:
+    """GitLab's documented 409 (``sha`` no longer the head) is a stale head."""
+    refusal_409 = (
+        "PUT https://gitlab.com/api/v4/projects/o%2Fr/merge_requests/7/merge: "
+        "409 {message: SHA does not match HEAD of source branch}"
+    )
+    forge, _ = _gitlab(tmp_path, _mr(), CommandResult(1, "", refusal_409, ["glab"]))
+    with pytest.raises(ForgeMergeRefusedError) as info:
+        forge.merge(7, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA)
+    assert info.value.reason == "head_moved"
+
+
+def test_github_merge_pins_head_with_match_head_commit() -> None:
+    forge = scripted_github(run=lambda a: gh_ok(f"Merged ({SHA})\n", argv=a))
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert forge._run.call_args.args[0] == [
+        "pr",
+        "merge",
+        "42",
+        "--squash",
+        "--match-head-commit",
+        SHA,
+        "--delete-branch",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("opened", "open"), ("locked", "locked"), ("merged", "merged"), ("weird", "unknown")],
+)
+def test_gitlab_states_fail_closed(raw: str, expected: str) -> None:
+    state = pull_request_from_gitlab({"iid": 1, "state": raw}).state
+    assert state == expected
+    assert (state in WRITABLE_STATES) is (expected == "open")
+
+
+def test_github_unknown_state_fails_closed() -> None:
+    state = pull_request_from_github({"number": 1, "state": "DRAFTISH"}, number=1).state
+    assert state == "unknown" and state not in WRITABLE_STATES
+
+
+def test_auto_merge_refuses_a_locked_mr_before_any_write(tmp_path: Path) -> None:
+    from repoach.review.auto_merge import run_auto_merge
+
+    forge, calls = _gitlab(tmp_path, _mr(state="locked"), merge_result=None)
+    result = run_auto_merge(
+        7,
+        forge=forge,
+        db_path=tmp_path / "merge.db",
+        wait_seconds=0,
+        poll_interval=1,
+        sleep=lambda _s: None,
+        repo_root=tmp_path,
+        merge_method=MergeMethod.MERGE,
+        delete_branch=False,
+    )
+    assert result.outcome == OUTCOME_SKIP_STATE
+    assert all(c[:2] != ["mr", "merge"] for c in calls)

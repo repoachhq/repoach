@@ -1,0 +1,44 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "--slurp",
+        "repos/:owner/:repo/pulls/42/reviews"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[[{\"id\": 80, \"user\": {\"login\": \"alice\"}, \"body\": \"lgtm\", \"state\": \"APPROVED\", \"commit_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"submitted_at\": \"2026-10-19T10:00:00Z\"}, {\"id\": 81, \"user\": {\"login\": \"bob\"}, \"body\": \"\", \"state\": \"APPROVED\", \"commit_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"submitted_at\": \"2026-10-19T10:05:00Z\"}]]"
+    }
+  ],
+  "case": "reviews_two_approvals",
+  "forge": "github",
+  "kwargs": {},
+  "method": "reviews",
+  "raises": null,
+  "result": [
+    {
+      "author": "alice",
+      "body": "lgtm",
+      "comments": [],
+      "id": 80,
+      "state": "APPROVED"
+    },
+    {
+      "author": "bob",
+      "body": "",
+      "comments": [],
+      "id": 81,
+      "state": "APPROVED"
+    }
+  ],
+  "source": "synthetic: two approvals in GitHub's documented list-reviews shape (https://docs.github.com/en/rest/pulls/reviews#list-reviews-for-a-pull-request)",
+  "trimmed": null
+}

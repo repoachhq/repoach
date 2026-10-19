@@ -10,6 +10,8 @@
         "merge",
         "42",
         "--squash",
+        "--match-head-commit",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "--delete-branch"
       ],
       "program": "gh",
@@ -23,6 +25,7 @@
   "forge": "github",
   "kwargs": {
     "delete_branch": true,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "method": "squash"
   },
   "method": "merge",
