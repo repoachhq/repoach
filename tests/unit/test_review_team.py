@@ -117,7 +117,7 @@ def test_gh_cli_unavailable_returns_127(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("shutil.which", lambda _name: None)
     cli = GitHubForge(cwd=tmp_path)
     assert not cli.available()
-    res = cli.pr_diff(99)
+    res = cli._pr_diff(99)
     assert isinstance(res, GhResult)
     assert res.returncode == 127
     assert "gh CLI not installed" in res.stderr
@@ -174,7 +174,7 @@ def test_pr_diff_api_success_skips_fallback():
         gh_script={"pr diff 309": (0, "diff --git a/x b/x", "")},
         git_script={},
     )
-    res = cli.pr_diff(309)
+    res = cli._pr_diff(309)
     assert res.ok
     assert res.stdout == "diff --git a/x b/x"
     assert all(call[0] == "gh" for call in cli.calls)
@@ -192,7 +192,7 @@ def test_pr_diff_falls_back_to_local_git_on_406():
             "diff origin/develop...": (0, "diff --git a/huge b/huge", ""),
         },
     )
-    res = cli.pr_diff(309)
+    res = cli._pr_diff(309)
     assert res.ok
     assert res.stdout == "diff --git a/huge b/huge"
 
@@ -220,7 +220,7 @@ def test_pr_diff_fallback_fetches_pull_head_when_commit_missing():
         return original(script, prog, args)
 
     cli._replay = replay_with_probe_sequence
-    res = cli.pr_diff(309)
+    res = cli._pr_diff(309)
     assert res.ok
     assert res.stdout == "fallback diff"
     assert ["git", "fetch", "--quiet", "origin", "refs/pull/309/head"] in cli.calls
@@ -234,7 +234,7 @@ def test_pr_diff_fallback_returns_api_error_when_view_fails():
         },
         git_script={},
     )
-    res = cli.pr_diff(309)
+    res = cli._pr_diff(309)
     assert not res.ok
     assert "maximum number of files" in res.stderr
 
@@ -251,12 +251,12 @@ def test_pr_diff_fallback_returns_api_error_when_git_diff_fails():
             "diff origin/develop...": (128, "", "fatal: bad revision"),
         },
     )
-    res = cli.pr_diff(309)
+    res = cli._pr_diff(309)
     assert not res.ok
     assert "maximum number of files" in res.stderr
 
 
-# ---------- SP-REVIEW-POST-BATCH: GitHubForge.pr_review_submit_batch ----------
+# ---------- SP-REVIEW-POST-BATCH: GitHubForge._pr_review_submit_batch ----------
 
 
 def test_pr_review_submit_batch_posts_single_call_with_comments_array(monkeypatch, tmp_path):
@@ -274,7 +274,7 @@ def test_pr_review_submit_batch_posts_single_call_with_comments_array(monkeypatc
     monkeypatch.setattr("repoach.forge.runner.subprocess.run", _fake_run)
     cli = GitHubForge(cwd=tmp_path, gh_path=str(gh_path))
 
-    res = cli.pr_review_submit_batch(
+    res = cli._pr_review_submit_batch(
         42,
         commit_sha="deadbeef",
         verdict="APPROVE",
@@ -367,7 +367,7 @@ class _StubGitHubForge(GitHubForge):
         self.archive_calls.append({"pr": pr_number, "body": body})
         return GhResult(0, json.dumps({"id": 1}), "", argv=["gh", "api"])
 
-    def pr_diff(self, pr_number: int) -> GhResult:
+    def _pr_diff(self, pr_number: int) -> GhResult:
         if not self._diff_ok:
             return GhResult(1, "", "boom", argv=["gh", "pr", "diff"])
         return GhResult(
@@ -388,14 +388,14 @@ class _StubGitHubForge(GitHubForge):
             argv=["gh", "pr", "diff"],
         )
 
-    def pr_head_sha(self, pr_number: int) -> str:
+    def _pr_head_sha(self, pr_number: int) -> str:
         return "deadbeef"
 
-    def pr_review_comment(self, pr_number: int, **kw) -> GhResult:
+    def _pr_review_comment(self, pr_number: int, **kw) -> GhResult:
         self.posted_comments.append({"pr": pr_number, **kw})
         return GhResult(0, "", "", argv=["gh", "api"])
 
-    def pr_review_submit(self, pr_number: int, **kw) -> GhResult:
+    def _pr_review_submit(self, pr_number: int, **kw) -> GhResult:
         self.posted_reviews.append({"pr": pr_number, **kw})
         if self.review_submit_fail:
             return GhResult(
@@ -406,7 +406,7 @@ class _StubGitHubForge(GitHubForge):
             )
         return GhResult(0, "", "", argv=["gh", "pr", "review"])
 
-    def pr_review_submit_batch(self, pr_number: int, **kw) -> GhResult:
+    def _pr_review_submit_batch(self, pr_number: int, **kw) -> GhResult:
         self.batch_calls.append({"pr": pr_number, **kw})
         if self.review_submit_fail:
             return GhResult(
@@ -419,7 +419,7 @@ class _StubGitHubForge(GitHubForge):
         self._next_review_id += 1
         return GhResult(0, json.dumps({"id": review_id}), "", argv=["gh", "api"])
 
-    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+    def _list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         return []
 
 
@@ -769,11 +769,56 @@ def test_refuted_sentinels_posted_only_when_posting(tmp_path, monkeypatch, post)
     assert calls == ([8] if post else [])
 
 
+class _ClosedGitHubForge(_StubGitHubForge):
+    """A stub whose PR reads closed at write time; counts the barrier's state reads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.state_reads = 0
+
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["pr", "view"] and args[-1] == "state":
+            self.state_reads += 1
+            return GhResult(0, json.dumps({"state": "CLOSED"}), "", argv=args)
+        return super()._run(args, input_data=input_data)
+
+
+def test_closed_pr_stops_posting_at_the_first_refused_write(tmp_path, monkeypatch):
+    """A PR closed before posting costs one state read, not one per write + fallbacks.
+
+    Without the short-circuit each reviewer would retry as COMMENT, fall
+    back to per-comment posts, then to a verdict and a fallback comment,
+    each re-reading the state (N + 4 reads per reviewer). The first
+    :class:`ForgeStateRefusedError` now ends the whole posting sequence
+    and the outcome is reported once as ``SKIP_STATE``.
+    """
+    comment = ReviewComment(file="a.py", line=1, severity="major", body="fix this")
+    for role, bot in (
+        ("Architect", BotRole.ARCHITECT),
+        ("Sentinel", BotRole.SENTINEL),
+        ("Tester", BotRole.TESTER),
+        ("Scribe", BotRole.SCRIBE),
+    ):
+        out = _outcome(bot, ReviewVerdict.REQUEST_CHANGES, comments=[comment, comment])
+        monkeypatch.setattr(
+            f"repoach.review.orchestrator.{role}",
+            lambda _out=out, **_kw: _StubReviewer(_out),
+        )
+    gh = _ClosedGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    team = orch.review_pr(pr_number=8)
+    assert gh.state_reads <= len(team.reviews)
+    assert gh.state_reads == 1
+    assert team.posting_outcome == "SKIP_STATE"
+    assert (team.posted_reviews, team.posted_comments) == (0, 0)
+    assert gh.batch_calls == gh.posted_reviews == gh.posted_comments == gh.archive_calls == []
+
+
 def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
     """GitHub rejecting every event on the batched review falls back to a comment.
 
     SP-REVIEW-POST-BATCH: ``review_submit_fail=True`` now makes the stub's
-    batched call (:meth:`_StubGitHubForge.pr_review_submit_batch`) fail for every
+    batched call (:meth:`_StubGitHubForge._pr_review_submit_batch`) fail for every
     event, not just the legacy ``pr_review_submit`` — so each bot still
     exhausts the full fallback chain: batched APPROVE attempt, batched
     COMMENT-downgrade retry, legacy ``pr_review_submit``, then the fallback
@@ -810,7 +855,7 @@ class _BatchGitHubForge(GitHubForge):
     """Truthful gh-transport stub exercising ``_publish_outcome``'s batching contract.
 
     ``batch_results`` is consumed in call order — one entry per
-    :meth:`pr_review_submit_batch` invocation — so a test can script an
+    :meth:`_pr_review_submit_batch` invocation — so a test can script an
     initial rejection followed by a downgraded-event success (or a
     second rejection, to drive the full-fallback path). The legacy
     ``pr_review_comment`` / ``pr_review_submit`` methods always succeed
@@ -838,7 +883,7 @@ class _BatchGitHubForge(GitHubForge):
             return GhResult(0, json.dumps({"state": "OPEN"}), "", argv=args)
         return super()._run(args, input_data=input_data)
 
-    def pr_review_submit_batch(
+    def _pr_review_submit_batch(
         self,
         pr_number: int,
         *,
@@ -858,15 +903,15 @@ class _BatchGitHubForge(GitHubForge):
         )
         return next(self._batch_results)
 
-    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+    def _list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         self.list_review_id_calls.append((pr_number, review_id))
         return self._review_id_comments
 
-    def pr_review_comment(self, pr_number: int, **kw) -> GhResult:
+    def _pr_review_comment(self, pr_number: int, **kw) -> GhResult:
         self.legacy_comment_calls.append({"pr": pr_number, **kw})
         return GhResult(0, "", "", argv=["gh", "api"])
 
-    def pr_review_submit(self, pr_number: int, **kw) -> GhResult:
+    def _pr_review_submit(self, pr_number: int, **kw) -> GhResult:
         self.legacy_submit_calls.append({"pr": pr_number, **kw})
         return GhResult(0, "", "", argv=["gh", "pr", "review"])
 

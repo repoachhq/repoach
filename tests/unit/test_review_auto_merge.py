@@ -342,6 +342,6 @@ def test_fetch_check_runs_unparseable_line_returns_error() -> None:
             argv=args,
         )
     )
-    entries, err = gh.fetch_check_runs("abc123")
+    entries, err = gh._fetch_check_runs("abc123")
     assert entries == []
     assert "unparseable" in err

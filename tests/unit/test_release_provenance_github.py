@@ -5,7 +5,7 @@ CLI default stays ``ledger`` (AC1), the ``github`` source classifies a
 range by ``mergeCommitOid`` membership through the same pure classifier
 the ledger source uses (AC2), an empty GitHub merged-set fails closed
 exactly like an empty ledger (AC3), and the new
-``GitHubForge.merged_pr_merge_shas`` method never issues a merge or push
+``GitHubForge._merged_pr_merge_shas`` method never issues a merge or push
 (AC5).
 """
 
@@ -212,7 +212,7 @@ def test_merged_pr_merge_shas_is_read_only() -> None:
     """AC5: ``merged_pr_merge_shas`` issues only ``gh pr list``, never merge/push."""
     cli = _RecordingGhCli(merge_commit_oids=["sha-a", "sha-b", ""])
 
-    shas = cli.merged_pr_merge_shas(base="develop")
+    shas = cli._merged_pr_merge_shas(base="develop")
 
     assert shas == {"sha-a", "sha-b"}
     assert len(cli.calls) == 1
@@ -233,7 +233,7 @@ def test_merged_pr_merge_shas_requests_the_list_compatible_json_field() -> None:
     """
     cli = _RecordingGhCli(merge_commit_oids=["sha-x"])
 
-    cli.merged_pr_merge_shas(base="develop")
+    cli._merged_pr_merge_shas(base="develop")
 
     issued = cli.calls[0]
     json_value = issued[issued.index("--json") + 1]

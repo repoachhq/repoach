@@ -46,7 +46,7 @@ def _facts(**over: object) -> ReleaseFacts:
         "develop_sha": "abc123",
         "out_of_band_commits": [],
         "remote_sha": "abc123",
-        "pr_head_sha": None,
+        "_pr_head_sha": None,
         "ci_green": True,
         "ci_checked": True,
     }

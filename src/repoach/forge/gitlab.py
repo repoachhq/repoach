@@ -764,7 +764,7 @@ class GitLabForge:
         return self._api_text(f"{self._project}/jobs/{m.group(1)}/trace")
 
     @staticmethod
-    def merge_refusal(
+    def _merge_refusal(
         mr: dict[str, object], head_sha: str | None
     ) -> tuple[MergeRefusal, str] | None:
         """Name why GitLab would refuse to merge ``mr`` now, from its own fields.
@@ -804,7 +804,7 @@ class GitLabForge:
     ) -> MergeResult:
         """Merge with ``glab mr merge`` now (no auto-merge), pinned to the head.
 
-        The MR is read first and :meth:`merge_refusal` decides from its
+        The MR is read first and :meth:`_merge_refusal` decides from its
         fields; the merge is attempted only when nothing predicts a
         refusal, with ``--sha`` set to the head it was decided at so
         GitLab itself refuses (HTTP 409) a head that moved in between.
@@ -815,7 +815,7 @@ class GitLabForge:
                 a 409, else ``refused``.
         """
         mr = self._mr(number)
-        refusal = self.merge_refusal(mr, head_sha)
+        refusal = self._merge_refusal(mr, head_sha)
         if refusal is not None:
             raise ForgeMergeRefusedError(refusal[1], reason=refusal[0])
         pinned = head_sha or str(mr.get("sha") or "")

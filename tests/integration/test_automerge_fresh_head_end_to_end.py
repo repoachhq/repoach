@@ -54,7 +54,7 @@ class _ScriptedPrHeadGhCli(GitHubForge):
         super().__init__(cwd=work_dir, gh_path="/nonexistent/gh", bot_login="")
         self._scripted_heads = list(scripted_heads)
 
-    def pr_head_sha(self, pr_number: int) -> str:
+    def _pr_head_sha(self, pr_number: int) -> str:
         del pr_number
         if len(self._scripted_heads) > 1:
             return self._scripted_heads.pop(0)

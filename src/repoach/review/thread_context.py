@@ -66,7 +66,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.logging import get_logger
-from ..forge import Comment, Forge, ForgeError
+from ..forge import Comment, Forge, ForgeError, ForgeStateRefusedError
 from .findings import Finding, FindingStatus, fetch_findings
 from .reviewer import BotRole, ReviewComment
 
@@ -556,6 +556,8 @@ def post_refuted_finding_sentinels(
         body = _format_finding_evidence_reply(finding)
         try:
             forge.reply(pr_number, root_id, body)
+        except ForgeStateRefusedError:
+            raise
         except Exception as exc:
             _log.warning(
                 "review.refuted_sentinel.post_failed",

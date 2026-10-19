@@ -86,10 +86,10 @@ class _StubGitHubForge(GitHubForge):
         self.posted_reviews: list[dict] = []
         self.posted_comments: list[dict] = []
 
-    def pr_diff(self, pr_number: int) -> GhResult:
+    def _pr_diff(self, pr_number: int) -> GhResult:
         return GhResult(0, "diff --git a/x b/x\n", "", argv=["gh"])
 
-    def pr_head_sha(self, pr_number: int) -> str:
+    def _pr_head_sha(self, pr_number: int) -> str:
         return "deadbeef"
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
@@ -103,19 +103,19 @@ class _StubGitHubForge(GitHubForge):
         self.archive_calls.append({"pr": pr_number, "body": body})
         return GhResult(0, "{}", "", argv=["gh"])
 
-    def pr_review_comment(self, pr_number: int, **kw: Any) -> GhResult:
+    def _pr_review_comment(self, pr_number: int, **kw: Any) -> GhResult:
         self.posted_comments.append({"pr": pr_number, **kw})
         return GhResult(0, "", "", argv=["gh"])
 
-    def pr_review_submit(self, pr_number: int, **kw: Any) -> GhResult:
+    def _pr_review_submit(self, pr_number: int, **kw: Any) -> GhResult:
         self.posted_reviews.append({"pr": pr_number, **kw})
         return GhResult(0, "", "", argv=["gh"])
 
-    def pr_review_submit_batch(self, pr_number: int, **kw: Any) -> GhResult:
+    def _pr_review_submit_batch(self, pr_number: int, **kw: Any) -> GhResult:
         self.posted_reviews.append({"pr": pr_number, **kw})
         return GhResult(0, "{}", "", argv=["gh"])
 
-    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+    def _list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         return []
 
 

@@ -351,7 +351,7 @@ class ArchiveFetch:
     """Outcome of an archive-comment fetch (SP-SAFE-MERGE-ARCHIVE-RETRY).
 
     Distinguishes the three cases that
-    :meth:`GitHubForge.fetch_archive_comment` historically collapsed into a
+    :meth:`GitHubForge._fetch_archive_comment` historically collapsed into a
     single ``None``: the comment exists (``body`` set), the comment is
     genuinely absent (both fields ``None``), and the GitHub API call
     itself failed (``api_error`` set) — e.g. a secondary-rate-limit 403
@@ -374,7 +374,6 @@ class GitHubForge:
     """The ``gh``-backed forge: today's GitHub wrapper behind the protocol."""
 
     name = "github"
-    ARCHIVE_MARKER = ARCHIVE_MARKER
 
     def __init__(
         self,
@@ -409,19 +408,14 @@ class GitHubForge:
         return self._gh is not None and Path(self._gh).is_file()
 
     @property
-    def bot_login(self) -> str:
+    def bot_username(self) -> str:
         """The GitHub login trust-bearing markers must be authored by."""
         return self._bot_login
 
-    @property
-    def bot_username(self) -> str:
-        """Protocol name of :attr:`bot_login`."""
-        return self._bot_login
-
     def _is_trusted_author(self, comment: object) -> bool:
-        """True when a raw comment payload was authored by :attr:`bot_login`.
+        """True when a raw comment payload was authored by :attr:`bot_username`.
 
-        Fails closed: an empty/unresolvable :attr:`bot_login` never
+        Fails closed: an empty/unresolvable :attr:`bot_username` never
         matches, and a missing/null author never matches — a missing
         identity must never widen trust (SP-EVIDENCE-SENTINEL-AUTHOR).
         """
@@ -473,7 +467,7 @@ class GitHubForge:
         """Run ``git`` in the local clone (protocol name of :meth:`_run_git`)."""
         return self._run_git(args)
 
-    def pr_diff(self, pr_number: int) -> GhResult:
+    def _pr_diff(self, pr_number: int) -> GhResult:
         """Fetch the unified diff of a PR.
 
         Tries ``gh pr diff`` first.  GitHub's diff media type refuses
@@ -551,7 +545,7 @@ class GitHubForge:
             return api_result
         head_probe = ["cat-file", "-e", f"{head}^{{commit}}"]
         if not self._run_git(head_probe).ok:
-            self._run_git(["fetch", "--quiet", "origin", self.head_ref_spec(pr_number)])
+            self._run_git(["fetch", "--quiet", "origin", self._head_ref_spec(pr_number)])
             if not self._run_git(head_probe).ok:
                 _log.warning(
                     "gh_client.pr_diff_fallback_head_unavailable",
@@ -577,11 +571,11 @@ class GitHubForge:
         return diff
 
     @staticmethod
-    def head_ref_spec(pr_number: int) -> str:
+    def _head_ref_spec(pr_number: int) -> str:
         """The server-side ref holding a PR's head (``refs/pull/<N>/head``)."""
         return f"refs/pull/{pr_number}/head"
 
-    def pr_view(self, pr_number: int) -> dict[str, object] | None:
+    def _pr_view(self, pr_number: int) -> dict[str, object] | None:
         """Fetch PR metadata as a JSON dict.
 
         Args:
@@ -611,7 +605,7 @@ class GitHubForge:
             )
             return None
 
-    def pr_create(
+    def _pr_create(
         self,
         *,
         head: str,
@@ -652,7 +646,7 @@ class GitHubForge:
             args.append("--draft")
         return self._run(args)
 
-    def pr_review_comment(
+    def _pr_review_comment(
         self,
         pr_number: int,
         *,
@@ -699,7 +693,7 @@ class GitHubForge:
             ]
         )
 
-    def pr_review_submit(
+    def _pr_review_submit(
         self,
         pr_number: int,
         *,
@@ -733,7 +727,7 @@ class GitHubForge:
             ]
         )
 
-    def pr_review_submit_batch(
+    def _pr_review_submit_batch(
         self,
         pr_number: int,
         *,
@@ -795,7 +789,7 @@ class GitHubForge:
             input_data=json.dumps(payload),
         )
 
-    def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
+    def _list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         """Return the inline comments belonging to one specific review.
 
         Wraps ``GET /repos/.../pulls/{pr}/reviews/{review_id}/comments``.
@@ -803,7 +797,7 @@ class GitHubForge:
         Args:
             pr_number: PR number.
             review_id: The ``id`` of a review previously created by
-                :meth:`pr_review_submit_batch`.
+                :meth:`_pr_review_submit_batch`.
 
         Returns:
             JSON-decoded list, each entry carrying at least ``"id"``,
@@ -842,7 +836,7 @@ class GitHubForge:
         except (json.JSONDecodeError, ValueError) as exc:
             raise ForgeError(f"JSON decode failed: {str(exc)[:160]}") from exc
 
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
+    def _list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
         """Return every inline review comment on a PR (root + replies).
 
         Wraps ``GET /repos/.../pulls/{pr}/comments`` with paging.
@@ -865,7 +859,7 @@ class GitHubForge:
             return []
         return [c for c in data if isinstance(c, dict)]
 
-    def reply_to_review_comment(
+    def _reply_to_review_comment(
         self,
         pr_number: int,
         *,
@@ -895,7 +889,7 @@ class GitHubForge:
             ]
         )
 
-    def pr_head_sha(self, pr_number: int) -> str | None:
+    def _pr_head_sha(self, pr_number: int) -> str | None:
         """Return the SHA of the PR's head commit, or ``None`` on error."""
         res = self._run(["pr", "view", str(pr_number), "--json", "headRefOid"])
         if not res.ok:
@@ -911,13 +905,13 @@ class GitHubForge:
             )
             return None
 
-    def find_archive_comment(self, pr_number: int) -> int | None:
+    def _find_archive_comment(self, pr_number: int) -> int | None:
         """Return the id of the existing archive comment on a PR, if any.
 
         Walks the PR's issue-comments and matches on the marker
-        :attr:`ARCHIVE_MARKER`.  Returns ``None`` if no comment carries
+        :data:`~repoach.forge.protocol.ARCHIVE_MARKER`.  Returns ``None`` if no comment carries
         the marker, no marker-bearing comment was authored by
-        :attr:`bot_login` (SP-EVIDENCE-SENTINEL-AUTHOR — a forged
+        :attr:`bot_username` (SP-EVIDENCE-SENTINEL-AUTHOR — a forged
         marker from any other author is ignored), or the API call
         fails.
         """
@@ -947,7 +941,7 @@ class GitHubForge:
             )
             return None
         for c in comments:
-            if not isinstance(c, dict) or self.ARCHIVE_MARKER not in (c.get("body") or ""):
+            if not isinstance(c, dict) or ARCHIVE_MARKER not in (c.get("body") or ""):
                 continue
             if not self._is_trusted_author(c):
                 continue
@@ -962,7 +956,7 @@ class GitHubForge:
         """Return ``(trusted comment payload carrying marker, api_error)`` for a PR.
 
         The first issue comment that carries ``marker``, was authored by
-        :attr:`bot_login` and has an integer id wins; ``api_error`` is set
+        :attr:`bot_username` and has an integer id wins; ``api_error`` is set
         when the listing itself failed or did not decode.
         """
         res = self._run(
@@ -986,10 +980,10 @@ class GitHubForge:
                 return c, None
         return None, None
 
-    def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
+    def _upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
         """Create or update the sticky archive comment on a PR.
 
-        The comment is identified by :attr:`ARCHIVE_MARKER`.  When
+        The comment is identified by :data:`~repoach.forge.protocol.ARCHIVE_MARKER`.  When
         found, we PATCH it; otherwise we POST a new issue comment.
 
         Args:
@@ -999,9 +993,9 @@ class GitHubForge:
         Returns:
             :class:`GhResult`.
         """
-        if self.ARCHIVE_MARKER not in body:
-            body = f"{self.ARCHIVE_MARKER}\n{body}"
-        return self._post_or_patch(pr_number, body, self.find_archive_comment(pr_number))
+        if ARCHIVE_MARKER not in body:
+            body = f"{ARCHIVE_MARKER}\n{body}"
+        return self._post_or_patch(pr_number, body, self._find_archive_comment(pr_number))
 
     def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
         """POST a new issue comment, or PATCH ``existing`` when given."""
@@ -1027,19 +1021,19 @@ class GitHubForge:
             ]
         )
 
-    def fetch_archive_comment(self, pr_number: int) -> str | None:
+    def _fetch_archive_comment(self, pr_number: int) -> str | None:
         """Return the raw body of the archive comment on a PR (or ``None``).
 
         Collapses API failure and genuine absence into ``None`` — use
-        :meth:`fetch_archive_comment_with_status` when the caller must
+        :meth:`_fetch_archive_comment_with_status` when the caller must
         tell the two apart.
         """
-        return self.fetch_archive_comment_with_status(pr_number).body
+        return self._fetch_archive_comment_with_status(pr_number).body
 
-    def fetch_archive_comment_with_status(self, pr_number: int) -> ArchiveFetch:
+    def _fetch_archive_comment_with_status(self, pr_number: int) -> ArchiveFetch:
         """Fetch the archive comment, distinguishing absence from API failure.
 
-        Sibling of :meth:`fetch_archive_comment`
+        Sibling of :meth:`_fetch_archive_comment`
         (SP-SAFE-MERGE-ARCHIVE-RETRY): the legacy method silently
         returned ``None`` when the ``gh api`` call itself failed, which
         downstream consumers misread as "no archive comment on the PR".
@@ -1049,7 +1043,7 @@ class GitHubForge:
 
         Returns:
             :class:`ArchiveFetch` — ``body`` set when a comment carrying
-            :attr:`ARCHIVE_MARKER` **and** authored by :attr:`bot_login`
+            :data:`~repoach.forge.protocol.ARCHIVE_MARKER` **and** authored by :attr:`bot_username`
             was found, ``api_error`` set when the fetch failed, both
             ``None`` when no trusted archive comment exists.
         """
@@ -1082,11 +1076,11 @@ class GitHubForge:
         for c in comments:
             comment = c if isinstance(c, dict) else {}
             body = comment.get("body") or ""
-            if self.ARCHIVE_MARKER in body and self._is_trusted_author(comment):
+            if ARCHIVE_MARKER in body and self._is_trusted_author(comment):
                 return ArchiveFetch(body=body, api_error=None)
         return ArchiveFetch(body=None, api_error=None)
 
-    def list_open_prs(self) -> list[dict[str, object]]:
+    def _list_open_prs(self) -> list[dict[str, object]]:
         """Return every open PR on the repo as a list of metadata dicts."""
         res = self._run(
             [
@@ -1109,7 +1103,7 @@ class GitHubForge:
             _log.warning("gh_client.list_open_prs_decode_failed", error=str(exc)[:200])
             return []
 
-    def merged_pr_merge_shas(self, base: str) -> set[str]:
+    def _merged_pr_merge_shas(self, base: str) -> set[str]:
         """Return every merge-commit SHA GitHub reports for PRs merged into *base*.
 
         Wraps ``gh pr list --state merged --base <base> --json
@@ -1180,14 +1174,14 @@ class GitHubForge:
         Raises:
             ForgeError: The call failed or reported no head.
         """
-        sha = self.pr_head_sha(number)
+        sha = self._pr_head_sha(number)
         if not sha:
             raise ForgeError(f"no head SHA reported for PR #{number}")
         return sha
 
     def diff(self, number: int) -> Diff:
         """Read the PR diff (``gh pr diff``, local-git fallback past 300 files)."""
-        res = self.pr_diff(number)
+        res = self._pr_diff(number)
         if not res.ok:
             raise_for_gh(res, number=number)
         return Diff(text=res.stdout, files=diff_files(res.stdout))
@@ -1227,7 +1221,9 @@ class GitHubForge:
         commit_sha: str | None = None,
     ) -> Comment:
         """Post an issue comment, or an inline review comment when fully anchored."""
-        res = self.pr_review_comment(number, body=body, commit_sha=commit_sha, file=path, line=line)
+        res = self._pr_review_comment(
+            number, body=body, commit_sha=commit_sha, file=path, line=line
+        )
         if not res.ok:
             raise_for_gh(res, number=number)
         anchored = path is not None and line is not None and commit_sha is not None
@@ -1256,12 +1252,12 @@ class GitHubForge:
         if review.commit_sha is None:
             if review.comments:
                 raise ValueError("inline comments need a commit_sha to anchor to")
-            res = self.pr_review_submit(number, verdict=review.verdict, summary=review.body)
+            res = self._pr_review_submit(number, verdict=review.verdict, summary=review.body)
             if not res.ok:
                 raise_for_gh(res, number=number)
             return Review(author=self._bot_login, state=review.verdict.upper(), body=review.body)
         payload = [{"file": c.path, "line": c.line, "body": c.body} for c in review.comments]
-        res = self.pr_review_submit_batch(
+        res = self._pr_review_submit_batch(
             number,
             commit_sha=review.commit_sha,
             verdict=review.verdict,
@@ -1275,7 +1271,7 @@ class GitHubForge:
         if review_id is None:
             _log.debug("review_team.batch_review_id_parse_failed", pr_number=number)
         elif payload:
-            for entry in self.list_review_id_comments(number, review_id):
+            for entry in self._list_review_id_comments(number, review_id):
                 if isinstance(entry, dict):
                     posted.append(comment_from_github(entry))
         return Review(
@@ -1289,7 +1285,7 @@ class GitHubForge:
     @write_barrier
     def reply(self, number: int, comment_id: int, body: str) -> Comment:
         """Reply in the inline thread rooted at ``comment_id``."""
-        res = self.reply_to_review_comment(number, comment_id=comment_id, body=body)
+        res = self._reply_to_review_comment(number, comment_id=comment_id, body=body)
         if not res.ok:
             raise_for_gh(res, number=number)
         return Comment(
@@ -1332,7 +1328,7 @@ class GitHubForge:
             id=_json_id(res.stdout) or existing or 0, author=self._bot_login, body=final_body
         )
 
-    def fetch_status_rollup(self, pr_number: int) -> tuple[list[dict], str]:
+    def _fetch_status_rollup(self, pr_number: int) -> tuple[list[dict], str]:
         """Return ``(rollup_entries, error_message)`` from ``gh pr view``.
 
         On parse errors or non-zero exit, ``rollup_entries`` is empty and
@@ -1350,7 +1346,7 @@ class GitHubForge:
             return [], "statusCheckRollup missing from gh output"
         return [dict(entry) for entry in rollup], ""
 
-    def fetch_check_runs(self, head_sha: str) -> tuple[list[dict], str]:
+    def _fetch_check_runs(self, head_sha: str) -> tuple[list[dict], str]:
         """Return ``(check_run_entries, error_message)`` for a commit.
 
         Queries the commit's complete check-run record instead of the PR
@@ -1382,7 +1378,7 @@ class GitHubForge:
                 return [], f"unparseable check-runs line: {stripped[:200]}"
         return entries, ""
 
-    def required_check_names(self) -> list[str]:
+    def _required_check_names(self) -> list[str]:
         """The required checks of the integration branch, else the configured list (G5)."""
         protection = self.branch_protection(get_settings().integration_branch)
         if protection.readable and protection.required_checks:
@@ -1407,10 +1403,10 @@ class GitHubForge:
         Raises:
             ForgeError: Neither source answered.
         """
-        names = list(required) if required is not None else self.required_check_names()
-        sha = head_sha or self.pr_head_sha(number)
+        names = list(required) if required is not None else self._required_check_names()
+        sha = head_sha or self._pr_head_sha(number)
         if sha:
-            rollup, err = self.fetch_check_runs(sha)
+            rollup, err = self._fetch_check_runs(sha)
             if err and not rollup:
                 _log.warning(
                     "auto_merge.check_runs_fallback_to_rollup",
@@ -1418,9 +1414,9 @@ class GitHubForge:
                     head_sha=sha[:12],
                     error=err[:200],
                 )
-                rollup, err = self.fetch_status_rollup(number)
+                rollup, err = self._fetch_status_rollup(number)
         else:
-            rollup, err = self.fetch_status_rollup(number)
+            rollup, err = self._fetch_status_rollup(number)
         if err and not rollup:
             raise ForgeError(err)
         failed, pending, missing = classify_required_checks(rollup, names)
@@ -1488,7 +1484,7 @@ class GitHubForge:
             raise ForgeError(res.stderr[:200])
         return res.stdout
 
-    def mergeability(self, number: int) -> dict[str, object]:
+    def _mergeability(self, number: int) -> dict[str, object]:
         """Read the PR's merge facts; re-read once when GitHub still says ``UNKNOWN``.
 
         GitHub computes ``mergeStateStatus`` lazily: the first read after a
@@ -1513,7 +1509,7 @@ class GitHubForge:
         return view
 
     @staticmethod
-    def merge_refusal(
+    def _merge_refusal(
         view: dict[str, object], head_sha: str | None
     ) -> tuple[MergeRefusal, str] | None:
         """Name why GitHub would refuse to merge now, from ``gh pr view`` facts.
@@ -1556,7 +1552,7 @@ class GitHubForge:
     ) -> MergeResult:
         """Merge after reading GitHub's merge facts, pinned to the head.
 
-        :meth:`mergeability` is read first and :meth:`merge_refusal`
+        :meth:`_mergeability` is read first and :meth:`_merge_refusal`
         decides; only then ``gh pr merge --<method> [--match-head-commit
         <sha>] [--delete-branch]`` runs, so GitHub itself also refuses a
         head that moved in between.
@@ -1565,7 +1561,7 @@ class GitHubForge:
             ForgeMergeRefusedError: GitHub would refuse or refused; its
                 ``reason`` comes from the read facts, else ``refused``.
         """
-        refusal = self.merge_refusal(self.mergeability(number), head_sha)
+        refusal = self._merge_refusal(self._mergeability(number), head_sha)
         if refusal is not None:
             raise ForgeMergeRefusedError(refusal[1], reason=refusal[0])
         args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[MergeMethod(method)]]
@@ -1672,7 +1668,7 @@ class GitHubForge:
         self, *, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PullRequest:
         """Open a PR with ``gh pr create``; the URL is the last ``http`` line printed."""
-        res = self.pr_create(head=head, base=base, title=title, body=body, draft=draft)
+        res = self._pr_create(head=head, base=base, title=title, body=body, draft=draft)
         if not res.ok:
             raise_for_gh(res)
         url = res.stdout.strip()
@@ -1698,7 +1694,7 @@ class GitHubForge:
         Raises:
             ForgeError: ``git fetch`` failed.
         """
-        ref = self.head_ref_spec(number)
+        ref = self._head_ref_spec(number)
         res = self._run_git(["fetch", "--quiet", "origin", ref])
         if not res.ok:
             raise ForgeError(res.stderr.strip()[:200] or f"git fetch {ref} failed")

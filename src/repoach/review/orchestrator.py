@@ -59,6 +59,7 @@ from ..forge import (
     ARCHIVE_MARKER,
     Forge,
     ForgeError,
+    ForgeStateRefusedError,
     InlineCommentDraft,
     Review,
     ReviewDraft,
@@ -257,7 +258,9 @@ class TeamOutcome:
 
     ``final_verdict`` is sourced from the findings ledger
     (:func:`merge_gate.verdict_from_facts`), not the retired consensus
-    gate.
+    gate. ``posting_outcome`` is ``"SKIP_STATE"`` when the forge refused
+    a write because the PR / MR is no longer open; posting then stopped
+    at that first refused write.
     """
 
     pr_number: int
@@ -270,6 +273,7 @@ class TeamOutcome:
     hallucinations: list[GuardEvent] = field(default_factory=list)
     head_sha: str | None = None
     auto_challenges: list[dict] = field(default_factory=list)
+    posting_outcome: str | None = None
 
 
 class ReviewTeamOrchestrator:
@@ -625,6 +629,7 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
+        state_refused: ForgeStateRefusedError | None = None
         try:
             from .thread_context import post_refuted_finding_sentinels
 
@@ -637,6 +642,8 @@ class ReviewTeamOrchestrator:
                 )
             else:
                 _log.info("review_team.refuted_sentinels_skipped_dry_run", pr_number=pr_number)
+        except ForgeStateRefusedError as exc:
+            state_refused = exc
         except Exception as exc:
             _log.warning(
                 "review_team.refuted_sentinels_failed",
@@ -738,26 +745,26 @@ class ReviewTeamOrchestrator:
         for event in all_events:
             record_hallucination(self._db_path, pr_number=pr_number, event=event)
 
-        if self._post:
-            posted_ids: dict[tuple[str, int], int] = {}
-            for outcome in outcomes:
-                self._publish_outcome(
+        if self._post and state_refused is None:
+            try:
+                self._publish_all(
                     pr_number=pr_number,
-                    outcome=outcome,
+                    outcomes=outcomes,
                     head_sha=head_sha,
                     team=team,
-                    posted_ids=posted_ids,
+                    resolved_per_role=resolved_per_role,
                 )
-            self._run_auto_challenge_pass(
+            except ForgeStateRefusedError as exc:
+                state_refused = exc
+        if state_refused is not None:
+            team.posting_outcome = "SKIP_STATE"
+            _log.warning(
+                "review_team.posting_skipped_state",
                 pr_number=pr_number,
-                outcomes=outcomes,
-                resolved_per_role=resolved_per_role,
-                posted_ids=posted_ids,
-                team=team,
+                state=state_refused.state,
+                posted_reviews=team.posted_reviews,
+                posted_comments=team.posted_comments,
             )
-            self._upsert_archive_comment(team)
-            self._fire_routine(team)
-            remember_verified_findings(self._db_path, pr_number=pr_number)
 
         _log.info(
             "review_team.done",
@@ -768,6 +775,42 @@ class ReviewTeamOrchestrator:
             posted=team.posted_reviews,
         )
         return team
+
+    def _publish_all(
+        self,
+        *,
+        pr_number: int,
+        outcomes: list[ReviewerOutcome],
+        head_sha: str | None,
+        team: TeamOutcome,
+        resolved_per_role: dict[BotRole, tuple[ResolvedDisagreement, ...]],
+    ) -> None:
+        """Publish every reviewer, the auto-challenges and the archive, then notify.
+
+        A :class:`~repoach.forge.ForgeStateRefusedError` from any write
+        propagates out of every nested fallback, so a PR / MR that is no
+        longer open stops the whole sequence at its first write — one
+        state read, no COMMENT retry, no per-comment or verdict fallback.
+        """
+        posted_ids: dict[tuple[str, int], int] = {}
+        for outcome in outcomes:
+            self._publish_outcome(
+                pr_number=pr_number,
+                outcome=outcome,
+                head_sha=head_sha,
+                team=team,
+                posted_ids=posted_ids,
+            )
+        self._run_auto_challenge_pass(
+            pr_number=pr_number,
+            outcomes=outcomes,
+            resolved_per_role=resolved_per_role,
+            posted_ids=posted_ids,
+            team=team,
+        )
+        self._upsert_archive_comment(team)
+        self._fire_routine(team)
+        remember_verified_findings(self._db_path, pr_number=pr_number)
 
     def _join_head_guard(
         self,
@@ -1030,6 +1073,8 @@ class ReviewTeamOrchestrator:
                     verdict=verdict, body=review_body, comments=drafts, commit_sha=head_sha
                 ),
             )
+        except ForgeStateRefusedError:
+            raise
         except ForgeError as exc:
             if verdict == ReviewVerdict.COMMENT.value:
                 last_error = exc.message
@@ -1050,6 +1095,8 @@ class ReviewTeamOrchestrator:
                             commit_sha=head_sha,
                         ),
                     )
+                except ForgeStateRefusedError:
+                    raise
                 except ForgeError as retry_exc:
                     last_error = retry_exc.message
         if posted is None:
@@ -1111,6 +1158,8 @@ class ReviewTeamOrchestrator:
                     line=comment.line,
                     commit_sha=head_sha,
                 )
+            except ForgeStateRefusedError:
+                raise
             except ForgeError as exc:
                 _log.warning(
                     "review_team.comment_post_failed",
@@ -1129,6 +1178,8 @@ class ReviewTeamOrchestrator:
             self._forge.post_review(
                 pr_number, ReviewDraft(verdict=outcome.verdict.value, body=review_body)
             )
+        except ForgeStateRefusedError:
+            raise
         except ForgeError as exc:
             _log.warning(
                 "review_team.review_submit_failed",
@@ -1143,6 +1194,8 @@ class ReviewTeamOrchestrator:
         )
         try:
             self._forge.post_comment(pr_number, fallback_body)
+        except ForgeStateRefusedError:
+            raise
         except ForgeError as exc:
             _log.warning(
                 "review_team.review_fallback_failed",
@@ -1308,6 +1361,8 @@ class ReviewTeamOrchestrator:
                 body = format_auto_challenge_reply(match)
                 try:
                     self._forge.reply(pr_number, match.new_comment_id, body)
+                except ForgeStateRefusedError:
+                    raise
                 except ForgeError as exc:
                     _log.warning(
                         "review.bot.auto_challenge_reply_failed",
@@ -1365,6 +1420,8 @@ class ReviewTeamOrchestrator:
         body = self._render_report_body(team, archive_appendix=archive_appendix)
         try:
             self._forge.upsert_marked_comment(team.pr_number, ARCHIVE_MARKER, body)
+        except ForgeStateRefusedError:
+            raise
         except ForgeError as exc:
             _log.warning(
                 "review_team.archive_upsert_failed",

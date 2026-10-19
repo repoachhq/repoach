@@ -1,6 +1,6 @@
 """Unit tests for SP-EVIDENCE-SENTINEL-AUTHOR — archive markers gated by author.
 
-``GitHubForge.find_archive_comment`` / ``fetch_archive_comment_with_status``
+``GitHubForge._find_archive_comment`` / ``fetch_archive_comment_with_status``
 used to return the FIRST comment bearing ``ARCHIVE_MARKER`` with no
 check on who posted it — so any PR commenter could forge the sticky
 review archive downstream surfaces read (audit 2026-07-13 finding M6).
@@ -20,9 +20,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from repoach.forge import ARCHIVE_MARKER
 from repoach.forge.github import ArchiveFetch, GhResult, GitHubForge, flatten_paginated_pages
 
-_MARKER = GitHubForge.ARCHIVE_MARKER
+_MARKER = ARCHIVE_MARKER
 _BOT_LOGIN = "repoach-review-bot"
 _FORGER_LOGIN = "pr-author"
 
@@ -70,9 +71,9 @@ def test_forged_archive_comment_ignored() -> None:
         bot_login=_BOT_LOGIN,
     )
 
-    assert cli.find_archive_comment(42) == 2
+    assert cli._find_archive_comment(42) == 2
 
-    fetch = cli.fetch_archive_comment_with_status(42)
+    fetch = cli._fetch_archive_comment_with_status(42)
     assert fetch.api_error is None
     assert fetch.body is not None
     assert "APPROVE" in fetch.body
@@ -85,8 +86,8 @@ def test_only_forged_comment_present_yields_no_archive() -> None:
         bot_login=_BOT_LOGIN,
     )
 
-    assert cli.find_archive_comment(42) is None
-    assert cli.fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
+    assert cli._find_archive_comment(42) is None
+    assert cli._fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
 
 
 def test_missing_author_on_marker_comment_is_ignored() -> None:
@@ -95,8 +96,8 @@ def test_missing_author_on_marker_comment_is_ignored() -> None:
         bot_login=_BOT_LOGIN,
     )
 
-    assert cli.find_archive_comment(42) is None
-    assert cli.fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
+    assert cli._find_archive_comment(42) is None
+    assert cli._fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
 
 
 def test_missing_bot_identity_fails_closed() -> None:
@@ -106,8 +107,8 @@ def test_missing_bot_identity_fails_closed() -> None:
         bot_login="",
     )
 
-    assert cli.find_archive_comment(42) is None
-    assert cli.fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
+    assert cli._find_archive_comment(42) is None
+    assert cli._fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
 
 
 def test_defaults_bot_login_from_settings_when_omitted() -> None:
@@ -118,14 +119,14 @@ def test_defaults_bot_login_from_settings_when_omitted() -> None:
         _comments_result([{"id": 7, "body": _MARKER, "user": {"login": settings_login}}])
     )
 
-    assert cli.find_archive_comment(42) == 7
+    assert cli._find_archive_comment(42) == 7
 
 
 class _PagedUpsertGhCli(GitHubForge):
     """``GitHubForge`` returning *get_result* for reads, recording every write argv.
 
-    Lets a test drive :meth:`GitHubForge.upsert_archive_comment` (which reads
-    via :meth:`GitHubForge.find_archive_comment` before deciding POST vs
+    Lets a test drive :meth:`GitHubForge._upsert_archive_comment` (which reads
+    via :meth:`GitHubForge._find_archive_comment` before deciding POST vs
     PATCH) while observing which write verb it picked, without a real
     ``gh`` subprocess.
     """
@@ -180,15 +181,15 @@ def test_paginated_array_endpoints_parse_all_pages() -> None:
     canned = GhResult(returncode=0, stdout=slurped_stdout, stderr="", argv=["gh"])
 
     cli = _CannedGitHubForge(canned, bot_login=_BOT_LOGIN)
-    assert cli.list_review_comments(42) == page1 + page2
-    assert cli.find_archive_comment(42) == 202
+    assert cli._list_review_comments(42) == page1 + page2
+    assert cli._find_archive_comment(42) == 202
 
-    fetch = cli.fetch_archive_comment_with_status(42)
+    fetch = cli._fetch_archive_comment_with_status(42)
     assert fetch.api_error is None
     assert fetch.body == marker_body
 
     upserter = _PagedUpsertGhCli(canned, bot_login=_BOT_LOGIN)
-    upserter.upsert_archive_comment(42, body=marker_body)
+    upserter._upsert_archive_comment(42, body=marker_body)
     assert len(upserter.write_calls) == 1, "expected exactly one write call, not a duplicate POST"
     method_index = upserter.write_calls[0].index("--method")
     assert upserter.write_calls[0][method_index + 1] == "PATCH", (
@@ -215,9 +216,9 @@ def test_malformed_paginated_output_surfaces_loudly() -> None:
     fake_log = MagicMock()
     with patch("repoach.forge.github._log", fake_log):
         cli = _CannedGitHubForge(malformed, bot_login=_BOT_LOGIN)
-        assert cli.list_review_comments(42) == []
-        assert cli.find_archive_comment(42) is None
-        fetch = cli.fetch_archive_comment_with_status(42)
+        assert cli._list_review_comments(42) == []
+        assert cli._find_archive_comment(42) is None
+        fetch = cli._fetch_archive_comment_with_status(42)
         assert fetch.body is None
         assert fetch.api_error is not None
         assert "decode" in fetch.api_error.lower()
