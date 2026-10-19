@@ -37,13 +37,14 @@ from pathlib import Path
 from ..agent_engine.agent_loop import AgentLoop
 from ..arch.registry import Registry, SpecNode
 from ..core.logging import get_logger
+from ..core.resources import prompts_dir
 from ..llm.capability import CapabilityTier
 from .governed_spec import GovernedSpec
 from .spec import SpecPlan
 
 _log = get_logger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
+_PROMPTS_DIR = prompts_dir()
 _PERSONA = "decomposer_0.1.1.md"
 _MAX_ATTEMPTS = 3
 _SUB_ID_RE = re.compile(r"^SP-[A-Z0-9-]+$")
