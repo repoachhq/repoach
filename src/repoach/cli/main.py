@@ -20,6 +20,7 @@ from ..lint import edge_honesty
 from .chain_status import chain_status
 from .doctor_cmds import doctor, project_root_or_exit
 from .init_cmds import init
+from .migrate_cmds import migrate_config
 from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
 
@@ -59,8 +60,9 @@ app.command(name="plan")(review_plan)
 app.command(name="chain-status")(chain_status)
 app.command(name="init")(init)
 app.command(name="doctor")(doctor)
+app.command(name="migrate-config")(migrate_config)
 
-SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset({"version", "doctor"})
+SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset({"version", "doctor", "migrate-config"})
 """Subcommands that must run with no configuration at all.
 
 Logging setup builds :class:`~repoach.core.config.Settings`; these

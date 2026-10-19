@@ -17,10 +17,9 @@ import typer
 from pydantic import ValidationError
 
 from .. import __version__
-from ..core.config import Settings
+from ..core.config import Settings, _anchored_env_files
 from ..core.paths import (
     NotARepositoryError,
-    env_files,
     project_slug,
     require_project_root,
     user_config_dir,
@@ -103,7 +102,7 @@ def doctor() -> None:
     typer.echo(f"project_root={root}")
     typer.echo(f"user_config_dir={user_config_dir()}")
     typer.echo(f"user_data_dir={user_data_dir()}")
-    for env_file in env_files(root):
+    for env_file in _anchored_env_files(root):
         state = "present" if env_file.is_file() else "absent"
         typer.echo(f"env_file={env_file} ({state})")
 
