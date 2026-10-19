@@ -224,10 +224,38 @@ def test_verilator_and_gcc_findings_are_red(tmp_path: Path, bare_path: Path) -> 
     _write(tmp_path, "fw/main.c", "int main( {\n")
     _exe(bare_path.parent, "fake-bin/verilator", 'echo "%Warning-UNUSED: $3:1:8: unused"\nexit 1\n')
     _exe(bare_path.parent, "fake-bin/gcc", "echo \"$2:1:10: error: expected ')'\" >&2\nexit 1\n")
-    report = run_verifiers(tmp_path, ["rtl/top.v", "fw/main.c"], _config("verilog", "c"))
+    advisory = run_verifiers(tmp_path, ["rtl/top.v", "fw/main.c"], _config("verilog", "c"))
+    assert _outcome(advisory, "verilator").status is VerifierStatus.ADVISORY
+    assert _outcome(advisory, "gcc").status is VerifierStatus.ADVISORY
+    assert advisory.passed is True
+    declared = _config(
+        "verilog",
+        "c",
+        verifier_commands={
+            "verilator": "verilator --lint-only -Wall {file} -Igen",
+            "gcc": "gcc -fsyntax-only {file} -Iinclude",
+        },
+    )
+    report = run_verifiers(tmp_path, ["rtl/top.v", "fw/main.c"], declared)
+    assert _outcome(report, "verilator").status is VerifierStatus.FAIL
     assert "rtl/top.v:1:8: unused" in _outcome(report, "verilator").detail
     assert "fw/main.c:1:10: error: expected ')'" in _outcome(report, "gcc").detail
     assert report.passed is False
+
+
+def test_generated_hls4ml_module_does_not_red_the_gate(tmp_path: Path) -> None:
+    if shutil.which("verilator") is None:
+        pytest.skip("verilator not installed")
+    _write(
+        tmp_path,
+        "soc/nn_accelerator_wb.v",
+        "module nn_accelerator_wb(input wire clk);\n  myproject accel (.ap_clk(clk));\nendmodule\n",
+    )
+    report = run_verifiers(tmp_path, ["soc/nn_accelerator_wb.v"], _config("verilog"))
+    verilator = _outcome(report, "verilator")
+    assert verilator.status is VerifierStatus.ADVISORY
+    assert "myproject" in verilator.detail
+    assert report.passed is True
 
 
 def test_verifier_command_override_and_advisory_policy(tmp_path: Path, bare_path: Path) -> None:

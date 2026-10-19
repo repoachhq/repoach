@@ -135,12 +135,19 @@ class CommandVerifier:
         language: Language it checks.
         binary: Executable looked up on ``PATH``.
         argv: Arguments after the binary; ``{file}`` is the repo-relative path.
+        advisory_unless_declared: Failures are advisory unless the project
+            declares the verifier's command in ``[gates].verifier_commands``.
+            Set for checkers whose default argv cannot see the project's
+            include paths or generated sources (a Verilog design that
+            instantiates an hls4ml-generated module, a C file whose headers
+            live under ``-I`` dirs): blocking on those would red every gate.
     """
 
     name: str
     language: Language
     binary: str
     argv: tuple[str, ...]
+    advisory_unless_declared: bool = False
 
 
 @dataclass(frozen=True)
@@ -523,9 +530,15 @@ VERIFIERS: dict[str, Verifier] = {
     "yaml_parse": FunctionVerifier("yaml_parse", Language.YAML, _verify_yaml),
     "md_links": FunctionVerifier("md_links", Language.MARKDOWN, _verify_md_links),
     "verilator": CommandVerifier(
-        "verilator", Language.VERILOG, "verilator", ("--lint-only", "-Wall", "{file}")
+        "verilator",
+        Language.VERILOG,
+        "verilator",
+        ("--lint-only", "-Wall", "{file}"),
+        advisory_unless_declared=True,
     ),
-    "gcc": CommandVerifier("gcc", Language.C, "gcc", ("-fsyntax-only", "{file}")),
+    "gcc": CommandVerifier(
+        "gcc", Language.C, "gcc", ("-fsyntax-only", "{file}"), advisory_unless_declared=True
+    ),
 }
 """Every verifier by name; the language table references these names."""
 
@@ -648,7 +661,10 @@ def run_verifiers(
                 continue
             if isinstance(verifier, CommandVerifier):
                 produced = _run_command_verifier(verifier, language, root, files, config)
-                advisory = False
+                advisory = (
+                    verifier.advisory_unless_declared
+                    and verifier.name not in config.verifier_commands
+                )
             else:
                 produced = verifier.fn(root, files, config)
                 advisory = verifier.advisory
@@ -700,7 +716,10 @@ def _availability(name: str, root: Path, config: GatesConfig) -> str:
     if isinstance(verifier, CommandVerifier):
         binary = _command_argv(verifier, config)[0]
         found = which(binary)
-        return f"found: {found}" if found else f"missing: {binary}"
+        state = f"found: {found}" if found else f"missing: {binary}"
+        if verifier.advisory_unless_declared and name not in config.verifier_commands:
+            state += " (advisory until declared in [gates].verifier_commands)"
+        return state
     states: list[str] = []
     for binary in verifier.binaries:
         found = next((b for d in _package_dirs(root) if (b := ts.node_bin(root, d, binary))), None)
