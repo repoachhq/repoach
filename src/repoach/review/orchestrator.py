@@ -67,7 +67,7 @@ from ..forge import (
     select_forge,
 )
 from ..project.config import load_project_config
-from ..project.spec_source import SpecResolution, resolve_spec
+from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
 from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
@@ -267,7 +267,9 @@ class TeamOutcome:
     at that first refused write. ``spec_id`` / ``spec_source`` name the
     spec the review ran against and where it was declared (``flag``,
     ``description``, ``branch``), both None when none was declared;
-    ``spec_covered`` is None when no coverage was computed.
+    ``spec_covered`` is None when no coverage was computed;
+    ``spec_missing`` is True when a ``Spec:`` line named an id with no
+    document (the review then runs without a spec).
     """
 
     pr_number: int
@@ -284,6 +286,7 @@ class TeamOutcome:
     spec_id: str | None = None
     spec_source: str | None = None
     spec_covered: bool | None = None
+    spec_missing: bool = False
 
 
 class ReviewTeamOrchestrator:
@@ -320,9 +323,10 @@ class ReviewTeamOrchestrator:
         """Load the spec a pull request declares, or None.
 
         A declared id with no document under the spec directory is
-        logged and reviewed without a spec, exactly as a branch naming a
-        missing spec always was; the ``--spec`` flag is checked by the
-        CLI before the review starts.
+        reviewed without a spec. A ``Spec:`` line naming a missing
+        document is a warning (the author asked for a spec); a branch
+        naming one stays an info, as it always was. The ``--spec`` flag
+        is checked by the CLI before the review starts.
 
         Args:
             declared: The resolved id and its source.
@@ -335,7 +339,8 @@ class ReviewTeamOrchestrator:
         try:
             return load_spec(declared.spec_id, root=self._repo_root)
         except FileNotFoundError as exc:
-            _log.info(
+            log = _log.warning if declared.source == "description" else _log.info
+            log(
                 "review_team.declared_spec_missing",
                 spec_id=declared.spec_id,
                 source=declared.source,
@@ -437,6 +442,7 @@ class ReviewTeamOrchestrator:
         spec_id: str | None = None
         spec_source: str | None = None
         spec_covered: bool | None = None
+        spec_missing = False
         pr_title = ""
         arch_edges_block = ""
         anchored = False
@@ -458,6 +464,10 @@ class ReviewTeamOrchestrator:
                 spec_plan_md = spec.raw_markdown
                 spec_id = spec.id
                 spec_source = declared.source
+            elif declared_spec_missing(declared, self._repo_root):
+                spec_id = declared.spec_id
+                spec_source = declared.source
+                spec_missing = True
             elif head_ref:
                 from .subspec_anchor import maybe_anchor_decomposed_parent
 
@@ -481,7 +491,7 @@ class ReviewTeamOrchestrator:
                 error=str(exc),
             )
 
-        if spec_id and not anchored:
+        if spec_id and not anchored and not spec_missing:
             try:
                 from .governed_spec import load_governed_spec, render_arch_edges
 
@@ -709,7 +719,7 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
-        if spec_id is not None:
+        if spec_id is not None and not spec_missing:
             try:
                 from .spec_gate import (
                     SpecCoverage,
@@ -785,6 +795,7 @@ class ReviewTeamOrchestrator:
             spec_id=spec_id,
             spec_source=spec_source,
             spec_covered=spec_covered,
+            spec_missing=spec_missing,
         )
 
         for outcome in outcomes:

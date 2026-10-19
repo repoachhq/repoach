@@ -344,6 +344,11 @@ class TestSpecResolution:
         assert resolve_spec_id(flag=None, description="Spec: SP-A extra", branch="") is None
         assert resolve_spec_id(flag=None, description="x\nSpec:  SP-A-1  \n", branch="") == "SP-A-1"
 
+    def test_spec_key_is_case_insensitive_and_the_id_verbatim(self) -> None:
+        for line in ("spec: SP-Yoob-1", "SPEC: SP-Yoob-1", "Spec:SP-Yoob-1"):
+            assert resolve_spec_id(flag=None, description=line, branch="") == "SP-Yoob-1"
+        assert resolve_spec_id(flag=None, description="Spec: sp-x.2", branch="") == "sp-x.2"
+
     def test_sources_restrict_the_order(self, tmp_path: Path) -> None:
         found = resolve_spec(
             flag=None,
@@ -516,6 +521,8 @@ class TestGateSpecSource:
         [
             ("Spec: SP-YOOB-MR-CREATE\n", "SP-YOOB-MR-CREATE", "description", "unknown"),
             ("measurement only\n", None, None, "not_applicable"),
+            ("spec: SP-GHOST-1\n", "SP-GHOST-1", "description", "missing"),
+            ("SPEC: sp-yoob-mr-create\n", "sp-yoob-mr-create", "description", "unknown"),
         ],
     )
     def test_gate_reports_spec_source_and_never_refuses_for_no_spec(
@@ -657,3 +664,28 @@ def test_undeclared_commands_are_skipped_with_a_reason_on_a_foreign_repo(
     assert (
         "config.commands.test=<not declared in repoach.toml; skipped on this repository>" in doctor
     )
+
+
+def test_description_naming_a_missing_spec_warns_and_reports_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _spec_repo(tmp_path)
+    team = _orchestrate(root, "Spec: SP-GHOST\n", None)
+    assert (team.spec_id, team.spec_source, team.spec_missing) == ("SP-GHOST", "description", True)
+    assert team.spec_covered is None
+
+    monkeypatch.chdir(root)
+    with patch("repoach.cli.review_cmds.run_review", return_value=team):
+        result = CliRunner().invoke(review_app, ["pr", "283", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "warning: spec SP-GHOST (from description) not found under docs/specs" in result.stderr
+    payload = json.loads(result.stdout)
+    assert (payload["spec"], payload["spec_coverage"]) == ("SP-GHOST", "missing")
+
+
+def test_missing_description_spec_is_logged_as_a_warning(tmp_path: Path) -> None:
+    root = _spec_repo(tmp_path)
+    with patch("repoach.review.orchestrator._log") as log:
+        _orchestrate(root, "Spec: SP-GHOST\n", None)
+    warned = [call.args[0] for call in log.warning.call_args_list]
+    assert "review_team.declared_spec_missing" in warned

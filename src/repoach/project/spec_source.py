@@ -15,11 +15,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..review.spec import _normalise_id, detect_spec_from_branch
+from ..review.spec import _normalise_id, detect_spec_from_branch, spec_exists
 from .config import DEFAULT_SPEC_SOURCES, SpecSource
 
-SPEC_LINE_RE = re.compile(r"^Spec:\s*(SP-[A-Z0-9-]+)\s*$", re.MULTILINE)
-"""A description line declaring the spec, e.g. ``Spec: SP-YOOB-MR-CREATE``."""
+SPEC_LINE_RE = re.compile(r"^(?i:spec):\s*((?i:sp)-[A-Za-z0-9._-]+)\s*$", re.MULTILINE)
+"""A description line declaring the spec, e.g. ``Spec: SP-YOOB-MR-CREATE``.
+
+The ``Spec:`` key and the ``SP-`` prefix match in any case; the id is
+returned verbatim, as written in the description."""
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,25 @@ def resolve_spec(
     return SpecResolution()
 
 
+def declared_spec_missing(declared: SpecResolution, root: Path) -> bool:
+    """Return whether a description-declared spec names no document.
+
+    Only the ``Spec:`` line counts: a ``--spec`` naming no document is
+    refused before the review, and a branch-derived id with no document
+    keeps its historical fallback (the decomposed-parent anchor).
+
+    Args:
+        declared: The resolved spec.
+        root: Repository root holding the spec directory.
+
+    Returns:
+        True when the description named a spec that does not exist.
+    """
+    if declared.source != "description" or declared.spec_id is None:
+        return False
+    return not spec_exists(declared.spec_id, root=root)
+
+
 def resolve_spec_id(
     *,
     flag: str | None,
@@ -108,20 +130,24 @@ def resolve_spec_id(
     ).spec_id
 
 
-def spec_coverage_label(spec_id: str | None, covered: bool | None) -> str:
+def spec_coverage_label(spec_id: str | None, covered: bool | None, *, missing: bool = False) -> str:
     """Return the spec-coverage fact as reported in JSON payloads.
 
     Args:
         spec_id: The resolved spec, None when none is declared.
         covered: The coverage verdict, None when none was computed.
+        missing: The declared spec has no document under the spec directory.
 
     Returns:
-        ``not_applicable`` without a spec (never a refusal), ``unknown``
-        when a spec is declared but no coverage was computed, else
-        ``covered`` / ``not_covered``.
+        ``not_applicable`` without a spec (never a refusal), ``missing``
+        when the declared spec has no document, ``unknown`` when a spec
+        is declared but no coverage was computed, else ``covered`` /
+        ``not_covered``.
     """
     if spec_id is None:
         return "not_applicable"
+    if missing:
+        return "missing"
     if covered is None:
         return "unknown"
     return "covered" if covered else "not_covered"

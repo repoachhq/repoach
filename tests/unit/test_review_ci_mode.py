@@ -46,6 +46,7 @@ class _FakeTeam:
     spec_id: str | None = None
     spec_source: str | None = None
     spec_covered: bool | None = None
+    spec_missing: bool = False
 
 
 _REQUIRED_TOP_LEVEL = {

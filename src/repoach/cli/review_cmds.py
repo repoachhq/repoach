@@ -31,7 +31,7 @@ from sqlalchemy import create_engine, text
 from ..core.config import get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
-from ..project.spec_source import resolve_spec, spec_coverage_label
+from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
 from ..review.auto_merge import (
     evaluate_merge_gate,
     merge_exit_code,
@@ -168,8 +168,10 @@ def review_pr(
     ``spec`` / ``spec_source`` name the spec the review ran against and
     where it was declared (``--spec``, a ``Spec:`` description line, the
     branch name); with none, ``spec`` is null and ``spec_coverage`` is
-    ``not_applicable`` — never a refusal.  A ``--spec`` naming no spec
-    document exits 2 before any forge call.
+    ``not_applicable`` — never a refusal.  A ``Spec:`` line naming no
+    spec document prints a warning and reports ``spec_coverage`` as
+    ``missing``.  A ``--spec`` naming no spec document exits 2 before
+    any forge call.
     """
     root = project_root_or_exit()
     spec_flag = _spec_flag(spec)
@@ -179,11 +181,18 @@ def review_pr(
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     spec_id = team.spec_id
+    if team.spec_missing:
+        where = specs_dir_for(root).relative_to(root)
+        typer.echo(
+            f"repoach: warning: spec {spec_id} (from {team.spec_source}) not found under "
+            f"{where}; reviewed without a spec",
+            err=True,
+        )
     payload = {
         "pr_number": team.pr_number,
         "spec": spec_id,
         "spec_source": team.spec_source,
-        "spec_coverage": spec_coverage_label(spec_id, team.spec_covered),
+        "spec_coverage": spec_coverage_label(spec_id, team.spec_covered, missing=team.spec_missing),
         "final_verdict": team.final_verdict.value,
         "n_blockers": team.n_blockers,
         "n_majors": team.n_majors,
@@ -459,7 +468,9 @@ def review_gate(
     ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
     (``--spec`` > ``Spec:`` description line > branch name).
     ``facts.spec_coverage`` is ``not_applicable`` when no spec is
-    declared: a PR without a spec is never refused for lacking one.
+    declared: a PR without a spec is never refused for lacking one; it
+    is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
+    a spec that has no document.
     """
     root = project_root_or_exit()
     spec_flag = _spec_flag(spec)
@@ -485,7 +496,9 @@ def review_gate(
         root=root,
     )
     coverage = spec_coverage_label(
-        declared.spec_id, facts.spec_covered if facts.spec_coverage_known else None
+        declared.spec_id,
+        facts.spec_covered if facts.spec_coverage_known else None,
+        missing=declared_spec_missing(declared, root),
     )
     typer.echo(
         json.dumps(
