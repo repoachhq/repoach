@@ -15,6 +15,12 @@ be taken as repoach's.  The host repository's ``.env`` and ``chains.env``
 are not read here; the llm_proxy gateway keeps its own anchors in
 ``repoach.llm_proxy.config.settings``.
 
+Below every environment layer sits the committed ``<project>/repoach.toml``
+(SP-UNIVERSAL-PROJECT-CONFIG): its ``[repoach].integration_branch``,
+``release_branch`` and ``[state]`` paths feed :class:`Settings` only
+when no environment layer sets them (:func:`configured_env_value`), so
+the resolution order is environment > file > built-in default.
+
 Building :class:`Settings` never requires a gateway: the proxy base URL
 is checked by :meth:`Settings.require_llm_proxy_base_url` at the point
 a gateway client is actually built, so ``repoach --version`` and
@@ -32,6 +38,7 @@ from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ..project.config import settings_file_values
 from . import paths
 from .paths import env_files, project_root
 
@@ -177,6 +184,71 @@ def _unrestricted_env_files(root: Path) -> tuple[Path, ...]:
     return files
 
 
+def configured_env_value(names: tuple[str, ...], root: Path) -> str | None:
+    """Return the value the environment layer gives one setting, if any.
+
+    Mirrors the precedence :class:`Settings` applies above
+    ``repoach.toml``: the process environment, then the allow-listed
+    keys of ``<root>/.repoach.env``, then the user env file (and a
+    repoach checkout's untracked legacy ``.env``), the later file
+    winning.  An empty value counts as unset.
+
+    Args:
+        names: Every environment name of the setting, preferred first.
+        root: The project root.
+
+    Returns:
+        The value, or None when no environment layer sets it.
+    """
+    wanted = tuple(name.upper() for name in names)
+    environment = {key.upper(): value for key, value in os.environ.items()}
+    for name in wanted:
+        if environment.get(name):
+            return environment[name]
+    overrides = _project_env_overrides(root)
+    for name in wanted:
+        target = PROJECT_ENV_ALLOWED.get(name)
+        if target is not None and overrides.get(target):
+            return overrides[target]
+    for env_file in reversed(_unrestricted_env_files(root)):
+        if not env_file.is_file():
+            continue
+        values = {key.upper(): value for key, value in dotenv_values(env_file).items()}
+        for name in wanted:
+            found = values.get(name)
+            if found:
+                return found
+    return None
+
+
+FILE_KEY_ENV_NAMES: dict[str, tuple[str, ...]] = {
+    "REPOACH_INTEGRATION_BRANCH": ("REPOACH_INTEGRATION_BRANCH", "INTEGRATION_BRANCH"),
+    "REPOACH_RELEASE_BRANCH": ("REPOACH_RELEASE_BRANCH", "RELEASE_BRANCH"),
+    "db_path": ("REPOACH_DB_PATH",),
+    "logs_dir": ("REPOACH_LOGS_DIR",),
+}
+"""Environment names that outrank each ``repoach.toml`` value :class:`Settings` reads."""
+
+
+def _project_file_overrides(root: Path) -> dict[str, str]:
+    """Return the ``repoach.toml`` values no environment layer overrides.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        Init keyword arguments for :class:`Settings`.
+
+    Raises:
+        ConfigError: ``repoach.toml`` is invalid.
+    """
+    return {
+        init_key: value
+        for init_key, value in settings_file_values(root).items()
+        if configured_env_value(FILE_KEY_ENV_NAMES[init_key], root) is None
+    }
+
+
 def _default_db_path() -> Path:
     """Return the default ledger path for the current project.
 
@@ -226,7 +298,8 @@ class Settings(BaseSettings):
         (and a repoach checkout's untracked legacy ``.env``) is read in
         full; the project's ``.repoach.env`` contributes only its
         allow-listed keys (:data:`PROJECT_ENV_ALLOWED`), passed as init
-        values below the process environment.
+        values below the process environment; ``repoach.toml`` values
+        follow, each only when no environment layer sets that key.
 
         Args:
             **data: Forwarded to
@@ -238,6 +311,8 @@ class Settings(BaseSettings):
             root = project_root()
             data["_env_file"] = _unrestricted_env_files(root)
             for key, value in _project_env_overrides(root).items():
+                data.setdefault(key, value)
+            for key, value in _project_file_overrides(root).items():
                 data.setdefault(key, value)
         super().__init__(**data)
 

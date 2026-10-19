@@ -222,6 +222,21 @@ def _origin_url(root: Path) -> str | None:
     return url if completed.returncode == 0 and url else None
 
 
+def origin_url(root: Path) -> str | None:
+    """Return the URL of the ``origin`` remote of ``root``, if any.
+
+    Args:
+        root: A directory inside a git working tree (or not).
+
+    Returns:
+        The configured URL, or None when there is no ``origin`` remote.
+
+    Raises:
+        NotARepositoryError: The ``git`` executable is not available.
+    """
+    return _origin_url(root)
+
+
 def _slug_from_remote(url: str) -> str | None:
     """Turn a git remote URL into ``host/owner/.../repo``, lower-cased.
 

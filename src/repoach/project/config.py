@@ -1,0 +1,461 @@
+"""The ``repoach.toml`` file model and its loader (SP-UNIVERSAL-PROJECT-CONFIG G1).
+
+One committed, secret-free file at the host repository root carries
+every project-specific fact repoach needs.  Every key is optional and
+every default equals repoach's own behaviour on 2026-10-18, so a
+repository without the file behaves exactly as repoach did before the
+file existed (the golden test in ``tests/unit/test_project_config.py``
+pins each default against the literal it replaces).
+
+Validation is strict: an unknown key, a value of the wrong type, a key
+whose name looks like a secret (``*_key``, ``*_token``, ``*_secret``), a
+path that leaves the repository, or a ``schema`` newer than this
+repoach raises :class:`ConfigError`, whose message names the file, the
+dotted key and, when it can be found, the line.
+
+This module reads the file only.  The environment layer and the origin
+remote are applied by :mod:`repoach.project.resolve`; the
+:class:`~repoach.core.config.Settings` singleton reads the file through
+:func:`settings_file_values` as a source placed below the environment.
+"""
+
+from __future__ import annotations
+
+import re
+import tomllib
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+CONFIG_FILE_NAME = "repoach.toml"
+"""File name of the project configuration, at the git toplevel."""
+
+SCHEMA_VERSION = 1
+"""Highest ``[repoach].schema`` this repoach understands."""
+
+DEFAULT_SPECS_DIR = "docs/specs"
+"""Spec directory before the file existed (``review/spec.py`` ``SPECS_DIR``)."""
+
+DEFAULT_PLANS_DIR = "docs/plans"
+"""Plan directory before the file existed (``review/plan.py`` ``plan_relpath``)."""
+
+DEFAULT_LINT_COMMAND = "ruff check src tests && ruff format --check src tests"
+"""The Coder's lint gate before the file existed (``coder_loop.run_ruff_gate``)."""
+
+DEFAULT_TEST_COMMAND = "pytest -q tests/unit"
+"""The Coder's test gate before the file existed (``coder_loop.run_pytest``)."""
+
+SECRET_SUFFIXES: tuple[str, ...] = ("_key", "_token", "_secret")
+"""Key-name suffixes refused anywhere in the file (NG1: no secrets, ever)."""
+
+SpecSource = Literal["flag", "description", "branch"]
+"""Where a pull request's spec id may come from, in resolution order."""
+
+DEFAULT_SPEC_SOURCES: tuple[SpecSource, ...] = ("flag", "description", "branch")
+"""Default spec resolution order (G4)."""
+
+ForgeName = Literal["github", "gitlab"]
+MergeMethodName = Literal["squash", "merge", "rebase"]
+ProviderKind = Literal["", "anthropic", "claude_code", "openai", "openai_compatible", "gateway"]
+
+_KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
+_SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
+
+
+class ConfigError(ValueError):
+    """``repoach.toml`` is unreadable or invalid.
+
+    Attributes:
+        path: The file that was read.
+        key: Dotted key the problem is about (``repoach.merge_method``),
+            empty for a whole-file problem.
+        line: 1-based line of the key or of the parse error, when known.
+        reason: The problem, without the location prefix.
+    """
+
+    def __init__(self, path: Path, reason: str, *, key: str = "", line: int | None = None) -> None:
+        self.path = path
+        self.key = key
+        self.line = line
+        self.reason = reason
+        where = f"{path}:{line}" if line is not None else str(path)
+        subject = f" key {key!r}:" if key else ""
+        super().__init__(f"{where}:{subject} {reason}")
+
+
+class _Section(BaseModel):
+    """Base of every section: frozen, unknown keys refused."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+def _relative_inside(value: str) -> str:
+    """Refuse a path that is absolute or climbs out of the repository.
+
+    Args:
+        value: A repository-relative path as written in the file.
+
+    Returns:
+        The value unchanged.
+
+    Raises:
+        ValueError: The path is absolute or has a ``..`` segment.
+    """
+    if not value:
+        return value
+    posix = PurePosixPath(value.replace("\\", "/"))
+    if posix.is_absolute() or Path(value).is_absolute() or ".." in posix.parts:
+        raise ValueError(f"{value!r} must be a path relative to the repository root, without '..'")
+    return value
+
+
+class RepoachSection(_Section):
+    """``[repoach]``: forge, branches, merge method, spec and plan directories."""
+
+    schema_: int = Field(default=SCHEMA_VERSION, alias="schema", ge=1)
+    forge: ForgeName | None = None
+    integration_branch: str = Field(default="develop", min_length=1)
+    release_branch: str = Field(default="main", min_length=1)
+    merge_method: MergeMethodName = "squash"
+    remove_source_branch: bool = True
+    specs_dir: str = Field(default=DEFAULT_SPECS_DIR, min_length=1)
+    plans_dir: str = Field(default=DEFAULT_PLANS_DIR, min_length=1)
+
+    @field_validator("specs_dir", "plans_dir")
+    @classmethod
+    def _check_dirs(cls, value: str) -> str:
+        """Keep the spec and plan directories inside the repository."""
+        return _relative_inside(value)
+
+
+class ProjectSection(_Section):
+    """``[project]``: measured languages and layout (consumed from M4/M5 on)."""
+
+    languages: list[str] = Field(default_factory=lambda: ["python"])
+    src_roots: list[str] = Field(default_factory=lambda: ["src"])
+    test_roots: list[str] = Field(default_factory=lambda: ["tests"])
+
+
+class CommandsSection(_Section):
+    """``[commands]``: the project's own lint, test and gate commands (M5)."""
+
+    lint: str = DEFAULT_LINT_COMMAND
+    test: str = DEFAULT_TEST_COMMAND
+    gate: str = ""
+
+
+class CoderSection(_Section):
+    """``[coder]``: paths added to the Coder's built-in jail (M5)."""
+
+    forbidden_prefixes: list[str] = Field(default_factory=list)
+    forbidden_paths: list[str] = Field(default_factory=list)
+
+
+class ProviderSection(_Section):
+    """``[provider]``: the provider *name* and model ids, never a credential (M4)."""
+
+    kind: ProviderKind = ""
+    opus: str = ""
+    sonnet: str = ""
+    haiku: str = ""
+
+
+class ReviewSection(_Section):
+    """``[review]``: the bot identity and the spec resolution order."""
+
+    bot_username: str = ""
+    spec_sources: list[SpecSource] = Field(default_factory=lambda: list(DEFAULT_SPEC_SOURCES))
+
+
+class ArchSection(_Section):
+    """``[arch]``: edge-honesty settings (moved from ``[tool.repoach.arch]``, G6)."""
+
+    frontier_suppress: list[str] = Field(default_factory=list)
+
+
+class StateSection(_Section):
+    """``[state]``: where the ledger and the diagnostic dumps go.
+
+    Empty means the per-user default
+    (``$XDG_DATA_HOME/repoach/<slug>/...``).  A committed file may only
+    name a path inside the repository: a clone must never be able to
+    point repoach's writes at an arbitrary location.
+    """
+
+    db_path: str = ""
+    logs_dir: str = ""
+
+    @field_validator("db_path", "logs_dir")
+    @classmethod
+    def _check_paths(cls, value: str) -> str:
+        """Keep the ledger and the dumps inside the repository."""
+        return _relative_inside(value)
+
+
+class ConventionsSection(_Section):
+    """``[conventions]``: read and type-checked only; enforced by SP-CONVENTIONS-GATE."""
+
+    types: list[str] = Field(
+        default_factory=lambda: [
+            "feat",
+            "fix",
+            "perf",
+            "refactor",
+            "docs",
+            "test",
+            "build",
+            "ci",
+            "chore",
+            "style",
+            "revert",
+        ]
+    )
+    scopes: str = r"[a-z0-9._/-]+"
+    branch_pattern: str = "<type>/<slug>"
+    exempt_branches: list[str] = Field(default_factory=lambda: ["main", "develop"])
+    pr_title: bool = True
+    breaking: bool = True
+    english: bool = True
+    header_max_chars: int = 72
+
+
+class ProjectConfig(_Section):
+    """The whole ``repoach.toml``; ``ProjectConfig()`` is the no-file behaviour."""
+
+    repoach: RepoachSection = Field(default_factory=RepoachSection)
+    project: ProjectSection = Field(default_factory=ProjectSection)
+    commands: CommandsSection = Field(default_factory=CommandsSection)
+    coder: CoderSection = Field(default_factory=CoderSection)
+    provider: ProviderSection = Field(default_factory=ProviderSection)
+    review: ReviewSection = Field(default_factory=ReviewSection)
+    arch: ArchSection = Field(default_factory=ArchSection)
+    state: StateSection = Field(default_factory=StateSection)
+    conventions: ConventionsSection = Field(default_factory=ConventionsSection)
+
+    def is_set(self, dotted: str) -> bool:
+        """Return whether the file set ``section.key`` explicitly.
+
+        Args:
+            dotted: ``section.key``, e.g. ``repoach.forge``.
+
+        Returns:
+            True when the key was present in the file.
+        """
+        section_name, _, key = dotted.partition(".")
+        if section_name not in self.model_fields_set:
+            return False
+        section = getattr(self, section_name)
+        field_name = "schema_" if key == "schema" else key
+        return field_name in section.model_fields_set
+
+
+def config_path(root: Path) -> Path:
+    """Return ``<root>/repoach.toml``.
+
+    Args:
+        root: The project root (git toplevel).
+
+    Returns:
+        The path, whether or not the file exists.
+    """
+    return root / CONFIG_FILE_NAME
+
+
+def _line_of(text: str, section: str, key: str) -> int | None:
+    """Return the 1-based line where ``key`` is assigned inside ``[section]``.
+
+    Args:
+        text: The file content.
+        section: Table name, empty for a top-level key.
+        key: Key name.
+
+    Returns:
+        The line number, or None when the key is not written literally.
+    """
+    current = ""
+    for number, line in enumerate(text.splitlines(), start=1):
+        header = _SECTION_LINE_RE.match(line)
+        if header is not None:
+            current = header.group("name")
+            continue
+        match = _KEY_LINE_RE.match(line)
+        if match is not None and current == section and match.group("key") == key:
+            return number
+    return None
+
+
+def _refuse_secret_keys(path: Path, text: str, data: dict[str, Any], prefix: str = "") -> None:
+    """Raise when any key, at any depth, is named like a secret.
+
+    Args:
+        path: The file, for the message.
+        text: The file content, for the line lookup.
+        data: A parsed table.
+        prefix: Dotted name of ``data`` inside the file.
+
+    Raises:
+        ConfigError: A key ends in one of :data:`SECRET_SUFFIXES`.
+    """
+    for key, value in data.items():
+        dotted = f"{prefix}.{key}" if prefix else key
+        if key.lower().endswith(SECRET_SUFFIXES):
+            raise ConfigError(
+                path,
+                "looks like a secret; repoach.toml is committed, put credentials in "
+                "the environment or ~/.config/repoach/env",
+                key=dotted,
+                line=_line_of(text, prefix, key),
+            )
+        if isinstance(value, dict):
+            _refuse_secret_keys(path, text, value, dotted)
+
+
+def _dotted_location(loc: tuple[int | str, ...]) -> tuple[str, str, str]:
+    """Turn a pydantic error location into ``(dotted, section, key)``.
+
+    Args:
+        loc: The error's ``loc`` tuple.
+
+    Returns:
+        The dotted key, the table holding it and its own name.
+    """
+    names = [str(part) for part in loc if isinstance(part, str)]
+    names = ["schema" if name == "schema_" else name for name in names]
+    if not names:
+        return "", "", ""
+    if len(names) == 1:
+        return names[0], "", names[0]
+    return ".".join(names[:2]), names[0], names[1]
+
+
+def parse_project_config(text: str, path: Path) -> ProjectConfig:
+    """Parse and validate the content of a ``repoach.toml``.
+
+    Args:
+        text: The file content.
+        path: Where it came from, for messages.
+
+    Returns:
+        The validated configuration.
+
+    Raises:
+        ConfigError: Unparsable TOML, an unknown key, a wrong type, a
+            secret-looking key, a path leaving the repository, or a
+            ``schema`` newer than :data:`SCHEMA_VERSION`.
+    """
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        line = getattr(exc, "lineno", None)
+        raise ConfigError(path, f"not valid TOML: {exc}", line=line) from exc
+    _refuse_secret_keys(path, text, data)
+    try:
+        config = ProjectConfig.model_validate(data)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        dotted, section, key = _dotted_location(tuple(first["loc"]))
+        reason = first["msg"]
+        if first["type"] == "extra_forbidden":
+            reason = "unknown key"
+        raise ConfigError(path, reason, key=dotted, line=_line_of(text, section, key)) from exc
+    if config.repoach.schema_ > SCHEMA_VERSION:
+        raise ConfigError(
+            path,
+            f"schema {config.repoach.schema_} is newer than this repoach understands "
+            f"({SCHEMA_VERSION}); upgrade repoach",
+            key="repoach.schema",
+            line=_line_of(text, "repoach", "schema"),
+        )
+    return config
+
+
+def load_project_config(root: Path) -> ProjectConfig:
+    """Load ``<root>/repoach.toml``; defaults when the file is absent.
+
+    Args:
+        root: The project root (git toplevel).
+
+    Returns:
+        The validated configuration; ``ProjectConfig()`` without a file.
+
+    Raises:
+        ConfigError: The file exists but is unreadable or invalid.
+    """
+    path = config_path(root)
+    if not path.is_file():
+        return ProjectConfig()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigError(path, f"unreadable: {exc}") from exc
+    return parse_project_config(text, path)
+
+
+SETTINGS_FILE_KEYS: dict[str, str] = {
+    "repoach.integration_branch": "REPOACH_INTEGRATION_BRANCH",
+    "repoach.release_branch": "REPOACH_RELEASE_BRANCH",
+    "state.db_path": "db_path",
+    "state.logs_dir": "logs_dir",
+}
+"""``repoach.toml`` keys :class:`~repoach.core.config.Settings` reads, by init key."""
+
+
+def settings_file_values(root: Path) -> dict[str, str]:
+    """Return the :class:`~repoach.core.config.Settings` init values the file sets.
+
+    Only keys the file sets explicitly are returned; paths are anchored
+    to ``root``.  The caller decides precedence against the environment.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        ``{settings init key: value}``.
+
+    Raises:
+        ConfigError: The file is invalid.
+    """
+    config = load_project_config(root)
+    values: dict[str, str] = {}
+    for dotted, init_key in SETTINGS_FILE_KEYS.items():
+        if not config.is_set(dotted):
+            continue
+        section, _, key = dotted.partition(".")
+        raw = str(getattr(getattr(config, section), key))
+        if not raw:
+            continue
+        values[init_key] = str((root / raw).resolve()) if section == "state" else raw
+    return values
+
+
+def specs_dir(root: Path) -> Path:
+    """Return the configured spec directory under ``root``.
+
+    Args:
+        root: The repository root.
+
+    Returns:
+        ``root / [repoach].specs_dir`` (``docs/specs`` by default).
+
+    Raises:
+        ConfigError: ``root/repoach.toml`` is invalid.
+    """
+    return root / load_project_config(root).repoach.specs_dir
+
+
+def plans_dir_relative(root: Path | None) -> str:
+    """Return the configured plan directory, relative to ``root``.
+
+    Args:
+        root: The repository root; None means the built-in default.
+
+    Returns:
+        ``[repoach].plans_dir`` (``docs/plans`` by default).
+
+    Raises:
+        ConfigError: ``root/repoach.toml`` is invalid.
+    """
+    if root is None:
+        return DEFAULT_PLANS_DIR
+    return load_project_config(root).repoach.plans_dir
