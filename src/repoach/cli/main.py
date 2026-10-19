@@ -17,8 +17,10 @@ from ..arch.cli import arch_app
 from ..core.config import get_settings
 from ..core.logging import configure_logging
 from ..lint import edge_honesty
+from ..project.config import ConfigError
 from ..project.config import specs_dir as configured_specs_dir
 from .chain_status import chain_status
+from .config_cmds import config_app
 from .doctor_cmds import doctor, project_root_or_exit
 from .init_cmds import init
 from .migrate_cmds import migrate_config
@@ -69,8 +71,11 @@ app.command(name="chain-status")(chain_status)
 app.command(name="init")(init)
 app.command(name="doctor")(doctor)
 app.command(name="migrate-config")(migrate_config)
+app.add_typer(config_app, name="config")
 
-SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset({"version", "doctor", "migrate-config", "init"})
+SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset(
+    {"version", "doctor", "migrate-config", "init", "config"}
+)
 """Subcommands that must run with no configuration at all.
 
 Logging setup builds :class:`~repoach.core.config.Settings`; these
@@ -112,10 +117,21 @@ def _bootstrap(
         help="Print the installed Repoach version and exit.",
     ),
 ) -> None:
-    """Configure logging once for every CLI invocation that needs settings."""
+    """Configure logging once for every CLI invocation that needs settings.
+
+    An invalid ``repoach.toml`` ends the command here with rc 2, before
+    any forge or provider call, naming the file, key and line.
+
+    Raises:
+        typer.Exit: Code 2 on a :class:`~repoach.project.config.ConfigError`.
+    """
     if ctx.invoked_subcommand in SETTINGS_FREE_COMMANDS:
         return
-    configure_logging()
+    try:
+        configure_logging()
+    except ConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 @app.command("version")
