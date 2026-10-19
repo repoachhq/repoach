@@ -101,6 +101,22 @@ def test_tsc_error_is_red_with_file_and_line(tmp_path: Path, bare_path: Path) ->
     assert report.passed is False
 
 
+def test_tsc_error_in_an_untouched_file_does_not_block(tmp_path: Path, bare_path: Path) -> None:
+    _ts_project(tmp_path)
+    _write(tmp_path, "frontend/src/ok.ts", "/** Doc. */\nexport const n = 1;\n")
+    _write(tmp_path, "frontend/src/legacy.ts", "export const m: number = 'x';\n")
+    _exe(
+        tmp_path,
+        "frontend/node_modules/.bin/tsc",
+        "echo \"src/legacy.ts(1,14): error TS2322: Type 'string' is not assignable.\"\nexit 2\n",
+    )
+    report = run_verifiers(tmp_path, ["frontend/src/ok.ts"], _config("typescript"))
+    tsc = _outcome(report, "tsc")
+    assert tsc.status is VerifierStatus.ADVISORY
+    assert "frontend/src/legacy.ts:1:14" in tsc.detail
+    assert report.passed is True
+
+
 def test_tsc_green_and_targets_the_referenced_project(tmp_path: Path, bare_path: Path) -> None:
     _ts_project(tmp_path)
     _write(tmp_path, "frontend/src/ok.ts", "/** Doc. */\nexport const n = 1;\n")

@@ -209,7 +209,15 @@ def _group(
 
 
 def _verify_tsc(root: Path, paths: list[str], config: GatesConfig) -> list[VerifierOutcome]:
-    """Type-check each tsconfig project the paths belong to with ``tsc --noEmit``."""
+    """Type-check each tsconfig project the paths belong to with ``tsc --noEmit``.
+
+    ``tsc`` checks the whole project, so a pre-existing error in a file
+    the change never touched would block every change. Only diagnostics
+    in the changed files fail the gate; diagnostics elsewhere are
+    reported as advisory with their count. A failure with no parseable
+    ``file(line,col)`` diagnostic at all (a broken tsconfig, a crash)
+    still fails.
+    """
     outcomes: list[VerifierOutcome] = []
     for tsconfig, files in _group(root, paths, lambda f: ts.find_tsconfig(root, f)).items():
         if tsconfig is None:
@@ -243,11 +251,27 @@ def _verify_tsc(root: Path, paths: list[str], config: GatesConfig) -> list[Verif
         if result.passed:
             outcomes.append(_outcome("tsc", Language.TYPESCRIPT, VerifierStatus.PASS, "", files))
             continue
-        diagnostics = ts.tsc_diagnostics(result.tail, tsconfig.parent, root)
+        diagnostics = ts.tsc_diagnostics(result.stdout or result.tail, tsconfig.parent, root)
+        if not diagnostics:
+            outcomes.append(
+                _outcome("tsc", Language.TYPESCRIPT, VerifierStatus.FAIL, result.tail, files)
+            )
+            continue
         changed = set(files)
-        diagnostics.sort(key=lambda line: line.split(":", 1)[0] not in changed)
-        detail = "\n".join(diagnostics) if diagnostics else result.tail
-        outcomes.append(_outcome("tsc", Language.TYPESCRIPT, VerifierStatus.FAIL, detail, files))
+        inside = [line for line in diagnostics if line.split(":", 1)[0] in changed]
+        outside = [line for line in diagnostics if line.split(":", 1)[0] not in changed]
+        if inside:
+            detail = "\n".join(inside)
+            if outside:
+                detail += f"\n({len(outside)} more error(s) outside the changed files)"
+            outcomes.append(
+                _outcome("tsc", Language.TYPESCRIPT, VerifierStatus.FAIL, detail, files)
+            )
+            continue
+        detail = f"{len(outside)} error(s) outside the changed files:\n" + "\n".join(outside)
+        outcomes.append(
+            _outcome("tsc", Language.TYPESCRIPT, VerifierStatus.ADVISORY, detail, files)
+        )
     return outcomes
 
 
