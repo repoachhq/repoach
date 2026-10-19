@@ -22,6 +22,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Test THIS checkout's sources: an editable install made from another
+# checkout (the main clone, when running in a git worktree) would otherwise
+# shadow src/ and the gates would judge the wrong tree.
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
 mode="full"
 review_pr=""
 case "${1:-}" in
