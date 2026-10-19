@@ -597,3 +597,43 @@ class TestGatesKeys:
         assert own.arch.require_frontmatter is True
         assert own.gates.docstring_exempt == ["tests/", "scripts/", "src/repoach/llm_proxy/"]
         assert resolve_project_config(checkout).config.arch.require_frontmatter is True
+
+
+class TestAsMapping:
+    def test_mapping_is_toml_shaped_and_resolved(self, tmp_path: Path) -> None:
+        root = _repo(
+            tmp_path,
+            "git@gitlab.com:o/r.git",
+            "[repoach]\nschema = 1\n\n[commands]\nlint = 'npm run lint'\ne2e = 'npm run e2e'\n",
+        )
+        mapping = resolve_project_config(root).config.as_mapping()
+        assert list(mapping) == [
+            "repoach",
+            "project",
+            "commands",
+            "coder",
+            "provider",
+            "review",
+            "gates",
+            "arch",
+            "state",
+            "conventions",
+        ]
+        assert mapping["repoach"]["schema"] == 1
+        assert mapping["repoach"]["forge"] == "gitlab"
+        assert mapping["commands"]["e2e"] == "npm run e2e"
+        assert mapping["commands"]["lint"] == "npm run lint"
+        assert mapping["commands"]["timeout_s"] == 900
+        assert mapping["gates"]["docstring_exempt"] == ["tests/"]
+        assert mapping["arch"]["require_frontmatter"] is False
+        assert mapping["project"]["prompts_dir"] == "prompts/review"
+
+    def test_mapping_round_trips_through_the_parser(self, tmp_path: Path) -> None:
+        config = resolve_project_config(_repo(tmp_path)).config
+        assert ProjectConfig.model_validate(config.as_mapping()) == config
+
+    def test_unresolved_none_keys_are_omitted(self) -> None:
+        mapping = ProjectConfig().as_mapping()
+        assert "docstring_exempt" not in mapping["gates"]
+        assert "require_frontmatter" not in mapping["arch"]
+        assert "forge" not in mapping["repoach"]

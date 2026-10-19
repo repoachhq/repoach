@@ -330,6 +330,25 @@ class ProjectConfig(_Section):
         field_name = "schema_" if key == "schema" else key
         return field_name in section.model_fields_set or field_name in (section.model_extra or {})
 
+    def as_mapping(self) -> dict[str, Any]:
+        """Return the configuration as a ``repoach.toml``-shaped dict.
+
+        One table per section, keyed as in the file (``schema``, not the
+        attribute name); named ``[commands]`` entries pass through; keys
+        still None (undeclared, no host default) are left out, exactly
+        as if the file omitted them.  Call it on the resolved
+        configuration (``resolve_project_config(root).config``) to get
+        the effective values: ``GatesConfig.from_mapping(cfg.as_mapping())``
+        is the one adapter the gates need. Two values stay as written:
+        an empty ``[review].bot_username`` and empty ``[state]`` paths
+        mean "the forge / per-user default", expanded only by
+        :func:`repoach.project.resolve.effective_rows`.
+
+        Returns:
+            A fresh, mutable nested dict of plain values.
+        """
+        return self.model_dump(by_alias=True, exclude_none=True)
+
     def with_host_defaults(self, *, repoach_host: bool) -> ProjectConfig:
         """Fill the keys whose default depends on the host repository.
 
