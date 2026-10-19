@@ -3,9 +3,10 @@
 Pins the anchored env-file resolution on ``core.config.Settings``:
 env-file discovery is rooted at the repository root (via a
 monkeypatchable ``_repo_root`` seam), not the process's current working
-directory, and the proxy base URL fails loud at construction instead
-of silently defaulting to the retired, wrong ``http://localhost:8082``
-literal.
+directory, and the proxy base URL fails loud where a gateway client is
+built (:func:`require_llm_proxy_base_url`) instead of silently
+defaulting to the retired, wrong ``http://localhost:8082`` literal --
+while a gateway-free command can still build :class:`Settings`.
 
 Both tests point ``_repo_root`` at an isolated ``tmp_path`` fixture
 tree rather than touching the real, deployed ``.env`` — CI checks out
@@ -56,13 +57,36 @@ def test_env_files_anchored_from_foreign_cwd(
     )
 
 
-def test_unresolved_base_url_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unresolved_base_url_does_not_block_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A host with no gateway configured still builds ``Settings``.
+
+    The auto-merge lanes (``repoach review merge`` in auto-review.yml
+    and merge-on-ci.yml) run on a checkout with no ``.env`` and never
+    talk to the gateway; a construction-time guard killed them with a
+    ``ValidationError`` before the merge gate could run.
+    """
+    anchored_root = tmp_path / "empty_anchored_repo"
+    anchored_root.mkdir()
+
+    monkeypatch.setattr(config, "_repo_root", lambda: anchored_root)
+    monkeypatch.delenv("REPOACH_LLM_PROXY_BASE_URL", raising=False)
+
+    settings = config.Settings()
+
+    assert settings.llm_proxy_base_url is None
+
+
+def test_unresolved_base_url_raises_at_client_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No anchored env file and no env var → fail loud, not :8082.
 
     The anchored root exists (so anchoring itself is not the failure
     mode under test) but carries neither ``chains.env`` nor ``.env``,
     and the process environment has no ``REPOACH_LLM_PROXY_BASE_URL``
-    either — booting anyway would silently ship the
+    either — building a gateway client anyway would silently ship the
     ``llm_proxy_auth_token`` bearer secret at an unconfigured host.
     """
     anchored_root = tmp_path / "empty_anchored_repo"
@@ -71,8 +95,10 @@ def test_unresolved_base_url_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(config, "_repo_root", lambda: anchored_root)
     monkeypatch.delenv("REPOACH_LLM_PROXY_BASE_URL", raising=False)
 
+    settings = config.Settings()
+
     with pytest.raises(ValueError, match="llm_proxy_base_url unresolved"):
-        config.Settings()
+        config.require_llm_proxy_base_url(settings)
 
 
 def test_explicit_env_var_wins_with_no_anchored_files(
@@ -93,6 +119,7 @@ def test_explicit_env_var_wins_with_no_anchored_files(
     settings = config.Settings()
 
     assert settings.llm_proxy_base_url == "http://127.0.0.1:8084"
+    assert config.require_llm_proxy_base_url(settings) == "http://127.0.0.1:8084"
 
 
 def test_db_path_anchored_from_foreign_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

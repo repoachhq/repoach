@@ -5,6 +5,11 @@ Pydantic-settings reads ``chains.env`` first (so its canonical
 top so per-machine secrets and overrides win. The local proxy and the
 GitHub Actions workflow share the same definition through this layered
 load.
+
+Building :class:`Settings` never requires a gateway: the proxy base URL
+is checked by :func:`require_llm_proxy_base_url` where a gateway client
+is actually built, so gateway-free commands (``repoach review merge``
+in the auto-merge lanes) run on a host that configures none.
 """
 
 from __future__ import annotations
@@ -318,28 +323,6 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def require_llm_proxy_base_url(self) -> Settings:
-        """Fail loud instead of silently defaulting the proxy base URL.
-
-        Returns:
-            The same :class:`Settings` instance.
-
-        Raises:
-            ValueError: When neither an anchored env file nor an
-                explicit ``REPOACH_LLM_PROXY_BASE_URL`` resolved a
-                value.  Booting anyway would POST the
-                ``llm_proxy_auth_token`` bearer secret at an
-                unconfigured, possibly wrong, host (SP-CONFIG-ENV-ANCHOR).
-        """
-        if not self.llm_proxy_base_url:
-            raise ValueError(
-                "llm_proxy_base_url unresolved -- no anchored env file and "
-                "no REPOACH_LLM_PROXY_BASE_URL; refusing to default to a "
-                "wrong proxy"
-            )
-        return self
-
-    @model_validator(mode="after")
     def require_proxy_token_in_prod(self) -> Settings:
         """Enforce the boot guard documented on ``llm_proxy_auth_token``.
 
@@ -385,3 +368,35 @@ def get_settings() -> Settings:
         _settings = Settings()
         _settings.ensure_dirs()
     return _settings
+
+
+def require_llm_proxy_base_url(settings: Settings) -> str:
+    """Return the gateway base URL, failing loud when none is configured.
+
+    Called by the code that builds a gateway client, not at
+    :class:`Settings` construction: a command that never talks to the
+    gateway (``repoach review merge``) must not need one.  Reads the
+    attribute only, so test doubles standing in for :class:`Settings`
+    keep working.
+
+    Args:
+        settings: The resolved settings (or a stand-in exposing
+            ``llm_proxy_base_url``).
+
+    Returns:
+        The configured ``llm_proxy_base_url``.
+
+    Raises:
+        ValueError: When neither an anchored env file nor an explicit
+            ``REPOACH_LLM_PROXY_BASE_URL`` resolved a value.  Proceeding
+            anyway would POST the ``llm_proxy_auth_token`` bearer secret
+            at an unconfigured, possibly wrong, host (SP-CONFIG-ENV-ANCHOR).
+    """
+    base_url = settings.llm_proxy_base_url
+    if not base_url:
+        raise ValueError(
+            "llm_proxy_base_url unresolved -- no anchored env file and "
+            "no REPOACH_LLM_PROXY_BASE_URL; refusing to default to a "
+            "wrong proxy"
+        )
+    return base_url
