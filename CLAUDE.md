@@ -64,6 +64,7 @@ src/repoach/
   cli/             # Typer CLI (review factory only)
   core/            # config, logging
   forge/           # Forge protocol: GitHub (gh) + GitLab (glab) behind one interface
+  gates/           # repoach.toml gate knobs, per-language verifiers, project lint/test/gate commands
   lint/            # no-inline-comments + no-silent-except gates
   llm/             # capability tiers (opus/sonnet/haiku)
   llm_proxy/       # chain-failover LLM proxy sidecar (code default :8082; deployed :8084)
