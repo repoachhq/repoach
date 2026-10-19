@@ -32,6 +32,8 @@ from pathlib import Path
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..forge import Diff, Forge, ForgeError, PullRequest, select_forge
+from ..gates.config import load_gates_config
+from ..gates.verifiers import run_verifiers
 from .finding_verifiers import verify_finding
 from .findings import (
     MECHANICAL_CLAIM_TYPES,
@@ -642,6 +644,25 @@ def run_coder_fix_from_findings(
             fixes_rejected=len(rejected),
             rejected_paths=rejected,
             no_op_reason=f"ruff gate red; fixes left uncommitted ({ruff_tail[:160]})",
+            reason_code=ReasonCode.RUFF_RED,
+        )
+
+    touched = [
+        str(fix.get("path"))
+        for fix in fixes
+        if isinstance(fix, dict) and fix.get("path") and fix.get("path") not in rejected
+    ]
+    verify_report = run_verifiers(repo, touched, load_gates_config(repo))
+    if not verify_report.passed:
+        return CoderFindingsResult(
+            pr_number=pr_number,
+            n_open_findings=len(findings),
+            fixes_applied=applied,
+            fixes_rejected=len(rejected),
+            rejected_paths=rejected,
+            no_op_reason=(
+                f"language verifiers red; fixes left uncommitted ({verify_report.render()[:160]})"
+            ),
             reason_code=ReasonCode.RUFF_RED,
         )
 

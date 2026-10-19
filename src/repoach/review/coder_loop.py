@@ -16,7 +16,9 @@ Developer session (:mod:`dev_runner`) build on:
 * :func:`apply_fixes` — write validated search/replace or full-file
   edits through the whitelist + placeholder guard.
 * :func:`run_ruff_gate` / :func:`run_pytest_matrix` — the local gates a
-  fix must pass; :func:`git_commit_and_push` lands the result on green
+  fix must pass: the project's ``[commands].lint`` / ``.test`` when it
+  declares them (SP-UNIVERSAL-GATES), else the built-in ruff and
+  ``pytest -q tests/unit``; :func:`git_commit_and_push` lands the result on green
   (a red gate leaves the work uncommitted — no destructive revert; the
   fix-forward stance carried in from the DEVAGENT arc, SP-DEVAGENT-WIRE).
 * :func:`fetch_ci_status` / :func:`fetch_failed_check_logs` — read the
@@ -38,6 +40,7 @@ from typing import Any
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
+from ..gates.commands import run_lint_gate, run_test_gate
 from ..gates.config import GatesConfig, current_gates_config, load_gates_config
 from .patch_apply import apply_search_replace_edits
 from .secret_env import scrubbed_env
@@ -649,14 +652,28 @@ def _pytest_pythons(settings: Settings | None = None) -> list[str | None]:
     return interpreters or [None]
 
 
-def run_pytest_matrix(repo_root: Path) -> tuple[bool, str]:
-    """Run :func:`run_pytest` across every interpreter listed in env.
+def run_pytest_matrix(repo_root: Path, config: GatesConfig | None = None) -> tuple[bool, str]:
+    """Run the test gate across every interpreter listed in env.
 
-    Iterates over :func:`_pytest_pythons`.  Returns on the first
-    failure (no need to keep going — a single CI matrix slot failing
-    means we cannot push).  When the env is unset, this collapses to
-    a single ``run_pytest`` call.
+    With a project ``[commands].test`` (SP-UNIVERSAL-GATES G2) the
+    command runs once — or once per ``REPOACH_CODER_PYTHONS`` entry when
+    it contains a ``{python}`` placeholder; an empty command is a
+    printed skip.  Without a configuration file the built-in
+    :func:`run_pytest` iterates over :func:`_pytest_pythons`, returning
+    on the first failure (a single CI matrix slot failing means we
+    cannot push); when the env is unset this collapses to a single call.
+
+    Args:
+        repo_root: Working tree root.
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
+
+    Returns:
+        ``(passed, tail_log)``.
     """
+    resolved = config if config is not None else load_gates_config(repo_root)
+    if resolved.test_cmd is not None:
+        return _run_configured_tests(repo_root, resolved)
     pythons = _pytest_pythons()
     for python in pythons:
         ok, tail = run_pytest(repo_root, python=python)
@@ -668,8 +685,35 @@ def run_pytest_matrix(repo_root: Path) -> tuple[bool, str]:
     return True, f"pytest green under {summary}"
 
 
-def run_ruff_gate(repo_root: Path, *, unsafe_fixes: bool = False) -> tuple[bool, str]:
-    """Run the same ruff checks CI does, with auto-fix applied first.
+def _run_configured_tests(repo_root: Path, config: GatesConfig) -> tuple[bool, str]:
+    """Run ``[commands].test``, expanding ``{python}`` over the interpreter matrix."""
+    if not config.test_cmd:
+        passed, tail = run_test_gate(repo_root, config)
+        _log.info("coder.test_gate_skipped", reason=tail)
+        return passed, tail
+    if "{python}" not in config.test_cmd:
+        passed, tail = run_test_gate(repo_root, config)
+        return passed, tail if not passed else f"tests green: {config.test_cmd}"
+    pythons = _pytest_pythons()
+    for python in pythons:
+        passed, tail = run_test_gate(repo_root, config, python=python)
+        label = python or "default"
+        if not passed:
+            return False, f"tests failed under {label}:\n{tail}"
+        _log.info("coder.test_matrix_slot_green", python=label)
+    summary = ", ".join(p or "default" for p in pythons)
+    return True, f"tests green under {summary}"
+
+
+def run_ruff_gate(
+    repo_root: Path, *, unsafe_fixes: bool = False, config: GatesConfig | None = None
+) -> tuple[bool, str]:
+    """Run the project's lint gate; without configuration, the ruff checks CI does.
+
+    With a ``repoach.toml`` the project's ``[commands].lint`` runs
+    instead (SP-UNIVERSAL-GATES G2) and its ``(passed, tail)`` is
+    returned unchanged; an empty command is a printed skip. Without
+    one, the built-in ruff sequence below runs, auto-fix first.
 
     Sequence:
         1. ``ruff check --fix src tests`` — apply the auto-fixable
@@ -691,12 +735,20 @@ def run_ruff_gate(repo_root: Path, *, unsafe_fixes: bool = False) -> tuple[bool,
             introduces is caught by the promised-tests and full-suite
             gates downstream. The Coder loop keeps the conservative
             default (safe fixes only).
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
 
     Returns:
         ``(passed, tail_log)``. ``passed`` is ``False`` as soon as
         any step in 3-4 reports a violation; the caller is expected
         to revert the working tree before exiting.
     """
+    resolved = config if config is not None else load_gates_config(repo_root)
+    if resolved.lint_cmd is not None:
+        passed, tail = run_lint_gate(repo_root, resolved)
+        if not resolved.lint_cmd:
+            _log.info("coder.lint_gate_skipped", reason=tail)
+        return passed, tail
     ruff = shutil.which("ruff") or "ruff"
     fix_cmd = [ruff, "check", "--fix", "src", "tests"]
     if unsafe_fixes:
