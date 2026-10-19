@@ -1,0 +1,71 @@
+# repoach.toml: project configuration for repoach, committed, secret-free.
+# Written by `repoach init` from measured facts; edit freely.
+# Every key is optional. A commented-out line shows the built-in default.
+# Precedence: command-line flag > REPOACH_* environment > this file > default.
+# Credentials never go here: a key ending in _key, _token or _secret is refused.
+
+[repoach]
+schema = 1
+# github or gitlab; inferred from the origin remote when absent.
+forge = "github"
+# Branch that pull/merge requests target, and the branch releases land on.
+integration_branch = "develop"
+release_branch = "main"
+# squash, merge or rebase.
+merge_method = "squash"
+# remove_source_branch = true
+specs_dir = "docs/specs"
+# plans_dir = "docs/plans"
+
+[project]
+# Measured by `repoach init` from the tracked files.
+languages = ["python", "shell"]
+src_roots = ["src"]
+test_roots = ["tests"]
+
+[commands]
+# The project's own lint and test commands; an empty string means none.
+lint = "ruff check src tests && ruff format --check src tests && python scripts/lint_no_inline_comments.py --summary && python scripts/lint_no_silent_except.py --summary"
+test = "pytest -q tests/unit"
+# The project's own pre-push barrier, optional.
+# gate = ""
+
+[coder]
+# Paths added to the Coder's built-in forbidden list.
+# forbidden_prefixes = []
+# forbidden_paths = []
+
+[provider]
+# anthropic, claude_code, openai, openai_compatible or gateway.
+# The credential itself stays in the environment or ~/.config/repoach/env.
+kind = "gateway"
+# opus = ""
+# sonnet = ""
+# haiku = ""
+
+[review]
+# Forge login the review bot posts as; markers are trusted from it only.
+# Default: github-actions[bot] on GitHub, nobody on GitLab.
+# bot_username = ""
+# Where a pull request's spec id comes from, in order.
+# spec_sources = ["flag", "description", "branch"]
+
+[arch]
+# frontier_suppress = []
+
+[state]
+# Ledger and diagnostic dumps; empty means ~/.local/share/repoach/<project>/.
+# A path here must stay inside the repository.
+# db_path = ""
+# logs_dir = ""
+
+# Commit, branch and title conventions (SP-CONVENTIONS-GATE).
+# [conventions]
+# types = ["feat", "fix", "perf", "refactor", "docs", "test", "build", "ci", "chore", "style", "revert"]
+# scopes = "[a-z0-9._/-]+"
+# branch_pattern = "<type>/<slug>"
+# exempt_branches = ["main", "develop"]
+# pr_title = true
+# breaking = true
+# english = true
+# header_max_chars = 72
