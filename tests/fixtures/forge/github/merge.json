@@ -1,0 +1,37 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "merge",
+        "42",
+        "--squash",
+        "--delete-branch"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+    }
+  ],
+  "case": "merge",
+  "forge": "github",
+  "kwargs": {
+    "delete_branch": true,
+    "method": "squash"
+  },
+  "method": "merge",
+  "raises": null,
+  "result": {
+    "merged": true,
+    "message": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "source": "synthetic: merge call: never executed against a live forge",
+  "trimmed": null
+}

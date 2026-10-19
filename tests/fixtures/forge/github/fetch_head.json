@@ -1,0 +1,29 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "fetch",
+        "--quiet",
+        "origin",
+        "refs/pull/42/head"
+      ],
+      "program": "git",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "fetch_head",
+  "forge": "github",
+  "kwargs": {},
+  "method": "fetch_head",
+  "raises": null,
+  "result": "refs/pull/42/head",
+  "source": "synthetic: local git fetch",
+  "trimmed": null
+}

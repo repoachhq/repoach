@@ -1,0 +1,41 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "list",
+        "--state",
+        "merged",
+        "--base",
+        "develop",
+        "--json",
+        "mergeCommit",
+        "--limit",
+        "500"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"mergeCommit\": {\"oid\": \"20dbb45aa6dac2180ad36c51364aff5632c2029a\"}}, {\"mergeCommit\": {\"oid\": \"5ac22fb2a7b9a31c3d9bc5b755e8fbc52e2c6b90\"}}, {\"mergeCommit\": {\"oid\": \"32f9b36faa9cc8e4c3c56dbe2b52f707bbc481b3\"}}, {\"mergeCommit\": {\"oid\": \"b26cdde15930e30835d50f8a1207bf101bad3333\"}}, {\"mergeCommit\": {\"oid\": \"37130e4d490ff08a46bd9d79f58d1fcf21ab33e7\"}}]"
+    }
+  ],
+  "case": "merged_shas",
+  "forge": "github",
+  "kwargs": {},
+  "method": "merged_shas",
+  "raises": null,
+  "result": [
+    "20dbb45aa6dac2180ad36c51364aff5632c2029a",
+    "32f9b36faa9cc8e4c3c56dbe2b52f707bbc481b3",
+    "37130e4d490ff08a46bd9d79f58d1fcf21ab33e7",
+    "5ac22fb2a7b9a31c3d9bc5b755e8fbc52e2c6b90",
+    "b26cdde15930e30835d50f8a1207bf101bad3333"
+  ],
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": 5
+}

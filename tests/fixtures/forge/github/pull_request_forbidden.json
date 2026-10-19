@@ -1,0 +1,30 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "number,title,body,headRefName,baseRefName,author,state,url,headRefOid,isDraft"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "gh: Resource not accessible by integration (HTTP 403)",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "pull_request_forbidden",
+  "forge": "github",
+  "kwargs": {},
+  "method": "pull_request",
+  "raises": "ForgeForbiddenError",
+  "result": null,
+  "source": "synthetic: a token without read scope; no live call yields a 403 without changing a token",
+  "trimmed": null
+}

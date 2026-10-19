@@ -1,0 +1,43 @@
+{
+  "args": [
+    7,
+    {
+      "body": "lgtm",
+      "verdict": "APPROVE"
+    }
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--method",
+        "POST",
+        "projects/:id/merge_requests/7/notes",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": "{\"body\": \"lgtm\"}",
+      "stdout": "{\"id\": 81, \"body\": \"lgtm\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}"
+    }
+  ],
+  "case": "post_review_bare",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "post_review",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "lgtm",
+    "comments": [],
+    "id": 81,
+    "state": "APPROVE"
+  },
+  "source": "synthetic: write call: never executed against a live forge",
+  "trimmed": null
+}

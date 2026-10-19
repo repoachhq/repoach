@@ -1,0 +1,86 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/{owner}/{repo}/branches/develop/protection"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "gh: Branch not protected (HTTP 404)",
+      "stdin": null,
+      "stdout": ""
+    },
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "headRefOid"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+    },
+    {
+      "args": [
+        "api",
+        "repos/{owner}/{repo}/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {name, status, conclusion, startedAt: .started_at}"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"name\": \"Test suite (Python 3.11)\", \"status\": \"completed\", \"conclusion\": \"failure\", \"startedAt\": \"2026-10-19T10:00:00Z\"}\n{\"name\": \"Test suite (Python 3.13)\", \"status\": \"completed\", \"conclusion\": \"success\", \"startedAt\": \"2026-10-19T10:00:00Z\"}"
+    }
+  ],
+  "case": "ci_status_failed",
+  "forge": "github",
+  "kwargs": {},
+  "method": "ci_status",
+  "raises": null,
+  "result": {
+    "checks": [
+      {
+        "bucket": "",
+        "conclusion": "failure",
+        "link": "",
+        "name": "Test suite (Python 3.11)",
+        "started_at": "2026-10-19T10:00:00Z",
+        "status": "completed",
+        "workflow": ""
+      },
+      {
+        "bucket": "",
+        "conclusion": "success",
+        "link": "",
+        "name": "Test suite (Python 3.13)",
+        "started_at": "2026-10-19T10:00:00Z",
+        "status": "completed",
+        "workflow": ""
+      }
+    ],
+    "failed": [
+      "Test suite (Python 3.11)=FAILURE"
+    ],
+    "missing": [],
+    "pending": [],
+    "required": [
+      "Test suite (Python 3.11)",
+      "Test suite (Python 3.13)"
+    ],
+    "state": "failure"
+  },
+  "source": "synthetic: a red / running / absent pipeline at a fixed head",
+  "trimmed": null
+}

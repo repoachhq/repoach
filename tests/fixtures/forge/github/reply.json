@@ -1,0 +1,42 @@
+{
+  "args": [
+    42,
+    1,
+    "evidence"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--method",
+        "POST",
+        "repos/:owner/:repo/pulls/42/comments/1/replies",
+        "-f",
+        "body=evidence"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"id\": 12, \"body\": \"evidence\", \"user\": {\"login\": \"repoach-bot\"}, \"created_at\": \"2026-10-19T10:00:00Z\", \"path\": \"a.py\", \"line\": 3, \"in_reply_to_id\": 1}"
+    }
+  ],
+  "case": "reply",
+  "forge": "github",
+  "kwargs": {},
+  "method": "reply",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "evidence",
+    "created_at": "",
+    "id": 12,
+    "in_reply_to": 1,
+    "line": null,
+    "path": null,
+    "thread_id": null
+  },
+  "source": "synthetic: write call: never executed against a live forge",
+  "trimmed": null
+}

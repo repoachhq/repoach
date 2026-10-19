@@ -1,0 +1,33 @@
+{
+  "args": [
+    7
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "mr",
+        "merge",
+        "7",
+        "--yes",
+        "--auto-merge=false"
+      ],
+      "program": "glab",
+      "returncode": 1,
+      "stderr": "ERROR: 405 Method Not Allowed: pipeline must succeed",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "merge_refused",
+  "forge": "gitlab",
+  "kwargs": {
+    "delete_branch": false,
+    "method": "merge"
+  },
+  "method": "merge",
+  "raises": "ForgeMergeRefusedError",
+  "result": null,
+  "source": "synthetic: merge call: never executed against a live forge",
+  "trimmed": null
+}

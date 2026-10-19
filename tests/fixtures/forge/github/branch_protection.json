@@ -1,0 +1,32 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/{owner}/{repo}/branches/develop/protection"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "gh: Branch not protected (HTTP 404)\n",
+      "stdin": null,
+      "stdout": "{\"message\": \"Branch not protected\", \"status\": \"404\"}"
+    }
+  ],
+  "case": "branch_protection",
+  "forge": "github",
+  "kwargs": {},
+  "method": "branch_protection",
+  "raises": null,
+  "result": {
+    "allow_force_push": false,
+    "merge_method": null,
+    "readable": false,
+    "required_checks": []
+  },
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

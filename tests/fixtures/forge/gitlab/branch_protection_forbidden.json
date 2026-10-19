@@ -1,0 +1,32 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "glab: 403 Forbidden (HTTP 403)",
+      "stdin": null,
+      "stdout": "{\"message\": \"403 Forbidden\"}"
+    }
+  ],
+  "case": "branch_protection_forbidden",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "branch_protection",
+  "raises": null,
+  "result": {
+    "allow_force_push": false,
+    "merge_method": null,
+    "readable": false,
+    "required_checks": []
+  },
+  "source": "synthetic: a token that cannot read the protection settings",
+  "trimmed": null
+}

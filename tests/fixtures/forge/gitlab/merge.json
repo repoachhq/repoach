@@ -1,0 +1,48 @@
+{
+  "args": [
+    7
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "mr",
+        "merge",
+        "7",
+        "--yes",
+        "--auto-merge=false"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "✓ Merged!\n"
+    },
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"merged\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}, \"merge_commit_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+    }
+  ],
+  "case": "merge",
+  "forge": "gitlab",
+  "kwargs": {
+    "delete_branch": false,
+    "method": "merge"
+  },
+  "method": "merge",
+  "raises": null,
+  "result": {
+    "merged": true,
+    "message": "✓ Merged!\n",
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "source": "synthetic: merge call: never executed against a live forge",
+  "trimmed": null
+}

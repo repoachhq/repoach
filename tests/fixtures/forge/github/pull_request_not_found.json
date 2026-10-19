@@ -1,0 +1,30 @@
+{
+  "args": [
+    999999
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "999999",
+        "--json",
+        "number,title,body,headRefName,baseRefName,author,state,url,headRefOid,isDraft"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "GraphQL: Could not resolve to a PullRequest with the number of 999999. (repository.pullRequest)\n",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "pull_request_not_found",
+  "forge": "github",
+  "kwargs": {},
+  "method": "pull_request",
+  "raises": "ForgeNotFoundError",
+  "result": null,
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

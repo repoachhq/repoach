@@ -1,0 +1,85 @@
+{
+  "args": [
+    200
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "checks",
+        "200",
+        "--json",
+        "name,state,bucket,link,workflow"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"bucket\": \"skipping\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91308427779\", \"name\": \"Auto-merge to develop\", \"state\": \"SKIPPED\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"fail\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91307476613\", \"name\": \"Coder auto-fix loop\", \"state\": \"FAILURE\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91305829550\", \"name\": \"Architect / Sentinel / Tester / Scribe\", \"state\": \"SUCCESS\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856865/job/91305829539\", \"name\": \"ShellCheck (warning-level)\", \"state\": \"SUCCESS\", \"workflow\": \"ShellCheck\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829439\", \"name\": \"Test suite (Python 3.11)\", \"state\": \"SUCCESS\", \"workflow\": \"CI\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829449\", \"name\": \"Test suite (Python 3.13)\", \"state\": \"SUCCESS\", \"workflow\": \"CI\"}]"
+    }
+  ],
+  "case": "checks",
+  "forge": "github",
+  "kwargs": {},
+  "method": "checks",
+  "raises": null,
+  "result": [
+    {
+      "bucket": "skipping",
+      "conclusion": "",
+      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91308427779",
+      "name": "Auto-merge to develop",
+      "started_at": "",
+      "status": "SKIPPED",
+      "workflow": "Auto Review (review bots)"
+    },
+    {
+      "bucket": "fail",
+      "conclusion": "",
+      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91307476613",
+      "name": "Coder auto-fix loop",
+      "started_at": "",
+      "status": "FAILURE",
+      "workflow": "Auto Review (review bots)"
+    },
+    {
+      "bucket": "pass",
+      "conclusion": "",
+      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91305829550",
+      "name": "Architect / Sentinel / Tester / Scribe",
+      "started_at": "",
+      "status": "SUCCESS",
+      "workflow": "Auto Review (review bots)"
+    },
+    {
+      "bucket": "pass",
+      "conclusion": "",
+      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856865/job/91305829539",
+      "name": "ShellCheck (warning-level)",
+      "started_at": "",
+      "status": "SUCCESS",
+      "workflow": "ShellCheck"
+    },
+    {
+      "bucket": "pass",
+      "conclusion": "",
+      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829439",
+      "name": "Test suite (Python 3.11)",
+      "started_at": "",
+      "status": "SUCCESS",
+      "workflow": "CI"
+    },
+    {
+      "bucket": "pass",
+      "conclusion": "",
+      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829449",
+      "name": "Test suite (Python 3.13)",
+      "started_at": "",
+      "status": "SUCCESS",
+      "workflow": "CI"
+    }
+  ],
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

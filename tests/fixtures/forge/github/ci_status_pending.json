@@ -1,0 +1,67 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/{owner}/{repo}/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs",
+        "--paginate",
+        "--jq",
+        ".check_runs[] | {name, status, conclusion, startedAt: .started_at}"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"name\": \"Test suite (Python 3.11)\", \"status\": \"in_progress\", \"conclusion\": null, \"startedAt\": \"2026-10-19T10:00:00Z\"}\n{\"name\": \"Test suite (Python 3.13)\", \"status\": \"completed\", \"conclusion\": \"success\", \"startedAt\": \"2026-10-19T10:00:00Z\"}"
+    }
+  ],
+  "case": "ci_status_pending",
+  "forge": "github",
+  "kwargs": {
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "required": [
+      "Test suite (Python 3.11)",
+      "Test suite (Python 3.13)"
+    ]
+  },
+  "method": "ci_status",
+  "raises": null,
+  "result": {
+    "checks": [
+      {
+        "bucket": "",
+        "conclusion": "",
+        "link": "",
+        "name": "Test suite (Python 3.11)",
+        "started_at": "2026-10-19T10:00:00Z",
+        "status": "in_progress",
+        "workflow": ""
+      },
+      {
+        "bucket": "",
+        "conclusion": "success",
+        "link": "",
+        "name": "Test suite (Python 3.13)",
+        "started_at": "2026-10-19T10:00:00Z",
+        "status": "completed",
+        "workflow": ""
+      }
+    ],
+    "failed": [],
+    "missing": [],
+    "pending": [
+      "Test suite (Python 3.11)"
+    ],
+    "required": [
+      "Test suite (Python 3.11)",
+      "Test suite (Python 3.13)"
+    ],
+    "state": "pending"
+  },
+  "source": "synthetic: a red / running / absent pipeline at a fixed head",
+  "trimmed": null
+}

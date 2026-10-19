@@ -1,0 +1,29 @@
+{
+  "args": [
+    7
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "fetch",
+        "--quiet",
+        "origin",
+        "refs/merge-requests/7/head"
+      ],
+      "program": "git",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "fetch_head",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "fetch_head",
+  "raises": null,
+  "result": "refs/merge-requests/7/head",
+  "source": "synthetic: local git fetch",
+  "trimmed": null
+}

@@ -1,0 +1,41 @@
+{
+  "args": [
+    200
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "200",
+        "--json",
+        "number,title,body,headRefName,baseRefName,author,state,url,headRefOid,isDraft"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"author\": {\"id\": \"MDQ6VXNlcjMxOTI0ODYy\", \"login\": \"jwfaye\", \"name\": \"Joseph Faye\"}, \"baseRefName\": \"develop\", \"body\": \"## Bug (caught live)\\n\\n`GhCli.merged_pr_merge_shas` — the GitHub provenance source added in #196 —\\nrequested `gh pr list --json mergeCommitOid`. That flat field exists on\\n`gh pr view` but **not** on `gh pr list`, which exposes the merge commit as a\\nnested `mergeCommit` object. `gh` rejected it (\\\"Unknown JSON field:\\nmergeCommitOid\\\"), the method returned an empty set, and\\n`repoach release gate --provenance github` **fail-closed** on a sound release\\nrange — caught while dogfooding the path on release PR #199 (the gate refused\\nrather than falsely approving, which is the right failure direction).\\n\\nThe unit tests missed it because the recording fake faked `_run` (never ran real\\n`gh`) and the integration test overrode the whole method — no test crossed the\\nreal `gh pr list` field boundary.\\n\\n## Fix\\n\\n- Request `--json mergeCommit` and read `mergeCommit.oid`.\\n- **Verified live**: `merged_pr_merge_shas` now returns 187 SHAs (was 0),\\n  including #196's own merge commit.\\n\\n## Regression guards\\n\\n- The recording fake now mirrors the real nested `{\\\"mergeCommit\\\": {\\\"oid\\\": ...}}`\\n  shape, so the parsing test validates against the actual gh output.\\n- A new test pins the argv: `--json` must request `mergeCommit`, never the\\n  `gh pr view` flat field.\\n\", \"headRefName\": \"fix/gh-merge-commit-field\", \"headRefOid\": \"a39976339afa9f7ece3c4d6a4d51e697faab7e81\", \"isDraft\": false, \"number\": 200, \"state\": \"MERGED\", \"title\": \"fix(release): gh pr list exposes mergeCommit, not mergeCommitOid\", \"url\": \"https://github.com/repoachhq/repoach/pull/200\"}"
+    }
+  ],
+  "case": "pull_request",
+  "forge": "github",
+  "kwargs": {},
+  "method": "pull_request",
+  "raises": null,
+  "result": {
+    "author": "jwfaye",
+    "base_ref": "develop",
+    "body": "## Bug (caught live)\n\n`GhCli.merged_pr_merge_shas` — the GitHub provenance source added in #196 —\nrequested `gh pr list --json mergeCommitOid`. That flat field exists on\n`gh pr view` but **not** on `gh pr list`, which exposes the merge commit as a\nnested `mergeCommit` object. `gh` rejected it (\"Unknown JSON field:\nmergeCommitOid\"), the method returned an empty set, and\n`repoach release gate --provenance github` **fail-closed** on a sound release\nrange — caught while dogfooding the path on release PR #199 (the gate refused\nrather than falsely approving, which is the right failure direction).\n\nThe unit tests missed it because the recording fake faked `_run` (never ran real\n`gh`) and the integration test overrode the whole method — no test crossed the\nreal `gh pr list` field boundary.\n\n## Fix\n\n- Request `--json mergeCommit` and read `mergeCommit.oid`.\n- **Verified live**: `merged_pr_merge_shas` now returns 187 SHAs (was 0),\n  including #196's own merge commit.\n\n## Regression guards\n\n- The recording fake now mirrors the real nested `{\"mergeCommit\": {\"oid\": ...}}`\n  shape, so the parsing test validates against the actual gh output.\n- A new test pins the argv: `--json` must request `mergeCommit`, never the\n  `gh pr view` flat field.\n",
+    "draft": false,
+    "head_ref": "fix/gh-merge-commit-field",
+    "head_sha": "a39976339afa9f7ece3c4d6a4d51e697faab7e81",
+    "number": 200,
+    "state": "merged",
+    "title": "fix(release): gh pr list exposes mergeCommit, not mergeCommitOid",
+    "url": "https://github.com/repoachhq/repoach/pull/200"
+  },
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

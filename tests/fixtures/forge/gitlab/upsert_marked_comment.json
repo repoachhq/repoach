@@ -1,0 +1,56 @@
+{
+  "args": [
+    7,
+    "<!-- repoach-review-archive -->",
+    "archive v2"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "projects/:id/merge_requests/7/notes?sort=asc&order_by=created_at&per_page=100"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"id\": 11, \"body\": \"<!-- repoach-review-archive -->\\narchive v1\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}]"
+    },
+    {
+      "args": [
+        "api",
+        "--method",
+        "PUT",
+        "projects/:id/merge_requests/7/notes/11",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": "{\"body\": \"<!-- repoach-review-archive -->\\narchive v2\"}",
+      "stdout": "{\"id\": 11, \"body\": \"<!-- repoach-review-archive -->\\narchive v2\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}"
+    }
+  ],
+  "case": "upsert_marked_comment",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "upsert_marked_comment",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "<!-- repoach-review-archive -->\narchive v2",
+    "created_at": "2026-10-19T10:00:00Z",
+    "id": 11,
+    "in_reply_to": null,
+    "line": null,
+    "path": null,
+    "thread_id": null
+  },
+  "source": "synthetic: write call: never executed against a live forge; the marker note exists and is updated in place",
+  "trimmed": null
+}
