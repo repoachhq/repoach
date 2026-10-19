@@ -37,3 +37,32 @@ def prompts_dir() -> Path:
     if checkout.is_dir():
         return checkout
     raise FileNotFoundError(f"repoach prompts not found at {packaged} nor {checkout}")
+
+
+SPEC_TEMPLATE_PACKAGED = Path("project") / "spec_template.md"
+"""Location of the spec template inside an installed wheel."""
+
+SPEC_TEMPLATE_CHECKOUT = Path("docs") / "specs" / "_TEMPLATE.md"
+"""Location of the spec template in a source checkout."""
+
+
+def spec_template_path() -> Path:
+    """Return the spec template ``repoach init`` copies into a host repository.
+
+    The wheel force-includes ``docs/specs/_TEMPLATE.md`` as
+    ``repoach/project/spec_template.md``; a source checkout reads it in
+    place, so there is exactly one template file in the repository.
+
+    Returns:
+        The absolute template path.
+
+    Raises:
+        FileNotFoundError: Neither layout has the file.
+    """
+    packaged = Path(str(files("repoach"))) / SPEC_TEMPLATE_PACKAGED
+    if packaged.is_file():
+        return packaged
+    checkout = Path(__file__).resolve().parents[3] / SPEC_TEMPLATE_CHECKOUT
+    if checkout.is_file():
+        return checkout
+    raise FileNotFoundError(f"repoach spec template not found at {packaged} nor {checkout}")

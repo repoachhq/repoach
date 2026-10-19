@@ -70,7 +70,7 @@ app.command(name="init")(init)
 app.command(name="doctor")(doctor)
 app.command(name="migrate-config")(migrate_config)
 
-SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset({"version", "doctor", "migrate-config"})
+SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset({"version", "doctor", "migrate-config", "init"})
 """Subcommands that must run with no configuration at all.
 
 Logging setup builds :class:`~repoach.core.config.Settings`; these

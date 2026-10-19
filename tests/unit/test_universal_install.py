@@ -5,7 +5,8 @@ working directory, XDG config/data directories, per-project ledger
 slug), that ``repoach --version`` / ``repoach version`` never build
 :class:`~repoach.core.config.Settings`, and that ``repoach doctor`` and
 ``repoach init`` refuse with rc 2 outside a git working tree and touch
-nothing on a foreign repository.
+nothing on a foreign repository beyond the files SP-UNIVERSAL-PROJECT-CONFIG
+hands it (``repoach.toml`` and the spec template).
 """
 
 from __future__ import annotations
@@ -251,7 +252,7 @@ class TestInitOnAForeignRepository:
         assert result.exit_code == 2
         assert "not a git repository" in result.stderr
 
-    def test_plain_init_writes_nothing_and_keeps_hooks_path(
+    def test_plain_init_writes_only_its_files_and_keeps_hooks_path(
         self, xdg: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         repo = _repo(xdg / "work" / "foreign")
@@ -261,7 +262,7 @@ class TestInitOnAForeignRepository:
         result = CliRunner().invoke(app, ["init"])
 
         assert result.exit_code == 0, result.output
-        assert _git(repo, "status", "--short") == ""
+        assert _git(repo, "status", "--short").splitlines() == ["?? docs/", "?? repoach.toml"]
         assert _git(repo, "config", "--get", "core.hooksPath") == "scripts/hooks"
         assert not (repo / ".env").exists()
 
