@@ -15,8 +15,6 @@ import typer
 
 from repoach.arch.registry import MalformedFrontmatterError, load_registry
 from repoach.arch.render import render
-from repoach.core.paths import project_root
-from repoach.project.config import specs_dir as configured_specs_dir
 
 arch_app = typer.Typer(
     help="Architecture graph derived from spec frontmatter.",
@@ -32,15 +30,13 @@ def graph_command(
     check: bool = typer.Option(
         False, "--check", help="Validate the corpus; exit 2 on a cycle or conflict."
     ),
-    specs_dir: Path | None = typer.Option(
-        None,
-        "--specs-dir",
-        help="Directory of spec markdown files (default: [repoach].specs_dir, docs/specs).",
+    specs_dir: Path = typer.Option(
+        Path("docs/specs"), "--specs-dir", help="Directory of spec markdown files."
     ),
 ) -> None:
     """Derive and render (or, with ``--check``, validate) the graph."""
     try:
-        registry = load_registry(specs_dir or configured_specs_dir(project_root()))
+        registry = load_registry(specs_dir)
     except MalformedFrontmatterError as exc:
         typer.echo(f"malformed spec frontmatter: {exc}", err=True)
         raise typer.Exit(code=2) from exc
