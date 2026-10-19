@@ -5,13 +5,13 @@ version: 0.1
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-20
 
 owns:
   code: [src/repoach/ledger/, tests/unit/test_finding_fate.py, tests/unit/test_stats.py, tests/unit/test_share_payload.py, tests/unit/test_adapt_propose.py, tests/fixtures/ledger/]
-  resources: [db:table:finding_fate, db:table:finding_posts, db:table:review_runs]
+  resources: [db:table:finding_fate, db:table:review_runs]
 
-depends_on: [SP-UNIVERSAL-PROJECT-CONFIG, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-CI-ENTRY, SP-REVIEW-POST-BATCH]
+depends_on: [SP-UNIVERSAL-PROJECT-CONFIG, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-CI-ENTRY, SP-REVIEW-POST-BATCH, SP-FINDING-THREAD-IDS]
 provides_to: []
 
 constraints:
@@ -85,7 +85,7 @@ refuter.
 ## Assumptions
 
 - A1: `SP-UNIVERSAL-FORGE` exposes, in addition to its protocol, two read calls this collector needs: `commits(number) -> list[Commit]` (sha, files touched with line ranges, authored_at) and `threads(number) -> list[Thread]` (root comment, replies, `resolved: bool`, path, line); both forges implement them from existing endpoints (`pulls/N/commits` + `commits/<sha>` on GitHub; `merge_requests/<iid>/commits` + `/diffs` and `discussions` with `resolved` on GitLab).
-- A2: `SP-REVIEW-POST-BATCH`'s posting path is where the forge comment id is known; this spec adds the `finding_posts` write there and nowhere else.
+- A2: `SP-REVIEW-POST-BATCH`'s posting path is where the forge comment id is known; `SP-FINDING-THREAD-IDS` adds the `finding_posts` write there and nowhere else.
 - A3: a human fix is recognised on lines, not on text: a commit after the finding's `head_sha` that touches `file` within `[line_start - fate_line_tolerance, line_end + fate_line_tolerance]` is the evidence; line shifts from earlier hunks in the same commit are followed through the diff, not guessed.
 - A4: the W1 fixture ledger (`tests/fixtures/ledger/w1_yoob_283.sql`) reproduces the W1 shape — 4 `pr_reviews`, 12 `pr_findings` (9 proposed, 2 refuted, 1 verified), files and line ranges as recorded — with every `claim` and `evidence_pointer` replaced by a placeholder; the forge answers come from recorded `glab api` fixtures under `tests/fixtures/forge/gitlab/`.
 
@@ -235,8 +235,9 @@ hex characters, `#[0-9]`, `@` and `http`, and fails on any hit.
 - Adds dependency: SP-UNIVERSAL-LEDGER -> SP-UNIVERSAL-FORGE (`pr_state`, `commits`, `threads` on both forges; the collector is forge-agnostic)
 - Adds dependency: SP-UNIVERSAL-LEDGER -> SP-UNIVERSAL-PROVIDERS (`usage_ledger` joined to `review_runs` for cost per review)
 - Adds dependency: SP-UNIVERSAL-LEDGER -> SP-UNIVERSAL-CI-ENTRY (`ledger collect` resolves the PR from CI variables; the GitLab/GitHub snippets gain an optional post-merge job)
-- Adds dependency: SP-UNIVERSAL-LEDGER -> SP-REVIEW-POST-BATCH (the batch posting path persists `finding_posts`)
-- New shared state: `db:table:finding_fate`, `db:table:finding_posts`, `db:table:review_runs`, owned here; `pr_findings` and `pr_reviews` are read, never written, by this component. No cycle: nothing in the review pipeline imports `ledger/`.
+- Adds dependency: SP-UNIVERSAL-LEDGER -> SP-REVIEW-POST-BATCH (the batch posting path is where the forge ids are known)
+- Adds dependency: SP-UNIVERSAL-LEDGER -> SP-FINDING-THREAD-IDS (`finding_posts` is owned and written there; the fate collector reads it, never writes it)
+- New shared state: `db:table:finding_fate`, `db:table:review_runs`, owned here; `db:table:finding_posts` is read from `SP-FINDING-THREAD-IDS`; `pr_findings` and `pr_reviews` are read, never written, by this component. No cycle: nothing in the review pipeline imports `ledger/`.
 
 ## Diagram
 ```mermaid
