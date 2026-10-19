@@ -18,11 +18,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from repoach.core import config
+from repoach.forge import PullRequest
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import OUTCOME_SKIP_BASE, run_auto_merge
 from repoach.review.coder_findings import run_coder_fix_from_findings
 from repoach.review.dev_runner import ensure_branch
-from repoach.review.gh_client import GhResult
 from repoach.review.release_gate import gather_release_facts, verify_release_live
+from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
 
 
 @pytest.fixture(autouse=True)
@@ -49,17 +51,14 @@ def _all_green_check_runs() -> str:
     )
 
 
-def _gh_auto_merge_stub(*, base: str, head: str = "feat/x", state: str = "OPEN") -> MagicMock:
-    """Minimal :class:`GhCli` stand-in exercising ``run_auto_merge``'s base check.
+def _gh_auto_merge_stub(*, base: str, head: str = "feat/x", state: str = "OPEN") -> GitHubForge:
+    """Minimal scripted GitHub forge exercising ``run_auto_merge``'s base check.
 
     Only detailed enough to reach *past* the base-branch refusal when the
     base matches -- the subsequent pure gate is expected to refuse for an
     unrelated reason (no review-integrity record seeded), which is fine:
     this test only asserts the base check itself flips, not a full merge.
     """
-    gh = MagicMock()
-    gh.pr_view.return_value = {"baseRefName": base, "headRefName": head, "state": state}
-    gh.pr_head_sha.return_value = "head_sha_1234567890"
 
     def _run_git_side(args: list[str]) -> GhResult:
         if args[:1] == ["ls-remote"]:
@@ -71,17 +70,18 @@ def _gh_auto_merge_stub(*, base: str, head: str = "feat/x", state: str = "OPEN")
             )
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
-
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:
             return GhResult(returncode=0, stdout=_all_green_check_runs(), stderr="", argv=args)
+        if args[:1] == ["api"] and args[1].endswith("/protection"):
+            return gh_fail("gh: Branch not protected (HTTP 404)")
+        if args[:2] == ["pr", "view"] and args[-1] == "headRefOid":
+            return gh_ok('{"headRefOid": "head_sha_1234567890"}', argv=args)
         if args[:2] == ["pr", "view"]:
-            return GhResult(returncode=0, stdout="{}", stderr="", argv=args)
+            return gh_ok(pr_view_stdout(base_ref=base, head_ref=head, state=state), argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run.side_effect = _run_side
-    return gh
+    return scripted_github(run=_run_side, git=_run_git_side)
 
 
 def test_settings_branch_defaults_with_no_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,23 +119,24 @@ def test_auto_merge_refusal_flips_to_configured_integration_branch(
     monkeypatch.setenv("REPOACH_INTEGRATION_BRANCH", "trunk")
 
     res_develop = run_auto_merge(
-        1, gh=_gh_auto_merge_stub(base="develop"), db_path=tmp_path / "develop.db"
+        1, forge=_gh_auto_merge_stub(base="develop"), db_path=tmp_path / "develop.db"
     )
     assert res_develop.outcome == OUTCOME_SKIP_BASE
     assert "trunk" in res_develop.notes
     assert "develop" in res_develop.notes
 
     res_trunk = run_auto_merge(
-        2, gh=_gh_auto_merge_stub(base="trunk"), db_path=tmp_path / "trunk.db"
+        2, forge=_gh_auto_merge_stub(base="trunk"), db_path=tmp_path / "trunk.db"
     )
     assert res_trunk.outcome != OUTCOME_SKIP_BASE
 
 
 def _gh_coder_findings_stub(*, base: str, head: str = "feat/x") -> MagicMock:
-    gh = MagicMock()
-    gh.pr_view.return_value = {"baseRefName": base, "headRefName": head, "state": "OPEN"}
-    gh.pr_head_sha.return_value = "head123"
-    return gh
+    forge = MagicMock()
+    forge.pull_request.return_value = PullRequest(
+        number=1, base_ref=base, head_ref=head, state="open", head_sha="head123"
+    )
+    return forge
 
 
 def test_coder_findings_refusal_flips_to_configured_integration_branch(
@@ -149,7 +150,7 @@ def test_coder_findings_refusal_flips_to_configured_integration_branch(
 
     res_develop = run_coder_fix_from_findings(
         1,
-        gh=_gh_coder_findings_stub(base="develop"),
+        forge=_gh_coder_findings_stub(base="develop"),
         repo_root=tmp_path,
         coder=MagicMock(),
         db_path=tmp_path / "develop.db",
@@ -161,7 +162,7 @@ def test_coder_findings_refusal_flips_to_configured_integration_branch(
 
     res_trunk = run_coder_fix_from_findings(
         2,
-        gh=_gh_coder_findings_stub(base="trunk"),
+        forge=_gh_coder_findings_stub(base="trunk"),
         repo_root=tmp_path,
         coder=MagicMock(),
         db_path=tmp_path / "trunk.db",
@@ -169,10 +170,7 @@ def test_coder_findings_refusal_flips_to_configured_integration_branch(
     assert res_trunk.wrong_base is False
 
 
-def _release_gh_stub(calls: list[list[str]], *, head_sha: str = "sha1") -> MagicMock:
-    gh = MagicMock()
-    gh.pr_head_sha.return_value = None
-
+def _release_gh_stub(calls: list[list[str]], *, head_sha: str = "sha1") -> GitHubForge:
     def _run_git_side(args: list[str]) -> GhResult:
         calls.append(args)
         if args[:1] == ["rev-parse"]:
@@ -190,8 +188,7 @@ def _release_gh_stub(calls: list[list[str]], *, head_sha: str = "sha1") -> Magic
             return GhResult(returncode=0, stdout="0\n", stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
-    return gh
+    return scripted_github(git=_run_git_side)
 
 
 def _noop_ci_runner(repo_root: Path) -> subprocess.CompletedProcess:
@@ -204,14 +201,14 @@ def test_release_gate_gather_facts_uses_configured_branch_names(
     """``gather_release_facts`` issues its git ref commands against the
 
     configured integration/release names, not the literal ``develop``/``main``
-    (AC3) -- a spy on ``gh._run_git`` records every invocation's argv.
+    (AC3) -- a spy on the forge's ``git`` seam records every invocation's argv.
     """
     monkeypatch.setenv("REPOACH_INTEGRATION_BRANCH", "trunk")
     monkeypatch.setenv("REPOACH_RELEASE_BRANCH", "release")
     calls: list[list[str]] = []
     gh = _release_gh_stub(calls)
 
-    gather_release_facts(repo_root=tmp_path, gh=gh, ci_runner=_noop_ci_runner)
+    gather_release_facts(repo_root=tmp_path, forge=gh, ci_runner=_noop_ci_runner)
 
     assert ["rev-parse", "trunk"] in calls
     assert ["ls-remote", "origin", "trunk"] in calls
@@ -235,7 +232,7 @@ def test_release_gate_verify_live_uses_configured_branch_names(
     calls: list[list[str]] = []
     gh = _release_gh_stub(calls, head_sha="deadbeef")
 
-    result = verify_release_live(gh=gh)
+    result = verify_release_live(forge=gh)
 
     assert ["fetch", "--quiet", "origin", "release", "trunk"] in calls
     assert ["ls-remote", "origin", "trunk"] in calls

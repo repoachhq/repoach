@@ -27,7 +27,7 @@ _BOT_LOGIN = "repoach-review-bot"
 _FORGER_LOGIN = "pr-author"
 
 
-class _CannedGhCli(GitHubForge):
+class _CannedGitHubForge(GitHubForge):
     """``GitHubForge`` whose ``_run`` returns a single canned :class:`GhResult`."""
 
     def __init__(self, canned: GhResult, *, bot_login: str | None = None) -> None:
@@ -65,7 +65,7 @@ def test_forged_archive_comment_ignored() -> None:
     this test fails on that code (the forged comment id 1 / body would
     be returned instead).
     """
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result(_forged_then_bot_archive_comments()),
         bot_login=_BOT_LOGIN,
     )
@@ -80,7 +80,7 @@ def test_forged_archive_comment_ignored() -> None:
 
 
 def test_only_forged_comment_present_yields_no_archive() -> None:
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 1, "body": f"{_MARKER}\nfake", "user": {"login": _FORGER_LOGIN}}]),
         bot_login=_BOT_LOGIN,
     )
@@ -90,7 +90,7 @@ def test_only_forged_comment_present_yields_no_archive() -> None:
 
 
 def test_missing_author_on_marker_comment_is_ignored() -> None:
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 1, "body": _MARKER}]),
         bot_login=_BOT_LOGIN,
     )
@@ -101,7 +101,7 @@ def test_missing_author_on_marker_comment_is_ignored() -> None:
 
 def test_missing_bot_identity_fails_closed() -> None:
     """An empty/unresolvable bot identity never widens trust, even for a genuine post."""
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 1, "body": _MARKER, "user": {"login": _BOT_LOGIN}}]),
         bot_login="",
     )
@@ -114,7 +114,7 @@ def test_defaults_bot_login_from_settings_when_omitted() -> None:
     from repoach.core.config import get_settings
 
     settings_login = get_settings().review_bot_login
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 7, "body": _MARKER, "user": {"login": settings_login}}])
     )
 
@@ -179,7 +179,7 @@ def test_paginated_array_endpoints_parse_all_pages() -> None:
     slurped_stdout = json.dumps([page1, page2])
     canned = GhResult(returncode=0, stdout=slurped_stdout, stderr="", argv=["gh"])
 
-    cli = _CannedGhCli(canned, bot_login=_BOT_LOGIN)
+    cli = _CannedGitHubForge(canned, bot_login=_BOT_LOGIN)
     assert cli.list_review_comments(42) == page1 + page2
     assert cli.find_archive_comment(42) == 202
 
@@ -214,7 +214,7 @@ def test_malformed_paginated_output_surfaces_loudly() -> None:
 
     fake_log = MagicMock()
     with patch("repoach.forge.github._log", fake_log):
-        cli = _CannedGhCli(malformed, bot_login=_BOT_LOGIN)
+        cli = _CannedGitHubForge(malformed, bot_login=_BOT_LOGIN)
         assert cli.list_review_comments(42) == []
         assert cli.find_archive_comment(42) is None
         fetch = cli.fetch_archive_comment_with_status(42)
@@ -241,7 +241,7 @@ def test_find_marked_comment_ignores_forged_and_raises_on_api_failure() -> None:
     """Protocol layer: the forged marker is skipped; an API failure raises, never ``None``."""
     from repoach.forge import ForgeError
 
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result(_forged_then_bot_archive_comments()),
         bot_login=_BOT_LOGIN,
     )
@@ -250,7 +250,7 @@ def test_find_marked_comment_ignores_forged_and_raises_on_api_failure() -> None:
     assert found.id == 2
     assert found.author == _BOT_LOGIN
 
-    failing = _CannedGhCli(
+    failing = _CannedGitHubForge(
         GhResult(returncode=1, stdout="", stderr="HTTP 502", argv=["gh"]),
         bot_login=_BOT_LOGIN,
     )

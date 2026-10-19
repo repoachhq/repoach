@@ -48,6 +48,7 @@ from typing import Literal
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..forge import Forge, ForgeError, select_forge
 from ..lint.no_inline_comments import scan_file as scan_inline_comments
 from ..lint.no_silent_except import scan_file as scan_silent_except
 from .coder_findings import ReasonCode
@@ -58,7 +59,6 @@ from .coder_loop import (
 from .decompose import Decomposer, decompose_spec, render_sub_spec_markdown
 from .devagent_selfverify import ComplianceJudge, make_compliance_judge, run_self_verify
 from .devagent_tools import normalise_contract
-from .gh_client import GhCli
 from .governed_spec import load_governed_spec
 from .import_gate import check_imports
 from .inline_comment_heal import heal_inline_comments
@@ -2002,9 +2002,9 @@ def open_pr(
     spec_ref: str,
     branch: str,
     base: str | None = None,
-    gh: GhCli | None = None,
+    forge: Forge | None = None,
 ) -> str:
-    """Open a draft-quality PR for *branch* via the ``gh`` CLI.
+    """Open a draft-quality PR / MR for *branch* through the forge.
 
     Takes the PR metadata as plain values rather than a :class:`SpecPlan` so the
     handoff survives a **superseded (deleted) parent** spec — on a decomposed run the
@@ -2021,12 +2021,12 @@ def open_pr(
         base: The PR base. Defaults to
             :attr:`~repoach.core.config.Settings.integration_branch`,
             resolved at call time so an env/test override takes effect.
-        gh: Optional :class:`GhCli` (tests inject a fake).
+        forge: Optional :class:`~repoach.forge.Forge` (tests inject a fake).
 
     Returns:
         The PR URL on success, empty string on failure.
     """
-    gh = gh or GhCli()
+    forge = forge or select_forge()
     base = base if base is not None else get_settings().integration_branch
     title = title[:200]
     body = (
@@ -2037,11 +2037,9 @@ def open_pr(
         "(Architect/Sentinel/Tester/Scribe + Coder fix loop) takes over "
         "from here._"
     )
-    res = gh.pr_create(head=branch, base=base, title=title, body=body)
-    if not res.ok:
-        _log.warning("dev_runner.pr_create_failed", stderr=res.stderr[:200])
+    try:
+        pr = forge.create_pull_request(head=branch, base=base, title=title, body=body)
+    except ForgeError as exc:
+        _log.warning("dev_runner.pr_create_failed", stderr=exc.message[:200])
         return ""
-    for line in reversed(res.stdout.strip().splitlines()):
-        if line.startswith("http"):
-            return line.strip()
-    return res.stdout.strip()
+    return pr.url

@@ -3,7 +3,7 @@
 Builds a real bare ``origin`` repo and a real clone, seeds a clean
 squash-shaped ``develop`` range off ``main``, and drives the actual
 ``gather_release_facts`` / ``compute_release_decision`` pair against it
-(only ``gh._run_git`` paths are exercised -- no network, no ``gh``
+(only ``forge.git`` paths are exercised -- no network, no ``gh``
 binary required). Confirms the gate passes on the clean range, then
 proves it refuses the instant an out-of-band commit lands on
 ``develop``, naming that commit's subject in the reasons.
@@ -23,7 +23,7 @@ import pytest
 import typer
 
 from repoach.cli import release_cmds
-from repoach.review.gh_client import GhCli
+from repoach.forge.github import GitHubForge
 from repoach.review.persistence import init_schema, record_merge
 from repoach.review.release_gate import (
     compute_release_decision,
@@ -78,9 +78,9 @@ def test_release_gate_clean_range_then_out_of_band_refusal(tmp_path: Path) -> No
         _git(work_dir, "commit", "-q", "-m", f"Add feature {n} (#{n})")
     _git(work_dir, "push", "-q", "-u", "origin", "develop")
 
-    gh = GhCli(cwd=work_dir)
+    gh = GitHubForge(cwd=work_dir)
 
-    facts = gather_release_facts(repo_root=work_dir, gh=gh, ci_runner=_fake_ci_runner)
+    facts = gather_release_facts(repo_root=work_dir, forge=gh, ci_runner=_fake_ci_runner)
     decision = compute_release_decision(facts)
     assert decision.merge is True
     assert decision.reasons == []
@@ -91,7 +91,7 @@ def test_release_gate_clean_range_then_out_of_band_refusal(tmp_path: Path) -> No
     _git(work_dir, "commit", "-q", "-m", out_of_band_subject)
     _git(work_dir, "push", "-q", "origin", "develop")
 
-    stale_facts = gather_release_facts(repo_root=work_dir, gh=gh, ci_runner=_fake_ci_runner)
+    stale_facts = gather_release_facts(repo_root=work_dir, forge=gh, ci_runner=_fake_ci_runner)
     stale_decision = compute_release_decision(stale_facts)
     assert stale_decision.merge is False
     assert any(out_of_band_subject in reason for reason in stale_decision.reasons)
@@ -146,10 +146,10 @@ def test_release_gate_ledger_backed_provenance_end_to_end(tmp_path: Path) -> Non
             notes="squash-merged via the gated PR path",
         )
 
-    gh = GhCli(cwd=work_dir)
+    gh = GitHubForge(cwd=work_dir)
 
     facts = gather_release_facts(
-        repo_root=work_dir, gh=gh, ci_runner=_fake_ci_runner, db_path=db_path
+        repo_root=work_dir, forge=gh, ci_runner=_fake_ci_runner, db_path=db_path
     )
     decision = compute_release_decision(facts)
     assert facts.provenance_error is None
@@ -164,7 +164,7 @@ def test_release_gate_ledger_backed_provenance_end_to_end(tmp_path: Path) -> Non
     _git(work_dir, "push", "-q", "origin", "develop")
 
     stale_facts = gather_release_facts(
-        repo_root=work_dir, gh=gh, ci_runner=_fake_ci_runner, db_path=db_path
+        repo_root=work_dir, forge=gh, ci_runner=_fake_ci_runner, db_path=db_path
     )
     stale_decision = compute_release_decision(stale_facts)
     assert stale_facts.out_of_band_commits == [forged_subject]
@@ -182,7 +182,7 @@ def test_release_verify_merge_commit_end_to_end(tmp_path: Path) -> None:
     clean-range test above does), then performs the exact sanctioned
     merge shape -- a real ``git merge --no-ff`` of ``develop`` into
     ``main`` -- and pushes it. ``verify_release`` against the real
-    receipt and a real ``GhCli`` must report verified True with a
+    receipt and a real ``GitHubForge`` must report verified True with a
     detail naming the match.
 
     ``develop`` then advances one more commit after the merge landed
@@ -209,9 +209,9 @@ def test_release_verify_merge_commit_end_to_end(tmp_path: Path) -> None:
     _git(work_dir, "commit", "-q", "-m", "Add feature (#1)")
     _git(work_dir, "push", "-q", "-u", "origin", "develop")
 
-    gh = GhCli(cwd=work_dir)
+    gh = GitHubForge(cwd=work_dir)
 
-    facts = gather_release_facts(repo_root=work_dir, gh=gh, ci_runner=_fake_ci_runner)
+    facts = gather_release_facts(repo_root=work_dir, forge=gh, ci_runner=_fake_ci_runner)
     decision = compute_release_decision(facts)
     assert decision.merge is True
     assert decision.reasons == []
@@ -223,7 +223,7 @@ def test_release_verify_merge_commit_end_to_end(tmp_path: Path) -> None:
     _git(work_dir, "merge", "--no-ff", "-q", "-m", "Merge develop into main", "develop")
     _git(work_dir, "push", "-q", "origin", "main")
 
-    result = verify_release(receipt_path, gh=gh)
+    result = verify_release(receipt_path, forge=gh)
     assert result.verified is True
     assert "matches the approved develop head" in result.detail
 
@@ -233,7 +233,7 @@ def test_release_verify_merge_commit_end_to_end(tmp_path: Path) -> None:
     _git(work_dir, "commit", "-q", "-m", "Add feature 2 (#2)")
     _git(work_dir, "push", "-q", "origin", "develop")
 
-    stale_result = verify_release(receipt_path, gh=gh)
+    stale_result = verify_release(receipt_path, forge=gh)
     assert stale_result.verified is False
 
 

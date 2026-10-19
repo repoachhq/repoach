@@ -6,8 +6,9 @@ Exercises :func:`repoach.review.persistence.record_dialogue` /
 Coder challenges recorded under ``round="challenge"``) and the
 ``## Dialogue transcript`` rendered in the archive comment.
 
-No network and no real ``gh``: the orchestrator's ``_StubGhCli``
-captures the body that would have been pushed and tests inspect it
+No network and no real ``gh``: ``_StubGitHubForge`` (a real
+:class:`~repoach.forge.github.GitHubForge` with its ``gh`` transport
+stubbed) captures the body that would have been pushed and tests inspect it
 directly.
 """
 
@@ -18,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from repoach.review.gh_client import GhResult
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.orchestrator import (
     ReviewTeamOrchestrator,
     _render_dialogue_transcript,
@@ -73,12 +74,13 @@ class _StubReviewer:
         return self._outcomes[idx]
 
 
-class _StubGhCli:
+class _StubGitHubForge(GitHubForge):
     """Capture archive bodies; returns canned diff."""
 
-    ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
-
     def __init__(self) -> None:
+        super().__init__(
+            cwd=Path("/tmp"), gh_path="/nonexistent/gh", bot_login="github-actions[bot]"
+        )
         self.archive_calls: list[dict] = []
         self.posted_reviews: list[dict] = []
         self.posted_comments: list[dict] = []
@@ -89,8 +91,14 @@ class _StubGhCli:
     def pr_head_sha(self, pr_number: int) -> str:
         return "deadbeef"
 
-    def pr_view(self, pr_number: int) -> dict | None:
-        return None
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return GhResult(0, "[[]]", "", argv=args)
+        return GhResult(1, "", "not stubbed", argv=args)
+
+    def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
+        self.archive_calls.append({"pr": pr_number, "body": body})
+        return GhResult(0, "{}", "", argv=["gh"])
 
     def pr_review_comment(self, pr_number: int, **kw: Any) -> GhResult:
         self.posted_comments.append({"pr": pr_number, **kw})
@@ -106,13 +114,6 @@ class _StubGhCli:
 
     def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         return []
-
-    def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
-        self.archive_calls.append({"pr": pr_number, "body": body})
-        return GhResult(0, "", "", argv=["gh"])
-
-    def fetch_archive_comment(self, pr_number: int) -> str | None:
-        return None
 
 
 @pytest.fixture
@@ -162,8 +163,8 @@ def test_record_dialogue_persists_round_1_outcomes(
             lambda r=role, **_kw: _StubReviewer([outs[r]]),
         )
 
-    gh = _StubGhCli()
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=db_path, post_to_github=False)
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=db_path, post_to_github=False)
     orch.review_pr(pr_number=42)
 
     entries = fetch_dialogue(42, db_path=db_path)
@@ -199,8 +200,8 @@ def test_record_dialogue_persists_round_2_only_for_rerun_reviewers(
             lambda r=role, **_kw: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
         )
 
-    gh = _StubGhCli()
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=db_path, post_to_github=False)
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=db_path, post_to_github=False)
     orch.review_pr(pr_number=43)
 
     entries = fetch_dialogue(43, db_path=db_path)
@@ -258,8 +259,8 @@ def test_archive_comment_renders_dialogue_section_when_db_has_rows(
             f"repoach.review.orchestrator.{cls}",
             lambda r=role, **_kw: _StubReviewer([_outcome(r, ReviewVerdict.APPROVE)]),
         )
-    gh = _StubGhCli()
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=db_path, post_to_github=True)
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=db_path, post_to_github=True)
     orch.review_pr(pr_number=45)
     assert gh.archive_calls, "archive comment should be upserted"
     body = gh.archive_calls[-1]["body"]

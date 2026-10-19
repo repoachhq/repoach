@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine, text
 
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_GATE,
@@ -26,8 +27,8 @@ from repoach.review.auto_merge import (
     resolve_verified_head,
     run_auto_merge,
 )
-from repoach.review.gh_client import GhResult
 from repoach.review.merge_gate import MergeDecision, MergeFacts
+from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
 
 _FRESH_SHA = "abc123def456abc123def456abc123def456abc1"
 _STALE_SHA = "1111111111111111111111111111111111111111"
@@ -43,10 +44,26 @@ def _ls_remote_result(sha: str, head_ref: str = "feat/x") -> GhResult:
     )
 
 
+def _head_run(*shas: str):
+    """A ``gh`` side effect answering ``pr view --json headRefOid`` with ``shas`` in turn.
+
+    The last SHA repeats once the sequence is exhausted.
+    """
+    remaining = list(shas)
+
+    def _side(args: list[str]) -> GhResult:
+        sha = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        return gh_ok(json.dumps({"headRefOid": sha}), argv=args)
+
+    return _side
+
+
+def _head_calls(gh: GitHubForge) -> int:
+    return sum(1 for call in gh._run.call_args_list if call.args[0][-1] == "headRefOid")
+
+
 def test_verified_head_match_first_try(tmp_path: Path) -> None:
-    gh = MagicMock()
-    gh.pr_head_sha.return_value = _FRESH_SHA
-    gh._run_git.return_value = _ls_remote_result(_FRESH_SHA)
+    gh = scripted_github(run=_head_run(_FRESH_SHA), git=lambda _a: _ls_remote_result(_FRESH_SHA))
     sleep = MagicMock()
 
     sha, reason = resolve_verified_head(
@@ -64,9 +81,9 @@ def test_verified_head_match_first_try(tmp_path: Path) -> None:
 
 
 def test_verified_head_converges_after_repoll(tmp_path: Path) -> None:
-    gh = MagicMock()
-    gh.pr_head_sha.side_effect = [_STALE_SHA, _FRESH_SHA]
-    gh._run_git.return_value = _ls_remote_result(_FRESH_SHA)
+    gh = scripted_github(
+        run=_head_run(_STALE_SHA, _FRESH_SHA), git=lambda _a: _ls_remote_result(_FRESH_SHA)
+    )
     sleep = MagicMock()
 
     sha, reason = resolve_verified_head(
@@ -84,9 +101,7 @@ def test_verified_head_converges_after_repoll(tmp_path: Path) -> None:
 
 
 def test_verified_head_persistent_mismatch_fails_closed(tmp_path: Path) -> None:
-    gh = MagicMock()
-    gh.pr_head_sha.return_value = _STALE_SHA
-    gh._run_git.return_value = _ls_remote_result(_OTHER_SHA)
+    gh = scripted_github(run=_head_run(_STALE_SHA), git=lambda _a: _ls_remote_result(_OTHER_SHA))
     sleep = MagicMock()
 
     sha, reason = resolve_verified_head(
@@ -108,13 +123,9 @@ def test_verified_head_persistent_mismatch_fails_closed(tmp_path: Path) -> None:
 
 
 def test_verified_head_ls_remote_error_fails_closed(tmp_path: Path) -> None:
-    gh = MagicMock()
-    gh.pr_head_sha.return_value = _FRESH_SHA
-    gh._run_git.return_value = GhResult(
-        returncode=1,
-        stdout="",
-        stderr="fatal: unable to access origin: network unreachable",
-        argv=["git", "ls-remote", "origin", "refs/heads/feat/x"],
+    gh = scripted_github(
+        run=_head_run(_FRESH_SHA),
+        git=lambda _a: gh_fail("fatal: unable to access origin: network unreachable"),
     )
     sleep = MagicMock()
 
@@ -142,19 +153,18 @@ def _make_gh(
     state: str = "OPEN",
     head: str = "feat/x",
     checks_ok: bool = True,
-) -> MagicMock:
-    """Build a GhCli mock covering ``pr_view`` + the CI check-runs + merge calls.
+    api_shas: tuple[str, ...] = (_FRESH_SHA,),
+    ls_remote: list[GhResult] | None = None,
+) -> GitHubForge:
+    """Build a scripted GitHub forge covering the PR view, CI check-runs and merge calls.
 
-    ``pr_head_sha`` and ``_run_git`` (the ``ls-remote`` path) are left for
-    each test to configure explicitly — that is exactly the surface
-    :func:`resolve_verified_head` and the pre-squash re-read exercise.
+    ``api_shas`` (what ``gh pr view --json headRefOid`` serves, in turn)
+    and ``ls_remote`` (what ``git ls-remote`` answers, in turn; the last
+    one repeats) are exactly the surface :func:`resolve_verified_head`
+    and the pre-squash re-read exercise.
     """
-    gh = MagicMock()
-    gh.pr_view.return_value = {
-        "baseRefName": base,
-        "headRefName": head,
-        "state": state,
-    }
+    head_side = _head_run(*api_shas)
+    remotes = list(ls_remote or [_ls_remote_result(api_shas[-1], head_ref=head)])
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:
@@ -168,6 +178,12 @@ def _make_gh(
             ]
             nd = "\n".join(json.dumps(e) for e in entries)
             return GhResult(returncode=0, stdout=nd, stderr="", argv=args)
+        if args[:1] == ["api"] and args[1].endswith("/protection"):
+            return gh_fail("gh: Branch not protected (HTTP 404)")
+        if args[:2] == ["pr", "view"] and args[-1] == "headRefOid":
+            return head_side(args)
+        if args[:2] == ["pr", "view"]:
+            return gh_ok(pr_view_stdout(base_ref=base, head_ref=head, state=state), argv=args)
         if args[:2] == ["pr", "merge"]:
             return GhResult(
                 returncode=0,
@@ -177,8 +193,10 @@ def _make_gh(
             )
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run.side_effect = _run_side
-    return gh
+    def _git_side(_args: list[str]) -> GhResult:
+        return remotes.pop(0) if len(remotes) > 1 else remotes[0]
+
+    return scripted_github(run=_run_side, git=_git_side)
 
 
 def _last_row(db_path: Path) -> dict[str, object]:
@@ -207,12 +225,15 @@ def _stub_facts(head_sha: str) -> MergeFacts:
 
 def test_auto_merge_refuses_on_stale_head_and_does_not_merge(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
-    gh = _make_gh(base="develop", head="feat/x")
-    gh.pr_head_sha.return_value = _STALE_SHA
-    gh._run_git.return_value = _ls_remote_result(_OTHER_SHA)
+    gh = _make_gh(
+        base="develop",
+        head="feat/x",
+        api_shas=(_STALE_SHA,),
+        ls_remote=[_ls_remote_result(_OTHER_SHA)],
+    )
 
-    with patch("repoach.review.auto_merge.squash_merge") as mocked_squash:
-        res = run_auto_merge(1, gh=gh, db_path=db, sleep=MagicMock())
+    with patch("repoach.review.auto_merge.merge_change") as mocked_squash:
+        res = run_auto_merge(1, forge=gh, db_path=db, sleep=MagicMock())
 
     assert res.outcome == OUTCOME_SKIP_STALE_HEAD
     assert _STALE_SHA[:12] in res.notes
@@ -273,11 +294,14 @@ def test_evaluate_merge_gate_stale_head_refuses(tmp_path: Path) -> None:
     repoach review gate exits 5 through the existing exit-code mapping.
     """
     db = tmp_path / "test.db"
-    gh = _make_gh(base="develop", head="feat/x")
-    gh.pr_head_sha.return_value = _STALE_SHA
-    gh._run_git.return_value = _ls_remote_result(_OTHER_SHA)
+    gh = _make_gh(
+        base="develop",
+        head="feat/x",
+        api_shas=(_STALE_SHA,),
+        ls_remote=[_ls_remote_result(_OTHER_SHA)],
+    )
 
-    evaluation = evaluate_merge_gate(1, gh=gh, db_path=db, repo_root=tmp_path, sleep=MagicMock())
+    evaluation = evaluate_merge_gate(1, forge=gh, db_path=db, repo_root=tmp_path, sleep=MagicMock())
 
     assert evaluation.decision.merge is False
     reason_blob = " ".join(evaluation.decision.reasons)
@@ -289,8 +313,6 @@ def test_evaluate_merge_gate_stale_head_refuses(tmp_path: Path) -> None:
 def test_gate_facts_computed_at_verified_head(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _make_gh(base="develop", head="feat/x", checks_ok=True)
-    gh.pr_head_sha.return_value = _FRESH_SHA
-    gh._run_git.return_value = _ls_remote_result(_FRESH_SHA, head_ref="feat/x")
 
     facts = _stub_facts(_FRESH_SHA)
     decision = MergeDecision(merge=False, reasons=["stub refusal so the test never reaches squash"])
@@ -299,23 +321,26 @@ def test_gate_facts_computed_at_verified_head(tmp_path: Path) -> None:
         "repoach.review.auto_merge.decide_at_head",
         return_value=(_FRESH_SHA, facts, decision),
     ) as mocked_decide:
-        res = run_auto_merge(1, gh=gh, db_path=db, sleep=MagicMock())
+        res = run_auto_merge(1, forge=gh, db_path=db, sleep=MagicMock())
 
     assert res.outcome == OUTCOME_SKIP_GATE
     mocked_decide.assert_called_once()
     _, kwargs = mocked_decide.call_args
     assert kwargs["head_sha"] == _FRESH_SHA
-    assert kwargs["head_sha"] != gh.pr_view.return_value["headRefName"]
+    assert kwargs["head_sha"] != "feat/x"
 
 
 def test_auto_merge_refuses_when_head_moves_mid_gate(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
-    gh = _make_gh(base="develop", head="feat/x", checks_ok=True)
-    gh.pr_head_sha.return_value = _FRESH_SHA
-    gh._run_git.side_effect = [
-        _ls_remote_result(_FRESH_SHA, head_ref="feat/x"),
-        _ls_remote_result(_OTHER_SHA, head_ref="feat/x"),
-    ]
+    gh = _make_gh(
+        base="develop",
+        head="feat/x",
+        checks_ok=True,
+        ls_remote=[
+            _ls_remote_result(_FRESH_SHA, head_ref="feat/x"),
+            _ls_remote_result(_OTHER_SHA, head_ref="feat/x"),
+        ],
+    )
 
     facts = _stub_facts(_FRESH_SHA)
     decision = MergeDecision(merge=True, reasons=[])
@@ -325,9 +350,9 @@ def test_auto_merge_refuses_when_head_moves_mid_gate(tmp_path: Path) -> None:
             "repoach.review.auto_merge.decide_at_head",
             return_value=(_FRESH_SHA, facts, decision),
         ),
-        patch("repoach.review.auto_merge.squash_merge") as mocked_squash,
+        patch("repoach.review.auto_merge.merge_change") as mocked_squash,
     ):
-        res = run_auto_merge(1, gh=gh, db_path=db, sleep=MagicMock())
+        res = run_auto_merge(1, forge=gh, db_path=db, sleep=MagicMock())
 
     assert res.outcome == OUTCOME_SKIP_STALE_HEAD
     assert _FRESH_SHA[:12] in res.notes

@@ -5,7 +5,7 @@ CLI default stays ``ledger`` (AC1), the ``github`` source classifies a
 range by ``mergeCommitOid`` membership through the same pure classifier
 the ledger source uses (AC2), an empty GitHub merged-set fails closed
 exactly like an empty ledger (AC3), and the new
-``GhCli.merged_pr_merge_shas`` method never issues a merge or push
+``GitHubForge.merged_pr_merge_shas`` method never issues a merge or push
 (AC5).
 """
 
@@ -21,7 +21,7 @@ from typer.testing import CliRunner
 
 from repoach.cli import release_cmds
 from repoach.cli.release_cmds import release_app
-from repoach.review.gh_client import GhCli, GhResult
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.release_gate import (
     ProvenanceSource,
     ReleaseFacts,
@@ -38,15 +38,15 @@ def _gh_stub_with_commits(
     merged_shas: set[str],
     pr_head_sha: str | None = None,
 ) -> MagicMock:
-    """Build a ``MagicMock`` ``GhCli`` stand-in with a fixed GitHub merged-SHA set.
+    """Build a ``MagicMock`` forge stand-in with a fixed GitHub merged-SHA set.
 
     Mirrors ``_gh_stub_with_commits`` in ``tests/unit/test_release_gate.py``
     (the ledger-provenance sibling), adding
-    ``merged_pr_merge_shas.return_value`` for the new GitHub source.
+    ``merged_shas.return_value`` for the new GitHub source.
     """
     gh = MagicMock()
-    gh.pr_head_sha.return_value = pr_head_sha
-    gh.merged_pr_merge_shas.return_value = merged_shas
+    gh.head_sha.return_value = pr_head_sha
+    gh.merged_shas.return_value = merged_shas
 
     def _run_git_side(args: list[str]) -> GhResult:
         if args[:2] == ["rev-parse", "develop"]:
@@ -59,7 +59,7 @@ def _gh_stub_with_commits(
             return GhResult(returncode=0, stdout=stdout, stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
+    gh.git.side_effect = _run_git_side
     return gh
 
 
@@ -82,7 +82,7 @@ def test_release_gate_provenance_option_defaults_to_ledger(
     def _fake_gather_release_facts(
         *,
         repo_root: Path,
-        gh: GhCli,
+        forge: GitHubForge,
         pr_number: int | None,
         db_path: Path,
         provenance: ProvenanceSource,
@@ -130,14 +130,14 @@ def test_github_provenance_flags_only_unmerged_shas(tmp_path: Path) -> None:
 
     facts = gather_release_facts(
         repo_root=tmp_path,
-        gh=gh,
+        forge=gh,
         ci_runner=_noop_ci_runner,
         provenance=ProvenanceSource.GITHUB,
     )
 
     assert facts.out_of_band_commits == ["hotfix something"]
     assert facts.provenance_error is None
-    gh.merged_pr_merge_shas.assert_called_once_with(base="develop")
+    gh.merged_shas.assert_called_once_with("develop")
 
 
 def test_github_provenance_all_covered_yields_clean_merge_decision(tmp_path: Path) -> None:
@@ -152,7 +152,7 @@ def test_github_provenance_all_covered_yields_clean_merge_decision(tmp_path: Pat
 
     facts = gather_release_facts(
         repo_root=tmp_path,
-        gh=gh,
+        forge=gh,
         ci_runner=_noop_ci_runner,
         provenance=ProvenanceSource.GITHUB,
     )
@@ -176,7 +176,7 @@ def test_github_provenance_empty_set_refuses(tmp_path: Path) -> None:
 
     facts = gather_release_facts(
         repo_root=tmp_path,
-        gh=gh,
+        forge=gh,
         ci_runner=_noop_ci_runner,
         provenance=ProvenanceSource.GITHUB,
     )
@@ -188,10 +188,10 @@ def test_github_provenance_empty_set_refuses(tmp_path: Path) -> None:
     assert any("provenance unverifiable" in reason for reason in decision.reasons)
 
 
-class _RecordingGhCli(GhCli):
-    """``GhCli`` that records every argv and returns a canned merged-PR list.
+class _RecordingGhCli(GitHubForge):
+    """``GitHubForge`` that records every argv and returns a canned merged-PR list.
 
-    Mirrors the ``_CannedGhCli`` / ``_PagedUpsertGhCli`` boundary-fake
+    Mirrors the ``_CannedGitHubForge`` / ``_PagedUpsertGhCli`` boundary-fake
     style in ``tests/unit/test_gh_client.py`` -- only ``_run`` (the
     subprocess boundary) is faked, so the real ``merged_pr_merge_shas``
     parsing logic runs unchanged.

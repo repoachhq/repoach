@@ -72,7 +72,7 @@ def _reviewer(role: BotRole) -> Reviewer:
 def _orchestrator(tmp_path, max_workers: int = 4) -> ReviewTeamOrchestrator:
     gh = MagicMock()
     return ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "l4.db",
         post_to_github=False,
         max_workers=max_workers,

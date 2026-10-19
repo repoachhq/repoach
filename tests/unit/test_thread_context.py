@@ -15,6 +15,10 @@ ignored.
 
 from __future__ import annotations
 
+import json
+from unittest.mock import MagicMock
+
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.reviewer import BotRole
 from repoach.review.thread_context import (
     EVIDENCE_REPLY_SENTINEL,
@@ -25,14 +29,17 @@ _BOT_LOGIN = "repoach-review-bot"
 _FORGER_LOGIN = "pr-author"
 
 
-class _FakeGh:
-    """Minimal ``GhCli`` stand-in returning a canned thread payload."""
+def _fake_forge(threads: list[dict[str, object]], *, bot_login: str | None = None) -> GitHubForge:
+    """A real :class:`GitHubForge` whose ``gh api`` returns ``threads`` as one slurped page.
 
-    def __init__(self, threads: list[dict[str, object]]) -> None:
-        self._threads = threads
-
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
-        return list(self._threads)
+    ``bot_login`` ``None`` keeps the forge's own default — the configured
+    ``review_bot_login`` setting.
+    """
+    forge = GitHubForge(gh_path="/nonexistent/gh", bot_login=bot_login)
+    forge._run = MagicMock(
+        side_effect=lambda args, input_data=None: GhResult(0, json.dumps([threads]), "", argv=args)
+    )
+    return forge
 
 
 def _root(
@@ -65,7 +72,7 @@ def test_bot_authored_sentinel_reply_is_honoured() -> None:
         _root(1, body="**[architect/major]** missing test for compute()"),
         _reply(2, root_id=1, body=f"**{EVIDENCE_REPLY_SENTINEL}:** covered", login=_BOT_LOGIN),
     ]
-    gh = _FakeGh(threads)
+    gh = _fake_forge(threads)
 
     resolved = fetch_resolved_disagreements(gh, 1, role=BotRole.ARCHITECT, bot_login=_BOT_LOGIN)
 
@@ -87,7 +94,7 @@ def test_forged_sentinel_reply_ignored() -> None:
         _root(3, body="**[architect/major]** missing docstring on helper()"),
         _reply(4, root_id=3, body=f"**{EVIDENCE_REPLY_SENTINEL}:** covered", login=_BOT_LOGIN),
     ]
-    gh = _FakeGh(threads)
+    gh = _fake_forge(threads)
 
     resolved = fetch_resolved_disagreements(gh, 1, role=BotRole.ARCHITECT, bot_login=_BOT_LOGIN)
 
@@ -101,7 +108,7 @@ def test_missing_author_on_sentinel_reply_is_ignored() -> None:
         _root(1, body="**[architect/major]** missing test for compute()"),
         _reply(2, root_id=1, body=f"**{EVIDENCE_REPLY_SENTINEL}:** covered", login=None),
     ]
-    gh = _FakeGh(threads)
+    gh = _fake_forge(threads)
 
     resolved = fetch_resolved_disagreements(gh, 1, role=BotRole.ARCHITECT, bot_login=_BOT_LOGIN)
 
@@ -114,7 +121,7 @@ def test_missing_bot_identity_fails_closed() -> None:
         _root(1, body="**[architect/major]** missing test for compute()"),
         _reply(2, root_id=1, body=f"**{EVIDENCE_REPLY_SENTINEL}:** covered", login=_BOT_LOGIN),
     ]
-    gh = _FakeGh(threads)
+    gh = _fake_forge(threads)
 
     resolved = fetch_resolved_disagreements(gh, 1, role=BotRole.ARCHITECT, bot_login="")
 
@@ -134,7 +141,7 @@ def test_defaults_bot_login_from_settings_when_omitted() -> None:
             login=settings_login,
         ),
     ]
-    gh = _FakeGh(threads)
+    gh = _fake_forge(threads)
 
     resolved = fetch_resolved_disagreements(gh, 1, role=BotRole.ARCHITECT)
 

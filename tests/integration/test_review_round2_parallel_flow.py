@@ -1,7 +1,7 @@
 """Integration test: pooled round 2 composes with round-1 pooling end to end.
 
 Exercises ``ReviewTeamOrchestrator.review_pr`` (SP-REVIEW-ROUND2-PARALLEL) against a
-real scratch git repository under ``tmp_path``, a truthful ``GhCli`` fake, and REAL
+real scratch git repository under ``tmp_path``, a truthful ``gh`` fake, and REAL
 ``Architect`` / ``Sentinel`` / ``Tester`` / ``Scribe`` instances whose only replaced
 surface is the public ``review_diff`` contract method. Two reviewers' round-1
 outcomes flag a blocker, triggering round 2 for both; their round-2 ``review_diff``
@@ -22,6 +22,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from repoach.forge.github import GitHubForge
+from repoach.forge.runner import CommandResult
 from repoach.review.merge_gate import MergeFacts
 from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.reviewer import (
@@ -36,6 +38,7 @@ from repoach.review.reviewer import (
     Sentinel,
     Tester,
 )
+from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
 
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
@@ -81,50 +84,24 @@ def _boundary_fake_reviewer(
     return instance
 
 
-class _GhCliFake:
-    def __init__(self, *, head_sha: str, head_ref: str = "feat/x") -> None:
-        self.head_sha = head_sha
-        self.head_ref = head_ref
+def _gh_fake(*, head_sha: str, head_ref: str = "feat/x") -> GitHubForge:
+    """A real :class:`GitHubForge` whose ``gh`` serves one PR with a canned diff."""
 
-    def pr_diff(self, pr_number: int) -> object:
-        result = MagicMock()
-        result.ok = True
-        result.stdout = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x = 1\n"
-        result.stderr = ""
-        return result
+    def _run(args: list[str]) -> CommandResult:
+        if args[:2] == ["pr", "diff"]:
+            return gh_ok(
+                "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x = 1\n",
+                argv=args,
+            )
+        if args[:2] == ["pr", "view"]:
+            return gh_ok(
+                pr_view_stdout(7, head_ref=head_ref, head_sha=head_sha, title="test"), argv=args
+            )
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return gh_ok("[[]]", argv=args)
+        return gh_ok("{}", argv=args)
 
-    def pr_view(self, pr_number: int) -> dict[str, object]:
-        return {"headRefName": self.head_ref, "title": "test"}
-
-    def pr_head_sha(self, pr_number: int) -> str | None:
-        return self.head_sha
-
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
-        return []
-
-    def pr_review_comment(self, pr_number: int, **kw: object) -> object:
-        r = MagicMock()
-        r.returncode = 0
-        r.stdout = ""
-        r.stderr = ""
-        return r
-
-    def pr_review_submit(self, pr_number: int, **kw: object) -> object:
-        r = MagicMock()
-        r.returncode = 0
-        r.stdout = ""
-        r.stderr = ""
-        return r
-
-    def upsert_archive_comment(self, pr_number: int, *, body: str) -> object:
-        r = MagicMock()
-        r.returncode = 0
-        r.stdout = ""
-        r.stderr = ""
-        return r
-
-    def fetch_archive_comment(self, pr_number: int) -> str | None:
-        return None
+    return scripted_github(run=_run)
 
 
 def _silence_downstream_ledger_writes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,7 +170,7 @@ def test_round2_barrier_gated_reviewers_complete_through_full_review_pr(
         check=True,
     )
 
-    gh = _GhCliFake(head_sha="cafe" * 8, head_ref="feat/x")
+    gh = _gh_fake(head_sha="cafe" * 8, head_ref="feat/x")
 
     barrier = threading.Barrier(parties=2, timeout=10)
 
@@ -237,7 +214,7 @@ def test_round2_barrier_gated_reviewers_complete_through_full_review_pr(
     _silence_downstream_ledger_writes(monkeypatch)
 
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=4,

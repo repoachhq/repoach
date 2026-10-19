@@ -5,10 +5,14 @@ the main app in :mod:`repoach.cli.main`.
 
 Subcommands:
 
-* ``repoach review pr <N>`` — run the four reviewer bots on PR
-  ``<N>`` and (by default) post their findings to GitHub.
+* ``repoach review pr <N>`` — run the four reviewer bots on PR / MR
+  ``<N>`` and (by default) post their findings to the forge.
 * ``repoach review pr <N> --dry-run`` — same but never publish to
-  GitHub; only persist to L4.  Useful for local previews and tests.
+  the forge; only persist to L4.  Useful for local previews and tests.
+
+Every command takes ``--forge github|gitlab`` (SP-UNIVERSAL-FORGE G4);
+without it the forge comes from ``REPOACH_FORGE``, ``repoach.toml`` or
+the origin remote. A forge that cannot be selected exits ``2``.
 * ``repoach review report <N>`` — pull the sticky archive comment
   off PR ``<N>`` and emit the full TeamOutcome as JSON.  Works
   regardless of where the workflow ran (local machine vs. Actions
@@ -25,6 +29,7 @@ import typer
 from sqlalchemy import create_engine, text
 
 from ..core.config import get_settings
+from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..review.auto_merge import (
     evaluate_merge_gate,
     merge_exit_code,
@@ -32,8 +37,37 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.gh_client import GhCli
 from ..review.orchestrator import run_review
+
+_FORGE_HELP = (
+    "Forge the PR / MR lives on: github or gitlab (default: REPOACH_FORGE, repoach.toml, origin)."
+)
+
+
+def _forge_kwargs(forge_name: object) -> dict[str, Forge]:
+    """Select the forge named by ``--forge``; ``{}`` lets the command select its own.
+
+    Anything but a non-empty string — ``None``, or typer's ``OptionInfo``
+    default when a command function is called directly from Python —
+    means no flag was given.
+
+    Raises:
+        typer.Exit: Code 2 when the named forge cannot be selected.
+    """
+    if not isinstance(forge_name, str) or not forge_name:
+        return {}
+    try:
+        return {"forge": select_forge(override=forge_name)}
+    except ForgeError as exc:
+        typer.echo(f"forge unavailable: {exc.message}", err=True)
+        raise typer.Exit(code=2) from exc
+
+
+def _forge_failure(exc: ForgeError) -> typer.Exit:
+    """Report a forge that could not be selected or reached; exit code 2."""
+    typer.echo(f"forge unavailable: {exc.message}", err=True)
+    return typer.Exit(code=2)
+
 
 review_app = typer.Typer(
     help="Review-bot team operations (NIM-only, no Anthropic quota).",
@@ -64,20 +98,21 @@ pre-fix behaviour for every reason with no dedicated branch.
 
 @review_app.command("pr")
 def review_pr(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to review."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to review."),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
         help=(
             "Run the four reviewers and persist outcomes to L4 but never "
-            "publish anything to GitHub. Useful for local previews."
+            "publish anything to the forge. Useful for local previews."
         ),
     ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
-    """Run the review-bot team on a GitHub PR and emit a summary.
+    """Run the review-bot team on a PR / MR and emit a summary.
 
     The four reviewers (Architect / Sentinel / Tester / Scribe) run in
-    parallel against the PR diff fetched via ``gh pr diff``.  Their
+    parallel against the diff read through the forge.  Their
     individual verdicts are aggregated into a final team verdict
     (``REQUEST_CHANGES`` wins, otherwise ``APPROVE`` wins, otherwise
     ``COMMENT``) which is posted alongside per-bot inline comments.
@@ -91,7 +126,10 @@ def review_pr(
     the same shape regardless of which mode they ran in
     (SP-AUTO-REVIEW-V2-MIGRATION).
     """
-    team = run_review(pr_number, post=not dry_run)
+    try:
+        team = run_review(pr_number, post=not dry_run, **_forge_kwargs(forge_name))
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
     payload = {
         "pr_number": team.pr_number,
         "final_verdict": team.final_verdict.value,
@@ -125,12 +163,13 @@ _ARCHIVE_FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 @review_app.command("report")
 def review_report(
-    pr_number: int = typer.Argument(..., help="GitHub PR number."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab)."),
     raw: bool = typer.Option(
         False,
         "--raw",
         help="Emit the full archive comment markdown instead of the JSON payload.",
     ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
     """Fetch the sticky review-archive comment off a PR and print it.
 
@@ -143,25 +182,31 @@ def review_report(
 
     * ``0`` — archive comment found and printed.
     * ``1`` — the API answered but no comment carries the marker.
-    * ``6`` — the GitHub API call itself failed (transient: rate
+    * ``6`` — the forge API call itself failed (transient: rate
       limit, network); the archive may well exist.
+    * ``2`` — the forge could not be selected.
     """
-    gh = GhCli()
-    fetch = gh.fetch_archive_comment_with_status(pr_number)
-    if fetch.api_error is not None:
+    forge = _forge_kwargs(forge_name).get("forge")
+    try:
+        forge = forge or select_forge()
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    try:
+        found = forge.find_marked_comment(pr_number, ARCHIVE_MARKER)
+    except ForgeError as exc:
         typer.echo(
-            f"Archive fetch failed on PR #{pr_number} — gh API error, "
-            f"not a missing archive: {fetch.api_error}",
+            f"Archive fetch failed on PR #{pr_number} — {forge.name} API error, "
+            f"not a missing archive: {exc.message[:200]}",
             err=True,
         )
-        raise typer.Exit(code=6)
-    body = fetch.body
-    if body is None:
+        raise typer.Exit(code=6) from exc
+    if found is None:
         typer.echo(
-            f"No archive comment found on PR #{pr_number} (marker: {gh.ARCHIVE_MARKER})",
+            f"No archive comment found on PR #{pr_number} (marker: {ARCHIVE_MARKER})",
             err=True,
         )
         raise typer.Exit(code=1)
+    body = found.body
     if raw:
         typer.echo(body)
         return
@@ -180,7 +225,8 @@ def review_report(
 
 @review_app.command("fix")
 def review_fix(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to auto-fix."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to auto-fix."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
     """Run one findings-driven Coder auto-fix iteration on a PR.
 
@@ -207,7 +253,10 @@ def review_fix(
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
     """
-    fr = run_coder_fix_from_findings(pr_number)
+    try:
+        fr = run_coder_fix_from_findings(pr_number, **_forge_kwargs(forge_name))
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
     typer.echo(
         json.dumps(
             {
@@ -240,9 +289,12 @@ def review_fix(
 
 @review_app.command("merge")
 def review_merge(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to auto-merge."),
+    pr_number: int = typer.Argument(
+        ..., help="PR number (GitHub) or MR iid (GitLab) to auto-merge."
+    ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
-    """Squash-merge a PR into ``develop`` once all gates are green.
+    """Merge a PR into ``develop`` once all gates are green (configured method, squash by default).
 
     Gates (all must hold): base = ``develop``, PR open, required CI
     checks all green, and the pure merge gate satisfied at head (zero
@@ -258,7 +310,10 @@ def review_merge(
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
     """
-    result = run_auto_merge(pr_number)
+    try:
+        result = run_auto_merge(pr_number, **_forge_kwargs(forge_name))
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
     typer.echo(
         json.dumps(
             {
@@ -317,7 +372,8 @@ def review_insights(
 
 @review_app.command("gate")
 def review_gate(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to evaluate."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
     """Evaluate the pure merge gate for a PR — read-only, never merges.
 
@@ -336,7 +392,7 @@ def review_gate(
       * ``1`` — could not evaluate (transport error gathering facts).
     """
     try:
-        evaluation = evaluate_merge_gate(pr_number)
+        evaluation = evaluate_merge_gate(pr_number, **_forge_kwargs(forge_name))
     except Exception as exc:
         typer.echo(
             json.dumps(
@@ -395,7 +451,7 @@ def review_develop(
     open_pull_request: bool = typer.Option(
         True,
         "--open-pr/--no-open-pr",
-        help="Whether to call ``gh pr create`` after pushing (default: yes).",
+        help="Whether to open a PR / MR through the forge after pushing (default: yes).",
     ),
     explore_via: str = typer.Option(
         "proxy",

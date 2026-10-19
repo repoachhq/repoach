@@ -4,9 +4,9 @@ The reviewers themselves call NIM and need a network — they're not in
 scope here.  We exercise:
 
 * :func:`record_review` round-trip on a tmp SQLite db.
-* :class:`GhCli` graceful failure path when ``gh`` is missing.
+* :class:`GitHubForge` graceful failure path when ``gh`` is missing.
 * End-to-end :meth:`ReviewTeamOrchestrator.review_pr` with the
-  reviewers + GhCli stubbed.
+  reviewers + the forge's ``gh`` transport stubbed.
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
-from repoach.review.gh_client import GhCli, GhResult
+from repoach.forge import Diff, PullRequest
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
 from repoach.review.persistence import init_schema, record_review
 from repoach.review.reviewer import (
@@ -26,6 +27,8 @@ from repoach.review.reviewer import (
     ReviewerOutcome,
     ReviewVerdict,
 )
+
+_BOT = "github-actions[bot]"
 
 
 def _outcome(
@@ -106,13 +109,13 @@ def test_init_schema_idempotent(tmp_path: Path):
     init_schema(db)
 
 
-# ---------- GhCli graceful degradation ----------
+# ---------- GitHubForge graceful degradation ----------
 
 
 def test_gh_cli_unavailable_returns_127(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("shutil.which", lambda _name: None)
-    cli = GhCli(cwd=tmp_path)
-    assert not cli.available
+    cli = GitHubForge(cwd=tmp_path)
+    assert not cli.available()
     res = cli.pr_diff(99)
     assert isinstance(res, GhResult)
     assert res.returncode == 127
@@ -120,8 +123,8 @@ def test_gh_cli_unavailable_returns_127(monkeypatch, tmp_path: Path):
     assert not res.ok
 
 
-class _ScriptedGhCli(GhCli):
-    """GhCli whose gh / git subprocesses are replaced by canned results.
+class _ScriptedGitHubForge(GitHubForge):
+    """GitHubForge whose gh / git subprocesses are replaced by canned results.
 
     ``gh_script`` and ``git_script`` map the first matching argv
     prefix (space-joined) to a ``(returncode, stdout, stderr)``
@@ -154,7 +157,7 @@ class _ScriptedGhCli(GhCli):
                 return GhResult(returncode=rc, stdout=out, stderr=err, argv=[prog, *args])
         raise AssertionError(f"unexpected {prog} call: {joined}")
 
-    def _run(self, args: list[str]) -> GhResult:
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
         return self._replay(self._gh_script, "gh", args)
 
     def _run_git(self, args: list[str]) -> GhResult:
@@ -166,7 +169,7 @@ _DIFF_406 = (1, "", "HTTP 406: Sorry, the diff exceeded the maximum number of fi
 
 
 def test_pr_diff_api_success_skips_fallback():
-    cli = _ScriptedGhCli(
+    cli = _ScriptedGitHubForge(
         gh_script={"pr diff 309": (0, "diff --git a/x b/x", "")},
         git_script={},
     )
@@ -177,7 +180,7 @@ def test_pr_diff_api_success_skips_fallback():
 
 
 def test_pr_diff_falls_back_to_local_git_on_406():
-    cli = _ScriptedGhCli(
+    cli = _ScriptedGitHubForge(
         gh_script={
             "pr diff 309": _DIFF_406,
             "pr view 309": (0, _PR_VIEW_JSON, ""),
@@ -195,7 +198,7 @@ def test_pr_diff_falls_back_to_local_git_on_406():
 
 def test_pr_diff_fallback_fetches_pull_head_when_commit_missing():
     probes = iter([(1, "", "missing"), (0, "", "")])
-    cli = _ScriptedGhCli(
+    cli = _ScriptedGitHubForge(
         gh_script={
             "pr diff 309": _DIFF_406,
             "pr view 309": (0, _PR_VIEW_JSON, ""),
@@ -223,7 +226,7 @@ def test_pr_diff_fallback_fetches_pull_head_when_commit_missing():
 
 
 def test_pr_diff_fallback_returns_api_error_when_view_fails():
-    cli = _ScriptedGhCli(
+    cli = _ScriptedGitHubForge(
         gh_script={
             "pr diff 309": _DIFF_406,
             "pr view 309": (1, "", "boom"),
@@ -236,7 +239,7 @@ def test_pr_diff_fallback_returns_api_error_when_view_fails():
 
 
 def test_pr_diff_fallback_returns_api_error_when_git_diff_fails():
-    cli = _ScriptedGhCli(
+    cli = _ScriptedGitHubForge(
         gh_script={
             "pr diff 309": _DIFF_406,
             "pr view 309": (0, _PR_VIEW_JSON, ""),
@@ -252,7 +255,7 @@ def test_pr_diff_fallback_returns_api_error_when_git_diff_fails():
     assert "maximum number of files" in res.stderr
 
 
-# ---------- SP-REVIEW-POST-BATCH: GhCli.pr_review_submit_batch ----------
+# ---------- SP-REVIEW-POST-BATCH: GitHubForge.pr_review_submit_batch ----------
 
 
 def test_pr_review_submit_batch_posts_single_call_with_comments_array(monkeypatch, tmp_path):
@@ -267,8 +270,8 @@ def test_pr_review_submit_batch_posts_single_call_with_comments_array(monkeypatc
         calls.append({"argv": argv, "input": kwargs.get("input")})
         return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"id": 777}), stderr="")
 
-    monkeypatch.setattr("repoach.review.gh_client.subprocess.run", _fake_run)
-    cli = GhCli(cwd=tmp_path, gh_path=str(gh_path))
+    monkeypatch.setattr("repoach.forge.runner.subprocess.run", _fake_run)
+    cli = GitHubForge(cwd=tmp_path, gh_path=str(gh_path))
 
     res = cli.pr_review_submit_batch(
         42,
@@ -326,10 +329,14 @@ class _StubReviewer:
         return self._outcome
 
 
-class _StubGhCli:
-    """Capture publish calls without hitting the network."""
+class _StubGitHubForge(GitHubForge):
+    """A real :class:`GitHubForge` whose ``gh`` transport methods are stubbed.
 
-    ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
+    The protocol layer (``diff``, ``post_review``, ``post_comment``,
+    ``upsert_marked_comment``...) runs unchanged on top of the stubbed
+    transport, so the orchestrator's posting sequence is exercised
+    through the same code it uses in production.
+    """
 
     def __init__(
         self,
@@ -337,6 +344,7 @@ class _StubGhCli:
         diff_ok: bool = True,
         review_submit_fail: bool = False,
     ) -> None:
+        super().__init__(cwd=Path("/tmp"), gh_path="/nonexistent/gh", bot_login=_BOT)
         self._diff_ok = diff_ok
         self.review_submit_fail = review_submit_fail
         self.posted_comments: list[dict] = []
@@ -344,6 +352,17 @@ class _StubGhCli:
         self.batch_calls: list[dict] = []
         self.archive_calls: list[dict] = []
         self._next_review_id = 1000
+
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["pr", "view"]:
+            return GhResult(0, json.dumps({"headRefName": "feat/stub-head"}), "", argv=args)
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return GhResult(0, "[[]]", "", argv=args)
+        raise AssertionError(f"unexpected gh call: {args}")
+
+    def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
+        self.archive_calls.append({"pr": pr_number, "body": body})
+        return GhResult(0, json.dumps({"id": 1}), "", argv=["gh", "api"])
 
     def pr_diff(self, pr_number: int) -> GhResult:
         if not self._diff_ok:
@@ -368,13 +387,6 @@ class _StubGhCli:
 
     def pr_head_sha(self, pr_number: int) -> str:
         return "deadbeef"
-
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
-        # SP-CODER-EVIDENCE-CHALLENGE 3B: orchestrator pre-fetches
-        # resolved disagreements per reviewer.  No fixture data here,
-        # so return an empty list — the fetcher returns [] and the
-        # reviewer prompts get the no-context stub.
-        return []
 
     def pr_review_comment(self, pr_number: int, **kw) -> GhResult:
         self.posted_comments.append({"pr": pr_number, **kw})
@@ -407,18 +419,9 @@ class _StubGhCli:
     def list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         return []
 
-    def upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
-        self.archive_calls.append({"pr": pr_number, "body": body})
-        return GhResult(0, "", "", argv=["gh", "api"])
-
-    def fetch_archive_comment(self, pr_number: int) -> str | None:
-        # No prior archive in the stub — the orchestrator's preserve
-        # path treats this as "nothing to carry over".
-        return None
-
 
 def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
-    """All four reviewers run, verdict resolves, posts go through GhCli.
+    """All four reviewers run, verdict resolves, posts go through the forge.
 
     Happy path: four APPROVE outcomes carrying only a minor comment →
     no blocking finding in the ledger and a complete review, so
@@ -456,9 +459,9 @@ def test_review_pr_runs_team_and_publishes(tmp_path, monkeypatch):
         lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
-    gh = _StubGhCli()
+    gh = _StubGitHubForge()
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=2,
@@ -536,7 +539,7 @@ def test_findings_failure_survives_but_fails_closed(monkeypatch, tmp_path: Path)
     monkeypatch.setattr("repoach.review.orchestrator.record_findings_for_outcomes", _boom)
 
     orch = ReviewTeamOrchestrator(
-        gh=_StubGhCli(),
+        forge=_StubGitHubForge(),
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=2,
@@ -573,7 +576,7 @@ def test_verify_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", _boom)
 
     orch = ReviewTeamOrchestrator(
-        gh=_StubGhCli(), db_path=tmp_path / "review.db", post_to_github=True, max_workers=2
+        forge=_StubGitHubForge(), db_path=tmp_path / "review.db", post_to_github=True, max_workers=2
     )
     assert orch.review_pr(pr_number=99).final_verdict == ReviewVerdict.APPROVE
 
@@ -605,7 +608,7 @@ def test_judge_failure_never_breaks_review(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("repoach.review.orchestrator.judge_findings_for_pr", _boom)
 
     orch = ReviewTeamOrchestrator(
-        gh=_StubGhCli(), db_path=tmp_path / "review.db", post_to_github=True, max_workers=2
+        forge=_StubGitHubForge(), db_path=tmp_path / "review.db", post_to_github=True, max_workers=2
     )
     assert orch.review_pr(pr_number=99).final_verdict == ReviewVerdict.APPROVE
 
@@ -640,7 +643,7 @@ def test_orchestrator_verifies_findings(monkeypatch, tmp_path: Path) -> None:
     )
 
     orch = ReviewTeamOrchestrator(
-        gh=_StubGhCli(),
+        forge=_StubGitHubForge(),
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=2,
@@ -657,9 +660,9 @@ def test_orchestrator_verifies_findings(monkeypatch, tmp_path: Path) -> None:
 
 def test_review_pr_returns_safe_outcome_on_diff_fetch_failure(tmp_path, monkeypatch):
     """A failing ``gh pr diff`` short-circuits to a COMMENT verdict."""
-    gh = _StubGhCli(diff_ok=False)
+    gh = _StubGitHubForge(diff_ok=False)
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=False,
     )
@@ -698,8 +701,8 @@ def test_review_pr_writes_archive_comment_when_posting(tmp_path, monkeypatch):
         lambda **_kw: _StubReviewer(fake_outcomes[3]),
     )
 
-    gh = _StubGhCli()
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=True)
     orch.review_pr(pr_number=42)
 
     assert len(gh.archive_calls) == 1
@@ -731,8 +734,8 @@ def test_review_pr_skips_archive_when_dry_run(tmp_path, monkeypatch):
         lambda **_kw: _StubReviewer(out),
     )
 
-    gh = _StubGhCli()
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=False)
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=False)
     orch.review_pr(pr_number=8)
     assert gh.archive_calls == []
     assert gh.posted_reviews == []
@@ -742,7 +745,7 @@ def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
     """GitHub rejecting every event on the batched review falls back to a comment.
 
     SP-REVIEW-POST-BATCH: ``review_submit_fail=True`` now makes the stub's
-    batched call (:meth:`_StubGhCli.pr_review_submit_batch`) fail for every
+    batched call (:meth:`_StubGitHubForge.pr_review_submit_batch`) fail for every
     event, not just the legacy ``pr_review_submit`` — so each bot still
     exhausts the full fallback chain: batched APPROVE attempt, batched
     COMMENT-downgrade retry, legacy ``pr_review_submit``, then the fallback
@@ -755,8 +758,8 @@ def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
             lambda o=out, **_kw: _StubReviewer(o),
         )
 
-    gh = _StubGhCli(review_submit_fail=True)
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    gh = _StubGitHubForge(review_submit_fail=True)
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=True)
     team = orch.review_pr(pr_number=21)
 
     # Each of the 4 bots tried a batched review (APPROVE, then a
@@ -775,8 +778,8 @@ def test_review_submit_falls_back_to_issue_comment(tmp_path, monkeypatch):
 # ---------- SP-REVIEW-POST-BATCH: _publish_outcome batching + fallback ----------
 
 
-class _BatchGhCli:
-    """Truthful gh stub exercising ``_publish_outcome``'s batching contract.
+class _BatchGitHubForge(GitHubForge):
+    """Truthful gh-transport stub exercising ``_publish_outcome``'s batching contract.
 
     ``batch_results`` is consumed in call order — one entry per
     :meth:`pr_review_submit_batch` invocation — so a test can script an
@@ -793,6 +796,7 @@ class _BatchGhCli:
         batch_results: list[GhResult],
         review_id_comments: list[dict[str, object]] | None = None,
     ) -> None:
+        super().__init__(cwd=Path("/tmp"), gh_path="/nonexistent/gh", bot_login=_BOT)
         self._batch_results = iter(batch_results)
         self._review_id_comments = review_id_comments or []
         self.batch_calls: list[dict[str, object]] = []
@@ -850,7 +854,7 @@ def test_publish_outcome_downgrades_to_comment_event_on_batch_rejection(tmp_path
         ReviewVerdict.REQUEST_CHANGES,
         comments=[ReviewComment(file="a.py", line=1, severity="major", body="fix this")],
     )
-    gh = _BatchGhCli(
+    gh = _BatchGitHubForge(
         batch_results=[
             GhResult(
                 1, "", "GraphQL: GITHUB_TOKEN cannot submit REQUEST_CHANGES", argv=["gh", "api"]
@@ -858,7 +862,7 @@ def test_publish_outcome_downgrades_to_comment_event_on_batch_rejection(tmp_path
             GhResult(0, json.dumps({"id": 555}), "", argv=["gh", "api"]),
         ]
     )
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=True)
     team = _team_outcome()
 
     orch._publish_outcome(
@@ -882,8 +886,8 @@ def test_publish_outcome_falls_back_to_per_comment_when_batch_fully_rejected(tmp
         comments=[ReviewComment(file="a.py", line=1, severity="major", body="fix this")],
     )
     rejection = GhResult(1, "", "422 Unprocessable Entity", argv=["gh", "api"])
-    gh = _BatchGhCli(batch_results=[rejection, rejection])
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    gh = _BatchGitHubForge(batch_results=[rejection, rejection])
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=True)
     team = _team_outcome()
 
     orch._publish_outcome(
@@ -907,14 +911,14 @@ def test_publish_outcome_recovers_posted_ids_from_batched_review(tmp_path):
             ReviewComment(file="b.py", line=9, severity="minor", body="nit two"),
         ],
     )
-    gh = _BatchGhCli(
+    gh = _BatchGitHubForge(
         batch_results=[GhResult(0, json.dumps({"id": 900}), "", argv=["gh", "api"])],
         review_id_comments=[
             {"id": 11, "path": "a.py", "line": 1},
             {"id": 12, "path": "b.py", "line": 9},
         ],
     )
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=True)
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=True)
     team = _team_outcome()
     posted_ids: dict[tuple[str, int], int] = {}
 
@@ -964,8 +968,8 @@ def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
         lambda **_kw: _StubReviewer(_outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE)),
     )
 
-    gh = _StubGhCli()
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=False)
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=False)
     team = orch.review_pr(pr_number=11)
     # Three healthy + one degraded sentinel = 4 outcomes.
     assert len(team.reviews) == 4
@@ -1114,20 +1118,15 @@ def test_run_team_review_loads_spec_from_branch_name(tmp_path) -> None:
     from repoach.review.orchestrator import ReviewTeamOrchestrator
 
     gh = MagicMock()
-    diff_res = MagicMock()
-    diff_res.ok = True
-    diff_res.stdout = "diff --git a/x b/x\n"
-    gh.pr_diff.return_value = diff_res
-    gh.pr_view.return_value = {"headRefName": "feat/sp-fake-impl"}
-    gh.pr_head_sha.return_value = "abc123"
-    gh.upsert_archive_comment.return_value = MagicMock(ok=True)
-    gh.pr_review_submit.return_value = MagicMock(ok=True)
-    gh.pr_review_comment.return_value = MagicMock(ok=True)
+    gh.diff.return_value = Diff(text="diff --git a/x b/x\n", files=["x"])
+    gh.pull_request.return_value = PullRequest(number=999, head_ref="feat/sp-fake-impl")
+    gh.head_sha.return_value = "abc123"
+    gh.comments.return_value = []
 
     fake_plan = MagicMock()
     fake_plan.raw_markdown = "# Fake spec — unique-spec-marker-aaa"
 
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=False)
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=False)
     # Patch AgentLoop in the reviewer module so Reviewer.__init__
     # does not try to validate the NIM API key (CI has no secret).
     with (
@@ -1166,15 +1165,10 @@ def test_run_team_review_anchors_to_sub_specs_for_decomposed_parent(tmp_path) ->
     from repoach.review.subspec_anchor import AnchoredReview
 
     gh = MagicMock()
-    diff_res = MagicMock()
-    diff_res.ok = True
-    diff_res.stdout = "diff --git a/x b/x\n"
-    gh.pr_diff.return_value = diff_res
-    gh.pr_view.return_value = {"headRefName": "feat/sp-parent-impl"}
-    gh.pr_head_sha.return_value = "abc123"
-    gh.upsert_archive_comment.return_value = MagicMock(ok=True)
-    gh.pr_review_submit.return_value = MagicMock(ok=True)
-    gh.pr_review_comment.return_value = MagicMock(ok=True)
+    gh.diff.return_value = Diff(text="diff --git a/x b/x\n", files=["x"])
+    gh.pull_request.return_value = PullRequest(number=999, head_ref="feat/sp-parent-impl")
+    gh.head_sha.return_value = "abc123"
+    gh.comments.return_value = []
 
     anchored = AnchoredReview(
         parent_id="SP-PARENT",
@@ -1183,7 +1177,7 @@ def test_run_team_review_anchors_to_sub_specs_for_decomposed_parent(tmp_path) ->
         arch_edges="ANCHORED-EDGES-marker-ccc",
     )
 
-    orch = ReviewTeamOrchestrator(gh=gh, db_path=tmp_path / "review.db", post_to_github=False)
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=False)
     with (
         patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
         patch("repoach.review.spec.maybe_load_active_spec", return_value=None),

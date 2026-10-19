@@ -31,6 +31,7 @@ from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..forge import Diff, Forge, ForgeError, PullRequest, select_forge
 from .finding_verifiers import verify_finding
 from .findings import (
     MECHANICAL_CLAIM_TYPES,
@@ -43,7 +44,6 @@ from .findings import (
     record_finding,
     update_finding_status,
 )
-from .gh_client import GhCli
 from .notifier import RoutineFireResult, fire_review_routine
 from .refuter import JUDGED_CLAIM_TYPES, Judge, make_refuter_judge, refute_finding
 from .reviewer import Coder
@@ -424,7 +424,7 @@ def _fire_stuck_dossier(
 def run_coder_fix_from_findings(
     pr_number: int,
     *,
-    gh: GhCli | None = None,
+    forge: Forge | None = None,
     repo_root: Path | None = None,
     coder: Coder | None = None,
     db_path: Path | None = None,
@@ -452,8 +452,8 @@ def run_coder_fix_from_findings(
     successful push records one round.
 
     Args:
-        pr_number: GitHub PR number (must target ``develop``).
-        gh: Optional pre-built :class:`GhCli` (tests inject a mock).
+        pr_number: PR / MR number (must target the integration branch).
+        forge: Optional pre-built :class:`~repoach.forge.Forge` (tests inject a fake).
         repo_root: Repo root; defaults to ``cwd``.
         coder: Optional pre-built :class:`Coder` (tests inject a fake).
         db_path: Override the ledger db path; defaults to settings.
@@ -477,15 +477,20 @@ def run_coder_fix_from_findings(
     from .persistence import init_schema, record_coder_response
 
     repo = (repo_root or Path.cwd()).resolve()
-    gh = gh or GhCli(cwd=repo)
+    forge = forge or select_forge(cwd=repo)
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
     init_findings_schema(db)
 
-    pr_meta = gh.pr_view(pr_number) or {}
-    base = str(pr_meta.get("baseRefName") or "")
-    head = str(pr_meta.get("headRefName") or "")
+    pr: PullRequest | None
+    try:
+        pr = forge.pull_request(pr_number)
+    except ForgeError as exc:
+        _log.warning("coder_findings.pr_view_failed", pr_number=pr_number, error=exc.message[:200])
+        pr = None
+    base = pr.base_ref if pr is not None else ""
+    head = pr.head_ref if pr is not None else ""
     integration_branch = settings.integration_branch
     if base != integration_branch:
         _log.warning("coder_findings.refuse_non_develop_base", pr_number=pr_number, base=base)
@@ -495,15 +500,15 @@ def run_coder_fix_from_findings(
             no_op_reason=f"base={base!r}, refusing (only {integration_branch} is allowed)",
         )
 
-    head_sha = gh.pr_head_sha(pr_number) or ""
-    ci_state, failed_rows = fetch_ci_status(gh, pr_number)
+    head_sha = pr.head_sha if pr is not None else ""
+    ci_state, failed_rows = fetch_ci_status(forge, pr_number)
     if ci_state == CI_RED and failed_rows:
         record_ci_failures_as_findings(
             db,
             pr_number=pr_number,
             head_sha=head_sha,
             failed_rows=failed_rows,
-            failure_logs=fetch_failed_check_logs(gh, failed_rows),
+            failure_logs=fetch_failed_check_logs(forge, failed_rows),
         )
     elif ci_state == CI_GREEN:
         resolve_broken_behavior_findings(db, pr_number=pr_number, head_sha=head_sha)
@@ -544,12 +549,14 @@ def run_coder_fix_from_findings(
             no_op_reason=f"stuck — {assessment.reason}; escalated (no fix attempted)",
         )
 
-    diff_res = gh.pr_diff(pr_number)
-    if not diff_res.ok:
+    diff: Diff
+    try:
+        diff = forge.diff(pr_number)
+    except ForgeError as exc:
         return CoderFindingsResult(
             pr_number=pr_number,
             n_open_findings=len(findings),
-            no_op_reason=f"diff fetch failed: {diff_res.stderr[:200]}",
+            no_op_reason=f"diff fetch failed: {exc.message[:200]}",
         )
 
     spec_plan_md: str | None = None
@@ -565,7 +572,7 @@ def run_coder_fix_from_findings(
     coder = coder or Coder()
     plan = coder.respond_to_findings(
         findings=findings,
-        diff=diff_res.stdout,
+        diff=diff.text,
         pr_number=pr_number,
         spec_plan=spec_plan_md,
     )

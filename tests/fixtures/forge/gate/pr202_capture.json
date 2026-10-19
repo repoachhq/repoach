@@ -1,0 +1,29 @@
+{
+  "captured": "2026-10-19 read-only gh/git against repoachhq/repoach",
+  "check_runs": {
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "{\"conclusion\": \"failure\", \"name\": \"Auto-merge to develop\", \"startedAt\": \"2026-10-19T11:43:03Z\", \"status\": \"completed\"}\n{\"conclusion\": \"success\", \"name\": \"Coder auto-fix loop\", \"startedAt\": \"2026-10-19T11:40:27Z\", \"status\": \"completed\"}\n{\"conclusion\": \"success\", \"name\": \"Architect / Sentinel / Tester / Scribe\", \"startedAt\": \"2026-10-19T11:29:16Z\", \"status\": \"completed\"}\n{\"conclusion\": \"success\", \"name\": \"ShellCheck (warning-level)\", \"startedAt\": \"2026-10-19T11:40:18Z\", \"status\": \"completed\"}\n{\"conclusion\": \"success\", \"name\": \"Test suite (Python 3.13)\", \"startedAt\": \"2026-10-19T11:33:16Z\", \"status\": \"completed\"}\n{\"conclusion\": \"success\", \"name\": \"Test suite (Python 3.11)\", \"startedAt\": \"2026-10-19T11:31:32Z\", \"status\": \"completed\"}"
+  },
+  "ls_remote": {
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "0c69899a7c6d97822a518e3a4b5b6587e722ab06\trefs/heads/feat/sp-universal-repo-spec\n"
+  },
+  "pr": 202,
+  "pr_view": {
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "{\"author\": {\"id\": \"MDQ6VXNlcjMxOTI0ODYy\", \"login\": \"jwfaye\", \"name\": \"Joseph Faye\"}, \"baseRefName\": \"develop\", \"body\": \"## Why\\n\\nOwner decision 2026-10-18: repoach must be a universal tool, usable by anyone in their own repository. Yoob (GitLab, Python + TypeScript, its own local gate) is the first external user that proves generality, never the spec.\\n\\n## What\\n\\n- `SP-UNIVERSAL-REPO` umbrella: 13 measured assumptions with file:line, non-goals, migration of this repo, milestones M0\u2013M8, risks, the universality gauge (`charmbracelet/gum` passes `init` + `review pr --dry-run` in five minutes with no code change).\\n- Children: INSTALL (wheel install boots without a gateway, state off the checkout), PROJECT-CONFIG (`repoach.toml`, `init` on a foreign repository, spec source), FORGE (protocol with GitHub and GitLab implementations and a conformance suite), PROVIDERS (bring-your-own key by default, gateway optional), GATES (lint/test/gate commands per language), CI-ENTRY (review anywhere with one exit contract, end of the auto-merge race).\\n- `docs/plans/2026-10-18_yoob-production-plan.md`: the measured production state and gap list the specs cite.\\n- `docs/tech_debt.md` row 22: unpinned `ruff>=0.5` resolves to 0.17 and flips nine Developer-gate tests red on develop.\\n\\n## Proof\\n\\n`repoach arch check --base develop` \u2192 edge-honesty ok; every `depends_on` target exists; docs-only diff.\", \"headRefName\": \"feat/sp-universal-repo-spec\", \"headRefOid\": \"0c69899a7c6d97822a518e3a4b5b6587e722ab06\", \"isDraft\": false, \"number\": 202, \"state\": \"OPEN\", \"title\": \"docs(specs): repoach runs on any repository \u2014 universal-tool spec family\", \"url\": \"https://github.com/repoachhq/repoach/pull/202\"}"
+  },
+  "protection": {
+    "returncode": 1,
+    "stderr": "gh: Branch not protected (HTTP 404)\n",
+    "stdout": "{\"message\": \"Branch not protected\", \"status\": \"404\"}"
+  },
+  "rollup": {
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "{\"statusCheckRollup\": [{\"conclusion\": \"SUCCESS\", \"name\": \"Architect / Sentinel / Tester / Scribe\", \"startedAt\": \"2026-10-19T11:29:16Z\", \"status\": \"COMPLETED\"}, {\"conclusion\": \"SUCCESS\", \"name\": \"Test suite (Python 3.11)\", \"startedAt\": \"2026-10-19T11:31:32Z\", \"status\": \"COMPLETED\"}, {\"conclusion\": \"SUCCESS\", \"name\": \"ShellCheck (warning-level)\", \"startedAt\": \"2026-10-19T11:40:18Z\", \"status\": \"COMPLETED\"}, {\"conclusion\": \"SUCCESS\", \"name\": \"Test suite (Python 3.13)\", \"startedAt\": \"2026-10-19T11:33:16Z\", \"status\": \"COMPLETED\"}, {\"conclusion\": \"SUCCESS\", \"name\": \"Coder auto-fix loop\", \"startedAt\": \"2026-10-19T11:40:27Z\", \"status\": \"COMPLETED\"}, {\"conclusion\": \"FAILURE\", \"name\": \"Auto-merge to develop\", \"startedAt\": \"2026-10-19T11:43:03Z\", \"status\": \"COMPLETED\"}]}"
+  }
+}

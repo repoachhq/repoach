@@ -14,7 +14,7 @@ import pytest
 import typer
 
 from repoach.cli import release_cmds
-from repoach.review.gh_client import GhCli
+from repoach.forge.github import GitHubForge
 from repoach.review.release_gate import (
     ProvenanceSource,
     ReleaseDecision,
@@ -40,7 +40,7 @@ def test_cli_release_gate_exit_zero_when_merge_ready(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number, db_path, provenance: _all_green_facts(),
+        lambda *, repo_root, forge, pr_number, db_path, provenance: _all_green_facts(),
     )
     release_cmds.release_gate(None, ProvenanceSource.LEDGER)
 
@@ -58,7 +58,7 @@ def test_cli_release_gate_exit_five_when_refused(
     monkeypatch.setattr(
         release_cmds,
         "gather_release_facts",
-        lambda *, repo_root, gh, pr_number, db_path, provenance: facts,
+        lambda *, repo_root, forge, pr_number, db_path, provenance: facts,
     )
     with pytest.raises(typer.Exit) as exc:
         release_cmds.release_gate(None, ProvenanceSource.LEDGER)
@@ -71,7 +71,7 @@ def test_cli_release_verify_exit_five_on_divergence(
     monkeypatch.setattr(
         release_cmds,
         "verify_release",
-        lambda path, *, gh: ReleaseVerifyResult(
+        lambda path, *, forge: ReleaseVerifyResult(
             verified=False,
             main_sha="def456",
             expected_sha="abc123",
@@ -94,11 +94,11 @@ def test_cli_release_verify_live_flag_skips_receipt_and_detects_divergence(
     ``live=False`` still calling ``verify_release`` unchanged, NG1) is
     also pinned here.
     """
-    live_calls: list[GhCli] = []
+    live_calls: list[GitHubForge] = []
     receipt_calls: list[Path] = []
 
-    def _fake_verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
-        live_calls.append(gh)
+    def _fake_verify_release_live(*, forge: GitHubForge) -> ReleaseVerifyResult:
+        live_calls.append(forge)
         return ReleaseVerifyResult(
             verified=False,
             main_sha="def456",
@@ -106,7 +106,7 @@ def test_cli_release_verify_live_flag_skips_receipt_and_detects_divergence(
             detail="main tip does not match the approved develop head",
         )
 
-    def _fake_verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
+    def _fake_verify_release(path: Path, *, forge: GitHubForge) -> ReleaseVerifyResult:
         receipt_calls.append(path)
         return ReleaseVerifyResult(
             verified=True,
@@ -173,7 +173,7 @@ def _redirect_release_cmds(
     """Point ``release_cmds`` at a throwaway work repo and receipt path.
 
     Redirects only the module-level path constants so the real
-    ``verify_release`` runs over a real ``GhCli`` against real git --
+    ``verify_release`` runs over a real ``GitHubForge`` against real git --
     no stubbing of ``verify_release`` itself.
     """
     monkeypatch.setattr(release_cmds, "_repo_root", lambda: work_dir)

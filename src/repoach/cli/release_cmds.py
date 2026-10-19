@@ -22,7 +22,7 @@ from typing import Annotated
 import typer
 
 from ..core.config import get_settings
-from ..review.gh_client import GhCli
+from ..forge import select_forge
 from ..review.release_gate import (
     ProvenanceSource,
     compute_release_decision,
@@ -86,11 +86,10 @@ def release_gate(
       * ``1`` -- could not evaluate (transport error or missing CI
         script gathering facts).
     """
-    gh = GhCli(cwd=_repo_root())
     try:
         facts = gather_release_facts(
             repo_root=_repo_root(),
-            gh=gh,
+            forge=select_forge(cwd=_repo_root()),
             pr_number=pr_number,
             db_path=Path(get_settings().db_path),
             provenance=provenance,
@@ -147,9 +146,11 @@ def release_verify(
       * ``1`` -- could not evaluate (missing/unparsable receipt or
         transport error).
     """
-    gh = GhCli(cwd=_repo_root())
     try:
-        result = verify_release_live(gh=gh) if live else verify_release(_RECEIPT_PATH, gh=gh)
+        forge = select_forge(cwd=_repo_root())
+        result = (
+            verify_release_live(forge=forge) if live else verify_release(_RECEIPT_PATH, forge=forge)
+        )
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc

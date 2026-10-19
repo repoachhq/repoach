@@ -35,7 +35,7 @@ from typing import Any
 
 from ..core.config import Settings
 from ..core.logging import get_logger
-from .gh_client import GhCli
+from ..forge import Forge, ForgeError
 from .patch_apply import apply_search_replace_edits
 from .secret_env import scrubbed_env
 
@@ -717,17 +717,18 @@ CI_PENDING: str = "PENDING"
 CI_UNKNOWN: str = "UNKNOWN"
 
 
-def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]]]:
+def fetch_ci_status(forge: Forge, pr_number: int) -> tuple[str, list[dict[str, str]]]:
     """Return the aggregated check state on a PR.
 
-    Classifies every check ``gh pr checks`` reports, not only checks
-    marked as required by branch protection — this repo has none
-    configured, so a required-only filter always returns an empty row
-    set (SP-CI-STATUS-CLIENT-CLASSIFY).
+    Classifies every check the forge reports (:meth:`Forge.checks` —
+    ``gh pr checks`` on GitHub, the head pipeline's jobs on GitLab), not
+    only checks marked as required by branch protection — this repo has
+    none configured, so a required-only filter always returns an empty
+    row set (SP-CI-STATUS-CLIENT-CLASSIFY).
 
     Args:
-        gh: A :class:`GhCli` wrapper.
-        pr_number: GitHub PR number.
+        forge: The forge the PR lives on.
+        pr_number: PR / MR number.
 
     Returns:
         ``(state, failed_rows)`` where ``state`` is one of
@@ -736,61 +737,38 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
         ``{name, link, workflow}`` dicts for the failed checks (used
         downstream to fetch their failure logs).
     """
-    res = gh._run(
-        [
-            "pr",
-            "checks",
-            str(pr_number),
-            "--json",
-            "name,state,bucket,link,workflow",
-        ]
-    )
-    if not res.ok and res.returncode != 8:
-        return CI_UNKNOWN, []
     try:
-        rows = json.loads(res.stdout) or []
-    except json.JSONDecodeError:
-        return CI_UNKNOWN, []
-    if not isinstance(rows, list):
+        rows = forge.checks(pr_number)
+    except ForgeError as exc:
+        _log.info("coder.ci_status_unknown", pr_number=pr_number, error=exc.message[:200])
         return CI_UNKNOWN, []
     if not rows:
         return CI_GREEN, []
 
     for row in rows:
-        bucket = str(row.get("bucket", "")).lower()
-        if bucket in {"skipping", "cancel"}:
+        if row.bucket in {"skipping", "cancel"}:
             _log.info(
                 "coder.ci_check_non_blocking",
-                name=str(row.get("name", "")),
-                bucket=bucket,
+                name=row.name,
+                bucket=row.bucket,
             )
 
     failed_rows = [
-        {
-            "name": str(r.get("name", "")),
-            "link": str(r.get("link", "")),
-            "workflow": str(r.get("workflow", "")),
-        }
-        for r in rows
-        if str(r.get("bucket", "")).lower() == "fail"
+        {"name": r.name, "link": r.link, "workflow": r.workflow} for r in rows if r.bucket == "fail"
     ]
     if failed_rows:
         return CI_RED, failed_rows
 
-    buckets = [str(r.get("bucket", "")).lower() for r in rows]
-    if any(b in {"pending", ""} for b in buckets):
+    if any(r.bucket in {"pending", ""} for r in rows):
         return CI_PENDING, []
     return CI_GREEN, []
 
 
-_RUN_LINK_RE = re.compile(r"/runs/(\d+)(?:/job/(\d+))?")
-
-
-def fetch_failed_check_logs(gh: GhCli, failed_rows: list[dict[str, str]]) -> list[str]:
-    """Pull the ``--log-failed`` tail for each failed check link.
+def fetch_failed_check_logs(forge: Forge, failed_rows: list[dict[str, str]]) -> list[str]:
+    """Pull the failed-log tail for each failed check link.
 
     Args:
-        gh: A :class:`GhCli` wrapper.
+        forge: The forge the PR lives on (:meth:`Forge.check_log`).
         failed_rows: Output of :func:`fetch_ci_status` second tuple item.
 
     Returns:
@@ -801,28 +779,19 @@ def fetch_failed_check_logs(gh: GhCli, failed_rows: list[dict[str, str]]) -> lis
     Note:
         Each block is capped at ~8 KB so the total payload stays well
         below the Coder's 60 KB diff cap even with several failed jobs.
-
-        ``fetch_ci_status`` accepts ``gh pr checks`` exit code 8 in
-        addition to 0 because the CLI exits 8 when required checks
-        aren't all green but still emits the rows on stdout — both
-        codes carry parseable JSON.
     """
     out: list[str] = []
     for row in failed_rows:
         name = row.get("name") or "?"
         link = row.get("link") or ""
-        m = _RUN_LINK_RE.search(link)
-        if m is None:
+        try:
+            log = forge.check_log(link)
+        except ForgeError as exc:
+            _log.warning("coder.check_log_failed", name=name, error=exc.message[:200])
+            out.append(f"### {name}\n_({forge.name} log fetch failed: {exc.message[:200]})_")
+            continue
+        if log is None:
             out.append(f"### {name}\n_(no log link found in: {link!r})_")
             continue
-        run_id = m.group(1)
-        job_id = m.group(2)
-        argv = ["run", "view", run_id, "--log-failed"]
-        if job_id:
-            argv += ["--job", job_id]
-        res = gh._run(argv)
-        if not res.ok:
-            out.append(f"### {name}\n_(gh run view failed: {res.stderr[:200]})_")
-            continue
-        out.append(f"### {name}\n{res.stdout[-8000:]}")
+        out.append(f"### {name}\n{log[-8000:]}")
     return out
