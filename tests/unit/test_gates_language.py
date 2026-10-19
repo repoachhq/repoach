@@ -452,3 +452,9 @@ def test_bad_repoach_toml_raises_a_named_error_in_process(tmp_path: Path) -> Non
     db = tmp_path / "f.db"
     with pytest.raises(GatesConfigError):
         gather_merge_facts(db, pr_number=1, repo_root=tmp_path, head_sha="h", ci_green=True)
+
+
+def test_foreign_repo_without_config_does_not_require_frontmatter(tmp_path: Path) -> None:
+    assert load_gates_config(tmp_path).require_frontmatter is False
+    _write(tmp_path, "pyproject.toml", '[project]\nname = "repoach"\n')
+    assert load_gates_config(tmp_path).require_frontmatter is True

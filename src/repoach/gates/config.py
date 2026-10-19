@@ -160,14 +160,20 @@ class GatesConfig:
     builtin: bool = True
 
     @classmethod
-    def builtin_default(cls) -> GatesConfig:
+    def builtin_default(cls, *, repoach_project: bool = True) -> GatesConfig:
         """Return the configuration of a project with no ``repoach.toml``.
 
         Reproduces repoach's behaviour before SP-UNIVERSAL-GATES: Python
         only, built-in ruff and pytest gates, Python verifiers on every
-        ``.py`` path (no root restriction), frontmatter required.
+        ``.py`` path (no root restriction).  Spec frontmatter is required
+        only in repoach's own checkout; a foreign repository without a
+        configuration file has not adopted architecture governance
+        (SP-UNIVERSAL-GATES G6).
+
+        Args:
+            repoach_project: Whether the host is repoach itself.
         """
-        return cls(src_roots=(), test_roots=())
+        return cls(src_roots=(), test_roots=(), require_frontmatter=repoach_project)
 
     @classmethod
     def from_mapping(
@@ -304,7 +310,7 @@ def load_gates_config(root: Path) -> GatesConfig:
     """
     path = root / CONFIG_FILE_NAME
     if not path.is_file():
-        return GatesConfig.builtin_default()
+        return GatesConfig.builtin_default(repoach_project=is_repoach_checkout(root))
     return GatesConfig.from_toml_path(path, repoach_project=is_repoach_checkout(root))
 
 
