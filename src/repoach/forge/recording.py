@@ -15,14 +15,179 @@ pins the exact calls each forge makes.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
+from ..core.logging import get_logger
 from .protocol import InlineCommentDraft, MergeMethod, ReviewDraft
 from .runner import CommandResult
+
+_log = get_logger(__name__)
+
+RECORDED_FIELDS: frozenset[str] = frozenset(
+    {
+        "a_mode",
+        "allow_force_push",
+        "allow_force_pushes",
+        "approved_by",
+        "author",
+        "b_mode",
+        "base_sha",
+        "baseRefName",
+        "body",
+        "bucket",
+        "checks",
+        "conclusion",
+        "context",
+        "contexts",
+        "created_at",
+        "deleted_file",
+        "description",
+        "detailed_merge_status",
+        "diff",
+        "diff_refs",
+        "draft",
+        "enabled",
+        "head_pipeline",
+        "head_sha",
+        "headRefName",
+        "headRefOid",
+        "id",
+        "iid",
+        "in_reply_to_id",
+        "isDraft",
+        "line",
+        "link",
+        "login",
+        "merge_commit_sha",
+        "merge_method",
+        "mergeable",
+        "mergeCommit",
+        "mergeStateStatus",
+        "message",
+        "name",
+        "new_file",
+        "new_line",
+        "new_path",
+        "notes",
+        "number",
+        "oid",
+        "old_line",
+        "old_path",
+        "only_allow_merge_if_pipeline_succeeds",
+        "path",
+        "position",
+        "renamed_file",
+        "required_status_checks",
+        "sha",
+        "source_branch",
+        "squash_commit_sha",
+        "stage",
+        "start_sha",
+        "started_at",
+        "startedAt",
+        "state",
+        "status",
+        "statusCheckRollup",
+        "system",
+        "target_branch",
+        "title",
+        "type",
+        "url",
+        "user",
+        "username",
+        "web_url",
+        "work_in_progress",
+        "workflow",
+    }
+)
+"""Every JSON key the forges read from a ``gh`` / ``glab`` answer.
+
+A recorded answer keeps only these keys (:func:`redact_stdout`): tokens
+(``runners_token``…), emails, ``node_id``\\ s and every other field the
+conformance suite never reads are dropped at record time, so a fixture
+cannot carry a secret the protocol does not need.
+"""
+
+SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"glrt-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"glpat-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"GR1348941[A-Za-z0-9_-]{10,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(
+        r"(?<![\\\w])[A-Za-z0-9][A-Za-z0-9._%+-]*[A-Za-z0-9]@(?!incoming\.)[A-Za-z0-9-]+\.[a-z]{2,}"
+    ),
+)
+"""Values that must never appear in a fixture: forge tokens and email addresses."""
+
+SECRET_KEY_RE = re.compile(r"(token|secret|password|private_key|api_key|node_id|email)", re.I)
+"""Keys whose presence in a recorded answer means redaction failed."""
+
+
+def redact_payload(value: object) -> object:
+    """Keep only :data:`RECORDED_FIELDS` keys, recursively."""
+    if isinstance(value, dict):
+        return {k: redact_payload(v) for k, v in value.items() if k in RECORDED_FIELDS}
+    if isinstance(value, list):
+        return [redact_payload(v) for v in value]
+    return value
+
+
+def decode_json_values(text: str) -> list[object] | None:
+    """Decode every top-level JSON value of ``text``; ``None`` when it is not JSON (a diff, a log)."""
+    decoder = json.JSONDecoder()
+    stripped = text.strip()
+    values: list[object] = []
+    pos = 0
+    try:
+        while pos < len(stripped):
+            value, pos = decoder.raw_decode(stripped, pos)
+            values.append(value)
+            while pos < len(stripped) and stripped[pos].isspace():
+                pos += 1
+    except json.JSONDecodeError as exc:
+        _log.debug("forge.recording.not_json", error=str(exc)[:120])
+        return None
+    return values or None
+
+
+def redact_stdout(text: str) -> str:
+    """Redact a recorded stdout: JSON answers keep only :data:`RECORDED_FIELDS`.
+
+    One JSON value is re-serialised compactly; several (``--paginate``
+    pages, ``--jq`` lines) one per line, which both decoders accept.
+    Non-JSON output (diffs, logs, ``git`` output) is kept verbatim and
+    left to :func:`find_secrets`.
+    """
+    values = decode_json_values(text)
+    if values is None:
+        return text
+    return "\n".join(json.dumps(redact_payload(v), ensure_ascii=False) for v in values)
+
+
+def find_secrets(text: str) -> list[str]:
+    """Return every secret-shaped value or key found in ``text`` (and its JSON)."""
+    found = [m.group(0) for pattern in SECRET_VALUE_PATTERNS for m in pattern.finditer(text)]
+    for value in decode_json_values(text) or []:
+        found += _secret_keys(value)
+    return found
+
+
+def _secret_keys(value: object) -> list[str]:
+    """Keys matching :data:`SECRET_KEY_RE` anywhere in a decoded payload."""
+    if isinstance(value, dict):
+        hits = [k for k in value if SECRET_KEY_RE.search(k)]
+        for v in value.values():
+            hits += _secret_keys(v)
+        return hits
+    if isinstance(value, list):
+        return [k for v in value for k in _secret_keys(v)]
+    return []
 
 
 @dataclass

@@ -15,6 +15,10 @@ Write methods are refused: a recording must never post, merge or open
 anything. Their fixtures are written by hand from the forge's documented
 payloads and say so in their ``source`` field.
 
+Every JSON answer is redacted at record time: only the keys the
+forges read (:data:`repoach.forge.recording.RECORDED_FIELDS`) are kept,
+and a fixture in which a token- or email-shaped value survives is refused.
+
 ``--trim N`` keeps only the first ``N`` items of every JSON array in
 recorded stdout (and of the recorded result), for listings too large to
 commit; the fixture records that it was trimmed.
@@ -36,6 +40,8 @@ from repoach.forge.recording import (
     ReplaySpawn,
     coerce_call,
     dump_fixture,
+    find_secrets,
+    redact_stdout,
     serialize_result,
 )
 from repoach.forge.select import select_forge
@@ -133,10 +139,17 @@ def record(
     except ForgeError as exc:
         raises = type(exc).__name__
     calls = [e.to_json() for e in recorder.exchanges]
+    for call in calls:
+        call["stdout"] = redact_stdout(call["stdout"])
     if trim is not None:
         for call in calls:
             call["stdout"] = _trim_stdout(call["stdout"], trim)
         result, raises = _replay(forge_name, cwd, method, typed_args, typed_kwargs, calls)
+    leaked = [hit for call in calls for hit in find_secrets(call["stdout"] + call["stderr"])]
+    if leaked:
+        raise SystemExit(
+            f"refusing to write a fixture carrying {len(leaked)} secret-shaped value(s)"
+        )
     fixture = {
         "forge": forge_name,
         "case": case,
