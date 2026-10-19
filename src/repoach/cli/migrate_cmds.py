@@ -137,6 +137,9 @@ def _open_holders(paths_to_check: list[Path]) -> list[str]:
     """Return ``pid (command)`` for every other process holding one of the files open.
 
     Linux only (``/proc``); elsewhere the SQLite lock is the only guard.
+    Processes whose descriptors cannot be read (other users' processes)
+    are counted and reported in a single debug line, never one line per
+    process, so a refusal is not buried under permission noise.
 
     Args:
         paths_to_check: The ledger and its side files.
@@ -149,6 +152,7 @@ def _open_holders(paths_to_check: list[Path]) -> list[str]:
         return []
     wanted = {str(path.resolve()) for path in paths_to_check if path.exists()}
     holders: list[str] = []
+    unreadable: list[str] = []
     for entry in proc.iterdir():
         if not entry.name.isdigit() or int(entry.name) == os.getpid():
             continue
@@ -156,10 +160,12 @@ def _open_holders(paths_to_check: list[Path]) -> list[str]:
             targets = {os.readlink(fd) for fd in (entry / "fd").iterdir()}
             command = (entry / "comm").read_text(encoding="utf-8").strip()
         except OSError as exc:
-            _log.debug("migrate.proc_unreadable", pid=entry.name, error=str(exc)[:120])
-            continue
-        if targets & wanted:
-            holders.append(f"{entry.name} ({command})")
+            unreadable.append(type(exc).__name__)
+        else:
+            if targets & wanted:
+                holders.append(f"{entry.name} ({command})")
+    if unreadable:
+        _log.debug("migrate.proc_unreadable", count=len(unreadable))
     return holders
 
 
