@@ -1,0 +1,16 @@
+{
+  "facts": {
+    "ci_green": true,
+    "open_blocking_findings": 0,
+    "review_complete": false,
+    "review_integrity_known": false,
+    "spec_coverage_known": false,
+    "spec_covered": false
+  },
+  "head_sha": "0c69899a7c6d97822a518e3a4b5b6587e722ab06",
+  "merge": false,
+  "pr_number": 202,
+  "reasons": [
+    "no review records for this PR in the ledger \u2014 findings-ledger artifact missing or not transported?"
+  ]
+}

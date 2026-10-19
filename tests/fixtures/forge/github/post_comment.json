@@ -1,0 +1,54 @@
+{
+  "args": [
+    42,
+    "hello"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
+        "pr",
+        "comment",
+        "42",
+        "--body",
+        "hello"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "https://github.com/o/r/pull/42#issuecomment-5\n"
+    }
+  ],
+  "case": "post_comment",
+  "forge": "github",
+  "kwargs": {},
+  "method": "post_comment",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "hello",
+    "created_at": "",
+    "id": 0,
+    "in_reply_to": null,
+    "line": null,
+    "path": null,
+    "thread_id": null
+  },
+  "source": "synthetic: write call: never executed against a live forge; the write barrier reads the state first",
+  "trimmed": null
+}

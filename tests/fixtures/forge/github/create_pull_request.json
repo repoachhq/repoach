@@ -1,0 +1,49 @@
+{
+  "args": [],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "create",
+        "--head",
+        "feat/x",
+        "--base",
+        "develop",
+        "--title",
+        "feat: x",
+        "--body",
+        "b"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "Creating pull request\nhttps://github.com/o/r/pull/43\n"
+    }
+  ],
+  "case": "create_pull_request",
+  "forge": "github",
+  "kwargs": {
+    "base": "develop",
+    "body": "b",
+    "head": "feat/x",
+    "title": "feat: x"
+  },
+  "method": "create_pull_request",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "base_ref": "develop",
+    "body": "b",
+    "draft": false,
+    "head_ref": "feat/x",
+    "head_sha": "",
+    "number": 43,
+    "state": "open",
+    "title": "feat: x",
+    "url": "https://github.com/o/r/pull/43"
+  },
+  "source": "synthetic: write call: never executed against a live forge",
+  "trimmed": null
+}

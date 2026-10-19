@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import structlog
 from structlog.testing import capture_logs
 
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review import coder_loop
 from repoach.review.coder_loop import (
     CI_GREEN,
@@ -36,7 +36,7 @@ from repoach.review.coder_loop import (
     fetch_failed_check_logs,
     is_path_allowed,
 )
-from repoach.review.gh_client import GhResult
+from tests.forge_fakes import scripted_github
 
 # ---------------------------------------------------------------------------
 # Whitelist
@@ -265,9 +265,8 @@ def test_apply_fixes_skips_bad_dict_shapes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _ci_only_gh(state: str) -> MagicMock:
-    """Build a GhCli mock that only answers ``pr checks`` calls."""
-    gh = MagicMock()
+def _ci_only_gh(state: str) -> GitHubForge:
+    """Build a scripted GitHub forge that only answers ``pr checks`` calls."""
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:2] != ["pr", "checks"]:
@@ -312,8 +311,7 @@ def _ci_only_gh(state: str) -> MagicMock:
             return GhResult(returncode=2, stdout="", stderr="boom", argv=args)
         raise ValueError(f"unknown ci state: {state}")
 
-    gh._run.side_effect = _run_side
-    return gh
+    return scripted_github(run=_run_side)
 
 
 def test_fetch_ci_status_green_when_no_required_checks() -> None:
@@ -356,15 +354,12 @@ def _fresh_coder_loop_logger(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fetch_ci_status_drops_required_flag() -> None:
     captured_argv: list[list[str]] = []
-    gh = MagicMock()
 
     def _run_side(args: list[str]) -> GhResult:
         captured_argv.append(args)
         return GhResult(returncode=0, stdout="[]", stderr="", argv=args)
 
-    gh._run.side_effect = _run_side
-
-    fetch_ci_status(gh, 1)
+    fetch_ci_status(scripted_github(run=_run_side), 1)
 
     assert captured_argv
     assert "--required" not in captured_argv[0]
@@ -378,7 +373,6 @@ def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
     the real ``gh`` binary would on this repo, rather than
     monkeypatching the classifier directly.
     """
-    gh = MagicMock()
 
     def _run_side(args: list[str]) -> GhResult:
         if "--required" in args:
@@ -412,7 +406,7 @@ def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
             argv=args,
         )
 
-    gh._run.side_effect = _run_side
+    gh = scripted_github(run=_run_side)
 
     state, failed = fetch_ci_status(gh, 1)
 
@@ -427,8 +421,7 @@ def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
 
 
 def test_fetch_ci_status_green_with_skipped_check_logs_it() -> None:
-    gh = MagicMock()
-    gh._run.return_value = GhResult(
+    canned = GhResult(
         returncode=0,
         stdout=json.dumps(
             [
@@ -451,6 +444,7 @@ def test_fetch_ci_status_green_with_skipped_check_logs_it() -> None:
         stderr="",
         argv=[],
     )
+    gh = scripted_github(run=lambda _args: canned)
 
     with capture_logs() as logs:
         state, failed = fetch_ci_status(gh, 1)
@@ -464,8 +458,7 @@ def test_fetch_ci_status_green_with_skipped_check_logs_it() -> None:
 
 
 def test_fetch_ci_status_green_with_cancelled_check() -> None:
-    gh = MagicMock()
-    gh._run.return_value = GhResult(
+    canned = GhResult(
         returncode=0,
         stdout=json.dumps(
             [
@@ -488,6 +481,7 @@ def test_fetch_ci_status_green_with_cancelled_check() -> None:
         stderr="",
         argv=[],
     )
+    gh = scripted_github(run=lambda _args: canned)
 
     state, failed = fetch_ci_status(gh, 1)
 
@@ -496,10 +490,8 @@ def test_fetch_ci_status_green_with_cancelled_check() -> None:
 
 
 def test_fetch_failed_check_logs_pulls_run_view_log() -> None:
-    gh = MagicMock()
-    gh._run.return_value = GhResult(
-        returncode=0, stdout="boom\nTraceback...\nAssertionError", stderr="", argv=[]
-    )
+    canned = GhResult(returncode=0, stdout="boom\nTraceback...\nAssertionError", stderr="", argv=[])
+    gh = scripted_github(run=lambda _args: canned)
     rows = [
         {
             "name": "Test suite (Python 3.13)",

@@ -1,0 +1,60 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--json",
+        "number,title,headRefName,baseRefName,author,url,headRefOid,isDraft",
+        "--limit",
+        "100",
+        "--base",
+        "develop"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"author\": {\"id\": \"MDQ6VXNlcjMxOTI0ODYy\", \"login\": \"jwfaye\", \"name\": \"Joseph Faye\"}, \"baseRefName\": \"develop\", \"headRefName\": \"feat/sp-gh-glab-shim-dry-run\", \"headRefOid\": \"7684eae5d2972ef918d3e61a36e04e2a032105e6\", \"isDraft\": false, \"number\": 203, \"title\": \"feat(scripts): read-only gh-to-glab shim for a GitLab dry-run review (W1)\", \"url\": \"https://github.com/repoachhq/repoach/pull/203\"}, {\"author\": {\"id\": \"MDQ6VXNlcjMxOTI0ODYy\", \"login\": \"jwfaye\", \"name\": \"Joseph Faye\"}, \"baseRefName\": \"develop\", \"headRefName\": \"feat/sp-universal-repo-spec\", \"headRefOid\": \"0c69899a7c6d97822a518e3a4b5b6587e722ab06\", \"isDraft\": false, \"number\": 202, \"title\": \"docs(specs): repoach runs on any repository — universal-tool spec family\", \"url\": \"https://github.com/repoachhq/repoach/pull/202\"}]"
+    }
+  ],
+  "case": "open_pull_requests",
+  "forge": "github",
+  "kwargs": {},
+  "method": "open_pull_requests",
+  "raises": null,
+  "result": [
+    {
+      "author": "jwfaye",
+      "base_ref": "develop",
+      "body": "",
+      "draft": false,
+      "head_ref": "feat/sp-gh-glab-shim-dry-run",
+      "head_sha": "7684eae5d2972ef918d3e61a36e04e2a032105e6",
+      "number": 203,
+      "state": "open",
+      "title": "feat(scripts): read-only gh-to-glab shim for a GitLab dry-run review (W1)",
+      "url": "https://github.com/repoachhq/repoach/pull/203"
+    },
+    {
+      "author": "jwfaye",
+      "base_ref": "develop",
+      "body": "",
+      "draft": false,
+      "head_ref": "feat/sp-universal-repo-spec",
+      "head_sha": "0c69899a7c6d97822a518e3a4b5b6587e722ab06",
+      "number": 202,
+      "state": "open",
+      "title": "docs(specs): repoach runs on any repository — universal-tool spec family",
+      "url": "https://github.com/repoachhq/repoach/pull/202"
+    }
+  ],
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

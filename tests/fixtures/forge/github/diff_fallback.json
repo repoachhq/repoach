@@ -1,0 +1,108 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "diff",
+        "42"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "HTTP 406: Sorry, the diff exceeded the maximum number of files (300)",
+      "stdin": null,
+      "stdout": ""
+    },
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "baseRefName,headRefOid"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"baseRefName\": \"develop\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+    },
+    {
+      "args": [
+        "fetch",
+        "--quiet",
+        "origin",
+        "+refs/heads/develop:refs/remotes/origin/develop"
+      ],
+      "program": "git",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": ""
+    },
+    {
+      "args": [
+        "cat-file",
+        "-e",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa^{commit}"
+      ],
+      "program": "git",
+      "returncode": 128,
+      "stderr": "missing",
+      "stdin": null,
+      "stdout": ""
+    },
+    {
+      "args": [
+        "fetch",
+        "--quiet",
+        "origin",
+        "refs/pull/42/head"
+      ],
+      "program": "git",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": ""
+    },
+    {
+      "args": [
+        "cat-file",
+        "-e",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa^{commit}"
+      ],
+      "program": "git",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": ""
+    },
+    {
+      "args": [
+        "diff",
+        "origin/develop...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "program": "git",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+    }
+  ],
+  "case": "diff_fallback",
+  "forge": "github",
+  "kwargs": {},
+  "method": "diff",
+  "raises": null,
+  "result": {
+    "files": [
+      "a.py"
+    ],
+    "text": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+  },
+  "source": "synthetic: the API diff endpoint refused (GitHub: >300 files, HTTP 406; GitLab: no raw_diffs)",
+  "trimmed": null
+}

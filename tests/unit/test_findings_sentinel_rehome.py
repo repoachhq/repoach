@@ -18,11 +18,13 @@ through the reader.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
+from repoach.forge import Comment
+from repoach.forge.github import GhResult, GitHubForge, comment_from_github
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -31,7 +33,6 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from repoach.review.gh_client import GhCli
 from repoach.review.reviewer import BotRole
 from repoach.review.thread_context import (
     EVIDENCE_REPLY_SENTINEL,
@@ -41,6 +42,8 @@ from repoach.review.thread_context import (
     fetch_resolved_disagreements,
     post_refuted_finding_sentinels,
 )
+
+_BOT = "github-actions[bot]"
 
 
 def _finding(
@@ -72,47 +75,57 @@ def _finding(
     )
 
 
-class _FakeGh:
-    """Minimal GhCli stand-in recording replies and modelling GitHub.
+class _FakeGh(GitHubForge):
+    """A real :class:`GitHubForge` whose ``gh api`` transport models GitHub in memory.
 
-    ``reply_to_review_comment`` appends the new reply to the in-memory
-    thread list so a later ``list_review_comments`` sees it — letting a
-    single fake drive the writer-then-reader round-trip.
+    ``GET pulls/<N>/comments`` serves the thread list; ``POST
+    .../comments/<id>/replies`` records the reply and appends it to the
+    list (authored by the bot) so a later read sees it — letting a single
+    fake drive the writer-then-reader round-trip through the real
+    protocol methods.
     """
 
     def __init__(self, threads: list[dict[str, object]], *, fail: bool = False) -> None:
+        super().__init__(gh_path="/nonexistent/gh", bot_login=_BOT)
         self._threads = list(threads)
         self.replies: list[tuple[int, str]] = []
         self.list_calls = 0
         self._fail = fail
         self._next_id = 10_000
 
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
-        self.list_calls += 1
-        return list(self._threads)
-
-    def reply_to_review_comment(self, pr_number: int, *, comment_id: int, body: str):
-        if self._fail:
-            raise RuntimeError("gh down")
-        self.replies.append((comment_id, body))
-        self._next_id += 1
-        self._threads.append(
-            {
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["pr", "view"] and args[-1] == "state":
+            return GhResult(0, json.dumps({"state": "OPEN"}), "", argv=args)
+        endpoint = next(a for a in args if a.startswith("repos/"))
+        if endpoint.endswith("/replies"):
+            if self._fail:
+                return GhResult(1, "", "gh down", argv=args)
+            comment_id = int(endpoint.split("/")[-2])
+            body = next(a for a in args if a.startswith("body=")).removeprefix("body=")
+            self.replies.append((comment_id, body))
+            self._next_id += 1
+            reply = {
                 "id": self._next_id,
                 "in_reply_to_id": comment_id,
                 "path": "",
                 "line": None,
                 "body": body,
-                "user": {"login": GhCli().bot_login},
+                "user": {"login": _BOT},
             }
-        )
-        return SimpleNamespace(ok=True)
+            self._threads.append(reply)
+            return GhResult(0, json.dumps(reply), "", argv=args)
+        self.list_calls += 1
+        return GhResult(0, json.dumps([self._threads]), "", argv=args)
 
 
 def _root(
     comment_id: int, *, path: str = "src/m.py", line: int = 12, body: str
 ) -> dict[str, object]:
     return {"id": comment_id, "in_reply_to_id": None, "path": path, "line": line, "body": body}
+
+
+def _root_comment(comment_id: int, *, path: str = "src/m.py", line: int = 12, body: str) -> Comment:
+    return comment_from_github(_root(comment_id, path=path, line=line, body=body))
 
 
 @pytest.fixture
@@ -139,26 +152,32 @@ def test_format_reply_falls_back_when_method_and_result_empty() -> None:
 
 
 def test_match_thread_by_path_and_line() -> None:
-    roots = [_root(100, body="**[architect/major]** add a test")]
-    assert _match_finding_thread(roots, _finding())["id"] == 100
+    roots = [_root_comment(100, body="**[architect/major]** add a test")]
+    match = _match_finding_thread(roots, _finding())
+    assert match is not None
+    assert match.id == 100
 
 
 def test_match_thread_returns_none_when_no_line_match() -> None:
-    roots = [_root(100, line=99, body="**[architect/major]** add a test")]
+    roots = [_root_comment(100, line=99, body="**[architect/major]** add a test")]
     assert _match_finding_thread(roots, _finding(line=12)) is None
 
 
 def test_match_thread_similarity_breaks_ties() -> None:
     roots = [
-        _root(100, body="totally unrelated remark about naming"),
-        _root(200, body="add a test for compute() please"),
+        _root_comment(100, body="totally unrelated remark about naming"),
+        _root_comment(200, body="add a test for compute() please"),
     ]
-    assert _match_finding_thread(roots, _finding(claim="add a test for compute()"))["id"] == 200
+    match = _match_finding_thread(roots, _finding(claim="add a test for compute()"))
+    assert match is not None
+    assert match.id == 200
 
 
 def test_thread_has_sentinel() -> None:
-    assert _thread_has_sentinel([{"body": f"**{EVIDENCE_REPLY_SENTINEL}:** nope"}]) is True
-    assert _thread_has_sentinel([{"body": "ordinary reply"}]) is False
+    assert (
+        _thread_has_sentinel([Comment(id=1, body=f"**{EVIDENCE_REPLY_SENTINEL}:** nope")]) is True
+    )
+    assert _thread_has_sentinel([Comment(id=2, body="ordinary reply")]) is False
     assert _thread_has_sentinel([]) is False
 
 

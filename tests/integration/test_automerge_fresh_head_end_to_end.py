@@ -20,8 +20,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from repoach.forge.github import GitHubForge
 from repoach.review.auto_merge import resolve_verified_head
-from repoach.review.gh_client import GhCli
 
 _BRANCH = "feat/fresh-head-e2e"
 _ABSENT_SHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
@@ -38,25 +38,23 @@ def _rev_parse(cwd: Path, ref: str) -> str:
     return result.stdout.strip()
 
 
-class _ScriptedPrHeadGhCli:
-    """Truthful boundary fake for gh: real git via ``GhCli``, scripted API head.
+class _ScriptedPrHeadGhCli(GitHubForge):
+    """Truthful boundary fake for gh: real git via ``GitHubForge``, scripted API head.
 
-    ``_run_git`` delegates to a real :class:`GhCli` rooted at the clone,
+    ``git`` is the real :class:`GitHubForge` one rooted at the clone,
     so ``git ls-remote`` is a genuine local-transport git call against
-    the bare origin -- ground truth, unmocked. ``pr_head_sha`` is the
+    the bare origin -- ground truth, unmocked. ``pr_head_sha`` (behind
+    the protocol's ``head_sha``) is the
     one seam the test controls, standing in for the PR API's
     ``headRefOid`` the way the 2026-07-06 incident served a stale
     value from that exact call.
     """
 
     def __init__(self, work_dir: Path, scripted_heads: list[str]) -> None:
-        self._real = GhCli(cwd=work_dir)
+        super().__init__(cwd=work_dir, gh_path="/nonexistent/gh", bot_login="")
         self._scripted_heads = list(scripted_heads)
 
-    def _run_git(self, args: list[str]):
-        return self._real._run_git(args)
-
-    def pr_head_sha(self, pr_number: int) -> str:
+    def _pr_head_sha(self, pr_number: int) -> str:
         del pr_number
         if len(self._scripted_heads) > 1:
             return self._scripted_heads.pop(0)

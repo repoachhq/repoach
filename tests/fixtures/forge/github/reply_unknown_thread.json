@@ -1,0 +1,47 @@
+{
+  "args": [
+    42,
+    404404,
+    "evidence"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
+        "api",
+        "--method",
+        "POST",
+        "repos/:owner/:repo/pulls/42/comments/404404/replies",
+        "-f",
+        "body=evidence"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "gh: Not Found (HTTP 404)",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "reply_unknown_thread",
+  "forge": "github",
+  "kwargs": {},
+  "method": "reply",
+  "raises": "ForgeNotFoundError",
+  "result": null,
+  "source": "synthetic: write call: never executed against a live forge; the write barrier reads the state first",
+  "trimmed": null
+}

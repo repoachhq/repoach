@@ -1,0 +1,39 @@
+{
+  "args": [
+    42,
+    "<!-- repoach-review-archive -->"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "--slurp",
+        "repos/:owner/:repo/issues/42/comments"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[[{\"id\": 10, \"body\": \"<!-- repoach-review-archive --> forged\", \"user\": {\"login\": \"dev\"}, \"created_at\": \"2026-10-19T10:00:00Z\"}, {\"id\": 11, \"body\": \"<!-- repoach-review-archive --> real\", \"user\": {\"login\": \"repoach-bot\"}, \"created_at\": \"2026-10-19T10:00:00Z\"}]]"
+    }
+  ],
+  "case": "find_marked_comment_forged",
+  "forge": "github",
+  "kwargs": {},
+  "method": "find_marked_comment",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "<!-- repoach-review-archive --> real",
+    "created_at": "2026-10-19T10:00:00Z",
+    "id": 11,
+    "in_reply_to": null,
+    "line": null,
+    "path": null,
+    "thread_id": null
+  },
+  "source": "synthetic: a forged marker before the trusted one cannot be posted read-only",
+  "trimmed": null
+}

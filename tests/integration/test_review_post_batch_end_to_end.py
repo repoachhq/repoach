@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from repoach.review.gh_client import GhCli
+from repoach.forge.github import GitHubForge
 from repoach.review.merge_gate import MergeFacts
 from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.reviewer import (
@@ -228,7 +228,7 @@ def test_review_pr_posts_batched_reviews_via_real_gh_subprocess(
     log_path = tmp_path / "gh_calls.jsonl"
     monkeypatch.setenv(_LOG_ENV_VAR, str(log_path))
 
-    gh = GhCli(cwd=repo_root, gh_path=str(fake_gh))
+    gh = GitHubForge(cwd=repo_root, gh_path=str(fake_gh))
 
     for role, cls_name in (
         (BotRole.ARCHITECT, "Architect"),
@@ -246,7 +246,7 @@ def test_review_pr_posts_batched_reviews_via_real_gh_subprocess(
     _silence_ledger_facts(monkeypatch)
 
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=4,

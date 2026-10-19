@@ -11,9 +11,9 @@ threads, reproducing the exact call path that raced
 production the first time a review ran against a brand-new findings
 ledger.
 
-Only the network/subprocess/LLM-gateway boundary is faked: ``GhCli`` is
+Only the network/subprocess/LLM-gateway boundary is faked: ``gh`` is
 replaced by a truthful stand-in returning a canned diff (mirroring the
-existing ``_StubGhCli`` pattern in ``tests/unit/test_review_team.py``),
+existing ``_StubGitHubForge`` pattern in ``tests/unit/test_review_team.py``),
 each reviewer's real ``AgentLoop`` is replaced by a ``MagicMock`` at
 construction (the same hermetic pattern
 ``test_fresh_head_concurrent.py`` uses, so the test never depends on
@@ -38,7 +38,8 @@ from sqlalchemy import create_engine, inspect, text
 from structlog.testing import capture_logs
 
 import repoach.review.review_lessons as review_lessons
-from repoach.review.gh_client import GhResult
+from repoach.forge.github import GitHubForge
+from repoach.forge.runner import CommandResult
 from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.reviewer import (
     Architect,
@@ -48,6 +49,7 @@ from repoach.review.reviewer import (
     Sentinel,
     Tester,
 )
+from tests.forge_fakes import gh_fail, gh_ok, scripted_github
 
 _CANNED_DIFF = (
     "diff --git a/a.py b/a.py\n"
@@ -71,19 +73,22 @@ _LEDGER_TABLES = (
 )
 
 
-class _StubGhCli:
-    """Truthful GhCli stand-in returning a canned diff, no network.
+def _stub_forge() -> GitHubForge:
+    """A real :class:`GitHubForge` whose ``gh`` answers with a canned diff, no network.
 
-    Mirrors the established ``_StubGhCli`` pattern in
-    ``tests/unit/test_review_team.py``; only the two methods the
-    ``post_to_github=False`` code path actually reaches are needed.
+    Only the two calls the ``post_to_github=False`` code path reaches are
+    answered: ``gh pr diff`` and the paginated inline-comments read;
+    anything else fails like an unreachable ``gh`` would.
     """
 
-    def pr_diff(self, pr_number: int) -> GhResult:
-        return GhResult(0, _CANNED_DIFF, "", argv=["gh", "pr", "diff"])
+    def _run(args: list[str]) -> CommandResult:
+        if args[:2] == ["pr", "diff"]:
+            return gh_ok(_CANNED_DIFF, argv=args)
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return gh_ok("[[]]", argv=args)
+        return gh_fail("not stubbed")
 
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
-        return []
+    return scripted_github(run=_run)
 
 
 def _canned_call_with_retry(
@@ -137,7 +142,7 @@ def test_review_pr_four_reviewer_threads_do_not_race_pr_findings_creation(
     assert not db_path.exists()
 
     orch = ReviewTeamOrchestrator(
-        gh=_StubGhCli(),
+        forge=_stub_forge(),
         db_path=db_path,
         post_to_github=False,
         max_workers=4,

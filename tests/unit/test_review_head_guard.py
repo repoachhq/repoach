@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from repoach.forge import Comment, Diff, PullRequest, Review
 from repoach.review.merge_gate import MergeFacts
 from repoach.review.orchestrator import (
     ReviewTeamOrchestrator,
@@ -79,8 +80,8 @@ def test_retries_until_the_served_head_catches_up(
     """Stale-then-fresh gh answers converge on the local HEAD."""
     root, local_head = repo_on_branch
     gh = MagicMock()
-    gh.pr_view.return_value = {"headRefName": "feat/x"}
-    gh.pr_head_sha.side_effect = ["stale" * 8, "stale" * 8, local_head]
+    gh.pull_request.return_value = PullRequest(number=3, head_ref="feat/x")
+    gh.head_sha.side_effect = ["stale" * 8, "stale" * 8, local_head]
     slept: list[float] = []
     resolved = resolve_fresh_head(
         gh, 3, repo_root=root, attempts=5, delay_s=0.0, sleep=slept.append
@@ -95,8 +96,8 @@ def test_gives_up_loudly_but_returns_the_served_head(
     """A never-converging API still yields the served value (evidence-first)."""
     root, _ = repo_on_branch
     gh = MagicMock()
-    gh.pr_view.return_value = {"headRefName": "feat/x"}
-    gh.pr_head_sha.return_value = "stale" * 8
+    gh.pull_request.return_value = PullRequest(number=3, head_ref="feat/x")
+    gh.head_sha.return_value = "stale" * 8
     resolved = resolve_fresh_head(
         gh, 3, repo_root=root, attempts=2, delay_s=0.0, sleep=lambda _s: None
     )
@@ -109,24 +110,24 @@ def test_foreign_branch_checkout_skips_the_guard(
     """When the checkout is not the PR's head branch, no retry happens."""
     root, _ = repo_on_branch
     gh = MagicMock()
-    gh.pr_view.return_value = {"headRefName": "another/branch"}
-    gh.pr_head_sha.return_value = "served" * 6
+    gh.pull_request.return_value = PullRequest(number=3, head_ref="another/branch")
+    gh.head_sha.return_value = "served" * 6
     resolved = resolve_fresh_head(gh, 3, repo_root=root, attempts=5, delay_s=0.0)
     assert resolved == "served" * 6
-    assert gh.pr_head_sha.call_count == 1
+    assert gh.head_sha.call_count == 1
 
 
 def test_pr_view_exception_returns_the_served_head(
     repo_on_branch: tuple[Path, str],
 ) -> None:
-    """A gh without pr_view (or a failing one) degrades to the served head."""
+    """A forge whose pull_request read fails degrades to the served head."""
     root, _ = repo_on_branch
     gh = MagicMock()
-    gh.pr_head_sha.return_value = "served" * 6
-    gh.pr_view.side_effect = RuntimeError("boom")
+    gh.head_sha.return_value = "served" * 6
+    gh.pull_request.side_effect = RuntimeError("boom")
     resolved = resolve_fresh_head(gh, 3, repo_root=root, attempts=3, delay_s=0.0)
     assert resolved == "served" * 6
-    assert gh.pr_head_sha.call_count == 1
+    assert gh.head_sha.call_count == 1
 
 
 def test_join_head_guard_returns_none_when_no_pool() -> None:
@@ -236,20 +237,17 @@ def _make_sleepy_review_diff(
 
 
 def _make_gh_stub(*, head_sha: str = "deadbeef", head_ref: str = "feat/x") -> MagicMock:
-    """Return a GhCli MagicMock with enough wiring for review_pr to proceed."""
+    """Return a Forge MagicMock with enough wiring for review_pr to proceed."""
     gh = MagicMock()
-    gh.pr_diff.return_value = MagicMock(
-        ok=True,
-        stdout=("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x = 1\n"),
-        stderr="",
-    )
-    gh.pr_view.return_value = {"headRefName": head_ref, "title": "test"}
-    gh.pr_head_sha.return_value = head_sha
-    gh.list_review_comments.return_value = []
-    gh.pr_review_comment.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    gh.pr_review_submit.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    gh.upsert_archive_comment.return_value = MagicMock(returncode=0, stdout="", stderr="")
-    gh.fetch_archive_comment.return_value = None
+    text = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x = 1\n"
+    gh.diff.return_value = Diff(text=text, files=["a.py"])
+    gh.pull_request.return_value = PullRequest(number=1, head_ref=head_ref, title="test")
+    gh.head_sha.return_value = head_sha
+    gh.comments.return_value = []
+    gh.post_comment.return_value = Comment(id=0)
+    gh.post_review.return_value = Review()
+    gh.upsert_marked_comment.return_value = Comment(id=1)
+    gh.find_marked_comment.return_value = None
     return gh
 
 
@@ -392,7 +390,7 @@ def test_orchestrator_head_guard_call_site_is_non_blocking(
 
     gh = _make_gh_stub()
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=4,
@@ -418,7 +416,7 @@ def test_orchestrator_head_guard_overlaps_reviewer_fanout(
     """The guard's wait overlaps with the reviewer fan-out instead of preceding it.
 
     Drives the real, unmodified ``resolve_fresh_head`` through the real call site
-    against a real scratch git repository, with a truthful stale-forever ``GhCli``
+    against a real scratch git repository, with a truthful stale-forever forge
     fake so every poll returns a served SHA that never matches local HEAD. Speeds up
     the retry cadence via ``resolve_fresh_head.__kwdefaults__["delay_s"]`` (a
     legitimate override of a keyword-only default; ``attempts`` and the retry
@@ -447,7 +445,7 @@ def test_orchestrator_head_guard_overlaps_reviewer_fanout(
     monkeypatch.setitem(resolve_fresh_head.__kwdefaults__, "delay_s", 0.2)
 
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=4,

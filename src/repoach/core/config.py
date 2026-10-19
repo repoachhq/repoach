@@ -419,6 +419,15 @@ class Settings(BaseSettings):
             "the hardcoded 'develop' literal (SP-BRANCH-CONFIG)."
         ),
     )
+    forge: str = Field(
+        default="",
+        validation_alias=AliasChoices("REPOACH_FORGE"),
+        description=(
+            "Which forge the repository lives on: 'github' or 'gitlab'. Empty "
+            "(the default) defers to repoach.toml, then to the origin remote's "
+            "host, then to GitHub (SP-UNIVERSAL-FORGE G4)."
+        ),
+    )
     release_branch: str = Field(
         default="main",
         validation_alias=AliasChoices(

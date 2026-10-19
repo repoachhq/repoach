@@ -32,8 +32,11 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..core.config import get_settings
-from .gh_client import GhCli
+from ..core.logging import get_logger
+from ..forge import Forge, ForgeError
 from .persistence import fetch_merged_pr_shas
+
+_log = get_logger(__name__)
 
 _SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)$")
 """Matches GitHub's default squash-merge subject suffix, e.g. ``(#42)``."""
@@ -66,7 +69,7 @@ class ProvenanceSource(StrEnum):
             factory merge path (``repoach review merge``). The default.
         GITHUB: Every ``mergeCommitOid`` GitHub reports for PRs merged
             into the integration branch
-            (:meth:`~repoach.review.gh_client.GhCli.merged_pr_merge_shas`)
+            (:meth:`~repoach.forge.Forge.merged_shas`)
             -- authoritative even when the ledger is empty, e.g. under
             the control-tower manual-merge regime.
     """
@@ -234,7 +237,7 @@ def _default_ci_runner(repo_root: Path) -> subprocess.CompletedProcess:
 def gather_release_facts(
     *,
     repo_root: Path,
-    gh: GhCli,
+    forge: Forge,
     pr_number: int | None = None,
     ci_runner: Callable[[Path], subprocess.CompletedProcess] | None = None,
     db_path: Path | None = None,
@@ -245,8 +248,7 @@ def gather_release_facts(
     Args:
         repo_root: Repository root, used to locate the local CI
             parity mirror.
-        gh: A :class:`~repoach.review.gh_client.GhCli`-like wrapper
-            used for the ``git``/``gh`` invocations.
+        forge: The forge, used for its local ``git`` and its PR reads.
         pr_number: The release PR number, when known; enables the
             release PR's ``headRefOid`` freshness cross-check.
         ci_runner: Injectable CI runner for tests; defaults to
@@ -267,10 +269,10 @@ def gather_release_facts(
             (the default) preserves the *db_path*-driven behaviour above
             unchanged. :attr:`ProvenanceSource.GITHUB` ignores *db_path*
             and instead verifies against
-            :meth:`~repoach.review.gh_client.GhCli.merged_pr_merge_shas`
-            -- every ``mergeCommitOid`` GitHub reports for PRs merged
-            into the integration branch -- fail-closed the same way on
-            an empty set via ``provenance_error``.
+            :meth:`~repoach.forge.Forge.merged_shas` -- every merge
+            commit the forge reports for changes merged into the
+            integration branch -- fail-closed the same way on an empty
+            set (or a failed listing) via ``provenance_error``.
 
     Returns:
         The assembled :class:`ReleaseFacts`.
@@ -285,10 +287,8 @@ def gather_release_facts(
     settings = get_settings()
     integration_branch = settings.integration_branch
     release_branch = settings.release_branch
-    develop_sha = gh._run_git(["rev-parse", integration_branch]).stdout.strip()
-    log_result = gh._run_git(
-        ["log", f"{release_branch}..{integration_branch}", "--format=%H%x09%s"]
-    )
+    develop_sha = forge.git(["rev-parse", integration_branch]).stdout.strip()
+    log_result = forge.git(["log", f"{release_branch}..{integration_branch}", "--format=%H%x09%s"])
     commits: list[tuple[str, str]] = []
     for line in log_result.stdout.splitlines():
         if not line.strip():
@@ -298,7 +298,15 @@ def gather_release_facts(
     out_of_band_commits: list[str]
     provenance_error: str | None = None
     if provenance is ProvenanceSource.GITHUB:
-        merged_shas = gh.merged_pr_merge_shas(base=integration_branch)
+        try:
+            merged_shas = forge.merged_shas(integration_branch)
+        except ForgeError as exc:
+            _log.warning(
+                "release_gate.merged_shas_failed",
+                base=integration_branch,
+                error=exc.message[:200],
+            )
+            merged_shas = set()
         if not merged_shas and commits:
             provenance_error = _PROVENANCE_GH_EMPTY.format(
                 branch=integration_branch, count=len(commits)
@@ -323,13 +331,13 @@ def gather_release_facts(
             if provenance_error is not None
             else classify_release_range_against_ledger(commits, merged_shas)
         )
-    ls_remote_result = gh._run_git(["ls-remote", "origin", integration_branch])
+    ls_remote_result = forge.git(["ls-remote", "origin", integration_branch])
     remote_sha = ""
     first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
     if ls_remote_result.returncode == 0 and first_line:
         tokens = first_line.split()
         remote_sha = tokens[0] if tokens else ""
-    pr_head_sha = gh.pr_head_sha(pr_number) if pr_number is not None else None
+    pr_head_sha = _pr_head_sha_or_none(forge, pr_number)
     result = (ci_runner or _default_ci_runner)(repo_root)
     ci_green = result.returncode == 0
     return ReleaseFacts(
@@ -382,19 +390,31 @@ def write_gate_receipt(path: Path, *, develop_sha: str, decision: ReleaseDecisio
     )
 
 
-def _ls_remote_sha(gh: GhCli, ref: str) -> str:
+def _pr_head_sha_or_none(forge: Forge, pr_number: int | None) -> str | None:
+    """The release PR's head SHA, ``None`` when no PR is given or it cannot be read."""
+    if pr_number is None:
+        return None
+    try:
+        return forge.head_sha(pr_number)
+    except ForgeError as exc:
+        _log.warning(
+            "release_gate.pr_head_sha_failed", pr_number=pr_number, error=exc.message[:200]
+        )
+        return None
+
+
+def _ls_remote_sha(forge: Forge, ref: str) -> str:
     """Return the live SHA ``git ls-remote origin <ref>`` reports.
 
     Args:
-        gh: A :class:`~repoach.review.gh_client.GhCli`-like wrapper used
-            for the ``git ls-remote`` invocation.
+        forge: The forge whose local ``git`` runs ``ls-remote``.
         ref: The remote ref name (e.g. ``"main"`` or ``"develop"``).
 
     Returns:
         The first token of ``ls-remote``'s first output line, or
         ``""`` when the ref could not be resolved.
     """
-    ls_remote_result = gh._run_git(["ls-remote", "origin", ref])
+    ls_remote_result = forge.git(["ls-remote", "origin", ref])
     first_line = ls_remote_result.stdout.splitlines()[0] if ls_remote_result.stdout.strip() else ""
     return first_line.split()[0] if first_line.split() else ""
 
@@ -438,7 +458,7 @@ def _sanctioned_shape_result(
     )
 
 
-def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
+def verify_release(path: Path, *, forge: Forge) -> ReleaseVerifyResult:
     """Verify that the live ``main`` tip matches the sanctioned release shape.
 
     Reads back the receipt written by :func:`write_gate_receipt` and
@@ -450,9 +470,8 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
 
     Args:
         path: The gate receipt written by :func:`write_gate_receipt`.
-        gh: A :class:`~repoach.review.gh_client.GhCli`-like wrapper used
-            for the ``git ls-remote``/``rev-parse``/``rev-list``
-            invocations.
+        forge: The forge whose local ``git`` runs the
+            ``ls-remote``/``rev-parse``/``rev-list`` invocations.
 
     Returns:
         The assembled :class:`ReleaseVerifyResult`.
@@ -473,15 +492,15 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
     release_branch = settings.release_branch
     data = json.loads(path.read_text())
     expected_sha = data["develop_sha"]
-    fetch_result = gh._run_git(["fetch", "--quiet", "origin", release_branch, integration_branch])
+    fetch_result = forge.git(["fetch", "--quiet", "origin", release_branch, integration_branch])
     if not fetch_result.ok:
         raise RuntimeError(
             f"git fetch origin {release_branch} {integration_branch} failed: "
             f"{fetch_result.stderr.strip()}"
         )
-    main_sha = _ls_remote_sha(gh, release_branch)
-    second_parent = gh._run_git(["rev-parse", f"origin/{release_branch}^2"]).stdout.strip()
-    distance = gh._run_git(
+    main_sha = _ls_remote_sha(forge, release_branch)
+    second_parent = forge.git(["rev-parse", f"origin/{release_branch}^2"]).stdout.strip()
+    distance = forge.git(
         ["rev-list", "--count", f"origin/{release_branch}..origin/{integration_branch}"]
     ).stdout.strip()
     return _sanctioned_shape_result(
@@ -492,7 +511,7 @@ def verify_release(path: Path, *, gh: GhCli) -> ReleaseVerifyResult:
     )
 
 
-def verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
+def verify_release_live(*, forge: Forge) -> ReleaseVerifyResult:
     """Verify main's tip against the sanctioned shape using develop's live tip.
 
     The receipt-free sibling of :func:`verify_release`: instead of
@@ -504,9 +523,8 @@ def verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
     :func:`verify_release` through :func:`_sanctioned_shape_result`.
 
     Args:
-        gh: A :class:`~repoach.review.gh_client.GhCli`-like wrapper used
-            for the ``git ls-remote``/``rev-parse``/``rev-list``
-            invocations.
+        forge: The forge whose local ``git`` runs the
+            ``ls-remote``/``rev-parse``/``rev-list`` invocations.
 
     Returns:
         The assembled :class:`ReleaseVerifyResult`, with
@@ -520,16 +538,16 @@ def verify_release_live(*, gh: GhCli) -> ReleaseVerifyResult:
     settings = get_settings()
     integration_branch = settings.integration_branch
     release_branch = settings.release_branch
-    fetch_result = gh._run_git(["fetch", "--quiet", "origin", release_branch, integration_branch])
+    fetch_result = forge.git(["fetch", "--quiet", "origin", release_branch, integration_branch])
     if not fetch_result.ok:
         raise RuntimeError(
             f"git fetch origin {release_branch} {integration_branch} failed: "
             f"{fetch_result.stderr.strip()}"
         )
-    expected_sha = _ls_remote_sha(gh, integration_branch)
-    main_sha = _ls_remote_sha(gh, release_branch)
-    second_parent = gh._run_git(["rev-parse", f"origin/{release_branch}^2"]).stdout.strip()
-    distance = gh._run_git(
+    expected_sha = _ls_remote_sha(forge, integration_branch)
+    main_sha = _ls_remote_sha(forge, release_branch)
+    second_parent = forge.git(["rev-parse", f"origin/{release_branch}^2"]).stdout.strip()
+    distance = forge.git(
         ["rev-list", "--count", f"origin/{release_branch}..origin/{integration_branch}"]
     ).stdout.strip()
     return _sanctioned_shape_result(

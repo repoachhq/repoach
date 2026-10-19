@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from sqlalchemy import create_engine, text
 
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_ALREADY_MERGED,
@@ -23,12 +23,11 @@ from repoach.review.auto_merge import (
     OUTCOME_SKIP_CI_FAILED,
     OUTCOME_SKIP_GATE,
     classify_required_checks,
-    fetch_check_runs,
     required_checks_green,
     run_auto_merge,
 )
 from repoach.review.findings import record_review_integrity
-from repoach.review.gh_client import GhResult
+from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
 
 
 def _all_green_rollup() -> list[dict]:
@@ -69,8 +68,8 @@ def _truthful_ls_remote(sha: str, head_ref: str) -> GhResult:
 
     SP-AUTOMERGE-FRESH-HEAD (operator rule: no stubs) —
     ``resolve_verified_head`` runs for real in every test, so every
-    fake ``GhCli`` here must answer ``_run_git(["ls-remote", ...])``
-    with the SAME SHA its ``pr_head_sha`` returns; otherwise the real
+    fake forge here must answer ``git ls-remote`` with the SAME SHA
+    its ``gh pr view --json headRefOid`` returns; otherwise the real
     convergence check would (correctly) refuse every existing scenario
     as a stale head.
     """
@@ -89,33 +88,41 @@ def _gh(
     checks_ok: bool = True,
     merge_ok: bool = True,
     head: str = "feat/x",
-) -> MagicMock:
-    """Build a GhCli mock with sensible defaults — override per-test."""
-    gh = MagicMock()
-    gh.pr_view.return_value = {
-        "baseRefName": base,
-        "headRefName": head,
-        "state": state,
-    }
-    gh.pr_head_sha.return_value = _HEAD
-    gh._run_git.return_value = _truthful_ls_remote(_HEAD, head)
+) -> GitHubForge:
+    """Build a scripted GitHub forge with sensible defaults — override per-test."""
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:
             entries = _all_green_rollup() if checks_ok else _one_failed_rollup()
             nd = "\n".join(json.dumps(e) for e in entries)
             return GhResult(returncode=0, stdout=nd, stderr="", argv=args)
+        if args[:1] == ["api"] and args[1].endswith("/protection"):
+            return gh_fail("gh: Branch not protected (HTTP 404)")
         if args[:2] == ["pr", "view"] and "statusCheckRollup" in " ".join(args):
             return GhResult(
                 returncode=0,
                 stdout=json.dumps(
                     {
+                        **json.loads(
+                            pr_view_stdout(
+                                base_ref=base, head_ref=head, state=state, head_sha=_HEAD
+                            )
+                        ),
+                        "mergeable": "MERGEABLE",
+                        "mergeStateStatus": "CLEAN",
                         "statusCheckRollup": _all_green_rollup()
                         if checks_ok
-                        else _one_failed_rollup()
+                        else _one_failed_rollup(),
                     }
                 ),
                 stderr="",
+                argv=args,
+            )
+        if args[:2] == ["pr", "view"] and args[-1] == "headRefOid":
+            return gh_ok(json.dumps({"headRefOid": _HEAD}), argv=args)
+        if args[:2] == ["pr", "view"]:
+            return gh_ok(
+                pr_view_stdout(base_ref=base, head_ref=head, state=state, head_sha=_HEAD),
                 argv=args,
             )
         if args[:2] == ["pr", "merge"]:
@@ -127,8 +134,7 @@ def _gh(
             )
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run.side_effect = _run_side
-    return gh
+    return scripted_github(run=_run_side, git=lambda _args: _truthful_ls_remote(_HEAD, head))
 
 
 def _row_count(db_path: Path) -> int:
@@ -175,7 +181,7 @@ def test_required_checks_green_fail() -> None:
 def test_auto_merge_refuses_main_base(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _gh(base="main")
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_SKIP_BASE
     # gh pr merge must NOT have been called.
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
@@ -186,7 +192,7 @@ def test_auto_merge_refuses_main_base(tmp_path: Path) -> None:
 def test_auto_merge_idempotent_on_already_merged(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _gh(base="develop", state="MERGED")
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_ALREADY_MERGED
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
     assert merge_calls == []
@@ -200,7 +206,7 @@ def test_auto_merge_skips_when_review_integrity_missing(tmp_path: Path) -> None:
     """
     db = tmp_path / "test.db"
     gh = _gh(base="develop")
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_SKIP_GATE
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
     assert merge_calls == []
@@ -216,14 +222,14 @@ def test_auto_merge_skips_when_review_incomplete(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _gh(base="develop")
     record_review_integrity(db, pr_number=1, head_sha=_HEAD, n_reviewers=4, n_unparsed=2)
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_SKIP_GATE
 
 
 def test_auto_merge_skips_when_ci_red(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _gh(base="develop", checks_ok=False)
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_SKIP_CI_FAILED
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
     assert merge_calls == []
@@ -233,7 +239,7 @@ def test_auto_merge_happy_path(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _gh(base="develop", checks_ok=True, merge_ok=True)
     _seed_review_complete(db, 1)
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_MERGED
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
     assert len(merge_calls) == 1
@@ -248,7 +254,7 @@ def test_auto_merge_records_failure_when_gh_merge_fails(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     gh = _gh(base="develop", checks_ok=True, merge_ok=False)
     _seed_review_complete(db, 1)
-    res = run_auto_merge(1, gh=gh, db_path=db)
+    res = run_auto_merge(1, forge=gh, db_path=db)
     assert res.outcome == OUTCOME_FAILED
     assert _last_outcome(db) == OUTCOME_FAILED
 
@@ -256,10 +262,10 @@ def test_auto_merge_records_failure_when_gh_merge_fails(tmp_path: Path) -> None:
 def test_auto_merge_persists_each_outcome(tmp_path: Path) -> None:
     """Every gate outcome must write a row to L4 ``pr_merges``."""
     db = tmp_path / "test.db"
-    run_auto_merge(1, gh=_gh(base="main"), db_path=db)
-    run_auto_merge(2, gh=_gh(), db_path=db)
-    run_auto_merge(3, gh=_gh(checks_ok=False), db_path=db)
-    run_auto_merge(4, gh=_gh(), db_path=db)
+    run_auto_merge(1, forge=_gh(base="main"), db_path=db)
+    run_auto_merge(2, forge=_gh(), db_path=db)
+    run_auto_merge(3, forge=_gh(checks_ok=False), db_path=db)
+    run_auto_merge(4, forge=_gh(), db_path=db)
     assert _row_count(db) == 4
 
 
@@ -316,10 +322,10 @@ def test_ci_gate_falls_back_to_rollup_when_commit_api_fails() -> None:
     gh = _gh(checks_ok=True)
     original_side = gh._run.side_effect
 
-    def _api_broken(args: list[str]) -> GhResult:
+    def _api_broken(args: list[str], input_data: str | None = None) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:
             return GhResult(returncode=1, stdout="", stderr="boom", argv=args)
-        return original_side(args)
+        return original_side(args, input_data)
 
     gh._run.side_effect = _api_broken
     ok, _ = required_checks_green(gh, 1, wait_seconds=0, poll_interval=0)
@@ -328,13 +334,14 @@ def test_ci_gate_falls_back_to_rollup_when_commit_api_fails() -> None:
 
 def test_fetch_check_runs_unparseable_line_returns_error() -> None:
     """A garbage NDJSON line degrades to an error, never a partial truth."""
-    gh = MagicMock()
-    gh._run.return_value = GhResult(
-        returncode=0,
-        stdout='{"name": "Test suite (Python 3.11)", "status": "COMPLETED", "conclusion": "SUCCESS"}\nnot json',
-        stderr="",
-        argv=["api"],
+    gh = scripted_github(
+        run=lambda args: GhResult(
+            returncode=0,
+            stdout='{"name": "Test suite (Python 3.11)", "status": "COMPLETED", "conclusion": "SUCCESS"}\nnot json',
+            stderr="",
+            argv=args,
+        )
     )
-    entries, err = fetch_check_runs(gh, "abc123")
+    entries, err = gh._fetch_check_runs("abc123")
     assert entries == []
     assert "unparseable" in err

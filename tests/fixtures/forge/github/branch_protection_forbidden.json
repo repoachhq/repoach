@@ -1,0 +1,32 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/{owner}/{repo}/branches/develop/protection"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "gh: Resource not accessible by integration (HTTP 403)",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "branch_protection_forbidden",
+  "forge": "github",
+  "kwargs": {},
+  "method": "branch_protection",
+  "raises": null,
+  "result": {
+    "allow_force_push": false,
+    "merge_method": null,
+    "readable": false,
+    "required_checks": []
+  },
+  "source": "synthetic: a token that cannot read the protection settings",
+  "trimmed": null
+}

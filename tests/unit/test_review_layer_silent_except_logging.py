@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 _REVIEW_DIR = Path(__file__).resolve().parents[2] / "src" / "repoach" / "review"
+_FORGE_DIR = Path(__file__).resolve().parents[2] / "src" / "repoach" / "forge"
 
 
 def _read(name: str) -> str:
@@ -64,9 +65,9 @@ class TestEventNamesPinnedInSource:
         assert '"dev_runner.path_outside_root"' in src
 
     def test_orchestrator_event_names_present(self) -> None:
-        src = _read("orchestrator.py")
-        assert '"orchestrator.comment_id_json_decode_failed"' in src
-        assert '"orchestrator.comment_id_int_cast_failed"' in src
+        src = (_FORGE_DIR / "github.py").read_text(encoding="utf-8")
+        assert '"forge.github.id_json_decode_failed"' in src
+        assert '"forge.github.id_not_int"' in src
 
     def test_hallucination_guard_event_names_present(self) -> None:
         src = _read("hallucination_guard.py")
@@ -76,11 +77,10 @@ class TestEventNamesPinnedInSource:
     def test_thread_context_event_names_present(self) -> None:
         src = _read("thread_context.py")
         assert '"thread_context.unknown_role_tag"' in src
-        assert '"thread_context.bad_in_reply_id"' in src
-        assert '"thread_context.bad_root_id"' in src
+        assert '"thread_context.inline_comments_failed"' in src
 
     def test_gh_client_event_names_present(self) -> None:
-        src = _read("gh_client.py")
+        src = (_FORGE_DIR / "github.py").read_text(encoding="utf-8")
         assert '"gh_client.pr_view_decode_failed"' in src
         assert '"gh_client.review_comments_decode_failed"' in src
         assert '"gh_client.pr_head_sha_decode_failed"' in src

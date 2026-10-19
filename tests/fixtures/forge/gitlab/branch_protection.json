@@ -1,0 +1,45 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"id\": 67827362, \"description\": null, \"name\": \"yoob_2\", \"path\": \"yoob_2\", \"created_at\": \"2025-03-08T21:38:48.386Z\", \"web_url\": \"https://gitlab.com/josephwfaye/yoob_2\", \"only_allow_merge_if_pipeline_succeeds\": true, \"merge_method\": \"merge\"}"
+    },
+    {
+      "args": [
+        "api",
+        "projects/:id/protected_branches/develop"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"id\": 220495381, \"name\": \"develop\", \"allow_force_push\": false}"
+    }
+  ],
+  "case": "branch_protection",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "branch_protection",
+  "raises": null,
+  "result": {
+    "allow_force_push": false,
+    "merge_method": "merge",
+    "readable": true,
+    "required_checks": [
+      "pipeline"
+    ]
+  },
+  "source": "recorded 2026-10-19 from yoob_2",
+  "trimmed": null
+}

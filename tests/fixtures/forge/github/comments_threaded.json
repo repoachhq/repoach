@@ -1,0 +1,50 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "--slurp",
+        "repos/:owner/:repo/pulls/42/comments"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[[{\"id\": 1, \"body\": \"**[architect/major]** x\", \"user\": {\"login\": \"repoach-bot\"}, \"created_at\": \"2026-10-19T10:00:00Z\", \"path\": \"a.py\", \"line\": 3, \"in_reply_to_id\": null}, {\"id\": 2, \"body\": \"reply\", \"user\": {\"login\": \"dev\"}, \"created_at\": \"2026-10-19T10:00:00Z\", \"path\": \"a.py\", \"line\": 3, \"in_reply_to_id\": 1}]]"
+    }
+  ],
+  "case": "comments_threaded",
+  "forge": "github",
+  "kwargs": {},
+  "method": "comments",
+  "raises": null,
+  "result": [
+    {
+      "author": "repoach-bot",
+      "body": "**[architect/major]** x",
+      "created_at": "2026-10-19T10:00:00Z",
+      "id": 1,
+      "in_reply_to": null,
+      "line": 3,
+      "path": "a.py",
+      "thread_id": null
+    },
+    {
+      "author": "dev",
+      "body": "reply",
+      "created_at": "2026-10-19T10:00:00Z",
+      "id": 2,
+      "in_reply_to": 1,
+      "line": 3,
+      "path": "a.py",
+      "thread_id": null
+    }
+  ],
+  "source": "synthetic: no recorded MR carries a repoach inline thread",
+  "trimmed": null
+}

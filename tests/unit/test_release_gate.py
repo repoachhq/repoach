@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from repoach.review.gh_client import GhCli, GhResult
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.persistence import init_schema, record_merge
 from repoach.review.release_gate import (
     ReleaseDecision,
@@ -46,7 +46,7 @@ def _facts(**over: object) -> ReleaseFacts:
         "develop_sha": "abc123",
         "out_of_band_commits": [],
         "remote_sha": "abc123",
-        "pr_head_sha": None,
+        "_pr_head_sha": None,
         "ci_green": True,
         "ci_checked": True,
     }
@@ -101,7 +101,7 @@ def _gh_stub_with_commits(
     pr_head_sha: str | None = None,
 ) -> MagicMock:
     gh = MagicMock()
-    gh.pr_head_sha.return_value = pr_head_sha
+    gh.head_sha.return_value = pr_head_sha
 
     def _run_git_side(args: list[str]) -> GhResult:
         if args[:2] == ["rev-parse", "develop"]:
@@ -114,7 +114,7 @@ def _gh_stub_with_commits(
             return GhResult(returncode=0, stdout=stdout, stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
+    gh.git.side_effect = _run_git_side
     return gh
 
 
@@ -141,7 +141,7 @@ def test_gather_release_facts_flags_forged_pr_suffix_via_ledger(tmp_path: Path) 
     gh = _gh_stub_with_commits(develop_sha="sha-forged", remote_sha="sha-forged", commits=commits)
 
     facts = gather_release_facts(
-        repo_root=tmp_path, gh=gh, ci_runner=_noop_ci_runner, db_path=db_path
+        repo_root=tmp_path, forge=gh, ci_runner=_noop_ci_runner, db_path=db_path
     )
     decision = compute_release_decision(facts)
 
@@ -166,7 +166,7 @@ def test_gather_release_facts_accepts_clean_ledger_backed_range(tmp_path: Path) 
     gh = _gh_stub_with_commits(develop_sha="sha-legit-1", remote_sha="sha-legit-1", commits=commits)
 
     facts = gather_release_facts(
-        repo_root=tmp_path, gh=gh, ci_runner=_noop_ci_runner, db_path=db_path
+        repo_root=tmp_path, forge=gh, ci_runner=_noop_ci_runner, db_path=db_path
     )
     decision = compute_release_decision(facts)
 
@@ -182,7 +182,7 @@ def test_gather_release_facts_fails_closed_on_empty_ledger(tmp_path: Path) -> No
     gh = _gh_stub_with_commits(develop_sha="sha-1", remote_sha="sha-1", commits=commits)
 
     facts = gather_release_facts(
-        repo_root=tmp_path, gh=gh, ci_runner=_noop_ci_runner, db_path=db_path
+        repo_root=tmp_path, forge=gh, ci_runner=_noop_ci_runner, db_path=db_path
     )
     decision = compute_release_decision(facts)
 
@@ -199,7 +199,7 @@ def test_gather_release_facts_fails_closed_on_unreadable_ledger(tmp_path: Path) 
     gh = _gh_stub_with_commits(develop_sha="sha-1", remote_sha="sha-1", commits=commits)
 
     facts = gather_release_facts(
-        repo_root=tmp_path, gh=gh, ci_runner=_noop_ci_runner, db_path=db_path
+        repo_root=tmp_path, forge=gh, ci_runner=_noop_ci_runner, db_path=db_path
     )
     decision = compute_release_decision(facts)
 
@@ -217,7 +217,7 @@ def test_gather_release_facts_without_db_path_falls_back_to_subject_regex(
     ]
     gh = _gh_stub_with_commits(develop_sha="sha-2", remote_sha="sha-2", commits=commits)
 
-    facts = gather_release_facts(repo_root=tmp_path, gh=gh, ci_runner=_noop_ci_runner)
+    facts = gather_release_facts(repo_root=tmp_path, forge=gh, ci_runner=_noop_ci_runner)
 
     assert facts.provenance_error is None
     assert facts.out_of_band_commits == ["Hotfix: patch prod config directly"]
@@ -232,7 +232,7 @@ def test_release_gate_fail_closed_on_red_ci() -> None:
 
 def _gh_stub(*, develop_sha: str, remote_sha: str, pr_head_sha: str | None = None) -> MagicMock:
     gh = MagicMock()
-    gh.pr_head_sha.return_value = pr_head_sha
+    gh.head_sha.return_value = pr_head_sha
 
     def _run_git_side(args: list[str]) -> GhResult:
         if args[:2] == ["rev-parse", "develop"]:
@@ -244,7 +244,7 @@ def _gh_stub(*, develop_sha: str, remote_sha: str, pr_head_sha: str | None = Non
             return GhResult(returncode=0, stdout=stdout, stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
+    gh.git.side_effect = _run_git_side
     return gh
 
 
@@ -254,7 +254,7 @@ def test_release_gate_refuses_stale_head(tmp_path: Path) -> None:
     def _ci_runner(repo_root: Path) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess([], 0)
 
-    facts = gather_release_facts(repo_root=tmp_path, gh=gh, ci_runner=_ci_runner)
+    facts = gather_release_facts(repo_root=tmp_path, forge=gh, ci_runner=_ci_runner)
     decision = compute_release_decision(facts)
     assert decision.merge is False
     assert any("abc123" in reason and "def456" in reason for reason in decision.reasons)
@@ -263,7 +263,7 @@ def test_release_gate_refuses_stale_head(tmp_path: Path) -> None:
 def test_release_gate_missing_ci_script_is_error(tmp_path: Path) -> None:
     gh = _gh_stub(develop_sha="a", remote_sha="a")
     with pytest.raises(FileNotFoundError):
-        gather_release_facts(repo_root=tmp_path, gh=gh)
+        gather_release_facts(repo_root=tmp_path, forge=gh)
 
 
 def test_release_verify_detects_squash_divergence(tmp_path: Path) -> None:
@@ -283,9 +283,9 @@ def test_release_verify_detects_squash_divergence(tmp_path: Path) -> None:
             )
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
+    gh.git.side_effect = _run_git_side
 
-    result = verify_release(receipt_path, gh=gh)
+    result = verify_release(receipt_path, forge=gh)
 
     assert result.verified is False
     assert "squash" in result.detail or "stale" in result.detail
@@ -349,8 +349,8 @@ def test_verify_accepts_merge_commit_release(tmp_path: Path) -> None:
         decision=ReleaseDecision(merge=True, reasons=[]),
     )
 
-    gh = GhCli(cwd=work_dir)
-    result = verify_release(receipt_path, gh=gh)
+    gh = GitHubForge(cwd=work_dir)
+    result = verify_release(receipt_path, forge=gh)
 
     assert result.verified is True
 
@@ -389,8 +389,8 @@ def test_verify_still_refuses_squash(tmp_path: Path) -> None:
         decision=ReleaseDecision(merge=True, reasons=[]),
     )
 
-    gh = GhCli(cwd=work_dir)
-    result = verify_release(receipt_path, gh=gh)
+    gh = GitHubForge(cwd=work_dir)
+    result = verify_release(receipt_path, forge=gh)
 
     assert result.verified is False
     assert "squash" in result.detail or "stale" in result.detail
@@ -434,8 +434,8 @@ def test_verify_refuses_stale_merge(tmp_path: Path) -> None:
         decision=ReleaseDecision(merge=True, reasons=[]),
     )
 
-    gh = GhCli(cwd=work_dir)
-    result = verify_release(receipt_path, gh=gh)
+    gh = GitHubForge(cwd=work_dir)
+    result = verify_release(receipt_path, forge=gh)
 
     assert result.verified is False
 
@@ -443,7 +443,7 @@ def test_verify_refuses_stale_merge(tmp_path: Path) -> None:
 def test_verify_release_fetches_before_rev_parse_checks(tmp_path: Path) -> None:
     """``verify_release`` fetches ``origin main develop`` before the stale-ref reads.
 
-    A recording ``MagicMock`` stands in for ``gh._run_git``: every call
+    A recording ``MagicMock`` stands in for ``forge.git``: every call
     is appended to a list in invocation order, then the fetch call's
     index is asserted to precede both the ``rev-parse origin/main^2``
     and ``rev-list origin/main..origin/develop`` calls.
@@ -467,9 +467,9 @@ def test_verify_release_fetches_before_rev_parse_checks(tmp_path: Path) -> None:
             )
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
+    gh.git.side_effect = _run_git_side
 
-    verify_release(receipt_path, gh=gh)
+    verify_release(receipt_path, forge=gh)
 
     fetch_index = calls.index(["fetch", "--quiet", "origin", "main", "develop"])
     rev_parse_index = calls.index(["rev-parse", "origin/main^2"])
@@ -494,10 +494,10 @@ def test_verify_release_raises_on_fetch_failure(tmp_path: Path) -> None:
             return GhResult(returncode=1, stdout="", stderr="fatal: unable to access\n", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run_git.side_effect = _run_git_side
+    gh.git.side_effect = _run_git_side
 
     with pytest.raises(RuntimeError):
-        verify_release(receipt_path, gh=gh)
+        verify_release(receipt_path, forge=gh)
 
 
 def test_verify_release_fetches_stale_local_refs_before_merge_check(tmp_path: Path) -> None:
@@ -550,8 +550,8 @@ def test_verify_release_fetches_stale_local_refs_before_merge_check(tmp_path: Pa
         decision=ReleaseDecision(merge=True, reasons=[]),
     )
 
-    gh = GhCli(cwd=operator_dir)
-    result = verify_release(receipt_path, gh=gh)
+    gh = GitHubForge(cwd=operator_dir)
+    result = verify_release(receipt_path, forge=gh)
 
     assert result.verified is True
 
@@ -582,8 +582,8 @@ def test_verify_release_live_accepts_merge_commit_shape(tmp_path: Path) -> None:
     _git(work_dir, "merge", "--no-ff", "-q", "-m", "Merge develop into main", "develop")
     _git(work_dir, "push", "-q", "origin", "main")
 
-    gh = GhCli(cwd=work_dir)
-    result = verify_release_live(gh=gh)
+    gh = GitHubForge(cwd=work_dir)
+    result = verify_release_live(forge=gh)
 
     assert result.verified is True
     assert not (tmp_path / "release_gate_receipt.json").exists()
@@ -616,8 +616,8 @@ def test_verify_release_live_rejects_squash_shape(tmp_path: Path) -> None:
     _git(work_dir, "commit", "-q", "-m", "Add feature (#1) (squashed)")
     _git(work_dir, "push", "-q", "origin", "main")
 
-    gh = GhCli(cwd=work_dir)
-    result = verify_release_live(gh=gh)
+    gh = GitHubForge(cwd=work_dir)
+    result = verify_release_live(forge=gh)
 
     assert result.verified is False
     assert "squash" in result.detail or "stale" in result.detail
