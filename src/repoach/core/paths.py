@@ -322,7 +322,8 @@ def is_repoach_checkout(root: Path) -> bool:
         _log.warning("paths.pyproject_unreadable", path=str(pyproject), error=str(exc)[:200])
         return False
     project = data.get("project")
-    return isinstance(project, dict) and project.get("name") == REPOACH_DISTRIBUTION_NAME
+    name = project.get("name") if isinstance(project, dict) else None
+    return isinstance(name, str) and name.strip().lower() == REPOACH_DISTRIBUTION_NAME
 
 
 def legacy_env_file(root: Path) -> Path | None:
@@ -404,10 +405,7 @@ def notify_deprecated(message: str) -> None:
     Args:
         message: The notice, naming the new location to move to.
     """
-    if message in _NOTIFIED:
-        return
-    _NOTIFIED.add(message)
-    print(f"repoach: deprecated: {message}", file=sys.stderr)
+    notify(f"deprecated: {message}")
 
 
 def default_logs_dir(root: Path) -> Path:
@@ -427,3 +425,44 @@ def default_logs_dir(root: Path) -> Path:
         NotARepositoryError: The ``git`` executable is not available.
     """
     return user_data_dir() / project_slug(root) / "logs"
+
+
+def is_tracked(root: Path, path: Path) -> bool:
+    """Return whether ``path`` is tracked by the git repository at ``root``.
+
+    A tracked env file arrives with a clone, so it was written by
+    whoever controls the repository, not by the user running repoach.
+
+    Args:
+        root: The project root.
+        path: The file to check.
+
+    Returns:
+        True when ``git ls-files --error-unmatch`` knows the file.
+
+    Raises:
+        NotARepositoryError: The ``git`` executable is not available.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", str(path)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise NotARepositoryError(root, "git executable not found") from exc
+    return completed.returncode == 0
+
+
+def notify(message: str) -> None:
+    """Print ``repoach: <message>`` to stderr once per process.
+
+    Args:
+        message: The notice.
+    """
+    if message in _NOTIFIED:
+        return
+    _NOTIFIED.add(message)
+    print(f"repoach: {message}", file=sys.stderr)

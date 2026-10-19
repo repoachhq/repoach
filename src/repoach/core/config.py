@@ -2,7 +2,11 @@
 
 The CLI and the agent side read, lowest precedence first,
 ``$XDG_CONFIG_HOME/repoach/env``, then ``<project>/.repoach.env``, then
-the process environment (SP-UNIVERSAL-INSTALL G5).  The project is the
+the process environment (SP-UNIVERSAL-INSTALL G5).  The project file may
+only set the keys of :data:`PROJECT_ENV_ALLOWED` (layout and
+conventions) and is refused when git tracks it: endpoints, tokens,
+paths and commands are user-level only, so a cloned repository cannot
+redirect the user's token.  The project is the
 git toplevel of the current working directory
 (:func:`repoach.core.paths.project_root`), never an ancestor of the
 installed package: on a tool install that ancestor is ``site-packages``
@@ -19,10 +23,12 @@ a gateway client is actually built, so ``repoach --version`` and
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any, Literal
 
+from dotenv import dotenv_values
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -66,6 +72,109 @@ def _anchored_env_files(root: Path | None = None) -> tuple[Path, ...]:
         "(run 'repoach migrate-config')"
     )
     return (user_env, legacy)
+
+
+PROJECT_ENV_ALLOWED: dict[str, str] = {
+    "REPOACH_LOG_LEVEL": "log_level",
+    "REPOACH_INTEGRATION_BRANCH": "REPOACH_INTEGRATION_BRANCH",
+    "INTEGRATION_BRANCH": "REPOACH_INTEGRATION_BRANCH",
+    "REPOACH_RELEASE_BRANCH": "REPOACH_RELEASE_BRANCH",
+    "RELEASE_BRANCH": "REPOACH_RELEASE_BRANCH",
+    "REPOACH_BUILDER_MEMORY_ENABLED": "REPOACH_BUILDER_MEMORY_ENABLED",
+    "BUILDER_MEMORY_ENABLED": "REPOACH_BUILDER_MEMORY_ENABLED",
+    "REPOACH_REVIEW_MEMORY_ENABLED": "REPOACH_REVIEW_MEMORY_ENABLED",
+    "REVIEW_MEMORY_ENABLED": "REPOACH_REVIEW_MEMORY_ENABLED",
+    "REPOACH_REVIEW_LESSONS_ENABLED": "REPOACH_REVIEW_LESSONS_ENABLED",
+    "REVIEW_LESSONS_ENABLED": "REPOACH_REVIEW_LESSONS_ENABLED",
+    "REPOACH_PLANNER_PARSE_ATTEMPTS": "planner_parse_attempts",
+    "REPOACH_AUTOMERGE_CI_WAIT_SECONDS": "automerge_ci_wait_seconds",
+    "REPOACH_AUTOMERGE_CI_POLL_INTERVAL": "automerge_ci_poll_interval",
+}
+"""Keys a project-level ``.repoach.env`` may set, mapped to their init key.
+
+Only layout and convention knobs (branch names, kill-switches, budgets).
+Anything that is a secret, an endpoint, a filesystem location, an
+executable or a trust identity -- the gateway URL and token, the
+agentmemory URL, routine credentials, ``db_path``/``logs_dir``,
+``coder_pythons``, ``review_bot_login`` -- is user-level only
+(``~/.config/repoach/env`` or the process environment): a cloned
+repository must never be able to redirect the user's token or code to
+a host or binary of its choosing (SP-UNIVERSAL-INSTALL)."""
+
+
+def _env_names_by_target() -> dict[str, set[str]]:
+    """Group the allow-listed env names by the init key they feed."""
+    grouped: dict[str, set[str]] = {}
+    for name, target in PROJECT_ENV_ALLOWED.items():
+        grouped.setdefault(target, set()).add(name)
+    return grouped
+
+
+def _project_env_overrides(root: Path) -> dict[str, str]:
+    """Return the allow-listed values of ``root/.repoach.env``.
+
+    The file is refused outright when git tracks it (it came with the
+    clone), and every key outside :data:`PROJECT_ENV_ALLOWED` is dropped
+    with one notice naming the file.  A key the process environment
+    already sets (under any of its names) is left to the environment.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        Init keyword arguments for :class:`Settings`.
+    """
+    project_env = env_files(root)[1]
+    if not project_env.is_file():
+        return {}
+    if paths.is_tracked(root, project_env):
+        paths.notify(
+            f"refusing {project_env}: it is tracked by git, so it came with the "
+            "repository; keep it untracked and gitignored"
+        )
+        return {}
+    environment = {name.upper() for name in os.environ}
+    names_by_target = _env_names_by_target()
+    overrides: dict[str, str] = {}
+    rejected: list[str] = []
+    for raw_key, value in dotenv_values(project_env).items():
+        key = raw_key.upper()
+        target = PROJECT_ENV_ALLOWED.get(key)
+        if target is None:
+            rejected.append(raw_key)
+            continue
+        if value is None or names_by_target[target] & environment:
+            continue
+        overrides[target] = value
+    if rejected:
+        paths.notify(
+            f"ignoring {', '.join(sorted(rejected))} in {project_env}: provider URLs, "
+            "tokens, keys, paths and commands are user-level only "
+            f"({env_files(root)[0]} or the environment)"
+        )
+    return overrides
+
+
+def _unrestricted_env_files(root: Path) -> tuple[Path, ...]:
+    """Return the env files read in full: the user file, plus a legacy ``.env``.
+
+    A legacy ``.env`` that git tracks is refused like a tracked
+    ``.repoach.env`` (a fork of repoach could otherwise ship one).
+
+    Args:
+        root: The project root.
+
+    Returns:
+        The files :class:`Settings` hands to pydantic-settings.
+    """
+    files = _anchored_env_files(root)
+    user_env, second = files
+    if second.name != paths.LEGACY_ENV_FILE_NAME:
+        return (user_env,)
+    if paths.is_tracked(root, second):
+        paths.notify(f"refusing {second}: it is tracked by git, so it came with the repository")
+        return (user_env,)
+    return files
 
 
 def _default_db_path() -> Path:
@@ -113,7 +222,11 @@ class Settings(BaseSettings):
         time, so it cannot follow the working directory a command runs
         from.  The anchor is therefore applied here instead, through
         pydantic-settings' per-instance ``_env_file`` override, at the
-        moment a :class:`Settings` is actually built.
+        moment a :class:`Settings` is actually built.  The user file
+        (and a repoach checkout's untracked legacy ``.env``) is read in
+        full; the project's ``.repoach.env`` contributes only its
+        allow-listed keys (:data:`PROJECT_ENV_ALLOWED`), passed as init
+        values below the process environment.
 
         Args:
             **data: Forwarded to
@@ -122,7 +235,10 @@ class Settings(BaseSettings):
                 disabling file loading altogether) is honoured as-is.
         """
         if "_env_file" not in data:
-            data["_env_file"] = _anchored_env_files()
+            root = project_root()
+            data["_env_file"] = _unrestricted_env_files(root)
+            for key, value in _project_env_overrides(root).items():
+                data.setdefault(key, value)
         super().__init__(**data)
 
     @model_validator(mode="before")
@@ -418,7 +534,7 @@ def require_llm_proxy_base_url(settings: Settings) -> str:
     if not base_url:
         raise ValueError(
             "llm_proxy_base_url unresolved -- set REPOACH_LLM_PROXY_BASE_URL "
-            "in the environment, ~/.config/repoach/env or <project>/.repoach.env; "
+            "in the environment or ~/.config/repoach/env (a project file may not set it); "
             "refusing to default to a wrong proxy"
         )
     return base_url

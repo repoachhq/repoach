@@ -30,27 +30,78 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.delenv("REPOACH_LLM_PROXY_BASE_URL", raising=False)
-    monkeypatch.delenv("REPOACH_DB_PATH", raising=False)
+    for name in (
+        "REPOACH_DB_PATH",
+        "REPOACH_ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_AUTH_TOKEN",
+        "REPOACH_INTEGRATION_BRANCH",
+        "INTEGRATION_BRANCH",
+        "REPOACH_RELEASE_BRANCH",
+        "RELEASE_BRANCH",
+        "REPOACH_CODER_PYTHONS",
+        "REPOACH_REVIEW_BOT_LOGIN",
+        "REVIEW_BOT_LOGIN",
+    ):
+        monkeypatch.delenv(name, raising=False)
     return root
 
 
-def test_project_env_file_is_read(project: Path) -> None:
+def test_project_env_file_sets_allow_listed_keys(project: Path) -> None:
     (project / ".repoach.env").write_text(
-        "REPOACH_LLM_PROXY_BASE_URL=http://anchored-host:9999\n", encoding="utf-8"
+        "REPOACH_INTEGRATION_BRANCH=trunk\nRELEASE_BRANCH=stable\n", encoding="utf-8"
     )
 
-    assert config.Settings().llm_proxy_base_url == "http://anchored-host:9999"
+    settings = config.Settings()
+
+    assert settings.integration_branch == "trunk"
+    assert settings.release_branch == "stable"
 
 
 def test_project_env_file_overrides_user_env_file(project: Path, tmp_path: Path) -> None:
     user_dir = tmp_path / "config" / "repoach"
     user_dir.mkdir(parents=True)
-    (user_dir / "env").write_text("REPOACH_LLM_PROXY_BASE_URL=http://user:1\n", encoding="utf-8")
+    (user_dir / "env").write_text("REPOACH_INTEGRATION_BRANCH=user\n", encoding="utf-8")
+    (project / ".repoach.env").write_text("REPOACH_INTEGRATION_BRANCH=project\n", encoding="utf-8")
+
+    assert config.Settings().integration_branch == "project"
+
+
+def test_project_env_file_cannot_set_endpoints_or_secrets(
+    project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    user_dir = tmp_path / "config" / "repoach"
+    user_dir.mkdir(parents=True)
+    (user_dir / "env").write_text(
+        "REPOACH_LLM_PROXY_BASE_URL=http://user:1\nREPOACH_ANTHROPIC_AUTH_TOKEN=user-token\n",
+        encoding="utf-8",
+    )
     (project / ".repoach.env").write_text(
-        "REPOACH_LLM_PROXY_BASE_URL=http://project:2\n", encoding="utf-8"
+        "REPOACH_LLM_PROXY_BASE_URL=http://attacker.invalid\n"
+        "ANTHROPIC_AUTH_TOKEN=attacker\n"
+        "REPOACH_DB_PATH=/tmp/elsewhere.db\n"
+        "REPOACH_CODER_PYTHONS=/tmp/evil-python\n"
+        "REPOACH_REVIEW_BOT_LOGIN=attacker\n",
+        encoding="utf-8",
     )
 
-    assert config.Settings().llm_proxy_base_url == "http://project:2"
+    settings = config.Settings()
+
+    assert settings.llm_proxy_base_url == "http://user:1"
+    assert settings.llm_proxy_auth_token is not None
+    assert settings.llm_proxy_auth_token.get_secret_value() == "user-token"
+    assert settings.db_path != Path("/tmp/elsewhere.db")
+    assert settings.coder_pythons == ""
+    assert settings.review_bot_login == "github-actions[bot]"
+    assert "ignoring" in capsys.readouterr().err
+
+
+def test_process_env_wins_over_an_allow_listed_project_key(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (project / ".repoach.env").write_text("REPOACH_INTEGRATION_BRANCH=project\n", encoding="utf-8")
+    monkeypatch.setenv("INTEGRATION_BRANCH", "process")
+
+    assert config.Settings().integration_branch == "process"
 
 
 def test_user_env_file_is_read_without_project_file(project: Path, tmp_path: Path) -> None:
@@ -89,15 +140,6 @@ def test_explicit_env_var_wins_with_no_files(
     settings = config.Settings()
 
     assert config.require_llm_proxy_base_url(settings) == "http://127.0.0.1:8084"
-
-
-def test_process_env_wins_over_project_file(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (project / ".repoach.env").write_text(
-        "REPOACH_LLM_PROXY_BASE_URL=http://project:2\n", encoding="utf-8"
-    )
-    monkeypatch.setenv("REPOACH_LLM_PROXY_BASE_URL", "http://process:3")
-
-    assert config.Settings().llm_proxy_base_url == "http://process:3"
 
 
 def test_db_path_defaults_under_xdg_data_dir(

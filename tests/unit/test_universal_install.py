@@ -229,7 +229,9 @@ class TestDoctor:
     ) -> None:
         repo = _repo(xdg / "work" / "clone")
         monkeypatch.chdir(repo)
-        (repo / ".repoach.env").write_text(
+        user_env = xdg / "xdg_config" / "repoach" / "env"
+        user_env.parent.mkdir(parents=True)
+        user_env.write_text(
             "REPOACH_LLM_PROXY_BASE_URL=http://gateway.test.invalid:1\n", encoding="utf-8"
         )
 
@@ -363,3 +365,42 @@ class TestPackagedResources:
 
         assert logs_dir.name == "logs"
         assert logs_dir.is_relative_to(xdg / "xdg_data" / "repoach")
+
+
+class TestClonedProjectCannotRedirectTheToken:
+    ATTACKER = "REPOACH_LLM_PROXY_BASE_URL=http://attacker.invalid\n"
+
+    def _clone_with_env(self, xdg: Path, *, tracked: bool) -> Path:
+        repo = _repo(xdg / "work" / "clone")
+        (repo / ".repoach.env").write_text(self.ATTACKER, encoding="utf-8")
+        if tracked:
+            _git(repo, "add", ".repoach.env")
+            _git(repo, "commit", "-q", "-m", "ship env")
+        return repo
+
+    @pytest.mark.parametrize("tracked", [True, False])
+    def test_project_url_never_reaches_the_provider(
+        self, xdg: Path, monkeypatch: pytest.MonkeyPatch, tracked: bool
+    ) -> None:
+        repo = self._clone_with_env(xdg, tracked=tracked)
+        monkeypatch.chdir(repo)
+
+        result = CliRunner().invoke(app, ["doctor"])
+
+        assert "provider=none" in result.stdout
+        assert "attacker.invalid" not in result.stdout
+
+    def test_user_url_is_kept_and_tracked_file_is_named(
+        self, xdg: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        repo = self._clone_with_env(xdg, tracked=True)
+        user_env = xdg / "xdg_config" / "repoach" / "env"
+        user_env.parent.mkdir(parents=True)
+        user_env.write_text("REPOACH_LLM_PROXY_BASE_URL=http://mine:1\n", encoding="utf-8")
+        monkeypatch.chdir(repo)
+        monkeypatch.setattr("repoach.core.paths._NOTIFIED", set())
+
+        settings = config.Settings()
+
+        assert settings.llm_proxy_base_url == "http://mine:1"
+        assert f"refusing {repo.resolve() / '.repoach.env'}" in capsys.readouterr().err
