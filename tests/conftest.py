@@ -29,3 +29,36 @@ def _disable_structlog_logger_cache_for_tests() -> None:
     CLI-invoking test re-enabling the flag for everything after it.
     """
     structlog.configure(cache_logger_on_first_use=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_xdg_dirs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Point ``XDG_CONFIG_HOME`` and ``XDG_DATA_HOME`` at session scratch dirs.
+
+    SP-UNIVERSAL-INSTALL: ``core.config.Settings`` reads
+    ``$XDG_CONFIG_HOME/repoach/env`` and defaults the ledger under
+    ``$XDG_DATA_HOME/repoach/``. Without this, a developer's real
+    ``~/.config/repoach/env`` would leak into the suite and every
+    ``get_settings()`` would create directories under the real
+    ``~/.local/share/repoach``. One directory per session (not per test)
+    because ``get_settings()`` caches its first instance process-wide.
+    """
+    base = tmp_path_factory.getbasetemp()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(base / "xdg_config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(base / "xdg_data"))
+
+
+@pytest.fixture(autouse=True)
+def _no_legacy_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ignore a repoach checkout's legacy ``.env`` and ``data/repoach.db``.
+
+    SP-UNIVERSAL-INSTALL keeps honouring both in repoach's own checkout
+    (with a deprecation notice). The suite runs from such a checkout, so
+    without this every ``Settings()`` would read the developer's real
+    ``.env`` and point at the live ledger. Tests of the legacy path
+    restore the real functions locally.
+    """
+    monkeypatch.setattr("repoach.core.paths.legacy_env_file", lambda _root: None)
+    monkeypatch.setattr("repoach.core.paths.legacy_db_path", lambda _root: None)

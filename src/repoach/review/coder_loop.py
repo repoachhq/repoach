@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..core.config import Settings
+from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
 from .patch_apply import apply_search_replace_edits
@@ -349,7 +349,7 @@ def persist_placeholder_rejected(
     Returns:
         The path written to, or ``None`` on I/O failure.
     """
-    target_dir = logs_dir or (Path(__file__).resolve().parents[3] / "logs")
+    target_dir = logs_dir or get_settings().logs_dir
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

@@ -31,6 +31,7 @@ from ..review.release_gate import (
     verify_release_live,
     write_gate_receipt,
 )
+from .doctor_cmds import project_root_or_exit
 
 release_app = typer.Typer(
     help="Operator-only develop -> main release gate (read-only, never merges).",
@@ -58,8 +59,8 @@ module-level constant is ruff's own documented fix.
 
 
 def _repo_root() -> Path:
-    """Resolve the repository root the same way ``arch_check`` does."""
-    return Path(__file__).resolve().parents[3]
+    """Resolve the git toplevel of the working directory, as ``arch_check`` does."""
+    return project_root_or_exit()
 
 
 @release_app.command("gate")

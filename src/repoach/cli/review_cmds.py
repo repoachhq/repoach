@@ -38,6 +38,7 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.orchestrator import run_review
+from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
     "Forge the PR / MR lives on: github or gitlab (default: REPOACH_FORGE, repoach.toml, origin)."
@@ -126,6 +127,7 @@ def review_pr(
     the same shape regardless of which mode they ran in
     (SP-AUTO-REVIEW-V2-MIGRATION).
     """
+    project_root_or_exit()
     try:
         team = run_review(pr_number, post=not dry_run, **_forge_kwargs(forge_name))
     except ForgeError as exc:
@@ -186,6 +188,7 @@ def review_report(
       limit, network); the archive may well exist.
     * ``2`` — the forge could not be selected.
     """
+    project_root_or_exit()
     forge = _forge_kwargs(forge_name).get("forge")
     try:
         forge = forge or select_forge()
@@ -253,6 +256,7 @@ def review_fix(
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
     """
+    project_root_or_exit()
     try:
         fr = run_coder_fix_from_findings(pr_number, **_forge_kwargs(forge_name))
     except ForgeError as exc:
@@ -310,6 +314,7 @@ def review_merge(
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
     """
+    project_root_or_exit()
     try:
         result = run_auto_merge(pr_number, **_forge_kwargs(forge_name))
     except ForgeError as exc:
@@ -343,6 +348,7 @@ def review_insights(
     that reached a verdict and were confirmed real rather than refuted.
     Read-only; always exits 0.
     """
+    project_root_or_exit()
     from ..review.review_lessons import gather_insights
 
     insights = gather_insights(Path(get_settings().db_path), pr_number=pr_number)
@@ -391,6 +397,7 @@ def review_gate(
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
     """
+    project_root_or_exit()
     try:
         evaluation = evaluate_merge_gate(pr_number, **_forge_kwargs(forge_name))
     except Exception as exc:
@@ -490,6 +497,7 @@ def review_develop(
       * ``6`` — self-verify gate failed (mechanical or judge).
       * ``7`` — decomposition / parent supersession failed.
     """
+    project_root_or_exit()
     if explore_via not in ("proxy", "claude_cli"):
         typer.echo(f"--explore-via must be 'proxy' or 'claude_cli', got {explore_via!r}", err=True)
         raise typer.Exit(code=2)
@@ -592,6 +600,7 @@ def review_plan(
       * ``2`` — bad ``--explore-via`` value.
       * ``5`` — spec id not found (no doc matches).
     """
+    project_root_or_exit()
     from ..review.planner import run_planner_session
 
     if explore_via not in ("proxy", "claude_cli"):
@@ -643,7 +652,9 @@ def review_hallucinations(
 
     Exits ``0`` whether or not any rows are present.
     """
+    project_root_or_exit()
     db_path = Path(get_settings().db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     where = "WHERE pr_number = :pr_number" if pr_number is not None else ""
     bind = {"pr_number": pr_number} if pr_number is not None else {}

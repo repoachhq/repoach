@@ -41,6 +41,7 @@ from pathlib import Path
 from ..agent_engine.agent_loop import AgentLoop
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..core.resources import prompts_dir
 from ..llm.capability import CapabilityTier
 from .coder_loop import run_ruff_gate
 from .plan import ActionPlan
@@ -49,7 +50,7 @@ from .spec_gate import SpecCoverage, compute_spec_coverage, selector_present
 
 _log = get_logger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
+_PROMPTS_DIR = prompts_dir()
 _PERSONA = "judge_selfverify_0.2.1.md"
 _DIFF_CAP_CHARS = 100_000
 _MAX_REFUTABLE_GAPS = 10

@@ -13,8 +13,19 @@ from loguru import logger
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ...core.paths import project_root, resolve_db_path
 from .nim import NimSettings
 from .provider_ids import SUPPORTED_PROVIDER_IDS
+
+
+def _shared_ledger_path() -> str:
+    """Default breaker/probe seed DB: the same ledger the CLI resolves.
+
+    SP-UNIVERSAL-INSTALL: the gateway and the CLI share one SQLite file
+    per project — ``REPOACH_DB_PATH`` when exported, else a legacy
+    ``data/repoach.db`` at the project root, else the XDG default.
+    """
+    return str(resolve_db_path(project_root()))
 
 
 def _env_files() -> tuple[Path, ...]:
@@ -361,7 +372,8 @@ class Settings(BaseSettings):
         default=True, validation_alias=_aliases("BREAKER_PROBE_SEED_ENABLED")
     )
     breaker_probe_seed_db: str = Field(
-        default="data/repoach.db", validation_alias=_aliases("BREAKER_PROBE_SEED_DB")
+        default_factory=_shared_ledger_path,
+        validation_alias=_aliases("BREAKER_PROBE_SEED_DB"),
     )
     breaker_state_persist_enabled: bool = Field(
         default=True, validation_alias=_aliases("BREAKER_STATE_PERSIST_ENABLED")
