@@ -50,6 +50,9 @@ def arch_check(
         typer.echo(line, err=True)
     if not report.ok:
         raise typer.Exit(code=1)
+    if report.governed_specs == 0:
+        typer.echo("edge-honesty: ok (0 governed specs)")
+        return
     typer.echo("edge-honesty: ok")
 
 
