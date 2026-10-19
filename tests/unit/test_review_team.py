@@ -356,7 +356,9 @@ class _StubGitHubForge(GitHubForge):
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
         if args[:2] == ["pr", "view"]:
-            return GhResult(0, json.dumps({"headRefName": "feat/stub-head"}), "", argv=args)
+            return GhResult(
+                0, json.dumps({"headRefName": "feat/stub-head", "state": "OPEN"}), "", argv=args
+            )
         if args[:3] == ["api", "--paginate", "--slurp"]:
             return GhResult(0, "[[]]", "", argv=args)
         raise AssertionError(f"unexpected gh call: {args}")
@@ -829,6 +831,12 @@ class _BatchGitHubForge(GitHubForge):
         self.legacy_comment_calls: list[dict[str, object]] = []
         self.legacy_submit_calls: list[dict[str, object]] = []
         self.list_review_id_calls: list[tuple[int, int]] = []
+
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        """Answer the write barrier's state read; every other gh call stays unavailable."""
+        if args[:2] == ["pr", "view"] and args[-1] == "state":
+            return GhResult(0, json.dumps({"state": "OPEN"}), "", argv=args)
+        return super()._run(args, input_data=input_data)
 
     def pr_review_submit_batch(
         self,

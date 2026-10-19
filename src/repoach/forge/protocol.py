@@ -27,8 +27,10 @@ cheap and explicit instead of being folded into a heavier read.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
 from enum import StrEnum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypeVar, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,13 +44,20 @@ MergeRefusal = Literal[
     "pending",
     "not_approved",
     "discussions_not_resolved",
+    "requested_changes",
     "conflict",
+    "draft",
+    "blocked",
+    "behind",
     "head_moved",
     "not_open",
+    "unrecognized",
     "refused",
 ]
 WRITABLE_STATES: frozenset[str] = frozenset({"open"})
 """States a write (post, merge) may target; ``locked``/``unknown`` refuse (G7)."""
+
+_WriteMethod = TypeVar("_WriteMethod", bound=Callable[..., Any])
 CheckState = Literal["success", "failure", "pending", "missing"]
 
 
@@ -121,6 +130,46 @@ class ForgeMergeRefusedError(ForgeError):
     def pending(self) -> bool:
         """True when the refusal is a pipeline that has not succeeded yet."""
         return self.reason == "pending"
+
+
+class ForgeStateRefusedError(ForgeError):
+    """A write targeted a change that is not ``open`` (merged, closed, locked, unknown).
+
+    Attributes:
+        number: The PR / MR addressed.
+        state: The state the forge reported.
+    """
+
+    def __init__(self, message: str, *, number: int, state: str) -> None:
+        super().__init__(message)
+        self.number = number
+        self.state = state
+
+
+def write_barrier(method: _WriteMethod) -> _WriteMethod:
+    """Refuse a forge write unless the change it targets is ``open`` (G7).
+
+    Every write method of both forges (``post_comment``, ``post_review``,
+    ``reply``, ``upsert_marked_comment``, ``merge``) is decorated with
+    this one barrier: it reads :meth:`Forge.pr_state` for the method's
+    first argument (the PR / MR number) right before the write and
+    raises :class:`ForgeStateRefusedError` for any state outside
+    :data:`WRITABLE_STATES`. A failed state read propagates — no write
+    happens on an unknown state.
+    """
+
+    @functools.wraps(method)
+    def guarded(self: Any, number: int, *args: Any, **kwargs: Any) -> Any:
+        state = self.pr_state(number)
+        if state not in WRITABLE_STATES:
+            raise ForgeStateRefusedError(
+                f"refusing {method.__name__} on #{number}: state is {state!r}",
+                number=number,
+                state=state,
+            )
+        return method(self, number, *args, **kwargs)
+
+    return cast(_WriteMethod, guarded)
 
 
 class _Model(BaseModel):

@@ -13,6 +13,17 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}}"
+    },
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
       "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}, \"detailed_merge_status\": \"mergeable\"}"
     },
     {
@@ -57,6 +68,6 @@
     "message": "✓ Merged!\n",
     "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
-  "source": "synthetic: merge call: never executed against a live forge; the MR is read first and glab pins the head with --sha",
+  "source": "synthetic: merge call: never executed against a live forge; the MR is read first and glab pins the head with --sha; the write barrier reads the state first",
   "trimmed": null
 }

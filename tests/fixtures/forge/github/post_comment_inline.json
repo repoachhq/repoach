@@ -7,6 +7,20 @@
   "calls": [
     {
       "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
         "api",
         "--method",
         "POST",
@@ -48,6 +62,6 @@
     "path": "a.py",
     "thread_id": null
   },
-  "source": "synthetic: write call: never executed against a live forge",
+  "source": "synthetic: write call: never executed against a live forge; the write barrier reads the state first",
   "trimmed": null
 }

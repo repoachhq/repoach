@@ -7,6 +7,34 @@
     {
       "args": [
         "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": []}"
+    },
+    {
+      "args": [
+        "pr",
         "merge",
         "42",
         "--squash",
@@ -35,6 +63,6 @@
     "message": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n",
     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
-  "source": "synthetic: merge call: never executed against a live forge; gh pins the head with --match-head-commit",
+  "source": "synthetic: merge call: never executed against a live forge; gh pins the head with --match-head-commit; the write barrier reads the state first",
   "trimmed": null
 }

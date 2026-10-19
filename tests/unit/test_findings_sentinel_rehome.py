@@ -94,6 +94,8 @@ class _FakeGh(GitHubForge):
         self._next_id = 10_000
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["pr", "view"] and args[-1] == "state":
+            return GhResult(0, json.dumps({"state": "OPEN"}), "", argv=args)
         endpoint = next(a for a in args if a.startswith("repos/"))
         if endpoint.endswith("/replies"):
             if self._fail:

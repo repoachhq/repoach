@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,7 @@ from .protocol import (
     ForgeNotFoundError,
     ForgeUnavailableError,
     MergeMethod,
+    MergeRefusal,
     MergeResult,
     PullRequest,
     PullRequestState,
@@ -52,6 +54,7 @@ from .protocol import (
     ReviewDraft,
     diff_files,
     trusted,
+    write_barrier,
 )
 from .runner import CommandResult, spawn
 
@@ -89,6 +92,43 @@ _GH_STATE_TO_PROTOCOL: dict[str, PullRequestState] = {
     "CLOSED": "closed",
 }
 """``gh`` states; anything else maps to ``unknown`` (refuses writes)."""
+
+MERGEABILITY_FIELDS = "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+"""``gh pr view --json`` fields :meth:`GitHubForge.merge` reads before merging."""
+
+MERGE_STATE_STATUS: dict[str, MergeRefusal | None] = {
+    "CLEAN": None,
+    "HAS_HOOKS": None,
+    "UNSTABLE": None,
+    "BLOCKED": "blocked",
+    "BEHIND": "behind",
+    "DIRTY": "conflict",
+    "DRAFT": "draft",
+    "UNKNOWN": "refused",
+}
+"""Every documented ``mergeStateStatus`` → the refusal it predicts (``None`` merges).
+
+https://docs.github.com/en/graphql/reference/enums#mergestatestatus —
+``UNSTABLE`` (non-passing non-required checks) still merges; ``UNKNOWN``
+twice in a row is refused (FAILED).
+"""
+
+_WAITS_ON_CHECKS = frozenset({"BLOCKED", "BEHIND", "UNSTABLE"})
+
+
+def _rollup_pending(rollup: object) -> bool:
+    """True when a ``statusCheckRollup`` entry is still queued or running."""
+    if not isinstance(rollup, list):
+        return False
+    for entry in rollup:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "").upper()
+        context_state = str(entry.get("state") or "").upper()
+        if status in _PENDING_STATUSES or context_state in _PENDING_STATUSES:
+            return True
+    return False
+
 
 _MERGE_METHOD_FLAGS: dict[MergeMethod, str] = {
     MergeMethod.SQUASH: "--squash",
@@ -362,6 +402,7 @@ class GitHubForge:
         self._timeout = timeout_s
         self._bot_login = bot_login if bot_login is not None else get_settings().review_bot_login
         self._protection_cache: dict[str, BranchProtection] = {}
+        self.merge_status_retry_s = 2.0
 
     def available(self) -> bool:
         """True if a ``gh`` binary is reachable."""
@@ -1175,6 +1216,7 @@ class GitHubForge:
             if isinstance(r, dict)
         ]
 
+    @write_barrier
     def post_comment(
         self,
         number: int,
@@ -1197,6 +1239,7 @@ class GitHubForge:
             line=line if anchored else None,
         )
 
+    @write_barrier
     def post_review(self, number: int, review: ReviewDraft) -> Review:
         """Post a review: batched with its inline comments, or a bare verdict.
 
@@ -1243,6 +1286,7 @@ class GitHubForge:
             comments=posted,
         )
 
+    @write_barrier
     def reply(self, number: int, comment_id: int, body: str) -> Comment:
         """Reply in the inline thread rooted at ``comment_id``."""
         res = self.reply_to_review_comment(number, comment_id=comment_id, body=body)
@@ -1266,6 +1310,7 @@ class GitHubForge:
             raise ForgeError(error)
         return comment_from_github(found) if found is not None else None
 
+    @write_barrier
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
         """Create or update the trusted issue comment carrying ``marker``.
 
@@ -1443,6 +1488,64 @@ class GitHubForge:
             raise ForgeError(res.stderr[:200])
         return res.stdout
 
+    def mergeability(self, number: int) -> dict[str, object]:
+        """Read the PR's merge facts; re-read once when GitHub still says ``UNKNOWN``.
+
+        GitHub computes ``mergeStateStatus`` lazily: the first read after a
+        push can be ``UNKNOWN``. One re-read after
+        ``merge_status_retry_s`` seconds; a second ``UNKNOWN`` stays
+        ``UNKNOWN`` and the merge is refused.
+        """
+        argv = ["pr", "view", str(number), "--json", MERGEABILITY_FIELDS]
+        for attempt in range(2):
+            res = self._run(argv)
+            if not res.ok:
+                raise_for_gh(res, number=number)
+            try:
+                view = json.loads(res.stdout)
+            except json.JSONDecodeError as exc:
+                raise ForgeError(f"gh pr view returned non-JSON: {str(exc)[:160]}") from exc
+            if not isinstance(view, dict):
+                raise ForgeError("gh pr view returned a non-object payload")
+            if str(view.get("mergeStateStatus") or "").upper() != "UNKNOWN" or attempt == 1:
+                return view
+            time.sleep(self.merge_status_retry_s)
+        return view
+
+    @staticmethod
+    def merge_refusal(
+        view: dict[str, object], head_sha: str | None
+    ) -> tuple[MergeRefusal, str] | None:
+        """Name why GitHub would refuse to merge now, from ``gh pr view`` facts.
+
+        Order: state, a head that moved off ``head_sha``, draft, conflict,
+        then ``mergeStateStatus`` through :data:`MERGE_STATE_STATUS` —
+        ``BLOCKED`` / ``BEHIND`` / ``UNSTABLE`` count as ``pending`` while
+        a check in ``statusCheckRollup`` is still running. ``None`` when
+        GitHub reports the PR mergeable.
+        """
+        state = _GH_STATE_TO_PROTOCOL.get(str(view.get("state") or "").upper(), "unknown")
+        if state != "open":
+            return "not_open", f"pull request state is {view.get('state')!r}"
+        current = str(view.get("headRefOid") or "")
+        if head_sha and current != head_sha:
+            return "head_moved", f"head moved: expected {head_sha[:12]}, now {current[:12]}"
+        merge_state = str(view.get("mergeStateStatus") or "").upper()
+        if view.get("isDraft") or merge_state == "DRAFT":
+            return "draft", "pull request is a draft"
+        if merge_state == "DIRTY" or str(view.get("mergeable") or "").upper() == "CONFLICTING":
+            return "conflict", f"mergeStateStatus={merge_state}"
+        if merge_state not in MERGE_STATE_STATUS:
+            return "unrecognized", f"mergeStateStatus={merge_state!r} is not a documented value"
+        rollup = view.get("statusCheckRollup")
+        if merge_state in _WAITS_ON_CHECKS and _rollup_pending(rollup):
+            return "pending", f"mergeStateStatus={merge_state} with checks still running"
+        predicted = MERGE_STATE_STATUS[merge_state]
+        if predicted is not None:
+            return predicted, f"mergeStateStatus={merge_state}"
+        return None
+
+    @write_barrier
     def merge(
         self,
         number: int,
@@ -1451,14 +1554,20 @@ class GitHubForge:
         delete_branch: bool,
         head_sha: str | None = None,
     ) -> MergeResult:
-        """Run ``gh pr merge --<method> [--match-head-commit <sha>] [--delete-branch]``.
+        """Merge after reading GitHub's merge facts, pinned to the head.
 
-        ``head_sha`` pins the merge: GitHub refuses it when the head moved
-        after the gate decided.
+        :meth:`mergeability` is read first and :meth:`merge_refusal`
+        decides; only then ``gh pr merge --<method> [--match-head-commit
+        <sha>] [--delete-branch]`` runs, so GitHub itself also refuses a
+        head that moved in between.
 
         Raises:
-            ForgeMergeRefusedError: ``gh`` refused; carries its output tail.
+            ForgeMergeRefusedError: GitHub would refuse or refused; its
+                ``reason`` comes from the read facts, else ``refused``.
         """
+        refusal = self.merge_refusal(self.mergeability(number), head_sha)
+        if refusal is not None:
+            raise ForgeMergeRefusedError(refusal[1], reason=refusal[0])
         args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[MergeMethod(method)]]
         if head_sha:
             args += ["--match-head-commit", head_sha]

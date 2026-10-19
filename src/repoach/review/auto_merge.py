@@ -60,6 +60,7 @@ from ..forge import (
     Forge,
     ForgeError,
     ForgeMergeRefusedError,
+    ForgeStateRefusedError,
     MergeMethod,
     PullRequest,
     load_forge_config,
@@ -101,6 +102,11 @@ OUTCOME_SKIP_NOT_APPROVED: str = "SKIP_NOT_APPROVED"
 OUTCOME_SKIP_DISCUSSIONS: str = "SKIP_DISCUSSIONS_UNRESOLVED"
 OUTCOME_SKIP_CONFLICT: str = "SKIP_CONFLICT"
 OUTCOME_SKIP_STATE: str = "SKIP_STATE"
+OUTCOME_SKIP_CHANGES_REQUESTED: str = "SKIP_CHANGES_REQUESTED"
+OUTCOME_SKIP_DRAFT: str = "SKIP_DRAFT"
+OUTCOME_SKIP_BLOCKED: str = "SKIP_BLOCKED"
+OUTCOME_SKIP_BEHIND: str = "SKIP_BEHIND"
+OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED: str = "SKIP_MERGE_STATUS_UNRECOGNIZED"
 OUTCOME_SKIP_STALE_HEAD: str = "SKIP_STALE_HEAD"
 OUTCOME_FAILED: str = "FAILED"
 
@@ -118,6 +124,11 @@ NON_FATAL_SKIP_OUTCOMES: frozenset[str] = frozenset(
         OUTCOME_SKIP_DISCUSSIONS,
         OUTCOME_SKIP_CONFLICT,
         OUTCOME_SKIP_STATE,
+        OUTCOME_SKIP_CHANGES_REQUESTED,
+        OUTCOME_SKIP_DRAFT,
+        OUTCOME_SKIP_BLOCKED,
+        OUTCOME_SKIP_BEHIND,
+        OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
         OUTCOME_SKIP_STALE_HEAD,
     }
 )
@@ -129,6 +140,11 @@ _REFUSAL_OUTCOMES: dict[str, str] = {
     "conflict": OUTCOME_SKIP_CONFLICT,
     "head_moved": OUTCOME_SKIP_STALE_HEAD,
     "not_open": OUTCOME_SKIP_STATE,
+    "requested_changes": OUTCOME_SKIP_CHANGES_REQUESTED,
+    "draft": OUTCOME_SKIP_DRAFT,
+    "blocked": OUTCOME_SKIP_BLOCKED,
+    "behind": OUTCOME_SKIP_BEHIND,
+    "unrecognized": OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
 }
 """Forge merge refusals read from facts → non-fatal outcomes; ``refused`` stays FAILED."""
 
@@ -373,6 +389,8 @@ def merge_change(
         )
     except ForgeMergeRefusedError as exc:
         return False, None, exc.message[-500:], exc.reason
+    except ForgeStateRefusedError as exc:
+        return False, None, exc.message[-500:], "not_open"
     except ForgeError as exc:
         return False, None, exc.message[-500:], "refused"
     return True, result.sha, result.message[-500:], ""

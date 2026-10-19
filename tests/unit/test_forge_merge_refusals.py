@@ -18,16 +18,24 @@ from pathlib import Path
 
 import pytest
 
-from repoach.forge import ForgeMergeRefusedError, MergeMethod
-from repoach.forge.github import pull_request_from_github
-from repoach.forge.gitlab import GitLabForge, pull_request_from_gitlab
+from repoach.forge import ForgeMergeRefusedError, ForgeStateRefusedError, MergeMethod, ReviewDraft
+from repoach.forge.github import (
+    MERGE_STATE_STATUS,
+    MERGEABILITY_FIELDS,
+    pull_request_from_github,
+)
+from repoach.forge.gitlab import DETAILED_MERGE_STATUS, GitLabForge, pull_request_from_gitlab
 from repoach.forge.protocol import WRITABLE_STATES
 from repoach.forge.runner import CommandResult
 from repoach.review.auto_merge import (
     _REFUSAL_OUTCOMES,
+    OUTCOME_SKIP_BLOCKED,
+    OUTCOME_SKIP_CHANGES_REQUESTED,
     OUTCOME_SKIP_CI_PENDING,
     OUTCOME_SKIP_CONFLICT,
     OUTCOME_SKIP_DISCUSSIONS,
+    OUTCOME_SKIP_DRAFT,
+    OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
     OUTCOME_SKIP_NOT_APPROVED,
     OUTCOME_SKIP_STALE_HEAD,
     OUTCOME_SKIP_STATE,
@@ -92,7 +100,6 @@ def _gitlab(tmp_path: Path, mr: dict[str, object], merge_result: CommandResult |
         ),
         ({"detailed_merge_status": "conflict"}, "conflict", OUTCOME_SKIP_CONFLICT),
         ({"sha": "b" * 40}, "head_moved", OUTCOME_SKIP_STALE_HEAD),
-        ({"state": "locked"}, "not_open", OUTCOME_SKIP_STATE),
     ],
 )
 def test_gitlab_refusal_named_from_mr_fields_without_merging(
@@ -131,9 +138,47 @@ def test_gitlab_409_is_head_moved(tmp_path: Path) -> None:
     assert info.value.reason == "head_moved"
 
 
+def _gh_view(**over: object) -> dict[str, object]:
+    view: dict[str, object] = {
+        "state": "OPEN",
+        "isDraft": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "headRefOid": SHA,
+        "statusCheckRollup": [],
+    }
+    view.update(over)
+    return view
+
+
+def _github(views: list[dict[str, object]]):
+    """A scripted GitHubForge serving the barrier, then ``views`` in order, then the merge."""
+    queue = list(views)
+
+    def run(args: list[str]) -> CommandResult:
+        if args[:2] == ["pr", "view"] and args[-1] == "state":
+            return gh_ok(json.dumps({"state": "OPEN"}), argv=args)
+        if args[:2] == ["pr", "view"] and args[-1] == MERGEABILITY_FIELDS:
+            return gh_ok(json.dumps(queue.pop(0)), argv=args)
+        assert args[:2] == ["pr", "merge"], args
+        return gh_ok(f"Merged ({SHA})\n", argv=args)
+
+    forge = scripted_github(run=run)
+    forge.merge_status_retry_s = 0.0
+    return forge
+
+
+def _merge_calls(forge) -> list[list[str]]:
+    return [c.args[0] for c in forge._run.call_args_list if c.args[0][:2] == ["pr", "merge"]]
+
+
 def test_github_merge_pins_head_with_match_head_commit() -> None:
-    forge = scripted_github(run=lambda a: gh_ok(f"Merged ({SHA})\n", argv=a))
+    forge = _github([_gh_view()])
     forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert [c.args[0][:2] + c.args[0][-1:] for c in forge._run.call_args_list[:2]] == [
+        ["pr", "view", "state"],
+        ["pr", "view", MERGEABILITY_FIELDS],
+    ]
     assert forge._run.call_args.args[0] == [
         "pr",
         "merge",
@@ -176,4 +221,181 @@ def test_auto_merge_refuses_a_locked_mr_before_any_write(tmp_path: Path) -> None
         delete_branch=False,
     )
     assert result.outcome == OUTCOME_SKIP_STATE
+    assert all(c[:2] != ["mr", "merge"] for c in calls)
+
+
+RUNNING = [{"name": "Test suite (Python 3.11)", "status": "IN_PROGRESS", "conclusion": None}]
+
+
+@pytest.mark.parametrize(
+    ("over", "reason"),
+    [
+        ({"mergeStateStatus": "BLOCKED", "statusCheckRollup": RUNNING}, "pending"),
+        ({"mergeStateStatus": "BEHIND", "statusCheckRollup": RUNNING}, "pending"),
+        ({"mergeStateStatus": "UNSTABLE", "statusCheckRollup": RUNNING}, "pending"),
+        ({"mergeStateStatus": "BLOCKED"}, "blocked"),
+        ({"mergeStateStatus": "BEHIND"}, "behind"),
+        ({"mergeStateStatus": "DIRTY"}, "conflict"),
+        ({"mergeable": "CONFLICTING"}, "conflict"),
+        ({"mergeStateStatus": "DRAFT"}, "draft"),
+        ({"isDraft": True}, "draft"),
+        ({"headRefOid": "b" * 40}, "head_moved"),
+        ({"mergeStateStatus": "SOMETHING_NEW"}, "unrecognized"),
+    ],
+)
+def test_github_refusal_named_from_view_without_merging(
+    over: dict[str, object], reason: str
+) -> None:
+    forge = _github([_gh_view(**over)])
+    with pytest.raises(ForgeMergeRefusedError) as info:
+        forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert info.value.reason == reason
+    assert _merge_calls(forge) == []
+    assert reason in _REFUSAL_OUTCOMES
+
+
+def test_github_unstable_without_pending_checks_merges() -> None:
+    forge = _github([_gh_view(mergeStateStatus="UNSTABLE")])
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert len(_merge_calls(forge)) == 1
+
+
+def test_github_unknown_is_reread_once_then_merges_when_clean() -> None:
+    forge = _github([_gh_view(mergeStateStatus="UNKNOWN"), _gh_view()])
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert len(_merge_calls(forge)) == 1
+
+
+def test_github_unknown_twice_is_failed() -> None:
+    forge = _github([_gh_view(mergeStateStatus="UNKNOWN"), _gh_view(mergeStateStatus="UNKNOWN")])
+    ok, _sha, _log, refusal = merge_change(
+        forge, 42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA
+    )
+    assert (ok, refusal) == (False, "refused")
+    assert refusal not in _REFUSAL_OUTCOMES
+    assert _merge_calls(forge) == []
+
+
+def test_github_merge_state_table_covers_every_documented_value() -> None:
+    """https://docs.github.com/en/graphql/reference/enums#mergestatestatus"""
+    documented = {
+        "BEHIND",
+        "BLOCKED",
+        "CLEAN",
+        "DIRTY",
+        "DRAFT",
+        "HAS_HOOKS",
+        "UNKNOWN",
+        "UNSTABLE",
+    }
+    assert documented <= set(MERGE_STATE_STATUS)
+
+
+GITLAB_DOCUMENTED_DETAILED_MERGE_STATUS = {
+    "approvals_syncing",
+    "checking",
+    "ci_must_pass",
+    "ci_still_running",
+    "commits_status",
+    "conflict",
+    "discussions_not_resolved",
+    "draft_status",
+    "jira_association_missing",
+    "mergeable",
+    "merge_request_blocked",
+    "merge_time",
+    "need_rebase",
+    "not_approved",
+    "not_open",
+    "preparing",
+    "requested_changes",
+    "security_policy_pipeline_check",
+    "security_policy_violations",
+    "status_checks_must_pass",
+    "unchecked",
+    "locked_paths",
+    "locked_lfs_files",
+    "title_regex",
+}
+"""The ``detailed_merge_status`` values of https://docs.gitlab.com/ee/api/merge_requests.html#merge-status.
+
+Read 2026-10-19 from gitlab-org/gitlab ``master:doc/api/merge_requests.md``
+("Merge status" section). ``blocked_status``, ``policies_denied`` and
+``external_status_checks`` are older values the table also maps.
+"""
+
+
+def test_gitlab_table_covers_every_documented_value() -> None:
+    assert set(DETAILED_MERGE_STATUS) >= GITLAB_DOCUMENTED_DETAILED_MERGE_STATUS
+    assert {"blocked_status", "policies_denied"} <= set(DETAILED_MERGE_STATUS)
+    assert [k for k, v in DETAILED_MERGE_STATUS.items() if v is None] == ["mergeable"]
+    for reason in DETAILED_MERGE_STATUS.values():
+        assert reason is None or reason in _REFUSAL_OUTCOMES
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome"),
+    [
+        ("unchecked", OUTCOME_SKIP_CI_PENDING),
+        ("preparing", OUTCOME_SKIP_CI_PENDING),
+        ("approvals_syncing", OUTCOME_SKIP_CI_PENDING),
+        ("checking", OUTCOME_SKIP_CI_PENDING),
+        ("draft_status", OUTCOME_SKIP_DRAFT),
+        ("requested_changes", OUTCOME_SKIP_CHANGES_REQUESTED),
+        ("blocked_status", OUTCOME_SKIP_BLOCKED),
+        ("policies_denied", OUTCOME_SKIP_BLOCKED),
+        ("jira_association_missing", OUTCOME_SKIP_BLOCKED),
+        ("a_value_gitlab_adds_later", OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED),
+        ("", OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED),
+    ],
+)
+def test_gitlab_non_mergeable_status_never_reaches_the_merge_call(
+    tmp_path: Path, status: str, outcome: str
+) -> None:
+    forge, calls = _gitlab(tmp_path, _mr(detailed_merge_status=status), merge_result=None)
+    ok, _sha, _log, refusal = merge_change(
+        forge, 7, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA
+    )
+    assert not ok and _REFUSAL_OUTCOMES[refusal] == outcome
+    assert all(c[:2] != ["mr", "merge"] for c in calls)
+
+
+WRITE_CALLS = {
+    "post_comment": lambda f, n: f.post_comment(n, "hello"),
+    "post_review": lambda f, n: f.post_review(n, ReviewDraft(verdict="COMMENT", body="b")),
+    "reply": lambda f, n: f.reply(n, 1, "evidence"),
+    "upsert_marked_comment": lambda f, n: f.upsert_marked_comment(n, "<!-- m -->", "b"),
+    "merge": lambda f, n: f.merge(n, method=MergeMethod.MERGE, delete_branch=False),
+}
+
+
+@pytest.mark.parametrize("write", sorted(WRITE_CALLS))
+@pytest.mark.parametrize("raw_state", ["merged", "closed", "locked", "reopened_somehow"])
+def test_gitlab_write_barrier_refuses_every_write(
+    tmp_path: Path, write: str, raw_state: str
+) -> None:
+    forge, calls = _gitlab(tmp_path, _mr(state=raw_state), merge_result=None)
+    with pytest.raises(ForgeStateRefusedError) as info:
+        WRITE_CALLS[write](forge, 7)
+    assert info.value.state == pull_request_from_gitlab({"iid": 7, "state": raw_state}).state
+    assert calls == [["api", "projects/:id/merge_requests/7"]]
+
+
+@pytest.mark.parametrize("write", sorted(WRITE_CALLS))
+@pytest.mark.parametrize("raw_state", ["MERGED", "CLOSED", "SOMETHING_NEW"])
+def test_github_write_barrier_refuses_every_write(write: str, raw_state: str) -> None:
+    forge = scripted_github(run=lambda a: gh_ok(json.dumps({"state": raw_state}), argv=a))
+    with pytest.raises(ForgeStateRefusedError):
+        WRITE_CALLS[write](forge, 42)
+    assert [c.args[0] for c in forge._run.call_args_list] == [
+        ["pr", "view", "42", "--json", "state"]
+    ]
+
+
+def test_gitlab_locked_merge_maps_to_skip_state(tmp_path: Path) -> None:
+    forge, calls = _gitlab(tmp_path, _mr(state="locked"), merge_result=None)
+    ok, _sha, _log, refusal = merge_change(
+        forge, 7, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA
+    )
+    assert not ok and _REFUSAL_OUTCOMES[refusal] == OUTCOME_SKIP_STATE
     assert all(c[:2] != ["mr", "merge"] for c in calls)

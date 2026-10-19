@@ -7,6 +7,20 @@
   "calls": [
     {
       "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
         "api",
         "--method",
         "POST",
@@ -39,6 +53,6 @@
   "method": "post_comment",
   "raises": "ForgeError",
   "result": null,
-  "source": "synthetic: write call: never executed against a live forge; the line is outside the diff",
+  "source": "synthetic: write call: never executed against a live forge; the line is outside the diff; the write barrier reads the state first",
   "trimmed": null
 }

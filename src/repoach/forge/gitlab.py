@@ -58,6 +58,7 @@ from .protocol import (
     ReviewDraft,
     diff_files,
     trusted,
+    write_barrier,
 )
 from .runner import CommandResult, spawn
 
@@ -99,21 +100,46 @@ _JOB_BUCKETS: dict[str, str] = {
     "manual": "skipping",
 }
 
-_DETAILED_STATUS_REFUSALS: dict[str, MergeRefusal] = {
+DOC_MERGE_STATUS_URL = "https://docs.gitlab.com/ee/api/merge_requests.html#merge-status"
+
+DETAILED_MERGE_STATUS: dict[str, MergeRefusal | None] = {
+    "mergeable": None,
+    "unchecked": "pending",
+    "checking": "pending",
+    "preparing": "pending",
+    "approvals_syncing": "pending",
     "ci_must_pass": "pending",
     "ci_still_running": "pending",
-    "checking": "pending",
+    "status_checks_must_pass": "pending",
+    "external_status_checks": "pending",
+    "security_policy_pipeline_check": "pending",
+    "merge_time": "pending",
     "not_approved": "not_approved",
     "discussions_not_resolved": "discussions_not_resolved",
+    "requested_changes": "requested_changes",
     "conflict": "conflict",
     "need_rebase": "conflict",
+    "draft_status": "draft",
     "not_open": "not_open",
+    "blocked_status": "blocked",
+    "merge_request_blocked": "blocked",
+    "policies_denied": "blocked",
+    "security_policy_violations": "blocked",
+    "jira_association_missing": "blocked",
+    "commits_status": "blocked",
+    "locked_paths": "blocked",
+    "locked_lfs_files": "blocked",
+    "title_regex": "blocked",
 }
-"""``detailed_merge_status`` values that name why GitLab would refuse a merge.
+"""Every documented ``detailed_merge_status`` → the refusal it predicts (``None`` merges).
 
-https://docs.gitlab.com/ee/api/merge_requests.html#merge-status — read
-before merging, because the accept endpoint's refusal is a bare
-``405 Method Not Allowed`` that names no reason.
+Source: :data:`DOC_MERGE_STATUS_URL`. Read before merging, because the
+accept endpoint's refusal is a bare ``405 Method Not Allowed`` that
+names no reason. Transient states (``unchecked``, ``checking``,
+``preparing``, ``approvals_syncing``, pipelines and status checks still
+running, ``merge_time``) are ``pending`` — recheck later. Only
+``mergeable`` reaches the merge call; a value missing from this table
+is ``unrecognized``, a named skip, never a blind merge attempt.
 """
 
 _HEAD_MOVED_STATUS = "409"
@@ -541,6 +567,7 @@ class GitLabForge:
             comment = comment.model_copy(update={"path": path, "line": line})
         return comment
 
+    @write_barrier
     def post_comment(
         self,
         number: int,
@@ -562,6 +589,7 @@ class GitLabForge:
             commit_sha=commit_sha,
         )
 
+    @write_barrier
     def post_review(self, number: int, review: ReviewDraft) -> Review:
         """Post one discussion per inline comment, then one verdict note.
 
@@ -607,6 +635,7 @@ class GitLabForge:
             comments=posted,
         )
 
+    @write_barrier
     def reply(self, number: int, comment_id: int, body: str) -> Comment:
         """Reply in the discussion holding note ``comment_id``.
 
@@ -642,6 +671,7 @@ class GitLabForge:
                 return comment
         return None
 
+    @write_barrier
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
         """Update the trusted marker note in place, or post it."""
         final_body = body if marker in body else f"{marker}\n{body}"
@@ -740,9 +770,10 @@ class GitLabForge:
         """Name why GitLab would refuse to merge ``mr`` now, from its own fields.
 
         Order: a state other than ``opened``, a head that moved off
-        ``head_sha``, then ``detailed_merge_status``, then a head
-        pipeline still running. ``None`` when no read fact predicts a
-        refusal — the merge is then attempted.
+        ``head_sha``, then ``detailed_merge_status`` through
+        :data:`DETAILED_MERGE_STATUS`, then a head pipeline still
+        running. ``None`` only for ``mergeable`` with no running
+        pipeline — the merge is then attempted.
         """
         state = _STATE_TO_PROTOCOL.get(str(mr.get("state") or ""), "unknown")
         if state != "open":
@@ -751,14 +782,18 @@ class GitLabForge:
         if head_sha and current != head_sha:
             return "head_moved", f"head moved: expected {head_sha[:12]}, now {current[:12]}"
         detailed = str(mr.get("detailed_merge_status") or "")
-        if detailed in _DETAILED_STATUS_REFUSALS:
-            return _DETAILED_STATUS_REFUSALS[detailed], f"detailed_merge_status={detailed}"
+        if detailed not in DETAILED_MERGE_STATUS:
+            return "unrecognized", f"detailed_merge_status={detailed!r} is not a documented value"
+        predicted = DETAILED_MERGE_STATUS[detailed]
+        if predicted is not None:
+            return predicted, f"detailed_merge_status={detailed}"
         pipeline = mr.get("head_pipeline")
         status = str(pipeline.get("status") or "") if isinstance(pipeline, dict) else ""
         if status in _PIPELINE_PENDING:
             return "pending", f"head_pipeline.status={status}"
         return None
 
+    @write_barrier
     def merge(
         self,
         number: int,

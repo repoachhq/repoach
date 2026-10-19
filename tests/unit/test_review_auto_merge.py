@@ -103,9 +103,16 @@ def _gh(
                 returncode=0,
                 stdout=json.dumps(
                     {
+                        **json.loads(
+                            pr_view_stdout(
+                                base_ref=base, head_ref=head, state=state, head_sha=_HEAD
+                            )
+                        ),
+                        "mergeable": "MERGEABLE",
+                        "mergeStateStatus": "CLEAN",
                         "statusCheckRollup": _all_green_rollup()
                         if checks_ok
-                        else _one_failed_rollup()
+                        else _one_failed_rollup(),
                     }
                 ),
                 stderr="",

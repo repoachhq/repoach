@@ -14,6 +14,7 @@ directly.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,8 @@ class _StubGitHubForge(GitHubForge):
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
         if args[:3] == ["api", "--paginate", "--slurp"]:
             return GhResult(0, "[[]]", "", argv=args)
+        if args[:2] == ["pr", "view"] and args[-1] == "state":
+            return GhResult(0, json.dumps({"state": "OPEN"}), "", argv=args)
         return GhResult(1, "", "not stubbed", argv=args)
 
     def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
