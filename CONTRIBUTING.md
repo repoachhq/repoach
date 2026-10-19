@@ -15,7 +15,9 @@ goes through the same pipeline: a four-reviewer bot team (Architect /
 Sentinel / Tester / Scribe), a findings ledger, and an
 **evidence-first merge gate** that re-verifies every fact (CI green,
 zero surviving blocking findings, spec coverage) at the exact head it
-is about to merge.
+is about to merge. The pipeline triggers automatically only for actors
+on the repository's allowlist (`vars.REPOACH_ALLOWED_ACTORS`); see the
+note on forks below for everyone else.
 
 The best ways to contribute, in increasing order of ceremony:
 
@@ -75,8 +77,8 @@ The gates that will actually bite you:
   specs, tests, commit messages.
 - **No secrets in code** — everything via `.env`; env vars use the
   `REPOACH_*` prefix. Never put a real key in a test fixture.
-- `pytest tests/unit` must be green; integration tests live under
-  `tests/integration/`.
+- `pytest tests/unit` and `pytest tests/integration` must both be
+  green — CI runs the two suites on Python 3.11 and 3.13.
 
 ## Specs
 

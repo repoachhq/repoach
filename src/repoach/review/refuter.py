@@ -31,6 +31,7 @@ from pathlib import Path
 
 from ..agent_engine.agent_loop import AgentLoop
 from ..core.logging import get_logger
+from ..core.resources import prompts_dir
 from ..llm.capability import CapabilityTier
 from .findings import (
     JUDGED_CLAIM_TYPES,
@@ -43,7 +44,7 @@ from .hallucination_guard import make_repo_file_reader
 
 _log = get_logger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
+_PROMPTS_DIR = prompts_dir()
 _PERSONA = "refuter_0.2.1.md"
 
 _VERDICT_LINE = re.compile(r"^VERDICT:\s*(\{.*\})\s*$")

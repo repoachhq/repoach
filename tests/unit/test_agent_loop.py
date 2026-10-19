@@ -64,13 +64,13 @@ def test_base_url_never_falls_back_to_the_retired_8082_default(mock_settings) ->
 
     Pre-fix: ``(settings.llm_proxy_base_url or "http://localhost:8082")``
     turned any falsy value into the hardcoded default. Post-fix there is
-    no ``or`` fallback left at the call site, so a falsy value passes
-    through unchanged instead of silently becoming ``:8082``.
+    no ``or`` fallback left at the call site; since SP-UNIVERSAL-INSTALL
+    the gateway URL is checked where the gateway client is built, so a
+    falsy value refuses loudly instead of silently becoming ``:8082``.
     """
     mock_settings.llm_proxy_base_url = ""
-    loop = AgentLoop(capability=CapabilityTier.SONNET)
-    assert "8082" not in loop._client._base_url
-    assert loop._client._base_url == ""
+    with pytest.raises(ValueError, match="llm_proxy_base_url unresolved"):
+        AgentLoop(capability=CapabilityTier.SONNET)
 
 
 class TestValidateToolArgs:
