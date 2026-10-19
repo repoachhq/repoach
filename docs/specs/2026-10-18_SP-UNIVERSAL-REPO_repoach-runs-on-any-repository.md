@@ -5,7 +5,7 @@ version: 0.2
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-19
+updated: 2026-10-20
 
 owns:
   code: []
@@ -179,7 +179,7 @@ What changes, in order:
 |---|---|---|---|---|
 | M0 | Plan W1: GitLab dry-run on Yoob MR !283 through a read-only `gh` shim and a `:8085` gateway instance, scratch only, zero repoach refactor | 1 d | — | from `yoob_2`: `REPOACH_DB_PATH=<w1>/yoob-review.db REPOACH_LLM_PROXY_BASE_URL=http://127.0.0.1:8085 repoach review pr 283 --dry-run` → rc 0 or 2, JSON with `len(reviews)==4`, `posted_comments==0`; `glab api projects/67827362/merge_requests/283/notes \| jq length` unchanged |
 | M1 | `SP-UNIVERSAL-INSTALL` | 1–2 d | M0 | in a fresh venv outside any project: `uv tool install ./dist/repoach-*.whl && repoach --version` → `repoach 0.2.0`, rc 0, no env set |
-| M2 | `SP-UNIVERSAL-PROJECT-CONFIG` | 2–3 d | M1 | in a throwaway clone of `charmbracelet/gum`: `repoach init && repoach init` → second run prints `init: repoach.toml unchanged`; `git status --short` lists exactly `repoach.toml` and `docs/specs/_TEMPLATE.md`; `git config core.hooksPath` byte-identical before/after |
+| M2 | `SP-UNIVERSAL-PROJECT-CONFIG` | 2–3 d | M1 | in a throwaway clone of `charmbracelet/gum`: `repoach init && repoach init` → second run prints `init: repoach.toml unchanged`; `git status --short` lists exactly `repoach.toml`, `docs/specs/_TEMPLATE.md` and the `.repoach.env` line appended to `.gitignore` (a repository with no `.gitignore` shows the two files only); `git config core.hooksPath` byte-identical before/after |
 | M3 | `SP-UNIVERSAL-FORGE` | 3–4 d | M2 | `pytest -q tests/unit/test_forge_conformance.py` → both parametrised forges green; from `yoob_2`: `repoach review pr 283 --dry-run` with no shim on PATH → same JSON shape as M0 |
 | M4 | `SP-UNIVERSAL-PROVIDERS` | 2 d | M1 | `REPOACH_PROVIDER=anthropic REPOACH_ANTHROPIC_API_KEY=… repoach review pr <n> --dry-run` with no gateway process → rc 0; `unset`-everything → rc 2 and `no provider configured` on stderr; `repoach usage` prints one row per review |
 | M5 | `SP-UNIVERSAL-GATES` | 2 d | M2 | `pytest -q tests/unit/test_gates_language.py` → a `missing_docstring` finding on `src/x.ts` ends `not_applicable`; a `lint` command exiting 1 makes the Coder gate red with the command's tail |
@@ -207,8 +207,8 @@ hand-implement or decompose with `SP-DEVAGENT-DECOMPOSE` before
 
 ## Acceptance Criteria
 - [ ] AC1: `python -m build --wheel && uv tool install dist/repoach-*.whl && cd /tmp && repoach --version` → `repoach <version>`, rc 0, with `env -i HOME=$HOME PATH=$PATH`.
-- [ ] AC2: in a fresh clone of `charmbracelet/gum`: `repoach init --dry-run` → lists the two files it would write, `git status --short` empty; `repoach init` → the two files exist; `repoach init` again → `init: repoach.toml unchanged`, rc 0.
-- [ ] AC3: same clone: `REPOACH_PROVIDER=anthropic REPOACH_ANTHROPIC_API_KEY=$KEY repoach review pr 1171 --dry-run` → rc 0 or 2, JSON with `len(reviews)==4`, `posted_comments==0`, `posted_reviews==0`, and every Python verifier row carries `method == "not_applicable"`; wall clock from AC1 to here ≤ 5 min; `git status --short` shows only the two `init` files.
+- [ ] AC2: in a fresh clone of `charmbracelet/gum`: `repoach init --dry-run` → lists the two files it would write and the `.gitignore` line it would append, `git status --short` empty; `repoach init` → the two files exist and `.gitignore` lists `.repoach.env`; `repoach init` again → `init: repoach.toml unchanged`, rc 0.
+- [ ] AC3: same clone: `REPOACH_PROVIDER=anthropic REPOACH_ANTHROPIC_API_KEY=$KEY repoach review pr 1171 --dry-run` → rc 0 or 2, JSON with `len(reviews)==4`, `posted_comments==0`, `posted_reviews==0`, and every Python verifier row carries `method == "not_applicable"`; wall clock from AC1 to here ≤ 5 min; `git status --short` shows only what `init` wrote (the two files and the `.gitignore` line).
 - [ ] AC4: from `yoob_2`: `repoach review pr 283 --dry-run` with `forge = "gitlab"` in `repoach.toml` → same JSON shape as AC3; `glab api projects/67827362/merge_requests/283/notes | jq length` unchanged before and after.
 - [ ] AC5: in repoach's own checkout with its committed `repoach.toml`: `pytest -q tests/unit` green and `scripts/ci_local.sh` green; `repoach review gate <open-pr>` prints the same `facts` as before the migration (recorded fixture).
 - [ ] AC6: `grep -n "five minutes" README.md` → one heading; every command under it appears verbatim in AC1–AC3.
