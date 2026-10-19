@@ -113,10 +113,14 @@ REPOACH_LLM_PROXY_BASE_URL=http://localhost:8082
 The gateway reads, lowest to highest: `.env` → `chains.env` (authoritative
 for the `MODEL_*` chains) → real environment variables. The CLI and the
 agent side read only `~/.config/repoach/env` → `<project>/.repoach.env` →
-real environment variables, never `.env`; in a repoach checkout,
-`ln -s .env .repoach.env` keeps one file for both. An exported shell
-variable always wins. `repoach doctor` prints the files it read and the
-resolved ledger path.
+real environment variables, never a foreign project's `.env`. A repoach
+checkout's own `.env` and a `data/repoach.db` ledger are still honoured,
+with a deprecation notice, until `repoach migrate-config` links
+`.repoach.env` to `.env` and moves the ledger to
+`~/.local/share/repoach/<host>/<owner>/<repo>/repoach.db` (leaving a
+symlink behind); the gateway's seed DB follows the same ledger. An
+exported shell variable always wins. `repoach doctor` prints the files
+it read and the resolved ledger path.
 
 ## 5. Model routing — `chains.env`
 
