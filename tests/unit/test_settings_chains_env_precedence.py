@@ -1,11 +1,10 @@
-"""Config env-file precedence for chains.env.
+"""Config env-file precedence.
 
-The MAIN settings (``core.config``) load ``chains.env`` then ``.env`` —
-it has no ``MODEL_*`` fields, so the order is moot for the chains and
-``.env`` still wins for everything else. SP-CONFIG-ENV-ANCHOR (2026-07-13)
-anchored that pair to the repo root (``_anchored_env_files``) instead of
-baking a CWD-relative tuple into ``model_config``, so the order guarantee
-now lives in that helper rather than in a literal ``env_file=(...)``.
+The MAIN settings (``core.config``) no longer read ``chains.env`` nor the
+host repository's ``.env`` (SP-UNIVERSAL-INSTALL G5): they read
+``$XDG_CONFIG_HOME/repoach/env`` then ``<project>/.repoach.env``, the
+process environment winning over both. They have no ``MODEL_*`` fields,
+so the capability chains were never theirs to read.
 
 The PROXY settings flipped under SP-CHAINS-SINGLE-SOURCE (2026-06-21):
 ``chains.env`` is read LAST so it is AUTHORITATIVE for the four capability
@@ -18,14 +17,14 @@ from repoach.core.config import _anchored_env_files
 from repoach.llm_proxy.config import settings as proxy_settings_module
 
 
-def test_core_settings_env_file_tuple_has_chains_env_first() -> None:
-    """``chains.env`` must precede ``.env`` so .env wins on overlap."""
-    chains_env, dotenv = _anchored_env_files()
-    assert chains_env.name == "chains.env"
-    assert dotenv.name == ".env"
-    assert chains_env.is_absolute(), "anchored paths must be absolute (SP-CONFIG-ENV-ANCHOR)"
-    assert dotenv.is_absolute(), "anchored paths must be absolute (SP-CONFIG-ENV-ANCHOR)"
-    assert chains_env.parent == dotenv.parent, "both files anchor to the same root"
+def test_core_settings_env_files_are_user_then_project() -> None:
+    """User-level ``env`` precedes the project's ``.repoach.env`` so the project wins."""
+    user_env, project_env = _anchored_env_files()
+    assert user_env.name == "env"
+    assert user_env.parent.name == "repoach"
+    assert project_env.name == ".repoach.env"
+    assert user_env.is_absolute(), "anchored paths must be absolute"
+    assert project_env.is_absolute(), "anchored paths must be absolute"
 
 
 def test_proxy_env_files_reads_chains_env_after_dotenv() -> None:

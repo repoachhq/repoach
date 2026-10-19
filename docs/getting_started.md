@@ -104,14 +104,30 @@ Useful knobs already in `.env.example` (defaults shown):
 ```dotenv
 REPOACH_ENV=dev                    # prod additionally REQUIRES the auth token at boot
 REPOACH_LOG_LEVEL=INFO
-REPOACH_DB_PATH=./data/repoach.db   # SQLite; auto-created on first use
+# REPOACH_DB_PATH=                 # default ~/.local/share/repoach/<host>/<owner>/<repo>/repoach.db
 REPOACH_PROXY_HOST=127.0.0.1       # non-loopback binds refuse to boot without a token
 REPOACH_PROXY_PORT=8082
 REPOACH_LLM_PROXY_BASE_URL=http://localhost:8082
 ```
 
-Precedence, lowest to highest: `chains.env` → `.env` → real
-environment variables. An exported shell variable always wins.
+The gateway reads, lowest to highest: `.env` → `chains.env` (authoritative
+for the `MODEL_*` chains) → real environment variables. The CLI and the
+agent side read only `~/.config/repoach/env` → `<project>/.repoach.env` →
+real environment variables, never a foreign project's `.env`. The project
+file is refused when git tracks it and may only set layout and convention
+keys (branch names, memory kill-switches, CI budgets); the gateway URL,
+tokens, keys, paths and commands belong in `~/.config/repoach/env` or the
+environment, so a cloned repository can never redirect your token. A
+repoach checkout's own untracked `.env` and a `data/repoach.db` ledger are
+still honoured, with a deprecation notice, until `repoach migrate-config`
+copies the CLI's secrets and endpoints to `~/.config/repoach/env` (mode
+0600), writes the allowed keys to `.repoach.env`, and moves the ledger to
+`~/.local/share/repoach/<host>/<owner>/<repo>/repoach.db` (verified copy,
+symlink left behind). Stop the gateway first: the migration refuses while
+any process holds the ledger open. The gateway's seed DB follows the same
+ledger. An
+exported shell variable always wins. `repoach doctor` prints the files
+it read and the resolved ledger path.
 
 ## 5. Model routing — `chains.env`
 

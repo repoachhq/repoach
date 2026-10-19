@@ -392,7 +392,8 @@ class AgentLoop:
 
         Raises:
             ValueError: If ``model_chain`` is provided but empty,
-                or if ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing.
+                if ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing, or if
+                no gateway base URL is configured.
         """
         if capability is not None:
             self._capability = capability

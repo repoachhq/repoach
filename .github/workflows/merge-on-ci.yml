@@ -172,6 +172,7 @@ jobs:
           # build without a gateway URL until the release carrying the
           # build-time guard; the merge gate itself never calls it.
           REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
+          REPOACH_LOGS_DIR: ${{ github.workspace }}/logs
           # Fail fast here too: the trigger already guarantees CI
           # completed at the resolved head; a mid-flight push fails
           # fast and defers to that push's own CI-completion event.
