@@ -30,7 +30,7 @@ Agents can't approve their own work. Every finding a reviewer raises is **re-ver
 Every change is anchored to a spec whose frontmatter declares **what it owns** and **what it depends on**. From that, Repoach *derives* the system's dependency graph — and *enforces* it: an import that crosses a boundary the spec never declared fails CI (`repoach arch check`). The architecture can't silently drift from the docs.
 
 ### 3. Failover routing, with a shadow autopilot
-Repoach runs its agents through one gateway with ten provider slots — NVIDIA NIM, OpenRouter, Kimi, Groq, Cerebras, DeepSeek, OpenAI, Anthropic, any OpenAI-compatible endpoint, and the local `claude` CLI — and walks a failover chain per capability tier (`chains.env`). A chain autopilot watches each head's live health and plans rewrites of the chains, bounded by a hard cap of two mutations per cycle. It runs in **shadow mode** unless started with `--apply`: it journals what it would change and writes nothing. The deployed timer runs it in shadow.
+Repoach runs its agents through one gateway with ten provider slots — NVIDIA NIM, OpenRouter, Kimi, Groq, Cerebras, DeepSeek, OpenAI, Anthropic, any OpenAI-compatible endpoint, and the local `claude` CLI — and walks a failover chain per capability tier (`chains.env`). A chain autopilot watches each head's live health and plans rewrites of the chains, bounded by a hard cap of two mutations per cycle. It runs in **shadow mode** unless writing is enabled with `--apply` or `REPOACH_CHAINPILOT_APPLY_ENABLED=true`: it journals what it would change and writes nothing. The deployed timer runs it in shadow.
 
 ### 🔁 It builds itself
 Repoach is built by Repoach. Every substantive change starts as a spec in `docs/specs/`, is planned and implemented by the factory's own Developer, and is opened as a PR against `develop` that the four-reviewer bench reviews. Of the 200 PRs merged so far, 65 were merged by the bot lane and 135 by the maintainer through `scripts/safe_merge.sh`, which runs the same review and gate before `gh pr merge` (measured 2026-10-18 on the GitHub PR list). **The factory is its own first customer.**
@@ -132,7 +132,8 @@ There is no wheel to install yet (the `repoach` name on PyPI is a reservation �
 git clone https://github.com/repoachhq/repoach && cd repoach
 python -m venv .venv && source .venv/bin/activate   # Python 3.11+
 pip install -e ".[dev]"
-cp .env.example .env      # required: every command except --help refuses to boot without it
+cp .env.example .env      # required: without it only the top-level `repoach --help` works;
+                          # `review pr --help`, `develop --help`, `arch check --help` and `version` exit 1
 
 repoach --help            # the CLI
 ```
@@ -157,7 +158,7 @@ Letting agents write and merge code is only acceptable if the blast radius is bo
 - Agents **never merge to the release branch** (`main`): the release gate is read-only and the operator merges. Into the integration branch (`develop`) they merge only through the evidence-first gate, and only when CI is green at the exact head.
 - Every agent fix is **path-whitelisted** — no touching `.github/`, `.githooks/`, `prompts/review/`, `.git/` or any `.env*` file.
 - Secrets are **scrubbed** from every subprocess that executes agent-authored code (test reruns, the Developer's tools, the read-only `claude -p` exploration): any variable named like a token, key, secret, password or credential is dropped.
-- The chain autopilot is **shadow by default**, capped at two chain mutations per cycle, and writes `chains.env` atomically with a `.bak` only when started with `--apply`.
+- The chain autopilot is **shadow by default**, capped at two chain mutations per cycle, and writes `chains.env` atomically with a `.bak` only when writing is enabled with `--apply` or `REPOACH_CHAINPILOT_APPLY_ENABLED=true`.
 
 ## Contributing
 
@@ -181,10 +182,10 @@ Early, and built in the open. What the code does on 2026-10-19 (`develop` 20dbb4
 | Languages and gates | Python: `ruff` + `pytest`, AST-based finding verifiers, `src/` + `tests/unit` layout assumed. | Per-project lint/test/gate commands, Python verifiers that step aside on other languages — `SP-UNIVERSAL-GATES`. |
 | Install | From a clone with `pip install -e`; config, `chains.env`, `.env` and the SQLite ledger are anchored to the repoach checkout; `repoach init` scaffolds repoach itself, not your repository. The `repoach 0.0.1` on PyPI is a name reservation. | A wheel that boots without a gateway or a checkout (`pipx install repoach`) — `SP-UNIVERSAL-INSTALL`, milestone M1, pending. |
 | Gateway | Required: the agents speak only HTTP to the local `llm_proxy`; a bring-your-own key still needs the gateway process running. | Direct providers in-process, gateway optional — `SP-UNIVERSAL-PROVIDERS`. |
-| Models | The committed free chains are dead: every NVIDIA NIM head has answered HTTP 410 on 13 086 of the 13 200 probes since 2026-09-01, the rest being connection errors (last real `ok` in August 2026), and the OpenRouter credit is negative. The only hop that answers a review today is the `claude_code/<tier>` tail — your local `claude` login. | A key, not a chain (`SP-UNIVERSAL-PROVIDERS`). |
+| Models | The committed free chains are dead: every NVIDIA NIM head has answered HTTP 410 on 13 089 of the 13 203 probes since 2026-09-01 (read 2026-10-19); the remainder is 99 connection errors, 13 `ok` rows written by test fixtures, and 2 other; the last real `ok` was 2026-08-21. The OpenRouter credit is negative. The only hop that answers a review today is the `claude_code/<tier>` tail — your local `claude` login. | A key, not a chain (`SP-UNIVERSAL-PROVIDERS`). |
 | Cost | Measured on one review of a 36-file / 196 k-character diff (2026-10-18): 225 582 tokens over 7 gateway calls, 83 s, four reviews, 0 tool calls. No precision or false-positive rate has been measured yet. | A ledger that reads each finding's fate from the forge and reports cost and precision — `SP-UNIVERSAL-LEDGER`. |
 | Known review defects | (1) `review pr --dry-run` is not write-free: the refuted-finding sentinels are posted outside the `post` guard (`orchestrator.py:661` vs `:768`), so on a PR that already carries repoach threads a dry run posts replies. (2) A dry run has no head SHA: the head guard starts only when posting (`orchestrator.py:410-414`), so its ledger rows carry `head_sha = NULL` and the verdict is derived at an empty head. Both measured 2026-10-18. | (1) is closed by `SP-UNIVERSAL-CI-ENTRY` (G2: `--dry-run` never posts). (2) has no closing spec yet. |
-| Activity | Last merge 2026-08-01 (#200). The CI lane's follow-up jobs race the maintainer's local merge: 53 of the last 60 `auto-review` runs ended red at the fix/merge step after the head branch was already gone; the review job itself was green. | `SP-UNIVERSAL-CI-ENTRY` (the merge race). |
+| Activity | Last merge 2026-08-01 (#200). The CI lane's follow-up jobs race the maintainer's local merge: of the last 60 `auto-review` runs (read 2026-10-19), 52 failed, 2 were cancelled and 6 succeeded — the failures mostly at the `auto_fix` checkout or `auto_merge` step, after the head branch was already gone; the review job itself was green. | `SP-UNIVERSAL-CI-ENTRY` (the merge race). |
 
 The umbrella spec `SP-UNIVERSAL-REPO` (on branch `feat/sp-universal-repo-spec`) orders this work M0–M8. A "five minutes on your repo" promise is milestone M7 of that spec; it is not true today and this README will carry it only once the clock has been measured.
 
