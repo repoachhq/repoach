@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/project/, tests/unit/test_project_config.py, tests/unit/test_init_foreign_repo.py]
   resources: []
 
-depends_on: [SP-UNIVERSAL-INSTALL, SP-REPOACH-INIT-SCAFFOLD, SP-BRANCH-CONFIG, SP-SPEC-TEMPLATE, SP-SPEC-GATE]
+depends_on: [SP-UNIVERSAL-INSTALL, SP-REPOACH-INIT-SCAFFOLD, SP-BRANCH-CONFIG, SP-SPEC-TEMPLATE, SP-SPEC-GATE, SP-DB-PATH-XDG, SP-PLAN-CONTRACT-LINTS]
 provides_to: []
 
 constraints: {}
@@ -166,6 +166,8 @@ scripts → `npm run lint`/`npm test`, `go.mod` → `go vet ./...`/`go test
 - Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-BRANCH-CONFIG (`integration_branch`/`release_branch` gain a file source below the env source)
 - Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-SPEC-TEMPLATE (ships the template file into foreign repos)
 - Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-SPEC-GATE (spec-coverage fact learns `not_applicable` when no spec resolves)
+- Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-DB-PATH-XDG (`Settings` reads `repoach.toml` below the environment; the golden test pins its branch defaults)
+- Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-PLAN-CONTRACT-LINTS (`plan_relpath` reads `[repoach].plans_dir`; the golden test pins `docs/plans`)
 - New shared state: `repoach.toml` (format owned by `SP-UNIVERSAL-REPO`); the `Settings` singleton reads `ProjectConfig` as a settings source placed below the environment.
 
 ## Diagram
