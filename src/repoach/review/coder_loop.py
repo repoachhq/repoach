@@ -7,8 +7,10 @@ Developer session (:mod:`dev_runner`) build on:
 
 * :func:`is_path_allowed` — the path whitelist (defence in depth on top
   of the prompt): :data:`FORBIDDEN_PATHS` / :data:`FORBIDDEN_PREFIXES`
-  (``.github/``, ``.githooks/``, ``prompts/review/``, ``.env*``), no
-  absolute paths, no ``..`` traversal.
+  (forge and CI config, hooks, agent settings, the project config,
+  ``prompts/review/``, ``.env*``) plus the project's own
+  ``[coder].forbidden_prefixes`` / ``forbidden_paths``, no absolute
+  paths, no ``..`` traversal.
 * :func:`is_placeholder_content` / :func:`persist_placeholder_rejected`
   — reject LLM placeholder strings rather than corrupt the working tree.
 * :func:`apply_fixes` — write validated search/replace or full-file
@@ -36,6 +38,7 @@ from typing import Any
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
+from ..gates.config import GatesConfig, current_gates_config, load_gates_config
 from .patch_apply import apply_search_replace_edits
 from .secret_env import scrubbed_env
 
@@ -58,14 +61,23 @@ FORBIDDEN_PATHS: frozenset[str] = frozenset(
         ".env.example",
         ".env.local",
         ".env.production",
+        ".gitlab-ci.yml",
+        "repoach.toml",
+        ".repoach.env",
     }
 )
-"""Exact repo-relative paths the Coder must never touch."""
+"""Exact repo-relative paths the Coder must never touch: the GitLab
+pipeline definition and repoach's own project configuration
+(SP-UNIVERSAL-GATES G7) join the env files."""
 
 
 FORBIDDEN_PREFIXES: tuple[str, ...] = (
     ".github/",
+    ".gitlab/",
     ".githooks/",
+    ".claude/",
+    ".gemini/",
+    ".agents/",
     "prompts/review/",
     ".git/",
 )
@@ -76,10 +88,24 @@ reviewer persona could let the bot rewrite its own ratings.  All of
 review routing, dependabot.yml and action configs execute in CI.
 ``.githooks/`` is wired via ``git config core.hooksPath`` — a merged
 malicious hook is local code execution on the operator's next
-commit/push (SP-CODER-WHITELIST-HARDEN)."""
+commit/push (SP-CODER-WHITELIST-HARDEN). ``.gitlab/`` (templates, CI
+includes) and the coding-agent settings directories (``.claude/``,
+``.gemini/``, ``.agents/`` — hooks that execute on the operator's next
+session) join them (SP-UNIVERSAL-GATES G7)."""
 
 
-def is_path_allowed(path: str) -> bool:
+def _project_forbidden(config: GatesConfig) -> tuple[frozenset[str], tuple[str, ...]]:
+    """Return the project's extra ``(exact paths, prefixes)`` for the jail.
+
+    Directory-shaped entries (ending with ``/``) are prefixes; the
+    configured ``prompts_dir`` is always one.
+    """
+    prompts = config.prompts_dir.strip("/") + "/"
+    prefixes = (*(p for p in config.forbidden_prefixes if p), prompts)
+    return frozenset(p for p in config.forbidden_paths if p), prefixes
+
+
+def is_path_allowed(path: str, config: GatesConfig | None = None) -> bool:
     """Return True when ``path`` is safe for the Coder to overwrite.
 
     A path is allowed when:
@@ -92,11 +118,14 @@ def is_path_allowed(path: str) -> bool:
     * Its final component is not exactly ``chains.env`` — the
       authoritative chain-selection config, human- or
       chainpilot-written only (SP-CODER-CHAINS-GUARD).
-    * It is not in :data:`FORBIDDEN_PATHS`.
-    * It does not start with any prefix in :data:`FORBIDDEN_PREFIXES`.
+    * It is not in :data:`FORBIDDEN_PATHS` nor ``[coder].forbidden_paths``.
+    * It does not start with any prefix in :data:`FORBIDDEN_PREFIXES`,
+      ``[coder].forbidden_prefixes`` or the configured ``prompts_dir``.
 
     Args:
         path: A repo-relative path proposed by the Coder.
+        config: The project's gate configuration; when omitted, the
+            configuration of the project the working directory sits in.
 
     Returns:
         True when safe, False otherwise.
@@ -116,7 +145,14 @@ def is_path_allowed(path: str) -> bool:
     norm = path.replace("\\", "/")
     if norm in FORBIDDEN_PATHS:
         return False
-    return all(not norm.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
+    if any(norm.startswith(prefix) for prefix in FORBIDDEN_PREFIXES):
+        return False
+    extra_paths, extra_prefixes = _project_forbidden(
+        config if config is not None else current_gates_config()
+    )
+    if norm in extra_paths:
+        return False
+    return all(not norm.startswith(prefix) for prefix in extra_prefixes)
 
 
 def _run(
@@ -492,6 +528,7 @@ def apply_fixes(
     applied = 0
     rejected: list[str] = []
     repo_root = repo_root.resolve()
+    jail_config = load_gates_config(repo_root)
     for fix in fixes:
         path_raw = fix.get("path")
         new_content = fix.get("new_content")
@@ -499,7 +536,7 @@ def apply_fixes(
         if not isinstance(path_raw, str) or not path_raw:
             rejected.append(str(path_raw))
             continue
-        if not is_path_allowed(path_raw):
+        if not is_path_allowed(path_raw, jail_config):
             _log.warning("coder.path_rejected", path=path_raw)
             rejected.append(path_raw)
             continue
@@ -541,7 +578,7 @@ def apply_fixes(
             _log.warning("coder.path_escapes_repo", path=path_raw)
             rejected.append(path_raw)
             continue
-        if not is_path_allowed(resolved_relative):
+        if not is_path_allowed(resolved_relative, jail_config):
             _log.warning(
                 "coder.resolved_path_rejected",
                 path=path_raw,
