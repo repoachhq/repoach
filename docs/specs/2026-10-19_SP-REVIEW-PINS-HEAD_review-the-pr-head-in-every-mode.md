@@ -87,7 +87,7 @@ Inputs:
 
 Outputs:
 - payload: `head_sha: str`, `tree: "worktree" | "checkout"`, `unverified_blocking: list[str]`.
-- verdict: `COMMENT` when `unverified_blocking` is non-empty and nothing else blocks; `REQUEST_CHANGES` and `APPROVE` as today otherwise.
+- verdict: `COMMENT` (exit 0) when `unverified_blocking` is non-empty and nothing else blocks — never `APPROVE`, never `REQUEST_CHANGES` (owner decision 2026-10-19: the Coder acts on verified findings only); `REQUEST_CHANGES` and `APPROVE` as today otherwise.
 
 Errors:
 - `HeadUnresolvedError`: the forge returned no SHA, or one that is not 40 hex characters — rc 2, `cannot resolve head of PR <N>`; nothing is recorded.
@@ -135,11 +135,11 @@ flowchart TD
 - [ ] AC1: `pytest -q tests/unit/test_review_pins_head.py::test_dry_run_records_head_sha` → green: stub forge `pr_head_sha → "deadbeef" * 5`, `ReviewTeamOrchestrator(post_to_github=False).review_pr(7)`, then `select distinct head_sha from pr_findings where pr_number = 7` → the stub's SHA. Today: `""`.
 - [ ] AC2: `pytest -q tests/unit/test_review_pins_head.py::test_dry_run_reads_head_tree_not_checkout` → green: a temp repository whose `refs/pull/7/head` carries `src/x.py` with a docstring while the checked-out branch lacks it; a stub reviewer raises blocking `missing_docstring` on `src/x.py:1`; after the review the finding is `refuted`. Today: `verified`, because the verifier read the checkout.
 - [ ] AC3: `pytest -q tests/unit/test_review_pins_head.py::test_no_approve_over_proposed_blocking` → green: a ledger with four complete reviews and one blocking `design` finding at `proposed`; `summarise_ledger_facts(...).blocking_unverified == ["finding 1: design is PROPOSED at head"]` and `verdict_from_facts(facts) is not ReviewVerdict.APPROVE`. Today: `blocking_unverified == []` and `APPROVE`.
+- [ ] AC3b: `pytest -q tests/unit/test_review_pins_head.py::test_unverified_blockers_yield_comment_exit_zero` → green: the same ledger as AC3 → `verdict_from_facts(facts) is ReviewVerdict.COMMENT`, and `repoach review pr 7 --dry-run` exits `0` with `final_verdict == "COMMENT"` and one entry in `unverified_blocking`. Today: `APPROVE`, exit 0, no key.
 - [ ] AC4: `python -c "from repoach.review.findings import record_review_ledger as r; r(':memory:', pr_number=1, head_sha='', outcomes=[], round_n=1, diff='')"` → `ValueError: head_sha required`. Today: returns without error and writes `""`.
 - [ ] AC5: `repoach review pr <N> --dry-run | jq -r '.head_sha, .tree, (.unverified_blocking | length)'` → a 40-hex SHA, `worktree` or `checkout`, an integer. Today: `null`, `null`, `0` from a missing key.
 - [ ] AC6: `cd <checkout on another branch> && repoach review pr <N> --dry-run >/dev/null; git branch --show-current` → unchanged, and `git worktree list | grep -c pr-<N>-` → `0` after the run. Today: trivially unchanged, but AC5 fails.
 - [ ] AC7: `repoach arch check --base develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- Q1: `COMMENT` (exit 0, nothing posted as a request for changes) or `REQUEST_CHANGES` (exit 2, which triggers the Coder on findings nobody verified) when only unverified blockers remain? Recommendation: `COMMENT`; the Coder should act on verified findings only.
-- Q2: the worktree lives under the ledger's directory so it follows `REPOACH_DB_PATH`; once `SP-UNIVERSAL-INSTALL` moves state under XDG, should it move to `$XDG_CACHE_HOME/repoach/worktrees` instead? Recommendation: yes, cache not data.
+- Q1: the worktree lives under the ledger's directory so it follows `REPOACH_DB_PATH`; once `SP-UNIVERSAL-INSTALL` moves state under XDG, should it move to `$XDG_CACHE_HOME/repoach/worktrees` instead? Recommendation: yes, cache not data.

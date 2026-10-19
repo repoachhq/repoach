@@ -103,6 +103,7 @@ payload ends with `"posted_comments": 0, "posted_reviews": 0,
 - a future step added outside the posting block that writes → the barrier refuses, `refused_writes` becomes non-zero, the CLI exits 8, and `test_dry_run_never_posts.py` goes red the moment the step is wired into the dry-run path.
 - posting mode with a forge error on a write → unchanged: `GhResult.ok` false, logged, counted in `posted_*` as today.
 - `pr_review_comment` without `file`/`line` (conversation comment) → still a write, still through `_write`.
+- the escalation dossier (`_fire_proposed_escalation_dossier`, `orchestrator.py:676`) in dry-run → not fired at all: no routine call, no forge write, no file written outside the ledger; the payload is the only product of a dry run (owner decision 2026-10-19).
 
 ### Failure scenarios
 - `ForgeWriteRefused` escapes to the CLI (a write reached the barrier in dry-run) → exit 8, stderr `dry run attempted a forge write: <argv head>`; nothing was sent.
@@ -129,6 +130,7 @@ flowchart TD
 - [ ] AC4: `repoach review pr <N> --dry-run | jq .refused_writes` → `0`. Today: `null`.
 - [ ] AC5: `pytest -q tests/unit/test_review_ci_mode.py` → green with `refused_writes` in `_REQUIRED_TOP_LEVEL`.
 - [ ] AC6: `repoach arch check --base develop` → `edge-honesty: ok`.
+- [ ] AC7: `pytest -q tests/unit/test_dry_run_never_posts.py::test_dry_run_fires_no_escalation_dossier` → green: a ledger with a `proposed` finding over the escalation cap, `_fire_proposed_escalation_dossier` replaced by a recording fake, `review_pr(7)` in dry-run → the fake was called zero times; in posting mode, once. Today: called in both modes.
 
 ## Open Questions
-- Q1: should the escalation dossier (`_fire_proposed_escalation_dossier`, `orchestrator.py:676`) also be skipped in dry-run, or does it only write to the local routine endpoint? Recommendation: skip it in dry-run as well; a preview should have no side effect outside the ledger.
+- None. (Resolved by the owner 2026-10-19: the escalation dossier is skipped in dry-run; a dry run produces and posts nothing beyond its own JSON and summary — see the edge case and AC7.)

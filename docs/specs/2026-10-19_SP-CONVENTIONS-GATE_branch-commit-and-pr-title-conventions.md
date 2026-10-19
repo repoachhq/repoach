@@ -141,6 +141,7 @@ violation and exits 9.
 - a header with `!` (`feat(api)!: drop v1`) or a `BREAKING CHANGE:` footer → valid, `breaking_change` true, surfaced in `conventions check --json` as `breaking: true`.
 - a Coder subject exceeding 72 characters → truncated at a word boundary before the check, never refused at commit time.
 - `pr_title = false` → `review pr` posts regardless and the payload still reports `title_ok`.
+- a project whose commit history is not in English → the heuristic is on from the first PR, like every other default (owner decision 2026-10-19); `init` performs no language detection, and the commented `[conventions]` section it writes carries `# english = true` with one line naming `english = false` as the opt-out.
 
 ### Failure scenarios
 - the hook is installed but `repoach` is not on PATH → the hook prints `repoach not found; install it or set core.hooksPath away` and exits 1 (a missing gate is a refusal, not a pass).
@@ -178,8 +179,8 @@ flowchart TD
 - [ ] AC9: `grep -rnE '"rebase"|"--amend"|"--force"|--force-with-lease' src/repoach/review/coder_loop.py src/repoach/review/coder_findings.py src/repoach/review/dev_runner.py src/repoach/review/auto_merge.py | grep -v 'worktree'` → no output, pinned by `test_conventions.py::test_no_lane_rewrites_history`. Today: already empty; the test does not exist.
 - [ ] AC10: `repoach init --dry-run` in a throwaway repository lists `repoach.toml` with a commented `[conventions]` section carrying the six keys and their defaults. Today: `init` writes no toml.
 - [ ] AC11: `repoach arch check --base develop` → `edge-honesty: ok`.
+- [ ] AC12: `pytest -q tests/unit/test_conventions_config.py::test_english_on_by_default_and_documented_opt_out` → green: `Conventions().english is True`; `check_commit_message("fix(api): corrige l'état\n", Conventions())` yields one `english` violation; the same with `Conventions(english=False)` yields none; and the toml text `repoach init --dry-run` prints contains both `# english = true` and `english = false`. Today: no module, no section.
 
 ## Open Questions
 - Q1: when a Coder-generated subject fails the check (for instance a `fix(wrapup): <selector>` with a 90-character selector), truncate as specified or refuse the Coder's commit and let the Developer session fail at that step? Recommendation: truncate; a long selector is not a convention breach by the author.
 - Q2: should `review pr` leave one conversation comment telling the author why nothing was posted, or stay strictly write-free as G6 says? Recommendation: write-free; the CI step already fails the PR with the same line, so the author sees it.
-- Q3: the English heuristic refuses accented characters; a project with non-English commit history that adopts repoach gets red on its first PR unless it sets `english = false`. Should `repoach init` detect a non-English last-50-commit sample and write `english = false` by default? Recommendation: no detection; the default stays `true` and the commented section shows the knob.

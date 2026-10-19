@@ -136,6 +136,7 @@ so the next run hits.
 - the comment was posted and the row write failed (ledger read-only) → `finding_posts.write_failed` logged once; the post is not retried.
 - a finding re-raised in round 2 at the same place → the round-2 finding gets its own row only if it was posted; threads are reused by the forge, so `thread_id` may equal the round-1 row's.
 - backfill on a PR whose bot comments carry no `path`/`line` (conversation comments) → counted as `unmatched`, never linked.
+- backfill matching is strict: a bot root at the finding's exact `(file, line)` and no other, `backfill_line_tolerance = 0` (owner decision 2026-10-19). A legacy finding with no exact root — the line shifted after a push, or two roots at the same place — is reported `unmatched` and gets no row; it stays `unknown` to every consumer, never an approximated link.
 
 ### Failure scenarios
 - `init_findings_schema` on a database that already holds an older `finding_posts` with fewer columns → the missing columns are added through the `_migrate_missing_columns` mechanism; no data loss.
@@ -165,7 +166,7 @@ flowchart TD
 - [ ] AC5: `repoach review backfill-threads <N> --dry-run` → `pr <N>: F findings, L linked, U unmatched, S already linked`, rc 0, and `select count(*) from finding_posts` unchanged; without `--dry-run` the count grows by `L`. Today: `No such command 'backfill-threads'`.
 - [ ] AC6: `repoach review pr <N> --dry-run | jq .finding_posts` → `0`. Today: `null`.
 - [ ] AC7: `repoach arch check --base develop` → `edge-honesty: ok` with this spec's three `depends_on` edges and `db:table:finding_posts` owned once.
+- [ ] AC8: `pytest -q tests/unit/test_finding_posts_backfill.py::test_backfill_is_strict_and_leaves_unmatched_unknown` → green: a legacy finding at `src/x.py:10` and a bot root at `src/x.py:12` → `BackfillReport.unmatched == 1`, `linked == 0`, no `finding_posts` row, and `resolve_thread(finding) is None`; a second case with two bot roots at `src/x.py:10` → also `unmatched == 1`, no row. Today: the file does not exist.
 
 ## Open Questions
 - Q1: should the batched path (`pr_review_submit_batch`) keep its extra `list_review_id_comments` call to learn the ids, or should posting switch to one call per comment so each response carries its id? Recommendation: keep the batch and the one scoped listing; one extra read per review is cheaper than N posts.
-- Q2: the backfill matches on exact `(file, line)` (`backfill_line_tolerance = 0`); the W1 measurement shows reviewers citing lines that shift after a push. Allow a tolerance of 3 as `SP-UNIVERSAL-LEDGER` does for fates, or keep the backfill strict and leave fuzzy matching to the collector? Recommendation: strict here; a wrong link is worse than no link.
