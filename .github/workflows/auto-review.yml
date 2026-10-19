@@ -693,6 +693,10 @@ jobs:
           # that release a pending-CI PR stalls green-but-unmerged
           # (recover with scripts/safe_merge.sh).
           REPOACH_AUTOMERGE_CI_WAIT_SECONDS: "0"
+          # Same value as the sibling review/coder steps: a PR head that
+          # predates the build-time proxy-URL guard still validates it in
+          # Settings, though the merge gate never calls the gateway.
+          REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
         run: |
           set +e
           python -m repoach.cli.main review merge "${{ needs.review.outputs.pr_number }}"
