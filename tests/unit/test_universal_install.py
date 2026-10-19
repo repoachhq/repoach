@@ -28,6 +28,7 @@ from repoach.core.paths import (
     user_config_dir,
     user_data_dir,
 )
+from repoach.core.resources import prompts_dir
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -261,3 +262,104 @@ class TestInitOnAForeignRepository:
         assert _git(repo, "status", "--short") == ""
         assert _git(repo, "config", "--get", "core.hooksPath") == "scripts/hooks"
         assert not (repo / ".env").exists()
+
+
+class TestSlugNormalisation:
+    def test_owner_and_repo_case_share_one_ledger(self, xdg: Path) -> None:
+        upper = _repo(xdg / "work" / "upper")
+        _git(upper, "remote", "add", "origin", "git@GitHub.com:Owner/Repo.git")
+        lower = _repo(xdg / "work" / "lower")
+        _git(lower, "remote", "add", "origin", "https://github.com/owner/repo")
+
+        assert project_slug(upper) == "github.com/owner/repo"
+        assert default_db_path(upper) == default_db_path(lower)
+
+    def test_file_remote_is_filed_under_local(self, xdg: Path) -> None:
+        repo = _repo(xdg / "work" / "clone")
+        _git(repo, "remote", "add", "origin", "file:///srv/git/Team/Repo.git")
+
+        assert project_slug(repo) == "local/srv/git/team/repo"
+
+
+class TestProjectScopedCommandsRefuseOutsideARepository:
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["review", "pr", "1", "--dry-run"],
+            ["review", "report", "1"],
+            ["review", "insights"],
+            ["develop", "SP-X"],
+            ["plan", "SP-X"],
+            ["arch", "check"],
+            ["release", "verify"],
+        ],
+    )
+    def test_exit_2_naming_the_cwd(
+        self, xdg: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+    ) -> None:
+        plain = xdg / "plain"
+        plain.mkdir()
+        monkeypatch.chdir(plain)
+
+        result = CliRunner().invoke(app, argv)
+
+        assert result.exit_code == 2, result.output
+        assert f"not a git repository: {plain.resolve()}" in result.stderr
+        assert not (xdg / "xdg_data").exists()
+
+    def test_help_still_works_outside_a_repository(
+        self, xdg: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plain = xdg / "plain"
+        plain.mkdir()
+        monkeypatch.chdir(plain)
+
+        result = CliRunner().invoke(app, ["review", "pr", "--help"])
+
+        assert result.exit_code == 0, result.output
+        assert "PR_NUMBER" in result.stdout
+
+
+def _tree(root: Path) -> list[str]:
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+class TestNoSideEffectsInHome:
+    def test_building_settings_creates_no_directory(self, xdg: Path) -> None:
+        settings = config.Settings()
+
+        assert settings.db_path.is_relative_to(xdg / "xdg_data")
+        assert settings.logs_dir.is_relative_to(xdg / "xdg_data")
+        assert not (xdg / "xdg_data").exists()
+        assert not (xdg / "xdg_config").exists()
+
+    def test_init_on_a_foreign_repository_leaves_home_identical(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = tmp_path / "home"
+        (home / ".config" / "git").mkdir(parents=True)
+        repo = _repo(tmp_path / "foreign")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        monkeypatch.chdir(repo)
+        before = _tree(home)
+
+        result = CliRunner().invoke(app, ["init"])
+
+        assert result.exit_code == 0, result.output
+        assert _tree(home) == before
+
+
+class TestPackagedResources:
+    def test_prompts_dir_holds_the_reviewer_prompts(self) -> None:
+        directory = prompts_dir()
+
+        assert directory.is_dir()
+        assert any(directory.glob("architect_*.md"))
+
+    def test_diagnostic_dumps_go_under_the_data_dir(self, xdg: Path) -> None:
+        logs_dir = config.Settings().logs_dir
+
+        assert logs_dir.name == "logs"
+        assert logs_dir.is_relative_to(xdg / "xdg_data" / "repoach")
