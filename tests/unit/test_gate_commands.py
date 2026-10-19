@@ -106,14 +106,22 @@ def test_timeout_kills_the_children_of_the_command(tmp_path: Path) -> None:
     assert not _alive(child)
 
 
-def test_leading_assignments_become_environment(tmp_path: Path) -> None:
+def test_leading_assignment_is_refused_and_env_form_runs(tmp_path: Path) -> None:
     _script(tmp_path, "ci/run-local-ci.sh", 'echo "wait=$YOOB_CI_WAIT args=$*"\n')
-    assert split_command("YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected") == (
-        {"YOOB_CI_WAIT": "1"},
-        ["./ci/run-local-ci.sh", "--affected"],
-    )
     passed, tail = run_project_gate(
         tmp_path, _config(gate="YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected")
+    )
+    assert passed is False
+    assert "leading assignment 'YOOB_CI_WAIT=1' is not supported" in tail
+    assert "wait=" not in tail
+    assert split_command("env YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected") == [
+        "env",
+        "YOOB_CI_WAIT=1",
+        "./ci/run-local-ci.sh",
+        "--affected",
+    ]
+    passed, tail = run_project_gate(
+        tmp_path, _config(gate="env YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected")
     )
     assert passed is True
     assert "wait=1 args=--affected" in tail

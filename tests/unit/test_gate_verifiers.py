@@ -28,8 +28,8 @@ from repoach.gates.selectors import (
 )
 from repoach.gates.typescript import strip_jsonc
 from repoach.gates.verifiers import VerifierStatus, run_verifiers
-from repoach.review.plan import PlanStep
-from repoach.review.spec_gate import promised_present
+from repoach.review.plan import ActionPlan, PlanStep
+from repoach.review.spec_gate import audit_plan_selectors, promised_present
 
 
 def _write(root: Path, rel: str, body: str) -> Path:
@@ -338,7 +338,7 @@ def test_go_has_no_verifier_and_says_so(tmp_path: Path) -> None:
         ),
         ("src/__tests__/util.ts::parses", SelectorKind.VITEST, "src/__tests__/util.ts", "parses"),
         ("./pkg/store -run TestPut", SelectorKind.GO, "./pkg/store", "TestPut"),
-        ("cmd:make check", SelectorKind.COMMAND, "", ""),
+        ("cmd:e2e", SelectorKind.COMMAND, "", ""),
     ],
 )
 def test_parse_selector_forms(raw: str, kind: SelectorKind, file: str, name: str) -> None:
@@ -347,7 +347,18 @@ def test_parse_selector_forms(raw: str, kind: SelectorKind, file: str, name: str
     assert (parsed.kind, parsed.file, parsed.name) == (kind, file, name)
 
 
-@pytest.mark.parametrize("raw", ["src/x.ts > name", "just words", "-k foo", "cmd:", "a.py > b"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "src/x.ts > name",
+        "just words",
+        "-k foo",
+        "cmd:",
+        "a.py > b",
+        "cmd:make check",
+        "cmd:rm -rf /",
+    ],
+)
 def test_unknown_selector_forms_parse_to_none(raw: str) -> None:
     assert parse_selector(raw) is None
 
@@ -402,3 +413,57 @@ def test_plan_step_accepts_vitest_and_refuses_a_bare_test_file() -> None:
             done_when="the widget test is green",
             unit_tests=["frontend/src/w.test.ts"],
         )
+
+
+def _plan(unit_tests: list[str], files: list[str]) -> ActionPlan:
+    return ActionPlan(
+        spec_id="SP-X",
+        title="x",
+        summary="x",
+        steps=[
+            PlanStep(
+                index=1,
+                title="docs",
+                action="write docs",
+                files=files,
+                commit_message="docs: x",
+                done_when="done",
+                unit_tests=unit_tests,
+            )
+        ],
+    )
+
+
+def test_plan_accepts_cmd_and_go_selectors_without_a_created_file() -> None:
+    plan = _plan(["cmd:e2e", "./pkg/store -run TestPut"], ["docs/notes.md", "pkg/store/put.go"])
+    assert plan.steps[0].unit_tests == ["cmd:e2e", "./pkg/store -run TestPut"]
+    with pytest.raises(ValueError, match="no step"):
+        _plan(["tests/test_x.py::test_y"], ["pkg/store/put.go"])
+
+
+def test_plan_audit_refuses_an_undeclared_cmd_selector(tmp_path: Path) -> None:
+    _write(tmp_path, "repoach.toml", '[commands]\ne2e = "./e2e.sh"\n')
+    plan = _plan(["cmd:e2e", "cmd:deploy"], ["pkg/a.go"])
+    assert audit_plan_selectors(plan, tmp_path) == ["cmd:deploy"]
+    _write(tmp_path, "pkg/store/put_test.go", "package store\n\nfunc TestPut(t *testing.T) {}\n")
+    go_plan = _plan(["./pkg/store -run TestPut", "./pkg/store -run TestGone"], ["pkg/a.go"])
+    assert audit_plan_selectors(go_plan, tmp_path) == ["./pkg/store -run TestGone"]
+
+
+def test_cmd_selector_runs_only_a_declared_command(tmp_path: Path) -> None:
+    _exe(tmp_path, "e2e.sh", "echo e2e-ran\n")
+    config = GatesConfig.from_mapping({"commands": {"e2e": "./e2e.sh", "test": "pytest -q"}})
+    assert config.named_commands == {"e2e": "./e2e.sh", "test": "pytest -q"}
+    ok, tail = run_selectors(tmp_path, ["cmd:e2e"], config)
+    assert ok is True and "e2e-ran" in tail
+    ok, tail = run_selectors(tmp_path, ["cmd:deploy"], config)
+    assert ok is False
+    assert tail == (
+        "cmd:deploy: command 'deploy' is not declared in [commands] of repoach.toml "
+        "(declared: e2e, test)"
+    )
+    parsed = parse_selector("cmd:deploy")
+    assert parsed is not None
+    assert selector_present(tmp_path, parsed, config) is False
+    ok, tail = run_selectors(tmp_path, ["cmd:echo hi"], config)
+    assert ok is False and tail.startswith("not applicable: unknown selector form")

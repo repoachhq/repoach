@@ -24,7 +24,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from ..gates.selectors import SelectorKind, parse_selector, selector_file
+from ..gates.selectors import SelectorKind, parse_selector, promised_file, selector_file
 
 PLAN_MARKER: str = "<!-- repoach-action-plan -->"
 
@@ -406,8 +406,8 @@ class ActionPlan(BaseModel):
                 for path in earlier.files
             }
             for selector in step.unit_tests:
-                test_file = selector_file(selector)
-                if test_file not in created_so_far:
+                test_file = promised_file(selector)
+                if test_file is not None and test_file not in created_so_far:
                     raise ValueError(
                         f"step {step.index} promises test {selector!r} but no step "
                         f"up to {step.index} creates {test_file!r} — add that test "
@@ -450,8 +450,8 @@ class ActionPlan(BaseModel):
         """
         created_anywhere = {path for step in self.steps for path in step.files}
         for selector in self.integration_tests:
-            test_file = selector_file(selector)
-            if test_file not in created_anywhere:
+            test_file = promised_file(selector)
+            if test_file is not None and test_file not in created_anywhere:
                 raise ValueError(
                     f"integration test {selector!r} is promised but no step creates "
                     f"{test_file!r} — add that file to a step's files (the per-step "

@@ -96,6 +96,23 @@ def _table(mapping: Mapping[str, Any], name: str) -> Mapping[str, Any]:
     return value
 
 
+def _named_commands(commands: Mapping[str, Any]) -> dict[str, str]:
+    """Return the non-empty command strings of ``[commands]`` by key.
+
+    Raises:
+        ValueError: A key other than ``timeout_s`` holds a non-string.
+    """
+    out: dict[str, str] = {}
+    for key, value in commands.items():
+        if key == "timeout_s":
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"commands.{key} must be a string, got {value!r}")
+        if value.strip():
+            out[str(key)] = value
+    return out
+
+
 def _languages(values: tuple[str, ...]) -> frozenset[Language]:
     """Parse ``[project].languages`` into :class:`Language` members."""
     out: set[Language] = set()
@@ -137,6 +154,10 @@ class GatesConfig:
         advisory_verifiers: Verifier names whose failures are reported
             but never turn a gate red.
         disabled_verifiers: Verifier names never run.
+        named_commands: Every command string of ``[commands]`` by key
+            (``lint``, ``test``, ``gate`` and any other the project
+            declares) — the only commands a ``cmd:<name>`` test selector
+            may run.
         verifier_commands: Per-verifier argv template overrides
             (``{file}`` is the repo-relative path).
         builtin: True for :meth:`builtin` (no configuration file).
@@ -156,6 +177,7 @@ class GatesConfig:
     prompts_dir: str = DEFAULT_PROMPTS_DIR
     advisory_verifiers: frozenset[str] = frozenset()
     disabled_verifiers: frozenset[str] = frozenset()
+    named_commands: Mapping[str, str] = field(default_factory=dict)
     verifier_commands: Mapping[str, str] = field(default_factory=dict)
     builtin: bool = True
 
@@ -242,6 +264,7 @@ class GatesConfig:
             disabled_verifiers=frozenset(
                 _str_tuple(gates.get("disabled_verifiers"), "gates.disabled_verifiers")
             ),
+            named_commands=_named_commands(commands),
             verifier_commands=dict(overrides_raw),
             builtin=False,
         )

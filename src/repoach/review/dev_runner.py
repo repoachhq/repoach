@@ -51,7 +51,13 @@ from ..core.logging import get_logger
 from ..forge import Forge, ForgeError, select_forge
 from ..gates.commands import run_project_gate
 from ..gates.config import applicable, load_gates_config
-from ..gates.selectors import SelectorKind, parse_selector, run_selectors, selector_file
+from ..gates.selectors import (
+    SelectorKind,
+    parse_selector,
+    promised_file,
+    run_selectors,
+    selector_file,
+)
 from ..gates.verifiers import run_verifiers
 from ..lint.no_inline_comments import scan_file as scan_inline_comments
 from ..lint.no_silent_except import scan_file as scan_silent_except
@@ -1481,7 +1487,12 @@ def execute_plan_step(
             last_gate_kind = _LINT_GATE_KIND
             continue
         if step.unit_tests:
-            absent = [t for t in step.unit_tests if not (repo_root / selector_file(t)).is_file()]
+            absent = [
+                t
+                for t in step.unit_tests
+                if (promised := promised_file(t)) is not None
+                and not (repo_root / promised).is_file()
+            ]
             if absent:
                 absent_files = sorted({selector_file(t) for t in absent})
                 creatable = [f for f in absent_files if f in step.files]

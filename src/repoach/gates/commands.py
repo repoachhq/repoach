@@ -1,10 +1,11 @@
 """Run the project's own lint, test and gate commands (SP-UNIVERSAL-GATES G1).
 
 A command string from ``[commands]`` is split with :mod:`shlex` (never
-a shell), leading ``NAME=value`` words become environment overrides
-(``YOOB_CI_WAIT=1 ./ci/run-local-ci.sh --affected``), and the command
-runs in the project root with a secret-scrubbed environment and a
-timeout.  Every runner returns ``(passed, tail)``: ``tail`` is the
+a shell) and runs in the project root with a secret-scrubbed
+environment and a timeout.  A leading ``NAME=value`` word is refused
+with a named reason rather than layered into the environment: a
+variable is set the explicit way, ``env YOOB_CI_WAIT=1
+./ci/run-local-ci.sh --affected``.  Every runner returns ``(passed, tail)``: ``tail`` is the
 command line followed by the last :data:`TAIL_CHARS` characters of the
 combined output, so a red gate always says what ran and how it failed.
 A missing binary or a timeout is a red gate with a one-line reason,
@@ -18,7 +19,7 @@ import re
 import shlex
 import signal
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,25 +65,25 @@ def _scrubbed_env() -> dict[str, str]:
     return scrubbed_env()
 
 
-def split_command(command: str) -> tuple[dict[str, str], list[str]]:
-    """Split a command string into environment overrides and argv.
+def split_command(command: str) -> list[str]:
+    """Split a command string into argv.
 
     Args:
         command: A ``[commands]`` value.
 
     Returns:
-        ``(env_overrides, argv)``; ``argv`` is empty when the string
-        holds only assignments or nothing.
+        The argv; empty when the string holds nothing.
 
     Raises:
-        ValueError: The string is not valid shell quoting.
+        ValueError: The string is not valid shell quoting, or it starts
+            with a ``NAME=value`` assignment (use ``env NAME=value cmd``).
     """
     words = shlex.split(command)
-    overrides: dict[str, str] = {}
-    while words and _ASSIGNMENT_RE.match(words[0]):
-        name, _, value = words.pop(0).partition("=")
-        overrides[name] = value
-    return overrides, words
+    if words and _ASSIGNMENT_RE.match(words[0]):
+        raise ValueError(
+            f"leading assignment {words[0]!r} is not supported; write it as 'env {words[0]} ...'"
+        )
+    return words
 
 
 def run_argv(
@@ -90,7 +91,6 @@ def run_argv(
     *,
     cwd: Path,
     timeout_s: int,
-    env_overrides: Mapping[str, str] | None = None,
     label: str | None = None,
 ) -> CommandResult:
     """Run ``argv`` in ``cwd`` with the scrubbed environment and a timeout.
@@ -99,7 +99,6 @@ def run_argv(
         argv: The command and its arguments.
         cwd: Working directory.
         timeout_s: Seconds before the process is killed.
-        env_overrides: Variables layered over the scrubbed environment.
         label: Command line shown at the head of the tail (defaults to
             the quoted ``argv``).
 
@@ -108,8 +107,6 @@ def run_argv(
     """
     shown = label if label is not None else shlex.join(argv)
     env = _scrubbed_env()
-    if env_overrides:
-        env.update(env_overrides)
     try:
         proc = subprocess.Popen(
             list(argv),
@@ -179,14 +176,14 @@ def run_command(command: str, *, root: Path, timeout_s: int) -> CommandResult:
         string is a red result naming the problem.
     """
     try:
-        overrides, argv = split_command(command)
+        argv = split_command(command)
     except ValueError as exc:
         return CommandResult(False, None, f"$ {command}\nunparseable command: {exc}")
     if not argv:
         return CommandResult(False, None, f"$ {command}\nno executable in command")
     if "/" in argv[0] and not os.path.isabs(argv[0]):
         argv[0] = str((root / argv[0]).resolve())
-    return run_argv(argv, cwd=root, timeout_s=timeout_s, env_overrides=overrides, label=command)
+    return run_argv(argv, cwd=root, timeout_s=timeout_s, label=command)
 
 
 def _skipped(name: str) -> tuple[bool, str]:
