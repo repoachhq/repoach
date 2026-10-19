@@ -87,10 +87,11 @@ def release_gate(
       * ``1`` -- could not evaluate (transport error or missing CI
         script gathering facts).
     """
+    root = _repo_root()
     try:
         facts = gather_release_facts(
-            repo_root=_repo_root(),
-            forge=select_forge(cwd=_repo_root()),
+            repo_root=root,
+            forge=select_forge(cwd=root),
             pr_number=pr_number,
             db_path=Path(get_settings().db_path),
             provenance=provenance,
@@ -147,8 +148,9 @@ def release_verify(
       * ``1`` -- could not evaluate (missing/unparsable receipt or
         transport error).
     """
+    root = _repo_root()
     try:
-        forge = select_forge(cwd=_repo_root())
+        forge = select_forge(cwd=root)
         result = (
             verify_release_live(forge=forge) if live else verify_release(_RECEIPT_PATH, forge=forge)
         )
