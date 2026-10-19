@@ -1,17 +1,17 @@
 ---
 id: SP-UNIVERSAL-REPO
 title: Repoach runs on any repository — umbrella for the universality programme
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-10-19
 
 owns:
   code: []
   resources: [format:repoach-toml]
 
-depends_on: [SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-GATES, SP-UNIVERSAL-CI-ENTRY]
+depends_on: [SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-GATES, SP-UNIVERSAL-CI-ENTRY, SP-UNIVERSAL-LEDGER]
 provides_to: []
 
 constraints:
@@ -34,7 +34,10 @@ barrier) is the first external user and the proof, never the spec.
 ## Context
 
 Measured on `develop` `20dbb45` (2026-10-18). Every claim below was
-re-run against the code, not taken from a document.
+re-run against the code, not taken from a document. Where repoach
+sits among the tools it competes with, and why the install path and a
+measured false-positive rate come first:
+`docs/plans/2026-10-19_positioning-and-market-map.md`.
 
 | # | Assumption baked in today | Where | Measured consequence |
 |---|---|---|---|
@@ -52,7 +55,7 @@ re-run against the code, not taken from a document.
 | A12 | The free chains are dead | `chains.env:71,78,86`; `nim_health_probe` | every tier head HTTP 410 since August; the only answering hop is `claude_code/<tier>` on this PC's Max login |
 | A13 | `merge-on-ci.yml` runs `main`'s code; the ledger CI jobs write is shipped as an artifact, the local ledger has 0 `pr_merges` rows | `merge-on-ci.yml:11-16,60-63`; `auto-review.yml:210,252-256` | a gate fix on `develop` is inert until a release |
 
-The programme is decomposed into six children, one per seam. Each is
+The programme is decomposed into seven children, one per seam. Each is
 a governed spec with its own acceptance commands; this umbrella holds
 the non-goals, the migration for repoach's own repository, the
 milestone order, the risk list and the universality gauge.
@@ -65,6 +68,7 @@ milestone order, the risk list and the universality gauge.
 | `SP-UNIVERSAL-PROVIDERS` | direct providers, gateway optional, usage ledger, clear no-provider error | Q1, G14 |
 | `SP-UNIVERSAL-GATES` | per-language lint/test/gate, Python verifiers skip by declared language, `owns` optional | W4, G7, G8, G9, G12 |
 | `SP-UNIVERSAL-CI-ENTRY` | `review pr` / `review gate` from any CI, posting vs dry-run, bot identity, the merge race | W5 (repoach side), G2, A10 |
+| `SP-UNIVERSAL-LEDGER` | finding fate read from the forge, refuter calibration, cost per review, `stats`, readable self-adaptation PRs, opt-in aggregated sharing | market map § 3 (the missing precision number) |
 
 ## Goals
 
@@ -142,7 +146,8 @@ identity.
 - Adds dependency: SP-UNIVERSAL-REPO -> SP-UNIVERSAL-PROVIDERS (the agent loop gains an in-process provider seam)
 - Adds dependency: SP-UNIVERSAL-REPO -> SP-UNIVERSAL-GATES (verifiers and Coder gates become language-aware)
 - Adds dependency: SP-UNIVERSAL-REPO -> SP-UNIVERSAL-CI-ENTRY (the CI workflows become thin callers)
-- New shared state: `format:repoach-toml`, owned here, consumed by all six children; no cycle (children never depend on the umbrella).
+- Adds dependency: SP-UNIVERSAL-REPO -> SP-UNIVERSAL-LEDGER (the ledger stays the user's file; learning is readable, sharing opt-in)
+- New shared state: `format:repoach-toml`, owned here, consumed by all seven children; no cycle (children never depend on the umbrella).
 
 ## Diagram
 ```mermaid
@@ -179,6 +184,7 @@ What changes, in order:
 | M4 | `SP-UNIVERSAL-PROVIDERS` | 2 d | M1 | `REPOACH_PROVIDER=anthropic REPOACH_ANTHROPIC_API_KEY=… repoach review pr <n> --dry-run` with no gateway process → rc 0; `unset`-everything → rc 2 and `no provider configured` on stderr; `repoach usage` prints one row per review |
 | M5 | `SP-UNIVERSAL-GATES` | 2 d | M2 | `pytest -q tests/unit/test_gates_language.py` → a `missing_docstring` finding on `src/x.ts` ends `not_applicable`; a `lint` command exiting 1 makes the Coder gate red with the command's tail |
 | M6 | `SP-UNIVERSAL-CI-ENTRY` | 2 d | M3, M4 | `pytest -q tests/unit/test_ci_entry.py`; `CI_MERGE_REQUEST_IID=283 repoach review pr --dry-run` from `yoob_2` resolves the MR; `repoach review merge <merged-pr>` → `ALREADY_MERGED`, rc 0 |
+| M6b | `SP-UNIVERSAL-LEDGER` | 3 d | M3, M4, M6 | `repoach ledger collect --pr 283` on the W1 fixture → 12 fates; `repoach stats` on an empty ledger → `no reviews recorded`, rc 0; `repoach stats --share --dry-run --json` free of paths, shas and text |
 | M7 | README "five minutes on your repo" + universality gauge | 1 d | M2–M6 | clock from `pipx install` to the end of `repoach review pr 1171 --dry-run` in `charmbracelet/gum` ≤ 5 min, `git diff --stat` empty except the two `init` files; repeat on `junegunn/fzf` (default branch `master`) |
 | M8 | Yoob consumer side (plan W5 Yoob job, W6 `scripts/mr-create`, W7 `repoach develop` on Yoob) | 6–7 d | M3–M6 | owned by Yoob specs, listed for ordering only |
 
@@ -206,7 +212,7 @@ hand-implement or decompose with `SP-DEVAGENT-DECOMPOSE` before
 - [ ] AC4: from `yoob_2`: `repoach review pr 283 --dry-run` with `forge = "gitlab"` in `repoach.toml` → same JSON shape as AC3; `glab api projects/67827362/merge_requests/283/notes | jq length` unchanged before and after.
 - [ ] AC5: in repoach's own checkout with its committed `repoach.toml`: `pytest -q tests/unit` green and `scripts/ci_local.sh` green; `repoach review gate <open-pr>` prints the same `facts` as before the migration (recorded fixture).
 - [ ] AC6: `grep -n "five minutes" README.md` → one heading; every command under it appears verbatim in AC1–AC3.
-- [ ] AC7: `repoach arch check --base origin/develop` → `edge-honesty: ok` with the seven specs of this family present.
+- [ ] AC7: `repoach arch check --base origin/develop` → `edge-honesty: ok` with the eight specs of this family present.
 
 ## Open Questions
 - Q1: model budget for Yoob reviews — direct Anthropic API key (≈11 M tokens/month at 3.3 MR/day measured) or the Max OAuth token on hel1 (shared quota, Yoob autofix precedent)? Recommendation: key for CI, `claude_code` for M0 only.
