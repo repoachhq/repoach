@@ -97,7 +97,7 @@ def _init_repoach_dev(repo_root: Path) -> None:
     typer.echo("  1. Set REPOACH_ANTHROPIC_AUTH_TOKEN and one provider key in .env")
     typer.echo(
         f"  2. Put REPOACH_LLM_PROXY_BASE_URL and REPOACH_ANTHROPIC_AUTH_TOKEN in "
-        f"{PROJECT_ENV_FILE_NAME} (the CLI does not read .env)"
+        f"{user_config_dir() / USER_ENV_FILE_NAME} (or run 'repoach migrate-config')"
     )
     typer.echo('  3. pip install -e ".[dev]"')
     typer.echo("  4. repoach version   # verify the install")
@@ -123,7 +123,8 @@ def init(
     typer.echo("")
     typer.echo("Next steps:")
     typer.echo(
-        f"  1. Configure a provider in {user_config_dir() / USER_ENV_FILE_NAME} or "
-        f"{repo_root / PROJECT_ENV_FILE_NAME} (keep it out of git)"
+        f"  1. Configure a provider in {user_config_dir() / USER_ENV_FILE_NAME}; "
+        f"{repo_root / PROJECT_ENV_FILE_NAME} (untracked) may only set branch names "
+        "and other conventions"
     )
     typer.echo("  2. repoach doctor   # check forge, provider and paths")

@@ -67,7 +67,7 @@ def _binary_line(name: str) -> str:
     return f"{name}={found if found is not None else 'missing'}"
 
 
-def _forge_status(root: Path) -> tuple[str, bool]:
+def _forge_status(root: Path) -> tuple[str, str | None]:
     """Return the selected forge and whether it is usable here.
 
     GitHub through ``gh`` is the only shipped forge until
@@ -78,14 +78,17 @@ def _forge_status(root: Path) -> tuple[str, bool]:
         root: The project root.
 
     Returns:
-        The ``forge=`` value and its usability.
+        The ``forge=`` value and, when unusable, the problem to report.
     """
     host = project_slug(root).split("/", 1)[0]
     if "gitlab" in host:
-        return "gitlab (not supported until SP-UNIVERSAL-FORGE)", False
+        return "gitlab", "forge gitlab is not supported until SP-UNIVERSAL-FORGE"
     if shutil.which("gh") is None:
-        return "github (gh missing)", False
-    return "github (gh found)", True
+        return (
+            "github (gh not on PATH)",
+            "gh not on PATH -- install the GitHub CLI to use the github forge",
+        )
+    return "github (gh found)", None
 
 
 def doctor() -> None:
@@ -115,10 +118,10 @@ def doctor() -> None:
         raise typer.Exit(code=EXIT_UNUSABLE) from exc
     typer.echo(f"db_path={settings.db_path}")
 
-    forge, forge_ok = _forge_status(root)
+    forge, forge_problem = _forge_status(root)
     typer.echo(f"forge={forge}")
-    if not forge_ok:
-        problems.append(f"forge unusable: {forge}")
+    if forge_problem is not None:
+        problems.append(forge_problem)
 
     if settings.llm_proxy_base_url:
         typer.echo(f"provider=gateway ({settings.llm_proxy_base_url})")
@@ -126,7 +129,7 @@ def doctor() -> None:
         typer.echo("provider=none")
         problems.append(
             "no provider configured -- set REPOACH_LLM_PROXY_BASE_URL (gateway) in the "
-            "environment, ~/.config/repoach/env or <project>/.repoach.env"
+            "environment or ~/.config/repoach/env (never in a project file)"
         )
 
     for name in DOCTOR_BINARIES:
