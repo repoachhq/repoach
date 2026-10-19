@@ -298,9 +298,16 @@ class TestTemplate:
 
 
 class TestMeasure:
-    def test_census_orders_languages(self) -> None:
+    def test_census_ranks_by_file_count_and_drops_minor_languages(self) -> None:
         files = ["a.sv", "b/c.tsx", "d.py", "e.sh", "README.md", "f/g.go"]
         assert census(files) == ["python", "typescript", "go", "verilog", "shell"]
+        gum = [f"x{i}.go" for i in range(59)] + [f"s{i}.sh" for i in range(11)]
+        gum += ["examples/gum.py", "examples/gum.js"] + [f"doc{i}.md" for i in range(43)]
+        assert census(gum) == ["go", "shell"]
+        lone = ["tool.py"] + [f"doc{i}.md" for i in range(99)]
+        assert census(lone) == ["python"]
+        two_minor = ["a.py", "b.sh"] + [f"doc{i}.md" for i in range(198)]
+        assert census(two_minor) == ["python"]
 
     def test_layout_reads_top_level_directories(self) -> None:
         files = ["src/a.py", "tests/test_a.py", "docs/x.py", ".github/y.py", "api/b.py"]

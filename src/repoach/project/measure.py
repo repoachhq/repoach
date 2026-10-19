@@ -10,7 +10,8 @@ Every value written by ``init`` is read from the clone, never assumed:
   carries one, else the default branch itself;
 * the merge method and branch deletion from the forge API when the
   ``gh`` / ``glab`` CLI can read them, else ``squash`` / ``true``;
-* the languages from a census of ``git ls-files`` by extension;
+* the languages from a census of ``git ls-files`` by extension, most
+  files first, dropping any under 2 % of the tracked files;
 * the source and test roots from the census' top-level directories;
 * the lint and test commands from known markers (``pyproject.toml``,
   a root ``package.json`` with ``lint`` / ``test`` scripts, ``go.mod``),
@@ -25,6 +26,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, urlsplit
@@ -47,6 +49,9 @@ LANGUAGE_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "shell": (".sh",),
 }
 """Extensions counted by the census (A2), in the order languages are listed."""
+
+MIN_LANGUAGE_SHARE = 0.02
+"""Share of tracked files below which a language is not declared."""
 
 TEST_ROOT_NAMES: frozenset[str] = frozenset({"tests", "test", "spec", "e2e", "__tests__"})
 """Top-level directory names taken as test roots."""
@@ -108,16 +113,27 @@ def language_of(path: str) -> str | None:
 
 
 def census(files: list[str]) -> list[str]:
-    """Return the languages with at least one tracked file, in census order.
+    """Return the languages that matter in the tracked files, most files first.
+
+    A language holding less than :data:`MIN_LANGUAGE_SHARE` of all
+    tracked files (an example script, a vendored helper) is dropped,
+    unless no language reaches the threshold, in which case the largest
+    one is kept alone.
 
     Args:
         files: Tracked repository-relative paths.
 
     Returns:
-        Language names ordered as :data:`LANGUAGE_EXTENSIONS`.
+        Language names by descending file count, ties in
+        :data:`LANGUAGE_EXTENSIONS` order.
     """
-    present = {language for path in files if (language := language_of(path)) is not None}
-    return [language for language in LANGUAGE_EXTENSIONS if language in present]
+    counts = Counter(language for path in files if (language := language_of(path)) is not None)
+    if not counts:
+        return []
+    order = list(LANGUAGE_EXTENSIONS)
+    ranked = sorted(counts, key=lambda language: (-counts[language], order.index(language)))
+    kept = [language for language in ranked if counts[language] >= MIN_LANGUAGE_SHARE * len(files)]
+    return kept or ranked[:1]
 
 
 def layout(files: list[str]) -> tuple[list[str], list[str]]:
