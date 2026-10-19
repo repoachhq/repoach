@@ -1210,7 +1210,7 @@ def test_run_team_review_loads_spec_from_branch_name(tmp_path) -> None:
     # does not try to validate the NIM API key (CI has no secret).
     with (
         patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
-        patch("repoach.review.spec.maybe_load_active_spec", return_value=fake_plan) as mloader,
+        patch("repoach.review.orchestrator.load_spec", return_value=fake_plan) as mloader,
         patch("repoach.review.reviewer.Architect.review_diff") as march,
         patch("repoach.review.reviewer.Sentinel.review_diff") as msent,
         patch("repoach.review.reviewer.Tester.review_diff") as mtest,
@@ -1230,7 +1230,7 @@ def test_run_team_review_loads_spec_from_branch_name(tmp_path) -> None:
         orch.review_pr(pr_number=999)
 
     mloader.assert_called_once()
-    assert mloader.call_args.kwargs.get("branch") == "feat/sp-fake-impl"
+    assert mloader.call_args.args[0] == "SP-FAKE"
     for m in (march, msent, mtest, mscribe):
         assert m.call_count == 1, "each reviewer dispatched exactly once"
         assert m.call_args.kwargs.get("spec_plan") == fake_plan.raw_markdown
@@ -1259,7 +1259,7 @@ def test_run_team_review_anchors_to_sub_specs_for_decomposed_parent(tmp_path) ->
     orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=False)
     with (
         patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
-        patch("repoach.review.spec.maybe_load_active_spec", return_value=None),
+        patch("repoach.review.orchestrator.load_spec", side_effect=FileNotFoundError("no doc")),
         patch(
             "repoach.review.subspec_anchor.maybe_anchor_decomposed_parent",
             return_value=anchored,

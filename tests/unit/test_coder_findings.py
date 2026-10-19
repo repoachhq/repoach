@@ -593,7 +593,9 @@ def test_cli_from_findings_placeholder_exits_9(monkeypatch) -> None:
     monkeypatch.setattr(
         review_cmds,
         "run_coder_fix_from_findings",
-        lambda pr: CoderFindingsResult(pr_number=pr, placeholder_rejected=True, pushed=False),
+        lambda pr, **_kwargs: CoderFindingsResult(
+            pr_number=pr, placeholder_rejected=True, pushed=False
+        ),
     )
     with pytest.raises(typer.Exit) as exc:
         review_cmds.review_fix(5, forge_name=None)
@@ -604,7 +606,9 @@ def test_cli_from_findings_whitelist_exits_4(monkeypatch) -> None:
     monkeypatch.setattr(
         review_cmds,
         "run_coder_fix_from_findings",
-        lambda pr: CoderFindingsResult(pr_number=pr, placeholder_rejected=False, pushed=False),
+        lambda pr, **_kwargs: CoderFindingsResult(
+            pr_number=pr, placeholder_rejected=False, pushed=False
+        ),
     )
     with pytest.raises(typer.Exit) as exc:
         review_cmds.review_fix(6, forge_name=None)
@@ -615,7 +619,7 @@ def test_cli_from_findings_stuck_exits_3(monkeypatch) -> None:
     monkeypatch.setattr(
         review_cmds,
         "run_coder_fix_from_findings",
-        lambda pr: CoderFindingsResult(pr_number=pr, stuck=True, pushed=False),
+        lambda pr, **_kwargs: CoderFindingsResult(pr_number=pr, stuck=True, pushed=False),
     )
     with pytest.raises(typer.Exit) as exc:
         review_cmds.review_fix(7, forge_name=None)

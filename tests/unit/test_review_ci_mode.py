@@ -43,6 +43,9 @@ class _FakeTeam:
     posted_comments: int = 4
     posted_reviews: int = 2
     reviews: list[_FakeOutcome] = field(default_factory=list)
+    spec_id: str | None = None
+    spec_source: str | None = None
+    spec_covered: bool | None = None
 
 
 _REQUIRED_TOP_LEVEL = {

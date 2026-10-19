@@ -30,6 +30,8 @@ from sqlalchemy import create_engine, text
 
 from ..core.config import get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
+from ..project.config import load_project_config
+from ..project.spec_source import resolve_spec, spec_coverage_label
 from ..review.auto_merge import (
     evaluate_merge_gate,
     merge_exit_code,
@@ -38,11 +40,46 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.orchestrator import run_review
+from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
     "Forge the PR / MR lives on: github or gitlab (default: REPOACH_FORGE, repoach.toml, origin)."
 )
+
+_SPEC_HELP = (
+    "Spec the PR / MR implements; outranks a 'Spec: SP-…' description line and the branch "
+    "name. Without any, the review runs with no spec (spec coverage: not_applicable)."
+)
+
+
+def _spec_flag(value: object) -> str | None:
+    """Return the ``--spec`` value, or None when absent.
+
+    Anything but a non-empty string — typer's ``OptionInfo`` default when
+    a command function is called directly from Python included — means
+    no flag was given.
+    """
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _require_spec(spec: str | None, root: Path) -> None:
+    """End the command with rc 2 when ``--spec`` names no spec document.
+
+    Args:
+        spec: The ``--spec`` value, None when absent.
+        root: The project root whose spec directory is searched.
+
+    Raises:
+        typer.Exit: Code 2, ``spec SP-X not found under <specs_dir>``.
+    """
+    if spec is None or spec_exists(spec, root=root):
+        return
+    where = specs_dir_for(root).relative_to(root)
+    typer.echo(f"spec {canonical_spec_id(spec)} not found under {where}", err=True)
+    raise typer.Exit(code=2)
 
 
 def _forge_kwargs(forge_name: object) -> dict[str, Forge]:
@@ -109,6 +146,7 @@ def review_pr(
         ),
     ),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+    spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
 ) -> None:
     """Run the review-bot team on a PR / MR and emit a summary.
 
@@ -126,14 +164,26 @@ def review_pr(
     the ``.github/workflows/auto-review.yml`` workflow therefore consume
     the same shape regardless of which mode they ran in
     (SP-AUTO-REVIEW-V2-MIGRATION).
+
+    ``spec`` / ``spec_source`` name the spec the review ran against and
+    where it was declared (``--spec``, a ``Spec:`` description line, the
+    branch name); with none, ``spec`` is null and ``spec_coverage`` is
+    ``not_applicable`` — never a refusal.  A ``--spec`` naming no spec
+    document exits 2 before any forge call.
     """
-    project_root_or_exit()
+    root = project_root_or_exit()
+    spec_flag = _spec_flag(spec)
+    _require_spec(spec_flag, root)
     try:
-        team = run_review(pr_number, post=not dry_run, **_forge_kwargs(forge_name))
+        team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
+    spec_id = team.spec_id
     payload = {
         "pr_number": team.pr_number,
+        "spec": spec_id,
+        "spec_source": team.spec_source,
+        "spec_coverage": spec_coverage_label(spec_id, team.spec_covered),
         "final_verdict": team.final_verdict.value,
         "n_blockers": team.n_blockers,
         "n_majors": team.n_majors,
@@ -230,6 +280,7 @@ def review_report(
 def review_fix(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to auto-fix."),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+    spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
 ) -> None:
     """Run one findings-driven Coder auto-fix iteration on a PR.
 
@@ -255,10 +306,17 @@ def review_fix(
         hit; the surviving open blocking findings were driven to
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
+      * ``2`` — ``--spec`` names no spec document, or the forge is unusable.
+
+    The Coder reads the spec resolved like ``review pr`` (``--spec`` >
+    ``Spec:`` description line > branch name); without one it fixes the
+    findings with no spec context.
     """
-    project_root_or_exit()
+    root = project_root_or_exit()
+    spec_flag = _spec_flag(spec)
+    _require_spec(spec_flag, root)
     try:
-        fr = run_coder_fix_from_findings(pr_number, **_forge_kwargs(forge_name))
+        fr = run_coder_fix_from_findings(pr_number, spec=spec_flag, **_forge_kwargs(forge_name))
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     typer.echo(
@@ -380,6 +438,7 @@ def review_insights(
 def review_gate(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+    spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
 ) -> None:
     """Evaluate the pure merge gate for a PR — read-only, never merges.
 
@@ -396,8 +455,15 @@ def review_gate(
       * ``0`` — gate satisfied (``merge`` is True): the PR may merge.
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
+
+    ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
+    (``--spec`` > ``Spec:`` description line > branch name).
+    ``facts.spec_coverage`` is ``not_applicable`` when no spec is
+    declared: a PR without a spec is never refused for lacking one.
     """
-    project_root_or_exit()
+    root = project_root_or_exit()
+    spec_flag = _spec_flag(spec)
+    _require_spec(spec_flag, root)
     try:
         evaluation = evaluate_merge_gate(pr_number, **_forge_kwargs(forge_name))
     except Exception as exc:
@@ -410,16 +476,30 @@ def review_gate(
         )
         raise typer.Exit(code=1) from exc
     facts = evaluation.facts
+    pr = evaluation.pull_request
+    declared = resolve_spec(
+        flag=spec_flag,
+        description=pr.body if pr is not None else "",
+        branch=pr.head_ref if pr is not None else "",
+        sources=load_project_config(root).review.spec_sources,
+        root=root,
+    )
+    coverage = spec_coverage_label(
+        declared.spec_id, facts.spec_covered if facts.spec_coverage_known else None
+    )
     typer.echo(
         json.dumps(
             {
                 "pr_number": pr_number,
                 "head_sha": evaluation.head_sha,
+                "spec": declared.spec_id,
+                "spec_source": declared.source,
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
                 "facts": {
                     "ci_green": facts.ci_green,
                     "open_blocking_findings": facts.open_blocking_findings,
+                    "spec_coverage": coverage,
                     "spec_covered": facts.spec_covered,
                     "spec_coverage_known": facts.spec_coverage_known,
                     "review_complete": facts.review_complete,

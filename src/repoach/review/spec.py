@@ -114,6 +114,31 @@ def _normalise_id(spec_id: str) -> str:
     return f"SP-{s}"
 
 
+def spec_exists(spec_id: str, *, root: Path | None = None) -> bool:
+    """Return whether a spec document matches ``spec_id``, without loading it.
+
+    Args:
+        spec_id: Any spelling accepted by :func:`load_spec`.
+        root: Repository root; defaults to ``Path.cwd()``.
+
+    Returns:
+        True when :func:`load_spec` would find a file.
+    """
+    return _resolve_plan_file(_normalise_id(spec_id), root=root) is not None
+
+
+def canonical_spec_id(spec_id: str) -> str:
+    """Return the canonical ``SP-<UPPER>`` spelling of a spec id.
+
+    Args:
+        spec_id: Any spelling accepted by :func:`load_spec`.
+
+    Returns:
+        The canonical id.
+    """
+    return _normalise_id(spec_id)
+
+
 def _scan_known_spec_ids(root: Path | None = None) -> tuple[str, ...]:
     """Scan ``docs/specs/`` for spec IDs, longest-first.
 

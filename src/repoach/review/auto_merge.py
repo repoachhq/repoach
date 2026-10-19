@@ -430,12 +430,15 @@ class GateEvaluation:
         ci_gate: The CI-gate outcome (green flag, outcome tag, reason).
         facts: The merge facts re-verified at ``head_sha``.
         decision: The pure-gate decision over those facts.
+        pull_request: The PR / MR as read for this evaluation, when the
+            forge answered (its description and branch declare the spec).
     """
 
     head_sha: str
     ci_gate: CIGateOutcome
     facts: MergeFacts
     decision: MergeDecision
+    pull_request: PullRequest | None = None
 
 
 def _ls_remote_tip(forge: Forge, head_ref: str) -> tuple[str | None, str]:
@@ -659,6 +662,7 @@ def evaluate_merge_gate(
             ),
             facts=stale_facts,
             decision=MergeDecision(merge=False, reasons=[reason]),
+            pull_request=pr,
         )
 
     ci_gate = evaluate_ci_gate(
@@ -692,6 +696,7 @@ def evaluate_merge_gate(
         ci_gate=ci_gate,
         facts=facts,
         decision=decision,
+        pull_request=pr,
     )
 
 
