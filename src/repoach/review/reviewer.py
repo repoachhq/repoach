@@ -36,7 +36,9 @@ from ..agent_engine.agent_loop import (
     PROXY_SONNET_CHAIN,
     AgentLoop,
 )
+from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..core.resources import prompts_dir
 from .diff_scoper import scope_diff
 from .findings import Finding
 from .retry_backoff import AttemptOutcome, RetryResult, retry_with_backoff
@@ -47,7 +49,7 @@ if TYPE_CHECKING:
 
 _log = get_logger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
+_PROMPTS_DIR = prompts_dir()
 
 _DIFF_HARD_CAP_CHARS = 140_000
 """Hard cap on the diff text substituted into reviewer prompts.
@@ -1248,7 +1250,7 @@ def _persist_parse_failed_response(
         The path written to, or ``None`` when the I/O failed (we
         don't want a logging failure to crash the dispatch).
     """
-    target_dir = logs_dir or (Path(__file__).resolve().parents[3] / "logs")
+    target_dir = logs_dir or get_settings().logs_dir
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

@@ -79,6 +79,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoach"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"prompts" = "repoach/prompts"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
