@@ -15,12 +15,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from repoach.forge.gitlab import GitLabForge
 from repoach.forge.runner import CommandResult
 from repoach.review.auto_merge import evaluate_merge_gate
 from tests.forge_fakes import scripted_github
 
 GATE = Path(__file__).resolve().parent.parent / "fixtures" / "forge" / "gate"
+
+
+@pytest.fixture(scope="module")
+def gate_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One ledger for the module: schema creation is the slow part, the ledger stays empty."""
+    return tmp_path_factory.mktemp("gate") / "gate.db"
 
 
 def _answer(entry: dict[str, object], argv: list[str]) -> CommandResult:
@@ -32,7 +40,7 @@ def _answer(entry: dict[str, object], argv: list[str]) -> CommandResult:
     )
 
 
-def test_gate_facts_identical_to_pre_protocol_recording(tmp_path: Path) -> None:
+def test_gate_facts_identical_to_pre_protocol_recording(tmp_path: Path, gate_db: Path) -> None:
     capture = json.loads((GATE / "pr202_capture.json").read_text())
     expected = json.loads((GATE / "pr202_facts_before_forge.json").read_text())
     head = json.loads(capture["pr_view"]["stdout"])["headRefOid"]
@@ -57,7 +65,7 @@ def test_gate_facts_identical_to_pre_protocol_recording(tmp_path: Path) -> None:
     evaluation = evaluate_merge_gate(
         capture["pr"],
         forge=scripted_github(run=run, git=git),
-        db_path=tmp_path / "gate.db",
+        db_path=gate_db,
         wait_seconds=0,
         poll_interval=1,
         sleep=lambda _s: None,
@@ -81,7 +89,7 @@ def test_gate_facts_identical_to_pre_protocol_recording(tmp_path: Path) -> None:
     assert actual == expected
 
 
-def _gitlab_gate(tmp_path: Path, pipeline_status: str) -> bool:
+def _gitlab_gate(tmp_path: Path, gate_db: Path, pipeline_status: str) -> bool:
     """Run the gate on a GitLab MR whose head pipeline reports ``pipeline_status``."""
     tmp_path.mkdir()
     sha = "c" * 40
@@ -108,7 +116,7 @@ def _gitlab_gate(tmp_path: Path, pipeline_status: str) -> bool:
     evaluation = evaluate_merge_gate(
         9,
         forge=forge,
-        db_path=tmp_path / "gate.db",
+        db_path=gate_db,
         wait_seconds=0,
         poll_interval=1,
         sleep=lambda _s: None,
@@ -117,8 +125,8 @@ def _gitlab_gate(tmp_path: Path, pipeline_status: str) -> bool:
     return evaluation.facts.ci_green
 
 
-def test_gitlab_gate_ci_green_is_head_pipeline_success(tmp_path: Path) -> None:
+def test_gitlab_gate_ci_green_is_head_pipeline_success(tmp_path: Path, gate_db: Path) -> None:
     """AC5: ``facts.ci_green`` equals ``head_pipeline.status == "success"``."""
-    assert _gitlab_gate(tmp_path / "a", "success") is True
-    assert _gitlab_gate(tmp_path / "b", "failed") is False
-    assert _gitlab_gate(tmp_path / "c", "running") is False
+    assert _gitlab_gate(tmp_path / "a", gate_db, "success") is True
+    assert _gitlab_gate(tmp_path / "b", gate_db, "failed") is False
+    assert _gitlab_gate(tmp_path / "c", gate_db, "running") is False
