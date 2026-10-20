@@ -262,7 +262,10 @@ class TeamOutcome:
 
     ``final_verdict`` is sourced from the findings ledger
     (:func:`merge_gate.verdict_from_facts`), not the retired consensus
-    gate. ``posting_outcome`` is ``"SKIP_STATE"`` when the forge refused
+    gate, except that one reviewer ending ``ERROR`` (transport exhausted,
+    bot crashed) makes it ``ERROR``. ``posting_outcome`` is
+    ``"SKIP_ERROR"`` when posting was requested but suppressed because a
+    reviewer errored, and ``"SKIP_STATE"`` when the forge refused
     a write because the PR / MR is no longer open; posting then stopped
     at that first refused write. ``spec_id`` / ``spec_source`` name the
     spec the review ran against and where it was declared (``flag``,
@@ -362,7 +365,7 @@ class ReviewTeamOrchestrator:
 
         Pipeline:
             1. **Fetch diff.**  Failure to read the PR diff is fatal —
-               we return a degraded ``COMMENT`` outcome rather than
+               we return an ``ERROR`` outcome rather than
                crash the workflow.
             2. **Submit fresh-head guard to background thread**
                (SP-FRESH-HEAD-CONCURRENT) — when posting to GitHub,
@@ -388,7 +391,7 @@ class ReviewTeamOrchestrator:
             5. **Run the four reviewers in parallel** through a
                :class:`ThreadPoolExecutor`.  A single bot blowing up
                (NIM chain exhaustion, parser crash) records a degraded
-               ``COMMENT`` outcome — the team continues without it.
+               ``ERROR`` outcome — the others run, nothing is published.
             6. **Hallucination guard** (SP-DEV-V2-B3) — post-process
                each outcome to disprove "missing X" claims by grepping
                the working tree, and to catch the self-referential
@@ -423,7 +426,7 @@ class ReviewTeamOrchestrator:
             )
             return TeamOutcome(
                 pr_number=pr_number,
-                final_verdict=ReviewVerdict.COMMENT,
+                final_verdict=ReviewVerdict.ERROR,
                 n_blockers=0,
                 n_majors=0,
             )
@@ -565,7 +568,7 @@ class ReviewTeamOrchestrator:
                     outcomes.append(
                         ReviewerOutcome(
                             role=reviewer.role,
-                            verdict=ReviewVerdict.COMMENT,
+                            verdict=ReviewVerdict.ERROR,
                             summary=(f"_(bot crashed: {type(exc).__name__} — {str(exc)[:140]})_"),
                             comments=[],
                             model_used="<n/a>",
@@ -625,7 +628,7 @@ class ReviewTeamOrchestrator:
         for i, o in enumerate(outcomes):
             if (
                 isinstance(o, ReviewerOutcome)
-                and o.verdict != ReviewVerdict.APPROVE
+                and o.verdict not in {ReviewVerdict.APPROVE, ReviewVerdict.ERROR}
                 and not any(c.severity in {"blocker", "major"} for c in o.comments)
             ):
                 outcomes[i] = replace(
@@ -639,6 +642,16 @@ class ReviewTeamOrchestrator:
                     pr_number=pr_number,
                     original_verdict=o.verdict.value,
                 )
+
+        errored_roles = [o.role.value for o in outcomes if o.verdict == ReviewVerdict.ERROR]
+        publish = self._post and not errored_roles
+        if errored_roles:
+            _log.error(
+                "review_team.reviewer_errored",
+                pr_number=pr_number,
+                roles=errored_roles,
+                posting="suppressed",
+            )
 
         n_blockers = sum(1 for o in outcomes for c in o.comments if c.severity == "blocker")
         n_majors = sum(1 for o in outcomes for c in o.comments if c.severity == "major")
@@ -690,7 +703,7 @@ class ReviewTeamOrchestrator:
         try:
             from .thread_context import post_refuted_finding_sentinels
 
-            if self._post:
+            if publish:
                 n_sentinels = post_refuted_finding_sentinels(self._forge, self._db_path, pr_number)
                 _log.info(
                     "review_team.refuted_sentinels_posted",
@@ -710,7 +723,8 @@ class ReviewTeamOrchestrator:
             )
 
         try:
-            self._fire_proposed_escalation_dossier(pr_number)
+            if not errored_roles:
+                self._fire_proposed_escalation_dossier(pr_number)
         except Exception as exc:
             _log.warning(
                 "review_team.proposed_escalation_failed",
@@ -782,7 +796,7 @@ class ReviewTeamOrchestrator:
         ledger_facts = summarise_ledger_facts(
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
         )
-        final = verdict_from_facts(ledger_facts)
+        final = ReviewVerdict.ERROR if errored_roles else verdict_from_facts(ledger_facts)
 
         team = TeamOutcome(
             pr_number=pr_number,
@@ -807,7 +821,9 @@ class ReviewTeamOrchestrator:
         for event in all_events:
             record_hallucination(self._db_path, pr_number=pr_number, event=event)
 
-        if self._post and state_refused is None:
+        if self._post and errored_roles:
+            team.posting_outcome = "SKIP_ERROR"
+        if publish and state_refused is None:
             try:
                 self._publish_all(
                     pr_number=pr_number,

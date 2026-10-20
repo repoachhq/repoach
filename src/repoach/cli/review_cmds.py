@@ -40,6 +40,7 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.orchestrator import run_review
+from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from .doctor_cmds import project_root_or_exit
 
@@ -51,6 +52,14 @@ _SPEC_HELP = (
     "Spec the PR / MR implements; outranks a 'Spec: SP-…' description line and the branch "
     "name. Without any, the review runs with no spec (spec coverage: not_applicable)."
 )
+
+
+EXIT_REVIEW_ERROR = 3
+"""``review pr`` exit code when a reviewer could not reach a model.
+
+Distinct from 2 (request changes, or a ``--spec`` naming no document)
+and from 5 (a refused merge gate): no review happened, nothing was
+published (SP-REVIEW-TRANSPORT-ERROR-VERDICT)."""
 
 
 def _spec_flag(value: object) -> str | None:
@@ -172,6 +181,10 @@ def review_pr(
     spec document prints a warning and reports ``spec_coverage`` as
     ``missing``.  A ``--spec`` naming no spec document exits 2 before
     any forge call.
+
+    A reviewer that could not reach a model (transport exhausted, bot
+    crashed) ends ``ERROR``: the team verdict is ``ERROR``, nothing is
+    published even without ``--dry-run``, and the command exits 3.
     """
     root = project_root_or_exit()
     spec_flag = _spec_flag(spec)
@@ -215,7 +228,9 @@ def review_pr(
         ],
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
-    if team.final_verdict.value == "REQUEST_CHANGES":
+    if team.final_verdict == ReviewVerdict.ERROR:
+        raise typer.Exit(code=EXIT_REVIEW_ERROR)
+    if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
         raise typer.Exit(code=2)
 
 
