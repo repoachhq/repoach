@@ -37,6 +37,14 @@ from ..project.toml_write import toml_value
 DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
 """External executables whose presence ``doctor`` reports."""
 
+_ROUTED_PROVIDER_KINDS: frozenset[str] = frozenset({"", "gateway"})
+"""``[provider].kind`` values a review can reach today.
+
+Every model call goes through the gateway (``REPOACH_LLM_PROXY_BASE_URL``);
+the direct providers are parsed but not routed
+(SP-PROVIDER-DIRECT-ANTHROPIC, open), so ``doctor`` says so instead of
+implying the key alone is enough."""
+
 EXIT_UNUSABLE = 2
 """Exit code when the project, forge or provider is not usable."""
 
@@ -146,14 +154,25 @@ def doctor() -> None:
     if forge_problem is not None:
         problems.append(forge_problem)
 
-    if settings.llm_proxy_base_url:
-        typer.echo(f"provider=gateway ({settings.llm_proxy_base_url})")
+    kind = resolved.config.provider.kind
+    if kind in _ROUTED_PROVIDER_KINDS:
+        if settings.llm_proxy_base_url:
+            typer.echo(f"provider=gateway ({settings.llm_proxy_base_url})")
+        else:
+            typer.echo("provider=none")
+            problems.append(
+                "no provider configured -- set REPOACH_LLM_PROXY_BASE_URL (gateway) in the "
+                "environment or ~/.config/repoach/env (never in a project file)"
+            )
     else:
-        typer.echo("provider=none")
-        problems.append(
-            "no provider configured -- set REPOACH_LLM_PROXY_BASE_URL (gateway) in the "
-            "environment or ~/.config/repoach/env (never in a project file)"
-        )
+        unrouted = f"provider {kind}: not routed, set REPOACH_LLM_PROXY_BASE_URL"
+        typer.echo(f"provider={kind} ({resolved.source('provider.kind')}; not routed)")
+        if settings.llm_proxy_base_url:
+            typer.echo(f"provider_route=gateway ({settings.llm_proxy_base_url})")
+            typer.echo(f"repoach: {unrouted}; reviews go through the gateway", err=True)
+        else:
+            typer.echo("provider_route=none")
+            problems.append(unrouted)
 
     for name in DOCTOR_BINARIES:
         typer.echo(_binary_line(name))
