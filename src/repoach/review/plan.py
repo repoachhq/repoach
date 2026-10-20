@@ -24,6 +24,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from ..gates.selectors import SelectorKind, parse_selector, promised_file, selector_file
 from ..project.config import plans_dir_relative
 
 PLAN_MARKER: str = "<!-- repoach-action-plan -->"
@@ -269,9 +270,20 @@ class PlanStep(BaseModel):
         satisfy the step gate vacuously.  Require a ``::`` node id so
         the promise discriminates the step's own new test function.
         Class-scoped selectors with multiple ``::`` segments satisfy
-        this check.
+        this check. Vitest selectors (``src/x.test.ts > name``, also
+        ``__tests__/`` files), Go selectors (``./pkg -run TestY``) and
+        ``cmd:`` selectors are accepted too (SP-UNIVERSAL-GATES G8); a
+        Vitest promise must name its test the same way.
         """
         for selector in selectors:
+            parsed = parse_selector(selector)
+            if parsed is not None and parsed.kind is not SelectorKind.PYTEST:
+                if parsed.kind is SelectorKind.VITEST and not parsed.names:
+                    raise ValueError(
+                        "promise the exact test: file.test.ts > test name — "
+                        "a bare file proves nothing about this step's new work"
+                    )
+                continue
             if "::" not in selector:
                 raise ValueError(
                     "promise the exact test function: file.py::test_name — "
@@ -395,8 +407,8 @@ class ActionPlan(BaseModel):
                 for path in earlier.files
             }
             for selector in step.unit_tests:
-                test_file = selector.split("::", 1)[0]
-                if test_file not in created_so_far:
+                test_file = promised_file(selector)
+                if test_file is not None and test_file not in created_so_far:
                     raise ValueError(
                         f"step {step.index} promises test {selector!r} but no step "
                         f"up to {step.index} creates {test_file!r} — add that test "
@@ -413,7 +425,7 @@ class ActionPlan(BaseModel):
         set produces the pytest masking bug that #34 had to guard against.
         """
         for selector in self.integration_tests:
-            file_part = selector.split("::", 1)[0]
+            file_part = selector_file(selector)
             if not file_part.startswith("tests/integration/"):
                 raise ValueError(
                     f"integration test selector {selector!r} must live under "
@@ -439,8 +451,8 @@ class ActionPlan(BaseModel):
         """
         created_anywhere = {path for step in self.steps for path in step.files}
         for selector in self.integration_tests:
-            test_file = selector.split("::", 1)[0]
-            if test_file not in created_anywhere:
+            test_file = promised_file(selector)
+            if test_file is not None and test_file not in created_anywhere:
                 raise ValueError(
                     f"integration test {selector!r} is promised but no step creates "
                     f"{test_file!r} — add that file to a step's files (the per-step "

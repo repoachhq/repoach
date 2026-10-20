@@ -7,6 +7,11 @@ source (SP-UNIVERSAL-PROJECT-CONFIG), the ledger path, the selected forge
 and provider, and whether each external binary is on ``PATH``.  It
 builds :class:`~repoach.core.config.Settings` directly (no directory is
 created) and never contacts a forge or a provider.
+
+``doctor --gates`` prints the gate configuration instead
+(SP-UNIVERSAL-GATES): the declared languages and commands, then one
+row per supported language with each verifier's availability here
+(``builtin``, ``found: <path>``, ``missing: <binary>``).
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from ..core.paths import (
     user_config_dir,
     user_data_dir,
 )
+from ..gates.config import CONFIG_FILE_NAME, GatesConfig, load_gates_config
+from ..gates.verifiers import availability_table
 from ..project.config import ConfigError, config_path
 from ..project.resolve import (
     UNDECLARED_COMMAND_NOTE,
@@ -100,18 +107,71 @@ def _forge_status(resolved: ResolvedProjectConfig) -> tuple[str, str | None]:
     return f"{name} ({source}; {binary} found)", None
 
 
-def doctor() -> None:
+def _command_line(name: str, value: str | None, builtin: str) -> str:
+    """Return the ``commands.<name>=`` line of ``doctor --gates``."""
+    if value is None:
+        return f"commands.{name}=({builtin})"
+    return f"commands.{name}={value or '(none: skipped)'}"
+
+
+def print_gates(root: Path) -> None:
+    """Print the gate configuration and the per-language verifier table.
+
+    Args:
+        root: The project root.
+
+    Raises:
+        typer.Exit: With code 2 when ``repoach.toml`` is malformed.
+    """
+    try:
+        config: GatesConfig = load_gates_config(root)
+    except ConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNUSABLE) from exc
+    source = root / CONFIG_FILE_NAME
+    typer.echo(f"gates_config={source if not config.builtin else 'builtin (no repoach.toml)'}")
+    typer.echo(f"languages={','.join(sorted(lang.value for lang in config.languages))}")
+    typer.echo(f"src_roots={','.join(config.src_roots) or '(anywhere)'}")
+    typer.echo(f"test_roots={','.join(config.test_roots) or '(anywhere)'}")
+    typer.echo(_command_line("lint", config.lint_cmd, "built-in ruff check + format"))
+    typer.echo(_command_line("test", config.test_cmd, "built-in pytest -q tests/unit"))
+    typer.echo(_command_line("gate", config.gate_cmd, "none"))
+    typer.echo(f"commands.timeout_s={config.timeout_s}")
+    typer.echo(f"arch.require_frontmatter={str(config.require_frontmatter).lower()}")
+    header = f"{'language':<11} {'declared':<9} {'extensions':<24} {'selector':<8} verifiers"
+    typer.echo(header)
+    for row in availability_table(root, config):
+        verifiers = "; ".join(f"{name}={state}" for name, state in row.verifiers) or "(none)"
+        typer.echo(
+            f"{row.language.value:<11} {'yes' if row.declared else 'no':<9} "
+            f"{','.join(row.extensions):<24} {row.selector_kind or '-':<8} {verifiers}"
+        )
+
+
+def doctor(
+    gates: bool = typer.Option(
+        False, "--gates", help="Print the gate configuration and per-language verifier table."
+    ),
+) -> None:
     """Print the resolved anchors, configuration, forge, provider and binaries.
 
     Every ``repoach.toml`` key is printed as ``config.<section>.<key>=<value>
     (<source>)``.  Exits 0 when the selected forge and provider are
     usable, 2 otherwise (including outside a git working tree or with an
-    invalid ``repoach.toml``).
+    invalid ``repoach.toml``). With ``--gates`` prints the gate
+    configuration and verifier table instead, exiting 0 unless
+    ``repoach.toml`` is invalid.
+
+    Args:
+        gates: Print the gate table instead of the anchors.
 
     Raises:
         typer.Exit: With code 2 when anything required is unusable.
     """
     root = project_root_or_exit()
+    if gates:
+        print_gates(root)
+        return
     typer.echo(f"repoach={__version__}")
     typer.echo(f"project_root={root}")
     typer.echo(f"user_config_dir={user_config_dir()}")

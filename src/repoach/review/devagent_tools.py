@@ -34,6 +34,8 @@ from pathlib import Path
 
 from ..agent_engine.agent_loop import ToolDef
 from ..core.logging import get_logger
+from ..gates.commands import run_test_gate
+from ..gates.config import GatesConfig, load_gates_config
 from .coder_loop import is_path_allowed, run_ruff_gate
 from .patch_apply import apply_search_replace_edits
 from .plan import require_repo_relative
@@ -104,7 +106,10 @@ def normalise_contract(repo_root: Path, allowed_paths: Iterable[str]) -> frozens
 
 
 def _resolve_writable(
-    repo_root: Path, path: str, contract: frozenset[str] | None = None
+    repo_root: Path,
+    path: str,
+    contract: frozenset[str] | None = None,
+    config: GatesConfig | None = None,
 ) -> Path | str:
     """Resolve a path the agent may *write*, or an error string.
 
@@ -115,12 +120,15 @@ def _resolve_writable(
     ``contract`` is supplied (the step's file whitelist, SP-DEVAGENT-LOOP), the
     resolved path must also be one of its members, so the agentic loop cannot write
     outside the step it was handed — the model reads the refusal and self-corrects.
+    ``config`` carries the project's own jail additions (SP-UNIVERSAL-GATES G7);
+    it is read from ``repo_root`` when omitted.
     """
     resolved = _resolve_in_repo(repo_root, path)
     if isinstance(resolved, str):
         return resolved
     relative = resolved.relative_to(repo_root).as_posix()
-    if not is_path_allowed(relative):
+    jail = config if config is not None else load_gates_config(repo_root)
+    if not is_path_allowed(relative, jail):
         return f"error: path is not writable (outside the allow-list): {path!r}"
     if contract is not None and relative not in contract:
         return (
@@ -150,6 +158,8 @@ def make_developer_tools(
     """
     root = (repo_root or Path.cwd()).resolve()
     contract = None if allowed_paths is None else normalise_contract(root, allowed_paths)
+    config = load_gates_config(root)
+    test_label = config.test_cmd or "pytest"
 
     def write_file(path: str, content: str) -> str:
         """Author a whole file (create or overwrite), creating parent dirs."""
@@ -157,7 +167,7 @@ def make_developer_tools(
             return "error: 'content' must be a string"
         if len(content) > _WRITE_CAP_CHARS:
             return f"error: content too large ({len(content)} chars > {_WRITE_CAP_CHARS})"
-        resolved = _resolve_writable(root, path, contract)
+        resolved = _resolve_writable(root, path, contract, config)
         if isinstance(resolved, str):
             return resolved
         try:
@@ -176,7 +186,7 @@ def make_developer_tools(
         """Apply ordered anchored ``{search, replace}`` edits to an existing file."""
         if not isinstance(edits, list):
             return "error: 'edits' must be a list of {search, replace} objects"
-        resolved = _resolve_writable(root, path, contract)
+        resolved = _resolve_writable(root, path, contract, config)
         if isinstance(resolved, str):
             return resolved
         if not resolved.is_file():
@@ -195,7 +205,9 @@ def make_developer_tools(
         return f"ok: applied {len(edits)} edit(s) to {path}"
 
     def run_tests(target: str = _DEFAULT_TEST_TARGET) -> str:
-        """Run pytest on a repo-relative target (default the unit suite)."""
+        """Run the project's test command (built-in: pytest) on a repo-relative target."""
+        if config.test_cmd is not None:
+            return _run_configured_tests(target)
         resolved = _resolve_in_repo(root, target)
         if isinstance(resolved, str):
             return resolved
@@ -219,12 +231,32 @@ def make_developer_tools(
         _log.info("devagent_tools.run_tests", target=target, verdict=verdict)
         return f"{verdict} (pytest {target})\n{tail}"
 
+    def _run_configured_tests(target: str) -> str:
+        """Run ``[commands].test`` with ``target`` (an empty command is a skip)."""
+        selector = target.strip()
+        if selector and selector != _DEFAULT_TEST_TARGET:
+            resolved = _resolve_in_repo(root, selector.split("::", 1)[0].split(" > ", 1)[0])
+            if isinstance(resolved, str):
+                return resolved
+        try:
+            passed, tail = run_test_gate(
+                root,
+                config,
+                target=selector if selector and selector != _DEFAULT_TEST_TARGET else None,
+            )
+        except ValueError as exc:
+            return f"error: {exc}"
+        verdict = "PASS" if passed else "FAIL"
+        _log.info("devagent_tools.run_tests", target=target, verdict=verdict)
+        return f"{verdict} ({test_label} {target})\n{tail[-_TEST_TAIL_CAP_CHARS:]}"
+
     def run_ruff() -> str:
-        """Run the repo's ruff gate (lint + format check, as CI does)."""
-        passed, tail = run_ruff_gate(root)
+        """Run the project's lint gate (built-in: ruff lint + format check, as CI does)."""
+        passed, tail = run_ruff_gate(root, config=config)
         verdict = "PASS" if passed else "FAIL"
         _log.info("devagent_tools.run_ruff", verdict=verdict)
-        return f"{verdict} (ruff)\n{tail[-_TEST_TAIL_CAP_CHARS:]}"
+        label = config.lint_cmd or "ruff"
+        return f"{verdict} ({label})\n{tail[-_TEST_TAIL_CAP_CHARS:]}"
 
     return [
         ToolDef(
@@ -274,6 +306,10 @@ def make_developer_tools(
             description=(
                 "Run pytest on a repo-relative target (a test file/dir, default "
                 "'tests/unit'). Returns PASS/FAIL and the captured tail."
+                if config.test_cmd is None
+                else f"Run the project's tests ({test_label}) on a repo-relative target "
+                "(a test file/dir or selector, default the whole suite). Returns "
+                "PASS/FAIL and the captured tail."
             ),
             parameters_schema={
                 "type": "object",
@@ -288,7 +324,12 @@ def make_developer_tools(
         ),
         ToolDef(
             name="run_ruff",
-            description="Run the repo's ruff lint+format gate. Returns PASS/FAIL and the tail.",
+            description=(
+                "Run the repo's ruff lint+format gate. Returns PASS/FAIL and the tail."
+                if config.lint_cmd is None
+                else f"Run the project's lint gate ({config.lint_cmd or 'none configured'}). "
+                "Returns PASS/FAIL and the tail."
+            ),
             parameters_schema={"type": "object", "properties": {}},
             callable_fn=run_ruff,
         ),

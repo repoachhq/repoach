@@ -36,6 +36,8 @@ from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
+from ..gates.selectors import SelectorKind, parse_selector, selector_file
+from ..gates.selectors import selector_present as gate_selector_present
 from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
 _log = get_logger(__name__)
@@ -127,8 +129,14 @@ def promised_present(repo_root: Path, selector: str) -> bool:
         defines ``def <trailing_name>(`` or
         ``async def <trailing_name>(`` at any indentation; ``False``
         when the file is absent, the file cannot be read, or the
-        trailing name is not defined.
+        trailing name is not defined. Vitest, Go and ``cmd:``
+        selectors are judged by
+        :func:`repoach.gates.selectors.selector_present` instead
+        (SP-UNIVERSAL-GATES G8).
     """
+    parsed = parse_selector(selector)
+    if parsed is not None and parsed.kind is not SelectorKind.PYTEST:
+        return gate_selector_present(repo_root, parsed)
     file_part, _, node = selector.partition("::")
     target = repo_root / file_part
     if not target.is_file():
@@ -170,6 +178,31 @@ def selector_present(repo_root: Path, selector: str) -> bool:
     return promised_present(repo_root, selector)
 
 
+def _orphaned(repo_root: Path, selector: str, action: str | None) -> bool:
+    """Whether one promised selector is orphaned at head (see :func:`audit_plan_selectors`).
+
+    A ``cmd:`` selector is orphaned whenever it names a command the
+    project did not declare in ``[commands]`` (nothing can create it);
+    a Go selector whose package directory does not exist yet is exempt
+    like an undelivered test file.
+    """
+    parsed = parse_selector(selector)
+    if parsed is not None and parsed.kind is SelectorKind.COMMAND:
+        return not gate_selector_present(repo_root, parsed)
+    if parsed is not None and parsed.kind is SelectorKind.GO:
+        package = repo_root / (parsed.file.removesuffix("...").rstrip("/") or ".")
+        if not package.is_dir() or gate_selector_present(repo_root, parsed):
+            return False
+        return action is None or parsed.name not in action
+    file_part = selector_file(selector)
+    node = selector[len(file_part) :].lstrip(":> ").strip()
+    if not (repo_root / file_part).is_file():
+        return False
+    if selector_present(repo_root, selector):
+        return False
+    return action is None or not node or node not in action
+
+
 def audit_plan_selectors(plan: ActionPlan, repo_root: Path) -> list[str]:
     """Return every promised selector orphaned relative to the tree at head.
 
@@ -195,23 +228,11 @@ def audit_plan_selectors(plan: ActionPlan, repo_root: Path) -> list[str]:
     offenders: list[str] = []
     for step in plan.steps:
         for selector in step.unit_tests:
-            file_part, _, node = selector.partition("::")
-            target = repo_root / file_part
-            if not target.is_file():
-                continue
-            if selector_present(repo_root, selector):
-                continue
-            if node and node in step.action:
-                continue
-            offenders.append(selector)
+            if _orphaned(repo_root, selector, step.action):
+                offenders.append(selector)
     for selector in plan.integration_tests:
-        file_part, _, node = selector.partition("::")
-        target = repo_root / file_part
-        if not target.is_file():
-            continue
-        if selector_present(repo_root, selector):
-            continue
-        offenders.append(selector)
+        if _orphaned(repo_root, selector, None):
+            offenders.append(selector)
     return offenders
 
 

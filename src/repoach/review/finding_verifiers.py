@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from ..gates.config import GatesConfig, applicable, load_gates_config
 from ..lint.no_inline_comments import scan_file as scan_inline
 from ..lint.no_silent_except import scan_file as scan_silent
 from .findings import (
@@ -32,11 +33,8 @@ from .hallucination_guard import (
     make_tests_symbol_searcher,
 )
 
-_DOCSTRING_EXEMPT_PREFIXES = ("tests/", "scripts/", "src/repoach/llm_proxy/")
-"""Paths the project exempts from docstring (ruff ``D``) rules in
-pyproject.toml — a missing-docstring claim on them is a false positive
-by the project's own policy (SP-VERIFIER-LIB precision, surfaced by the
-SP-MERGE-GATE-SHADOW dry-run on PR #378)."""
+_LANGUAGE_METHOD = "language"
+"""Verification method recorded when a Python-only verifier does not apply."""
 
 _DEFERRED_RESULT = "not mechanically verifiable — slices 5-6"
 
@@ -66,7 +64,9 @@ def _missing_test_search_targets(symbols: list[str]) -> list[str]:
     return targets
 
 
-def _verify_missing_test(finding: Finding, repo_root: Path) -> tuple[FindingStatus, str, str]:
+def _verify_missing_test(
+    finding: Finding, repo_root: Path, config: GatesConfig
+) -> tuple[FindingStatus, str, str]:
     """Refute a missing-test claim only when a covering test exists under ``tests/``.
 
     The search is scoped to ``tests/`` alone — the existence of the
@@ -84,14 +84,19 @@ def _verify_missing_test(finding: Finding, repo_root: Path) -> tuple[FindingStat
     return FindingStatus.VERIFIED, "symbol_search", f"no test for {', '.join(symbols)}"
 
 
-def _verify_missing_docstring(finding: Finding, repo_root: Path) -> tuple[FindingStatus, str, str]:
+def _verify_missing_docstring(
+    finding: Finding, repo_root: Path, config: GatesConfig
+) -> tuple[FindingStatus, str, str]:
     """Refute a missing-docstring claim when every public symbol is documented.
 
     Files the project exempts from docstring rules
-    (:data:`_DOCSTRING_EXEMPT_PREFIXES`) are refuted outright — a
-    missing-docstring claim there contradicts the project's own policy.
+    (``[gates].docstring_exempt``; repoach's own ``tests/``, ``scripts/``
+    and ``src/repoach/llm_proxy/`` by default) are refuted outright — a
+    missing-docstring claim there contradicts the project's own policy
+    (SP-VERIFIER-LIB precision, surfaced by the SP-MERGE-GATE-SHADOW
+    dry-run on PR #378).
     """
-    if finding.file.startswith(_DOCSTRING_EXEMPT_PREFIXES):
+    if config.docstring_exempt and finding.file.startswith(config.docstring_exempt):
         return FindingStatus.REFUTED, "ast_docstring", "path is docstring-exempt (pyproject D)"
     reader = make_repo_file_reader(repo_root)
     source = reader(finding.file)
@@ -115,7 +120,9 @@ def _verify_missing_docstring(finding: Finding, repo_root: Path) -> tuple[Findin
     return FindingStatus.VERIFIED, "ast_docstring", f"{undocumented} public symbol(s) undocumented"
 
 
-def _verify_lint(finding: Finding, repo_root: Path) -> tuple[FindingStatus, str, str]:
+def _verify_lint(
+    finding: Finding, repo_root: Path, config: GatesConfig
+) -> tuple[FindingStatus, str, str]:
     """Verify a lint-convention claim by running the repo's own scanners."""
     target = repo_root / finding.file
     if not target.is_file():
@@ -132,18 +139,34 @@ _MECHANICAL = {
     ClaimType.LINT_CONVENTION: _verify_lint,
 }
 
+_PYTHON_ONLY: frozenset[ClaimType] = frozenset(
+    {ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
+)
+"""Claim types whose verifier parses Python (``ast`` / the house scanners).
 
-def verify_finding(finding: Finding, *, repo_root: Path) -> tuple[FindingStatus, str, str]:
+They run only when the project declares Python and the cited file is a
+``.py`` under its source or test roots; anywhere else they end
+``not_applicable`` with method ``language`` (SP-UNIVERSAL-GATES G3)."""
+
+
+def verify_finding(
+    finding: Finding, *, repo_root: Path, config: GatesConfig | None = None
+) -> tuple[FindingStatus, str, str]:
     """Return ``(new_status, method, result)`` for one finding.
 
     Mechanically-checkable claim types dispatch to their verifier;
     everything else (``design`` / ``security`` / ``broken_behavior`` /
-    ``spec_gap``) is left ``proposed`` for the judged slices.
+    ``spec_gap``) is left ``proposed`` for the judged slices. A
+    Python-only verifier on a file it does not apply to returns
+    ``NOT_APPLICABLE`` with method ``language`` and the reason
+    (``not python: .tsx``, ``python not declared``, ``outside src_roots``).
 
     Args:
         finding: The proposed finding to check.
         repo_root: Root the cited paths/symbols resolve against (the
             PR head checkout the orchestrator already uses).
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
 
     Returns:
         A ``(FindingStatus, method, result)`` triple; the status is
@@ -153,7 +176,12 @@ def verify_finding(finding: Finding, *, repo_root: Path) -> tuple[FindingStatus,
     verifier = _MECHANICAL.get(finding.claim_type)
     if verifier is None:
         return FindingStatus.PROPOSED, "deferred", _DEFERRED_RESULT
-    return verifier(finding, repo_root)
+    resolved = config if config is not None else load_gates_config(repo_root)
+    if finding.claim_type in _PYTHON_ONLY:
+        ok, reason = applicable(finding.file, resolved)
+        if not ok:
+            return FindingStatus.NOT_APPLICABLE, _LANGUAGE_METHOD, reason
+    return verifier(finding, repo_root, resolved)
 
 
 def verify_findings_for_pr(
@@ -173,12 +201,14 @@ def verify_findings_for_pr(
             updated row); ``None`` becomes ``""``.
 
     Returns:
-        Counts ``{"verified": n, "refuted": n, "deferred": n}``.
+        Counts ``{"verified": n, "refuted": n, "deferred": n}``, plus
+        ``"not_applicable": n`` when any finding ended not applicable.
     """
     counts = {"verified": 0, "refuted": 0, "deferred": 0}
+    config = load_gates_config(repo_root)
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
     for finding in proposed:
-        new_status, method, result = verify_finding(finding, repo_root=repo_root)
+        new_status, method, result = verify_finding(finding, repo_root=repo_root, config=config)
         if new_status is FindingStatus.PROPOSED:
             if finding.id is not None:
                 record_verification_attempt(
@@ -200,5 +230,5 @@ def verify_findings_for_pr(
             verification_result=result,
             checked_at_sha=head_sha or "",
         )
-        counts[new_status.value] += 1
+        counts[new_status.value] = counts.get(new_status.value, 0) + 1
     return counts
