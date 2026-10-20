@@ -24,6 +24,14 @@ from typing import Annotated
 
 import typer
 
+from ..ci_entry.snippets import (
+    DEFAULT_REF,
+    InstallTarget,
+    apply_ci_init,
+    gitlab_include_snippet,
+    plan_ci_init,
+    render,
+)
 from ..core.paths import USER_ENV_FILE_NAME, user_config_dir
 from ..project.config import ConfigError
 from ..project.scaffold import InitRefusedError, apply_init, plan_init
@@ -109,6 +117,32 @@ def _init_repoach_dev(repo_root: Path) -> None:
     typer.echo("  4. repoach version   # verify the install")
 
 
+def _init_ci(
+    kind: str, *, print_only: bool, dry_run: bool, force: bool, ref: str, pypi: str | None
+) -> None:
+    """Write (or print) the review job for ``kind``.
+
+    Raises:
+        typer.Exit: Code 2 for an unknown CI or outside a git working tree.
+    """
+    name = kind.strip().lower()
+    if name != "gitlab" and name != "github":
+        typer.echo(f"repoach: unknown CI {kind!r}; use gitlab or github", err=True)
+        raise typer.Exit(code=EXIT_UNUSABLE)
+    target = InstallTarget(ref=ref, pypi_version=pypi)
+    if print_only:
+        typer.echo(render(name, target)[1], nl=False)
+        return
+    repo_root = _repo_root()
+    plan = plan_ci_init(repo_root, name, target, force=force)
+    if not dry_run:
+        apply_ci_init(repo_root, plan)
+    typer.echo(plan.describe(dry_run=dry_run))
+    if name == "gitlab":
+        typer.echo("init: add to .gitlab-ci.yml (repoach never edits it):")
+        typer.echo(gitlab_include_snippet(), nl=False)
+
+
 def init(
     repoach_dev: Annotated[
         bool,
@@ -132,6 +166,25 @@ def init(
         bool,
         typer.Option("--offline", help="Do not ask the forge API (merge method stays squash)."),
     ] = False,
+    ci: Annotated[
+        str | None,
+        typer.Option(
+            "--ci",
+            help="Write the review job for this CI instead: gitlab or github.",
+        ),
+    ] = None,
+    print_only: Annotated[
+        bool,
+        typer.Option("--print", help="With --ci: print the job on stdout; write nothing."),
+    ] = False,
+    ref: Annotated[
+        str,
+        typer.Option("--ref", help="With --ci: repoach git ref (tag or SHA) the job installs."),
+    ] = DEFAULT_REF,
+    pypi_version: Annotated[
+        str | None,
+        typer.Option("--pypi-version", help="With --ci: install repoach==VERSION from PyPI."),
+    ] = None,
 ) -> None:
     """Write repoach.toml and the spec template into the current repository.
 
@@ -139,7 +192,18 @@ def init(
     create``); a second run prints ``unchanged`` for each and changes
     no byte.  Exit codes: ``0`` done, ``2`` not a git repository, an
     invalid existing ``repoach.toml``, or a refused ``--force``.
+
+    With ``--ci gitlab|github`` it writes only the review job
+    (SP-UNIVERSAL-CI-ENTRY): ``.repoach/ci/gitlab-review.yml`` for an
+    ``include:`` (``.gitlab-ci.yml`` is never edited; the include lines
+    are printed) or ``.github/workflows/repoach-review.yml``. A file
+    holding other content is left alone unless ``--force``.
     """
+    if ci is not None:
+        _init_ci(
+            ci, print_only=print_only, dry_run=dry_run, force=force, ref=ref, pypi=pypi_version
+        )
+        return
     repo_root = _repo_root()
     if repoach_dev:
         if not (repo_root / REPOACH_SOURCE_MARKER).is_dir():
