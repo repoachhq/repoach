@@ -126,7 +126,7 @@ known-first-party = ["repoach"]
 # SP-NO-INLINE-COMMENTS-GATE — suppressions migrated from inline ``# noqa`` directives.
 # Domain-specific exception class names that don't end in "Error" — renaming
 # would break public API consumers.
-"src/repoach/agent_engine/adapters.py" = ["N818"]
+"src/repoach/providers/errors.py" = ["N818"]
 # typer.Argument()/Option() defaults are the documented idiom; B008 fires
 # on every CLI declaration otherwise.
 "src/repoach/cli/main.py" = ["B008"]

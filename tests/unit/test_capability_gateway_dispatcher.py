@@ -17,12 +17,12 @@ import pytest
 from fastapi.responses import StreamingResponse
 
 from repoach.llm_proxy.api.agent_dispatcher import (
-    _aggregate_sse_stream,
     _serialise_tool_result,
     _translate_message,
-    _translate_request,
     _translate_tool,
+    aggregate_sse_stream,
     dispatch_agent_request,
+    translate_request,
 )
 from repoach.llm_proxy.api.models.agent_v1 import (
     AgentRequest,
@@ -79,7 +79,7 @@ async def _async_chunks(*chunks: str) -> AsyncIterator[bytes]:
 
 def test_translate_request_maps_capability_to_alias() -> None:
     req = _build_request(capability="sonnet")
-    out = _translate_request(req, "claude-sonnet-4-6")
+    out = translate_request(req, "claude-sonnet-4-6")
     assert out.model == "claude-sonnet-4-6"
     assert out.system == "You are Repoach's WhatsApp assistant."
     assert out.stream is True
@@ -202,7 +202,7 @@ async def test_aggregate_sse_collects_text_block() -> None:
             ]
         )
     )
-    aggregated = await _aggregate_sse_stream(stream)
+    aggregated = await aggregate_sse_stream(stream)
     assert aggregated["model"] == "nvidia_nim/meta/llama-3.3-70b-instruct"
     assert aggregated["stop_reason"] == "end_turn"
     assert len(aggregated["content_blocks"]) == 1
@@ -255,7 +255,7 @@ async def test_aggregate_sse_collects_tool_use_with_chunked_input_json() -> None
             ]
         )
     )
-    aggregated = await _aggregate_sse_stream(stream)
+    aggregated = await aggregate_sse_stream(stream)
     assert aggregated["stop_reason"] == "tool_use"
     block = aggregated["content_blocks"][0]
     assert block["type"] == "tool_use"
@@ -269,7 +269,7 @@ async def test_aggregate_sse_skips_done_marker() -> None:
     stream = _async_chunks(
         "event: message_stop\ndata: [DONE]\n\n",
     )
-    aggregated = await _aggregate_sse_stream(stream)
+    aggregated = await aggregate_sse_stream(stream)
     # No exceptions; empty result is fine.
     assert aggregated["content_blocks"] == []
     assert aggregated["stop_reason"] == ""

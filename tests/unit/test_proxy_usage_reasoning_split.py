@@ -1,7 +1,7 @@
 """Acceptance tests for SP-USAGE-REASONING-SPLIT step 4/4.
 
 Covers the agent_v1 ``Usage.reasoning_tokens`` field as populated by
-``_aggregate_sse_stream`` in the agent dispatcher, and confirms the
+``aggregate_sse_stream`` in the agent dispatcher, and confirms the
 ``/v1/messages`` usage object stays byte-compatible (no new key), per
 the spec's AC1-AC4.
 """
@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from repoach.llm_proxy.api.agent_dispatcher import _aggregate_sse_stream
+from repoach.llm_proxy.api.agent_dispatcher import aggregate_sse_stream
 from repoach.llm_proxy.core.anthropic.sse import SSEBuilder
 
 
@@ -57,7 +57,7 @@ async def test_upstream_reasoning_detail_is_surfaced() -> None:
             ]
         )
     )
-    aggregated = await _aggregate_sse_stream(stream)
+    aggregated = await aggregate_sse_stream(stream)
     usage = aggregated["usage"]
     assert usage.reasoning_tokens == 1200
     assert usage.output_tokens == 2500
@@ -85,7 +85,7 @@ async def test_missing_detail_defaults_to_zero() -> None:
             ]
         )
     )
-    aggregated = await _aggregate_sse_stream(stream)
+    aggregated = await aggregate_sse_stream(stream)
     usage = aggregated["usage"]
     assert usage.reasoning_tokens == 0
     assert usage.output_tokens == 10
@@ -121,7 +121,7 @@ async def test_estimator_split_survives_when_usage_absent() -> None:
             ]
         )
     )
-    aggregated = await _aggregate_sse_stream(stream)
+    aggregated = await aggregate_sse_stream(stream)
     usage = aggregated["usage"]
     assert usage.reasoning_tokens == 61
     assert usage.output_tokens == 87

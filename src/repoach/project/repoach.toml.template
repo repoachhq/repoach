@@ -46,10 +46,15 @@ schema = 1
 [provider]
 # anthropic, claude_code, openai, openai_compatible or gateway.
 # The credential itself stays in the environment or ~/.config/repoach/env.
+# Unset or gateway: the gateway at REPOACH_LLM_PROXY_BASE_URL. claude_code: the
+# logged-in Claude Code CLI, no key. anthropic: REPOACH_ANTHROPIC_API_KEY, else
+# ANTHROPIC_API_KEY.
 # kind = ""
 # opus = ""
 # sonnet = ""
 # haiku = ""
+# claude_code only: the claude executable; empty means claude on PATH.
+# cli_path = ""
 
 [review]
 # Forge login the review bot posts as; markers are trusted from it only.

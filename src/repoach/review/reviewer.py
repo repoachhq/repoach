@@ -561,6 +561,14 @@ class Reviewer:
             return result.value
 
         stub = _FailedRunResult(error=str(result.error) if result.error else "Unknown")
+        if result.fatal and result.error is not None:
+            return (
+                ReviewVerdict.ERROR,
+                f"[parse_failed:TRANSPORT] provider refused, not retried — "
+                f"{type(result.error).__name__}: {str(result.error)[:400]}",
+                [],
+                stub,
+            )
         return (
             ReviewVerdict.ERROR,
             f"[parse_failed:TRANSPORT] all {len(self._RETRY_BACKOFFS_S)} attempts raised — last={type(result.error).__name__ if result.error else 'Unknown'}",

@@ -23,43 +23,28 @@ from typing import Any
 import httpx
 
 from ..core.logging import get_logger
-from ..llm.capability import CapabilityTier
+from ..llm.capability import CAPABILITY_TO_ALIAS, CapabilityTier
 from ..llm_proxy.api.models.agent_v1 import (
-    AgentRequest,
     AgentResponse,
     Message,
     ToolSpec,
 )
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
+from ..providers.errors import GatewayChainExhausted, GatewayError, GatewayTransportError
+from ..providers.protocol import agent_request
 
 _log = get_logger(__name__)
 
 
-class GatewayError(Exception):
-    """Base class for proxy-gateway errors raised to the agent loop."""
-
-
-class GatewayTransportError(GatewayError):
-    """5xx, 429, connect-refused, read-timeout — retryable transport-level."""
-
-
-class GatewayChainExhausted(GatewayError):
-    """The proxy walked its chain and every upstream returned an error.
-
-    Distinct from :class:`GatewayTransportError` because the failover
-    is the proxy's job — when this fires, the proxy already gave up
-    on every entry in ``MODEL_<CAPABILITY>``.  Retrying from the
-    agent side won't help.
-    """
-
-
 class ProxyGatewayClient:
-    """Native ``repoach/v1`` HTTP client.
+    """Native ``repoach/v1`` HTTP client — the ``gateway`` provider.
 
     :meth:`call` POSTs an :class:`AgentRequest` to
     ``{base_url}/v1/agent`` and parses the response as an
     :class:`AgentResponse`.  Errors raise typed exceptions so the
     agent loop can decide when to retry vs surface to the caller.
+    It satisfies :class:`~repoach.providers.protocol.Provider`; ``models``
+    are the tier aliases the gateway's chain router classifies.
     """
 
     def __init__(
@@ -84,6 +69,8 @@ class ProxyGatewayClient:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_s = timeout_s
+        self.name = "gateway"
+        self.models: dict[CapabilityTier, str] = dict(CAPABILITY_TO_ALIAS)
 
     def call(
         self,
@@ -138,21 +125,15 @@ class ProxyGatewayClient:
                 non-JSON body, or response that fails AgentResponse
                 validation.
         """
-        thinking_config: ThinkingConfig | None = None
-        if thinking is not None:
-            thinking_config = (
-                ThinkingConfig.model_validate(thinking) if isinstance(thinking, dict) else thinking
-            )
-        request = AgentRequest(
-            schema_version="1",
-            capability=capability.value,
+        request = agent_request(
+            capability=capability,
             system=system,
-            messages=list(messages),
-            tools=list(tools),
+            messages=messages,
+            tools=tools,
             max_tokens=max_tokens,
             temperature=temperature,
-            skip_models=sorted(skip_models),
-            thinking=thinking_config,
+            skip_models=skip_models,
+            thinking=thinking,
         )
         body = request.model_dump(exclude_none=True)
         url = f"{self._base_url}/v1/agent"

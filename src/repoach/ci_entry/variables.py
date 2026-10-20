@@ -22,7 +22,13 @@ GATEWAY_TOKEN_VAR = "REPOACH_ANTHROPIC_AUTH_TOKEN"
 """Gateway mode: the gateway's shared secret."""
 
 DIRECT_KEY_VARS: tuple[str, ...] = ("REPOACH_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
-"""Direct-provider mode: the Anthropic key a loopback gateway is started with."""
+"""The Anthropic key: read in-process in ``anthropic`` mode, else handed to a loopback gateway."""
+
+PROVIDER_VAR = "REPOACH_PROVIDER"
+"""``claude_code`` / ``anthropic``: the review calls the model itself (SP-UNIVERSAL-PROVIDERS)."""
+
+CLAUDE_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+"""``claude_code`` mode in CI: the token ``claude setup-token`` prints (no interactive login)."""
 
 POST_VAR = "REPOACH_ADVISORY_POST"
 """Posting switch: only the exact value ``1`` posts; anything else is a dry run."""
@@ -130,6 +136,17 @@ CI_VARIABLES: tuple[CiVariable, ...] = (
     *(
         CiVariable(name=name, group="forge", purpose="GitHub token (gh)", secret=True)
         for name in GITHUB_TOKEN_VARS
+    ),
+    CiVariable(
+        name=PROVIDER_VAR,
+        group="provider",
+        purpose="claude_code or anthropic: call the model in-process, no gateway",
+    ),
+    CiVariable(
+        name=CLAUDE_TOKEN_VAR,
+        group="provider",
+        purpose="claude_code mode: token from 'claude setup-token'",
+        secret=True,
     ),
     CiVariable(name=GATEWAY_URL_VAR, group="provider", purpose="gateway mode: gateway base URL"),
     CiVariable(

@@ -67,6 +67,8 @@ from ..llm_proxy.api.models.agent_v1 import (
     TraceEntry,
 )
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
+from ..providers.protocol import Provider
+from ..providers.select import DIRECT_KINDS, build_direct_provider, resolve_route
 from .adapters import GatewayChainExhausted, GatewayError, GatewayTransportError, ProxyGatewayClient
 
 _log = get_logger(__name__)
@@ -356,8 +358,36 @@ def _budget_nudge_text(remaining: int, max_turns: int) -> str:
     )
 
 
+def _gateway_client(timeout_s: float) -> ProxyGatewayClient:
+    """Build the gateway client exactly as the loop always did (the ``gateway`` route).
+
+    Raises:
+        ValueError: ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing.
+        GatewayConfigError: No gateway base URL is configured.
+    """
+    settings = get_settings()
+    secret = settings.llm_proxy_auth_token
+    api_key = (
+        secret.get_secret_value()
+        if secret is not None and hasattr(secret, "get_secret_value")
+        else ""
+    )
+    if not api_key:
+        raise ValueError(
+            "REPOACH_ANTHROPIC_AUTH_TOKEN is missing — the proxy gateway "
+            "requires a shared secret.  Set it in .env."
+        )
+    base_url = require_llm_proxy_base_url(settings).rstrip("/")
+    return ProxyGatewayClient(base_url=base_url, api_key=api_key, timeout_s=timeout_s)
+
+
 class AgentLoop:
-    """Proxy-only ``repoach/v1`` tool-using agent loop."""
+    """``repoach/v1`` tool-using agent loop over the selected provider.
+
+    The provider is the gateway client unless ``[provider].kind`` is
+    ``claude_code`` or ``anthropic`` (SP-UNIVERSAL-PROVIDERS), in which
+    case the gateway's own transport runs in-process.
+    """
 
     def __init__(
         self,
@@ -370,7 +400,7 @@ class AgentLoop:
         temperature: float = 0.1,
         thinking: ThinkingConfig | dict[str, Any] | None = None,
     ) -> None:
-        """Initialise the loop pointing at the local proxy gateway.
+        """Initialise the loop on the selected provider (the gateway by default).
 
         Args:
             capability: The capability tier the caller wants
@@ -381,8 +411,9 @@ class AgentLoop:
                 a tier.  New callers pass ``capability=`` directly.
             max_turns: Hard cap on tool-call round-trips per
                 :meth:`run` invocation.
-            per_call_timeout_s: HTTP timeout applied to each gateway
-                call.  Defaults to :data:`LONG_OUTPUT_TIMEOUT_S`.
+            per_call_timeout_s: Timeout of each provider call (the
+                gateway's HTTP budget, the ``claude`` CLI's subprocess
+                budget).  Defaults to :data:`LONG_OUTPUT_TIMEOUT_S`.
             max_tokens: Output token cap per turn.
             temperature: Sampling temperature.
             thinking: Optional thinking config forwarded verbatim to
@@ -393,7 +424,9 @@ class AgentLoop:
         Raises:
             ValueError: If ``model_chain`` is provided but empty,
                 if ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing, or if
-                no gateway base URL is configured.
+                no gateway base URL is configured (gateway route).
+            ProviderConfigError: A direct provider's CLI or key is
+                missing.
         """
         if capability is not None:
             self._capability = capability
@@ -407,31 +440,17 @@ class AgentLoop:
 
         self._model_chain: tuple[str, ...] = (alias_for_capability(self._capability),)
 
-        settings = get_settings()
-        secret = settings.llm_proxy_auth_token
-        api_key = (
-            secret.get_secret_value()
-            if secret is not None and hasattr(secret, "get_secret_value")
-            else ""
-        )
-        if not api_key:
-            raise ValueError(
-                "REPOACH_ANTHROPIC_AUTH_TOKEN is missing — the proxy gateway "
-                "requires a shared secret.  Set it in .env."
-            )
-
-        base_url = require_llm_proxy_base_url(settings).rstrip("/")
-
         self._max_turns = max_turns
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._per_call_timeout_s = per_call_timeout_s
         self._thinking: ThinkingConfig | dict[str, Any] | None = thinking
-        self._client = ProxyGatewayClient(
-            base_url=base_url,
-            api_key=api_key,
-            timeout_s=per_call_timeout_s,
-        )
+        route = resolve_route()
+        self._client: Provider
+        if route.kind in DIRECT_KINDS:
+            self._client = build_direct_provider(route, timeout_s=per_call_timeout_s)
+        else:
+            self._client = _gateway_client(per_call_timeout_s)
 
     def run_oneshot(
         self,

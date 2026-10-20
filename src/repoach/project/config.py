@@ -244,12 +244,17 @@ class CoderSection(_Section):
 
 
 class ProviderSection(_Section):
-    """``[provider]``: the provider *name* and model ids, never a credential (M4)."""
+    """``[provider]``: the provider *name* and model ids, never a credential (M4).
+
+    ``cli_path`` is the ``claude`` executable the ``claude_code`` provider
+    runs; empty means ``claude`` on ``PATH`` (SP-UNIVERSAL-PROVIDERS).
+    """
 
     kind: ProviderKind = ""
     opus: str = ""
     sonnet: str = ""
     haiku: str = ""
+    cli_path: str = ""
 
 
 class ReviewSection(_Section):
