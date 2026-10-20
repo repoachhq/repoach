@@ -11,6 +11,7 @@ stdout with ``python -m json.tool``, the operator's own probe.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,21 +30,33 @@ _SRC = Path(__file__).resolve().parents[2] / "src"
 
 
 def _run(code: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    # Isolate the child's config/data lookup (HOME, XDG_*) and guarantee it
+    # resolves ``repoach`` the way this interpreter does (PYTHONPATH), but
+    # start from the parent's own environment rather than replacing it: a
+    # CI-provisioned interpreter (actions/setup-python) can need
+    # LD_LIBRARY_PATH to even start, and a bare ``{"PATH": ..., "HOME": ...}``
+    # dict drops that, so the child never execs (exit 127, no stderr to read).
     env = {
+        **os.environ,
         "PATH": "/usr/bin:/bin",
         "HOME": str(tmp_path),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "PYTHONPATH": str(_SRC),
     }
-    return subprocess.run(
+    completed = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        check=True,
         cwd=tmp_path,
         env=env,
     )
+    assert completed.returncode == 0, (
+        f"child exited {completed.returncode}\n"
+        f"stdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
+    return completed
 
 
 def _json_tool(stdout: str) -> subprocess.CompletedProcess[str]:
