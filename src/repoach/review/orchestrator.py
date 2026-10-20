@@ -53,7 +53,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..core.config import get_settings
+from ..core.config import get_settings, require_gateway_credentials
 from ..core.logging import get_logger
 from ..core.paths import project_root
 from ..forge import (
@@ -1914,7 +1914,12 @@ def run_review(
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers.
+
+    Raises:
+        GatewayConfigError: The gateway URL or its shared secret is
+            missing; raised before any forge call.
     """
+    require_gateway_credentials(get_settings())
     return ReviewTeamOrchestrator(forge=forge, post_to_github=post).review_pr(
         pr_number, spec_flag=spec
     )

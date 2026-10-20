@@ -592,6 +592,10 @@ def get_settings() -> Settings:
     return _settings
 
 
+class GatewayConfigError(ValueError):
+    """The gateway a review would call is not configured (named variable, rc 2)."""
+
+
 def require_llm_proxy_base_url(settings: Settings) -> str:
     """Return the gateway base URL, failing loud when none is configured.
 
@@ -609,16 +613,43 @@ def require_llm_proxy_base_url(settings: Settings) -> str:
         The configured ``llm_proxy_base_url``.
 
     Raises:
-        ValueError: When no env file and no explicit
+        GatewayConfigError: When no env file and no explicit
             ``REPOACH_LLM_PROXY_BASE_URL`` resolved a value.  Proceeding
             anyway would POST the ``llm_proxy_auth_token`` bearer secret
             at an unconfigured, possibly wrong, host (SP-CONFIG-ENV-ANCHOR).
     """
     base_url = settings.llm_proxy_base_url
     if not base_url:
-        raise ValueError(
+        raise GatewayConfigError(
             "llm_proxy_base_url unresolved -- set REPOACH_LLM_PROXY_BASE_URL "
             "in the environment or ~/.config/repoach/env (a project file may not set it); "
             "refusing to default to a wrong proxy"
+        )
+    return base_url
+
+
+def require_gateway_credentials(settings: Settings) -> str:
+    """Check the gateway URL and its shared secret before any review work.
+
+    The agent loop needs both when it is built, which happens after the
+    forge reads of a review; checking here lets ``review pr`` fail before
+    any forge call with one line naming the missing variable.
+
+    Args:
+        settings: The resolved settings.
+
+    Returns:
+        The configured gateway base URL.
+
+    Raises:
+        GatewayConfigError: The URL or ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is
+            missing; the message names the variable, never a value.
+    """
+    base_url = require_llm_proxy_base_url(settings)
+    token = settings.llm_proxy_auth_token
+    if token is None or not token.get_secret_value():
+        raise GatewayConfigError(
+            f"REPOACH_ANTHROPIC_AUTH_TOKEN is not set -- the gateway at {base_url} needs "
+            "its shared secret; set it in the environment or ~/.config/repoach/env"
         )
     return base_url

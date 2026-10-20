@@ -28,7 +28,7 @@ from pathlib import Path
 import typer
 from sqlalchemy import create_engine, text
 
-from ..core.config import get_settings
+from ..core.config import GatewayConfigError, get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
@@ -192,6 +192,9 @@ def review_pr(
     _require_spec(spec_flag, root)
     try:
         team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
+    except GatewayConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     spec_id = team.spec_id
