@@ -7,9 +7,12 @@ project carries a shell driver:
   (not a merge-request pipeline), no forge token, no provider;
 * nothing is posted unless ``REPOACH_ADVISORY_POST`` is exactly ``1``
   (or ``--post``); every other value runs the review with ``--dry-run``;
-* two provider modes: **gateway** (``REPOACH_LLM_PROXY_BASE_URL`` +
-  ``REPOACH_ANTHROPIC_AUTH_TOKEN``, a gateway already running) and
-  **direct** (``REPOACH_ANTHROPIC_API_KEY``: a loopback gateway is
+* four provider modes: **claude_code** / **anthropic** (an explicit
+  ``REPOACH_PROVIDER`` or ``[provider].kind``: the review calls the
+  model in-process, no gateway, SP-UNIVERSAL-PROVIDERS), **gateway**
+  (``REPOACH_LLM_PROXY_BASE_URL`` + ``REPOACH_ANTHROPIC_AUTH_TOKEN``, a
+  gateway already running) and **direct** (only
+  ``REPOACH_ANTHROPIC_API_KEY`` and no kind: a loopback gateway is
   started for the job, :mod:`repoach.ci_entry.gateway`);
 * a team verdict of ``REQUEST_CHANGES`` is told apart from an outage by
   reading the review's JSON, not its exit code (``review pr`` exits 2
@@ -61,12 +64,18 @@ from .variables import (
     GITHUB_TOKEN_VARS,
     GITLAB_TOKEN_VARS,
     POST_VAR,
+    PROVIDER_VAR,
 )
 
 _log = get_logger(__name__)
 
 ReviewMode = Literal["post", "dry-run"]
-ProviderMode = Literal["gateway", "direct", "none"]
+ProviderMode = Literal["gateway", "direct", "claude_code", "anthropic", "none"]
+PlannedProviderMode = Literal["gateway", "direct", "claude_code", "anthropic"]
+
+IN_PROCESS_MODES: tuple[PlannedProviderMode, ...] = ("claude_code", "anthropic")
+"""Modes whose review calls the model itself: no gateway, no loopback."""
+
 
 EXIT_OK = 0
 EXIT_INTERNAL = 1
@@ -114,7 +123,8 @@ class CiReviewReport(BaseModel):
         pr_number: The PR / MR number, None when unresolved.
         pr_source: ``flag`` or the variable the number came from.
         mode: ``post`` or ``dry-run``.
-        provider_mode: ``gateway``, ``direct`` or ``none``.
+        provider_mode: ``claude_code``, ``anthropic``, ``gateway``,
+            ``direct`` (loopback gateway) or ``none``.
         final_verdict: The team verdict when a review ran.
         posted_comments: Comments the review posted (0 on a dry run).
         posted_reviews: Reviews the review posted (0 on a dry run).
@@ -157,7 +167,8 @@ class CiReviewPlan(BaseModel):
         pr_number: The PR / MR number.
         pr_source: Where the number came from.
         mode: ``post`` or ``dry-run``.
-        provider_mode: ``gateway`` or ``direct``.
+        provider_mode: ``claude_code``, ``anthropic``, ``gateway`` or
+            ``direct``.
         forge_token_var: The variable holding the forge token.
         strict: Whether ``--strict`` was given.
     """
@@ -169,7 +180,7 @@ class CiReviewPlan(BaseModel):
     pr_number: int
     pr_source: str
     mode: ReviewMode
-    provider_mode: Literal["gateway", "direct"]
+    provider_mode: PlannedProviderMode
     forge_token_var: str
     strict: bool = False
 
@@ -213,15 +224,29 @@ def review_mode(env: Mapping[str, str], *, post: bool, dry_run: bool) -> ReviewM
     return "post" if env.get(POST_VAR, "").strip() == "1" else "dry-run"
 
 
-def provider_mode(env: Mapping[str, str]) -> tuple[ProviderMode, str | None]:
+def provider_mode(env: Mapping[str, str], kind: str = "") -> tuple[ProviderMode, str | None]:
     """Choose the provider mode, or name what is missing.
 
-    Gateway mode wins when both its variables are set; otherwise a
-    direct key starts a loopback gateway.
+    An explicit ``claude_code`` or ``anthropic`` kind wins: the review
+    calls the model in-process.  Otherwise gateway mode wins when both
+    its variables are set, and a lone direct key starts a loopback
+    gateway.
+
+    Args:
+        env: The job environment.
+        kind: ``[provider].kind`` as resolved for the project; empty
+            means read ``REPOACH_PROVIDER`` from ``env``.
 
     Returns:
         ``(mode, None)`` when usable, ``("none", reason)`` otherwise.
     """
+    chosen_kind = kind or env_value(env, PROVIDER_VAR) or ""
+    if chosen_kind == "claude_code":
+        return "claude_code", None
+    if chosen_kind == "anthropic":
+        if first_set(env, DIRECT_KEY_VARS) is None:
+            return "none", f"provider anthropic: {' / '.join(DIRECT_KEY_VARS)} is not set"
+        return "anthropic", None
     has_url = env_value(env, GATEWAY_URL_VAR) is not None
     has_token = env_value(env, GATEWAY_TOKEN_VAR) is not None
     if has_url and has_token:
@@ -248,6 +273,7 @@ def plan_ci_review(
     post: bool = False,
     dry_run: bool = False,
     strict: bool = False,
+    provider_kind: str = "",
 ) -> CiReviewPlan | CiReviewReport:
     """Resolve every input, or end with a named skip or configuration error.
 
@@ -263,6 +289,8 @@ def plan_ci_review(
         post: ``--post``.
         dry_run: ``--dry-run``.
         strict: ``--strict``.
+        provider_kind: The project's ``[provider].kind`` (see
+            :func:`provider_mode`).
 
     Returns:
         The plan, or the final report of a run that cannot start.
@@ -321,7 +349,7 @@ def plan_ci_review(
             strict=strict,
             **common,
         )
-    chosen, missing = provider_mode(env)
+    chosen, missing = provider_mode(env, provider_kind)
     if chosen == "none":
         return finish(Outcome.SKIPPED, f"skipped, {missing}", strict=strict, **common)
     return CiReviewPlan(
@@ -410,16 +438,24 @@ def review_env(
 ) -> dict[str, str]:
     """Build the review's environment: the forge token in, the provider key out.
 
+    In ``anthropic`` mode the review calls the API itself, so the key
+    stays in and ``REPOACH_PROVIDER`` names the mode; in ``claude_code``
+    mode no key exists and the CLI's own login (``HOME``,
+    ``CLAUDE_CODE_OAUTH_TOKEN``) is inherited.
+
     Args:
         plan: The run plan.
         env: The job environment.
-        gateway: The loopback gateway in direct mode, None in gateway mode.
+        gateway: The loopback gateway in direct mode, None otherwise.
         memory_off: Set every :data:`MEMORY_SWITCHES` to ``false``.
 
     Returns:
         The environment for ``repoach review pr``.
     """
-    child = {k: v for k, v in env.items() if k not in DIRECT_KEY_VARS}
+    keep_key = plan.provider_mode == "anthropic"
+    child = {k: v for k, v in env.items() if keep_key or k not in DIRECT_KEY_VARS}
+    if plan.provider_mode in IN_PROCESS_MODES:
+        child[PROVIDER_VAR] = plan.provider_mode
     child.update(forge_env(plan, env))
     if memory_off:
         child.update(dict.fromkeys(MEMORY_SWITCHES, "false"))
@@ -648,7 +684,7 @@ def run_ci_review(
     notes = [note] if note is not None else []
     off = note is not None
     try:
-        if plan.provider_mode == "gateway":
+        if plan.provider_mode != "direct":
             rc, stdout = review_runner(plan, review_env(plan, env, None, memory_off=off))
         else:
             with gateway_starter(env) as gateway:

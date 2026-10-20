@@ -1,9 +1,9 @@
 """Start a loopback repoach gateway for one CI job (direct-provider mode).
 
-A review reaches a model only through the repoach gateway
-(``REPOACH_LLM_PROXY_BASE_URL``); the direct providers are parsed but not
-routed yet (SP-PROVIDER-DIRECT-ANTHROPIC). A job holding only an
-Anthropic key therefore runs the gateway inside itself: on
+A job that sets ``REPOACH_PROVIDER=anthropic`` (or ``claude_code``)
+reviews in-process and never starts this gateway (SP-UNIVERSAL-PROVIDERS).
+A job holding only an Anthropic key and naming no provider keeps the
+earlier behaviour: it runs the gateway inside itself, on
 ``127.0.0.1``, with that key as its only upstream and a shared secret
 drawn per job, exactly as Yoob's ``ci/review-advisory.sh`` did in shell.
 
@@ -31,17 +31,17 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from ..core.logging import get_logger
+from ..providers.select import ANTHROPIC_MODELS
 from .context import env_value
 from .variables import DIRECT_KEY_VARS, GATEWAY_PORT_VAR, PASSTHROUGH_VARS
 
 _log = get_logger(__name__)
 
 DEFAULT_MODELS: dict[str, str] = {
-    "MODEL_OPUS": "claude-opus-5",
-    "MODEL_SONNET": "claude-sonnet-5",
-    "MODEL_HAIKU": "claude-haiku-4-5",
+    f"MODEL_{tier.name}": model for tier, model in ANTHROPIC_MODELS.items()
 }
-"""Anthropic model per gateway tier; ``REPOACH_MODEL_<TIER>`` overrides each."""
+"""Anthropic model per gateway tier, the in-process ``anthropic`` provider's table;
+``REPOACH_MODEL_<TIER>`` overrides each."""
 
 LOOPBACK_HOST = "127.0.0.1"
 

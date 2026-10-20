@@ -175,6 +175,7 @@ def review_from_env(
         post=post,
         dry_run=dry_run,
         strict=strict,
+        provider_kind=resolved.config.provider.kind,
     )
     if isinstance(planned, CiReviewReport):
         return planned

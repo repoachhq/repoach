@@ -632,3 +632,43 @@ def test_gateway_env_keeps_what_the_interpreter_needs_and_never_ld_preload() -> 
     child = gateway_env(parent, port=1, auth_token="t")
     assert {name: child.get(name) for name in INTERPRETER_VARS} == INTERPRETER_VARS
     assert "LD_PRELOAD" not in child
+
+
+class TestInProcessProviders:
+    """SP-UNIVERSAL-PROVIDERS: an explicit kind reviews in-process, no gateway started."""
+
+    def test_claude_code_needs_no_key_and_no_gateway(self) -> None:
+        fake = FakeRun()
+        report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "claude_code"}, fake)
+        assert (report.outcome, report.provider_mode) == (Outcome.REVIEWED, "claude_code")
+        assert fake.gateway_envs == []
+        env = fake.review_envs[0]
+        assert env["REPOACH_PROVIDER"] == "claude_code"
+        assert "REPOACH_LLM_PROXY_BASE_URL" not in env
+
+    def test_claude_code_wins_over_a_gateway(self) -> None:
+        fake = FakeRun()
+        report = _run({**GITLAB_ENV, **GATEWAY_VARS, "REPOACH_PROVIDER": "claude_code"}, fake)
+        assert report.provider_mode == "claude_code"
+        assert fake.gateway_envs == []
+
+    def test_anthropic_keeps_the_key_in_the_review(self) -> None:
+        fake = FakeRun()
+        report = _run({**GITLAB_ENV, **DIRECT_VARS, "REPOACH_PROVIDER": "anthropic"}, fake)
+        assert (report.outcome, report.provider_mode) == (Outcome.REVIEWED, "anthropic")
+        assert fake.gateway_envs == []
+        env = fake.review_envs[0]
+        assert env["REPOACH_ANTHROPIC_API_KEY"] == "sk-ant-secret"
+        assert env["REPOACH_PROVIDER"] == "anthropic"
+
+    def test_anthropic_without_a_key_is_a_named_skip(self) -> None:
+        report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "anthropic"}, FakeRun())
+        assert report.outcome == Outcome.SKIPPED
+        assert "provider anthropic" in report.reason
+
+    def test_kind_from_repoach_toml(self) -> None:
+        fake = FakeRun()
+        planned = plan_ci_review(GITLAB_ENV, provider_kind="claude_code")
+        assert isinstance(planned, CiReviewPlan)
+        assert planned.provider_mode == "claude_code"
+        assert fake.gateway_envs == []
