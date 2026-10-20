@@ -24,7 +24,7 @@ from repoach.cli.review_cmds import review_app
 from repoach.forge import Diff, MergeMethod, PullRequest
 from repoach.project.config import ProjectConfig
 from repoach.project.resolve import effective_rows, resolve_project_config
-from repoach.review.auto_merge import GateEvaluation
+from repoach.review.auto_merge import CIGateOutcome, GateEvaluation
 from repoach.review.merge_gate import MergeDecision, MergeFacts
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
 from repoach.review.reviewer import ReviewVerdict
@@ -218,7 +218,7 @@ class TestGateSpecSource:
         )
         return GateEvaluation(
             head_sha="abc",
-            ci_gate=MagicMock(green=True),
+            ci_gate=CIGateOutcome(green=True, outcome_tag="", reason=""),
             facts=facts,
             decision=MergeDecision(merge=True, reasons=[]),
             pull_request=PullRequest(number=7, head_ref="docs/measure", body=body),

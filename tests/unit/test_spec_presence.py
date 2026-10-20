@@ -48,7 +48,9 @@ def test_report_not_ok_on_spec_violation() -> None:
         spec_violations=(SpecPresenceViolation(path="docs/specs/x.md"),),
     )
     assert report.ok is False
-    assert any("ungoverned new spec" in line for line in report_lines(report))
+    assert any(
+        "malformed spec: docs/specs/x.md: no frontmatter" in line for line in report_lines(report)
+    )
 
 
 def test_grandfather_pre_template_specs() -> None:

@@ -752,6 +752,30 @@ def _availability(name: str, root: Path, config: GatesConfig) -> str:
     return ", ".join(states) if states else kind
 
 
+def node_install_hint(root: Path) -> str | None:
+    """Name the install command for each package whose ``node_modules`` is absent.
+
+    ``tsc`` / ``eslint`` are looked up in ``node_modules/.bin`` first, so a
+    fresh clone reports them missing until the dependencies are installed;
+    this says how, from the package's lockfile.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        One line such as ``cd frontend && npm ci`` (several packages joined
+        by ``; ``), or ``None`` when every package has its ``node_modules``.
+    """
+    hints: list[str] = []
+    for package in _package_dirs(root):
+        if not (package / "package.json").is_file() or (package / "node_modules").is_dir():
+            continue
+        command = ts.install_command(package)
+        rel = package.relative_to(root).as_posix()
+        hints.append(command if rel == "." else f"cd {rel} && {command}")
+    return "; ".join(hints) or None
+
+
 def availability_table(root: Path, config: GatesConfig) -> list[AvailabilityRow]:
     """Return the per-language verifier availability for ``doctor --gates``."""
     rows: list[AvailabilityRow] = []
@@ -779,5 +803,6 @@ __all__ = [
     "VerifierReport",
     "VerifierStatus",
     "availability_table",
+    "node_install_hint",
     "run_verifiers",
 ]

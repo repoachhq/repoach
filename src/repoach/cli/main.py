@@ -48,7 +48,12 @@ def arch_check(
         help="Directory of spec markdown files (default: [repoach].specs_dir, docs/specs).",
     ),
 ) -> None:
-    """Fail when a changed file's couplings are missing from its depends_on."""
+    """Fail when a changed file's couplings are missing from its depends_on.
+
+    ``[arch].require_frontmatter`` decides what a spec lacking the registry
+    keys is: a named violation (rc 1) when true, an ``ungoverned`` count
+    when false — never a traceback (SP-ARCH-FOREIGN-FRONTMATTER).
+    """
     repo_root = project_root_or_exit()
     base = base if base is not None else get_settings().integration_branch
     report = edge_honesty.run(

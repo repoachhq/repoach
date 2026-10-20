@@ -259,6 +259,49 @@ def package_dir(root: Path, file: Path) -> Path:
     return root
 
 
+_LOCKFILE_INSTALL: tuple[tuple[str, str], ...] = (
+    ("pnpm-lock.yaml", "pnpm install --frozen-lockfile"),
+    ("yarn.lock", "yarn install --immutable"),
+    ("package-lock.json", "npm ci"),
+    ("npm-shrinkwrap.json", "npm ci"),
+)
+"""Lockfile → reproducible install command, checked in this order."""
+
+
+def install_command(package: Path) -> str:
+    """Return the install command a package directory's lockfile calls for.
+
+    Args:
+        package: A directory holding ``package.json``.
+
+    Returns:
+        ``pnpm install --frozen-lockfile``, ``yarn install --immutable``
+        (Berry) or ``yarn install --frozen-lockfile`` (classic, ``# yarn
+        lockfile v1``), or ``npm ci`` by lockfile; ``npm install`` when
+        there is none.
+    """
+    for lockfile, command in _LOCKFILE_INSTALL:
+        path = package / lockfile
+        if not path.is_file():
+            continue
+        if lockfile == "yarn.lock" and _is_yarn_classic(path):
+            return "yarn install --frozen-lockfile"
+        return command
+    return "npm install"
+
+
+def _is_yarn_classic(lockfile: Path) -> bool:
+    """Whether a ``yarn.lock`` was written by Yarn 1 (classic), not Berry.
+
+    Yarn classic stamps ``# yarn lockfile v1`` on the first lines and does
+    not know ``--immutable``; Berry writes a YAML lockfile with a
+    ``__metadata`` block instead.
+    """
+    with lockfile.open(encoding="utf-8", errors="replace") as handle:
+        head = [handle.readline() for _ in range(3)]
+    return any(line.strip() == "# yarn lockfile v1" for line in head)
+
+
 def node_bin(root: Path, start: Path, name: str) -> str | None:
     """Locate a Node tool: the project's ``node_modules/.bin`` first, then ``PATH``.
 
@@ -397,6 +440,7 @@ __all__ = [
     "TsConfig",
     "find_tsconfig",
     "import_specifiers",
+    "install_command",
     "load_tsconfig",
     "node_bin",
     "package_dir",

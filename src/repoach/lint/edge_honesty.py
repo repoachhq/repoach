@@ -40,7 +40,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from repoach.arch import Registry, has_frontmatter, load_registry
+from repoach.arch import MalformedSpec, Registry, has_frontmatter, load_registry
 from repoach.gates import typescript as ts
 from repoach.gates.config import GatesConfig, applicable, load_gates_config, python_packages
 from repoach.gates.languages import Language, language_of
@@ -92,17 +92,24 @@ class SpecPresenceViolation:
 
 @dataclass(frozen=True)
 class Report:
-    """The outcome of an edge-honesty run over a diff."""
+    """The outcome of an edge-honesty run over a diff.
+
+    ``malformed_specs`` (blocking) and ``ungoverned_specs`` (reported) hold
+    the specs whose frontmatter lacks the registry keys; which of the two
+    depends on ``[arch].require_frontmatter`` (SP-ARCH-FOREIGN-FRONTMATTER).
+    """
 
     violations: tuple[EdgeViolation, ...]
     frontier: tuple[FrontierRef, ...]
     spec_violations: tuple[SpecPresenceViolation, ...] = ()
+    malformed_specs: tuple[MalformedSpec, ...] = ()
+    ungoverned_specs: tuple[MalformedSpec, ...] = ()
     governed_specs: int | None = None
 
     @property
     def ok(self) -> bool:
-        """True when no tier-1 edge or spec-presence violation was found."""
-        return not self.violations and not self.spec_violations
+        """True when no tier-1 edge, spec-presence or malformed-spec violation was found."""
+        return not self.violations and not self.spec_violations and not self.malformed_specs
 
 
 def _module_candidates(module: str, base_rel: str = "src") -> tuple[str, ...]:
@@ -468,6 +475,21 @@ def check_added_specs(
     return violations
 
 
+def _ungoverned(registry: Registry) -> tuple[MalformedSpec, ...]:
+    """Return every spec outside the graph: no frontmatter, or a foreign one.
+
+    A frontmatter-less spec (a frontier node) and a spec whose frontmatter
+    lacks the registry keys are the same fact on a foreign repository
+    (SP-ARCH-FOREIGN-FRONTMATTER), listed together, sorted by file name.
+    """
+    fenceless = (
+        MalformedSpec(path=node.path, reason=f"{node.path.name}: no frontmatter")
+        for node in registry.nodes.values()
+        if node.frontier
+    )
+    return tuple(sorted((*fenceless, *registry.malformed), key=lambda spec: spec.path.name))
+
+
 def run(
     *,
     base: str,
@@ -478,9 +500,12 @@ def run(
 ) -> Report:
     """Load the registry and check the diff — the orchestration entrypoint.
 
-    A malformed frontmatter fence still raises (a fence that opens must
-    parse); a frontmatter-less new spec is a violation only when
-    ``config.require_frontmatter`` is on.
+    ``config.require_frontmatter`` (``[arch].require_frontmatter``) decides
+    what a spec whose frontmatter lacks the registry keys is
+    (SP-ARCH-FOREIGN-FRONTMATTER). True: a named violation, and a
+    frontmatter-less new spec is one too. False (a foreign repository's
+    human specs): it is counted as ungoverned, never an error, and the
+    presence check is off.
 
     Args:
         base: The ref to diff against.
@@ -494,21 +519,27 @@ def run(
         The :class:`Report`, carrying the number of governed specs.
     """
     resolved_config = config if config is not None else load_gates_config(repo_root)
-    registry = load_registry(specs_dir)
+    registry = load_registry(specs_dir, tolerate_malformed=True)
     governed = sum(1 for node in registry.nodes.values() if not node.frontier)
     changed = gather_changed_files(base=base, staged=staged, repo_root=repo_root)
     suppress = load_frontier_suppress(repo_root)
     report = check_diff(
         registry, changed, repo_root, staged=staged, suppress=suppress, config=resolved_config
     )
-    spec_violations: list[SpecPresenceViolation] = []
-    if resolved_config.require_frontmatter:
-        added_specs = gather_added_specs(base=base, staged=staged, repo_root=repo_root)
-        spec_violations = check_added_specs(added_specs, repo_root, staged=staged)
+    if not resolved_config.require_frontmatter:
+        return Report(
+            violations=report.violations,
+            frontier=report.frontier,
+            ungoverned_specs=_ungoverned(registry),
+            governed_specs=governed,
+        )
+    added_specs = gather_added_specs(base=base, staged=staged, repo_root=repo_root)
+    spec_violations = check_added_specs(added_specs, repo_root, staged=staged)
     return Report(
         violations=report.violations,
         frontier=report.frontier,
         spec_violations=tuple(spec_violations),
+        malformed_specs=registry.malformed,
         governed_specs=governed,
     )
 
@@ -522,6 +553,17 @@ def report_lines(report: Report) -> list[str]:
             f"frontier: {len(report.frontier)} ungoverned ref(s) across "
             f"{len(sources)} spec(s) — reported, not enforced"
         )
+    if report.ungoverned_specs:
+        lines.append(
+            f"ungoverned: {len(report.ungoverned_specs)} spec(s) without registry "
+            "frontmatter — not graphed ([arch].require_frontmatter = false)"
+        )
+        lines.extend(f"  ungoverned spec: {spec.path.name}" for spec in report.ungoverned_specs)
+    for malformed in report.malformed_specs:
+        lines.append(
+            f"malformed spec: {malformed.reason} — complete the governed template "
+            "block, or set [arch].require_frontmatter = false"
+        )
     for violation in report.violations:
         lines.append(
             f"undeclared edge: {violation.source} -> {violation.target} via "
@@ -530,8 +572,7 @@ def report_lines(report: Report) -> list[str]:
         )
     for spec_violation in report.spec_violations:
         lines.append(
-            f"ungoverned new spec: {spec_violation.path} has no frontmatter — "
-            "add the governed template block, or it becomes an un-graphed "
-            "frontier node"
+            f"malformed spec: {spec_violation.path}: no frontmatter — complete the "
+            "governed template block, or set [arch].require_frontmatter = false"
         )
     return lines

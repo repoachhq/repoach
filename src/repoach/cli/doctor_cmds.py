@@ -23,7 +23,7 @@ import typer
 from pydantic import ValidationError
 
 from .. import __version__
-from ..core.config import Settings, _anchored_env_files
+from ..core.config import Settings, _anchored_env_files, configured_env_value
 from ..core.paths import (
     NotARepositoryError,
     require_project_root,
@@ -31,7 +31,7 @@ from ..core.paths import (
     user_data_dir,
 )
 from ..gates.config import CONFIG_FILE_NAME, GatesConfig, load_gates_config
-from ..gates.verifiers import availability_table
+from ..gates.verifiers import availability_table, node_install_hint
 from ..project.config import ConfigError, config_path
 from ..project.resolve import (
     UNDECLARED_COMMAND_NOTE,
@@ -43,6 +43,34 @@ from ..project.toml_write import toml_value
 
 DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
 """External executables whose presence ``doctor`` reports."""
+
+_ROUTED_PROVIDER_KINDS: frozenset[str] = frozenset({"", "gateway"})
+"""``[provider].kind`` values a review can reach today.
+
+Every model call goes through the gateway (``REPOACH_LLM_PROXY_BASE_URL``);
+the direct providers are parsed but not routed
+(SP-PROVIDER-DIRECT-ANTHROPIC, open), so ``doctor`` says so instead of
+implying the key alone is enough."""
+
+ANTHROPIC_CREDENTIAL_NAMES: tuple[str, ...] = ("REPOACH_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+"""Environment names the direct ``anthropic`` provider reads, first found wins."""
+
+
+def _anthropic_credential(root: Path) -> str:
+    """Name the Anthropic credential the environment layer holds, never its value.
+
+    Args:
+        root: The project root (its env layers are consulted).
+
+    Returns:
+        ``<NAME> (present)`` for the first name set, in
+        :data:`ANTHROPIC_CREDENTIAL_NAMES` order, else ``none (reads …)``.
+    """
+    for name in ANTHROPIC_CREDENTIAL_NAMES:
+        if configured_env_value((name,), root) is not None:
+            return f"{name} (present)"
+    return f"none (reads {', then '.join(ANTHROPIC_CREDENTIAL_NAMES)})"
+
 
 EXIT_UNUSABLE = 2
 """Exit code when the project, forge or provider is not usable."""
@@ -146,6 +174,9 @@ def print_gates(root: Path) -> None:
             f"{row.language.value:<11} {'yes' if row.declared else 'no':<9} "
             f"{','.join(row.extensions):<24} {row.selector_kind or '-':<8} {verifiers}"
         )
+    hint = node_install_hint(root)
+    if hint is not None:
+        typer.echo(f"node_install=node_modules absent -- run: {hint}")
 
 
 def doctor(
@@ -206,14 +237,27 @@ def doctor(
     if forge_problem is not None:
         problems.append(forge_problem)
 
-    if settings.llm_proxy_base_url:
-        typer.echo(f"provider=gateway ({settings.llm_proxy_base_url})")
+    kind = resolved.config.provider.kind
+    if kind in _ROUTED_PROVIDER_KINDS:
+        if settings.llm_proxy_base_url:
+            typer.echo(f"provider=gateway ({settings.llm_proxy_base_url})")
+        else:
+            typer.echo("provider=none")
+            problems.append(
+                "no provider configured -- set REPOACH_LLM_PROXY_BASE_URL (gateway) in the "
+                "environment or ~/.config/repoach/env (never in a project file)"
+            )
     else:
-        typer.echo("provider=none")
-        problems.append(
-            "no provider configured -- set REPOACH_LLM_PROXY_BASE_URL (gateway) in the "
-            "environment or ~/.config/repoach/env (never in a project file)"
-        )
+        unrouted = f"provider {kind}: not routed, set REPOACH_LLM_PROXY_BASE_URL"
+        typer.echo(f"provider={kind} ({resolved.source('provider.kind')}; not routed)")
+        if kind == "anthropic":
+            typer.echo(f"provider_credential={_anthropic_credential(root)}")
+        if settings.llm_proxy_base_url:
+            typer.echo(f"provider_route=gateway ({settings.llm_proxy_base_url})")
+            typer.echo(f"repoach: {unrouted}; reviews go through the gateway", err=True)
+        else:
+            typer.echo("provider_route=none")
+            problems.append(unrouted)
 
     for name in DOCTOR_BINARIES:
         typer.echo(_binary_line(name))

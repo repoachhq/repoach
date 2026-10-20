@@ -662,7 +662,7 @@ def test_orchestrator_verifies_findings(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_review_pr_returns_safe_outcome_on_diff_fetch_failure(tmp_path, monkeypatch):
-    """A failing ``gh pr diff`` short-circuits to a COMMENT verdict."""
+    """A failing ``gh pr diff`` short-circuits to an ERROR verdict."""
     gh = _StubGitHubForge(diff_ok=False)
     orch = ReviewTeamOrchestrator(
         forge=gh,
@@ -670,7 +670,7 @@ def test_review_pr_returns_safe_outcome_on_diff_fetch_failure(tmp_path, monkeypa
         post_to_github=False,
     )
     team = orch.review_pr(pr_number=7)
-    assert team.final_verdict == ReviewVerdict.COMMENT
+    assert team.final_verdict == ReviewVerdict.ERROR
     assert team.posted_reviews == 0
     assert team.reviews == []
 
@@ -1015,12 +1015,10 @@ def test_publish_outcome_recovers_posted_ids_from_batched_review(tmp_path):
 def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
     """A single reviewer crashing yields a degraded outcome, others run.
 
-    SP-REVIEW-CONSENSUS-V2: a crashed reviewer's degraded outcome
-    carries ``ReviewVerdict.COMMENT``, which now blocks consensus
-    (previously it slipped through as APPROVE). The crash-resilience
-    contract still holds — every other reviewer runs to completion —
-    but the merge gate correctly refuses until the crashing bot
-    re-runs cleanly. Same fixture, stronger assertion.
+    SP-REVIEW-TRANSPORT-ERROR-VERDICT: a crashed reviewer's outcome
+    carries ``ReviewVerdict.ERROR``, is never auto-promoted to APPROVE,
+    and makes the team verdict ``ERROR``. The crash-resilience contract
+    still holds — every other reviewer runs to completion.
     """
 
     class _BoomReviewer:
@@ -1053,14 +1051,50 @@ def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
     # Three healthy + one degraded sentinel = 4 outcomes.
     assert len(team.reviews) == 4
     sentinel_out = next(o for o in team.reviews if o.role == BotRole.SENTINEL)
-    assert sentinel_out.verdict == ReviewVerdict.APPROVE
+    assert sentinel_out.verdict == ReviewVerdict.ERROR
     assert "bot crashed" in sentinel_out.summary
-    assert "[auto-promoted: nit-only]" in sentinel_out.summary
-    assert team.final_verdict == ReviewVerdict.REQUEST_CHANGES, (
-        "an unparsed (crashed) reviewer makes the review incomplete; the "
-        "ledger-sourced verdict (SP-CODER-TRIGGER-FLIP) is REQUEST_CHANGES, "
-        "in lockstep with the merge gate refusing on review_complete=False"
+    assert "[auto-promoted" not in sentinel_out.summary
+    assert team.final_verdict == ReviewVerdict.ERROR
+
+
+def test_crashed_reviewer_leaves_the_ledger_review_incomplete(tmp_path, monkeypatch):
+    """A crashed reviewer under ERROR still marks the bench incomplete in the ledger.
+
+    The ``_(bot crashed:`` sentinel is what ``findings_bridge`` counts as
+    unparsed; the merge gate refuses on ``review_complete=False``. The ERROR
+    verdict changes the team verdict and posting, not this ledger fact.
+    """
+    from repoach.review.merge_gate import summarise_ledger_facts
+
+    class _BoomReviewer:
+        role = BotRole.SENTINEL
+
+        def review_diff(self, diff, *, pr_number=None, **_kwargs):
+            raise RuntimeError("synthetic chain exhaustion")
+
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Architect",
+        lambda **_kw: _StubReviewer(_outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)),
     )
+    monkeypatch.setattr("repoach.review.orchestrator.Sentinel", lambda **_kw: _BoomReviewer())
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Tester",
+        lambda **_kw: _StubReviewer(_outcome(BotRole.TESTER, ReviewVerdict.APPROVE)),
+    )
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Scribe",
+        lambda **_kw: _StubReviewer(_outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE)),
+    )
+    db = tmp_path / "review.db"
+    team = ReviewTeamOrchestrator(
+        forge=_StubGitHubForge(), db_path=db, post_to_github=True, repo_root=tmp_path
+    ).review_pr(pr_number=12)
+
+    assert team.final_verdict == ReviewVerdict.ERROR
+    assert team.head_sha
+    facts = summarise_ledger_facts(db, pr_number=12, head_sha=team.head_sha)
+    assert facts.review_integrity_known is True
+    assert facts.review_complete is False
 
 
 def test_team_outcome_to_dict_shape():

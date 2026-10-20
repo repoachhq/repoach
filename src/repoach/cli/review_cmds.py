@@ -28,11 +28,12 @@ from pathlib import Path
 import typer
 from sqlalchemy import create_engine, text
 
-from ..core.config import get_settings
+from ..core.config import GatewayConfigError, get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
 from ..review.auto_merge import (
+    OUTCOME_ALREADY_MERGED,
     evaluate_merge_gate,
     merge_exit_code,
     run_auto_merge,
@@ -40,6 +41,7 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.orchestrator import run_review
+from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from .doctor_cmds import project_root_or_exit
 
@@ -51,6 +53,14 @@ _SPEC_HELP = (
     "Spec the PR / MR implements; outranks a 'Spec: SP-…' description line and the branch "
     "name. Without any, the review runs with no spec (spec coverage: not_applicable)."
 )
+
+
+EXIT_REVIEW_ERROR = 3
+"""``review pr`` exit code when a reviewer could not reach a model.
+
+Distinct from 2 (request changes, or a ``--spec`` naming no document)
+and from 5 (a refused merge gate): no review happened, nothing was
+published (SP-REVIEW-TRANSPORT-ERROR-VERDICT)."""
 
 
 def _spec_flag(value: object) -> str | None:
@@ -172,12 +182,21 @@ def review_pr(
     spec document prints a warning and reports ``spec_coverage`` as
     ``missing``.  A ``--spec`` naming no spec document exits 2 before
     any forge call.
+
+    A reviewer that could not reach a model (transport exhausted, bot
+    crashed) ends ``ERROR``: the team verdict is ``ERROR``, nothing is
+    published even without ``--dry-run`` (``posting_outcome`` is
+    ``SKIP_ERROR``), and the command exits 3.  ``posting_outcome`` is null
+    when posting ran or was not requested.
     """
     root = project_root_or_exit()
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:
         team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
+    except GatewayConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     spec_id = team.spec_id
@@ -198,6 +217,7 @@ def review_pr(
         "n_majors": team.n_majors,
         "posted_comments": team.posted_comments,
         "posted_reviews": team.posted_reviews,
+        "posting_outcome": team.posting_outcome,
         "reviews": [
             {
                 "role": o.role.value,
@@ -215,7 +235,9 @@ def review_pr(
         ],
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
-    if team.final_verdict.value == "REQUEST_CHANGES":
+    if team.final_verdict == ReviewVerdict.ERROR:
+        raise typer.Exit(code=EXIT_REVIEW_ERROR)
+    if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
         raise typer.Exit(code=2)
 
 
@@ -461,7 +483,9 @@ def review_gate(
     :func:`decide_at_head`).
 
     Exit codes:
-      * ``0`` — gate satisfied (``merge`` is True): the PR may merge.
+      * ``0`` — gate satisfied (``merge`` is True): the PR may merge; or
+        the PR is already merged (``outcome`` ``ALREADY_MERGED``,
+        ``merge`` False, nothing left to gate).
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
 
@@ -504,6 +528,7 @@ def review_gate(
         json.dumps(
             {
                 "pr_number": pr_number,
+                "outcome": evaluation.ci_gate.outcome_tag,
                 "head_sha": evaluation.head_sha,
                 "spec": declared.spec_id,
                 "spec_source": declared.source,
@@ -523,6 +548,8 @@ def review_gate(
             ensure_ascii=False,
         )
     )
+    if evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED:
+        return
     if not evaluation.decision.merge:
         raise typer.Exit(code=5)
 

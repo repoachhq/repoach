@@ -45,6 +45,23 @@ class OwnershipConflict:
 
 
 @dataclass(frozen=True)
+class MalformedSpec:
+    """A spec whose frontmatter fence does not hold the registry keys.
+
+    Collected instead of raised when the registry is loaded with
+    ``tolerate_malformed`` (SP-ARCH-FOREIGN-FRONTMATTER): on a foreign
+    repository a human spec may carry its own frontmatter shape.
+
+    Attributes:
+        path: The spec file.
+        reason: Why it is not a governed spec, file name first.
+    """
+
+    path: Path
+    reason: str
+
+
+@dataclass(frozen=True)
 class SpecNode:
     """One spec parsed from its frontmatter, or a frontier placeholder.
 
@@ -166,7 +183,7 @@ def _path_contains(owned: str, artifact: str) -> bool:
     return artifact == base or artifact.startswith(base + "/")
 
 
-def load_registry(specs_dir: Path) -> Registry:
+def load_registry(specs_dir: Path, *, tolerate_malformed: bool = False) -> Registry:
     """Parse every spec under ``specs_dir`` into a :class:`Registry`.
 
     Underscore-prefixed files (``_TEMPLATE.md``) are skipped. A duplicate
@@ -174,33 +191,48 @@ def load_registry(specs_dir: Path) -> Registry:
 
     Args:
         specs_dir: Directory of spec markdown files.
+        tolerate_malformed: Record a malformed spec (or a duplicate id)
+            in :attr:`Registry.malformed` and leave it out of the graph,
+            instead of raising; the caller decides whether it blocks.
 
     Returns:
         The parsed registry.
 
     Raises:
-        MalformedFrontmatterError: A governed spec is malformed, or two
-            specs share an ``id``.
+        MalformedFrontmatterError: Unless ``tolerate_malformed``, a
+            governed spec is malformed, or two specs share an ``id``.
     """
     nodes: dict[str, SpecNode] = {}
+    malformed: list[MalformedSpec] = []
     for path in sorted(specs_dir.glob("*.md")):
         if path.name.startswith("_"):
             continue
-        node = _parse_node(path)
-        if node.id in nodes:
-            raise MalformedFrontmatterError(
-                f"{path.name}: duplicate spec id {node.id!r} (already declared by "
-                f"{nodes[node.id].path.name})"
-            )
+        try:
+            node = _parse_node(path)
+            if node.id in nodes:
+                raise MalformedFrontmatterError(
+                    f"{path.name}: duplicate spec id {node.id!r} (already declared by "
+                    f"{nodes[node.id].path.name})"
+                )
+        except MalformedFrontmatterError as exc:
+            if not tolerate_malformed:
+                raise
+            malformed.append(MalformedSpec(path=path, reason=str(exc)))
+            continue
         nodes[node.id] = node
-    return Registry(nodes=nodes)
+    return Registry(nodes=nodes, malformed=tuple(malformed))
 
 
 @dataclass(frozen=True)
 class Registry:
-    """An immutable id-to-:class:`SpecNode` map over a spec corpus."""
+    """An immutable id-to-:class:`SpecNode` map over a spec corpus.
+
+    ``malformed`` lists the specs left out of the graph when the registry
+    was loaded with ``tolerate_malformed``; it is empty otherwise.
+    """
 
     nodes: Mapping[str, SpecNode]
+    malformed: tuple[MalformedSpec, ...] = ()
 
     def owner_of(self, artifact: str) -> str | None:
         """Resolve an artifact to its owning spec-id, or ``None`` (frontier).

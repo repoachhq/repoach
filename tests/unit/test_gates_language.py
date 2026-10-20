@@ -341,7 +341,7 @@ def test_arch_check_require_frontmatter_keeps_the_presence_violation(
     monkeypatch.chdir(root)
     result = CliRunner().invoke(app, ["arch", "check", "--base", "main"])
     assert result.exit_code == 1
-    assert "ungoverned new spec: docs/specs/2026-10-19_SP-FOO_foo.md" in result.output
+    assert "malformed spec: docs/specs/2026-10-19_SP-FOO_foo.md: no frontmatter" in result.output
 
 
 def test_doctor_gates_prints_the_language_table(
