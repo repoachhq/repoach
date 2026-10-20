@@ -23,6 +23,7 @@ from repoach.project.config import (
     DEFAULT_TEST_COMMAND,
     ConfigError,
     ProjectConfig,
+    _decode_error_line,
     load_project_config,
     parse_project_config,
 )
@@ -159,6 +160,11 @@ class TestValidation:
             load_project_config(tmp_path)
         assert info.value.line == 2
         assert "not valid TOML" in str(info.value)
+
+    def test_parse_error_line_comes_from_the_message_without_lineno(self) -> None:
+        """Python 3.11-3.13 carry the position only in the message."""
+        assert _decode_error_line(ValueError("Invalid value (at line 7, column 3)")) == 7
+        assert _decode_error_line(ValueError("Unexpected end")) is None
 
     def test_conventions_section_is_read_but_inert(self, tmp_path: Path) -> None:
         text = "[conventions]\ntypes = ['feat', 'fix']\nheader_max_chars = 50\n"
