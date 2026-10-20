@@ -57,3 +57,31 @@ def test_gateway_kind_is_unchanged(clone: Path, monkeypatch: pytest.MonkeyPatch)
     result = CliRunner().invoke(app, ["doctor"])
     assert "provider=none" in result.stdout
     assert "not routed" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("present", "expected"),
+    [
+        (
+            {
+                "REPOACH_ANTHROPIC_API_KEY": "credential-value-one",
+                "ANTHROPIC_API_KEY": "credential-value-two",
+            },
+            "REPOACH_ANTHROPIC_API_KEY (present)",
+        ),
+        ({"ANTHROPIC_API_KEY": "credential-value-two"}, "ANTHROPIC_API_KEY (present)"),
+        ({}, "none (reads REPOACH_ANTHROPIC_API_KEY, then ANTHROPIC_API_KEY)"),
+    ],
+)
+def test_anthropic_credential_order_never_prints_the_value(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, present: dict[str, str], expected: str
+) -> None:
+    monkeypatch.setenv("REPOACH_PROVIDER", "anthropic")
+    monkeypatch.delenv("REPOACH_ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for name, value in present.items():
+        monkeypatch.setenv(name, value)
+    result = CliRunner().invoke(app, ["doctor"])
+    assert f"provider_credential={expected}" in result.stdout
+    assert "credential-value-one" not in result.output
+    assert "credential-value-two" not in result.output
