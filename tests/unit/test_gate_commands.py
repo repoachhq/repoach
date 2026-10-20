@@ -14,6 +14,7 @@ exactly today's ruff argv.
 from __future__ import annotations
 
 import stat
+import subprocess
 import time
 from pathlib import Path
 
@@ -89,16 +90,18 @@ def test_gate_command_timeout_is_red(tmp_path: Path) -> None:
 
 
 def _alive(pid: int) -> bool:
-    stat_file = Path(f"/proc/{pid}/stat")
-    if not stat_file.is_file():
-        return False
-    fields = stat_file.read_text().rsplit(")", 1)[-1].split()
-    return bool(fields) and fields[0] != "Z"
+    probe = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+    )
+    state = probe.stdout.strip()
+    return probe.returncode == 0 and bool(state) and not state.startswith("Z")
 
 
 def test_timeout_kills_the_children_of_the_command(tmp_path: Path) -> None:
     _script(tmp_path, "spawn.sh", "sleep 60 &\necho $! > child.pid\nwait\n")
+    started = time.monotonic()
     passed, tail = run_project_gate(tmp_path, _config(gate="./spawn.sh", timeout_s=1))
+    assert time.monotonic() - started < 20
     assert passed is False and "timeout after 1s" in tail
     child = int((tmp_path / "child.pid").read_text().strip())
     deadline = time.monotonic() + 5
