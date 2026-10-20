@@ -14,6 +14,7 @@ import httpx
 import typer
 
 from ..arch.cli import arch_app
+from ..ci_entry.cli import ci_app
 from ..core.config import get_settings
 from ..core.logging import configure_logging
 from ..gates.config import current_gates_config
@@ -34,6 +35,7 @@ app = typer.Typer(
 )
 app.add_typer(review_app, name="review")
 app.add_typer(release_app, name="release")
+app.add_typer(ci_app, name="ci")
 
 
 @arch_app.command("check")
@@ -83,7 +85,7 @@ app.command(name="migrate-config")(migrate_config)
 app.add_typer(config_app, name="config")
 
 SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset(
-    {"version", "doctor", "migrate-config", "init", "config"}
+    {"version", "doctor", "migrate-config", "init", "config", "ci"}
 )
 """Subcommands that must run with no configuration at all.
 

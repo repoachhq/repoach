@@ -151,6 +151,42 @@ you from clone to a live, authenticated call through the LLM gateway —
 provider keys, `chains.env` routing, the CLI tour — and then through the
 GitHub review factory on this repository.
 
+## Run repoach in CI
+
+`repoach ci review` reviews the pull / merge request of the CI job it runs in — no shell driver per project. It reads the forge and the PR number from the CI (`CI_MERGE_REQUEST_IID` on GitLab CI, `GITHUB_EVENT_PATH` on GitHub Actions; `--pr N` and `--forge` override), prints one JSON document on stdout and one human line on stderr, and is **advisory**: it always exits 0 unless `--strict`. A missing input is a named skip (`skipped, GITLAB_TOKEN / REPOACH_GITLAB_TOKEN is not set`), and nothing is posted unless `REPOACH_ADVISORY_POST` is exactly `1`. `repoach doctor --ci` lists, by name only, the variables it reads and which are present.
+
+Write the job, then commit it:
+
+```bash
+repoach init --ci gitlab   # writes .repoach/ci/gitlab-review.yml, prints the pin and the include
+repoach init --ci github   # writes .github/workflows/repoach-review.yml, prints the pin
+repoach init --ci gitlab --print   # print only, write nothing
+```
+
+The job pins the repoach that ran `init`, never a branch: the commit pip installed it from, the `HEAD` of a repoach checkout (push it before the job runs), or `repoach==<version>` from PyPI; `--ref <tag-or-sha>` or `--pypi-version X.Y.Z` override it.
+
+On GitLab, add the printed include to `.gitlab-ci.yml` (repoach never edits it); override any key of the `review:advisory` job beside it, for example the runner tag:
+
+```yaml
+include:
+  - local: .repoach/ci/gitlab-review.yml
+review:advisory:
+  tags: [my-runner]
+```
+
+The job installs the pinned repoach with every secret unset for the install step, then runs `repoach ci review`. Set, as masked CI/CD variables (GitLab) or secrets (GitHub):
+
+| | GitLab | GitHub |
+|---|---|---|
+| Forge token | `REPOACH_GITLAB_TOKEN` (project access token, `api`) | `GITHUB_TOKEN` (provided) |
+| Direct-provider mode | `REPOACH_ANTHROPIC_API_KEY` | secret `REPOACH_ANTHROPIC_API_KEY` |
+| Gateway mode | `REPOACH_LLM_PROXY_BASE_URL` + `REPOACH_ANTHROPIC_AUTH_TOKEN` | variable `REPOACH_LLM_PROXY_BASE_URL` + secret `REPOACH_ANTHROPIC_AUTH_TOKEN` |
+| Posting | `REPOACH_ADVISORY_POST=1` | variable `REPOACH_ADVISORY_POST=1` |
+
+In **gateway mode** the review calls a repoach gateway you already run. In **direct-provider mode** the job starts a gateway on `127.0.0.1` for its own duration, with the Anthropic key as its only upstream (`REPOACH_MODEL_OPUS` / `_SONNET` / `_HAIKU` override the models) and a per-job shared secret; the key reaches that gateway and never the review, and the forge token reaches the review and never the gateway. Posting on GitLab also needs the bot's username (`[review].bot_username` in `repoach.toml`, or `REPOACH_REVIEW_BOT_LOGIN`).
+
+Exit codes with `--strict`: `0` reviewed (APPROVE/COMMENT) or the PR already merged/closed, `1` internal error, `2` a missing input, bad flag or config, forge or provider unavailable, `3` a reviewer reached no model or the review outran `--timeout` (minutes, default 25; the child is killed with its process group), `4` changes requested. Any exception is one `internal_error` JSON, never a traceback.
+
 ## Safety
 
 Letting agents write and merge code is only acceptable if the blast radius is bounded. In Repoach:

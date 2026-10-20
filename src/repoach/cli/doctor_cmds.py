@@ -16,6 +16,7 @@ row per supported language with each verifier's availability here
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -23,6 +24,7 @@ import typer
 from pydantic import ValidationError
 
 from .. import __version__
+from ..ci_entry.cli import ci_doctor_lines
 from ..core.config import Settings, _anchored_env_files, configured_env_value
 from ..core.paths import (
     NotARepositoryError,
@@ -183,6 +185,11 @@ def doctor(
     gates: bool = typer.Option(
         False, "--gates", help="Print the gate configuration and per-language verifier table."
     ),
+    ci: bool = typer.Option(
+        False,
+        "--ci",
+        help="Print the CI variables 'repoach ci review' would read and which are present.",
+    ),
 ) -> None:
     """Print the resolved anchors, configuration, forge, provider and binaries.
 
@@ -191,14 +198,22 @@ def doctor(
     usable, 2 otherwise (including outside a git working tree or with an
     invalid ``repoach.toml``). With ``--gates`` prints the gate
     configuration and verifier table instead, exiting 0 unless
-    ``repoach.toml`` is invalid.
+    ``repoach.toml`` is invalid. With ``--ci`` prints, by name only, the
+    variables ``repoach ci review`` reads and whether each is present,
+    then the CI, PR source, posting mode and provider mode it would use;
+    it exits 0 and needs no git working tree (SP-UNIVERSAL-CI-ENTRY).
 
     Args:
         gates: Print the gate table instead of the anchors.
+        ci: Print the CI variable table instead of the anchors.
 
     Raises:
         typer.Exit: With code 2 when anything required is unusable.
     """
+    if ci:
+        for line in ci_doctor_lines(os.environ):
+            typer.echo(line)
+        return
     root = project_root_or_exit()
     if gates:
         print_gates(root)
