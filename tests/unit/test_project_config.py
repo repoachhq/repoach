@@ -102,7 +102,11 @@ class TestGoldenDefaults:
         assert config.coder.forbidden_prefixes == []
         assert coder_loop.FORBIDDEN_PREFIXES == (
             ".github/",
+            ".gitlab/",
             ".githooks/",
+            ".claude/",
+            ".gemini/",
+            ".agents/",
             "prompts/review/",
             ".git/",
         )

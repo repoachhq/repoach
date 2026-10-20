@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/lint/edge_honesty.py]   # new lint gate, sibling of the no-inline / no-silent gates
   resources: N/A                                # consumes the registry; owns no table/topic
 
-depends_on: [SP-ARCH-GRAPH, SP-UNIVERSAL-PROJECT-CONFIG]  # imports Registry + owner_of (tier-1a code edge); NOT the template (transitive)
+depends_on: [SP-ARCH-GRAPH, SP-UNIVERSAL-PROJECT-CONFIG, SP-UNIVERSAL-GATES]  # imports Registry + owner_of (tier-1a code edge); NOT the template (transitive)
 provides_to: []                       # AUTO-maintained
 
 constraints: {}

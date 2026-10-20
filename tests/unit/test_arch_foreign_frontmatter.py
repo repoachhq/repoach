@@ -63,7 +63,6 @@ def test_not_required_lists_the_spec_as_ungoverned(tmp_path: Path) -> None:
         staged=False,
         specs_dir=repo / "docs" / "specs",
         repo_root=repo,
-        require_frontmatter=False,
     )
     assert report.ok
     assert [s.path.name for s in report.ungoverned_specs] == [_HUMAN_SPEC]
@@ -78,7 +77,6 @@ def test_required_names_the_violation(tmp_path: Path) -> None:
         staged=False,
         specs_dir=repo / "docs" / "specs",
         repo_root=repo,
-        require_frontmatter=True,
     )
     assert not report.ok
     assert [s.path.name for s in report.malformed_specs] == [_HUMAN_SPEC]

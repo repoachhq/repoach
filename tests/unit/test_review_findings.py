@@ -40,7 +40,7 @@ def _make_finding(*, pr_number: int = 1) -> Finding:
 def test_allowed_transitions_law() -> None:
     """Verify each ALLOWED_TRANSITIONS entry matches the spec diagram."""
     assert ALLOWED_TRANSITIONS[FindingStatus.PROPOSED] == frozenset(
-        {FindingStatus.VERIFIED, FindingStatus.REFUTED}
+        {FindingStatus.VERIFIED, FindingStatus.REFUTED, FindingStatus.NOT_APPLICABLE}
     )
     assert ALLOWED_TRANSITIONS[FindingStatus.VERIFIED] == frozenset({FindingStatus.OPEN})
     assert ALLOWED_TRANSITIONS[FindingStatus.OPEN] == frozenset(
@@ -49,6 +49,7 @@ def test_allowed_transitions_law() -> None:
     assert ALLOWED_TRANSITIONS[FindingStatus.REFUTED] == frozenset({FindingStatus.PROPOSED})
     assert ALLOWED_TRANSITIONS[FindingStatus.RESOLVED] == frozenset()
     assert ALLOWED_TRANSITIONS[FindingStatus.STUCK] == frozenset()
+    assert ALLOWED_TRANSITIONS[FindingStatus.NOT_APPLICABLE] == frozenset()
 
 
 def test_terminal_states_have_no_exits() -> None:
@@ -58,7 +59,7 @@ def test_terminal_states_have_no_exits() -> None:
     to PROPOSED on a reviewer re-raise so an injected refutation can
     never bury a blocking finding permanently.
     """
-    terminal = {FindingStatus.RESOLVED, FindingStatus.STUCK}
+    terminal = {FindingStatus.RESOLVED, FindingStatus.STUCK, FindingStatus.NOT_APPLICABLE}
     for state in terminal:
         assert ALLOWED_TRANSITIONS[state] == frozenset(), (
             f"{state} should be terminal but has exits"

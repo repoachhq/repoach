@@ -16,10 +16,10 @@ import typer
 from ..arch.cli import arch_app
 from ..core.config import get_settings
 from ..core.logging import configure_logging
+from ..gates.config import current_gates_config
 from ..lint import edge_honesty
 from ..project.config import ConfigError
 from ..project.config import specs_dir as configured_specs_dir
-from ..project.resolve import resolve_project_config
 from .chain_status import chain_status
 from .config_cmds import config_app
 from .doctor_cmds import doctor, project_root_or_exit
@@ -56,18 +56,19 @@ def arch_check(
     """
     repo_root = project_root_or_exit()
     base = base if base is not None else get_settings().integration_branch
-    require_frontmatter = resolve_project_config(repo_root).config.arch.require_frontmatter
     report = edge_honesty.run(
         base=base,
         staged=staged,
         specs_dir=specs_dir or configured_specs_dir(repo_root),
         repo_root=repo_root,
-        require_frontmatter=require_frontmatter is not False,
     )
     for line in edge_honesty.report_lines(report):
         typer.echo(line, err=True)
     if not report.ok:
         raise typer.Exit(code=1)
+    if report.governed_specs == 0:
+        typer.echo("edge-honesty: ok (0 governed specs)")
+        return
     typer.echo("edge-honesty: ok")
 
 
@@ -128,7 +129,10 @@ def _bootstrap(
     """Configure logging once for every CLI invocation that needs settings.
 
     An invalid ``repoach.toml`` ends the command here with rc 2, before
-    any forge or provider call, naming the file, key and line.
+    any forge or provider call, naming the file, key and line: the
+    settings read it, then the gate configuration is built from it once,
+    so a key only the gates check (``[project].languages``) is refused
+    here too rather than as a traceback deep inside a gate.
 
     Raises:
         typer.Exit: Code 2 on a :class:`~repoach.project.config.ConfigError`.
@@ -137,6 +141,7 @@ def _bootstrap(
         return
     try:
         configure_logging()
+        current_gates_config()
     except ConfigError as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc

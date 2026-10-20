@@ -49,6 +49,16 @@ from typing import Literal
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError, select_forge
+from ..gates.commands import run_project_gate
+from ..gates.config import applicable, load_gates_config
+from ..gates.selectors import (
+    SelectorKind,
+    parse_selector,
+    promised_file,
+    run_selectors,
+    selector_file,
+)
+from ..gates.verifiers import run_verifiers
 from ..lint.no_inline_comments import scan_file as scan_inline_comments
 from ..lint.no_silent_except import scan_file as scan_silent_except
 from .coder_findings import ReasonCode
@@ -77,8 +87,9 @@ _log = get_logger(__name__)
 def _promised_test_files(unit_tests: list[str]) -> set[str]:
     """Return the set of repo-relative file paths extracted from promised selectors.
 
-    Each selector is split on ``::`` and the file part (index 0) is kept.
-    Bare-file selectors that contain no ``::`` are skipped — only selectors
+    Each selector's file part is kept (:func:`repoach.gates.selectors.selector_file`
+    — the ``::`` head for pytest, the file before `` > `` for Vitest).
+    Bare-file selectors that name no test are skipped — only selectors
     that name an explicit node id contribute to the returned set.
 
     Args:
@@ -88,7 +99,7 @@ def _promised_test_files(unit_tests: list[str]) -> set[str]:
         Set of repo-relative file paths whose promised selectors include
         a ``::`` node-id portion.
     """
-    return {s.split("::", 1)[0] for s in unit_tests if "::" in s}
+    return {selector_file(s) for s in unit_tests if "::" in s or " > " in s}
 
 
 def _test_function_names_in_file(repo_root: Path, file_path: str) -> list[str]:
@@ -447,7 +458,7 @@ def step_preflight_complete(repo_root: Path, plan: ActionPlan, step: PlanStep) -
     """
     attributed: list[str] = list(step.unit_tests)
     for selector in plan.integration_tests:
-        file_path = selector.split("::", 1)[0]
+        file_path = selector_file(selector)
         if file_path in step.files:
             attributed.append(selector)
 
@@ -515,7 +526,7 @@ def _step_tests_already_green(repo_root: Path, step: PlanStep) -> bool:
     """
     if not step.unit_tests:
         return False
-    file_paths = {s.split("::", 1)[0] for s in step.unit_tests}
+    file_paths = {selector_file(s) for s in step.unit_tests}
     for file_path in file_paths:
         if not (repo_root / file_path).is_file():
             return False
@@ -942,16 +953,46 @@ def run_promised_tests(repo_root: Path, selectors: list[str]) -> tuple[bool, str
         (name mismatch — the implementation is green but under a
         different function name).
     """
+    foreign = [s for s in selectors if not _is_pytest_selector(s)]
+    if foreign:
+        return _run_foreign_promised_tests(repo_root, selectors, foreign)
     exact_ok, exact_tail = run_pytest_selectors(repo_root, selectors)
     if exact_ok:
         return True, exact_tail, False
 
-    file_paths = sorted({s.split("::", 1)[0] for s in selectors})
+    file_paths = sorted({selector_file(s) for s in selectors})
     file_ok, file_tail = run_pytest_selectors(repo_root, file_paths)
     if file_ok:
         return True, file_tail, True
 
     return False, file_tail, False
+
+
+def _is_pytest_selector(selector: str) -> bool:
+    """Whether *selector* runs through pytest (a ``.py`` file, or an unparseable string)."""
+    parsed = parse_selector(selector)
+    return parsed is None or parsed.kind is SelectorKind.PYTEST
+
+
+def _run_foreign_promised_tests(
+    repo_root: Path, selectors: list[str], foreign: list[str]
+) -> tuple[bool, str, bool]:
+    """Run a selector set that holds Vitest / Go / ``cmd:`` promises (SP-UNIVERSAL-GATES G8).
+
+    The pytest part (if any) runs through :func:`run_pytest_selectors`;
+    the rest through its own runner. No file-level reconciliation is
+    attempted for the foreign kinds — the exact promise must go green.
+    """
+    pytest_part = [s for s in selectors if s not in foreign]
+    tails: list[str] = []
+    if pytest_part:
+        ok, tail = run_pytest_selectors(repo_root, pytest_part)
+        if not ok:
+            return False, tail, False
+        tails.append(tail)
+    ok, tail = run_selectors(repo_root, foreign, load_gates_config(repo_root))
+    tails.append(tail)
+    return ok, "\n".join(tails)[-400:], False
 
 
 def _changed_paths(repo_root: Path) -> list[str]:
@@ -1225,7 +1266,7 @@ def repair_wrapup_failures(
             loop_result = dev.develop_step(
                 brief=brief,
                 repo_root=repo_root,
-                allowed_paths=[*matched_step.files, selector.split("::", 1)[0]],
+                allowed_paths=[*matched_step.files, selector_file(selector)],
                 repo_tree="",
                 spec_id=f"{plan.spec_id}:wrapup-repair-step-{outcome.step.index}",
             )
@@ -1332,6 +1373,7 @@ def execute_plan_step(
         branch.
     """
     allowed_paths = list(step.files)
+    gates_config = load_gates_config(repo_root)
     contract = normalise_contract(repo_root, allowed_paths)
     totals = StepOutcome(ok=False)
     gate_feedback = ""
@@ -1420,28 +1462,39 @@ def execute_plan_step(
                 paths=healed,
             )
 
-        syntax_ok, syntax_tail = check_python_syntax(repo_root, allowed_paths)
+        python_paths = [p for p in allowed_paths if applicable(p, gates_config)[0]]
+        syntax_ok, syntax_tail = check_python_syntax(repo_root, python_paths)
         if not syntax_ok:
             gate_feedback = f"python syntax gate: {syntax_tail}"
             continue
-        imports_ok, imports_report = check_imports(repo_root, allowed_paths)
+        imports_ok, imports_report = check_imports(repo_root, allowed_paths, gates_config)
         if not imports_ok:
             gate_feedback = f"import gate: {imports_report}"
             continue
-        ruff_ok, ruff_tail = run_ruff_gate(repo_root, unsafe_fixes=True)
+        ruff_ok, ruff_tail = run_ruff_gate(repo_root, unsafe_fixes=True, config=gates_config)
         if not ruff_ok:
             gate_feedback = f"ruff gate: {ruff_tail}"
             last_gate_kind = _LINT_GATE_KIND
             continue
-        lint_ok, lint_report = run_repo_lint_gates(repo_root, allowed_paths)
+        lint_ok, lint_report = run_repo_lint_gates(repo_root, python_paths)
         if not lint_ok:
             gate_feedback = f"repo lint gate: {lint_report}"
             last_gate_kind = _LINT_GATE_KIND
             continue
+        verify_report = run_verifiers(repo_root, allowed_paths, gates_config)
+        if not verify_report.passed:
+            gate_feedback = f"language verifiers: {verify_report.render()}"
+            last_gate_kind = _LINT_GATE_KIND
+            continue
         if step.unit_tests:
-            absent = [t for t in step.unit_tests if not (repo_root / t.split("::", 1)[0]).is_file()]
+            absent = [
+                t
+                for t in step.unit_tests
+                if (promised := promised_file(t)) is not None
+                and not (repo_root / promised).is_file()
+            ]
             if absent:
-                absent_files = sorted({t.split("::", 1)[0] for t in absent})
+                absent_files = sorted({selector_file(t) for t in absent})
                 creatable = [f for f in absent_files if f in step.files]
                 if creatable:
                     gate_feedback = (
@@ -1491,7 +1544,7 @@ def execute_plan_step(
                     continue
                 absent_promises: list[str] = []
                 for selector in step.unit_tests:
-                    if selector.split("::", 1)[0] not in touched_promised:
+                    if selector_file(selector) not in touched_promised:
                         continue
                     if not promised_present(repo_root, selector):
                         absent_promises.append(selector)
@@ -1549,7 +1602,7 @@ def execute_plan_step(
             return totals
 
         if baseline_green:
-            promised_files = {s.split("::", 1)[0] for s in step.unit_tests}
+            promised_files = {selector_file(s) for s in step.unit_tests}
             non_test_changes = [p for p in step_changes if p not in promised_files]
             if not non_test_changes:
                 totals.reason = (
@@ -1568,6 +1621,12 @@ def execute_plan_step(
                     step_changes=step_changes,
                 )
                 return totals
+
+        if gates_config.gate_cmd:
+            project_ok, project_tail = run_project_gate(repo_root, gates_config)
+            if not project_ok:
+                gate_feedback = f"project gate ({gates_config.gate_cmd}): {project_tail}"
+                continue
 
         committed, commit_detail = commit_paths(repo_root, step_changes, step.commit_message)
         if not committed:
@@ -1742,7 +1801,7 @@ def _develop_one_spec(
                 commit_paths(repo, dirty, step.commit_message)
             result.steps_completed += 1
             selectors = list(step.unit_tests) + [
-                t for t in action_plan.integration_tests if t.split("::", 1)[0] in contract
+                t for t in action_plan.integration_tests if selector_file(t) in contract
             ]
             _log.info(
                 "dev_runner.step_preflight_complete",
@@ -1809,10 +1868,10 @@ def _develop_one_spec(
         return f"full unit suite pytest red after all steps ({full_tail[:160]})"
 
     integration_present = [
-        t for t in action_plan.integration_tests if (repo / t.split("::")[0]).exists()
+        t for t in action_plan.integration_tests if (repo / selector_file(t)).exists()
     ]
     promised_missing = [
-        t for t in action_plan.integration_tests if not (repo / t.split("::")[0]).exists()
+        t for t in action_plan.integration_tests if not (repo / selector_file(t)).exists()
     ]
     if promised_missing:
         _log.warning(

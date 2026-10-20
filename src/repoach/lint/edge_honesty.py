@@ -20,6 +20,15 @@ Architect review. Imports/tables resolving to no governed owner are
 It consumes the `SP-ARCH-GRAPH` deriver's :class:`Registry` + ``owner_of``;
 its frontmatter dependency is transitive through the deriver, so its only
 declared edge is ``SP-ARCH-GRAPH``.
+
+Language-aware (SP-UNIVERSAL-GATES): intra-repo Python imports are the
+project's own top-level packages found under its declared ``src_roots``
+(``repoach`` under ``src`` without a ``repoach.toml``), Python files are
+checked only when the project declares Python, and TypeScript /
+JavaScript files have their relative and ``tsconfig`` ``paths``-aliased
+``import … from`` targets resolved to repo paths and checked the same
+way (tier 1a). The spec-presence check is blocking only when
+``[arch].require_frontmatter`` is on (always, without a ``repoach.toml``).
 """
 
 from __future__ import annotations
@@ -32,9 +41,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from repoach.arch import MalformedSpec, Registry, has_frontmatter, load_registry
+from repoach.gates import typescript as ts
+from repoach.gates.config import GatesConfig, applicable, load_gates_config, python_packages
+from repoach.gates.languages import Language, language_of
 from repoach.project.config import load_project_config
 
-_REPO_TOP = "repoach"
+_JS_LANGUAGES = frozenset({Language.TYPESCRIPT, Language.JAVASCRIPT})
+"""Languages whose ``import … from`` couplings are resolved through tsconfig."""
 
 
 @dataclass(frozen=True)
@@ -91,6 +104,7 @@ class Report:
     spec_violations: tuple[SpecPresenceViolation, ...] = ()
     malformed_specs: tuple[MalformedSpec, ...] = ()
     ungoverned_specs: tuple[MalformedSpec, ...] = ()
+    governed_specs: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -98,15 +112,22 @@ class Report:
         return not self.violations and not self.spec_violations and not self.malformed_specs
 
 
-def _module_candidates(module: str) -> tuple[str, ...]:
-    """Map a dotted module to the repo paths it could resolve to."""
+def _module_candidates(module: str, base_rel: str = "src") -> tuple[str, ...]:
+    """Map a dotted module to the repo paths it could resolve to.
+
+    Args:
+        module: Dotted module name.
+        base_rel: Repo-relative directory its top package sits in
+            (``""`` for the repository root).
+    """
     rel = module.replace(".", "/")
-    return (f"src/{rel}.py", f"src/{rel}/__init__.py")
+    prefix = f"{base_rel}/" if base_rel else ""
+    return (f"{prefix}{rel}.py", f"{prefix}{rel}/__init__.py")
 
 
-def _import_owner(registry: Registry, module: str) -> str | None:
+def _import_owner(registry: Registry, module: str, base_rel: str = "src") -> str | None:
     """Resolve an intra-repo import to its owning spec-id, if any."""
-    for candidate in _module_candidates(module):
+    for candidate in _module_candidates(module, base_rel):
         owner = registry.owner_of(candidate)
         if owner is not None:
             return owner
@@ -122,8 +143,8 @@ def _is_table_call(func: ast.expr) -> bool:
     return False
 
 
-def _intra_repo_imports(tree: ast.AST) -> set[str]:
-    """Return the dotted intra-repo modules a parsed file imports."""
+def _intra_repo_imports(tree: ast.AST, tops: frozenset[str] = frozenset({"repoach"})) -> set[str]:
+    """Return the dotted modules of the project's own packages ``tops`` a parsed file imports."""
     modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
@@ -131,7 +152,7 @@ def _intra_repo_imports(tree: ast.AST) -> set[str]:
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 modules.add(alias.name)
-    return {module for module in modules if module.split(".")[0] == _REPO_TOP}
+    return {module for module in modules if module.split(".")[0] in tops}
 
 
 def _table_literals(tree: ast.AST) -> set[str]:
@@ -177,21 +198,39 @@ def _read_source(rel_path: str, *, staged: bool, repo_root: Path) -> str:
     return (repo_root / rel_path).read_text(encoding="utf-8")
 
 
+def _package_bases(repo_root: Path, config: GatesConfig) -> dict[str, str]:
+    """Return ``{top_package: repo-relative directory it sits in}``."""
+    top = repo_root.resolve()
+    out: dict[str, str] = {}
+    for name, base in python_packages(repo_root, config).items():
+        if not base.is_relative_to(top):
+            continue
+        relative = base.relative_to(top).as_posix()
+        out[name] = "" if relative == "." else relative
+    return out
+
+
 def _check_file(
-    registry: Registry, repo_root: Path, rel_path: str, *, staged: bool
+    registry: Registry,
+    repo_root: Path,
+    rel_path: str,
+    *,
+    staged: bool,
+    bases: dict[str, str] | None = None,
 ) -> tuple[list[EdgeViolation], list[FrontierRef]]:
-    """Check one changed file's couplings against its owner's ``depends_on``."""
+    """Check one changed Python file's couplings against its owner's ``depends_on``."""
     owner = registry.owner_of(rel_path)
     if owner is None or registry.nodes[owner].frontier:
         return [], []
+    package_bases = bases if bases is not None else {"repoach": "src"}
     declared = set(registry.nodes[owner].depends_on)
     tree = ast.parse(_read_source(rel_path, staged=staged, repo_root=repo_root))
 
     violations: list[EdgeViolation] = []
     frontier: list[FrontierRef] = []
 
-    for module in sorted(_intra_repo_imports(tree)):
-        target = _import_owner(registry, module)
+    for module in sorted(_intra_repo_imports(tree, frozenset(package_bases))):
+        target = _import_owner(registry, module, package_bases[module.split(".")[0]])
         if target is None or registry.nodes[target].frontier:
             frontier.append(FrontierRef(owner, module, rel_path))
         elif target != owner and target not in declared:
@@ -205,6 +244,46 @@ def _check_file(
         elif target != owner and target not in declared:
             violations.append(EdgeViolation(owner, target, "table", resource, rel_path))
 
+    return violations, frontier
+
+
+def _check_js_file(
+    registry: Registry, repo_root: Path, rel_path: str, *, staged: bool
+) -> tuple[list[EdgeViolation], list[FrontierRef]]:
+    """Check one changed TypeScript/JavaScript file's resolved imports (tier 1a).
+
+    Relative and ``tsconfig`` ``paths``-aliased specifiers are resolved
+    to repo files; bare package imports and unresolvable specifiers
+    (the ``ts_imports`` verifier's concern) are skipped.
+    """
+    owner = registry.owner_of(rel_path)
+    if owner is None or registry.nodes[owner].frontier:
+        return [], []
+    declared = set(registry.nodes[owner].depends_on)
+    source = _read_source(rel_path, staged=staged, repo_root=repo_root)
+    top = repo_root.resolve()
+    file = (top / rel_path).resolve()
+    tsconfig_path = ts.find_tsconfig(top, file)
+    tsconfig = ts.load_tsconfig(tsconfig_path) if tsconfig_path is not None else None
+
+    violations: list[EdgeViolation] = []
+    frontier: list[FrontierRef] = []
+    seen: set[str] = set()
+    for _line, specifier in ts.import_specifiers(source):
+        checked, resolved = ts.resolve_import(file, specifier, tsconfig)
+        if not checked or resolved is None:
+            continue
+        if not resolved.is_relative_to(top):
+            continue
+        target_rel = resolved.relative_to(top).as_posix()
+        if target_rel in seen or target_rel == rel_path:
+            continue
+        seen.add(target_rel)
+        target = registry.owner_of(target_rel)
+        if target is None or registry.nodes[target].frontier:
+            frontier.append(FrontierRef(owner, target_rel, rel_path))
+        elif target != owner and target not in declared:
+            violations.append(EdgeViolation(owner, target, "import", target_rel, rel_path))
     return violations, frontier
 
 
@@ -246,8 +325,9 @@ def check_diff(
     *,
     staged: bool = False,
     suppress: frozenset[str] = frozenset(),
+    config: GatesConfig | None = None,
 ) -> Report:
-    """Check every changed Python file owned by a governed spec.
+    """Check every changed Python / TypeScript file owned by a governed spec.
 
     Args:
         registry: The parsed spec registry.
@@ -257,16 +337,30 @@ def check_diff(
             content that will actually be committed) rather than the
             worktree copy.
         suppress: Frontier artifacts to silence (known legacy).
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted. Python files are checked only
+            when the project declares Python and they sit under its
+            roots; TypeScript / JavaScript files only when declared.
 
     Returns:
         The aggregated :class:`Report` (frontier filtered by ``suppress``).
     """
+    resolved_config = config if config is not None else load_gates_config(repo_root)
+    bases = _package_bases(repo_root, resolved_config)
     violations: list[EdgeViolation] = []
     frontier: list[FrontierRef] = []
     for rel_path in changed_files:
-        if not rel_path.endswith(".py"):
+        language = language_of(rel_path)
+        if language in _JS_LANGUAGES and language in resolved_config.languages:
+            file_violations, file_frontier = _check_js_file(
+                registry, repo_root, rel_path, staged=staged
+            )
+        elif applicable(rel_path, resolved_config)[0]:
+            file_violations, file_frontier = _check_file(
+                registry, repo_root, rel_path, staged=staged, bases=bases
+            )
+        else:
             continue
-        file_violations, file_frontier = _check_file(registry, repo_root, rel_path, staged=staged)
         violations.extend(file_violations)
         frontier.extend(ref for ref in file_frontier if ref.artifact not in suppress)
     return Report(violations=tuple(violations), frontier=tuple(frontier))
@@ -387,33 +481,42 @@ def run(
     staged: bool,
     specs_dir: Path,
     repo_root: Path,
-    require_frontmatter: bool = True,
+    config: GatesConfig | None = None,
 ) -> Report:
     """Load the registry and check the diff — the orchestration entrypoint.
 
+    ``config.require_frontmatter`` (``[arch].require_frontmatter``) decides
+    what a spec whose frontmatter lacks the registry keys is
+    (SP-ARCH-FOREIGN-FRONTMATTER). True: a named violation, and a
+    frontmatter-less new spec is one too. False (a foreign repository's
+    human specs): it is counted as ungoverned, never an error, and the
+    presence check is off.
+
     Args:
-        base: The ref to diff against (three-dot).
-        staged: Check the staged index instead (pre-commit).
+        base: The ref to diff against.
+        staged: Check the staged index instead.
         specs_dir: Directory of spec markdown files.
         repo_root: The repository root.
-        require_frontmatter: ``[arch].require_frontmatter``. True: a spec
-            whose frontmatter lacks the registry keys is a named
-            violation, and an added spec with no fence is one too. False
-            (a foreign repository's human specs): such a spec is counted
-            as ungoverned, never an error, and the presence check is off.
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
 
     Returns:
-        The aggregated :class:`Report`.
+        The :class:`Report`, carrying the number of governed specs.
     """
+    resolved_config = config if config is not None else load_gates_config(repo_root)
     registry = load_registry(specs_dir, tolerate_malformed=True)
+    governed = sum(1 for node in registry.nodes.values() if not node.frontier)
     changed = gather_changed_files(base=base, staged=staged, repo_root=repo_root)
     suppress = load_frontier_suppress(repo_root)
-    report = check_diff(registry, changed, repo_root, staged=staged, suppress=suppress)
-    if not require_frontmatter:
+    report = check_diff(
+        registry, changed, repo_root, staged=staged, suppress=suppress, config=resolved_config
+    )
+    if not resolved_config.require_frontmatter:
         return Report(
             violations=report.violations,
             frontier=report.frontier,
             ungoverned_specs=registry.malformed,
+            governed_specs=governed,
         )
     added_specs = gather_added_specs(base=base, staged=staged, repo_root=repo_root)
     spec_violations = check_added_specs(added_specs, repo_root, staged=staged)
@@ -422,6 +525,7 @@ def run(
         frontier=report.frontier,
         spec_violations=tuple(spec_violations),
         malformed_specs=registry.malformed,
+        governed_specs=governed,
     )
 
 
