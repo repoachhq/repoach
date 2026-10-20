@@ -1,17 +1,17 @@
 ---
 id: SP-BRANCH-CONFIG
 title: Configurable integration + release branch names (drop the hardcoded develop/main literals)
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-10-20
 
 owns:
   code: [tests/unit/test_branch_config.py]
   resources: N/A
 
-depends_on: [SP-CONFIG-ENV-ANCHOR, SP-RELEASE-GATE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-DEV-STEP-PREFLIGHT, SP-REVIEW-POST-BATCH]
+depends_on: [SP-CONFIG-ENV-ANCHOR, SP-RELEASE-GATE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-DEV-STEP-PREFLIGHT, SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE]
 provides_to: []
 
 constraints: {}
@@ -137,3 +137,6 @@ signature default `None`) so overrides are honoured.
   module, no topology change. The two-branch model stays; only its names
   become configuration — the last hardcoded-assumption blocker for a repo
   that doesn't happen to use `develop`/`main`.
+- The promised test fakes the forge layer via `repoach.forge.PullRequest` and
+  `repoach.forge.github.GitHubForge`/`GhResult` to exercise the per-branch
+  refusal sites, so this spec depends on SP-UNIVERSAL-FORGE.
