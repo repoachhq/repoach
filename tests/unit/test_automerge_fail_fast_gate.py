@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
@@ -18,6 +17,7 @@ from sqlalchemy import create_engine, text
 
 import repoach.core.config as config
 from repoach.core.config import Settings
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_CI_TIMEOUT,
@@ -26,7 +26,7 @@ from repoach.review.auto_merge import (
     required_checks_green,
     run_auto_merge,
 )
-from repoach.review.gh_client import GhResult
+from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
 
 
 def test_settings_env_overrides_wait_and_poll(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,8 +66,8 @@ def _truthful_ls_remote(sha: str, head_ref: str) -> GhResult:
 
     SP-AUTOMERGE-FRESH-HEAD (operator rule: no stubs) — the real
     ``resolve_verified_head`` runs in every test that reaches it, so
-    the fake ``GhCli`` must answer ``_run_git`` with the same SHA its
-    ``pr_head_sha`` returns.
+    the fake forge must answer ``git ls-remote`` with the same SHA its
+    ``gh pr view --json headRefOid`` returns.
     """
     return GhResult(
         returncode=0,
@@ -77,19 +77,17 @@ def _truthful_ls_remote(sha: str, head_ref: str) -> GhResult:
     )
 
 
-def _pending_gh(*, head: str = "feat/x", base: str = "develop", state: str = "OPEN") -> MagicMock:
-    """A truthful boundary-fake ``GhCli`` whose rollup never goes green."""
+def _pending_gh(*, head: str = "feat/x", base: str = "develop", state: str = "OPEN") -> GitHubForge:
+    """A truthful scripted GitHub forge whose rollup never goes green."""
     head_sha = "head_pending123"
-    gh = MagicMock()
-    gh.pr_view.return_value = {"baseRefName": base, "headRefName": head, "state": state}
-    gh.pr_head_sha.return_value = head_sha
-    gh._run_git.return_value = _truthful_ls_remote(head_sha, head)
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:
             entries = _pending_rollup()
             nd = "\n".join(json.dumps(entry) for entry in entries)
             return GhResult(returncode=0, stdout=nd, stderr="", argv=args)
+        if args[:1] == ["api"] and args[1].endswith("/protection"):
+            return gh_fail("gh: Branch not protected (HTTP 404)")
         if args[:2] == ["pr", "view"] and "statusCheckRollup" in " ".join(args):
             return GhResult(
                 returncode=0,
@@ -97,12 +95,15 @@ def _pending_gh(*, head: str = "feat/x", base: str = "develop", state: str = "OP
                 stderr="",
                 argv=args,
             )
+        if args[:2] == ["pr", "view"] and args[-1] == "headRefOid":
+            return gh_ok(json.dumps({"headRefOid": head_sha}), argv=args)
+        if args[:2] == ["pr", "view"]:
+            return gh_ok(pr_view_stdout(base_ref=base, head_ref=head, state=state), argv=args)
         if args[:2] == ["pr", "merge"]:
             raise AssertionError("gh pr merge must never be called on a CI-gate refusal")
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run.side_effect = _run_side
-    return gh
+    return scripted_github(run=_run_side, git=lambda _a: _truthful_ls_remote(head_sha, head))
 
 
 def test_wait_zero_single_evaluation_no_sleep() -> None:
@@ -122,7 +123,11 @@ def test_wait_zero_single_evaluation_no_sleep() -> None:
     assert outcome.outcome_tag == OUTCOME_SKIP_CI_TIMEOUT
     assert DEFAULT_REQUIRED_CHECK_NAMES[0] in outcome.reason
     assert sleeps == []
-    check_run_calls = [call for call in gh._run.call_args_list if call.args[0][:1] == ["api"]]
+    check_run_calls = [
+        call
+        for call in gh._run.call_args_list
+        if call.args[0][:1] == ["api"] and "/check-runs" in call.args[0][1]
+    ]
     assert len(check_run_calls) == 1
 
 
@@ -131,7 +136,7 @@ def test_run_auto_merge_wait_zero_persists_fail_fast_skip(tmp_path: Path) -> Non
     db = tmp_path / "test.db"
     gh = _pending_gh()
 
-    result = run_auto_merge(1, gh=gh, db_path=db, wait_seconds=0)
+    result = run_auto_merge(1, forge=gh, db_path=db, wait_seconds=0)
 
     assert result.outcome == OUTCOME_SKIP_CI_TIMEOUT
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
@@ -198,7 +203,7 @@ def test_gate_functions_source_defaults_from_settings(
         db = tmp_path / "gate.db"
         evaluation = evaluate_merge_gate(
             1,
-            gh=_pending_gh(),
+            forge=_pending_gh(),
             db_path=db,
             monotonic=lambda: 100.0,
             sleep=lambda seconds: sleeps.append(seconds),

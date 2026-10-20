@@ -1,0 +1,30 @@
+{
+  "args": [
+    200
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "200",
+        "--json",
+        "headRefOid"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"headRefOid\": \"a39976339afa9f7ece3c4d6a4d51e697faab7e81\"}"
+    }
+  ],
+  "case": "head_sha",
+  "forge": "github",
+  "kwargs": {},
+  "method": "head_sha",
+  "raises": null,
+  "result": "a39976339afa9f7ece3c4d6a4d51e697faab7e81",
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from repoach.arch import load_registry
+from repoach.gates.config import GatesConfig
 from repoach.lint import edge_honesty
 from repoach.lint.edge_honesty import (
     _read_source,
@@ -282,3 +283,42 @@ def test_frontier_suppress_wired() -> None:
     assert load_frontier_suppress(_REPO_ROOT) == frozenset(
         str(item) for item in arch["frontier_suppress"]
     )
+
+
+def test_frontier_suppress_moves_to_repoach_toml(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.repoach.arch]\nfrontier_suppress = ['legacy.a']\n"
+    )
+    assert load_frontier_suppress(tmp_path) == frozenset({"legacy.a"})
+    (tmp_path / "repoach.toml").write_text("[arch]\nfrontier_suppress = ['legacy.b']\n")
+    assert load_frontier_suppress(tmp_path) == frozenset({"legacy.b"})
+
+
+def test_typescript_alias_imports_are_checked_when_declared(tmp_path: Path) -> None:
+    """A ``paths``-aliased TypeScript import into another spec's code is an edge (SP-UNIVERSAL-GATES)."""
+    _src(
+        tmp_path,
+        "frontend/tsconfig.json",
+        '{\n  // aliases\n  "compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./src/*"]},},\n'
+        '  "include": ["src"]\n}\n',
+    )
+    _src(
+        tmp_path,
+        "frontend/src/a/view.ts",
+        "import { api } from '@/b/client';\nexport const v = api;\n",
+    )
+    _src(tmp_path, "frontend/src/b/client.ts", "export const api = 1;\n")
+    specs = _corpus(
+        tmp_path,
+        {
+            "01_SP-A_a.md": _spec("SP-A", owns_code="frontend/src/a/"),
+            "01_SP-B_b.md": _spec("SP-B", owns_code="frontend/src/b/"),
+        },
+    )
+    registry = load_registry(specs)
+    config = GatesConfig.from_mapping({"project": {"languages": ["typescript"]}})
+    report = check_diff(registry, ["frontend/src/a/view.ts"], tmp_path, config=config)
+    assert [(v.source, v.target, v.detail) for v in report.violations] == [
+        ("SP-A", "SP-B", "frontend/src/b/client.ts")
+    ]
+    assert check_diff(registry, ["frontend/src/a/view.ts"], tmp_path).violations == ()

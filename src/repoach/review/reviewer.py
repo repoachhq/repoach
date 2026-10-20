@@ -36,7 +36,9 @@ from ..agent_engine.agent_loop import (
     PROXY_SONNET_CHAIN,
     AgentLoop,
 )
+from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..core.resources import prompts_dir
 from .diff_scoper import scope_diff
 from .findings import Finding
 from .retry_backoff import AttemptOutcome, RetryResult, retry_with_backoff
@@ -47,7 +49,7 @@ if TYPE_CHECKING:
 
 _log = get_logger(__name__)
 
-_PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts" / "review"
+_PROMPTS_DIR = prompts_dir()
 
 _DIFF_HARD_CAP_CHARS = 140_000
 """Hard cap on the diff text substituted into reviewer prompts.
@@ -121,11 +123,19 @@ class BotRole(enum.StrEnum):
 
 
 class ReviewVerdict(enum.StrEnum):
-    """Aggregable verdict each reviewer returns."""
+    """Aggregable verdict each reviewer returns.
+
+    ``ERROR`` is terminal and never a judgement of the code: the reviewer
+    could not reach a model (transport exhausted, bot crashed), so no
+    review happened.  It is never promoted to ``APPROVE``; one errored
+    reviewer makes the team verdict ``ERROR`` and nothing is published
+    (SP-REVIEW-TRANSPORT-ERROR-VERDICT).
+    """
 
     APPROVE = "APPROVE"
     REQUEST_CHANGES = "REQUEST_CHANGES"
     COMMENT = "COMMENT"
+    ERROR = "ERROR"
 
 
 @dataclass(frozen=True)
@@ -552,7 +562,7 @@ class Reviewer:
 
         stub = _FailedRunResult(error=str(result.error) if result.error else "Unknown")
         return (
-            ReviewVerdict.COMMENT,
+            ReviewVerdict.ERROR,
             f"[parse_failed:TRANSPORT] all {len(self._RETRY_BACKOFFS_S)} attempts raised — last={type(result.error).__name__ if result.error else 'Unknown'}",
             [],
             stub,
@@ -795,8 +805,8 @@ class Reviewer:
           is the signature of a max_tokens cut mid-emission.
         * **Transport** — when the raw matches
           :data:`_TRANSPORT_ERROR_RE` or is empty / whitespace-only,
-          we mark the outcome as ``TRANSPORT`` (verdict = COMMENT,
-          non-blocking).  Transport failures (HTTP 410, "end of life",
+          we mark the outcome as ``TRANSPORT`` (verdict = ERROR:
+          no review happened).  Transport failures (HTTP 410, "end of life",
           ``Request timed out``, ``Connection error``,
           ``RemoteProtocolError``, ``TimeoutException``,
           ``request_id=req_*`` envelopes) are infra issues, not code
@@ -876,7 +886,7 @@ class Reviewer:
 
         if looks_transport_error:
             marker = "TRANSPORT"
-            verdict = ReviewVerdict.COMMENT
+            verdict = ReviewVerdict.ERROR
         elif looks_truncated:
             marker = "TRUNCATED"
             verdict = ReviewVerdict.REQUEST_CHANGES
@@ -1248,7 +1258,7 @@ def _persist_parse_failed_response(
         The path written to, or ``None`` when the I/O failed (we
         don't want a logging failure to crash the dispatch).
     """
-    target_dir = logs_dir or (Path(__file__).resolve().parents[3] / "logs")
+    target_dir = logs_dir or get_settings().logs_dir
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

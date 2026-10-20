@@ -1,0 +1,42 @@
+{
+  "args": [
+    7
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7/approvals"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"id\": 5, \"iid\": 7, \"project_id\": 1, \"title\": \"feat: x\", \"description\": \"\", \"state\": \"opened\", \"created_at\": \"2026-10-19T09:00:00Z\", \"updated_at\": \"2026-10-19T10:05:00Z\", \"merge_status\": \"can_be_merged\", \"approved\": true, \"approvals_required\": 2, \"approvals_left\": 0, \"approved_by\": [{\"user\": {\"name\": \"Alice\", \"username\": \"alice\", \"id\": 11, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/alice\"}}, {\"user\": {\"name\": \"Bob\", \"username\": \"bob\", \"id\": 12, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/bob\"}}]}"
+    }
+  ],
+  "case": "reviews_two_approvals",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "reviews",
+  "raises": null,
+  "result": [
+    {
+      "author": "alice",
+      "body": "",
+      "comments": [],
+      "id": 11,
+      "state": "APPROVED"
+    },
+    {
+      "author": "bob",
+      "body": "",
+      "comments": [],
+      "id": 12,
+      "state": "APPROVED"
+    }
+  ],
+  "source": "synthetic: two approvals in GitLab's documented approvals shape (https://docs.gitlab.com/ee/api/merge_request_approvals.html#get-configuration-1, GET /projects/:id/merge_requests/:iid/approvals); no Yoob MR carries an approval",
+  "trimmed": null
+}

@@ -1,11 +1,11 @@
 """Unit tests for SP-EVIDENCE-SENTINEL-AUTHOR — archive markers gated by author.
 
-``GhCli.find_archive_comment`` / ``fetch_archive_comment_with_status``
+``GitHubForge._find_archive_comment`` / ``fetch_archive_comment_with_status``
 used to return the FIRST comment bearing ``ARCHIVE_MARKER`` with no
 check on who posted it — so any PR commenter could forge the sticky
 review archive downstream surfaces read (audit 2026-07-13 finding M6).
 
-These tests drive the real ``GhCli`` methods (INTEGRATION-style: only
+These tests drive the real ``GitHubForge`` methods (INTEGRATION-style: only
 the ``gh api`` subprocess call is faked, via a truthful boundary fake
 for ``_run``) over a comment list carrying a non-bot-authored comment
 bearing the marker FIRST and a bot-authored marker comment SECOND, and
@@ -20,15 +20,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from repoach.review.gh_client import ArchiveFetch, GhCli, GhResult, flatten_paginated_pages
+from repoach.forge import ARCHIVE_MARKER
+from repoach.forge.github import ArchiveFetch, GhResult, GitHubForge, flatten_paginated_pages
 
-_MARKER = GhCli.ARCHIVE_MARKER
+_MARKER = ARCHIVE_MARKER
 _BOT_LOGIN = "repoach-review-bot"
 _FORGER_LOGIN = "pr-author"
 
 
-class _CannedGhCli(GhCli):
-    """``GhCli`` whose ``_run`` returns a single canned :class:`GhResult`."""
+class _CannedGitHubForge(GitHubForge):
+    """``GitHubForge`` whose ``_run`` returns a single canned :class:`GhResult`."""
 
     def __init__(self, canned: GhResult, *, bot_login: str | None = None) -> None:
         super().__init__(bot_login=bot_login)
@@ -65,14 +66,14 @@ def test_forged_archive_comment_ignored() -> None:
     this test fails on that code (the forged comment id 1 / body would
     be returned instead).
     """
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result(_forged_then_bot_archive_comments()),
         bot_login=_BOT_LOGIN,
     )
 
-    assert cli.find_archive_comment(42) == 2
+    assert cli._find_archive_comment(42) == 2
 
-    fetch = cli.fetch_archive_comment_with_status(42)
+    fetch = cli._fetch_archive_comment_with_status(42)
     assert fetch.api_error is None
     assert fetch.body is not None
     assert "APPROVE" in fetch.body
@@ -80,52 +81,52 @@ def test_forged_archive_comment_ignored() -> None:
 
 
 def test_only_forged_comment_present_yields_no_archive() -> None:
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 1, "body": f"{_MARKER}\nfake", "user": {"login": _FORGER_LOGIN}}]),
         bot_login=_BOT_LOGIN,
     )
 
-    assert cli.find_archive_comment(42) is None
-    assert cli.fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
+    assert cli._find_archive_comment(42) is None
+    assert cli._fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
 
 
 def test_missing_author_on_marker_comment_is_ignored() -> None:
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 1, "body": _MARKER}]),
         bot_login=_BOT_LOGIN,
     )
 
-    assert cli.find_archive_comment(42) is None
-    assert cli.fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
+    assert cli._find_archive_comment(42) is None
+    assert cli._fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
 
 
 def test_missing_bot_identity_fails_closed() -> None:
     """An empty/unresolvable bot identity never widens trust, even for a genuine post."""
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 1, "body": _MARKER, "user": {"login": _BOT_LOGIN}}]),
         bot_login="",
     )
 
-    assert cli.find_archive_comment(42) is None
-    assert cli.fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
+    assert cli._find_archive_comment(42) is None
+    assert cli._fetch_archive_comment_with_status(42) == ArchiveFetch(body=None, api_error=None)
 
 
 def test_defaults_bot_login_from_settings_when_omitted() -> None:
     from repoach.core.config import get_settings
 
     settings_login = get_settings().review_bot_login
-    cli = _CannedGhCli(
+    cli = _CannedGitHubForge(
         _comments_result([{"id": 7, "body": _MARKER, "user": {"login": settings_login}}])
     )
 
-    assert cli.find_archive_comment(42) == 7
+    assert cli._find_archive_comment(42) == 7
 
 
-class _PagedUpsertGhCli(GhCli):
-    """``GhCli`` returning *get_result* for reads, recording every write argv.
+class _PagedUpsertGhCli(GitHubForge):
+    """``GitHubForge`` returning *get_result* for reads, recording every write argv.
 
-    Lets a test drive :meth:`GhCli.upsert_archive_comment` (which reads
-    via :meth:`GhCli.find_archive_comment` before deciding POST vs
+    Lets a test drive :meth:`GitHubForge._upsert_archive_comment` (which reads
+    via :meth:`GitHubForge._find_archive_comment` before deciding POST vs
     PATCH) while observing which write verb it picked, without a real
     ``gh`` subprocess.
     """
@@ -159,7 +160,7 @@ def _two_page_archive_payload() -> tuple[list[dict[str, object]], list[dict[str,
 def test_paginated_array_endpoints_parse_all_pages() -> None:
     """AC1 + AC2: the flatten helper, and every caller built on it, merge every page.
 
-    Reverting the ``gh_client.py`` change (back to a bare
+    Reverting the ``forge/github.py`` (formerly ``gh_client.py``) change (back to a bare
     ``json.loads(res.stdout)`` with no flatten) makes this fail: with a
     genuine two-page ``--slurp`` payload the pre-fix code parses the
     JSON successfully (it is well-formed) but treats each *page* as a
@@ -179,16 +180,16 @@ def test_paginated_array_endpoints_parse_all_pages() -> None:
     slurped_stdout = json.dumps([page1, page2])
     canned = GhResult(returncode=0, stdout=slurped_stdout, stderr="", argv=["gh"])
 
-    cli = _CannedGhCli(canned, bot_login=_BOT_LOGIN)
-    assert cli.list_review_comments(42) == page1 + page2
-    assert cli.find_archive_comment(42) == 202
+    cli = _CannedGitHubForge(canned, bot_login=_BOT_LOGIN)
+    assert cli._list_review_comments(42) == page1 + page2
+    assert cli._find_archive_comment(42) == 202
 
-    fetch = cli.fetch_archive_comment_with_status(42)
+    fetch = cli._fetch_archive_comment_with_status(42)
     assert fetch.api_error is None
     assert fetch.body == marker_body
 
     upserter = _PagedUpsertGhCli(canned, bot_login=_BOT_LOGIN)
-    upserter.upsert_archive_comment(42, body=marker_body)
+    upserter._upsert_archive_comment(42, body=marker_body)
     assert len(upserter.write_calls) == 1, "expected exactly one write call, not a duplicate POST"
     method_index = upserter.write_calls[0].index("--method")
     assert upserter.write_calls[0][method_index + 1] == "PATCH", (
@@ -213,11 +214,11 @@ def test_malformed_paginated_output_surfaces_loudly() -> None:
     malformed = GhResult(returncode=0, stdout="[][]", stderr="", argv=["gh"])
 
     fake_log = MagicMock()
-    with patch("repoach.review.gh_client._log", fake_log):
-        cli = _CannedGhCli(malformed, bot_login=_BOT_LOGIN)
-        assert cli.list_review_comments(42) == []
-        assert cli.find_archive_comment(42) is None
-        fetch = cli.fetch_archive_comment_with_status(42)
+    with patch("repoach.forge.github._log", fake_log):
+        cli = _CannedGitHubForge(malformed, bot_login=_BOT_LOGIN)
+        assert cli._list_review_comments(42) == []
+        assert cli._find_archive_comment(42) is None
+        fetch = cli._fetch_archive_comment_with_status(42)
         assert fetch.body is None
         assert fetch.api_error is not None
         assert "decode" in fetch.api_error.lower()
@@ -226,3 +227,33 @@ def test_malformed_paginated_output_surfaces_loudly() -> None:
     assert "gh_client.review_comments_decode_failed" in events
     assert "gh_client.find_archive_decode_failed" in events
     assert "gh_client.archive_body_decode_failed" in events
+
+
+def test_deprecated_gh_client_path_forwards_to_forge_github() -> None:
+    """The one-release shim ``repoach.review.gh_client`` still resolves ``GhCli``."""
+    from repoach.forge.github import GitHubForge
+    from repoach.review import gh_client
+
+    assert gh_client.GhCli is GitHubForge
+    assert gh_client.flatten_paginated_pages is flatten_paginated_pages
+
+
+def test_find_marked_comment_ignores_forged_and_raises_on_api_failure() -> None:
+    """Protocol layer: the forged marker is skipped; an API failure raises, never ``None``."""
+    from repoach.forge import ForgeError
+
+    cli = _CannedGitHubForge(
+        _comments_result(_forged_then_bot_archive_comments()),
+        bot_login=_BOT_LOGIN,
+    )
+    found = cli.find_marked_comment(42, _MARKER)
+    assert found is not None
+    assert found.id == 2
+    assert found.author == _BOT_LOGIN
+
+    failing = _CannedGitHubForge(
+        GhResult(returncode=1, stdout="", stderr="HTTP 502", argv=["gh"]),
+        bot_login=_BOT_LOGIN,
+    )
+    with pytest.raises(ForgeError):
+        failing.find_marked_comment(42, _MARKER)

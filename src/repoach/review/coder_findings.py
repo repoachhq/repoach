@@ -31,6 +31,12 @@ from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..core.paths import project_root
+from ..forge import Diff, Forge, ForgeError, PullRequest, select_forge
+from ..gates.config import load_gates_config
+from ..gates.verifiers import run_verifiers
+from ..project.config import load_project_config
+from ..project.spec_source import resolve_spec
 from .finding_verifiers import verify_finding
 from .findings import (
     MECHANICAL_CLAIM_TYPES,
@@ -43,7 +49,6 @@ from .findings import (
     record_finding,
     update_finding_status,
 )
-from .gh_client import GhCli
 from .notifier import RoutineFireResult, fire_review_routine
 from .refuter import JUDGED_CLAIM_TYPES, Judge, make_refuter_judge, refute_finding
 from .reviewer import Coder
@@ -424,11 +429,12 @@ def _fire_stuck_dossier(
 def run_coder_fix_from_findings(
     pr_number: int,
     *,
-    gh: GhCli | None = None,
+    forge: Forge | None = None,
     repo_root: Path | None = None,
     coder: Coder | None = None,
     db_path: Path | None = None,
     routine_fire: Callable[..., RoutineFireResult] = fire_review_routine,
+    spec: str | None = None,
 ) -> CoderFindingsResult:
     """Resolve a PR's open blocking findings, then re-verify at head.
 
@@ -452,13 +458,15 @@ def run_coder_fix_from_findings(
     successful push records one round.
 
     Args:
-        pr_number: GitHub PR number (must target ``develop``).
-        gh: Optional pre-built :class:`GhCli` (tests inject a mock).
+        pr_number: PR / MR number (must target the integration branch).
+        forge: Optional pre-built :class:`~repoach.forge.Forge` (tests inject a fake).
         repo_root: Repo root; defaults to ``cwd``.
         coder: Optional pre-built :class:`Coder` (tests inject a fake).
         db_path: Override the ledger db path; defaults to settings.
         routine_fire: The routine-fire callable for the stuck-escalation
             dossier; defaults to the live notifier (tests inject a fake).
+        spec: The ``--spec`` value; outranks the description's ``Spec:``
+            line and the branch name (SP-UNIVERSAL-PROJECT-CONFIG G4).
 
     Returns:
         A :class:`CoderFindingsResult` describing what happened.
@@ -477,15 +485,20 @@ def run_coder_fix_from_findings(
     from .persistence import init_schema, record_coder_response
 
     repo = (repo_root or Path.cwd()).resolve()
-    gh = gh or GhCli(cwd=repo)
+    forge = forge or select_forge(cwd=repo)
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
     init_findings_schema(db)
 
-    pr_meta = gh.pr_view(pr_number) or {}
-    base = str(pr_meta.get("baseRefName") or "")
-    head = str(pr_meta.get("headRefName") or "")
+    pr: PullRequest | None
+    try:
+        pr = forge.pull_request(pr_number)
+    except ForgeError as exc:
+        _log.warning("coder_findings.pr_view_failed", pr_number=pr_number, error=exc.message[:200])
+        pr = None
+    base = pr.base_ref if pr is not None else ""
+    head = pr.head_ref if pr is not None else ""
     integration_branch = settings.integration_branch
     if base != integration_branch:
         _log.warning("coder_findings.refuse_non_develop_base", pr_number=pr_number, base=base)
@@ -495,15 +508,15 @@ def run_coder_fix_from_findings(
             no_op_reason=f"base={base!r}, refusing (only {integration_branch} is allowed)",
         )
 
-    head_sha = gh.pr_head_sha(pr_number) or ""
-    ci_state, failed_rows = fetch_ci_status(gh, pr_number)
+    head_sha = pr.head_sha if pr is not None else ""
+    ci_state, failed_rows = fetch_ci_status(forge, pr_number)
     if ci_state == CI_RED and failed_rows:
         record_ci_failures_as_findings(
             db,
             pr_number=pr_number,
             head_sha=head_sha,
             failed_rows=failed_rows,
-            failure_logs=fetch_failed_check_logs(gh, failed_rows),
+            failure_logs=fetch_failed_check_logs(forge, failed_rows),
         )
     elif ci_state == CI_GREEN:
         resolve_broken_behavior_findings(db, pr_number=pr_number, head_sha=head_sha)
@@ -544,28 +557,37 @@ def run_coder_fix_from_findings(
             no_op_reason=f"stuck — {assessment.reason}; escalated (no fix attempted)",
         )
 
-    diff_res = gh.pr_diff(pr_number)
-    if not diff_res.ok:
+    diff: Diff
+    try:
+        diff = forge.diff(pr_number)
+    except ForgeError as exc:
         return CoderFindingsResult(
             pr_number=pr_number,
             n_open_findings=len(findings),
-            no_op_reason=f"diff fetch failed: {diff_res.stderr[:200]}",
+            no_op_reason=f"diff fetch failed: {exc.message[:200]}",
         )
 
     spec_plan_md: str | None = None
     try:
         from .spec import maybe_load_active_spec
 
-        spec = maybe_load_active_spec(branch=head)
-        if spec is not None:
-            spec_plan_md = spec.raw_markdown
+        declared = resolve_spec(
+            flag=spec,
+            description=pr.body if pr is not None else "",
+            branch=head,
+            sources=load_project_config(project_root(repo)).review.spec_sources,
+            root=repo,
+        )
+        plan_doc = maybe_load_active_spec(explicit_id=declared.spec_id, root=repo)
+        if plan_doc is not None:
+            spec_plan_md = plan_doc.raw_markdown
     except Exception as exc:
         _log.info("coder_findings.spec_lookup_failed", branch=head, error=str(exc)[:160])
 
     coder = coder or Coder()
     plan = coder.respond_to_findings(
         findings=findings,
-        diff=diff_res.stdout,
+        diff=diff.text,
         pr_number=pr_number,
         spec_plan=spec_plan_md,
     )
@@ -635,6 +657,25 @@ def run_coder_fix_from_findings(
             fixes_rejected=len(rejected),
             rejected_paths=rejected,
             no_op_reason=f"ruff gate red; fixes left uncommitted ({ruff_tail[:160]})",
+            reason_code=ReasonCode.RUFF_RED,
+        )
+
+    touched = [
+        str(fix.get("path"))
+        for fix in fixes
+        if isinstance(fix, dict) and fix.get("path") and fix.get("path") not in rejected
+    ]
+    verify_report = run_verifiers(repo, touched, load_gates_config(repo))
+    if not verify_report.passed:
+        return CoderFindingsResult(
+            pr_number=pr_number,
+            n_open_findings=len(findings),
+            fixes_applied=applied,
+            fixes_rejected=len(rejected),
+            rejected_paths=rejected,
+            no_op_reason=(
+                f"language verifiers red; fixes left uncommitted ({verify_report.render()[:160]})"
+            ),
             reason_code=ReasonCode.RUFF_RED,
         )
 

@@ -1,0 +1,48 @@
+{
+  "args": [
+    7
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"failed\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}"
+    }
+  ],
+  "case": "ci_status_failed",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "ci_status",
+  "raises": null,
+  "result": {
+    "checks": [
+      {
+        "bucket": "",
+        "conclusion": "FAILED",
+        "link": "",
+        "name": "pipeline",
+        "started_at": "",
+        "status": "FAILED",
+        "workflow": ""
+      }
+    ],
+    "failed": [
+      "pipeline=FAILED"
+    ],
+    "missing": [],
+    "pending": [],
+    "required": [
+      "pipeline"
+    ],
+    "state": "failure"
+  },
+  "source": "synthetic: a red / running / absent pipeline at a fixed head",
+  "trimmed": null
+}

@@ -1,0 +1,50 @@
+{
+  "args": [],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "mr",
+        "create",
+        "--source-branch",
+        "feat/x",
+        "--target-branch",
+        "develop",
+        "--title",
+        "feat: x",
+        "--description",
+        "b",
+        "--yes"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "Creating merge request for feat/x into develop in o/r\n\n!8 feat: x (feat/x)\n https://gitlab.com/o/r/-/merge_requests/8\n"
+    }
+  ],
+  "case": "create_pull_request",
+  "forge": "gitlab",
+  "kwargs": {
+    "base": "develop",
+    "body": "b",
+    "head": "feat/x",
+    "title": "feat: x"
+  },
+  "method": "create_pull_request",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "base_ref": "develop",
+    "body": "b",
+    "draft": false,
+    "head_ref": "feat/x",
+    "head_sha": "",
+    "number": 8,
+    "state": "open",
+    "title": "feat: x",
+    "url": "https://gitlab.com/o/r/-/merge_requests/8"
+  },
+  "source": "synthetic: write call: never executed against a live forge",
+  "trimmed": null
+}

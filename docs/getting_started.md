@@ -26,8 +26,17 @@ Two reading paths:
 
 Supported providers (the gateway routes to these):
 `nvidia_nim`, `open_router`, `kimi`, `groq`, `cerebras`, `deepseek`,
-and `claude_code` (uses a local `claude` CLI as last-resort fallback —
-optional, chains work without it).
+direct `openai` and `anthropic`, any OpenAI-compatible endpoint
+(`openai_compatible`, e.g. vLLM or Ollama), and `claude_code` (uses a
+local `claude` CLI as last-resort fallback — optional, chains work
+without it).
+
+> **Measured 2026-10-19:** the heads of the committed `chains.env` are
+> dead — every NVIDIA NIM probe since 2026-09-01 answers HTTP 410 and
+> the OpenRouter credit is negative. Until the chains are regenerated,
+> a live call needs a provider you hold a key for at the head of the
+> chain (section 5), or a local `claude` login for the `claude_code`
+> tail.
 
 ## 2. Clone and install
 
@@ -98,30 +107,50 @@ NVIDIA_NIM_API_KEY=nvapi-...
 | Groq | `GROQ_API_KEY` | console.groq.com |
 | Cerebras | `CEREBRAS_API_KEY` | cloud.cerebras.ai |
 | DeepSeek | `DEEPSEEK_API_KEY` | platform.deepseek.com |
+| OpenAI (direct) | `OPENAI_API_KEY` | platform.openai.com |
+| Anthropic (direct) | `ANTHROPIC_API_KEY` | console.anthropic.com |
+| Any OpenAI-compatible endpoint | `OPENAI_COMPATIBLE_API_KEY` + `OPENAI_COMPATIBLE_BASE_URL` | your vLLM / Ollama / other server |
 
 Useful knobs already in `.env.example` (defaults shown):
 
 ```dotenv
 REPOACH_ENV=dev                    # prod additionally REQUIRES the auth token at boot
 REPOACH_LOG_LEVEL=INFO
-REPOACH_DB_PATH=./data/repoach.db   # SQLite; auto-created on first use
+# REPOACH_DB_PATH=                 # default ~/.local/share/repoach/<host>/<owner>/<repo>/repoach.db
 REPOACH_PROXY_HOST=127.0.0.1       # non-loopback binds refuse to boot without a token
 REPOACH_PROXY_PORT=8082
 REPOACH_LLM_PROXY_BASE_URL=http://localhost:8082
 ```
 
-Precedence, lowest to highest: `chains.env` → `.env` → real
-environment variables. An exported shell variable always wins.
+The gateway reads, lowest to highest: `.env` → `chains.env` (authoritative
+for the `MODEL_*` chains) → real environment variables. The CLI and the
+agent side read only `~/.config/repoach/env` → `<project>/.repoach.env` →
+real environment variables, never a foreign project's `.env`. The project
+file is refused when git tracks it and may only set layout and convention
+keys (branch names, memory kill-switches, CI budgets); the gateway URL,
+tokens, keys, paths and commands belong in `~/.config/repoach/env` or the
+environment, so a cloned repository can never redirect your token. A
+repoach checkout's own untracked `.env` and a `data/repoach.db` ledger are
+still honoured, with a deprecation notice, until `repoach migrate-config`
+copies the CLI's secrets and endpoints to `~/.config/repoach/env` (mode
+0600), writes the allowed keys to `.repoach.env`, and moves the ledger to
+`~/.local/share/repoach/<host>/<owner>/<repo>/repoach.db` (verified copy,
+symlink left behind). Stop the gateway first: the migration refuses while
+any process holds the ledger open. The gateway's seed DB follows the same
+ledger. An
+exported shell variable always wins. `repoach doctor` prints the files
+it read and the resolved ledger path.
 
 ## 5. Model routing — `chains.env`
 
 `chains.env` is the single source of truth for which upstream models
-serve each capability tier. Three lines, one per tier:
+serve each capability tier. Three lines, one per tier (abridged — the
+committed `MODEL_SONNET` chain carries ten entries):
 
 ```dotenv
 MODEL_OPUS=nvidia_nim/z-ai/glm-5.2,open_router/z-ai/glm-5.2,claude_code/opus
-MODEL_SONNET=nvidia_nim/deepseek-ai/deepseek-v4-pro,claude_code/sonnet
-MODEL_HAIKU=nvidia_nim/z-ai/glm-5.2,claude_code/haiku
+MODEL_SONNET=nvidia_nim/deepseek-ai/deepseek-v4-pro,…,claude_code/sonnet
+MODEL_HAIKU=nvidia_nim/z-ai/glm-5.2,…,claude_code/haiku
 ```
 
 - Each value is a **failover chain**: comma-separated
@@ -139,8 +168,10 @@ MODEL_SONNET=nvidia_nim/deepseek-ai/deepseek-v4-pro
 MODEL_HAIKU=nvidia_nim/z-ai/glm-5.2
 ```
 
-The committed `chains.env` is a working configuration — if you have
-keys for its head providers you can leave it untouched.
+The committed `chains.env` is the factory's own configuration, not a
+guarantee: its NIM heads have answered HTTP 410 since September 2026
+(see section 1). Put a provider you hold a live key for at the head of
+each chain, or run `repoach monitor-chains` first to see what answers.
 
 ## 6. Start the gateway and log in
 
@@ -162,8 +193,11 @@ curl -sf http://127.0.0.1:8082/health
 ```
 
 ```json
-{"status": "healthy", "breaker": []}
+{"status": "healthy"}
 ```
+
+(Anonymous callers get liveness only; the breaker and credit internals
+are returned to authenticated callers.)
 
 **Make your first authenticated, live completion.** Authentication is
 your `REPOACH_ANTHROPIC_AUTH_TOKEN`, sent as `x-api-key` (also
@@ -251,14 +285,25 @@ GitHub — useful for a first try.
 To run the **CI-side automation on your own fork** (auto-review on PR
 open, event-driven merge), you additionally need:
 
-1. a **self-hosted GitHub Actions runner** (all workflows declare
-   `runs-on: self-hosted`);
+1. a **self-hosted GitHub Actions runner** — every workflow runs on
+   `${{ vars.REPOACH_RUNNER || 'self-hosted' }}`, so set the repository
+   variable `REPOACH_RUNNER` to your runner label or label yours
+   `self-hosted`;
 2. provider keys as **repository secrets** (`NVIDIA_NIM_API_KEY`,
    `OPENROUTER_API_KEY`, … — same names as section 4);
-3. your GitHub username in the **actor allowlists** inside
-   `.github/workflows/*.yml` (they ship pinned to the maintainer);
+3. your GitHub username in the repository variable
+   `REPOACH_ALLOWED_ACTORS` — a JSON list such as `["you"]`; the
+   workflows default to `["jwfaye"]` when it is unset, and no YAML
+   edit is needed;
 4. optionally `CLAUDE_CODE_ROUTINE_ID` / `CLAUDE_CODE_ROUTINE_TOKEN`
    secrets for push notifications into a Claude Code session.
+
+Everything in this guide assumes the checkout is repoach's own: the
+configuration, `chains.env`, `.env` and the SQLite ledger are anchored
+to the repoach checkout, and `repoach review` reaches GitHub through
+the `gh` CLI only. Running the factory on another repository or on
+GitLab is specified (`SP-UNIVERSAL-REPO` and its children) but not
+built yet.
 
 ## 10. Troubleshooting
 

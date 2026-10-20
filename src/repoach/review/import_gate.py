@@ -6,9 +6,12 @@ the model invents a ``repoach.*`` module, pytest answers
 instead of fixing the import. This gate runs before pytest and turns
 the failure into directive feedback — which module is missing, what
 the package actually contains, and where the wanted names really
-live — so even an improvised import converges on retry. Only
-``repoach`` imports are checked; stdlib and third-party resolution
-stays pytest's job.
+live — so even an improvised import converges on retry. Only imports
+of the project's own top-level packages are checked — the packages
+found under its declared ``src_roots`` (``repoach`` under ``src`` by
+default, SP-UNIVERSAL-GATES) — and only in ``.py`` files the project's
+Python verifiers apply to; stdlib and third-party resolution stays
+pytest's job.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import re
 from pathlib import Path
 
 from ..core.logging import get_logger
+from ..gates.config import GatesConfig, applicable, load_gates_config, python_packages
 
 _log = get_logger(__name__)
 
@@ -109,11 +113,11 @@ def _collect_defined_names(statements: list[ast.stmt], names: set[str]) -> None:
             _collect_defined_names(node.orelse, names)
 
 
-def _find_name_homes(src_root: Path, name: str) -> list[str]:
-    """Locate modules whose top level defines *name* (def/class/assign)."""
+def _find_name_homes(src_root: Path, name: str, top: str = "repoach") -> list[str]:
+    """Locate modules of package *top* whose top level defines *name* (def/class/assign)."""
     pattern = re.compile(rf"^(def|class) {re.escape(name)}\b|^{re.escape(name)}(:| =)", re.M)
     homes: list[str] = []
-    for module_file in sorted((src_root / "repoach").rglob("*.py")):
+    for module_file in sorted((src_root / top).rglob("*.py")):
         try:
             if pattern.search(module_file.read_text(encoding="utf-8")):
                 dotted = ".".join(module_file.relative_to(src_root).with_suffix("").parts)
@@ -129,12 +133,26 @@ def _find_name_homes(src_root: Path, name: str) -> list[str]:
     return homes
 
 
-def _resolve_relative(path_str: str, level: int, module: str | None) -> str | None:
-    """Translate a relative import inside ``src/`` to a dotted module path."""
+def _resolve_relative(
+    path_str: str, level: int, module: str | None, src_prefix: tuple[str, ...] = ("src",)
+) -> str | None:
+    """Translate a relative import inside a source root to a dotted module path.
+
+    Args:
+        path_str: Repo-relative path of the importing file.
+        level: Number of leading dots.
+        module: The ``from`` module after the dots, if any.
+        src_prefix: Path parts of the directory the file's top package
+            sits in (``("src",)`` for repoach).
+
+    Returns:
+        The dotted module, or ``None`` when the file is not under
+        ``src_prefix`` or the import climbs above the top package.
+    """
     parts = Path(path_str).with_suffix("").parts
-    if not parts or parts[0] != "src":
+    if len(parts) <= len(src_prefix) or parts[: len(src_prefix)] != src_prefix:
         return None
-    package_parts = list(parts[1:-1])
+    package_parts = list(parts[len(src_prefix) : -1])
     if level > len(package_parts):
         return None
     base = package_parts[: len(package_parts) - (level - 1)]
@@ -153,13 +171,18 @@ def _module_violation(src_root: Path, path_str: str, dotted: str) -> str:
     )
 
 
-def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
-    """Resolve every ``repoach`` import of the given files against ``src/``.
+def check_imports(
+    repo_root: Path, paths: list[str], config: GatesConfig | None = None
+) -> tuple[bool, str]:
+    """Resolve every import of the project's own packages in the given files.
 
     Args:
         repo_root: Repository root.
-        paths: Repo-relative paths (non-Python and absent files are
-            skipped — the syntax gate runs before this one).
+        paths: Repo-relative paths (non-Python, absent files and files
+            outside the declared Python roots are skipped — the syntax
+            gate runs before this one).
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
 
     Returns:
         ``(True, "")`` when every import resolves, else ``(False,
@@ -168,11 +191,17 @@ def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
         name matches; missing names say which modules actually define
         them.
     """
-    src_root = repo_root / "src"
+    resolved_config = config if config is not None else load_gates_config(repo_root)
+    packages = python_packages(repo_root, resolved_config)
+    top_root = repo_root.resolve()
     violations: list[str] = []
     for path_str in paths:
         target = repo_root / path_str
         if target.suffix != ".py" or not target.is_file():
+            continue
+        ok, reason = applicable(path_str, resolved_config)
+        if not ok:
+            _log.debug("import_gate.not_applicable", path=path_str, reason=reason)
             continue
         try:
             tree = ast.parse(target.read_text(encoding="utf-8"))
@@ -182,19 +211,27 @@ def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.split(".")[0] == "repoach" and not _module_file(
-                        src_root, alias.name
-                    ):
-                        violations.append(_module_violation(src_root, path_str, alias.name))
+                    top = alias.name.split(".")[0]
+                    if top in packages and not _module_file(packages[top], alias.name):
+                        violations.append(_module_violation(packages[top], path_str, alias.name))
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
-                    dotted = _resolve_relative(path_str, node.level, node.module)
-                    if dotted is None or dotted.split(".")[0] != "repoach":
+                    dotted = None
+                    for base in packages.values():
+                        if base != top_root and top_root not in base.parents:
+                            continue
+                        prefix = base.relative_to(top_root).parts
+                        dotted = _resolve_relative(path_str, node.level, node.module, prefix)
+                        if dotted is not None:
+                            break
+                    if dotted is None or dotted.split(".")[0] not in packages:
                         continue
-                elif (node.module or "").split(".")[0] == "repoach":
+                elif (node.module or "").split(".")[0] in packages:
                     dotted = node.module or ""
                 else:
                     continue
+                top = dotted.split(".")[0]
+                src_root = packages[top]
                 module_file = _module_file(src_root, dotted)
                 if module_file is None:
                     violations.append(_module_violation(src_root, path_str, dotted))
@@ -205,10 +242,10 @@ def check_imports(repo_root: Path, paths: list[str]) -> tuple[bool, str]:
                         continue
                     if _module_file(src_root, f"{dotted}.{alias.name}") is not None:
                         continue
-                    homes = _find_name_homes(src_root, alias.name)
+                    homes = _find_name_homes(src_root, alias.name, top)
                     violations.append(
                         f"{path_str}: '{alias.name}' is not defined in '{dotted}'; "
-                        f"found in: {', '.join(homes) or '(nowhere under repoach)'}"
+                        f"found in: {', '.join(homes) or f'(nowhere under {top})'}"
                     )
     if violations:
         return False, "\n".join(violations)

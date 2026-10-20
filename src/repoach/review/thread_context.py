@@ -11,7 +11,7 @@ The flow:
 2. Before invoking each reviewer, it calls
    :func:`fetch_resolved_disagreements` with the reviewer's role.
 3. The function walks every inline thread on the PR via
-   ``gh.list_review_comments``, finds threads whose **root** comment
+   :meth:`Forge.comments`, finds threads whose **root** comment
    carries this role's tag (``[<role>/<severity>]``) AND whose
    replies include the ``"Verified — challenge with evidence"``
    sentinel posted by the Coder bot, and returns one
@@ -64,12 +64,10 @@ import difflib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..forge import Comment, Forge, ForgeError, ForgeStateRefusedError
 from .findings import Finding, FindingStatus, fetch_findings
-from .gh_client import GhCli, comment_author_login
 from .reviewer import BotRole, ReviewComment
 
 _log = get_logger(__name__)
@@ -140,34 +138,38 @@ def _truncate(s: str, *, max_chars: int = _EXCERPT_MAX_CHARS) -> str:
 
 
 def _partition_review_comments(
-    threads: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
-    """Split raw inline comments into thread roots and replies-by-root.
+    threads: list[Comment],
+) -> tuple[list[Comment], dict[int, list[Comment]]]:
+    """Split inline comments into thread roots and replies-by-root.
 
-    A comment with ``in_reply_to_id is None`` is a thread root; every
-    other comment is a reply keyed under its root's id.  Non-dict
-    entries and unparseable reply ids are dropped.
+    A comment with ``in_reply_to is None`` is a thread root; every
+    other comment is a reply keyed under its root's id.
     """
-    replies_by_root: dict[int, list[dict[str, Any]]] = {}
-    roots: list[dict[str, Any]] = []
+    replies_by_root: dict[int, list[Comment]] = {}
+    roots: list[Comment] = []
     for c in threads:
-        if not isinstance(c, dict):
-            continue
-        in_reply = c.get("in_reply_to_id")
-        if in_reply is None:
+        if c.in_reply_to is None:
             roots.append(c)
             continue
-        try:
-            in_reply_int = int(in_reply)
-        except (TypeError, ValueError):
-            _log.debug("thread_context.bad_in_reply_id", raw=str(in_reply)[:50])
-            continue
-        replies_by_root.setdefault(in_reply_int, []).append(c)
+        replies_by_root.setdefault(c.in_reply_to, []).append(c)
     return roots, replies_by_root
 
 
+def _inline_threads(forge: Forge, pr_number: int) -> list[Comment]:
+    """Read the PR's inline comments; ``[]`` (logged) when the forge call fails."""
+    try:
+        return forge.comments(pr_number)
+    except ForgeError as exc:
+        _log.warning(
+            "thread_context.inline_comments_failed",
+            pr_number=pr_number,
+            error=exc.message[:200],
+        )
+        return []
+
+
 def fetch_resolved_disagreements(
-    gh: GhCli,
+    forge: Forge,
     pr_number: int,
     *,
     role: BotRole,
@@ -179,30 +181,28 @@ def fetch_resolved_disagreements(
     reviewer role AND received a reply, authored by the trusted bot
     identity, containing the :data:`EVIDENCE_REPLY_SENTINEL` substring
     (SP-EVIDENCE-SENTINEL-AUTHOR). A sentinel-bearing reply from any
-    other ``user.login`` — e.g. the PR author forging the sentinel
-    string — is ignored, so it never resolves the thread.
+    other author — e.g. the PR author forging the sentinel string — is
+    ignored, so it never resolves the thread.
 
     Args:
-        gh: GitHub CLI wrapper used to fetch the PR's review comments.
-        pr_number: PR number.
+        forge: The forge the PR lives on.
+        pr_number: PR / MR number.
         role: Reviewer role to filter on; only threads whose root
             comment is tagged with this role's ``[<role>/...]`` prefix
             are returned.
-        bot_login: The GitHub login a sentinel reply must carry to be
-            trusted.  Defaults to
-            :attr:`~repoach.core.config.Settings.review_bot_login`
-            when omitted. A falsy value (including the resolved
-            default being empty) fails closed — no reply is ever
+        bot_login: The login a sentinel reply must carry to be trusted.
+            Defaults to the forge's :attr:`~Forge.bot_username` when
+            omitted. A falsy value fails closed — no reply is ever
             trusted rather than trusting all of them.
 
     Returns:
         Up to :data:`_MAX_DISAGREEMENTS_PER_ROLE` resolved threads,
         most recent first (thread root ``id`` descending).  Empty
-        list when no thread matches or the gh call fails.
+        list when no thread matches or the forge call fails.
     """
-    expected_login = bot_login if bot_login is not None else get_settings().review_bot_login
+    expected_login = bot_login if bot_login is not None else forge.bot_username
 
-    threads = gh.list_review_comments(pr_number)
+    threads = _inline_threads(forge, pr_number)
     if not threads:
         return []
 
@@ -210,42 +210,29 @@ def fetch_resolved_disagreements(
 
     out: list[ResolvedDisagreement] = []
     for root in roots:
-        body = str(root.get("body") or "")
-        detected = _detect_role_in_body(body)
+        detected = _detect_role_in_body(root.body)
         if detected is not role:
             continue
-        try:
-            root_id = int(root.get("id") or 0)
-        except (TypeError, ValueError):
-            _log.debug("thread_context.bad_root_id", raw=str(root.get("id"))[:50])
-            continue
-        if root_id <= 0:
+        if root.id <= 0:
             continue
         evidence_reply: str | None = None
-        for reply in replies_by_root.get(root_id, []):
-            reply_body = str(reply.get("body") or "")
-            if EVIDENCE_REPLY_SENTINEL not in reply_body:
+        for reply in replies_by_root.get(root.id, []):
+            if EVIDENCE_REPLY_SENTINEL not in reply.body:
                 continue
-            if not expected_login or comment_author_login(reply) != expected_login:
+            if not expected_login or reply.author != expected_login:
                 continue
-            evidence_reply = reply_body
+            evidence_reply = reply.body
             break
         if evidence_reply is None:
             continue
-        path = str(root.get("path") or "")
-        try:
-            line_int = int(root.get("line") or 0)
-        except (TypeError, ValueError):
-            _log.debug("thread_context.root_line_unparseable", raw=root.get("line"))
-            line_int = 0
         out.append(
             ResolvedDisagreement(
                 role=role,
-                file=path,
-                line=line_int,
-                reviewer_body=_truncate(body),
+                file=root.path or "",
+                line=root.line or 0,
+                reviewer_body=_truncate(root.body),
                 coder_evidence=_truncate(evidence_reply),
-                root_comment_id=root_id,
+                root_comment_id=root.id,
             )
         )
 
@@ -486,48 +473,37 @@ def _format_finding_evidence_reply(finding: Finding) -> str:
 
 
 def _match_finding_thread(
-    roots: list[dict[str, Any]],
+    roots: list[Comment],
     finding: Finding,
-) -> dict[str, Any] | None:
+) -> Comment | None:
     """Return the root thread a ``finding`` originated from, or ``None``.
 
-    A :class:`~repoach.review.findings.Finding` carries no GitHub
-    comment id (the source :class:`~repoach.review.reviewer.ReviewComment`
-    never had one), so the thread is re-located by ``path`` + ``line``
+    A :class:`~repoach.review.findings.Finding` carries no forge comment
+    id (the source :class:`~repoach.review.reviewer.ReviewComment` never
+    had one), so the thread is re-located by ``path`` + ``line``
     equality, with the highest :func:`similarity` of root body vs the
     finding's claim breaking ties when several critiques share a line.
     """
-    candidates: list[dict[str, Any]] = []
-    for root in roots:
-        if str(root.get("path") or "") != finding.file:
-            continue
-        raw_line = root.get("line")
-        try:
-            line_int = int(raw_line) if raw_line is not None else None
-        except (TypeError, ValueError):
-            _log.debug("thread_context.match_line_unparseable", raw=str(raw_line)[:50])
-            line_int = None
-        if line_int != finding.line_start:
-            continue
-        candidates.append(root)
+    candidates = [
+        root
+        for root in roots
+        if (root.path or "") == finding.file and root.line == finding.line_start
+    ]
     if not candidates:
         return None
     if len(candidates) == 1:
         return candidates[0]
-    candidates.sort(
-        key=lambda r: similarity(str(r.get("body") or ""), finding.claim),
-        reverse=True,
-    )
+    candidates.sort(key=lambda r: similarity(r.body, finding.claim), reverse=True)
     return candidates[0]
 
 
-def _thread_has_sentinel(replies: list[dict[str, Any]]) -> bool:
+def _thread_has_sentinel(replies: list[Comment]) -> bool:
     """Return True when any reply on the thread already carries the sentinel."""
-    return any(EVIDENCE_REPLY_SENTINEL in str(r.get("body") or "") for r in replies)
+    return any(EVIDENCE_REPLY_SENTINEL in r.body for r in replies)
 
 
 def post_refuted_finding_sentinels(
-    gh: GhCli,
+    forge: Forge,
     db_path: Path,
     pr_number: int,
 ) -> int:
@@ -548,10 +524,10 @@ def post_refuted_finding_sentinels(
     thread and are skipped.  Posting is idempotent: a thread that
     already carries the sentinel is left untouched, so re-runs and the
     accumulating refuted ledger never duplicate replies.  A failed
-    ``gh`` reply is logged and skipped, never raised.
+    reply is logged and skipped, never raised.
 
     Args:
-        gh: GitHub CLI wrapper.
+        forge: The forge the PR lives on.
         db_path: The findings ledger database.
         pr_number: PR whose refuted reviewer findings are announced.
 
@@ -565,27 +541,23 @@ def post_refuted_finding_sentinels(
     ]
     if not refuted:
         return 0
-    threads = gh.list_review_comments(pr_number)
+    threads = _inline_threads(forge, pr_number)
     if not threads:
         return 0
     roots, replies_by_root = _partition_review_comments(threads)
     posted = 0
     for finding in refuted:
         root = _match_finding_thread(roots, finding)
-        if root is None:
+        if root is None or root.id <= 0:
             continue
-        try:
-            root_id = int(root.get("id") or 0)
-        except (TypeError, ValueError):
-            _log.debug("thread_context.match_root_id_unparseable", raw=str(root.get("id"))[:50])
-            continue
-        if root_id <= 0:
-            continue
+        root_id = root.id
         if _thread_has_sentinel(replies_by_root.get(root_id, [])):
             continue
         body = _format_finding_evidence_reply(finding)
         try:
-            gh.reply_to_review_comment(pr_number, comment_id=root_id, body=body)
+            forge.reply(pr_number, root_id, body)
+        except ForgeStateRefusedError:
+            raise
         except Exception as exc:
             _log.warning(
                 "review.refuted_sentinel.post_failed",

@@ -22,6 +22,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ..gates.config import load_gates_config
 from .finding_verifiers import verify_finding
 from .findings import (
     JUDGED_CLAIM_TYPES,
@@ -53,7 +54,9 @@ instead of redeclaring it makes that drift structurally impossible:
 every claim type the refuter judges is, by construction, also judged
 here.
 """
-_SETTLED = frozenset({FindingStatus.RESOLVED, FindingStatus.REFUTED})
+_SETTLED = frozenset({FindingStatus.RESOLVED, FindingStatus.REFUTED, FindingStatus.NOT_APPLICABLE})
+"""Statuses that never block: ``not_applicable`` is terminal and non-blocking
+(SP-UNIVERSAL-GATES G4) — the verifier does not apply to the cited file."""
 _BLOCKING_STATUSES = frozenset({FindingStatus.VERIFIED, FindingStatus.STUCK})
 """Statuses that confirm a live blocking problem (SP-STUCK-ESCALATION).
 
@@ -222,6 +225,7 @@ def gather_merge_facts(
     init_findings_schema(db_path)
     open_blocking = 0
     blocking_unverified: list[str] = []
+    gates_config = load_gates_config(repo_root)
     for finding in fetch_findings(db_path, pr_number):
         if finding.severity is not Severity.BLOCKING or finding.status in _SETTLED:
             continue
@@ -236,7 +240,7 @@ def gather_merge_facts(
             )
             continue
         if finding.claim_type in _MECHANICAL_TYPES:
-            status, _, _ = verify_finding(finding, repo_root=repo_root)
+            status, _, _ = verify_finding(finding, repo_root=repo_root, config=gates_config)
             if status is FindingStatus.VERIFIED:
                 open_blocking += 1
         elif finding.claim_type in _JUDGED_TYPES:

@@ -1,0 +1,55 @@
+{
+  "args": [
+    42,
+    {
+      "body": "lgtm",
+      "verdict": "APPROVE"
+    }
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
+        "pr",
+        "review",
+        "42",
+        "--approve",
+        "--body",
+        "lgtm"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "post_review_bare",
+  "forge": "github",
+  "kwargs": {},
+  "method": "post_review",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "lgtm",
+    "comments": [],
+    "id": 0,
+    "state": "APPROVE"
+  },
+  "source": "synthetic: write call: never executed against a live forge; the write barrier reads the state first",
+  "trimmed": null
+}

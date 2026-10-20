@@ -20,8 +20,9 @@ The gate verifies, in order:
    is NOT consulted (it was a forgeable, stale signal — audit CRITICAL
    #1); the sticky comment is report-only.
 
-When all gates pass, we run ``gh pr merge --squash --delete-branch``
-and persist the outcome to L4 ``pr_merges``.
+When all gates pass, the forge merges with the configured method
+(``squash`` by default — ``gh pr merge --squash --delete-branch`` on
+GitHub) and the outcome is persisted to L4 ``pr_merges``.
 
 Module-level constants :
     - The ``OUTCOME_*`` names are kept stable so historical L4
@@ -29,13 +30,13 @@ Module-level constants :
       umbrella tag preserved for back-compat; new refused-on-CI
       paths emit one of the more specific tags
       (``OUTCOME_SKIP_CI_FAILED``, ``OUTCOME_SKIP_CI_TIMEOUT``,
-      ``OUTCOME_SKIP_CI_MISSING``).
-    - :data:`DEFAULT_REQUIRED_CHECK_NAMES` mirrors the matrix in
-      ``.github/workflows/ci.yml``.  Override per call when the
-      matrix changes.
-    - The ``_FAIL_CONCLUSIONS`` / ``_SUCCESS_CONCLUSIONS`` /
-      ``_PENDING_STATUSES`` frozensets bucket the conclusion strings
-      returned by ``gh pr view --json statusCheckRollup``.
+      ``OUTCOME_SKIP_CI_MISSING``, ``OUTCOME_SKIP_CI_PENDING``).
+    - CI facts come from :meth:`repoach.forge.protocol.Forge.ci_status`
+      (SP-UNIVERSAL-FORGE G5): on GitHub the required checks of the
+      branch protection when readable, else
+      :data:`DEFAULT_REQUIRED_CHECK_NAMES` (re-exported here, it mirrors
+      the matrix in ``.github/workflows/ci.yml``); on GitLab the MR's
+      ``head_pipeline.status``.
     - The CI-gate wait budget and poll cadence are sourced from
       :class:`repoach.core.config.Settings` at call time
       (``automerge_ci_wait_seconds`` / ``automerge_ci_poll_interval``,
@@ -48,15 +49,25 @@ Module-level constants :
 from __future__ import annotations
 
 import json
-import re
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
-from .gh_client import GhCli
+from ..forge import (
+    Forge,
+    ForgeError,
+    ForgeMergeRefusedError,
+    ForgeStateRefusedError,
+    MergeMethod,
+    PullRequest,
+    merge_preferences,
+    select_forge,
+)
+from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
+from ..forge.protocol import WRITABLE_STATES
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -86,6 +97,16 @@ OUTCOME_SKIP_CI: str = "SKIP_CI_RED"
 OUTCOME_SKIP_CI_FAILED: str = "SKIP_CI_FAILED"
 OUTCOME_SKIP_CI_TIMEOUT: str = "SKIP_CI_TIMEOUT"
 OUTCOME_SKIP_CI_MISSING: str = "SKIP_CI_MISSING"
+OUTCOME_SKIP_CI_PENDING: str = "SKIP_CI_PENDING"
+OUTCOME_SKIP_NOT_APPROVED: str = "SKIP_NOT_APPROVED"
+OUTCOME_SKIP_DISCUSSIONS: str = "SKIP_DISCUSSIONS_UNRESOLVED"
+OUTCOME_SKIP_CONFLICT: str = "SKIP_CONFLICT"
+OUTCOME_SKIP_STATE: str = "SKIP_STATE"
+OUTCOME_SKIP_CHANGES_REQUESTED: str = "SKIP_CHANGES_REQUESTED"
+OUTCOME_SKIP_DRAFT: str = "SKIP_DRAFT"
+OUTCOME_SKIP_BLOCKED: str = "SKIP_BLOCKED"
+OUTCOME_SKIP_BEHIND: str = "SKIP_BEHIND"
+OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED: str = "SKIP_MERGE_STATUS_UNRECOGNIZED"
 OUTCOME_SKIP_STALE_HEAD: str = "SKIP_STALE_HEAD"
 OUTCOME_FAILED: str = "FAILED"
 
@@ -98,9 +119,39 @@ NON_FATAL_SKIP_OUTCOMES: frozenset[str] = frozenset(
         OUTCOME_SKIP_CI_FAILED,
         OUTCOME_SKIP_CI_TIMEOUT,
         OUTCOME_SKIP_CI_MISSING,
+        OUTCOME_SKIP_CI_PENDING,
+        OUTCOME_SKIP_NOT_APPROVED,
+        OUTCOME_SKIP_DISCUSSIONS,
+        OUTCOME_SKIP_CONFLICT,
+        OUTCOME_SKIP_STATE,
+        OUTCOME_SKIP_CHANGES_REQUESTED,
+        OUTCOME_SKIP_DRAFT,
+        OUTCOME_SKIP_BLOCKED,
+        OUTCOME_SKIP_BEHIND,
+        OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
         OUTCOME_SKIP_STALE_HEAD,
     }
 )
+
+_REFUSAL_OUTCOMES: dict[str, str] = {
+    "pending": OUTCOME_SKIP_CI_PENDING,
+    "not_approved": OUTCOME_SKIP_NOT_APPROVED,
+    "discussions_not_resolved": OUTCOME_SKIP_DISCUSSIONS,
+    "conflict": OUTCOME_SKIP_CONFLICT,
+    "head_moved": OUTCOME_SKIP_STALE_HEAD,
+    "not_open": OUTCOME_SKIP_STATE,
+    "requested_changes": OUTCOME_SKIP_CHANGES_REQUESTED,
+    "draft": OUTCOME_SKIP_DRAFT,
+    "blocked": OUTCOME_SKIP_BLOCKED,
+    "behind": OUTCOME_SKIP_BEHIND,
+    "unrecognized": OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
+}
+"""Forge merge refusals read from facts → non-fatal outcomes; ``refused`` stays FAILED."""
+
+__all__ = [
+    "DEFAULT_REQUIRED_CHECK_NAMES",
+    "classify_required_checks",
+]
 
 
 def merge_exit_code(outcome: str) -> int:
@@ -115,23 +166,6 @@ def merge_exit_code(outcome: str) -> int:
     if outcome in NON_FATAL_SKIP_OUTCOMES:
         return 5
     return 1
-
-
-DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
-    "Test suite (Python 3.11)",
-    "Test suite (Python 3.13)",
-)
-
-_FAIL_CONCLUSIONS: frozenset[str] = frozenset(
-    {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
-)
-_SUCCESS_CONCLUSIONS: frozenset[str] = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
-_PENDING_STATUSES: frozenset[str] = frozenset(
-    {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "EXPECTED", "REQUESTED"}
-)
-
-
-_MERGE_SHA_RE = re.compile(r"\b([0-9a-f]{40})\b")
 
 
 def _resolve_wait_poll(wait_seconds: int | None, poll_interval: int | None) -> tuple[int, int]:
@@ -162,119 +196,11 @@ class CIGateOutcome:
     rollup_snapshot: list[dict] = field(default_factory=list)
 
 
-def fetch_status_rollup(gh: GhCli, pr_number: int) -> tuple[list[dict], str]:
-    """Return ``(rollup_entries, error_message)`` from ``gh pr view``.
-
-    On parse errors or non-zero exit, ``rollup_entries`` is empty and
-    ``error_message`` carries a short diagnostic.
-    """
-    res = gh._run(
-        [
-            "pr",
-            "view",
-            str(pr_number),
-            "--json",
-            "statusCheckRollup",
-        ]
-    )
-    if not res.ok:
-        return [], f"gh pr view failed: {res.stderr[:200]}"
-    try:
-        data = json.loads(res.stdout) or {}
-    except json.JSONDecodeError:
-        return [], f"unparseable gh output: {res.stdout[:200]}"
-    rollup = data.get("statusCheckRollup")
-    if not isinstance(rollup, list):
-        return [], "statusCheckRollup missing from gh output"
-    return [dict(entry) for entry in rollup], ""
-
-
-def fetch_check_runs(gh: GhCli, head_sha: str) -> tuple[list[dict], str]:
-    """Return ``(check_run_entries, error_message)`` for a commit.
-
-    Queries the commit's complete check-run record instead of the PR
-    ``statusCheckRollup``: the rollup is blind to ``workflow_dispatch``
-    runs and was observed pinning a stale CANCELLED entry over a newer
-    green run at the same SHA (PR #3, 2026-07-03).  Entries are
-    normalised to the rollup shape (``name`` / ``status`` /
-    ``conclusion`` / ``startedAt``); the ``--jq`` projection emits one
-    JSON object per line.
-    """
-    res = gh._run(
-        [
-            "api",
-            "repos/{owner}/{repo}/commits/" + head_sha + "/check-runs",
-            "--paginate",
-            "--jq",
-            ".check_runs[] | {name, status, conclusion, startedAt: .started_at}",
-        ]
-    )
-    if not res.ok:
-        return [], f"gh api check-runs failed: {res.stderr[:200]}"
-    entries: list[dict] = []
-    for line in res.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            entries.append(dict(json.loads(stripped)))
-        except json.JSONDecodeError:
-            return [], f"unparseable check-runs line: {stripped[:200]}"
-    return entries, ""
-
-
-def classify_required_checks(
-    rollup: Iterable[dict],
-    required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
-) -> tuple[list[str], list[str], list[str]]:
-    """Bucket required checks into ``(failed, pending, missing)``.
-
-    Each ``rollup`` entry is a ``{"name", "status", "conclusion", ...}``
-    dict, from either ``gh pr view --json statusCheckRollup`` or
-    :func:`fetch_check_runs`.  Duplicate entries (workflow re-runs,
-    concurrency cancellations) collapse to the latest ``startedAt``
-    per name — neither source is reliably ordered, and the observed
-    stale-cancelled-over-fresh-green pinning (PR #3, 2026-07-03) means
-    iteration order must never decide.  ISO-8601 timestamps compare
-    lexicographically; an entry without one is treated as oldest.  An
-    unknown conclusion bucket is treated as a failure (fail-closed).
-    """
-    by_name: dict[str, dict] = {}
-    for entry in rollup:
-        name = str(entry.get("name") or "")
-        if not name:
-            continue
-        started = str(entry.get("startedAt") or "")
-        current = by_name.get(name)
-        if current is None or started >= str(current.get("startedAt") or ""):
-            by_name[name] = dict(entry)
-
-    failed: list[str] = []
-    pending: list[str] = []
-    missing: list[str] = []
-    for required in required_names:
-        match = by_name.get(required)
-        if match is None:
-            missing.append(required)
-            continue
-        conclusion = str(match.get("conclusion") or "").upper()
-        status = str(match.get("status") or "").upper()
-        if conclusion in _FAIL_CONCLUSIONS:
-            failed.append(f"{required}={conclusion}")
-        elif conclusion in _SUCCESS_CONCLUSIONS:
-            continue
-        elif status in _PENDING_STATUSES or not conclusion:
-            pending.append(required)
-        else:
-            failed.append(f"{required}={conclusion or 'EMPTY'}")
-    return failed, pending, missing
-
-
 def evaluate_ci_gate(
-    gh: GhCli,
+    forge: Forge,
     pr_number: int,
     *,
-    required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
+    required_names: Sequence[str] | None = None,
     wait_seconds: int | None = None,
     poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
@@ -294,7 +220,8 @@ def evaluate_ci_gate(
     head commit's check-runs (``head_sha`` when given, else resolved
     per poll so a mid-poll push is still judged at the fresh head);
     the PR ``statusCheckRollup`` is only a fallback when the commit
-    API fails.
+    API fails. Both live behind :meth:`Forge.ci_status`; ``required_names``
+    ``None`` lets the forge resolve them (SP-UNIVERSAL-FORGE G5).
     """
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     deadline = monotonic() + wait_seconds
@@ -306,39 +233,37 @@ def evaluate_ci_gate(
         pr_number=pr_number,
         wait_seconds=wait_seconds,
         poll_interval=poll_interval,
-        required_names=list(required_names),
+        required_names=list(required_names) if required_names is not None else None,
     )
 
     while True:
-        sha = head_sha or gh.pr_head_sha(pr_number)
-        if sha:
-            rollup, err = fetch_check_runs(gh, sha)
-            if err and not rollup:
-                _log.warning(
-                    "auto_merge.check_runs_fallback_to_rollup",
-                    pr_number=pr_number,
-                    head_sha=sha[:12],
-                    error=err[:200],
-                )
-                rollup, err = fetch_status_rollup(gh, pr_number)
-        else:
-            rollup, err = fetch_status_rollup(gh, pr_number)
-        poll_count += 1
-        if err and not rollup:
+        try:
+            status = forge.ci_status(pr_number, head_sha=head_sha, required=required_names)
+        except ForgeError as exc:
+            poll_count += 1
             _log.error(
                 "auto_merge.ci_gate_fetch_failed",
                 pr_number=pr_number,
                 poll=poll_count,
-                error=err[:200],
+                error=exc.message[:200],
             )
             return CIGateOutcome(
                 green=False,
                 outcome_tag=OUTCOME_SKIP_CI,
-                reason=err,
+                reason=exc.message,
                 rollup_snapshot=[],
             )
-        last_snapshot = rollup
-        failed, pending, missing = classify_required_checks(rollup, required_names)
+        poll_count += 1
+        last_snapshot = [
+            {
+                "name": check.name,
+                "status": check.status,
+                "conclusion": check.conclusion,
+                "startedAt": check.started_at,
+            }
+            for check in status.checks
+        ]
+        failed, pending, missing = status.failed, status.pending, status.missing
         _log.info(
             "auto_merge.ci_gate_poll",
             pr_number=pr_number,
@@ -385,10 +310,10 @@ def evaluate_ci_gate(
 
 
 def required_checks_green(
-    gh: GhCli,
+    forge: Forge,
     pr_number: int,
     *,
-    required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
+    required_names: Sequence[str] | None = None,
     wait_seconds: int | None = None,
     poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
@@ -402,7 +327,7 @@ def required_checks_green(
     """
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     outcome = evaluate_ci_gate(
-        gh,
+        forge,
         pr_number,
         required_names=required_names,
         wait_seconds=wait_seconds,
@@ -430,32 +355,65 @@ def _summarise_rollup(rollup: Sequence[dict]) -> str:
     return json.dumps(summary, separators=(",", ":"))
 
 
-def squash_merge(
-    gh: GhCli, pr_number: int, *, delete_branch: bool = True
-) -> tuple[bool, str | None, str]:
-    """Run ``gh pr merge --squash`` and return ``(ok, merge_sha, log)``.
+def merge_change(
+    forge: Forge,
+    pr_number: int,
+    *,
+    method: MergeMethod = MergeMethod.SQUASH,
+    delete_branch: bool = True,
+    head_sha: str | None = None,
+) -> tuple[bool, str | None, str, str]:
+    """Merge through the forge and return ``(ok, merge_sha, log, refusal)``.
 
-    The success path of ``gh pr merge`` prints the merge commit SHA;
-    we extract it from stdout when present so callers can persist it
-    to L4 for audit.
+    On GitHub this runs ``gh pr merge --<method> [--match-head-commit
+    <sha>] [--delete-branch]``; the merge commit SHA is extracted from
+    its output when present so callers can persist it to L4 for audit.
 
     Args:
-        gh: A :class:`GhCli` wrapper.
-        pr_number: PR to merge.
+        forge: The forge the PR lives on.
+        pr_number: PR / MR to merge.
+        method: The configured merge method.
         delete_branch: When True, also delete the head branch.
+        head_sha: The head the gate decided at; the forge refuses to
+            merge any other.
 
     Returns:
-        ``(ok, merge_sha_or_None, log_tail)``.
+        ``(ok, merge_sha_or_None, log_tail, refusal)`` — ``refusal`` is
+        ``""`` on success, else the forge's
+        :attr:`~repoach.forge.ForgeMergeRefusedError.reason`
+        (``refused`` for any other forge error).
     """
-    args = ["pr", "merge", str(pr_number), "--squash"]
-    if delete_branch:
-        args.append("--delete-branch")
-    res = gh._run(args)
-    if not res.ok:
-        return False, None, (res.stderr or res.stdout)[-500:]
-    m = _MERGE_SHA_RE.search(res.stdout)
-    sha = m.group(1) if m else None
-    return True, sha, res.stdout[-500:]
+    try:
+        result = forge.merge(
+            pr_number, method=method, delete_branch=delete_branch, head_sha=head_sha
+        )
+    except ForgeMergeRefusedError as exc:
+        return False, None, exc.message[-500:], exc.reason
+    except ForgeStateRefusedError as exc:
+        return False, None, exc.message[-500:], "not_open"
+    except ForgeError as exc:
+        return False, None, exc.message[-500:], "refused"
+    return True, result.sha, result.message[-500:], ""
+
+
+def _head_sha_or_empty(forge: Forge, pr_number: int) -> str:
+    """The forge's head SHA for ``pr_number``, ``""`` when it cannot be read."""
+    try:
+        return forge.head_sha(pr_number)
+    except ForgeError as exc:
+        _log.warning(
+            "auto_merge.head_sha_unavailable", pr_number=pr_number, error=exc.message[:200]
+        )
+        return ""
+
+
+def _pull_request_or_none(forge: Forge, pr_number: int) -> PullRequest | None:
+    """The PR metadata, ``None`` when it cannot be read (callers fail closed)."""
+    try:
+        return forge.pull_request(pr_number)
+    except ForgeError as exc:
+        _log.warning("auto_merge.pr_view_failed", pr_number=pr_number, error=exc.message[:200])
+        return None
 
 
 @dataclass
@@ -472,15 +430,31 @@ class GateEvaluation:
         ci_gate: The CI-gate outcome (green flag, outcome tag, reason).
         facts: The merge facts re-verified at ``head_sha``.
         decision: The pure-gate decision over those facts.
+        pull_request: The PR / MR as read for this evaluation, when the
+            forge answered (its description and branch declare the spec).
     """
 
     head_sha: str
     ci_gate: CIGateOutcome
     facts: MergeFacts
     decision: MergeDecision
+    pull_request: PullRequest | None = None
 
 
-def _ls_remote_tip(gh: GhCli, head_ref: str) -> tuple[str | None, str]:
+def _unknown_facts() -> MergeFacts:
+    """Return merge facts for a gate that stopped before reading the ledger."""
+    return MergeFacts(
+        head_sha="",
+        ci_green=False,
+        open_blocking_findings=0,
+        spec_covered=False,
+        spec_coverage_known=False,
+        review_complete=False,
+        review_integrity_known=False,
+    )
+
+
+def _ls_remote_tip(forge: Forge, head_ref: str) -> tuple[str | None, str]:
     """Resolve the branch tip via ``git ls-remote origin refs/heads/<head_ref>``.
 
     Shared by :func:`resolve_verified_head` and the pre-squash re-read in
@@ -489,16 +463,25 @@ def _ls_remote_tip(gh: GhCli, head_ref: str) -> tuple[str | None, str]:
     on any transport or parse failure).
 
     Args:
-        gh: The GitHub client wrapper; only ``_run_git`` is used.
+        forge: The forge; only its local :meth:`~Forge.git` is used.
         head_ref: The branch name to resolve (``headRefName``).
 
     Returns:
-        ``(sha, "")`` on success, ``(None, reason)`` on failure.
+        ``(sha, "")`` on success, ``(None, reason)`` on failure.  The
+        reason always names its cause (SP-GATE-MERGED-MR-NAMED-REASON):
+        no head branch read, the branch absent from origin (deleted
+        after merge, or never pushed), or the ``ls-remote`` exit code
+        when git printed nothing — never an empty string after a colon.
     """
-    ls_remote = gh._run_git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
-    if not ls_remote.ok or not ls_remote.stdout.strip():
+    if not head_ref:
+        return None, "no head branch: the pull request's source branch could not be read"
+    ls_remote = forge.git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
+    if ls_remote.ok and not ls_remote.stdout.strip():
+        return None, f"branch {head_ref!r} not found on origin (deleted, or never pushed)"
+    if not ls_remote.ok:
         error = (ls_remote.stderr or ls_remote.stdout).strip()
-        return None, f"ls-remote failed: {error[:200]}"
+        detail = error[:200] if error else f"exit {ls_remote.returncode}, no output"
+        return None, f"ls-remote failed: {detail}"
     first_line = ls_remote.stdout.strip().splitlines()[0]
     tokens = first_line.split()
     remote_sha = tokens[0] if tokens else ""
@@ -508,7 +491,7 @@ def _ls_remote_tip(gh: GhCli, head_ref: str) -> tuple[str | None, str]:
 
 
 def resolve_verified_head(
-    gh: GhCli,
+    forge: Forge,
     pr_number: int,
     head_ref: str,
     *,
@@ -526,7 +509,7 @@ def resolve_verified_head(
     helper resolves the branch tip with
     ``git ls-remote origin refs/heads/<head_ref>`` — the git backend's
     own ground truth — and compares it against
-    :meth:`GhCli.pr_head_sha`, re-polling up to ``attempts`` times with
+    :meth:`Forge.head_sha`, re-polling up to ``attempts`` times with
     ``sleep(delay_s)`` between polls until the two agree.
 
     The contract is fail-closed: a persistent mismatch, or an
@@ -535,8 +518,8 @@ def resolve_verified_head(
     head that cannot be verified.
 
     Args:
-        gh: The GitHub client wrapper; both ``pr_head_sha`` and the
-            underlying ``_run_git`` are used.
+        forge: The forge; both :meth:`~Forge.head_sha` and the local
+            :meth:`~Forge.git` are used.
         pr_number: PR whose head is under verification.
         head_ref: The PR's head branch name (``headRefName``).
         repo_root: The checkout the caller is verifying against; kept
@@ -559,16 +542,11 @@ def resolve_verified_head(
     api_sha = ""
     remote_sha = ""
     for attempt in range(attempts):
-        ls_remote = gh._run_git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
-        if not ls_remote.ok or not ls_remote.stdout.strip():
-            error = (ls_remote.stderr or ls_remote.stdout).strip()
-            return None, f"ls-remote failed: {error[:200]}"
-        first_line = ls_remote.stdout.strip().splitlines()[0]
-        tokens = first_line.split()
-        remote_sha = tokens[0] if tokens else ""
-        if not remote_sha:
-            return None, f"ls-remote returned no SHA: {first_line[:200]}"
-        api_sha = gh.pr_head_sha(pr_number) or ""
+        tip, reason = _ls_remote_tip(forge, head_ref)
+        if tip is None:
+            return None, reason
+        remote_sha = tip
+        api_sha = _head_sha_or_empty(forge, pr_number)
         if api_sha == remote_sha:
             return remote_sha, ""
         if attempt < attempts - 1:
@@ -583,7 +561,7 @@ def resolve_verified_head(
 def decide_at_head(
     pr_number: int,
     *,
-    gh: GhCli,
+    forge: Forge,
     db: Path,
     ci_green: bool,
     repo_root: Path | None = None,
@@ -599,7 +577,7 @@ def decide_at_head(
 
     Args:
         pr_number: The PR under decision.
-        gh: The GitHub client used to resolve the head SHA when
+        forge: The forge used to resolve the head SHA when
             ``head_sha`` is not supplied.
         db: The findings + coverage ledger.
         ci_green: Whether required checks are green at head (folded into
@@ -607,7 +585,7 @@ def decide_at_head(
         repo_root: The head checkout the mechanical verifiers resolve
             against; defaults to the current working directory.
         head_sha: An explicit head to decide at, overriding
-            ``gh.pr_head_sha``.  SP-AUTOMERGE-FRESH-HEAD:
+            :meth:`Forge.head_sha`.  SP-AUTOMERGE-FRESH-HEAD:
             :func:`run_auto_merge` passes the ``resolve_verified_head``
             SHA here so gate facts are computed at the exact commit
             about to be merged, not whatever the API happens to be
@@ -617,7 +595,7 @@ def decide_at_head(
     Returns:
         ``(head_sha, facts, decision)``.
     """
-    resolved_head = head_sha if head_sha is not None else (gh.pr_head_sha(pr_number) or "")
+    resolved_head = head_sha if head_sha is not None else _head_sha_or_empty(forge, pr_number)
     facts = gather_merge_facts(
         db,
         pr_number=pr_number,
@@ -631,9 +609,9 @@ def decide_at_head(
 def evaluate_merge_gate(
     pr_number: int,
     *,
-    gh: GhCli | None = None,
+    forge: Forge | None = None,
     db_path: Path | None = None,
-    required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
+    required_names: Sequence[str] | None = None,
     wait_seconds: int | None = None,
     poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
@@ -646,7 +624,7 @@ def evaluate_merge_gate(
     waits on required CI the same way the auto-merge does, then reaches
     :func:`decide_at_head`. It performs no base/state check and never
     merges or posts — ``safe_merge.sh`` keeps ownership of the actual
-    ``gh pr merge``.
+    merge.
 
     SP-AUTOMERGE-FRESH-HEAD: before any of that, the PR API head is
     cross-checked against ``git ls-remote`` ground truth through
@@ -658,18 +636,34 @@ def evaluate_merge_gate(
     :func:`decide_at_head` at all, so ``repoach review gate`` exits 5
     through the existing exit-code mapping and ``safe_merge.sh``
     aborts on the same signal the CI auto-merge would refuse on.
+
+    A pull request the forge reports ``merged`` short-circuits before
+    any of that with ``outcome_tag = ALREADY_MERGED``, ``merge`` False
+    and that reason (SP-GATE-MERGED-MR-NAMED-REASON): its source branch
+    may be gone, and there is nothing left to gate.
     """
-    gh = gh or GhCli()
+    forge = forge or select_forge(cwd=repo_root)
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
 
-    pr_meta = gh.pr_view(pr_number) or {}
-    head_ref = str(pr_meta.get("headRefName") or "")
+    pr = _pull_request_or_none(forge, pr_number)
+    head_ref = pr.head_ref if pr is not None else ""
+
+    if pr is not None and pr.state == "merged":
+        reason = f"{OUTCOME_ALREADY_MERGED}: #{pr_number} is already merged into {pr.base_ref!r}"
+        _log.info("auto_merge.gate_already_merged", pr_number=pr_number, base=pr.base_ref)
+        return GateEvaluation(
+            head_sha=pr.head_sha,
+            ci_gate=CIGateOutcome(green=False, outcome_tag=OUTCOME_ALREADY_MERGED, reason=reason),
+            facts=_unknown_facts(),
+            decision=MergeDecision(merge=False, reasons=[reason]),
+            pull_request=pr,
+        )
 
     verified_head, stale_reason = resolve_verified_head(
-        gh,
+        forge,
         pr_number,
         head_ref,
         repo_root=repo_root or Path.cwd(),
@@ -683,15 +677,6 @@ def evaluate_merge_gate(
             head_ref=head_ref,
             reason=stale_reason,
         )
-        stale_facts = MergeFacts(
-            head_sha="",
-            ci_green=False,
-            open_blocking_findings=0,
-            spec_covered=False,
-            spec_coverage_known=False,
-            review_complete=False,
-            review_integrity_known=False,
-        )
         return GateEvaluation(
             head_sha="",
             ci_gate=CIGateOutcome(
@@ -699,12 +684,13 @@ def evaluate_merge_gate(
                 outcome_tag=OUTCOME_SKIP_STALE_HEAD,
                 reason=reason,
             ),
-            facts=stale_facts,
+            facts=_unknown_facts(),
             decision=MergeDecision(merge=False, reasons=[reason]),
+            pull_request=pr,
         )
 
     ci_gate = evaluate_ci_gate(
-        gh,
+        forge,
         pr_number,
         required_names=required_names,
         wait_seconds=wait_seconds,
@@ -715,7 +701,7 @@ def evaluate_merge_gate(
     )
     head_sha, facts, decision = decide_at_head(
         pr_number,
-        gh=gh,
+        forge=forge,
         db=db,
         ci_green=ci_gate.green,
         repo_root=repo_root,
@@ -734,22 +720,25 @@ def evaluate_merge_gate(
         ci_gate=ci_gate,
         facts=facts,
         decision=decision,
+        pull_request=pr,
     )
 
 
 def run_auto_merge(
     pr_number: int,
     *,
-    gh: GhCli | None = None,
+    forge: Forge | None = None,
     db_path: Path | None = None,
-    required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
+    required_names: Sequence[str] | None = None,
     wait_seconds: int | None = None,
     poll_interval: int | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     repo_root: Path | None = None,
+    merge_method: MergeMethod | None = None,
+    delete_branch: bool | None = None,
 ) -> AutoMergeResult:
-    """Evaluate the merge gates and (if all green) squash-merge.
+    """Evaluate the merge gates and (if all green) merge with the configured method.
 
     The function is the unit invoked by ``repoach review merge
     <N>`` and the ``auto_merge`` job in the GitHub Actions workflow.
@@ -772,16 +761,20 @@ def run_auto_merge(
     already-merged or closed PR is treated as idempotent success
     (``OUTCOME_ALREADY_MERGED``).
     """
-    gh = gh or GhCli()
+    forge = forge or select_forge(cwd=repo_root)
+    if merge_method is None or delete_branch is None:
+        configured_method, configured_delete = merge_preferences(repo_root)
+        merge_method = merge_method if merge_method is not None else configured_method
+        delete_branch = delete_branch if delete_branch is not None else configured_delete
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
 
-    pr_meta = gh.pr_view(pr_number) or {}
-    base = str(pr_meta.get("baseRefName") or "")
-    head = str(pr_meta.get("headRefName") or "")
-    state = str(pr_meta.get("state") or "").upper()
+    pr = _pull_request_or_none(forge, pr_number)
+    base = pr.base_ref if pr is not None else ""
+    head = pr.head_ref if pr is not None else ""
+    state = pr.state.upper() if pr is not None else ""
 
     _log.info(
         "auto_merge.run_started",
@@ -837,9 +830,17 @@ def run_auto_merge(
                 notes=f"state={state}",
             )
         )
+    if pr is not None and pr.state not in WRITABLE_STATES:
+        return _persist(
+            AutoMergeResult(
+                pr_number=pr_number,
+                outcome=OUTCOME_SKIP_STATE,
+                notes=f"state={state}, refusing to write",
+            )
+        )
 
     verified_head, stale_reason = resolve_verified_head(
-        gh,
+        forge,
         pr_number,
         head,
         repo_root=repo_root or Path.cwd(),
@@ -862,7 +863,7 @@ def run_auto_merge(
         )
 
     ci_gate = evaluate_ci_gate(
-        gh,
+        forge,
         pr_number,
         required_names=required_names,
         wait_seconds=wait_seconds,
@@ -883,7 +884,7 @@ def run_auto_merge(
 
     _, facts, decision = decide_at_head(
         pr_number,
-        gh=gh,
+        forge=forge,
         db=db,
         ci_green=ci_gate.green,
         repo_root=repo_root,
@@ -907,7 +908,7 @@ def run_auto_merge(
             )
         )
 
-    tip_sha, tip_err = _ls_remote_tip(gh, head)
+    tip_sha, tip_err = _ls_remote_tip(forge, head)
     if tip_sha is None or tip_sha != verified_head:
         reason = (
             tip_err
@@ -930,7 +931,21 @@ def run_auto_merge(
             )
         )
 
-    ok, merge_sha, log = squash_merge(gh, pr_number, delete_branch=True)
+    ok, merge_sha, log, refusal = merge_change(
+        forge,
+        pr_number,
+        method=merge_method,
+        delete_branch=delete_branch,
+        head_sha=verified_head,
+    )
+    if not ok and refusal in _REFUSAL_OUTCOMES:
+        return _persist(
+            AutoMergeResult(
+                pr_number=pr_number,
+                outcome=_REFUSAL_OUTCOMES[refusal],
+                notes=f"merge refused ({refusal}): {log}",
+            )
+        )
     if not ok:
         return _persist(
             AutoMergeResult(

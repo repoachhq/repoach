@@ -2,7 +2,7 @@
 
 Drives :func:`run_coder_fix_from_findings` against a real, hermetic
 bare-origin + working-clone pair (no network beyond the local bare
-repo). Only the ``gh`` boundary is faked — ``pr_view`` scripted to
+repo). Only the forge boundary is faked — ``pull_request`` scripted to
 return a PR with no ``headRefName`` — and only the CI/ruff/pytest
 gates are stubbed (they are not the surface this spec changes). The
 git plumbing itself, including ``git_commit_and_push``, runs for
@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
+from repoach.forge import Diff, PullRequest
 from repoach.review import coder_loop
 from repoach.review.coder_findings import run_coder_fix_from_findings
 from repoach.review.findings import (
@@ -52,20 +52,20 @@ class _ScriptedGh:
     def __init__(self, *, head: str | None) -> None:
         self._head = head
 
-    def pr_view(self, pr_number: int) -> dict[str, str]:
-        del pr_number
-        meta = {"baseRefName": "develop", "state": "OPEN"}
-        if self._head is not None:
-            meta["headRefName"] = self._head
-        return meta
+    name = "github"
 
-    def pr_head_sha(self, pr_number: int) -> str:
-        del pr_number
-        return "shaHEAD"
+    def pull_request(self, number: int) -> PullRequest:
+        return PullRequest(
+            number=number,
+            base_ref="develop",
+            head_ref=self._head or "",
+            state="open",
+            head_sha="shaHEAD",
+        )
 
-    def pr_diff(self, pr_number: int) -> SimpleNamespace:
-        del pr_number
-        return SimpleNamespace(ok=True, stdout="diff", stderr="")
+    def diff(self, number: int) -> Diff:
+        del number
+        return Diff(text="diff")
 
 
 class _FakeCoder:
@@ -144,7 +144,7 @@ def test_push_refuses_when_no_head_branch_end_to_end(tmp_path: Path, monkeypatch
     }
     res = run_coder_fix_from_findings(
         _PR_NUMBER,
-        gh=_ScriptedGh(head=None),
+        forge=_ScriptedGh(head=None),
         repo_root=work,
         coder=_FakeCoder(plan),
         db_path=db,
@@ -179,7 +179,7 @@ def test_push_targets_real_head_branch_end_to_end(tmp_path: Path, monkeypatch) -
     }
     res = run_coder_fix_from_findings(
         _PR_NUMBER,
-        gh=_ScriptedGh(head="feat/x"),
+        forge=_ScriptedGh(head="feat/x"),
         repo_root=work,
         coder=_FakeCoder(plan),
         db_path=db,

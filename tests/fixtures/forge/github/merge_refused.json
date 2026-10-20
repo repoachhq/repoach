@@ -1,0 +1,64 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": []}"
+    },
+    {
+      "args": [
+        "pr",
+        "merge",
+        "42",
+        "--squash",
+        "--match-head-commit",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--delete-branch"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "X Pull request o/r#42 is not mergeable: the base branch policy prohibits the merge.",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "merge_refused",
+  "forge": "github",
+  "kwargs": {
+    "delete_branch": true,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "method": "squash"
+  },
+  "method": "merge",
+  "raises": "ForgeMergeRefusedError",
+  "result": null,
+  "source": "synthetic: merge call: never executed against a live forge; the write barrier reads the state first",
+  "trimmed": null
+}

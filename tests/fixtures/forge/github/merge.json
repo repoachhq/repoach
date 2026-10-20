@@ -1,0 +1,68 @@
+{
+  "args": [
+    42
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\"}"
+    },
+    {
+      "args": [
+        "pr",
+        "view",
+        "42",
+        "--json",
+        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": []}"
+    },
+    {
+      "args": [
+        "pr",
+        "merge",
+        "42",
+        "--squash",
+        "--match-head-commit",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--delete-branch"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
+    }
+  ],
+  "case": "merge",
+  "forge": "github",
+  "kwargs": {
+    "delete_branch": true,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "method": "squash"
+  },
+  "method": "merge",
+  "raises": null,
+  "result": {
+    "merged": true,
+    "message": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "source": "synthetic: merge call: never executed against a live forge; gh pins the head with --match-head-commit; the write barrier reads the state first",
+  "trimmed": null
+}

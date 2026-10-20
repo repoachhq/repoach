@@ -1,0 +1,58 @@
+{
+  "args": [
+    200
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "--slurp",
+        "repos/:owner/:repo/pulls/200/reviews"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[[{\"id\": 4833152585, \"user\": {\"login\": \"github-actions[bot]\", \"id\": 41898282, \"url\": \"https://api.github.com/users/github-actions%5Bbot%5D\", \"type\": \"Bot\"}, \"body\": \"### Architect review\\n\\n**Verdict:** APPROVE\\n\\nMinimal, correct fix: switches the gh pr list JSON field from flat mergeCommitOid to nested mergeCommit.oid, updates the parser defensively, and pins the argv in a regression test. No architectural concerns.\\n\\n_— Repoach review bot, minimaxai/minimax-m3, 4162 tokens, 76.98s_\", \"state\": \"COMMENTED\"}, {\"id\": 4833152641, \"user\": {\"login\": \"github-actions[bot]\", \"id\": 41898282, \"url\": \"https://api.github.com/users/github-actions%5Bbot%5D\", \"type\": \"Bot\"}, \"body\": \"### Sentinel review\\n\\n**Verdict:** APPROVE\\n\\nRead-only gh pr list field rename from mergeCommitOid to nested mergeCommit.oid. No secrets, no shell injection, no mutation surface. Defensive isinstance checks added. Security-neutral.\\n\\n_— Repoach review bot, z-ai/glm-5.2, 3528 tokens, 10.62s_\", \"state\": \"COMMENTED\"}, {\"id\": 4833152684, \"user\": {\"login\": \"github-actions[bot]\", \"id\": 41898282, \"url\": \"https://api.github.com/users/github-actions%5Bbot%5D\", \"type\": \"Bot\"}, \"body\": \"### Tester review\\n\\n**Verdict:** APPROVE\\n\\nRegression test pins the JSON field name correctly, but the new `isinstance(merge_commit, dict)` guard for unmerged/in-flight PRs is untested. [auto-promoted: nit-only]\\n\\n_— Repoach review bot, minimaxai/minimax-m3, 4805 tokens, 132.45s_\", \"state\": \"COMMENTED\"}, {\"id\": 4833152750, \"user\": {\"login\": \"github-actions[bot]\", \"id\": 41898282, \"url\": \"https://api.github.com/users/github-actions%5Bbot%5D\", \"type\": \"Bot\"}, \"body\": \"### Scribe review\\n\\n**Verdict:** APPROVE\\n\\nDocstring and test docstring accurately reflect the nested mergeCommit shape; no missing sections, no silent excepts, no language drift.\\n\\n_— Repoach review bot, minimaxai/minimax-m3, 4000 tokens, 68.34s_\", \"state\": \"COMMENTED\"}]]"
+    }
+  ],
+  "case": "reviews",
+  "forge": "github",
+  "kwargs": {},
+  "method": "reviews",
+  "raises": null,
+  "result": [
+    {
+      "author": "github-actions[bot]",
+      "body": "### Architect review\n\n**Verdict:** APPROVE\n\nMinimal, correct fix: switches the gh pr list JSON field from flat mergeCommitOid to nested mergeCommit.oid, updates the parser defensively, and pins the argv in a regression test. No architectural concerns.\n\n_— Repoach review bot, minimaxai/minimax-m3, 4162 tokens, 76.98s_",
+      "comments": [],
+      "id": 4833152585,
+      "state": "COMMENTED"
+    },
+    {
+      "author": "github-actions[bot]",
+      "body": "### Sentinel review\n\n**Verdict:** APPROVE\n\nRead-only gh pr list field rename from mergeCommitOid to nested mergeCommit.oid. No secrets, no shell injection, no mutation surface. Defensive isinstance checks added. Security-neutral.\n\n_— Repoach review bot, z-ai/glm-5.2, 3528 tokens, 10.62s_",
+      "comments": [],
+      "id": 4833152641,
+      "state": "COMMENTED"
+    },
+    {
+      "author": "github-actions[bot]",
+      "body": "### Tester review\n\n**Verdict:** APPROVE\n\nRegression test pins the JSON field name correctly, but the new `isinstance(merge_commit, dict)` guard for unmerged/in-flight PRs is untested. [auto-promoted: nit-only]\n\n_— Repoach review bot, minimaxai/minimax-m3, 4805 tokens, 132.45s_",
+      "comments": [],
+      "id": 4833152684,
+      "state": "COMMENTED"
+    },
+    {
+      "author": "github-actions[bot]",
+      "body": "### Scribe review\n\n**Verdict:** APPROVE\n\nDocstring and test docstring accurately reflect the nested mergeCommit shape; no missing sections, no silent excepts, no language drift.\n\n_— Repoach review bot, minimaxai/minimax-m3, 4000 tokens, 68.34s_",
+      "comments": [],
+      "id": 4833152750,
+      "state": "COMMENTED"
+    }
+  ],
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

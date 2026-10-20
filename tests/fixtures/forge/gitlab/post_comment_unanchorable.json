@@ -1,0 +1,86 @@
+{
+  "args": [
+    7,
+    "fix"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}}"
+    },
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}}"
+    },
+    {
+      "args": [
+        "api",
+        "--method",
+        "POST",
+        "projects/:id/merge_requests/7/discussions",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "glab: 400 Bad request - Note {:line_code=>[\"can't be blank\"]} (HTTP 400)",
+      "stdin": "{\"body\": \"fix\", \"position\": {\"position_type\": \"text\", \"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"old_path\": \"a.py\", \"new_path\": \"a.py\", \"new_line\": 999}}",
+      "stdout": "{\"message\": \"400 Bad request - Note {:line_code=>[\\\"can't be blank\\\"]}\"}"
+    },
+    {
+      "args": [
+        "api",
+        "--method",
+        "POST",
+        "projects/:id/merge_requests/7/notes",
+        "--header",
+        "Content-Type: application/json",
+        "--input",
+        "-"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": "{\"body\": \"**`a.py:999`**\\n\\nfix\"}",
+      "stdout": "{\"id\": 7, \"body\": \"**`a.py:999`**\\n\\nfix\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}"
+    }
+  ],
+  "case": "post_comment_unanchorable",
+  "forge": "gitlab",
+  "kwargs": {
+    "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "line": 999,
+    "path": "a.py"
+  },
+  "method": "post_comment",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "**`a.py:999`**\n\nfix",
+    "created_at": "2026-10-19T10:00:00Z",
+    "id": 7,
+    "in_reply_to": null,
+    "line": null,
+    "path": null,
+    "thread_id": null
+  },
+  "source": "synthetic: write call: never executed against a live forge; the line is outside the diff (position fallback); the write barrier reads the state first",
+  "trimmed": null
+}

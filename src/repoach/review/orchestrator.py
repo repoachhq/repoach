@@ -53,12 +53,24 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..core.config import get_settings
+from ..core.config import get_settings, require_gateway_credentials
 from ..core.logging import get_logger
+from ..core.paths import project_root
+from ..forge import (
+    ARCHIVE_MARKER,
+    Forge,
+    ForgeError,
+    ForgeStateRefusedError,
+    InlineCommentDraft,
+    Review,
+    ReviewDraft,
+    select_forge,
+)
+from ..project.config import load_project_config
+from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
 from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
-from .gh_client import GhCli, GhResult
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
@@ -96,42 +108,10 @@ from .reviewer import (
     Tester,
     make_file_excerpts,
 )
+from .spec import SpecPlan, load_spec
 from .thread_context import ResolvedDisagreement
 
 _log = get_logger(__name__)
-
-
-def _parse_comment_id(stdout: str) -> int | None:
-    """Extract the integer ``id`` field from a gh API JSON response.
-
-    The ``gh api`` invocation echoes the JSON of the created resource
-    on stdout — a single inline comment
-    (:meth:`~repoach.review.gh_client.GhCli.pr_review_comment`) or,
-    since SP-REVIEW-POST-BATCH, a whole batched review
-    (:meth:`~repoach.review.gh_client.GhCli.pr_review_submit_batch`).
-    Both shapes carry their own id under the same top-level ``"id"``
-    key, so one parser covers both callers.  Tolerant of empty /
-    non-JSON output (returns ``None``) so a missing id never crashes
-    the review pass — the auto-challenge pass simply can't target that
-    comment/review.
-    """
-    if not stdout:
-        return None
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        _log.debug("orchestrator.comment_id_json_decode_failed", error=str(exc)[:120])
-        return None
-    if not isinstance(data, dict):
-        return None
-    raw = data.get("id")
-    try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError) as exc:
-        _log.debug(
-            "orchestrator.comment_id_int_cast_failed", raw=str(raw)[:50], error=str(exc)[:120]
-        )
-        return None
 
 
 def _render_comment_body(outcome: ReviewerOutcome, comment: ReviewComment) -> str:
@@ -282,7 +262,17 @@ class TeamOutcome:
 
     ``final_verdict`` is sourced from the findings ledger
     (:func:`merge_gate.verdict_from_facts`), not the retired consensus
-    gate.
+    gate, except that one reviewer ending ``ERROR`` (transport exhausted,
+    bot crashed) makes it ``ERROR``. ``posting_outcome`` is
+    ``"SKIP_ERROR"`` when posting was requested but suppressed because a
+    reviewer errored, and ``"SKIP_STATE"`` when the forge refused
+    a write because the PR / MR is no longer open; posting then stopped
+    at that first refused write. ``spec_id`` / ``spec_source`` name the
+    spec the review ran against and where it was declared (``flag``,
+    ``description``, ``branch``), both None when none was declared;
+    ``spec_covered`` is None when no coverage was computed;
+    ``spec_missing`` is True when a ``Spec:`` line named an id with no
+    document (the review then runs without a spec).
     """
 
     pr_number: int
@@ -295,13 +285,19 @@ class TeamOutcome:
     hallucinations: list[GuardEvent] = field(default_factory=list)
     head_sha: str | None = None
     auto_challenges: list[dict] = field(default_factory=list)
+    posting_outcome: str | None = None
+    spec_id: str | None = None
+    spec_source: str | None = None
+    spec_covered: bool | None = None
+    spec_missing: bool = False
 
 
 class ReviewTeamOrchestrator:
     """Run the four reviewer bots in parallel and post their findings.
 
     Args:
-        gh: Optional pre-built :class:`GhCli` instance.
+        forge: Optional pre-built :class:`~repoach.forge.Forge`; selected
+            for ``repo_root`` (:func:`~repoach.forge.select_forge`) when omitted.
         db_path: Path to the L4 SQLite db.  Defaults to settings.db_path.
         post_to_github: When False, do not publish anything to GitHub
             (dry-run mode for tests / local previews).
@@ -311,7 +307,7 @@ class ReviewTeamOrchestrator:
     def __init__(
         self,
         *,
-        gh: GhCli | None = None,
+        forge: Forge | None = None,
         db_path: Path | None = None,
         post_to_github: bool = True,
         max_workers: int = 4,
@@ -319,18 +315,49 @@ class ReviewTeamOrchestrator:
     ) -> None:
         """Initialise the orchestrator with optional dependencies."""
         settings = get_settings()
-        self._gh = gh or GhCli()
+        self._repo_root = repo_root or Path.cwd()
+        self._forge = forge or select_forge(cwd=self._repo_root)
         self._db_path = db_path or Path(settings.db_path)
         self._post = post_to_github
         self._max_workers = max_workers
-        self._repo_root = repo_root or Path.cwd()
         init_schema(self._db_path)
 
-    def review_pr(self, pr_number: int) -> TeamOutcome:
+    def _load_declared_spec(self, declared: SpecResolution) -> SpecPlan | None:
+        """Load the spec a pull request declares, or None.
+
+        A declared id with no document under the spec directory is
+        reviewed without a spec. A ``Spec:`` line naming a missing
+        document is a warning (the author asked for a spec); a branch
+        naming one stays an info, as it always was. The ``--spec`` flag
+        is checked by the CLI before the review starts.
+
+        Args:
+            declared: The resolved id and its source.
+
+        Returns:
+            The loaded spec, or None.
+        """
+        if declared.spec_id is None:
+            return None
+        try:
+            return load_spec(declared.spec_id, root=self._repo_root)
+        except FileNotFoundError as exc:
+            log = _log.warning if declared.source == "description" else _log.info
+            log(
+                "review_team.declared_spec_missing",
+                spec_id=declared.spec_id,
+                source=declared.source,
+                error=str(exc)[:200],
+            )
+            return None
+
+    def review_pr(self, pr_number: int, *, spec_flag: str | None = None) -> TeamOutcome:
         """Run the four reviewers in parallel and return aggregated outcome.
 
         Args:
             pr_number: GitHub PR number.
+            spec_flag: The ``--spec`` value; outranks the description's
+                ``Spec:`` line and the branch name (SP-UNIVERSAL-PROJECT-CONFIG G4).
 
         Returns:
             A :class:`TeamOutcome` with each reviewer's verdict, the
@@ -338,7 +365,7 @@ class ReviewTeamOrchestrator:
 
         Pipeline:
             1. **Fetch diff.**  Failure to read the PR diff is fatal —
-               we return a degraded ``COMMENT`` outcome rather than
+               we return an ``ERROR`` outcome rather than
                crash the workflow.
             2. **Submit fresh-head guard to background thread**
                (SP-FRESH-HEAD-CONCURRENT) — when posting to GitHub,
@@ -364,7 +391,7 @@ class ReviewTeamOrchestrator:
             5. **Run the four reviewers in parallel** through a
                :class:`ThreadPoolExecutor`.  A single bot blowing up
                (NIM chain exhaustion, parser crash) records a degraded
-               ``COMMENT`` outcome — the team continues without it.
+               ``ERROR`` outcome — the others run, nothing is published.
             6. **Hallucination guard** (SP-DEV-V2-B3) — post-process
                each outcome to disprove "missing X" claims by grepping
                the working tree, and to catch the self-referential
@@ -389,20 +416,20 @@ class ReviewTeamOrchestrator:
                layer : each new commit on the impl branch re-fires
                ``auto-review.yml`` which calls back into us.
         """
-        diff_res = self._gh.pr_diff(pr_number)
-        if not diff_res.ok:
+        try:
+            diff = self._forge.diff(pr_number).text
+        except ForgeError as exc:
             _log.error(
                 "review_team.diff_fetch_failed",
                 pr_number=pr_number,
-                stderr=diff_res.stderr[:200],
+                stderr=exc.message[:200],
             )
             return TeamOutcome(
                 pr_number=pr_number,
-                final_verdict=ReviewVerdict.COMMENT,
+                final_verdict=ReviewVerdict.ERROR,
                 n_blockers=0,
                 n_majors=0,
             )
-        diff = diff_res.stdout
         diff_hash = _compute_diff_hash(diff)
 
         head_guard_pool: ThreadPoolExecutor | None = None
@@ -410,49 +437,56 @@ class ReviewTeamOrchestrator:
         if self._post:
             head_guard_pool = ThreadPoolExecutor(max_workers=1)
             head_guard_future = head_guard_pool.submit(
-                resolve_fresh_head, self._gh, pr_number, repo_root=self._repo_root
+                resolve_fresh_head, self._forge, pr_number, repo_root=self._repo_root
             )
         head_sha: str | None = None
 
         spec_plan_md: str | None = None
         spec_id: str | None = None
+        spec_source: str | None = None
+        spec_covered: bool | None = None
+        spec_missing = False
         pr_title = ""
         arch_edges_block = ""
         anchored = False
         base_ref: str | None = None
         try:
-            view = self._gh.pr_view(pr_number)
-            if isinstance(view, dict):
-                pr_title = str(view.get("title") or "")
-            head_ref = (view or {}).get("headRefName") if isinstance(view, dict) else None
-            resolved_base_ref = (view or {}).get("baseRefName") if isinstance(view, dict) else None
-            base_ref = (
-                resolved_base_ref
-                if isinstance(resolved_base_ref, str) and resolved_base_ref
-                else None
+            pr = self._forge.pull_request(pr_number)
+            pr_title = pr.title
+            head_ref = pr.head_ref
+            base_ref = pr.base_ref or None
+            declared = resolve_spec(
+                flag=spec_flag,
+                description=pr.body,
+                branch=head_ref,
+                sources=load_project_config(project_root(self._repo_root)).review.spec_sources,
+                root=self._repo_root,
             )
-            if isinstance(head_ref, str) and head_ref:
-                from .spec import maybe_load_active_spec
+            spec = self._load_declared_spec(declared)
+            if spec is not None:
+                spec_plan_md = spec.raw_markdown
+                spec_id = spec.id
+                spec_source = declared.source
+            elif declared_spec_missing(declared, self._repo_root):
+                spec_id = declared.spec_id
+                spec_source = declared.source
+                spec_missing = True
+            elif head_ref:
+                from .subspec_anchor import maybe_anchor_decomposed_parent
 
-                spec = maybe_load_active_spec(branch=head_ref)
-                if spec is not None:
-                    spec_plan_md = spec.raw_markdown
-                    spec_id = spec.id
-                else:
-                    from .subspec_anchor import maybe_anchor_decomposed_parent
-
-                    anchor = maybe_anchor_decomposed_parent(head_ref, root=self._repo_root)
-                    if anchor is not None:
-                        spec_plan_md = anchor.spec_plan_md
-                        spec_id = anchor.parent_id
-                        arch_edges_block = anchor.arch_edges
-                        anchored = True
-                        _log.info(
-                            "review_team.anchored_to_sub_specs",
-                            pr_number=pr_number,
-                            parent_id=anchor.parent_id,
-                            sub_spec_ids=list(anchor.sub_spec_ids),
-                        )
+                anchor = maybe_anchor_decomposed_parent(head_ref, root=self._repo_root)
+                if anchor is not None:
+                    spec_plan_md = anchor.spec_plan_md
+                    spec_id = anchor.parent_id
+                    spec_source = "branch"
+                    arch_edges_block = anchor.arch_edges
+                    anchored = True
+                    _log.info(
+                        "review_team.anchored_to_sub_specs",
+                        pr_number=pr_number,
+                        parent_id=anchor.parent_id,
+                        sub_spec_ids=list(anchor.sub_spec_ids),
+                    )
         except Exception as exc:
             _log.info(
                 "review_team.spec_lookup_failed",
@@ -460,7 +494,7 @@ class ReviewTeamOrchestrator:
                 error=str(exc),
             )
 
-        if spec_id and not anchored:
+        if spec_id and not anchored and not spec_missing:
             try:
                 from .governed_spec import load_governed_spec, render_arch_edges
 
@@ -486,7 +520,7 @@ class ReviewTeamOrchestrator:
         resolved_per_role: dict[BotRole, tuple[ResolvedDisagreement, ...]] = {}
         try:
             for r in reviewers:
-                items = fetch_resolved_disagreements(self._gh, pr_number, role=r.role)
+                items = fetch_resolved_disagreements(self._forge, pr_number, role=r.role)
                 resolved_per_role[r.role] = tuple(items)
         except Exception as exc:
             _log.warning(
@@ -534,7 +568,7 @@ class ReviewTeamOrchestrator:
                     outcomes.append(
                         ReviewerOutcome(
                             role=reviewer.role,
-                            verdict=ReviewVerdict.COMMENT,
+                            verdict=ReviewVerdict.ERROR,
                             summary=(f"_(bot crashed: {type(exc).__name__} — {str(exc)[:140]})_"),
                             comments=[],
                             model_used="<n/a>",
@@ -594,7 +628,7 @@ class ReviewTeamOrchestrator:
         for i, o in enumerate(outcomes):
             if (
                 isinstance(o, ReviewerOutcome)
-                and o.verdict != ReviewVerdict.APPROVE
+                and o.verdict not in {ReviewVerdict.APPROVE, ReviewVerdict.ERROR}
                 and not any(c.severity in {"blocker", "major"} for c in o.comments)
             ):
                 outcomes[i] = replace(
@@ -608,6 +642,16 @@ class ReviewTeamOrchestrator:
                     pr_number=pr_number,
                     original_verdict=o.verdict.value,
                 )
+
+        errored_roles = [o.role.value for o in outcomes if o.verdict == ReviewVerdict.ERROR]
+        publish = self._post and not errored_roles
+        if errored_roles:
+            _log.error(
+                "review_team.reviewer_errored",
+                pr_number=pr_number,
+                roles=errored_roles,
+                posting="suppressed",
+            )
 
         n_blockers = sum(1 for o in outcomes for c in o.comments if c.severity == "blocker")
         n_majors = sum(1 for o in outcomes for c in o.comments if c.severity == "major")
@@ -655,15 +699,21 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
+        state_refused: ForgeStateRefusedError | None = None
         try:
             from .thread_context import post_refuted_finding_sentinels
 
-            n_sentinels = post_refuted_finding_sentinels(self._gh, self._db_path, pr_number)
-            _log.info(
-                "review_team.refuted_sentinels_posted",
-                pr_number=pr_number,
-                n_sentinels=n_sentinels,
-            )
+            if publish:
+                n_sentinels = post_refuted_finding_sentinels(self._forge, self._db_path, pr_number)
+                _log.info(
+                    "review_team.refuted_sentinels_posted",
+                    pr_number=pr_number,
+                    n_sentinels=n_sentinels,
+                )
+            else:
+                _log.info("review_team.refuted_sentinels_skipped_dry_run", pr_number=pr_number)
+        except ForgeStateRefusedError as exc:
+            state_refused = exc
         except Exception as exc:
             _log.warning(
                 "review_team.refuted_sentinels_failed",
@@ -673,7 +723,8 @@ class ReviewTeamOrchestrator:
             )
 
         try:
-            self._fire_proposed_escalation_dossier(pr_number)
+            if not errored_roles:
+                self._fire_proposed_escalation_dossier(pr_number)
         except Exception as exc:
             _log.warning(
                 "review_team.proposed_escalation_failed",
@@ -682,7 +733,7 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
-        if spec_id is not None:
+        if spec_id is not None and not spec_missing:
             try:
                 from .spec_gate import (
                     SpecCoverage,
@@ -695,7 +746,7 @@ class ReviewTeamOrchestrator:
                     spec_id, repo_root=self._repo_root, base_ref=base_ref
                 )
                 if not resolution.base_available and base_ref:
-                    self._gh._run_git(
+                    self._forge.git(
                         [
                             "fetch",
                             "--quiet",
@@ -721,6 +772,7 @@ class ReviewTeamOrchestrator:
                         missing=["base-ref-unavailable"],
                         covered=False,
                     )
+                spec_covered = coverage.covered
                 record_spec_coverage(
                     self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
                 )
@@ -744,7 +796,7 @@ class ReviewTeamOrchestrator:
         ledger_facts = summarise_ledger_facts(
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
         )
-        final = verdict_from_facts(ledger_facts)
+        final = ReviewVerdict.ERROR if errored_roles else verdict_from_facts(ledger_facts)
 
         team = TeamOutcome(
             pr_number=pr_number,
@@ -754,6 +806,10 @@ class ReviewTeamOrchestrator:
             head_sha=head_sha,
             reviews=outcomes,
             hallucinations=all_events,
+            spec_id=spec_id,
+            spec_source=spec_source,
+            spec_covered=spec_covered,
+            spec_missing=spec_missing,
         )
 
         for outcome in outcomes:
@@ -765,26 +821,28 @@ class ReviewTeamOrchestrator:
         for event in all_events:
             record_hallucination(self._db_path, pr_number=pr_number, event=event)
 
-        if self._post:
-            posted_ids: dict[tuple[str, int], int] = {}
-            for outcome in outcomes:
-                self._publish_outcome(
+        if self._post and errored_roles:
+            team.posting_outcome = "SKIP_ERROR"
+        if publish and state_refused is None:
+            try:
+                self._publish_all(
                     pr_number=pr_number,
-                    outcome=outcome,
+                    outcomes=outcomes,
                     head_sha=head_sha,
                     team=team,
-                    posted_ids=posted_ids,
+                    resolved_per_role=resolved_per_role,
                 )
-            self._run_auto_challenge_pass(
+            except ForgeStateRefusedError as exc:
+                state_refused = exc
+        if state_refused is not None:
+            team.posting_outcome = "SKIP_STATE"
+            _log.warning(
+                "review_team.posting_skipped_state",
                 pr_number=pr_number,
-                outcomes=outcomes,
-                resolved_per_role=resolved_per_role,
-                posted_ids=posted_ids,
-                team=team,
+                state=state_refused.state,
+                posted_reviews=team.posted_reviews,
+                posted_comments=team.posted_comments,
             )
-            self._upsert_archive_comment(team)
-            self._fire_routine(team)
-            remember_verified_findings(self._db_path, pr_number=pr_number)
 
         _log.info(
             "review_team.done",
@@ -795,6 +853,42 @@ class ReviewTeamOrchestrator:
             posted=team.posted_reviews,
         )
         return team
+
+    def _publish_all(
+        self,
+        *,
+        pr_number: int,
+        outcomes: list[ReviewerOutcome],
+        head_sha: str | None,
+        team: TeamOutcome,
+        resolved_per_role: dict[BotRole, tuple[ResolvedDisagreement, ...]],
+    ) -> None:
+        """Publish every reviewer, the auto-challenges and the archive, then notify.
+
+        A :class:`~repoach.forge.ForgeStateRefusedError` from any write
+        propagates out of every nested fallback, so a PR / MR that is no
+        longer open stops the whole sequence at its first write — one
+        state read, no COMMENT retry, no per-comment or verdict fallback.
+        """
+        posted_ids: dict[tuple[str, int], int] = {}
+        for outcome in outcomes:
+            self._publish_outcome(
+                pr_number=pr_number,
+                outcome=outcome,
+                head_sha=head_sha,
+                team=team,
+                posted_ids=posted_ids,
+            )
+        self._run_auto_challenge_pass(
+            pr_number=pr_number,
+            outcomes=outcomes,
+            resolved_per_role=resolved_per_role,
+            posted_ids=posted_ids,
+            team=team,
+        )
+        self._upsert_archive_comment(team)
+        self._fire_routine(team)
+        remember_verified_findings(self._db_path, pr_number=pr_number)
 
     def _join_head_guard(
         self,
@@ -1038,42 +1132,56 @@ class ReviewTeamOrchestrator:
         single bad anchor degrades in isolation rather than losing the
         whole reviewer's output.
         """
-        comments_payload = [
-            {
-                "file": comment.file,
-                "line": comment.line,
-                "body": _render_comment_body(outcome, comment),
-            }
+        drafts = [
+            InlineCommentDraft(
+                path=comment.file,
+                line=comment.line,
+                body=_render_comment_body(outcome, comment),
+            )
             for comment in outcome.comments
         ]
         review_body = _render_review_body(outcome)
         verdict = outcome.verdict.value
-        res = self._gh.pr_review_submit_batch(
-            pr_number,
-            commit_sha=head_sha,
-            verdict=verdict,
-            body=review_body,
-            comments=comments_payload,
-        )
-        if not res.ok and verdict != ReviewVerdict.COMMENT.value:
-            _log.warning(
-                "review_team.batch_review_rejected",
-                role=outcome.role.value,
-                verdict=verdict,
-                stderr=res.stderr[:200],
-            )
-            res = self._gh.pr_review_submit_batch(
+        posted: Review | None = None
+        last_error = ""
+        try:
+            posted = self._forge.post_review(
                 pr_number,
-                commit_sha=head_sha,
-                verdict=ReviewVerdict.COMMENT.value,
-                body=review_body,
-                comments=comments_payload,
+                ReviewDraft(
+                    verdict=verdict, body=review_body, comments=drafts, commit_sha=head_sha
+                ),
             )
-        if not res.ok:
+        except ForgeStateRefusedError:
+            raise
+        except ForgeError as exc:
+            if verdict == ReviewVerdict.COMMENT.value:
+                last_error = exc.message
+            else:
+                _log.warning(
+                    "review_team.batch_review_rejected",
+                    role=outcome.role.value,
+                    verdict=verdict,
+                    stderr=exc.message[:200],
+                )
+                try:
+                    posted = self._forge.post_review(
+                        pr_number,
+                        ReviewDraft(
+                            verdict=ReviewVerdict.COMMENT.value,
+                            body=review_body,
+                            comments=drafts,
+                            commit_sha=head_sha,
+                        ),
+                    )
+                except ForgeStateRefusedError:
+                    raise
+                except ForgeError as retry_exc:
+                    last_error = retry_exc.message
+        if posted is None:
             _log.warning(
                 "review_team.batch_review_fully_rejected",
                 role=outcome.role.value,
-                stderr=res.stderr[:200],
+                stderr=last_error[:200],
             )
             self._publish_per_comment(
                 pr_number=pr_number,
@@ -1086,45 +1194,10 @@ class ReviewTeamOrchestrator:
 
         team.posted_reviews += 1
         team.posted_comments += len(outcome.comments)
-        if posted_ids is not None and comments_payload:
-            self._recover_batched_posted_ids(
-                pr_number=pr_number,
-                res=res,
-                posted_ids=posted_ids,
-            )
-
-    def _recover_batched_posted_ids(
-        self,
-        *,
-        pr_number: int,
-        res: GhResult,
-        posted_ids: dict[tuple[str, int], int],
-    ) -> None:
-        """Populate ``posted_ids`` from a successful batched review's comments.
-
-        Parses the created review's own ``id`` out of ``res.stdout``,
-        fetches that review's comments scoped to its id (not the
-        whole-PR comment list), and records ``(file, line) -> comment
-        id`` for every entry whose ``path``/``line``/``id`` are present
-        and well-typed — the same shape
-        :meth:`_run_auto_challenge_pass` already consumes today.
-        Malformed / unparseable JSON no-ops (``posted_ids`` unchanged,
-        logged at debug) rather than raising — the auto-challenge pass
-        simply can't target this reviewer's threads this round.
-        """
-        review_id = _parse_comment_id(res.stdout)
-        if review_id is None:
-            _log.debug(
-                "review_team.batch_review_id_parse_failed",
-                pr_number=pr_number,
-            )
-            return
-        for entry in self._gh.list_review_id_comments(pr_number, review_id):
-            path = entry.get("path")
-            line = entry.get("line")
-            comment_id = entry.get("id")
-            if isinstance(path, str) and isinstance(line, int) and isinstance(comment_id, int):
-                posted_ids[(path, line)] = comment_id
+        if posted_ids is not None and drafts:
+            for comment in posted.comments:
+                if comment.path is not None and comment.line is not None and comment.id:
+                    posted_ids[(comment.path, comment.line)] = comment.id
 
     def _publish_per_comment(
         self,
@@ -1155,54 +1228,60 @@ class ReviewTeamOrchestrator:
         """
         for comment in outcome.comments:
             body = _render_comment_body(outcome, comment)
-            res = self._gh.pr_review_comment(
-                pr_number,
-                body=body,
-                commit_sha=head_sha,
-                file=comment.file,
-                line=comment.line,
-            )
-            if res.ok:
-                team.posted_comments += 1
-                if posted_ids is not None:
-                    new_id = _parse_comment_id(res.stdout)
-                    if new_id is not None:
-                        posted_ids[(comment.file, comment.line)] = new_id
-            else:
+            try:
+                created = self._forge.post_comment(
+                    pr_number,
+                    body,
+                    path=comment.file,
+                    line=comment.line,
+                    commit_sha=head_sha,
+                )
+            except ForgeStateRefusedError:
+                raise
+            except ForgeError as exc:
                 _log.warning(
                     "review_team.comment_post_failed",
                     role=outcome.role.value,
                     file=comment.file,
                     line=comment.line,
-                    stderr=res.stderr[:200],
+                    stderr=exc.message[:200],
                 )
+                continue
+            team.posted_comments += 1
+            if posted_ids is not None and created.id:
+                posted_ids[(comment.file, comment.line)] = created.id
 
         review_body = _render_review_body(outcome)
-        res = self._gh.pr_review_submit(
-            pr_number,
-            verdict=outcome.verdict.value,
-            summary=review_body,
-        )
-        if res.ok:
+        try:
+            self._forge.post_review(
+                pr_number, ReviewDraft(verdict=outcome.verdict.value, body=review_body)
+            )
+        except ForgeStateRefusedError:
+            raise
+        except ForgeError as exc:
+            _log.warning(
+                "review_team.review_submit_failed",
+                role=outcome.role.value,
+                stderr=exc.message[:200],
+            )
+        else:
             team.posted_reviews += 1
             return
-        _log.warning(
-            "review_team.review_submit_failed",
-            role=outcome.role.value,
-            stderr=res.stderr[:200],
-        )
         fallback_body = (
             f"_(verdict submission rejected — falling back to a comment)_\n\n{review_body}"
         )
-        fb = self._gh.pr_review_comment(pr_number, body=fallback_body)
-        if fb.ok:
-            team.posted_comments += 1
-        else:
+        try:
+            self._forge.post_comment(pr_number, fallback_body)
+        except ForgeStateRefusedError:
+            raise
+        except ForgeError as exc:
             _log.warning(
                 "review_team.review_fallback_failed",
                 role=outcome.role.value,
-                stderr=fb.stderr[:200],
+                stderr=exc.message[:200],
             )
+        else:
+            team.posted_comments += 1
 
     def _fire_proposed_escalation_dossier(self, pr_number: int) -> None:
         """Fire a proposed-escalation dossier for findings frozen in proposed.
@@ -1358,18 +1437,17 @@ class ReviewTeamOrchestrator:
             )
             for match in matches:
                 body = format_auto_challenge_reply(match)
-                res = self._gh.reply_to_review_comment(
-                    pr_number,
-                    comment_id=match.new_comment_id,
-                    body=body,
-                )
-                if not res.ok:
+                try:
+                    self._forge.reply(pr_number, match.new_comment_id, body)
+                except ForgeStateRefusedError:
+                    raise
+                except ForgeError as exc:
                     _log.warning(
                         "review.bot.auto_challenge_reply_failed",
                         pr_number=pr_number,
                         role=outcome.role.value,
                         new_comment_id=match.new_comment_id,
-                        stderr=(res.stderr or "")[:200],
+                        stderr=exc.message[:200],
                     )
                     continue
                 team.auto_challenges.append(
@@ -1396,11 +1474,11 @@ class ReviewTeamOrchestrator:
     def _upsert_archive_comment(self, team: TeamOutcome) -> None:
         """Push a sticky comment carrying the full TeamOutcome JSON.
 
-        The comment is identified by :attr:`GhCli.ARCHIVE_MARKER` so
-        repeat runs replace it instead of stacking.  This gives us a
+        The comment is identified by :data:`~repoach.forge.ARCHIVE_MARKER`
+        so repeat runs replace it instead of stacking.  This gives us a
         machine-readable archive that survives the workflow runner —
-        retrievable via :meth:`GhCli.fetch_archive_comment` from any
-        machine with PR-read access.
+        retrievable via ``repoach review report`` from any machine with
+        PR-read access.
         """
         payload = team_outcome_to_dict(team)
         body_json = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
@@ -1418,12 +1496,15 @@ class ReviewTeamOrchestrator:
         if transcript:
             archive_appendix = f"{archive_appendix}\n{transcript}"
         body = self._render_report_body(team, archive_appendix=archive_appendix)
-        res = self._gh.upsert_archive_comment(team.pr_number, body=body)
-        if not res.ok:
+        try:
+            self._forge.upsert_marked_comment(team.pr_number, ARCHIVE_MARKER, body)
+        except ForgeStateRefusedError:
+            raise
+        except ForgeError as exc:
             _log.warning(
                 "review_team.archive_upsert_failed",
                 pr_number=team.pr_number,
-                stderr=res.stderr[:200],
+                stderr=exc.message[:200],
             )
 
     def _render_report_body(self, team: TeamOutcome, *, archive_appendix: str) -> str:
@@ -1609,7 +1690,7 @@ def _local_git(repo_root: Path, *args: str) -> str | None:
 
 
 def resolve_fresh_head(
-    gh: GhCli,
+    forge: Forge,
     pr_number: int,
     *,
     repo_root: Path,
@@ -1625,15 +1706,15 @@ def resolve_fresh_head(
     wasted. When the local checkout sits on the PR's head branch, the
     locally committed HEAD is ground truth: re-poll ``gh`` (bounded)
     until the API catches up. If it never does, log loudly and return
-    what GitHub serves — the review must still record what it actually
+    what the forge serves — the review must still record what it actually
     reviewed (evidence-first), but the operator sees the divergence.
     """
-    served = gh.pr_head_sha(pr_number)
+    served = _served_head(forge, pr_number)
     local_branch = _local_git(repo_root, "symbolic-ref", "--short", "HEAD")
     if not local_branch:
         return served
     try:
-        view = gh.pr_view(pr_number)
+        head_branch: str | None = forge.pull_request(pr_number).head_ref
     except Exception as exc:
         _log.debug(
             "orchestrator.head_guard_view_failed",
@@ -1641,7 +1722,6 @@ def resolve_fresh_head(
             error=str(exc)[:120],
         )
         return served
-    head_branch = view.get("headRefName") if isinstance(view, dict) else None
     if head_branch != local_branch:
         return served
     local_head = _local_git(repo_root, "rev-parse", "HEAD")
@@ -1658,7 +1738,7 @@ def resolve_fresh_head(
             local=local_head[:12],
         )
         sleep(delay_s)
-        served = gh.pr_head_sha(pr_number)
+        served = _served_head(forge, pr_number)
     if served != local_head:
         _log.error(
             "orchestrator.reviewing_stale_head",
@@ -1667,6 +1747,17 @@ def resolve_fresh_head(
             local=local_head[:12],
         )
     return served
+
+
+def _served_head(forge: Forge, pr_number: int) -> str | None:
+    """The head SHA the forge serves, ``None`` when it cannot be read."""
+    try:
+        return forge.head_sha(pr_number)
+    except ForgeError as exc:
+        _log.debug(
+            "orchestrator.head_sha_unavailable", pr_number=pr_number, error=exc.message[:120]
+        )
+        return None
 
 
 def _compute_diff_hash(diff: str) -> str:
@@ -1805,14 +1896,30 @@ def _render_guard_section(team: TeamOutcome) -> str:
     )
 
 
-def run_review(pr_number: int, *, post: bool = True) -> TeamOutcome:
+def run_review(
+    pr_number: int,
+    *,
+    post: bool = True,
+    forge: Forge | None = None,
+    spec: str | None = None,
+) -> TeamOutcome:
     """Module-level convenience wrapper used by the CLI command.
 
     Args:
         pr_number: GitHub PR number to review.
-        post: When False, do not publish anything to GitHub (dry-run).
+        post: When False, do not publish anything to the forge (dry-run).
+        forge: The forge to read and post through; selected from the
+            repository when omitted.
+        spec: The ``--spec`` value, highest-precedence spec source.
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers.
+
+    Raises:
+        GatewayConfigError: The gateway URL or its shared secret is
+            missing; raised before any forge call.
     """
-    return ReviewTeamOrchestrator(post_to_github=post).review_pr(pr_number)
+    require_gateway_credentials(get_settings())
+    return ReviewTeamOrchestrator(forge=forge, post_to_github=post).review_pr(
+        pr_number, spec_flag=spec
+    )

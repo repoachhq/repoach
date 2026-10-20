@@ -56,13 +56,13 @@ def _hermetic_llm_proxy_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default ``REPOACH_LLM_PROXY_BASE_URL`` so ``core.config.Settings``
     always resolves without touching the real deployed ``.env``.
 
-    SP-CONFIG-ENV-ANCHOR: ``Settings`` now fails loud at construction
+    SP-CONFIG-ENV-ANCHOR: the gateway client fails loud at build time
     when neither an anchored env file nor the process environment
     resolves ``llm_proxy_base_url`` (the retired ``:8082`` fallback is
     gone, on purpose). CI checks out no ``.env`` (it is gitignored) and
     the committed ``chains.env`` never carried this key, so without a
-    default here the first test in a worker process to reach a real
-    ``core.config.Settings()``/``get_settings()`` would raise. A test
+    default here the first test in a worker process to build a real
+    gateway client from ``get_settings()`` would raise. A test
     exercising the unresolved-raise path itself deletes the var later
     on the same ``monkeypatch`` fixture instance, which wins.
     """

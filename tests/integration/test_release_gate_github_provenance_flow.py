@@ -2,9 +2,9 @@
 
 Builds a real bare ``origin`` repo and a real clone with a genuine
 ``main..develop`` release range, drives ``gather_release_facts`` with
-``provenance=ProvenanceSource.GITHUB`` against a ``GhCli`` whose git
+``provenance=ProvenanceSource.GITHUB`` against a ``GitHubForge`` whose git
 operations are all real (``_run_git`` untouched) but whose
-``merged_pr_merge_shas`` is overridden to return a controlled set of
+``merged_shas`` is overridden to return a controlled set of
 merge-commit SHAs -- the one boundary a hermetic test cannot cross
 live, since it would otherwise require a real ``gh`` call to GitHub.
 Mirrors the hermetic tmp-repo fixture style of
@@ -16,7 +16,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from repoach.review.gh_client import GhCli
+from repoach.forge.github import GitHubForge
 from repoach.review.release_gate import (
     ProvenanceSource,
     compute_release_decision,
@@ -33,10 +33,10 @@ def _fake_ci_runner(repo_root: Path) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess([], 0)
 
 
-class _GithubMergedShasGhCli(GhCli):
-    """A real ``GhCli`` whose ``merged_pr_merge_shas`` is a settable boundary fake.
+class _GithubMergedShasGhCli(GitHubForge):
+    """A real ``GitHubForge`` whose ``merged_shas`` is a settable boundary fake.
 
-    Every other method (``_run_git``, ``pr_head_sha``) runs unchanged
+    Every other method (``_run_git``, ``head_sha``) runs unchanged
     against the real git repository at ``cwd`` -- only the GitHub
     merged-PR-list call, which would otherwise require network access
     to GitHub, is replaced with a canned set the test controls.
@@ -46,7 +46,7 @@ class _GithubMergedShasGhCli(GhCli):
         super().__init__(cwd=cwd)
         self.merge_commit_shas = merge_commit_shas
 
-    def merged_pr_merge_shas(self, base: str) -> set[str]:
+    def merged_shas(self, base: str) -> set[str]:
         return self.merge_commit_shas
 
 
@@ -62,7 +62,7 @@ def test_github_provenance_gate_merges_clean_range_then_refuses_on_missing_sha(
     3. Branch ``develop`` off ``main``, add two squash-shaped commits,
        push ``develop``, and record both commits' real SHAs.
     4. Drive ``gather_release_facts(..., provenance=ProvenanceSource.GITHUB)``
-       against a fake ``gh`` whose ``merged_pr_merge_shas`` returns
+       against a fake ``gh`` whose ``merged_shas`` returns
        exactly those two SHAs and a green injected CI runner: expect
        ``merge is True``.
     5. Drop one SHA from the fake GitHub merged-set and re-gather:
@@ -96,7 +96,7 @@ def test_github_provenance_gate_merges_clean_range_then_refuses_on_missing_sha(
 
     facts = gather_release_facts(
         repo_root=work_dir,
-        gh=gh,
+        forge=gh,
         ci_runner=_fake_ci_runner,
         provenance=ProvenanceSource.GITHUB,
     )
@@ -112,7 +112,7 @@ def test_github_provenance_gate_merges_clean_range_then_refuses_on_missing_sha(
 
     stale_facts = gather_release_facts(
         repo_root=work_dir,
-        gh=gh,
+        forge=gh,
         ci_runner=_fake_ci_runner,
         provenance=ProvenanceSource.GITHUB,
     )

@@ -1,0 +1,30 @@
+{
+  "args": [
+    200
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "pr",
+        "view",
+        "200",
+        "--json",
+        "state"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"state\": \"MERGED\"}"
+    }
+  ],
+  "case": "pr_state",
+  "forge": "github",
+  "kwargs": {},
+  "method": "pr_state",
+  "raises": null,
+  "result": "merged",
+  "source": "recorded 2026-10-19 from m3",
+  "trimmed": null
+}

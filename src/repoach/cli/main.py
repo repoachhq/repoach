@@ -16,9 +16,15 @@ import typer
 from ..arch.cli import arch_app
 from ..core.config import get_settings
 from ..core.logging import configure_logging
+from ..gates.config import current_gates_config
 from ..lint import edge_honesty
+from ..project.config import ConfigError
+from ..project.config import specs_dir as configured_specs_dir
 from .chain_status import chain_status
+from .config_cmds import config_app
+from .doctor_cmds import doctor, project_root_or_exit
 from .init_cmds import init
+from .migrate_cmds import migrate_config
 from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
 
@@ -36,18 +42,33 @@ def arch_check(
         None, "--base", help="Diff against this ref (three-dot); defaults to integration_branch."
     ),
     staged: bool = typer.Option(False, "--staged", help="Check the staged index (pre-commit)."),
-    specs_dir: Path = typer.Option(
-        Path("docs/specs"), "--specs-dir", help="Directory of spec markdown files."
+    specs_dir: Path | None = typer.Option(
+        None,
+        "--specs-dir",
+        help="Directory of spec markdown files (default: [repoach].specs_dir, docs/specs).",
     ),
 ) -> None:
-    """Fail when a changed file's couplings are missing from its depends_on."""
-    repo_root = Path(__file__).resolve().parents[3]
+    """Fail when a changed file's couplings are missing from its depends_on.
+
+    ``[arch].require_frontmatter`` decides what a spec lacking the registry
+    keys is: a named violation (rc 1) when true, an ``ungoverned`` count
+    when false — never a traceback (SP-ARCH-FOREIGN-FRONTMATTER).
+    """
+    repo_root = project_root_or_exit()
     base = base if base is not None else get_settings().integration_branch
-    report = edge_honesty.run(base=base, staged=staged, specs_dir=specs_dir, repo_root=repo_root)
+    report = edge_honesty.run(
+        base=base,
+        staged=staged,
+        specs_dir=specs_dir or configured_specs_dir(repo_root),
+        repo_root=repo_root,
+    )
     for line in edge_honesty.report_lines(report):
         typer.echo(line, err=True)
     if not report.ok:
         raise typer.Exit(code=1)
+    if report.governed_specs == 0:
+        typer.echo("edge-honesty: ok (0 governed specs)")
+        return
     typer.echo("edge-honesty: ok")
 
 
@@ -57,20 +78,79 @@ app.command(name="develop")(review_develop)
 app.command(name="plan")(review_plan)
 app.command(name="chain-status")(chain_status)
 app.command(name="init")(init)
+app.command(name="doctor")(doctor)
+app.command(name="migrate-config")(migrate_config)
+app.add_typer(config_app, name="config")
+
+SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset(
+    {"version", "doctor", "migrate-config", "init", "config"}
+)
+"""Subcommands that must run with no configuration at all.
+
+Logging setup builds :class:`~repoach.core.config.Settings`; these
+commands skip it so a bare tool install answers them
+(SP-UNIVERSAL-INSTALL G1/G6)."""
+
+
+def _version_line() -> str:
+    """Return the one-line version banner, ``repoach <version>``."""
+    from .. import __version__
+
+    return f"repoach {__version__}"
+
+
+def _print_version(requested: bool) -> None:
+    """Eager ``--version`` handler: print the banner and stop.
+
+    Runs before :func:`_bootstrap`'s body, so no settings are built.
+
+    Args:
+        requested: Whether ``--version`` was passed.
+
+    Raises:
+        typer.Exit: Always, with code 0, once the banner is printed.
+    """
+    if requested:
+        typer.echo(_version_line())
+        raise typer.Exit(code=0)
 
 
 @app.callback()
-def _bootstrap() -> None:
-    """Configure logging once for every CLI invocation."""
-    configure_logging()
+def _bootstrap(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_print_version,
+        is_eager=True,
+        help="Print the installed Repoach version and exit.",
+    ),
+) -> None:
+    """Configure logging once for every CLI invocation that needs settings.
+
+    An invalid ``repoach.toml`` ends the command here with rc 2, before
+    any forge or provider call, naming the file, key and line: the
+    settings read it, then the gate configuration is built from it once,
+    so a key only the gates check (``[project].languages``) is refused
+    here too rather than as a traceback deep inside a gate.
+
+    Raises:
+        typer.Exit: Code 2 on a :class:`~repoach.project.config.ConfigError`.
+    """
+    if ctx.invoked_subcommand in SETTINGS_FREE_COMMANDS:
+        return
+    try:
+        configure_logging()
+        current_gates_config()
+    except ConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 @app.command("version")
 def show_version() -> None:
-    """Print the installed Repoach version."""
-    from .. import __version__
-
-    typer.echo(__version__)
+    """Print the installed Repoach version (alias of ``--version``)."""
+    typer.echo(_version_line())
 
 
 def _probe_client() -> httpx.AsyncClient:

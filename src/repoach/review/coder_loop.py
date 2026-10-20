@@ -7,14 +7,18 @@ Developer session (:mod:`dev_runner`) build on:
 
 * :func:`is_path_allowed` — the path whitelist (defence in depth on top
   of the prompt): :data:`FORBIDDEN_PATHS` / :data:`FORBIDDEN_PREFIXES`
-  (``.github/``, ``.githooks/``, ``prompts/review/``, ``.env*``), no
-  absolute paths, no ``..`` traversal.
+  (forge and CI config, hooks, agent settings, the project config,
+  ``prompts/review/``, ``.env*``) plus the project's own
+  ``[coder].forbidden_prefixes`` / ``forbidden_paths``, no absolute
+  paths, no ``..`` traversal.
 * :func:`is_placeholder_content` / :func:`persist_placeholder_rejected`
   — reject LLM placeholder strings rather than corrupt the working tree.
 * :func:`apply_fixes` — write validated search/replace or full-file
   edits through the whitelist + placeholder guard.
 * :func:`run_ruff_gate` / :func:`run_pytest_matrix` — the local gates a
-  fix must pass; :func:`git_commit_and_push` lands the result on green
+  fix must pass: the project's ``[commands].lint`` / ``.test`` when it
+  declares them (SP-UNIVERSAL-GATES), else the built-in ruff and
+  ``pytest -q tests/unit``; :func:`git_commit_and_push` lands the result on green
   (a red gate leaves the work uncommitted — no destructive revert; the
   fix-forward stance carried in from the DEVAGENT arc, SP-DEVAGENT-WIRE).
 * :func:`fetch_ci_status` / :func:`fetch_failed_check_logs` — read the
@@ -33,9 +37,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..core.config import Settings
+from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
-from .gh_client import GhCli
+from ..forge import Forge, ForgeError
+from ..gates.commands import run_lint_gate, run_test_gate
+from ..gates.config import GatesConfig, current_gates_config, load_gates_config
 from .patch_apply import apply_search_replace_edits
 from .secret_env import scrubbed_env
 
@@ -58,14 +64,23 @@ FORBIDDEN_PATHS: frozenset[str] = frozenset(
         ".env.example",
         ".env.local",
         ".env.production",
+        ".gitlab-ci.yml",
+        "repoach.toml",
+        ".repoach.env",
     }
 )
-"""Exact repo-relative paths the Coder must never touch."""
+"""Exact repo-relative paths the Coder must never touch: the GitLab
+pipeline definition and repoach's own project configuration
+(SP-UNIVERSAL-GATES G7) join the env files."""
 
 
 FORBIDDEN_PREFIXES: tuple[str, ...] = (
     ".github/",
+    ".gitlab/",
     ".githooks/",
+    ".claude/",
+    ".gemini/",
+    ".agents/",
     "prompts/review/",
     ".git/",
 )
@@ -76,10 +91,24 @@ reviewer persona could let the bot rewrite its own ratings.  All of
 review routing, dependabot.yml and action configs execute in CI.
 ``.githooks/`` is wired via ``git config core.hooksPath`` — a merged
 malicious hook is local code execution on the operator's next
-commit/push (SP-CODER-WHITELIST-HARDEN)."""
+commit/push (SP-CODER-WHITELIST-HARDEN). ``.gitlab/`` (templates, CI
+includes) and the coding-agent settings directories (``.claude/``,
+``.gemini/``, ``.agents/`` — hooks that execute on the operator's next
+session) join them (SP-UNIVERSAL-GATES G7)."""
 
 
-def is_path_allowed(path: str) -> bool:
+def _project_forbidden(config: GatesConfig) -> tuple[frozenset[str], tuple[str, ...]]:
+    """Return the project's extra ``(exact paths, prefixes)`` for the jail.
+
+    Directory-shaped entries (ending with ``/``) are prefixes; the
+    configured ``prompts_dir`` is always one.
+    """
+    prompts = config.prompts_dir.strip("/") + "/"
+    prefixes = (*(p for p in config.forbidden_prefixes if p), prompts)
+    return frozenset(p for p in config.forbidden_paths if p), prefixes
+
+
+def is_path_allowed(path: str, config: GatesConfig | None = None) -> bool:
     """Return True when ``path`` is safe for the Coder to overwrite.
 
     A path is allowed when:
@@ -92,11 +121,14 @@ def is_path_allowed(path: str) -> bool:
     * Its final component is not exactly ``chains.env`` — the
       authoritative chain-selection config, human- or
       chainpilot-written only (SP-CODER-CHAINS-GUARD).
-    * It is not in :data:`FORBIDDEN_PATHS`.
-    * It does not start with any prefix in :data:`FORBIDDEN_PREFIXES`.
+    * It is not in :data:`FORBIDDEN_PATHS` nor ``[coder].forbidden_paths``.
+    * It does not start with any prefix in :data:`FORBIDDEN_PREFIXES`,
+      ``[coder].forbidden_prefixes`` or the configured ``prompts_dir``.
 
     Args:
         path: A repo-relative path proposed by the Coder.
+        config: The project's gate configuration; when omitted, the
+            configuration of the project the working directory sits in.
 
     Returns:
         True when safe, False otherwise.
@@ -116,7 +148,14 @@ def is_path_allowed(path: str) -> bool:
     norm = path.replace("\\", "/")
     if norm in FORBIDDEN_PATHS:
         return False
-    return all(not norm.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
+    if any(norm.startswith(prefix) for prefix in FORBIDDEN_PREFIXES):
+        return False
+    extra_paths, extra_prefixes = _project_forbidden(
+        config if config is not None else current_gates_config()
+    )
+    if norm in extra_paths:
+        return False
+    return all(not norm.startswith(prefix) for prefix in extra_prefixes)
 
 
 def _run(
@@ -349,7 +388,7 @@ def persist_placeholder_rejected(
     Returns:
         The path written to, or ``None`` on I/O failure.
     """
-    target_dir = logs_dir or (Path(__file__).resolve().parents[3] / "logs")
+    target_dir = logs_dir or get_settings().logs_dir
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -492,6 +531,7 @@ def apply_fixes(
     applied = 0
     rejected: list[str] = []
     repo_root = repo_root.resolve()
+    jail_config = load_gates_config(repo_root)
     for fix in fixes:
         path_raw = fix.get("path")
         new_content = fix.get("new_content")
@@ -499,7 +539,7 @@ def apply_fixes(
         if not isinstance(path_raw, str) or not path_raw:
             rejected.append(str(path_raw))
             continue
-        if not is_path_allowed(path_raw):
+        if not is_path_allowed(path_raw, jail_config):
             _log.warning("coder.path_rejected", path=path_raw)
             rejected.append(path_raw)
             continue
@@ -541,7 +581,7 @@ def apply_fixes(
             _log.warning("coder.path_escapes_repo", path=path_raw)
             rejected.append(path_raw)
             continue
-        if not is_path_allowed(resolved_relative):
+        if not is_path_allowed(resolved_relative, jail_config):
             _log.warning(
                 "coder.resolved_path_rejected",
                 path=path_raw,
@@ -612,14 +652,28 @@ def _pytest_pythons(settings: Settings | None = None) -> list[str | None]:
     return interpreters or [None]
 
 
-def run_pytest_matrix(repo_root: Path) -> tuple[bool, str]:
-    """Run :func:`run_pytest` across every interpreter listed in env.
+def run_pytest_matrix(repo_root: Path, config: GatesConfig | None = None) -> tuple[bool, str]:
+    """Run the test gate across every interpreter listed in env.
 
-    Iterates over :func:`_pytest_pythons`.  Returns on the first
-    failure (no need to keep going — a single CI matrix slot failing
-    means we cannot push).  When the env is unset, this collapses to
-    a single ``run_pytest`` call.
+    With a project ``[commands].test`` (SP-UNIVERSAL-GATES G2) the
+    command runs once — or once per ``REPOACH_CODER_PYTHONS`` entry when
+    it contains a ``{python}`` placeholder; an empty command is a
+    printed skip.  Without a configuration file the built-in
+    :func:`run_pytest` iterates over :func:`_pytest_pythons`, returning
+    on the first failure (a single CI matrix slot failing means we
+    cannot push); when the env is unset this collapses to a single call.
+
+    Args:
+        repo_root: Working tree root.
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
+
+    Returns:
+        ``(passed, tail_log)``.
     """
+    resolved = config if config is not None else load_gates_config(repo_root)
+    if resolved.test_cmd is not None:
+        return _run_configured_tests(repo_root, resolved)
     pythons = _pytest_pythons()
     for python in pythons:
         ok, tail = run_pytest(repo_root, python=python)
@@ -631,8 +685,35 @@ def run_pytest_matrix(repo_root: Path) -> tuple[bool, str]:
     return True, f"pytest green under {summary}"
 
 
-def run_ruff_gate(repo_root: Path, *, unsafe_fixes: bool = False) -> tuple[bool, str]:
-    """Run the same ruff checks CI does, with auto-fix applied first.
+def _run_configured_tests(repo_root: Path, config: GatesConfig) -> tuple[bool, str]:
+    """Run ``[commands].test``, expanding ``{python}`` over the interpreter matrix."""
+    if not config.test_cmd:
+        passed, tail = run_test_gate(repo_root, config)
+        _log.info("coder.test_gate_skipped", reason=tail)
+        return passed, tail
+    if "{python}" not in config.test_cmd:
+        passed, tail = run_test_gate(repo_root, config)
+        return passed, tail if not passed else f"tests green: {config.test_cmd}"
+    pythons = _pytest_pythons()
+    for python in pythons:
+        passed, tail = run_test_gate(repo_root, config, python=python)
+        label = python or "default"
+        if not passed:
+            return False, f"tests failed under {label}:\n{tail}"
+        _log.info("coder.test_matrix_slot_green", python=label)
+    summary = ", ".join(p or "default" for p in pythons)
+    return True, f"tests green under {summary}"
+
+
+def run_ruff_gate(
+    repo_root: Path, *, unsafe_fixes: bool = False, config: GatesConfig | None = None
+) -> tuple[bool, str]:
+    """Run the project's lint gate; without configuration, the ruff checks CI does.
+
+    With a ``repoach.toml`` the project's ``[commands].lint`` runs
+    instead (SP-UNIVERSAL-GATES G2) and its ``(passed, tail)`` is
+    returned unchanged; an empty command is a printed skip. Without
+    one, the built-in ruff sequence below runs, auto-fix first.
 
     Sequence:
         1. ``ruff check --fix src tests`` — apply the auto-fixable
@@ -654,12 +735,20 @@ def run_ruff_gate(repo_root: Path, *, unsafe_fixes: bool = False) -> tuple[bool,
             introduces is caught by the promised-tests and full-suite
             gates downstream. The Coder loop keeps the conservative
             default (safe fixes only).
+        config: The project's gate configuration; read from
+            ``repo_root`` when omitted.
 
     Returns:
         ``(passed, tail_log)``. ``passed`` is ``False`` as soon as
         any step in 3-4 reports a violation; the caller is expected
         to revert the working tree before exiting.
     """
+    resolved = config if config is not None else load_gates_config(repo_root)
+    if resolved.lint_cmd is not None:
+        passed, tail = run_lint_gate(repo_root, resolved)
+        if not resolved.lint_cmd:
+            _log.info("coder.lint_gate_skipped", reason=tail)
+        return passed, tail
     ruff = shutil.which("ruff") or "ruff"
     fix_cmd = [ruff, "check", "--fix", "src", "tests"]
     if unsafe_fixes:
@@ -717,17 +806,18 @@ CI_PENDING: str = "PENDING"
 CI_UNKNOWN: str = "UNKNOWN"
 
 
-def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]]]:
+def fetch_ci_status(forge: Forge, pr_number: int) -> tuple[str, list[dict[str, str]]]:
     """Return the aggregated check state on a PR.
 
-    Classifies every check ``gh pr checks`` reports, not only checks
-    marked as required by branch protection — this repo has none
-    configured, so a required-only filter always returns an empty row
-    set (SP-CI-STATUS-CLIENT-CLASSIFY).
+    Classifies every check the forge reports (:meth:`Forge.checks` —
+    ``gh pr checks`` on GitHub, the head pipeline's jobs on GitLab), not
+    only checks marked as required by branch protection — this repo has
+    none configured, so a required-only filter always returns an empty
+    row set (SP-CI-STATUS-CLIENT-CLASSIFY).
 
     Args:
-        gh: A :class:`GhCli` wrapper.
-        pr_number: GitHub PR number.
+        forge: The forge the PR lives on.
+        pr_number: PR / MR number.
 
     Returns:
         ``(state, failed_rows)`` where ``state`` is one of
@@ -736,61 +826,38 @@ def fetch_ci_status(gh: GhCli, pr_number: int) -> tuple[str, list[dict[str, str]
         ``{name, link, workflow}`` dicts for the failed checks (used
         downstream to fetch their failure logs).
     """
-    res = gh._run(
-        [
-            "pr",
-            "checks",
-            str(pr_number),
-            "--json",
-            "name,state,bucket,link,workflow",
-        ]
-    )
-    if not res.ok and res.returncode != 8:
-        return CI_UNKNOWN, []
     try:
-        rows = json.loads(res.stdout) or []
-    except json.JSONDecodeError:
-        return CI_UNKNOWN, []
-    if not isinstance(rows, list):
+        rows = forge.checks(pr_number)
+    except ForgeError as exc:
+        _log.info("coder.ci_status_unknown", pr_number=pr_number, error=exc.message[:200])
         return CI_UNKNOWN, []
     if not rows:
         return CI_GREEN, []
 
     for row in rows:
-        bucket = str(row.get("bucket", "")).lower()
-        if bucket in {"skipping", "cancel"}:
+        if row.bucket in {"skipping", "cancel"}:
             _log.info(
                 "coder.ci_check_non_blocking",
-                name=str(row.get("name", "")),
-                bucket=bucket,
+                name=row.name,
+                bucket=row.bucket,
             )
 
     failed_rows = [
-        {
-            "name": str(r.get("name", "")),
-            "link": str(r.get("link", "")),
-            "workflow": str(r.get("workflow", "")),
-        }
-        for r in rows
-        if str(r.get("bucket", "")).lower() == "fail"
+        {"name": r.name, "link": r.link, "workflow": r.workflow} for r in rows if r.bucket == "fail"
     ]
     if failed_rows:
         return CI_RED, failed_rows
 
-    buckets = [str(r.get("bucket", "")).lower() for r in rows]
-    if any(b in {"pending", ""} for b in buckets):
+    if any(r.bucket in {"pending", ""} for r in rows):
         return CI_PENDING, []
     return CI_GREEN, []
 
 
-_RUN_LINK_RE = re.compile(r"/runs/(\d+)(?:/job/(\d+))?")
-
-
-def fetch_failed_check_logs(gh: GhCli, failed_rows: list[dict[str, str]]) -> list[str]:
-    """Pull the ``--log-failed`` tail for each failed check link.
+def fetch_failed_check_logs(forge: Forge, failed_rows: list[dict[str, str]]) -> list[str]:
+    """Pull the failed-log tail for each failed check link.
 
     Args:
-        gh: A :class:`GhCli` wrapper.
+        forge: The forge the PR lives on (:meth:`Forge.check_log`).
         failed_rows: Output of :func:`fetch_ci_status` second tuple item.
 
     Returns:
@@ -801,28 +868,19 @@ def fetch_failed_check_logs(gh: GhCli, failed_rows: list[dict[str, str]]) -> lis
     Note:
         Each block is capped at ~8 KB so the total payload stays well
         below the Coder's 60 KB diff cap even with several failed jobs.
-
-        ``fetch_ci_status`` accepts ``gh pr checks`` exit code 8 in
-        addition to 0 because the CLI exits 8 when required checks
-        aren't all green but still emits the rows on stdout — both
-        codes carry parseable JSON.
     """
     out: list[str] = []
     for row in failed_rows:
         name = row.get("name") or "?"
         link = row.get("link") or ""
-        m = _RUN_LINK_RE.search(link)
-        if m is None:
+        try:
+            log = forge.check_log(link)
+        except ForgeError as exc:
+            _log.warning("coder.check_log_failed", name=name, error=exc.message[:200])
+            out.append(f"### {name}\n_({forge.name} log fetch failed: {exc.message[:200]})_")
+            continue
+        if log is None:
             out.append(f"### {name}\n_(no log link found in: {link!r})_")
             continue
-        run_id = m.group(1)
-        job_id = m.group(2)
-        argv = ["run", "view", run_id, "--log-failed"]
-        if job_id:
-            argv += ["--job", job_id]
-        res = gh._run(argv)
-        if not res.ok:
-            out.append(f"### {name}\n_(gh run view failed: {res.stderr[:200]})_")
-            continue
-        out.append(f"### {name}\n{res.stdout[-8000:]}")
+        out.append(f"### {name}\n{log[-8000:]}")
     return out

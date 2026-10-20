@@ -1,0 +1,27 @@
+{
+  "args": [
+    999999
+  ],
+  "bot_username": "",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/999999"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "glab: 404 Not found (HTTP 404)\n",
+      "stdin": null,
+      "stdout": "{\"message\": \"404 Not found\"}"
+    }
+  ],
+  "case": "pull_request_not_found",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "pull_request",
+  "raises": "ForgeNotFoundError",
+  "result": null,
+  "source": "recorded 2026-10-19 from yoob_2",
+  "trimmed": null
+}

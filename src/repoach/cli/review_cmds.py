@@ -5,10 +5,14 @@ the main app in :mod:`repoach.cli.main`.
 
 Subcommands:
 
-* ``repoach review pr <N>`` — run the four reviewer bots on PR
-  ``<N>`` and (by default) post their findings to GitHub.
+* ``repoach review pr <N>`` — run the four reviewer bots on PR / MR
+  ``<N>`` and (by default) post their findings to the forge.
 * ``repoach review pr <N> --dry-run`` — same but never publish to
-  GitHub; only persist to L4.  Useful for local previews and tests.
+  the forge; only persist to L4.  Useful for local previews and tests.
+
+Every command takes ``--forge github|gitlab`` (SP-UNIVERSAL-FORGE G4);
+without it the forge comes from ``REPOACH_FORGE``, ``repoach.toml`` or
+the origin remote. A forge that cannot be selected exits ``2``.
 * ``repoach review report <N>`` — pull the sticky archive comment
   off PR ``<N>`` and emit the full TeamOutcome as JSON.  Works
   regardless of where the workflow ran (local machine vs. Actions
@@ -24,16 +28,94 @@ from pathlib import Path
 import typer
 from sqlalchemy import create_engine, text
 
-from ..core.config import get_settings
+from ..core.config import GatewayConfigError, get_settings
+from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
+from ..project.config import load_project_config
+from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
 from ..review.auto_merge import (
+    OUTCOME_ALREADY_MERGED,
     evaluate_merge_gate,
     merge_exit_code,
     run_auto_merge,
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.gh_client import GhCli
 from ..review.orchestrator import run_review
+from ..review.reviewer import ReviewVerdict
+from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
+from .doctor_cmds import project_root_or_exit
+
+_FORGE_HELP = (
+    "Forge the PR / MR lives on: github or gitlab (default: REPOACH_FORGE, repoach.toml, origin)."
+)
+
+_SPEC_HELP = (
+    "Spec the PR / MR implements; outranks a 'Spec: SP-…' description line and the branch "
+    "name. Without any, the review runs with no spec (spec coverage: not_applicable)."
+)
+
+
+EXIT_REVIEW_ERROR = 3
+"""``review pr`` exit code when a reviewer could not reach a model.
+
+Distinct from 2 (request changes, or a ``--spec`` naming no document)
+and from 5 (a refused merge gate): no review happened, nothing was
+published (SP-REVIEW-TRANSPORT-ERROR-VERDICT)."""
+
+
+def _spec_flag(value: object) -> str | None:
+    """Return the ``--spec`` value, or None when absent.
+
+    Anything but a non-empty string — typer's ``OptionInfo`` default when
+    a command function is called directly from Python included — means
+    no flag was given.
+    """
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _require_spec(spec: str | None, root: Path) -> None:
+    """End the command with rc 2 when ``--spec`` names no spec document.
+
+    Args:
+        spec: The ``--spec`` value, None when absent.
+        root: The project root whose spec directory is searched.
+
+    Raises:
+        typer.Exit: Code 2, ``spec SP-X not found under <specs_dir>``.
+    """
+    if spec is None or spec_exists(spec, root=root):
+        return
+    where = specs_dir_for(root).relative_to(root)
+    typer.echo(f"spec {canonical_spec_id(spec)} not found under {where}", err=True)
+    raise typer.Exit(code=2)
+
+
+def _forge_kwargs(forge_name: object) -> dict[str, Forge]:
+    """Select the forge named by ``--forge``; ``{}`` lets the command select its own.
+
+    Anything but a non-empty string — ``None``, or typer's ``OptionInfo``
+    default when a command function is called directly from Python —
+    means no flag was given.
+
+    Raises:
+        typer.Exit: Code 2 when the named forge cannot be selected.
+    """
+    if not isinstance(forge_name, str) or not forge_name:
+        return {}
+    try:
+        return {"forge": select_forge(override=forge_name)}
+    except ForgeError as exc:
+        typer.echo(f"forge unavailable: {exc.message}", err=True)
+        raise typer.Exit(code=2) from exc
+
+
+def _forge_failure(exc: ForgeError) -> typer.Exit:
+    """Report a forge that could not be selected or reached; exit code 2."""
+    typer.echo(f"forge unavailable: {exc.message}", err=True)
+    return typer.Exit(code=2)
+
 
 review_app = typer.Typer(
     help="Review-bot team operations (NIM-only, no Anthropic quota).",
@@ -64,20 +146,22 @@ pre-fix behaviour for every reason with no dedicated branch.
 
 @review_app.command("pr")
 def review_pr(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to review."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to review."),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
         help=(
             "Run the four reviewers and persist outcomes to L4 but never "
-            "publish anything to GitHub. Useful for local previews."
+            "publish anything to the forge. Useful for local previews."
         ),
     ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+    spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
 ) -> None:
-    """Run the review-bot team on a GitHub PR and emit a summary.
+    """Run the review-bot team on a PR / MR and emit a summary.
 
     The four reviewers (Architect / Sentinel / Tester / Scribe) run in
-    parallel against the PR diff fetched via ``gh pr diff``.  Their
+    parallel against the diff read through the forge.  Their
     individual verdicts are aggregated into a final team verdict
     (``REQUEST_CHANGES`` wins, otherwise ``APPROVE`` wins, otherwise
     ``COMMENT``) which is posted alongside per-bot inline comments.
@@ -90,15 +174,50 @@ def review_pr(
     the ``.github/workflows/auto-review.yml`` workflow therefore consume
     the same shape regardless of which mode they ran in
     (SP-AUTO-REVIEW-V2-MIGRATION).
+
+    ``spec`` / ``spec_source`` name the spec the review ran against and
+    where it was declared (``--spec``, a ``Spec:`` description line, the
+    branch name); with none, ``spec`` is null and ``spec_coverage`` is
+    ``not_applicable`` — never a refusal.  A ``Spec:`` line naming no
+    spec document prints a warning and reports ``spec_coverage`` as
+    ``missing``.  A ``--spec`` naming no spec document exits 2 before
+    any forge call.
+
+    A reviewer that could not reach a model (transport exhausted, bot
+    crashed) ends ``ERROR``: the team verdict is ``ERROR``, nothing is
+    published even without ``--dry-run`` (``posting_outcome`` is
+    ``SKIP_ERROR``), and the command exits 3.  ``posting_outcome`` is null
+    when posting ran or was not requested.
     """
-    team = run_review(pr_number, post=not dry_run)
+    root = project_root_or_exit()
+    spec_flag = _spec_flag(spec)
+    _require_spec(spec_flag, root)
+    try:
+        team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
+    except GatewayConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    spec_id = team.spec_id
+    if team.spec_missing:
+        where = specs_dir_for(root).relative_to(root)
+        typer.echo(
+            f"repoach: warning: spec {spec_id} (from {team.spec_source}) not found under "
+            f"{where}; reviewed without a spec",
+            err=True,
+        )
     payload = {
         "pr_number": team.pr_number,
+        "spec": spec_id,
+        "spec_source": team.spec_source,
+        "spec_coverage": spec_coverage_label(spec_id, team.spec_covered, missing=team.spec_missing),
         "final_verdict": team.final_verdict.value,
         "n_blockers": team.n_blockers,
         "n_majors": team.n_majors,
         "posted_comments": team.posted_comments,
         "posted_reviews": team.posted_reviews,
+        "posting_outcome": team.posting_outcome,
         "reviews": [
             {
                 "role": o.role.value,
@@ -116,7 +235,9 @@ def review_pr(
         ],
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
-    if team.final_verdict.value == "REQUEST_CHANGES":
+    if team.final_verdict == ReviewVerdict.ERROR:
+        raise typer.Exit(code=EXIT_REVIEW_ERROR)
+    if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
         raise typer.Exit(code=2)
 
 
@@ -125,12 +246,13 @@ _ARCHIVE_FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 @review_app.command("report")
 def review_report(
-    pr_number: int = typer.Argument(..., help="GitHub PR number."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab)."),
     raw: bool = typer.Option(
         False,
         "--raw",
         help="Emit the full archive comment markdown instead of the JSON payload.",
     ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
     """Fetch the sticky review-archive comment off a PR and print it.
 
@@ -143,25 +265,32 @@ def review_report(
 
     * ``0`` — archive comment found and printed.
     * ``1`` — the API answered but no comment carries the marker.
-    * ``6`` — the GitHub API call itself failed (transient: rate
+    * ``6`` — the forge API call itself failed (transient: rate
       limit, network); the archive may well exist.
+    * ``2`` — the forge could not be selected.
     """
-    gh = GhCli()
-    fetch = gh.fetch_archive_comment_with_status(pr_number)
-    if fetch.api_error is not None:
+    project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    try:
+        forge = forge or select_forge()
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    try:
+        found = forge.find_marked_comment(pr_number, ARCHIVE_MARKER)
+    except ForgeError as exc:
         typer.echo(
-            f"Archive fetch failed on PR #{pr_number} — gh API error, "
-            f"not a missing archive: {fetch.api_error}",
+            f"Archive fetch failed on PR #{pr_number} — {forge.name} API error, "
+            f"not a missing archive: {exc.message[:200]}",
             err=True,
         )
-        raise typer.Exit(code=6)
-    body = fetch.body
-    if body is None:
+        raise typer.Exit(code=6) from exc
+    if found is None:
         typer.echo(
-            f"No archive comment found on PR #{pr_number} (marker: {gh.ARCHIVE_MARKER})",
+            f"No archive comment found on PR #{pr_number} (marker: {ARCHIVE_MARKER})",
             err=True,
         )
         raise typer.Exit(code=1)
+    body = found.body
     if raw:
         typer.echo(body)
         return
@@ -180,7 +309,9 @@ def review_report(
 
 @review_app.command("fix")
 def review_fix(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to auto-fix."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to auto-fix."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+    spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
 ) -> None:
     """Run one findings-driven Coder auto-fix iteration on a PR.
 
@@ -206,8 +337,19 @@ def review_fix(
         hit; the surviving open blocking findings were driven to
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
+      * ``2`` — ``--spec`` names no spec document, or the forge is unusable.
+
+    The Coder reads the spec resolved like ``review pr`` (``--spec`` >
+    ``Spec:`` description line > branch name); without one it fixes the
+    findings with no spec context.
     """
-    fr = run_coder_fix_from_findings(pr_number)
+    root = project_root_or_exit()
+    spec_flag = _spec_flag(spec)
+    _require_spec(spec_flag, root)
+    try:
+        fr = run_coder_fix_from_findings(pr_number, spec=spec_flag, **_forge_kwargs(forge_name))
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
     typer.echo(
         json.dumps(
             {
@@ -240,9 +382,12 @@ def review_fix(
 
 @review_app.command("merge")
 def review_merge(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to auto-merge."),
+    pr_number: int = typer.Argument(
+        ..., help="PR number (GitHub) or MR iid (GitLab) to auto-merge."
+    ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
 ) -> None:
-    """Squash-merge a PR into ``develop`` once all gates are green.
+    """Merge a PR into ``develop`` once all gates are green (configured method, squash by default).
 
     Gates (all must hold): base = ``develop``, PR open, required CI
     checks all green, and the pure merge gate satisfied at head (zero
@@ -258,7 +403,11 @@ def review_merge(
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
     """
-    result = run_auto_merge(pr_number)
+    project_root_or_exit()
+    try:
+        result = run_auto_merge(pr_number, **_forge_kwargs(forge_name))
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
     typer.echo(
         json.dumps(
             {
@@ -288,6 +437,7 @@ def review_insights(
     that reached a verdict and were confirmed real rather than refuted.
     Read-only; always exits 0.
     """
+    project_root_or_exit()
     from ..review.review_lessons import gather_insights
 
     insights = gather_insights(Path(get_settings().db_path), pr_number=pr_number)
@@ -317,7 +467,9 @@ def review_insights(
 
 @review_app.command("gate")
 def review_gate(
-    pr_number: int = typer.Argument(..., help="GitHub PR number to evaluate."),
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+    spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
 ) -> None:
     """Evaluate the pure merge gate for a PR — read-only, never merges.
 
@@ -331,12 +483,24 @@ def review_gate(
     :func:`decide_at_head`).
 
     Exit codes:
-      * ``0`` — gate satisfied (``merge`` is True): the PR may merge.
+      * ``0`` — gate satisfied (``merge`` is True): the PR may merge; or
+        the PR is already merged (``outcome`` ``ALREADY_MERGED``,
+        ``merge`` False, nothing left to gate).
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
+
+    ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
+    (``--spec`` > ``Spec:`` description line > branch name).
+    ``facts.spec_coverage`` is ``not_applicable`` when no spec is
+    declared: a PR without a spec is never refused for lacking one; it
+    is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
+    a spec that has no document.
     """
+    root = project_root_or_exit()
+    spec_flag = _spec_flag(spec)
+    _require_spec(spec_flag, root)
     try:
-        evaluation = evaluate_merge_gate(pr_number)
+        evaluation = evaluate_merge_gate(pr_number, **_forge_kwargs(forge_name))
     except Exception as exc:
         typer.echo(
             json.dumps(
@@ -347,16 +511,33 @@ def review_gate(
         )
         raise typer.Exit(code=1) from exc
     facts = evaluation.facts
+    pr = evaluation.pull_request
+    declared = resolve_spec(
+        flag=spec_flag,
+        description=pr.body if pr is not None else "",
+        branch=pr.head_ref if pr is not None else "",
+        sources=load_project_config(root).review.spec_sources,
+        root=root,
+    )
+    coverage = spec_coverage_label(
+        declared.spec_id,
+        facts.spec_covered if facts.spec_coverage_known else None,
+        missing=declared_spec_missing(declared, root),
+    )
     typer.echo(
         json.dumps(
             {
                 "pr_number": pr_number,
+                "outcome": evaluation.ci_gate.outcome_tag,
                 "head_sha": evaluation.head_sha,
+                "spec": declared.spec_id,
+                "spec_source": declared.source,
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
                 "facts": {
                     "ci_green": facts.ci_green,
                     "open_blocking_findings": facts.open_blocking_findings,
+                    "spec_coverage": coverage,
                     "spec_covered": facts.spec_covered,
                     "spec_coverage_known": facts.spec_coverage_known,
                     "review_complete": facts.review_complete,
@@ -367,6 +548,8 @@ def review_gate(
             ensure_ascii=False,
         )
     )
+    if evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED:
+        return
     if not evaluation.decision.merge:
         raise typer.Exit(code=5)
 
@@ -395,7 +578,7 @@ def review_develop(
     open_pull_request: bool = typer.Option(
         True,
         "--open-pr/--no-open-pr",
-        help="Whether to call ``gh pr create`` after pushing (default: yes).",
+        help="Whether to open a PR / MR through the forge after pushing (default: yes).",
     ),
     explore_via: str = typer.Option(
         "proxy",
@@ -434,6 +617,7 @@ def review_develop(
       * ``6`` — self-verify gate failed (mechanical or judge).
       * ``7`` — decomposition / parent supersession failed.
     """
+    project_root_or_exit()
     if explore_via not in ("proxy", "claude_cli"):
         typer.echo(f"--explore-via must be 'proxy' or 'claude_cli', got {explore_via!r}", err=True)
         raise typer.Exit(code=2)
@@ -536,6 +720,7 @@ def review_plan(
       * ``2`` — bad ``--explore-via`` value.
       * ``5`` — spec id not found (no doc matches).
     """
+    project_root_or_exit()
     from ..review.planner import run_planner_session
 
     if explore_via not in ("proxy", "claude_cli"):
@@ -587,7 +772,9 @@ def review_hallucinations(
 
     Exits ``0`` whether or not any rows are present.
     """
+    project_root_or_exit()
     db_path = Path(get_settings().db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     where = "WHERE pr_number = :pr_number" if pr_number is not None else ""
     bind = {"pr_number": pr_number} if pr_number is not None else {}

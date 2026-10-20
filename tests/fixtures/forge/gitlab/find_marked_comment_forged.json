@@ -1,0 +1,38 @@
+{
+  "args": [
+    7,
+    "<!-- repoach-review-archive -->"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "projects/:id/merge_requests/7/notes?sort=asc&order_by=created_at&per_page=100"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"id\": 9, \"body\": \"<!-- repoach-review-archive --> system\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": true, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}, {\"id\": 10, \"body\": \"<!-- repoach-review-archive --> forged\", \"author\": {\"username\": \"dev\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}, {\"id\": 11, \"body\": \"<!-- repoach-review-archive --> real\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}]"
+    }
+  ],
+  "case": "find_marked_comment_forged",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "find_marked_comment",
+  "raises": null,
+  "result": {
+    "author": "repoach-bot",
+    "body": "<!-- repoach-review-archive --> real",
+    "created_at": "2026-10-19T10:00:00Z",
+    "id": 11,
+    "in_reply_to": null,
+    "line": null,
+    "path": null,
+    "thread_id": null
+  },
+  "source": "synthetic: a forged marker before the trusted one cannot be posted read-only",
+  "trimmed": null
+}

@@ -25,7 +25,7 @@ from pathlib import Path
 from ..arch import load_registry
 from ..core.logging import get_logger
 from .governed_spec import load_governed_spec, render_arch_edges
-from .spec import SPECS_DIR, SpecPlan, load_spec
+from .spec import SpecPlan, load_spec, specs_dir_for
 
 _log = get_logger(__name__)
 
@@ -80,7 +80,7 @@ def discover_sub_specs(parent_id: str, *, root: Path | None = None) -> list[Spec
     """
     canonical = parent_id.strip().upper()
     pattern = re.compile(rf"^{re.escape(canonical)}-(\d+)$")
-    specs_dir = (root or Path.cwd()) / SPECS_DIR
+    specs_dir = specs_dir_for(root)
     try:
         registry = load_registry(specs_dir)
     except Exception as exc:

@@ -108,7 +108,7 @@ class TestRetryOnTransportException:
         )
 
         assert loop.run_oneshot.call_count == 3
-        assert verdict == ReviewVerdict.COMMENT
+        assert verdict == ReviewVerdict.ERROR
         assert "[parse_failed:TRANSPORT]" in summary
         assert "RuntimeError" in summary
         assert comments == []
@@ -168,7 +168,7 @@ class TestRetryOnParseFailed:
         )
 
         assert loop.run_oneshot.call_count == 3
-        assert verdict == ReviewVerdict.COMMENT
+        assert verdict == ReviewVerdict.ERROR
         assert summary.startswith("[parse_failed:TRANSPORT]")
         assert comments == []
         assert not isinstance(result, _FailedRunResult)

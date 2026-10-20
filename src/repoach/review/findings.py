@@ -82,7 +82,13 @@ class Severity(StrEnum):
 
 
 class FindingStatus(StrEnum):
-    """Lifecycle state of a finding."""
+    """Lifecycle state of a finding.
+
+    ``not_applicable`` is terminal and non-blocking: the mechanical
+    verifier for the claim does not apply to the cited file (another
+    language, outside the declared source roots), so the claim is
+    neither confirmed nor refuted (SP-UNIVERSAL-GATES G4).
+    """
 
     PROPOSED = "proposed"
     VERIFIED = "verified"
@@ -90,6 +96,7 @@ class FindingStatus(StrEnum):
     OPEN = "open"
     RESOLVED = "resolved"
     STUCK = "stuck"
+    NOT_APPLICABLE = "not_applicable"
 
 
 CONFIRMED_REAL_STATUSES: frozenset[FindingStatus] = frozenset(
@@ -102,12 +109,15 @@ copies."""
 
 
 ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
-    FindingStatus.PROPOSED: frozenset({FindingStatus.VERIFIED, FindingStatus.REFUTED}),
+    FindingStatus.PROPOSED: frozenset(
+        {FindingStatus.VERIFIED, FindingStatus.REFUTED, FindingStatus.NOT_APPLICABLE}
+    ),
     FindingStatus.VERIFIED: frozenset({FindingStatus.OPEN}),
     FindingStatus.OPEN: frozenset({FindingStatus.RESOLVED, FindingStatus.STUCK}),
     FindingStatus.REFUTED: frozenset({FindingStatus.PROPOSED}),
     FindingStatus.RESOLVED: frozenset(),
     FindingStatus.STUCK: frozenset(),
+    FindingStatus.NOT_APPLICABLE: frozenset(),
 }
 
 

@@ -1,0 +1,15 @@
+{
+  "args": [
+    "https://example.com/not-a-job"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [],
+  "case": "check_log_no_link",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "check_log",
+  "raises": null,
+  "result": null,
+  "source": "synthetic: a link naming no job",
+  "trimmed": null
+}

@@ -12,6 +12,7 @@ from __future__ import annotations
 from repoach.arch.graph import Graph
 from repoach.arch.registry import (
     MalformedFrontmatterError,
+    MalformedSpec,
     OwnershipConflict,
     OwnershipConflictError,
     Registry,
@@ -24,6 +25,7 @@ from repoach.arch.render import render
 __all__ = [
     "Graph",
     "MalformedFrontmatterError",
+    "MalformedSpec",
     "OwnershipConflict",
     "OwnershipConflictError",
     "Registry",

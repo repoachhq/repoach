@@ -1,7 +1,7 @@
 """Integration test: the fresh-head guard runs concurrently with the reviewer fan-out.
 
 Exercises ``ReviewTeamOrchestrator.review_pr`` end-to-end (SP-FRESH-HEAD-CONCURRENT)
-against a real scratch git repository under ``tmp_path``, a truthful ``GhCli`` fake,
+against a real scratch git repository under ``tmp_path``, a truthful ``gh`` fake,
 and REAL ``Architect`` / ``Sentinel`` / ``Tester`` / ``Scribe`` instances whose only
 replaced surface is the public ``review_diff`` contract method — never an ad-hoc stub
 class with an invented signature. Asserts ``head_sha`` resolves correctly and that the
@@ -18,6 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from repoach.forge.github import GitHubForge
+from repoach.forge.runner import CommandResult
 from repoach.review.merge_gate import MergeFacts
 from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.reviewer import (
@@ -30,6 +32,7 @@ from repoach.review.reviewer import (
     Sentinel,
     Tester,
 )
+from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
 
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
@@ -82,58 +85,30 @@ def _make_sleepy_review_diff(
     return _review_diff
 
 
-class _GhCliFake:
-    """Truthful GhCli replacement that surfaces a stale-forever head SHA.
+def _gh_fake(*, head_sha: str = "stale" * 8, head_ref: str = "feat/x") -> GitHubForge:
+    """A real :class:`GitHubForge` whose ``gh`` surfaces a stale-forever head SHA.
 
-    The scratch git repo has its own HEAD; this fake always returns a different SHA
-    (``\"stale\" * 8``) from ``pr_head_sha`` while reporting the branch name correctly
-    from ``pr_view``, which is exactly the condition that makes ``resolve_fresh_head``
+    The scratch git repo has its own HEAD; ``gh pr view`` always reports a
+    different SHA (``\"stale\" * 8``) while naming the branch correctly,
+    which is exactly the condition that makes ``resolve_fresh_head``
     re-poll until it exhausts its attempts and gives up loudly.
     """
 
-    def __init__(self, *, head_sha: str = "stale" * 8, head_ref: str = "feat/x") -> None:
-        self.head_sha = head_sha
-        self.head_ref = head_ref
+    def _run(args: list[str]) -> CommandResult:
+        if args[:2] == ["pr", "diff"]:
+            return gh_ok(
+                "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x = 1\n",
+                argv=args,
+            )
+        if args[:2] == ["pr", "view"]:
+            return gh_ok(
+                pr_view_stdout(3, head_ref=head_ref, head_sha=head_sha, title="test"), argv=args
+            )
+        if args[:3] == ["api", "--paginate", "--slurp"]:
+            return gh_ok("[[]]", argv=args)
+        return gh_ok("{}", argv=args)
 
-    def pr_diff(self, pr_number: int) -> object:
-        result = MagicMock()
-        result.ok = True
-        result.stdout = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x = 1\n"
-        result.stderr = ""
-        return result
-
-    def pr_view(self, pr_number: int) -> dict[str, object]:
-        return {"headRefName": self.head_ref, "title": "test"}
-
-    def pr_head_sha(self, pr_number: int) -> str | None:
-        return self.head_sha
-
-    def list_review_comments(self, pr_number: int) -> list[dict[str, object]]:
-        return []
-
-    def pr_review_comment(self, pr_number: int, **kw: object) -> object:
-        r = MagicMock()
-        r.returncode = 0
-        r.stdout = ""
-        r.stderr = ""
-        return r
-
-    def pr_review_submit(self, pr_number: int, **kw: object) -> object:
-        r = MagicMock()
-        r.returncode = 0
-        r.stdout = ""
-        r.stderr = ""
-        return r
-
-    def upsert_archive_comment(self, pr_number: int, *, body: str) -> object:
-        r = MagicMock()
-        r.returncode = 0
-        r.stdout = ""
-        r.stderr = ""
-        return r
-
-    def fetch_archive_comment(self, pr_number: int) -> str | None:
-        return None
+    return scripted_github(run=_run)
 
 
 def _silence_downstream_ledger_writes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,7 +156,7 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
     """The head guard resolves correctly and overlaps the reviewer fan-out end to end.
 
     Constructs an orchestrator with a real scratch git repo under ``tmp_path``, a
-    truthful stale-forever ``_GhCliFake``, the real, unmodified ``resolve_fresh_head``
+    truthful stale-forever ``_gh_fake``, the real, unmodified ``resolve_fresh_head``
     (sped up via its ``delay_s`` keyword-only default), and boundary-fake reviewers
     that each sleep briefly. Asserts ``head_sha`` is the stale SHA the fake returns
     after the guard exhausts its retries, and that total wall time sits below the
@@ -207,7 +182,7 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
         check=True,
     )
 
-    gh = _GhCliFake(head_sha="stale" * 8, head_ref="feat/x")
+    gh = _gh_fake(head_sha="stale" * 8, head_ref="feat/x")
 
     reviewer_delay = 1.5
     for role, cls_name in (
@@ -230,7 +205,7 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
     _silence_downstream_ledger_writes(monkeypatch)
 
     orch = ReviewTeamOrchestrator(
-        gh=gh,
+        forge=gh,
         db_path=tmp_path / "review.db",
         post_to_github=True,
         max_workers=4,

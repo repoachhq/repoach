@@ -19,6 +19,7 @@ import pytest
 import typer
 
 from repoach.cli import review_cmds
+from repoach.forge import Diff, PullRequest
 from repoach.review import coder_findings, coder_loop
 from repoach.review.coder_findings import (
     CoderFindingsResult,
@@ -225,11 +226,14 @@ def test_respond_to_findings_parse_failure_is_graceful(tmp_path: Path) -> None:
 
 
 def _gh_mock(*, base: str = "develop", head: str = "feat/x") -> MagicMock:
-    gh = MagicMock()
-    gh.pr_view.return_value = {"baseRefName": base, "headRefName": head, "state": "OPEN"}
-    gh.pr_head_sha.return_value = "head123"
-    gh.pr_diff.return_value = SimpleNamespace(ok=True, stdout="diff", stderr="")
-    return gh
+    """A forge mock answering the protocol reads the findings Coder makes."""
+    forge = MagicMock()
+    forge.name = "github"
+    forge.pull_request.return_value = PullRequest(
+        number=1, base_ref=base, head_ref=head, state="open", head_sha="head123"
+    )
+    forge.diff.return_value = Diff(text="diff")
+    return forge
 
 
 class _FakeCoder:
@@ -243,7 +247,7 @@ class _FakeCoder:
 def test_run_from_findings_refuses_non_develop_base(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(base="main"), repo_root=tmp_path, coder=_FakeCoder({}), db_path=db
+        1, forge=_gh_mock(base="main"), repo_root=tmp_path, coder=_FakeCoder({}), db_path=db
     )
     assert res.pushed is False
     assert res.no_op_reason and "develop" in res.no_op_reason
@@ -254,7 +258,7 @@ def test_run_from_findings_noop_when_no_open_findings(tmp_path: Path, monkeypatc
     init_findings_schema(db)
     monkeypatch.setattr(coder_loop, "fetch_ci_status", lambda *a, **k: (coder_loop.CI_GREEN, []))
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder({}), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder({}), db_path=db
     )
     assert res.pushed is False
     assert res.no_op_reason == "no open blocking findings to resolve"
@@ -289,7 +293,7 @@ def test_run_from_findings_happy_path_resolves(tmp_path: Path, monkeypatch) -> N
         "summary": "added test_resolved",
     }
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
     assert res.pushed is True
     assert res.fixes_applied == 1
@@ -327,7 +331,7 @@ def test_run_coder_fix_records_round_on_push(tmp_path: Path, monkeypatch) -> Non
     plan = {"fixes": [{"path": "tests/test_y.py", "new_content": "...", "rationale": "r"}]}
 
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
 
     assert res.pushed is True
@@ -366,7 +370,7 @@ def test_push_refuses_when_no_head_branch(tmp_path: Path, monkeypatch) -> None:
         "summary": "added test_resolved",
     }
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(head=""), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        1, forge=_gh_mock(head=""), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
 
     assert res.pushed is False
@@ -405,7 +409,7 @@ def test_run_coder_fix_stuck_escalates_without_fixing(tmp_path: Path, monkeypatc
 
     coder = MagicMock()
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=coder, db_path=db, routine_fire=_fake_fire
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=coder, db_path=db, routine_fire=_fake_fire
     )
 
     assert res.stuck is True
@@ -423,7 +427,7 @@ def test_run_coder_fix_stuck_skips_when_no_open(tmp_path: Path, monkeypatch) -> 
     monkeypatch.setattr(coder_loop, "fetch_ci_status", lambda *a, **k: (coder_loop.CI_GREEN, []))
 
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=MagicMock(), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=MagicMock(), db_path=db
     )
 
     assert res.stuck is False
@@ -494,7 +498,7 @@ def test_run_from_findings_materializes_ci_red(tmp_path: Path, monkeypatch) -> N
         "summary": "fixed ci",
     }
     res = run_coder_fix_from_findings(
-        7, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        7, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
     assert res.pushed is True
     assert res.n_open_findings == 1
@@ -520,7 +524,7 @@ def test_run_from_findings_resolves_stale_ci_finding_when_ci_turns_green(
         ),
     )
     monkeypatch.setattr(coder_loop, "fetch_ci_status", lambda *a, **k: (coder_loop.CI_GREEN, []))
-    res = run_coder_fix_from_findings(1, gh=_gh_mock(), repo_root=tmp_path, db_path=db)
+    res = run_coder_fix_from_findings(1, forge=_gh_mock(), repo_root=tmp_path, db_path=db)
     assert res.pushed is False
     assert res.no_op_reason == "no open blocking findings to resolve"
     bb = next(f for f in fetch_findings(db, 1) if f.claim_type is ClaimType.BROKEN_BEHAVIOR)
@@ -554,7 +558,7 @@ def test_placeholder_rejection_flags_and_persists(tmp_path: Path, monkeypatch) -
         "summary": "s",
     }
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
 
     assert res.pushed is False
@@ -577,7 +581,7 @@ def test_whitelist_only_rejection_not_flagged(tmp_path: Path, monkeypatch) -> No
         "summary": "s",
     }
     res = run_coder_fix_from_findings(
-        2, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        2, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
 
     assert res.pushed is False
@@ -589,10 +593,12 @@ def test_cli_from_findings_placeholder_exits_9(monkeypatch) -> None:
     monkeypatch.setattr(
         review_cmds,
         "run_coder_fix_from_findings",
-        lambda pr: CoderFindingsResult(pr_number=pr, placeholder_rejected=True, pushed=False),
+        lambda pr, **_kwargs: CoderFindingsResult(
+            pr_number=pr, placeholder_rejected=True, pushed=False
+        ),
     )
     with pytest.raises(typer.Exit) as exc:
-        review_cmds.review_fix(5)
+        review_cmds.review_fix(5, forge_name=None)
     assert exc.value.exit_code == 9
 
 
@@ -600,10 +606,12 @@ def test_cli_from_findings_whitelist_exits_4(monkeypatch) -> None:
     monkeypatch.setattr(
         review_cmds,
         "run_coder_fix_from_findings",
-        lambda pr: CoderFindingsResult(pr_number=pr, placeholder_rejected=False, pushed=False),
+        lambda pr, **_kwargs: CoderFindingsResult(
+            pr_number=pr, placeholder_rejected=False, pushed=False
+        ),
     )
     with pytest.raises(typer.Exit) as exc:
-        review_cmds.review_fix(6)
+        review_cmds.review_fix(6, forge_name=None)
     assert exc.value.exit_code == 4
 
 
@@ -611,10 +619,10 @@ def test_cli_from_findings_stuck_exits_3(monkeypatch) -> None:
     monkeypatch.setattr(
         review_cmds,
         "run_coder_fix_from_findings",
-        lambda pr: CoderFindingsResult(pr_number=pr, stuck=True, pushed=False),
+        lambda pr, **_kwargs: CoderFindingsResult(pr_number=pr, stuck=True, pushed=False),
     )
     with pytest.raises(typer.Exit) as exc:
-        review_cmds.review_fix(7)
+        review_cmds.review_fix(7, forge_name=None)
     assert exc.value.exit_code == 3
 
 
@@ -644,7 +652,7 @@ def test_run_from_findings_ruff_red_leaves_work_on_disk(tmp_path: Path, monkeypa
     monkeypatch.setattr(coder_loop, "run_ruff_gate", lambda *a, **k: (False, "E501 too long"))
 
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
 
     assert res.pushed is False
@@ -661,7 +669,7 @@ def test_run_from_findings_pytest_red_leaves_work_on_disk(tmp_path: Path, monkey
     monkeypatch.setattr(coder_loop, "run_pytest_matrix", lambda *a, **k: (False, "1 failed"))
 
     res = run_coder_fix_from_findings(
-        1, gh=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
+        1, forge=_gh_mock(), repo_root=tmp_path, coder=_FakeCoder(plan), db_path=db
     )
 
     assert res.pushed is False

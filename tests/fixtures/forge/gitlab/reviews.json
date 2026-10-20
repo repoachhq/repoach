@@ -1,0 +1,27 @@
+{
+  "args": [
+    283
+  ],
+  "bot_username": "",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/283/approvals"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"id\": 551047368, \"iid\": 283, \"title\": \"feat(soc): wire spi, i2c and gpio into the generated soc\", \"description\": \"## Why\\n\\nMeasured 2026-10-15: the vendored SPI, I2C and GPIO cores were instantiated only by vendored board targets the bridge never imports. The registry had one peripheral (the S1 sample FIFO), the composer wired UART and timer only, the BSP knew neither bus. A capability ingested and not exposed is a stub; the intern's ECG acquisition (SPI ADC) needs the SPI master from firmware.\\n\\n## What\\n\\n- Registry: `yoob_spi_master`, `yoob_i2c_master`, `yoob_gpio` (category `peripheral`, 66 → 69 blocks), declared through `ArchConfig.peripheral_specs`, `SoCPipeline(..., peripherals=[...])` and `CoSimProblem.peripherals`.\\n- The cores sit on the SoC's own CSR bus (ctrl, timer0, uart keep their bases; gpio0/i2c0/spi0 follow), IRQs through `soc.irq.add`, registers in `csr.csv` / `csr.h`. No private bridge, no hand-indexed register map.\\n- `yoob_peripherals.h` is generated from `csr.csv` on every single-image firmware build that declares a peripheral; the generated `tasks.c` includes it when a CSR-bus peripheral is declared, so a task body can call `yoob_spi_xfer`, `yoob_i2c_write/read`, `yoob_gpio_write/read`; every wait is bounded and reports `YOOB_*_STALL`. AMP refuses the combination explicitly.\\n- Verilator device models (MCP3201-style SPI ADC, I2C slave with registers, GPIO loopback) and four cosim tests driven from firmware.\\n- One check over all interrupt lines (uart, timer0, accelerators, peripherals) refusing a duplicate by name.\\n- Fix carried from the review: the S1 sample FIFO's `served` latch held any back-to-back store to a bus timeout (`clear_flags(); status()` = 1 000 033 cycles, STATUS 0xFFFFFFFF). VexRiscv never holds a command past ACK, so the latch guarded against a master that does not exist; decode is back to `cyc & stb & ~ack`, clear-then-status is about 30 cycles, the ROM ≡ stream e2e still agrees on 3602 elements.\\n\\n## Proof\\n\\n- Cosim: 10 SPI codes exact, 6 I2C round trips exact plus NACK on a wrong address, 10 GPIO patterns plus OE mask and edge events, forced stall terminates.\\n- Regression: default SoC `sim.v` and the example's rom/streamed `firmware.bin` byte-identical to develop; the whole default build directory identical beyond timestamps.\\n- Independently re-verified four times (every condition re-run on both trees, diff read for weakened tests): tests/hw_soc + tests/hw 3667 passed, the 6 failures (4 Vivado, 2 AMP prototype) identical on develop; ruff, format and lint-conventions clean.\\n\\n## Not in this MR\\n\\nThe mapper derives only `sample_fifo` from `IOSpec.streams`; a graph declares these peripherals through `SoCPipeline(peripherals=...)`, not yet from a graph attribute. No board declares their pads. Verilator lint: the added warnings are in vendored CSR banks and cores, none in new statements.\", \"state\": \"merged\", \"created_at\": \"2026-10-18T15:30:16.544Z\", \"approved_by\": []}"
+    }
+  ],
+  "case": "reviews",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "reviews",
+  "raises": null,
+  "result": [],
+  "source": "recorded 2026-10-19 from yoob_2",
+  "trimmed": null
+}

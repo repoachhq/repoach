@@ -1,0 +1,31 @@
+{
+  "args": [
+    "https://github.com/o/r/actions/runs/42/job/100"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "run",
+        "view",
+        "42",
+        "--log-failed",
+        "--job",
+        "100"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "Traceback\nAssertionError\n"
+    }
+  ],
+  "case": "check_log",
+  "forge": "github",
+  "kwargs": {},
+  "method": "check_log",
+  "raises": null,
+  "result": "Traceback\nAssertionError\n",
+  "source": "synthetic: a failed job log",
+  "trimmed": null
+}

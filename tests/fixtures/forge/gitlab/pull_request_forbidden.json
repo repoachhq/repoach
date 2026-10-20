@@ -1,0 +1,27 @@
+{
+  "args": [
+    7
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "projects/:id/merge_requests/7"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "glab: 403 Forbidden (HTTP 403)",
+      "stdin": null,
+      "stdout": "{\"message\": \"403 Forbidden\"}"
+    }
+  ],
+  "case": "pull_request_forbidden",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "pull_request",
+  "raises": "ForgeForbiddenError",
+  "result": null,
+  "source": "synthetic: a token without read scope; no live call yields a 403 without changing a token",
+  "trimmed": null
+}

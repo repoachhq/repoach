@@ -1,0 +1,41 @@
+{
+  "args": [
+    "develop"
+  ],
+  "bot_username": "",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "projects/:id/merge_requests?state=opened&per_page=100&target_branch=develop"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"id\": 551214565, \"iid\": 289, \"title\": \"feat(soc): declare spi, i2c and gpio peripherals from the graph and bind their pads\", \"description\": \"## Why\\n\\nAfter !283 the SPI, I2C and GPIO peripherals existed in the SoC but only a Python caller could declare them (`SoCPipeline(peripherals=…)`); a graph, the API and the SDK could not, and no board knew where their pads go. The intern's ECG acquisition and any on-board proof need a graph that says \\\"this SoC has an SPI ADC on these pins\\\".\\n\\n## What\\n\\n- A graph JSON carries `peripherals: [{id, kind, params, irq_num?, pads?}]`; the mapper validates it (bounds, duplicate ids and IRQ lines, reserved and keyword ids, case-insensitive clashes) and appends the specs after the stream-derived FIFOs; `POST /graphs/create` and the SDK (sync and async) accept it; `POST /soc/generate` carries it into the build; an invalid declaration is a 422 naming the field.\\n- Board pads: a `PadBinding` names a platform resource or a Pmod connector; the composer wires SDA as one tristate (open-drain compatible), SCL push-pull, GPIO as per-pin tristates, and emits the constraints (Pmod I2C on Xilinx gets weak internal pull-ups; external ones remain required). Unknown resource, taken pin, wrong width, an id that names a board resource without binding it, a peripheral id that shadows a SoC block (`uart`, `timer0`, `sim_trace`, …): every case is refused by name, never tied off.\\n- `pads.iostandard` is restricted to `^[A-Z0-9_]{2,32}$` (an injection into the XDC was possible through the API, fork and import).\\n- The editor's save keeps a graph's peripherals; `examples/graph_declared_peripherals.py` runs the graph-declared SPI ADC and GPIO under Verilator against the bench models and builds the same configuration for the Arty A7.\\n\\n## Proof\\n\\n- New tests fail on develop (32 failed / 26 passed on the pre-fix tree) and pass here: graph validation 16, board pads 17, peripheral ids 24, API generate 8 (+3), SDK 634, editor round trip.\\n- Vivado 2024.2 `synth_design` on the Arty: the three peripherals add 317 LUT, 359 FF, 16 IOB.\\n- Regression: six artefacts byte-identical to develop (ROM and streamed `firmware.bin`, bare SoC, example ROM and streamed `sim.v`, the three-peripheral SoC).\\n- Independently re-verified three times (injection and shadowing probes replayed on every path).\\n\\n## Not in this MR\\n\\nA stream naming a peripheral as its source (`source: \\\"spi0\\\"`) is the next slice (S2). Pull-ups are emitted for Xilinx only.\", \"state\": \"opened\", \"created_at\": \"2026-10-19T05:09:05.648Z\", \"target_branch\": \"develop\", \"source_branch\": \"feat/peripherals-declared-from-the-graph\", \"author\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"draft\": false, \"work_in_progress\": false, \"detailed_merge_status\": \"conflict\", \"sha\": \"705dcf809c881cef10ffe105f4af8d4c78897c20\", \"merge_commit_sha\": null, \"squash_commit_sha\": null, \"web_url\": \"https://gitlab.com/josephwfaye/yoob_2/-/merge_requests/289\"}]"
+    }
+  ],
+  "case": "open_pull_requests",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "open_pull_requests",
+  "raises": null,
+  "result": [
+    {
+      "author": "josephwfaye",
+      "base_ref": "develop",
+      "body": "## Why\n\nAfter !283 the SPI, I2C and GPIO peripherals existed in the SoC but only a Python caller could declare them (`SoCPipeline(peripherals=…)`); a graph, the API and the SDK could not, and no board knew where their pads go. The intern's ECG acquisition and any on-board proof need a graph that says \"this SoC has an SPI ADC on these pins\".\n\n## What\n\n- A graph JSON carries `peripherals: [{id, kind, params, irq_num?, pads?}]`; the mapper validates it (bounds, duplicate ids and IRQ lines, reserved and keyword ids, case-insensitive clashes) and appends the specs after the stream-derived FIFOs; `POST /graphs/create` and the SDK (sync and async) accept it; `POST /soc/generate` carries it into the build; an invalid declaration is a 422 naming the field.\n- Board pads: a `PadBinding` names a platform resource or a Pmod connector; the composer wires SDA as one tristate (open-drain compatible), SCL push-pull, GPIO as per-pin tristates, and emits the constraints (Pmod I2C on Xilinx gets weak internal pull-ups; external ones remain required). Unknown resource, taken pin, wrong width, an id that names a board resource without binding it, a peripheral id that shadows a SoC block (`uart`, `timer0`, `sim_trace`, …): every case is refused by name, never tied off.\n- `pads.iostandard` is restricted to `^[A-Z0-9_]{2,32}$` (an injection into the XDC was possible through the API, fork and import).\n- The editor's save keeps a graph's peripherals; `examples/graph_declared_peripherals.py` runs the graph-declared SPI ADC and GPIO under Verilator against the bench models and builds the same configuration for the Arty A7.\n\n## Proof\n\n- New tests fail on develop (32 failed / 26 passed on the pre-fix tree) and pass here: graph validation 16, board pads 17, peripheral ids 24, API generate 8 (+3), SDK 634, editor round trip.\n- Vivado 2024.2 `synth_design` on the Arty: the three peripherals add 317 LUT, 359 FF, 16 IOB.\n- Regression: six artefacts byte-identical to develop (ROM and streamed `firmware.bin`, bare SoC, example ROM and streamed `sim.v`, the three-peripheral SoC).\n- Independently re-verified three times (injection and shadowing probes replayed on every path).\n\n## Not in this MR\n\nA stream naming a peripheral as its source (`source: \"spi0\"`) is the next slice (S2). Pull-ups are emitted for Xilinx only.",
+      "draft": false,
+      "head_ref": "feat/peripherals-declared-from-the-graph",
+      "head_sha": "705dcf809c881cef10ffe105f4af8d4c78897c20",
+      "number": 289,
+      "state": "open",
+      "title": "feat(soc): declare spi, i2c and gpio peripherals from the graph and bind their pads",
+      "url": "https://gitlab.com/josephwfaye/yoob_2/-/merge_requests/289"
+    }
+  ],
+  "source": "recorded 2026-10-19 from yoob_2",
+  "trimmed": 3
+}

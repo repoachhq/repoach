@@ -1,9 +1,18 @@
-"""``repoach init`` — scaffold ``.env`` and git hooks for a fresh clone.
+"""``repoach init`` — onboard the git repository of the working directory.
 
-Performs the two mechanical, idempotent onboarding steps a third-party
-clone otherwise requires by hand (copy ``.env.example`` to ``.env``,
-wire the guardrail git hooks) and prints the remaining manual steps
-(provider secrets, install) that cannot be scaffolded.
+The command anchors to the git toplevel of the current working directory
+(SP-UNIVERSAL-INSTALL), never to the checkout the package was installed
+from, and refuses with rc 2 outside a git working tree.  It writes
+``repoach.toml`` from measured defaults and ``<specs_dir>/_TEMPLATE.md``,
+appends ``.repoach.env`` to an existing ``.gitignore``, and touches
+nothing else (SP-UNIVERSAL-PROJECT-CONFIG G2/G3, see
+:mod:`repoach.project.scaffold`).
+
+``--repoach-dev`` keeps the contributor onboarding of a repoach
+checkout (SP-REPOACH-INIT-SCAFFOLD): copy ``.env.example`` to ``.env``
+for the gateway and wire the guardrail git hooks.  Those steps rewrite
+``core.hooksPath``, so they run only when asked and only in a checkout
+that contains ``src/repoach/``.
 """
 
 from __future__ import annotations
@@ -11,18 +20,27 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
+from ..core.paths import USER_ENV_FILE_NAME, user_config_dir
+from ..project.config import ConfigError
+from ..project.scaffold import InitRefusedError, apply_init, plan_init
+from .doctor_cmds import EXIT_UNUSABLE, project_root_or_exit
+
+REPOACH_SOURCE_MARKER = Path("src") / "repoach"
+"""Directory whose presence identifies a repoach checkout for ``--repoach-dev``."""
+
 
 def _repo_root() -> Path:
-    """Return the repository root (`.env`/`chains.env` anchor).
+    """Return the git toplevel of the working directory, or exit with rc 2.
 
     Extracted as a module-level function, mirroring
     `main.py::_probe_client`, so tests can monkeypatch it to a
     temporary directory instead of mutating the real checkout.
     """
-    return Path(__file__).resolve().parents[3]
+    return project_root_or_exit()
 
 
 def scaffold_env(repo_root: Path) -> bool:
@@ -65,10 +83,12 @@ def configure_hooks(repo_root: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def init() -> None:
-    """Typer callback for `repoach init` — scaffold + print next steps."""
-    repo_root = _repo_root()
+def _init_repoach_dev(repo_root: Path) -> None:
+    """Run the contributor onboarding of a repoach checkout.
 
+    Args:
+        repo_root: The repoach checkout's git toplevel.
+    """
     created = scaffold_env(repo_root)
     if created:
         typer.echo("init: created .env from .env.example")
@@ -81,5 +101,65 @@ def init() -> None:
     typer.echo("")
     typer.echo("Remaining manual steps:")
     typer.echo("  1. Set REPOACH_ANTHROPIC_AUTH_TOKEN and one provider key in .env")
-    typer.echo('  2. pip install -e ".[dev]"')
-    typer.echo("  3. repoach version   # verify the install")
+    typer.echo(
+        f"  2. Put REPOACH_LLM_PROXY_BASE_URL and REPOACH_ANTHROPIC_AUTH_TOKEN in "
+        f"{user_config_dir() / USER_ENV_FILE_NAME} (or run 'repoach migrate-config')"
+    )
+    typer.echo('  3. pip install -e ".[dev]"')
+    typer.echo("  4. repoach version   # verify the install")
+
+
+def init(
+    repoach_dev: Annotated[
+        bool,
+        typer.Option(
+            "--repoach-dev",
+            help="Contributor onboarding of a repoach checkout: scaffold .env and wire .githooks.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print what would be written; write nothing.")
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-measure and rewrite an existing repoach.toml."),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="With --force: discard uncommitted repoach.toml changes."),
+    ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Do not ask the forge API (merge method stays squash)."),
+    ] = False,
+) -> None:
+    """Write repoach.toml and the spec template into the current repository.
+
+    Prints one line per file (``created``, ``unchanged``, ``would
+    create``); a second run prints ``unchanged`` for each and changes
+    no byte.  Exit codes: ``0`` done, ``2`` not a git repository, an
+    invalid existing ``repoach.toml``, or a refused ``--force``.
+    """
+    repo_root = _repo_root()
+    if repoach_dev:
+        if not (repo_root / REPOACH_SOURCE_MARKER).is_dir():
+            typer.echo(
+                f"repoach: --repoach-dev refused: {repo_root} has no {REPOACH_SOURCE_MARKER}/ "
+                "(it is not a repoach checkout)",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_UNUSABLE)
+        _init_repoach_dev(repo_root)
+        return
+
+    try:
+        plan = plan_init(repo_root, force=force, yes=yes, probe=not offline)
+    except (InitRefusedError, ConfigError) as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNUSABLE) from exc
+    if not dry_run:
+        apply_init(repo_root, plan)
+    for action in plan.actions:
+        typer.echo(action.describe(dry_run=dry_run))
+    for note in plan.notes:
+        typer.echo(f"init: note: {note}")

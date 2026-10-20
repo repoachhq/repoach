@@ -26,7 +26,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..core.logging import get_logger
-from .spec import SPECS_DIR, SpecPlan
+from .spec import SpecPlan, specs_dir_for
 
 _log = get_logger(__name__)
 
@@ -74,13 +74,13 @@ def supersede_parent_on_decompose(
     if not staged_subspecs:
         return "refusing to supersede parent: no sub-specs staged to replace it"
 
-    specs_dir = (repo_root / SPECS_DIR).resolve()
+    specs_dir = specs_dir_for(repo_root).resolve()
     try:
         parent_path = (repo_root / parent_spec.file_path).resolve()
     except (OSError, ValueError) as exc:
         return f"could not resolve parent spec path: {str(exc)[:120]}"
     if not parent_path.is_relative_to(specs_dir):
-        return f"refusing to supersede parent outside {SPECS_DIR}: {parent_spec.file_path}"
+        return f"refusing to supersede parent outside {specs_dir}: {parent_spec.file_path}"
     if not parent_path.is_file():
         return f"parent spec file not found: {parent_spec.file_path}"
 

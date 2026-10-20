@@ -13,18 +13,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, text
 
 import repoach.core.config as config
+from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
     OUTCOME_SKIP_CI_TIMEOUT,
     run_auto_merge,
 )
-from repoach.review.gh_client import GhResult
+from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
 
 _HEAD = "head_abc123"
 """The head SHA the mocked PR resolves to; the pure gate decides at it."""
@@ -34,9 +34,8 @@ def _truthful_ls_remote(sha: str, head_ref: str) -> GhResult:
     """Build an ``ls-remote`` result agreeing with a given ``pr_head_sha``.
 
     SP-AUTOMERGE-FRESH-HEAD (operator rule: no stubs) — ``resolve_verified_head``
-    runs for real here, so the fake ``GhCli`` must answer
-    ``_run_git(["ls-remote", ...])`` with the SAME SHA its ``pr_head_sha``
-    returns; otherwise the real convergence check would (correctly) refuse
+    runs for real here, so the fake forge must answer ``git ls-remote``
+    with the SAME SHA its ``gh pr view --json headRefOid`` returns; otherwise the real convergence check would (correctly) refuse
     this scenario as a stale head.
     """
     return GhResult(
@@ -57,16 +56,8 @@ def _one_pending_rollup() -> list[dict]:
     return rollup
 
 
-def _gh_with_pending_check(*, head: str = "feat/x") -> MagicMock:
-    """A truthful boundary-fake ``GhCli`` with one required check QUEUED forever."""
-    gh = MagicMock()
-    gh.pr_view.return_value = {
-        "baseRefName": "develop",
-        "headRefName": head,
-        "state": "OPEN",
-    }
-    gh.pr_head_sha.return_value = _HEAD
-    gh._run_git.return_value = _truthful_ls_remote(_HEAD, head)
+def _gh_with_pending_check(*, head: str = "feat/x") -> GitHubForge:
+    """A truthful scripted GitHub forge with one required check QUEUED forever."""
 
     def _run_side(args: list[str]) -> GhResult:
         if args[:1] == ["api"] and "/check-runs" in args[1]:
@@ -80,6 +71,12 @@ def _gh_with_pending_check(*, head: str = "feat/x") -> MagicMock:
                 stderr="",
                 argv=args,
             )
+        if args[:1] == ["api"] and args[1].endswith("/protection"):
+            return gh_fail("gh: Branch not protected (HTTP 404)")
+        if args[:2] == ["pr", "view"] and args[-1] == "headRefOid":
+            return gh_ok(json.dumps({"headRefOid": _HEAD}), argv=args)
+        if args[:2] == ["pr", "view"] and "statusCheckRollup" not in " ".join(args):
+            return gh_ok(pr_view_stdout(head_ref=head), argv=args)
         if args[:2] == ["pr", "merge"]:
             return GhResult(
                 returncode=0,
@@ -89,8 +86,7 @@ def _gh_with_pending_check(*, head: str = "feat/x") -> MagicMock:
             )
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
-    gh._run.side_effect = _run_side
-    return gh
+    return scripted_github(run=_run_side, git=lambda _a: _truthful_ls_remote(_HEAD, head))
 
 
 def _last_outcome(db_path: Path) -> str:
@@ -123,7 +119,7 @@ def test_automerge_fail_fast_settings_end_to_end(
         def _record_sleep(seconds: float) -> None:
             sleep_calls.append(seconds)
 
-        result = run_auto_merge(1, gh=gh, db_path=db, sleep=_record_sleep)
+        result = run_auto_merge(1, forge=gh, db_path=db, sleep=_record_sleep)
 
         assert result.outcome == OUTCOME_SKIP_CI_TIMEOUT
         assert _last_outcome(db) == OUTCOME_SKIP_CI_TIMEOUT
