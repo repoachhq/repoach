@@ -95,4 +95,4 @@ flowchart TD
 - [x] AC5: `pytest -q tests/unit/test_review_team.py::test_one_failing_reviewer_does_not_break_team` → green with the crashed reviewer asserted `ERROR` (it asserted `APPROVE` + `auto-promoted` before).
 
 ## Open Questions
-- Q1: a MALFORMED reviewer with no comments is still promoted to `APPROVE` at the per-reviewer level (the team verdict stays `REQUEST_CHANGES` through `review_complete`). Same honesty defect, smaller blast radius; left for a follow-up.
+- Q1: a MALFORMED reviewer with no comments is still promoted to `APPROVE` at the per-reviewer level (the team verdict stays `REQUEST_CHANGES` through `review_complete`). Same honesty defect, smaller blast radius: `docs/tech_debt.md` row 31.
