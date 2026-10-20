@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/ci_entry/, tests/unit/test_ci_entry.py, tests/unit/test_ci_review.py, tests/unit/test_ci_init.py, tests/unit/test_ci_doctor.py, tests/unit/test_merge_race.py]
   resources: []
 
-depends_on: [SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-PROJECT-CONFIG, SP-MERGE-EXIT-CONTRACT, SP-AUTOMERGE-EVENT-DRIVEN, SP-CI-SECRETS-ISOLATION, SP-VERIFIER-PR-TREE]
+depends_on: [SP-UNIVERSAL-FORGE, SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-PROJECT-CONFIG, SP-MERGE-EXIT-CONTRACT, SP-AUTOMERGE-EVENT-DRIVEN, SP-CI-SECRETS-ISOLATION, SP-VERIFIER-PR-TREE]
 provides_to: []
 
 constraints: {}
@@ -125,6 +125,7 @@ the PR. Shell: `repoach review pr 283 --dry-run`.
 
 ## Architecture Impact
 - Adds dependency: SP-UNIVERSAL-CI-ENTRY -> SP-UNIVERSAL-FORGE (`pr_state`, `open_pull_requests`, posting)
+- Adds dependency: SP-UNIVERSAL-CI-ENTRY -> SP-UNIVERSAL-INSTALL (`require_project_root` anchors `ci review` to the job's checkout)
 - Adds dependency: SP-UNIVERSAL-CI-ENTRY -> SP-UNIVERSAL-PROVIDERS (provider resolved per run, rc 2 contract)
 - Adds dependency: SP-UNIVERSAL-CI-ENTRY -> SP-UNIVERSAL-PROJECT-CONFIG (`[review].post_by_default`, `bot_username`)
 - Adds dependency: SP-UNIVERSAL-CI-ENTRY -> SP-MERGE-EXIT-CONTRACT (the exit table extends it, no code changes meaning)
