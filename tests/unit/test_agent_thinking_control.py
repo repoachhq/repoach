@@ -87,11 +87,11 @@ def test_thinking_field_reaches_the_translated_request() -> None:
 
     AC1 from SP-AGENT-THINKING-CONTROL.
     """
-    from repoach.llm_proxy.api.agent_dispatcher import _translate_request
+    from repoach.llm_proxy.api.agent_dispatcher import translate_request
 
     thinking = ThinkingConfig(type="enabled", budget_tokens=1024)
     request = _build_request(thinking=thinking)
-    translated = _translate_request(request, "test-model")
+    translated = translate_request(request, "test-model")
 
     assert translated.thinking is not None
     assert translated.thinking.type == "enabled"
@@ -104,10 +104,10 @@ def test_absent_thinking_field_translates_to_none() -> None:
 
     AC2 from SP-AGENT-THINKING-CONTROL.
     """
-    from repoach.llm_proxy.api.agent_dispatcher import _translate_request
+    from repoach.llm_proxy.api.agent_dispatcher import translate_request
 
     request = _build_request()
-    translated = _translate_request(request, "test-model")
+    translated = translate_request(request, "test-model")
 
     assert translated.thinking is None
 
@@ -117,11 +117,11 @@ def test_disabled_thinking_round_trips() -> None:
 
     AC3 from SP-AGENT-THINKING-CONTROL.
     """
-    from repoach.llm_proxy.api.agent_dispatcher import _translate_request
+    from repoach.llm_proxy.api.agent_dispatcher import translate_request
 
     thinking = ThinkingConfig(type="disabled")
     request = _build_request(thinking=thinking)
-    translated = _translate_request(request, "test-model")
+    translated = translate_request(request, "test-model")
 
     assert translated.thinking is not None
     assert translated.thinking.type == "disabled"
