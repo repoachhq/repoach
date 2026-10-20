@@ -107,3 +107,58 @@ def test_arch_check_cli(
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert expected_line in result.stderr
     assert "Traceback" not in result.output
+
+
+_FENCELESS_SPEC = "2026-10-19_mr-create-from-the-editor.md"
+
+
+def _fenceless_repo(tmp_path: Path, *, require_frontmatter: bool) -> Path:
+    repo = _foreign_repo(tmp_path, require_frontmatter=require_frontmatter)
+    (repo / "docs" / "specs" / _FENCELESS_SPEC).write_text("# A human spec, no frontmatter\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "fenceless spec")
+    return repo
+
+
+def test_not_required_lists_a_fenceless_spec_as_ungoverned(tmp_path: Path) -> None:
+    repo = _fenceless_repo(tmp_path, require_frontmatter=False)
+    report = edge_honesty.run(
+        base="develop~2", staged=False, specs_dir=repo / "docs" / "specs", repo_root=repo
+    )
+    assert report.ok
+    assert [s.path.name for s in report.ungoverned_specs] == [_HUMAN_SPEC, _FENCELESS_SPEC]
+
+
+@pytest.mark.parametrize(
+    ("require_frontmatter", "expected_rc", "expected_lines"),
+    [
+        (
+            False,
+            0,
+            [
+                "ungoverned: 2 spec(s) without registry frontmatter",
+                f"  ungoverned spec: {_FENCELESS_SPEC}",
+            ],
+        ),
+        (
+            True,
+            1,
+            [f"malformed spec: docs/specs/{_FENCELESS_SPEC}: no frontmatter"],
+        ),
+    ],
+)
+def test_arch_check_cli_fenceless_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    require_frontmatter: bool,
+    expected_rc: int,
+    expected_lines: list[str],
+) -> None:
+    repo = _fenceless_repo(tmp_path, require_frontmatter=require_frontmatter)
+    monkeypatch.chdir(repo)
+    result = CliRunner().invoke(app, ["arch", "check", "--base", "develop~2"])
+    assert result.exit_code == expected_rc, result.output
+    for line in expected_lines:
+        assert line in result.stderr
+    assert "ungoverned new spec" not in result.stderr
+    assert "Traceback" not in result.output

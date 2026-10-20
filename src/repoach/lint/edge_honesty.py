@@ -475,6 +475,21 @@ def check_added_specs(
     return violations
 
 
+def _ungoverned(registry: Registry) -> tuple[MalformedSpec, ...]:
+    """Return every spec outside the graph: no frontmatter, or a foreign one.
+
+    A frontmatter-less spec (a frontier node) and a spec whose frontmatter
+    lacks the registry keys are the same fact on a foreign repository
+    (SP-ARCH-FOREIGN-FRONTMATTER), listed together, sorted by file name.
+    """
+    fenceless = (
+        MalformedSpec(path=node.path, reason=f"{node.path.name}: no frontmatter")
+        for node in registry.nodes.values()
+        if node.frontier
+    )
+    return tuple(sorted((*fenceless, *registry.malformed), key=lambda spec: spec.path.name))
+
+
 def run(
     *,
     base: str,
@@ -515,7 +530,7 @@ def run(
         return Report(
             violations=report.violations,
             frontier=report.frontier,
-            ungoverned_specs=registry.malformed,
+            ungoverned_specs=_ungoverned(registry),
             governed_specs=governed,
         )
     added_specs = gather_added_specs(base=base, staged=staged, repo_root=repo_root)
@@ -557,8 +572,7 @@ def report_lines(report: Report) -> list[str]:
         )
     for spec_violation in report.spec_violations:
         lines.append(
-            f"ungoverned new spec: {spec_violation.path} has no frontmatter — "
-            "add the governed template block, or it becomes an un-graphed "
-            "frontier node"
+            f"malformed spec: {spec_violation.path}: no frontmatter — complete the "
+            "governed template block, or set [arch].require_frontmatter = false"
         )
     return lines

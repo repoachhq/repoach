@@ -1,7 +1,7 @@
 ---
 id: SP-ARCH-FOREIGN-FRONTMATTER
 title: arch check lists a foreign repository's human specs as ungoverned instead of crashing
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-10-20
@@ -43,6 +43,8 @@ specs with a frontmatter of their own (`title`, `status`, …):
 - G1: `load_registry(…, tolerate_malformed=True)` collects malformed specs (and duplicate ids) in `Registry.malformed` and leaves them out of the graph; the default still raises, so `arch graph` and the spec loaders keep their contract.
 - G2: `edge_honesty.run` reads `config.require_frontmatter` (the gates' `GatesConfig`, SP-UNIVERSAL-GATES): false → `Report.ungoverned_specs`, reported (`ungoverned: N spec(s) …` plus one line per file), the added-spec presence check off; true → `Report.malformed_specs`, each a `malformed spec: <file>: <reason>` violation, rc 1.
 - G3: the effective `[arch].require_frontmatter` (host default included) comes from `load_gates_config`, which SP-UNIVERSAL-GATES added; `arch check` passes nothing of its own.
+
+- G4: a spec with no frontmatter at all takes the same path: listed as ungoverned when the flag is false; when true, an added one reads `malformed spec: <path>: no frontmatter` (it read `ungoverned new spec: … has no frontmatter`; specs older than the template stay grandfathered).
 
 ## Non-Goals
 
@@ -86,4 +88,5 @@ flowchart TD
 - [x] AC2: `pytest -q tests/unit/test_arch_foreign_frontmatter.py::test_not_required_lists_the_spec_as_ungoverned` → green.
 - [x] AC3: `pytest -q tests/unit/test_arch_foreign_frontmatter.py::test_required_names_the_violation` → green.
 - [x] AC4: `pytest -q tests/unit/test_arch_foreign_frontmatter.py::test_arch_check_cli` → green: scratch repository, flag false → rc 0 with the `ungoverned:` line; flag true → rc 1 with the `malformed spec:` line; no traceback either way.
+- [x] AC6: `pytest -q tests/unit/test_arch_foreign_frontmatter.py::test_not_required_lists_a_fenceless_spec_as_ungoverned tests/unit/test_arch_foreign_frontmatter.py::test_arch_check_cli_fenceless_spec` → green: a frontmatter-less spec is listed `ungoverned` (flag false, rc 0) and reads `malformed spec: docs/specs/<file>: no frontmatter` (flag true, rc 1). Found by independent verification 2026-10-20.
 - [x] AC5: `repoach arch check --base origin/develop` in repoach's own checkout → `edge-honesty: ok`.
