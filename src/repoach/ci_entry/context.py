@@ -45,6 +45,20 @@ class NoPullRequestError(Exception):
         super().__init__(f"no pull request: none of {', '.join(looked_at)} is set{detail}")
 
 
+class InvalidPullRequestError(Exception):
+    """A PR number was given but is not one: a configuration error, not a skip.
+
+    Attributes:
+        value: The raw value.
+        source: ``--pr`` or the variable it came from.
+    """
+
+    def __init__(self, value: object, source: str) -> None:
+        self.value = value
+        self.source = source
+        super().__init__(f"not a PR number: {value!r} from {source}")
+
+
 def env_value(env: Mapping[str, str], name: str) -> str | None:
     """Return ``env[name]`` stripped, or None when absent or blank."""
     value = env.get(name)
@@ -125,12 +139,16 @@ def resolve_pr_number(explicit: int | None, env: Mapping[str, str]) -> tuple[int
         ``(number, source)``; ``source`` is ``flag`` or the variable name.
 
     Raises:
-        NoPullRequestError: Nothing yields a positive number; names every
-            variable consulted and why a present one did not count.
+        InvalidPullRequestError: ``--pr``, ``REPOACH_PR_NUMBER`` or
+            ``CI_MERGE_REQUEST_IID`` holds something that is not a
+            positive integer; checked in that order, the first one set
+            decides.
+        NoPullRequestError: Nothing yields a number; names every variable
+            consulted and why a present GitHub one did not count.
     """
     if explicit is not None:
         if explicit <= 0:
-            raise NoPullRequestError((PR_SOURCE_FLAG,), (f"--pr {explicit} is not positive",))
+            raise InvalidPullRequestError(explicit, "--pr")
         return explicit, PR_SOURCE_FLAG
     notes: list[str] = []
     for name in ("REPOACH_PR_NUMBER", "CI_MERGE_REQUEST_IID"):
@@ -138,9 +156,9 @@ def resolve_pr_number(explicit: int | None, env: Mapping[str, str]) -> tuple[int
         if raw is None:
             continue
         number = _positive_int(raw)
-        if number is not None:
-            return number, name
-        notes.append(f"{name}={raw!r} is not a positive integer")
+        if number is None:
+            raise InvalidPullRequestError(raw, name)
+        return number, name
     event_path = env_value(env, "GITHUB_EVENT_PATH")
     if event_path is not None:
         number, note = _number_from_event(Path(event_path))

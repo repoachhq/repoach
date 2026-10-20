@@ -22,6 +22,7 @@ from repoach.ci_entry.advisory import (
 )
 from repoach.ci_entry.context import (
     PR_ENV_SOURCES,
+    InvalidPullRequestError,
     NoPullRequestError,
     detect_ci_forge,
     resolve_pr_number,
@@ -93,10 +94,38 @@ class TestResolvePrNumber:
             resolve_pr_number(None, {"GITHUB_REF": "refs/heads/main"})
         assert "refs/heads/main" in str(info.value)
 
-    def test_non_numeric_iid_is_named(self) -> None:
-        with pytest.raises(NoPullRequestError) as info:
+    def test_non_numeric_iid_is_invalid_not_absent(self) -> None:
+        with pytest.raises(InvalidPullRequestError) as info:
             resolve_pr_number(None, {"CI_MERGE_REQUEST_IID": "abc"})
-        assert "CI_MERGE_REQUEST_IID='abc'" in str(info.value)
+        assert str(info.value) == "not a PR number: 'abc' from CI_MERGE_REQUEST_IID"
+
+    def test_pr_zero_is_invalid(self) -> None:
+        with pytest.raises(InvalidPullRequestError) as info:
+            resolve_pr_number(0, {})
+        assert str(info.value) == "not a PR number: 0 from --pr"
+
+    @pytest.mark.parametrize(
+        ("pr", "env", "reason"),
+        [
+            (
+                None,
+                {"CI_MERGE_REQUEST_IID": "abc"},
+                "not a PR number: 'abc' from CI_MERGE_REQUEST_IID",
+            ),
+            (0, {}, "not a PR number: 0 from --pr"),
+            (None, {"REPOACH_PR_NUMBER": "-3"}, "not a PR number: '-3' from REPOACH_PR_NUMBER"),
+        ],
+    )
+    def test_invalid_number_is_a_config_error(
+        self, pr: int | None, env: dict[str, str], reason: str
+    ) -> None:
+        report = plan_ci_review({"GITLAB_CI": "true", **env}, pr_override=pr, strict=True)
+        assert isinstance(report, CiReviewReport)
+        assert (report.outcome, report.reason, report.exit_code) == (
+            Outcome.CONFIG_ERROR,
+            reason,
+            EXIT_CONFIG,
+        )
 
 
 class TestDetectForge:

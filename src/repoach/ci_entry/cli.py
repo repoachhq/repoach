@@ -32,7 +32,13 @@ from .advisory import (
     run_ci_review,
     subprocess_review_runner,
 )
-from .context import NoPullRequestError, detect_ci_forge, env_value, resolve_pr_number
+from .context import (
+    InvalidPullRequestError,
+    NoPullRequestError,
+    detect_ci_forge,
+    env_value,
+    resolve_pr_number,
+)
 from .gateway import loopback_gateway
 from .variables import CI_VARIABLES
 
@@ -193,6 +199,8 @@ def ci_doctor_lines(env: Mapping[str, str]) -> list[str]:
     try:
         _, source = resolve_pr_number(None, env)
         lines.append(f"pr_source={source}")
+    except InvalidPullRequestError as exc:
+        lines.append(f"pr_source=invalid ({exc.source} is not a PR number)")
     except NoPullRequestError as exc:
         lines.append(f"pr_source=none ({'; '.join(exc.notes) or 'no PR variable set'})")
     lines.append(f"mode={review_mode(env, post=False, dry_run=False)}")

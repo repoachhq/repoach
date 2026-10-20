@@ -43,7 +43,14 @@ from pydantic import BaseModel, ConfigDict
 from ..core.logging import get_logger
 from ..forge import ForgeError
 from ..project.config import ForgeName
-from .context import NoPullRequestError, detect_ci_forge, env_value, first_set, resolve_pr_number
+from .context import (
+    InvalidPullRequestError,
+    NoPullRequestError,
+    detect_ci_forge,
+    env_value,
+    first_set,
+    resolve_pr_number,
+)
 from .gateway import GatewayHandle, GatewayStartError
 from .variables import (
     DIRECT_KEY_VARS,
@@ -265,6 +272,15 @@ def plan_ci_review(
             forge, forge_source = project_forge()
     try:
         number, pr_source = resolve_pr_number(pr_override, env)
+    except InvalidPullRequestError as exc:
+        return finish(
+            Outcome.CONFIG_ERROR,
+            str(exc),
+            strict=strict,
+            forge=forge,
+            mode=mode,
+            forge_source=forge_source,
+        )
     except NoPullRequestError as exc:
         return finish(
             Outcome.SKIPPED,
