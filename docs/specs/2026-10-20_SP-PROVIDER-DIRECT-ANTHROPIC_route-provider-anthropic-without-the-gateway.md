@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_doctor_provider_route.py, tests/unit/test_provider_direct_anthropic.py]
   resources: []
 
-depends_on: [SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-AGENT-THINKING-CONTROL, SP-PROVIDER-INIT-DEDUP]
+depends_on: [SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-AGENT-THINKING-CONTROL, SP-PROVIDER-INIT-DEDUP, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:
@@ -94,6 +94,7 @@ Measured 2026-10-20 plugging repoach into Yoob (GitLab, no gateway):
 ## Architecture Impact
 - Adds dependency (when G1 lands): `agent_engine` → `llm_proxy.providers.anthropic_messages` (SP-PROVIDER-INIT-DEDUP) and the dispatcher's translation (SP-AGENT-THINKING-CONTROL).
 - Today: `cli/doctor_cmds.py` reads the resolved `[provider].kind` (SP-UNIVERSAL-PROJECT-CONFIG).
+- Adds dependency (0.3): SP-PROVIDER-DIRECT-ANTHROPIC -> SP-RETRY-BACKOFF-DEDUP (its AC5 test drives a real reviewer to prove a rejected key is one request, not a retry schedule).
 
 ## Diagram
 ```mermaid

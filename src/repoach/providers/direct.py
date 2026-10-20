@@ -41,7 +41,7 @@ from ..llm_proxy.api.models.agent_v1 import (
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from ..llm_proxy.providers.base import BaseProvider
 from ..llm_proxy.providers.exceptions import ProviderError
-from .errors import GatewayError, GatewayTransportError
+from .errors import GatewayError, GatewayTransportError, ProviderAuthError
 from .protocol import agent_request
 
 _log = get_logger(__name__)
@@ -258,7 +258,7 @@ class DirectProvider:
             detail += f" {status}"
         detail += f": {message[:300]}"
         if status in AUTH_STATUSES:
-            return GatewayError(f"{detail} -- {self._auth_hint}")
+            return ProviderAuthError(f"{detail} -- {self._auth_hint}")
         if status is None or status >= 500 or status in RETRYABLE_STATUSES:
             return GatewayTransportError(detail)
         return GatewayError(detail)
@@ -267,7 +267,7 @@ class DirectProvider:
         """Map a raised transport error; a login problem is never retried."""
         text = str(exc)
         if exc.status_code in AUTH_STATUSES or any(m in text.lower() for m in CLI_AUTH_MARKERS):
-            return GatewayError(f"{self.name}: {text[:300]} -- {self._auth_hint}")
+            return ProviderAuthError(f"{self.name}: {text[:300]} -- {self._auth_hint}")
         return GatewayTransportError(f"{self.name}: {text[:300]}")
 
 

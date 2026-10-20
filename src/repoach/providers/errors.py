@@ -30,6 +30,18 @@ class GatewayChainExhausted(GatewayError):
     """
 
 
+class ProviderAuthError(GatewayError):
+    """The provider rejected the credential (HTTP 401/403, a logged-out CLI).
+
+    ``retryable = False`` makes every retry loop
+    (:func:`~repoach.review.retry_backoff.retry_with_backoff`) stop at the
+    first attempt: retrying repeats the refusal and loses the hint.  The
+    message names what to replace or run, never a value.
+    """
+
+    retryable = False
+
+
 class ProviderConfigError(GatewayConfigError):
     """The selected provider cannot be used: a missing CLI, login or key (rc 2).
 
@@ -43,5 +55,6 @@ __all__ = [
     "GatewayChainExhausted",
     "GatewayError",
     "GatewayTransportError",
+    "ProviderAuthError",
     "ProviderConfigError",
 ]

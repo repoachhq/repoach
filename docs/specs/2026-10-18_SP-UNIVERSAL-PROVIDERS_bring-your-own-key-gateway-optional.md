@@ -60,11 +60,11 @@ pr N` works with no gateway, no key, no `.env`.
   call is spawned as a session leader and its whole process group is
   killed on timeout or interruption (`own_process_group`, off for the
   gateway). A login rejected mid-run (`/login`, `invalid api key`…) is a
-  `GatewayError` (not retried); any other CLI failure or timeout a
+  `ProviderAuthError` (`retryable = False`: the reviewer backoff stops at the first attempt, the hint goes to the summary and the `review.bot.attempt_fatal` log); any other CLI failure or timeout a
   `GatewayTransportError`.
 - `anthropic`: key from `REPOACH_ANTHROPIC_API_KEY`, else
   `ANTHROPIC_API_KEY` (SP-PROVIDER-DIRECT-ANTHROPIC Q1); optional
-  `REPOACH_ANTHROPIC_BASE_URL`; 401/403 → `GatewayError` naming the
+  `REPOACH_ANTHROPIC_BASE_URL`; 401/403 → `ProviderAuthError` (one request, never retried) naming the
   variable, 5xx/408/429/529/unreachable → `GatewayTransportError`.
 - Preflight `require_provider_ready()` (called by `review pr` before
   any forge call): missing CLI, logged-out CLI (`claude auth status
