@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from repoach.arch import Registry, has_frontmatter, load_registry
+from repoach.arch import MalformedSpec, Registry, has_frontmatter, load_registry
 from repoach.project.config import load_project_config
 
 _REPO_TOP = "repoach"
@@ -79,16 +79,23 @@ class SpecPresenceViolation:
 
 @dataclass(frozen=True)
 class Report:
-    """The outcome of an edge-honesty run over a diff."""
+    """The outcome of an edge-honesty run over a diff.
+
+    ``malformed_specs`` (blocking) and ``ungoverned_specs`` (reported) hold
+    the specs whose frontmatter lacks the registry keys; which of the two
+    depends on ``[arch].require_frontmatter`` (SP-ARCH-FOREIGN-FRONTMATTER).
+    """
 
     violations: tuple[EdgeViolation, ...]
     frontier: tuple[FrontierRef, ...]
     spec_violations: tuple[SpecPresenceViolation, ...] = ()
+    malformed_specs: tuple[MalformedSpec, ...] = ()
+    ungoverned_specs: tuple[MalformedSpec, ...] = ()
 
     @property
     def ok(self) -> bool:
-        """True when no tier-1 edge or spec-presence violation was found."""
-        return not self.violations and not self.spec_violations
+        """True when no tier-1 edge, spec-presence or malformed-spec violation was found."""
+        return not self.violations and not self.spec_violations and not self.malformed_specs
 
 
 def _module_candidates(module: str) -> tuple[str, ...]:
@@ -374,18 +381,47 @@ def check_added_specs(
     return violations
 
 
-def run(*, base: str, staged: bool, specs_dir: Path, repo_root: Path) -> Report:
-    """Load the registry and check the diff — the orchestration entrypoint."""
-    registry = load_registry(specs_dir)
+def run(
+    *,
+    base: str,
+    staged: bool,
+    specs_dir: Path,
+    repo_root: Path,
+    require_frontmatter: bool = True,
+) -> Report:
+    """Load the registry and check the diff — the orchestration entrypoint.
+
+    Args:
+        base: The ref to diff against (three-dot).
+        staged: Check the staged index instead (pre-commit).
+        specs_dir: Directory of spec markdown files.
+        repo_root: The repository root.
+        require_frontmatter: ``[arch].require_frontmatter``. True: a spec
+            whose frontmatter lacks the registry keys is a named
+            violation, and an added spec with no fence is one too. False
+            (a foreign repository's human specs): such a spec is counted
+            as ungoverned, never an error, and the presence check is off.
+
+    Returns:
+        The aggregated :class:`Report`.
+    """
+    registry = load_registry(specs_dir, tolerate_malformed=True)
     changed = gather_changed_files(base=base, staged=staged, repo_root=repo_root)
     suppress = load_frontier_suppress(repo_root)
     report = check_diff(registry, changed, repo_root, staged=staged, suppress=suppress)
+    if not require_frontmatter:
+        return Report(
+            violations=report.violations,
+            frontier=report.frontier,
+            ungoverned_specs=registry.malformed,
+        )
     added_specs = gather_added_specs(base=base, staged=staged, repo_root=repo_root)
     spec_violations = check_added_specs(added_specs, repo_root, staged=staged)
     return Report(
         violations=report.violations,
         frontier=report.frontier,
         spec_violations=tuple(spec_violations),
+        malformed_specs=registry.malformed,
     )
 
 
@@ -397,6 +433,17 @@ def report_lines(report: Report) -> list[str]:
         lines.append(
             f"frontier: {len(report.frontier)} ungoverned ref(s) across "
             f"{len(sources)} spec(s) — reported, not enforced"
+        )
+    if report.ungoverned_specs:
+        lines.append(
+            f"ungoverned: {len(report.ungoverned_specs)} spec(s) without registry "
+            "frontmatter — not graphed ([arch].require_frontmatter = false)"
+        )
+        lines.extend(f"  ungoverned spec: {spec.path.name}" for spec in report.ungoverned_specs)
+    for malformed in report.malformed_specs:
+        lines.append(
+            f"malformed spec: {malformed.reason} — complete the governed template "
+            "block, or set [arch].require_frontmatter = false"
         )
     for violation in report.violations:
         lines.append(

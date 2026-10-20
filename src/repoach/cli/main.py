@@ -19,6 +19,7 @@ from ..core.logging import configure_logging
 from ..lint import edge_honesty
 from ..project.config import ConfigError
 from ..project.config import specs_dir as configured_specs_dir
+from ..project.resolve import resolve_project_config
 from .chain_status import chain_status
 from .config_cmds import config_app
 from .doctor_cmds import doctor, project_root_or_exit
@@ -47,14 +48,21 @@ def arch_check(
         help="Directory of spec markdown files (default: [repoach].specs_dir, docs/specs).",
     ),
 ) -> None:
-    """Fail when a changed file's couplings are missing from its depends_on."""
+    """Fail when a changed file's couplings are missing from its depends_on.
+
+    ``[arch].require_frontmatter`` decides what a spec lacking the registry
+    keys is: a named violation (rc 1) when true, an ``ungoverned`` count
+    when false — never a traceback (SP-ARCH-FOREIGN-FRONTMATTER).
+    """
     repo_root = project_root_or_exit()
     base = base if base is not None else get_settings().integration_branch
+    require_frontmatter = resolve_project_config(repo_root).config.arch.require_frontmatter
     report = edge_honesty.run(
         base=base,
         staged=staged,
         specs_dir=specs_dir or configured_specs_dir(repo_root),
         repo_root=repo_root,
+        require_frontmatter=require_frontmatter is not False,
     )
     for line in edge_honesty.report_lines(report):
         typer.echo(line, err=True)
