@@ -70,7 +70,7 @@ job.
 ## Slices
 
 - Slice 1 (0.2, this branch): G1's resolver (`ci_entry/context.py`), G6–G10, and G2/G3/G4 as applied inside `repoach ci review`.
-- Slice 2 (open, `docs/tech_debt.md` row 39): the PR argument becoming optional on the six `review` commands, `review pr --post`, `[review].post_by_default`, `review fix`'s head-SHA checkout and push race, `repoach review exit-codes`, and the `auto-review.yml` migration (AC2, AC5, AC7).
+- Slice 2 (open, `docs/tech_debt.md` row 41): the PR argument becoming optional on the six `review` commands, `review pr --post`, `[review].post_by_default`, `review fix`'s head-SHA checkout and push race, `repoach review exit-codes`, and the `auto-review.yml` migration (AC2, AC5, AC7).
 
 ## Non-Goals
 
@@ -158,4 +158,4 @@ flowchart TD
 
 ## Open Questions
 - Q1: should the GitHub reusable workflow live in this repository (`.github/workflows/review.yml` with `workflow_call`) or in a separate `repoachhq/review-action` repository? Recommend here, versioned by tag, until a second consumer exists.
-- Q1 answer (0.2): neither for now; `init --ci github` writes a standalone workflow into the consuming repository. A reusable `workflow_call` workflow is deferred until a second GitHub consumer exists (tracked with slice 2, `docs/tech_debt.md` row 39).
+- Q1 answer (0.2): neither for now; `init --ci github` writes a standalone workflow into the consuming repository. A reusable `workflow_call` workflow is deferred until a second GitHub consumer exists (tracked with slice 2, `docs/tech_debt.md` row 41).
