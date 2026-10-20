@@ -1,14 +1,14 @@
 ---
 id: SP-PROVIDER-DIRECT-ANTHROPIC
 title: Route REPOACH_PROVIDER=anthropic to the Anthropic API without the gateway
-version: 0.2
-status: open
+version: 0.3
+status: delivered
 author: agent
 created: 2026-10-20
 updated: 2026-10-20
 
 owns:
-  code: [tests/unit/test_doctor_provider_route.py]
+  code: [tests/unit/test_doctor_provider_route.py, tests/unit/test_provider_direct_anthropic.py]
   resources: []
 
 depends_on: [SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-AGENT-THINKING-CONTROL, SP-PROVIDER-INIT-DEDUP]
@@ -27,12 +27,21 @@ On a foreign repository a CI job with `REPOACH_PROVIDER=anthropic` and
 that ships, `repoach doctor` says the provider is not routed and which
 route is live, instead of implying the key is enough.
 
-**Status `open`.** Shipped in this change: the `doctor` line (G4).
-Not shipped: the direct path (G1–G3). **Decision 2026-10-20: it is
-delivered once, by SP-UNIVERSAL-PROVIDERS as its `AnthropicProvider`
-behind the `Provider` protocol** (`depends_on`); this spec stays `open`
-until that lands and AC4–AC6 pass. Size: Context F6. Tracked in
-`docs/tech_debt.md` row 34.
+**Status `delivered` (0.3, 2026-10-20).** The direct path (G1–G3)
+landed once, as SP-UNIVERSAL-PROVIDERS slice 1: `[provider].kind =
+"anthropic"` builds a `DirectProvider` (`src/repoach/providers/`) over
+the gateway's own `AnthropicMessagesTransport` and the dispatcher's
+translation, made public (`translate_request`, `aggregate_sse_stream`,
+`translate_content_blocks`, `ANTHROPIC_TO_AGENT_STOP`). `doctor` prints
+`provider_route=direct (anthropic)` (G4 final wording). AC5 and AC6 are
+green; AC4 needs a real key and was not run on the measuring machine
+(`docs/tech_debt.md`). `docs/tech_debt.md` row 34 is removed.
+
+Found while delivering: the gateway's `anthropic` descriptor posted to
+`https://api.anthropic.com/messages`, which answers 404 (measured
+2026-10-20: `/messages` 404, `/v1/messages` 401 without a key), so the
+`ci review` loopback gateway could never have reached the API either.
+`ANTHROPIC_DEFAULT_BASE` now carries `/v1`.
 
 ## Context
 
@@ -49,10 +58,10 @@ Measured 2026-10-20 plugging repoach into Yoob (GitLab, no gateway):
 
 ## Goals
 
-- G1: `[provider].kind = "anthropic"` (or `REPOACH_PROVIDER=anthropic`) with `REPOACH_ANTHROPIC_API_KEY`, else `ANTHROPIC_API_KEY` in the environment or `~/.config/repoach/env` → the agent loop calls the Anthropic Messages API in-process through the gateway's own `AnthropicMessagesTransport` and translation helpers (made public in `llm_proxy/api/agent_dispatcher.py`), no proxy, no `REPOACH_LLM_PROXY_BASE_URL`, no `REPOACH_ANTHROPIC_AUTH_TOKEN`.
-- G2: tier → model id from `[provider].opus/sonnet/haiku`, else the SP-UNIVERSAL-PROVIDERS G3 defaults.
-- G3: transport failures surface as `GatewayTransportError` (retried by the reviewer backoff, then `ERROR` per SP-REVIEW-TRANSPORT-ERROR-VERDICT); a 401 is `GatewayError` naming the variable that supplied the key, never its value.
-- G4 (shipped): `doctor` prints `provider=<kind> (<source>; not routed)` and `provider_route=gateway (<url>)` or `provider_route=none`, and for `anthropic` `provider_credential=<NAME> (present)` (first of `REPOACH_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY`) or `provider_credential=none (reads REPOACH_ANTHROPIC_API_KEY, then ANTHROPIC_API_KEY)`; with no gateway URL it fails rc 2 with `provider <kind>: not routed, set REPOACH_LLM_PROXY_BASE_URL`. Once G1 ships, `provider_route=anthropic (direct)`.
+- G1 (delivered): `[provider].kind = "anthropic"` (or `REPOACH_PROVIDER=anthropic`) with `REPOACH_ANTHROPIC_API_KEY`, else `ANTHROPIC_API_KEY` in the environment or `~/.config/repoach/env` → the agent loop calls the Anthropic Messages API in-process through the gateway's own `AnthropicMessagesTransport` and translation helpers (made public in `llm_proxy/api/agent_dispatcher.py`), no proxy, no `REPOACH_LLM_PROXY_BASE_URL`, no `REPOACH_ANTHROPIC_AUTH_TOKEN`.
+- G2 (delivered): tier → model id from `[provider].opus/sonnet/haiku`, else the SP-UNIVERSAL-PROVIDERS G3 defaults.
+- G3 (delivered): transport failures surface as `GatewayTransportError` (retried by the reviewer backoff, then `ERROR` per SP-REVIEW-TRANSPORT-ERROR-VERDICT); a 401 is `GatewayError` naming the variable that supplied the key, never its value.
+- G4 (shipped): `doctor` prints `provider=<kind> (<source>; not routed)` and `provider_route=gateway (<url>)` or `provider_route=none`, and for `anthropic` `provider_credential=<NAME> (present)` (first of `REPOACH_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY`) or `provider_credential=none (reads REPOACH_ANTHROPIC_API_KEY, then ANTHROPIC_API_KEY)`; with no gateway URL it fails rc 2 with `provider <kind>: not routed, set REPOACH_LLM_PROXY_BASE_URL`. Since G1 shipped: `provider=anthropic (<source>)`, `provider_route=direct (anthropic)`, and a missing key is a doctor problem (rc 2) naming both variables.
 
 ## Non-Goals
 
@@ -72,12 +81,12 @@ Measured 2026-10-20 plugging repoach into Yoob (GitLab, no gateway):
 ## Behavior
 
 ### Nominal
-`REPOACH_PROVIDER=anthropic ANTHROPIC_API_KEY=… repoach review pr N --dry-run`, no gateway → four reviews from the API (G1, open).
+`REPOACH_PROVIDER=anthropic ANTHROPIC_API_KEY=… repoach review pr N --dry-run`, no gateway → four reviews from the API (G1).
 
 ### Edge cases
-- Key missing → rc 2 before any call, naming both variables (open).
+- Key missing → rc 2 before any forge call, naming both variables.
 - Both variables set → `REPOACH_ANTHROPIC_API_KEY` wins; `doctor` names it.
-- Both a gateway URL and `kind = anthropic` → today: the gateway is used and `doctor` says so; after G1: the direct path.
+- Both a gateway URL and `kind = anthropic` → the direct path; the explicit kind wins.
 
 ### Failure scenarios
 - API unreachable → each reviewer `ERROR`, team `ERROR`, rc 3 (already true through the gateway path).
@@ -92,17 +101,17 @@ flowchart TD
     A[AgentLoop] --> B{provider.kind}
     B -- gateway / empty --> C[ProxyGatewayClient -> gateway]
     B -- anthropic --> D[direct: AnthropicMessagesTransport in-process]
-    D -. open .-> E[Anthropic Messages API]
+    D --> E[Anthropic Messages API]
 ```
 
 ## Acceptance Criteria
-- [x] AC1: `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_without_gateway_is_not_routed` → green: `REPOACH_PROVIDER=anthropic`, no gateway URL → stdout `provider=anthropic (env; not routed)`, `provider_route=none`; stderr `provider anthropic: not routed, set REPOACH_LLM_PROXY_BASE_URL`; rc 2.
-- [x] AC2: `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_with_gateway_names_the_live_route` → green: `provider_route=gateway (<url>)`.
-- [x] AC3: `pytest -q tests/unit/test_doctor_provider_route.py::test_gateway_kind_is_unchanged` → green.
+- [x] AC1 (superseded 0.3 by AC6): `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_without_a_key_is_a_named_problem` → green: no key → `provider_route=direct (anthropic)`, stderr `provider anthropic: no API key`, rc 2; the not-routed wording now belongs to `openai` / `openai_compatible` (`test_unrouted_kind_without_gateway`).
+- [x] AC2 (superseded 0.3): `pytest -q tests/unit/test_doctor_provider_route.py::test_unrouted_kind_with_gateway_names_the_live_route` → green: `provider_route=gateway (<url>)` for an unrouted kind.
+- [x] AC3: `pytest -q tests/unit/test_doctor_provider_route.py::test_gateway_kind` → green.
 - [x] AC3b: `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_credential_order_never_prints_the_value` → green: both set → `REPOACH_ANTHROPIC_API_KEY (present)`; only the second → `ANTHROPIC_API_KEY (present)`; none → the `reads …` line; no value in the output.
-- [ ] AC4: `REPOACH_PROVIDER=anthropic ANTHROPIC_API_KEY=$KEY repoach review pr <n> --dry-run` with no gateway process → rc 0 or 2, `len(reviews) == 4`, no `ERROR`.
-- [ ] AC5: `pytest -q tests/unit/test_provider_direct_anthropic.py` → green with an `httpx.MockTransport` answering the Messages SSE stream: one `AgentResponse` per call; a 401 → `GatewayError` naming the variable; a connect error → `GatewayTransportError`.
-- [ ] AC6: `repoach doctor` with `kind = anthropic` and the key → `provider_route=anthropic (direct)`, rc 0.
+- [ ] AC4: `REPOACH_PROVIDER=anthropic ANTHROPIC_API_KEY=$KEY repoach review pr <n> --dry-run` with no gateway process → rc 0 or 2, `len(reviews) == 4`, no `ERROR`. Not run: no Anthropic key on the measuring machine (`docs/tech_debt.md`); the same path end to end is pinned against a loopback HTTP server by AC5, and the `claude_code` sibling was measured live (SP-UNIVERSAL-PROVIDERS AC3b).
+- [x] AC5: `pytest -q tests/unit/test_provider_direct_anthropic.py` → green (a real loopback HTTP server, not `httpx.MockTransport`: the transport builds its own client) with an `httpx.MockTransport` answering the Messages SSE stream: one `AgentResponse` per call; a 401 → `GatewayError` naming the variable; a connect error → `GatewayTransportError`.
+- [x] AC6: `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_with_its_key_is_direct_even_beside_a_gateway` → green: `provider_route=direct (anthropic)`, no provider problem (wording follows SP-UNIVERSAL-PROVIDERS: `direct (<kind>)`).
 
 ## Open Questions
 - Q1 (decided 2026-10-20): read `REPOACH_ANTHROPIC_API_KEY` first, then `ANTHROPIC_API_KEY`. SP-UNIVERSAL-PROVIDERS G2 names only the first and must adopt the fallback when it implements `AnthropicProvider`.
