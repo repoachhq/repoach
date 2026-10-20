@@ -409,7 +409,7 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
             f"base ref {ref!r} does not resolve to a commit in {base}: "
             f"{verify.stderr.strip()[:200]}"
         )
-    relpath = plan_relpath(spec_id)
+    relpath = plan_relpath(spec_id, root=base)
     show = subprocess.run(
         ["git", "show", f"{ref}:{relpath}"],
         cwd=base,

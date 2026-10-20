@@ -620,10 +620,10 @@ def run_planner_session(
         outcome.error = error
         return outcome
 
-    target = repo / plan_relpath(spec.id)
+    target = repo / plan_relpath(spec.id, root=repo)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_plan_markdown(plan), encoding="utf-8")
-    outcome.plan_path = plan_relpath(spec.id)
+    outcome.plan_path = plan_relpath(spec.id, root=repo)
     outcome.written = True
     outcome.n_steps = len(plan.steps)
     _log.info(

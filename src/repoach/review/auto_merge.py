@@ -63,7 +63,7 @@ from ..forge import (
     ForgeStateRefusedError,
     MergeMethod,
     PullRequest,
-    load_forge_config,
+    merge_preferences,
     select_forge,
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
@@ -430,12 +430,15 @@ class GateEvaluation:
         ci_gate: The CI-gate outcome (green flag, outcome tag, reason).
         facts: The merge facts re-verified at ``head_sha``.
         decision: The pure-gate decision over those facts.
+        pull_request: The PR / MR as read for this evaluation, when the
+            forge answered (its description and branch declare the spec).
     """
 
     head_sha: str
     ci_gate: CIGateOutcome
     facts: MergeFacts
     decision: MergeDecision
+    pull_request: PullRequest | None = None
 
 
 def _ls_remote_tip(forge: Forge, head_ref: str) -> tuple[str | None, str]:
@@ -659,6 +662,7 @@ def evaluate_merge_gate(
             ),
             facts=stale_facts,
             decision=MergeDecision(merge=False, reasons=[reason]),
+            pull_request=pr,
         )
 
     ci_gate = evaluate_ci_gate(
@@ -692,6 +696,7 @@ def evaluate_merge_gate(
         ci_gate=ci_gate,
         facts=facts,
         decision=decision,
+        pull_request=pr,
     )
 
 
@@ -734,9 +739,9 @@ def run_auto_merge(
     """
     forge = forge or select_forge(cwd=repo_root)
     if merge_method is None or delete_branch is None:
-        config = load_forge_config(repo_root)
-        merge_method = merge_method if merge_method is not None else config.merge_method
-        delete_branch = delete_branch if delete_branch is not None else config.remove_source_branch
+        configured_method, configured_delete = merge_preferences(repo_root)
+        merge_method = merge_method if merge_method is not None else configured_method
+        delete_branch = delete_branch if delete_branch is not None else configured_delete
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     settings = get_settings()
     db = db_path or Path(settings.db_path)

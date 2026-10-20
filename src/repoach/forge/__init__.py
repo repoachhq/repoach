@@ -29,7 +29,7 @@ from .protocol import (
     ReviewDraft,
 )
 from .runner import CommandResult
-from .select import ForgeConfig, load_forge_config, select_forge
+from .select import merge_preferences, select_forge
 
 __all__ = [
     "ARCHIVE_MARKER",
@@ -40,7 +40,6 @@ __all__ = [
     "Comment",
     "Diff",
     "Forge",
-    "ForgeConfig",
     "ForgeError",
     "ForgeForbiddenError",
     "ForgeMergeRefusedError",
@@ -53,6 +52,6 @@ __all__ = [
     "PullRequest",
     "Review",
     "ReviewDraft",
-    "load_forge_config",
+    "merge_preferences",
     "select_forge",
 ]

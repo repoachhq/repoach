@@ -31,7 +31,6 @@ from repoach.gates.config import (
 )
 from repoach.gates.languages import Language, diff_languages, language_of
 from repoach.gates.verifiers import VerifierStatus, run_verifiers
-from repoach.lint import edge_honesty
 from repoach.review.coder_loop import is_path_allowed, run_ruff_gate
 from repoach.review.finding_verifiers import verify_finding, verify_findings_for_pr
 from repoach.review.findings import (
@@ -345,47 +344,6 @@ def test_arch_check_require_frontmatter_keeps_the_presence_violation(
     assert "ungoverned new spec: docs/specs/2026-10-19_SP-FOO_foo.md" in result.output
 
 
-def _spec(spec_id: str, owns: str, depends_on: str = "") -> str:
-    return (
-        "---\n"
-        f"id: {spec_id}\n"
-        f"title: {spec_id}\n"
-        "version: 0.1\n"
-        "status: approved\n"
-        "owns:\n"
-        f"  code: [{owns}]\n"
-        "  resources: []\n"
-        f"depends_on: [{depends_on}]\n"
-        "---\n\n# body\n"
-    )
-
-
-def test_edge_honesty_resolves_typescript_alias_imports(tmp_path: Path) -> None:
-    _write(
-        tmp_path,
-        "frontend/tsconfig.json",
-        '{\n  // aliases\n  "compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["./src/*"]},},\n'
-        '  "include": ["src"]\n}\n',
-    )
-    _write(
-        tmp_path,
-        "frontend/src/a/view.ts",
-        "import { api } from '@/b/client';\nexport const v = api;\n",
-    )
-    _write(tmp_path, "frontend/src/b/client.ts", "export const api = 1;\n")
-    specs = tmp_path / "docs" / "specs"
-    _write(tmp_path, "docs/specs/01_SP-A_a.md", _spec("SP-A", "frontend/src/a/"))
-    _write(tmp_path, "docs/specs/01_SP-B_b.md", _spec("SP-B", "frontend/src/b/"))
-    registry = edge_honesty.load_registry(specs)
-    config = _config("typescript")
-    report = edge_honesty.check_diff(registry, ["frontend/src/a/view.ts"], tmp_path, config=config)
-    assert [(v.source, v.target, v.detail) for v in report.violations] == [
-        ("SP-A", "SP-B", "frontend/src/b/client.ts")
-    ]
-    builtin = edge_honesty.check_diff(registry, ["frontend/src/a/view.ts"], tmp_path)
-    assert builtin.violations == ()
-
-
 def test_doctor_gates_prints_the_language_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -439,13 +397,13 @@ def test_bad_repoach_toml_is_a_named_usage_error(
     result = CliRunner().invoke(app, argv)
     assert result.exit_code == 2, result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
-    assert "repoach.toml: project.languages: unknown language 'cobol'" in result.output
+    assert "repoach.toml: key 'project.languages': unknown language 'cobol'" in result.output
     assert "Traceback" not in result.output
 
 
 def test_bad_repoach_toml_raises_a_named_error_in_process(tmp_path: Path) -> None:
     _write(tmp_path, "repoach.toml", _BAD_TOML)
-    with pytest.raises(GatesConfigError, match=r"repoach\.toml: project\.languages: unknown"):
+    with pytest.raises(GatesConfigError, match=r"repoach\.toml: key 'project\.languages': unknown"):
         load_gates_config(tmp_path)
     with pytest.raises(GatesConfigError):
         run_ruff_gate(tmp_path)

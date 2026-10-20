@@ -55,6 +55,7 @@ from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..core.paths import project_root
 from ..forge import (
     ARCHIVE_MARKER,
     Forge,
@@ -65,6 +66,8 @@ from ..forge import (
     ReviewDraft,
     select_forge,
 )
+from ..project.config import load_project_config
+from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
 from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
@@ -105,6 +108,7 @@ from .reviewer import (
     Tester,
     make_file_excerpts,
 )
+from .spec import SpecPlan, load_spec
 from .thread_context import ResolvedDisagreement
 
 _log = get_logger(__name__)
@@ -260,7 +264,12 @@ class TeamOutcome:
     (:func:`merge_gate.verdict_from_facts`), not the retired consensus
     gate. ``posting_outcome`` is ``"SKIP_STATE"`` when the forge refused
     a write because the PR / MR is no longer open; posting then stopped
-    at that first refused write.
+    at that first refused write. ``spec_id`` / ``spec_source`` name the
+    spec the review ran against and where it was declared (``flag``,
+    ``description``, ``branch``), both None when none was declared;
+    ``spec_covered`` is None when no coverage was computed;
+    ``spec_missing`` is True when a ``Spec:`` line named an id with no
+    document (the review then runs without a spec).
     """
 
     pr_number: int
@@ -274,6 +283,10 @@ class TeamOutcome:
     head_sha: str | None = None
     auto_challenges: list[dict] = field(default_factory=list)
     posting_outcome: str | None = None
+    spec_id: str | None = None
+    spec_source: str | None = None
+    spec_covered: bool | None = None
+    spec_missing: bool = False
 
 
 class ReviewTeamOrchestrator:
@@ -306,11 +319,42 @@ class ReviewTeamOrchestrator:
         self._max_workers = max_workers
         init_schema(self._db_path)
 
-    def review_pr(self, pr_number: int) -> TeamOutcome:
+    def _load_declared_spec(self, declared: SpecResolution) -> SpecPlan | None:
+        """Load the spec a pull request declares, or None.
+
+        A declared id with no document under the spec directory is
+        reviewed without a spec. A ``Spec:`` line naming a missing
+        document is a warning (the author asked for a spec); a branch
+        naming one stays an info, as it always was. The ``--spec`` flag
+        is checked by the CLI before the review starts.
+
+        Args:
+            declared: The resolved id and its source.
+
+        Returns:
+            The loaded spec, or None.
+        """
+        if declared.spec_id is None:
+            return None
+        try:
+            return load_spec(declared.spec_id, root=self._repo_root)
+        except FileNotFoundError as exc:
+            log = _log.warning if declared.source == "description" else _log.info
+            log(
+                "review_team.declared_spec_missing",
+                spec_id=declared.spec_id,
+                source=declared.source,
+                error=str(exc)[:200],
+            )
+            return None
+
+    def review_pr(self, pr_number: int, *, spec_flag: str | None = None) -> TeamOutcome:
         """Run the four reviewers in parallel and return aggregated outcome.
 
         Args:
             pr_number: GitHub PR number.
+            spec_flag: The ``--spec`` value; outranks the description's
+                ``Spec:`` line and the branch name (SP-UNIVERSAL-PROJECT-CONFIG G4).
 
         Returns:
             A :class:`TeamOutcome` with each reviewer's verdict, the
@@ -396,6 +440,9 @@ class ReviewTeamOrchestrator:
 
         spec_plan_md: str | None = None
         spec_id: str | None = None
+        spec_source: str | None = None
+        spec_covered: bool | None = None
+        spec_missing = False
         pr_title = ""
         arch_edges_block = ""
         anchored = False
@@ -405,28 +452,38 @@ class ReviewTeamOrchestrator:
             pr_title = pr.title
             head_ref = pr.head_ref
             base_ref = pr.base_ref or None
-            if head_ref:
-                from .spec import maybe_load_active_spec
+            declared = resolve_spec(
+                flag=spec_flag,
+                description=pr.body,
+                branch=head_ref,
+                sources=load_project_config(project_root(self._repo_root)).review.spec_sources,
+                root=self._repo_root,
+            )
+            spec = self._load_declared_spec(declared)
+            if spec is not None:
+                spec_plan_md = spec.raw_markdown
+                spec_id = spec.id
+                spec_source = declared.source
+            elif declared_spec_missing(declared, self._repo_root):
+                spec_id = declared.spec_id
+                spec_source = declared.source
+                spec_missing = True
+            elif head_ref:
+                from .subspec_anchor import maybe_anchor_decomposed_parent
 
-                spec = maybe_load_active_spec(branch=head_ref)
-                if spec is not None:
-                    spec_plan_md = spec.raw_markdown
-                    spec_id = spec.id
-                else:
-                    from .subspec_anchor import maybe_anchor_decomposed_parent
-
-                    anchor = maybe_anchor_decomposed_parent(head_ref, root=self._repo_root)
-                    if anchor is not None:
-                        spec_plan_md = anchor.spec_plan_md
-                        spec_id = anchor.parent_id
-                        arch_edges_block = anchor.arch_edges
-                        anchored = True
-                        _log.info(
-                            "review_team.anchored_to_sub_specs",
-                            pr_number=pr_number,
-                            parent_id=anchor.parent_id,
-                            sub_spec_ids=list(anchor.sub_spec_ids),
-                        )
+                anchor = maybe_anchor_decomposed_parent(head_ref, root=self._repo_root)
+                if anchor is not None:
+                    spec_plan_md = anchor.spec_plan_md
+                    spec_id = anchor.parent_id
+                    spec_source = "branch"
+                    arch_edges_block = anchor.arch_edges
+                    anchored = True
+                    _log.info(
+                        "review_team.anchored_to_sub_specs",
+                        pr_number=pr_number,
+                        parent_id=anchor.parent_id,
+                        sub_spec_ids=list(anchor.sub_spec_ids),
+                    )
         except Exception as exc:
             _log.info(
                 "review_team.spec_lookup_failed",
@@ -434,7 +491,7 @@ class ReviewTeamOrchestrator:
                 error=str(exc),
             )
 
-        if spec_id and not anchored:
+        if spec_id and not anchored and not spec_missing:
             try:
                 from .governed_spec import load_governed_spec, render_arch_edges
 
@@ -662,7 +719,7 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
-        if spec_id is not None:
+        if spec_id is not None and not spec_missing:
             try:
                 from .spec_gate import (
                     SpecCoverage,
@@ -701,6 +758,7 @@ class ReviewTeamOrchestrator:
                         missing=["base-ref-unavailable"],
                         covered=False,
                     )
+                spec_covered = coverage.covered
                 record_spec_coverage(
                     self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
                 )
@@ -734,6 +792,10 @@ class ReviewTeamOrchestrator:
             head_sha=head_sha,
             reviews=outcomes,
             hallucinations=all_events,
+            spec_id=spec_id,
+            spec_source=spec_source,
+            spec_covered=spec_covered,
+            spec_missing=spec_missing,
         )
 
         for outcome in outcomes:
@@ -1818,7 +1880,13 @@ def _render_guard_section(team: TeamOutcome) -> str:
     )
 
 
-def run_review(pr_number: int, *, post: bool = True, forge: Forge | None = None) -> TeamOutcome:
+def run_review(
+    pr_number: int,
+    *,
+    post: bool = True,
+    forge: Forge | None = None,
+    spec: str | None = None,
+) -> TeamOutcome:
     """Module-level convenience wrapper used by the CLI command.
 
     Args:
@@ -1826,8 +1894,11 @@ def run_review(pr_number: int, *, post: bool = True, forge: Forge | None = None)
         post: When False, do not publish anything to the forge (dry-run).
         forge: The forge to read and post through; selected from the
             repository when omitted.
+        spec: The ``--spec`` value, highest-precedence spec source.
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers.
     """
-    return ReviewTeamOrchestrator(forge=forge, post_to_github=post).review_pr(pr_number)
+    return ReviewTeamOrchestrator(forge=forge, post_to_github=post).review_pr(
+        pr_number, spec_flag=spec
+    )

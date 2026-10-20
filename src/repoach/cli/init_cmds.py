@@ -2,16 +2,17 @@
 
 The command anchors to the git toplevel of the current working directory
 (SP-UNIVERSAL-INSTALL), never to the checkout the package was installed
-from, and refuses with rc 2 outside a git working tree.  On a foreign
-repository it touches nothing and prints where repoach reads its
-configuration; the project file it will scaffold (``repoach.toml``)
-lands with SP-UNIVERSAL-PROJECT-CONFIG.
+from, and refuses with rc 2 outside a git working tree.  It writes
+``repoach.toml`` from measured defaults and ``<specs_dir>/_TEMPLATE.md``,
+appends ``.repoach.env`` to an existing ``.gitignore``, and touches
+nothing else (SP-UNIVERSAL-PROJECT-CONFIG G2/G3, see
+:mod:`repoach.project.scaffold`).
 
 ``--repoach-dev`` keeps the contributor onboarding of a repoach
 checkout (SP-REPOACH-INIT-SCAFFOLD): copy ``.env.example`` to ``.env``
 for the gateway and wire the guardrail git hooks.  Those steps rewrite
-``core.hooksPath``, so they never run on a repository that did not ask
-for them.
+``core.hooksPath``, so they run only when asked and only in a checkout
+that contains ``src/repoach/``.
 """
 
 from __future__ import annotations
@@ -23,8 +24,13 @@ from typing import Annotated
 
 import typer
 
-from ..core.paths import PROJECT_ENV_FILE_NAME, USER_ENV_FILE_NAME, user_config_dir
-from .doctor_cmds import project_root_or_exit
+from ..core.paths import USER_ENV_FILE_NAME, user_config_dir
+from ..project.config import ConfigError
+from ..project.scaffold import InitRefusedError, apply_init, plan_init
+from .doctor_cmds import EXIT_UNUSABLE, project_root_or_exit
+
+REPOACH_SOURCE_MARKER = Path("src") / "repoach"
+"""Directory whose presence identifies a repoach checkout for ``--repoach-dev``."""
 
 
 def _repo_root() -> Path:
@@ -111,20 +117,49 @@ def init(
             help="Contributor onboarding of a repoach checkout: scaffold .env and wire .githooks.",
         ),
     ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print what would be written; write nothing.")
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-measure and rewrite an existing repoach.toml."),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="With --force: discard uncommitted repoach.toml changes."),
+    ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option("--offline", help="Do not ask the forge API (merge method stays squash)."),
+    ] = False,
 ) -> None:
-    """Typer callback for `repoach init`."""
+    """Write repoach.toml and the spec template into the current repository.
+
+    Prints one line per file (``created``, ``unchanged``, ``would
+    create``); a second run prints ``unchanged`` for each and changes
+    no byte.  Exit codes: ``0`` done, ``2`` not a git repository, an
+    invalid existing ``repoach.toml``, or a refused ``--force``.
+    """
     repo_root = _repo_root()
     if repoach_dev:
+        if not (repo_root / REPOACH_SOURCE_MARKER).is_dir():
+            typer.echo(
+                f"repoach: --repoach-dev refused: {repo_root} has no {REPOACH_SOURCE_MARKER}/ "
+                "(it is not a repoach checkout)",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_UNUSABLE)
         _init_repoach_dev(repo_root)
         return
 
-    typer.echo(f"init: project root {repo_root}")
-    typer.echo("init: nothing written (repoach.toml lands with SP-UNIVERSAL-PROJECT-CONFIG)")
-    typer.echo("")
-    typer.echo("Next steps:")
-    typer.echo(
-        f"  1. Configure a provider in {user_config_dir() / USER_ENV_FILE_NAME}; "
-        f"{repo_root / PROJECT_ENV_FILE_NAME} (untracked) may only set branch names "
-        "and other conventions"
-    )
-    typer.echo("  2. repoach doctor   # check forge, provider and paths")
+    try:
+        plan = plan_init(repo_root, force=force, yes=yes, probe=not offline)
+    except (InitRefusedError, ConfigError) as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNUSABLE) from exc
+    if not dry_run:
+        apply_init(repo_root, plan)
+    for action in plan.actions:
+        typer.echo(action.describe(dry_run=dry_run))
+    for note in plan.notes:
+        typer.echo(f"init: note: {note}")

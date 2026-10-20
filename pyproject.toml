@@ -81,6 +81,7 @@ packages = ["src/repoach"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "prompts" = "repoach/prompts"
+"docs/specs/_TEMPLATE.md" = "repoach/project/spec_template.md"
 
 [tool.ruff]
 line-length = 100

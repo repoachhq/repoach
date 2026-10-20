@@ -1,29 +1,31 @@
 """The gate knobs a project declares, read through one small dataclass (SP-UNIVERSAL-GATES).
 
 Every gate, verifier and jail rule that depends on the host project
-reads a :class:`GatesConfig`.  The mapping it is built from has the
-shape of ``repoach.toml``'s tables (``[project]``, ``[commands]``,
-``[gates]``, ``[arch]``, ``[coder]``); this module is the only place
-that reads the file, so the project-config loader of
-SP-UNIVERSAL-PROJECT-CONFIG replaces :func:`load_gates_config` with one
-adapter call (``GatesConfig.from_mapping(project_config.as_mapping())``).
+reads a :class:`GatesConfig`.  ``repoach.toml`` has one reader,
+:func:`repoach.project.config.load_project_config`
+(SP-UNIVERSAL-PROJECT-CONFIG); :func:`load_gates_config` adapts its
+host-resolved result with one call,
+``GatesConfig.from_mapping(project_config.as_mapping())``, and a
+malformed file or a gate key the project config does not check
+(``[project].languages``) is the same
+:class:`~repoach.project.config.ConfigError`.
 
-Two defaults coexist on purpose:
+Two shapes coexist on purpose:
 
-* :meth:`GatesConfig.builtin` — no ``repoach.toml`` at all.  It encodes
-  repoach's own behaviour before this spec (Python only, the literal
-  ``ruff``/``pytest`` gates, docstring exemptions, frontmatter required),
-  so a checkout without configuration behaves exactly as it did.
-  ``lint_cmd``/``test_cmd`` are ``None`` there, which the callers read
-  as "run the built-in Python gate".
-* :meth:`GatesConfig.from_mapping` — a project that wrote a
-  configuration.  A command it leaves out is ``""`` and its gate is
-  skipped with a printed reason; nothing Python-shaped is assumed.
+* no ``repoach.toml`` at all — :meth:`GatesConfig.builtin_default`
+  encodes repoach's behaviour before this spec (Python only, the
+  built-in ``ruff``/``pytest`` gates, Python verifiers on every ``.py``
+  path), so a checkout without configuration behaves exactly as it
+  did.  ``lint_cmd``/``test_cmd`` are ``None`` there, which the callers
+  read as "run the built-in Python gate".
+* a project that wrote a configuration — :meth:`GatesConfig.from_mapping`.
+  A command it leaves out (and the host does not default) is ``""``
+  and its gate is skipped with a printed reason; nothing Python-shaped
+  is assumed.
 """
 
 from __future__ import annotations
 
-import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,30 +33,22 @@ from typing import Any
 
 from ..core.logging import get_logger
 from ..core.paths import NotARepositoryError, is_repoach_checkout, project_root
+from ..project.config import (
+    CONFIG_FILE_NAME,
+    DEFAULT_PROMPTS_DIR,
+    DEFAULT_TIMEOUT_S,
+    REPOACH_DOCSTRING_EXEMPT,
+    ConfigError,
+    config_path,
+    load_project_config,
+)
 from .languages import Language, python_applicable
 
 _log = get_logger(__name__)
 
-CONFIG_FILE_NAME = "repoach.toml"
-"""The committed, secret-free project file at the host repository root."""
-
-DEFAULT_TIMEOUT_S = 900
-"""Seconds a project command may run before it is killed (``[commands].timeout_s``)."""
-
-REPOACH_DOCSTRING_EXEMPT: tuple[str, ...] = ("tests/", "scripts/", "src/repoach/llm_proxy/")
-"""Paths repoach's own pyproject exempts from docstring (ruff ``D``) rules."""
-
-DEFAULT_PROMPTS_DIR = "prompts/review"
-"""Where the reviewer personas live; always forbidden to the Coder."""
-
-
-class GatesConfigError(ValueError):
-    """A ``repoach.toml`` that cannot be read as gate configuration.
-
-    The message names the file and the dotted key at fault
-    (``repoach.toml: project.languages: unknown language 'cobol' …``);
-    the CLI reports it as a usage error (rc 2), never a traceback.
-    """
+GatesConfigError = ConfigError
+"""A gate configuration problem is a project configuration problem: one
+error type, one bootstrap check, file and key named in the message."""
 
 
 def _str_tuple(value: object, key: str) -> tuple[str, ...]:
@@ -73,7 +67,7 @@ def _str_tuple(value: object, key: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{key} must be an array of strings, got {value!r}")
+        raise ValueError(f"{key}: must be an array of strings, got {value!r}")
     return tuple(value)
 
 
@@ -82,7 +76,7 @@ def _str_value(value: object, key: str) -> str:
     if value is None:
         return ""
     if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string, got {value!r}")
+        raise ValueError(f"{key}: must be a string, got {value!r}")
     return value
 
 
@@ -92,7 +86,7 @@ def _table(mapping: Mapping[str, Any], name: str) -> Mapping[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
-        raise ValueError(f"[{name}] must be a table, got {value!r}")
+        raise ValueError(f"{name}: must be a table, got {value!r}")
     return value
 
 
@@ -107,7 +101,7 @@ def _named_commands(commands: Mapping[str, Any]) -> dict[str, str]:
         if key == "timeout_s":
             continue
         if not isinstance(value, str):
-            raise ValueError(f"commands.{key} must be a string, got {value!r}")
+            raise ValueError(f"commands.{key}: must be a string, got {value!r}")
         if value.strip():
             out[str(key)] = value
     return out
@@ -182,39 +176,42 @@ class GatesConfig:
     builtin: bool = True
 
     @classmethod
-    def builtin_default(cls, *, repoach_project: bool = True) -> GatesConfig:
+    def builtin_default(cls, *, require_frontmatter: bool = True) -> GatesConfig:
         """Return the configuration of a project with no ``repoach.toml``.
 
         Reproduces repoach's behaviour before SP-UNIVERSAL-GATES: Python
         only, built-in ruff and pytest gates, Python verifiers on every
-        ``.py`` path (no root restriction).  Spec frontmatter is required
-        only in repoach's own checkout; a foreign repository without a
-        configuration file has not adopted architecture governance
-        (SP-UNIVERSAL-GATES G6).
+        ``.py`` path (no root restriction).
 
         Args:
-            repoach_project: Whether the host is repoach itself.
+            require_frontmatter: The host default from
+                :meth:`repoach.project.config.ProjectConfig.with_host_defaults`
+                (repoach itself: true; a foreign repository: false,
+                SP-UNIVERSAL-GATES G6).
         """
-        return cls(src_roots=(), test_roots=(), require_frontmatter=repoach_project)
+        return cls(src_roots=(), test_roots=(), require_frontmatter=require_frontmatter)
 
     @classmethod
-    def from_mapping(
-        cls, mapping: Mapping[str, Any], *, repoach_project: bool = False
-    ) -> GatesConfig:
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> GatesConfig:
         """Build the configuration from a ``repoach.toml``-shaped mapping.
 
+        Feed it ``ProjectConfig.with_host_defaults(...).as_mapping()``:
+        the host-dependent defaults (``docstring_exempt``,
+        ``require_frontmatter``, repoach's own lint/test commands) are
+        already filled there.  A key still absent falls back to the
+        foreign-repository default (test roots exempt, frontmatter not
+        required, command skipped).
+
         Args:
-            mapping: The parsed document (``[project]``, ``[commands]``,
+            mapping: The document (``[project]``, ``[commands]``,
                 ``[gates]``, ``[arch]``, ``[coder]`` tables; all optional).
-            repoach_project: Whether the host is repoach itself; only
-                changes the ``docstring_exempt`` and
-                ``require_frontmatter`` defaults.
 
         Returns:
             The configuration.
 
         Raises:
-            ValueError: A key has the wrong type or names an unknown language.
+            ValueError: A key has the wrong type or names an unknown
+                language; the message starts with the dotted key.
         """
         project = _table(mapping, "project")
         commands = _table(mapping, "commands")
@@ -227,21 +224,19 @@ class GatesConfig:
         exempt_raw = gates.get("docstring_exempt")
         if exempt_raw is not None:
             exempt = _str_tuple(exempt_raw, "gates.docstring_exempt")
-        elif repoach_project:
-            exempt = REPOACH_DOCSTRING_EXEMPT
         else:
             exempt = tuple(root.rstrip("/") + "/" for root in test_roots)
-        require_raw = arch.get("require_frontmatter", repoach_project)
+        require_raw = arch.get("require_frontmatter", False)
         if not isinstance(require_raw, bool):
-            raise ValueError(f"arch.require_frontmatter must be a boolean, got {require_raw!r}")
+            raise ValueError(f"arch.require_frontmatter: must be a boolean, got {require_raw!r}")
         timeout_raw = commands.get("timeout_s", DEFAULT_TIMEOUT_S)
         if not isinstance(timeout_raw, int) or isinstance(timeout_raw, bool) or timeout_raw <= 0:
-            raise ValueError(f"commands.timeout_s must be a positive integer, got {timeout_raw!r}")
+            raise ValueError(f"commands.timeout_s: must be a positive integer, got {timeout_raw!r}")
         overrides_raw = gates.get("verifier_commands", {})
         if not isinstance(overrides_raw, Mapping) or not all(
             isinstance(value, str) for value in overrides_raw.values()
         ):
-            raise ValueError("gates.verifier_commands must map verifier names to strings")
+            raise ValueError("gates.verifier_commands: must map verifier names to strings")
         return cls(
             languages=languages,
             src_roots=src_roots,
@@ -268,30 +263,6 @@ class GatesConfig:
             verifier_commands=dict(overrides_raw),
             builtin=False,
         )
-
-    @classmethod
-    def from_toml_path(cls, path: Path, *, repoach_project: bool = False) -> GatesConfig:
-        """Read ``path`` (a ``repoach.toml``) and build the configuration.
-
-        Args:
-            path: The TOML file.
-            repoach_project: Forwarded to :meth:`from_mapping`.
-
-        Returns:
-            The configuration.
-
-        Raises:
-            GatesConfigError: The file is unreadable, not valid TOML, or a
-                key is malformed; the message names the file and the key.
-        """
-        try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-            raise GatesConfigError(f"{path}: invalid TOML: {exc}") from exc
-        try:
-            return cls.from_mapping(data, repoach_project=repoach_project)
-        except ValueError as exc:
-            raise GatesConfigError(f"{path}: {exc}") from exc
 
     @property
     def python_roots(self) -> tuple[str, ...]:
@@ -321,20 +292,35 @@ def applicable(path: str, config: GatesConfig) -> tuple[bool, str]:
 def load_gates_config(root: Path) -> GatesConfig:
     """Return the gate configuration of the project at ``root``.
 
+    Reads ``repoach.toml`` through
+    :func:`repoach.project.config.load_project_config` (never directly),
+    applies the host defaults, and adapts the mapping.
+
     Args:
         root: The project root.
 
     Returns:
-        :meth:`GatesConfig.from_toml_path` when ``root/repoach.toml``
-        exists, else :meth:`GatesConfig.builtin_default`.
+        :meth:`GatesConfig.from_mapping` of the resolved configuration
+        when ``root/repoach.toml`` exists, else
+        :meth:`GatesConfig.builtin_default` with the host's frontmatter
+        default.
 
     Raises:
-        GatesConfigError: ``repoach.toml`` exists but is malformed.
+        ConfigError: ``repoach.toml`` is malformed, or a gate key holds a
+            value the gates refuse (an unknown language); the message
+            names the file and the key.
     """
-    path = root / CONFIG_FILE_NAME
+    project = load_project_config(root).with_host_defaults(repoach_host=is_repoach_checkout(root))
+    path = config_path(root)
     if not path.is_file():
-        return GatesConfig.builtin_default(repoach_project=is_repoach_checkout(root))
-    return GatesConfig.from_toml_path(path, repoach_project=is_repoach_checkout(root))
+        return GatesConfig.builtin_default(
+            require_frontmatter=bool(project.arch.require_frontmatter)
+        )
+    try:
+        return GatesConfig.from_mapping(project.as_mapping())
+    except ValueError as exc:
+        key, _, reason = str(exc).partition(": ")
+        raise ConfigError(path, reason or str(exc), key=key if reason else "") from exc
 
 
 def current_gates_config() -> GatesConfig:
@@ -347,13 +333,15 @@ def current_gates_config() -> GatesConfig:
         root = project_root()
     except NotARepositoryError as exc:
         _log.info("gates.config_no_project", error=str(exc)[:200])
-        return GatesConfig.builtin_default()
+        return GatesConfig.builtin_default(require_frontmatter=False)
     return load_gates_config(root)
 
 
 __all__ = [
     "CONFIG_FILE_NAME",
+    "DEFAULT_PROMPTS_DIR",
     "DEFAULT_TIMEOUT_S",
+    "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
     "GatesConfigError",
     "applicable",

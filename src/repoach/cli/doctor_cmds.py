@@ -2,7 +2,8 @@
 
 ``doctor`` prints, one ``key=value`` line each, the anchors a run
 resolves (SP-UNIVERSAL-INSTALL G6): project root, user config and data
-directories, the env files read, the ledger path, the selected forge
+directories, the env files read, every ``repoach.toml`` key with its
+source (SP-UNIVERSAL-PROJECT-CONFIG), the ledger path, the selected forge
 and provider, and whether each external binary is on ``PATH``.  It
 builds :class:`~repoach.core.config.Settings` directly (no directory is
 created) and never contacts a forge or a provider.
@@ -25,13 +26,20 @@ from .. import __version__
 from ..core.config import Settings, _anchored_env_files
 from ..core.paths import (
     NotARepositoryError,
-    project_slug,
     require_project_root,
     user_config_dir,
     user_data_dir,
 )
 from ..gates.config import CONFIG_FILE_NAME, GatesConfig, load_gates_config
 from ..gates.verifiers import availability_table
+from ..project.config import ConfigError, config_path
+from ..project.resolve import (
+    UNDECLARED_COMMAND_NOTE,
+    ResolvedProjectConfig,
+    effective_rows,
+    resolve_project_config,
+)
+from ..project.toml_write import toml_value
 
 DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
 """External executables whose presence ``doctor`` reports."""
@@ -74,28 +82,29 @@ def _binary_line(name: str) -> str:
     return f"{name}={found if found is not None else 'missing'}"
 
 
-def _forge_status(root: Path) -> tuple[str, str | None]:
+_FORGE_BINARIES: dict[str, str] = {"github": "gh", "gitlab": "glab"}
+"""CLI each forge is driven through."""
+
+
+def _forge_status(resolved: ResolvedProjectConfig) -> tuple[str, str | None]:
     """Return the selected forge and whether it is usable here.
 
-    GitHub through ``gh`` is the only shipped forge until
-    SP-UNIVERSAL-FORGE lands; a GitLab ``origin`` is named but reported
-    unusable rather than silently treated as GitHub.
-
     Args:
-        root: The project root.
+        resolved: The project's resolved configuration.
 
     Returns:
-        The ``forge=`` value and, when unusable, the problem to report.
+        The ``forge=`` value (name, source, binary state) and, when the
+        forge's CLI is missing, the problem to report.
     """
-    host = project_slug(root).split("/", 1)[0]
-    if "gitlab" in host:
-        return "gitlab", "forge gitlab is not supported until SP-UNIVERSAL-FORGE"
-    if shutil.which("gh") is None:
+    name = resolved.forge
+    source = resolved.source("repoach.forge")
+    binary = _FORGE_BINARIES[name]
+    if shutil.which(binary) is None:
         return (
-            "github (gh not on PATH)",
-            "gh not on PATH -- install the GitHub CLI to use the github forge",
+            f"{name} ({source}; {binary} not on PATH)",
+            f"{binary} not on PATH -- install it to use the {name} forge",
         )
-    return "github (gh found)", None
+    return f"{name} ({source}; {binary} found)", None
 
 
 def _command_line(name: str, value: str | None, builtin: str) -> str:
@@ -116,8 +125,8 @@ def print_gates(root: Path) -> None:
     """
     try:
         config: GatesConfig = load_gates_config(root)
-    except ValueError as exc:
-        typer.echo(f"repoach: {CONFIG_FILE_NAME} invalid: {exc}", err=True)
+    except ConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=EXIT_UNUSABLE) from exc
     source = root / CONFIG_FILE_NAME
     typer.echo(f"gates_config={source if not config.builtin else 'builtin (no repoach.toml)'}")
@@ -144,12 +153,14 @@ def doctor(
         False, "--gates", help="Print the gate configuration and per-language verifier table."
     ),
 ) -> None:
-    """Print the resolved anchors, forge, provider and binaries.
+    """Print the resolved anchors, configuration, forge, provider and binaries.
 
-    Exits 0 when the selected forge and provider are usable, 2
-    otherwise (including outside a git working tree). With ``--gates``
-    prints the gate configuration and verifier table instead, exiting
-    0 unless ``repoach.toml`` is malformed.
+    Every ``repoach.toml`` key is printed as ``config.<section>.<key>=<value>
+    (<source>)``.  Exits 0 when the selected forge and provider are
+    usable, 2 otherwise (including outside a git working tree or with an
+    invalid ``repoach.toml``). With ``--gates`` prints the gate
+    configuration and verifier table instead, exiting 0 unless
+    ``repoach.toml`` is invalid.
 
     Args:
         gates: Print the gate table instead of the anchors.
@@ -168,6 +179,18 @@ def doctor(
     for env_file in _anchored_env_files(root):
         state = "present" if env_file.is_file() else "absent"
         typer.echo(f"env_file={env_file} ({state})")
+    config_file = config_path(root)
+    typer.echo(f"config_file={config_file} ({'present' if config_file.is_file() else 'absent'})")
+
+    try:
+        resolved = resolve_project_config(root)
+    except ConfigError as exc:
+        typer.echo("config=invalid")
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNUSABLE) from exc
+    for dotted, value, source in effective_rows(resolved):
+        shown = f"<{UNDECLARED_COMMAND_NOTE}>" if value is None else toml_value(value)
+        typer.echo(f"config.{dotted}={shown} ({source})")
 
     problems: list[str] = []
     try:
@@ -178,7 +201,7 @@ def doctor(
         raise typer.Exit(code=EXIT_UNUSABLE) from exc
     typer.echo(f"db_path={settings.db_path}")
 
-    forge, forge_problem = _forge_status(root)
+    forge, forge_problem = _forge_status(resolved)
     typer.echo(f"forge={forge}")
     if forge_problem is not None:
         problems.append(forge_problem)
