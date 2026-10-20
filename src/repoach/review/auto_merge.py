@@ -441,6 +441,19 @@ class GateEvaluation:
     pull_request: PullRequest | None = None
 
 
+def _unknown_facts() -> MergeFacts:
+    """Return merge facts for a gate that stopped before reading the ledger."""
+    return MergeFacts(
+        head_sha="",
+        ci_green=False,
+        open_blocking_findings=0,
+        spec_covered=False,
+        spec_coverage_known=False,
+        review_complete=False,
+        review_integrity_known=False,
+    )
+
+
 def _ls_remote_tip(forge: Forge, head_ref: str) -> tuple[str | None, str]:
     """Resolve the branch tip via ``git ls-remote origin refs/heads/<head_ref>``.
 
@@ -454,12 +467,21 @@ def _ls_remote_tip(forge: Forge, head_ref: str) -> tuple[str | None, str]:
         head_ref: The branch name to resolve (``headRefName``).
 
     Returns:
-        ``(sha, "")`` on success, ``(None, reason)`` on failure.
+        ``(sha, "")`` on success, ``(None, reason)`` on failure.  The
+        reason always names its cause (SP-GATE-MERGED-MR-NAMED-REASON):
+        no head branch read, the branch absent from origin (deleted
+        after merge, or never pushed), or the ``ls-remote`` exit code
+        when git printed nothing — never an empty string after a colon.
     """
+    if not head_ref:
+        return None, "no head branch: the pull request's source branch could not be read"
     ls_remote = forge.git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
-    if not ls_remote.ok or not ls_remote.stdout.strip():
+    if ls_remote.ok and not ls_remote.stdout.strip():
+        return None, f"branch {head_ref!r} not found on origin (deleted, or never pushed)"
+    if not ls_remote.ok:
         error = (ls_remote.stderr or ls_remote.stdout).strip()
-        return None, f"ls-remote failed: {error[:200]}"
+        detail = error[:200] if error else f"exit {ls_remote.returncode}, no output"
+        return None, f"ls-remote failed: {detail}"
     first_line = ls_remote.stdout.strip().splitlines()[0]
     tokens = first_line.split()
     remote_sha = tokens[0] if tokens else ""
@@ -520,15 +542,10 @@ def resolve_verified_head(
     api_sha = ""
     remote_sha = ""
     for attempt in range(attempts):
-        ls_remote = forge.git(["ls-remote", "origin", f"refs/heads/{head_ref}"])
-        if not ls_remote.ok or not ls_remote.stdout.strip():
-            error = (ls_remote.stderr or ls_remote.stdout).strip()
-            return None, f"ls-remote failed: {error[:200]}"
-        first_line = ls_remote.stdout.strip().splitlines()[0]
-        tokens = first_line.split()
-        remote_sha = tokens[0] if tokens else ""
-        if not remote_sha:
-            return None, f"ls-remote returned no SHA: {first_line[:200]}"
+        tip, reason = _ls_remote_tip(forge, head_ref)
+        if tip is None:
+            return None, reason
+        remote_sha = tip
         api_sha = _head_sha_or_empty(forge, pr_number)
         if api_sha == remote_sha:
             return remote_sha, ""
@@ -619,6 +636,11 @@ def evaluate_merge_gate(
     :func:`decide_at_head` at all, so ``repoach review gate`` exits 5
     through the existing exit-code mapping and ``safe_merge.sh``
     aborts on the same signal the CI auto-merge would refuse on.
+
+    A pull request the forge reports ``merged`` short-circuits before
+    any of that with ``outcome_tag = ALREADY_MERGED``, ``merge`` False
+    and that reason (SP-GATE-MERGED-MR-NAMED-REASON): its source branch
+    may be gone, and there is nothing left to gate.
     """
     forge = forge or select_forge(cwd=repo_root)
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
@@ -628,6 +650,17 @@ def evaluate_merge_gate(
 
     pr = _pull_request_or_none(forge, pr_number)
     head_ref = pr.head_ref if pr is not None else ""
+
+    if pr is not None and pr.state == "merged":
+        reason = f"{OUTCOME_ALREADY_MERGED}: #{pr_number} is already merged into {pr.base_ref!r}"
+        _log.info("auto_merge.gate_already_merged", pr_number=pr_number, base=pr.base_ref)
+        return GateEvaluation(
+            head_sha=pr.head_sha,
+            ci_gate=CIGateOutcome(green=False, outcome_tag=OUTCOME_ALREADY_MERGED, reason=reason),
+            facts=_unknown_facts(),
+            decision=MergeDecision(merge=False, reasons=[reason]),
+            pull_request=pr,
+        )
 
     verified_head, stale_reason = resolve_verified_head(
         forge,
@@ -644,15 +677,6 @@ def evaluate_merge_gate(
             head_ref=head_ref,
             reason=stale_reason,
         )
-        stale_facts = MergeFacts(
-            head_sha="",
-            ci_green=False,
-            open_blocking_findings=0,
-            spec_covered=False,
-            spec_coverage_known=False,
-            review_complete=False,
-            review_integrity_known=False,
-        )
         return GateEvaluation(
             head_sha="",
             ci_gate=CIGateOutcome(
@@ -660,7 +684,7 @@ def evaluate_merge_gate(
                 outcome_tag=OUTCOME_SKIP_STALE_HEAD,
                 reason=reason,
             ),
-            facts=stale_facts,
+            facts=_unknown_facts(),
             decision=MergeDecision(merge=False, reasons=[reason]),
             pull_request=pr,
         )

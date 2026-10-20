@@ -33,6 +33,7 @@ from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
 from ..review.auto_merge import (
+    OUTCOME_ALREADY_MERGED,
     evaluate_merge_gate,
     merge_exit_code,
     run_auto_merge,
@@ -476,7 +477,9 @@ def review_gate(
     :func:`decide_at_head`).
 
     Exit codes:
-      * ``0`` — gate satisfied (``merge`` is True): the PR may merge.
+      * ``0`` — gate satisfied (``merge`` is True): the PR may merge; or
+        the PR is already merged (``outcome`` ``ALREADY_MERGED``,
+        ``merge`` False, nothing left to gate).
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
 
@@ -519,6 +522,7 @@ def review_gate(
         json.dumps(
             {
                 "pr_number": pr_number,
+                "outcome": evaluation.ci_gate.outcome_tag,
                 "head_sha": evaluation.head_sha,
                 "spec": declared.spec_id,
                 "spec_source": declared.source,
@@ -538,6 +542,8 @@ def review_gate(
             ensure_ascii=False,
         )
     )
+    if evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED:
+        return
     if not evaluation.decision.merge:
         raise typer.Exit(code=5)
 
