@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -121,6 +122,7 @@ class CiReviewReport(BaseModel):
         review: The review's JSON payload, verbatim, when it printed one.
         detail: The first 200 characters of the review's stdout when it
             was not one JSON document.
+        notes: Lines printed on stderr beside the outcome (agent memory off…).
         strict: Whether ``--strict`` was given.
         exit_code: The exit code this run ends with.
     """
@@ -141,6 +143,7 @@ class CiReviewReport(BaseModel):
     review_exit_code: int | None = None
     review: dict[str, object] | None = None
     detail: str | None = None
+    notes: list[str] = []
     strict: bool = False
     exit_code: int = EXIT_OK
 
@@ -354,8 +357,56 @@ def forge_env(plan: CiReviewPlan, env: Mapping[str, str]) -> dict[str, str]:
     return derived
 
 
+MEMORY_SWITCHES: tuple[str, ...] = (
+    "REPOACH_REVIEW_MEMORY_ENABLED",
+    "REPOACH_BUILDER_MEMORY_ENABLED",
+    "REPOACH_REVIEW_LESSONS_ENABLED",
+)
+"""The agent-memory switches a review reads (recall, builder loop, lesson distillation)."""
+
+MEMORY_URL_VARS: tuple[str, ...] = ("REPOACH_AGENTMEMORY_URL", "AGENTMEMORY_URL")
+DEFAULT_MEMORY_URL = "http://localhost:3111"
+
+
+def memory_reachable(url: str, timeout_s: float = 1.0) -> bool:
+    """True when a TCP connection to the agent-memory URL's host and port opens."""
+    parsed = urlparse(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError as exc:
+        _log.debug("ci_memory_unreachable", url=url, error=str(exc))
+        return False
+
+
+def memory_off_note(env: Mapping[str, str], reachable: Callable[[str], bool]) -> str | None:
+    """Say why agent memory is turned off for the review, None to leave it alone.
+
+    The agent-memory service (``localhost:3111``) is a developer-machine
+    service: a CI job has none, and each recall would wait for its
+    timeout. Memory is turned off when the job is a CI (``CI=true``,
+    ``GITLAB_CI``, ``GITHUB_ACTIONS``) or the URL does not answer, unless
+    the operator set one of :data:`MEMORY_SWITCHES` explicitly.
+    """
+    if first_set(env, MEMORY_SWITCHES) is not None:
+        return None
+    if env_value(env, "CI") == "true" or detect_ci_forge(env)[0] is not None:
+        return "agent memory off: CI job (the agentmemory service is a developer-machine service)"
+    url = next((env_value(env, n) for n in MEMORY_URL_VARS if env_value(env, n)), None)
+    target = url or DEFAULT_MEMORY_URL
+    if not reachable(target):
+        return f"agent memory off: {target} unreachable"
+    return None
+
+
 def review_env(
-    plan: CiReviewPlan, env: Mapping[str, str], gateway: GatewayHandle | None
+    plan: CiReviewPlan,
+    env: Mapping[str, str],
+    gateway: GatewayHandle | None,
+    *,
+    memory_off: bool = False,
 ) -> dict[str, str]:
     """Build the review's environment: the forge token in, the provider key out.
 
@@ -363,12 +414,15 @@ def review_env(
         plan: The run plan.
         env: The job environment.
         gateway: The loopback gateway in direct mode, None in gateway mode.
+        memory_off: Set every :data:`MEMORY_SWITCHES` to ``false``.
 
     Returns:
         The environment for ``repoach review pr``.
     """
     child = {k: v for k, v in env.items() if k not in DIRECT_KEY_VARS}
     child.update(forge_env(plan, env))
+    if memory_off:
+        child.update(dict.fromkeys(MEMORY_SWITCHES, "false"))
     if gateway is not None:
         child[GATEWAY_URL_VAR] = gateway.base_url
         child[GATEWAY_TOKEN_VAR] = gateway.auth_token
@@ -433,7 +487,7 @@ def subprocess_review_runner(
     """
 
     def run(plan: CiReviewPlan, env: dict[str, str]) -> tuple[int, str]:
-        argv = [python, "-m", "repoach.cli.main", "review", "pr", str(plan.pr_number)]
+        argv = [python, "-m", "repoach", "review", "pr", str(plan.pr_number)]
         argv += ["--forge", plan.forge]
         if plan.mode == "dry-run":
             argv.append("--dry-run")
@@ -532,6 +586,7 @@ def run_ci_review(
     review_runner: ReviewRunner,
     gateway_starter: GatewayStarter,
     bot_username: str | None = None,
+    memory_probe: Callable[[str], bool] = memory_reachable,
 ) -> CiReviewReport:
     """Run the review a plan describes and report its outcome.
 
@@ -543,6 +598,7 @@ def run_ci_review(
         gateway_starter: Starts the loopback gateway (direct mode).
         bot_username: The forge's effective bot identity; an empty one
             refuses posting on GitLab, where no marker could be trusted.
+        memory_probe: Says whether the agent-memory URL answers.
 
     Returns:
         The final report.
@@ -588,12 +644,16 @@ def run_ci_review(
             strict=plan.strict,
             **common,
         )
+    note = memory_off_note(env, memory_probe)
+    notes = [note] if note is not None else []
+    off = note is not None
     try:
         if plan.provider_mode == "gateway":
-            rc, stdout = review_runner(plan, review_env(plan, env, None))
+            rc, stdout = review_runner(plan, review_env(plan, env, None, memory_off=off))
         else:
             with gateway_starter(env) as gateway:
-                rc, stdout = review_runner(plan, review_env(plan, env, gateway))
+                child = review_env(plan, env, gateway, memory_off=off)
+                rc, stdout = review_runner(plan, child)
     except GatewayStartError as exc:
         return finish(
             Outcome.UNAVAILABLE,
@@ -602,8 +662,9 @@ def run_ci_review(
             **common,
         )
     except ReviewTimeoutError as exc:
-        return finish(Outcome.TIMEOUT, f"{exc}; killed", strict=plan.strict, **common)
-    return interpret_review(plan, rc, stdout, plan.provider_mode)
+        return finish(Outcome.TIMEOUT, f"{exc}; killed", strict=plan.strict, notes=notes, **common)
+    report = interpret_review(plan, rc, stdout, plan.provider_mode)
+    return report.model_copy(update={"notes": notes})
 
 
 def apply_forge_env(plan: CiReviewPlan, env: Mapping[str, str]) -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import stat
 import subprocess
 import sys
@@ -29,6 +30,7 @@ from repoach.ci_entry.advisory import (
     CiReviewPlan,
     CiReviewReport,
     Outcome,
+    memory_reachable,
     plan_ci_review,
     run_ci_review,
     subprocess_review_runner,
@@ -129,6 +131,7 @@ def _run(env: dict[str, str], fake: FakeRun, **flags: bool) -> CiReviewReport:
         review_runner=fake.runner,
         gateway_starter=fake.gateway,
         bot_username="repoach-bot",
+        memory_probe=lambda url: False,
     )
 
 
@@ -353,7 +356,7 @@ class TestProcessSeams:
         payload = json.loads(stdout)
         assert payload["argv"] == [
             "-m",
-            "repoach.cli.main",
+            "repoach",
             "review",
             "pr",
             "283",
@@ -522,3 +525,68 @@ class TestChildRobustness:
         assert payload["outcome"] == "internal_error"
         assert payload["reason"] == "RuntimeError: disk on fire"
         assert "Traceback" not in result.stdout
+
+
+class TestAgentMemoryInCi:
+    def test_ci_turns_memory_off_with_a_note(self) -> None:
+        fake = FakeRun()
+        report = _run({**GITLAB_ENV, **GATEWAY_VARS}, fake)
+        assert report.notes == [
+            "agent memory off: CI job (the agentmemory service is a developer-machine service)"
+        ]
+        env = fake.review_envs[0]
+        assert env["REPOACH_REVIEW_MEMORY_ENABLED"] == "false"
+        assert env["REPOACH_BUILDER_MEMORY_ENABLED"] == "false"
+        assert env["REPOACH_REVIEW_LESSONS_ENABLED"] == "false"
+
+    def test_an_explicit_switch_is_respected(self) -> None:
+        fake = FakeRun()
+        env = {**GITLAB_ENV, **GATEWAY_VARS, "REPOACH_REVIEW_MEMORY_ENABLED": "true"}
+        report = _run(env, fake)
+        assert report.notes == []
+        assert fake.review_envs[0]["REPOACH_REVIEW_MEMORY_ENABLED"] == "true"
+        assert "REPOACH_BUILDER_MEMORY_ENABLED" not in fake.review_envs[0]
+
+    @pytest.mark.parametrize(("reachable", "off"), [(False, True), (True, False)])
+    def test_outside_ci_memory_follows_reachability(self, reachable: bool, off: bool) -> None:
+        env = {"GH_TOKEN": "t", "REPOACH_AGENTMEMORY_URL": "http://memory:3111", **GATEWAY_VARS}
+        planned = plan_ci_review(env, pr_override=5, forge_override="github")
+        assert isinstance(planned, CiReviewPlan)
+        fake = FakeRun()
+        probed: list[str] = []
+
+        def probe(url: str) -> bool:
+            probed.append(url)
+            return reachable
+
+        report = run_ci_review(
+            planned,
+            env,
+            pr_state=fake.pr_state,
+            review_runner=fake.runner,
+            gateway_starter=fake.gateway,
+            memory_probe=probe,
+        )
+        assert probed == ["http://memory:3111"]
+        assert (report.notes == ["agent memory off: http://memory:3111 unreachable"]) is off
+        assert ("REPOACH_REVIEW_MEMORY_ENABLED" in fake.review_envs[0]) is off
+
+    def test_memory_reachable_on_a_closed_port(self) -> None:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        assert memory_reachable(f"http://127.0.0.1:{port}", timeout_s=0.5) is False
+
+
+def test_python_dash_m_repoach_has_no_runpy_warning(tmp_path: Path) -> None:
+    src = Path(__file__).resolve().parents[2] / "src"
+    completed = subprocess.run(
+        [sys.executable, "-W", "error::RuntimeWarning", "-m", "repoach", "--version"],
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "PYTHONPATH": str(src)},
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.startswith("repoach ")
+    assert "RuntimeWarning" not in completed.stderr

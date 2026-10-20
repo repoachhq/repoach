@@ -66,6 +66,8 @@ def emit(report: CiReviewReport) -> None:
         f"({report.mode}, provider {report.provider_mode}): {report.reason}",
         err=True,
     )
+    for note in report.notes:
+        typer.echo(f"repoach ci review: {note}", err=True)
     typer.echo(json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False))
     raise typer.Exit(code=report.exit_code)
 
