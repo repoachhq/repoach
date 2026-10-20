@@ -634,7 +634,7 @@ def commit_plan_document(repo_root: Path, spec_id: str) -> tuple[bool, str]:
     Returns ``(committed_or_already_clean, detail)`` — a plan that is
     already part of history is success, not a failure.
     """
-    relpath = plan_relpath(spec_id)
+    relpath = plan_relpath(spec_id, root=repo_root)
     rc, out = _run_git(repo_root, "status", "--porcelain", "--", relpath)
     if rc != 0:
         return False, f"git status failed: {out}"

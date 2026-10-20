@@ -24,6 +24,8 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from ..project.config import plans_dir_relative
+
 PLAN_MARKER: str = "<!-- repoach-action-plan -->"
 
 _SPEC_ID_RE = re.compile(r"^SP-[A-Z0-9-]+$")
@@ -447,16 +449,21 @@ class ActionPlan(BaseModel):
         return self
 
 
-def plan_relpath(spec_id: str) -> str:
+def plan_relpath(spec_id: str, *, root: Path | None = None) -> str:
     """Return the repo-relative path of a spec's committed plan.
 
     Args:
         spec_id: Spec identifier (e.g. ``"SP-PLAN-FORM"``).
+        root: Repository root whose ``[repoach].plans_dir`` applies
+            (SP-UNIVERSAL-PROJECT-CONFIG G5); None means the default.
 
     Returns:
-        ``docs/plans/<SPEC-ID>.md``.
+        ``<plans_dir>/<SPEC-ID>.md`` (``docs/plans/<SPEC-ID>.md`` by default).
+
+    Raises:
+        ConfigError: ``root/repoach.toml`` is invalid.
     """
-    return f"docs/plans/{spec_id}.md"
+    return f"{plans_dir_relative(root).rstrip('/')}/{spec_id}.md"
 
 
 def render_plan_markdown(plan: ActionPlan) -> str:
@@ -539,7 +546,7 @@ def load_plan(spec_id: str, *, root: Path | None = None) -> ActionPlan:
             :func:`parse_plan_markdown`).
     """
     base = (root or Path.cwd()).resolve()
-    target = base / plan_relpath(spec_id)
+    target = base / plan_relpath(spec_id, root=base)
     if not target.is_file():
         raise FileNotFoundError(f"no committed plan at {target}")
     return parse_plan_markdown(target.read_text(encoding="utf-8"))

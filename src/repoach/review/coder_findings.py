@@ -31,7 +31,10 @@ from pathlib import Path
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
+from ..core.paths import project_root
 from ..forge import Diff, Forge, ForgeError, PullRequest, select_forge
+from ..project.config import load_project_config
+from ..project.spec_source import resolve_spec
 from .finding_verifiers import verify_finding
 from .findings import (
     MECHANICAL_CLAIM_TYPES,
@@ -429,6 +432,7 @@ def run_coder_fix_from_findings(
     coder: Coder | None = None,
     db_path: Path | None = None,
     routine_fire: Callable[..., RoutineFireResult] = fire_review_routine,
+    spec: str | None = None,
 ) -> CoderFindingsResult:
     """Resolve a PR's open blocking findings, then re-verify at head.
 
@@ -459,6 +463,8 @@ def run_coder_fix_from_findings(
         db_path: Override the ledger db path; defaults to settings.
         routine_fire: The routine-fire callable for the stuck-escalation
             dossier; defaults to the live notifier (tests inject a fake).
+        spec: The ``--spec`` value; outranks the description's ``Spec:``
+            line and the branch name (SP-UNIVERSAL-PROJECT-CONFIG G4).
 
     Returns:
         A :class:`CoderFindingsResult` describing what happened.
@@ -563,9 +569,16 @@ def run_coder_fix_from_findings(
     try:
         from .spec import maybe_load_active_spec
 
-        spec = maybe_load_active_spec(branch=head)
-        if spec is not None:
-            spec_plan_md = spec.raw_markdown
+        declared = resolve_spec(
+            flag=spec,
+            description=pr.body if pr is not None else "",
+            branch=head,
+            sources=load_project_config(project_root(repo)).review.spec_sources,
+            root=repo,
+        )
+        plan_doc = maybe_load_active_spec(explicit_id=declared.spec_id, root=repo)
+        if plan_doc is not None:
+            spec_plan_md = plan_doc.raw_markdown
     except Exception as exc:
         _log.info("coder_findings.spec_lookup_failed", branch=head, error=str(exc)[:160])
 

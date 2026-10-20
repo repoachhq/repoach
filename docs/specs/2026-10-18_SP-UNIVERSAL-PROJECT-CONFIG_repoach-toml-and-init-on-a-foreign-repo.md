@@ -5,13 +5,13 @@ version: 0.1
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-10-20
 
 owns:
   code: [src/repoach/project/, tests/unit/test_project_config.py, tests/unit/test_init_foreign_repo.py]
   resources: []
 
-depends_on: [SP-UNIVERSAL-INSTALL, SP-REPOACH-INIT-SCAFFOLD, SP-BRANCH-CONFIG, SP-SPEC-TEMPLATE, SP-SPEC-GATE]
+depends_on: [SP-UNIVERSAL-INSTALL, SP-REPOACH-INIT-SCAFFOLD, SP-BRANCH-CONFIG, SP-SPEC-TEMPLATE, SP-SPEC-GATE, SP-DB-PATH-XDG, SP-PLAN-CONTRACT-LINTS]
 provides_to: []
 
 constraints: {}
@@ -147,7 +147,8 @@ top-level directories, `lint`/`test` left empty unless a known marker is
 found (`pyproject.toml` → ruff/pytest, `package.json` with `lint`/`test`
 scripts → `npm run lint`/`npm test`, `go.mod` → `go vet ./...`/`go test
 ./...`), `merge_method` from the forge API when readable, else
-`squash`. Writes the two files, prints them, rc 0.
+`squash`. Writes the two files, appends `.repoach.env` to an existing
+`.gitignore`, prints one line per path, rc 0.
 
 ### Edge cases
 - no origin remote → `forge` left empty with a comment; `review *` then requires `--forge` or `REPOACH_FORGE`.
@@ -165,6 +166,8 @@ scripts → `npm run lint`/`npm test`, `go.mod` → `go vet ./...`/`go test
 - Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-BRANCH-CONFIG (`integration_branch`/`release_branch` gain a file source below the env source)
 - Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-SPEC-TEMPLATE (ships the template file into foreign repos)
 - Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-SPEC-GATE (spec-coverage fact learns `not_applicable` when no spec resolves)
+- Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-DB-PATH-XDG (`Settings` reads `repoach.toml` below the environment; the golden test pins its branch defaults)
+- Adds dependency: SP-UNIVERSAL-PROJECT-CONFIG -> SP-PLAN-CONTRACT-LINTS (`plan_relpath` reads `[repoach].plans_dir`; the golden test pins `docs/plans`)
 - New shared state: `repoach.toml` (format owned by `SP-UNIVERSAL-REPO`); the `Settings` singleton reads `ProjectConfig` as a settings source placed below the environment.
 
 ## Diagram
@@ -178,7 +181,7 @@ flowchart TD
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: in a fresh clone of `charmbracelet/gum`: `repoach init --dry-run` → two `would create` lines, `git status --short` empty; `repoach init` → `created repoach.toml`, `created docs/specs/_TEMPLATE.md`; `repoach init` → two `unchanged` lines; `git status --short` → exactly `?? repoach.toml` and `?? docs/specs/`.
+- [ ] AC1: in a fresh clone of `charmbracelet/gum` (which has a `.gitignore`): `repoach init --dry-run` → `would create repoach.toml`, `would create docs/specs/_TEMPLATE.md`, `would update .gitignore (+ .repoach.env)`, `git status --short` empty; `repoach init` → `created repoach.toml`, `created docs/specs/_TEMPLATE.md`, `updated .gitignore (+ .repoach.env)`; `repoach init` → one `unchanged` line per path; `git status --short` → exactly ` M .gitignore`, `?? docs/` and `?? repoach.toml` (the `.gitignore` line of AC5). Variants: a repository with no `.gitignore` shows only the two `??` entries; a repository whose `<specs_dir>/_TEMPLATE.md` is already tracked (repoach itself) shows only `?? repoach.toml` and prints `docs/specs/_TEMPLATE.md unchanged`; a clone of Yoob, which has `docs/` but no `docs/specs/`, shows ` M .gitignore`, `?? docs/specs/` and `?? repoach.toml`.
 - [ ] AC2: same clone: `git config core.hooksPath` before and after → identical (empty); `test ! -e .env`; `grep -c languages repoach.toml` → 1 and the value contains `"go"`; `grep merge_method repoach.toml` → `"squash"` or the API-read value.
 - [ ] AC3: in a clone of Yoob: `repoach init` → `forge = "gitlab"`, `merge_method = "merge"`, `languages` contains `"python"`, `"typescript"` and `"verilog"`; `git config core.hooksPath` → `scripts/hooks` unchanged.
 - [ ] AC4: `pytest -q tests/unit/test_project_config.py` → green, including the golden test: `load_project_config(tmp_path_without_file)` equals `ProjectConfig()` and every default matches the literal it replaces (`docs/specs`, `docs/plans`, `squash`, `develop`, `main`, the ruff/pytest commands, the four jail prefixes).

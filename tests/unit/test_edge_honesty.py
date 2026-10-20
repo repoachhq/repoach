@@ -282,3 +282,12 @@ def test_frontier_suppress_wired() -> None:
     assert load_frontier_suppress(_REPO_ROOT) == frozenset(
         str(item) for item in arch["frontier_suppress"]
     )
+
+
+def test_frontier_suppress_moves_to_repoach_toml(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.repoach.arch]\nfrontier_suppress = ['legacy.a']\n"
+    )
+    assert load_frontier_suppress(tmp_path) == frozenset({"legacy.a"})
+    (tmp_path / "repoach.toml").write_text("[arch]\nfrontier_suppress = ['legacy.b']\n")
+    assert load_frontier_suppress(tmp_path) == frozenset({"legacy.b"})

@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/lint/edge_honesty.py]   # new lint gate, sibling of the no-inline / no-silent gates
   resources: N/A                                # consumes the registry; owns no table/topic
 
-depends_on: [SP-ARCH-GRAPH]           # imports Registry + owner_of (tier-1a code edge); NOT the template (transitive)
+depends_on: [SP-ARCH-GRAPH, SP-UNIVERSAL-PROJECT-CONFIG]  # imports Registry + owner_of (tier-1a code edge); NOT the template (transitive)
 provides_to: []                       # AUTO-maintained
 
 constraints: {}
@@ -139,6 +139,9 @@ otherwise an `EdgeViolation`. Un-owned resolutions accumulate into
   `Registry` + `owner_of` (tier-1a code edge). It does NOT depend on
   `SP-SPEC-TEMPLATE`: its frontmatter dependency is transitive through the
   deriver, and the resolution rule declares only direct imports.
+- Adds dependency: `SP-ARCH-EDGE-GATE -> SP-UNIVERSAL-PROJECT-CONFIG`
+  (2026-10-20) — `load_frontier_suppress` reads `[arch].frontier_suppress`
+  from `repoach.toml` before the legacy `pyproject.toml` table.
 - **Self-application**: once landed, the gate runs on its own PR — its
   import of `arch/` requires the declared `SP-ARCH-GRAPH` edge, so the
   gate is the first component governed by itself.
