@@ -61,6 +61,9 @@ PASSTHROUGH_VARS: tuple[str, ...] = (
     "XDG_CACHE_HOME",
     "PYTHONPATH",
     "VIRTUAL_ENV",
+    "PYTHONHOME",
+    "Python_ROOT_DIR",
+    "Python3_ROOT_DIR",
     "LD_LIBRARY_PATH",
     "pythonLocation",
     "SSL_CERT_FILE",
@@ -76,7 +79,17 @@ A CI injects credentials under names repoach cannot enumerate
 ``CI_JOB_JWT_V2``, ``ACTIONS_RUNTIME_TOKEN``,
 ``ACTIONS_ID_TOKEN_REQUEST_TOKEN``, any masked project variable), so the
 loopback gateway and the install steps keep only these names plus the
-one secret each needs, never "everything but a deny-list"."""
+one secret each needs, never "everything but a deny-list".
+
+The list also keeps what an interpreter needs to exec at all: a Python
+provisioned by ``actions/setup-python`` links ``libpython3.x.so`` through
+``LD_LIBRARY_PATH`` (``pythonLocation``, ``Python_ROOT_DIR``) and dies
+with exit 127 without it (PR #217 CI). ``LD_PRELOAD`` is deliberately
+absent: it injects code into every process the step starts."""
+
+PIP_PREFIX = "PIP_"
+"""The install step also keeps ``PIP_*`` (``PIP_INDEX_URL`` and friends), so a
+private index reaches pip; no other step sees them."""
 
 
 class CiVariable(BaseModel):

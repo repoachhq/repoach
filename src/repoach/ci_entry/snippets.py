@@ -25,6 +25,7 @@ from .variables import (
     GATEWAY_TOKEN_VAR,
     GATEWAY_URL_VAR,
     PASSTHROUGH_VARS,
+    PIP_PREFIX,
     POST_VAR,
 )
 
@@ -44,7 +45,7 @@ CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
 SETUP_PYTHON_ACTION = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
 
 
-def scrubbed(command: str, *extra: str) -> str:
+def scrubbed(command: str, *extra: str, prefixes: tuple[str, ...] = ()) -> str:
     """Run ``command`` with only the allow-listed variables that are set.
 
     A one-line Python ``execvpe`` (Python is in both job images before
@@ -58,12 +59,15 @@ def scrubbed(command: str, *extra: str) -> str:
     Args:
         command: The command to run.
         *extra: ``NAME=value`` assignments the step needs.
+        prefixes: Name prefixes also kept (``PIP_`` for the install step).
     """
     keep = ",".join(f'"{name}"' for name in PASSTHROUGH_VARS)
+    starts = ",".join(f'"{prefix}"' for prefix in prefixes)
+    match = f" or n.startswith(({starts},))" if prefixes else ""
     scrub = (
         f"import os,sys;keep={{{keep}}};"
         "os.execvpe(sys.argv[1],sys.argv[1:],"
-        "{n:v for n,v in os.environ.items() if n in keep})"
+        f"{{n:v for n,v in os.environ.items() if n in keep{match}}})"
     )
     added = f"env {' '.join(extra)} " if extra else ""
     return f"python3 -c '{scrub}' {added}{command}"
@@ -80,7 +84,10 @@ def _apt_command() -> str:
 
 def _install_command() -> str:
     """Return the scrubbed install step for ``$REPOACH_INSTALL``."""
-    return scrubbed('python -m pip install --quiet --disable-pip-version-check "$REPOACH_INSTALL"')
+    return scrubbed(
+        'python -m pip install --quiet --disable-pip-version-check "$REPOACH_INSTALL"',
+        prefixes=(PIP_PREFIX,),
+    )
 
 
 def render_gitlab_job(target: InstallTarget) -> str:

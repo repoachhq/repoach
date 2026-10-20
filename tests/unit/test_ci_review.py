@@ -35,7 +35,13 @@ from repoach.ci_entry.advisory import (
     run_ci_review,
     subprocess_review_runner,
 )
-from repoach.ci_entry.gateway import GatewayHandle, GatewayStartError, loopback_gateway
+from repoach.ci_entry.gateway import (
+    GatewayHandle,
+    GatewayStartError,
+    gateway_env,
+    loopback_gateway,
+)
+from repoach.ci_entry.variables import PASSTHROUGH_VARS
 from repoach.cli.main import app
 from repoach.forge import ForgeError
 
@@ -76,6 +82,16 @@ GITHUB_CREDENTIALS: dict[str, str] = {
     "REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret",
     "ORG_DEPLOY_KEY": "deploy-secret",
 }
+
+
+def _interpreter_env() -> dict[str, str]:
+    """The parent's interpreter variables (PATH, LD_LIBRARY_PATH…), as a CI runner sets them.
+
+    A child built from a hand-written ``{"PATH": …}`` loses
+    ``LD_LIBRARY_PATH``, and an ``actions/setup-python`` interpreter then
+    exits 127 before running a line (PR #217 CI).
+    """
+    return {name: os.environ[name] for name in PASSTHROUGH_VARS if name in os.environ}
 
 
 def _github_env(tmp_path: Path) -> dict[str, str]:
@@ -350,7 +366,7 @@ class TestProcessSeams:
             forge_token_var="GITLAB_TOKEN",
         )
         rc, stdout = subprocess_review_runner(tmp_path, python)(
-            plan, {"PATH": os.environ["PATH"], "REPOACH_FORGE": "gitlab"}
+            plan, {**_interpreter_env(), "REPOACH_FORGE": "gitlab"}
         )
         assert rc == 2
         payload = json.loads(stdout)
@@ -385,7 +401,7 @@ class TestProcessSeams:
             "http.server.HTTPServer(('127.0.0.1', port), H).serve_forever()\n",
         )
         env = {
-            "PATH": os.environ["PATH"],
+            **_interpreter_env(),
             "HTTPS_PROXY": "http://proxy.internal:3128",
             "REPOACH_MODEL_SONNET": "claude-sonnet-x",
             **credentials,
@@ -405,7 +421,7 @@ class TestProcessSeams:
 
     def test_loopback_gateway_that_exits_names_its_log(self, tmp_path: Path) -> None:
         python = _fake_python(tmp_path, "import sys\nprint('boom: no upstream')\nsys.exit(1)\n")
-        env = {"PATH": os.environ["PATH"], "REPOACH_ANTHROPIC_API_KEY": "k"}
+        env = {**_interpreter_env(), "REPOACH_ANTHROPIC_API_KEY": "k"}
         gateway = loopback_gateway(env, python=python, timeout_s=20, poll_s=0.1)
         with pytest.raises(GatewayStartError) as info, gateway:
             raise AssertionError("must not yield")
@@ -485,7 +501,7 @@ class TestChildRobustness:
         fake = FakeRun()
         report = run_ci_review(
             self._plan(),
-            {**GITLAB_ENV, **GATEWAY_VARS},
+            {**_interpreter_env(), **GITLAB_ENV, **GATEWAY_VARS},
             pr_state=fake.pr_state,
             review_runner=subprocess_review_runner(tmp_path, python, timeout_s=1.5),
             gateway_starter=fake.gateway,
@@ -584,9 +600,35 @@ def test_python_dash_m_repoach_has_no_runpy_warning(tmp_path: Path) -> None:
         [sys.executable, "-W", "error::RuntimeWarning", "-m", "repoach", "--version"],
         capture_output=True,
         text=True,
-        env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), "PYTHONPATH": str(src)},
+        env={**_interpreter_env(), "HOME": str(tmp_path), "PYTHONPATH": str(src)},
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.startswith("repoach ")
     assert "RuntimeWarning" not in completed.stderr
+
+
+INTERPRETER_VARS: dict[str, str] = {
+    "LD_LIBRARY_PATH": "/opt/hostedtoolcache/Python/3.13.0/x64/lib",
+    "PYTHONHOME": "/opt/python",
+    "VIRTUAL_ENV": "/work/.venv",
+    "TMPDIR": "/runner/tmp",
+    "SSL_CERT_FILE": "/etc/ssl/cert.pem",
+    "SSL_CERT_DIR": "/etc/ssl/certs",
+    "REQUESTS_CA_BUNDLE": "/etc/ssl/bundle.pem",
+    "pythonLocation": "/opt/hostedtoolcache/Python/3.13.0/x64",
+    "Python_ROOT_DIR": "/opt/hostedtoolcache/Python/3.13.0/x64",
+}
+"""What a CI runner sets for its interpreter to exec (actions/setup-python shape)."""
+
+
+def test_gateway_env_keeps_what_the_interpreter_needs_and_never_ld_preload() -> None:
+    parent = {
+        "PATH": "/usr/bin",
+        **INTERPRETER_VARS,
+        "LD_PRELOAD": "/tmp/evil.so",
+        "REPOACH_ANTHROPIC_API_KEY": "k",
+    }
+    child = gateway_env(parent, port=1, auth_token="t")
+    assert {name: child.get(name) for name in INTERPRETER_VARS} == INTERPRETER_VARS
+    assert "LD_PRELOAD" not in child

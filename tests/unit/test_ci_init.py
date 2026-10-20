@@ -305,3 +305,46 @@ def test_gitlab_header_names_the_bot_identity_posting_needs() -> None:
     assert "REPOACH_REVIEW_BOT_LOGIN" in text
     assert "[review].bot_username" in text
     assert "REPOACH_ADVISORY_POST=1" in text
+
+
+def test_install_step_keeps_interpreter_and_pip_variables(tmp_path: Path) -> None:
+    doc = yaml.safe_load(render_github_workflow(InstallTarget(pypi_version="0.2.0")))
+    install = doc["jobs"]["review"]["steps"][2]
+    bin_dir, dumps = _dump_tools(tmp_path)
+    kept = {
+        "LD_LIBRARY_PATH": "/opt/hostedtoolcache/Python/3.13.0/x64/lib",
+        "pythonLocation": "/opt/hostedtoolcache/Python/3.13.0/x64",
+        "Python_ROOT_DIR": "/opt/hostedtoolcache/Python/3.13.0/x64",
+        "SSL_CERT_FILE": "/etc/ssl/cert.pem",
+        "PIP_INDEX_URL": "https://pypi.internal/simple",
+        "PIP_EXTRA_INDEX_URL": "https://mirror.internal/simple",
+    }
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        **kept,
+        "LD_PRELOAD": "",
+        **install["env"],
+        **GITHUB_CREDENTIALS,
+    }
+    _run_step(install["run"], env)
+    dumped = dict(
+        line.split("=", 1)
+        for line in (dumps / "python.env").read_text(encoding="utf-8").splitlines()
+        if "=" in line
+    )
+    assert {name: dumped.get(name) for name in kept} == kept
+    assert "LD_PRELOAD" not in dumped
+    _assert_scrubbed(dumps / "python.env", GITHUB_CREDENTIALS, keeps="PIP_INDEX_URL")
+
+
+def test_apt_step_sees_no_pip_variable(tmp_path: Path) -> None:
+    job = yaml.safe_load(render_gitlab_job(InstallTarget(ref="v0.2.0")))[GITLAB_JOB_NAME]
+    bin_dir, dumps = _dump_tools(tmp_path)
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "PIP_INDEX_URL": "https://user:pass@pypi.internal/simple",
+    }
+    _run_step(job["script"][0], env)
+    assert "PIP_INDEX_URL" not in (dumps / "apt-get.env").read_text(encoding="utf-8")
