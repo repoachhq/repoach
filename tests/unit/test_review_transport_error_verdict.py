@@ -180,3 +180,35 @@ def test_review_pr_cli_exits_3_on_error_verdict() -> None:
     payload = json.loads(result.stdout)
     assert payload["final_verdict"] == "ERROR"
     assert payload["reviews"][0]["verdict"] == "ERROR"
+
+
+def test_review_pr_cli_reports_skip_error_posting_outcome(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    import sys
+
+    _install_unreachable_reviewers(monkeypatch)
+    forge = _StubGitHubForge()
+
+    def review(pr_number: int, **kwargs: Any) -> TeamOutcome:
+        return ReviewTeamOrchestrator(
+            forge=forge,
+            db_path=tmp_path / "review.db",
+            post_to_github=kwargs["post"],
+            repo_root=tmp_path,
+        ).review_pr(pr_number)
+
+    with patch("repoach.cli.review_cmds.run_review", review):
+        result = CliRunner().invoke(review_app, ["pr", "42"])
+
+    assert result.exit_code == EXIT_REVIEW_ERROR, result.output
+    checked = subprocess.run(
+        [sys.executable, "-m", "json.tool"], input=result.stdout, capture_output=True, text=True
+    )
+    assert checked.returncode == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["posting_outcome"] == "SKIP_ERROR"
+    assert payload["posted_reviews"] == 0
+    assert forge.posted_reviews == []
+    assert forge.archive_calls == []

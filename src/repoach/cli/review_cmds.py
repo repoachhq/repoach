@@ -185,7 +185,9 @@ def review_pr(
 
     A reviewer that could not reach a model (transport exhausted, bot
     crashed) ends ``ERROR``: the team verdict is ``ERROR``, nothing is
-    published even without ``--dry-run``, and the command exits 3.
+    published even without ``--dry-run`` (``posting_outcome`` is
+    ``SKIP_ERROR``), and the command exits 3.  ``posting_outcome`` is null
+    when posting ran or was not requested.
     """
     root = project_root_or_exit()
     spec_flag = _spec_flag(spec)
@@ -215,6 +217,7 @@ def review_pr(
         "n_majors": team.n_majors,
         "posted_comments": team.posted_comments,
         "posted_reviews": team.posted_reviews,
+        "posting_outcome": team.posting_outcome,
         "reviews": [
             {
                 "role": o.role.value,

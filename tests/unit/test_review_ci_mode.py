@@ -47,6 +47,7 @@ class _FakeTeam:
     spec_source: str | None = None
     spec_covered: bool | None = None
     spec_missing: bool = False
+    posting_outcome: str | None = None
 
 
 _REQUIRED_TOP_LEVEL = {
@@ -56,6 +57,7 @@ _REQUIRED_TOP_LEVEL = {
     "n_majors",
     "posted_comments",
     "posted_reviews",
+    "posting_outcome",
     "reviews",
 }
 

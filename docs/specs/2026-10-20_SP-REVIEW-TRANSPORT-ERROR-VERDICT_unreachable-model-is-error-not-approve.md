@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-TRANSPORT-ERROR-VERDICT
 title: A reviewer that could not reach a model ends ERROR, never APPROVE
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-10-20
@@ -61,6 +61,7 @@ repository) with the gateway unreachable / an invalid upstream:
 - `ReviewVerdict.ERROR = "ERROR"` (`review/reviewer.py`).
 - `EXIT_REVIEW_ERROR = 3` (`cli/review_cmds.py`).
 - `TeamOutcome.posting_outcome == "SKIP_ERROR"` when posting was requested and suppressed.
+- `review pr` JSON carries `posting_outcome` (`SKIP_ERROR`, `SKIP_STATE` or null).
 
 ## Behavior
 
@@ -93,6 +94,8 @@ flowchart TD
 - [x] AC3: `pytest -q tests/unit/test_review_transport_error_verdict.py::test_one_errored_reviewer_makes_the_team_error` → green.
 - [x] AC4: `pytest -q tests/unit/test_review_transport_error_verdict.py::test_review_pr_cli_exits_3_on_error_verdict` → green: rc 3, JSON `final_verdict == "ERROR"`.
 - [x] AC5: `pytest -q tests/unit/test_review_team.py::test_one_failing_reviewer_does_not_break_team` → green with the crashed reviewer asserted `ERROR` (it asserted `APPROVE` + `auto-promoted` before).
+
+- [x] AC6: `pytest -q tests/unit/test_review_transport_error_verdict.py::test_review_pr_cli_reports_skip_error_posting_outcome` → green: `review pr 42` (no `--dry-run`) with four unreachable reviewers → stdout passes `python -m json.tool`, `posting_outcome == "SKIP_ERROR"`, rc 3, no forge write. Found by independent verification 2026-10-20 (the key was absent from the JSON).
 
 ## Open Questions
 - Q1: a MALFORMED reviewer with no comments is still promoted to `APPROVE` at the per-reviewer level (the team verdict stays `REQUEST_CHANGES` through `review_complete`). Same honesty defect, smaller blast radius: `docs/tech_debt.md` row 35.
