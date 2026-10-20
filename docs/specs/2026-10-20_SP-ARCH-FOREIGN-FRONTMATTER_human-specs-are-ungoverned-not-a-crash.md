@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_arch_foreign_frontmatter.py]
   resources: []
 
-depends_on: [SP-ARCH-GRAPH, SP-ARCH-EDGE-GATE, SP-UNIVERSAL-PROJECT-CONFIG]
+depends_on: [SP-ARCH-GRAPH, SP-ARCH-EDGE-GATE, SP-UNIVERSAL-PROJECT-CONFIG, SP-UNIVERSAL-GATES]
 provides_to: []
 
 constraints: {}
@@ -41,8 +41,8 @@ specs with a frontmatter of their own (`title`, `status`, …):
 ## Goals
 
 - G1: `load_registry(…, tolerate_malformed=True)` collects malformed specs (and duplicate ids) in `Registry.malformed` and leaves them out of the graph; the default still raises, so `arch graph` and the spec loaders keep their contract.
-- G2: `edge_honesty.run(…, require_frontmatter=…)`: false → `Report.ungoverned_specs`, reported (`ungoverned: N spec(s) …` plus one line per file), the added-spec presence check off; true → `Report.malformed_specs`, each a `malformed spec: <file>: <reason>` violation, rc 1.
-- G3: `repoach arch check` reads the effective `[arch].require_frontmatter` (host default included).
+- G2: `edge_honesty.run` reads `config.require_frontmatter` (the gates' `GatesConfig`, SP-UNIVERSAL-GATES): false → `Report.ungoverned_specs`, reported (`ungoverned: N spec(s) …` plus one line per file), the added-spec presence check off; true → `Report.malformed_specs`, each a `malformed spec: <file>: <reason>` violation, rc 1.
+- G3: the effective `[arch].require_frontmatter` (host default included) comes from `load_gates_config`, which SP-UNIVERSAL-GATES added; `arch check` passes nothing of its own.
 
 ## Non-Goals
 
@@ -69,7 +69,7 @@ Foreign repository, flag false → stderr `ungoverned: 1 spec(s) without registr
 - An invalid `repoach.toml` still ends rc 2 at bootstrap, before the check.
 
 ## Architecture Impact
-- No new edge; `cli/main.py` reads the resolved config (SP-UNIVERSAL-PROJECT-CONFIG).
+- No new edge; the flag reaches `edge_honesty` through SP-UNIVERSAL-GATES's `load_gates_config` (SP-UNIVERSAL-PROJECT-CONFIG underneath).
 
 ## Diagram
 ```mermaid
