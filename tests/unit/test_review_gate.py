@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import typer
@@ -19,6 +18,8 @@ from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
+    OUTCOME_SKIP_GATE,
+    CIGateOutcome,
     GateEvaluation,
     decide_at_head,
     evaluate_merge_gate,
@@ -127,7 +128,9 @@ def _patch_eval(monkeypatch: pytest.MonkeyPatch, *, merge: bool, reasons: list[s
     )
     evaluation = GateEvaluation(
         head_sha=_HEAD,
-        ci_gate=MagicMock(green=merge),
+        ci_gate=CIGateOutcome(
+            green=merge, outcome_tag="" if merge else OUTCOME_SKIP_GATE, reason=""
+        ),
         facts=facts,
         decision=MergeDecision(merge=merge, reasons=reasons),
     )
