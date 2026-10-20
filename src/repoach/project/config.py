@@ -80,6 +80,29 @@ ProviderKind = Literal["", "anthropic", "claude_code", "openai", "openai_compati
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
 _SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
 
+_DECODE_POSITION_RE = re.compile(r"\(at line (?P<line>\d+), column \d+\)")
+"""Position suffix ``tomllib`` puts in its messages on every supported Python."""
+
+
+def _decode_error_line(exc: ValueError) -> int | None:
+    """Return the 1-based line of a TOML parse error, when ``tomllib`` says it.
+
+    Python 3.14 exposes ``lineno``; 3.11 to 3.13 only write the position
+    into the message (``Invalid value (at line 2, column 9)``).
+
+    Args:
+        exc: The parse error (a ``tomllib.TOMLDecodeError``).
+
+    Returns:
+        The line, or None when neither the attribute nor the message
+        carries one (an error at end of document, for instance).
+    """
+    lineno = getattr(exc, "lineno", None)
+    if isinstance(lineno, int):
+        return lineno
+    match = _DECODE_POSITION_RE.search(str(exc))
+    return int(match.group("line")) if match is not None else None
+
 
 class ConfigError(ValueError):
     """``repoach.toml`` is unreadable or invalid.
@@ -489,8 +512,7 @@ def parse_project_config(text: str, path: Path) -> ProjectConfig:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        line = getattr(exc, "lineno", None)
-        raise ConfigError(path, f"not valid TOML: {exc}", line=line) from exc
+        raise ConfigError(path, f"not valid TOML: {exc}", line=_decode_error_line(exc)) from exc
     _refuse_secret_keys(path, text, data)
     try:
         config = ProjectConfig.model_validate(data)
