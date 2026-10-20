@@ -1057,6 +1057,46 @@ def test_one_failing_reviewer_does_not_break_team(tmp_path, monkeypatch):
     assert team.final_verdict == ReviewVerdict.ERROR
 
 
+def test_crashed_reviewer_leaves_the_ledger_review_incomplete(tmp_path, monkeypatch):
+    """A crashed reviewer under ERROR still marks the bench incomplete in the ledger.
+
+    The ``_(bot crashed:`` sentinel is what ``findings_bridge`` counts as
+    unparsed; the merge gate refuses on ``review_complete=False``. The ERROR
+    verdict changes the team verdict and posting, not this ledger fact.
+    """
+    from repoach.review.merge_gate import summarise_ledger_facts
+
+    class _BoomReviewer:
+        role = BotRole.SENTINEL
+
+        def review_diff(self, diff, *, pr_number=None, **_kwargs):
+            raise RuntimeError("synthetic chain exhaustion")
+
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Architect",
+        lambda **_kw: _StubReviewer(_outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)),
+    )
+    monkeypatch.setattr("repoach.review.orchestrator.Sentinel", lambda **_kw: _BoomReviewer())
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Tester",
+        lambda **_kw: _StubReviewer(_outcome(BotRole.TESTER, ReviewVerdict.APPROVE)),
+    )
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Scribe",
+        lambda **_kw: _StubReviewer(_outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE)),
+    )
+    db = tmp_path / "review.db"
+    team = ReviewTeamOrchestrator(
+        forge=_StubGitHubForge(), db_path=db, post_to_github=True, repo_root=tmp_path
+    ).review_pr(pr_number=12)
+
+    assert team.final_verdict == ReviewVerdict.ERROR
+    assert team.head_sha
+    facts = summarise_ledger_facts(db, pr_number=12, head_sha=team.head_sha)
+    assert facts.review_integrity_known is True
+    assert facts.review_complete is False
+
+
 def test_team_outcome_to_dict_shape():
     """The serialised payload exposes the per-bot comments in full."""
     from repoach.review.orchestrator import team_outcome_to_dict

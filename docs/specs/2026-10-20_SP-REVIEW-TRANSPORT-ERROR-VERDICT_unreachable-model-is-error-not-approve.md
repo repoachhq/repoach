@@ -97,5 +97,8 @@ flowchart TD
 
 - [x] AC6: `pytest -q tests/unit/test_review_transport_error_verdict.py::test_review_pr_cli_reports_skip_error_posting_outcome` → green: `review pr 42` (no `--dry-run`) with four unreachable reviewers → stdout passes `python -m json.tool`, `posting_outcome == "SKIP_ERROR"`, rc 3, no forge write. Found by independent verification 2026-10-20 (the key was absent from the JSON).
 
+- [x] AC7: `pytest -q tests/unit/test_review_team.py::test_crashed_reviewer_leaves_the_ledger_review_incomplete` → green: a crashed reviewer ends `ERROR` and the ledger still records `review_complete=False` at the head (the `_(bot crashed:` sentinel), so the merge gate keeps refusing. This fact was pinned by the two tests AC5 flipped.
+- Note: `test_review_team.py::test_review_pr_returns_safe_outcome_on_diff_fetch_failure` moved from `COMMENT` to `ERROR` deliberately — an unreadable diff is an error, not a comment (G1).
+
 ## Open Questions
 - Q1: a MALFORMED reviewer with no comments is still promoted to `APPROVE` at the per-reviewer level (the team verdict stays `REQUEST_CHANGES` through `review_complete`). Same honesty defect, smaller blast radius: `docs/tech_debt.md` row 35.
