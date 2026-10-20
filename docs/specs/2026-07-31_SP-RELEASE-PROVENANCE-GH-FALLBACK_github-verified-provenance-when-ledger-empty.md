@@ -1,17 +1,17 @@
 ---
 id: SP-RELEASE-PROVENANCE-GH-FALLBACK
 title: GitHub-verified release provenance (opt-in) when the pr_merges ledger is empty
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-10-20
 
 owns:
   code: [tests/unit/test_release_provenance_github.py, tests/integration/test_release_gate_github_provenance_flow.py]
   resources: N/A
 
-depends_on: [SP-RELEASE-GATE, SP-RELEASE-PROVENANCE-LEDGER, SP-BRANCH-CONFIG, SP-RELEASE-SANCTIONED-DEVELOP-MERGE, SP-REVIEW-POST-BATCH]
+depends_on: [SP-RELEASE-GATE, SP-RELEASE-PROVENANCE-LEDGER, SP-BRANCH-CONFIG, SP-RELEASE-SANCTIONED-DEVELOP-MERGE, SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE]
 provides_to: []
 
 constraints: {}
@@ -130,3 +130,9 @@ result on the integration branch).
   operator, so an empty ledger under the factory regime still fails loud.
 - `repoach release verify` is unchanged (its shape check is already
   ledger-independent).
+
+## Architecture Impact
+
+- The test suite imports `repoach.forge.github` (integration and unit tests)
+  to fake the forge layer the GitHub provenance source reads, so this spec
+  depends on SP-UNIVERSAL-FORGE in addition to the sites above.
