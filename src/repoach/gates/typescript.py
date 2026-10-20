@@ -259,6 +259,31 @@ def package_dir(root: Path, file: Path) -> Path:
     return root
 
 
+_LOCKFILE_INSTALL: tuple[tuple[str, str], ...] = (
+    ("pnpm-lock.yaml", "pnpm install --frozen-lockfile"),
+    ("yarn.lock", "yarn install --immutable"),
+    ("package-lock.json", "npm ci"),
+    ("npm-shrinkwrap.json", "npm ci"),
+)
+"""Lockfile → reproducible install command, checked in this order."""
+
+
+def install_command(package: Path) -> str:
+    """Return the install command a package directory's lockfile calls for.
+
+    Args:
+        package: A directory holding ``package.json``.
+
+    Returns:
+        ``pnpm install --frozen-lockfile``, ``yarn install --immutable`` or
+        ``npm ci`` by lockfile; ``npm install`` when there is none.
+    """
+    for lockfile, command in _LOCKFILE_INSTALL:
+        if (package / lockfile).is_file():
+            return command
+    return "npm install"
+
+
 def node_bin(root: Path, start: Path, name: str) -> str | None:
     """Locate a Node tool: the project's ``node_modules/.bin`` first, then ``PATH``.
 
@@ -397,6 +422,7 @@ __all__ = [
     "TsConfig",
     "find_tsconfig",
     "import_specifiers",
+    "install_command",
     "load_tsconfig",
     "node_bin",
     "package_dir",

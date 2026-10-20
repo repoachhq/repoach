@@ -31,7 +31,7 @@ from ..core.paths import (
     user_data_dir,
 )
 from ..gates.config import CONFIG_FILE_NAME, GatesConfig, load_gates_config
-from ..gates.verifiers import availability_table
+from ..gates.verifiers import availability_table, node_install_hint
 from ..project.config import ConfigError, config_path
 from ..project.resolve import (
     UNDECLARED_COMMAND_NOTE,
@@ -174,6 +174,9 @@ def print_gates(root: Path) -> None:
             f"{row.language.value:<11} {'yes' if row.declared else 'no':<9} "
             f"{','.join(row.extensions):<24} {row.selector_kind or '-':<8} {verifiers}"
         )
+    hint = node_install_hint(root)
+    if hint is not None:
+        typer.echo(f"node_install=node_modules absent -- run: {hint}")
 
 
 def doctor(
