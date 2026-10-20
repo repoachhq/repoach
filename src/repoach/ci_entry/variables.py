@@ -1,0 +1,96 @@
+"""The CI variables ``repoach ci review`` reads, by name and purpose.
+
+One table drives both the command and ``repoach doctor --ci``, so the
+doctor can never list a variable the command ignores or miss one it
+reads. Values are never printed by anything that consumes this table.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict
+
+GITLAB_TOKEN_VARS: tuple[str, ...] = ("GITLAB_TOKEN", "REPOACH_GITLAB_TOKEN")
+"""Token ``glab`` posts and reads with, first found wins."""
+
+GITHUB_TOKEN_VARS: tuple[str, ...] = ("GH_TOKEN", "GITHUB_TOKEN")
+"""Token ``gh`` posts and reads with, first found wins."""
+
+GATEWAY_URL_VAR = "REPOACH_LLM_PROXY_BASE_URL"
+"""Gateway mode: the base URL of a running repoach gateway."""
+
+GATEWAY_TOKEN_VAR = "REPOACH_ANTHROPIC_AUTH_TOKEN"
+"""Gateway mode: the gateway's shared secret."""
+
+DIRECT_KEY_VARS: tuple[str, ...] = ("REPOACH_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+"""Direct-provider mode: the Anthropic key a loopback gateway is started with."""
+
+POST_VAR = "REPOACH_ADVISORY_POST"
+"""Posting switch: only the exact value ``1`` posts; anything else is a dry run."""
+
+MODEL_VARS: tuple[str, ...] = ("REPOACH_MODEL_OPUS", "REPOACH_MODEL_SONNET", "REPOACH_MODEL_HAIKU")
+"""Direct-provider mode: per-tier Anthropic model overrides."""
+
+GATEWAY_PORT_VAR = "REPOACH_GATEWAY_PORT"
+"""Direct-provider mode: loopback port override (a free port otherwise)."""
+
+FORGE_TOKEN_VARS: tuple[str, ...] = (*GITLAB_TOKEN_VARS, *GITHUB_TOKEN_VARS, "CI_JOB_TOKEN")
+"""Every forge credential name, removed from the loopback gateway's environment."""
+
+
+class CiVariable(BaseModel):
+    """One variable ``repoach ci review`` reads.
+
+    Attributes:
+        name: The environment variable.
+        group: What it serves (``detect``, ``pr``, ``forge``, ``provider``,
+            ``posting``, ``model``).
+        purpose: One line, shown by ``doctor --ci``.
+        secret: True when the value is a credential.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    group: str
+    purpose: str
+    secret: bool = False
+
+
+CI_VARIABLES: tuple[CiVariable, ...] = (
+    CiVariable(name="GITLAB_CI", group="detect", purpose="GitLab CI is running this job"),
+    CiVariable(name="GITHUB_ACTIONS", group="detect", purpose="GitHub Actions is running this job"),
+    CiVariable(name="CI_SERVER_URL", group="detect", purpose="GitLab instance (sets GITLAB_HOST)"),
+    CiVariable(name="CI_PROJECT_ID", group="detect", purpose="GitLab project (reported)"),
+    CiVariable(
+        name="GITHUB_REPOSITORY", group="detect", purpose="GitHub owner/repo (sets GH_REPO)"
+    ),
+    CiVariable(name="REPOACH_PR_NUMBER", group="pr", purpose="explicit PR / MR number"),
+    CiVariable(name="CI_MERGE_REQUEST_IID", group="pr", purpose="GitLab merge request iid"),
+    CiVariable(name="GITHUB_EVENT_PATH", group="pr", purpose="GitHub event payload"),
+    CiVariable(name="GITHUB_REF", group="pr", purpose="GitHub refs/pull/<n>/merge"),
+    *(
+        CiVariable(name=name, group="forge", purpose="GitLab token (glab)", secret=True)
+        for name in GITLAB_TOKEN_VARS
+    ),
+    *(
+        CiVariable(name=name, group="forge", purpose="GitHub token (gh)", secret=True)
+        for name in GITHUB_TOKEN_VARS
+    ),
+    CiVariable(name=GATEWAY_URL_VAR, group="provider", purpose="gateway mode: gateway base URL"),
+    CiVariable(
+        name=GATEWAY_TOKEN_VAR, group="provider", purpose="gateway mode: shared secret", secret=True
+    ),
+    *(
+        CiVariable(
+            name=name, group="provider", purpose="direct mode: Anthropic API key", secret=True
+        )
+        for name in DIRECT_KEY_VARS
+    ),
+    CiVariable(name=POST_VAR, group="posting", purpose="1 posts; anything else is a dry run"),
+    *(
+        CiVariable(name=name, group="model", purpose="direct mode: model id override")
+        for name in MODEL_VARS
+    ),
+    CiVariable(name=GATEWAY_PORT_VAR, group="model", purpose="direct mode: loopback port"),
+)
+"""Every variable ``repoach ci review`` reads, in display order."""
