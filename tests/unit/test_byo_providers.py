@@ -80,7 +80,9 @@ def test_registry_builds_anthropic_with_resolved_base_url(monkeypatch: pytest.Mo
     monkeypatch.setenv("REPOACH_ANTHROPIC_API_KEY", "test-anthropic-key")
     provider = create_provider("anthropic", Settings(_env_file=None))
     assert isinstance(provider, AnthropicMessagesTransport)
-    assert provider._base_url == "https://api.anthropic.com"
+    assert provider._base_url == "https://api.anthropic.com/v1"
+    request = provider._client.build_request("POST", "/messages")
+    assert str(request.url) == "https://api.anthropic.com/v1/messages"
 
 
 def test_registry_builds_openai_compatible_with_configured_base_url(
