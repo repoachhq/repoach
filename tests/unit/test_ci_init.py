@@ -15,11 +15,11 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from repoach.ci_entry.pin import InstallTarget, resolve_pin
 from repoach.ci_entry.snippets import (
     GITHUB_WORKFLOW_PATH,
     GITLAB_JOB_NAME,
     GITLAB_JOB_PATH,
-    InstallTarget,
     render_github_workflow,
     render_gitlab_job,
 )
@@ -222,7 +222,74 @@ class TestInitCi:
         assert "overwritten" in forced
         assert GITLAB_JOB_NAME in yaml.safe_load(target.read_text(encoding="utf-8"))
 
+    def test_default_pin_is_printed_and_never_a_branch(
+        self, yoob: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        out = _init(yoob, monkeypatch, "--ci", "gitlab")
+        pinned = next(line for line in out.splitlines() if line.startswith("init: pinned "))
+        job = yaml.safe_load((yoob / GITLAB_JOB_PATH).read_text(encoding="utf-8"))
+        install = job[GITLAB_JOB_NAME]["variables"]["REPOACH_INSTALL"]
+        pin = pinned.removeprefix("init: pinned ").split(" (")[0]
+        git_form = pin.replace(" @ ", " @ git+https://github.com/repoachhq/repoach@")
+        assert install in (pin, git_form)
+        assert not install.endswith(("@develop", "@main"))
+
     def test_unknown_ci_is_rc_2(self, yoob: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(yoob)
         result = CliRunner().invoke(app, ["init", "--ci", "jenkins"])
         assert result.exit_code == 2
+
+
+def _commit(repo: Path) -> str:
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.email=a@b",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+class TestResolvePin:
+    def test_commit_pip_installed_from_git(self, tmp_path: Path) -> None:
+        record = {
+            "url": "https://github.com/repoachhq/repoach",
+            "vcs_info": {"commit_id": "abc123"},
+        }
+        pin = resolve_pin(direct_url=record, source_dir=tmp_path, version="0.1.0")
+        assert (pin.ref, pin.pypi_version) == ("abc123", None)
+
+    def test_repoach_checkout_pins_its_head(self, tmp_path: Path) -> None:
+        checkout = _git_repo(tmp_path / "repoach")
+        package = checkout / "src" / "repoach"
+        package.mkdir(parents=True)
+        head = _commit(checkout)
+        pin = resolve_pin(direct_url=None, source_dir=package, version="0.1.0")
+        assert pin.ref == head
+        assert "uncommitted" not in pin.provenance
+
+    def test_wheel_inside_a_project_venv_never_pins_the_project_head(self, tmp_path: Path) -> None:
+        project = _git_repo(tmp_path / "project")
+        _commit(project)
+        package = project / ".venv" / "lib" / "site-packages" / "repoach"
+        package.mkdir(parents=True)
+        pin = resolve_pin(direct_url=None, source_dir=package, version="0.3.1")
+        assert (pin.ref, pin.pypi_version) == (None, "0.3.1")
+        assert pin.requirement("https://x") == "repoach==0.3.1"
+
+    def test_no_git_falls_back_to_the_pypi_version(self, tmp_path: Path) -> None:
+        pin = resolve_pin(direct_url=None, source_dir=tmp_path, version="0.2.0")
+        assert pin.describe() == "repoach==0.2.0 (the running version, from PyPI)"

@@ -158,10 +158,12 @@ GitHub review factory on this repository.
 Write the job, then commit it:
 
 ```bash
-repoach init --ci gitlab --ref <tag-or-sha>   # writes .repoach/ci/gitlab-review.yml, prints the include
-repoach init --ci github --ref <tag-or-sha>   # writes .github/workflows/repoach-review.yml
-repoach init --ci gitlab --print              # print only, write nothing
+repoach init --ci gitlab   # writes .repoach/ci/gitlab-review.yml, prints the pin and the include
+repoach init --ci github   # writes .github/workflows/repoach-review.yml, prints the pin
+repoach init --ci gitlab --print   # print only, write nothing
 ```
+
+The job pins the repoach that ran `init`, never a branch: the commit pip installed it from, the `HEAD` of a repoach checkout (push it before the job runs), or `repoach==<version>` from PyPI; `--ref <tag-or-sha>` or `--pypi-version X.Y.Z` override it.
 
 On GitLab, add the printed include to `.gitlab-ci.yml` (repoach never edits it); override any key of the `review:advisory` job beside it, for example the runner tag:
 

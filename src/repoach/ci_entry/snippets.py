@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from .pin import InstallTarget
 from .variables import (
     DIRECT_KEY_VARS,
     GATEWAY_TOKEN_VAR,
@@ -30,8 +31,6 @@ from .variables import (
 CiKind = Literal["gitlab", "github"]
 
 REPOACH_GIT_URL = "https://github.com/repoachhq/repoach"
-DEFAULT_REF = "develop"
-"""Git ref installed when neither ``--ref`` nor ``--pypi-version`` is given."""
 
 GITLAB_JOB_PATH = Path(".repoach") / "ci" / "gitlab-review.yml"
 GITHUB_WORKFLOW_PATH = Path(".github") / "workflows" / "repoach-review.yml"
@@ -43,26 +42,6 @@ PYTHON_IMAGE = (
 )
 CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
 SETUP_PYTHON_ACTION = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-
-
-class InstallTarget(BaseModel):
-    """What the job installs: a git ref of repoach or a PyPI version.
-
-    Attributes:
-        ref: Git ref (tag, SHA or branch) of the repoach repository.
-        pypi_version: Exact PyPI version; wins over ``ref``.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    ref: str = DEFAULT_REF
-    pypi_version: str | None = None
-
-    def requirement(self) -> str:
-        """Return the pip requirement string."""
-        if self.pypi_version:
-            return f"repoach=={self.pypi_version}"
-        return f"repoach @ git+{REPOACH_GIT_URL}@{self.ref}"
 
 
 def scrubbed(command: str, *extra: str) -> str:
@@ -121,7 +100,7 @@ def render_gitlab_job(target: InstallTarget) -> str:
         "  timeout: 30 minutes\n"
         f"  image: {PYTHON_IMAGE}\n"
         "  variables:\n"
-        f'    REPOACH_INSTALL: "{target.requirement()}"\n'
+        f'    REPOACH_INSTALL: "{target.requirement(REPOACH_GIT_URL)}"\n'
         f'    {POST_VAR}: "0"\n'
         "  script:\n"
         f"    - {_apt_command()}\n"
@@ -159,7 +138,7 @@ def render_github_workflow(target: InstallTarget) -> str:
         '          python-version: "3.12"\n'
         "      - name: Install repoach (no secret in this step)\n"
         "        env:\n"
-        f'          REPOACH_INSTALL: "{target.requirement()}"\n'
+        f'          REPOACH_INSTALL: "{target.requirement(REPOACH_GIT_URL)}"\n'
         f"        run: {_install_command()}\n"
         "      - name: Review\n"
         "        env:\n"

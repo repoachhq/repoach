@@ -24,9 +24,8 @@ from typing import Annotated
 
 import typer
 
+from ..ci_entry.pin import InstallTarget, default_pin
 from ..ci_entry.snippets import (
-    DEFAULT_REF,
-    InstallTarget,
     apply_ci_init,
     gitlab_include_snippet,
     plan_ci_init,
@@ -118,7 +117,13 @@ def _init_repoach_dev(repo_root: Path) -> None:
 
 
 def _init_ci(
-    kind: str, *, print_only: bool, dry_run: bool, force: bool, ref: str, pypi: str | None
+    kind: str,
+    *,
+    print_only: bool,
+    dry_run: bool,
+    force: bool,
+    ref: str | None,
+    pypi: str | None,
 ) -> None:
     """Write (or print) the review job for ``kind``.
 
@@ -129,8 +134,10 @@ def _init_ci(
     if name != "gitlab" and name != "github":
         typer.echo(f"repoach: unknown CI {kind!r}; use gitlab or github", err=True)
         raise typer.Exit(code=EXIT_UNUSABLE)
-    target = InstallTarget(ref=ref, pypi_version=pypi)
+    target = InstallTarget(ref=ref, pypi_version=pypi) if ref or pypi else default_pin()
+    pinned = f"init: pinned {target.describe()}"
     if print_only:
+        typer.echo(pinned, err=True)
         typer.echo(render(name, target)[1], nl=False)
         return
     repo_root = _repo_root()
@@ -138,6 +145,7 @@ def _init_ci(
     if not dry_run:
         apply_ci_init(repo_root, plan)
     typer.echo(plan.describe(dry_run=dry_run))
+    typer.echo(pinned)
     if name == "gitlab":
         typer.echo("init: add to .gitlab-ci.yml (repoach never edits it):")
         typer.echo(gitlab_include_snippet(), nl=False)
@@ -178,9 +186,13 @@ def init(
         typer.Option("--print", help="With --ci: print the job on stdout; write nothing."),
     ] = False,
     ref: Annotated[
-        str,
-        typer.Option("--ref", help="With --ci: repoach git ref (tag or SHA) the job installs."),
-    ] = DEFAULT_REF,
+        str | None,
+        typer.Option(
+            "--ref",
+            help="With --ci: repoach git ref (tag or SHA) to install "
+            "(default: the running repoach's own commit or version).",
+        ),
+    ] = None,
     pypi_version: Annotated[
         str | None,
         typer.Option("--pypi-version", help="With --ci: install repoach==VERSION from PyPI."),
