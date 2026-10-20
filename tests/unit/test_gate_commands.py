@@ -25,6 +25,7 @@ from repoach.gates.commands import (
     run_project_gate,
     run_test_gate,
     split_command,
+    split_steps,
 )
 from repoach.gates.config import GatesConfig, load_gates_config
 from repoach.review import coder_loop
@@ -225,3 +226,30 @@ def test_developer_tools_use_the_configured_commands(tmp_path: Path) -> None:
     assert test_out.startswith("PASS (./t.sh {target} src/x.test.ts)")
     assert "target=src/x.test.ts" in test_out
     assert tools["run_tests"]("--pdb").startswith("error:")
+
+
+def test_and_chain_runs_steps_in_order_and_stops_at_the_first_failure(tmp_path: Path) -> None:
+    _script(tmp_path, "a.sh", "echo step-a\n")
+    _script(tmp_path, "b.sh", "echo step-b\nexit 3\n")
+    _script(tmp_path, "c.sh", "echo step-c\n")
+    passed, tail = run_lint_gate(tmp_path, _config(lint="./a.sh && ./b.sh && ./c.sh"))
+    assert passed is False
+    assert tail.startswith("$ ./a.sh && ./b.sh && ./c.sh\n")
+    assert "step-a" in tail and "step-b" in tail and "step-c" not in tail
+    assert "exit status 3" in tail
+    assert run_lint_gate(tmp_path, _config(lint="./a.sh && ./c.sh"))[0] is True
+
+
+@pytest.mark.parametrize(
+    "command", ["./a.sh | tee x", "./a.sh; ./b.sh", "./a.sh > out", "./a.sh &&"]
+)
+def test_other_shell_operators_are_refused(tmp_path: Path, command: str) -> None:
+    passed, tail = run_lint_gate(tmp_path, _config(lint=command))
+    assert passed is False
+    assert "unparseable command" in tail
+
+
+def test_repoach_own_lint_command_splits_into_its_steps() -> None:
+    lint = load_gates_config(Path(__file__).resolve().parents[2]).lint_cmd
+    assert lint is not None
+    assert [step[0] for step in split_steps(lint)] == ["ruff", "ruff", "python", "python"]

@@ -19,6 +19,7 @@ import re
 import shlex
 import signal
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,7 +79,9 @@ def split_command(command: str) -> list[str]:
         ValueError: The string is not valid shell quoting, or it starts
             with a ``NAME=value`` assignment (use ``env NAME=value cmd``).
     """
-    words = shlex.split(command)
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    words = list(lexer)
     if words and _ASSIGNMENT_RE.match(words[0]):
         raise ValueError(
             f"leading assignment {words[0]!r} is not supported; write it as 'env {words[0]} ...'"
@@ -163,27 +166,86 @@ def _decode(raw: bytes | str | None) -> str:
     return raw
 
 
+_SHELL_OPERATORS: frozenset[str] = frozenset(
+    {"||", ";", ";;", "|", "&", ">", ">>", "<", "<<", ">&", "&>", "|&", "(", ")"}
+)
+"""Shell operators a command string may not use: it never runs through a shell."""
+
+
+def split_steps(command: str) -> list[list[str]]:
+    """Split a command string into the argv of each ``&&``-chained step.
+
+    ``&&`` is the one operator understood without a shell: each step
+    runs only when the previous one exited 0 (repoach's own lint is
+    ``ruff check … && ruff format --check … && python scripts/…``).
+
+    Args:
+        command: A ``[commands]`` value.
+
+    Returns:
+        One non-empty argv per step.
+
+    Raises:
+        ValueError: Bad quoting, a leading assignment, an empty step, or
+            another shell operator (``|``, ``;``, ``||``, redirections).
+    """
+    steps: list[list[str]] = [[]]
+    for word in split_command(command):
+        if word == "&&":
+            steps.append([])
+            continue
+        if word in _SHELL_OPERATORS:
+            raise ValueError(
+                f"shell operator {word!r} is not supported (commands run without a "
+                "shell; only && chains steps): wrap it in a script"
+            )
+        if not steps[-1] and _ASSIGNMENT_RE.match(word):
+            raise ValueError(
+                f"leading assignment {word!r} is not supported; write it as 'env {word} ...'"
+            )
+        steps[-1].append(word)
+    if any(not step for step in steps):
+        raise ValueError("empty step around &&")
+    return steps
+
+
 def run_command(command: str, *, root: Path, timeout_s: int) -> CommandResult:
     """Run one ``[commands]`` string in ``root``.
+
+    ``&&``-chained steps run in order and stop at the first failure; the
+    timeout is one budget for the whole chain.
 
     Args:
         command: The configured command line.
         root: The project root (working directory).
-        timeout_s: Seconds before the process is killed.
+        timeout_s: Seconds before the process (chain) is killed.
 
     Returns:
-        The :class:`CommandResult`; a malformed or assignment-only
-        string is a red result naming the problem.
+        The :class:`CommandResult`; a malformed string is a red result
+        naming the problem.
     """
     try:
-        argv = split_command(command)
+        steps = split_steps(command)
     except ValueError as exc:
         return CommandResult(False, None, f"$ {command}\nunparseable command: {exc}")
-    if not argv:
-        return CommandResult(False, None, f"$ {command}\nno executable in command")
-    if "/" in argv[0] and not os.path.isabs(argv[0]):
-        argv[0] = str((root / argv[0]).resolve())
-    return run_argv(argv, cwd=root, timeout_s=timeout_s, label=command)
+    deadline = time.monotonic() + timeout_s
+    tails: list[str] = []
+    stdout: list[str] = []
+    result = CommandResult(True, 0, "")
+    for argv in steps:
+        if "/" in argv[0] and not os.path.isabs(argv[0]):
+            argv[0] = str((root / argv[0]).resolve())
+        remaining = max(1, int(deadline - time.monotonic()))
+        label = command if len(steps) == 1 else shlex.join(argv)
+        result = run_argv(argv, cwd=root, timeout_s=remaining, label=label)
+        tails.append(result.tail)
+        stdout.append(result.stdout)
+        if not result.passed:
+            break
+    tail = "\n".join(tails)
+    if len(steps) > 1:
+        tail = f"$ {command}\n{tail[-TAIL_CHARS:]}"
+    return CommandResult(result.passed, result.returncode, tail, "".join(stdout))
 
 
 def _skipped(name: str) -> tuple[bool, str]:
@@ -293,4 +355,5 @@ __all__ = [
     "run_project_gate",
     "run_test_gate",
     "split_command",
+    "split_steps",
 ]
