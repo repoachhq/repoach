@@ -293,3 +293,15 @@ class TestResolvePin:
     def test_no_git_falls_back_to_the_pypi_version(self, tmp_path: Path) -> None:
         pin = resolve_pin(direct_url=None, source_dir=tmp_path, version="0.2.0")
         assert pin.describe() == "repoach==0.2.0 (the running version, from PyPI)"
+
+
+def test_gitlab_header_names_the_bot_identity_posting_needs() -> None:
+    header = [
+        line
+        for line in render_gitlab_job(InstallTarget(ref="v0.2.0")).splitlines()
+        if line.startswith("#")
+    ]
+    text = "\n".join(header)
+    assert "REPOACH_REVIEW_BOT_LOGIN" in text
+    assert "[review].bot_username" in text
+    assert "REPOACH_ADVISORY_POST=1" in text
