@@ -53,7 +53,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..core.config import get_settings, require_gateway_credentials
+from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..core.paths import project_root
 from ..forge import (
@@ -68,6 +68,7 @@ from ..forge import (
 )
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
+from ..providers.select import require_provider_ready
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
 from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
@@ -1916,10 +1917,11 @@ def run_review(
         The :class:`TeamOutcome` aggregated across the four reviewers.
 
     Raises:
-        GatewayConfigError: The gateway URL or its shared secret is
-            missing; raised before any forge call.
+        GatewayConfigError: The selected provider cannot be used (the
+            gateway URL or secret, the ``claude`` CLI or its login, the
+            Anthropic key); raised before any forge call.
     """
-    require_gateway_credentials(get_settings())
+    require_provider_ready()
     return ReviewTeamOrchestrator(forge=forge, post_to_github=post).review_pr(
         pr_number, spec_flag=spec
     )
