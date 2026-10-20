@@ -32,7 +32,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..core.logging import get_logger
 from .context import env_value
-from .variables import DIRECT_KEY_VARS, FORGE_TOKEN_VARS, GATEWAY_PORT_VAR
+from .variables import DIRECT_KEY_VARS, GATEWAY_PORT_VAR, PASSTHROUGH_VARS
 
 _log = get_logger(__name__)
 
@@ -77,7 +77,11 @@ def free_port() -> int:
 
 
 def gateway_env(env: Mapping[str, str], *, port: int, auth_token: str) -> dict[str, str]:
-    """Build the gateway's environment: the provider key in, every forge credential out.
+    """Build the gateway's environment from an allow-list: the provider key and nothing else secret.
+
+    Starts from :data:`~repoach.ci_entry.variables.PASSTHROUGH_VARS`, so a
+    forge token or any other CI credential (registry password, job JWT,
+    runtime token) never reaches the gateway, whatever its name.
 
     Args:
         env: The job environment.
@@ -87,10 +91,9 @@ def gateway_env(env: Mapping[str, str], *, port: int, auth_token: str) -> dict[s
     Returns:
         The environment for ``python -m repoach.llm_proxy``.
     """
-    child = {k: v for k, v in env.items() if k not in FORGE_TOKEN_VARS}
+    child = {name: env[name] for name in PASSTHROUGH_VARS if name in env}
     key_name = next(name for name in DIRECT_KEY_VARS if env_value(env, name) is not None)
     child["REPOACH_ANTHROPIC_API_KEY"] = env[key_name].strip()
-    child.pop("ANTHROPIC_API_KEY", None)
     child["REPOACH_PROXY_HOST"] = LOOPBACK_HOST
     child["REPOACH_PROXY_PORT"] = str(port)
     child["REPOACH_ANTHROPIC_AUTH_TOKEN"] = auth_token

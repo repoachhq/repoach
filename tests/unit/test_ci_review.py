@@ -52,6 +52,29 @@ GATEWAY_VARS: dict[str, str] = {
 DIRECT_VARS: dict[str, str] = {"REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret"}
 
 
+GITLAB_CREDENTIALS: dict[str, str] = {
+    "CI_REGISTRY_PASSWORD": "registry-secret",
+    "CI_DEPENDENCY_PROXY_PASSWORD": "proxy-secret",
+    "CI_JOB_JWT": "jwt-secret",
+    "CI_JOB_JWT_V2": "jwt2-secret",
+    "CI_JOB_TOKEN": "job-secret",
+    "GITLAB_TOKEN": "glpat-secret",
+    "REPOACH_GITLAB_TOKEN": "glpat-secret",
+    "REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret",
+    "PROJECT_MASKED_DB_PASSWORD": "db-secret",
+}
+"""A GitLab job's credentials: the known names and one nobody can predict."""
+
+GITHUB_CREDENTIALS: dict[str, str] = {
+    "ACTIONS_RUNTIME_TOKEN": "runtime-secret",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "oidc-secret",
+    "GITHUB_TOKEN": "ghs-secret",
+    "GH_TOKEN": "ghs-secret",
+    "REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret",
+    "ORG_DEPLOY_KEY": "deploy-secret",
+}
+
+
 def _github_env(tmp_path: Path) -> dict[str, str]:
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"pull_request": {"number": 17}}), encoding="utf-8")
@@ -339,7 +362,10 @@ class TestProcessSeams:
         ]
         assert payload["forge"] == "gitlab"
 
-    def test_loopback_gateway_env_and_health(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("credentials", [GITLAB_CREDENTIALS, GITHUB_CREDENTIALS])
+    def test_loopback_gateway_env_and_health(
+        self, tmp_path: Path, credentials: dict[str, str]
+    ) -> None:
         record = tmp_path / "gateway-env.json"
         python = _fake_python(
             tmp_path,
@@ -356,10 +382,9 @@ class TestProcessSeams:
         )
         env = {
             "PATH": os.environ["PATH"],
-            "REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret",
-            "GITLAB_TOKEN": "glpat-secret",
-            "REPOACH_GITLAB_TOKEN": "glpat-secret",
+            "HTTPS_PROXY": "http://proxy.internal:3128",
             "REPOACH_MODEL_SONNET": "claude-sonnet-x",
+            **credentials,
         }
         with loopback_gateway(env, python=python, timeout_s=20, poll_s=0.1) as gateway:
             assert gateway.base_url.startswith("http://127.0.0.1:")
@@ -369,7 +394,10 @@ class TestProcessSeams:
         assert seen["REPOACH_PROXY_HOST"] == "127.0.0.1"
         assert seen["MODEL_SONNET"] == "anthropic/claude-sonnet-x"
         assert seen["MODEL_OPUS"] == "anthropic/claude-opus-5"
-        assert "GITLAB_TOKEN" not in seen and "REPOACH_GITLAB_TOKEN" not in seen
+        assert seen["HTTPS_PROXY"] == "http://proxy.internal:3128"
+        leaked = {k for k, v in seen.items() if v in credentials.values()}
+        assert leaked == {"REPOACH_ANTHROPIC_API_KEY"}
+        assert set(seen).isdisjoint(set(credentials) - {"REPOACH_ANTHROPIC_API_KEY"})
 
     def test_loopback_gateway_that_exits_names_its_log(self, tmp_path: Path) -> None:
         python = _fake_python(tmp_path, "import sys\nprint('boom: no upstream')\nsys.exit(1)\n")

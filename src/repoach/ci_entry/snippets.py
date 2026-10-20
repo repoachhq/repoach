@@ -21,9 +21,9 @@ from pydantic import BaseModel, ConfigDict
 
 from .variables import (
     DIRECT_KEY_VARS,
-    FORGE_TOKEN_VARS,
     GATEWAY_TOKEN_VAR,
     GATEWAY_URL_VAR,
+    PASSTHROUGH_VARS,
     POST_VAR,
 )
 
@@ -43,9 +43,6 @@ PYTHON_IMAGE = (
 )
 CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
 SETUP_PYTHON_ACTION = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-
-_SECRET_VARS: tuple[str, ...] = (*FORGE_TOKEN_VARS, *DIRECT_KEY_VARS, GATEWAY_TOKEN_VAR)
-"""Removed from the install step's environment."""
 
 
 class InstallTarget(BaseModel):
@@ -68,12 +65,43 @@ class InstallTarget(BaseModel):
         return f"repoach @ git+{REPOACH_GIT_URL}@{self.ref}"
 
 
-def _install_command() -> str:
-    """Return the install command, every secret unset for its duration."""
-    unset = " ".join(f"-u {name}" for name in _SECRET_VARS)
-    return (
-        f'env {unset} python -m pip install --quiet --disable-pip-version-check "$REPOACH_INSTALL"'
+def scrubbed(command: str, *extra: str) -> str:
+    """Run ``command`` with only the allow-listed variables that are set.
+
+    A one-line Python ``execvpe`` (Python is in both job images before
+    repoach is) rebuilds the environment from
+    :data:`~repoach.ci_entry.variables.PASSTHROUGH_VARS` alone, so no
+    credential the job holds reaches the step, under any name; an unset
+    name stays unset rather than becoming empty. ``extra`` adds
+    ``NAME=value`` assignments through ``env``. Expansions in
+    ``command`` (``$REPOACH_INSTALL``) are done by the job's own shell.
+
+    Args:
+        command: The command to run.
+        *extra: ``NAME=value`` assignments the step needs.
+    """
+    keep = ",".join(f'"{name}"' for name in PASSTHROUGH_VARS)
+    scrub = (
+        f"import os,sys;keep={{{keep}}};"
+        "os.execvpe(sys.argv[1],sys.argv[1:],"
+        "{n:v for n,v in os.environ.items() if n in keep})"
     )
+    added = f"env {' '.join(extra)} " if extra else ""
+    return f"python3 -c '{scrub}' {added}{command}"
+
+
+def _apt_command() -> str:
+    """Return the scrubbed ``apt-get`` step installing git and glab."""
+    return scrubbed(
+        "sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends "
+        "git glab ca-certificates >/dev/null'",
+        "DEBIAN_FRONTEND=noninteractive",
+    )
+
+
+def _install_command() -> str:
+    """Return the scrubbed install step for ``$REPOACH_INSTALL``."""
+    return scrubbed('python -m pip install --quiet --disable-pip-version-check "$REPOACH_INSTALL"')
 
 
 def render_gitlab_job(target: InstallTarget) -> str:
@@ -96,8 +124,7 @@ def render_gitlab_job(target: InstallTarget) -> str:
         f'    REPOACH_INSTALL: "{target.requirement()}"\n'
         f'    {POST_VAR}: "0"\n'
         "  script:\n"
-        "    - apt-get update -qq && apt-get install -y -qq --no-install-recommends "
-        "git glab ca-certificates >/dev/null\n"
+        f"    - {_apt_command()}\n"
         f"    - {_install_command()}\n"
         "    - repoach ci review\n"
     )

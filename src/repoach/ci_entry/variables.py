@@ -34,7 +34,49 @@ GATEWAY_PORT_VAR = "REPOACH_GATEWAY_PORT"
 """Direct-provider mode: loopback port override (a free port otherwise)."""
 
 FORGE_TOKEN_VARS: tuple[str, ...] = (*GITLAB_TOKEN_VARS, *GITHUB_TOKEN_VARS, "CI_JOB_TOKEN")
-"""Every forge credential name, removed from the loopback gateway's environment."""
+"""Every forge credential name ``ci review`` itself knows about."""
+
+PROXY_VARS: tuple[str, ...] = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+)
+"""Outbound proxy settings a scrubbed step keeps, so it still reaches the network."""
+
+PASSTHROUGH_VARS: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "TMPDIR",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "PYTHONPATH",
+    "VIRTUAL_ENV",
+    "LD_LIBRARY_PATH",
+    "pythonLocation",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    *PROXY_VARS,
+)
+"""The allow-list a scrubbed environment starts from: no credential is on it.
+
+A CI injects credentials under names repoach cannot enumerate
+(``CI_REGISTRY_PASSWORD``, ``CI_DEPENDENCY_PROXY_PASSWORD``,
+``CI_JOB_JWT_V2``, ``ACTIONS_RUNTIME_TOKEN``,
+``ACTIONS_ID_TOKEN_REQUEST_TOKEN``, any masked project variable), so the
+loopback gateway and the install steps keep only these names plus the
+one secret each needs, never "everything but a deny-list"."""
 
 
 class CiVariable(BaseModel):

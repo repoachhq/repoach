@@ -25,20 +25,89 @@ from repoach.ci_entry.snippets import (
 )
 from repoach.cli.main import app
 
-SECRETS = (
-    "GITLAB_TOKEN",
-    "REPOACH_GITLAB_TOKEN",
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
-    "REPOACH_ANTHROPIC_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "REPOACH_ANTHROPIC_AUTH_TOKEN",
-)
+GITLAB_CREDENTIALS: dict[str, str] = {
+    "CI_REGISTRY_PASSWORD": "registry-secret",
+    "CI_DEPENDENCY_PROXY_PASSWORD": "proxy-secret",
+    "CI_JOB_JWT": "jwt-secret",
+    "CI_JOB_JWT_V2": "jwt2-secret",
+    "CI_JOB_TOKEN": "job-secret",
+    "GITLAB_TOKEN": "glpat-secret",
+    "REPOACH_GITLAB_TOKEN": "glpat-secret",
+    "REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret",
+    "REPOACH_ANTHROPIC_AUTH_TOKEN": "gateway-secret",
+    "PROJECT_MASKED_DB_PASSWORD": "db-secret",
+}
+"""What a GitLab job holds: the known names and one nobody can predict."""
+
+GITHUB_CREDENTIALS: dict[str, str] = {
+    "ACTIONS_RUNTIME_TOKEN": "runtime-secret",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "oidc-secret",
+    "GITHUB_TOKEN": "ghs-secret",
+    "GH_TOKEN": "ghs-secret",
+    "REPOACH_ANTHROPIC_API_KEY": "sk-ant-secret",
+    "REPOACH_ANTHROPIC_AUTH_TOKEN": "gateway-secret",
+    "ORG_DEPLOY_KEY": "deploy-secret",
+}
 
 
-def _unset_names(command: str) -> set[str]:
-    words = command.split()
-    return {words[i + 1] for i, word in enumerate(words) if word == "-u"}
+def _dump_tools(tmp_path: Path) -> tuple[Path, Path]:
+    """Put fake ``python`` and ``apt-get`` first on PATH; each dumps its env."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    dumps = tmp_path / "dumps"
+    dumps.mkdir()
+    for name in ("python", "apt-get"):
+        tool = bin_dir / name
+        tool.write_text(f"#!/bin/sh\nenv > {dumps}/{name}.env\n", encoding="utf-8")
+        tool.chmod(0o755)
+    return bin_dir, dumps
+
+
+def _run_step(command: str, env: dict[str, str]) -> None:
+    subprocess.run(["bash", "-c", command], env=env, check=True)
+
+
+def _assert_scrubbed(dump: Path, credentials: dict[str, str], *, keeps: str) -> None:
+    text = dump.read_text(encoding="utf-8")
+    names = {line.split("=", 1)[0] for line in text.splitlines() if "=" in line}
+    assert names.isdisjoint(credentials), names & set(credentials)
+    assert all(value not in text for value in credentials.values())
+    assert keeps in names
+
+
+class TestScrubbedSteps:
+    def test_gitlab_apt_and_pip_see_no_credential(self, tmp_path: Path) -> None:
+        job = yaml.safe_load(render_gitlab_job(InstallTarget(ref="v0.2.0")))[GITLAB_JOB_NAME]
+        bin_dir, dumps = _dump_tools(tmp_path)
+        env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "HTTPS_PROXY": "http://proxy.internal:3128",
+            "GITLAB_CI": "true",
+            "REPOACH_INSTALL": job["variables"]["REPOACH_INSTALL"],
+            **GITLAB_CREDENTIALS,
+        }
+        _run_step(job["script"][0], env)
+        _run_step(job["script"][1], env)
+        _assert_scrubbed(dumps / "apt-get.env", GITLAB_CREDENTIALS, keeps="HTTPS_PROXY")
+        _assert_scrubbed(dumps / "python.env", GITLAB_CREDENTIALS, keeps="HTTPS_PROXY")
+        assert "DEBIAN_FRONTEND=noninteractive" in (dumps / "apt-get.env").read_text()
+        assert "GITLAB_CI" not in (dumps / "python.env").read_text()
+        assert job["script"][2] == "repoach ci review"
+
+    def test_github_pip_sees_no_credential(self, tmp_path: Path) -> None:
+        doc = yaml.safe_load(render_github_workflow(InstallTarget(pypi_version="0.2.0")))
+        install = doc["jobs"]["review"]["steps"][2]
+        bin_dir, dumps = _dump_tools(tmp_path)
+        env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "https_proxy": "http://proxy.internal:3128",
+            **install["env"],
+            **GITHUB_CREDENTIALS,
+        }
+        _run_step(install["run"], env)
+        _assert_scrubbed(dumps / "python.env", GITHUB_CREDENTIALS, keeps="https_proxy")
 
 
 class TestRender:
@@ -51,9 +120,7 @@ class TestRender:
             "repoach @ git+https://github.com/repoachhq/repoach@v0.2.0"
         )
         assert job["variables"]["REPOACH_ADVISORY_POST"] == "0"
-        install, review = job["script"][1], job["script"][2]
-        assert set(SECRETS) <= _unset_names(install)
-        assert review == "repoach ci review"
+        assert len(job["script"]) == 3
 
     def test_github_workflow_shape(self) -> None:
         doc = yaml.safe_load(render_github_workflow(InstallTarget(pypi_version="0.2.0")))
@@ -63,7 +130,6 @@ class TestRender:
         assert job["continue-on-error"] is True
         install, review = job["steps"][2], job["steps"][3]
         assert install["env"] == {"REPOACH_INSTALL": "repoach==0.2.0"}
-        assert set(SECRETS) <= _unset_names(install["run"])
         assert review["run"] == "repoach ci review"
         assert "REPOACH_ANTHROPIC_API_KEY" in review["env"]
         assert all(
