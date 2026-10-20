@@ -64,7 +64,7 @@ pr N` works with no gateway, no key, no `.env`.
   `GatewayTransportError`.
 - `anthropic`: key from `REPOACH_ANTHROPIC_API_KEY`, else
   `ANTHROPIC_API_KEY` (SP-PROVIDER-DIRECT-ANTHROPIC Q1); optional
-  `REPOACH_ANTHROPIC_BASE_URL`; 401/403 → `ProviderAuthError` (one request, never retried) naming the
+  `REPOACH_ANTHROPIC_BASE_URL` (with or without `/v1`: a root not ending in `/v1` gets it, so requests always land on `/v1/messages`); 401/403 → `ProviderAuthError` (one request, never retried) naming the
   variable, 5xx/408/429/529/unreachable → `GatewayTransportError`.
 - Preflight `require_provider_ready()` (called by `review pr` before
   any forge call): missing CLI, logged-out CLI (`claude auth status

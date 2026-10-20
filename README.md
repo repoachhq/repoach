@@ -158,7 +158,7 @@ Every model call goes through one provider, chosen by `[provider].kind` in `repo
 | Way | Set | What answers |
 |---|---|---|
 | Claude Code login | `kind = "claude_code"` | the `claude` CLI you are logged into, run headless (`claude --print`) from the review process — no gateway, no key, no `.env`; billed to your Claude plan |
-| API key | `kind = "anthropic"` and `REPOACH_ANTHROPIC_API_KEY` (else `ANTHROPIC_API_KEY`) in the environment or `~/.config/repoach/env` | the Anthropic Messages API, called from the review process |
+| API key | `kind = "anthropic"` and `REPOACH_ANTHROPIC_API_KEY` (else `ANTHROPIC_API_KEY`) in the environment or `~/.config/repoach/env`; `REPOACH_ANTHROPIC_BASE_URL` for a proxy, with or without `/v1` (repoach adds it) | the Anthropic Messages API, called from the review process |
 | Gateway | no kind, or `kind = "gateway"`, and `REPOACH_LLM_PROXY_BASE_URL` + `REPOACH_ANTHROPIC_AUTH_TOKEN` | the chain-failover gateway you run (`python -m repoach.llm_proxy`, chains in `chains.env`) |
 
 ```toml

@@ -19,6 +19,7 @@ from repoach.agent_engine.adapters import GatewayError, GatewayTransportError
 from repoach.agent_engine.agent_loop import AgentLoop
 from repoach.core import config as core_config
 from repoach.llm.capability import CapabilityTier
+from repoach.providers.select import anthropic_base_url
 from repoach.review.reviewer import Architect, ReviewVerdict
 from tests.provider_fakes import FakeAnthropicServer
 from tests.unit.test_provider_select import PROVIDER_ENV
@@ -122,3 +123,25 @@ def test_rejected_key_ends_the_reviewer_after_one_request_with_the_hint(
     assert len(fatal) == 1
     assert "replace it" in fatal[0]["message"]
     assert fatal[0]["log_level"] == "error"
+
+
+@pytest.mark.parametrize("suffix", ["", "/", "/v1", "/v1/"])
+def test_base_url_with_or_without_v1_posts_to_v1_messages(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
+) -> None:
+    monkeypatch.setenv("REPOACH_ANTHROPIC_API_KEY", "some-key-value")
+    with FakeAnthropicServer(text="ok") as server:
+        root = server.base_url.removesuffix("/v1")
+        monkeypatch.setenv("REPOACH_ANTHROPIC_BASE_URL", root + suffix)
+        AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
+    assert server.requests[0]["path"] == "/v1/messages"
+
+
+def test_base_url_normalisation() -> None:
+    assert anthropic_base_url(None) == "https://api.anthropic.com/v1"
+    assert anthropic_base_url("  ") == "https://api.anthropic.com/v1"
+    assert anthropic_base_url("https://proxy.example") == "https://proxy.example/v1"
+    assert anthropic_base_url("https://proxy.example/anthropic/") == (
+        "https://proxy.example/anthropic/v1"
+    )
+    assert anthropic_base_url("https://proxy.example/v1/") == "https://proxy.example/v1"

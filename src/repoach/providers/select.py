@@ -54,6 +54,29 @@ ANTHROPIC_CREDENTIAL_NAMES: tuple[str, ...] = ("REPOACH_ANTHROPIC_API_KEY", "ANT
 ANTHROPIC_BASE_URL_VAR = "REPOACH_ANTHROPIC_BASE_URL"
 """Optional Messages API root (a corporate proxy, a test server); the API's own otherwise."""
 
+
+def anthropic_base_url(raw: str | None) -> str:
+    """Return the Messages API root the transport posts ``/messages`` under.
+
+    ``https://proxy.example`` and ``https://proxy.example/v1`` both mean
+    the same API (the form ``ANTHROPIC_BASE_URL`` users write has no
+    ``/v1``); the transport appends ``/messages``, so a root whose path
+    does not already end in ``/v1`` gets it, and the request lands on
+    ``/v1/messages``, never on the 404 ``/messages``.
+
+    Args:
+        raw: ``REPOACH_ANTHROPIC_BASE_URL``, None when unset.
+
+    Returns:
+        :data:`ANTHROPIC_DEFAULT_BASE` when ``raw`` is unset or blank, else
+        ``raw`` without a trailing slash, ending in ``/v1``.
+    """
+    if raw is None or not raw.strip():
+        return ANTHROPIC_DEFAULT_BASE
+    base = raw.strip().rstrip("/")
+    return base if base.endswith("/v1") else f"{base}/v1"
+
+
 DEFAULT_CLI = "claude"
 
 CLAUDE_CODE_MODELS: dict[CapabilityTier, str] = {
@@ -286,9 +309,7 @@ def build_direct_provider(route: ProviderRoute, *, timeout_s: float) -> DirectPr
         if credential is None:
             raise _missing_anthropic_key()
         name, key = credential
-        base_url = (
-            configured_env_value((ANTHROPIC_BASE_URL_VAR,), route.root) or ANTHROPIC_DEFAULT_BASE
-        )
+        base_url = anthropic_base_url(configured_env_value((ANTHROPIC_BASE_URL_VAR,), route.root))
 
         def anthropic_transport() -> BaseProvider:
             return AnthropicMessagesTransport(
@@ -356,6 +377,7 @@ __all__ = [
     "DIRECT_KINDS",
     "ClaudeLogin",
     "ProviderRoute",
+    "anthropic_base_url",
     "anthropic_credential",
     "build_direct_provider",
     "claude_cli",
