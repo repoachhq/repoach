@@ -138,7 +138,7 @@ cp .env.example .env      # required: without it only the top-level `repoach --h
 repoach --help            # the CLI
 ```
 
-To run anything that calls a model, set two values in `.env` — `REPOACH_ANTHROPIC_AUTH_TOKEN` (the gateway's shared secret, any long random string) and one provider key — then start the gateway in a second terminal with `python -m repoach.llm_proxy`. With the gateway up and `gh auth login` done:
+To run anything that calls a model, pick a provider (see [Providers](#providers)): the shortest path is a logged-in Claude Code and `REPOACH_PROVIDER=claude_code`, with no gateway and no key. With a provider ready and `gh auth login` done:
 
 ```bash
 repoach review pr <N> --dry-run   # run the review bench on a PR, post nothing
@@ -150,6 +150,33 @@ The **[getting-started guide](docs/getting_started.md)** walks
 you from clone to a live, authenticated call through the LLM gateway —
 provider keys, `chains.env` routing, the CLI tour — and then through the
 GitHub review factory on this repository.
+
+## Providers
+
+Every model call goes through one provider, chosen by `[provider].kind` in `repoach.toml` or `REPOACH_PROVIDER` (the environment wins). Three ways:
+
+| Way | Set | What answers |
+|---|---|---|
+| Claude Code login | `kind = "claude_code"` | the `claude` CLI you are logged into, run headless (`claude --print`) from the review process — no gateway, no key, no `.env`; billed to your Claude plan |
+| API key | `kind = "anthropic"` and `REPOACH_ANTHROPIC_API_KEY` (else `ANTHROPIC_API_KEY`) in the environment or `~/.config/repoach/env` | the Anthropic Messages API, called from the review process |
+| Gateway | no kind, or `kind = "gateway"`, and `REPOACH_LLM_PROXY_BASE_URL` + `REPOACH_ANTHROPIC_AUTH_TOKEN` | the chain-failover gateway you run (`python -m repoach.llm_proxy`, chains in `chains.env`) |
+
+```toml
+# repoach.toml
+[provider]
+kind = "claude_code"
+```
+
+```bash
+claude auth status                # "loggedIn": true
+repoach doctor                    # provider_route=direct (claude_code), provider_credential=claude login (…)
+repoach review pr <N> --dry-run
+```
+
+- **Models.** Each agent asks for a tier (`opus`, `sonnet`, `haiku`). `claude_code` sends the CLI's own aliases; `anthropic` defaults to `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`. Override per tier with `[provider].opus` / `.sonnet` / `.haiku` or `REPOACH_MODEL_OPUS` / `_SONNET` / `_HAIKU`.
+- **Claude Code details.** The CLI is `[provider].cli_path` or `REPOACH_CLAUDE_CODE_CLI_PATH`, else `claude` on `PATH`. Each call runs in an empty temporary directory (your project's `CLAUDE.md` is never loaded), in its own process group, killed with its children on timeout. Where nobody can log in interactively (a CI runner), set `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
+- **Never implicit.** `claude_code` is used only when named: a `claude` binary on `PATH` with no kind still means the gateway.
+- **Failing early.** A missing CLI, a logged-out CLI, a missing key or a missing gateway URL is one line on stderr and exit code 2, before any forge call. `repoach doctor` prints `provider_route=direct (claude_code|anthropic)`, `gateway (<url>)` or `none`, and `provider_credential=` with the credential's name, never its value.
 
 ## Run repoach in CI
 
@@ -179,11 +206,12 @@ The job installs the pinned repoach with every secret unset for the install step
 | | GitLab | GitHub |
 |---|---|---|
 | Forge token | `REPOACH_GITLAB_TOKEN` (project access token, `api`) | `GITHUB_TOKEN` (provided) |
-| Direct-provider mode | `REPOACH_ANTHROPIC_API_KEY` | secret `REPOACH_ANTHROPIC_API_KEY` |
+| API key | `REPOACH_PROVIDER=anthropic` + `REPOACH_ANTHROPIC_API_KEY` | variable `REPOACH_PROVIDER=anthropic` + secret `REPOACH_ANTHROPIC_API_KEY` |
+| Claude Code | `REPOACH_PROVIDER=claude_code` + `CLAUDE_CODE_OAUTH_TOKEN`, `claude` installed in the job | the same |
 | Gateway mode | `REPOACH_LLM_PROXY_BASE_URL` + `REPOACH_ANTHROPIC_AUTH_TOKEN` | variable `REPOACH_LLM_PROXY_BASE_URL` + secret `REPOACH_ANTHROPIC_AUTH_TOKEN` |
 | Posting | `REPOACH_ADVISORY_POST=1` | variable `REPOACH_ADVISORY_POST=1` |
 
-In **gateway mode** the review calls a repoach gateway you already run. In **direct-provider mode** the job starts a gateway on `127.0.0.1` for its own duration, with the Anthropic key as its only upstream (`REPOACH_MODEL_OPUS` / `_SONNET` / `_HAIKU` override the models) and a per-job shared secret; the key reaches that gateway and never the review, and the forge token reaches the review and never the gateway. Posting on GitLab also needs the bot's username (`[review].bot_username` in `repoach.toml`, or `REPOACH_REVIEW_BOT_LOGIN`).
+With **`REPOACH_PROVIDER=anthropic` or `claude_code`** (or `[provider].kind`), the review calls the model itself: no gateway runs, and in `anthropic` mode the key reaches the review. In **gateway mode** the review calls a repoach gateway you already run. A job that sets only `REPOACH_ANTHROPIC_API_KEY` and names no provider keeps the older **direct-provider mode**: it starts a gateway on `127.0.0.1` for its own duration, with the Anthropic key as its only upstream (`REPOACH_MODEL_OPUS` / `_SONNET` / `_HAIKU` override the models) and a per-job shared secret; the key reaches that gateway and never the review, and the forge token reaches the review and never the gateway. Posting on GitLab also needs the bot's username (`[review].bot_username` in `repoach.toml`, or `REPOACH_REVIEW_BOT_LOGIN`).
 
 Exit codes with `--strict`: `0` reviewed (APPROVE/COMMENT) or the PR already merged/closed, `1` internal error, `2` a missing input, bad flag or config, forge or provider unavailable, `3` a reviewer reached no model or the review outran `--timeout` (minutes, default 25; the child is killed with its process group), `4` changes requested. Any exception is one `internal_error` JSON, never a traceback.
 
@@ -217,7 +245,7 @@ Early, and built in the open. What the code does on 2026-10-19 (`develop` 20dbb4
 | Forge | GitHub only, through the `gh` CLI on your PATH (19 methods in `src/repoach/review/gh_client.py`). | A `Forge` protocol with GitHub and GitLab implementations — spec `SP-UNIVERSAL-FORGE`. |
 | Languages and gates | Python: `ruff` + `pytest`, AST-based finding verifiers, `src/` + `tests/unit` layout assumed. | Per-project lint/test/gate commands, Python verifiers that step aside on other languages — `SP-UNIVERSAL-GATES`. |
 | Install | From a clone with `pip install -e`; config, `chains.env`, `.env` and the SQLite ledger are anchored to the repoach checkout; `repoach init` scaffolds repoach itself, not your repository. The `repoach 0.0.1` on PyPI is a name reservation. | A wheel that boots without a gateway or a checkout (`pipx install repoach`) — `SP-UNIVERSAL-INSTALL`, milestone M1, pending. |
-| Gateway | Required: the agents speak only HTTP to the local `llm_proxy`; a bring-your-own key still needs the gateway process running. | Direct providers in-process, gateway optional — `SP-UNIVERSAL-PROVIDERS`. |
+| Gateway | Optional since 2026-10-20: `claude_code` (a logged-in Claude Code) and `anthropic` (a key) run in-process ([Providers](#providers)); with neither named, the agents speak HTTP to the local `llm_proxy`. | An OpenAI-compatible direct provider and a per-call usage ledger — `SP-UNIVERSAL-PROVIDERS`. |
 | Models | The committed free chains are dead: every NVIDIA NIM head has answered HTTP 410 on 13 089 of the 13 203 probes since 2026-09-01 (read 2026-10-19); the remainder is 99 connection errors, 13 `ok` rows written by test fixtures, and 2 other; the last real `ok` was 2026-08-21. The OpenRouter credit is negative. The only hop that answers a review today is the `claude_code/<tier>` tail — your local `claude` login. | A key, not a chain (`SP-UNIVERSAL-PROVIDERS`). |
 | Cost | Measured on one review of a 36-file / 196 k-character diff (2026-10-18): 225 582 tokens over 7 gateway calls, 83 s, four reviews, 0 tool calls. No precision or false-positive rate has been measured yet. | A ledger that reads each finding's fate from the forge and reports cost and precision — `SP-UNIVERSAL-LEDGER`. |
 | Known review defects | (1) `review pr --dry-run` is not write-free: the refuted-finding sentinels are posted outside the `post` guard (`orchestrator.py:661` vs `:768`), so on a PR that already carries repoach threads a dry run posts replies. (2) A dry run has no head SHA: the head guard starts only when posting (`orchestrator.py:410-414`), so its ledger rows carry `head_sha = NULL` and the verdict is derived at an empty head. Both measured 2026-10-18. | (1) is closed by `SP-UNIVERSAL-CI-ENTRY` (G2: `--dry-run` never posts). (2) has no closing spec yet. |
