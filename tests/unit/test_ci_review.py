@@ -16,6 +16,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -446,3 +447,78 @@ class TestCli:
         result = CliRunner().invoke(app, ["ci", "review", "--help"])
         assert result.exit_code == 0
         assert "REQUEST_CHANGES" in result.stdout
+
+
+def _gone(pid: int, within_s: float = 5.0) -> bool:
+    """True once ``pid`` no longer exists, or is a zombie awaiting its reaper."""
+    deadline = time.monotonic() + within_s
+    status = Path(f"/proc/{pid}/status")
+    while time.monotonic() < deadline:
+        try:
+            state = status.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return True
+        if "\nState:\tZ" in state:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+class TestChildRobustness:
+    def _plan(self, strict: bool = True) -> CiReviewPlan:
+        planned = plan_ci_review({**GITLAB_ENV, **GATEWAY_VARS}, strict=strict)
+        assert isinstance(planned, CiReviewPlan)
+        return planned
+
+    def test_timeout_kills_the_whole_process_group(self, tmp_path: Path) -> None:
+        grandchild = tmp_path / "grandchild.pid"
+        python = _fake_python(
+            tmp_path,
+            "import subprocess, time\n"
+            "child = subprocess.Popen(['sleep', '300'])\n"
+            f"open({str(grandchild)!r}, 'w').write(str(child.pid))\n"
+            "time.sleep(300)\n",
+        )
+        fake = FakeRun()
+        report = run_ci_review(
+            self._plan(),
+            {**GITLAB_ENV, **GATEWAY_VARS},
+            pr_state=fake.pr_state,
+            review_runner=subprocess_review_runner(tmp_path, python, timeout_s=1.5),
+            gateway_starter=fake.gateway,
+            bot_username="repoach-bot",
+        )
+        assert report.outcome == Outcome.TIMEOUT
+        assert report.exit_code == 3
+        pid = int(grandchild.read_text(encoding="utf-8"))
+        assert _gone(pid)
+
+    def test_unknown_state_is_a_named_skip(self) -> None:
+        fake = FakeRun(state="unknown")
+        report = _run({**GITLAB_ENV, **GATEWAY_VARS}, fake)
+        assert report.outcome == Outcome.SKIPPED
+        assert "state 'unknown'" in report.reason
+        assert fake.review_envs == []
+
+    def test_unparseable_stdout_is_carried_in_detail(self) -> None:
+        noise = "Traceback (most recent call last):\n" + "x" * 500
+        report = _run({**GITLAB_ENV, **GATEWAY_VARS}, FakeRun(rc=1, stdout=noise), strict=True)
+        assert report.outcome == Outcome.INTERNAL_ERROR
+        assert report.detail == noise[:200]
+        assert report.exit_code == 1
+
+    @pytest.mark.parametrize(("strict", "code"), [(False, 0), (True, 1)])
+    def test_any_exception_is_one_json_internal_error(
+        self, monkeypatch: pytest.MonkeyPatch, strict: bool, code: int
+    ) -> None:
+        def explode(*args: object, **kwargs: object) -> CiReviewReport:
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr("repoach.ci_entry.cli.review_from_env", explode)
+        args = ["ci", "review", *(["--strict"] if strict else [])]
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == code
+        payload = json.loads(result.stdout)
+        assert payload["outcome"] == "internal_error"
+        assert payload["reason"] == "RuntimeError: disk on fire"
+        assert "Traceback" not in result.stdout

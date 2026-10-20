@@ -15,11 +15,13 @@ from collections.abc import Mapping
 
 import typer
 
+from ..core.logging import get_logger
 from ..core.paths import NotARepositoryError, require_project_root
 from ..forge import select_forge
 from ..project.config import ConfigError, ForgeName
 from ..project.resolve import effective_bot_username, resolve_project_config
 from .advisory import (
+    DEFAULT_REVIEW_TIMEOUT_S,
     EXIT_CODE_TABLE,
     CiReviewPlan,
     CiReviewReport,
@@ -41,6 +43,8 @@ from .context import (
 )
 from .gateway import loopback_gateway
 from .variables import CI_VARIABLES
+
+_log = get_logger(__name__)
 
 ci_app = typer.Typer(
     help="Run repoach from a CI job (GitLab CI, GitHub Actions).", no_args_is_help=True
@@ -97,6 +101,11 @@ def ci_review(
     strict: bool = typer.Option(
         False, "--strict", help="Exit non-zero on a skip, an error or REQUEST_CHANGES."
     ),
+    timeout_min: float = typer.Option(
+        DEFAULT_REVIEW_TIMEOUT_S / 60,
+        "--timeout",
+        help="Minutes before the review child is killed with its process group.",
+    ),
 ) -> None:
     """Review the PR / MR of this CI job; advisory unless --strict.
 
@@ -110,16 +119,20 @@ def ci_review(
 
     {exit_codes}
     """
-    emit(
-        review_from_env(
+    try:
+        report = review_from_env(
             dict(os.environ),
             pr=pr,
             forge_name=forge_name,
             post=post,
             dry_run=dry_run,
             strict=strict,
+            timeout_s=timeout_min * 60,
         )
-    )
+    except Exception as exc:
+        _log.error("ci_review_internal_error", error=repr(exc))
+        report = finish(Outcome.INTERNAL_ERROR, f"{type(exc).__name__}: {exc}", strict=strict)
+    emit(report)
 
 
 def review_from_env(
@@ -130,6 +143,7 @@ def review_from_env(
     post: bool,
     dry_run: bool,
     strict: bool,
+    timeout_s: float = DEFAULT_REVIEW_TIMEOUT_S,
 ) -> CiReviewReport:
     """Run ``ci review`` from the checkout in the working directory; return its report.
 
@@ -140,6 +154,7 @@ def review_from_env(
         post: ``--post``.
         dry_run: ``--dry-run``.
         strict: ``--strict``.
+        timeout_s: Deadline of the review child.
 
     Returns:
         The report :func:`emit` prints.
@@ -170,7 +185,7 @@ def review_from_env(
         planned,
         env,
         pr_state=read_state,
-        review_runner=subprocess_review_runner(root),
+        review_runner=subprocess_review_runner(root, timeout_s=timeout_s),
         gateway_starter=loopback_gateway,
         bot_username=effective_bot_username(resolved, planned.forge),
     )

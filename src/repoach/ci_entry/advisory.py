@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -74,9 +75,9 @@ EXIT_CHANGES_REQUESTED = 4
 
 EXIT_CODE_TABLE: tuple[tuple[int, str], ...] = (
     (EXIT_OK, "advisory mode: always; --strict: reviewed (APPROVE/COMMENT), merged or closed"),
-    (EXIT_INTERNAL, "--strict: internal error (unexpected review exit code)"),
+    (EXIT_INTERNAL, "--strict: internal error (unexpected exit code or exception)"),
     (EXIT_CONFIG, "--strict: skipped for a missing input, bad flag/config, forge/provider down"),
-    (EXIT_REVIEWER_ERROR, "--strict: a reviewer reached no model (verdict ERROR)"),
+    (EXIT_REVIEWER_ERROR, "--strict: a reviewer reached no model, or the review timed out"),
     (EXIT_CHANGES_REQUESTED, "--strict: the team requested changes"),
 )
 """``repoach ci review`` exit codes, printed by ``--help`` and pinned by a test."""
@@ -97,6 +98,7 @@ class Outcome(StrEnum):
     CONFIG_ERROR = "config_error"
     UNAVAILABLE = "unavailable"
     REVIEWER_ERROR = "reviewer_error"
+    TIMEOUT = "timeout"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -117,6 +119,8 @@ class CiReviewReport(BaseModel):
         posted_reviews: Reviews the review posted (0 on a dry run).
         review_exit_code: ``repoach review pr``'s own exit code.
         review: The review's JSON payload, verbatim, when it printed one.
+        detail: The first 200 characters of the review's stdout when it
+            was not one JSON document.
         strict: Whether ``--strict`` was given.
         exit_code: The exit code this run ends with.
     """
@@ -136,6 +140,7 @@ class CiReviewReport(BaseModel):
     posted_reviews: int = 0
     review_exit_code: int | None = None
     review: dict[str, object] | None = None
+    detail: str | None = None
     strict: bool = False
     exit_code: int = EXIT_OK
 
@@ -174,7 +179,7 @@ def exit_code_for(outcome: Outcome, final_verdict: str | None, *, strict: bool) 
         return EXIT_CHANGES_REQUESTED if final_verdict == "REQUEST_CHANGES" else EXIT_OK
     if outcome in (Outcome.ALREADY_MERGED, Outcome.CLOSED):
         return EXIT_OK
-    if outcome == Outcome.REVIEWER_ERROR:
+    if outcome in (Outcome.REVIEWER_ERROR, Outcome.TIMEOUT):
         return EXIT_REVIEWER_ERROR
     if outcome == Outcome.INTERNAL_ERROR:
         return EXIT_INTERNAL
@@ -380,14 +385,51 @@ GatewayStarter = Callable[[Mapping[str, str]], AbstractContextManager[GatewayHan
 """Starts the loopback gateway for the ``with`` block (direct mode)."""
 
 
-def subprocess_review_runner(cwd: Path, python: str = sys.executable) -> ReviewRunner:
+DEFAULT_REVIEW_TIMEOUT_S = 25 * 60
+"""Deadline of the review child; under a 30-minute job timeout, with room to report."""
+
+KILL_GRACE_S = 10.0
+
+
+class ReviewTimeoutError(Exception):
+    """The review child outlived its deadline and was killed with its process group."""
+
+    def __init__(self, timeout_s: float) -> None:
+        self.timeout_s = timeout_s
+        super().__init__(f"the review did not finish within {timeout_s / 60:.0f} min")
+
+
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """Terminate the child's whole process group, then kill it after a grace period."""
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError as exc:
+        _log.debug("ci_review_group_gone", pid=process.pid, error=str(exc))
+        return
+    try:
+        process.wait(timeout=KILL_GRACE_S)
+    except subprocess.TimeoutExpired as exc:
+        _log.warning("ci_review_group_kill", pid=process.pid, error=str(exc))
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+
+def subprocess_review_runner(
+    cwd: Path, python: str = sys.executable, timeout_s: float = DEFAULT_REVIEW_TIMEOUT_S
+) -> ReviewRunner:
     """Return a runner that calls ``repoach review pr`` in a child interpreter.
 
-    The child's stderr is the job log; its stdout is captured for the JSON.
+    The child's stderr is the job log; its stdout is captured for the
+    JSON. It runs in its own session, so a timeout kills it together with
+    everything it started (``gh``, ``glab``, verifier tools).
 
     Args:
         cwd: The checkout the review runs in.
         python: The interpreter with repoach installed.
+        timeout_s: Deadline before the process group is killed.
+
+    Raises:
+        ReviewTimeoutError: From the runner, when the deadline passes.
     """
 
     def run(plan: CiReviewPlan, env: dict[str, str]) -> tuple[int, str]:
@@ -395,10 +437,17 @@ def subprocess_review_runner(cwd: Path, python: str = sys.executable) -> ReviewR
         argv += ["--forge", plan.forge]
         if plan.mode == "dry-run":
             argv.append("--dry-run")
-        completed = subprocess.run(
-            argv, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True, check=False
+        process = subprocess.Popen(
+            argv, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True, start_new_session=True
         )
-        return completed.returncode, completed.stdout
+        try:
+            stdout, _ = process.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            _log.warning("ci_review_timeout", pid=process.pid, timeout_s=timeout_s, error=str(exc))
+            _kill_group(process)
+            process.communicate()
+            raise ReviewTimeoutError(timeout_s) from exc
+        return process.returncode, stdout
 
     return run
 
@@ -452,6 +501,7 @@ def interpret_review(
         "posted_reviews": _count(payload, "posted_reviews"),
         "review_exit_code": rc,
         "review": payload,
+        "detail": stdout.strip()[:200] if payload is None and stdout.strip() else None,
     }
     if (rc == 0 and verdict is not None) or (rc == 2 and verdict == "REQUEST_CHANGES"):
         return finish(Outcome.REVIEWED, f"advisory: {verdict}", strict=plan.strict, **fields)
@@ -531,12 +581,19 @@ def run_ci_review(
         )
     if state == "closed":
         return finish(Outcome.CLOSED, f"#{plan.pr_number} is closed", strict=plan.strict, **common)
-    if plan.provider_mode == "gateway":
-        rc, stdout = review_runner(plan, review_env(plan, env, None))
-        return interpret_review(plan, rc, stdout, "gateway")
+    if state == "unknown":
+        return finish(
+            Outcome.SKIPPED,
+            f"skipped, the forge reports state 'unknown' for #{plan.pr_number}",
+            strict=plan.strict,
+            **common,
+        )
     try:
-        with gateway_starter(env) as gateway:
-            rc, stdout = review_runner(plan, review_env(plan, env, gateway))
+        if plan.provider_mode == "gateway":
+            rc, stdout = review_runner(plan, review_env(plan, env, None))
+        else:
+            with gateway_starter(env) as gateway:
+                rc, stdout = review_runner(plan, review_env(plan, env, gateway))
     except GatewayStartError as exc:
         return finish(
             Outcome.UNAVAILABLE,
@@ -544,7 +601,9 @@ def run_ci_review(
             strict=plan.strict,
             **common,
         )
-    return interpret_review(plan, rc, stdout, "direct")
+    except ReviewTimeoutError as exc:
+        return finish(Outcome.TIMEOUT, f"{exc}; killed", strict=plan.strict, **common)
+    return interpret_review(plan, rc, stdout, plan.provider_mode)
 
 
 def apply_forge_env(plan: CiReviewPlan, env: Mapping[str, str]) -> None:
