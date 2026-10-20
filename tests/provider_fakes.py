@@ -55,6 +55,7 @@ with open(LOG, "a", encoding="utf-8") as handle:
         "cwd": os.getcwd(),
         "session_leader": os.getsid(0) == os.getpid(),
         "pid": os.getpid(),
+        "env": dict(os.environ),
     }}) + "\\n")
 time.sleep({sleep_s!r})
 exit_code = {exit_code!r}

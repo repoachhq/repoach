@@ -26,7 +26,7 @@ import shutil
 import signal
 import tempfile
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +132,7 @@ class ClaudeCodeProvider(BaseProvider):
         default_model: str = "sonnet",
         subprocess_timeout: float = 600.0,
         own_process_group: bool = False,
+        child_env: Callable[[Mapping[str, str]], dict[str, str]] | None = None,
     ) -> None:
         """Initialise the provider.
 
@@ -149,6 +150,10 @@ class ClaudeCodeProvider(BaseProvider):
                 The in-process direct provider sets it
                 (SP-UNIVERSAL-PROVIDERS); the gateway keeps the
                 single-process kill it always had.
+            child_env: Builds the CLI's environment from ``os.environ`` at
+                each spawn. None (the gateway) inherits it unchanged; the
+                direct provider strips every API key and token so
+                ``claude --print`` answers on the login, never on a key.
 
         The provider runs ``claude`` from a clean tempdir so the CLI
         never auto-loads the proxy's own ``CLAUDE.md``, project
@@ -168,6 +173,7 @@ class ClaudeCodeProvider(BaseProvider):
         self._default_model = default_model
         self._subprocess_timeout = subprocess_timeout
         self._own_process_group = own_process_group
+        self._child_env = child_env
         self._workdir = Path(tempfile.mkdtemp(prefix="repoach_claude_code_"))
         self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
             "claude_code",
@@ -245,6 +251,7 @@ class ClaudeCodeProvider(BaseProvider):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self._workdir),
                     start_new_session=self._own_process_group,
+                    env=None if self._child_env is None else self._child_env(os.environ),
                 )
                 register_pid(proc.pid)
                 stdout_b, stderr_b = await asyncio.wait_for(

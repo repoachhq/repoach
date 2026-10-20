@@ -174,7 +174,7 @@ repoach review pr <N> --dry-run
 ```
 
 - **Models.** Each agent asks for a tier (`opus`, `sonnet`, `haiku`). `claude_code` sends the CLI's own aliases; `anthropic` defaults to `claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`. Override per tier with `[provider].opus` / `.sonnet` / `.haiku` or `REPOACH_MODEL_OPUS` / `_SONNET` / `_HAIKU`.
-- **Claude Code details.** The CLI is `[provider].cli_path` or `REPOACH_CLAUDE_CODE_CLI_PATH`, else `claude` on `PATH`. Each call runs in an empty temporary directory (your project's `CLAUDE.md` is never loaded), in its own process group, killed with its children on timeout. Where nobody can log in interactively (a CI runner), set `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`.
+- **Claude Code details.** The CLI is `[provider].cli_path` or `REPOACH_CLAUDE_CODE_CLI_PATH`, else `claude` on `PATH`. Each call runs in an empty temporary directory (your project's `CLAUDE.md` is never loaded), in its own process group, killed with its children on timeout. The CLI is spawned without any `*_API_KEY`, `*_AUTH_TOKEN` or `*_TOKEN` variable of yours, so it answers on the login and never bills a key it would otherwise find; the one token it keeps is `CLAUDE_CODE_OAUTH_TOKEN`: where nobody can log in interactively (a CI runner), set it from `claude setup-token`.
 - **Never implicit.** `claude_code` is used only when named: a `claude` binary on `PATH` with no kind still means the gateway.
 - **Failing early.** A missing CLI, a logged-out CLI, a missing key or a missing gateway URL is one line on stderr and exit code 2, before any forge call. `repoach doctor` prints `provider_route=direct (claude_code|anthropic)`, `gateway (<url>)` or `none`, and `provider_credential=` with the credential's name, never its value.
 

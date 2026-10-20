@@ -207,3 +207,33 @@ def test_unusable_cli_fails_before_any_forge_call(
     assert forge.transport_calls == []
     assert forge.posted_reviews == [] and forge.archive_calls == []
     assert read_calls(log) == []
+
+
+def test_the_cli_never_inherits_a_key_or_a_token(
+    clone: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key beside ``kind = claude_code`` must not reach ``claude --print`` (it would bill the API)."""
+    cli, log = write_fake_claude(tmp_path / "bin", result="ok")
+    monkeypatch.setenv("REPOACH_CLAUDE_CODE_CLI_PATH", str(cli))
+    secrets = {
+        "ANTHROPIC_API_KEY": "leak-one",
+        "REPOACH_ANTHROPIC_API_KEY": "leak-two",
+        "REPOACH_ANTHROPIC_AUTH_TOKEN": "leak-three",
+        "GITLAB_TOKEN": "leak-four",
+    }
+    for name, value in secrets.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "kept-login")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config"))
+    monkeypatch.setenv("LANG", "C.UTF-8")
+
+    AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
+
+    env = read_calls(log)[0]["env"]
+    assert not set(secrets) & set(env)
+    assert not any(value in env.values() for value in secrets.values())
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "kept-login"
+    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "claude-config")
+    assert env["LANG"] == "C.UTF-8"
+    assert env["HOME"] == os.environ["HOME"]
+    assert env["PATH"] == os.environ["PATH"]

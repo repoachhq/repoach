@@ -19,8 +19,10 @@ spends a Claude subscription.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -72,6 +74,30 @@ LOGIN_PROBE_TIMEOUT_S = 30.0
 
 DIRECT_CONCURRENCY = 8
 """Concurrent calls one direct transport admits: four reviewers plus their verifiers."""
+
+CLI_SECRET_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_AUTH_TOKEN", "_TOKEN")
+"""Variable-name endings the ``claude`` CLI never inherits (see :func:`claude_cli_env`)."""
+
+CLI_KEPT_SECRETS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
+"""The one token the CLI keeps: it *is* the login on a headless runner."""
+
+
+def claude_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """Return the environment the ``claude`` CLI runs with: ``environ`` minus every key and token.
+
+    The CLI bills an ``ANTHROPIC_API_KEY`` it finds before the login, so
+    a review run with ``kind = "claude_code"`` beside a key (or a gateway
+    secret) would silently spend API credit.  Every name ending in
+    :data:`CLI_SECRET_SUFFIXES` is dropped, except
+    :data:`CLI_KEPT_SECRETS`; everything else (``PATH``, ``HOME``,
+    ``LANG``, ``TMPDIR``, ``LD_LIBRARY_PATH``, CA bundles, proxies,
+    ``CLAUDE_CONFIG_DIR``) is kept.
+    """
+    return {
+        name: value
+        for name, value in environ.items()
+        if name in CLI_KEPT_SECRETS or not name.upper().endswith(CLI_SECRET_SUFFIXES)
+    }
 
 
 class ProviderRoute(BaseModel):
@@ -171,6 +197,7 @@ def claude_login(cli: str) -> ClaudeLogin:
     try:
         completed = subprocess.run(
             [cli, "auth", "status", "--json"],
+            env=claude_cli_env(os.environ),
             capture_output=True,
             text=True,
             timeout=LOGIN_PROBE_TIMEOUT_S,
@@ -243,6 +270,7 @@ def build_direct_provider(route: ProviderRoute, *, timeout_s: float) -> DirectPr
                 default_model=CLAUDE_CODE_MODELS[CapabilityTier.SONNET],
                 subprocess_timeout=timeout_s,
                 own_process_group=True,
+                child_env=claude_cli_env,
             )
 
         return DirectProvider(
@@ -331,6 +359,7 @@ __all__ = [
     "anthropic_credential",
     "build_direct_provider",
     "claude_cli",
+    "claude_cli_env",
     "claude_login",
     "require_provider_ready",
     "resolve_route",
