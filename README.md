@@ -28,6 +28,8 @@ repoach init                 # writes repoach.toml and the spec template
 repoach doctor               # which provider route is configured
 ```
 
+Until the next release, `main` lags `develop`; to get the provider routes and `init --ci` today: `pipx install git+https://github.com/repoachhq/repoach@develop`.
+
 Pick a provider (below), log in to your forge (`gh auth login` or `glab auth login`), then:
 
 ```bash
