@@ -78,6 +78,9 @@ schema = 1
 # disabled_verifiers = []
 # A verifier's command, by verifier name.
 # verifier_commands = {}
+# Findings the refuter judges per pull request; the rest are reported
+# deferred, each one named.
+# refuter_max_judged = 10
 
 [arch]
 # frontier_suppress = []

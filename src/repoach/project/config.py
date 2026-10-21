@@ -58,6 +58,9 @@ DEFAULT_TEST_COMMAND = "pytest -q tests/unit"
 DEFAULT_TIMEOUT_S = 900
 """Seconds a project command may run (``coder_loop`` ran pytest with this budget)."""
 
+DEFAULT_REFUTER_MAX_JUDGED = 10
+"""Findings the refuter judges per PR when ``[gates].refuter_max_judged`` is unset."""
+
 DEFAULT_PROMPTS_DIR = "prompts/review"
 """Where the reviewer personas live; always forbidden to the Coder."""
 
@@ -285,13 +288,16 @@ class GatesSection(_Section):
     """``[gates]``: verifier knobs (SP-UNIVERSAL-GATES).
 
     ``docstring_exempt`` None means the host default
-    (:meth:`ProjectConfig.with_host_defaults`).
+    (:meth:`ProjectConfig.with_host_defaults`). ``refuter_max_judged``
+    caps the findings the refuter sends to its judge per PR; the rest
+    are reported deferred, each one named (SP-REFUTER-JUDGES-WHAT-IT-CAN).
     """
 
     docstring_exempt: list[str] | None = None
     advisory_verifiers: list[str] = Field(default_factory=list)
     disabled_verifiers: list[str] = Field(default_factory=list)
     verifier_commands: dict[str, str] = Field(default_factory=dict)
+    refuter_max_judged: StrictInt = Field(default=DEFAULT_REFUTER_MAX_JUDGED, gt=0)
 
 
 class ArchSection(_Section):

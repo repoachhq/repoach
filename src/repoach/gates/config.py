@@ -36,6 +36,7 @@ from ..core.paths import NotARepositoryError, is_repoach_checkout, project_root
 from ..project.config import (
     CONFIG_FILE_NAME,
     DEFAULT_PROMPTS_DIR,
+    DEFAULT_REFUTER_MAX_JUDGED,
     DEFAULT_TIMEOUT_S,
     REPOACH_DOCSTRING_EXEMPT,
     ConfigError,
@@ -154,6 +155,9 @@ class GatesConfig:
             may run.
         verifier_commands: Per-verifier argv template overrides
             (``{file}`` is the repo-relative path).
+        refuter_max_judged: ``[gates].refuter_max_judged``, the findings
+            the refuter sends to its judge per PR; the overflow is
+            reported deferred, each finding named.
         builtin: True for :meth:`builtin` (no configuration file).
     """
 
@@ -173,6 +177,7 @@ class GatesConfig:
     disabled_verifiers: frozenset[str] = frozenset()
     named_commands: Mapping[str, str] = field(default_factory=dict)
     verifier_commands: Mapping[str, str] = field(default_factory=dict)
+    refuter_max_judged: int = DEFAULT_REFUTER_MAX_JUDGED
     builtin: bool = True
 
     @classmethod
@@ -237,6 +242,11 @@ class GatesConfig:
             isinstance(value, str) for value in overrides_raw.values()
         ):
             raise ValueError("gates.verifier_commands: must map verifier names to strings")
+        max_judged = gates.get("refuter_max_judged", DEFAULT_REFUTER_MAX_JUDGED)
+        if not isinstance(max_judged, int) or isinstance(max_judged, bool) or max_judged <= 0:
+            raise ValueError(
+                f"gates.refuter_max_judged: must be a positive integer, got {max_judged!r}"
+            )
         return cls(
             languages=languages,
             src_roots=src_roots,
@@ -261,6 +271,7 @@ class GatesConfig:
             ),
             named_commands=_named_commands(commands),
             verifier_commands=dict(overrides_raw),
+            refuter_max_judged=max_judged,
             builtin=False,
         )
 
@@ -340,6 +351,7 @@ def current_gates_config() -> GatesConfig:
 __all__ = [
     "CONFIG_FILE_NAME",
     "DEFAULT_PROMPTS_DIR",
+    "DEFAULT_REFUTER_MAX_JUDGED",
     "DEFAULT_TIMEOUT_S",
     "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
