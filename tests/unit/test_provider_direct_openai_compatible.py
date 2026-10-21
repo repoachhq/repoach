@@ -221,9 +221,9 @@ def test_gemini_native_posts_to_the_generative_language_root(
     assert out.model_used == "gemini/gemini-2.5-flash"
     assert server.requests[0]["path"] == "/v1beta/openai/chat/completions"
     (row,) = _rows(tmp_path)
-    assert row.provider == "gemini"
-    assert row.cost_usd == pytest.approx((32 * 0.30 + 8 * 0.03 + 9 * 2.50) / 1_000_000)
-    assert row.price_source == "gemini/gemini-2.5-flash read 2026-10-21"
+    assert (row.provider, row.model) == ("gemini", "gemini-2.5-flash")
+    assert (row.prompt_tokens, row.cache_read_tokens, row.completion_tokens) == (32, 8, 9)
+    assert (row.cost_usd, row.price_source) == (None, None)
 
 
 def test_gemini_default_root_is_the_compatible_surface(

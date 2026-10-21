@@ -40,6 +40,10 @@ Delivered with `SP-UNIVERSAL-PROVIDERS` slice 2 (which owns the
   `src/repoach/providers/prices.py`, not `prices.toml` — `PriceRow`
   with `source_url`, `read_on` 2026-10-21 and an optional
   `valid_until` (a temporary vendor price stops pricing after it).
+  Rows are keyed on the API host the call reached (`api.anthropic.com`,
+  `api.openai.com`, `generativelanguage.googleapis.com`) and the model:
+  an `openai_compatible` at another host, an Anthropic proxy or a
+  preset without a row is unpriced, never billed at a list price.
   Rows: Anthropic `claude-opus-5` 5 / 25, `claude-sonnet-5` 2 / 10,
   `claude-haiku-4-5` 1 / 5 (with cache write / read), OpenAI
   `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`, Gemini `gemini-3.8-flash`

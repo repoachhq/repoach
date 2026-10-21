@@ -14,8 +14,14 @@ uncached prompt, ``cache_read`` and ``cache_write`` are apart.
   cost always None, shown as ``subscription (tokens only)`` (NG2).
 * ``ollama`` runs on the user's machine: :data:`SELF_HOSTED_PROVIDERS`,
   cost 0 whatever the model.
-* the gateway and any (provider, model) absent here: cost None, shown
+* the gateway and any (host, model) absent here: cost None, shown
   as unpriced.
+
+A row is keyed on the **host** the call reached, not on the provider
+name: a list price is the vendor's own endpoint's.  An
+``openai_compatible`` route at another host, an Anthropic proxy
+(``REPOACH_ANTHROPIC_BASE_URL``), or a preset with no row is unpriced
+("cannot say"), never billed at a vendor's list price it did not pay.
 """
 
 from __future__ import annotations
@@ -30,6 +36,10 @@ PRICES_READ_ON = date(2026, 10, 21)
 
 STALE_AFTER_DAYS = 90
 """A table read longer ago than this is printed with ``may be stale``."""
+
+ANTHROPIC_HOST = "api.anthropic.com"
+OPENAI_HOST = "api.openai.com"
+GEMINI_HOST = "generativelanguage.googleapis.com"
 
 ANTHROPIC_PRICING_URL = "https://platform.claude.com/docs/en/about-claude/pricing"
 OPENAI_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
@@ -48,7 +58,8 @@ class PriceRow(BaseModel):
     """List price of one model, USD per million tokens.
 
     Attributes:
-        provider: The route label (``anthropic``, ``openai``, ``gemini``…).
+        provider: The vendor, for display (``anthropic``, ``openai``, ``gemini``).
+        host: The API host the price applies to; the lookup key with ``model``.
         model: The model id exactly as sent.
         input_per_mtok: Uncached prompt tokens.
         output_per_mtok: Completion tokens.
@@ -64,6 +75,7 @@ class PriceRow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     provider: str
+    host: str
     model: str
     input_per_mtok: Decimal
     output_per_mtok: Decimal
@@ -82,6 +94,7 @@ class PriceRow(BaseModel):
 def _anthropic(model: str, inp: str, cw: str, cr: str, out: str) -> PriceRow:
     return PriceRow(
         provider="anthropic",
+        host=ANTHROPIC_HOST,
         model=model,
         input_per_mtok=Decimal(inp),
         output_per_mtok=Decimal(out),
@@ -94,6 +107,7 @@ def _anthropic(model: str, inp: str, cw: str, cr: str, out: str) -> PriceRow:
 def _openai(model: str, inp: str, cr: str, out: str) -> PriceRow:
     return PriceRow(
         provider="openai",
+        host=OPENAI_HOST,
         model=model,
         input_per_mtok=Decimal(inp),
         output_per_mtok=Decimal(out),
@@ -105,6 +119,7 @@ def _openai(model: str, inp: str, cr: str, out: str) -> PriceRow:
 def _gemini(model: str, inp: str, cr: str, out: str, until: date | None = None) -> PriceRow:
     return PriceRow(
         provider="gemini",
+        host=GEMINI_HOST,
         model=model,
         input_per_mtok=Decimal(inp),
         output_per_mtok=Decimal(out),
@@ -131,12 +146,12 @@ cache hit, output.  OpenAI: input, cached input, output.  Gemini: paid
 tier, prompts up to 200k tokens, text input, context caching, output;
 ``gemini-3.8-flash`` is listed at this price through 2026-12-31."""
 
-_BY_KEY: dict[tuple[str, str], PriceRow] = {(row.provider, row.model): row for row in PRICES}
+_BY_KEY: dict[tuple[str, str], PriceRow] = {(row.host, row.model): row for row in PRICES}
 
 
-def price_row(provider: str, model: str, *, on: date) -> PriceRow | None:
-    """Return the row pricing ``model`` on ``provider`` on day ``on``, else None."""
-    row = _BY_KEY.get((provider, model))
+def price_row(host: str, model: str, *, on: date) -> PriceRow | None:
+    """Return the row pricing ``model`` at API host ``host`` on day ``on``, else None."""
+    row = _BY_KEY.get((host, model))
     if row is None or (row.valid_until is not None and on > row.valid_until):
         return None
     return row
@@ -163,6 +178,7 @@ def price_call(
     provider: str,
     model: str,
     *,
+    host: str,
     input_tokens: int,
     output_tokens: int,
     cache_read_tokens: int,
@@ -172,8 +188,9 @@ def price_call(
     """Estimate one call's cost from :data:`PRICES`.
 
     Args:
-        provider: The route label.
+        provider: The route label (decides subscription and self-hosted).
         model: The model id as sent.
+        host: The API host the call reached (the price lookup key).
         input_tokens: Uncached prompt tokens.
         output_tokens: Completion tokens.
         cache_read_tokens: Prompt-cache hits.
@@ -188,7 +205,7 @@ def price_call(
         return CallCost(cost_usd=None, price_source=None, subscription=True)
     if provider in SELF_HOSTED_PROVIDERS:
         return CallCost(cost_usd=Decimal(0), price_source="self-hosted")
-    row = price_row(provider, model, on=on)
+    row = price_row(host, model, on=on)
     if row is None:
         return CallCost(cost_usd=None, price_source=None)
     cache_read = (

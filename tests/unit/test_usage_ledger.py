@@ -23,8 +23,10 @@ from repoach.agent_engine.agent_loop import AgentLoop
 from repoach.cli.main import app
 from repoach.core import config as core_config
 from repoach.llm.capability import CapabilityTier
+from repoach.providers import prices as prices_module
 from repoach.providers import usage as usage_module
 from repoach.providers.prices import (
+    ANTHROPIC_HOST,
     PRICES,
     PRICES_READ_ON,
     price_call,
@@ -73,9 +75,22 @@ def _row(**fields: object) -> UsageRow:
     return UsageRow.model_validate(base)
 
 
+def _price_the_fake_host(monkeypatch: pytest.MonkeyPatch, *models: str) -> None:
+    """Two-row price fixture: the shipped Anthropic rows, keyed on the loopback host."""
+    for model in models:
+        row = price_row(ANTHROPIC_HOST, model, on=PRICES_READ_ON)
+        assert row is not None
+        monkeypatch.setitem(
+            prices_module._BY_KEY,
+            ("127.0.0.1", model),
+            row.model_copy(update={"host": "127.0.0.1"}),
+        )
+
+
 def test_anthropic_calls_are_priced_from_the_table_and_attributed(
     clone: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _price_the_fake_host(monkeypatch, "claude-sonnet-5", "claude-opus-5")
     monkeypatch.setenv("REPOACH_PROVIDER", "anthropic")
     monkeypatch.setenv("REPOACH_ANTHROPIC_API_KEY", "some-key-value")
     with FakeAnthropicServer(text="ok") as server:
@@ -104,6 +119,21 @@ def test_anthropic_calls_are_priced_from_the_table_and_attributed(
         "Architect",
     ]
     assert document["total"]["calls"] == 2
+
+
+def test_a_call_at_another_host_is_never_priced_at_list_price(
+    clone: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An Anthropic model reached through a proxy host is unpriced, not billed at the API's list price."""
+    monkeypatch.setenv("REPOACH_PROVIDER", "anthropic")
+    monkeypatch.setenv("REPOACH_ANTHROPIC_API_KEY", "some-key-value")
+    with FakeAnthropicServer(text="ok") as server:
+        monkeypatch.setenv("REPOACH_ANTHROPIC_BASE_URL", server.base_url)
+        with usage_run("review pr", 7) as run:
+            AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
+    (row,) = read_rows(tmp_path / "review.db")
+    assert (row.model, row.cost_usd, row.price_source) == ("claude-sonnet-5", None, None)
+    assert run_summary_line(run).endswith("cannot say (1 unpriced calls)")
 
 
 def test_claude_code_is_tokens_only_never_a_dollar_figure(
@@ -196,6 +226,7 @@ def test_price_call_hand_computed_with_cache_rows() -> None:
     cost = price_call(
         "anthropic",
         "claude-opus-5",
+        host="api.anthropic.com",
         input_tokens=1_000_000,
         output_tokens=100_000,
         cache_read_tokens=200_000,
@@ -206,6 +237,7 @@ def test_price_call_hand_computed_with_cache_rows() -> None:
     assert price_call(
         "ollama",
         "anything",
+        host="localhost",
         input_tokens=9,
         output_tokens=9,
         cache_read_tokens=0,
@@ -215,6 +247,7 @@ def test_price_call_hand_computed_with_cache_rows() -> None:
     unpriced = price_call(
         "openrouter",
         "google/gemini-3.8-flash",
+        host="openrouter.ai",
         input_tokens=9,
         output_tokens=9,
         cache_read_tokens=0,
@@ -222,11 +255,35 @@ def test_price_call_hand_computed_with_cache_rows() -> None:
         on=date(2026, 10, 21),
     )
     assert (unpriced.cost_usd, unpriced.price_source) == (None, None)
+    for host in ("127.0.0.1", "api.groq.com", "openrouter.ai"):
+        elsewhere = price_call(
+            "openai_compatible",
+            "gpt-6-luna",
+            host=host,
+            input_tokens=9,
+            output_tokens=9,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            on=date(2026, 10, 21),
+        )
+        assert elsewhere.cost_usd is None
+    gemini = price_call(
+        "gemini",
+        "gemini-2.5-flash",
+        host="generativelanguage.googleapis.com",
+        input_tokens=1_000_000,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        on=date(2026, 10, 21),
+    )
+    assert gemini.cost_usd == Decimal("0.30")
 
 
 def test_a_temporary_price_ends_on_its_announced_day() -> None:
-    assert price_row("gemini", "gemini-3.8-flash", on=date(2026, 12, 31)) is not None
-    assert price_row("gemini", "gemini-3.8-flash", on=date(2027, 1, 1)) is None
+    host = "generativelanguage.googleapis.com"
+    assert price_row(host, "gemini-3.8-flash", on=date(2026, 12, 31)) is not None
+    assert price_row(host, "gemini-3.8-flash", on=date(2027, 1, 1)) is None
 
 
 def test_cost_text_mixes_priced_subscription_and_unpriced() -> None:

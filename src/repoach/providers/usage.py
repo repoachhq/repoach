@@ -32,6 +32,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, ParamSpec, TypeVar
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
@@ -298,9 +299,11 @@ def _build_row(
     cache_read = int(usage.cache_read_tokens) if usage is not None else 0
     cache_write = int(usage.cache_write_tokens) if usage is not None else 0
     now = datetime.now(UTC)
+    host = urlparse(str(getattr(client, "base_url", "") or "")).hostname or ""
     cost = price_call(
         provider,
         model,
+        host=host,
         input_tokens=prompt,
         output_tokens=completion,
         cache_read_tokens=cache_read,

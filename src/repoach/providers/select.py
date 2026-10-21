@@ -588,6 +588,7 @@ def _chat_provider(route: ProviderRoute, *, timeout_s: float) -> DirectProvider:
         transport_factory=chat_transport,
         timeout_s=timeout_s,
         auth_hint=hint,
+        base_url=base_url,
     )
 
 
@@ -658,6 +659,7 @@ def build_direct_provider(route: ProviderRoute, *, timeout_s: float) -> DirectPr
             transport_factory=anthropic_transport,
             timeout_s=timeout_s,
             auth_hint=f"the key in {name} was rejected; replace it",
+            base_url=base_url,
         )
     raise ValueError(f"route {route.kind!r} is not a direct provider")
 

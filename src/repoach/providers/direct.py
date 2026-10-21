@@ -167,6 +167,8 @@ class DirectProvider:
         models: Model per capability tier, as sent to the transport.
         transport_key: Identity of the transport configuration; providers
             sharing it share one transport (one rate limiter, one client).
+        base_url: The API root the transport posts to (``""`` for the
+            CLI); the usage ledger prices a call by its host.
     """
 
     def __init__(
@@ -178,6 +180,7 @@ class DirectProvider:
         transport_factory: Callable[[], BaseProvider],
         timeout_s: float,
         auth_hint: str,
+        base_url: str = "",
     ) -> None:
         """Initialise the provider; nothing is spawned or connected yet.
 
@@ -191,6 +194,7 @@ class DirectProvider:
                 plus :data:`DEADLINE_HEADROOM_S`.
             auth_hint: What to do when the credential is rejected, named
                 by variable or command, never by value.
+            base_url: See the class attributes.
         """
         self.name = name
         self.models = dict(models)
@@ -198,6 +202,7 @@ class DirectProvider:
         self._factory = transport_factory
         self._timeout_s = timeout_s
         self._auth_hint = auth_hint
+        self.base_url = base_url
 
     def call(
         self,
