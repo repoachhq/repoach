@@ -1,15 +1,20 @@
 name: Publish to PyPI
 
-# Hand-authored (.github/workflows is bot-forbidden). On a v* tag push,
-# build the sdist + wheel and publish to PyPI via trusted publishing
-# (OIDC — no API token is ever stored). A tag push is inherently
-# trusted (only a maintainer can push a tag to the protected repo), so
-# no actor gate is needed — same rationale as release-verify.yml.
+# Hand-authored (.github/workflows is bot-forbidden). SP-PYPI-RELEASE.
 #
-# INERT until the maintainer (a) claims the `repoach` project on PyPI
-# and (b) configures a trusted publisher for this repo + this workflow
-# (https://docs.pypi.org/trusted-publishers/). The version published is
-# whatever `pyproject.toml` declares, so bump it and push `vX.Y.Z`.
+# A v* tag push: check the tag is on main, build the sdist + wheel once,
+# check the wheel's version equals the tag without its v, smoke the wheel
+# with pipx on Python 3.11 and 3.13, publish it to PyPI through trusted
+# publishing (OIDC, no stored token) from the `pypi` environment, create
+# the GitHub release with notes generated from the commit subjects, then
+# smoke the published release from the PyPI index.
+#
+# workflow_dispatch is the dry run: build, version report and wheel
+# smoke, never a publish nor a release.
+#
+# Inert until the owner claims the `repoach` project on PyPI and adds
+# this repository, this workflow and the `pypi` environment as a trusted
+# publisher; docs/releasing.md is the procedure.
 
 on:
   push:
@@ -24,19 +29,26 @@ permissions:
   contents: read
 
 jobs:
-  build-and-publish:
-    name: Build sdist + wheel and publish to PyPI
+  build:
+    name: Build sdist + wheel once
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
-    permissions:
-      # Trusted publishing exchanges this OIDC token with PyPI for a
-      # short-lived upload credential; no long-lived secret is stored.
-      id-token: write
-      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - name: Checkout (full history for the version tag)
+      - name: Checkout (full history, the version comes from the tag)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+
+      - name: The tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main ; then
+            echo "::error::tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main"
+            exit 1
+          fi
 
       - name: Set up Python 3.13
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -45,13 +57,178 @@ jobs:
 
       - name: Build sdist + wheel
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip build twine
           python -m build --sdist --wheel --outdir dist/
-
-      - name: Verify distribution metadata
-        run: |
-          python -m pip install twine
           twine check dist/*
+          ls -l dist/
+
+      - name: Version matches the tag
+        id: version
+        run: |
+          wheel="$(ls dist/repoach-*.whl)"
+          built="$(basename "$wheel" | cut -d- -f2)"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] ; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$built" != "$tag" ] ; then
+              echo "version mismatch: wheel $built, tag $tag"
+              echo "::error::version mismatch: wheel $built, tag $tag"
+              exit 1
+            fi
+          else
+            echo "dry run: wheel $built, no tag"
+          fi
+          echo "version=$built" >> "$GITHUB_OUTPUT"
+          case "$built" in
+            *a*|*b*|*rc*|*dev*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Upload dist
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  wheel-smoke:
+    name: wheel-smoke (${{ matrix.python-version }})
+    needs: build
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: Checkout (the smoke script only)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          sparse-checkout: scripts/wheel_smoke.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Set up Python ${{ matrix.python-version }}
+        id: py
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: pipx install the wheel and run it outside the checkout
+        run: |
+          python -m pip install --upgrade pipx
+          PIPX="python -m pipx" bash scripts/wheel_smoke.sh \
+            --python "${{ steps.py.outputs.python-path }}" \
+            --expect "${{ needs.build.outputs.version }}" \
+            dist/repoach-*.whl
+
+  build-and-publish:
+    name: Publish to PyPI (trusted publishing)
+    needs: [build, wheel-smoke]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    environment:
+      name: pypi
+      url: https://pypi.org/project/repoach/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
 
       - name: Publish to PyPI (trusted publishing)
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  github-release:
+    name: GitHub release with generated notes
+    needs: [build, build-and-publish]
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (full history for the previous tag)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Notes from the commit subjects since the previous tag
+        run: |
+          prev="$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null \
+            || git rev-list --max-parents=0 "$GITHUB_REF_NAME" | tail -1)"
+          python scripts/release_notes.py "$prev" "$GITHUB_REF_NAME" > release-notes.md
+          cat release-notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          if [ "${{ needs.build.outputs.prerelease }}" = "true" ] ; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag --title "$GITHUB_REF_NAME" --notes-file release-notes.md "${flags[@]}"
+
+  pypi-smoke:
+    name: pypi-smoke (${{ matrix.python-version }})
+    needs: [build, build-and-publish]
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: Checkout (the smoke script only)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          sparse-checkout: scripts/wheel_smoke.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        id: py
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Wait for the index to serve the release (at most 10 minutes)
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          for attempt in $(seq 1 20) ; do
+            if python -m pip download --quiet --no-deps --no-cache-dir \
+                --index-url https://pypi.org/simple --dest "$RUNNER_TEMP/probe" \
+                "repoach==$VERSION" ; then
+              echo "repoach $VERSION served by the index (attempt $attempt)"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::repoach $VERSION not served by https://pypi.org/simple after 10 minutes"
+          exit 1
+
+      - name: pipx install the release from PyPI and run it
+        run: |
+          python -m pip install --upgrade pipx
+          PIPX="python -m pipx" bash scripts/wheel_smoke.sh \
+            --python "${{ steps.py.outputs.python-path }}" \
+            --expect "${{ needs.build.outputs.version }}" \
+            --index-url https://pypi.org/simple \
+            "repoach==${{ needs.build.outputs.version }}"
