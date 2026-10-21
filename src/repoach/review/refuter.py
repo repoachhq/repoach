@@ -160,10 +160,13 @@ class JudgingReport:
         outcomes: One :class:`Refutation` per proposed finding, in the
             order the refuter considered them.
         model_calls: Judge invocations made (a raising judge counts).
+        stale: Proposed findings recorded at another head (an earlier
+            run), left untouched and not in ``outcomes``.
     """
 
     outcomes: tuple[Refutation, ...] = ()
     model_calls: int = 0
+    stale: int = 0
 
     @property
     def counts(self) -> dict[str, int]:
@@ -190,6 +193,8 @@ class JudgingReport:
             self._bucket("deferred"),
             self._bucket("unverified"),
         ]
+        if self.stale:
+            parts.append(f"stale: {self.stale} (older heads)")
         return "refuter: " + ", ".join(parts)
 
     def _bucket(self, state: RefutationState) -> str:
@@ -417,6 +422,7 @@ def judge_findings_for_pr(
     diff_files: Collection[str] = (),
     tree_sha: str | None = None,
     review_head: str | None = None,
+    scope_head: str | None = None,
 ) -> JudgingReport:
     """Judge the proposed findings of a PR and name what it could not judge.
 
@@ -446,6 +452,9 @@ def judge_findings_for_pr(
             differ, a cited file of the diff absent from ``repo_root``
             is deferred with ``checkout is not the MR head (<sha7>)``
             rather than ``evidence outside the diff``.
+        scope_head: When given, only proposed findings recorded at this
+            head (this run's) are judged; the others, from earlier runs
+            or with an empty head, are counted in ``stale`` and left alone.
 
     Returns:
         One :class:`Refutation` per proposed finding, plus the number of
@@ -456,6 +465,11 @@ def judge_findings_for_pr(
     tree_behind = bool(reviewed and tree_sha and tree_sha != reviewed)
     in_diff = frozenset(diff_files)
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
+    stale = 0
+    if scope_head:
+        current = [f for f in proposed if f.head_sha == scope_head]
+        stale = len(proposed) - len(current)
+        proposed = current
     primary = [f for f in proposed if f.claim_type in JUDGED_CLAIM_TYPES]
     fallback = [
         f for f in proposed if f.claim_type not in JUDGED_CLAIM_TYPES and f.verify_attempts >= 1
@@ -494,4 +508,4 @@ def judge_findings_for_pr(
     outcomes.extend(
         _refutation(finding, "unverified", NOT_YET_MECHANICALLY_VERIFIED) for finding in unverified
     )
-    return JudgingReport(outcomes=tuple(outcomes), model_calls=judge.calls)
+    return JudgingReport(outcomes=tuple(outcomes), model_calls=judge.calls, stale=stale)

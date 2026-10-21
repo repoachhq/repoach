@@ -721,6 +721,7 @@ class ReviewTeamOrchestrator:
                     diff_files=diff_files(diff),
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
+                    scope_head=head_sha,
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
@@ -728,6 +729,7 @@ class ReviewTeamOrchestrator:
                 "review_team.findings_judged",
                 pr_number=pr_number,
                 model_calls=judging.model_calls,
+                stale=judging.stale,
                 **judging.counts,
             )
             for deferral in judging.deferrals:

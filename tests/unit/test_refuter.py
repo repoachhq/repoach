@@ -563,3 +563,39 @@ def test_deferral_reason_checkout_is_not_the_mr_head(
 
     assert [(o.state, o.reason) for o in report.outcomes] == [("deferred", expected)]
     assert prompts == []
+
+
+def test_scope_head_judges_this_run_and_counts_older_heads_as_stale(tmp_path: Path) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    _seed_file(tmp_path)
+    old = _finding(ClaimType.DESIGN, claim="from an earlier head")
+    old.head_sha = "1111111"
+    empty = _finding(ClaimType.SECURITY, claim="from a dry run with no head")
+    empty.head_sha = ""
+    now = _finding(ClaimType.DESIGN, claim="from this run")
+    now.head_sha = "2222222"
+    ids = {
+        name: record_finding(db, f) for name, f in (("old", old), ("empty", empty), ("now", now))
+    }
+    prompts: list[str] = []
+
+    report = judge_findings_for_pr(
+        db,
+        pr_number=1,
+        repo_root=tmp_path,
+        head_sha="2222222",
+        judge_factory=_counting_factory(prompts, _REFUTED),
+        scope_head="2222222",
+    )
+
+    assert [(o.finding_id, o.state) for o in report.outcomes] == [(ids["now"], "refuted")]
+    assert report.stale == 2
+    assert len(prompts) == 1
+    assert {f.id for f in fetch_findings(db, 1, status=FindingStatus.PROPOSED)} == {
+        ids["old"],
+        ids["empty"],
+    }
+    assert report.summary_line() == (
+        "refuter: judged 1, refuted 1, deferred 0, unverified 0, stale: 2 (older heads)"
+    )
