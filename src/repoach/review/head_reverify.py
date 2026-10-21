@@ -393,6 +393,17 @@ def _cached(finding: Finding, head_sha: str) -> Reverification | None:
     return _outcome(finding, state, _stored_reason(finding))
 
 
+def _claim_key(finding: Finding) -> tuple[str, str, int, int, str]:
+    """Return what makes two findings the same claim (raised by several reviewers)."""
+    return (
+        finding.claim_type.value,
+        finding.file,
+        finding.line_start,
+        finding.line_end,
+        " ".join(finding.claim.split()).lower(),
+    )
+
+
 def _stored_reason(finding: Finding) -> str:
     """Return the reason a previous re-check at this head stored on the row."""
     _, _, reason = finding.verification_result.partition(": ")
@@ -455,6 +466,7 @@ def reverify_older_findings(
     init_findings_schema(db_path)
     judge = LazyJudge(judge_factory)
     outcomes: list[Reverification] = []
+    seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str]] = {}
     for finding in fetch_findings(db_path, pr_number):
         if not _older_unsettled(finding, head_sha):
             continue
@@ -462,15 +474,18 @@ def reverify_older_findings(
         if cached is not None:
             outcomes.append(cached)
             continue
-        state, method, reason = _recheck(
-            finding,
-            repo_root=repo_root,
-            head_sha=head_sha,
-            ci_green=ci_green,
-            config=config,
-            judge=judge,
-            max_judged=max_judged,
-        )
+        key = _claim_key(finding)
+        if key not in seen:
+            seen[key] = _recheck(
+                finding,
+                repo_root=repo_root,
+                head_sha=head_sha,
+                ci_green=ci_green,
+                config=config,
+                judge=judge,
+                max_judged=max_judged,
+            )
+        state, method, reason = seen[key]
         outcome = _outcome(finding, state, reason)
         _persist(db_path, finding, outcome, method=method, head=head_sha)
         outcomes.append(outcome)

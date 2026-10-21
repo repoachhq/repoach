@@ -609,3 +609,30 @@ def test_a_mention_outside_a_running_test_keeps_missing_test_open(
 
     assert _row(db, finding_id).status is FindingStatus.VERIFIED
     assert evaluation.facts.reverified == {"resolved": 0, "still_open": 1, "needs_judgement": 0}
+
+
+def test_identical_claims_of_several_reviewers_cost_one_judge_call(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    head_a, first = _planted(repo, db)
+    second = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.SECURITY,
+        file="src/store.py",
+        line=3,
+        claim="search()  interpolates prefix into SQL: injection",
+        method="refuter",
+    )
+    head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
+    _review_at(db, head_b)
+    judge = _Judge()
+
+    evaluation = gate(repo, head_b, lambda: judge)
+
+    assert judge.calls == 1
+    assert _row(db, first).status is FindingStatus.RESOLVED_AT_HEAD
+    assert _row(db, second).status is FindingStatus.RESOLVED_AT_HEAD
+    assert evaluation.facts.reverified == {"resolved": 2, "still_open": 0, "needs_judgement": 0}
