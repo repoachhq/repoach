@@ -36,7 +36,7 @@ from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
-from ..gates.selectors import SelectorKind, parse_selector, selector_file
+from ..gates.selectors import SelectorKind, TestSelector, parse_selector, selector_file
 from ..gates.selectors import selector_present as gate_selector_present
 from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
@@ -257,6 +257,160 @@ def _body_is_trivial(body: list[ast.stmt]) -> bool:
     return True
 
 
+_SKIPPED_TEST_MODIFIERS = frozenset({"todo", "skip"})
+"""Vitest modifiers whose block never runs: ``it.todo(...)``, ``it.skip(...)``."""
+
+
+def _skip_literal(source: str, index: int) -> int:
+    """Return the index just past the string or comment starting at ``index``.
+
+    Returns ``index`` unchanged when no string literal or comment starts there.
+    """
+    char = source[index]
+    if char in "'\"`":
+        cursor = index + 1
+        while cursor < len(source) and source[cursor] != char:
+            cursor += 2 if source[cursor] == "\\" else 1
+        return cursor + 1
+    if source.startswith("//", index):
+        end = source.find("\n", index)
+        return len(source) if end == -1 else end
+    if source.startswith("/*", index):
+        end = source.find("*/", index + 2)
+        return len(source) if end == -1 else end + 2
+    return index
+
+
+def _code_between(
+    source: str, start: int, opener: str, closer: str, *, keep_strings: bool = True
+) -> str | None:
+    """Return the code between the bracket at ``start`` and its match, comments dropped.
+
+    Strings are kept (they are code) unless ``keep_strings`` is False,
+    when each is replaced by a space; comments are removed. ``None``
+    when the bracket is never closed.
+    """
+    depth = 0
+    kept: list[str] = []
+    index = start
+    while index < len(source):
+        after = _skip_literal(source, index)
+        if after != index:
+            if source[index] in "'\"`":
+                kept.append(source[index:after] if keep_strings else " ")
+            index = after
+            continue
+        char = source[index]
+        if char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return "".join(kept)[1:]
+        kept.append(char)
+        index += 1
+    return None
+
+
+_VITEST_BLOCK = (
+    r"\b(?P<call>it|test|describe)(?P<modifiers>(?:\.\w+)*)\s*(?P<paren>\()\s*"
+    r"(?P<quote>['\"`])"
+)
+"""The head of a Vitest block up to its title's opening quote."""
+
+_ARROW_HEAD = re.compile(r",\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*")
+_FUNCTION_HEAD = re.compile(r",\s*(?:async\s+)?function\b[^{]*")
+
+
+def _skipped(match: re.Match[str]) -> bool:
+    """Whether a matched Vitest block carries ``.todo`` or ``.skip``."""
+    modifiers = {part for part in match.group("modifiers").split(".") if part}
+    return bool(modifiers & _SKIPPED_TEST_MODIFIERS)
+
+
+def _callback_body(source: str, match: re.Match[str], *, keep_strings: bool = True) -> str | None:
+    """Return the code of the callback following a matched Vitest title, comments dropped.
+
+    ``match`` ends right after the title's closing quote. A ``{…}`` body
+    returns its content; an expression-bodied arrow returns the
+    expression; a call with no callback returns ``None``.
+    """
+    rest = source[match.end() :]
+    arrow = _ARROW_HEAD.match(rest)
+    function = _FUNCTION_HEAD.match(rest)
+    head = arrow or function
+    if head is None:
+        return None
+    offset = match.end() + head.end()
+    if offset < len(source) and source[offset] == "{":
+        return _code_between(source, offset, "{", "}", keep_strings=keep_strings)
+    if function is not None:
+        return None
+    return _code_between("(" + source[offset:], 0, "(", ")", keep_strings=keep_strings)
+
+
+def vitest_test_bodies(source: str) -> list[str]:
+    """Return the callback code of every ``it`` / ``test`` block that runs.
+
+    ``describe`` blocks, ``.todo`` / ``.skip`` blocks and blocks with no
+    callback are left out; comments and string literals are dropped
+    from each body, so a title, a ``// TODO`` or a quoted name never
+    counts as code (SP-GATE-REVERIFIES-AT-HEAD).
+
+    Args:
+        source: A Vitest test file.
+
+    Returns:
+        One code string per running test block, in source order.
+    """
+    pattern = re.compile(_VITEST_BLOCK + r"(?:\\.|(?!(?P=quote))[^\\])*(?P=quote)\s*")
+    bodies: list[str] = []
+    for match in pattern.finditer(source):
+        if match.group("call") == "describe" or _skipped(match):
+            continue
+        body = _callback_body(source, match, keep_strings=False)
+        if body is not None and body.strip():
+            bodies.append(body)
+    return bodies
+
+
+def vitest_body_non_trivial(repo_root: Path, selector: TestSelector) -> bool:
+    """Return whether a Vitest selector's block has a non-empty callback body.
+
+    The block is the first ``it`` / ``test`` / ``describe`` call (any
+    ``.only`` / ``.concurrent`` chain) whose title is the selector's
+    trailing name. Its callback must hold code once comments are
+    dropped: an arrow function with a non-empty ``{…}`` body or an
+    expression body, or a ``function`` with a non-empty body. A call
+    with no callback, an ``it.todo`` / ``it.skip``, or ``() => {}``
+    is trivial. A whole-file selector is non-trivial when the file
+    exists.
+
+    Args:
+        repo_root: Root the selector path resolves against (the PR head).
+        selector: A parsed Vitest selector.
+
+    Returns:
+        Whether the promised test has a body that runs code.
+    """
+    target = repo_root / selector.file
+    if not target.is_file():
+        return False
+    if not selector.names:
+        return True
+    try:
+        source = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        _log.debug("spec_gate.vitest_read_failed", selector=selector.raw, error=str(exc)[:120])
+        return False
+    pattern = re.compile(_VITEST_BLOCK + re.escape(selector.name) + r"(?P=quote)\s*")
+    match = pattern.search(source)
+    if match is None or _skipped(match):
+        return False
+    body = _callback_body(source, match)
+    return body is not None and bool(body.strip())
+
+
 def promised_body_non_trivial(repo_root: Path, selector: str) -> bool:
     r"""Return whether *selector*'s promised test has a non-trivial body.
 
@@ -276,20 +430,39 @@ def promised_body_non_trivial(repo_root: Path, selector: str) -> bool:
         selector: A pytest selector, as accepted by
             :func:`promised_present`.
 
+    Non-pytest selectors are dispatched through
+    :func:`~repoach.gates.selectors.parse_selector` exactly as
+    :func:`promised_present` dispatches them: a Vitest selector (written
+    with `` > `` or ``::``) is judged by its ``it`` / ``test`` /
+    ``describe`` block (:func:`vitest_body_non_trivial`); Go and ``cmd:``
+    selectors have no body to inspect. A node id in a file that is not
+    Python never reaches Python's ``ast``, so a TypeScript parse error
+    can never pass for a non-empty body (SP-GATE-REVERIFIES-AT-HEAD G6,
+    tech_debt row 60).
+
     Returns:
         ``True`` for a bare file selector (no body to inspect), or for
         a node id whose trailing function has at least one non-trivial
-        statement, or when the file fails to parse (a syntax error is
-        a separate, unrelated concern from an empty promise). ``False``
-        when the file is absent, the trailing name is not defined, or
-        its body is empty / ``pass`` / ``...`` / a bare docstring only.
+        statement, or when a Python file fails to parse (a syntax error
+        is a separate, unrelated concern from an empty promise).
+        ``False`` when the file is absent, the trailing name is not
+        defined, its body is empty / ``pass`` / ``...`` / a bare
+        docstring only, or the node id names a test in a file that is
+        neither Python nor a recognised Vitest test file.
     """
+    parsed = parse_selector(selector)
+    if parsed is not None and parsed.kind is SelectorKind.VITEST:
+        return vitest_body_non_trivial(repo_root, parsed)
+    if parsed is not None and parsed.kind is not SelectorKind.PYTEST:
+        return True
     file_part, _, node = selector.partition("::")
     target = repo_root / file_part
     if not target.is_file():
         return False
     if not node:
         return True
+    if not file_part.endswith(".py"):
+        return False
     segments = [part.split("[", 1)[0] for part in node.split("::") if part]
     if not segments:
         return False

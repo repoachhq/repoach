@@ -466,10 +466,14 @@ def review_merge(
         Non-fatal — the next review round can pick it up.
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
+
+    Like ``review gate``, the ledger is re-verified on the tree of the
+    verified head, never on the checkout's branch; the findings of older
+    heads are re-checked there (SP-GATE-REVERIFIES-AT-HEAD).
     """
     project_root_or_exit()
     try:
-        result = run_auto_merge(pr_number, **_forge_kwargs(forge_name))
+        result = run_auto_merge(pr_number, pin_tree=True, **_forge_kwargs(forge_name))
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     typer.echo(
@@ -574,9 +578,14 @@ def review_gate(
     tree is built (an MR already merged, a stale head), ``--keep-tree``
     prints ``nothing materialised (<why>)`` instead of a path.
 
-    The gate itself makes no model call.  ``--provider`` is accepted and
-    validated (an unknown name exits 2) so a job can hand ``review pr``
-    and ``review gate`` the same flags.
+    Every unsettled blocking finding raised at an older head is
+    re-checked at the head first (SP-GATE-REVERIFIES-AT-HEAD): the ones
+    the head no longer supports become ``resolved_at_head``, the others
+    are named in ``reasons`` (``still present at <sha7>`` or
+    ``unresolved: needs judgement``). One ``gate: re-verified …`` line
+    on stderr says it, and ``reverified`` in the JSON counts it. A
+    judged finding is re-judged by the refuter, so the gate may make
+    model calls through ``--provider`` (up to the refuter cap).
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -624,6 +633,7 @@ def review_gate(
                 "spec_source": declared.source,
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
+                "reverified": facts.reverified,
                 "facts": {
                     "ci_green": facts.ci_green,
                     "open_blocking_findings": facts.open_blocking_findings,
@@ -638,6 +648,8 @@ def review_gate(
             ensure_ascii=False,
         )
     )
+    if facts.reverify_line:
+        typer.echo(facts.reverify_line, err=True)
     if keep_tree and evaluation.tree is None:
         merged = evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED
         why = "already merged" if merged else evaluation.ci_gate.outcome_tag.lower()

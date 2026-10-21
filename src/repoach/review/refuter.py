@@ -361,7 +361,7 @@ def configured_max_judged(repo_root: Path) -> int:
     return resolve_refuter_max_judged(repo_root)[0]
 
 
-class _LazyJudge:
+class LazyJudge:
     """Build the judge on its first call and count the calls made.
 
     A factory that raises (no provider, gateway down) raises again on
@@ -467,7 +467,7 @@ def judge_findings_for_pr(
     unverified = [
         f for f in proposed if f.claim_type not in JUDGED_CLAIM_TYPES and f.verify_attempts == 0
     ]
-    judge = _LazyJudge(judge_factory)
+    judge = LazyJudge(judge_factory)
     outcomes: list[Refutation] = []
     for finding in primary + fallback:
         if judge.calls >= cap:

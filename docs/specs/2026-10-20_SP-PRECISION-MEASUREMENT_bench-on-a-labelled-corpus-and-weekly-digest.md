@@ -51,7 +51,7 @@ Code: `src/repoach/bench/` (`corpus`, `local_forge`, `runner`, `result`,
   [--reviewers R,...] [--dry-run] [--results-dir D] [--ledger-db DB]`
   writes `<date>_<corpus>_<provider>.json`; each case is reviewed on a
   throw-away ledger by `BenchOrchestrator` (the dry-run team, which also
-  never fires the escalation routine, tech_debt #68). `bench report`
+  never fires the escalation routine, tech_debt #69). `bench report`
   (also `bench score`) prints both tables, the totals, the located
   defects and per-case findings / refuted / tokens / wall time, with
   `--markdown` and `--update-readme FILE`. `bench label` writes one stub
@@ -78,7 +78,7 @@ labelled findings, so precision, refuter precision and recall read
 | AC2 | Met: `tests/unit/test_bench_score.py`, the hand-counted fixture prints `precision 3/4`, `refuter precision 1/2`, `recall 1/2`, `unsure 1`. |
 | AC3 | Partly: the line and its pattern are tested (`test_readme_line_matches_the_published_pattern`); the README carries the generated table, not the line, because AC5 refuses it (0 < 100). |
 | AC4 | Met: `tests/unit/test_bench_digest.py::test_cli_json_has_the_spec_keys_and_links`. |
-| AC5 | The refusal is met (`corpus too small: N < 100`, exit 2); the corpus is not: 66 fingerprints stubbed, 0 labelled (D1, tech_debt #65, #66). |
+| AC5 | The refusal is met (`corpus too small: N < 100`, exit 2); the corpus is not: 66 fingerprints stubbed, 0 labelled (D1, tech_debt #66, #67). |
 
 
 ## Intent
@@ -170,9 +170,9 @@ flowchart TD
 - D3: publish the per-reviewer table, or only the aggregate line.
 
 ## Gaps
-- No finding has a human label today; the first number needs D1 (tech_debt #65).
-- Even fully labelled, the stubbed corpus holds 66 fingerprints, under the 100 of AC5 (tech_debt #66).
-- The fingerprint stability of A1 is unmeasured: it needs a second run of the same corpus (tech_debt #69).
+- No finding has a human label today; the first number needs D1 (tech_debt #66).
+- Even fully labelled, the stubbed corpus holds 66 fingerprints, under the 100 of AC5 (tech_debt #67).
+- The fingerprint stability of A1 is unmeasured: it needs a second run of the same corpus (tech_debt #70).
 
 ## Open Questions
 - Q1: recall on real (non-planted) defects needs defects found after merge; out of scope until `finding_fate` has a few months of data.

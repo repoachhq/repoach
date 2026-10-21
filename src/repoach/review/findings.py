@@ -10,8 +10,9 @@ REFUTED is re-openable (SP-REFUTER-INJECTION-HARDEN): refuted ->
 proposed is admitted so a later reviewer re-raising the same claim
 sends the finding back for a fresh judging round.  Without that exit a
 single injected refutation verdict would bury a real blocking finding
-forever, self-defended by the refuted-finding sentinel.  RESOLVED and
-STUCK stay terminal.
+forever, self-defended by the refuted-finding sentinel.  RESOLVED stays
+terminal; STUCK leaves only for RESOLVED_AT_HEAD, when the merge gate finds
+the head no longer supports it (SP-GATE-REVERIFIES-AT-HEAD).
 """
 
 from __future__ import annotations
@@ -88,6 +89,13 @@ class FindingStatus(StrEnum):
     verifier for the claim does not apply to the cited file (another
     language, outside the declared source roots), so the claim is
     neither confirmed nor refuted (SP-UNIVERSAL-GATES G4).
+
+    ``resolved_at_head`` is terminal and non-blocking: the merge gate
+    re-checked a finding raised at an older head against the head it
+    decides on and the head no longer supports it — a person's fix
+    settled it (SP-GATE-REVERIFIES-AT-HEAD). It says nothing about
+    whether the finding was real at its own head, so it is not in
+    :data:`CONFIRMED_REAL_STATUSES`.
     """
 
     PROPOSED = "proposed"
@@ -97,6 +105,7 @@ class FindingStatus(StrEnum):
     RESOLVED = "resolved"
     STUCK = "stuck"
     NOT_APPLICABLE = "not_applicable"
+    RESOLVED_AT_HEAD = "resolved_at_head"
 
 
 CONFIRMED_REAL_STATUSES: frozenset[FindingStatus] = frozenset(
@@ -110,14 +119,22 @@ copies."""
 
 ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
     FindingStatus.PROPOSED: frozenset(
-        {FindingStatus.VERIFIED, FindingStatus.REFUTED, FindingStatus.NOT_APPLICABLE}
+        {
+            FindingStatus.VERIFIED,
+            FindingStatus.REFUTED,
+            FindingStatus.NOT_APPLICABLE,
+            FindingStatus.RESOLVED_AT_HEAD,
+        }
     ),
-    FindingStatus.VERIFIED: frozenset({FindingStatus.OPEN}),
-    FindingStatus.OPEN: frozenset({FindingStatus.RESOLVED, FindingStatus.STUCK}),
+    FindingStatus.VERIFIED: frozenset({FindingStatus.OPEN, FindingStatus.RESOLVED_AT_HEAD}),
+    FindingStatus.OPEN: frozenset(
+        {FindingStatus.RESOLVED, FindingStatus.STUCK, FindingStatus.RESOLVED_AT_HEAD}
+    ),
     FindingStatus.REFUTED: frozenset({FindingStatus.PROPOSED}),
     FindingStatus.RESOLVED: frozenset(),
-    FindingStatus.STUCK: frozenset(),
+    FindingStatus.STUCK: frozenset({FindingStatus.RESOLVED_AT_HEAD}),
     FindingStatus.NOT_APPLICABLE: frozenset(),
+    FindingStatus.RESOLVED_AT_HEAD: frozenset(),
 }
 
 
