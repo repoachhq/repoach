@@ -21,6 +21,7 @@ import typer
 
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
+from repoach.forge.protocol import MergeMethod, PullRequest
 from repoach.review import auto_merge
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, evaluate_merge_gate
 from repoach.review.findings import (
@@ -126,6 +127,13 @@ class _Judge:
             "reasoning": "the prefix is still interpolated" if planted else "the prefix is bound",
         }
         return f"VERDICT: {json.dumps(verdict)}"
+
+
+def _ci(monkeypatch: pytest.MonkeyPatch, *, green: bool) -> None:
+    outcome = CIGateOutcome(
+        green=green, outcome_tag="GREEN" if green else "SKIP_CI_PENDING", reason=""
+    )
+    monkeypatch.setattr(auto_merge, "evaluate_ci_gate", lambda *_a, **_k: outcome)
 
 
 @pytest.fixture
@@ -456,3 +464,65 @@ def test_cli_prints_the_line_and_the_json_key(
     assert json.loads(out)["reverified"] == {"resolved": 2, "still_open": 1, "needs_judgement": 0}
     lines = [line for line in err.splitlines() if re.match(r"^gate: re-verified", line)]
     assert lines == [facts.reverify_line]
+
+
+def _merge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    repo: _Repo,
+    head: str,
+    judge_factory: Callable[[], Callable[[str], str]],
+    *,
+    pin_tree: bool,
+) -> auto_merge.AutoMergeResult:
+    base = auto_merge.get_settings().integration_branch
+    pr = PullRequest(number=7, state="open", head_sha=head, head_ref="feat/x", base_ref=base)
+    monkeypatch.setattr(auto_merge, "_pull_request_or_none", lambda *_a: pr)
+    monkeypatch.setattr(auto_merge, "resolve_verified_head", lambda *_a, **_k: (head, ""))
+    monkeypatch.delenv("REPOACH_REFUTER_MAX_JUDGED", raising=False)
+    _ci(monkeypatch, green=True)
+    return auto_merge.run_auto_merge(
+        7,
+        forge=_HeadForge(repo.checkout, head),
+        db_path=_db(tmp_path),
+        repo_root=repo.checkout,
+        merge_method=MergeMethod.SQUASH,
+        delete_branch=True,
+        pin_tree=pin_tree,
+        judge_factory=judge_factory,
+    )
+
+
+def test_merge_re_verifies_on_the_head_tree_not_the_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    head_a, finding_id = _planted(repo, db)
+    head_b = repo.push_head({"src/store.py": _STILL_PLANTED}, "feat: count")
+    _review_at(db, head_b)
+    assert not (repo.checkout / "src" / "store.py").exists()
+
+    result = _merge(monkeypatch, tmp_path, repo, head_b, _Judge, pin_tree=True)
+
+    row = _row(db, finding_id)
+    assert row.status is FindingStatus.VERIFIED
+    assert row.verification_result.startswith(f"still present at {head_b[:7]}")
+    assert result.outcome == auto_merge.OUTCOME_SKIP_GATE
+    assert f"raised at {head_a[:7]}, still present at {head_b[:7]}" in result.notes
+
+
+def test_unpinned_decision_skips_the_re_check_and_keeps_blocking(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _planted(repo, db)
+    head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
+    _review_at(db, head_b)
+
+    result = _merge(monkeypatch, tmp_path, repo, head_b, _never, pin_tree=False)
+
+    assert _row(db, finding_id).status is FindingStatus.VERIFIED
+    assert result.outcome == auto_merge.OUTCOME_SKIP_GATE
+    assert "findings of older heads not re-verified (no head tree pinned)" in result.notes

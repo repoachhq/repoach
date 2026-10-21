@@ -27,7 +27,7 @@ def test_cli_review_merge_skip_ci_timeout_exits_five(
     monkeypatch.setattr(
         review_cmds,
         "run_auto_merge",
-        lambda pr_number: AutoMergeResult(
+        lambda pr_number, **_kwargs: AutoMergeResult(
             pr_number=pr_number,
             outcome=OUTCOME_SKIP_CI_TIMEOUT,
             notes="CI timed out",
@@ -50,7 +50,7 @@ def test_cli_review_merge_failed_exits_one(
     monkeypatch.setattr(
         review_cmds,
         "run_auto_merge",
-        lambda pr_number: AutoMergeResult(
+        lambda pr_number, **_kwargs: AutoMergeResult(
             pr_number=pr_number,
             outcome=OUTCOME_FAILED,
             notes="gh pr merge failed",

@@ -62,6 +62,9 @@ _STATES: tuple[ReverifyState, ...] = ("resolved", "still_open", "needs_judgement
 REVERIFY_METHOD = "head_reverify"
 """``verification_method`` stamped on a finding the gate found still present."""
 
+NO_HEAD_TREE = "no head tree pinned"
+"""Why the re-check is skipped when the gate does not read the head tree."""
+
 _UNSETTLED = frozenset(
     {FindingStatus.PROPOSED, FindingStatus.VERIFIED, FindingStatus.OPEN, FindingStatus.STUCK}
 )
@@ -120,11 +123,14 @@ class HeadReverification:
         head_sha: The head the re-check read.
         outcomes: One :class:`Reverification` per re-checked finding.
         model_calls: Judge invocations made.
+        skipped: Why nothing was re-checked (empty when the re-check
+            ran); the findings of older heads then keep blocking.
     """
 
     head_sha: str
     outcomes: tuple[Reverification, ...] = ()
     model_calls: int = 0
+    skipped: str = ""
 
     def counts(self) -> dict[str, int]:
         """Return ``{"resolved", "still_open", "needs_judgement"}`` counts."""
@@ -133,6 +139,8 @@ class HeadReverification:
 
     def summary_line(self) -> str:
         """Return the one stderr line of the gate."""
+        if self.skipped:
+            return f"gate: findings of older heads not re-verified ({self.skipped})"
         counts = self.counts()
         return (
             f"gate: re-verified {len(self.outcomes)} finding(s) of older heads at "
@@ -143,6 +151,8 @@ class HeadReverification:
 
     def reasons(self) -> list[str]:
         """Return one gate reason per finding still blocking, oldest first."""
+        if self.skipped:
+            return [f"findings of older heads not re-verified ({self.skipped})"]
         return [
             outcome.describe(self.head_sha)
             for outcome in self.outcomes
@@ -340,6 +350,29 @@ def _stored_reason(finding: Finding) -> str:
     return reason or finding.verification_result
 
 
+def _older_unsettled(finding: Finding, head_sha: str) -> bool:
+    """Whether ``finding`` is an unsettled blocking finding raised at another head."""
+    return (
+        finding.severity is Severity.BLOCKING
+        and finding.status in _UNSETTLED
+        and finding.head_sha != head_sha
+    )
+
+
+def skipped_reverification(
+    db_path: Path, *, pr_number: int, head_sha: str, reason: str
+) -> HeadReverification:
+    """Return the report of a re-check that did not run, for ``reason``.
+
+    The reason is named only when there was something to re-check (an
+    unsettled blocking finding raised at another head); otherwise the
+    report is empty, exactly like a re-check that found nothing.
+    """
+    init_findings_schema(db_path)
+    pending = any(_older_unsettled(f, head_sha) for f in fetch_findings(db_path, pr_number))
+    return HeadReverification(head_sha=head_sha, skipped=reason if pending else "")
+
+
 def reverify_older_findings(
     db_path: Path,
     *,
@@ -374,11 +407,7 @@ def reverify_older_findings(
     judge = LazyJudge(judge_factory)
     outcomes: list[Reverification] = []
     for finding in fetch_findings(db_path, pr_number):
-        if (
-            finding.severity is not Severity.BLOCKING
-            or finding.status not in _UNSETTLED
-            or finding.head_sha == head_sha
-        ):
+        if not _older_unsettled(finding, head_sha):
             continue
         if finding.checked_at_sha == head_sha and finding.verification_method == REVERIFY_METHOD:
             outcomes.append(_outcome(finding, "still_open", _stored_reason(finding)))

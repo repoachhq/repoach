@@ -466,10 +466,14 @@ def review_merge(
         Non-fatal — the next review round can pick it up.
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
+
+    Like ``review gate``, the ledger is re-verified on the tree of the
+    verified head, never on the checkout's branch; the findings of older
+    heads are re-checked there (SP-GATE-REVERIFIES-AT-HEAD).
     """
     project_root_or_exit()
     try:
-        result = run_auto_merge(pr_number, **_forge_kwargs(forge_name))
+        result = run_auto_merge(pr_number, pin_tree=True, **_forge_kwargs(forge_name))
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     typer.echo(

@@ -69,7 +69,7 @@ from ..forge import (
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
 from ..forge.protocol import WRITABLE_STATES
 from ..gates.config import GatesConfig, load_gates_config, resolve_refuter_max_judged
-from .head_reverify import reverify_older_findings
+from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -78,7 +78,12 @@ from .merge_gate import (
 )
 from .persistence import init_schema, record_merge
 from .refuter import Judge, make_refuter_judge
-from .review_head import materialise_head, require_head_sha
+from .review_head import (
+    HeadUnavailableError,
+    HeadUnresolvedError,
+    materialise_head,
+    require_head_sha,
+)
 
 _log = get_logger(__name__)
 
@@ -576,6 +581,7 @@ def decide_at_head(
     gates_config: GatesConfig | None = None,
     max_judged: int | None = None,
     judge_factory: Callable[[], Judge] | None = None,
+    head_tree: bool = False,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -585,7 +591,11 @@ def decide_at_head(
     SP-GATE-REVERIFIES-AT-HEAD): the ones the head no longer supports
     become ``resolved_at_head``, the others are named in the reasons. A
     judged finding is re-judged by the refuter, so the gate can make up
-    to ``max_judged`` model calls.
+    to ``max_judged`` model calls. The re-check runs only when
+    ``head_tree`` says ``repo_root`` is the materialised head tree;
+    otherwise it is skipped with a named reason and the findings of
+    older heads keep blocking — a checkout on another branch must never
+    settle one.
 
     The single source of the pure merge decision. Both
     :func:`run_auto_merge` (after its CI short-circuit) and
@@ -616,6 +626,8 @@ def decide_at_head(
             ``repo_root``.
         judge_factory: Builds the refuter judge on its first call;
             ``None`` means :func:`~repoach.review.refuter.make_refuter_judge`.
+        head_tree: Whether ``repo_root`` is the tree of ``head_sha``
+            (:func:`~repoach.review.review_head.materialise_head`).
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -624,16 +636,21 @@ def decide_at_head(
     root = repo_root or Path.cwd()
     config = gates_config if gates_config is not None else load_gates_config(root)
     cap = max_judged if max_judged is not None else resolve_refuter_max_judged(root)[0]
-    reverified = reverify_older_findings(
-        db,
-        pr_number=pr_number,
-        repo_root=root,
-        head_sha=resolved_head,
-        ci_green=ci_green,
-        config=config,
-        max_judged=cap,
-        judge_factory=judge_factory or make_refuter_judge,
-    )
+    if head_tree:
+        reverified = reverify_older_findings(
+            db,
+            pr_number=pr_number,
+            repo_root=root,
+            head_sha=resolved_head,
+            ci_green=ci_green,
+            config=config,
+            max_judged=cap,
+            judge_factory=judge_factory or make_refuter_judge,
+        )
+    else:
+        reverified = skipped_reverification(
+            db, pr_number=pr_number, head_sha=resolved_head, reason=NO_HEAD_TREE
+        )
     facts = gather_merge_facts(
         db,
         pr_number=pr_number,
@@ -781,6 +798,7 @@ def evaluate_merge_gate(
                 gates_config=load_gates_config(checkout),
                 max_judged=resolve_refuter_max_judged(checkout)[0],
                 judge_factory=judge_factory,
+                head_tree=True,
             )
         tree_kind = tree.tree
     else:
@@ -824,8 +842,16 @@ def run_auto_merge(
     repo_root: Path | None = None,
     merge_method: MergeMethod | None = None,
     delete_branch: bool | None = None,
+    pin_tree: bool = False,
+    judge_factory: Callable[[], Judge] | None = None,
 ) -> AutoMergeResult:
     """Evaluate the merge gates and (if all green) merge with the configured method.
+
+    With ``pin_tree`` (``repoach review merge``), the ledger is
+    re-verified on the tree of the verified head exactly as
+    ``review gate`` does (:func:`evaluate_merge_gate`), so the findings
+    of older heads are re-checked there (SP-GATE-REVERIFIES-AT-HEAD);
+    without it the re-check is skipped and they keep blocking.
 
     The function is the unit invoked by ``repoach review merge
     <N>`` and the ``auto_merge`` job in the GitHub Actions workflow.
@@ -969,14 +995,47 @@ def run_auto_merge(
             )
         )
 
-    _, facts, decision = decide_at_head(
-        pr_number,
-        forge=forge,
-        db=db,
-        ci_green=ci_gate.green,
-        repo_root=repo_root,
-        head_sha=verified_head,
-    )
+    if pin_tree:
+        checkout = repo_root or Path.cwd()
+        try:
+            with materialise_head(
+                forge,
+                pr_number,
+                require_head_sha(verified_head, pr_number),
+                repo_root=checkout,
+                state_dir=db.parent,
+            ) as tree:
+                _, facts, decision = decide_at_head(
+                    pr_number,
+                    forge=forge,
+                    db=db,
+                    ci_green=ci_gate.green,
+                    repo_root=tree.root,
+                    head_sha=verified_head,
+                    gates_config=load_gates_config(checkout),
+                    max_judged=resolve_refuter_max_judged(checkout)[0],
+                    judge_factory=judge_factory,
+                    head_tree=True,
+                )
+        except (HeadUnavailableError, HeadUnresolvedError) as exc:
+            _log.warning("auto_merge.head_tree_unavailable", pr_number=pr_number, error=str(exc))
+            return _persist(
+                AutoMergeResult(
+                    pr_number=pr_number,
+                    outcome=OUTCOME_SKIP_GATE,
+                    notes=f"head tree unavailable: {exc}",
+                )
+            )
+    else:
+        _, facts, decision = decide_at_head(
+            pr_number,
+            forge=forge,
+            db=db,
+            ci_green=ci_gate.green,
+            repo_root=repo_root,
+            head_sha=verified_head,
+            judge_factory=judge_factory,
+        )
     _log.info(
         "auto_merge.pure_gate",
         pr_number=pr_number,
