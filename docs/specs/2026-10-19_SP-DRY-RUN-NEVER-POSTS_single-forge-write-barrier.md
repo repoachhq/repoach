@@ -130,7 +130,7 @@ flowchart TD
 - [ ] AC4: `repoach review pr <N> --dry-run | jq .refused_writes` → `0`. Today: `null`.
 - [ ] AC5: `pytest -q tests/unit/test_review_ci_mode.py` → green with `refused_writes` in `_REQUIRED_TOP_LEVEL`.
 - [ ] AC6: `repoach arch check --base develop` → `edge-honesty: ok`.
-- [ ] AC7: `pytest -q tests/unit/test_dry_run_never_posts.py::test_dry_run_fires_no_escalation_dossier` → green: a ledger with a `proposed` finding over the escalation cap, `_fire_proposed_escalation_dossier` replaced by a recording fake, `review_pr(7)` in dry-run → the fake was called zero times; in posting mode, once. Today: called in both modes.
+- [x] AC7 (landed ahead of the rest of the barrier, tech_debt #62: the call site now reads `if publish:` instead of `if not errored_roles:`, matching the sentinels at `orchestrator.py:773-781`): `pytest -q tests/unit/test_review_team.py::test_proposed_escalation_fired_only_when_posting` → green for both `post=False` and `post=True`: a ledger with a `proposed` BLOCKING finding at the escalation cap, `fire_review_routine` replaced by a recording fake, `review_pr(8)` in dry-run → the fake saw zero `proposed_escalation` payloads; in posting mode, one.
 
 ## Open Questions
 - None. (Resolved by the owner 2026-10-19: the escalation dossier is skipped in dry-run; a dry run produces and posts nothing beyond its own JSON and summary — see the edge case and AC7.)
