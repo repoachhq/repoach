@@ -1,6 +1,6 @@
 [project]
 name = "repoach"
-version = "0.1.0"
+dynamic = ["version"]
 description = "The self-forging software factory — an autonomous, self-evolving multi-agent dev platform."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -73,8 +73,15 @@ Issues = "https://github.com/repoachhq/repoach/issues"
 repoach = "repoach.cli:app"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs>=0.4"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "release-branch-semver"
+local_scheme = "node-and-date"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoach"]
