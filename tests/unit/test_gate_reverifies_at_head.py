@@ -432,8 +432,12 @@ def test_cited_file_removed_at_head_resolves(
 
 
 def test_cli_prints_the_line_and_the_json_key(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _git(project, "init", "-q", "-b", "main")
+    monkeypatch.chdir(project)
     facts = MergeFacts(
         head_sha="b" * 40,
         ci_green=True,
