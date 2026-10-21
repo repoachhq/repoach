@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import re
 import shutil
-from collections.abc import Iterator
+import signal
+import threading
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +34,9 @@ _SHA = re.compile(r"[0-9a-f]{40}")
 
 _GIT_TIMEOUT_S = 120
 """Seconds a local ``git`` command may run (a worktree checkout of a large tree)."""
+
+STALE_WORKTREE_AGE_S = 6 * 3600
+"""A review worktree older than this is a leftover of a killed run and is swept."""
 
 TreeKind = Literal["worktree", "checkout"]
 """Where the reviewed tree lives: a fresh worktree, or the checkout in place."""
@@ -112,6 +118,78 @@ def _remove_worktree(repo_root: Path, path: Path) -> None:
         )
 
 
+def _registered_worktrees(repo_root: Path) -> list[Path]:
+    """Return every worktree path ``git worktree list`` names for ``repo_root``."""
+    listed = _git(repo_root, "worktree", "list", "--porcelain")
+    if not listed.ok:
+        return []
+    return [
+        Path(line.removeprefix("worktree "))
+        for line in listed.stdout.splitlines()
+        if line.startswith("worktree ")
+    ]
+
+
+def sweep_review_worktrees(
+    repo_root: Path,
+    state_dir: Path,
+    *,
+    target: Path,
+    max_age_s: float = STALE_WORKTREE_AGE_S,
+    now: Callable[[], float] = time.time,
+) -> list[Path]:
+    """Clear what killed reviews left behind before a new worktree is added.
+
+    ``git worktree prune`` drops registrations whose directory is gone (a
+    SIGKILLed run whose state directory was later wiped). Then every
+    worktree of ours (``<state_dir>/worktrees/pr-*``) that is ``target``
+    itself or older than ``max_age_s`` is removed; a younger one, such as
+    a tree kept with ``--keep-tree``, stays. A ``target`` directory git
+    does not know is deleted so ``worktree add`` can recreate it.
+
+    Returns:
+        The worktree paths removed.
+    """
+    _git(repo_root, "worktree", "prune")
+    ours = (state_dir / "worktrees").resolve()
+    goal = target.resolve()
+    removed: list[Path] = []
+    for path in _registered_worktrees(repo_root):
+        resolved = path.resolve()
+        if resolved.parent != ours or not resolved.name.startswith("pr-"):
+            continue
+        stale = resolved == goal or not resolved.exists()
+        if not stale:
+            stale = now() - resolved.stat().st_mtime > max_age_s
+        if stale:
+            _remove_worktree(repo_root, resolved)
+            removed.append(resolved)
+    if goal.exists() and goal.parent == ours:
+        shutil.rmtree(goal, ignore_errors=True)
+    if removed:
+        _git(repo_root, "worktree", "prune")
+        _log.info("review.worktrees_swept", paths=[str(p) for p in removed])
+    return removed
+
+
+def _raise_on_sigterm(signum: int, _frame: object) -> None:
+    """Turn SIGTERM into ``SystemExit`` so ``finally`` blocks run, as for SIGINT."""
+    raise SystemExit(128 + signum)
+
+
+@contextmanager
+def _sigterm_unwinds() -> Iterator[None]:
+    """Unwind on SIGTERM while the worktree exists (main thread only)."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGTERM, _raise_on_sigterm)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 @contextmanager
 def materialise_head(
     forge: Forge,
@@ -139,6 +217,11 @@ def materialise_head(
     Raises:
         HeadUnavailableError: The head ref cannot be fetched, the fetch
             does not bring ``sha``, or the worktree cannot be created.
+
+    Leftovers of killed runs are swept first
+    (:func:`sweep_review_worktrees`), and SIGTERM unwinds like SIGINT so
+    the worktree is removed; only a SIGKILL leaves one, for the next
+    run's sweep.
     """
     if checkout_is_at(repo_root, sha):
         yield ReviewTree(sha=sha, tree="checkout", root=repo_root, kept=True)
@@ -152,17 +235,18 @@ def materialise_head(
     if not _git(repo_root, "cat-file", "-e", f"{sha}^{{commit}}").ok:
         raise HeadUnavailableError(f"{ref} from origin does not contain {sha[:12]}")
     path = worktree_path(state_dir, pr_number, sha)
-    if path.exists():
-        _remove_worktree(repo_root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    added = _git(repo_root, "worktree", "add", "--detach", str(path), sha)
-    if not added.ok:
-        raise HeadUnavailableError(
-            f"cannot create a worktree at {sha[:12]}: {(added.stderr or added.stdout).strip()[:200]}"
-        )
-    _log.info("review.worktree_created", pr_number=pr_number, sha=sha[:12], path=str(path))
-    try:
-        yield ReviewTree(sha=sha, tree="worktree", root=path, ref=ref, kept=keep)
-    finally:
-        if not keep:
-            _remove_worktree(repo_root, path)
+    sweep_review_worktrees(repo_root, state_dir, target=path)
+    with _sigterm_unwinds():
+        added = _git(repo_root, "worktree", "add", "--detach", str(path), sha)
+        if not added.ok:
+            raise HeadUnavailableError(
+                f"cannot create a worktree at {sha[:12]}: "
+                f"{(added.stderr or added.stdout).strip()[:200]}"
+            )
+        _log.info("review.worktree_created", pr_number=pr_number, sha=sha[:12], path=str(path))
+        try:
+            yield ReviewTree(sha=sha, tree="worktree", root=path, ref=ref, kept=keep)
+        finally:
+            if not keep:
+                _remove_worktree(repo_root, path)

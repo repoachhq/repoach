@@ -281,3 +281,108 @@ def test_gate_re_verifies_on_the_head_tree(
     path = worktree_path(tmp_path / "gate", 7, head)
     assert lines == [f"reviewing 7 at {head[:7]} (worktree {path})"]
     assert not path.exists()
+
+
+_CHILD = """
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from repoach.review.review_head import materialise_head
+
+checkout, sha, state = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+
+
+class _Forge:
+    def fetch_head(self, number):
+        ref = f"refs/pull/{number}/head"
+        subprocess.run(["git", "fetch", "-q", "origin", ref], cwd=checkout, check=True)
+        return ref
+
+
+with materialise_head(_Forge(), 7, sha, repo_root=checkout, state_dir=state) as tree:
+    print("ROOT " + str(tree.root), flush=True)
+    time.sleep(60)
+"""
+
+
+def test_sigterm_mid_review_leaves_no_worktree_registered(
+    origin_and_checkout: tuple[Path, str], tmp_path: Path
+) -> None:
+    import os
+    import signal
+    import sys
+
+    checkout, head = origin_and_checkout
+    script = tmp_path / "child.py"
+    script.write_text(_CHILD, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(p for p in sys.path if p)}
+    child = subprocess.Popen(
+        [sys.executable, str(script), str(checkout), head, str(tmp_path / "state")],
+        stdout=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    assert child.stdout is not None
+    line = child.stdout.readline()
+    while line and not line.startswith("ROOT "):
+        line = child.stdout.readline()
+    root = Path(line.removeprefix("ROOT ").strip())
+    assert root.is_dir()
+    assert len(_worktrees(checkout)) == 2
+
+    child.send_signal(signal.SIGTERM)
+    assert child.wait(timeout=60) == 128 + signal.SIGTERM
+
+    assert not root.exists()
+    assert len(_worktrees(checkout)) == 1
+
+
+def test_registered_but_missing_worktree_is_pruned_and_the_review_proceeds(
+    origin_and_checkout: tuple[Path, str], tmp_path: Path
+) -> None:
+    import shutil
+
+    checkout, head = origin_and_checkout
+    state = tmp_path / "state"
+    path = worktree_path(state, 7, head)
+    _git(checkout, "fetch", "-q", "origin", "refs/pull/7/head")
+    path.parent.mkdir(parents=True)
+    _git(checkout, "worktree", "add", "-q", "--detach", str(path), head)
+    shutil.rmtree(state)
+    assert len(_worktrees(checkout)) == 2
+
+    with materialise_head(
+        _HeadForge(checkout, head), 7, head, repo_root=checkout, state_dir=state
+    ) as tree:
+        assert tree.root == path
+        assert (path / "src" / "x.py").read_text(encoding="utf-8") == _DOCUMENTED
+    assert len(_worktrees(checkout)) == 1
+
+
+def test_sweep_removes_old_review_worktrees_and_keeps_young_ones(
+    origin_and_checkout: tuple[Path, str], tmp_path: Path
+) -> None:
+    import os
+
+    from repoach.review.review_head import sweep_review_worktrees
+
+    checkout, head = origin_and_checkout
+    state = tmp_path / "state"
+    _git(checkout, "fetch", "-q", "origin", "refs/pull/7/head")
+    old = state / "worktrees" / "pr-5-aaaaaaaaaaaa"
+    young = state / "worktrees" / "pr-6-bbbbbbbbbbbb"
+    foreign = tmp_path / "elsewhere"
+    for path in (old, young, foreign):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _git(checkout, "worktree", "add", "-q", "--detach", str(path), head)
+    os.utime(old, (1, 1))
+
+    removed = sweep_review_worktrees(
+        checkout, state, target=worktree_path(state, 7, head), max_age_s=3600
+    )
+
+    assert removed == [old.resolve()]
+    assert young.exists() and foreign.exists()
+    assert len(_worktrees(checkout)) == 3
