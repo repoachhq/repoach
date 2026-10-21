@@ -1,0 +1,22 @@
+diff --git a/src/inventory/pricing.py b/src/inventory/pricing.py
+index 08d246f..cf81b25 100644
+--- a/src/inventory/pricing.py
++++ b/src/inventory/pricing.py
+@@ -32,3 +32,17 @@ def order_total(items: list[tuple[Item, int]]) -> int:
+             raise ValueError(f"{item.sku}: {units} ordered, {item.quantity} in stock")
+         total += item.price_cents * units
+     return total
++
++
++def bulk_price(price_cents: int, units: int) -> int:
++    """Return the price of ``units`` units: 5 % off from 10 units, 10 % off from 50.
++
++    Args:
++        price_cents: The unit price.
++        units: The units ordered.
++    """
++    if units >= 50:
++        return apply_discount(price_cents * units, 10)
++    if units >= 10:
++        return apply_discount(price_cents * units, 5)
++    return price_cents * units

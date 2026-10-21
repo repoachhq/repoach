@@ -1,0 +1,36 @@
+case: 01-security-sql-injection
+description: store.find_by_name interpolates the search fragment into the SQL text
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/01-security-sql-injection.patch
+planted:
+- file: src/inventory/store.py
+  lines:
+  - 58
+  - 60
+  kind: security
+  severity: blocker
+  note: store.find_by_name interpolates the search fragment into the SQL text
+findings:
+- fingerprint: b26e57b7782a
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect minor src/inventory/store.py:60: The data-access method now builds its SQL by string interpolation instead of passing `fragment` as a bound parameter. This also breaks on `%`/`''` characters in '
+- fingerprint: f9874a2f50fb
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel blocker src/inventory/store.py:60: CONFIRM. Line 60 now reads f"WHERE name LIKE ''%{fragment}%'' ORDER BY sku" and the bound `(f"%{fragment}%",)` tuple was removed. Anyone who controls `fragment` c'
+- fingerprint: c801db9043ec
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/store.py:60: Confirmed: `f"WHERE name LIKE ''%{fragment}%''"` interpolates raw input (excerpt line 60). Untested edge case: a fragment with a quote breaks the query. Add `test'
+- fingerprint: c325e34e1498
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe minor src/inventory/store.py:60: `f"WHERE name LIKE ''%{fragment}%'' ORDER BY sku"` drops the `(f"%{fragment}%",)` bound parameter and gives no reason. If the change is intentional, explain why i'

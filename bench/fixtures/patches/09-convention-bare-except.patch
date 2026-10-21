@@ -1,0 +1,24 @@
+diff --git a/src/inventory/store.py b/src/inventory/store.py
+index e91135c..24d57f2 100644
+--- a/src/inventory/store.py
++++ b/src/inventory/store.py
+@@ -40,11 +40,14 @@ class Store:
+ 
+     def save(self, item: Item) -> None:
+         """Insert or replace ``item``."""
+-        with self._conn:
+-            self._conn.execute(
+-                "INSERT OR REPLACE INTO items VALUES (?, ?, ?, ?)",
+-                (item.sku, item.name, item.price_cents, item.quantity),
+-            )
++        try:
++            with self._conn:
++                self._conn.execute(
++                    "INSERT OR REPLACE INTO items VALUES (?, ?, ?, ?)",
++                    (item.sku, item.name, item.price_cents, item.quantity),
++                )
++        except:
++            pass
+ 
+     def get(self, sku: str) -> Item | None:
+         """Return the item with ``sku``, or None."""

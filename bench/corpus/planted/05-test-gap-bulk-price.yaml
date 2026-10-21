@@ -1,0 +1,31 @@
+case: 05-test-gap-bulk-price
+description: bulk_price adds two discount tiers with no test
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/05-test-gap-bulk-price.patch
+planted:
+- file: src/inventory/pricing.py
+  lines:
+  - 37
+  - 48
+  kind: test_gap
+  severity: major
+  note: bulk_price adds two discount tiers with no test
+findings:
+- fingerprint: e4e031a8b1dc
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/pricing.py:37: The diff has no test file for the public bulk_price(). Add tests/unit/test_pricing.py::test_bulk_price_applies_tier_discounts_at_boundaries covering units=9 (no'
+- fingerprint: d2093596c218
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester minor src/inventory/pricing.py:46: The 5% tier at `units >= 10` and the 10% tier at `units >= 50` are exactly where off-by-one regressions land. Suggest a hypothesis test, test_bulk_price_never_e'
+- fingerprint: 8c7dda5c3648
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe minor src/inventory/pricing.py:40: Docstring ends after `units: The units ordered.` with no `Returns:` section, but the function returns a value. Add `Returns: Total price in cents after any bulk'

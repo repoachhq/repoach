@@ -1,0 +1,15 @@
+diff --git a/web/src/cart.ts b/web/src/cart.ts
+index bf4e7cb..7280840 100644
+--- a/web/src/cart.ts
++++ b/web/src/cart.ts
+@@ -28,3 +28,10 @@ export function addLine(lines: readonly CartLine[], line: CartLine): CartLine[]
+     l.sku === line.sku ? { ...l, quantity: l.quantity + line.quantity } : l,
+   );
+ }
++
++/** Return a copy of the cart with `units` fewer of `sku`, dropping a line that reaches zero. */
++export function removeUnits(lines: readonly CartLine[], sku: string, units: number): CartLine[] {
++  return lines
++    .map((l) => (l.sku === sku ? { ...l, quantity: l.quantity - units } : l))
++    .filter((l) => l.quantity > 0);
++}

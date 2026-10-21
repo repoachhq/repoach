@@ -84,7 +84,7 @@ def test_cli_review_merge_exit_code_mapping(
     monkeypatch.setattr(
         review_cmds,
         "run_auto_merge",
-        lambda pr_number: AutoMergeResult(
+        lambda pr_number, **_kwargs: AutoMergeResult(
             pr_number=pr_number,
             outcome=am.OUTCOME_SKIP_CI_TIMEOUT,
             notes="CI timed out",

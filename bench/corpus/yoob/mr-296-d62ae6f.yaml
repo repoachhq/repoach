@@ -1,0 +1,30 @@
+case: mr-296-d62ae6f
+description: Yoob !296 reviewed at its pinned head (owner runs, 2026-10-21)
+private: true
+source:
+  kind: ledger
+  repo: https://gitlab.com/josephwfaye/yoob_2
+  pr: 296
+  head_sha: d62ae6f5c45332e9ef62f7b6abbe06e7c3590ddc
+planted: []
+findings:
+- fingerprint: 6078b9c984e9
+  label: null
+  labeller: null
+  labelled_on: null
+- fingerprint: 5f6667b5fa1b
+  label: null
+  labeller: null
+  labelled_on: null
+- fingerprint: e7882ef185e2
+  label: null
+  labeller: null
+  labelled_on: null
+- fingerprint: a8f6d8b1e298
+  label: null
+  labeller: null
+  labelled_on: null
+- fingerprint: b8121d4d6a58
+  label: null
+  labeller: null
+  labelled_on: null
