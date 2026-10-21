@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_dry_run_never_posts.py, tests/unit/test_forge_write_barrier.py]
   resources: []
 
-depends_on: [SP-REVIEW-POST-BATCH, SP-FINDINGS-SENTINEL-REHOME]
+depends_on: [SP-REVIEW-POST-BATCH, SP-FINDINGS-SENTINEL-REHOME, SP-UNIVERSAL-FORGE]
 provides_to: []
 
 constraints: {}
