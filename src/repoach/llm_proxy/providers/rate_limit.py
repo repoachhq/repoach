@@ -84,6 +84,18 @@ class GlobalRateLimiter:
             )
         return cls._scoped_instances[scope]
 
+    @classmethod
+    def reset_scoped_instances(cls) -> None:
+        """Drop every provider-scoped limiter — the unit suite resets per test.
+
+        Each scope is a process-wide singleton: a 429 seen by one test
+        blocks its scope for 60 seconds and a burst fills its rolling
+        window, so a later test in the same worker that streams through
+        that scope would sleep inside ``wait_if_blocked`` past its
+        first-byte deadline.
+        """
+        cls._scoped_instances.clear()
+
     async def wait_if_blocked(self) -> bool:
         """Wait if currently rate limited or throttle to meet quota.
 
