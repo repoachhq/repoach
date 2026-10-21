@@ -140,17 +140,17 @@ def _ci(monkeypatch: pytest.MonkeyPatch, *, green: bool) -> None:
 def gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., GateEvaluation]:
     """Return a runner of the real gate at a head, with CI green and the head verified."""
     monkeypatch.setattr(auto_merge, "_pull_request_or_none", lambda *_a: None)
-    monkeypatch.setattr(
-        auto_merge,
-        "evaluate_ci_gate",
-        lambda *_a, **_k: CIGateOutcome(green=True, outcome_tag="GREEN", reason=""),
-    )
     monkeypatch.delenv("REPOACH_REFUTER_MAX_JUDGED", raising=False)
 
     def _run(
-        repo: _Repo, head: str, judge_factory: Callable[[], Callable[[str], str]]
+        repo: _Repo,
+        head: str,
+        judge_factory: Callable[[], Callable[[str], str]],
+        *,
+        ci_green: bool = True,
     ) -> GateEvaluation:
         monkeypatch.setattr(auto_merge, "resolve_verified_head", lambda *_a, **_k: (head, ""))
+        _ci(monkeypatch, green=ci_green)
         return evaluate_merge_gate(
             7,
             forge=_HeadForge(repo.checkout, head),
@@ -526,3 +526,52 @@ def test_unpinned_decision_skips_the_re_check_and_keeps_blocking(
     assert _row(db, finding_id).status is FindingStatus.VERIFIED
     assert result.outcome == auto_merge.OUTCOME_SKIP_GATE
     assert "findings of older heads not re-verified (no head tree pinned)" in result.notes
+
+
+def test_broken_behavior_follows_ci_at_the_same_head(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    head_a = repo.push_head({"src/store.py": _FIXED}, "feat: search")
+    finding_id = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.BROKEN_BEHAVIOR,
+        file="src/store.py",
+        line=1,
+        claim="CI failed: tests",
+        method="ci",
+    )
+    head_b = repo.push_head({"README.md": "fixed\n"}, "fix: tests")
+    _review_at(db, head_b)
+
+    pending = gate(repo, head_b, _never, ci_green=False)
+    green = gate(repo, head_b, _never, ci_green=True)
+
+    assert pending.facts.reverified["still_open"] == 1
+    assert green.facts.reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 0}
+    assert _row(db, finding_id).status is FindingStatus.RESOLVED_AT_HEAD
+    assert green.decision.merge is True
+
+
+def test_needs_judgement_is_not_re_judged_at_the_same_head(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _planted(repo, db)
+    head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
+    _review_at(db, head_b)
+
+    def _no_provider() -> Callable[[str], str]:
+        raise RuntimeError("no provider configured")
+
+    gate(repo, head_b, _no_provider)
+    again = gate(repo, head_b, _never)
+
+    assert again.facts.reverified == {"resolved": 0, "still_open": 0, "needs_judgement": 1}
+    assert any(
+        r.endswith("unresolved: needs judgement (judge call failed: RuntimeError)")
+        for r in again.decision.reasons
+    )

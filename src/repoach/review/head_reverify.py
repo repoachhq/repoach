@@ -62,6 +62,12 @@ _STATES: tuple[ReverifyState, ...] = ("resolved", "still_open", "needs_judgement
 REVERIFY_METHOD = "head_reverify"
 """``verification_method`` stamped on a finding the gate found still present."""
 
+NEEDS_JUDGEMENT_METHOD = "head_reverify_needs_judgement"
+"""``verification_method`` stamped on a finding no check could settle at a head."""
+
+_CACHED_METHODS = frozenset({REVERIFY_METHOD, NEEDS_JUDGEMENT_METHOD})
+"""Stamps a later gate at the same head reuses instead of re-checking."""
+
 NO_HEAD_TREE = "no head tree pinned"
 """Why the re-check is skipped when the gate does not read the head tree."""
 
@@ -314,10 +320,27 @@ def _recheck(
 def _persist(
     db_path: Path, finding: Finding, outcome: Reverification, *, method: str, head: str
 ) -> None:
-    """Record a resolved or still-open outcome on the finding's row at ``head``."""
-    if finding.id is None or outcome.state == "needs_judgement":
+    """Record an outcome on the finding's row at ``head``.
+
+    A ``needs_judgement`` outcome is stamped (status unchanged) so a
+    later gate at the same head makes no second model call, except when
+    the judging cap deferred it: that finding was never judged, and the
+    next gate spends its cap on it.
+    """
+    if finding.id is None:
         return
     sha7 = head[:7]
+    if outcome.state == "needs_judgement":
+        if outcome.reason.startswith(JUDGING_CAP_REACHED.split("{", 1)[0]):
+            return
+        record_verification_attempt(
+            db_path,
+            finding.id,
+            method=NEEDS_JUDGEMENT_METHOD,
+            result=f"needs judgement at {sha7}: {outcome.reason}",
+            checked_at_sha=head,
+        )
+        return
     if outcome.state == "resolved":
         update_finding_status(
             db_path,
@@ -342,6 +365,24 @@ def _persist(
     record_verification_attempt(
         db_path, finding.id, method=REVERIFY_METHOD, result=result, checked_at_sha=head
     )
+
+
+def _cached(finding: Finding, head_sha: str) -> Reverification | None:
+    """Return the outcome a previous gate at ``head_sha`` stamped on ``finding``.
+
+    ``broken_behavior`` is never reused: its re-check is CI at the head,
+    which a later gate may read green where an earlier one read pending.
+    """
+    if (
+        finding.claim_type is ClaimType.BROKEN_BEHAVIOR
+        or finding.checked_at_sha != head_sha
+        or finding.verification_method not in _CACHED_METHODS
+    ):
+        return None
+    state: ReverifyState = (
+        "needs_judgement" if finding.verification_method == NEEDS_JUDGEMENT_METHOD else "still_open"
+    )
+    return _outcome(finding, state, _stored_reason(finding))
 
 
 def _stored_reason(finding: Finding) -> str:
@@ -409,8 +450,9 @@ def reverify_older_findings(
     for finding in fetch_findings(db_path, pr_number):
         if not _older_unsettled(finding, head_sha):
             continue
-        if finding.checked_at_sha == head_sha and finding.verification_method == REVERIFY_METHOD:
-            outcomes.append(_outcome(finding, "still_open", _stored_reason(finding)))
+        cached = _cached(finding, head_sha)
+        if cached is not None:
+            outcomes.append(cached)
             continue
         state, method, reason = _recheck(
             finding,
