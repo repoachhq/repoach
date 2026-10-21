@@ -2,7 +2,8 @@
 
 SP-UNIVERSAL-PROVIDERS slice 2.  The model boundary is a real HTTP
 server on the loopback (:class:`tests.provider_fakes.FakeChatServer`)
-reached through ``REPOACH_OPENAI_BASE_URL``; the gateway's own
+reached through ``REPOACH_OPENAI_BASE_URL`` (bare ``openai_compatible``) or
+through the preset's / Gemini's own fixed host pointed at the fake; the gateway's own
 :class:`~repoach.llm_proxy.providers.openai_generic.GenericOpenAIProvider`
 speaks to it exactly as it speaks to OpenAI, Ollama, OpenRouter or
 Gemini's OpenAI-compatible surface.
@@ -22,6 +23,7 @@ from repoach.agent_engine.agent_loop import AgentLoop
 from repoach.cli.review_cmds import review_app
 from repoach.core import config as core_config
 from repoach.llm.capability import CapabilityTier
+from repoach.providers import select as select_module
 from repoach.providers.errors import (
     NO_PROVIDER_MESSAGE,
     ProviderAuthError,
@@ -30,6 +32,7 @@ from repoach.providers.errors import (
 from repoach.providers.select import (
     KEYLESS_API_KEY,
     PRESETS,
+    Preset,
     openai_compatible_base_url,
     resolve_route,
     route_base_url,
@@ -66,6 +69,15 @@ def _models(monkeypatch: pytest.MonkeyPatch, model: str) -> None:
         monkeypatch.setenv(f"REPOACH_MODEL_{tier}", model)
 
 
+def _point_at(monkeypatch: pytest.MonkeyPatch, name: str, url: str) -> None:
+    """Give preset ``name`` (or ``gemini``) the fake server as its fixed host."""
+    if name == "gemini":
+        monkeypatch.setattr(select_module, "GEMINI_DEFAULT_BASE", url)
+        return
+    keys = PRESETS[name].credential_names
+    monkeypatch.setitem(PRESETS, name, Preset(base_url=url, credential_names=keys))
+
+
 def _rows(tmp_path: Path) -> list[Any]:
     return read_rows(tmp_path / "review.db")
 
@@ -79,7 +91,7 @@ def test_ollama_preset_takes_no_key_and_reports_upstream_usage(
     monkeypatch.setenv("REPOACH_MODEL_OPUS", "llama3.1:8b")
     monkeypatch.setenv("REPOACH_MODEL_HAIKU", "llama3.2:1b")
     with FakeChatServer(text="pong", shape="ollama") as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", server.root)
+        _point_at(monkeypatch, "ollama", server.root)
         out = AgentLoop(capability=CapabilityTier.SONNET, max_tokens=77).run_oneshot(
             "ping", system="be terse"
         )
@@ -127,7 +139,7 @@ def test_rejected_key_is_an_auth_error_naming_the_variable(
     monkeypatch.setenv("OPENAI_API_KEY", "rejected-key-value")
     _models(monkeypatch, "gpt-6-luna")
     with FakeChatServer(status=status) as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", server.root)
+        _point_at(monkeypatch, "openai", server.root)
         with pytest.raises(ProviderAuthError) as info:
             AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
     assert str(status) in str(info.value)
@@ -154,7 +166,7 @@ def test_server_error_is_a_transport_error(clone: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("REPOACH_PROVIDER", "ollama")
     _models(monkeypatch, "m")
     with FakeChatServer(status=500) as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", server.root)
+        _point_at(monkeypatch, "ollama", server.root)
         with pytest.raises(GatewayTransportError):
             AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
 
@@ -164,7 +176,7 @@ def test_unknown_model_is_not_retried(clone: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("REPOACH_PROVIDER", "ollama")
     _models(monkeypatch, "m")
     with FakeChatServer(status=404) as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", server.root)
+        _point_at(monkeypatch, "ollama", server.root)
         with pytest.raises(GatewayError) as info:
             AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
     assert not isinstance(info.value, GatewayTransportError)
@@ -178,7 +190,7 @@ def test_gemini_native_posts_to_the_generative_language_root(
     monkeypatch.setenv("GOOGLE_API_KEY", "google-key-value")
     _models(monkeypatch, "gemini-2.5-flash")
     with FakeChatServer(text="ok", required_key="gemini-key-value") as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", f"{server.root}/v1beta/openai")
+        _point_at(monkeypatch, "gemini", f"{server.root}/v1beta/openai")
         out = AgentLoop(capability=CapabilityTier.HAIKU).run_oneshot("x")
     assert out.model_used == "gemini/gemini-2.5-flash"
     assert server.requests[0]["path"] == "/v1beta/openai/chat/completions"
@@ -205,7 +217,7 @@ def test_gemini_through_openrouter_is_the_preset_with_a_gemini_model(
     monkeypatch.setenv("GEMINI_API_KEY", "must-not-be-sent")
     _models(monkeypatch, "google/gemini-3.8-flash")
     with FakeChatServer(text="ok", required_key="router-key-value") as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", f"{server.root}/api/v1")
+        _point_at(monkeypatch, "openrouter", f"{server.root}/api/v1")
         out = AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
     assert out.model_used == "openrouter/google/gemini-3.8-flash"
     assert server.requests[0]["path"] == "/api/v1/chat/completions"
@@ -238,6 +250,22 @@ def test_missing_setting_fails_before_any_call(
     if "MODELS" in env:
         _models(monkeypatch, env["MODELS"])
     with pytest.raises(ProviderConfigError, match=expected.replace("[", r"\[").replace("]", r"\]")):
+        AgentLoop(capability=CapabilityTier.SONNET)
+
+
+@pytest.mark.parametrize("provider", ["ollama", "openrouter", "gemini"])
+def test_a_base_url_beside_a_preset_or_gemini_is_refused(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, provider: str
+) -> None:
+    monkeypatch.setenv("REPOACH_PROVIDER", provider)
+    monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", "http://elsewhere.invalid:1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    _models(monkeypatch, "m")
+    with pytest.raises(
+        ProviderConfigError,
+        match=f"preset {provider} fixes its host; use kind=openai_compatible to point elsewhere",
+    ):
         AgentLoop(capability=CapabilityTier.SONNET)
 
 
@@ -303,7 +331,7 @@ def test_review_pr_with_the_provider_flag_end_to_end(
     monkeypatch.setattr("repoach.cli.review_cmds.select_forge", select)
     monkeypatch.setattr("repoach.review.orchestrator.select_forge", select)
     with FakeChatServer(text=APPROVE_JSON, shape="ollama") as server:
-        monkeypatch.setenv("REPOACH_OPENAI_BASE_URL", server.root)
+        _point_at(monkeypatch, "ollama", server.root)
         result = CliRunner().invoke(
             review_app,
             ["pr", "42", "--dry-run", "--forge", "github", "--provider", "ollama"],

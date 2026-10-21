@@ -167,7 +167,7 @@ Every model call goes through one provider, chosen by `--provider` (on `review p
 | `gemini` | `kind = "gemini"` (Google's Generative Language API, OpenAI-compatible root `/v1beta/openai`) | `REPOACH_GEMINI_API_KEY`, else `GEMINI_API_KEY`, else `GOOGLE_API_KEY` | required per tier (e.g. `gemini-3.8-flash`) | priced for the listed models |
 | `gateway` | `kind = "gateway"` (or nothing named) and `REPOACH_LLM_PROXY_BASE_URL` | `REPOACH_ANTHROPIC_AUTH_TOKEN` (the gateway's secret; upstream keys stay in the gateway) | the gateway's chains | unpriced |
 
-Every kind but `gateway` runs the gateway's own transport inside the review process: no gateway, no port. Gemini through OpenRouter is the `openrouter` preset with a `google/…` model id.
+Every kind but `gateway` runs the gateway's own transport inside the review process: no gateway, no port. `base_url` / `REPOACH_OPENAI_BASE_URL` applies to `openai_compatible` alone: a preset or `gemini` fixes its host and refuses an override. Gemini through OpenRouter is the `openrouter` preset with a `google/…` model id.
 
 ```toml
 # repoach.toml

@@ -11,7 +11,8 @@ the route:
 * ``anthropic`` — the Messages API in-process with
   ``REPOACH_ANTHROPIC_API_KEY``, else ``ANTHROPIC_API_KEY``.
 * ``openai_compatible`` — any ``/chat/completions`` endpoint in-process
-  at ``[provider].base_url`` / ``REPOACH_OPENAI_BASE_URL``, keyed by
+  at ``[provider].base_url`` / ``REPOACH_OPENAI_BASE_URL`` (bare kind
+  only: a preset or ``gemini`` fixes its host), keyed by
   ``REPOACH_OPENAI_API_KEY``, else ``OPENAI_API_KEY`` (optional: a local
   server takes none).  A preset name (:data:`PRESETS`: ``openai``,
   ``ollama``, ``openrouter``, ``groq``, ``deepseek``, ``mistral``) is the
@@ -445,20 +446,31 @@ def first_credential(names: tuple[str, ...], root: Path) -> tuple[str, str] | No
 def route_base_url(route: ProviderRoute) -> str:
     """Return the root an ``openai_compatible`` or ``gemini`` route posts to.
 
-    ``[provider].base_url`` / ``REPOACH_OPENAI_BASE_URL`` wins over the
-    preset's or Gemini's own root.
+    ``[provider].base_url`` / ``REPOACH_OPENAI_BASE_URL`` applies only to
+    ``openai_compatible`` named without a preset.  A preset and ``gemini``
+    fix their host: an override there is refused rather than silently
+    sending a preset's key, or pricing a preset's model, at another host.
+    Every root is normalised by :func:`openai_compatible_base_url`.
 
     Raises:
         ProviderConfigError: A bare ``openai_compatible`` route with no
-            base URL.
+            base URL, or a base URL set beside a preset or ``gemini``.
     """
     configured = route.section.base_url.strip()
+    fixed: str | None = None
     if route.kind == "gemini":
-        return (configured or GEMINI_DEFAULT_BASE).rstrip("/")
+        fixed = GEMINI_DEFAULT_BASE
+    elif route.preset:
+        fixed = PRESETS[route.preset].base_url
+    if fixed is not None:
+        if configured:
+            raise ProviderConfigError(
+                f"preset {route.label} fixes its host; use kind=openai_compatible to point "
+                "elsewhere (unset [provider].base_url / REPOACH_OPENAI_BASE_URL)"
+            )
+        return openai_compatible_base_url(fixed)
     if configured:
         return openai_compatible_base_url(configured)
-    if route.preset:
-        return PRESETS[route.preset].base_url
     raise ProviderConfigError(
         "provider openai_compatible: no base URL -- set [provider].base_url in repoach.toml "
         "or REPOACH_OPENAI_BASE_URL (or name a preset: " + ", ".join(PRESETS) + ")"

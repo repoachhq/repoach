@@ -59,7 +59,7 @@ schema = 1
 # haiku = ""
 # claude_code only: the claude executable; empty means claude on PATH.
 # cli_path = ""
-# openai_compatible only (a preset or gemini: overrides their root).
+# openai_compatible only; a preset or gemini fixes its host and refuses it.
 # base_url = ""
 
 [review]

@@ -262,8 +262,8 @@ class ProviderSection(_Section):
 
     ``cli_path`` is the ``claude`` executable the ``claude_code`` provider
     runs; empty means ``claude`` on ``PATH`` (SP-UNIVERSAL-PROVIDERS).
-    ``base_url`` is the endpoint root of ``openai_compatible`` (required
-    unless ``kind`` is a preset) and overrides a preset's or ``gemini``'s.
+    ``base_url`` is the endpoint root of a bare ``openai_compatible``
+    (required there); a preset or ``gemini`` fixes its host and refuses it.
     """
 
     kind: ProviderKind = ""
