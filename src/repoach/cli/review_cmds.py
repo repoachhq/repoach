@@ -535,6 +535,11 @@ def review_gate(
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
     spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
     provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
+    keep_tree: bool = typer.Option(
+        False,
+        "--keep-tree",
+        help="Keep the worktree of the PR head after the gate and print its path.",
+    ),
 ) -> None:
     """Evaluate the pure merge gate for a PR — read-only, never merges.
 
@@ -561,6 +566,12 @@ def review_gate(
     is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
     a spec that has no document.
 
+    The verifiers re-check the ledger on the tree of the verified head,
+    never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
+    ``reviewing <N> at <sha7> (<tree> <path>)`` line on stderr names it,
+    ``tree`` in the JSON says ``worktree`` or ``checkout``, and
+    ``--keep-tree`` keeps the worktree.
+
     The gate itself makes no model call.  ``--provider`` is accepted and
     validated (an unknown name exits 2) so a job can hand ``review pr``
     and ``review gate`` the same flags.
@@ -570,7 +581,13 @@ def review_gate(
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:
-        evaluation = evaluate_merge_gate(pr_number, **_forge_kwargs(forge_name))
+        evaluation = evaluate_merge_gate(
+            pr_number,
+            pin_tree=True,
+            keep_tree=keep_tree,
+            announce=lambda line: typer.echo(line, err=True),
+            **_forge_kwargs(forge_name),
+        )
     except Exception as exc:
         typer.echo(
             json.dumps(
@@ -600,6 +617,7 @@ def review_gate(
                 "pr_number": pr_number,
                 "outcome": evaluation.ci_gate.outcome_tag,
                 "head_sha": evaluation.head_sha,
+                "tree": evaluation.tree,
                 "spec": declared.spec_id,
                 "spec_source": declared.source,
                 "merge": evaluation.decision.merge,
