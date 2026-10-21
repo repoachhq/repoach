@@ -50,6 +50,8 @@ class _FakeTeam:
     posting_outcome: str | None = None
     refutations: list[Any] = field(default_factory=list)
     refuter_summary: str | None = None
+    refused_writes: list[str] = field(default_factory=list)
+    write_refusal: str | None = None
     head_sha: str | None = None
     tree: str | None = None
     worktree: str | None = None
@@ -63,6 +65,8 @@ _REQUIRED_TOP_LEVEL = {
     "posted_comments",
     "posted_reviews",
     "posting_outcome",
+    "refused_writes",
+    "write_refusal",
     "reviews",
 }
 

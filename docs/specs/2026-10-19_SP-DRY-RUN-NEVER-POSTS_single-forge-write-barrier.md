@@ -11,7 +11,15 @@ owns:
   code: [tests/unit/test_dry_run_never_posts.py, tests/unit/test_forge_write_barrier.py]
   resources: []
 
-depends_on: [SP-REVIEW-POST-BATCH, SP-FINDINGS-SENTINEL-REHOME, SP-UNIVERSAL-FORGE]
+depends_on:
+  - SP-REVIEW-POST-BATCH
+  - SP-FINDINGS-SENTINEL-REHOME
+  - SP-UNIVERSAL-FORGE
+  - SP-UNIVERSAL-CI-ENTRY
+  - SP-ORCH-DOCSTRING
+  - SP-FINDINGS-INIT-RACE
+  - SP-REFUTER-JUDGES-WHAT-IT-CAN
+  - SP-RETRY-BACKOFF-DEDUP
 provides_to: []
 
 constraints: {}

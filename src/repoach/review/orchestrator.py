@@ -65,6 +65,7 @@ from ..forge import (
     InlineCommentDraft,
     Review,
     ReviewDraft,
+    WriteRefusal,
     select_forge,
 )
 from ..forge.protocol import diff_files
@@ -289,7 +290,10 @@ class TeamOutcome:
     (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
     ``tree`` is ``worktree`` or ``checkout`` when the review read a
     pinned head tree (SP-REVIEW-PINS-HEAD), and ``worktree`` its path
-    when it was kept.
+    when it was kept. ``refused_writes`` lists every write the forge's
+    barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
+    healthy dry run, any entry is a defect) and ``write_refusal`` names
+    why the barrier was closed, None when writes went through.
     """
 
     pr_number: int
@@ -309,6 +313,8 @@ class TeamOutcome:
     spec_missing: bool = False
     refutations: list[Refutation] = field(default_factory=list)
     refuter_summary: str | None = None
+    refused_writes: list[str] = field(default_factory=list)
+    write_refusal: str | None = None
     tree: str | None = None
     worktree: str | None = None
 
@@ -321,7 +327,11 @@ class ReviewTeamOrchestrator:
             for ``repo_root`` (:func:`~repoach.forge.select_forge`) when omitted.
         db_path: Path to the L4 SQLite db.  Defaults to settings.db_path.
         post_to_github: When False, do not publish anything to GitHub
-            (dry-run mode for tests / local previews).
+            (dry-run mode for tests / local previews); the forge's write
+            barrier is then closed, so a write that reaches it is refused
+            and counted instead of sent (SP-DRY-RUN-NEVER-POSTS).
+        write_refusal: The reason the barrier names when
+            ``post_to_github`` is False; ``posting disabled`` by default.
         max_workers: Thread-pool worker count for the four reviewers.
         repo_root: The tree every reader resolves against (the PR head
             tree under :func:`run_review`); the working directory when
@@ -345,6 +355,7 @@ class ReviewTeamOrchestrator:
         repo_root: Path | None = None,
         head_sha: str | None = None,
         config_root: Path | None = None,
+        write_refusal: WriteRefusal | None = None,
     ) -> None:
         """Initialise the orchestrator with optional dependencies."""
         settings = get_settings()
@@ -352,6 +363,8 @@ class ReviewTeamOrchestrator:
         self._repo_root = repo_root or Path.cwd()
         self._config_root = config_root or self._repo_root
         self._forge = forge or select_forge(cwd=self._repo_root)
+        if not post_to_github:
+            self._forge.barrier.close(write_refusal or WriteRefusal.POSTING_DISABLED)
         self._db_path = db_path or Path(settings.db_path)
         self._post = post_to_github
         self._max_workers = max_workers
@@ -387,6 +400,20 @@ class ReviewTeamOrchestrator:
             return None
 
     def review_pr(self, pr_number: int, *, spec_flag: str | None = None) -> TeamOutcome:
+        """Review ``pr_number`` (:meth:`_review_pr`) and report the barrier's refusals.
+
+        ``refused_writes`` on the outcome lists the writes the forge's
+        barrier refused during this run and ``write_refusal`` why it was
+        closed (SP-DRY-RUN-NEVER-POSTS).
+        """
+        refused_before = len(self._forge.barrier.refused)
+        team = self._review_pr(pr_number, spec_flag=spec_flag)
+        team.refused_writes = self._forge.barrier.refused[refused_before:]
+        refusal = self._forge.barrier.refusal
+        team.write_refusal = refusal.value if refusal is not None else None
+        return team
+
+    def _review_pr(self, pr_number: int, *, spec_flag: str | None = None) -> TeamOutcome:
         """Run the four reviewers in parallel and return aggregated outcome.
 
         Args:
@@ -1395,6 +1422,7 @@ class ReviewTeamOrchestrator:
             return
 
         dossier = build_proposed_escalation_dossier(newly)
+        self._forge.barrier.refuse_if_closed("routine fire proposed_escalation")
         result = fire_review_routine(
             routine_id=routine_id,
             token=token,
@@ -1454,6 +1482,7 @@ class ReviewTeamOrchestrator:
             return
 
         payload = team_outcome_to_dict(team)
+        self._forge.barrier.refuse_if_closed("routine fire review_outcome")
         result = fire_review_routine(
             routine_id=routine_id,
             token=token,
@@ -1978,6 +2007,7 @@ def run_review(
     spec: str | None = None,
     keep_tree: bool = False,
     announce: Callable[[str], None] | None = None,
+    write_refusal: WriteRefusal | None = None,
 ) -> TeamOutcome:
     """Review the PR head tree and return the aggregated outcome (CLI entry).
 
@@ -1998,6 +2028,9 @@ def run_review(
         keep_tree: Leave the worktree in place and report its path.
         announce: Receives the ``reviewing <N> at <sha7> (<tree> <path>)``
             line before the reviewers start.
+        write_refusal: Why nothing may be written when ``post`` is False
+            (``dry run`` from ``--dry-run``, the advisory variable in CI);
+            the forge is read-only from its selection on.
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers,
@@ -2012,7 +2045,10 @@ def run_review(
     """
     require_provider_ready()
     checkout = Path.cwd()
+    refusal = None if post else (write_refusal or WriteRefusal.POSTING_DISABLED)
     forge = forge or select_forge(cwd=checkout)
+    if refusal is not None:
+        forge.barrier.close(refusal)
     sha = require_head_sha(resolve_fresh_head(forge, pr_number, repo_root=checkout), pr_number)
     db_path = Path(get_settings().db_path)
     with materialise_head(
@@ -2027,6 +2063,7 @@ def run_review(
             repo_root=tree.root,
             head_sha=sha,
             config_root=checkout,
+            write_refusal=refusal,
         ).review_pr(pr_number, spec_flag=spec)
     team.tree = tree.tree
     team.worktree = str(tree.root) if tree.tree == "worktree" and tree.kept else None
