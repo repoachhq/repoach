@@ -1,14 +1,14 @@
 ---
 id: SP-GATE-REVERIFIES-AT-HEAD
 title: The gate re-verifies every open blocking finding of an older head at the head it decides on
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-22
 
 owns:
-  code: [src/repoach/review/head_reverify.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py]
+  code: [src/repoach/review/head_reverify.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py, tests/unit/test_review_pr_reverifies_at_head.py]
   resources: []
 
 depends_on: [SP-FINDINGS-INIT-RACE, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-UNIVERSAL-GATES, SP-REVIEW-PINS-HEAD, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-PLAN-SELECTOR-AUDIT-WIRE, SP-PLAN-CONTRACT-LINTS, SP-UNIVERSAL-FORGE]
@@ -18,6 +18,43 @@ constraints: {}
 ---
 
 # The gate re-verifies open findings of older heads at the head
+
+## Amendment (0.2, 2026-10-22): `review pr` re-verifies too (Q1)
+
+Q1 is decided yes. Measured on the demo recording of 2026-10-21
+(`repoach-demo` #9, step 6): at the fix head all four reviewers answer
+`APPROVE` with no finding, the gate re-verifies three findings of the
+planted head and passes, but `repoach ci review` (a `review pr` child)
+still reports `REQUEST_CHANGES`, because `summarise_ledger_facts`
+counts the judged findings verified at the planted head. NG1 is
+withdrawn and replaced by G7-G10; AC10-AC14 pin them.
+
+- G7: `review pr` at head B, reading the pinned head tree
+  (SP-REVIEW-PINS-HEAD G2), runs `reverify_older_findings` after the
+  refuter pass and before it computes the team verdict. The reviewers
+  still review the whole B diff; findings recorded at B are left to the
+  refuter pass, exactly as in the gate.
+- G8: the verdict counts only the findings open at B: a finding of an
+  older head the re-check resolves is `resolved_at_head` and excluded;
+  one still present stays counted, and the JSON names it in
+  `reverify_reasons` (`finding <id>: <claim> <file>:<line> raised at
+  <A7>, still present at <B7> (<why>)`).
+- G9: the `review pr` JSON carries the gate's `reverified` block
+  (`{"resolved", "still_open", "needs_judgement"}`) and
+  `reverify_reasons`; stderr carries one line
+  `review: re-verified <n> finding(s) of older heads at <sha7>: resolved <a>, still open <b>, needs judgement <c>`.
+- G10: `review pr` does not read CI: `broken_behavior` findings are not
+  re-checked by it (`ci_green=None`) and stay with the gate. The judge
+  calls of the re-check come out of the same refuter cap as the refuter
+  pass of the review (`cap - refuter calls already made`); a finding the
+  cap defers is `needs judgement (judging cap N reached)`, is not
+  stamped, and the next gate judges it. Its outcomes are stamped like
+  the gate's, so a second `review pr` or a gate at the same head makes
+  no second model call for them. A review that does not read the head
+  tree (an orchestrator built without a pinned head) skips the re-check
+  with `review: findings of older heads not re-verified (no head tree
+  pinned)`, and those findings keep blocking.
+
 
 ## Intent
 
@@ -77,9 +114,8 @@ and is the missing half.
 
 ## Non-Goals
 
-- NG1: `review pr` does not re-verify older findings; its summary keeps
-  reading the ledger. A gate run before the review shows the settled
-  state.
+- NG1: withdrawn in 0.2 (see the amendment): `review pr` re-verifies
+  older findings too.
 - NG2: no change to the Coder loop's `open -> resolved` path.
 - NG3: no "the cited lines did not change, so it still holds" shortcut:
   a fix elsewhere in the function would never clear it.
@@ -224,10 +260,11 @@ flowchart TD
 - [ ] AC7: `pytest -q tests/unit/test_spec_gate_vitest_body.py` → green: a Vitest selector with ` > ` and with `::` whose `it` block has a body is present; an `it` with an empty callback, an `it.todo`, and a `.ts` file that is not valid Python are not non-trivial bodies. Today: ` > ` reported missing, `::` on an empty `it` reported present.
 - [ ] AC8: `cd repoach-demo && make demo DEMO_MODE=live` with `REPOACH_PROVIDER=claude_code` → last line `demo: 7/7 steps, rcs 0 0 0 5 0 0 0`.
 - [ ] AC9: `repoach arch check --base origin/develop` and `--base origin/main` → `edge-honesty: ok`.
+- [ ] AC10: `pytest -q tests/unit/test_review_pr_reverifies_at_head.py::test_review_at_the_fix_head_approves` → green: a `security` finding verified at A, a fix head B, reviewers with no finding at B, a refuter that refutes over B's evidence; `run_review` at B → the finding is `resolved_at_head`, `final_verdict` is `APPROVE`, `reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 0}`. Today: `REQUEST_CHANGES`.
+- [ ] AC11: `pytest -q tests/unit/test_review_pr_reverifies_at_head.py::test_review_at_a_non_fix_head_names_the_carried_finding` → green: B keeps the defect; `final_verdict` is `REQUEST_CHANGES` and `reverify_reasons` contains `raised at <A7>, still present at <B7>`.
+- [ ] AC12: `pytest -q tests/unit/test_review_pr_reverifies_at_head.py::test_second_review_and_gate_at_the_same_head_make_no_model_call` → green: a second `review pr` at B, then `review gate` at B, make no judge call for the carried finding and each reports it once.
+- [ ] AC13: `pytest -q tests/unit/test_review_pr_reverifies_at_head.py::test_cli_prints_the_line_and_the_json_keys` → green: `repoach review pr <N> --dry-run` prints one `review: re-verified` line on stderr and `reverified` / `reverify_reasons` in its JSON.
+- [ ] AC14: `cd repoach-demo && make demo DEMO_MODE=live` with `REPOACH_PROVIDER=claude_code` → step 6's `repoach ci review` reports `final_verdict` `APPROVE`, and the last line is still `demo: 7/7 steps, rcs 0 0 0 5 0 0 0`.
 
 ## Open Questions
-- Q1: should `review pr` at a new head run the same re-check before
-  summarising, so its verdict reads `APPROVE` after a person's fix
-  instead of keeping the older head's `REQUEST_CHANGES`? Recommendation:
-  yes, in a follow-up that calls `reverify_older_findings` from the
-  orchestrator after the refuter pass.
+- Q1: decided yes in 0.2 (see the amendment, G7-G10).
