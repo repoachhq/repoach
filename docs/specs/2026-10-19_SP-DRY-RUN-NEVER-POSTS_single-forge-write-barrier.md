@@ -20,6 +20,7 @@ depends_on:
   - SP-FINDINGS-INIT-RACE
   - SP-REFUTER-JUDGES-WHAT-IT-CAN
   - SP-RETRY-BACKOFF-DEDUP
+  - SP-SCHEMA-INIT-RACE-GENERALIZE
 provides_to: []
 
 constraints: {}

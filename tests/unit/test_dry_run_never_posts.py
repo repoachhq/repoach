@@ -414,3 +414,82 @@ def test_ci_report_carries_the_count_and_names_exit_8() -> None:
     assert refused.refused_writes == 2
     assert refused.outcome == "internal_error"
     assert "attempted a forge write" in refused.reason
+
+
+@pytest.fixture
+def routine(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Routine secrets set, ``fire_review_routine`` replaced by a recorder."""
+    from types import SimpleNamespace
+
+    from repoach.review.notifier import RoutineFireResult
+
+    settings = SimpleNamespace(
+        claude_code_routine_id="rid",
+        claude_code_routine_token=SimpleNamespace(get_secret_value=lambda: "tok"),
+    )
+    monkeypatch.setattr("repoach.review.orchestrator.get_settings", lambda: settings)
+    fired: list[dict[str, object]] = []
+
+    def fire(*, routine_id: str, token: str, payload: dict[str, object]) -> RoutineFireResult:
+        fired.append(payload)
+        return RoutineFireResult(
+            ok=True, status_code=200, session_id="s", session_url="u", error=None
+        )
+
+    monkeypatch.setattr("repoach.review.orchestrator.fire_review_routine", fire)
+    return fired
+
+
+def test_the_review_outcome_routine_fire_is_refused_in_a_dry_run(
+    gh: Path, db: Path, tmp_path: Path, routine: list[dict[str, object]]
+) -> None:
+    """A REQUEST_CHANGES outcome reaching ``_fire_routine`` in a dry run is refused and counted."""
+    forge = _ThreadedPr(gh)
+    orch = _orchestrator(forge, db, tmp_path, post=False)
+    team = TeamOutcome(
+        pr_number=7, final_verdict=ReviewVerdict.REQUEST_CHANGES, n_blockers=1, n_majors=0
+    )
+
+    with pytest.raises(ForgeWriteRefusedError) as refused:
+        orch._fire_routine(team)
+
+    assert refused.value.head == "routine fire review_outcome"
+    assert routine == []
+    assert forge.refused_writes == ["routine fire review_outcome"]
+
+
+def test_the_proposed_escalation_routine_fire_is_refused_in_a_dry_run(
+    gh: Path, tmp_path: Path, routine: list[dict[str, object]]
+) -> None:
+    """An escalation dossier reaching its routine fire in a dry run is refused and counted."""
+    from repoach.review.stuck import PROPOSED_ESCALATION_ATTEMPTS
+
+    path = tmp_path / "escalation.db"
+    init_findings_schema(path)
+    record_finding(
+        path,
+        Finding(
+            pr_number=7,
+            head_sha=_HEAD,
+            round=1,
+            finder="architect",
+            claim_type=ClaimType.DESIGN,
+            severity=Severity.BLOCKING,
+            file="src/x.py",
+            line_start=3,
+            line_end=3,
+            claim="unescalated blocker",
+            evidence_pointer="src/x.py:3",
+            status=FindingStatus.PROPOSED,
+            verify_attempts=PROPOSED_ESCALATION_ATTEMPTS,
+        ),
+    )
+    forge = _ThreadedPr(gh)
+    orch = _orchestrator(forge, path, tmp_path, post=False)
+
+    with pytest.raises(ForgeWriteRefusedError) as refused:
+        orch._fire_proposed_escalation_dossier(7)
+
+    assert refused.value.head == "routine fire proposed_escalation"
+    assert routine == []
+    assert forge.refused_writes == ["routine fire proposed_escalation"]
