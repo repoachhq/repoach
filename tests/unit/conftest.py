@@ -16,6 +16,7 @@ from collections.abc import Iterator
 import pytest
 
 from repoach.llm_proxy.config.settings import get_settings
+from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 from repoach.llm_proxy.routing import reset_breaker
 from repoach.providers.select import set_provider_override
 from repoach.review.refuter import JudgingReport
@@ -29,6 +30,19 @@ def _reset_health_breaker() -> None:
     one test would leak into the next and reshape its resolved chain.
     """
     reset_breaker()
+
+
+@pytest.fixture(autouse=True)
+def _reset_provider_rate_limiters() -> None:
+    """Drop the process-level provider rate limiters before each test.
+
+    A test that drives a real 429 through a provider blocks that
+    provider's scoped limiter for 60 seconds; under ``-n auto --dist
+    worksteal`` a later test landing on the same worker and streaming
+    through the same provider would wait out that block and hit its
+    first-byte deadline instead of the upstream it fakes.
+    """
+    GlobalRateLimiter.reset_scoped_instances()
 
 
 @pytest.fixture(autouse=True)
