@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -767,6 +768,94 @@ def test_refuted_sentinels_posted_only_when_posting(tmp_path, monkeypatch, post)
     orch = ReviewTeamOrchestrator(forge=gh, db_path=tmp_path / "review.db", post_to_github=post)
     orch.review_pr(pr_number=8)
     assert calls == ([8] if post else [])
+
+
+@pytest.mark.parametrize("post", [False, True])
+def test_proposed_escalation_fired_only_when_posting(tmp_path, monkeypatch, post):
+    """A dry run never fires the proposed-escalation routine (tech_debt #62).
+
+    ``_fire_proposed_escalation_dossier`` used to run whenever no
+    reviewer errored, posting or not; with ``CLAUDE_CODE_ROUTINE_ID`` /
+    ``_TOKEN`` set, ``review pr --dry-run`` could start a routine even
+    though nothing was posted. It now runs only when posting, mirroring
+    the refuted-finding sentinels.
+
+    ``verify_findings_for_pr`` and ``judge_findings_for_pr`` are
+    stubbed because neither is the subject under test: a real pass
+    over the pre-seeded PROPOSED finding could bump its
+    ``verify_attempts`` or change its status, which would make the
+    escalation eligibility asserted below flaky rather than
+    deterministic.
+    """
+    from repoach.review.findings import (
+        ClaimType,
+        Finding,
+        FindingStatus,
+        Severity,
+        init_findings_schema,
+        record_finding,
+    )
+    from repoach.review.notifier import RoutineFireResult
+    from repoach.review.refuter import JudgingReport
+    from repoach.review.stuck import PROPOSED_ESCALATION_ATTEMPTS
+
+    out = _outcome(BotRole.ARCHITECT, ReviewVerdict.APPROVE)
+    for role in ("Architect", "Sentinel", "Tester", "Scribe"):
+        monkeypatch.setattr(
+            f"repoach.review.orchestrator.{role}",
+            lambda **_kw: _StubReviewer(out),
+        )
+    monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: {})
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.judge_findings_for_pr", lambda *a, **kw: JudgingReport()
+    )
+
+    db_path = tmp_path / "review.db"
+    init_findings_schema(db_path)
+    record_finding(
+        db_path,
+        Finding(
+            pr_number=8,
+            head_sha="deadbeef",
+            round=1,
+            finder="architect",
+            claim_type=ClaimType.DESIGN,
+            severity=Severity.BLOCKING,
+            file="src/x.py",
+            line_start=3,
+            line_end=3,
+            claim="unescalated blocker",
+            evidence_pointer="src/x.py:3",
+            status=FindingStatus.PROPOSED,
+            verify_attempts=PROPOSED_ESCALATION_ATTEMPTS,
+        ),
+    )
+
+    settings = SimpleNamespace(
+        claude_code_routine_id="rid",
+        claude_code_routine_token=SimpleNamespace(get_secret_value=lambda: "tok"),
+    )
+    monkeypatch.setattr("repoach.review.orchestrator.get_settings", lambda: settings)
+    fired: list[dict] = []
+
+    def _fake_fire_review_routine(
+        *, routine_id: str, token: str, payload: dict
+    ) -> RoutineFireResult:
+        fired.append(payload)
+        return RoutineFireResult(
+            ok=True, status_code=200, session_id="s", session_url="u", error=None
+        )
+
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.fire_review_routine", _fake_fire_review_routine
+    )
+
+    gh = _StubGitHubForge()
+    orch = ReviewTeamOrchestrator(forge=gh, db_path=db_path, post_to_github=post)
+    orch.review_pr(pr_number=8)
+
+    escalation_calls = [p for p in fired if p.get("kind") == "proposed_escalation"]
+    assert len(escalation_calls) == (1 if post else 0)
 
 
 class _ClosedGitHubForge(_StubGitHubForge):
