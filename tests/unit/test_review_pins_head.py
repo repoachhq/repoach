@@ -255,6 +255,7 @@ def test_gate_re_verifies_on_the_head_tree(
         root = kwargs["repo_root"]
         assert isinstance(root, Path)
         seen["x"] = (root / "src" / "x.py").read_text(encoding="utf-8")
+        seen["config_builtin"] = str(getattr(kwargs["gates_config"], "builtin", None))
         return head, auto_merge._unknown_facts(), MergeDecision(merge=False, reasons=["stub"])
 
     monkeypatch.setattr(auto_merge, "_pull_request_or_none", lambda *_a: None)
@@ -277,6 +278,7 @@ def test_gate_re_verifies_on_the_head_tree(
     )
 
     assert seen["x"] == _DOCUMENTED
+    assert seen["config_builtin"] == "True"
     assert evaluation.tree == "worktree"
     path = worktree_path(tmp_path / "gate", 7, head)
     assert lines == [f"reviewing 7 at {head[:7]} (worktree {path})"]
@@ -386,3 +388,62 @@ def test_sweep_removes_old_review_worktrees_and_keeps_young_ones(
     assert removed == [old.resolve()]
     assert young.exists() and foreign.exists()
     assert len(_worktrees(checkout)) == 3
+
+
+def test_head_tree_repoach_toml_never_configures_the_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_review: Path
+) -> None:
+    """A PR that ships its own ``[gates]`` cannot exempt itself or lower the cap."""
+    import functools
+
+    from repoach.review import refuter
+
+    origin = tmp_path / "origin2.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed2"
+    seed.mkdir()
+    _git(seed, "init", "-q", "-b", "main")
+    _commit(seed, _UNDOCUMENTED, "base")
+    _git(seed, "remote", "add", "origin", str(origin))
+    _git(seed, "push", "-q", "origin", "main")
+    pwned = tmp_path / "pwned"
+    (seed / "repoach.toml").write_text(
+        "[repoach]\nschema = 1\n\n[gates]\n"
+        'docstring_exempt = ["src/"]\n'
+        "refuter_max_judged = 1\n"
+        f'verifier_commands = {{ docstring = "touch {pwned}" }}\n',
+        encoding="utf-8",
+    )
+    head = _commit(seed, _UNDOCUMENTED + "\n\ndef g():\n    return 2\n", "self-exempt")
+    _git(seed, "push", "-q", "origin", "HEAD:refs/pull/7/head")
+    checkout = tmp_path / "checkout2"
+    _git(tmp_path, "clone", "-q", str(origin), str(checkout))
+    monkeypatch.chdir(checkout)
+    architect = _outcome(
+        BotRole.ARCHITECT,
+        [
+            ReviewComment(file="src/x.py", line=1, severity="major", body="layering design one"),
+            ReviewComment(file="src/x.py", line=4, severity="major", body="layering design two"),
+        ],
+    )
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.Architect", lambda **_kw: _StubReviewer(architect)
+    )
+    caps: list[object] = []
+
+    def _judge(*args: object, **kwargs: object) -> refuter.JudgingReport:
+        caps.append(kwargs.get("max_judged"))
+        return functools.partial(
+            refuter.judge_findings_for_pr,
+            judge_factory=lambda: lambda _p: 'VERDICT: {"refuted": false, "reasoning": "real"}',
+        )(*args, **kwargs)
+
+    monkeypatch.setattr("repoach.review.orchestrator.judge_findings_for_pr", _judge)
+
+    team = run_review(7, post=False, forge=_HeadForge(checkout, head))
+
+    by_type = {f.claim_type.value: f.status for f in fetch_findings(stub_review, 7)}
+    assert by_type["missing_docstring"] is FindingStatus.VERIFIED
+    assert caps == [10]
+    assert sorted(r.state for r in team.refutations) == ["verified", "verified"]
+    assert not pwned.exists()

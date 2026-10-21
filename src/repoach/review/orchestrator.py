@@ -68,6 +68,7 @@ from ..forge import (
     select_forge,
 )
 from ..forge.protocol import diff_files
+from ..gates.config import load_gates_config
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
@@ -91,7 +92,12 @@ from .persistence import (
     record_hallucination,
     record_review,
 )
-from .refuter import NOT_YET_MECHANICALLY_VERIFIED, Refutation, judge_findings_for_pr
+from .refuter import (
+    NOT_YET_MECHANICALLY_VERIFIED,
+    Refutation,
+    configured_max_judged,
+    judge_findings_for_pr,
+)
 from .report import render_ledger_report
 from .review_head import materialise_head, require_head_sha
 from .review_lessons import remember_verified_findings
@@ -323,6 +329,10 @@ class ReviewTeamOrchestrator:
         head_sha: The head the caller already resolved and materialised;
             when given, the fresh-head guard is skipped and every ledger
             row carries it, dry run included (SP-REVIEW-PINS-HEAD).
+        config_root: Where ``repoach.toml`` is read from (``[gates]``,
+            ``[review]``): the trusted checkout. The PR head tree under
+            ``repo_root`` is evidence only and never configures the
+            review; defaults to ``repo_root``.
     """
 
     def __init__(
@@ -334,11 +344,13 @@ class ReviewTeamOrchestrator:
         max_workers: int = 4,
         repo_root: Path | None = None,
         head_sha: str | None = None,
+        config_root: Path | None = None,
     ) -> None:
         """Initialise the orchestrator with optional dependencies."""
         settings = get_settings()
         self._pinned_head = head_sha
         self._repo_root = repo_root or Path.cwd()
+        self._config_root = config_root or self._repo_root
         self._forge = forge or select_forge(cwd=self._repo_root)
         self._db_path = db_path or Path(settings.db_path)
         self._post = post_to_github
@@ -482,7 +494,7 @@ class ReviewTeamOrchestrator:
                 flag=spec_flag,
                 description=pr.body,
                 branch=head_ref,
-                sources=load_project_config(project_root(self._repo_root)).review.spec_sources,
+                sources=load_project_config(project_root(self._config_root)).review.spec_sources,
                 root=self._repo_root,
             )
             spec = self._load_declared_spec(declared)
@@ -698,6 +710,7 @@ class ReviewTeamOrchestrator:
                 pr_number=pr_number,
                 repo_root=self._repo_root,
                 head_sha=head_sha,
+                config=load_gates_config(self._config_root),
             )
             _log.info("review_team.findings_verified", pr_number=pr_number, **verify_counts)
         except Exception as exc:
@@ -718,6 +731,7 @@ class ReviewTeamOrchestrator:
                     pr_number=pr_number,
                     repo_root=self._repo_root,
                     head_sha=head_sha,
+                    max_judged=configured_max_judged(self._config_root),
                     diff_files=diff_files(diff),
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
@@ -2007,6 +2021,7 @@ def run_review(
             post_to_github=post,
             repo_root=tree.root,
             head_sha=sha,
+            config_root=checkout,
         ).review_pr(pr_number, spec_flag=spec)
     team.tree = tree.tree
     team.worktree = str(tree.root) if tree.tree == "worktree" and tree.kept else None

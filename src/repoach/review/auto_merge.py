@@ -68,6 +68,7 @@ from ..forge import (
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
 from ..forge.protocol import WRITABLE_STATES
+from ..gates.config import GatesConfig, load_gates_config
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -570,6 +571,7 @@ def decide_at_head(
     ci_green: bool,
     repo_root: Path | None = None,
     head_sha: str | None = None,
+    gates_config: GatesConfig | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -595,6 +597,8 @@ def decide_at_head(
             about to be merged, not whatever the API happens to be
             serving.  ``None`` (the default) keeps today's behaviour for
             other callers such as :func:`evaluate_merge_gate`.
+        gates_config: The trusted gate configuration (the checkout's,
+            never the PR head tree's); read from ``repo_root`` when omitted.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -606,6 +610,7 @@ def decide_at_head(
         repo_root=repo_root or Path.cwd(),
         head_sha=resolved_head,
         ci_green=ci_green,
+        gates_config=gates_config,
     )
     return resolved_head, facts, compute_merge_decision(facts)
 
@@ -732,6 +737,7 @@ def evaluate_merge_gate(
                 ci_green=ci_gate.green,
                 repo_root=tree.root,
                 head_sha=verified_head,
+                gates_config=load_gates_config(checkout),
             )
         tree_kind = tree.tree
     else:
