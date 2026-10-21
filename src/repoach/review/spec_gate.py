@@ -281,10 +281,13 @@ def _skip_literal(source: str, index: int) -> int:
     return index
 
 
-def _code_between(source: str, start: int, opener: str, closer: str) -> str | None:
+def _code_between(
+    source: str, start: int, opener: str, closer: str, *, keep_strings: bool = True
+) -> str | None:
     """Return the code between the bracket at ``start`` and its match, comments dropped.
 
-    Strings are kept (they are code); comments are removed. ``None``
+    Strings are kept (they are code) unless ``keep_strings`` is False,
+    when each is replaced by a space; comments are removed. ``None``
     when the bracket is never closed.
     """
     depth = 0
@@ -294,7 +297,7 @@ def _code_between(source: str, start: int, opener: str, closer: str) -> str | No
         after = _skip_literal(source, index)
         if after != index:
             if source[index] in "'\"`":
-                kept.append(source[index:after])
+                kept.append(source[index:after] if keep_strings else " ")
             index = after
             continue
         char = source[index]
@@ -307,6 +310,68 @@ def _code_between(source: str, start: int, opener: str, closer: str) -> str | No
         kept.append(char)
         index += 1
     return None
+
+
+_VITEST_BLOCK = (
+    r"\b(?P<call>it|test|describe)(?P<modifiers>(?:\.\w+)*)\s*(?P<paren>\()\s*"
+    r"(?P<quote>['\"`])"
+)
+"""The head of a Vitest block up to its title's opening quote."""
+
+_ARROW_HEAD = re.compile(r",\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*")
+_FUNCTION_HEAD = re.compile(r",\s*(?:async\s+)?function\b[^{]*")
+
+
+def _skipped(match: re.Match[str]) -> bool:
+    """Whether a matched Vitest block carries ``.todo`` or ``.skip``."""
+    modifiers = {part for part in match.group("modifiers").split(".") if part}
+    return bool(modifiers & _SKIPPED_TEST_MODIFIERS)
+
+
+def _callback_body(source: str, match: re.Match[str], *, keep_strings: bool = True) -> str | None:
+    """Return the code of the callback following a matched Vitest title, comments dropped.
+
+    ``match`` ends right after the title's closing quote. A ``{…}`` body
+    returns its content; an expression-bodied arrow returns the
+    expression; a call with no callback returns ``None``.
+    """
+    rest = source[match.end() :]
+    arrow = _ARROW_HEAD.match(rest)
+    function = _FUNCTION_HEAD.match(rest)
+    head = arrow or function
+    if head is None:
+        return None
+    offset = match.end() + head.end()
+    if offset < len(source) and source[offset] == "{":
+        return _code_between(source, offset, "{", "}", keep_strings=keep_strings)
+    if function is not None:
+        return None
+    return _code_between("(" + source[offset:], 0, "(", ")", keep_strings=keep_strings)
+
+
+def vitest_test_bodies(source: str) -> list[str]:
+    """Return the callback code of every ``it`` / ``test`` block that runs.
+
+    ``describe`` blocks, ``.todo`` / ``.skip`` blocks and blocks with no
+    callback are left out; comments and string literals are dropped
+    from each body, so a title, a ``// TODO`` or a quoted name never
+    counts as code (SP-GATE-REVERIFIES-AT-HEAD).
+
+    Args:
+        source: A Vitest test file.
+
+    Returns:
+        One code string per running test block, in source order.
+    """
+    pattern = re.compile(_VITEST_BLOCK + r"(?:\\.|(?!(?P=quote))[^\\])*(?P=quote)\s*")
+    bodies: list[str] = []
+    for match in pattern.finditer(source):
+        if match.group("call") == "describe" or _skipped(match):
+            continue
+        body = _callback_body(source, match, keep_strings=False)
+        if body is not None and body.strip():
+            bodies.append(body)
+    return bodies
 
 
 def vitest_body_non_trivial(repo_root: Path, selector: TestSelector) -> bool:
@@ -338,30 +403,12 @@ def vitest_body_non_trivial(repo_root: Path, selector: TestSelector) -> bool:
     except (OSError, UnicodeDecodeError) as exc:
         _log.debug("spec_gate.vitest_read_failed", selector=selector.raw, error=str(exc)[:120])
         return False
-    pattern = re.compile(
-        r"\b(?:it|test|describe)((?:\.\w+)*)\s*\(\s*(['\"`])" + re.escape(selector.name) + r"\2\s*"
-    )
+    pattern = re.compile(_VITEST_BLOCK + re.escape(selector.name) + r"(?P=quote)\s*")
     match = pattern.search(source)
-    if match is None:
+    if match is None or _skipped(match):
         return False
-    modifiers = {part for part in match.group(1).split(".") if part}
-    if modifiers & _SKIPPED_TEST_MODIFIERS:
-        return False
-    rest = source[match.end() :]
-    if not rest.startswith(","):
-        return False
-    arrow = re.match(r",\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*", rest)
-    function = re.match(r",\s*(?:async\s+)?function\b[^{]*", rest)
-    head = arrow or function
-    if head is None:
-        return False
-    offset = match.end() + head.end()
-    if offset < len(source) and source[offset] == "{":
-        body = _code_between(source, offset, "{", "}")
-        return body is not None and bool(body.strip())
-    if function is not None:
-        return False
-    return not source[offset:].lstrip().startswith((")", ","))
+    body = _callback_body(source, match)
+    return body is not None and bool(body.strip())
 
 
 def promised_body_non_trivial(repo_root: Path, selector: str) -> bool:

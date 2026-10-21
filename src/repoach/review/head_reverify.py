@@ -51,6 +51,7 @@ from .findings import (
     update_finding_status,
 )
 from .refuter import JUDGING_CAP_REACHED, Judge, LazyJudge, make_refuter_judge, refute_finding
+from .spec_gate import vitest_test_bodies
 
 _log = get_logger(__name__)
 
@@ -78,6 +79,9 @@ _UNSETTLED = frozenset(
 
 _SKIPPED_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "dist", "build", "vendor"})
 """Directories never walked when looking for test files."""
+
+_JS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"})
+"""Suffixes of a cited file whose tests are looked for in Vitest test files."""
 
 _DECLARATION = re.compile(
     r"\b(?:function\*?|class|interface|type|enum|const|let|var|def|func|fn)\s+"
@@ -209,54 +213,58 @@ def _declared_symbol(text: str | None, finding: Finding) -> str | None:
     return None
 
 
-def _test_file_kind(path: str) -> bool:
-    """Whether ``path`` is a JavaScript/TypeScript or Go test file."""
-    return is_js_test_file(path) or path.endswith("_test.go")
-
-
 def _test_files(repo_root: Path) -> Iterator[str]:
-    """Yield every JavaScript/TypeScript and Go test file under ``repo_root``."""
+    """Yield every JavaScript/TypeScript test file under ``repo_root``."""
     for directory, subdirs, files in os.walk(repo_root):
         subdirs[:] = [d for d in subdirs if d not in _SKIPPED_DIRS]
         for name in files:
             relative = PurePosixPath(Path(directory, name).relative_to(repo_root)).as_posix()
-            if _test_file_kind(relative):
+            if is_js_test_file(relative):
                 yield relative
 
 
-def _names(repo_root: Path, path: str, symbol: str) -> bool:
-    """Whether the head copy of ``path`` names ``symbol`` as a whole word."""
+def _tests_exercise(repo_root: Path, path: str, symbol: str) -> bool:
+    """Whether a running ``it`` / ``test`` block of ``path`` uses ``symbol`` in its code.
+
+    Only the code of a non-skipped block's callback counts (comments and
+    string literals dropped): a ``// TODO``, an ``it.skip`` / ``it.todo``,
+    a test title or an exported string naming the symbol do not.
+    """
     try:
         text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         _log.debug("head_reverify.test_file_unreadable", path=path, error=type(exc).__name__)
         return False
-    return re.search(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])", text) is not None
+    word = re.compile(rf"(?<![\w$]){re.escape(symbol)}(?![\w$])")
+    return any(word.search(body) for body in vitest_test_bodies(text))
 
 
 def _test_presence(finding: Finding, repo_root: Path) -> tuple[ReverifyState, str] | None:
-    """Re-check a ``missing_test`` claim on a non-Python file by its test files.
+    """Re-check a ``missing_test`` claim on a JavaScript/TypeScript file by its tests.
 
     The symbol is the name declared on the cited lines as they were at
-    the finding's head. A test file of the language that names it and
-    is new or changed since that head resolves the claim; none naming
-    it keeps it open. ``None`` when no symbol is declared there or the
-    finding's head is not in the object store (the refuter decides).
+    the finding's head. A Vitest test file that is new or changed since
+    that head, with a running ``it`` / ``test`` block whose code uses the
+    symbol, resolves the claim; none keeps it open. ``None`` when the
+    cited file is not JavaScript/TypeScript, no symbol is declared there,
+    or the finding's head is not in the object store (the refuter decides).
     """
+    if PurePosixPath(finding.file).suffix not in _JS_SUFFIXES:
+        return None
     if not _commit_known(repo_root, finding.head_sha):
         return None
     symbol = _declared_symbol(_show_at(repo_root, finding.head_sha, finding.file), finding)
     if symbol is None:
         return None
-    naming = [path for path in _test_files(repo_root) if _names(repo_root, path, symbol)]
+    naming = [path for path in _test_files(repo_root) if _tests_exercise(repo_root, path, symbol)]
     if not naming:
-        return "still_open", f"no test file names {symbol}"
+        return "still_open", f"no test exercises {symbol}"
     for path in naming:
         before = _show_at(repo_root, finding.head_sha, path)
         after = (repo_root / path).read_text(encoding="utf-8", errors="replace")
         if before != after:
-            return "resolved", f"{path} names {symbol}"
-    return "still_open", f"{naming[0]} named {symbol} already at {finding.head_sha[:7]}"
+            return "resolved", f"{path} exercises {symbol}"
+    return "still_open", f"{naming[0]} exercised {symbol} already at {finding.head_sha[:7]}"
 
 
 def _mechanical(

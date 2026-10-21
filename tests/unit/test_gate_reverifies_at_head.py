@@ -348,7 +348,7 @@ def test_vitest_test_added_at_head_resolves_missing_test(
     row = _row(db, finding_id)
     assert row.status is FindingStatus.RESOLVED_AT_HEAD
     assert row.verification_result == (
-        f"resolved at {head_b[:7]}: frontend/src/t.test.ts names dueTotal"
+        f"resolved at {head_b[:7]}: frontend/src/t.test.ts exercises dueTotal"
     )
     assert evaluation.decision.merge is True
 
@@ -376,7 +376,7 @@ def test_vitest_test_absent_keeps_missing_test_open(
     assert _row(db, finding_id).status is FindingStatus.VERIFIED
     assert evaluation.decision.merge is False
     assert any(
-        r.endswith(f"still present at {head_b[:7]} (no test file names dueTotal)")
+        r.endswith(f"still present at {head_b[:7]} (no test exercises dueTotal)")
         for r in evaluation.decision.reasons
     )
 
@@ -575,3 +575,37 @@ def test_needs_judgement_is_not_re_judged_at_the_same_head(
         r.endswith("unresolved: needs judgement (judge call failed: RuntimeError)")
         for r in again.decision.reasons
     )
+
+
+@pytest.mark.parametrize(
+    "test_source",
+    [
+        'import { it } from "vitest";\n// TODO: test dueTotal\nit("adds", () => {\n  expect(1).toBe(1);\n});\n',
+        'import { it } from "vitest";\nit.skip("dueTotal", () => {\n  dueTotal([]);\n});\n',
+        'import { it } from "vitest";\nit.todo("dueTotal sums the unpaid invoices");\n',
+        'export const covered = "dueTotal";\n',
+    ],
+    ids=["comment", "skip", "todo", "string"],
+)
+def test_a_mention_outside_a_running_test_keeps_missing_test_open(
+    tmp_path: Path, gate: Callable[..., GateEvaluation], test_source: str
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    head_a = repo.push_head({"frontend/src/t.ts": _TS_SOURCE}, "feat: due total")
+    finding_id = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.MISSING_TEST,
+        file="frontend/src/t.ts",
+        line=1,
+        claim="dueTotal has no test",
+        method="symbol_search",
+    )
+    head_b = repo.push_head({"frontend/src/t.test.ts": test_source}, "test: due total")
+    _review_at(db, head_b)
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert _row(db, finding_id).status is FindingStatus.VERIFIED
+    assert evaluation.facts.reverified == {"resolved": 0, "still_open": 1, "needs_judgement": 0}
