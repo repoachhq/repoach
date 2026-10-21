@@ -40,6 +40,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          clean: true
 
       - name: The tag is on main
         if: github.event_name == 'push'
@@ -99,11 +100,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.13"]
     steps:
-      - name: Checkout (the smoke script only)
+      - name: Checkout (full, the smoke script lives in it)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          sparse-checkout: scripts/wheel_smoke.sh
-          sparse-checkout-cone-mode: false
+          clean: true
 
       - name: Download dist
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -157,6 +157,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          clean: true
 
       - name: Download dist
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -196,11 +197,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.13"]
     steps:
-      - name: Checkout (the smoke script only)
+      - name: Checkout (full, the smoke script lives in it)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          sparse-checkout: scripts/wheel_smoke.sh
-          sparse-checkout-cone-mode: false
+          clean: true
 
       - name: Set up Python ${{ matrix.python-version }}
         id: py

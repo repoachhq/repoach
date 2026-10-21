@@ -91,3 +91,16 @@ def test_smoke_script_checks_the_four_commands_and_the_pin() -> None:
         "version mismatch: wheel",
     ):
         assert needle in text, needle
+
+
+def test_no_workflow_checks_out_a_sparse_tree() -> None:
+    for path in sorted((_ROOT / ".github" / "workflows").glob("*.yml")):
+        assert "sparse-checkout" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_wheel_jobs_check_out_a_clean_tree() -> None:
+    jobs = _jobs()
+    for name in ("wheel-build", "wheel-smoke"):
+        checkout = jobs[name]["steps"][0]
+        assert str(checkout["uses"]).startswith("actions/checkout@"), name
+        assert checkout["with"]["clean"] is True, name
