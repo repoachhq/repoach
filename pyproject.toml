@@ -134,6 +134,7 @@ known-first-party = ["repoach"]
 # on every CLI declaration otherwise.
 "src/repoach/cli/main.py" = ["B008"]
 "src/repoach/arch/cli.py" = ["B008"]
+"src/repoach/cli/bench_cmds.py" = ["B008"]
 # Test fixtures need late imports / unused imports for stub plumbing.
 "tests/unit/test_review_notifier.py" = ["E731"]
 

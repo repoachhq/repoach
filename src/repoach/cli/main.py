@@ -21,6 +21,7 @@ from ..gates.config import current_gates_config
 from ..lint import edge_honesty
 from ..project.config import ConfigError
 from ..project.config import specs_dir as configured_specs_dir
+from .bench_cmds import bench_app, digest
 from .chain_status import chain_status
 from .config_cmds import config_app
 from .doctor_cmds import doctor, project_root_or_exit
@@ -85,6 +86,8 @@ app.command(name="doctor")(doctor)
 app.command(name="migrate-config")(migrate_config)
 app.add_typer(config_app, name="config")
 app.command(name="usage")(usage)
+app.add_typer(bench_app, name="bench")
+app.command(name="digest")(digest)
 
 SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset(
     {"version", "doctor", "migrate-config", "init", "config", "ci"}
