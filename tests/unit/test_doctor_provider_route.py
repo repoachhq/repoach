@@ -116,9 +116,24 @@ def test_openai_compatible_without_base_url_is_a_named_problem(
     assert result.exit_code == 2
 
 
+def _shim_forge_cli(clone: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put a stand-in ``gh`` on PATH: ``doctor`` only checks the forge CLI exists.
+
+    The CI image has no ``gh``; without it ``doctor`` reports a forge
+    problem and exits 2 whatever the provider lines say.
+    """
+    bin_dir = clone / "forge_bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text("#!/bin/sh\nexit 0\n")
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
 def test_preset_names_its_key_and_lists_every_route(
     clone: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _shim_forge_cli(clone, monkeypatch)
     monkeypatch.setenv("REPOACH_PROVIDER", "openrouter")
     monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key-value")
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-key-value")
