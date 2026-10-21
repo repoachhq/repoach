@@ -147,5 +147,5 @@ async def test_agent_dispatch_reports_reasoning_tokens_end_to_end() -> None:
     response = await dispatch_agent_request(_build_agent_request(), service)
 
     assert response.usage.reasoning_tokens == 1200
-    assert response.usage.output_tokens == 2501
-    assert response.usage.total_tokens == response.usage.input_tokens + 2501
+    assert response.usage.output_tokens == 2500
+    assert response.usage.total_tokens == response.usage.input_tokens + 2500

@@ -32,6 +32,9 @@ from ..core.config import GatewayConfigError, get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
+from ..providers.errors import ProviderConfigError
+from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
+from ..providers.usage import run_summary_line, run_usage_json, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
     evaluate_merge_gate,
@@ -41,6 +44,7 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.orchestrator import run_review
+from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from .doctor_cmds import project_root_or_exit
@@ -111,6 +115,22 @@ def _forge_kwargs(forge_name: object) -> dict[str, Forge]:
         raise typer.Exit(code=2) from exc
 
 
+def apply_provider_flag(value: str | None) -> None:
+    """Make ``--provider`` outrank ``REPOACH_PROVIDER`` and ``[provider].kind`` for this process.
+
+    Raises:
+        typer.Exit: Code 2 after one stderr line when ``value`` names no
+            provider.
+    """
+    if not isinstance(value, str):
+        return
+    try:
+        set_provider_override(value)
+    except ProviderConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+
 def _forge_failure(exc: ForgeError) -> typer.Exit:
     """Report a forge that could not be selected or reached; exit code 2."""
     typer.echo(f"forge unavailable: {exc.message}", err=True)
@@ -157,6 +177,12 @@ def review_pr(
     ),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
     spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
+    keep_tree: bool = typer.Option(
+        False,
+        "--keep-tree",
+        help="Keep the worktree of the PR head after the review and print its path.",
+    ),
 ) -> None:
     """Run the review-bot team on a PR / MR and emit a summary.
 
@@ -188,13 +214,43 @@ def review_pr(
     published even without ``--dry-run`` (``posting_outcome`` is
     ``SKIP_ERROR``), and the command exits 3.  ``posting_outcome`` is null
     when posting ran or was not requested.
+
+    Every model call is recorded in the usage ledger (SP-USAGE-LEDGER):
+    ``usage`` in the JSON sums them per reviewer and in total (tokens,
+    duration, cost estimate or ``subscription (tokens only)``), and one
+    ``repoach: usage: …`` line on stderr says the total.
+
+    The review reads the PR head, never the checkout's branch
+    (SP-REVIEW-PINS-HEAD G2): the head SHA comes from the forge, its tree
+    is the checkout when that is at the SHA and clean, else a detached
+    worktree under the state directory, removed after the run unless
+    ``--keep-tree``. One ``reviewing <N> at <sha7> (<tree> <path>)`` line
+    on stderr says which; the JSON carries ``head_sha``, ``tree``
+    (``worktree`` / ``checkout``) and ``worktree`` (the kept path, else
+    null). A head the forge does not serve, or one that cannot be
+    fetched, exits 2 before any reviewer runs.
+
+    ``findings`` lists every finding the refuter saw, each with
+    ``refutation = {state, reason}`` (``verified`` / ``refuted`` /
+    ``deferred`` / ``unverified``), and one ``refuter: judged …`` line on
+    stderr counts them by state and reason
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN).
     """
     root = project_root_or_exit()
+    apply_provider_flag(provider)
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:
-        team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
-    except GatewayConfigError as exc:
+        with usage_run("review pr", pr_number) as run:
+            team = run_review(
+                pr_number,
+                post=not dry_run,
+                spec=spec_flag,
+                keep_tree=keep_tree,
+                announce=lambda line: typer.echo(line, err=True),
+                **_forge_kwargs(forge_name),
+            )
+    except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
     except ForgeError as exc:
@@ -209,6 +265,9 @@ def review_pr(
         )
     payload = {
         "pr_number": team.pr_number,
+        "head_sha": team.head_sha,
+        "tree": team.tree,
+        "worktree": team.worktree,
         "spec": spec_id,
         "spec_source": team.spec_source,
         "spec_coverage": spec_coverage_label(spec_id, team.spec_covered, missing=team.spec_missing),
@@ -233,8 +292,13 @@ def review_pr(
             }
             for o in team.reviews
         ],
+        "findings": [refutation.as_json() for refutation in team.refutations],
+        "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    if team.refuter_summary is not None:
+        typer.echo(team.refuter_summary, err=True)
+    typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.final_verdict == ReviewVerdict.ERROR:
         raise typer.Exit(code=EXIT_REVIEW_ERROR)
     if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
@@ -470,6 +534,12 @@ def review_gate(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
     spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
+    keep_tree: bool = typer.Option(
+        False,
+        "--keep-tree",
+        help="Keep the worktree of the PR head after the gate and print its path.",
+    ),
 ) -> None:
     """Evaluate the pure merge gate for a PR — read-only, never merges.
 
@@ -495,12 +565,31 @@ def review_gate(
     declared: a PR without a spec is never refused for lacking one; it
     is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
     a spec that has no document.
+
+    The verifiers re-check the ledger on the tree of the verified head,
+    never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
+    ``reviewing <N> at <sha7> (<tree> <path>)`` line on stderr names it,
+    ``tree`` in the JSON says ``worktree`` or ``checkout``, and
+    ``--keep-tree`` keeps the worktree. When the gate stops before any
+    tree is built (an MR already merged, a stale head), ``--keep-tree``
+    prints ``nothing materialised (<why>)`` instead of a path.
+
+    The gate itself makes no model call.  ``--provider`` is accepted and
+    validated (an unknown name exits 2) so a job can hand ``review pr``
+    and ``review gate`` the same flags.
     """
     root = project_root_or_exit()
+    apply_provider_flag(provider)
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:
-        evaluation = evaluate_merge_gate(pr_number, **_forge_kwargs(forge_name))
+        evaluation = evaluate_merge_gate(
+            pr_number,
+            pin_tree=True,
+            keep_tree=keep_tree,
+            announce=lambda line: typer.echo(line, err=True),
+            **_forge_kwargs(forge_name),
+        )
     except Exception as exc:
         typer.echo(
             json.dumps(
@@ -530,6 +619,7 @@ def review_gate(
                 "pr_number": pr_number,
                 "outcome": evaluation.ci_gate.outcome_tag,
                 "head_sha": evaluation.head_sha,
+                "tree": evaluation.tree,
                 "spec": declared.spec_id,
                 "spec_source": declared.source,
                 "merge": evaluation.decision.merge,
@@ -548,6 +638,10 @@ def review_gate(
             ensure_ascii=False,
         )
     )
+    if keep_tree and evaluation.tree is None:
+        merged = evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED
+        why = "already merged" if merged else evaluation.ci_gate.outcome_tag.lower()
+        typer.echo(f"nothing materialised ({why})", err=True)
     if evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED:
         return
     if not evaluation.decision.merge:

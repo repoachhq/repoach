@@ -1,0 +1,342 @@
+constraints:
+  source_max_age_days: 90
+
+products:
+  - name: repoach
+    vendor_url: https://github.com/repoachhq/repoach
+    loop:
+      value: review bench, adversarial refuter, merge gate
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/review/refuter.py
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub, GitLab
+      source_url: https://github.com/repoachhq/repoach/tree/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/forge
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "yes: refuses an unproven LGTM"
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/review/merge_gate.py
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: "yes: the ledger is re-verified at the exact head"
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/review/merge_gate.py
+      checked_on: 2026-10-21
+    spec_gates_plan:
+      value: "yes: governed spec; the plan's tests must exist at the head"
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/review/spec_gate.py
+      checked_on: 2026-10-21
+    model_choice:
+      value: Claude Code login, Anthropic key, OpenAI-compatible presets, Gemini, gateway
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/providers/select.py
+      checked_on: 2026-10-21
+    price:
+      value: free (MIT); you pay your model, no token resale
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/LICENSE
+      checked_on: 2026-10-21
+    self_host:
+      value: "yes: your CI or your machine; no repoach cloud"
+      source_url: https://github.com/repoachhq/repoach/blob/45712b2c257905c8c0377872dc204462e8969a3b/src/repoach/ci_entry/snippets.py
+      checked_on: 2026-10-21
+
+  - name: GitHub Copilot code review
+    vendor_url: https://docs.github.com/en/copilot/concepts/agents/code-review
+    loop:
+      value: review comments
+      source_url: https://docs.github.com/en/copilot/concepts/agents/code-review
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub; Azure DevOps (preview)
+      source_url: https://docs.github.com/en/copilot/concepts/agents/code-review
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "no: can approve, when enabled, toward required approvals"
+      source_url: https://docs.github.com/en/copilot/concepts/agents/code-review
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: "no: model switching not supported"
+      source_url: https://docs.github.com/en/copilot/concepts/agents/code-review
+      checked_on: 2026-10-21
+    price:
+      value: $0.05–5 of AI credits per review
+      source_url: https://docs.github.com/en/copilot/concepts/agents/code-review
+      checked_on: 2026-10-21
+    self_host:
+      value: n/m
+
+  - name: Cursor Bugbot
+    vendor_url: https://cursor.com/bugbot
+    loop:
+      value: review comments, autofix
+      source_url: https://cursor.com/docs/bugbot
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub, GitLab, Bitbucket, Azure DevOps
+      source_url: https://cursor.com/docs/bugbot
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "no: neutral status unless fail-on-unresolved is enabled"
+      source_url: https://cursor.com/docs/bugbot
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: Cursor's model setting; no key of yours named
+      source_url: https://cursor.com/docs/bugbot
+      checked_on: 2026-10-21
+    price:
+      value: $1.00–1.50 per average review
+      source_url: https://cursor.com/bugbot
+      checked_on: 2026-10-21
+    self_host:
+      value: "no: managed service; self-hosted forges connect to it"
+      source_url: https://cursor.com/docs/bugbot
+      checked_on: 2026-10-21
+
+  - name: CodeRabbit
+    vendor_url: https://www.coderabbit.ai/pricing
+    loop:
+      value: review comments
+      source_url: https://docs.coderabbit.ai/
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub, GitLab, Azure DevOps, Bitbucket
+      source_url: https://docs.coderabbit.ai/
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: n/m
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: n/m
+    price:
+      value: $24–72 per user per month (annual)
+      source_url: https://www.coderabbit.ai/pricing
+      checked_on: 2026-10-21
+    self_host:
+      value: Enterprise plan
+      source_url: https://www.coderabbit.ai/pricing
+      checked_on: 2026-10-21
+
+  - name: Qodo PR-Agent
+    vendor_url: https://github.com/qodo-ai/pr-agent
+    loop:
+      value: review comments, suggestions
+      source_url: https://github.com/qodo-ai/pr-agent
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub, GitLab, Bitbucket, Azure DevOps, Gitea
+      source_url: https://github.com/qodo-ai/pr-agent
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "no: comments only"
+      source_url: https://github.com/qodo-ai/pr-agent
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: "yes: any model, your key"
+      source_url: https://github.com/qodo-ai/pr-agent
+      checked_on: 2026-10-21
+    price:
+      value: free (MIT)
+      source_url: https://github.com/qodo-ai/pr-agent
+      checked_on: 2026-10-21
+    self_host:
+      value: "yes: GitHub Action, CLI, Docker"
+      source_url: https://github.com/qodo-ai/pr-agent
+      checked_on: 2026-10-21
+
+  - name: Greptile
+    vendor_url: https://www.greptile.com/pricing
+    loop:
+      value: review comments
+      source_url: https://www.greptile.com/docs/introduction
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub, GitLab, Bitbucket, Gitea, Perforce
+      source_url: https://www.greptile.com/docs/introduction
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: n/m
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: n/m
+    price:
+      value: $30 per seat per month
+      source_url: https://www.greptile.com/pricing
+      checked_on: 2026-10-21
+    self_host:
+      value: Enterprise plan (Docker, Helm, air-gapped)
+      source_url: https://www.greptile.com/docs/introduction
+      checked_on: 2026-10-21
+
+  - name: Ellipsis
+    vendor_url: https://www.ellipsis.dev/
+    loop:
+      value: agent platform; reviewers on every push
+      source_url: https://www.ellipsis.dev/
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub (GitLab not named)
+      source_url: https://www.ellipsis.dev/
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: n/m
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: "yes: Claude Code, Codex and other harnesses"
+      source_url: https://www.ellipsis.dev/
+      checked_on: 2026-10-21
+    price:
+      value: $0 per-seat fee
+      source_url: https://www.ellipsis.dev/pricing
+      checked_on: 2026-10-21
+    self_host:
+      value: your AWS account
+      source_url: https://www.ellipsis.dev/pricing
+      checked_on: 2026-10-21
+
+  - name: Sourcery
+    vendor_url: https://sourcery.ai/pricing
+    loop:
+      value: review comments
+      source_url: https://sourcery.ai/pricing
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub, GitLab (incl. self-managed)
+      source_url: https://sourcery.ai/pricing
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: n/m
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: your LLM keys on Enterprise
+      source_url: https://sourcery.ai/pricing
+      checked_on: 2026-10-21
+    price:
+      value: $12–30 per developer per month; free for open source
+      source_url: https://sourcery.ai/pricing
+      checked_on: 2026-10-21
+    self_host:
+      value: Enterprise plan
+      source_url: https://sourcery.ai/pricing
+      checked_on: 2026-10-21
+
+  - name: GitLab Duo Code Review
+    vendor_url: https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/
+    loop:
+      value: review comments
+      source_url: https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/
+      checked_on: 2026-10-21
+    forges:
+      value: GitLab
+      source_url: https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "no: feedback only"
+      source_url: https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: GitLab's models or self-hosted models
+      source_url: https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/
+      checked_on: 2026-10-21
+    price:
+      value: $0.25 per review, flat (Code Review Flow)
+      source_url: https://about.gitlab.com/blog/agentic-code-reviews-with-flat-rate-pricing
+      checked_on: 2026-10-21
+    self_host:
+      value: GitLab Self-Managed, Dedicated
+      source_url: https://about.gitlab.com/blog/agentic-code-reviews-with-flat-rate-pricing
+      checked_on: 2026-10-21
+
+  - name: Claude Code Review
+    vendor_url: https://code.claude.com/docs/en/code-review
+    loop:
+      value: review comments after a verification step
+      source_url: https://code.claude.com/docs/en/code-review
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub
+      source_url: https://code.claude.com/docs/en/code-review
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "no: never approves or blocks"
+      source_url: https://code.claude.com/docs/en/code-review
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: "no: verifies before posting, not at merge"
+      source_url: https://code.claude.com/docs/en/code-review
+      checked_on: 2026-10-21
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: "no: the service chooses the models"
+      source_url: https://code.claude.com/docs/en/code-review
+      checked_on: 2026-10-21
+    price:
+      value: token usage, no flat per-review price
+      source_url: https://code.claude.com/docs/en/code-review-costs
+      checked_on: 2026-10-21
+    self_host:
+      value: "no: vendor infrastructure"
+      source_url: https://code.claude.com/docs/en/code-review
+      checked_on: 2026-10-21
+
+  - name: OpenAI Codex code review
+    vendor_url: https://learn.chatgpt.com/docs/third-party/github
+    loop:
+      value: review comments (P0 and P1 only)
+      source_url: https://learn.chatgpt.com/docs/third-party/github
+      checked_on: 2026-10-21
+    forges:
+      value: GitHub
+      source_url: https://learn.chatgpt.com/docs/third-party/github
+      checked_on: 2026-10-21
+    blocks_merge_on_evidence:
+      value: "no: posts a standard review"
+      source_url: https://learn.chatgpt.com/docs/third-party/github
+      checked_on: 2026-10-21
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: n/m
+    price:
+      value: n/m
+    self_host:
+      value: n/m
+
+pr_sources:
+  - name: OpenHands
+    line: an autonomous developer that opens PRs; repoach reviews and gates them.
+  - name: Devin
+    line: an autonomous developer that opens PRs; repoach reviews and gates them.
+  - name: SWE-agent
+    line: an agent that turns an issue into a patch; repoach reviews and gates the PR.
+  - name: Aider
+    line: a local coding assistant whose commits reach a PR; repoach reviews and gates it.
+
+retired: []

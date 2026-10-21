@@ -68,6 +68,7 @@ from ..forge import (
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
 from ..forge.protocol import WRITABLE_STATES
+from ..gates.config import GatesConfig, load_gates_config
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -75,6 +76,7 @@ from .merge_gate import (
     gather_merge_facts,
 )
 from .persistence import init_schema, record_merge
+from .review_head import materialise_head, require_head_sha
 
 _log = get_logger(__name__)
 
@@ -432,6 +434,8 @@ class GateEvaluation:
         decision: The pure-gate decision over those facts.
         pull_request: The PR / MR as read for this evaluation, when the
             forge answered (its description and branch declare the spec).
+        tree: ``worktree`` / ``checkout`` when the ledger was re-verified
+            on a pinned head tree (SP-REVIEW-PINS-HEAD), else None.
     """
 
     head_sha: str
@@ -439,6 +443,7 @@ class GateEvaluation:
     facts: MergeFacts
     decision: MergeDecision
     pull_request: PullRequest | None = None
+    tree: str | None = None
 
 
 def _unknown_facts() -> MergeFacts:
@@ -566,6 +571,7 @@ def decide_at_head(
     ci_green: bool,
     repo_root: Path | None = None,
     head_sha: str | None = None,
+    gates_config: GatesConfig | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -591,6 +597,8 @@ def decide_at_head(
             about to be merged, not whatever the API happens to be
             serving.  ``None`` (the default) keeps today's behaviour for
             other callers such as :func:`evaluate_merge_gate`.
+        gates_config: The trusted gate configuration (the checkout's,
+            never the PR head tree's); read from ``repo_root`` when omitted.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -602,6 +610,7 @@ def decide_at_head(
         repo_root=repo_root or Path.cwd(),
         head_sha=resolved_head,
         ci_green=ci_green,
+        gates_config=gates_config,
     )
     return resolved_head, facts, compute_merge_decision(facts)
 
@@ -617,6 +626,9 @@ def evaluate_merge_gate(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     repo_root: Path | None = None,
+    pin_tree: bool = False,
+    keep_tree: bool = False,
+    announce: Callable[[str], None] | None = None,
 ) -> GateEvaluation:
     """Run the CI gate and the pure merge decision, without merging.
 
@@ -641,6 +653,12 @@ def evaluate_merge_gate(
     any of that with ``outcome_tag = ALREADY_MERGED``, ``merge`` False
     and that reason (SP-GATE-MERGED-MR-NAMED-REASON): its source branch
     may be gone, and there is nothing left to gate.
+
+    With ``pin_tree`` (``repoach review gate``), the verifiers re-check
+    the ledger on the tree of the verified head
+    (:func:`~repoach.review.review_head.materialise_head`), not on the
+    checkout's branch; ``keep_tree`` keeps that worktree and ``announce``
+    receives the ``reviewing <N> at <sha7> (<tree> <path>)`` line.
     """
     forge = forge or select_forge(cwd=repo_root)
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
@@ -699,14 +717,38 @@ def evaluate_merge_gate(
         sleep=sleep,
         head_sha=verified_head,
     )
-    head_sha, facts, decision = decide_at_head(
-        pr_number,
-        forge=forge,
-        db=db,
-        ci_green=ci_gate.green,
-        repo_root=repo_root,
-        head_sha=verified_head,
-    )
+    tree_kind: str | None = None
+    if pin_tree:
+        checkout = repo_root or Path.cwd()
+        with materialise_head(
+            forge,
+            pr_number,
+            require_head_sha(verified_head, pr_number),
+            repo_root=checkout,
+            state_dir=db.parent,
+            keep=keep_tree,
+        ) as tree:
+            if announce is not None:
+                announce(tree.announcement(pr_number))
+            head_sha, facts, decision = decide_at_head(
+                pr_number,
+                forge=forge,
+                db=db,
+                ci_green=ci_gate.green,
+                repo_root=tree.root,
+                head_sha=verified_head,
+                gates_config=load_gates_config(checkout),
+            )
+        tree_kind = tree.tree
+    else:
+        head_sha, facts, decision = decide_at_head(
+            pr_number,
+            forge=forge,
+            db=db,
+            ci_green=ci_gate.green,
+            repo_root=repo_root,
+            head_sha=verified_head,
+        )
     _log.info(
         "auto_merge.gate_evaluated",
         pr_number=pr_number,
@@ -721,6 +763,7 @@ def evaluate_merge_gate(
         facts=facts,
         decision=decision,
         pull_request=pr,
+        tree=tree_kind,
     )
 
 

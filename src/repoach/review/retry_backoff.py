@@ -56,12 +56,16 @@ class RetryResult(Generic[T]):
         attempts: Number of attempts actually made.
         accepted: Whether ``value`` was produced by an accepted
             attempt.
+        fatal: The loop stopped early on an exception whose
+            ``retryable`` attribute is ``False`` (a rejected credential:
+            retrying can only repeat the refusal).
     """
 
     value: T | None
     error: Exception | None
     attempts: int
     accepted: bool
+    fatal: bool = False
 
 
 def retry_with_backoff(
@@ -75,7 +79,10 @@ def retry_with_backoff(
     """Run ``attempt`` up to ``len(backoffs)`` times with backoff waits.
 
     Before each attempt after the first, sleeps for the scheduled
-    number of seconds. An attempt that raises is caught and retried.
+    number of seconds. An attempt that raises is caught and retried,
+    unless the exception carries ``retryable = False``
+    (:class:`~repoach.providers.errors.ProviderAuthError`): that stops
+    the loop at once, logged in full as ``f"{log_scope}.attempt_fatal"``.
     An attempt that returns an :class:`AttemptOutcome` with
     ``accept=False`` is also retried, but its value is remembered as
     the fallback if the schedule exhausts without an accepted outcome.
@@ -120,6 +127,17 @@ def retry_with_backoff(
             outcome = attempt(attempt_no)
         except Exception as exc:
             last_error = exc
+            if getattr(exc, "retryable", True) is False:
+                _log.error(
+                    f"{log_scope}.attempt_fatal",
+                    attempt=attempt_no,
+                    error=type(exc).__name__,
+                    message=str(exc),
+                    **context,
+                )
+                return RetryResult(
+                    value=None, error=exc, attempts=attempt_no, accepted=False, fatal=True
+                )
             _log.warning(
                 f"{log_scope}.attempt_failed",
                 attempt=attempt_no,

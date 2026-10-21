@@ -46,6 +46,12 @@ ENV_NAMES: dict[str, tuple[str, ...]] = {
     "repoach.remove_source_branch": ("REPOACH_REMOVE_SOURCE_BRANCH",),
     "review.bot_username": ("REPOACH_REVIEW_BOT_LOGIN", "REVIEW_BOT_LOGIN"),
     "provider.kind": ("REPOACH_PROVIDER",),
+    "provider.opus": ("REPOACH_MODEL_OPUS",),
+    "provider.sonnet": ("REPOACH_MODEL_SONNET",),
+    "provider.haiku": ("REPOACH_MODEL_HAIKU",),
+    "provider.cli_path": ("REPOACH_CLAUDE_CODE_CLI_PATH",),
+    "provider.base_url": ("REPOACH_OPENAI_BASE_URL",),
+    "gates.refuter_max_judged": ("REPOACH_REFUTER_MAX_JUDGED",),
     "state.db_path": ("REPOACH_DB_PATH",),
     "state.logs_dir": ("REPOACH_LOGS_DIR",),
 }

@@ -58,6 +58,9 @@ DEFAULT_TEST_COMMAND = "pytest -q tests/unit"
 DEFAULT_TIMEOUT_S = 900
 """Seconds a project command may run (``coder_loop`` ran pytest with this budget)."""
 
+DEFAULT_REFUTER_MAX_JUDGED = 10
+"""Findings the refuter judges per PR when ``[gates].refuter_max_judged`` is unset."""
+
 DEFAULT_PROMPTS_DIR = "prompts/review"
 """Where the reviewer personas live; always forbidden to the Coder."""
 
@@ -75,7 +78,21 @@ DEFAULT_SPEC_SOURCES: tuple[SpecSource, ...] = ("flag", "description", "branch")
 
 ForgeName = Literal["github", "gitlab"]
 MergeMethodName = Literal["squash", "merge", "rebase"]
-ProviderKind = Literal["", "anthropic", "claude_code", "openai", "openai_compatible", "gateway"]
+ProviderKind = Literal[
+    "",
+    "anthropic",
+    "claude_code",
+    "openai_compatible",
+    "gemini",
+    "gateway",
+    "openai",
+    "ollama",
+    "openrouter",
+    "groq",
+    "deepseek",
+    "mistral",
+]
+"""A provider kind, or a preset naming an ``openai_compatible`` endpoint (SP-UNIVERSAL-PROVIDERS)."""
 
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
 _SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
@@ -244,12 +261,20 @@ class CoderSection(_Section):
 
 
 class ProviderSection(_Section):
-    """``[provider]``: the provider *name* and model ids, never a credential (M4)."""
+    """``[provider]``: the provider *name* and model ids, never a credential (M4).
+
+    ``cli_path`` is the ``claude`` executable the ``claude_code`` provider
+    runs; empty means ``claude`` on ``PATH`` (SP-UNIVERSAL-PROVIDERS).
+    ``base_url`` is the endpoint root of a bare ``openai_compatible``
+    (required there); a preset or ``gemini`` fixes its host and refuses it.
+    """
 
     kind: ProviderKind = ""
     opus: str = ""
     sonnet: str = ""
     haiku: str = ""
+    cli_path: str = ""
+    base_url: str = ""
 
 
 class ReviewSection(_Section):
@@ -263,13 +288,30 @@ class GatesSection(_Section):
     """``[gates]``: verifier knobs (SP-UNIVERSAL-GATES).
 
     ``docstring_exempt`` None means the host default
-    (:meth:`ProjectConfig.with_host_defaults`).
+    (:meth:`ProjectConfig.with_host_defaults`). ``refuter_max_judged``
+    caps the findings the refuter sends to its judge per PR; the rest
+    are reported deferred, each one named (SP-REFUTER-JUDGES-WHAT-IT-CAN);
+    ``REPOACH_REFUTER_MAX_JUDGED`` outranks it, so the value is coerced
+    from the environment's string but never from a boolean.
     """
 
     docstring_exempt: list[str] | None = None
     advisory_verifiers: list[str] = Field(default_factory=list)
     disabled_verifiers: list[str] = Field(default_factory=list)
     verifier_commands: dict[str, str] = Field(default_factory=dict)
+    refuter_max_judged: int = Field(default=DEFAULT_REFUTER_MAX_JUDGED, gt=0)
+
+    @field_validator("refuter_max_judged", mode="before")
+    @classmethod
+    def _no_bool_cap(cls, value: object) -> object:
+        """Refuse ``true`` / ``false`` for the cap (an int, not a switch).
+
+        Raises:
+            ValueError: The value is a boolean.
+        """
+        if isinstance(value, bool):
+            raise ValueError("gates.refuter_max_judged must be a positive integer")
+        return value
 
 
 class ArchSection(_Section):

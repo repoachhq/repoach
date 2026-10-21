@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from repoach.gates.config import DEFAULT_REFUTER_MAX_JUDGED as _MAX_JUDGED
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -17,7 +18,7 @@ from repoach.review.findings import (
     record_finding,
     record_verification_attempt,
 )
-from repoach.review.refuter import _MAX_JUDGED, JUDGED_CLAIM_TYPES, judge_findings_for_pr
+from repoach.review.refuter import JUDGED_CLAIM_TYPES, judge_findings_for_pr
 
 
 def _spec_gap_finding() -> Finding:
@@ -68,9 +69,9 @@ def test_spec_gap_is_judged(tmp_path: Path) -> None:
 
     counts = judge_findings_for_pr(
         db, pr_number=1, repo_root=tmp_path, head_sha="dead123", judge_factory=_factory
-    )
+    ).counts
 
-    assert counts == {"verified": 1, "refuted": 0, "deferred": 0}
+    assert counts == {"verified": 1, "refuted": 0, "deferred": 0, "unverified": 0}
     assert len(prompts) == 1
     assert "spec_gap" in prompts[0]
 
@@ -128,9 +129,9 @@ def test_mechanical_deferral_falls_back_to_judge(tmp_path: Path) -> None:
 
     counts = judge_findings_for_pr(
         db, pr_number=1, repo_root=tmp_path, head_sha="dead123", judge_factory=_factory
-    )
+    ).counts
 
-    assert counts == {"verified": 1, "refuted": 0, "deferred": 0}
+    assert counts == {"verified": 1, "refuted": 0, "deferred": 0, "unverified": 0}
     assert len(prompts) == 1
     assert "missing_test" in prompts[0]
 
@@ -189,7 +190,7 @@ def test_judge_fallback_respects_cap(tmp_path: Path) -> None:
 
     counts = judge_findings_for_pr(
         db, pr_number=1, repo_root=tmp_path, head_sha="dead123", judge_factory=_factory
-    )
+    ).counts
 
     assert len(prompts) == _MAX_JUDGED
     assert counts["deferred"] >= 1

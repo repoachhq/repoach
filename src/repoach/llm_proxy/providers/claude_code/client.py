@@ -12,19 +12,22 @@ Tradeoffs vs the native Anthropic API:
   produced by the model are converted to native ``tool_use`` SSE
   blocks via :class:`HeuristicToolParser`, matching what the rest
   of the proxy expects.
-- No token counts from the upstream model are echoed (the CLI
-  reports its own usage which differs from API token semantics).
+- Token counts are the CLI's own ``usage`` report (input, prompt
+  cache, output) copied onto the terminal ``message_delta``; a count
+  the CLI does not report falls back to the caller's estimate.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shlex
 import shutil
+import signal
 import tempfile
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +46,23 @@ from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 _SUBPROCESS_KILL_GRACE_S: float = 2.0
 
 
-async def _kill_subprocess_on_exit(proc: asyncio.subprocess.Process, req_tag: str) -> None:
+def _send(proc: asyncio.subprocess.Process, sig: int, *, group: bool) -> None:
+    """Send ``sig`` to ``proc``, or to its whole process group when ``group``.
+
+    The single-process path keeps ``terminate`` / ``kill`` (SIGTERM /
+    SIGKILL), exactly the calls the gateway always made.
+    """
+    if group:
+        os.killpg(proc.pid, sig)
+    elif sig == signal.SIGKILL:
+        proc.kill()
+    else:
+        proc.terminate()
+
+
+async def _kill_subprocess_on_exit(
+    proc: asyncio.subprocess.Process, req_tag: str, *, group: bool = False
+) -> None:
     """Ensure ``proc`` is not left running past the end of a stream call.
 
     Best-effort, never raises: sends SIGTERM and waits up to
@@ -55,11 +74,13 @@ async def _kill_subprocess_on_exit(proc: asyncio.subprocess.Process, req_tag: st
         proc: The spawned ``claude`` CLI child process.
         req_tag: Request-id log suffix for correlating cleanup log
             lines with the originating request.
+        group: Signal the child's whole process group (it was spawned as
+            a session leader), so the helpers ``claude`` starts die with it.
     """
     if proc.returncode is not None:
         return
     try:
-        proc.terminate()
+        _send(proc, signal.SIGTERM, group=group)
     except ProcessLookupError as exc:
         logger.debug(
             "CLAUDE_CODE_SUBPROCESS_KILL_RACE:{} pid={} terminate raced with exit ({})",
@@ -80,7 +101,7 @@ async def _kill_subprocess_on_exit(proc: asyncio.subprocess.Process, req_tag: st
             _SUBPROCESS_KILL_GRACE_S,
         )
     try:
-        proc.kill()
+        _send(proc, signal.SIGKILL, group=group)
     except ProcessLookupError as exc:
         logger.debug(
             "CLAUDE_CODE_SUBPROCESS_KILL_RACE:{} pid={} kill raced with exit ({})",
@@ -111,6 +132,8 @@ class ClaudeCodeProvider(BaseProvider):
         cli_path: str = "claude",
         default_model: str = "sonnet",
         subprocess_timeout: float = 600.0,
+        own_process_group: bool = False,
+        child_env: Callable[[Mapping[str, str]], dict[str, str]] | None = None,
     ) -> None:
         """Initialise the provider.
 
@@ -123,6 +146,15 @@ class ClaudeCodeProvider(BaseProvider):
                 ``claude -p`` invocation. Set higher than the proxy's
                 generic HTTP read timeout because cold starts +
                 cache-creation on the first turn can exceed 2 min.
+            own_process_group: Spawn each ``claude`` in its own session
+                and kill the whole group on timeout or cancellation.
+                The in-process direct provider sets it
+                (SP-UNIVERSAL-PROVIDERS); the gateway keeps the
+                single-process kill it always had.
+            child_env: Builds the CLI's environment from ``os.environ`` at
+                each spawn. None (the gateway) inherits it unchanged; the
+                direct provider strips every API key and token so
+                ``claude --print`` answers on the login, never on a key.
 
         The provider runs ``claude`` from a clean tempdir so the CLI
         never auto-loads the proxy's own ``CLAUDE.md``, project
@@ -141,6 +173,8 @@ class ClaudeCodeProvider(BaseProvider):
         self._cli_path = resolved_cli
         self._default_model = default_model
         self._subprocess_timeout = subprocess_timeout
+        self._own_process_group = own_process_group
+        self._child_env = child_env
         self._workdir = Path(tempfile.mkdtemp(prefix="repoach_claude_code_"))
         self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
             "claude_code",
@@ -217,6 +251,8 @@ class ClaudeCodeProvider(BaseProvider):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self._workdir),
+                    start_new_session=self._own_process_group,
+                    env=None if self._child_env is None else self._child_env(os.environ),
                 )
                 register_pid(proc.pid)
                 stdout_b, stderr_b = await asyncio.wait_for(
@@ -294,6 +330,7 @@ class ClaudeCodeProvider(BaseProvider):
 
                 stop_reason = "tool_use" if tool_use_emitted else "end_turn"
                 output_tokens = _resolve_output_tokens(payload, text_chars_emitted)
+                _apply_cli_input_usage(sse, payload)
 
             except (asyncio.CancelledError, GeneratorExit):
                 raise
@@ -322,7 +359,7 @@ class ClaudeCodeProvider(BaseProvider):
                 raise
             finally:
                 if proc is not None:
-                    await _kill_subprocess_on_exit(proc, req_tag)
+                    await _kill_subprocess_on_exit(proc, req_tag, group=self._own_process_group)
                     unregister_pid(proc.pid)
                 if sysprompt_path is not None:
                     try:
@@ -570,6 +607,29 @@ class ClaudeCodeProvider(BaseProvider):
             raise ProviderError(
                 append_request_id(f"claude CLI emitted non-JSON: {text[:200]}", request_id)
             ) from exc
+
+
+def _apply_cli_input_usage(sse: SSEBuilder, payload: dict[str, Any]) -> None:
+    """Copy the CLI's reported input and prompt-cache counts onto ``sse``.
+
+    ``claude --output-format json`` reports ``usage.input_tokens`` (the
+    uncached part), ``cache_creation_input_tokens`` and
+    ``cache_read_input_tokens``; the terminal ``message_delta`` then
+    carries those counts instead of the caller's estimate.  A count that
+    is missing or not an integer leaves the estimate in place.
+    """
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return
+    reported = usage.get("input_tokens")
+    if isinstance(reported, int):
+        sse.input_tokens = reported
+    cache_write = usage.get("cache_creation_input_tokens")
+    if isinstance(cache_write, int):
+        sse.cache_write_tokens = cache_write
+    cache_read = usage.get("cache_read_input_tokens")
+    if isinstance(cache_read, int):
+        sse.cache_read_tokens = cache_read
 
 
 def _resolve_output_tokens(payload: dict[str, Any], text_chars: int) -> int:

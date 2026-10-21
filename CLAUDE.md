@@ -61,6 +61,7 @@ layers:
 ```
 src/repoach/
   agent_engine/    # provider-agnostic AgentLoop (runs the review bots)
+  ci_entry/        # repoach ci review: advisory review from any CI (GitLab CI, GitHub Actions)
   cli/             # Typer CLI (review factory only)
   core/            # config, logging
   forge/           # Forge protocol: GitHub (gh) + GitLab (glab) behind one interface

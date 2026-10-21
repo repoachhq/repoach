@@ -11,10 +11,14 @@ runs after this one and wins).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from repoach.llm_proxy.config.settings import get_settings
 from repoach.llm_proxy.routing import reset_breaker
+from repoach.providers.select import set_provider_override
+from repoach.review.refuter import JudgingReport
 
 
 @pytest.fixture(autouse=True)
@@ -86,5 +90,17 @@ def _no_live_refuter(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "repoach.review.orchestrator.judge_findings_for_pr",
-        lambda *_args, **_kwargs: {"verified": 0, "refuted": 0, "deferred": 0},
+        lambda *_args, **_kwargs: JudgingReport(),
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_provider_flag() -> Iterator[None]:
+    """Clear ``--provider`` after each test.
+
+    The flag is recorded process-wide (:func:`repoach.providers.select.set_provider_override`);
+    a CLI test passing ``--provider`` would otherwise reroute every later
+    test in the same worker.
+    """
+    yield
+    set_provider_override(None)

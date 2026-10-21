@@ -111,6 +111,10 @@ class Usage(BaseModel):
     this field keep working; a missing or unreadable upstream detail
     also resolves to 0 rather than failing the response.
     """
+    cache_read_tokens: int = 0
+    """Input tokens served from the provider's prompt cache, not in ``input_tokens``."""
+    cache_write_tokens: int = 0
+    """Input tokens written to the provider's prompt cache, not in ``input_tokens``."""
 
 
 TraceOutcome = Literal[
