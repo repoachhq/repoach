@@ -233,3 +233,11 @@ def test_readme_line_matches_the_published_pattern() -> None:
     line = readme_line(card)
     assert README_LINE.fullmatch(line), line
     assert line.startswith("precision 0.75 (45/60), recall 0.50 (15/30) on 105 labelled")
+
+
+def test_an_unlabelled_run_leaves_located_defects_out_of_recall() -> None:
+    card = score(_result(), _corpus({}))
+    assert card.total.recall.fraction() == "0/1"
+    assert card.recall_pending == 1
+    assert card.planted_located == 1
+    assert card.planted_total == 2

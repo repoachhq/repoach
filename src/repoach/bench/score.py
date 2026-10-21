@@ -15,7 +15,10 @@ none yet                  unlabelled (excluded, listed for labelling)
 precision = TP / (TP + FP); refuter precision = correct refutations /
 (correct + wrong refutations); recall = planted defects found / planted
 defects, where a defect is *found* when a non-refuted finding labelled
-``true`` cites its file on a line range overlapping the defect's. Every
+``true`` cites its file on a line range overlapping the defect's. A
+defect whose overlapping findings are not all labelled yet (and none is
+labelled ``true``) is left out of recall and counted as waiting on
+labels, so an unlabelled run never reads as a recall of 0. Every
 ratio is printed with its numerator and denominator, and ``cannot say``
 when the denominator is 0.
 
@@ -172,6 +175,8 @@ class Scorecard:
     cases: list[CaseLine]
     cases_skipped: int
     planted_located: int
+    planted_total: int
+    recall_pending: int
     labels_expected: int
     labels_matched: int
     unlabelled: list[Unlabelled] = field(default_factory=list)
@@ -230,7 +235,7 @@ def score(result: BenchResult, corpus: Corpus) -> Scorecard:
     by_severity: dict[str, Tally] = {}
     lines: list[CaseLine] = []
     unlabelled: list[Unlabelled] = []
-    skipped = located_total = expected = matched = 0
+    skipped = located_total = expected = matched = planted_total = recall_pending = 0
     known_cases = {case.case: case for case in corpus.cases}
     for run in result.cases:
         case = known_cases.get(run.case)
@@ -253,14 +258,18 @@ def score(result: BenchResult, corpus: Corpus) -> Scorecard:
                 unlabelled.append(Unlabelled(run.case, finding))
         located = 0
         for defect in planted:
-            total.planted += 1
-            _row(by_severity, defect.severity).planted += 1
-            for reviewer in REVIEWERS:
-                _row(by_reviewer, reviewer).planted += 1
+            planted_total += 1
             posted = [f for f in run.findings if not f.refuted and overlaps(f, defect)]
             if posted:
                 located += 1
             confirmed = [f for f in posted if labels.get(f.fingerprint) == "true"]
+            if not confirmed and any(labels.get(f.fingerprint) is None for f in posted):
+                recall_pending += 1
+                continue
+            total.planted += 1
+            _row(by_severity, defect.severity).planted += 1
+            for reviewer in REVIEWERS:
+                _row(by_reviewer, reviewer).planted += 1
             if confirmed:
                 total.found += 1
                 _row(by_severity, defect.severity).found += 1
@@ -292,6 +301,8 @@ def score(result: BenchResult, corpus: Corpus) -> Scorecard:
         cases=lines,
         cases_skipped=skipped,
         planted_located=located_total,
+        planted_total=planted_total,
+        recall_pending=recall_pending,
         labels_expected=expected,
         labels_matched=matched,
         unlabelled=unlabelled,
@@ -351,8 +362,8 @@ def render_report(card: Scorecard, *, markdown: bool = False) -> list[str]:
     lines += _table("severity", card.by_severity, markdown=markdown)
     lines += ["", totals_line(card)]
     lines.append(
-        f"planted defects located before labelling: {card.planted_located}/{card.total.planted}"
-        " (a non-refuted finding overlaps the defect; recall needs its label)"
+        f"planted defects located: {card.planted_located}/{card.planted_total} (a non-refuted"
+        f" finding overlaps the defect); recall waits on labels for {card.recall_pending}"
     )
     if card.labels_expected:
         lines.append(f"label match rate: {card.match_rate.text()}")
