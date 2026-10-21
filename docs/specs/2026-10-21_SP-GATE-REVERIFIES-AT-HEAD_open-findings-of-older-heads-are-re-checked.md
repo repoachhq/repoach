@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/head_reverify.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py, tests/unit/test_review_pr_reverifies_at_head.py]
   resources: []
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-UNIVERSAL-GATES, SP-REVIEW-PINS-HEAD, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-PLAN-SELECTOR-AUDIT-WIRE, SP-PLAN-CONTRACT-LINTS, SP-UNIVERSAL-FORGE]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-UNIVERSAL-GATES, SP-REVIEW-PINS-HEAD, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-PLAN-SELECTOR-AUDIT-WIRE, SP-PLAN-CONTRACT-LINTS, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints: {}
@@ -235,6 +235,9 @@ a complete review at B and coverage held, the gate exits 0 and prints
 - Adds dependency: SP-GATE-REVERIFIES-AT-HEAD -> SP-PLAN-SELECTOR-AUDIT-WIRE (owner of `spec_gate.py`: G6 changes `promised_body_non_trivial`; the tests call it)
 - Adds dependency: SP-GATE-REVERIFIES-AT-HEAD -> SP-PLAN-CONTRACT-LINTS (the coverage test builds an `ActionPlan`)
 - Adds dependency: SP-GATE-REVERIFIES-AT-HEAD -> SP-UNIVERSAL-FORGE (the gate tests drive a `GitHubForge` with a real `git`)
+- Adds dependency: SP-GATE-REVERIFIES-AT-HEAD -> SP-ORCH-DOCSTRING (0.2: owner of `orchestrator.py`; the `review pr` tests drive `run_review` and read `TeamOutcome`)
+- Adds dependency: SP-GATE-REVERIFIES-AT-HEAD -> SP-RETRY-BACKOFF-DEDUP (0.2: owner of `reviewer.py`; the `review pr` tests build `ReviewerOutcome` stubs)
+- `orchestrator.py` (0.2) gains the call into `head_reverify.py`; `head_reverify` imports nothing from the orchestrator.
 - `auto_merge.py` is frontier; it gains the call into `head_reverify.py`. No cycle: `head_reverify` imports neither `merge_gate` nor `auto_merge`.
 
 ## Diagram
