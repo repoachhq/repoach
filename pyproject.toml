@@ -62,6 +62,8 @@ dev = [
     "hypothesis>=6.108",
     "ruff>=0.5",
     "mypy>=1.10",
+    "build>=1.2",
+    "twine>=5.0",
 ]
 
 [project.urls]

@@ -114,3 +114,68 @@ jobs:
           kill "$proxy_pid" 2>/dev/null || true
           tail -100 logs/proxy_smoke.log || true
           exit 1
+
+  wheel-build:
+    name: wheel-build
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    steps:
+      - name: Checkout (full history, the version comes from the tags)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build --sdist --wheel --outdir dist/
+          twine check dist/*
+          ls -l dist/
+
+      - name: Upload dist
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  wheel-smoke:
+    name: wheel-smoke (${{ matrix.python-version }})
+    needs: wheel-build
+    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: Checkout (the smoke script only)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          sparse-checkout: scripts/wheel_smoke.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Set up Python ${{ matrix.python-version }}
+        id: py
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: pipx install the wheel and run it outside the checkout
+        run: |
+          python -m pip install --upgrade pipx
+          PIPX="python -m pipx" bash scripts/wheel_smoke.sh \
+            --python "${{ steps.py.outputs.python-path }}" dist/repoach-*.whl
