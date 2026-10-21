@@ -88,8 +88,11 @@ and is the missing half.
 
 ## Assumptions
 
-- A1: the gate reads the head tree (SP-REVIEW-PINS-HEAD G2); the
-  re-check never reads the checkout.
+- A1: the gate and `review merge` both read the head tree
+  (SP-REVIEW-PINS-HEAD G2); the re-check never reads the checkout. A
+  `decide_at_head` call that is not told its `repo_root` is the head
+  tree skips the re-check with `findings of older heads not
+  re-verified (no head tree pinned)`, and those findings keep blocking.
 - A2: the refuter cap and the gate configuration come from the
   checkout (trusted), never from the PR head's `repoach.toml`.
 - A3: a finding the re-check resolves says nothing about whether it was
@@ -138,13 +141,17 @@ Re-check per claim type:
 | Claim | Check at head | resolved when | still open when | otherwise |
 |---|---|---|---|---|
 | `missing_test` / `missing_docstring` / `lint_convention` | `verify_finding` | it refutes, or the cited file is gone | it verifies | refuter |
-| `missing_test` on a non-Python file | the symbol declared on the cited line, searched in the language's test files (`*.test.*`, `*.spec.*`, `__tests__/`, `*_test.go`) | a test file names it | none does | refuter (no symbol on the line) |
+| `missing_test` on a JavaScript/TypeScript file | the symbol declared on the cited line at the finding's head, looked for in the code of every running `it`/`test` block of the Vitest test files (comments, strings, titles, `.skip`/`.todo` blocks ignored) | such a block uses it, in a test file new or changed since the finding's head | none does | refuter (no symbol on the line; any other non-Python language) |
 | `design` / `security` / `spec_gap` | refuter, cited evidence read at head | refuted, or the cited file is gone | verified | needs judgement |
 | `broken_behavior` | CI at head | green | red | — |
 
 A finding already re-checked at this head (`checked_at_sha` = head,
-recorded at another head) is counted `still_open` with its stored
-reason, without a second model call.
+recorded at another head) keeps its stored outcome — `still_open`, or
+`needs_judgement` unless the cap deferred it — without a second model
+call; `broken_behavior` is always re-read from CI, which may have
+turned green since. Findings carrying the same claim (claim type,
+file, lines and normalised text — several reviewers raising one
+defect) are re-checked once and cost one judge call.
 
 Outputs:
 - gate JSON: `reverified: {"resolved": int, "still_open": int, "needs_judgement": int}`.
@@ -168,6 +175,11 @@ a complete review at B and coverage held, the gate exits 0 and prints
   finding stays `verified` with `checked_at_sha` = B, the reasons say
   `finding <id>: security src/x.py:3 raised at <A7>, still present at <B7>`, exit 5.
 - the gate runs twice at B → the second run makes no model call.
+- `review merge` with the checkout on the base branch (the cited file
+  absent there) → the head tree is still the one read; the finding is
+  never resolved by the checkout's absence.
+- a first gate with CI pending, a second with CI green, same head → a
+  `broken_behavior` finding resolves on the second.
 - more judged findings than the cap → the rest are `needs judgement
   (judging cap N reached)`.
 - a finding recorded at B itself → untouched (the review at B owns it).
