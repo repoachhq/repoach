@@ -33,6 +33,7 @@ from repoach.providers.errors import (
 from repoach.providers.select import (
     KEYLESS_API_KEY,
     PRESETS,
+    SELECTABLE,
     Preset,
     openai_compatible_base_url,
     resolve_route,
@@ -400,3 +401,10 @@ def test_nothing_configured_is_one_line_rc_2_before_any_forge_call(
     lines = [line for line in result.stderr.splitlines() if line.strip()]
     assert lines == [f"repoach: {NO_PROVIDER_MESSAGE}"]
     assert forge.transport_calls == []
+
+
+def test_no_provider_message_names_every_kind_preset_and_the_flag() -> None:
+    assert "--provider" in NO_PROVIDER_MESSAGE
+    assert "REPOACH_PROVIDER" in NO_PROVIDER_MESSAGE
+    for name in SELECTABLE:
+        assert name in NO_PROVIDER_MESSAGE

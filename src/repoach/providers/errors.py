@@ -63,8 +63,9 @@ class ProviderConfigError(GatewayConfigError):
 
 
 NO_PROVIDER_MESSAGE = (
-    "no provider configured -- set [provider].kind in repoach.toml or REPOACH_PROVIDER "
-    "(claude_code, anthropic, openai_compatible, gemini, gateway)"
+    "no provider configured -- pass --provider, or set REPOACH_PROVIDER or [provider].kind "
+    "in repoach.toml, to a kind (claude_code, anthropic, openai_compatible, gemini, gateway) "
+    "or a preset (openai, ollama, openrouter, groq, deepseek, mistral)"
 )
 """The one line every command prints, after ``repoach: ``, when nothing names a provider."""
 

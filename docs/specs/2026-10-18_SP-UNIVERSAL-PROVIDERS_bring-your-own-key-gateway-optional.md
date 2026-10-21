@@ -133,7 +133,7 @@ no-provider error, and the usage ledger of `SP-USAGE-LEDGER`.
   `[provider].kind`; `ProviderRoute.source` is `flag`.
 - One error (`NoProviderConfiguredError`, a `ProviderConfigError`): no
   name anywhere and no gateway URL →
-  `repoach: no provider configured -- set [provider].kind in repoach.toml or REPOACH_PROVIDER (claude_code, anthropic, openai_compatible, gemini, gateway)`,
+  `repoach: no provider configured -- pass --provider, or set REPOACH_PROVIDER or [provider].kind in repoach.toml, to a kind (claude_code, anthropic, openai_compatible, gemini, gateway) or a preset (openai, ollama, openrouter, groq, deepseek, mistral)`,
   rc 2, before any forge call; the same text from the `review pr`
   preflight, the agent loop (every other command), `doctor`, and
   `ci review` (as its skip reason: advisory mode stays rc 0 by
