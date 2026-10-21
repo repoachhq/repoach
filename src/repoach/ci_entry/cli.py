@@ -20,6 +20,7 @@ from ..core.paths import NotARepositoryError, require_project_root
 from ..forge import select_forge
 from ..project.config import ConfigError, ForgeName
 from ..project.resolve import effective_bot_username, resolve_project_config
+from ..providers.select import PROVIDER_FLAG_HELP, SELECTABLE
 from .advisory import (
     DEFAULT_REVIEW_TIMEOUT_S,
     EXIT_CODE_TABLE,
@@ -63,7 +64,7 @@ def emit(report: CiReviewReport) -> None:
     forge = report.forge or "no forge"
     typer.echo(
         f"repoach ci review: {report.outcome.value}{where} on {forge} "
-        f"({report.mode}, provider {report.provider_mode}): {report.reason}",
+        f"({report.mode}, provider {report.provider or 'none'}): {report.reason}",
         err=True,
     )
     for note in report.notes:
@@ -108,6 +109,7 @@ def ci_review(
         "--timeout",
         help="Minutes before the review child is killed with its process group.",
     ),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
 ) -> None:
     """Review the PR / MR of this CI job; advisory unless --strict.
 
@@ -130,6 +132,7 @@ def ci_review(
             dry_run=dry_run,
             strict=strict,
             timeout_s=timeout_min * 60,
+            provider=provider,
         )
     except Exception as exc:
         _log.error("ci_review_internal_error", error=repr(exc))
@@ -146,6 +149,7 @@ def review_from_env(
     dry_run: bool,
     strict: bool,
     timeout_s: float = DEFAULT_REVIEW_TIMEOUT_S,
+    provider: str | None = None,
 ) -> CiReviewReport:
     """Run ``ci review`` from the checkout in the working directory; return its report.
 
@@ -157,10 +161,18 @@ def review_from_env(
         dry_run: ``--dry-run``.
         strict: ``--strict``.
         timeout_s: Deadline of the review child.
+        provider: ``--provider``: outranks ``REPOACH_PROVIDER`` and
+            ``[provider].kind``, and is what the review child is told.
 
     Returns:
         The report :func:`emit` prints.
     """
+    if provider is not None and provider not in SELECTABLE:
+        return finish(
+            Outcome.CONFIG_ERROR,
+            f"unknown provider {provider!r} -- use one of {', '.join(SELECTABLE)}",
+            strict=strict,
+        )
     try:
         forge_override = _forge_flag(forge_name)
         root = require_project_root()
@@ -175,7 +187,7 @@ def review_from_env(
         post=post,
         dry_run=dry_run,
         strict=strict,
-        provider_kind=resolved.config.provider.kind,
+        provider_kind=provider or resolved.config.provider.kind,
     )
     if isinstance(planned, CiReviewReport):
         return planned

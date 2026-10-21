@@ -1,14 +1,14 @@
 ---
 id: SP-UNIVERSAL-PROVIDERS
 title: Bring-your-own key by default, the chain-failover gateway optional, a usage ledger per project
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-20
+updated: 2026-10-21
 
 owns:
-  code: [src/repoach/providers/, tests/provider_fakes.py, tests/unit/test_provider_select.py, tests/unit/test_provider_direct_claude_code.py, tests/unit/test_usage_ledger.py]
+  code: [src/repoach/providers/, src/repoach/agent_engine/adapters.py, src/repoach/agent_engine/agent_loop.py, src/repoach/llm/capability.py, tests/provider_fakes.py, tests/unit/test_provider_select.py, tests/unit/test_provider_direct_claude_code.py, tests/unit/test_provider_direct_openai_compatible.py, tests/unit/test_usage_ledger.py]
   resources: [db:table:usage_ledger]
 
 depends_on: [SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-CHAINS-SINGLE-SOURCE, SP-DB-PATH-XDG]
@@ -91,6 +91,95 @@ Not in slice 1 (`docs/tech_debt.md`): the usage ledger (G5, AC6, AC7),
 the `openai_compatible` direct provider, a `--provider` flag, G4's
 single `NoProviderConfiguredError`, exact model ids on `claude_code`,
 and a live `anthropic` run (no key on the measuring machine).
+
+## Delivered — slice 2 (0.3, 2026-10-21)
+
+Owner decisions (2026-10-20): repoach connects several LLM providers,
+the user brings their own key or login, repoach resells no tokens;
+slice 2 is the OpenAI-compatible direct provider with presets, Gemini
+both native and through OpenRouter, a `--provider` flag, one named
+no-provider error, and the usage ledger of `SP-USAGE-LEDGER`.
+
+- `openai_compatible` (`providers/select.py`, `providers/direct.py`):
+  the gateway's own `GenericOpenAIProvider` in-process (subclass
+  `MeteredChatTransport` adds only `stream_options.include_usage`, so
+  the upstream reports its token counts); `[provider].base_url` /
+  `REPOACH_OPENAI_BASE_URL`, a root whose path has no version segment
+  gets `/v1`; key `REPOACH_OPENAI_API_KEY`, else `OPENAI_API_KEY`,
+  optional (a keyless server receives the placeholder `no-key`); no
+  default model: each tier from `[provider].<tier>` /
+  `REPOACH_MODEL_<TIER>`, a missing one is a `ProviderConfigError`
+  naming the settings.  401/403 → `ProviderAuthError` naming the
+  variable; 404 → `GatewayError`; 5xx / unreachable →
+  `GatewayTransportError`.  The aggregator now turns a stream that
+  ended with `stop_reason: error` into an error with the transport's
+  `error_status_code`, which is how the chat transport reports a
+  refused request.
+- Presets (`PRESETS`) set only a base URL and key names: `openai`
+  (`api.openai.com/v1`, `REPOACH_OPENAI_API_KEY` / `OPENAI_API_KEY`),
+  `ollama` (`localhost:11434/v1`, no key), `openrouter`, `groq`,
+  `deepseek`, `mistral` (`REPOACH_<NAME>_API_KEY`, else `<NAME>_API_KEY`).
+- `gemini`: the Generative Language API through Google's
+  OpenAI-compatible root `https://generativelanguage.googleapis.com/v1beta/openai`
+  (ai.google.dev/gemini-api/docs/openai, read 2026-10-21) with the same
+  transport — native in the sense of Google's own endpoint, not the
+  `generateContent` wire format (tech_debt #50); key
+  `REPOACH_GEMINI_API_KEY`, else `GEMINI_API_KEY`, else
+  `GOOGLE_API_KEY`.  Gemini through OpenRouter is the `openrouter`
+  preset with a `google/gemini-…` model id.
+- `--provider <kind|preset>` on `review pr`, `review gate` (accepted and
+  validated; the gate makes no model call) and `ci review` (passed to the
+  review child as `REPOACH_PROVIDER`): flag > `REPOACH_PROVIDER` >
+  `[provider].kind`; `ProviderRoute.source` is `flag`.
+- One error (`NoProviderConfiguredError`, a `ProviderConfigError`): no
+  name anywhere and no gateway URL →
+  `repoach: no provider configured -- pass --provider, or set REPOACH_PROVIDER or [provider].kind in repoach.toml, to a kind (claude_code, anthropic, openai_compatible, gemini, gateway) or a preset (openai, ollama, openrouter, groq, deepseek, mistral)`,
+  rc 2, before any forge call; the same text from the `review pr`
+  preflight, the agent loop (every other command), `doctor`, and
+  `ci review` (as its skip reason: advisory mode stays rc 0 by
+  SP-UNIVERSAL-CI-ENTRY's rule, tech_debt #53).  An unset kind with a
+  gateway URL is still the gateway, as before.
+- `doctor`: the selected route as before, then one `provider_option=`
+  line per kind and preset naming its endpoint and which credential
+  variables are present (never a value).
+- Usage ledger (G5, delivered as `SP-USAGE-LEDGER`): `usage_ledger`
+  table, one row per call from `AgentLoop._provider_call`, the only
+  write site; `review pr` JSON `usage` and one stderr line; `repoach
+  usage --since 7d`.  The transports now carry the upstream's own
+  input and prompt-cache counts (chat: `prompt_tokens` minus
+  `cached_tokens`; CLI: its `usage` report), and the aggregator no
+  longer counts the placeholder output token twice.
+
+Measured 2026-10-21 on this machine (Yoob, GitLab, no gateway, no
+`.env`, ledger in a scratch file; Yoob's `git status` empty before and
+after):
+
+- `REPOACH_PROVIDER=claude_code repoach review pr 296 --dry-run --forge
+  gitlab` → rc 0 in 115 s, final verdict APPROVE (Architect, Tester,
+  Scribe APPROVE on `sonnet`; Sentinel COMMENT on `opus`), posted 0/0;
+  stderr `repoach: usage: 8 calls, 300374 tokens (in 16, out 7166,
+  cached 293192), 113.0 s, subscription (tokens only)`; per reviewer:
+  Architect 1 call / 501 out / 9.0 s, Sentinel 2 / 4620 / 54.5 s, Tester
+  1 / 527 / 8.7 s, Scribe 1 / 394 / 7.4 s, Refuter 3 / 1124 / 34.5 s.
+  The CLI reports 2 uncached input tokens per call; the prompt is in
+  its cache counts (221148 written, 72044 read).
+- `REPOACH_PROVIDER=ollama` against the local Ollama (`llama3.1:8b`): a
+  one-shot call answered `Pong!`, row `ollama llama3.1:8b` 17 in / 4 out,
+  84.6 s (model load), cost `$0` self-hosted.
+  `REPOACH_PROVIDER=ollama` (all tiers `llama3.1:8b`) `repoach review pr
+  296 --dry-run --forge gitlab` → rc 3 in 242 s: the route works (24
+  calls answered, 98304 in / 5485 out, `$0.0000` self-hosted, posted
+  0/0) but all four reviewers end ERROR on unparseable answers.  Every
+  call reported exactly 4096 prompt tokens: Ollama's default context
+  window truncated the review prompt, so an 8B model at default
+  settings cannot review a Yoob-sized diff (a model or `num_ctx` choice,
+  not a provider defect).
+
+Not in slice 2 (`docs/tech_debt.md` #47, #48, #50–#54): exact model ids
+on `claude_code`; any live run of `anthropic`, `openai`, `openrouter`,
+`gemini` (no key on the measuring machine; pinned against loopback
+fakes); prices beyond ten models and a `repoach.toml` price override;
+a native `generateContent` transport.
 
 ## Context
 
@@ -199,17 +288,19 @@ flowchart TD
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: `env -i HOME=$HOME PATH=$PATH repoach review pr 1 --dry-run` in any clone → rc 2, stderr contains `no provider configured` and the four names; `ss -ltnp | grep -c 8084` unchanged.
+- [x] AC1 (as built 0.3: five names, the owner's wording; pinned by `test_provider_direct_openai_compatible.py::test_nothing_configured_is_one_line_rc_2_before_any_forge_call` — one stderr line, rc 2, zero forge transport calls): `env -i HOME=$HOME PATH=$PATH repoach review pr 1 --dry-run` in any clone → rc 2, stderr contains `no provider configured` and the four names; `ss -ltnp | grep -c 8084` unchanged.
 - [ ] AC2: `REPOACH_PROVIDER=anthropic REPOACH_ANTHROPIC_API_KEY=$KEY repoach review pr <n> --dry-run` with the gateway unit stopped → rc 0 or 2 (never 1), JSON `len(reviews)==4`; `sqlite3 <db> "select count(*) from usage_ledger where provider='anthropic'"` ≥ 5.
 - [ ] AC3: `REPOACH_PROVIDER=claude_code` with `CLAUDE_CODE_OAUTH_TOKEN` set and no interactive login → same shape; `REPOACH_PROVIDER=claude_code` with no `claude` on PATH → rc 2, `claude CLI not found` (wording as built). The second half is green (`test_provider_direct_claude_code.py::test_unusable_cli_fails_before_any_forge_call`); the token half is unmeasured (`claude auth status` reports `loggedIn: true`, `authMethod: oauth_token` for a set token, measured 2026-10-20, but no review ran on a token-only login).
 - [x] AC3b (added 0.2): with an interactive login, `REPOACH_PROVIDER=claude_code repoach review pr 296 --dry-run --forge gitlab` on Yoob, no gateway → rc 0, four reviews, posted 0/0 (Delivered, measured).
 - [x] AC4 (as built 0.2: the pre-change request bytes are pinned instead of a JSON fixture — `test_provider_select.py::test_gateway_route_request_is_byte_identical`, body captured from `develop` d6335de; `pytest -q tests/unit` green): `REPOACH_PROVIDER=gateway REPOACH_LLM_PROXY_BASE_URL=http://127.0.0.1:8084 repoach review pr <n> --dry-run` in repoach's own checkout → identical JSON shape to the pre-change run (fixture), and `pytest -q tests/unit` green.
-- [ ] AC5: `pytest -q tests/unit/test_provider_select.py` → green: precedence flag > env > file (green for env > file; no flag yet); `claude_code` never selected by default; each provider's missing credential names the variable.
-- [ ] AC6: `pytest -q tests/unit/test_usage_ledger.py` → green with a truthful `httpx.MockTransport` fake for the Anthropic SDK: one row per call, `cost_usd` null, `error` set on a 401.
-- [ ] AC7: `repoach usage --json | jq '.totals.calls'` after AC2 ≥ 5; `repoach usage` prints `cannot say` in the cost column when every row has null cost.
+- [x] AC5 (0.3: flag > env > file in `test_provider_direct_openai_compatible.py::test_flag_outranks_env_outranks_file`; missing credentials per provider in `::test_missing_setting_fails_before_any_call`): `pytest -q tests/unit/test_provider_select.py` → green: precedence flag > env > file; `claude_code` never selected by default; each provider's missing credential names the variable.
+- [x] AC6 (as built 0.3: the fake is the loopback `FakeAnthropicServer`, the transport the gateway's own, not the SDK; a priced Anthropic call has a cost, a `claude_code` call and a failed call have none): `pytest -q tests/unit/test_usage_ledger.py` → green: one row per call, `cost_usd` null, `error` set on a 401.
+- [ ] AC7 (0.3: the command and the `cannot say` column are green in `test_usage_ledger.py`; AC2 itself is unmeasured, no Anthropic key): `repoach usage --json | jq '.totals.calls'` after AC2 ≥ 5; `repoach usage` prints `cannot say` in the cost column when every row has null cost.
 
 - [x] AC8 (added 0.2): `pytest -q tests/unit/test_provider_direct_claude_code.py` → green: a fake `claude` on PATH answers the real transport; tier → `--model` alias; session leader killed on timeout; a `/login` failure is not retried; `review pr 42 --dry-run` end to end with `kind = "claude_code"` in `repoach.toml` → four APPROVE reviews, posted 0/0; absent or logged-out CLI → rc 2, one stderr line, no forge transport call.
 - [x] AC9 (added 0.2): `pytest -q tests/unit/test_provider_direct_anthropic.py` → green (SP-PROVIDER-DIRECT-ANTHROPIC AC5).
+- [x] AC10 (added 0.3): `pytest -q tests/unit/test_provider_direct_openai_compatible.py` → green: Ollama-shaped stream with no key at a root without `/v1`; the first key of `REPOACH_OPENAI_API_KEY` / `OPENAI_API_KEY`; 401 and 403 → `ProviderAuthError` after one request; Gemini native at `/v1beta/openai` and Gemini through the `openrouter` preset, each with its own key; `review pr --provider ollama` end to end → four APPROVE reviews, `usage` in the JSON, one stderr usage line.
+- [x] AC11 (added 0.3): `REPOACH_PROVIDER=claude_code repoach review pr 296 --dry-run --forge gitlab` on Yoob prints `repoach: usage: … subscription (tokens only)` and no `$` (measured above).
 
 ## Open Questions
 - Q1: gateway as an optional extra (`repoach[gateway]`) — umbrella Q5.

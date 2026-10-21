@@ -1,14 +1,14 @@
 ---
 id: SP-USAGE-LEDGER
 title: Tokens, cost estimate and duration per review and per reviewer, printed after review pr and queried with repoach usage
-version: 0.1
-status: proposed
+version: 0.2
+status: delivered
 author: agent
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 
 owns:
-  code: []
+  code: [src/repoach/cli/usage_cmds.py]
   resources: []
 
 depends_on: [SP-UNIVERSAL-PROVIDERS]
@@ -18,6 +18,55 @@ constraints: {}
 ---
 
 # Tokens, cost estimate and duration per review
+
+## Delivered (0.2, 2026-10-21) — the core; three goals as amended or partial
+
+Delivered with `SP-UNIVERSAL-PROVIDERS` slice 2 (which owns the
+`usage_ledger` table and `src/repoach/providers/`).
+
+- G1 as built: `usage_ledger` (`providers/usage.py`) has `run_id`,
+  `command`, `pr_number`, `reviewer`, `provider`, `model`,
+  `prompt_tokens` (uncached), `completion_tokens`, `cache_read_tokens`,
+  `cache_write_tokens`, `duration_ms`, `cost_usd` (null when unpriced,
+  on a subscription, or the call failed), `price_source`, `error`,
+  `created_at`.  One write site: `AgentLoop._provider_call`, for every
+  route including the gateway.  Reviewers are attributed through
+  context variables bound into the orchestrator's worker threads;
+  Q1 → the refuter is its own row, `Refuter`.  `run_id` is minted per
+  `review pr` (`review_runs` does not exist yet, tech_debt #54).  An
+  unwritable ledger logs `usage_ledger.write_failed` once and the
+  summary ends `usage not recorded`.
+- G2 as amended by the owner (2026-10-20): the price table is
+  `src/repoach/providers/prices.py`, not `prices.toml` — `PriceRow`
+  with `source_url`, `read_on` 2026-10-21 and an optional
+  `valid_until` (a temporary vendor price stops pricing after it).
+  Rows are keyed on the API host the call reached (`api.anthropic.com`,
+  `api.openai.com`, `generativelanguage.googleapis.com`) and the model:
+  an `openai_compatible` at another host, an Anthropic proxy or a
+  preset without a row is unpriced, never billed at a list price.
+  Rows: Anthropic `claude-opus-5` 5 / 25, `claude-sonnet-5` 2 / 10,
+  `claude-haiku-4-5` 1 / 5 (with cache write / read), OpenAI
+  `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`, Gemini `gemini-3.8-flash`
+  (through 2026-12-31), `gemini-2.5-pro`, `gemini-2.5-flash`,
+  `gemini-2.5-flash-lite`.  `claude_code` → null, shown as
+  `subscription (tokens only)`; `ollama` → 0, `self-hosted`; gateway
+  and every other model → null (D1 left open).  Not built: the
+  `[usage.prices]` override (tech_debt #51).
+- G3 as amended by the owner: `review pr` prints one stderr line,
+  `repoach: usage: N calls, T tokens (in …, out …, cache_read …, cache_write …), W s,
+  <cost>`, where `<cost>` is `$X.XXXX (prices read 2026-10-21)`,
+  `subscription (tokens only)`, `cannot say (N unpriced calls)` or a
+  mix with `+ N unpriced calls`; the JSON gains `usage` with
+  `per_reviewer`, `total`, `providers`, `run_id`, `prices_read_on`,
+  `recorded`.  The table of G3 is not printed (tech_debt #52), so AC2
+  is unmet as written.
+- G4: `repoach usage [--since 7d|24h|2w|DATE] [--until …] [--by
+  model|provider|reviewer|pr|day|command] [--json]`, default 7 days by
+  model; text output `key | calls | in | out | cache_read | cache_write | wall_s | cost`.
+- G5: `may be stale` is appended to the dollar figure when the table
+  was read more than 90 days before the run.
+- D2: the stderr line is on by default; `ci review` runs the review as
+  a child, so the line is in the child's stderr.
 
 ## Intent
 
@@ -111,19 +160,19 @@ flowchart TD
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: `pytest -q tests/unit/test_usage_ledger.py` → green: a fake Anthropic transport returning fixed usage → one row per call with `reviewer` and `run_id` set and `cost_usd` equal to the hand-computed value for a two-row price fixture; a `claude_code` call → `cost_usd` null, `price_source` null.
-- [ ] AC2: `repoach review pr <n> --dry-run 2>&1 >/dev/null | tail -6` on a direct-Anthropic run → a table whose header is `reviewer | calls | in | out | cached | cost | wall` and a last line starting `total:` with a dollar figure and `prices read 20`.
-- [ ] AC3: the same through `claude_code` → the last line contains `subscription (tokens only)` and no `$`.
-- [ ] AC4: `repoach usage --since 2026-10-01 --by reviewer --json | python -c "import json,sys; d=json.load(sys.stdin); assert {'rows','totals'} <= d.keys()"` → exit 0.
-- [ ] AC5: `python -c "import tomllib,pathlib; rows=tomllib.loads(pathlib.Path('src/repoach/providers/prices.toml').read_text())['price']; assert all(r['source_url'] and r['read_on'] for r in rows)"` → exit 0.
+- [x] AC1 (as built: the price fixture is the shipped table, hand-computed in the test): `pytest -q tests/unit/test_usage_ledger.py` → green: a fake Anthropic transport returning fixed usage → one row per call with `reviewer` and `run_id` set and `cost_usd` equal to the hand-computed value for a two-row price fixture; a `claude_code` call → `cost_usd` null, `price_source` null.
+- [ ] AC2 (unmet as written: one line instead of a table, owner decision; no Anthropic key to run it, tech_debt #48, #52): `repoach review pr <n> --dry-run 2>&1 >/dev/null | tail -6` on a direct-Anthropic run → a table whose header is `reviewer | calls | in | out | cached | cost | wall` and a last line starting `total:` with a dollar figure and `prices read 20`.
+- [x] AC3 (measured 2026-10-21 on Yoob MR 296: `repoach: usage: 8 calls, 300374 tokens (in 16, out 7166, cached 293192), 113.0 s, subscription (tokens only)`): the same through `claude_code` → the last line contains `subscription (tokens only)` and no `$`.
+- [x] AC4 (`test_usage_ledger.py::test_usage_command_groups_the_period`): `repoach usage --since 2026-10-01 --by reviewer --json | python -c "import json,sys; d=json.load(sys.stdin); assert {'rows','totals'} <= d.keys()"` → exit 0.
+- [x] AC5 (as amended: the table is `prices.py`; `test_usage_ledger.py::test_every_price_row_names_its_source_and_day`): `python -c "import tomllib,pathlib; rows=tomllib.loads(pathlib.Path('src/repoach/providers/prices.toml').read_text())['price']; assert all(r['source_url'] and r['read_on'] for r in rows)"` → exit 0.
 
 ## Owner decisions needed
 - D1: show a dollar estimate for gateway runs priced by the upstream header, or tokens only for every gateway call.
 - D2: whether the per-review summary is on by default in `ci review` output (it lengthens the job log by about eight lines).
 
 ## Gaps
-- Slice 1 of `SP-UNIVERSAL-PROVIDERS` (the provider abstraction) has not landed; this slice cannot start before it.
-- The gateway does not yet report the upstream model in a response header; D1 needs that header.
+- The gateway does not yet report the upstream model in a response header; D1 needs that header (gateway rows are unpriced).
+- `docs/tech_debt.md` #51 (prices, override), #52 (one-line summary), #54 (run id).
 
 ## Open Questions
 - Q1: does the refuter count as a reviewer row or its own line? Proposed: its own row named `Refuter`.

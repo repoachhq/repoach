@@ -28,6 +28,7 @@ from .init_cmds import init
 from .migrate_cmds import migrate_config
 from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
+from .usage_cmds import usage
 
 app = typer.Typer(
     help="Repoach CLI (genesis reset — review factory only)",
@@ -83,6 +84,7 @@ app.command(name="init")(init)
 app.command(name="doctor")(doctor)
 app.command(name="migrate-config")(migrate_config)
 app.add_typer(config_app, name="config")
+app.command(name="usage")(usage)
 
 SETTINGS_FREE_COMMANDS: frozenset[str] = frozenset(
     {"version", "doctor", "migrate-config", "init", "config", "ci"}

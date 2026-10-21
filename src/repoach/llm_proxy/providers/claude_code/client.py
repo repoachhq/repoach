@@ -12,8 +12,9 @@ Tradeoffs vs the native Anthropic API:
   produced by the model are converted to native ``tool_use`` SSE
   blocks via :class:`HeuristicToolParser`, matching what the rest
   of the proxy expects.
-- No token counts from the upstream model are echoed (the CLI
-  reports its own usage which differs from API token semantics).
+- Token counts are the CLI's own ``usage`` report (input, prompt
+  cache, output) copied onto the terminal ``message_delta``; a count
+  the CLI does not report falls back to the caller's estimate.
 """
 
 from __future__ import annotations
@@ -329,6 +330,7 @@ class ClaudeCodeProvider(BaseProvider):
 
                 stop_reason = "tool_use" if tool_use_emitted else "end_turn"
                 output_tokens = _resolve_output_tokens(payload, text_chars_emitted)
+                _apply_cli_input_usage(sse, payload)
 
             except (asyncio.CancelledError, GeneratorExit):
                 raise
@@ -605,6 +607,29 @@ class ClaudeCodeProvider(BaseProvider):
             raise ProviderError(
                 append_request_id(f"claude CLI emitted non-JSON: {text[:200]}", request_id)
             ) from exc
+
+
+def _apply_cli_input_usage(sse: SSEBuilder, payload: dict[str, Any]) -> None:
+    """Copy the CLI's reported input and prompt-cache counts onto ``sse``.
+
+    ``claude --output-format json`` reports ``usage.input_tokens`` (the
+    uncached part), ``cache_creation_input_tokens`` and
+    ``cache_read_input_tokens``; the terminal ``message_delta`` then
+    carries those counts instead of the caller's estimate.  A count that
+    is missing or not an integer leaves the estimate in place.
+    """
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return
+    reported = usage.get("input_tokens")
+    if isinstance(reported, int):
+        sse.input_tokens = reported
+    cache_write = usage.get("cache_creation_input_tokens")
+    if isinstance(cache_write, int):
+        sse.cache_write_tokens = cache_write
+    cache_read = usage.get("cache_read_input_tokens")
+    if isinstance(cache_read, int):
+        sse.cache_read_tokens = cache_read
 
 
 def _resolve_output_tokens(payload: dict[str, Any], text_chars: int) -> int:

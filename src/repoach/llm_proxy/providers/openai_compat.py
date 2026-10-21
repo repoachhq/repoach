@@ -71,6 +71,18 @@ def _extract_reasoning_tokens(usage_info: Any, tag: str) -> int:
     return 0
 
 
+def _extract_cached_tokens(usage_info: Any) -> int:
+    """Return ``usage.prompt_tokens_details.cached_tokens``, 0 when absent or not an int.
+
+    OpenAI-style ``prompt_tokens`` includes the cached part; the terminal
+    ``message_delta`` reports it apart, as the Messages API does
+    (``input_tokens`` uncached, ``cache_read_input_tokens`` cached).
+    """
+    details = getattr(usage_info, "prompt_tokens_details", None)
+    value = getattr(details, "cached_tokens", None) if details is not None else None
+    return value if isinstance(value, int) else 0
+
+
 class OpenAIChatTransport(BaseProvider):
     """Base for OpenAI-compatible ``/chat/completions`` adapters (NIM, DeepSeek, …)."""
 
@@ -413,6 +425,9 @@ class OpenAIChatTransport(BaseProvider):
                     provider_input,
                     provider_input - input_tokens,
                 )
+                cached = _extract_cached_tokens(usage_info)
+                sse.input_tokens = max(provider_input - cached, 0)
+                sse.cache_read_tokens = cached
 
         if usage_info is not None:
             reasoning_tokens_value = _extract_reasoning_tokens(usage_info, tag)

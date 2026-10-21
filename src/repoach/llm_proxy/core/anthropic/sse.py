@@ -175,6 +175,8 @@ class SSEBuilder:
         self.message_id = message_id
         self.model = model
         self.input_tokens = input_tokens
+        self.cache_read_tokens: int | None = None
+        self.cache_write_tokens: int | None = None
         self.blocks = ContentBlockManager()
         self._accumulated_text_parts: list[str] = []
         self._accumulated_reasoning_parts: list[str] = []
@@ -222,7 +224,9 @@ class SSEBuilder:
         error-shaped delta (SP-BREAKER-LIVE-REASONS); it is omitted from
         the payload entirely when ``None`` (every success-path call),
         so well-behaved clients see the exact same shape as before this
-        field existed.
+        field existed.  The prompt-cache counts (``cache_read_tokens``,
+        ``cache_write_tokens``) are likewise emitted only when a transport
+        read them from its upstream.
         """
         payload: dict = {
             "type": "message_delta",
@@ -233,6 +237,10 @@ class SSEBuilder:
             },
             "reasoning_tokens": reasoning_tokens,
         }
+        if self.cache_read_tokens is not None:
+            payload["usage"]["cache_read_input_tokens"] = self.cache_read_tokens
+        if self.cache_write_tokens is not None:
+            payload["usage"]["cache_creation_input_tokens"] = self.cache_write_tokens
         if error_status_code is not None:
             payload["error_status_code"] = error_status_code
         return self._format_event("message_delta", payload)

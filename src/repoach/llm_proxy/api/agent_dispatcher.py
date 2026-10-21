@@ -211,14 +211,22 @@ async def aggregate_sse_stream(
         * ``stop_reason``: Anthropic stop_reason string (may be empty)
         * ``model``: provider/model id (proxy decorates ``message_start``
           with the resolved model alias)
-        * ``usage``: aggregated :class:`Usage` (best effort — sums
-          token counts seen across ``message_start`` + ``message_delta``)
+        * ``usage``: aggregated :class:`Usage` (best effort — every
+          count takes the larger of ``message_start`` and
+          ``message_delta``: the Messages API reports cumulative counts
+          on ``message_delta`` after a placeholder on ``message_start``,
+          and a transport that learns the real count only at the end
+          reports it there; summing the two counted the placeholder
+          output token twice)
         * ``error``: ``{"message", "status_code"}`` of the last in-band
-          ``error`` event, else None.  The gateway's own dispatch ignores
-          it (its failover already judged the stream); the in-process
-          direct providers (SP-UNIVERSAL-PROVIDERS) have no failover and
-          read it to raise a typed error instead of returning an empty
-          answer.
+          ``error`` event; else, for a stream that ended with
+          ``stop_reason`` ``error`` (an OpenAI-style transport degrades a
+          caught upstream failure to error text plus
+          ``message_delta.error_status_code``), its text and that status;
+          else None.  The gateway's own dispatch ignores it (its failover
+          already judged the stream); the in-process direct providers
+          (SP-UNIVERSAL-PROVIDERS) have no failover and read it to raise
+          a typed error instead of returning an empty answer.
     """
     blocks_by_index: dict[int, dict[str, Any]] = {}
     stop_reason: str = ""
@@ -226,7 +234,10 @@ async def aggregate_sse_stream(
     input_tokens = 0
     output_tokens = 0
     reasoning_tokens = 0
+    cache_read_tokens = 0
+    cache_write_tokens = 0
     error: dict[str, Any] | None = None
+    delta_error_status: int | None = None
 
     async for chunk in body_iterator:
         text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
@@ -239,8 +250,14 @@ async def aggregate_sse_stream(
                 msg = data.get("message", {}) or {}
                 model = str(msg.get("model") or "") or model
                 usage = msg.get("usage") or {}
-                input_tokens += int(usage.get("input_tokens") or 0)
-                output_tokens += int(usage.get("output_tokens") or 0)
+                input_tokens = max(input_tokens, int(usage.get("input_tokens") or 0))
+                output_tokens = max(output_tokens, int(usage.get("output_tokens") or 0))
+                cache_read_tokens = max(
+                    cache_read_tokens, int(usage.get("cache_read_input_tokens") or 0)
+                )
+                cache_write_tokens = max(
+                    cache_write_tokens, int(usage.get("cache_creation_input_tokens") or 0)
+                )
             elif event_type == "content_block_start":
                 idx = int(data.get("index") or 0)
                 cb = data.get("content_block") or {}
@@ -267,8 +284,18 @@ async def aggregate_sse_stream(
                 if delta.get("stop_reason"):
                     stop_reason = str(delta.get("stop_reason"))
                 usage = data.get("usage") or {}
-                output_tokens += int(usage.get("output_tokens") or 0)
+                output_tokens = max(output_tokens, int(usage.get("output_tokens") or 0))
+                input_tokens = max(input_tokens, int(usage.get("input_tokens") or 0))
+                cache_read_tokens = max(
+                    cache_read_tokens, int(usage.get("cache_read_input_tokens") or 0)
+                )
+                cache_write_tokens = max(
+                    cache_write_tokens, int(usage.get("cache_creation_input_tokens") or 0)
+                )
                 reasoning_tokens += int(data.get("reasoning_tokens") or 0)
+                status = data.get("error_status_code")
+                if isinstance(status, int):
+                    delta_error_status = status
             elif event_type == "error":
                 payload = data.get("error") or {}
                 status = payload.get("status_code")
@@ -278,6 +305,11 @@ async def aggregate_sse_stream(
                 }
 
     ordered_blocks = [blocks_by_index[i] for i in sorted(blocks_by_index)]
+    if error is None and stop_reason == "error":
+        error = {
+            "message": "".join(str(b.get("text") or "") for b in ordered_blocks).strip(),
+            "status_code": delta_error_status,
+        }
     return {
         "content_blocks": ordered_blocks,
         "stop_reason": stop_reason,
@@ -287,6 +319,8 @@ async def aggregate_sse_stream(
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             reasoning_tokens=reasoning_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         ),
         "error": error,
     }

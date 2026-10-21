@@ -4,8 +4,10 @@
 resolves (SP-UNIVERSAL-INSTALL G6): project root, user config and data
 directories, the env files read, every ``repoach.toml`` key with its
 source (SP-UNIVERSAL-PROJECT-CONFIG), the ledger path, the selected forge
-and provider (route and credential name, never a value), and whether
-each external binary is on ``PATH``.  It
+and provider (route and credential name, never a value), one
+``provider_option=`` line per provider route naming which of its
+credential variables are present, and whether each external binary is
+on ``PATH``.  It
 builds :class:`~repoach.core.config.Settings` directly (no directory is
 created) and never contacts a forge or a model; for ``claude_code`` it
 runs ``claude auth status``, which reads the local login.
@@ -44,28 +46,32 @@ from ..project.resolve import (
     resolve_project_config,
 )
 from ..project.toml_write import toml_value
-from ..providers.errors import ProviderConfigError
+from ..providers.errors import NO_PROVIDER_MESSAGE, ProviderConfigError
 from ..providers.select import (
     ANTHROPIC_CREDENTIAL_NAMES,
+    DEFAULT_CLI,
     DIRECT_KINDS,
+    GEMINI_DEFAULT_BASE,
+    PRESETS,
+    SELECTABLE,
     ProviderRoute,
     anthropic_credential,
+    build_direct_provider,
     claude_cli,
     claude_login,
+    credential_names,
+    credential_required,
+    first_credential,
+    provider_credential_names,
+    provider_needs_key,
     resolve_route,
 )
 
 DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
 """External executables whose presence ``doctor`` reports."""
 
-_GATEWAY_PROVIDER_KINDS: frozenset[str] = frozenset({"", "gateway"})
-"""``[provider].kind`` values served by the gateway (``REPOACH_LLM_PROXY_BASE_URL``).
-
-``claude_code`` and ``anthropic`` run in-process (SP-UNIVERSAL-PROVIDERS);
-``openai`` / ``openai_compatible`` are parsed but not routed yet, so
-``doctor`` says so instead of implying the key alone is enough."""
-
 GATEWAY_SECRET_NAME = "REPOACH_ANTHROPIC_AUTH_TOKEN"
+GATEWAY_URL_NAME = "REPOACH_LLM_PROXY_BASE_URL"
 
 
 def _anthropic_credential(root: Path) -> str:
@@ -83,6 +89,18 @@ def _anthropic_credential(root: Path) -> str:
     if found is not None:
         return f"{found[0]} (present)"
     return f"none (reads {', then '.join(ANTHROPIC_CREDENTIAL_NAMES)})"
+
+
+def _named_credential(route: ProviderRoute) -> str:
+    """Name the key a keyed direct route would use, never its value."""
+    names = credential_names(route)
+    if not names:
+        return "none needed (keyless endpoint)"
+    found = first_credential(names, route.root)
+    if found is not None:
+        return f"{found[0]} (present)"
+    optional = "" if credential_required(route) else "; optional"
+    return f"none (reads {', then '.join(names)}{optional})"
 
 
 def _claude_code_credential(route: ProviderRoute) -> tuple[str, str | None]:
@@ -106,10 +124,64 @@ def _claude_code_credential(route: ProviderRoute) -> tuple[str, str | None]:
     return f"claude login ({login.method}; {cli})", None
 
 
+def _presence(names: tuple[str, ...], root: Path) -> str:
+    """``NAME=present|absent`` for each of ``names``, never a value."""
+    return ", ".join(
+        f"{name}={'present' if first_credential((name,), root) else 'absent'}" for name in names
+    )
+
+
+def provider_option_lines(root: Path, settings: Settings) -> list[str]:
+    """One ``provider_option=`` line per provider route, with the credential names present.
+
+    Lists every kind and preset (:data:`~repoach.providers.select.SELECTABLE`)
+    so a user sees which one their environment already supports; nothing
+    is called and no value is printed.
+
+    Args:
+        root: The project root (its env layers are consulted).
+        settings: The resolved settings (the gateway URL and secret).
+
+    Returns:
+        The lines, in :data:`SELECTABLE` order.
+    """
+    lines: list[str] = []
+    claude = shutil.which(DEFAULT_CLI)
+    for name in SELECTABLE:
+        if name == "claude_code":
+            detail = f"claude CLI {'at ' + claude if claude else 'not on PATH'}; login, no key"
+        elif name == "gateway":
+            url_state = "present" if settings.llm_proxy_base_url else "absent"
+            secret = settings.llm_proxy_auth_token
+            secret_state = (
+                "present" if secret is not None and secret.get_secret_value() else "absent"
+            )
+            detail = f"{GATEWAY_URL_NAME}={url_state}, {GATEWAY_SECRET_NAME}={secret_state}"
+        else:
+            names = provider_credential_names(name)
+            if name in PRESETS:
+                where = PRESETS[name].base_url
+            elif name == "gemini":
+                where = GEMINI_DEFAULT_BASE
+            elif name == "openai_compatible":
+                where = "base_url from [provider].base_url / REPOACH_OPENAI_BASE_URL"
+            else:
+                where = "Messages API"
+            keys = _presence(names, root) if names else "no key"
+            if names and not provider_needs_key(name):
+                keys += " (optional)"
+            detail = f"{where}; {keys}"
+        lines.append(f"provider_option={name} ({detail})")
+    return lines
+
+
 def _provider_report(
     resolved: ResolvedProjectConfig, settings: Settings, root: Path
 ) -> tuple[list[str], list[str], list[str]]:
     """Return the provider lines, the problems and the warnings ``doctor`` prints.
+
+    The selected route first (``provider=``, ``provider_route=``,
+    ``provider_credential=``), then :func:`provider_option_lines`.
 
     Args:
         resolved: The effective project configuration.
@@ -119,58 +191,51 @@ def _provider_report(
     Returns:
         ``(stdout lines, problems, stderr warnings)``.
     """
-    kind = resolved.config.provider.kind
+    route = resolve_route(root)
     url = settings.llm_proxy_base_url
     secret = settings.llm_proxy_auth_token
     lines: list[str] = []
     problems: list[str] = []
     warnings: list[str] = []
-    if kind in DIRECT_KINDS:
-        route = resolve_route(root)
-        lines.append(f"provider={kind} ({resolved.source('provider.kind')})")
-        lines.append(f"provider_route=direct ({kind})")
-        if kind == "anthropic":
-            lines.append(f"provider_credential={_anthropic_credential(root)}")
-            if anthropic_credential(root) is None:
-                problems.append(
-                    "provider anthropic: no API key -- set "
-                    f"{', then '.join(ANTHROPIC_CREDENTIAL_NAMES)}"
-                )
-        else:
+    if route.kind in DIRECT_KINDS:
+        lines.append(f"provider={route.configured} ({resolved.source('provider.kind')})")
+        lines.append(f"provider_route=direct ({route.label})")
+        if route.kind == "claude_code":
             credential, problem = _claude_code_credential(route)
             lines.append(f"provider_credential={credential}")
             if problem is not None:
                 problems.append(problem)
+        else:
+            if route.kind == "anthropic":
+                lines.append(f"provider_credential={_anthropic_credential(root)}")
+            else:
+                lines.append(f"provider_credential={_named_credential(route)}")
+            try:
+                build_direct_provider(route, timeout_s=1.0)
+            except ProviderConfigError as exc:
+                problems.append(str(exc))
+        lines.extend(provider_option_lines(root, settings))
         return lines, problems, warnings
     gateway_secret = (
         f"{GATEWAY_SECRET_NAME} (present)"
         if secret is not None and secret.get_secret_value()
         else f"none (reads {GATEWAY_SECRET_NAME})"
     )
-    if kind in _GATEWAY_PROVIDER_KINDS:
-        if url:
-            lines.append(f"provider=gateway ({url})")
-            lines.append(f"provider_route=gateway ({url})")
-            lines.append(f"provider_credential={gateway_secret}")
-        else:
-            lines.append("provider=none")
-            lines.append("provider_route=none")
-            problems.append(
-                "no provider configured -- set REPOACH_PROVIDER=claude_code (a logged-in "
-                "Claude Code), REPOACH_PROVIDER=anthropic with REPOACH_ANTHROPIC_API_KEY, or "
-                "REPOACH_LLM_PROXY_BASE_URL (gateway) in the environment or "
-                "~/.config/repoach/env (never in a project file)"
-            )
-        return lines, problems, warnings
-    unrouted = f"provider {kind}: not routed, set REPOACH_LLM_PROXY_BASE_URL"
-    lines.append(f"provider={kind} ({resolved.source('provider.kind')}; not routed)")
     if url:
+        lines.append(f"provider=gateway ({url})")
         lines.append(f"provider_route=gateway ({url})")
         lines.append(f"provider_credential={gateway_secret}")
-        warnings.append(f"{unrouted}; reviews go through the gateway")
     else:
+        lines.append("provider=none")
         lines.append("provider_route=none")
-        problems.append(unrouted)
+        if route.configured:
+            problems.append(
+                f"provider gateway: {GATEWAY_URL_NAME} is not set -- set it in the environment "
+                "or ~/.config/repoach/env (never in a project file)"
+            )
+        else:
+            problems.append(NO_PROVIDER_MESSAGE)
+    lines.extend(provider_option_lines(root, settings))
     return lines, problems, warnings
 
 

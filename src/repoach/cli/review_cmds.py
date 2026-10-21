@@ -32,6 +32,9 @@ from ..core.config import GatewayConfigError, get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
+from ..providers.errors import ProviderConfigError
+from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
+from ..providers.usage import run_summary_line, run_usage_json, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
     evaluate_merge_gate,
@@ -111,6 +114,22 @@ def _forge_kwargs(forge_name: object) -> dict[str, Forge]:
         raise typer.Exit(code=2) from exc
 
 
+def apply_provider_flag(value: str | None) -> None:
+    """Make ``--provider`` outrank ``REPOACH_PROVIDER`` and ``[provider].kind`` for this process.
+
+    Raises:
+        typer.Exit: Code 2 after one stderr line when ``value`` names no
+            provider.
+    """
+    if not isinstance(value, str):
+        return
+    try:
+        set_provider_override(value)
+    except ProviderConfigError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+
 def _forge_failure(exc: ForgeError) -> typer.Exit:
     """Report a forge that could not be selected or reached; exit code 2."""
     typer.echo(f"forge unavailable: {exc.message}", err=True)
@@ -157,6 +176,7 @@ def review_pr(
     ),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
     spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
 ) -> None:
     """Run the review-bot team on a PR / MR and emit a summary.
 
@@ -188,12 +208,21 @@ def review_pr(
     published even without ``--dry-run`` (``posting_outcome`` is
     ``SKIP_ERROR``), and the command exits 3.  ``posting_outcome`` is null
     when posting ran or was not requested.
+
+    Every model call is recorded in the usage ledger (SP-USAGE-LEDGER):
+    ``usage`` in the JSON sums them per reviewer and in total (tokens,
+    duration, cost estimate or ``subscription (tokens only)``), and one
+    ``repoach: usage: …`` line on stderr says the total.
     """
     root = project_root_or_exit()
+    apply_provider_flag(provider)
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:
-        team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
+        with usage_run("review pr", pr_number) as run:
+            team = run_review(
+                pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name)
+            )
     except GatewayConfigError as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -233,8 +262,10 @@ def review_pr(
             }
             for o in team.reviews
         ],
+        "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.final_verdict == ReviewVerdict.ERROR:
         raise typer.Exit(code=EXIT_REVIEW_ERROR)
     if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
@@ -470,6 +501,7 @@ def review_gate(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
     spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
+    provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
 ) -> None:
     """Evaluate the pure merge gate for a PR — read-only, never merges.
 
@@ -495,8 +527,13 @@ def review_gate(
     declared: a PR without a spec is never refused for lacking one; it
     is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
     a spec that has no document.
+
+    The gate itself makes no model call.  ``--provider`` is accepted and
+    validated (an unknown name exits 2) so a job can hand ``review pr``
+    and ``review gate`` the same flags.
     """
     root = project_root_or_exit()
+    apply_provider_flag(provider)
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:

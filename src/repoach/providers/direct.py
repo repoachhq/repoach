@@ -2,11 +2,14 @@
 
 A direct provider runs one of the gateway's upstream transports inside
 the review process — :class:`~repoach.llm_proxy.providers.claude_code.ClaudeCodeProvider`
-(the logged-in ``claude`` CLI, headless) or
+(the logged-in ``claude`` CLI, headless),
 :class:`~repoach.llm_proxy.providers.anthropic_messages.AnthropicMessagesTransport`
-(the Messages API with a key) — and translates with the gateway
-dispatcher's public helpers, so there is one implementation of each
-upstream, not two.
+(the Messages API with a key) or
+:class:`~repoach.llm_proxy.providers.openai_generic.GenericOpenAIProvider`
+(any ``/chat/completions`` endpoint: OpenAI, Ollama, OpenRouter, Groq,
+DeepSeek, Mistral, Gemini's compatible surface) — and translates with
+the gateway dispatcher's public helpers, so there is one implementation
+of each upstream, not two.
 
 Every direct call runs on one event loop owned by one daemon thread
 (:class:`_LoopThread`).  The transports hold asyncio primitives (the
@@ -41,7 +44,8 @@ from ..llm_proxy.api.models.agent_v1 import (
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from ..llm_proxy.providers.base import BaseProvider
 from ..llm_proxy.providers.exceptions import ProviderError
-from .errors import GatewayError, GatewayTransportError, ProviderAuthError
+from ..llm_proxy.providers.openai_generic import GenericOpenAIProvider
+from .errors import GatewayError, GatewayTransportError, ProviderAuthError, ProviderRequestError
 from .protocol import agent_request
 
 _log = get_logger(__name__)
@@ -59,6 +63,9 @@ RETRYABLE_STATUSES: frozenset[int] = frozenset({408, 429, 529})
 
 AUTH_STATUSES: frozenset[int] = frozenset({401, 403})
 
+REQUEST_STATUSES: frozenset[int] = frozenset({400, 404, 422})
+"""Statuses meaning the request itself is wrong: never retried (:class:`ProviderRequestError`)."""
+
 CLI_AUTH_MARKERS: tuple[str, ...] = (
     "/login",
     "invalid api key",
@@ -67,6 +74,23 @@ CLI_AUTH_MARKERS: tuple[str, ...] = (
     "authentication",
 )
 """Fragments of a ``claude`` CLI failure that mean the login is missing or expired."""
+
+
+class MeteredChatTransport(GenericOpenAIProvider):
+    """The gateway's chat-completions transport, asking the upstream for its token counts.
+
+    A streamed ``/chat/completions`` answer carries ``usage`` only when
+    the request sets ``stream_options.include_usage``; the gateway never
+    sets it (its token figures are estimates), the in-process route
+    does, so the usage ledger records the upstream's own counts.  Every
+    other part of the request is the gateway transport's.
+    """
+
+    def _build_request_body(self, request: Any) -> dict:
+        """Return the gateway transport's body plus ``stream_options.include_usage``."""
+        body = super()._build_request_body(request)
+        body["stream_options"] = {"include_usage": True}
+        return body
 
 
 class _LoopThread:
@@ -138,10 +162,13 @@ class DirectProvider:
     """A :class:`~repoach.providers.protocol.Provider` over an in-process gateway transport.
 
     Attributes:
-        name: ``claude_code`` or ``anthropic``.
+        name: ``claude_code``, ``anthropic``, ``gemini``, ``openai_compatible``
+            or the preset that set its base URL (``ollama``, ``openrouter``…).
         models: Model per capability tier, as sent to the transport.
         transport_key: Identity of the transport configuration; providers
             sharing it share one transport (one rate limiter, one client).
+        base_url: The API root the transport posts to (``""`` for the
+            CLI); the usage ledger prices a call by its host.
     """
 
     def __init__(
@@ -153,6 +180,7 @@ class DirectProvider:
         transport_factory: Callable[[], BaseProvider],
         timeout_s: float,
         auth_hint: str,
+        base_url: str = "",
     ) -> None:
         """Initialise the provider; nothing is spawned or connected yet.
 
@@ -166,6 +194,7 @@ class DirectProvider:
                 plus :data:`DEADLINE_HEADROOM_S`.
             auth_hint: What to do when the credential is rejected, named
                 by variable or command, never by value.
+            base_url: See the class attributes.
         """
         self.name = name
         self.models = dict(models)
@@ -173,6 +202,7 @@ class DirectProvider:
         self._factory = transport_factory
         self._timeout_s = timeout_s
         self._auth_hint = auth_hint
+        self.base_url = base_url
 
     def call(
         self,
@@ -259,6 +289,8 @@ class DirectProvider:
         detail += f": {message[:300]}"
         if status in AUTH_STATUSES:
             return ProviderAuthError(f"{detail} -- {self._auth_hint}")
+        if status in REQUEST_STATUSES:
+            return ProviderRequestError(f"{detail} -- check the model id and the endpoint")
         if status is None or status >= 500 or status in RETRYABLE_STATUSES:
             return GatewayTransportError(detail)
         return GatewayError(detail)
@@ -271,4 +303,4 @@ class DirectProvider:
         return GatewayTransportError(f"{self.name}: {text[:300]}")
 
 
-__all__ = ["DirectProvider"]
+__all__ = ["DirectProvider", "MeteredChatTransport"]

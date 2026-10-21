@@ -69,6 +69,7 @@ from ..forge import (
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
+from ..providers.usage import bind_reviewer, reviewer_scope
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
 from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
@@ -543,7 +544,7 @@ class ReviewTeamOrchestrator:
                 (
                     r,
                     pool.submit(
-                        r.review_diff,
+                        bind_reviewer(r.role.value.title(), r.review_diff),
                         diff,
                         pr_number=pr_number,
                         spec_plan=spec_plan_md,
@@ -685,12 +686,13 @@ class ReviewTeamOrchestrator:
             )
 
         try:
-            judge_counts = judge_findings_for_pr(
-                self._db_path,
-                pr_number=pr_number,
-                repo_root=self._repo_root,
-                head_sha=head_sha,
-            )
+            with reviewer_scope("Refuter"):
+                judge_counts = judge_findings_for_pr(
+                    self._db_path,
+                    pr_number=pr_number,
+                    repo_root=self._repo_root,
+                    head_sha=head_sha,
+                )
             _log.info("review_team.findings_judged", pr_number=pr_number, **judge_counts)
         except Exception as exc:
             _log.warning(
@@ -986,7 +988,7 @@ class ReviewTeamOrchestrator:
                     guard_events=guard_events,
                 )
                 futures[i] = pool.submit(
-                    reviewer.review_diff,
+                    bind_reviewer(reviewer.role.value.title(), reviewer.review_diff),
                     diff,
                     pr_number=pr_number,
                     spec_plan=spec_plan,

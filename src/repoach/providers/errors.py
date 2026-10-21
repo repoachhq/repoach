@@ -42,6 +42,17 @@ class ProviderAuthError(GatewayError):
     retryable = False
 
 
+class ProviderRequestError(GatewayError):
+    """The provider refused the request itself (HTTP 400, 404, 422).
+
+    An unknown model id, a wrong path or a body the endpoint rejects: the
+    same request fails the same way, so ``retryable = False`` stops
+    every retry loop at the first attempt, like :class:`ProviderAuthError`.
+    """
+
+    retryable = False
+
+
 class ProviderConfigError(GatewayConfigError):
     """The selected provider cannot be used: a missing CLI, login or key (rc 2).
 
@@ -51,10 +62,32 @@ class ProviderConfigError(GatewayConfigError):
     """
 
 
+NO_PROVIDER_MESSAGE = (
+    "no provider configured -- pass --provider, or set REPOACH_PROVIDER or [provider].kind "
+    "in repoach.toml, to a kind (claude_code, anthropic, openai_compatible, gemini, gateway) "
+    "or a preset (openai, ollama, openrouter, groq, deepseek, mistral)"
+)
+"""The one line every command prints, after ``repoach: ``, when nothing names a provider."""
+
+
+class NoProviderConfiguredError(ProviderConfigError):
+    """No ``--provider``, no ``REPOACH_PROVIDER``, no ``[provider].kind`` and no gateway URL (rc 2).
+
+    One class and one message (:data:`NO_PROVIDER_MESSAGE`) for every
+    command, raised before any forge call (SP-UNIVERSAL-PROVIDERS G4).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(NO_PROVIDER_MESSAGE)
+
+
 __all__ = [
+    "NO_PROVIDER_MESSAGE",
     "GatewayChainExhausted",
     "GatewayError",
     "GatewayTransportError",
+    "NoProviderConfiguredError",
     "ProviderAuthError",
     "ProviderConfigError",
+    "ProviderRequestError",
 ]
