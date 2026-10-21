@@ -42,6 +42,17 @@ class ProviderAuthError(GatewayError):
     retryable = False
 
 
+class ProviderRequestError(GatewayError):
+    """The provider refused the request itself (HTTP 400, 404, 422).
+
+    An unknown model id, a wrong path or a body the endpoint rejects: the
+    same request fails the same way, so ``retryable = False`` stops
+    every retry loop at the first attempt, like :class:`ProviderAuthError`.
+    """
+
+    retryable = False
+
+
 class ProviderConfigError(GatewayConfigError):
     """The selected provider cannot be used: a missing CLI, login or key (rc 2).
 
@@ -77,4 +88,5 @@ __all__ = [
     "NoProviderConfiguredError",
     "ProviderAuthError",
     "ProviderConfigError",
+    "ProviderRequestError",
 ]

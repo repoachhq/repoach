@@ -45,7 +45,7 @@ from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from ..llm_proxy.providers.base import BaseProvider
 from ..llm_proxy.providers.exceptions import ProviderError
 from ..llm_proxy.providers.openai_generic import GenericOpenAIProvider
-from .errors import GatewayError, GatewayTransportError, ProviderAuthError
+from .errors import GatewayError, GatewayTransportError, ProviderAuthError, ProviderRequestError
 from .protocol import agent_request
 
 _log = get_logger(__name__)
@@ -62,6 +62,9 @@ RETRYABLE_STATUSES: frozenset[int] = frozenset({408, 429, 529})
 """Upstream statuses below 500 that are still transport-level (retried)."""
 
 AUTH_STATUSES: frozenset[int] = frozenset({401, 403})
+
+REQUEST_STATUSES: frozenset[int] = frozenset({400, 404, 422})
+"""Statuses meaning the request itself is wrong: never retried (:class:`ProviderRequestError`)."""
 
 CLI_AUTH_MARKERS: tuple[str, ...] = (
     "/login",
@@ -281,6 +284,8 @@ class DirectProvider:
         detail += f": {message[:300]}"
         if status in AUTH_STATUSES:
             return ProviderAuthError(f"{detail} -- {self._auth_hint}")
+        if status in REQUEST_STATUSES:
+            return ProviderRequestError(f"{detail} -- check the model id and the endpoint")
         if status is None or status >= 500 or status in RETRYABLE_STATUSES:
             return GatewayTransportError(detail)
         return GatewayError(detail)

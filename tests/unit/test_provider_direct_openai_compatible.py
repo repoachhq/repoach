@@ -28,6 +28,7 @@ from repoach.providers.errors import (
     NO_PROVIDER_MESSAGE,
     ProviderAuthError,
     ProviderConfigError,
+    ProviderRequestError,
 )
 from repoach.providers.select import (
     KEYLESS_API_KEY,
@@ -171,15 +172,38 @@ def test_server_error_is_a_transport_error(clone: Path, monkeypatch: pytest.Monk
             AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
 
 
-def test_unknown_model_is_not_retried(clone: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 404 (wrong model or path) is a plain provider error: retrying repeats it."""
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_client_error_is_not_retryable(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A 400/404/422 (wrong model, path or body) fails the same way again: never retried."""
     monkeypatch.setenv("REPOACH_PROVIDER", "ollama")
     _models(monkeypatch, "m")
+    with FakeChatServer(status=status) as server:
+        _point_at(monkeypatch, "ollama", server.root)
+        with pytest.raises(ProviderRequestError) as info:
+            AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
+    assert isinstance(info.value, GatewayError)
+    assert not isinstance(info.value, GatewayTransportError)
+    assert info.value.retryable is False
+    assert len(server.requests) == 1
+
+
+def test_unknown_model_ends_each_reviewer_after_one_request(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``review pr`` on a 404: one request per reviewer, every reviewer ERROR, rc 3."""
+    monkeypatch.setattr("time.sleep", lambda *_a, **_kw: None)
+    monkeypatch.setenv("REPOACH_PROVIDER", "ollama")
+    _models(monkeypatch, "no-such-model")
+    forge = _CountingForge()
     with FakeChatServer(status=404) as server:
         _point_at(monkeypatch, "ollama", server.root)
-        with pytest.raises(GatewayError) as info:
-            AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
-    assert not isinstance(info.value, GatewayTransportError)
+        result, _ = _review(monkeypatch, forge)
+    assert result.exit_code == 3, result.output
+    payload = json.loads(result.stdout)
+    assert {review["verdict"] for review in payload["reviews"]} == {"ERROR"}
+    assert len(server.requests) == len(payload["reviews"]) == 4
 
 
 def test_gemini_native_posts_to_the_generative_language_root(
