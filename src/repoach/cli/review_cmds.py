@@ -32,6 +32,7 @@ from ..core.config import GatewayConfigError, get_settings
 from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
+from ..providers.usage import run_summary_line, run_usage_json, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
     evaluate_merge_gate,
@@ -188,12 +189,20 @@ def review_pr(
     published even without ``--dry-run`` (``posting_outcome`` is
     ``SKIP_ERROR``), and the command exits 3.  ``posting_outcome`` is null
     when posting ran or was not requested.
+
+    Every model call is recorded in the usage ledger (SP-USAGE-LEDGER):
+    ``usage`` in the JSON sums them per reviewer and in total (tokens,
+    duration, cost estimate or ``subscription (tokens only)``), and one
+    ``repoach: usage: …`` line on stderr says the total.
     """
     root = project_root_or_exit()
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
     try:
-        team = run_review(pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name))
+        with usage_run("review pr", pr_number) as run:
+            team = run_review(
+                pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name)
+            )
     except GatewayConfigError as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -233,8 +242,10 @@ def review_pr(
             }
             for o in team.reviews
         ],
+        "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.final_verdict == ReviewVerdict.ERROR:
         raise typer.Exit(code=EXIT_REVIEW_ERROR)
     if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
