@@ -1,0 +1,61 @@
+case: 08-docstring-stale-args
+description: is_admin documents a scope argument it does not take, and not the one it does
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/08-docstring-stale-args.patch
+planted:
+- file: src/inventory/auth.py
+  lines:
+  - 21
+  - 30
+  kind: docstring
+  severity: minor
+  note: is_admin documents a scope argument it does not take, and not the one it does
+findings:
+- fingerprint: b429d8e91a0c
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect major src/inventory/auth.py:21: `is_admin(..., allow_readonly=True)` returns True for the read-only token, so the name misleads and callers can mistake read access for admin. Split it: keep `i'
+- fingerprint: 27ba5d41f3fb
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect minor src/inventory/auth.py:33: The `INVENTORY_READ_TOKEN` env lookup is inlined in `is_admin`, while the admin token goes through the `admin_token()` accessor. Add a matching `read_token()` a'
+- fingerprint: c83f36b4e019
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect nit src/inventory/auth.py:26: The docstring documents a `scope` parameter, but the signature has the keyword-only `allow_readonly`. Align the contract with the code; if you adopt a separate '
+- fingerprint: b7454062dee6
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel minor src/inventory/auth.py:21: Confirmed. With `is_admin(presented, *, allow_readonly: bool = False)`, any route that passes `allow_readonly=True` treats the read token as admin. If a mutatin'
+- fingerprint: 8f8d0854cf92
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel nit src/inventory/auth.py:26: Raised by the scribe and architect: the docstring tells callers to use `scope="read"`, but that parameter doesn''t exist. A caller who follows it gets a TypeErro'
+- fingerprint: f229a1b8a2bd
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/auth.py:32: New read-token branch has no tests in the diff. Add test_is_admin_allow_readonly_accepts_read_token and test_is_admin_rejects_read_token_when_allow_readonly_fal'
+- fingerprint: c55dac8239a5
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/auth.py:35: Empty-token edge case (the bool(presented) guard) is unexercised. Add test_is_admin_readonly_empty_presented_with_unset_read_token_falls_through, asserting an e'
+- fingerprint: 957a920b1b89
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe major src/inventory/auth.py:26: Docstring says `scope: The scope the caller asks for, ``admin`` or ``read``.` but the signature is `*, allow_readonly: bool = False`. No `scope` parameter exist'
+- fingerprint: fd9fa7e7b6e3
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe major src/inventory/auth.py:30: Returns says `with ``scope="read"``, also for the read-only token.` That argument does not exist. Reword to `with allow_readonly=True`. Also document that an un'

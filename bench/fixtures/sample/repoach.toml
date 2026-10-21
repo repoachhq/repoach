@@ -1,0 +1,12 @@
+[repoach]
+schema = 1
+integration_branch = "base"
+
+[project]
+languages = ["python", "typescript"]
+src_roots = ["src", "web/src"]
+test_roots = ["tests", "web/tests"]
+
+[commands]
+lint = ""
+test = ""
