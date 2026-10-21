@@ -7,151 +7,37 @@
 
 # Repoach
 
-### The self-forging software factory.
-
-*A governed spec, an autonomous developer that must satisfy it, four reviewers refuted before they are believed, and a merge gate that trusts evidence — running on its own repository first.*
-
 [![CI](https://github.com/repoachhq/repoach/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/repoachhq/repoach/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Built by Repoach](https://img.shields.io/badge/built%20by-Repoach-orange)](https://github.com/repoachhq/repoach)
 
 </div>
 
 ---
 
-**Repoach** is an autonomous software factory. It ships changes through a multi-agent review pipeline that re-verifies its own findings before anything merges, and its agents reach their models through one local LLM gateway with chain failover across providers. Today it runs on one repository — this one, on GitHub, in Python. Running it on *your* repository, on GitLab as well as GitHub, in any language, is the direction (see [Status](#status)), not what the code does yet.
+Evidence-first merge gate and PR reviewer for GitHub and GitLab. Bring your Claude Code login or your key. Install in minutes.
 
-## Why Repoach is different
-
-Most "AI writes your code" tools trust the model. **Repoach trusts evidence.**
-
-### 1. Evidence-first merge gate
-Agents can't approve their own work. Every finding a reviewer raises is **re-verified against the current HEAD** before a merge is allowed. There is no forgeable "LGTM" — the gate re-checks the facts (CI green, zero surviving blockers, complete review, spec covered) at merge time, every time.
-
-### 2. Governed specs
-Every change is anchored to a spec whose frontmatter declares **what it owns** and **what it depends on**. From that, Repoach *derives* the system's dependency graph — and *enforces* it: an import that crosses a boundary the spec never declared fails CI (`repoach arch check`). The architecture can't silently drift from the docs.
-
-### 3. Failover routing, with a shadow autopilot
-Repoach runs its agents through one gateway with ten provider slots — NVIDIA NIM, OpenRouter, Kimi, Groq, Cerebras, DeepSeek, OpenAI, Anthropic, any OpenAI-compatible endpoint, and the local `claude` CLI — and walks a failover chain per capability tier (`chains.env`). A chain autopilot watches each head's live health and plans rewrites of the chains, bounded by a hard cap of two mutations per cycle. It runs in **shadow mode** unless writing is enabled with `--apply` or `REPOACH_CHAINPILOT_APPLY_ENABLED=true`: it journals what it would change and writes nothing. The deployed timer runs it in shadow.
-
-### 🔁 It builds itself
-Repoach is built by Repoach. Every substantive change starts as a spec in `docs/specs/`, is planned and implemented by the factory's own Developer, and is opened as a PR against `develop` that the four-reviewer bench reviews. Of the 200 PRs merged so far, 65 were merged by the bot lane and 135 by the maintainer through `scripts/safe_merge.sh`, which runs the same review and gate before `gh pr merge` (measured 2026-10-18 on the GitHub PR list). **The factory is its own first customer.**
-
-## How it works
-
-A spec's life, top to bottom: build → review → ship. Four reviewers and a claim-verification layer feed a findings ledger; a pure evidence-first gate re-verifies everything at the exact head it is about to merge.
-
-![Repoach — the review factory, from spec to merge](docs/review_factory_architecture.png)
-
-### Deeper dives
-
-<details>
-<summary><b>The review pipeline</b> — findings, mechanical verifiers, adversarial refuter, and the merge gate</summary>
-
-![Repoach — evidence-first review pipeline](docs/review_redesign_architecture.png)
-</details>
-
-<details>
-<summary><b>Builder memory</b> — the factory recalls past lessons before planning and remembers each build's outcome</summary>
-
-![Repoach — builder memory loop](docs/builder_memory_architecture.png)
-</details>
-
-<details>
-<summary><b>Provider observability</b> — active probes + passive telemetry around the LLM gateway</summary>
-
-![Repoach — NIM observability](docs/nim_observability_architecture.png)
-</details>
-
-## Watch it work
-
-Here's a spec going from *written* to *shipped* — the same loop every change in this repo travels. The values are illustrative and each JSON is abridged to the fields that matter; the real payloads carry more keys, and `repoach <command> --help` lists the exit codes.
-
-**1 · You write a spec, the factory builds it.** The Planner drafts a plan (`docs/plans/<SP-ID>.md`), then the Developer executes it one commit per step and opens a PR against `develop`:
-
-```console
-$ repoach develop SP-BUDGET-RETRY-BACKOFF
-{
-  "spec_id": "SP-BUDGET-RETRY-BACKOFF",
-  "branch": "feat/sp-budget-retry-backoff-impl",
-  "steps_total": 4,
-  "steps_completed": 4,
-  "ruff_passed": true,
-  "pytest_passed": true,
-  "self_verified": true,
-  "pushed": true
-}
-```
-
-**2 · Four reviewers judge it — independently.** Architect, Sentinel, Tester, and Scribe each return a verdict. A single `REQUEST_CHANGES` wins:
-
-```console
-$ repoach review pr 42
-{
-  "pr_number": 42,
-  "final_verdict": "REQUEST_CHANGES",
-  "n_blockers": 1,
-  "posted_comments": 1,
-  "reviews": [
-    { "role": "architect", "verdict": "APPROVE",         "summary": "Boundary clean; policy owned by the spec." },
-    { "role": "sentinel",  "verdict": "REQUEST_CHANGES", "summary": "Backoff has no jitter cap — a retry storm is reachable." },
-    { "role": "tester",    "verdict": "APPROVE",         "summary": "Integration test exercises breaker recovery." },
-    { "role": "scribe",    "verdict": "APPROVE",         "summary": "Docstrings Google-style; spec cross-referenced." }
-  ]
-}
-```
-
-Add `--dry-run` to run the same bench and persist its findings without posting to the PR (two known gaps in that mode are listed under [Status](#status)).
-
-**3 · The Coder fixes what they found — then they re-verify.** One findings-driven iteration; each resolved finding is re-checked at the new head:
-
-```console
-$ repoach review fix 42
-{ "n_open_findings": 1, "fixes_applied": 1, "pytest_passed": true, "pushed": true, "resolved": 1, "still_open": 0 }
-```
-
-**4 · The gate re-checks the facts at HEAD — and only then merges.** No "LGTM" is trusted: the gate re-verifies the findings ledger against the exact commit it is about to merge:
-
-```console
-$ repoach review gate 42
-{
-  "pr_number": 42,
-  "head_sha": "9f6cd85",
-  "merge": true,
-  "reasons": [],
-  "facts": { "ci_green": true, "open_blocking_findings": 0,
-             "spec_covered": true, "review_complete": true }
-}
-```
-
-`merge: true` → `repoach review merge 42` squash-merges the PR into `develop`. `merge: false` prints its reasons and blocks. That decision is byte-identical to the one `repoach review merge` acts on — the read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
+**How it decides.** Four reviewers (Architect, Sentinel, Tester, Scribe) read the pull or merge request and write their findings to a ledger. Mechanical verifiers check what can be checked on disk, and an adversarial refuter on a heavier model must fail to disprove a judged finding before it counts. The merge gate then re-verifies that ledger at the exact head it is about to merge (CI green, zero surviving blockers, a complete review, the spec's promised tests present) and refuses an LGTM it cannot prove. repoach is made by one maintainer plus agents, and is open to contributors.
 
 ## Quickstart
 
-There is no wheel to install yet (the `repoach` name on PyPI is a reservation — see [Status](#status)); install from a clone:
+repoach is not on PyPI yet (the `repoach` name there is a reservation; the release is `SP-PYPI-RELEASE`). Until then, install from the repository:
 
 ```bash
-git clone https://github.com/repoachhq/repoach && cd repoach
-python -m venv .venv && source .venv/bin/activate   # Python 3.11+
-pip install -e ".[dev]"
-cp .env.example .env      # required: without it only the top-level `repoach --help` works;
-                          # `review pr --help`, `develop --help`, `arch check --help` and `version` exit 1
-
-repoach --help            # the CLI
+pipx install git+https://github.com/repoachhq/repoach@main
+cd your-repo
+repoach init                 # writes repoach.toml and the spec template
+repoach doctor               # which provider route is configured
 ```
 
-To run anything that calls a model, pick a provider (see [Providers](#providers)): the shortest path is a logged-in Claude Code and `REPOACH_PROVIDER=claude_code`, with no gateway and no key. With a provider ready and `gh auth login` done:
+Pick a provider (below), log in to your forge (`gh auth login` or `glab auth login`), then:
 
 ```bash
-repoach review pr <N> --dry-run   # run the review bench on a PR, post nothing
-repoach review gate <N>           # evidence-first merge gate, read-only
-repoach develop <SP-ID> --no-push # plan-driven build from a spec, no push, no PR
+repoach review pr <N> --dry-run   # run the review bench on a PR or MR, post nothing
+repoach review gate <N>           # the evidence-first merge gate, read-only
 ```
 
-The **[getting-started guide](docs/getting_started.md)** walks
-you from clone to a live, authenticated call through the LLM gateway —
-provider keys, `chains.env` routing, the CLI tour — and then through the
-GitHub review factory on this repository.
+`repoach init` ran in 7 s on the `gum` repository (measured 2026-10-19/21). The **[getting-started guide](docs/getting_started.md)** covers the rest of the CLI.
 
-## Providers
+### Providers
 
 Every model call goes through one provider, chosen by `--provider` (on `review pr`, `review gate`, `ci review`), else `REPOACH_PROVIDER`, else `[provider].kind` in `repoach.toml`. You bring your own key or login; repoach sells no tokens. Keys live in the environment or `~/.config/repoach/env`, never in a project file.
 
@@ -190,6 +76,65 @@ repoach usage --since 7d --by reviewer
 - **Claude Code details.** The CLI is `[provider].cli_path` or `REPOACH_CLAUDE_CODE_CLI_PATH`, else `claude` on `PATH`. Each call runs in an empty temporary directory (your project's `CLAUDE.md` is never loaded), in its own process group, killed with its children on timeout. The CLI is spawned without any `*_API_KEY`, `*_AUTH_TOKEN` or `*_TOKEN` variable of yours, so it answers on the login and never bills a key it would otherwise find; the one token it keeps is `CLAUDE_CODE_OAUTH_TOKEN`.
 - **Never implicit.** `claude_code` is used only when named. Nothing named and no gateway URL is one error, rc 2, before any forge call: `repoach: no provider configured -- pass --provider, or set REPOACH_PROVIDER or [provider].kind in repoach.toml, to a kind (claude_code, anthropic, openai_compatible, gemini, gateway) or a preset (openai, ollama, openrouter, groq, deepseek, mistral)`.
 - **Failing early.** A missing CLI, a logged-out CLI, a missing key, model or base URL is one line on stderr and exit code 2, before any forge call; a key the provider rejects (401/403) stops the reviewer at the first attempt with the variable's name, never its value.
+
+## Works after your agents, not instead of them
+
+repoach does not write your code. Aider, OpenHands, the Copilot coding agent, Cursor and the humans on your team are PR sources: they open the pull or merge request, and repoach reviews it and gates the merge. It sits where a CI barrier sits, after whatever produced the change, and it judges an agent's PR and a person's PR the same way.
+
+## What the gate refuses
+
+Two excerpts from recorded runs on this repository's public PRs.
+
+**A finding refuted before it was believed.** On [PR #217](https://github.com/repoachhq/repoach/pull/217), the Scribe flagged `src/repoach/ci_entry/advisory.py:672`: "`apply_forge_env` mutates `os.environ` via `setdefault`, which the module docstring does not mention." The refuter answered on the [same thread](https://github.com/repoachhq/repoach/pull/217#discussion_r4327345489):
+
+> apply_forge_env is explicitly named and documented as exporting env for the PR-state read, and it only uses setdefault. [...] this is a style preference, not a defect.
+>
+> this `design` finding was refuted by the `refuter` check and marked ``refuted`` in the findings ledger
+
+**An LGTM refused.** On [PR #202](https://github.com/repoachhq/repoach/pull/202), the bench's `final_verdict` was `APPROVE`, with zero blockers and green CI. The [review report](https://github.com/repoachhq/repoach/pull/202#issuecomment-6266037175) still reads:
+
+```markdown
+## Decision: BLOCKED at `0c69899a7c6d` — spec acceptance selectors not all present
+
+| Fact | Value |
+| --- | --- |
+| CI green | True |
+| Open blocking findings | 0 |
+| Spec covered | False |
+| Review complete | True |
+```
+
+The approval was not enough: the tests the plan promised were not present at that head, so the gate said no.
+
+<details>
+<summary><b>The review pipeline</b>: findings, mechanical verifiers, adversarial refuter, and the merge gate</summary>
+
+![Repoach — evidence-first review pipeline](docs/review_redesign_architecture.png)
+</details>
+
+## How it compares
+
+| Product | Forges | Blocks a merge on evidence | Re-verifies findings at the merge head | Spec in the repo gates the plan | Model choice (BYOK) | Self-host | Price as listed |
+|---|---|---|---|---|---|---|---|
+| repoach | GitHub, GitLab | yes: refuses an unproven LGTM | yes: the ledger is re-verified at the exact head | yes: governed spec; the plan's tests must exist at the head | Claude Code login, Anthropic key, OpenAI-compatible presets, Gemini, gateway | yes: your CI or your machine; no repoach cloud | free (MIT); you pay your model, no token resale |
+| GitHub Copilot code review | GitHub; Azure DevOps (preview) | no: can approve, when enabled, toward required approvals | n/m | n/m | no: model switching not supported | n/m | $0.05–5 of AI credits per review |
+| Cursor Bugbot | GitHub, GitLab, Bitbucket, Azure DevOps | no: neutral status unless fail-on-unresolved is enabled | n/m | n/m | Cursor's model setting; no key of yours named | no: managed service; self-hosted forges connect to it | $1.00–1.50 per average review |
+| CodeRabbit | GitHub, GitLab, Azure DevOps, Bitbucket | n/m | n/m | n/m | n/m | Enterprise plan | $24–72 per user per month (annual) |
+| Qodo PR-Agent | GitHub, GitLab, Bitbucket, Azure DevOps, Gitea | no: comments only | n/m | n/m | yes: any model, your key | yes: GitHub Action, CLI, Docker | free (MIT) |
+| Greptile | GitHub, GitLab, Bitbucket, Gitea, Perforce | n/m | n/m | n/m | n/m | Enterprise plan (Docker, Helm, air-gapped) | $30 per seat per month |
+| Sourcery | GitHub, GitLab (incl. self-managed) | n/m | n/m | n/m | your LLM keys on Enterprise | Enterprise plan | $12–30 per developer per month; free for open source |
+| GitLab Duo Code Review | GitLab | no: feedback only | n/m | n/m | GitLab's models or self-hosted models | GitLab Self-Managed, Dedicated | $0.25 per review, flat (Code Review Flow) |
+| Claude Code Review | GitHub | no: never approves or blocks | no: verifies before posting, not at merge | n/m | no: the service chooses the models | no: vendor infrastructure | token usage, no flat per-review price |
+
+Each cell is copied from [docs/comparison.md](docs/comparison.md), which links the page every value was read on; `n/m` means the page says nothing, so this table cannot say. All cells checked on 2026-10-21.
+
+### What repoach does not do
+
+- **No cloud.** It runs in your CI or on your machine; there is no hosted repoach to sign up to.
+- **No token resale.** You bring a login or a key and pay your model provider directly.
+- **No mathematical proof.** The gate re-verifies each finding's claim against the code at the head and requires green tests; it proves no property of your program.
+- **It is as good as your tests.** "CI green" and "the spec's tests are present" mean what your test suite means; a weak suite makes a weak gate.
+- **No precision number yet.** The false-positive rate has not been measured; `SP-PRECISION-MEASUREMENT` will publish it.
 
 ## Run repoach in CI
 
@@ -231,43 +176,122 @@ Exit codes with `--strict`: `0` reviewed (APPROVE/COMMENT) or the PR already mer
 
 ## Safety
 
-Letting agents write and merge code is only acceptable if the blast radius is bounded. In Repoach:
+Letting agents review and merge code is only acceptable if the blast radius is bounded. In repoach:
 
 - Agents **never merge to the release branch** (`main`): the release gate is read-only and the operator merges. Into the integration branch (`develop`) they merge only through the evidence-first gate, and only when CI is green at the exact head.
 - Every agent fix is **path-whitelisted** — no touching `.github/`, `.githooks/`, `prompts/review/`, `.git/` or any `.env*` file.
 - Secrets are **scrubbed** from every subprocess that executes agent-authored code (test reruns, the Developer's tools, the read-only `claude -p` exploration): any variable named like a token, key, secret, password or credential is dropped.
 - The chain autopilot is **shadow by default**, capped at two chain mutations per cycle, and writes `chains.env` atomically with a `.bak` only when writing is enabled with `--apply` or `REPOACH_CHAINPILOT_APPLY_ENABLED=true`.
 
-## Contributing
-
-Issues, docs, spec proposals, and code PRs are all welcome — but this
-repo works a little differently: the factory is its own primary
-developer, and every PR by an allow-listed actor goes through the same
-bot-review team and evidence-first merge gate. The workflows run on a
-self-hosted runner behind an actor allowlist, so a PR from outside is
-picked up by the maintainer and run through the same pipeline by hand.
-Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** — it explains the
-spec-driven workflow, the quality gates, and what to expect from the
-review bots.
-
 ## Status
 
-Early, and built in the open. What the code does on 2026-10-19 (`develop` 20dbb45), measured, not promised:
+Early, and built in the open. Every row is measured, not promised, and names what it was read on.
 
-| Area | Today | Direction |
+| Area | Today | Read on |
 |---|---|---|
-| Forge | GitHub only, through the `gh` CLI on your PATH (19 methods in `src/repoach/review/gh_client.py`). | A `Forge` protocol with GitHub and GitLab implementations — spec `SP-UNIVERSAL-FORGE`. |
-| Languages and gates | Python: `ruff` + `pytest`, AST-based finding verifiers, `src/` + `tests/unit` layout assumed. | Per-project lint/test/gate commands, Python verifiers that step aside on other languages — `SP-UNIVERSAL-GATES`. |
-| Install | From a clone with `pip install -e`; config, `chains.env`, `.env` and the SQLite ledger are anchored to the repoach checkout; `repoach init` scaffolds repoach itself, not your repository. The `repoach 0.0.1` on PyPI is a name reservation. | A wheel that boots without a gateway or a checkout (`pipx install repoach`) — `SP-UNIVERSAL-INSTALL`, milestone M1, pending. |
-| Gateway | Optional: `claude_code`, `anthropic`, any OpenAI-compatible endpoint (presets `openai`, `ollama`, `openrouter`, `groq`, `deepseek`, `mistral`) and `gemini` run in-process ([Providers](#providers)), each call recorded in a usage ledger with a cost estimate; the agents speak HTTP to the local `llm_proxy` only with `gateway`. | Prices for the OpenRouter, Groq, DeepSeek and Mistral models; a `repoach.toml` price override — `SP-USAGE-LEDGER`. |
-| Models | The committed free chains are dead: every NVIDIA NIM head has answered HTTP 410 on 13 089 of the 13 203 probes since 2026-09-01 (read 2026-10-19); the remainder is 99 connection errors, 13 `ok` rows written by test fixtures, and 2 other; the last real `ok` was 2026-08-21. The OpenRouter credit is negative. The only hop that answers a review today is the `claude_code/<tier>` tail — your local `claude` login. | A key, not a chain (`SP-UNIVERSAL-PROVIDERS`). |
-| Cost | Measured on one review of a 36-file / 196 k-character diff (2026-10-18): 225 582 tokens over 7 gateway calls, 83 s, four reviews, 0 tool calls. No precision or false-positive rate has been measured yet. | A ledger that reads each finding's fate from the forge and reports cost and precision — `SP-UNIVERSAL-LEDGER`. |
-| Known review defects | (1) `review pr --dry-run` is not write-free: the refuted-finding sentinels are posted outside the `post` guard (`orchestrator.py:661` vs `:768`), so on a PR that already carries repoach threads a dry run posts replies. (2) A dry run has no head SHA: the head guard starts only when posting (`orchestrator.py:410-414`), so its ledger rows carry `head_sha = NULL` and the verdict is derived at an empty head. Both measured 2026-10-18. | (1) is closed by `SP-UNIVERSAL-CI-ENTRY` (G2: `--dry-run` never posts). (2) has no closing spec yet. |
-| Activity | Last merge 2026-08-01 (#200). The CI lane's follow-up jobs race the maintainer's local merge: of the last 60 `auto-review` runs (read 2026-10-19), 52 failed, 2 were cancelled and 6 succeeded — the failures mostly at the `auto_fix` checkout or `auto_merge` step, after the head branch was already gone; the review job itself was green. | `SP-UNIVERSAL-CI-ENTRY` (the merge race). |
+| Forges | GitHub (`gh`) and GitLab (`glab`) behind one `Forge` protocol (`src/repoach/forge/`). | `develop` 45712b2, 2026-10-21 |
+| Languages and gates | Lint, test and gate commands and per-language verifiers (Python, the TypeScript family, YAML, Markdown links, external tools such as `verilator`) from `repoach.toml` (`src/repoach/gates/`); a check that cannot run answers `not_applicable` with the reason. | `develop` 45712b2, 2026-10-21 |
+| Install | `pipx install git+https://github.com/repoachhq/repoach@main`; the `repoach` on PyPI is a name reservation until `SP-PYPI-RELEASE`. `repoach init` ran in 7 s on the `gum` repository, and `init --ci gitlab\|github` writes the job. | owner runs, 2026-10-19/21 |
+| Providers | Claude Code login, Anthropic key, OpenAI-compatible presets (OpenAI, Ollama, OpenRouter, Groq, DeepSeek, Mistral), Gemini, and the gateway ([Providers](#providers)). | `develop` 45712b2, 2026-10-21 |
+| First external client | Yoob (GitLab; Python, TypeScript and Verilog). On its first runs the gate flagged 3 majors on the secrets scoping of Yoob's own CI wiring of repoach. | owner runs, 2026-10-19/21 |
+| Time and tokens | A real review of a Yoob merge request, run from the client repository through a Claude Code login: 69–115 s, about 224–300 k tokens per review, more than 95 % of them cached. | owner runs, 2026-10-19/21 |
+| Precision | Not measured: no false-positive rate is published yet (`SP-PRECISION-MEASUREMENT`). | 2026-10-21 |
+| Known review defect | A dry run has no head SHA: the head guard starts only when posting (`if self._post:` in `src/repoach/review/orchestrator.py`), so its ledger rows carry `head_sha = NULL`. The other 2026-10-18 defect, a dry run posting refuted-finding replies, is closed: the sentinels are skipped in a dry run. | `develop` 45712b2, 2026-10-21 |
+| Activity | Last merge #220 on 2026-10-21. | GitHub PR list, 2026-10-21 |
 
-The umbrella spec `SP-UNIVERSAL-REPO` (on branch `feat/sp-universal-repo-spec`) orders this work M0–M8. A "five minutes on your repo" promise is milestone M7 of that spec; it is not true today and this README will carry it only once the clock has been measured.
+## Later: the spec-driven builder
 
-If the idea resonates — an autonomous factory that's *transparent, self-evolving, and safe to be wrong* — ⭐ the repo and follow along.
+repoach also builds. The same governed specs that gate a review can drive a Planner, a Developer and a Coder that write the change themselves; this is how repoach builds repoach, and it comes after the gate in this README because the gate is what you install first.
+
+### Governed specs
+
+Every change is anchored to a spec whose frontmatter declares **what it owns** and **what it depends on**. From that, repoach *derives* the system's dependency graph and *enforces* it: an import that crosses a boundary the spec never declared fails CI (`repoach arch check`). The architecture cannot silently drift from the docs.
+
+### Failover routing, with a shadow autopilot
+
+In gateway mode, repoach runs its agents through one gateway with ten provider slots (NVIDIA NIM, OpenRouter, Kimi, Groq, Cerebras, DeepSeek, OpenAI, Anthropic, any OpenAI-compatible endpoint, and the local `claude` CLI) and walks a failover chain per capability tier (`chains.env`). A chain autopilot watches each head's live health and plans rewrites of the chains, bounded by a hard cap of two mutations per cycle. It runs in **shadow mode** unless writing is enabled with `--apply` or `REPOACH_CHAINPILOT_APPLY_ENABLED=true`: it journals what it would change and writes nothing.
+
+### It builds itself
+
+Every substantive change to repoach starts as a spec in `docs/specs/`, is planned and implemented by its own Developer, and is opened as a PR against `develop` that the four-reviewer bench reviews. Of the 200 PRs merged by 2026-10-18, 65 were merged by the bot lane and 135 by the maintainer through `scripts/safe_merge.sh`, which runs the same review and gate before `gh pr merge` (measured 2026-10-18 on the GitHub PR list).
+
+![Repoach — the review factory, from spec to merge](docs/review_factory_architecture.png)
+
+<details>
+<summary><b>Builder memory</b>: past lessons recalled before planning, each build's outcome remembered</summary>
+
+![Repoach — builder memory loop](docs/builder_memory_architecture.png)
+</details>
+
+<details>
+<summary><b>Provider observability</b>: active probes and passive telemetry around the LLM gateway</summary>
+
+![Repoach — NIM observability](docs/nim_observability_architecture.png)
+</details>
+
+### Watch it work
+
+A spec going from *written* to *shipped*. The values are illustrative and each JSON is abridged to the fields that matter; `repoach <command> --help` lists the exit codes.
+
+**1 · You write a spec, the Developer builds it.** The Planner drafts a plan (`docs/plans/<SP-ID>.md`), then the Developer executes it one commit per step and opens a PR against `develop`:
+
+```console
+$ repoach develop SP-BUDGET-RETRY-BACKOFF
+{
+  "spec_id": "SP-BUDGET-RETRY-BACKOFF",
+  "branch": "feat/sp-budget-retry-backoff-impl",
+  "steps_total": 4,
+  "steps_completed": 4,
+  "ruff_passed": true,
+  "pytest_passed": true,
+  "self_verified": true,
+  "pushed": true
+}
+```
+
+**2 · Four reviewers judge it, independently.** A single `REQUEST_CHANGES` wins:
+
+```console
+$ repoach review pr 42
+{
+  "pr_number": 42,
+  "final_verdict": "REQUEST_CHANGES",
+  "n_blockers": 1,
+  "reviews": [
+    { "role": "architect", "verdict": "APPROVE",         "summary": "Boundary clean; policy owned by the spec." },
+    { "role": "sentinel",  "verdict": "REQUEST_CHANGES", "summary": "Backoff has no jitter cap — a retry storm is reachable." },
+    { "role": "tester",    "verdict": "APPROVE",         "summary": "Integration test exercises breaker recovery." },
+    { "role": "scribe",    "verdict": "APPROVE",         "summary": "Docstrings Google-style; spec cross-referenced." }
+  ]
+}
+```
+
+**3 · The Coder fixes what they found, then they re-verify.** One findings-driven iteration; each resolved finding is re-checked at the new head:
+
+```console
+$ repoach review fix 42
+{ "n_open_findings": 1, "fixes_applied": 1, "pytest_passed": true, "pushed": true, "resolved": 1, "still_open": 0 }
+```
+
+**4 · The gate re-checks the facts at the head, and only then merges.**
+
+```console
+$ repoach review gate 42
+{
+  "pr_number": 42,
+  "head_sha": "9f6cd85",
+  "merge": true,
+  "reasons": [],
+  "facts": { "ci_green": true, "open_blocking_findings": 0,
+             "spec_covered": true, "review_complete": true }
+}
+```
+
+`merge: true` → `repoach review merge 42` squash-merges the PR into `develop`. `merge: false` prints its reasons and blocks. The read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
+
+## Contributing
+
+Issues, docs, spec proposals, and code PRs are all welcome, from people and from their agents. Every PR by an allow-listed actor goes through the same bot-review team and evidence-first merge gate; the workflows run on a self-hosted runner behind an actor allowlist, so a PR from outside is picked up by the maintainer and run through the same pipeline by hand. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**: it explains the spec-driven workflow, the quality gates, and what to expect from the review bots.
 
 ---
 
