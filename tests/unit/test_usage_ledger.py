@@ -94,7 +94,9 @@ def test_anthropic_calls_are_priced_from_the_table_and_attributed(
     assert rows[1].cost_usd == pytest.approx((12 * 5 + 9 * 25) / 1_000_000)
     assert rows[0].price_source == f"anthropic/claude-sonnet-5 read {PRICES_READ_ON}"
     line = run_summary_line(run)
-    assert line.startswith("usage: 2 calls, 42 tokens (in 24, out 18, cached 0), ")
+    assert line.startswith(
+        "usage: 2 calls, 42 tokens (in 24, out 18, cache_read 0, cache_write 0), "
+    )
     assert "$0.0004 (prices read 2026-10-21)" in line
     document = run_usage_json(run)
     assert [entry["reviewer"] for entry in document["per_reviewer"]] == [
@@ -134,6 +136,9 @@ def test_rejected_key_is_a_row_with_its_error_and_no_cost(
     assert row.error is not None and row.error.startswith("ProviderAuthError: ")
     assert "rejected-key-value" not in row.error
     assert (row.cost_usd, row.prompt_tokens) == (None, 0)
+    assert run_summary_line_for([row]).startswith(
+        "usage: 1 calls, all failed (ProviderAuthError), "
+    )
     assert totals([row]).unpriced_calls == 0
     assert totals([row]).errors == 1
 
@@ -263,7 +268,16 @@ def test_usage_command_groups_the_period(clone: Path, tmp_path: Path) -> None:
     table = CliRunner().invoke(app, ["usage", "--since", "7d"])
     assert table.exit_code == 0
     lines = table.stdout.splitlines()
-    assert lines[1].split() == ["key", "calls", "in", "out", "cached", "wall_s", "cost"]
+    assert lines[1].split() == [
+        "key",
+        "calls",
+        "in",
+        "out",
+        "cache_read",
+        "cache_write",
+        "wall_s",
+        "cost",
+    ]
     assert lines[-1].startswith("total")
     with sqlite3.connect(db) as conn:
         assert conn.execute("select count(*) from usage_ledger").fetchone() == (4,)
@@ -273,3 +287,18 @@ def test_usage_command_rejects_a_bad_period(clone: Path) -> None:
     result = CliRunner().invoke(app, ["usage", "--since", "soon"])
     assert result.exit_code == 2
     assert "7d, 24h, 2w" in result.stderr
+
+
+def run_summary_line_for(rows: list[UsageRow]) -> str:
+    """The summary line of a run holding exactly ``rows``."""
+    with usage_run("review pr", 1) as run:
+        for row in rows:
+            run.add(row)
+    return run_summary_line(run)
+
+
+def test_summary_splits_cache_read_and_write(clone: Path) -> None:
+    line = run_summary_line_for(
+        [_row(prompt_tokens=2, completion_tokens=3, cache_read_tokens=5, cache_write_tokens=7)]
+    )
+    assert "(in 2, out 3, cache_read 5, cache_write 7)" in line

@@ -472,15 +472,25 @@ def cost_text(total: UsageTotals) -> str:
 
 
 def run_summary_line(run: UsageRun) -> str:
-    """The one line ``review pr`` prints on stderr after its verdict."""
+    """The one line ``review pr`` prints on stderr after its verdict.
+
+    Every call failed: ``usage: N calls, all failed (<error classes>), W s``
+    instead of a zero token count that reads like a free review.
+    """
     rows = run.snapshot()
     total = totals(rows)
-    line = (
-        f"usage: {total.calls} calls, {total.total_tokens} tokens "
-        f"(in {total.prompt_tokens}, out {total.completion_tokens}, "
-        f"cached {total.cache_read_tokens + total.cache_write_tokens}), "
-        f"{run.wall_s():.1f} s, {cost_text(total)}"
-    )
+    if total.calls and total.errors == total.calls:
+        classes = sorted({(row.error or "").split(":", 1)[0] for row in rows})
+        line = (
+            f"usage: {total.calls} calls, all failed ({', '.join(classes)}), {run.wall_s():.1f} s"
+        )
+    else:
+        line = (
+            f"usage: {total.calls} calls, {total.total_tokens} tokens "
+            f"(in {total.prompt_tokens}, out {total.completion_tokens}, "
+            f"cache_read {total.cache_read_tokens}, cache_write {total.cache_write_tokens}), "
+            f"{run.wall_s():.1f} s, {cost_text(total)}"
+        )
     if not run.recorded:
         line += "; usage not recorded"
     return line
@@ -625,14 +635,15 @@ def usage_report(rows: list[UsageRow], *, by: str) -> UsageReport:
 
 def usage_table(report: UsageReport) -> list[str]:
     """Render ``report`` as aligned text lines, the total last."""
-    header = ("key", "calls", "in", "out", "cached", "wall_s", "cost")
+    header = ("key", "calls", "in", "out", "cache_read", "cache_write", "wall_s", "cost")
     body = [
         (
             group.key,
             str(group.calls),
             str(group.prompt_tokens),
             str(group.completion_tokens),
-            str(group.cache_read_tokens + group.cache_write_tokens),
+            str(group.cache_read_tokens),
+            str(group.cache_write_tokens),
             f"{group.duration_ms / 1000:.1f}",
             group.cost,
         )

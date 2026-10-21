@@ -49,7 +49,7 @@ Delivered with `SP-UNIVERSAL-PROVIDERS` slice 2 (which owns the
   and every other model → null (D1 left open).  Not built: the
   `[usage.prices]` override (tech_debt #51).
 - G3 as amended by the owner: `review pr` prints one stderr line,
-  `repoach: usage: N calls, T tokens (in …, out …, cached …), W s,
+  `repoach: usage: N calls, T tokens (in …, out …, cache_read …, cache_write …), W s,
   <cost>`, where `<cost>` is `$X.XXXX (prices read 2026-10-21)`,
   `subscription (tokens only)`, `cannot say (N unpriced calls)` or a
   mix with `+ N unpriced calls`; the JSON gains `usage` with
@@ -58,7 +58,7 @@ Delivered with `SP-UNIVERSAL-PROVIDERS` slice 2 (which owns the
   is unmet as written.
 - G4: `repoach usage [--since 7d|24h|2w|DATE] [--until …] [--by
   model|provider|reviewer|pr|day|command] [--json]`, default 7 days by
-  model; text output `key | calls | in | out | cached | wall_s | cost`.
+  model; text output `key | calls | in | out | cache_read | cache_write | wall_s | cost`.
 - G5: `may be stale` is appended to the dollar figure when the table
   was read more than 90 days before the run.
 - D2: the stderr line is on by default; `ci review` runs the review as
