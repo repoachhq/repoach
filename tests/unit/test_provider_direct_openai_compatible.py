@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from repoach.agent_engine.adapters import GatewayError, GatewayTransportError
 from repoach.agent_engine.agent_loop import AgentLoop
+from repoach.cli.main import app as main_app
 from repoach.cli.review_cmds import review_app
 from repoach.core import config as core_config
 from repoach.llm.capability import CapabilityTier
@@ -408,3 +409,11 @@ def test_no_provider_message_names_every_kind_preset_and_the_flag() -> None:
     assert "REPOACH_PROVIDER" in NO_PROVIDER_MESSAGE
     for name in SELECTABLE:
         assert name in NO_PROVIDER_MESSAGE
+
+
+@pytest.mark.parametrize("command", [["review", "pr"], ["review", "gate"], ["ci", "review"]])
+def test_provider_flag_help_shows_the_toml_key(command: list[str]) -> None:
+    """Rich markup would eat an unescaped ``[provider]``; the help must print it."""
+    result = CliRunner().invoke(main_app, [*command, "--help"], env={"COLUMNS": "250"})
+    assert result.exit_code == 0
+    assert "REPOACH_PROVIDER and [provider].kind" in result.stdout

@@ -147,11 +147,14 @@ SELECTABLE: tuple[str, ...] = KINDS + tuple(PRESETS)
 """Every value ``--provider``, ``REPOACH_PROVIDER`` and ``[provider].kind`` accept."""
 
 PROVIDER_FLAG_HELP = (
-    "Provider for this run, outranking REPOACH_PROVIDER and [provider].kind: "
+    "Provider for this run, outranking REPOACH_PROVIDER and \\[provider].kind: "
     "claude_code, anthropic, openai_compatible, gemini, gateway, or a preset "
     "(openai, ollama, openrouter, groq, deepseek, mistral)."
 )
-"""``--provider``'s help text, shared by every command that takes the flag."""
+"""``--provider``'s help text, shared by every command that takes the flag.
+
+Typer renders help as Rich markup, where ``[provider]`` is a tag and
+vanishes; the backslash escapes it so the help reads ``[provider].kind``."""
 
 _VERSION_SEGMENT = re.compile(r"^v\d+[a-z0-9]*$")
 
