@@ -305,6 +305,9 @@ def load_corpus(root: Path) -> Corpus:
     return Corpus(name=name, root=root.resolve(), sha=digest.hexdigest()[:12], cases=cases)
 
 
+_NO_WRAP = 10_000
+"""YAML line width: a hint stays on one line, so a stub is four lines to edit."""
+
 _YAML_LABEL: dict[str | None, bool | str | None] = {"true": True, "false": False}
 """How a label is written back: YAML booleans for true / false, the word for unsure."""
 
@@ -327,7 +330,7 @@ def write_case(case: Case) -> Path:
             entry.pop("hint")
     for defect in data["planted"]:
         defect["lines"] = list(defect["lines"])
-    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
+    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=_NO_WRAP)
     case.path.write_text(text, encoding="utf-8")
     return case.path
 
