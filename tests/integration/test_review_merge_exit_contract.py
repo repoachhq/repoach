@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 from repoach.cli import review_cmds
 from repoach.review.auto_merge import (
     OUTCOME_FAILED,
+    OUTCOME_MERGED,
     OUTCOME_SKIP_CI_TIMEOUT,
     AutoMergeResult,
 )
@@ -64,3 +65,27 @@ def test_cli_review_merge_failed_exits_one(
     payload = json.loads(result.output)
     assert payload["pr_number"] == 79
     assert payload["outcome"] == OUTCOME_FAILED
+
+
+def test_cli_review_merge_pins_head_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``review merge`` re-verifies the ledger on the pinned head tree (SP-GATE-REVERIFIES-AT-HEAD)."""
+    captured_kwargs: dict[str, object] = {}
+
+    def _fake_run_auto_merge(pr_number: int, **kwargs: object) -> AutoMergeResult:
+        captured_kwargs.update(kwargs)
+        return AutoMergeResult(
+            pr_number=pr_number,
+            outcome=OUTCOME_MERGED,
+            merged_sha="deadbeef",
+            notes="merged",
+        )
+
+    monkeypatch.setattr(review_cmds, "run_auto_merge", _fake_run_auto_merge)
+
+    runner = CliRunner()
+    result = runner.invoke(review_cmds.review_app, ["merge", "79"])
+
+    assert result.exit_code == 0
+    assert captured_kwargs.get("pin_tree") is True
