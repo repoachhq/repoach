@@ -1,105 +1,117 @@
 # Contributing to Repoach
 
-Thanks for your interest in Repoach! This repo works a little
-differently from most open-source projects, so please read this page
-before opening a PR — it will save you (and the bots) a round-trip.
+Repoach is built by writing specs, not by sending unsolicited diffs.
+This guide is itself a governed spec — `SP-CONTRIBUTING`, registered
+in `docs/specs/` and listed by `repoach arch graph` — so a change to
+it goes through the same review as a change to code.
 
-## How this repo is built
+## Five steps to a merged contribution
 
-Repoach is built *by* Repoach. The primary developer is the factory
-itself: substantive changes start as a **governed spec** in
-`docs/specs/`, a Planner turns the spec into a step-by-step action
-plan, and an autonomous Developer implements it branch-by-branch,
-commit-by-commit. Every PR — bot-authored or human-authored — then
-goes through the same pipeline: a four-reviewer bot team (Architect /
-Sentinel / Tester / Scribe), a findings ledger, and an
-**evidence-first merge gate** that re-verifies every fact (CI green,
-zero surviving blocking findings, spec coverage) at the exact head it
-is about to merge. The pipeline triggers automatically only for actors
-on the repository's allowlist (`vars.REPOACH_ALLOWED_ACTORS`); see the
-note on forks below for everyone else.
+1. Install from a clone: `pip install -e ".[dev]"` (Python 3.11+). `pipx install repoach` will replace this once `SP-PYPI-RELEASE` ships — today the `repoach` name on PyPI is a reservation, not a working release.
+2. Run the tests: `pytest -q tests/unit` — 3062 tests, measured at 6m16s on 2026-10-21.
+3. Pick an open [`good first spec`](https://github.com/repoachhq/repoach/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+spec%22) issue, or write your own spec in `docs/specs/`.
+4. Write or update the spec the change implements, then the code and its tests.
+5. Open the PR against `develop`; a maintainer comments `/repoach review` to run the bench, or it runs automatically if your GitHub login is on the actor allowlist.
 
-The best ways to contribute, in increasing order of ceremony:
+## What a contribution is
 
-1. **Open an issue** — bug reports, design discussion, spec proposals.
-   This is the right starting point for anything substantive.
-2. **Improve docs** — docs-only PRs are welcome and cheap to review.
-3. **Propose a spec** — if you want a feature built, a well-formed
-   spec in `docs/specs/` (see the conventions below) is worth more
-   than an unsolicited implementation: the factory can build from it.
-4. **Code PRs** — welcome too; expect the bot review team to review
-   your diff the same way it reviews its own.
+A contribution is a spec plus the diff that satisfies it — an issue,
+a doc fix, or code. The spec is what the bench reviews against: the
+`Acceptance Criteria` section of a `docs/specs/<date>_<SP-ID>_<slug>.md`
+file becomes the evidence a PR has to produce. A one-line doc fix
+with no behavioral claim does not need a new spec; anything that
+changes behavior does.
 
-## Branches and PRs
+## The spec-first rule
 
-- `main` is release-only; **all PRs target `develop`**.
-- Branch naming: `feat/…`, `fix/…`, `chore/…`.
-- Commit messages follow conventional-commit style
-  (`feat(scope): …`, `fix(scope): …`, `docs(specs): …`) in English.
-- One concern per PR; small is beautiful — the review bench re-reads
-  your whole diff.
+Substantive changes start as a spec, not as a diff. Browse
+`docs/specs/` for the shape (`docs/specs/_TEMPLATE.md` is the
+template `SP-SPEC-TEMPLATE` defines); `repoach plan <SP-ID>` and
+`repoach develop <SP-ID>` are how the factory itself builds from one.
+A spec's frontmatter declares `owns` (the files and resources it is
+responsible for) and `depends_on` (the other specs it needs); `repoach
+arch check` derives the dependency graph from every spec's frontmatter
+and fails a PR whose diff crosses an undeclared boundary — ownership
+is enforced, not just documented.
 
-> **Note on forks:** CI and the review team run on self-hosted
-> runners, so **workflows do not run automatically on PRs from
-> forks**. A maintainer will pick up your PR, mirror the branch into
-> the repo, and run the pipeline on it. Nothing is wrong with your PR
-> if checks show as skipped — it just needs the maintainer hop.
+## The three gates a PR passes
 
-## Local setup
+The merge gate is a pure function of three facts, re-verified at the
+exact commit it is about to merge — never trusted from an earlier run:
+
+| Gate | What it means |
+|---|---|
+| CI green | Every required check (lint, `pytest tests/unit`, `pytest tests/integration`, the matrix) is green at head. |
+| Zero open blocking findings | The bot review team (Architect / Sentinel / Tester / Scribe) found nothing a refuter could not disprove, re-checked at head. |
+| Spec coverage | Every acceptance criterion the PR claims to satisfy has a real, present test — not a claim taken on trust. |
+
+There is no human override in the normal path: a PR that cannot
+produce these three facts does not merge, bot-authored or human-authored.
+
+## Adding a language: one row, one verifier, one test
+
+Language support is data, not a special case. `docs/languages.md` is
+the one table a reader checks; `src/repoach/gates/languages.py`'s
+`LANGUAGE_TABLE` is what the gate actually runs. Adding a language is:
+
+1. One row in `docs/languages.md` (`language | detected by | lint | test | verifier | status | maintainer`).
+2. One `LanguageSpec` entry in `LANGUAGE_TABLE` (extensions, shebangs, the verifier names, the test-selector form) — the language is detected from this row alone.
+3. One verifier: a `CommandVerifier` (binary + argv template) when an existing external tool can judge the language's files, or a `FunctionVerifier` in `src/repoach/gates/verifiers.py` when the check needs in-process logic (the TypeScript family is the worked example).
+4. Tests for that verifier against a small fixture repository (a passing file, a failing one), the same shape as the existing Python and TypeScript tests.
+
+A language with no verifier available yet ships with `verifier: none`
+and `status: experimental` in the table — an honest gap, not a silent
+pass. `docs/languages.md` lists only the languages that have a landed
+verifier; `Go` and `Rust` are already detected (`LANGUAGE_TABLE` has
+rows for both) but neither has a verifier yet — each is an open
+`good first spec` issue.
+
+## Running the gates locally
 
 ```bash
-git clone https://github.com/repoachhq/repoach && cd repoach
-pip install -e ".[dev]"            # Python 3.11+
-git config core.hooksPath .githooks   # pre-commit + pre-push gates
-cp .env.example .env               # fill in your provider keys
+scripts/ci_local.sh          # full parity with CI: lint + unit + integration
+scripts/ci_local.sh --fast   # lint only
+scripts/ci_local.sh --tests  # pytest tests/unit only
 ```
 
-## Quality gates (run these before pushing)
+Install the git hooks once so the fast gate runs before every commit
+and push:
 
 ```bash
-scripts/ci_local.sh          # full parity with CI
-scripts/ci_local.sh --fast   # lint-only (ruff + format + comment gate)
-scripts/ci_local.sh --tests  # pytest-only
+git config core.hooksPath .githooks
 ```
 
-The gates that will actually bite you:
+## Commits, branches and PRs
 
-- **Zero inline comments, zero `# noqa`** anywhere in `src/`,
-  `tests/`, `scripts/`. Substantive *why* belongs in docstrings
-  (Google style); well-named identifiers carry the *what*. Lint
-  exceptions live in `pyproject.toml` only. Enforced by pre-commit,
-  CI, and a dedicated test.
-- **No silent `except`** — every caught exception is logged or
-  re-raised.
-- **Strict typing** everywhere; **Pydantic models** for data crossing
-  module boundaries.
-- **English everywhere** — code, comments, docstrings, log messages,
-  specs, tests, commit messages.
-- **No secrets in code** — everything via `.env`; env vars use the
-  `REPOACH_*` prefix. Never put a real key in a test fixture.
-- `pytest tests/unit` and `pytest tests/integration` must both be
-  green — CI runs the two suites on Python 3.11 and 3.13.
+- `main` is release-only; every PR targets `develop`.
+- Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
+- Commit messages are [Conventional Commits](https://www.conventionalcommits.org/), imperative, lowercase, no trailing period, 72 characters max (`feat(scope): subject`), in English.
+- No AI attribution of any kind in a commit message or PR description — no `Co-Authored-By` trailer naming a model, no "Generated by" line. A human `Co-Authored-By` for a human co-author is fine.
+- One concern per PR. The review bench re-reads the whole diff, so small is cheaper for everyone, including you.
 
-## Specs
+## What reviewers will hold you to
 
-Substantive changes are anchored to a spec:
-`docs/specs/<date>_<SP-ID>_<slug>.md`, with YAML frontmatter declaring
-`owns` (the modules the spec owns) and `depends_on`. Repoach *derives*
-the dependency graph from these declarations and *enforces* it in CI
-— an import crossing an undeclared boundary fails the build. Browse
-recent specs in `docs/specs/` for the format; `repoach plan <SP-ID>`
-and `repoach develop <SP-ID>` are how the factory builds from one.
+- The diff matches a spec's acceptance criteria, or is a genuinely minor fix with no spec needed.
+- Tests are real: a truthful boundary fake (a fake HTTP transport, a fake CLI executable) is fine; monkeypatching Repoach's own behavior to make a test pass is not.
+- Zero inline comments and no `# noqa` in `src/`, `tests/`, `scripts/` — substantive *why* goes in a docstring, well-named identifiers carry the *what*. Checked by `scripts/lint_no_inline_comments.py`.
+- No silent `except` — every caught exception is logged or re-raised. Checked by `scripts/lint_no_silent_except.py`.
 
-## What reviewers (bots and humans) will hold you to
+## Where decisions live
 
-- The diff matches a spec's acceptance criteria, or is a genuinely
-  minor fix.
-- Tests are real: truthful boundary fakes (a fake HTTP transport, a
-  fake CLI executable) are fine; monkeypatching Repoach's own
-  behavior to make a test pass is not.
-- CI green at head, no surviving blocking findings — the merge gate
-  re-checks this mechanically; there is no human override in the
-  normal path.
+- Product and architecture decisions that are still open live as
+  `Owner decisions needed` and `Open Questions` sections inside the
+  relevant spec in `docs/specs/` — not in this file, not in an issue
+  comment, not in chat history.
+- The weekly "first ten users" ritual and its owner-held slot are in
+  [`docs/community.md`](docs/community.md).
+- The enforcement contact for the [Code of Conduct](CODE_OF_CONDUCT.md)
+  is named there, not here.
+
+> **Note on forks:** CI and the review bench run on self-hosted
+> runners behind an actor allowlist (`vars.REPOACH_ALLOWED_ACTORS`),
+> so workflows do not run automatically on a PR from a fork. A
+> maintainer comments `/repoach review` to run the pipeline on it by
+> hand — nothing is wrong with your PR if its checks show as skipped.
 
 ## License
 

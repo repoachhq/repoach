@@ -68,6 +68,9 @@ jobs:
       - name: Lint — no silent except (SP-LINT-LOG-CATCH-ALL)
         run: python scripts/lint_no_silent_except.py --summary
 
+      - name: Lint — CONTRIBUTING cites real paths (SP-CONTRIBUTING)
+        run: python scripts/check_contributing.py CONTRIBUTING.md
+
       - name: Lint — edge honesty (SP-ARCH-EDGE-GATE)
         if: github.event_name == 'pull_request'
         run: |
