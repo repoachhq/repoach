@@ -293,7 +293,7 @@ $ repoach review gate 42
 
 ## Contributing
 
-Issues, docs, spec proposals, and code PRs are all welcome, from people and from their agents. Every PR by an allow-listed actor goes through the same bot-review team and evidence-first merge gate; the workflows run on a self-hosted runner behind an actor allowlist, so a PR from outside is picked up by the maintainer and run through the same pipeline by hand. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**: it explains the spec-driven workflow, the quality gates, and what to expect from the review bots.
+Issues, docs, spec proposals, and code PRs are all welcome, from people and from their agents. Every PR by an allow-listed actor goes through the same bot-review team and evidence-first merge gate; the workflows run on a self-hosted runner behind an actor allowlist, so a PR from outside is picked up by the maintainer and run through the same pipeline by hand. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**: it explains the spec-driven workflow, the quality gates, and what to expect from the review bots. New to the codebase? Pick an open [`good first spec`](https://github.com/repoachhq/repoach/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+spec%22) issue.
 
 ---
 

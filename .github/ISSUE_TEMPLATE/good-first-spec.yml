@@ -1,0 +1,58 @@
+name: Good first spec
+description: A spec sized for a newcomer's first contribution — one evening, one spec, one PR.
+title: "Language support: <name>"
+labels:
+  - "good first spec"
+body:
+  - type: markdown
+    attributes:
+      value: >
+        See CONTRIBUTING.md for the spec-first rule and the three
+        gates a PR has to pass. Fill in what you know; the maintainer
+        fills the rest before labeling this ready.
+  - type: input
+    id: spec-id
+    attributes:
+      label: Spec ID
+      description: The SP-ID this issue implements (an existing one from docs/specs/, or the one you propose to create).
+      placeholder: SP-EXAMPLE-ID
+    validations:
+      required: true
+  - type: textarea
+    id: intent
+    attributes:
+      label: Intent
+      description: One to three sentences — what this component does, and why it exists.
+    validations:
+      required: true
+  - type: textarea
+    id: goals
+    attributes:
+      label: Goals
+      description: The verifiable objectives (G1, G2, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: "Acceptance criteria (commands)"
+      description: Command-form checks a reviewer can run, each with its expected output or exit code.
+      placeholder: |
+        AC1: `pytest -q tests/unit/test_example.py` -> green
+    validations:
+      required: true
+  - type: textarea
+    id: files-touched
+    attributes:
+      label: Files likely touched
+      description: The files you expect to create or change.
+    validations:
+      required: true
+  - type: input
+    id: estimated-lines
+    attributes:
+      label: Estimated lines of change
+      description: A rough diff size — this issue should be ≤ 150 lines of change.
+      placeholder: "~80"
+    validations:
+      required: true

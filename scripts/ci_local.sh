@@ -121,6 +121,7 @@ if [[ "$mode" != "tests" && "$mode" != "integration" ]] ; then
     run_step "ruff format --check" ruff format --check src tests
     run_step "lint — no inline comments / no noqa" python scripts/lint_no_inline_comments.py --summary
     run_step "lint — no silent except" python scripts/lint_no_silent_except.py --summary
+    run_step "lint — CONTRIBUTING cites real paths" python scripts/check_contributing.py CONTRIBUTING.md
 fi
 
 if [[ "$mode" == "full" || "$mode" == "tests" ]] ; then
