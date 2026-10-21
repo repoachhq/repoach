@@ -5,7 +5,7 @@ version: 0.1
 status: proposed
 author: agent
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 
 owns:
   code: []
@@ -38,7 +38,7 @@ silently wrong.
 ## Goals
 
 - G1: `docs/comparison.yaml` is the source: one entry per product with `name`, `vendor_url`, and the cells `loop`, `forges`, `blocks_merge_on_evidence`, `reverifies_at_merge_head`, `spec_gates_plan`, `model_choice`, `price`, `self_host`; each cell is `{value, source_url, checked_on}` or `{value: "n/m"}`.
-- G2: the rows: repoach, GitHub Copilot code review, Cursor Bugbot, CodeRabbit, Qodo PR-Agent, Greptile, Ellipsis, Sourcery, GitLab Duo Code Review. Autonomous developers (OpenHands, Devin, SWE-agent, Aider) are listed under "PR sources, not competitors" with one line each and no cells.
+- G2: the rows: repoach, GitHub Copilot code review, Cursor Bugbot, CodeRabbit, Qodo PR-Agent, Greptile, Ellipsis, Sourcery, GitLab Duo Code Review, Claude Code Review, OpenAI Codex code review (the last two by D2). Autonomous developers (OpenHands, Devin, SWE-agent, Aider) are listed under "PR sources, not competitors" with one line each and no cells.
 - G3: `scripts/gen_comparison.py` renders `docs/comparison.md` from the YAML: one table, a footnote per cell number linking its `source_url`, the oldest `checked_on` in the page title line, and a "How to dispute a cell" paragraph (open an issue with the URL). It exits 1 if any `source_url` answers ≥ 400 or does not resolve, 3 if any `checked_on` is older than `constraints.source_max_age_days`, 0 otherwise; `--offline` renders without checking.
 - G4: `scripts/check_links.py <files>` (shared with `SP-README-PRODUCT-STATEMENT`) checks every Markdown link in the given files; `gen_comparison.py` calls it on its own output.
 - G5: repoach's own row is sourced from this repository (a file path at a commit SHA), never from marketing text.
@@ -88,12 +88,13 @@ flowchart TD
 - [ ] AC1: `python scripts/gen_comparison.py && git diff --exit-code docs/comparison.md` → exit 0 (the committed page is the rendered page).
 - [ ] AC2: `python scripts/gen_comparison.py --offline` with one `source_url` replaced by `https://example.invalid/x` → still renders; without `--offline` → exit 1 and the line `dead: https://example.invalid/x (comparison.yaml: CodeRabbit.price)`.
 - [ ] AC3: a fixture YAML with `checked_on: 2020-01-01` → exit 3, `stale: 1 cell older than 90 days`.
-- [ ] AC4: `grep -c '^| ' docs/comparison.md` → 11 (header, separator, nine rows), and `grep -ci 'openhands' docs/comparison.md` → ≥ 1 only under the "PR sources" heading.
+- [ ] AC4: `grep -c '^| ' docs/comparison.md` → 13 (header, separator, eleven rows), and `grep -ci 'openhands' docs/comparison.md` → ≥ 1 only under the "PR sources" heading.
 - [ ] AC5: `pytest -q tests/unit/test_gen_comparison.py` → green, network mocked.
 
 ## Owner decisions needed
 - D1: who re-reads the vendor pages every 90 days (owner, or a "good first spec" contributor task).
 - D2: include Claude Code's own review feature and OpenAI Codex review as rows, or keep the list to tools sold primarily as reviewers.
+  Decided 2026-10-21: include both as rows; G2 and AC4 count them.
 
 ## Gaps
 - F1 records sources by domain only; every cell needs its exact URL re-read before the first render.
