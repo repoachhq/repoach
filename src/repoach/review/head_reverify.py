@@ -147,13 +147,18 @@ class HeadReverification:
         tally = Counter(outcome.state for outcome in self.outcomes)
         return {state: tally.get(state, 0) for state in _STATES}
 
-    def summary_line(self) -> str:
-        """Return the one stderr line of the gate."""
+    def summary_line(self, prefix: str = "gate") -> str:
+        """Return the one stderr line of the command named by ``prefix``.
+
+        Args:
+            prefix: ``gate`` for ``review gate`` / ``review merge``,
+                ``review`` for ``review pr``.
+        """
         if self.skipped:
-            return f"gate: findings of older heads not re-verified ({self.skipped})"
+            return f"{prefix}: findings of older heads not re-verified ({self.skipped})"
         counts = self.counts()
         return (
-            f"gate: re-verified {len(self.outcomes)} finding(s) of older heads at "
+            f"{prefix}: re-verified {len(self.outcomes)} finding(s) of older heads at "
             f"{self.head_sha[:7] or '(no head)'}: resolved {counts['resolved']}, "
             f"still open {counts['still_open']}, "
             f"needs judgement {counts['needs_judgement']}"
@@ -410,26 +415,35 @@ def _stored_reason(finding: Finding) -> str:
     return reason or finding.verification_result
 
 
-def _older_unsettled(finding: Finding, head_sha: str) -> bool:
-    """Whether ``finding`` is an unsettled blocking finding raised at another head."""
+def _older_unsettled(finding: Finding, head_sha: str, *, reads_ci: bool = True) -> bool:
+    """Whether ``finding`` is an unsettled blocking finding raised at another head.
+
+    A ``broken_behavior`` finding is settled by CI at the head; a caller
+    that does not read CI (``reads_ci`` False, ``review pr``) leaves it
+    to the gate.
+    """
     return (
         finding.severity is Severity.BLOCKING
         and finding.status in _UNSETTLED
         and finding.head_sha != head_sha
+        and (reads_ci or finding.claim_type is not ClaimType.BROKEN_BEHAVIOR)
     )
 
 
 def skipped_reverification(
-    db_path: Path, *, pr_number: int, head_sha: str, reason: str
+    db_path: Path, *, pr_number: int, head_sha: str, reason: str, reads_ci: bool = True
 ) -> HeadReverification:
     """Return the report of a re-check that did not run, for ``reason``.
 
     The reason is named only when there was something to re-check (an
-    unsettled blocking finding raised at another head); otherwise the
-    report is empty, exactly like a re-check that found nothing.
+    unsettled blocking finding raised at another head; ``broken_behavior``
+    ones only when ``reads_ci``); otherwise the report is empty, exactly
+    like a re-check that found nothing.
     """
     init_findings_schema(db_path)
-    pending = any(_older_unsettled(f, head_sha) for f in fetch_findings(db_path, pr_number))
+    pending = any(
+        _older_unsettled(f, head_sha, reads_ci=reads_ci) for f in fetch_findings(db_path, pr_number)
+    )
     return HeadReverification(head_sha=head_sha, skipped=reason if pending else "")
 
 
@@ -439,12 +453,17 @@ def reverify_older_findings(
     pr_number: int,
     repo_root: Path,
     head_sha: str,
-    ci_green: bool,
+    ci_green: bool | None,
     config: GatesConfig,
     max_judged: int,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
 ) -> HeadReverification:
     """Re-check every unsettled blocking finding of an older head at ``head_sha``.
+
+    The gate and ``review merge`` call it before gathering their facts;
+    ``review pr`` calls it after its refuter pass and before computing
+    the team verdict (SP-GATE-REVERIFIES-AT-HEAD G7), with ``ci_green``
+    ``None`` because it does not read CI.
 
     Args:
         db_path: The findings ledger.
@@ -452,7 +471,8 @@ def reverify_older_findings(
         repo_root: The head tree (never the checkout).
         head_sha: The head the gate decides on; empty re-checks nothing.
         ci_green: Whether required checks are green at the head (settles
-            ``broken_behavior``).
+            ``broken_behavior``); ``None`` when the caller does not read
+            CI, and ``broken_behavior`` findings are then not re-checked.
         config: The trusted gate configuration (the checkout's).
         max_judged: Judge calls allowed in this re-check.
         judge_factory: Builds the refuter judge on its first call.
@@ -468,7 +488,7 @@ def reverify_older_findings(
     outcomes: list[Reverification] = []
     seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str]] = {}
     for finding in fetch_findings(db_path, pr_number):
-        if not _older_unsettled(finding, head_sha):
+        if not _older_unsettled(finding, head_sha, reads_ci=ci_green is not None):
             continue
         cached = _cached(finding, head_sha)
         if cached is not None:
@@ -480,7 +500,7 @@ def reverify_older_findings(
                 finding,
                 repo_root=repo_root,
                 head_sha=head_sha,
-                ci_green=ci_green,
+                ci_green=bool(ci_green),
                 config=config,
                 judge=judge,
                 max_judged=max_judged,

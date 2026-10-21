@@ -55,6 +55,11 @@ class _FakeTeam:
     head_sha: str | None = None
     tree: str | None = None
     worktree: str | None = None
+    reverified: dict[str, int] = field(
+        default_factory=lambda: {"resolved": 0, "still_open": 0, "needs_judgement": 0}
+    )
+    reverify_reasons: list[str] = field(default_factory=list)
+    reverify_line: str = ""
 
 
 _REQUIRED_TOP_LEVEL = {
