@@ -1,14 +1,14 @@
 ---
 id: SP-PRECISION-MEASUREMENT
 title: Precision and recall of findings on a labelled corpus, repoach bench, a dated number in the README, and repoach digest
-version: 0.1
-status: proposed
+version: 0.2
+status: delivered
 author: agent
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 
 owns:
-  code: []
+  code: [src/repoach/bench/, src/repoach/cli/bench_cmds.py, bench/]
   resources: []
 
 depends_on: [SP-UNIVERSAL-LEDGER, SP-REFUTER, SP-PUBLIC-DEMO-REPO]
@@ -19,6 +19,67 @@ constraints:
 ---
 
 # Precision and recall of findings on a labelled corpus
+
+## Delivered (0.2, 2026-10-21) — the machinery; the number waits on labels
+
+Code: `src/repoach/bench/` (`corpus`, `local_forge`, `runner`, `result`,
+`score`, `digest`) and `src/repoach/cli/bench_cmds.py`; data under
+`bench/` (`corpus/README.md` documents the format and the scoring).
+
+- G1, G2 as built, with one amendment to recall: a planted defect whose
+  overlapping non-refuted findings are not all labelled yet (and none is
+  labelled `true`) is left out of recall and counted as `recall waits on
+  labels for N`, so an unlabelled run never reads as a recall of 0. A
+  defect no surviving finding overlaps is a miss whatever the labels.
+  `report` also prints the defects *located* (overlapped by a surviving
+  finding, before labelling) as a separate line.
+- G3 as amended: a corpus is a directory of YAML case files, one per
+  case (`bench/corpus/<corpus>/<case>.yaml`); a `.toml` case file is read
+  the same way, label stubs are written to YAML only. Sources: `local`
+  (a fixture tree plus a patch, served by `LocalDiffForge`), `forge` (a
+  PR / MR of the checkout `bench run` runs in) and `ledger` (findings
+  already recorded, read without a new review; `head_sha: unrecorded`
+  selects the rows a dry run wrote before `SP-REVIEW-PINS-HEAD`). The
+  fingerprint is reviewer, claim type, file and `line_start // 5`, with
+  no claim hash: a model words the same finding differently on each run
+  (A1 amended). Corpora: `planted` (10 cases on
+  `bench/fixtures/sample`, two each of security, logic, test gap,
+  docstring, convention, Python and TypeScript) and `yoob` (Yoob !296
+  read from the owner's ledger, `private: true`: fingerprints only). The
+  demo repository and the two public repositories (D2) host no case yet.
+- G4: `repoach bench run [CORPUS | --corpus C] [--provider P]
+  [--reviewers R,...] [--dry-run] [--results-dir D] [--ledger-db DB]`
+  writes `<date>_<corpus>_<provider>.json`; each case is reviewed on a
+  throw-away ledger by `BenchOrchestrator` (the dry-run team, which also
+  never fires the escalation routine, tech_debt #62). `bench report`
+  (also `bench score`) prints both tables, the totals, the located
+  defects and per-case findings / refuted / tokens / wall time, with
+  `--markdown` and `--update-readme FILE`. `bench label` writes one stub
+  per new fingerprint (`label: null`, a one-line `hint` unless the case
+  is private); `--interactive` asks t / f / u per finding.
+- G5: the README `Precision` section is the `--update-readme` block,
+  never typed; the one-line number is refused below 100 labelled
+  findings.
+- G6 as built, with two ledger gaps named in the output's docstring:
+  `pr_findings` has no timestamp (the period selects PRs with a
+  `pr_reviews` row in it) and `pr_merges` has no head SHA (a refused
+  LGTM carries the outcome tag and the notes as the gate fact).
+  `--since 7d|DATE`, `--format md|json`, `--db`, `--repo-url`.
+
+Measured 2026-10-21, `bench run bench/corpus/planted --provider
+claude_code`: 10 cases, 0 skipped, 45 findings (14 refuted), 10/10
+planted defects located, 135–349 k tokens and 64–160 s per case; 0
+labelled findings, so precision, refuter precision and recall read
+`cannot say`. `yoob`: 39 findings, 25 distinct fingerprints stubbed.
+
+| AC | Result |
+|---|---|
+| AC1 | Met on `bench/corpus/planted` (no `demo.toml`: `SP-PUBLIC-DEMO-REPO` has not landed); exit 0, `bench/results/2026-10-21_planted_claude_code.json`, both tables with the spec header. |
+| AC2 | Met: `tests/unit/test_bench_score.py`, the hand-counted fixture prints `precision 3/4`, `refuter precision 1/2`, `recall 1/2`, `unsure 1`. |
+| AC3 | Partly: the line and its pattern are tested (`test_readme_line_matches_the_published_pattern`); the README carries the generated table, not the line, because AC5 refuses it (0 < 100). |
+| AC4 | Met: `tests/unit/test_bench_digest.py::test_cli_json_has_the_spec_keys_and_links`. |
+| AC5 | The refusal is met (`corpus too small: N < 100`, exit 2); the corpus is not: 66 fingerprints stubbed, 0 labelled (D1, tech_debt #59, #60). |
+
 
 ## Intent
 
@@ -109,8 +170,9 @@ flowchart TD
 - D3: publish the per-reviewer table, or only the aggregate line.
 
 ## Gaps
-- No finding has a human label today; the first number needs D1.
-- The fingerprint stability of A1 is unmeasured.
+- No finding has a human label today; the first number needs D1 (tech_debt #59).
+- Even fully labelled, the stubbed corpus holds 66 fingerprints, under the 100 of AC5 (tech_debt #60).
+- The fingerprint stability of A1 is unmeasured: it needs a second run of the same corpus (tech_debt #63).
 
 ## Open Questions
 - Q1: recall on real (non-planted) defects needs defects found after merge; out of scope until `finding_fate` has a few months of data.
