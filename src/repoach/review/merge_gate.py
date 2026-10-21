@@ -54,9 +54,21 @@ instead of redeclaring it makes that drift structurally impossible:
 every claim type the refuter judges is, by construction, also judged
 here.
 """
-_SETTLED = frozenset({FindingStatus.RESOLVED, FindingStatus.REFUTED, FindingStatus.NOT_APPLICABLE})
+_SETTLED = frozenset(
+    {
+        FindingStatus.RESOLVED,
+        FindingStatus.REFUTED,
+        FindingStatus.NOT_APPLICABLE,
+        FindingStatus.RESOLVED_AT_HEAD,
+    }
+)
 """Statuses that never block: ``not_applicable`` is terminal and non-blocking
-(SP-UNIVERSAL-GATES G4) — the verifier does not apply to the cited file."""
+(SP-UNIVERSAL-GATES G4) — the verifier does not apply to the cited file;
+``resolved_at_head`` is the gate's own re-check finding that the head no
+longer supports a finding of an older head (SP-GATE-REVERIFIES-AT-HEAD)."""
+
+NO_REVERIFICATION: dict[str, int] = {"resolved": 0, "still_open": 0, "needs_judgement": 0}
+"""The ``reverified`` counts of a gate that re-checked nothing."""
 _BLOCKING_STATUSES = frozenset({FindingStatus.VERIFIED, FindingStatus.STUCK})
 """Statuses that confirm a live blocking problem (SP-STUCK-ESCALATION).
 
@@ -98,6 +110,15 @@ class MergeFacts(BaseModel):
             older head from a findings-ledger artifact that failed to
             transport into an empty database (the generic "review did
             not run" reason misdirected the operator; tech-debt survey).
+        blocking_unverified: One line per blocking finding no check
+            could confirm at head.
+        reverified: Counts of the findings of older heads re-checked at
+            this head — ``resolved``, ``still_open``,
+            ``needs_judgement`` (SP-GATE-REVERIFIES-AT-HEAD).
+        reverify_reasons: One line per re-checked finding still
+            blocking, naming the head it was raised at.
+        reverify_line: The one-line summary of the re-check (empty when
+            the gate did not reach the ledger).
     """
 
     head_sha: str
@@ -109,6 +130,9 @@ class MergeFacts(BaseModel):
     review_integrity_known: bool
     review_integrity_any: bool = False
     blocking_unverified: list[str] = []
+    reverified: dict[str, int] = dict(NO_REVERIFICATION)
+    reverify_reasons: list[str] = []
+    reverify_line: str = ""
 
 
 class MergeDecision(BaseModel):
@@ -160,6 +184,8 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
             f"{len(facts.blocking_unverified)} unverified blocking finding(s): "
             f"{'; '.join(facts.blocking_unverified)}"
         )
+    if reasons:
+        reasons.extend(facts.reverify_reasons)
     return MergeDecision(merge=not reasons, reasons=reasons)
 
 
