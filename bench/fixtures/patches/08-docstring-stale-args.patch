@@ -1,0 +1,26 @@
+diff --git a/src/inventory/auth.py b/src/inventory/auth.py
+index 4d884ab..478c142 100644
+--- a/src/inventory/auth.py
++++ b/src/inventory/auth.py
+@@ -18,6 +18,19 @@ def admin_token() -> str:
+     return token
+ 
+ 
+-def is_admin(presented: str) -> bool:
+-    """Return True when ``presented`` is the admin token (constant-time compare)."""
++def is_admin(presented: str, *, allow_readonly: bool = False) -> bool:
++    """Return True when ``presented`` is the admin token (constant-time compare).
++
++    Args:
++        presented: The token the caller sent.
++        scope: The scope the caller asks for, ``admin`` or ``read``.
++
++    Returns:
++        True for the admin token; with ``scope="read"``, also for the
++        read-only token.
++    """
++    if allow_readonly and hmac.compare_digest(
++        presented.encode(), os.environ.get("INVENTORY_READ_TOKEN", "").encode()
++    ):
++        return bool(presented)
+     return hmac.compare_digest(presented.encode(), admin_token().encode())

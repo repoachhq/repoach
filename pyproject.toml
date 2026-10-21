@@ -1,6 +1,6 @@
 [project]
 name = "repoach"
-version = "0.1.0"
+dynamic = ["version"]
 description = "The self-forging software factory — an autonomous, self-evolving multi-agent dev platform."
 requires-python = ">=3.11"
 readme = "README.md"
@@ -62,6 +62,8 @@ dev = [
     "hypothesis>=6.108",
     "ruff>=0.5",
     "mypy>=1.10",
+    "build>=1.2",
+    "twine>=5.0",
 ]
 
 [project.urls]
@@ -73,8 +75,15 @@ Issues = "https://github.com/repoachhq/repoach/issues"
 repoach = "repoach.cli:app"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs>=0.4"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "release-branch-semver"
+local_scheme = "node-and-date"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoach"]
@@ -87,6 +96,9 @@ packages = ["src/repoach"]
 line-length = 100
 target-version = "py311"
 src = ["src"]
+# The bench fixture is review input with planted defects, not repoach code.
+extend-exclude = ["bench/fixtures"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
@@ -131,6 +143,7 @@ known-first-party = ["repoach"]
 # on every CLI declaration otherwise.
 "src/repoach/cli/main.py" = ["B008"]
 "src/repoach/arch/cli.py" = ["B008"]
+"src/repoach/cli/bench_cmds.py" = ["B008"]
 # Test fixtures need late imports / unused imports for stub plumbing.
 "tests/unit/test_review_notifier.py" = ["E731"]
 

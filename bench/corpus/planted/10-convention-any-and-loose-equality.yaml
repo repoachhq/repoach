@@ -1,0 +1,36 @@
+case: 10-convention-any-and-loose-equality
+description: addLine types its line as any, declares with var and compares with ==
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/10-convention-any-and-loose-equality.patch
+planted:
+- file: web/src/cart.ts
+  lines:
+  - 22
+  - 23
+  kind: convention
+  severity: nit
+  note: addLine types its line as any, declares with var and compares with ==
+findings:
+- fingerprint: d9b2cf24a4eb
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect minor web/src/cart.ts:22: Confirmed: line 22 shows `line: any`, while every other export in cart.ts takes `CartLine`. This drops the typed contract on a public function, and tester and s'
+- fingerprint: d764e9361319
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel minor web/src/cart.ts:22: `line: any` together with `l.sku == line.sku` turns off compile-time checks on cart input and allows type coercion (for example, SKU `1` would match `"1"`). If '
+- fingerprint: 183a1919d835
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major web/src/cart.ts:23: `==` now coerces SKUs, so "1" and 1 match here. The merge branch below still uses `===`, so a coerced match would append a duplicate line instead of merging. Ad'
+- fingerprint: 868fd6440078
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe minor web/src/cart.ts:22: `export function addLine(lines: readonly CartLine[], line: any)`: the docstring says `line` is added to the cart, but `any` hides the expected shape. Restore `l'

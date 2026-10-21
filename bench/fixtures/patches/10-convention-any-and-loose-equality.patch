@@ -1,0 +1,15 @@
+diff --git a/web/src/cart.ts b/web/src/cart.ts
+index bf4e7cb..434e254 100644
+--- a/web/src/cart.ts
++++ b/web/src/cart.ts
+@@ -19,8 +19,8 @@ export function formatCents(cents: number): string {
+ }
+ 
+ /** Return a copy of the cart with `line` added, merging quantities by SKU. */
+-export function addLine(lines: readonly CartLine[], line: CartLine): CartLine[] {
+-  const existing = lines.find((l) => l.sku === line.sku);
++export function addLine(lines: readonly CartLine[], line: any): CartLine[] {
++  var existing = lines.find((l) => l.sku == line.sku);
+   if (!existing) {
+     return [...lines, line];
+   }

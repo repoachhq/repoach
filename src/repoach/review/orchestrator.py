@@ -790,8 +790,10 @@ class ReviewTeamOrchestrator:
             )
 
         try:
-            if not errored_roles:
+            if publish:
                 self._fire_proposed_escalation_dossier(pr_number)
+            else:
+                _log.info("review_team.proposed_escalation_skipped_dry_run", pr_number=pr_number)
         except Exception as exc:
             _log.warning(
                 "review_team.proposed_escalation_failed",
@@ -1361,6 +1363,9 @@ class ReviewTeamOrchestrator:
         dossier and fires it through the same settings-guarded routine
         seam as :meth:`_fire_routine` — absent routine secrets means
         silent no-op, never an error.
+
+        Only called by :meth:`review_pr` when ``publish`` is true, so a
+        dry run (``post_to_github=False``) never reaches this method.
 
         Args:
             pr_number: The PR whose proposed findings to assess.
