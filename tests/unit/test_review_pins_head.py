@@ -240,3 +240,44 @@ def test_head_absent_from_the_fetched_ref_is_unavailable(
         ),
     ):
         pytest.fail("no tree may be yielded")
+
+
+def test_gate_re_verifies_on_the_head_tree(
+    monkeypatch: pytest.MonkeyPatch, origin_and_checkout: tuple[Path, str], tmp_path: Path
+) -> None:
+    from repoach.review import auto_merge
+    from repoach.review.merge_gate import MergeDecision
+
+    checkout, head = origin_and_checkout
+    seen: dict[str, str] = {}
+
+    def _decide(pr_number: int, **kwargs: object):
+        root = kwargs["repo_root"]
+        assert isinstance(root, Path)
+        seen["x"] = (root / "src" / "x.py").read_text(encoding="utf-8")
+        return head, auto_merge._unknown_facts(), MergeDecision(merge=False, reasons=["stub"])
+
+    monkeypatch.setattr(auto_merge, "_pull_request_or_none", lambda *_a: None)
+    monkeypatch.setattr(auto_merge, "resolve_verified_head", lambda *_a, **_k: (head, ""))
+    monkeypatch.setattr(
+        auto_merge,
+        "evaluate_ci_gate",
+        lambda *_a, **_k: auto_merge.CIGateOutcome(green=True, outcome_tag="GREEN", reason=""),
+    )
+    monkeypatch.setattr(auto_merge, "decide_at_head", _decide)
+    lines: list[str] = []
+
+    evaluation = auto_merge.evaluate_merge_gate(
+        7,
+        forge=_HeadForge(checkout, head),
+        db_path=tmp_path / "gate" / "review.db",
+        repo_root=checkout,
+        pin_tree=True,
+        announce=lines.append,
+    )
+
+    assert seen["x"] == _DOCUMENTED
+    assert evaluation.tree == "worktree"
+    path = worktree_path(tmp_path / "gate", 7, head)
+    assert lines == [f"reviewing 7 at {head[:7]} (worktree {path})"]
+    assert not path.exists()

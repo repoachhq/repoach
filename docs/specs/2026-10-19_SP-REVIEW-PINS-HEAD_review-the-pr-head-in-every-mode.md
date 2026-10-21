@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/review_head.py, tests/unit/test_review_pins_head.py]
   resources: []
 
-depends_on: [SP-ORCH-DOCSTRING, SP-REVIEW-POST-BATCH, SP-FINDINGS-INIT-RACE, SP-PURE-MERGE-GATE, SP-UNIVERSAL-FORGE, SP-RETRY-BACKOFF-DEDUP]
+depends_on: [SP-ORCH-DOCSTRING, SP-REVIEW-POST-BATCH, SP-FINDINGS-INIT-RACE, SP-PURE-MERGE-GATE, SP-UNIVERSAL-FORGE, SP-RETRY-BACKOFF-DEDUP, SP-DEDUP-CLASSIFICATION-CONSTANTS]
 provides_to: []
 
 constraints:
