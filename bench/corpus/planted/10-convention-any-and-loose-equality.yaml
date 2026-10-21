@@ -1,0 +1,16 @@
+case: 10-convention-any-and-loose-equality
+description: addLine types its line as any, declares with var and compares with ==
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/10-convention-any-and-loose-equality.patch
+planted:
+- file: web/src/cart.ts
+  lines:
+  - 22
+  - 23
+  kind: convention
+  severity: nit
+  note: addLine types its line as any, declares with var and compares with ==
+findings: []

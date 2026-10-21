@@ -1,0 +1,16 @@
+case: 08-docstring-stale-args
+description: is_admin documents a scope argument it does not take, and not the one it does
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/08-docstring-stale-args.patch
+planted:
+- file: src/inventory/auth.py
+  lines:
+  - 21
+  - 30
+  kind: docstring
+  severity: minor
+  note: is_admin documents a scope argument it does not take, and not the one it does
+findings: []

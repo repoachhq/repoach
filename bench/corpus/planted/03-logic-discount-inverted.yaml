@@ -1,0 +1,16 @@
+case: 03-logic-discount-inverted
+description: apply_discount charges the discount instead of removing it
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/03-logic-discount-inverted.patch
+planted:
+- file: src/inventory/pricing.py
+  lines:
+  - 20
+  - 20
+  kind: logic
+  severity: blocker
+  note: apply_discount charges the discount instead of removing it
+findings: []

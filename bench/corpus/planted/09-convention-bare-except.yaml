@@ -1,0 +1,16 @@
+case: 09-convention-bare-except
+description: 'Store.save swallows every exception with a bare except: pass'
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/09-convention-bare-except.patch
+planted:
+- file: src/inventory/store.py
+  lines:
+  - 41
+  - 50
+  kind: convention
+  severity: major
+  note: 'Store.save swallows every exception with a bare except: pass'
+findings: []

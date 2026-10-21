@@ -1,0 +1,16 @@
+case: 06-test-gap-remove-line
+description: removeUnits adds cart-line removal with no test
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/06-test-gap-remove-line.patch
+planted:
+- file: web/src/cart.ts
+  lines:
+  - 33
+  - 36
+  kind: test_gap
+  severity: minor
+  note: removeUnits adds cart-line removal with no test
+findings: []

@@ -1,0 +1,16 @@
+case: 05-test-gap-bulk-price
+description: bulk_price adds two discount tiers with no test
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/05-test-gap-bulk-price.patch
+planted:
+- file: src/inventory/pricing.py
+  lines:
+  - 37
+  - 48
+  kind: test_gap
+  severity: major
+  note: bulk_price adds two discount tiers with no test
+findings: []

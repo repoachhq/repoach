@@ -1,0 +1,19 @@
+diff --git a/src/inventory/store.py b/src/inventory/store.py
+index e91135c..e173c94 100644
+--- a/src/inventory/store.py
++++ b/src/inventory/store.py
+@@ -62,6 +62,14 @@ class Store:
+         ).fetchall()
+         return [Item(*row) for row in rows]
+ 
++    def low_stock(self, threshold: int) -> list[Item]:
++        rows = self._conn.execute(
++            "SELECT sku, name, price_cents, quantity FROM items "
++            "WHERE quantity < ? ORDER BY quantity, sku",
++            (threshold,),
++        ).fetchall()
++        return [Item(*row) for row in rows]
++
+     def all(self) -> list[Item]:
+         """Return every item, by SKU."""
+         rows = self._conn.execute(

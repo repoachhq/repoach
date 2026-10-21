@@ -1,0 +1,16 @@
+case: 04-logic-total-ignores-quantity
+description: cartTotal sums unit prices and ignores quantities
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/04-logic-total-ignores-quantity.patch
+planted:
+- file: web/src/cart.ts
+  lines:
+  - 10
+  - 12
+  kind: logic
+  severity: major
+  note: cartTotal sums unit prices and ignores quantities
+findings: []

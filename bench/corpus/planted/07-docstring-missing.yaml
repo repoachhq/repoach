@@ -1,0 +1,16 @@
+case: 07-docstring-missing
+description: Store.low_stock is public and has no docstring
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/07-docstring-missing.patch
+planted:
+- file: src/inventory/store.py
+  lines:
+  - 65
+  - 71
+  kind: docstring
+  severity: minor
+  note: Store.low_stock is public and has no docstring
+findings: []

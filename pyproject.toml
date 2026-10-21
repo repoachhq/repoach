@@ -87,6 +87,9 @@ packages = ["src/repoach"]
 line-length = 100
 target-version = "py311"
 src = ["src"]
+# The bench fixture is review input with planted defects, not repoach code.
+extend-exclude = ["bench/fixtures"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
