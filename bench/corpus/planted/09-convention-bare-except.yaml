@@ -13,4 +13,34 @@ planted:
   kind: convention
   severity: major
   note: 'Store.save swallows every exception with a bare except: pass'
-findings: []
+findings:
+- fingerprint: 4f828e67af41
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect major src/inventory/store.py:49: CONFIRM: the excerpt shows `except:` then `pass` at lines 49-50. save() returns None either way, so callers can''t distinguish success from failure and the Store'
+- fingerprint: 17067bbf1d50
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel major src/inventory/store.py:49: CONFIRM: the live excerpt shows `except:\n pass` around the INSERT OR REPLACE. Any failed write (constraint violation, locked or corrupted DB, disk full) is dro'
+- fingerprint: 465512c90272
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/store.py:49: The new `except: pass` branch has no test in this diff. The excerpt shows it catches everything, so a failed write is silent. Add `test_save_raises_on_write_fai'
+- fingerprint: e4b6451484c7
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester minor src/inventory/store.py:50: Add `test_save_failure_does_not_persist_item`, asserting that `get(sku)` returns None after a failed save. It checks that the `with self._conn` rollback still w'
+- fingerprint: 98a7a742c615
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe major src/inventory/store.py:49: New silent handler `except:` / `pass` has no logging and no `# allow-silent-except` directive. Catch a specific exception (e.g. `sqlite3.Error`) and call `_log.'
+- fingerprint: eac1c9614186
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe minor src/inventory/store.py:42: Docstring `"""Insert or replace ``item``."""` doesn''t reflect the new behaviour that failures are swallowed. Document it (or a `Raises:` section if the handler '

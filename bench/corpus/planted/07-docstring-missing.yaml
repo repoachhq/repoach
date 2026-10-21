@@ -13,4 +13,14 @@ planted:
   kind: docstring
   severity: minor
   note: Store.low_stock is public and has no docstring
-findings: []
+findings:
+- fingerprint: 09dfaede59a8
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/store.py:65: New public method low_stock has no test in this diff (only store.py changed). Add tests/unit/test_store.py cases: test_low_stock_excludes_items_at_threshold (st'
+- fingerprint: aa29e8c6208f
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe minor src/inventory/store.py:65: Public method `def low_stock(self, threshold: int) -> list[Item]:` lacks a Google-style docstring. Add a summary plus `Args: threshold: Exclusive upper bound on'

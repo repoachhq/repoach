@@ -13,4 +13,14 @@ planted:
   kind: logic
   severity: major
   note: cartTotal sums unit prices and ignores quantities
-findings: []
+findings:
+- fingerprint: 3dd3369090f3
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major web/src/cart.ts:11: Excerpt confirms line 11 sums only priceCents, which contradicts the docstring on line 9 (price times quantity). No test in the diff covers this. Add `test_cart'
+- fingerprint: a71e92693925
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe major web/src/cart.ts:11: `return lines.reduce((sum, line) => sum + line.priceCents, 0);` contradicts the docstring above it (''the sum of price times quantity''). Either restore `* line.q'

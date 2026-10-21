@@ -13,4 +13,24 @@ planted:
   kind: security
   severity: blocker
   note: renderNames writes item names into innerHTML unescaped
-findings: []
+findings:
+- fingerprint: 1cdfe325f2dd
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect minor web/src/api.ts:14: Building markup by string interpolation mixes data and presentation in one step and removes the typed DOM boundary the previous createElement version enforced. '
+- fingerprint: b5b2b1a4f099
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel blocker web/src/api.ts:14: Stored XSS: `list.innerHTML = lines.map((line) => `<li>${line.name}</li>`)` puts `line.name` from the untrusted `/carts/{userId}` JSON straight into markup. A n'
+- fingerprint: 0cdd3acd580a
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major web/src/api.ts:14: No test in this diff pins renderNames output for markup-like or unicode names. Add `test_render_names_treats_html_in_name_as_literal_text` (e.g. `<img onerror=.'
+- fingerprint: 3f5f425c6fc4
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe minor web/src/api.ts:14: The docstring "Render the cart''s item names into `list`, one <li> each." doesn''t say that names are inserted as raw HTML via `list.innerHTML = ...`. Either docu'
