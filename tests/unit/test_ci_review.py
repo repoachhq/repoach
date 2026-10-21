@@ -44,6 +44,7 @@ from repoach.ci_entry.gateway import (
 from repoach.ci_entry.variables import PASSTHROUGH_VARS
 from repoach.cli.main import app
 from repoach.forge import ForgeError
+from repoach.providers.errors import NO_PROVIDER_MESSAGE
 
 GITLAB_ENV: dict[str, str] = {
     "GITLAB_CI": "true",
@@ -174,8 +175,7 @@ class TestNamedSkips:
     def test_no_provider(self) -> None:
         report = _run(dict(GITLAB_ENV), FakeRun())
         assert report.outcome == Outcome.SKIPPED
-        assert "REPOACH_ANTHROPIC_API_KEY" in report.reason
-        assert "REPOACH_LLM_PROXY_BASE_URL" in report.reason
+        assert report.reason == f"skipped, {NO_PROVIDER_MESSAGE}"
 
     def test_gateway_url_without_its_secret(self) -> None:
         env = {**GITLAB_ENV, "REPOACH_LLM_PROXY_BASE_URL": "http://gw"}
@@ -665,6 +665,31 @@ class TestInProcessProviders:
         report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "anthropic"}, FakeRun())
         assert report.outcome == Outcome.SKIPPED
         assert "provider anthropic" in report.reason
+
+    def test_keyless_preset_reviews_in_process_and_names_itself_to_the_child(self) -> None:
+        fake = FakeRun()
+        report = _run({**GITLAB_ENV, **DIRECT_VARS, "REPOACH_PROVIDER": "ollama"}, fake)
+        assert (report.outcome, report.provider_mode) == (Outcome.REVIEWED, "openai_compatible")
+        assert fake.gateway_envs == []
+        env = fake.review_envs[0]
+        assert env["REPOACH_PROVIDER"] == "ollama"
+        assert "REPOACH_ANTHROPIC_API_KEY" not in env
+
+    def test_gemini_needs_its_key(self) -> None:
+        report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "gemini"}, FakeRun())
+        assert report.outcome == Outcome.SKIPPED
+        assert "REPOACH_GEMINI_API_KEY / GEMINI_API_KEY / GOOGLE_API_KEY" in report.reason
+        fake = FakeRun()
+        report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "gemini", "GEMINI_API_KEY": "g"}, fake)
+        assert (report.outcome, report.provider_mode) == (Outcome.REVIEWED, "gemini")
+        assert fake.review_envs[0]["GEMINI_API_KEY"] == "g"
+
+    def test_provider_flag_outranks_the_environment(self) -> None:
+        planned = plan_ci_review(
+            {**GITLAB_ENV, "REPOACH_PROVIDER": "anthropic"}, provider_kind="ollama"
+        )
+        assert isinstance(planned, CiReviewPlan)
+        assert (planned.provider_mode, planned.provider_name) == ("openai_compatible", "ollama")
 
     def test_kind_from_repoach_toml(self) -> None:
         fake = FakeRun()

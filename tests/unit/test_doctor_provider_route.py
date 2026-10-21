@@ -3,9 +3,10 @@
 SP-PROVIDER-DIRECT-ANTHROPIC G4, delivered by SP-UNIVERSAL-PROVIDERS:
 ``claude_code`` and ``anthropic`` are routed in-process
 (``provider_route=direct (<kind>)``), the gateway kinds print
-``provider_route=gateway (<url>)`` or ``none``, and the still-unrouted
-``openai`` / ``openai_compatible`` say so instead of implying the key is
-enough.
+``provider_route=gateway (<url>)`` or ``none``; slice 2 routes
+``openai_compatible``, its presets and ``gemini`` in-process too, and
+lists every route with the credential names present
+(``provider_option=``).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typer.testing import CliRunner
 
 from repoach.cli.main import app
 from repoach.core import config as core_config
+from repoach.providers.errors import NO_PROVIDER_MESSAGE
 from tests.provider_fakes import write_fake_claude
 from tests.unit.test_provider_select import PROVIDER_ENV
 from tests.unit.test_universal_install import _repo
@@ -100,23 +102,63 @@ def test_claude_code_logged_out_or_absent(
     assert result.exit_code == 2
 
 
-def test_unrouted_kind_without_gateway(clone: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_compatible_without_base_url_is_a_named_problem(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("REPOACH_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("REPOACH_MODEL_OPUS", "m")
+    monkeypatch.setenv("REPOACH_MODEL_SONNET", "m")
+    monkeypatch.setenv("REPOACH_MODEL_HAIKU", "m")
     result = CliRunner().invoke(app, ["doctor"])
-    assert "provider=openai_compatible (env; not routed)" in result.stdout
-    assert "provider_route=none" in result.stdout
-    assert "provider openai_compatible: not routed, set REPOACH_LLM_PROXY_BASE_URL" in result.stderr
+    assert "provider=openai_compatible (env)" in result.stdout
+    assert "provider_route=direct (openai_compatible)" in result.stdout
+    assert "provider openai_compatible: no base URL" in result.stderr
     assert result.exit_code == 2
 
 
-def test_unrouted_kind_with_gateway_names_the_live_route(
+def test_preset_names_its_key_and_lists_every_route(
     clone: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("REPOACH_PROVIDER", "openai")
-    _gateway_url(clone)
+    monkeypatch.setenv("REPOACH_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key-value")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key-value")
+    for tier in ("OPUS", "SONNET", "HAIKU"):
+        monkeypatch.setenv(f"REPOACH_MODEL_{tier}", "google/gemini-3.8-flash")
     result = CliRunner().invoke(app, ["doctor"])
-    assert "provider_route=gateway (http://gateway.test.invalid:1)" in result.stdout
-    assert "provider openai: not routed" in result.stderr
+    assert "provider=openrouter (env)" in result.stdout
+    assert "provider_route=direct (openrouter)" in result.stdout
+    assert "provider_credential=OPENROUTER_API_KEY (present)" in result.stdout
+    options = [line for line in result.stdout.splitlines() if line.startswith("provider_option=")]
+    assert [line.split(" ", 1)[0] for line in options] == [
+        f"provider_option={name}"
+        for name in (
+            "claude_code",
+            "anthropic",
+            "openai_compatible",
+            "gemini",
+            "gateway",
+            "openai",
+            "ollama",
+            "openrouter",
+            "groq",
+            "deepseek",
+            "mistral",
+        )
+    ]
+    gemini = next(line for line in options if line.startswith("provider_option=gemini "))
+    assert "REPOACH_GEMINI_API_KEY=absent, GEMINI_API_KEY=present, GOOGLE_API_KEY=absent" in gemini
+    ollama = next(line for line in options if line.startswith("provider_option=ollama "))
+    assert "http://localhost:11434/v1; no key" in ollama
+    assert "openrouter-key-value" not in result.output
+    assert "gemini-key-value" not in result.output
+    assert result.exit_code == 0, result.output
+
+
+def test_nothing_configured_is_the_one_message(clone: Path) -> None:
+    result = CliRunner().invoke(app, ["doctor"])
+    assert "provider=none" in result.stdout
+    assert f"repoach: {NO_PROVIDER_MESSAGE}" in result.stderr
+    assert result.exit_code == 2
 
 
 def test_gateway_kind(clone: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,8 +166,7 @@ def test_gateway_kind(clone: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(app, ["doctor"])
     assert "provider=none" in result.stdout
     assert "provider_route=none" in result.stdout
-    assert "REPOACH_PROVIDER=claude_code" in result.stderr
-    assert "not routed" not in result.stderr
+    assert "provider gateway: REPOACH_LLM_PROXY_BASE_URL is not set" in result.stderr
     _gateway_url(clone)
     monkeypatch.setattr(core_config, "_settings", None)
     result = CliRunner().invoke(app, ["doctor"])

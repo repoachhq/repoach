@@ -25,7 +25,7 @@ DIRECT_KEY_VARS: tuple[str, ...] = ("REPOACH_ANTHROPIC_API_KEY", "ANTHROPIC_API_
 """The Anthropic key: read in-process in ``anthropic`` mode, else handed to a loopback gateway."""
 
 PROVIDER_VAR = "REPOACH_PROVIDER"
-"""``claude_code`` / ``anthropic``: the review calls the model itself (SP-UNIVERSAL-PROVIDERS)."""
+"""A provider kind or preset (``claude_code``, ``anthropic``, ``ollama``, ``gemini``…): the review calls the model itself (SP-UNIVERSAL-PROVIDERS)."""
 
 CLAUDE_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 """``claude_code`` mode in CI: the token ``claude setup-token`` prints (no interactive login)."""
@@ -140,7 +140,7 @@ CI_VARIABLES: tuple[CiVariable, ...] = (
     CiVariable(
         name=PROVIDER_VAR,
         group="provider",
-        purpose="claude_code or anthropic: call the model in-process, no gateway",
+        purpose="a provider kind or preset: call the model in-process, no gateway",
     ),
     CiVariable(
         name=CLAUDE_TOKEN_VAR,

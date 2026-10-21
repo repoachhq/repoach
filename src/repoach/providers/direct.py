@@ -2,11 +2,14 @@
 
 A direct provider runs one of the gateway's upstream transports inside
 the review process — :class:`~repoach.llm_proxy.providers.claude_code.ClaudeCodeProvider`
-(the logged-in ``claude`` CLI, headless) or
+(the logged-in ``claude`` CLI, headless),
 :class:`~repoach.llm_proxy.providers.anthropic_messages.AnthropicMessagesTransport`
-(the Messages API with a key) — and translates with the gateway
-dispatcher's public helpers, so there is one implementation of each
-upstream, not two.
+(the Messages API with a key) or
+:class:`~repoach.llm_proxy.providers.openai_generic.GenericOpenAIProvider`
+(any ``/chat/completions`` endpoint: OpenAI, Ollama, OpenRouter, Groq,
+DeepSeek, Mistral, Gemini's compatible surface) — and translates with
+the gateway dispatcher's public helpers, so there is one implementation
+of each upstream, not two.
 
 Every direct call runs on one event loop owned by one daemon thread
 (:class:`_LoopThread`).  The transports hold asyncio primitives (the
@@ -41,6 +44,7 @@ from ..llm_proxy.api.models.agent_v1 import (
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from ..llm_proxy.providers.base import BaseProvider
 from ..llm_proxy.providers.exceptions import ProviderError
+from ..llm_proxy.providers.openai_generic import GenericOpenAIProvider
 from .errors import GatewayError, GatewayTransportError, ProviderAuthError
 from .protocol import agent_request
 
@@ -67,6 +71,23 @@ CLI_AUTH_MARKERS: tuple[str, ...] = (
     "authentication",
 )
 """Fragments of a ``claude`` CLI failure that mean the login is missing or expired."""
+
+
+class MeteredChatTransport(GenericOpenAIProvider):
+    """The gateway's chat-completions transport, asking the upstream for its token counts.
+
+    A streamed ``/chat/completions`` answer carries ``usage`` only when
+    the request sets ``stream_options.include_usage``; the gateway never
+    sets it (its token figures are estimates), the in-process route
+    does, so the usage ledger records the upstream's own counts.  Every
+    other part of the request is the gateway transport's.
+    """
+
+    def _build_request_body(self, request: Any) -> dict:
+        """Return the gateway transport's body plus ``stream_options.include_usage``."""
+        body = super()._build_request_body(request)
+        body["stream_options"] = {"include_usage": True}
+        return body
 
 
 class _LoopThread:
@@ -138,7 +159,8 @@ class DirectProvider:
     """A :class:`~repoach.providers.protocol.Provider` over an in-process gateway transport.
 
     Attributes:
-        name: ``claude_code`` or ``anthropic``.
+        name: ``claude_code``, ``anthropic``, ``gemini``, ``openai_compatible``
+            or the preset that set its base URL (``ollama``, ``openrouter``…).
         models: Model per capability tier, as sent to the transport.
         transport_key: Identity of the transport configuration; providers
             sharing it share one transport (one rate limiter, one client).
@@ -271,4 +293,4 @@ class DirectProvider:
         return GatewayTransportError(f"{self.name}: {text[:300]}")
 
 
-__all__ = ["DirectProvider"]
+__all__ = ["DirectProvider", "MeteredChatTransport"]

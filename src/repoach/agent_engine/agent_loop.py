@@ -68,7 +68,13 @@ from ..llm_proxy.api.models.agent_v1 import (
 )
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from ..providers.protocol import Provider
-from ..providers.select import DIRECT_KINDS, build_direct_provider, resolve_route
+from ..providers.select import (
+    DIRECT_KINDS,
+    ProviderRoute,
+    build_direct_provider,
+    require_configured,
+    resolve_route,
+)
 from ..providers.usage import record_call
 from .adapters import GatewayChainExhausted, GatewayError, GatewayTransportError, ProxyGatewayClient
 
@@ -359,14 +365,17 @@ def _budget_nudge_text(remaining: int, max_turns: int) -> str:
     )
 
 
-def _gateway_client(timeout_s: float) -> ProxyGatewayClient:
+def _gateway_client(timeout_s: float, route: ProviderRoute) -> ProxyGatewayClient:
     """Build the gateway client exactly as the loop always did (the ``gateway`` route).
 
     Raises:
+        NoProviderConfiguredError: No provider is named and no gateway
+            URL is set.
         ValueError: ``REPOACH_ANTHROPIC_AUTH_TOKEN`` is missing.
         GatewayConfigError: No gateway base URL is configured.
     """
     settings = get_settings()
+    require_configured(route, settings.llm_proxy_base_url)
     secret = settings.llm_proxy_auth_token
     api_key = (
         secret.get_secret_value()
@@ -451,7 +460,7 @@ class AgentLoop:
         if route.kind in DIRECT_KINDS:
             self._client = build_direct_provider(route, timeout_s=per_call_timeout_s)
         else:
-            self._client = _gateway_client(per_call_timeout_s)
+            self._client = _gateway_client(per_call_timeout_s, route)
 
     def _provider_call(self, **kwargs: Any) -> AgentResponse:
         """Call the provider once and record the call in the usage ledger (SP-USAGE-LEDGER).

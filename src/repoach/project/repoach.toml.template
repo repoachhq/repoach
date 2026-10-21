@@ -44,17 +44,23 @@ schema = 1
 # forbidden_paths = []
 
 [provider]
-# anthropic, claude_code, openai, openai_compatible or gateway.
-# The credential itself stays in the environment or ~/.config/repoach/env.
-# Unset or gateway: the gateway at REPOACH_LLM_PROXY_BASE_URL. claude_code: the
-# logged-in Claude Code CLI, no key. anthropic: REPOACH_ANTHROPIC_API_KEY, else
-# ANTHROPIC_API_KEY.
+# claude_code, anthropic, openai_compatible, gemini or gateway, or a preset
+# (openai, ollama, openrouter, groq, deepseek, mistral). --provider and
+# REPOACH_PROVIDER override it. The credential itself stays in the environment
+# or ~/.config/repoach/env. claude_code: the logged-in Claude Code CLI, no key.
+# anthropic: REPOACH_ANTHROPIC_API_KEY, else ANTHROPIC_API_KEY.
+# openai_compatible: base_url below, REPOACH_OPENAI_API_KEY, else OPENAI_API_KEY.
+# gemini: REPOACH_GEMINI_API_KEY, else GEMINI_API_KEY, else GOOGLE_API_KEY.
+# gateway: REPOACH_LLM_PROXY_BASE_URL.
 # kind = ""
+# Model per tier; required for openai_compatible, gemini and the presets.
 # opus = ""
 # sonnet = ""
 # haiku = ""
 # claude_code only: the claude executable; empty means claude on PATH.
 # cli_path = ""
+# openai_compatible only (a preset or gemini: overrides their root).
+# base_url = ""
 
 [review]
 # Forge login the review bot posts as; markers are trusted from it only.

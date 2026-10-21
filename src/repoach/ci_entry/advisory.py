@@ -48,6 +48,8 @@ from pydantic import BaseModel, ConfigDict
 from ..core.logging import get_logger
 from ..forge import ForgeError
 from ..project.config import ForgeName
+from ..providers.errors import NO_PROVIDER_MESSAGE
+from ..providers.select import PRESETS, provider_credential_names, provider_needs_key
 from .context import (
     InvalidPullRequestError,
     NoPullRequestError,
@@ -70,10 +72,19 @@ from .variables import (
 _log = get_logger(__name__)
 
 ReviewMode = Literal["post", "dry-run"]
-ProviderMode = Literal["gateway", "direct", "claude_code", "anthropic", "none"]
-PlannedProviderMode = Literal["gateway", "direct", "claude_code", "anthropic"]
+ProviderMode = Literal[
+    "gateway", "direct", "claude_code", "anthropic", "openai_compatible", "gemini", "none"
+]
+PlannedProviderMode = Literal[
+    "gateway", "direct", "claude_code", "anthropic", "openai_compatible", "gemini"
+]
 
-IN_PROCESS_MODES: tuple[PlannedProviderMode, ...] = ("claude_code", "anthropic")
+IN_PROCESS_MODES: tuple[PlannedProviderMode, ...] = (
+    "claude_code",
+    "anthropic",
+    "openai_compatible",
+    "gemini",
+)
 """Modes whose review calls the model itself: no gateway, no loopback."""
 
 
@@ -171,6 +182,9 @@ class CiReviewPlan(BaseModel):
             ``direct``.
         forge_token_var: The variable holding the forge token.
         strict: Whether ``--strict`` was given.
+        provider_name: In an in-process mode, the provider the review
+            child is told to use (a kind or a preset such as ``ollama``);
+            empty otherwise.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -183,6 +197,7 @@ class CiReviewPlan(BaseModel):
     provider_mode: PlannedProviderMode
     forge_token_var: str
     strict: bool = False
+    provider_name: str = ""
 
 
 def exit_code_for(outcome: Outcome, final_verdict: str | None, *, strict: bool) -> int:
@@ -227,10 +242,11 @@ def review_mode(env: Mapping[str, str], *, post: bool, dry_run: bool) -> ReviewM
 def provider_mode(env: Mapping[str, str], kind: str = "") -> tuple[ProviderMode, str | None]:
     """Choose the provider mode, or name what is missing.
 
-    An explicit ``claude_code`` or ``anthropic`` kind wins: the review
-    calls the model in-process.  Otherwise gateway mode wins when both
-    its variables are set, and a lone direct key starts a loopback
-    gateway.
+    An explicit ``claude_code``, ``anthropic``, ``openai_compatible`` /
+    preset or ``gemini`` kind wins: the review calls the model
+    in-process.  Otherwise gateway mode wins when both its variables are
+    set, and a lone direct key starts a loopback gateway.  Nothing at all
+    is :data:`~repoach.providers.errors.NO_PROVIDER_MESSAGE`.
 
     Args:
         env: The job environment.
@@ -247,6 +263,11 @@ def provider_mode(env: Mapping[str, str], kind: str = "") -> tuple[ProviderMode,
         if first_set(env, DIRECT_KEY_VARS) is None:
             return "none", f"provider anthropic: {' / '.join(DIRECT_KEY_VARS)} is not set"
         return "anthropic", None
+    if chosen_kind in PRESETS or chosen_kind in ("openai_compatible", "gemini"):
+        names = provider_credential_names(chosen_kind)
+        if provider_needs_key(chosen_kind) and first_set(env, names) is None:
+            return "none", f"provider {chosen_kind}: {' / '.join(names)} is not set"
+        return ("gemini" if chosen_kind == "gemini" else "openai_compatible"), None
     has_url = env_value(env, GATEWAY_URL_VAR) is not None
     has_token = env_value(env, GATEWAY_TOKEN_VAR) is not None
     if has_url and has_token:
@@ -258,10 +279,7 @@ def provider_mode(env: Mapping[str, str], kind: str = "") -> tuple[ProviderMode,
             "none",
             f"{GATEWAY_TOKEN_VAR} is not set (gateway mode needs it with {GATEWAY_URL_VAR})",
         )
-    return "none", (
-        f"no provider: set {DIRECT_KEY_VARS[0]} (direct mode) or "
-        f"{GATEWAY_URL_VAR} + {GATEWAY_TOKEN_VAR} (gateway mode)"
-    )
+    return "none", NO_PROVIDER_MESSAGE
 
 
 def plan_ci_review(
@@ -352,7 +370,9 @@ def plan_ci_review(
     chosen, missing = provider_mode(env, provider_kind)
     if chosen == "none":
         return finish(Outcome.SKIPPED, f"skipped, {missing}", strict=strict, **common)
+    named = provider_kind or env_value(env, PROVIDER_VAR) or ""
     return CiReviewPlan(
+        provider_name=named if chosen in IN_PROCESS_MODES else "",
         forge=forge,
         forge_source=forge_source,
         pr_number=number,
@@ -455,7 +475,7 @@ def review_env(
     keep_key = plan.provider_mode == "anthropic"
     child = {k: v for k, v in env.items() if keep_key or k not in DIRECT_KEY_VARS}
     if plan.provider_mode in IN_PROCESS_MODES:
-        child[PROVIDER_VAR] = plan.provider_mode
+        child[PROVIDER_VAR] = plan.provider_name or plan.provider_mode
     child.update(forge_env(plan, env))
     if memory_off:
         child.update(dict.fromkeys(MEMORY_SWITCHES, "false"))

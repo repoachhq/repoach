@@ -50,6 +50,7 @@ ENV_NAMES: dict[str, tuple[str, ...]] = {
     "provider.sonnet": ("REPOACH_MODEL_SONNET",),
     "provider.haiku": ("REPOACH_MODEL_HAIKU",),
     "provider.cli_path": ("REPOACH_CLAUDE_CODE_CLI_PATH",),
+    "provider.base_url": ("REPOACH_OPENAI_BASE_URL",),
     "state.db_path": ("REPOACH_DB_PATH",),
     "state.logs_dir": ("REPOACH_LOGS_DIR",),
 }

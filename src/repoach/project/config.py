@@ -75,7 +75,21 @@ DEFAULT_SPEC_SOURCES: tuple[SpecSource, ...] = ("flag", "description", "branch")
 
 ForgeName = Literal["github", "gitlab"]
 MergeMethodName = Literal["squash", "merge", "rebase"]
-ProviderKind = Literal["", "anthropic", "claude_code", "openai", "openai_compatible", "gateway"]
+ProviderKind = Literal[
+    "",
+    "anthropic",
+    "claude_code",
+    "openai_compatible",
+    "gemini",
+    "gateway",
+    "openai",
+    "ollama",
+    "openrouter",
+    "groq",
+    "deepseek",
+    "mistral",
+]
+"""A provider kind, or a preset naming an ``openai_compatible`` endpoint (SP-UNIVERSAL-PROVIDERS)."""
 
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
 _SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
@@ -248,6 +262,8 @@ class ProviderSection(_Section):
 
     ``cli_path`` is the ``claude`` executable the ``claude_code`` provider
     runs; empty means ``claude`` on ``PATH`` (SP-UNIVERSAL-PROVIDERS).
+    ``base_url`` is the endpoint root of ``openai_compatible`` (required
+    unless ``kind`` is a preset) and overrides a preset's or ``gemini``'s.
     """
 
     kind: ProviderKind = ""
@@ -255,6 +271,7 @@ class ProviderSection(_Section):
     sonnet: str = ""
     haiku: str = ""
     cli_path: str = ""
+    base_url: str = ""
 
 
 class ReviewSection(_Section):

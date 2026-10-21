@@ -19,7 +19,11 @@ from repoach.core import config as core_config
 from repoach.core.config import GatewayConfigError
 from repoach.llm.capability import CapabilityTier
 from repoach.providers.direct import DirectProvider
-from repoach.providers.errors import ProviderConfigError
+from repoach.providers.errors import (
+    NO_PROVIDER_MESSAGE,
+    NoProviderConfiguredError,
+    ProviderConfigError,
+)
 from repoach.providers.protocol import Provider
 from repoach.providers.select import (
     build_direct_provider,
@@ -48,6 +52,20 @@ PROVIDER_ENV = (
     "ANTHROPIC_API_KEY",
     "REPOACH_ANTHROPIC_BASE_URL",
     "REPOACH_ANTHROPIC_AUTH_TOKEN",
+    "REPOACH_OPENAI_BASE_URL",
+    "REPOACH_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
+    "REPOACH_GEMINI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "REPOACH_OPENROUTER_API_KEY",
+    "OPENROUTER_API_KEY",
+    "REPOACH_GROQ_API_KEY",
+    "GROQ_API_KEY",
+    "REPOACH_DEEPSEEK_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "REPOACH_MISTRAL_API_KEY",
+    "MISTRAL_API_KEY",
 )
 
 
@@ -81,25 +99,36 @@ def test_env_outranks_the_file(project: Path, monkeypatch: pytest.MonkeyPatch) -
     assert (route.kind, route.source) == ("claude_code", "env")
 
 
-def test_unrouted_kinds_stay_on_the_gateway(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_compatible_and_its_presets_route_in_process(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("REPOACH_PROVIDER", "openai_compatible")
     route = resolve_route()
-    assert (route.kind, route.configured) == ("gateway", "openai_compatible")
+    assert (route.kind, route.configured, route.preset) == (
+        "openai_compatible",
+        "openai_compatible",
+        "",
+    )
+    monkeypatch.setenv("REPOACH_PROVIDER", "ollama")
+    route = resolve_route()
+    assert (route.kind, route.preset, route.label) == ("openai_compatible", "ollama", "ollama")
 
 
 def test_claude_code_is_never_chosen_implicitly(
     project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """G6: a ``claude`` binary on PATH and no kind is the gateway route, not a Max charge."""
+    """G6: a ``claude`` binary on PATH and nothing named is the no-provider error, not a Max charge."""
     write_fake_claude(tmp_path / "bin")
     monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
     monkeypatch.delenv("REPOACH_LLM_PROXY_BASE_URL", raising=False)
     monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "gateway-secret")
     monkeypatch.setattr(core_config, "_settings", None)
-    with pytest.raises(GatewayConfigError, match="llm_proxy_base_url unresolved"):
+    with pytest.raises(NoProviderConfiguredError) as from_loop:
         AgentLoop(capability=CapabilityTier.SONNET)
-    with pytest.raises(GatewayConfigError, match="llm_proxy_base_url unresolved"):
+    with pytest.raises(NoProviderConfiguredError) as from_preflight:
         require_provider_ready()
+    assert str(from_loop.value) == str(from_preflight.value) == NO_PROVIDER_MESSAGE
+    assert isinstance(from_loop.value, GatewayConfigError)
 
 
 def test_tier_models_defaults_then_overrides(

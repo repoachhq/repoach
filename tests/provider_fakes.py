@@ -7,6 +7,9 @@
 * :class:`FakeAnthropicServer` is a real HTTP server on the loopback that
   answers ``POST /v1/messages`` with a Messages API SSE stream, or with
   an error status.
+* :class:`FakeChatServer` is the same for ``POST …/chat/completions``
+  (OpenAI, Ollama, OpenRouter, Gemini's compatible surface), streaming
+  chat-completion chunks and, when asked, the usage chunk.
 
 Neither touches repoach's own code: the transports under test spawn the
 executable and speak HTTP to the server exactly as they do in production.
@@ -217,6 +220,125 @@ class FakeAnthropicServer:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
     def __enter__(self) -> FakeAnthropicServer:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+def chat_stream(text: str, model: str, *, shape: str, usage: bool) -> bytes:
+    """Return the SSE body a ``/chat/completions`` endpoint streams for one text answer.
+
+    Args:
+        text: The answer.
+        model: Echoed in every chunk.
+        shape: ``openai`` (usage with ``prompt_tokens_details.cached_tokens``)
+            or ``ollama`` (``system_fingerprint: fp_ollama``, no details), the
+            two shapes measured from the vendors' documentation and a local
+            Ollama 2026-10-21.
+        usage: Whether the request asked for ``stream_options.include_usage``;
+            a real endpoint sends the usage chunk only then.
+    """
+    base: dict[str, Any] = {
+        "id": "chatcmpl-fake",
+        "object": "chat.completion.chunk",
+        "created": 1_760_000_000,
+        "model": model,
+    }
+    if shape == "ollama":
+        base["system_fingerprint"] = "fp_ollama"
+    chunks = [
+        {
+            **base,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": text},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+    ]
+    if usage:
+        counts: dict[str, Any] = {"prompt_tokens": 40, "completion_tokens": 9, "total_tokens": 49}
+        if shape == "openai":
+            counts["prompt_tokens_details"] = {"cached_tokens": 8}
+        chunks.append({**base, "choices": [], "usage": counts})
+    body = b"".join(f"data: {json.dumps(chunk)}\n\n".encode() for chunk in chunks)
+    return body + b"data: [DONE]\n\n"
+
+
+class FakeChatServer:
+    """A loopback HTTP server standing in for an OpenAI-compatible ``/chat/completions``.
+
+    Serves any path ending in ``/chat/completions`` (``/v1/…``,
+    ``/api/v1/…``, ``/v1beta/openai/…``), so one fake stands for OpenAI,
+    Ollama, OpenRouter and Gemini's compatible surface.
+
+    Attributes:
+        root: ``http://127.0.0.1:<port>`` (no path).
+        requests: One ``{"path", "headers", "body"}`` per request received.
+    """
+
+    def __init__(
+        self,
+        *,
+        status: int = 200,
+        text: str = APPROVE_JSON,
+        shape: str = "openai",
+        required_key: str | None = None,
+    ) -> None:
+        self.status = status
+        self.text = text
+        self.shape = shape
+        self.required_key = required_key
+        self.requests: list[dict[str, Any]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _reply(self, status: int, payload: bytes, content_type: str) -> None:
+                self.send_response(status)
+                self.send_header("content-type", content_type)
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_POST(self) -> None:
+                length = int(self.headers.get("content-length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                headers = {k.lower(): v for k, v in self.headers.items()}
+                owner.requests.append({"path": self.path, "headers": headers, "body": body})
+                status = owner.status
+                if owner.required_key is not None and headers.get("authorization") != (
+                    f"Bearer {owner.required_key}"
+                ):
+                    status = 401
+                if not self.path.endswith("/chat/completions"):
+                    status = 404
+                if status != 200:
+                    error = {"error": {"message": "fake refusal", "type": "invalid_request_error"}}
+                    self._reply(status, json.dumps(error).encode(), "application/json")
+                    return
+                options = body.get("stream_options") or {}
+                stream = chat_stream(
+                    owner.text,
+                    str(body.get("model") or ""),
+                    shape=owner.shape,
+                    usage=bool(options.get("include_usage")),
+                )
+                self._reply(200, stream, "text/event-stream")
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return None
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.root = f"http://127.0.0.1:{self._server.server_address[1]}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    def __enter__(self) -> FakeChatServer:
         self._thread.start()
         return self
 

@@ -51,10 +51,30 @@ class ProviderConfigError(GatewayConfigError):
     """
 
 
+NO_PROVIDER_MESSAGE = (
+    "no provider configured -- set [provider].kind in repoach.toml or REPOACH_PROVIDER "
+    "(claude_code, anthropic, openai_compatible, gemini, gateway)"
+)
+"""The one line every command prints, after ``repoach: ``, when nothing names a provider."""
+
+
+class NoProviderConfiguredError(ProviderConfigError):
+    """No ``--provider``, no ``REPOACH_PROVIDER``, no ``[provider].kind`` and no gateway URL (rc 2).
+
+    One class and one message (:data:`NO_PROVIDER_MESSAGE`) for every
+    command, raised before any forge call (SP-UNIVERSAL-PROVIDERS G4).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(NO_PROVIDER_MESSAGE)
+
+
 __all__ = [
+    "NO_PROVIDER_MESSAGE",
     "GatewayChainExhausted",
     "GatewayError",
     "GatewayTransportError",
+    "NoProviderConfiguredError",
     "ProviderAuthError",
     "ProviderConfigError",
 ]
