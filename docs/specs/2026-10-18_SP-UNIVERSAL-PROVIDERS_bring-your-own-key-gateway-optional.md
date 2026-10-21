@@ -8,7 +8,7 @@ created: 2026-10-18
 updated: 2026-10-21
 
 owns:
-  code: [src/repoach/providers/, tests/provider_fakes.py, tests/unit/test_provider_select.py, tests/unit/test_provider_direct_claude_code.py, tests/unit/test_provider_direct_openai_compatible.py, tests/unit/test_usage_ledger.py]
+  code: [src/repoach/providers/, src/repoach/agent_engine/adapters.py, src/repoach/agent_engine/agent_loop.py, src/repoach/llm/capability.py, tests/provider_fakes.py, tests/unit/test_provider_select.py, tests/unit/test_provider_direct_claude_code.py, tests/unit/test_provider_direct_openai_compatible.py, tests/unit/test_usage_ledger.py]
   resources: [db:table:usage_ledger]
 
 depends_on: [SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-CHAINS-SINGLE-SOURCE, SP-DB-PATH-XDG]
