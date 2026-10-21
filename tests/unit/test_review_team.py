@@ -1321,3 +1321,132 @@ def test_run_team_review_anchors_to_sub_specs_for_decomposed_parent(tmp_path) ->
     for m in (march, msent, mtest, mscribe):
         assert m.call_args.kwargs.get("spec_plan") == "ANCHORED-MARKDOWN-marker-bbb"
         assert m.call_args.kwargs.get("arch_edges") == "ANCHORED-EDGES-marker-ccc"
+
+
+def _install_architect_and_tester(monkeypatch, *, architect_file: str) -> None:
+    """Stub the four reviewers: an Architect design finding and a Tester bug finding."""
+    architect = _outcome(
+        BotRole.ARCHITECT,
+        ReviewVerdict.APPROVE,
+        comments=[
+            ReviewComment(
+                file=architect_file, line=1, severity="major", body="layering design smell"
+            )
+        ],
+    )
+    tester = _outcome(
+        BotRole.TESTER,
+        ReviewVerdict.APPROVE,
+        comments=[
+            ReviewComment(file="src/x.py", line=1, severity="major", body="crash on empty input")
+        ],
+    )
+    stubs = {
+        "Architect": architect,
+        "Sentinel": _outcome(BotRole.SENTINEL, ReviewVerdict.APPROVE),
+        "Tester": tester,
+        "Scribe": _outcome(BotRole.SCRIBE, ReviewVerdict.APPROVE),
+    }
+    for name, outcome in stubs.items():
+        monkeypatch.setattr(
+            f"repoach.review.orchestrator.{name}",
+            lambda _o=outcome, **_kw: _StubReviewer(_o),
+        )
+
+
+def _real_refuter(monkeypatch, prompts: list[str]) -> None:
+    """Route the orchestrator to the real refuter with a recording fake judge."""
+    import functools
+
+    from repoach.review import refuter
+
+    def _factory():
+        def _judge(prompt: str) -> str:
+            prompts.append(prompt)
+            return 'VERDICT: {"refuted": true, "reasoning": "no concrete defect"}'
+
+        return _judge
+
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.judge_findings_for_pr",
+        functools.partial(refuter.judge_findings_for_pr, judge_factory=_factory),
+    )
+
+
+def test_orchestrator_logs_one_finding_deferred_event_per_deferral(monkeypatch, tmp_path: Path):
+    """Each deferral is one ``review_team.finding_deferred`` event; the aggregate keeps its shape."""
+    from structlog.testing import capture_logs
+
+    _install_architect_and_tester(monkeypatch, architect_file="a.py")
+
+    def _verifier_down(*_a, **_kw):
+        raise RuntimeError("verifier down")
+
+    monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", _verifier_down)
+    prompts: list[str] = []
+    _real_refuter(monkeypatch, prompts)
+    orch = ReviewTeamOrchestrator(
+        forge=_StubGitHubForge(),
+        db_path=tmp_path / "review.db",
+        post_to_github=False,
+        max_workers=2,
+        repo_root=tmp_path,
+    )
+
+    with capture_logs() as logs:
+        team = orch.review_pr(pr_number=99)
+
+    verify_failed = [e for e in logs if e["event"] == "review_team.findings_verify_failed"]
+    assert len(verify_failed) == 1
+    assert verify_failed[0]["log_level"] == "warning"
+    assert verify_failed[0]["exc"] == "RuntimeError"
+    deferred = [e for e in logs if e["event"] == "review_team.finding_deferred"]
+    assert sorted((e["file"], e["state"], e["reason"]) for e in deferred) == [
+        ("a.py", "deferred", "evidence outside the diff"),
+        ("src/x.py", "unverified", "not yet mechanically verified"),
+    ]
+    judged = [e for e in logs if e["event"] == "review_team.findings_judged"]
+    assert len(judged) == 1
+    assert {k: judged[0][k] for k in ("verified", "refuted", "deferred", "unverified")} == {
+        "verified": 0,
+        "refuted": 0,
+        "deferred": 1,
+        "unverified": 1,
+    }
+    assert judged[0]["model_calls"] == 0
+    assert prompts == []
+    assert sorted((r.file, r.state) for r in team.refutations) == [
+        ("a.py", "deferred"),
+        ("src/x.py", "unverified"),
+    ]
+    assert team.refuter_summary == (
+        "refuter: judged 0, refuted 0, deferred 1 (evidence outside the diff), "
+        "unverified 1 (not yet mechanically verified)"
+    )
+
+
+def test_orchestrator_finding_deferred_event_absent_when_everything_is_judged(
+    monkeypatch, tmp_path: Path
+):
+    """With verification run first and readable evidence, every finding gets a verdict."""
+    from structlog.testing import capture_logs
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "x.py").write_text("y = 2\n", encoding="utf-8")
+    _install_architect_and_tester(monkeypatch, architect_file="src/x.py")
+    prompts: list[str] = []
+    _real_refuter(monkeypatch, prompts)
+    orch = ReviewTeamOrchestrator(
+        forge=_StubGitHubForge(),
+        db_path=tmp_path / "review.db",
+        post_to_github=False,
+        max_workers=2,
+        repo_root=tmp_path,
+    )
+
+    with capture_logs() as logs:
+        team = orch.review_pr(pr_number=99)
+
+    assert [e for e in logs if e["event"] == "review_team.finding_deferred"] == []
+    assert len(prompts) == 2
+    assert {r.state for r in team.refutations} == {"refuted"}

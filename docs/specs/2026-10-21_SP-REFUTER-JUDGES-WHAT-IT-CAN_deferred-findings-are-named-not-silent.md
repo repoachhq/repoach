@@ -8,7 +8,7 @@ created: 2026-10-21
 updated: 2026-10-21
 
 owns:
-  code: []
+  code: [src/repoach/review/refuter.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py]
   resources: N/A
 
 depends_on: [SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING]
@@ -58,11 +58,9 @@ documentation-only slice inventing an edge to a spec that owns nothing.
 - G1: Every deferred finding carries a named reason, both in
   `judge_findings_for_pr`'s return value and in whatever the
   orchestrator logs — a closed set of tags, not a free-text string that
-  drifts: `"evidence outside the diff"`, `"judging cap N reached"`,
-  `"verdict unparseable"`, `"judge call failed: <exc type>"`,
-  `"not yet mechanically verified"`.
-- G2: F5's silent exclusion gets an explicit third bucket
-  (`unverified_targets`) so it is counted and named instead of invisible.
+  drifts (the table under Interface).
+- G2: F5's silent exclusion gets an explicit bucket (`unverified`) so
+  it is counted and named instead of invisible.
 - G3: The judging cap (`_MAX_JUDGED`) becomes a `GatesConfig` setting
   (`refuter_max_judged`, default 10) instead of a hardcoded module
   constant, read the same way `verify_finding` already reads
@@ -90,12 +88,12 @@ documentation-only slice inventing an edge to a spec that owns nothing.
   decision changes here.
 - NG4: Claiming ownership of `refuter.py` / `finding_verifiers.py` /
   `hallucination_guard.py` in this spec's `owns` — that is the
-  implementation slice's decision, not this draft's.
+  implementation slice's decision, not this draft's (taken: see Gaps).
 
 ## Assumptions
 
-- A1: `judge_findings_for_pr`'s current two-value contract
-  (`dict[str, int]`) has a small, enumerable set of callers
+- A1: `judge_findings_for_pr`'s former `dict[str, int]` contract
+  had a small, enumerable set of callers
   (`orchestrator.py` plus the unit suite) that can all be updated in
   one slice — verified by F8 and the existing test file being the only
   non-orchestrator caller.
@@ -106,18 +104,24 @@ documentation-only slice inventing an edge to a spec that owns nothing.
 ## Interface
 
 ```python
-class Deferral(BaseModel):
+RefutationState = Literal["verified", "refuted", "deferred", "unverified"]
+
+@dataclass(frozen=True)
+class Refutation:
     finding_id: int | None
     file: str
+    line_start: int
     claim_type: ClaimType
-    reason: Literal[
-        "evidence outside the diff",
-        "judging cap reached",
-        "verdict unparseable",
-        "judge call failed",
-        "not yet mechanically verified",
-    ]
-    detail: str  # cap value, exception type name, or "" when the tag is self-explanatory
+    state: RefutationState
+    reason: str  # the judge's reasoning for a verdict, else one closed-set reason
+
+@dataclass(frozen=True)
+class JudgingReport:
+    outcomes: tuple[Refutation, ...]
+    model_calls: int
+    counts: dict[str, int]            # property: verified / refuted / deferred / unverified
+    deferrals: tuple[Refutation, ...]  # property: outcomes without a verdict
+    def summary_line(self) -> str: ...
 
 def judge_findings_for_pr(
     db_path: Path,
@@ -127,72 +131,93 @@ def judge_findings_for_pr(
     head_sha: str | None,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
     max_judged: int | None = None,  # None reads GatesConfig.refuter_max_judged, default 10
-) -> tuple[dict[str, int], list[Deferral]]: ...
+    diff_files: Collection[str] = (),
+    tree_sha: str | None = None,
+    review_head: str | None = None,  # defaults to head_sha
+) -> JudgingReport: ...
 ```
 
 Inputs: unchanged, plus the optional `max_judged` override (tests only;
-production reads the config).
+production reads `[gates].refuter_max_judged`), the diff's paths, the
+commit `repo_root` is at, and the head the review is about.
 
-Outputs: the existing `{"verified": n, "refuted": n, "deferred": n}`
-aggregate (byte-for-byte compatible — no existing reader breaks) plus
-`deferrals`, one entry per deferred finding, `len(deferrals) ==
-counts["deferred"]` always.
+Outputs: one `Refutation` per proposed finding, each in exactly one
+state; `sum(counts.values()) == len(outcomes)` always. Reasons of the
+two verdict-less states come from a closed set, details inline:
 
-Errors: none new — a judge exception still yields a `Deferral` with
-reason `"judge call failed"`, never an unhandled raise.
+| State | Reason |
+|---|---|
+| `deferred` | `evidence outside the diff` — cited file is not a file under `repo_root` |
+| `deferred` | `checkout is not the MR head (<sha7>)` — cited file is in the diff, absent from a tree whose commit is not the head |
+| `deferred` | `evidence unreadable` — file there, cited lines not |
+| `deferred` | `judging cap N reached` |
+| `deferred` | `verdict unparseable` |
+| `deferred` | `judge call failed: <exception type>` |
+| `unverified` | `not yet mechanically verified` |
+
+The cap counts judge calls, so a finding with unreadable evidence never
+uses a slot. `review pr` adds `findings[i] = {id, file, line,
+claim_type, refutation: {state, reason}}` to its JSON and one stderr
+line, `refuter: judged 3, refuted 1, deferred 2 (evidence unreadable
+×2), unverified 1 (not yet mechanically verified)`.
+
+Errors: none new — a judge exception yields `judge call failed:
+<exception type>`, never an unhandled raise; a judge factory that
+raises is built once and names its exception on every finding it
+leaves.
 
 ## Behavior
 
 ### Nominal
 A `design` finding with readable evidence and a well-formed judge reply
-→ `verified` or `refuted`, zero entries in `deferrals` for it.
+→ `verified` or `refuted`, absent from `deferrals`.
 
 ### Edge cases
-- Non-judged claim type, `verify_attempts == 0`, judged before
-  `verify_findings_for_pr` ran on it this pass → one `Deferral`,
-  reason `"not yet mechanically verified"`, and `counts["deferred"]`
-  now includes it (today: invisible, F5).
-- 12 judgeable findings, cap 10 → 10 judged normally, 2 each get a
-  `Deferral` with reason `"judging cap reached"` and the file/claim_type
-  identity that is missing today (F7).
-- Cited file absent under `repo_root` → one `Deferral`, reason
-  `"evidence outside the diff"`, zero model calls (F6).
+- Non-judged claim type, `verify_attempts == 0` (the verifiers have not
+  run on it this pass) → `unverified`, reason `not yet mechanically
+  verified` (before: invisible, F5).
+- 12 judgeable findings, cap 10 → 10 judged, 2 `deferred` with
+  `judging cap 10 reached`, each named by id, file and claim type (F7).
+- Cited file absent under `repo_root` → `deferred`, `evidence outside
+  the diff`, or `checkout is not the MR head (<sha7>)` when the file is
+  in the diff and the tree is not at the head; zero model calls (F6).
 
 ### Failure scenarios
-- Judge raises → `Deferral` reason `"judge call failed"`, `detail` the
-  exception type name; the PR review itself is unaffected (orchestrator
-  already guards the whole call, F8).
-- `GatesConfig.refuter_max_judged` unset or invalid → falls back to 10,
-  logged once, never a crash.
+- Judge raises → `deferred`, `judge call failed: <exception type>`; the
+  PR review itself is unaffected (the orchestrator guards the call, F8).
+- `verify_findings_for_pr` raises → logged at warning with the
+  exception name; the findings it left are reported `unverified`.
+- `[gates].refuter_max_judged` invalid → the config load refuses it; the
+  refuter logs the error and falls back to 10, never a crash.
 
 ## Architecture Impact
 
 - Adds dependency: SP-REFUTER-JUDGES-WHAT-IT-CAN -> SP-FINDINGS-INIT-RACE
   (reads/writes the `pr_findings` ledger `findings.py` owns — unchanged
-  schema, new read pattern for the `unverified_targets` bucket).
+  schema).
 - Adds dependency: SP-REFUTER-JUDGES-WHAT-IT-CAN -> SP-ORCH-DOCSTRING
-  (the orchestrator's `judge_findings_for_pr` call site, `orchestrator.py:688-698`,
-  must unpack the new `(counts, deferrals)` return and add the
-  per-deferral log event).
-- New / changed coupling: none to `refuter.py` / `finding_verifiers.py`
-  / `hallucination_guard.py` as spec edges — they are frontier (F11);
-  the implementation slice should either promote `refuter.py` with its
-  own `owns` or fold it under one of the two depended-on specs, not
-  leave the edge undeclared once code changes.
+  (the orchestrator's `judge_findings_for_pr` call site logs one
+  `review_team.finding_deferred` event per verdict-less finding).
+- Owns `refuter.py`, `hallucination_guard.py` and
+  `finding_verifiers.py` (formerly frontier, F11);
+  SP-UNIVERSAL-GATES declares its edge to this spec
+  (`tests/unit/test_gates_language.py` imports `finding_verifiers.py`).
 
 ## Diagram
 
 ```mermaid
 flowchart TD
     A[proposed finding] --> B{claim_type judged OR verify_attempts >= 1?}
-    B -- no --> C[Deferral: not yet mechanically verified]
-    B -- yes --> D{within cap?}
-    D -- no --> E[Deferral: judging cap reached]
-    D -- yes --> F{evidence readable?}
-    F -- no --> G[Deferral: evidence outside the diff]
-    F -- yes --> H[judge call]
-    H -- raises --> I[Deferral: judge call failed]
-    H -- unparseable --> J[Deferral: verdict unparseable]
+    B -- no --> C[unverified: not yet mechanically verified]
+    B -- yes --> D{judge calls < cap?}
+    D -- no --> E[deferred: judging cap N reached]
+    D -- yes --> F{cited file under repo_root?}
+    F -- no --> G[deferred: evidence outside the diff / checkout is not the MR head]
+    F -- yes --> R{cited lines readable?}
+    R -- no --> U[deferred: evidence unreadable]
+    R -- yes --> H[judge call]
+    H -- raises --> I[deferred: judge call failed: exc type]
+    H -- unparseable --> J[deferred: verdict unparseable]
     H -- parsed --> K[verified / refuted]
 ```
 
@@ -200,45 +225,34 @@ flowchart TD
 
 Run from `repoach` with `PATH=.venv/bin:$PATH PYTHONPATH=$PWD/src`.
 
-- [ ] AC1: `pytest tests/unit/test_refuter.py -k "deferral_reason" -v` —
-  for each of the four reason tags produced inside `refute_finding`'s
-  own call path (evidence/cap/unparseable/judge-failed), an engineered
-  finding yields a `Deferral` carrying that exact tag.
-- [ ] AC2: `pytest tests/unit/test_refuter.py -k "unverified_target" -v`
-  — a `BROKEN_BEHAVIOR` finding with `verify_attempts == 0`, judged
-  before any `verify_findings_for_pr` call, appears in `deferrals` with
-  reason `"not yet mechanically verified"` and `counts["deferred"] == 1`
-  (today: `0`, F5).
-- [ ] AC3: `pytest tests/unit/test_refuter.py -k "judges_every_readable" -v`
+- [x] AC1: `pytest tests/unit/test_refuter.py -k "deferral_reason" -v` —
+  each deferral reason (outside the diff, checkout not at head,
+  unreadable, cap, unparseable, judge failed) is produced by an
+  engineered finding with that exact text.
+- [x] AC2: `pytest tests/unit/test_refuter.py -k "unverified_target" -v`
+  — a `BROKEN_BEHAVIOR` finding with `verify_attempts == 0` ends
+  `unverified`, reason `not yet mechanically verified`, and
+  `counts["unverified"] == 1` (before: counted nowhere, F5).
+- [x] AC3: `pytest tests/unit/test_refuter.py -k "judges_every_readable" -v`
   — N findings with readable evidence and N <= `max_judged` all end
-  `verified` or `refuted`, never `proposed`, for any fixed judge
-  returning a well-formed verdict.
-- [ ] AC4: `grep -n "refuter_max_judged" src/repoach/gates/config.py &&
+  `verified` or `refuted`, never `proposed`.
+- [x] AC4: `grep -n "refuter_max_judged" src/repoach/gates/config.py &&
   pytest tests/unit/test_refuter.py -k "max_judged_configurable" -v` —
-  a `GatesConfig(refuter_max_judged=3)` caps a 5-finding batch at 3
-  judged + 2 `Deferral(reason="judging cap reached")`; an unset config
-  keeps the default of 10.
-- [ ] AC5: `pytest tests/unit/test_review_team.py -k "finding_deferred_event" -v`
-  — the orchestrator emits one `review_team.finding_deferred` event per
-  `Deferral`, and `review_team.findings_judged` still logs the same
-  aggregate counts shape as before this change.
-- [ ] AC6: `ruff check src/repoach/review/refuter.py
-  src/repoach/review/orchestrator.py src/repoach/gates/config.py &&
-  ruff format --check src/repoach/review/refuter.py
-  src/repoach/review/orchestrator.py && pytest tests/unit/test_refuter.py
-  tests/unit/test_review_team.py tests/unit/test_finding_verifiers.py -v`
-  — full green, no regression on the existing
-  `test_judge_findings_for_pr_transitions_and_counts` /
-  `test_judge_findings_no_targets_never_builds_judge` pair (the second
-  one's assertion is the thing G2 changes — update it in the same
-  commit, do not leave it pinning the old silent behavior).
+  `refuter_max_judged = 3` caps a 5-finding batch at 3 judged + 2
+  `deferred` with `judging cap 3 reached`; an unset config keeps 10.
+- [x] AC5: `pytest tests/unit/test_review_team.py -k "finding_deferred_event" -v`
+  — one `review_team.finding_deferred` event per verdict-less finding;
+  `review_team.findings_judged` logs the four counts and `model_calls`.
+- [x] AC6: `ruff check` / `ruff format --check` on the touched modules
+  and `pytest tests/unit/test_refuter.py tests/unit/test_review_team.py
+  tests/unit/test_finding_verifiers.py` green;
+  `test_judge_findings_no_targets_never_builds_judge` now asserts the
+  `unverified` bucket instead of pinning the silent exclusion.
 
 ## Owner decisions needed
 
-- D1: should `Deferral.detail` for `"judge call failed"` include the
-  exception message (truncated, as `reasoning` already is elsewhere in
-  this module) or only the exception type name — the message may carry
-  provider-specific text not worth committing to a stable log schema.
+- D1 (taken by the implementation slice): `judge call failed` carries
+  the exception type name only, never the message.
 
 ## Gaps
 
@@ -248,13 +262,19 @@ Run from `repoach` with `PATH=.venv/bin:$PATH PYTHONPATH=$PWD/src`.
   tech_debt #57 itself prescribes), this spec's F5/F6/F7 predicates are
   the demonstrated causes of a zero-call, all-deferred refuter pass —
   not yet proven to be the *only* ones that produced !296's specific 19.
-- No `owns` promotion for `refuter.py` / `finding_verifiers.py` /
-  `hallucination_guard.py` in this draft (F11) — left to the
-  implementation slice.
+- The implementation slice promoted `refuter.py`,
+  `hallucination_guard.py` and `finding_verifiers.py` into this spec's
+  `owns.code`; `repoach arch graph --check` lists the same cycles with
+  and without the promotion (none involves this spec), which answers
+  Q2.
+- Verdicts read the checkout, not the head, until SP-REVIEW-PINS-HEAD:
+  a review that reads a tree other than the PR head judges stale or
+  absent evidence; the `checkout is not the MR head` reason names the
+  absent case, a present-but-stale file is still judged as it stands.
 
 ## Open Questions
 
-- Q1: when G5's trace lands, does it add a sixth `Deferral` reason
+- Q1: when G5's trace lands, does it add another deferral reason
   tag ("already judged this PR") or show F9 was never the cause on
   !296? Must be resolved before `status` can move past `draft`.
 - Q2: does the implementation slice promote `refuter.py` with its own

@@ -48,6 +48,7 @@ import json
 import re
 import subprocess
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -66,6 +67,8 @@ from ..forge import (
     ReviewDraft,
     select_forge,
 )
+from ..forge.protocol import diff_files
+from ..gates.config import load_gates_config
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
@@ -89,8 +92,14 @@ from .persistence import (
     record_hallucination,
     record_review,
 )
-from .refuter import judge_findings_for_pr
+from .refuter import (
+    NOT_YET_MECHANICALLY_VERIFIED,
+    Refutation,
+    configured_max_judged,
+    judge_findings_for_pr,
+)
 from .report import render_ledger_report
+from .review_head import materialise_head, require_head_sha
 from .review_lessons import remember_verified_findings
 from .review_memory import recall_review_lessons, review_lessons_section
 from .reviewer import (
@@ -274,7 +283,13 @@ class TeamOutcome:
     ``description``, ``branch``), both None when none was declared;
     ``spec_covered`` is None when no coverage was computed;
     ``spec_missing`` is True when a ``Spec:`` line named an id with no
-    document (the review then runs without a spec).
+    document (the review then runs without a spec). ``refutations``
+    holds one entry per finding the refuter saw, each with its state and
+    reason; ``refuter_summary`` is the one line naming them
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
+    ``tree`` is ``worktree`` or ``checkout`` when the review read a
+    pinned head tree (SP-REVIEW-PINS-HEAD), and ``worktree`` its path
+    when it was kept.
     """
 
     pr_number: int
@@ -292,6 +307,10 @@ class TeamOutcome:
     spec_source: str | None = None
     spec_covered: bool | None = None
     spec_missing: bool = False
+    refutations: list[Refutation] = field(default_factory=list)
+    refuter_summary: str | None = None
+    tree: str | None = None
+    worktree: str | None = None
 
 
 class ReviewTeamOrchestrator:
@@ -304,6 +323,16 @@ class ReviewTeamOrchestrator:
         post_to_github: When False, do not publish anything to GitHub
             (dry-run mode for tests / local previews).
         max_workers: Thread-pool worker count for the four reviewers.
+        repo_root: The tree every reader resolves against (the PR head
+            tree under :func:`run_review`); the working directory when
+            omitted.
+        head_sha: The head the caller already resolved and materialised;
+            when given, the fresh-head guard is skipped and every ledger
+            row carries it, dry run included (SP-REVIEW-PINS-HEAD).
+        config_root: Where ``repoach.toml`` is read from (``[gates]``,
+            ``[review]``): the trusted checkout. The PR head tree under
+            ``repo_root`` is evidence only and never configures the
+            review; defaults to ``repo_root``.
     """
 
     def __init__(
@@ -314,10 +343,14 @@ class ReviewTeamOrchestrator:
         post_to_github: bool = True,
         max_workers: int = 4,
         repo_root: Path | None = None,
+        head_sha: str | None = None,
+        config_root: Path | None = None,
     ) -> None:
         """Initialise the orchestrator with optional dependencies."""
         settings = get_settings()
+        self._pinned_head = head_sha
         self._repo_root = repo_root or Path.cwd()
+        self._config_root = config_root or self._repo_root
         self._forge = forge or select_forge(cwd=self._repo_root)
         self._db_path = db_path or Path(settings.db_path)
         self._post = post_to_github
@@ -436,7 +469,7 @@ class ReviewTeamOrchestrator:
 
         head_guard_pool: ThreadPoolExecutor | None = None
         head_guard_future: Future[str | None] | None = None
-        if self._post:
+        if self._post and self._pinned_head is None:
             head_guard_pool = ThreadPoolExecutor(max_workers=1)
             head_guard_future = head_guard_pool.submit(
                 resolve_fresh_head, self._forge, pr_number, repo_root=self._repo_root
@@ -461,7 +494,7 @@ class ReviewTeamOrchestrator:
                 flag=spec_flag,
                 description=pr.body,
                 branch=head_ref,
-                sources=load_project_config(project_root(self._repo_root)).review.spec_sources,
+                sources=load_project_config(project_root(self._config_root)).review.spec_sources,
                 root=self._repo_root,
             )
             spec = self._load_declared_spec(declared)
@@ -658,7 +691,9 @@ class ReviewTeamOrchestrator:
         n_blockers = sum(1 for o in outcomes for c in o.comments if c.severity == "blocker")
         n_majors = sum(1 for o in outcomes for c in o.comments if c.severity == "major")
 
-        head_sha = self._join_head_guard(head_guard_pool, head_guard_future, pr_number=pr_number)
+        head_sha = self._pinned_head or self._join_head_guard(
+            head_guard_pool, head_guard_future, pr_number=pr_number
+        )
 
         record_review_ledger(
             self._db_path,
@@ -675,6 +710,7 @@ class ReviewTeamOrchestrator:
                 pr_number=pr_number,
                 repo_root=self._repo_root,
                 head_sha=head_sha,
+                config=load_gates_config(self._config_root),
             )
             _log.info("review_team.findings_verified", pr_number=pr_number, **verify_counts)
         except Exception as exc:
@@ -683,18 +719,46 @@ class ReviewTeamOrchestrator:
                 pr_number=pr_number,
                 exc=type(exc).__name__,
                 message=str(exc)[:200],
+                consequence=f"unjudged claim types reported unverified: {NOT_YET_MECHANICALLY_VERIFIED}",
             )
 
+        refutations: list[Refutation] = []
+        refuter_summary: str | None = None
         try:
             with reviewer_scope("Refuter"):
-                judge_counts = judge_findings_for_pr(
+                judging = judge_findings_for_pr(
                     self._db_path,
                     pr_number=pr_number,
                     repo_root=self._repo_root,
                     head_sha=head_sha,
+                    max_judged=configured_max_judged(self._config_root),
+                    diff_files=diff_files(diff),
+                    tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
+                    review_head=head_sha or _served_head(self._forge, pr_number),
+                    scope_head=head_sha,
                 )
-            _log.info("review_team.findings_judged", pr_number=pr_number, **judge_counts)
+            refutations = list(judging.outcomes)
+            refuter_summary = judging.summary_line()
+            _log.info(
+                "review_team.findings_judged",
+                pr_number=pr_number,
+                model_calls=judging.model_calls,
+                stale=judging.stale,
+                **judging.counts,
+            )
+            for deferral in judging.deferrals:
+                _log.info(
+                    "review_team.finding_deferred",
+                    pr_number=pr_number,
+                    finding_id=deferral.finding_id,
+                    file=deferral.file,
+                    line=deferral.line_start,
+                    claim_type=deferral.claim_type.value,
+                    state=deferral.state,
+                    reason=deferral.reason,
+                )
         except Exception as exc:
+            refuter_summary = f"refuter: failed: {type(exc).__name__}, no finding judged"
             _log.warning(
                 "review_team.findings_judge_failed",
                 pr_number=pr_number,
@@ -813,6 +877,8 @@ class ReviewTeamOrchestrator:
             spec_source=spec_source,
             spec_covered=spec_covered,
             spec_missing=spec_missing,
+            refutations=refutations,
+            refuter_summary=refuter_summary,
         )
 
         for outcome in outcomes:
@@ -1022,8 +1088,8 @@ class ReviewTeamOrchestrator:
                 revised[i] = new_outcome
         return revised
 
-    @staticmethod
     def _build_dialogue_context(
+        self,
         *,
         reviewer_role: BotRole,
         reviewer_outcome: ReviewerOutcome,
@@ -1034,8 +1100,8 @@ class ReviewTeamOrchestrator:
 
         Excludes the reviewer's own round-1 outcome from peer_outcomes;
         truncates each peer's prose to 200 chars; filters guard events
-        to those targeting this reviewer; reads file excerpts from disk
-        for every cited ``file:line``.
+        to those targeting this reviewer; reads file excerpts from the
+        reviewed tree for every cited ``file:line``.
         """
         peer_outcomes = tuple(
             PeerOutcome(
@@ -1056,7 +1122,7 @@ class ReviewTeamOrchestrator:
         )
         excerpts = make_file_excerpts(
             reviewer_outcome.comments,
-            repo_root=Path.cwd(),
+            repo_root=self._repo_root,
         )
         return DialogueContext(
             peer_outcomes=peer_outcomes,
@@ -1905,25 +1971,58 @@ def run_review(
     post: bool = True,
     forge: Forge | None = None,
     spec: str | None = None,
+    keep_tree: bool = False,
+    announce: Callable[[str], None] | None = None,
 ) -> TeamOutcome:
-    """Module-level convenience wrapper used by the CLI command.
+    """Review the PR head tree and return the aggregated outcome (CLI entry).
+
+    SP-REVIEW-PINS-HEAD G2: the head SHA is resolved from the forge first
+    (with :func:`resolve_fresh_head`'s propagation-lag poll), the tree at
+    that SHA is materialised (:func:`~repoach.review.review_head.materialise_head`:
+    the checkout in place when it is at the SHA and clean, else a
+    detached worktree under the state directory) and every reader of the
+    review resolves against it. The worktree is removed afterwards
+    unless ``keep_tree``.
 
     Args:
-        pr_number: GitHub PR number to review.
+        pr_number: PR number (GitHub) or MR iid (GitLab) to review.
         post: When False, do not publish anything to the forge (dry-run).
         forge: The forge to read and post through; selected from the
             repository when omitted.
         spec: The ``--spec`` value, highest-precedence spec source.
+        keep_tree: Leave the worktree in place and report its path.
+        announce: Receives the ``reviewing <N> at <sha7> (<tree> <path>)``
+            line before the reviewers start.
 
     Returns:
-        The :class:`TeamOutcome` aggregated across the four reviewers.
+        The :class:`TeamOutcome` aggregated across the four reviewers,
+        with ``head_sha`` and ``tree`` filled.
 
     Raises:
         GatewayConfigError: The selected provider cannot be used (the
             gateway URL or secret, the ``claude`` CLI or its login, the
             Anthropic key); raised before any forge call.
+        HeadUnresolvedError: The forge served no usable head SHA.
+        HeadUnavailableError: The head tree could not be materialised.
     """
     require_provider_ready()
-    return ReviewTeamOrchestrator(forge=forge, post_to_github=post).review_pr(
-        pr_number, spec_flag=spec
-    )
+    checkout = Path.cwd()
+    forge = forge or select_forge(cwd=checkout)
+    sha = require_head_sha(resolve_fresh_head(forge, pr_number, repo_root=checkout), pr_number)
+    db_path = Path(get_settings().db_path)
+    with materialise_head(
+        forge, pr_number, sha, repo_root=checkout, state_dir=db_path.parent, keep=keep_tree
+    ) as tree:
+        if announce is not None:
+            announce(tree.announcement(pr_number))
+        team = ReviewTeamOrchestrator(
+            forge=forge,
+            db_path=db_path,
+            post_to_github=post,
+            repo_root=tree.root,
+            head_sha=sha,
+            config_root=checkout,
+        ).review_pr(pr_number, spec_flag=spec)
+    team.tree = tree.tree
+    team.worktree = str(tree.root) if tree.tree == "worktree" and tree.kept else None
+    return team

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from ..gates.config import load_gates_config
+from ..gates.config import GatesConfig, load_gates_config
 from .finding_verifiers import verify_finding
 from .findings import (
     JUDGED_CLAIM_TYPES,
@@ -199,6 +199,7 @@ def gather_merge_facts(
     repo_root: Path,
     head_sha: str,
     ci_green: bool,
+    gates_config: GatesConfig | None = None,
 ) -> MergeFacts:
     """Re-verify the ledger at *head_sha* and assemble :class:`MergeFacts`.
 
@@ -218,6 +219,8 @@ def gather_merge_facts(
         repo_root: The head checkout the verifiers resolve against.
         head_sha: The exact head being decided on.
         ci_green: Whether required checks are green at head.
+        gates_config: The trusted gate configuration (the checkout's,
+            never the PR head tree's); read from ``repo_root`` when omitted.
 
     Returns:
         The assembled :class:`MergeFacts`.
@@ -225,7 +228,8 @@ def gather_merge_facts(
     init_findings_schema(db_path)
     open_blocking = 0
     blocking_unverified: list[str] = []
-    gates_config = load_gates_config(repo_root)
+    if gates_config is None:
+        gates_config = load_gates_config(repo_root)
     for finding in fetch_findings(db_path, pr_number):
         if finding.severity is not Severity.BLOCKING or finding.status in _SETTLED:
             continue

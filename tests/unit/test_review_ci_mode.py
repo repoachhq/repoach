@@ -48,6 +48,11 @@ class _FakeTeam:
     spec_covered: bool | None = None
     spec_missing: bool = False
     posting_outcome: str | None = None
+    refutations: list[Any] = field(default_factory=list)
+    refuter_summary: str | None = None
+    head_sha: str | None = None
+    tree: str | None = None
+    worktree: str | None = None
 
 
 _REQUIRED_TOP_LEVEL = {
@@ -191,3 +196,47 @@ def test_review_pr_exit_zero_on_approve_or_comment() -> None:
         with patch("repoach.cli.review_cmds.run_review", return_value=team):
             result = runner.invoke(review_app, ["pr", "42", "--dry-run"])
         assert result.exit_code == 0, f"{verdict.value} must exit 0 ; got {result.exit_code}"
+
+
+def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() -> None:
+    """Every finding the refuter saw is in ``findings`` with ``refutation = {state, reason}``."""
+    import json
+
+    from repoach.review.findings import ClaimType
+    from repoach.review.refuter import JudgingReport, Refutation
+
+    report = JudgingReport(
+        outcomes=(
+            Refutation(7, "a.py", 3, ClaimType.DESIGN, "refuted", "vague"),
+            Refutation(
+                8, "ci/x.sh", 1, ClaimType.SECURITY, "deferred", "evidence outside the diff"
+            ),
+            Refutation(
+                9, "a.py", 5, ClaimType.MISSING_TEST, "unverified", "not yet mechanically verified"
+            ),
+        )
+    )
+    team = _build_fake_team()
+    team.refutations = list(report.outcomes)
+    team.refuter_summary = report.summary_line()
+    with patch("repoach.cli.review_cmds.run_review", return_value=team):
+        result = CliRunner().invoke(review_app, ["pr", "999", "--dry-run"])
+
+    payload = json.loads(result.stdout)
+    assert [f["refutation"] for f in payload["findings"]] == [
+        {"state": "refuted", "reason": "vague"},
+        {"state": "deferred", "reason": "evidence outside the diff"},
+        {"state": "unverified", "reason": "not yet mechanically verified"},
+    ]
+    assert payload["findings"][1] == {
+        "id": 8,
+        "file": "ci/x.sh",
+        "line": 1,
+        "claim_type": "security",
+        "refutation": {"state": "deferred", "reason": "evidence outside the diff"},
+    }
+    refuter_lines = [line for line in result.stderr.splitlines() if line.startswith("refuter:")]
+    assert refuter_lines == [
+        "refuter: judged 1, refuted 1, deferred 1 (evidence outside the diff), "
+        "unverified 1 (not yet mechanically verified)"
+    ]

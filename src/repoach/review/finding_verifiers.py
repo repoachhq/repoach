@@ -190,6 +190,7 @@ def verify_findings_for_pr(
     pr_number: int,
     repo_root: Path,
     head_sha: str | None,
+    config: GatesConfig | None = None,
 ) -> dict[str, int]:
     """Verify every proposed finding of a PR and persist the transitions.
 
@@ -199,13 +200,15 @@ def verify_findings_for_pr(
         repo_root: Root the verifiers resolve evidence against.
         head_sha: Commit the verification ran against (stored on each
             updated row); ``None`` becomes ``""``.
+        config: The trusted gate configuration (the checkout's, never the
+            PR head's); read from ``repo_root`` when omitted.
 
     Returns:
         Counts ``{"verified": n, "refuted": n, "deferred": n}``, plus
         ``"not_applicable": n`` when any finding ended not applicable.
     """
     counts = {"verified": 0, "refuted": 0, "deferred": 0}
-    config = load_gates_config(repo_root)
+    config = config if config is not None else load_gates_config(repo_root)
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
     for finding in proposed:
         new_status, method, result = verify_finding(finding, repo_root=repo_root, config=config)

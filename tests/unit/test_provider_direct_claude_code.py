@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,16 @@ class _CountingForge(_StubGitHubForge):
     def _pr_diff(self, pr_number: int) -> Any:
         self.transport_calls.append(f"pr diff {pr_number}")
         return super()._pr_diff(pr_number)
+
+    def _pr_head_sha(self, pr_number: int) -> str:
+        """Serve the clone's own HEAD as the PR head (SP-REVIEW-PINS-HEAD)."""
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def fetch_head(self, number: int) -> str:
+        """The head is the clone's HEAD, already in its object store."""
+        return f"refs/pull/{number}/head"
 
 
 def _review(monkeypatch: pytest.MonkeyPatch, forge: _StubGitHubForge) -> Any:

@@ -36,7 +36,12 @@ from ..core.paths import (
     user_config_dir,
     user_data_dir,
 )
-from ..gates.config import CONFIG_FILE_NAME, GatesConfig, load_gates_config
+from ..gates.config import (
+    CONFIG_FILE_NAME,
+    GatesConfig,
+    load_gates_config,
+    resolve_refuter_max_judged,
+)
 from ..gates.verifiers import availability_table, node_install_hint
 from ..project.config import ConfigError, config_path
 from ..project.resolve import (
@@ -333,6 +338,8 @@ def print_gates(root: Path) -> None:
     typer.echo(_command_line("gate", config.gate_cmd, "none"))
     typer.echo(f"commands.timeout_s={config.timeout_s}")
     typer.echo(f"arch.require_frontmatter={str(config.require_frontmatter).lower()}")
+    max_judged, max_judged_source = resolve_refuter_max_judged(root)
+    typer.echo(f"gates.refuter_max_judged={max_judged} ({max_judged_source})")
     header = f"{'language':<11} {'declared':<9} {'extensions':<24} {'selector':<8} verifiers"
     typer.echo(header)
     for row in availability_table(root, config):
