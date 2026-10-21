@@ -7,7 +7,7 @@ import time
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,7 @@ from repoach.llm_proxy.providers.exceptions import (
     RateLimitError,
     UpstreamStatusError,
 )
+from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 from repoach.llm_proxy.routing import ModelRef, get_breaker, is_slow_completion, ttl_for_reason
 from repoach.llm_proxy.routing.breaker import ACCOUNT_FAULT_REASONS, escalated_ttl
 from repoach.llm_proxy.routing.breaker_persist import persist_state
@@ -108,6 +109,21 @@ def _classify_failover_reason(exc: BaseException) -> str:
     ):
         return "transport_error"
     return f"exception:{exc_name}"
+
+
+def _rate_limit_blocked_until_iso(limiter: GlobalRateLimiter) -> str:
+    """Project a limiter's reactive block onto a wall-clock ISO timestamp.
+
+    ``GlobalRateLimiter`` is deliberately clock-free (monotonic-only,
+    mirroring ``BreakerState``) ; this does the same monotonic-to-wall
+    projection ``breaker_persist.persist_state`` already does for the
+    breaker, so a skipped candidate's log line and user-facing message
+    can name a real time instead of a raw monotonic offset.
+    """
+    now_monotonic = time.monotonic()
+    now_wall = datetime.now(UTC)
+    remaining_s = limiter.seconds_until_unblocked(now_monotonic)
+    return (now_wall + timedelta(seconds=remaining_s)).isoformat()
 
 
 def _classify_empty_peek(peek: PeekResult) -> str:
@@ -594,6 +610,24 @@ class ClaudeProxyService:
         dispatch protects the caller waiting on the wire, so a
         slow-but-served completion is a strike, not recovery evidence.
 
+        SP-FAILOVER-SKIPS-BLOCKED-PROVIDER: before dispatching, each
+        candidate's provider-scoped :class:`GlobalRateLimiter`
+        (``providers/rate_limit.py``) is checked via
+        :meth:`GlobalRateLimiter.is_blocked`. The limiter scope is
+        shared by every model of the same provider, so a 429 against
+        one model (which also trips that model's own breaker ref)
+        would otherwise leave sibling models dispatchable — they sleep
+        inside the provider's HTTP layer until the block lifts, miss
+        ``first_byte_deadline_s``, and get mis-recorded as
+        ``first_byte_timeout`` after burning most of the dispatch
+        budget. A blocked candidate is skipped with zero dispatch cost
+        and a ``rate_limited until <ISO time>`` reason recorded in the
+        ``proxy_chain_skip_rate_limited`` log event, ``hop_breakdown``,
+        and (if the chain is exhausted) the terminal SSE message. This
+        does NOT trip the candidate's own breaker ref — it never
+        actually failed, only its provider's shared limiter is cooling
+        down.
+
         SP-CHAIN-REQUEST-BUDGET wraps the whole walk in a single
         wall-clock deadline (``settings.dispatch_total_budget_s``,
         computed once here) so a fully-exhausted chain cannot cost the
@@ -624,6 +658,32 @@ class ClaudeProxyService:
                     dispatch_id=dispatch_id,
                     candidate=candidate.provider_model_ref,
                     attempt=attempt_index + 1,
+                )
+                continue
+
+            provider = self._provider_getter(candidate.provider_id)
+            limiter = provider.rate_limiter
+            if limiter is not None and limiter.is_blocked():
+                blocked_until_iso = _rate_limit_blocked_until_iso(limiter)
+                reason = f"rate_limited until {blocked_until_iso}"
+                last_error = RateLimitError(reason)
+                prior_failures.append((candidate.provider_model_ref, reason))
+                hop_breakdown.append(
+                    {
+                        "provider_model_ref": candidate.provider_model_ref,
+                        "reason": reason,
+                        "elapsed_s": 0.0,
+                    }
+                )
+                logger.warning(
+                    "proxy_chain_skip_rate_limited",
+                    dispatch_id=dispatch_id,
+                    candidate=candidate.provider_model_ref,
+                    attempt=attempt_index + 1,
+                    chain_length=len(chain),
+                    chain_remaining=len(chain) - attempt_index - 1,
+                    reason=reason,
+                    blocked_until=blocked_until_iso,
                 )
                 continue
 
@@ -673,7 +733,6 @@ class ClaudeProxyService:
                 )
             attempt_started = time.monotonic()
             try:
-                provider = self._provider_getter(candidate.provider_id)
                 stream = provider.stream_response(
                     attempt_request,
                     input_tokens=input_tokens,

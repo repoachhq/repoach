@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from loguru import logger as loguru_logger
 
 from repoach.llm_proxy.api._failover import (
     PeekResult,
@@ -34,6 +36,8 @@ from repoach.llm_proxy.api.models.anthropic import (
 from repoach.llm_proxy.api.services import ClaudeProxyService
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
+from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
+from repoach.llm_proxy.routing import ModelRef, get_breaker
 
 # ---------------------------------------------------------------------------
 # SSE chunk fixtures
@@ -740,3 +744,114 @@ def test_all_candidates_failing_emits_terminal_sse_error(monkeypatch: pytest.Mon
     payload = json.loads(error_chunk.split("data: ", 1)[1].strip())
     assert payload["error"]["type"] == "chain_exhausted"
     assert "kimi down" in payload["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# SP-FAILOVER-SKIPS-BLOCKED-PROVIDER — pre-dispatch rate-limit skip
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def captured_loguru() -> Any:
+    """Capture loguru records for the duration of a test."""
+    records: list[Any] = []
+    sink_id = loguru_logger.add(
+        lambda msg: records.append(msg.record),
+        format="{message}",
+        level="DEBUG",
+    )
+    try:
+        yield records
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+def _find_event(records: list[Any], event: str) -> Any:
+    for r in records:
+        if r["message"] == event:
+            return r
+    raise AssertionError(f"event {event!r} not in {[r['message'] for r in records]}")
+
+
+def test_blocked_provider_is_skipped_without_dispatch_and_failover_is_fast(
+    monkeypatch: pytest.MonkeyPatch,
+    captured_loguru: list[Any],
+) -> None:
+    """A provider already blocked by a prior 429 is skipped with no request.
+
+    ``nvidia_nim`` is wired to raise if it were ever dispatched, and its
+    scoped limiter is pre-blocked for 60s to simulate a 429 a previous
+    request already hit. The chain must reach ``kimi`` well under the
+    20s ``first_byte_deadline_s`` — in fact under 1s, since the skip
+    never dispatches at all.
+    """
+    providers = {
+        "nvidia_nim": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            raises=RuntimeError("must not be dispatched while rate-limited"),
+        ),
+        "kimi": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            chunks=[
+                _MESSAGE_START,
+                _TEXT_CONTENT_START,
+                _REAL_TEXT_DELTA,
+                _CONTENT_BLOCK_STOP,
+                _TERMINAL_REAL_DELTA,
+                _MESSAGE_STOP,
+            ],
+        ),
+        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(monkeypatch, providers)
+    providers["nvidia_nim"]._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
+        "test-nvidia-nim-blocked"
+    )
+    providers["nvidia_nim"]._global_rate_limiter.set_blocked(60)
+
+    started = time.monotonic()
+    response = service.create_message(_make_request())
+    chunks = _drain_stream_response(response)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0, f"expected the blocked hop to cost nothing, took {elapsed}s"
+    assert any(c == _TEXT_CONTENT_START for c in chunks)
+    assert "unused" not in chunks
+
+    fired = _find_event(captured_loguru, "proxy_chain_skip_rate_limited")
+    assert fired["extra"]["candidate"] == "nvidia_nim/meta/llama-3.3-70b-instruct"
+    assert fired["extra"]["reason"].startswith("rate_limited until ")
+
+
+def test_blocked_provider_skip_does_not_trip_its_own_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skipping a rate-limited candidate must not trip ITS breaker ref.
+
+    The candidate never actually failed — only its provider's shared
+    limiter (set by some OTHER model's 429) is cooling down — so
+    penalising this ref's own consecutive-failure count would be a
+    misattribution.
+    """
+    providers = {
+        "nvidia_nim": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            raises=RuntimeError("must not be dispatched while rate-limited"),
+        ),
+        "kimi": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            chunks=[_MESSAGE_START, _TOOL_USE_START, _TERMINAL_REAL_DELTA, _MESSAGE_STOP],
+        ),
+        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(monkeypatch, providers)
+    providers["nvidia_nim"]._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
+        "test-nvidia-nim-breaker-skip"
+    )
+    providers["nvidia_nim"]._global_rate_limiter.set_blocked(60)
+
+    response = service.create_message(_make_request())
+    _drain_stream_response(response)
+
+    ref = ModelRef.parse("nvidia_nim/meta/llama-3.3-70b-instruct")
+    assert get_breaker().is_down(ref, time.monotonic()) is False

@@ -22,6 +22,8 @@ class ProviderConfig(BaseModel):
     rate_limit: int | None = None
     rate_window: int = 60
     max_concurrency: int = 5
+    rate_limit_block_default_s: float = 60.0
+    rate_limit_block_max_s: float = 300.0
     http_read_timeout: float = 300.0
     http_write_timeout: float = 10.0
     http_connect_timeout: float = 2.0
@@ -40,8 +42,28 @@ class BaseProvider(ABC):
     tool requests transparently as the chain's last-resort backstop.
     """
 
+    _global_rate_limiter: GlobalRateLimiter | None = None
+
     def __init__(self, config: ProviderConfig):
         self._config = config
+
+    @property
+    def rate_limiter(self) -> GlobalRateLimiter | None:
+        """Return this provider's process-wide rate limiter scope, if any.
+
+        Every concrete provider that talks to a real upstream sets
+        ``self._global_rate_limiter`` in its constructor (via
+        :meth:`_scoped_rate_limiter`, or the equivalent direct
+        ``GlobalRateLimiter.get_scoped_instance`` call made by
+        ``claude_code``). Exposed here so the failover dispatcher can
+        check whether a provider is currently blocked BEFORE
+        dispatching to it, without reaching into a concrete subclass's
+        private attribute (SP-FAILOVER-SKIPS-BLOCKED-PROVIDER). A test
+        double that never talks to a real upstream is free to leave
+        this unset ; the class-level default of ``None`` means "never
+        blocked" to every caller.
+        """
+        return self._global_rate_limiter
 
     def _build_timeout(self) -> httpx.Timeout:
         """Build the httpx.Timeout derived from this provider's ProviderConfig.
