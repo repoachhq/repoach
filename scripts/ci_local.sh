@@ -8,6 +8,9 @@
 #   scripts/ci_local.sh --fast     # skip pytest (lint-only — pre-commit-style)
 #   scripts/ci_local.sh --tests    # pytest unit tests only (skip lint and integration)
 #   scripts/ci_local.sh --integration  # pytest integration tests only
+#   scripts/ci_local.sh --wheel        # mirror the wheel-build + wheel-smoke jobs:
+#                                      # build once, pipx-install the wheel on
+#                                      # Python 3.11 and 3.13 (SP-PYPI-RELEASE)
 #   scripts/ci_local.sh --review <PR>  # mirror the .github/workflows/auto-review.yml
 #                                      # review job locally — runs the four
 #                                      # bots against the PR via the V2
@@ -33,6 +36,7 @@ case "${1:-}" in
     --fast)   mode="lint" ;;
     --tests)  mode="tests" ;;
     --integration) mode="integration" ;;
+    --wheel)  mode="wheel" ;;
     --review)
         mode="review"
         review_pr="${2:-}"
@@ -42,7 +46,7 @@ case "${1:-}" in
         fi
         ;;
     "")       mode="full" ;;
-    *)        echo "usage: $0 [--fast | --tests | --integration | --review <PR>]" >&2 ; exit 2 ;;
+    *)        echo "usage: $0 [--fast | --tests | --integration | --wheel | --review <PR>]" >&2 ; exit 2 ;;
 esac
 
 bold() { printf "\n\033[1m== %s ==\033[0m\n" "$1" ; }
@@ -116,7 +120,23 @@ if [[ "$mode" == "review" ]] ; then
     exit 1
 fi
 
-if [[ "$mode" != "tests" && "$mode" != "integration" ]] ; then
+if [[ "$mode" == "wheel" ]] ; then
+    wheel_dir="$(mktemp -d)"
+    trap 'rm -rf "$wheel_dir"' EXIT
+    run_step "build sdist + wheel" python -m build --sdist --wheel --outdir "$wheel_dir" .
+    run_step "twine check" bash -c "python -m twine check '$wheel_dir'/*"
+    for py in 3.11 3.13 ; do
+        py_bin="$(command -v "python$py" || uv python find "$py" 2>/dev/null || true)"
+        if [[ -z "$py_bin" ]] ; then
+            fail "wheel-smoke ($py): no python$py on PATH nor through uv"
+            failures+=("wheel-smoke ($py)")
+            continue
+        fi
+        run_step "wheel-smoke ($py)" bash scripts/wheel_smoke.sh --python "$py_bin" "$wheel_dir"/repoach-*.whl
+    done
+fi
+
+if [[ "$mode" != "tests" && "$mode" != "integration" && "$mode" != "wheel" ]] ; then
     run_step "ruff check"        ruff check src tests
     run_step "ruff format --check" ruff format --check src tests
     run_step "lint — no inline comments / no noqa" python scripts/lint_no_inline_comments.py --summary
