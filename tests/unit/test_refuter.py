@@ -599,3 +599,46 @@ def test_scope_head_judges_this_run_and_counts_older_heads_as_stale(tmp_path: Pa
     assert report.summary_line() == (
         "refuter: judged 1, refuted 1, deferred 0, unverified 0, stale: 2 (older heads)"
     )
+
+
+def test_max_judged_env_outranks_repoach_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from repoach.gates.config import resolve_refuter_max_judged
+
+    (tmp_path / "repoach.toml").write_text("[gates]\nrefuter_max_judged = 5\n", encoding="utf-8")
+    monkeypatch.delenv("REPOACH_REFUTER_MAX_JUDGED", raising=False)
+    assert resolve_refuter_max_judged(tmp_path) == (5, "repoach.toml")
+
+    monkeypatch.setenv("REPOACH_REFUTER_MAX_JUDGED", "3")
+    assert resolve_refuter_max_judged(tmp_path) == (3, "env REPOACH_REFUTER_MAX_JUDGED")
+    assert configured_max_judged(tmp_path) == 3
+
+    monkeypatch.setenv("REPOACH_REFUTER_MAX_JUDGED", "zero")
+    assert resolve_refuter_max_judged(tmp_path) == (5, "repoach.toml")
+
+    (tmp_path / "repoach.toml").unlink()
+    monkeypatch.delenv("REPOACH_REFUTER_MAX_JUDGED")
+    assert resolve_refuter_max_judged(tmp_path) == (10, "default")
+
+
+def test_max_judged_env_is_printed_by_doctor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from repoach.cli.doctor_cmds import print_gates
+    from repoach.project.resolve import resolve_project_config
+
+    monkeypatch.setenv("REPOACH_REFUTER_MAX_JUDGED", "4")
+
+    print_gates(tmp_path)
+
+    assert "gates.refuter_max_judged=4 (env REPOACH_REFUTER_MAX_JUDGED)" in capsys.readouterr().out
+    resolved = resolve_project_config(tmp_path)
+    assert resolved.config.gates.refuter_max_judged == 4
+    assert resolved.sources["gates.refuter_max_judged"] == "env"
+
+
+def test_max_judged_refuses_a_boolean_in_repoach_toml(tmp_path: Path) -> None:
+    (tmp_path / "repoach.toml").write_text("[gates]\nrefuter_max_judged = true\n", encoding="utf-8")
+    with pytest.raises(GatesConfigError):
+        load_gates_config(tmp_path)

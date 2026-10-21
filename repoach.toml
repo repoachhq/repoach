@@ -68,7 +68,7 @@ docstring_exempt = ["tests/", "scripts/", "src/repoach/llm_proxy/"]
 # A verifier's command, by verifier name.
 # verifier_commands = {}
 # Findings the refuter judges per pull request; the rest are reported
-# deferred, each one named.
+# deferred, each one named. REPOACH_REFUTER_MAX_JUDGED outranks it.
 # refuter_max_judged = 10
 
 [arch]

@@ -43,7 +43,7 @@ from typing import Literal
 from ..agent_engine.agent_loop import AgentLoop
 from ..core.logging import get_logger
 from ..core.resources import prompts_dir
-from ..gates.config import DEFAULT_REFUTER_MAX_JUDGED, GatesConfigError, load_gates_config
+from ..gates.config import resolve_refuter_max_judged
 from ..llm.capability import CapabilityTier
 from .findings import (
     JUDGED_CLAIM_TYPES,
@@ -354,21 +354,11 @@ def refute_finding(
 
 
 def configured_max_judged(repo_root: Path) -> int:
-    """Return ``[gates].refuter_max_judged`` of the project at ``repo_root``.
+    """Return the refuter cap for ``repo_root``: env > ``repoach.toml`` > 10.
 
-    A malformed ``repoach.toml`` falls back to
-    :data:`~repoach.gates.config.DEFAULT_REFUTER_MAX_JUDGED`, logged at
-    warning: the refuter never fails a review over its own cap.
+    See :func:`~repoach.gates.config.resolve_refuter_max_judged`.
     """
-    try:
-        return load_gates_config(repo_root).refuter_max_judged
-    except GatesConfigError as exc:
-        _log.warning(
-            "refuter.max_judged_config_invalid",
-            error=str(exc)[:200],
-            fallback=DEFAULT_REFUTER_MAX_JUDGED,
-        )
-        return DEFAULT_REFUTER_MAX_JUDGED
+    return resolve_refuter_max_judged(repo_root)[0]
 
 
 class _LazyJudge:

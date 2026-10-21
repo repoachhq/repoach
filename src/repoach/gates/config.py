@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..core.config import configured_env_value
 from ..core.logging import get_logger
 from ..core.paths import NotARepositoryError, is_repoach_checkout, project_root
 from ..project.config import (
@@ -334,6 +335,45 @@ def load_gates_config(root: Path) -> GatesConfig:
         raise ConfigError(path, reason or str(exc), key=key if reason else "") from exc
 
 
+MAX_JUDGED_ENV = "REPOACH_REFUTER_MAX_JUDGED"
+"""Environment override of ``[gates].refuter_max_judged`` (env > toml > 10)."""
+
+
+def resolve_refuter_max_judged(repo_root: Path) -> tuple[int, str]:
+    """Return the refuter cap for the project at ``repo_root`` and where it came from.
+
+    :data:`MAX_JUDGED_ENV` (a positive integer) wins, then
+    ``[gates].refuter_max_judged``, then
+    :data:`DEFAULT_REFUTER_MAX_JUDGED`. An invalid
+    environment value or a malformed ``repoach.toml`` is logged at
+    warning and skipped: the refuter never fails a review over its cap.
+
+    Returns:
+        ``(cap, source)`` with ``source`` one of ``env
+        REPOACH_REFUTER_MAX_JUDGED``, ``repoach.toml`` or ``default``.
+    """
+    raw = configured_env_value((MAX_JUDGED_ENV,), repo_root)
+    if raw is not None:
+        value = raw.strip()
+        if value.isdigit() and int(value) > 0:
+            return int(value), f"env {MAX_JUDGED_ENV}"
+        _log.warning(
+            "gates.refuter_max_judged_env_invalid", variable=MAX_JUDGED_ENV, value=raw[:40]
+        )
+    try:
+        config = load_gates_config(repo_root)
+    except GatesConfigError as exc:
+        _log.warning(
+            "gates.refuter_max_judged_config_invalid",
+            error=str(exc)[:200],
+            fallback=DEFAULT_REFUTER_MAX_JUDGED,
+        )
+        return DEFAULT_REFUTER_MAX_JUDGED, "default"
+    if config.builtin or config.refuter_max_judged == DEFAULT_REFUTER_MAX_JUDGED:
+        return config.refuter_max_judged, "default"
+    return config.refuter_max_judged, "repoach.toml"
+
+
 def current_gates_config() -> GatesConfig:
     """Return the configuration of the project the working directory sits in.
 
@@ -353,6 +393,7 @@ __all__ = [
     "DEFAULT_PROMPTS_DIR",
     "DEFAULT_REFUTER_MAX_JUDGED",
     "DEFAULT_TIMEOUT_S",
+    "MAX_JUDGED_ENV",
     "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
     "GatesConfigError",
@@ -360,6 +401,7 @@ __all__ = [
     "current_gates_config",
     "load_gates_config",
     "python_packages",
+    "resolve_refuter_max_judged",
 ]
 
 
