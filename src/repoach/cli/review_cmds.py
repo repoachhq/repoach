@@ -213,6 +213,12 @@ def review_pr(
     ``usage`` in the JSON sums them per reviewer and in total (tokens,
     duration, cost estimate or ``subscription (tokens only)``), and one
     ``repoach: usage: …`` line on stderr says the total.
+
+    ``findings`` lists every finding the refuter saw, each with
+    ``refutation = {state, reason}`` (``verified`` / ``refuted`` /
+    ``deferred`` / ``unverified``), and one ``refuter: judged …`` line on
+    stderr counts them by state and reason
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN).
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -262,9 +268,12 @@ def review_pr(
             }
             for o in team.reviews
         ],
+        "findings": [refutation.as_json() for refutation in team.refutations],
         "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    if team.refuter_summary is not None:
+        typer.echo(team.refuter_summary, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.final_verdict == ReviewVerdict.ERROR:
         raise typer.Exit(code=EXIT_REVIEW_ERROR)
