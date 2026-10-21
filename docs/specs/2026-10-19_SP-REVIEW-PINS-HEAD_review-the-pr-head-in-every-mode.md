@@ -5,13 +5,13 @@ version: 0.1
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-21
 
 owns:
   code: [src/repoach/review/review_head.py, tests/unit/test_review_pins_head.py]
   resources: []
 
-depends_on: [SP-ORCH-DOCSTRING, SP-REVIEW-POST-BATCH, SP-FINDINGS-INIT-RACE, SP-PURE-MERGE-GATE]
+depends_on: [SP-ORCH-DOCSTRING, SP-REVIEW-POST-BATCH, SP-FINDINGS-INIT-RACE, SP-PURE-MERGE-GATE, SP-UNIVERSAL-FORGE, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:
@@ -53,6 +53,15 @@ MR !283 (`docs/tech_debt.md` row 23 as of PR #203).
 - G3: every ledger row written by a review carries that SHA: `record_review_ledger`, `record_review_integrity`, the verifier and refuter stamps refuse an empty `head_sha` with `ValueError`.
 - G4: `summarise_ledger_facts` reports `blocking_unverified` exactly as `gather_merge_facts` does, and `verdict_from_facts` never returns `APPROVE` while that list is non-empty.
 - G5: the `review pr` payload carries `head_sha`, `tree` (`worktree` or `checkout`) and `unverified_blocking` (the list of `finding <id>: <claim_type> is PROPOSED at head` lines).
+
+G2 is implemented (2026-10-21): `run_review` (`review pr`, and `ci
+review` through it) and `review gate` resolve the head, materialise its
+tree with `review_head.materialise_head` and point `repo_root` at it;
+`review pr` prints `reviewing <N> at <sha7> (<tree> <path>)` on stderr
+and fills `head_sha`, `tree` and `worktree` in its JSON. The flag is
+`--keep-tree` (not `--keep-worktree`); `--allow-checkout-tree`, G1's
+every-mode resolution inside the orchestrator, G3, G4 and the rest of
+G5 are not built yet.
 
 ## Non-Goals
 

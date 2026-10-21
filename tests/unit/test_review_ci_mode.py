@@ -50,6 +50,9 @@ class _FakeTeam:
     posting_outcome: str | None = None
     refutations: list[Any] = field(default_factory=list)
     refuter_summary: str | None = None
+    head_sha: str | None = None
+    tree: str | None = None
+    worktree: str | None = None
 
 
 _REQUIRED_TOP_LEVEL = {

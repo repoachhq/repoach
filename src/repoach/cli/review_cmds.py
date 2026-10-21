@@ -44,6 +44,7 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.orchestrator import run_review
+from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from .doctor_cmds import project_root_or_exit
@@ -177,6 +178,11 @@ def review_pr(
     forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
     spec: str | None = typer.Option(None, "--spec", help=_SPEC_HELP),
     provider: str | None = typer.Option(None, "--provider", help=PROVIDER_FLAG_HELP),
+    keep_tree: bool = typer.Option(
+        False,
+        "--keep-tree",
+        help="Keep the worktree of the PR head after the review and print its path.",
+    ),
 ) -> None:
     """Run the review-bot team on a PR / MR and emit a summary.
 
@@ -214,6 +220,16 @@ def review_pr(
     duration, cost estimate or ``subscription (tokens only)``), and one
     ``repoach: usage: …`` line on stderr says the total.
 
+    The review reads the PR head, never the checkout's branch
+    (SP-REVIEW-PINS-HEAD G2): the head SHA comes from the forge, its tree
+    is the checkout when that is at the SHA and clean, else a detached
+    worktree under the state directory, removed after the run unless
+    ``--keep-tree``. One ``reviewing <N> at <sha7> (<tree> <path>)`` line
+    on stderr says which; the JSON carries ``head_sha``, ``tree``
+    (``worktree`` / ``checkout``) and ``worktree`` (the kept path, else
+    null). A head the forge does not serve, or one that cannot be
+    fetched, exits 2 before any reviewer runs.
+
     ``findings`` lists every finding the refuter saw, each with
     ``refutation = {state, reason}`` (``verified`` / ``refuted`` /
     ``deferred`` / ``unverified``), and one ``refuter: judged …`` line on
@@ -227,9 +243,14 @@ def review_pr(
     try:
         with usage_run("review pr", pr_number) as run:
             team = run_review(
-                pr_number, post=not dry_run, spec=spec_flag, **_forge_kwargs(forge_name)
+                pr_number,
+                post=not dry_run,
+                spec=spec_flag,
+                keep_tree=keep_tree,
+                announce=lambda line: typer.echo(line, err=True),
+                **_forge_kwargs(forge_name),
             )
-    except GatewayConfigError as exc:
+    except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
     except ForgeError as exc:
@@ -244,6 +265,9 @@ def review_pr(
         )
     payload = {
         "pr_number": team.pr_number,
+        "head_sha": team.head_sha,
+        "tree": team.tree,
+        "worktree": team.worktree,
         "spec": spec_id,
         "spec_source": team.spec_source,
         "spec_coverage": spec_coverage_label(spec_id, team.spec_covered, missing=team.spec_missing),
