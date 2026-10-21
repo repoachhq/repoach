@@ -371,6 +371,76 @@ def _self_calls(func: ast.AST, method: str) -> list[ast.Call]:
     ]
 
 
+def _is_self_method(node: ast.expr, method: str) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == method
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def _get_gated(node: ast.expr) -> bool:
+    """True for ``self._run if <x> == "GET" else self._write`` — the one safe conditional alias."""
+    return (
+        isinstance(node, ast.IfExp)
+        and _is_self_method(node.body, "_run")
+        and _is_self_method(node.orelse, "_write")
+        and isinstance(node.test, ast.Compare)
+        and len(node.test.ops) == 1
+        and isinstance(node.test.ops[0], ast.Eq)
+        and isinstance(node.test.comparators[0], ast.Constant)
+        and node.test.comparators[0].value == "GET"
+    )
+
+
+def _may_be_run(node: ast.expr) -> bool:
+    """True when an expression can evaluate to ``self._run``."""
+    if _is_self_method(node, "_run"):
+        return True
+    if isinstance(node, ast.IfExp):
+        return _may_be_run(node.body) or _may_be_run(node.orelse)
+    return False
+
+
+def _run_calls(func: ast.AST) -> list[ast.Call]:
+    """Every call that can reach ``self._run``: direct, or through a local alias.
+
+    ``run = self._run`` (or any conditional that can pick it) makes ``run(...)``
+    a ``_run`` call; ``run = self._run if method == "GET" else self._write``
+    is the one exception, since its ``_run`` branch only ever carries a GET.
+    """
+    aliases = {
+        target.id
+        for node in ast.walk(func)
+        if isinstance(node, ast.Assign) and _may_be_run(node.value) and not _get_gated(node.value)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    return [
+        node
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and (
+            _is_self_method(node.func, "_run")
+            or (isinstance(node.func, ast.Name) and node.func.id in aliases)
+        )
+    ]
+
+
+def test_aliasing_run_is_seen_by_the_ast_guard() -> None:
+    """``run = self._run`` then ``run(write argv)`` counts as a ``_run`` call; the GET gate does not."""
+    func = ast.parse(
+        "def f(self, method):\n"
+        "    run = self._run\n"
+        "    gated = self._run if method == 'GET' else self._write\n"
+        "    run(['api', '--method', 'POST', 'x/y'])\n"
+        "    gated(['api', '--method', method, 'x/y'])\n"
+    ).body[0]
+    calls = _run_calls(func)
+    assert [c.func.id for c in calls if isinstance(c.func, ast.Name)] == ["run"]
+
+
 def _functions(source: Path) -> list[ast.FunctionDef]:
     tree = ast.parse(source.read_text())
     return [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
@@ -387,10 +457,18 @@ def test_every_write_argv_is_built_for_the_barrier(source: Path) -> None:
     A ``"POST"``/``"PATCH"``/``"PUT"``/``"DELETE"`` literal is legitimate
     only in a function that calls ``self._write``, or as the ``method=``
     of ``self._api`` / ``self._api_text`` (whose non-GET calls go through
-    ``_write``, pinned by the GitLab argv-write tests above).
+    ``_write``, pinned by the GitLab argv-write tests above). Calls through
+    a local alias of ``self._run`` are checked like direct ones
+    (:func:`_run_calls`).
+
+    This is a static net, not the guard: it cannot follow an alias stored
+    on ``self``, passed as an argument or built dynamically. The runtime
+    tests above are the real guard — ``_run`` itself refuses any mutating
+    argv not admitted by the barrier (``ForgeWriteBypassError``), and each
+    write method is driven through a real spawner on both forges.
     """
     for func in _functions(source):
-        for call in _self_calls(func, "_run"):
+        for call in _run_calls(func):
             if not call.args:
                 continue
             first = call.args[0]
