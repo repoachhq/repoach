@@ -1,0 +1,31 @@
+case: 03-logic-discount-inverted
+description: apply_discount charges the discount instead of removing it
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/03-logic-discount-inverted.patch
+planted:
+- file: src/inventory/pricing.py
+  lines:
+  - 20
+  - 20
+  kind: logic
+  severity: blocker
+  note: apply_discount charges the discount instead of removing it
+findings:
+- fingerprint: ec8278f4aa2c
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'architect minor src/inventory/pricing.py:20: The return value changes from the discounted price to the discount amount, but the signature, name and docstring (''Return price_cents reduced by percent'') still'
+- fingerprint: 03f0668d8e8e
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major src/inventory/pricing.py:20: Line 20 now returns the discount amount, but the docstring promises the price reduced by percent. Add a test such as test_apply_discount_returns_reduced_price ('
+- fingerprint: dcf42532c278
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe major src/inventory/pricing.py:20: `return price_cents * percent // 100` contradicts the docstring, which says it returns `price_cents` reduced by `percent`. The code now returns the discount amo'

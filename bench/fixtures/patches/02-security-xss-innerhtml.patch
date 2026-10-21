@@ -1,0 +1,17 @@
+diff --git a/web/src/api.ts b/web/src/api.ts
+index 93833cf..c1396fe 100644
+--- a/web/src/api.ts
++++ b/web/src/api.ts
+@@ -11,11 +11,5 @@ export async function fetchCart(baseUrl: string, userId: string): Promise<CartLi
+ 
+ /** Render the cart's item names into `list`, one <li> each. */
+ export function renderNames(list: HTMLElement, lines: readonly CartLine[]): void {
+-  list.replaceChildren(
+-    ...lines.map((line) => {
+-      const item = document.createElement("li");
+-      item.textContent = line.name;
+-      return item;
+-    }),
+-  );
++  list.innerHTML = lines.map((line) => `<li>${line.name}</li>`).join("");
+ }

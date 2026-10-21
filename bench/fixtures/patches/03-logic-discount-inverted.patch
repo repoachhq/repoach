@@ -1,0 +1,13 @@
+diff --git a/src/inventory/pricing.py b/src/inventory/pricing.py
+index 08d246f..b413c61 100644
+--- a/src/inventory/pricing.py
++++ b/src/inventory/pricing.py
+@@ -17,7 +17,7 @@ def apply_discount(price_cents: int, percent: int) -> int:
+     """
+     if not 0 <= percent <= 100:
+         raise ValueError(f"discount {percent}% outside 0..100")
+-    return price_cents * (100 - percent) // 100
++    return price_cents * percent // 100
+ 
+ 
+ def order_total(items: list[tuple[Item, int]]) -> int:

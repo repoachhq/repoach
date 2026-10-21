@@ -1,0 +1,36 @@
+case: 06-test-gap-remove-line
+description: removeUnits adds cart-line removal with no test
+private: false
+source:
+  kind: local
+  fixture: ../../fixtures/sample
+  patch: ../../fixtures/patches/06-test-gap-remove-line.patch
+planted:
+- file: web/src/cart.ts
+  lines:
+  - 33
+  - 36
+  kind: test_gap
+  severity: minor
+  note: removeUnits adds cart-line removal with no test
+findings:
+- fingerprint: 0ff3c2fecafc
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'sentinel nit web/src/cart.ts:32: `removeUnits` does not check `units`. A negative value raises the quantity (`l.quantity - (-5)`), and `NaN` silently drops the line. That is harmless while this'
+- fingerprint: 07878482bbd2
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester major web/src/cart.ts:33: New exported removeUnits has no tests in the diff. Add tests: test_removeUnits_drops_line_when_quantity_reaches_zero, test_removeUnits_drops_line_when_units_exc'
+- fingerprint: b30e3c737ac5
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'tester minor web/src/cart.ts:35: Negative or zero `units` is unguarded: negative units silently increases quantity, and 0 is a no-op. Add a test pinning the intended behaviour (e.g. test_remove'
+- fingerprint: 81ced5555746
+  label: null
+  labeller: null
+  labelled_on: null
+  hint: 'scribe nit web/src/cart.ts:32: `/** Return a copy of the cart with `units` fewer of `sku`, ... */` doesn''t say what happens if `units` is negative or exceeds the line quantity. Negative units'

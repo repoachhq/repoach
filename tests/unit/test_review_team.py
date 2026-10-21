@@ -772,7 +772,7 @@ def test_refuted_sentinels_posted_only_when_posting(tmp_path, monkeypatch, post)
 
 @pytest.mark.parametrize("post", [False, True])
 def test_proposed_escalation_fired_only_when_posting(tmp_path, monkeypatch, post):
-    """A dry run never fires the proposed-escalation routine (tech_debt #62).
+    """A dry run never fires the proposed-escalation routine (tech_debt #69).
 
     ``_fire_proposed_escalation_dossier`` used to run whenever no
     reviewer errored, posting or not; with ``CLAUDE_CODE_ROUTINE_ID`` /

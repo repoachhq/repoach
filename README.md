@@ -136,7 +136,7 @@ Each cell is copied from [docs/comparison.md](docs/comparison.md), which links t
 - **No token resale.** You bring a login or a key and pay your model provider directly.
 - **No mathematical proof.** The gate re-verifies each finding's claim against the code at the head and requires green tests; it proves no property of your program.
 - **It is as good as your tests.** "CI green" and "the spec's tests are present" mean what your test suite means; a weak suite makes a weak gate.
-- **No precision number yet.** The false-positive rate has not been measured; `SP-PRECISION-MEASUREMENT` will publish it.
+- **No precision number yet.** `repoach bench` measures it on a labelled corpus ([Precision](#precision)), but no finding carries a human label yet, so precision and recall read `cannot say`.
 
 ## Run repoach in CI
 
@@ -197,9 +197,49 @@ Early, and built in the open. Every row is measured, not promised, and names wha
 | Providers | Claude Code login, Anthropic key, OpenAI-compatible presets (OpenAI, Ollama, OpenRouter, Groq, DeepSeek, Mistral), Gemini, and the gateway ([Providers](#providers)). | `develop` 45712b2, 2026-10-21 |
 | First external client | Yoob (GitLab; Python, TypeScript and Verilog). On its first runs the gate flagged 3 majors on the secrets scoping of Yoob's own CI wiring of repoach. | owner runs, 2026-10-19/21 |
 | Time and tokens | A real review of a Yoob merge request, run from the client repository through a Claude Code login: 69–115 s, about 224–300 k tokens per review, more than 95 % of them cached. | owner runs, 2026-10-19/21 |
-| Precision | Not measured: no false-positive rate is published yet (`SP-PRECISION-MEASUREMENT`). | 2026-10-21 |
+| Precision | Measured on the planted-defect corpus with `claude_code`; precision and recall wait on human labels. The table, its date and corpus size are generated, never typed: [Precision](#precision). | `repoach bench`, 2026-10-21 |
 | Known review defect | A dry run has no head SHA: the head guard starts only when posting (`if self._post:` in `src/repoach/review/orchestrator.py`), so its ledger rows carry `head_sha = NULL`. The other 2026-10-18 defect, a dry run posting refuted-finding replies, is closed: the sentinels are skipped in a dry run. | `develop` 45712b2, 2026-10-21 |
 | Activity | Last merge #220 on 2026-10-21. | GitHub PR list, 2026-10-21 |
+
+## Precision
+
+A reviewer is worth what its findings are worth. `repoach bench run` reviews every case of a labelled corpus through the real pipeline (a dry run on a throw-away ledger), `repoach bench report` scores the run against the human labels, and the block below is written by `repoach bench report <result> --update-readme README.md`, never by hand. The published one-line number (`--readme-line`) is refused until the corpus holds 100 labelled findings. Corpus format, labelling and the scoring rules: [bench/corpus/README.md](bench/corpus/README.md).
+
+<!-- bench:precision:start -->
+corpus planted@813105285fc7, provider claude_code, measured 2026-10-21, 10 cases scored, 0 cases skipped, 0 labelled findings
+
+| reviewer | TP | FP | unsure | precision | refuter precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| architect | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+| sentinel | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+| tester | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+| scribe | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+
+| severity | TP | FP | unsure | precision | refuter precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| blocker | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+| major | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+| minor | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+| nit | 0 | 0 | 0 | cannot say | cannot say | cannot say |
+
+precision cannot say, refuter precision cannot say, recall cannot say, unsure 0, unlabelled 45
+planted defects located: 10/10 (a non-refuted finding overlaps the defect); recall waits on labels for 10
+
+| case | findings | refuted | planted | located | tokens | wall s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 01-security-sql-injection | 5 | 2 | 1 | 1 | 262930 | 140 |
+| 02-security-xss-innerhtml | 4 | 0 | 1 | 1 | 239389 | 124 |
+| 03-logic-discount-inverted | 3 | 1 | 1 | 1 | 243115 | 87 |
+| 04-logic-total-ignores-quantity | 2 | 0 | 1 | 1 | 189792 | 66 |
+| 05-test-gap-bulk-price | 3 | 2 | 1 | 1 | 160341 | 64 |
+| 06-test-gap-remove-line | 4 | 1 | 1 | 1 | 212337 | 110 |
+| 07-docstring-missing | 2 | 0 | 1 | 1 | 134989 | 75 |
+| 08-docstring-stale-args | 10 | 5 | 1 | 1 | 349091 | 160 |
+| 09-convention-bare-except | 6 | 1 | 1 | 1 | 296644 | 149 |
+| 10-convention-any-and-loose-equality | 6 | 2 | 1 | 1 | 294487 | 148 |
+<!-- bench:precision:end -->
+
+`repoach digest --since 7d` reads the same ledger the other way: the findings the refuter refuted, the merges the gate refused, and the merges that passed after a refusal, each with its PR link.
 
 ## Later: the spec-driven builder
 

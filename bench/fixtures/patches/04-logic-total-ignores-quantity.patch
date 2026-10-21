@@ -1,0 +1,13 @@
+diff --git a/web/src/cart.ts b/web/src/cart.ts
+index bf4e7cb..8607c9b 100644
+--- a/web/src/cart.ts
++++ b/web/src/cart.ts
+@@ -8,7 +8,7 @@ export interface CartLine {
+ 
+ /** Return the cart total in cents: the sum of price times quantity. */
+ export function cartTotal(lines: readonly CartLine[]): number {
+-  return lines.reduce((sum, line) => sum + line.priceCents * line.quantity, 0);
++  return lines.reduce((sum, line) => sum + line.priceCents, 0);
+ }
+ 
+ /** Format cents as a price with two decimals, e.g. 1234 -> "12.34". */

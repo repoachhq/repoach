@@ -1,0 +1,14 @@
+diff --git a/src/inventory/store.py b/src/inventory/store.py
+index e91135c..eeae225 100644
+--- a/src/inventory/store.py
++++ b/src/inventory/store.py
+@@ -57,8 +57,7 @@ class Store:
+         """Return the items whose name contains ``fragment``, by SKU."""
+         rows = self._conn.execute(
+             "SELECT sku, name, price_cents, quantity FROM items "
+-            "WHERE name LIKE ? ORDER BY sku",
+-            (f"%{fragment}%",),
++            f"WHERE name LIKE '%{fragment}%' ORDER BY sku"
+         ).fetchall()
+         return [Item(*row) for row in rows]
+ 
