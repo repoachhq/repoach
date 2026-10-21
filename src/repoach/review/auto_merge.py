@@ -68,7 +68,8 @@ from ..forge import (
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
 from ..forge.protocol import WRITABLE_STATES
-from ..gates.config import GatesConfig, load_gates_config
+from ..gates.config import GatesConfig, load_gates_config, resolve_refuter_max_judged
+from .head_reverify import reverify_older_findings
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -76,6 +77,7 @@ from .merge_gate import (
     gather_merge_facts,
 )
 from .persistence import init_schema, record_merge
+from .refuter import Judge, make_refuter_judge
 from .review_head import materialise_head, require_head_sha
 
 _log = get_logger(__name__)
@@ -572,8 +574,18 @@ def decide_at_head(
     repo_root: Path | None = None,
     head_sha: str | None = None,
     gates_config: GatesConfig | None = None,
+    max_judged: int | None = None,
+    judge_factory: Callable[[], Judge] | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
+
+    Before the facts are gathered, every unsettled blocking finding
+    raised at an older head is re-checked at this head
+    (:func:`~repoach.review.head_reverify.reverify_older_findings`,
+    SP-GATE-REVERIFIES-AT-HEAD): the ones the head no longer supports
+    become ``resolved_at_head``, the others are named in the reasons. A
+    judged finding is re-judged by the refuter, so the gate can make up
+    to ``max_judged`` model calls.
 
     The single source of the pure merge decision. Both
     :func:`run_auto_merge` (after its CI short-circuit) and
@@ -599,18 +611,42 @@ def decide_at_head(
             other callers such as :func:`evaluate_merge_gate`.
         gates_config: The trusted gate configuration (the checkout's,
             never the PR head tree's); read from ``repo_root`` when omitted.
+        max_judged: Refuter calls the re-check may make; ``None`` reads
+            :func:`~repoach.gates.config.resolve_refuter_max_judged` at
+            ``repo_root``.
+        judge_factory: Builds the refuter judge on its first call;
+            ``None`` means :func:`~repoach.review.refuter.make_refuter_judge`.
 
     Returns:
         ``(head_sha, facts, decision)``.
     """
     resolved_head = head_sha if head_sha is not None else _head_sha_or_empty(forge, pr_number)
+    root = repo_root or Path.cwd()
+    config = gates_config if gates_config is not None else load_gates_config(root)
+    cap = max_judged if max_judged is not None else resolve_refuter_max_judged(root)[0]
+    reverified = reverify_older_findings(
+        db,
+        pr_number=pr_number,
+        repo_root=root,
+        head_sha=resolved_head,
+        ci_green=ci_green,
+        config=config,
+        max_judged=cap,
+        judge_factory=judge_factory or make_refuter_judge,
+    )
     facts = gather_merge_facts(
         db,
         pr_number=pr_number,
-        repo_root=repo_root or Path.cwd(),
+        repo_root=root,
         head_sha=resolved_head,
         ci_green=ci_green,
-        gates_config=gates_config,
+        gates_config=config,
+    ).model_copy(
+        update={
+            "reverified": reverified.counts(),
+            "reverify_reasons": reverified.reasons(),
+            "reverify_line": reverified.summary_line(),
+        }
     )
     return resolved_head, facts, compute_merge_decision(facts)
 
@@ -629,6 +665,7 @@ def evaluate_merge_gate(
     pin_tree: bool = False,
     keep_tree: bool = False,
     announce: Callable[[str], None] | None = None,
+    judge_factory: Callable[[], Judge] | None = None,
 ) -> GateEvaluation:
     """Run the CI gate and the pure merge decision, without merging.
 
@@ -659,6 +696,10 @@ def evaluate_merge_gate(
     (:func:`~repoach.review.review_head.materialise_head`), not on the
     checkout's branch; ``keep_tree`` keeps that worktree and ``announce``
     receives the ``reviewing <N> at <sha7> (<tree> <path>)`` line.
+
+    The refuter cap of the re-check of older findings
+    (SP-GATE-REVERIFIES-AT-HEAD) is read from the checkout, never from
+    the head tree; ``judge_factory`` replaces the refuter judge (tests).
     """
     forge = forge or select_forge(cwd=repo_root)
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
@@ -738,6 +779,8 @@ def evaluate_merge_gate(
                 repo_root=tree.root,
                 head_sha=verified_head,
                 gates_config=load_gates_config(checkout),
+                max_judged=resolve_refuter_max_judged(checkout)[0],
+                judge_factory=judge_factory,
             )
         tree_kind = tree.tree
     else:
@@ -748,6 +791,7 @@ def evaluate_merge_gate(
             ci_green=ci_gate.green,
             repo_root=repo_root,
             head_sha=verified_head,
+            judge_factory=judge_factory,
         )
     _log.info(
         "auto_merge.gate_evaluated",
