@@ -1,7 +1,8 @@
 """The public surface of both forges is the ``Forge`` protocol, nothing more.
 
 The ``gh`` / ``glab`` transport helpers are private, so no caller can
-reach a write that skips :func:`~repoach.forge.protocol.write_barrier`
+reach a write that skips :func:`~repoach.forge.protocol.write_barrier` or
+:func:`~repoach.forge.protocol.unnumbered_write`
 (the historical ``GhCli`` alias is :class:`GitHubForge` and has the same
 surface).
 """
@@ -31,5 +32,12 @@ def test_public_surface_is_the_protocol(cls: type) -> None:
 
 @pytest.mark.parametrize("cls", [GitHubForge, GitLabForge])
 def test_every_write_goes_through_the_barrier(cls: type) -> None:
-    for name in ("post_comment", "post_review", "reply", "upsert_marked_comment", "merge"):
+    for name in (
+        "post_comment",
+        "post_review",
+        "reply",
+        "upsert_marked_comment",
+        "merge",
+        "create_pull_request",
+    ):
         assert getattr(getattr(cls, name), "__wrapped__", None) is not None, name

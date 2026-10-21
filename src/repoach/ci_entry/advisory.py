@@ -46,7 +46,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict
 
 from ..core.logging import get_logger
-from ..forge import ForgeError
+from ..forge import ForgeError, WriteRefusal
 from ..project.config import ForgeName
 from ..providers.errors import NO_PROVIDER_MESSAGE
 from ..providers.select import PRESETS, provider_credential_names, provider_needs_key
@@ -93,6 +93,9 @@ EXIT_INTERNAL = 1
 EXIT_CONFIG = 2
 EXIT_REVIEWER_ERROR = 3
 EXIT_CHANGES_REQUESTED = 4
+
+REVIEW_EXIT_WRITE_REFUSED = 8
+"""``repoach review pr``'s exit code when a dry run reached the forge write barrier."""
 
 EXIT_CODE_TABLE: tuple[tuple[int, str], ...] = (
     (EXIT_OK, "advisory mode: always; --strict: reviewed (APPROVE/COMMENT), merged or closed"),
@@ -143,6 +146,8 @@ class CiReviewReport(BaseModel):
         final_verdict: The team verdict when a review ran.
         posted_comments: Comments the review posted (0 on a dry run).
         posted_reviews: Reviews the review posted (0 on a dry run).
+        refused_writes: Writes the review's forge barrier refused; any
+            value but 0 is a defect (SP-DRY-RUN-NEVER-POSTS).
         review_exit_code: ``repoach review pr``'s own exit code.
         review: The review's JSON payload, verbatim, when it printed one.
         detail: The first 200 characters of the review's stdout when it
@@ -166,6 +171,7 @@ class CiReviewReport(BaseModel):
     final_verdict: str | None = None
     posted_comments: int = 0
     posted_reviews: int = 0
+    refused_writes: int = 0
     review_exit_code: int | None = None
     review: dict[str, object] | None = None
     detail: str | None = None
@@ -190,6 +196,9 @@ class CiReviewPlan(BaseModel):
         provider_name: In an in-process mode, the provider the review
             child is told to use (a kind or a preset such as ``ollama``);
             empty otherwise.
+        write_refusal: Why the review writes nothing in ``dry-run`` mode
+            (``--dry-run``, or ``REPOACH_ADVISORY_POST`` not ``1``); None
+            when it posts.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -203,6 +212,7 @@ class CiReviewPlan(BaseModel):
     forge_token_var: str
     strict: bool = False
     provider_name: str = ""
+    write_refusal: WriteRefusal | None = None
 
 
 def exit_code_for(outcome: Outcome, final_verdict: str | None, *, strict: bool) -> int:
@@ -242,6 +252,18 @@ def review_mode(env: Mapping[str, str], *, post: bool, dry_run: bool) -> ReviewM
     if dry_run:
         return "dry-run"
     return "post" if env.get(POST_VAR, "").strip() == "1" else "dry-run"
+
+
+def dry_run_refusal(mode: ReviewMode, *, dry_run: bool) -> WriteRefusal | None:
+    """Name why a ``dry-run`` review writes nothing; None when it posts.
+
+    ``--dry-run`` is a dry run by request; any other ``dry-run`` comes
+    from ``REPOACH_ADVISORY_POST`` not being exactly ``1``
+    (SP-DRY-RUN-NEVER-POSTS).
+    """
+    if mode == "post":
+        return None
+    return WriteRefusal.DRY_RUN if dry_run else WriteRefusal.ADVISORY_POST_OFF
 
 
 def provider_mode(env: Mapping[str, str], kind: str = "") -> tuple[ProviderMode, str | None]:
@@ -388,6 +410,7 @@ def plan_ci_review(
         provider_mode=chosen,
         forge_token_var=token_var,
         strict=strict,
+        write_refusal=dry_run_refusal(mode, dry_run=dry_run),
     )
 
 
@@ -554,6 +577,8 @@ def subprocess_review_runner(
         argv += ["--forge", plan.forge]
         if plan.mode == "dry-run":
             argv.append("--dry-run")
+            if plan.write_refusal is not None:
+                argv += ["--dry-run-reason", plan.write_refusal.value]
         process = subprocess.Popen(
             argv, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True, start_new_session=True
         )
@@ -617,6 +642,7 @@ def interpret_review(
         "final_verdict": verdict,
         "posted_comments": _count(payload, "posted_comments"),
         "posted_reviews": _count(payload, "posted_reviews"),
+        "refused_writes": _count(payload, "refused_writes"),
         "review_exit_code": rc,
         "review": payload,
         "detail": stdout.strip()[:200] if payload is None and stdout.strip() else None,
@@ -627,6 +653,13 @@ def interpret_review(
         return finish(
             Outcome.REVIEWER_ERROR,
             "a reviewer reached no model (verdict ERROR); nothing was posted",
+            strict=plan.strict,
+            **fields,
+        )
+    if rc == REVIEW_EXIT_WRITE_REFUSED:
+        return finish(
+            Outcome.INTERNAL_ERROR,
+            "the dry run attempted a forge write; the barrier refused it, nothing was sent",
             strict=plan.strict,
             **fields,
         )

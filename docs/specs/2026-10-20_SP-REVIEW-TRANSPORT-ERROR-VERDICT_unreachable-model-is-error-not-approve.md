@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_review_transport_error_verdict.py]
   resources: []
 
-depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-ORCH-DOCSTRING]
+depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-ORCH-DOCSTRING, SP-UNIVERSAL-PROVIDERS]
 provides_to: []
 
 constraints: {}
