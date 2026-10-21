@@ -52,7 +52,7 @@ def test_oneshot_calls_v1_messages_with_the_first_key(
         )
     assert out.text == "pong"
     assert out.model_used == "anthropic/claude-sonnet-5"
-    assert out.tokens_used == 12 + 1 + 9
+    assert out.tokens_used == 12 + 9
     (request,) = server.requests
     assert request["path"] == "/v1/messages"
     assert request["headers"]["x-api-key"] == "first-key-value"

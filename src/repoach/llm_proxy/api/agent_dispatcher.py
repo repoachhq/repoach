@@ -211,11 +211,13 @@ async def aggregate_sse_stream(
         * ``stop_reason``: Anthropic stop_reason string (may be empty)
         * ``model``: provider/model id (proxy decorates ``message_start``
           with the resolved model alias)
-        * ``usage``: aggregated :class:`Usage` (best effort — output
-          sums ``message_start`` + ``message_delta``; input and the
-          prompt-cache counts take the larger of the two, since a
-          transport that learns the real count only at the end reports
-          it on ``message_delta``)
+        * ``usage``: aggregated :class:`Usage` (best effort — every
+          count takes the larger of ``message_start`` and
+          ``message_delta``: the Messages API reports cumulative counts
+          on ``message_delta`` after a placeholder on ``message_start``,
+          and a transport that learns the real count only at the end
+          reports it there; summing the two counted the placeholder
+          output token twice)
         * ``error``: ``{"message", "status_code"}`` of the last in-band
           ``error`` event; else, for a stream that ended with
           ``stop_reason`` ``error`` (an OpenAI-style transport degrades a
@@ -249,7 +251,7 @@ async def aggregate_sse_stream(
                 model = str(msg.get("model") or "") or model
                 usage = msg.get("usage") or {}
                 input_tokens = max(input_tokens, int(usage.get("input_tokens") or 0))
-                output_tokens += int(usage.get("output_tokens") or 0)
+                output_tokens = max(output_tokens, int(usage.get("output_tokens") or 0))
                 cache_read_tokens = max(
                     cache_read_tokens, int(usage.get("cache_read_input_tokens") or 0)
                 )
@@ -282,7 +284,7 @@ async def aggregate_sse_stream(
                 if delta.get("stop_reason"):
                     stop_reason = str(delta.get("stop_reason"))
                 usage = data.get("usage") or {}
-                output_tokens += int(usage.get("output_tokens") or 0)
+                output_tokens = max(output_tokens, int(usage.get("output_tokens") or 0))
                 input_tokens = max(input_tokens, int(usage.get("input_tokens") or 0))
                 cache_read_tokens = max(
                     cache_read_tokens, int(usage.get("cache_read_input_tokens") or 0)
