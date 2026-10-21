@@ -528,3 +528,38 @@ def test_summary_line_matches_the_documented_shape() -> None:
         "state": "deferred",
         "reason": "evidence unreadable",
     }
+
+
+_HEAD = "abc1234" + "0" * 33
+
+
+@pytest.mark.parametrize(
+    ("tree_sha", "in_diff", "expected"),
+    [
+        ("f" * 40, True, "checkout is not the MR head (abc1234)"),
+        ("f" * 40, False, "evidence outside the diff"),
+        (_HEAD, True, "evidence outside the diff"),
+        (None, True, "evidence outside the diff"),
+    ],
+)
+def test_deferral_reason_checkout_is_not_the_mr_head(
+    tmp_path: Path, tree_sha: str | None, in_diff: bool, expected: str
+) -> None:
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_finding(db, _finding(ClaimType.DESIGN, file="ci/review-advisory.sh"))
+    prompts: list[str] = []
+
+    report = judge_findings_for_pr(
+        db,
+        pr_number=1,
+        repo_root=tmp_path,
+        head_sha=None,
+        judge_factory=_counting_factory(prompts, _REFUTED),
+        diff_files=["ci/review-advisory.sh"] if in_diff else ["other.py"],
+        tree_sha=tree_sha,
+        review_head=_HEAD,
+    )
+
+    assert [(o.state, o.reason) for o in report.outcomes] == [("deferred", expected)]
+    assert prompts == []

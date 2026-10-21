@@ -66,6 +66,7 @@ from ..forge import (
     ReviewDraft,
     select_forge,
 )
+from ..forge.protocol import diff_files
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
@@ -700,6 +701,9 @@ class ReviewTeamOrchestrator:
                     pr_number=pr_number,
                     repo_root=self._repo_root,
                     head_sha=head_sha,
+                    diff_files=diff_files(diff),
+                    tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
+                    review_head=head_sha or _served_head(self._forge, pr_number),
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()

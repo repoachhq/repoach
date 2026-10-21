@@ -35,7 +35,7 @@ import json
 import re
 import secrets
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -75,6 +75,10 @@ _EVIDENCE_CONTEXT = 25
 EVIDENCE_OUTSIDE_DIFF = "evidence outside the diff"
 """The cited file does not resolve to a file inside ``repo_root``."""
 
+CHECKOUT_NOT_HEAD = "checkout is not the MR head ({sha7})"
+"""Template of the reason when the cited file is in the diff but absent from
+a tree that is not at the reviewed head (the evidence exists, elsewhere)."""
+
 EVIDENCE_UNREADABLE = "evidence unreadable"
 """The cited file exists but could not be read, or the cited lines are not in it."""
 
@@ -92,6 +96,7 @@ NOT_YET_MECHANICALLY_VERIFIED = "not yet mechanically verified"
 
 DEFERRAL_REASONS = (
     EVIDENCE_OUTSIDE_DIFF,
+    CHECKOUT_NOT_HEAD,
     EVIDENCE_UNREADABLE,
     JUDGING_CAP_REACHED,
     VERDICT_UNPARSEABLE,
@@ -222,15 +227,18 @@ def _cited_file_inside(finding: Finding, repo_root: Path) -> bool:
     return target.is_relative_to(root) and target.is_file()
 
 
-def _evidence_excerpt(finding: Finding, repo_root: Path) -> tuple[str | None, str]:
+def _evidence_excerpt(
+    finding: Finding, repo_root: Path, absent_reason: str = EVIDENCE_OUTSIDE_DIFF
+) -> tuple[str | None, str]:
     """Return ``(cited code window, "")``, or ``(None, deferral reason)``.
 
-    The reason is :data:`EVIDENCE_OUTSIDE_DIFF` when the cited file is
-    not a file inside ``repo_root`` and :data:`EVIDENCE_UNREADABLE` when
-    it is but cannot be read or holds none of the cited lines.
+    The reason is ``absent_reason`` (by default
+    :data:`EVIDENCE_OUTSIDE_DIFF`) when the cited file is not a file
+    inside ``repo_root``, and :data:`EVIDENCE_UNREADABLE` when it is but
+    cannot be read or holds none of the cited lines.
     """
     if not _cited_file_inside(finding, repo_root):
-        return None, EVIDENCE_OUTSIDE_DIFF
+        return None, absent_reason
     reader = make_repo_file_reader(repo_root)
     source = reader(finding.file)
     if source is None:
@@ -308,7 +316,13 @@ def _parse_verdict(raw: str) -> tuple[bool, str] | None:
     return verdict
 
 
-def refute_finding(finding: Finding, *, repo_root: Path, judge: Judge) -> tuple[FindingStatus, str]:
+def refute_finding(
+    finding: Finding,
+    *,
+    repo_root: Path,
+    judge: Judge,
+    absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
+) -> tuple[FindingStatus, str]:
     """Judge one finding, returning ``(new_status, reason)``.
 
     ``REFUTED`` when the judge refutes the claim, ``VERIFIED`` when it
@@ -316,9 +330,10 @@ def refute_finding(finding: Finding, *, repo_root: Path, judge: Judge) -> tuple[
     a later round) with a reason from :data:`DEFERRAL_REASONS` when the
     evidence is outside the repository or unreadable (the judge is then
     never called), when the judge raised (``judge call failed:
-    <exception type>``) or when its verdict is unparseable.
+    <exception type>``) or when its verdict is unparseable. A cited file
+    absent from ``repo_root`` is deferred with ``absent_reason``.
     """
-    evidence, reason = _evidence_excerpt(finding, repo_root)
+    evidence, reason = _evidence_excerpt(finding, repo_root, absent_reason)
     if evidence is None:
         return FindingStatus.PROPOSED, reason
     try:
@@ -399,6 +414,9 @@ def judge_findings_for_pr(
     head_sha: str | None,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
     max_judged: int | None = None,
+    diff_files: Collection[str] = (),
+    tree_sha: str | None = None,
+    review_head: str | None = None,
 ) -> JudgingReport:
     """Judge the proposed findings of a PR and name what it could not judge.
 
@@ -421,12 +439,22 @@ def judge_findings_for_pr(
         judge_factory: Builds the judge (tests inject a fake).
         max_judged: Judge calls allowed; ``None`` reads
             ``[gates].refuter_max_judged`` (default 10).
+        diff_files: Paths the PR's diff touches.
+        tree_sha: Commit ``repo_root`` is at (``None`` when unknown).
+        review_head: Head commit the review is about; defaults to
+            ``head_sha``. When both it and ``tree_sha`` are known and
+            differ, a cited file of the diff absent from ``repo_root``
+            is deferred with ``checkout is not the MR head (<sha7>)``
+            rather than ``evidence outside the diff``.
 
     Returns:
         One :class:`Refutation` per proposed finding, plus the number of
         judge calls made.
     """
     cap = configured_max_judged(repo_root) if max_judged is None else max_judged
+    reviewed = review_head or head_sha
+    tree_behind = bool(reviewed and tree_sha and tree_sha != reviewed)
+    in_diff = frozenset(diff_files)
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
     primary = [f for f in proposed if f.claim_type in JUDGED_CLAIM_TYPES]
     fallback = [
@@ -441,7 +469,14 @@ def judge_findings_for_pr(
         if judge.calls >= cap:
             outcomes.append(_refutation(finding, "deferred", JUDGING_CAP_REACHED.format(cap=cap)))
             continue
-        new_status, reason = refute_finding(finding, repo_root=repo_root, judge=judge)
+        absent = (
+            CHECKOUT_NOT_HEAD.format(sha7=(reviewed or "")[:7])
+            if tree_behind and finding.file in in_diff
+            else EVIDENCE_OUTSIDE_DIFF
+        )
+        new_status, reason = refute_finding(
+            finding, repo_root=repo_root, judge=judge, absent_reason=absent
+        )
         if new_status is FindingStatus.PROPOSED:
             outcomes.append(_refutation(finding, "deferred", reason))
             continue
