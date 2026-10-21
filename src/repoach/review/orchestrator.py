@@ -89,7 +89,7 @@ from .persistence import (
     record_hallucination,
     record_review,
 )
-from .refuter import judge_findings_for_pr
+from .refuter import NOT_YET_MECHANICALLY_VERIFIED, Refutation, judge_findings_for_pr
 from .report import render_ledger_report
 from .review_lessons import remember_verified_findings
 from .review_memory import recall_review_lessons, review_lessons_section
@@ -274,7 +274,10 @@ class TeamOutcome:
     ``description``, ``branch``), both None when none was declared;
     ``spec_covered`` is None when no coverage was computed;
     ``spec_missing`` is True when a ``Spec:`` line named an id with no
-    document (the review then runs without a spec).
+    document (the review then runs without a spec). ``refutations``
+    holds one entry per finding the refuter saw, each with its state and
+    reason; ``refuter_summary`` is the one line naming them
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
     """
 
     pr_number: int
@@ -292,6 +295,8 @@ class TeamOutcome:
     spec_source: str | None = None
     spec_covered: bool | None = None
     spec_missing: bool = False
+    refutations: list[Refutation] = field(default_factory=list)
+    refuter_summary: str | None = None
 
 
 class ReviewTeamOrchestrator:
@@ -683,18 +688,40 @@ class ReviewTeamOrchestrator:
                 pr_number=pr_number,
                 exc=type(exc).__name__,
                 message=str(exc)[:200],
+                consequence=f"unjudged claim types reported unverified: {NOT_YET_MECHANICALLY_VERIFIED}",
             )
 
+        refutations: list[Refutation] = []
+        refuter_summary: str | None = None
         try:
             with reviewer_scope("Refuter"):
-                judge_counts = judge_findings_for_pr(
+                judging = judge_findings_for_pr(
                     self._db_path,
                     pr_number=pr_number,
                     repo_root=self._repo_root,
                     head_sha=head_sha,
                 )
-            _log.info("review_team.findings_judged", pr_number=pr_number, **judge_counts)
+            refutations = list(judging.outcomes)
+            refuter_summary = judging.summary_line()
+            _log.info(
+                "review_team.findings_judged",
+                pr_number=pr_number,
+                model_calls=judging.model_calls,
+                **judging.counts,
+            )
+            for deferral in judging.deferrals:
+                _log.info(
+                    "review_team.finding_deferred",
+                    pr_number=pr_number,
+                    finding_id=deferral.finding_id,
+                    file=deferral.file,
+                    line=deferral.line_start,
+                    claim_type=deferral.claim_type.value,
+                    state=deferral.state,
+                    reason=deferral.reason,
+                )
         except Exception as exc:
+            refuter_summary = f"refuter: failed: {type(exc).__name__}, no finding judged"
             _log.warning(
                 "review_team.findings_judge_failed",
                 pr_number=pr_number,
@@ -813,6 +840,8 @@ class ReviewTeamOrchestrator:
             spec_source=spec_source,
             spec_covered=spec_covered,
             spec_missing=spec_missing,
+            refutations=refutations,
+            refuter_summary=refuter_summary,
         )
 
         for outcome in outcomes:

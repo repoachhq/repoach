@@ -18,6 +18,7 @@ import pytest
 from repoach.llm_proxy.config.settings import get_settings
 from repoach.llm_proxy.routing import reset_breaker
 from repoach.providers.select import set_provider_override
+from repoach.review.refuter import JudgingReport
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +90,7 @@ def _no_live_refuter(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "repoach.review.orchestrator.judge_findings_for_pr",
-        lambda *_args, **_kwargs: {"verified": 0, "refuted": 0, "deferred": 0},
+        lambda *_args, **_kwargs: JudgingReport(),
     )
 
 
