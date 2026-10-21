@@ -8,7 +8,7 @@ created: 2026-10-21
 updated: 2026-10-21
 
 owns:
-  code: []
+  code: [src/repoach/review/refuter.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py]
   resources: N/A
 
 depends_on: [SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING]
@@ -90,7 +90,7 @@ documentation-only slice inventing an edge to a spec that owns nothing.
   decision changes here.
 - NG4: Claiming ownership of `refuter.py` / `finding_verifiers.py` /
   `hallucination_guard.py` in this spec's `owns` — that is the
-  implementation slice's decision, not this draft's.
+  implementation slice's decision, not this draft's (taken: see Gaps).
 
 ## Assumptions
 
@@ -248,9 +248,36 @@ Run from `repoach` with `PATH=.venv/bin:$PATH PYTHONPATH=$PWD/src`.
   tech_debt #57 itself prescribes), this spec's F5/F6/F7 predicates are
   the demonstrated causes of a zero-call, all-deferred refuter pass —
   not yet proven to be the *only* ones that produced !296's specific 19.
-- No `owns` promotion for `refuter.py` / `finding_verifiers.py` /
-  `hallucination_guard.py` in this draft (F11) — left to the
-  implementation slice.
+- The implementation slice promoted `refuter.py`,
+  `hallucination_guard.py` and `finding_verifiers.py` into this spec's
+  `owns.code`; `repoach arch graph --check` lists the same cycles with
+  and without the promotion (none involves this spec), which answers
+  Q2.
+
+## Implemented interface (2026-10-21)
+
+The slice that implements this draft departs from the Interface above
+in three places, each to keep a finding from leaving without a state:
+
+- `judge_findings_for_pr` returns a `JudgingReport`: one `Refutation`
+  per proposed finding it saw (`finding_id`, `file`, `line_start`,
+  `claim_type`, `state`, `reason`) plus `model_calls`. `counts` gains a
+  fourth key, `unverified`; `deferrals` is every outcome without a
+  verdict.
+- `state` is one of `verified` / `refuted` / `deferred` / `unverified`.
+  "not yet mechanically verified" is the `unverified` reason, not a
+  deferral, so G2's third bucket is visible in the counts.
+- The reason carries its detail inline, from a closed set:
+  `evidence outside the diff` (cited file not a file under
+  `repo_root`), `evidence unreadable` (file there, cited lines not),
+  `judging cap N reached`, `verdict unparseable`,
+  `judge call failed: <exception type>` (D1: type name only).
+  The cap counts judge calls, so unreadable evidence never uses a slot.
+
+`review pr` adds `findings[i] = {id, file, line, claim_type,
+refutation: {state, reason}}` to its JSON and one stderr line,
+`refuter: judged 3, refuted 1, deferred 2 (evidence unreadable ×2),
+unverified 1 (not yet mechanically verified)`.
 
 ## Open Questions
 
