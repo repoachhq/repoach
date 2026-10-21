@@ -570,7 +570,9 @@ def review_gate(
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
     ``reviewing <N> at <sha7> (<tree> <path>)`` line on stderr names it,
     ``tree`` in the JSON says ``worktree`` or ``checkout``, and
-    ``--keep-tree`` keeps the worktree.
+    ``--keep-tree`` keeps the worktree. When the gate stops before any
+    tree is built (an MR already merged, a stale head), ``--keep-tree``
+    prints ``nothing materialised (<why>)`` instead of a path.
 
     The gate itself makes no model call.  ``--provider`` is accepted and
     validated (an unknown name exits 2) so a job can hand ``review pr``
@@ -636,6 +638,10 @@ def review_gate(
             ensure_ascii=False,
         )
     )
+    if keep_tree and evaluation.tree is None:
+        merged = evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED
+        why = "already merged" if merged else evaluation.ci_gate.outcome_tag.lower()
+        typer.echo(f"nothing materialised ({why})", err=True)
     if evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED:
         return
     if not evaluation.decision.merge:

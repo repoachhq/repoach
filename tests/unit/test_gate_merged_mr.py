@@ -122,3 +122,39 @@ def test_gate_cli_exit_code(
     assert payload["outcome"] == expected_outcome
     assert payload["merge"] is False
     assert all(not reason.endswith(": ") for reason in payload["reasons"])
+
+
+@pytest.mark.parametrize(
+    ("state", "line"),
+    [
+        ("merged", "nothing materialised (already merged)"),
+        ("opened", "nothing materialised (skip_stale_head)"),
+    ],
+)
+def test_gate_keep_tree_says_nothing_was_materialised(
+    tmp_path: Path, state: str, line: str
+) -> None:
+    forge = _gitlab(tmp_path, state=state, ls_remote=_DELETED)
+    real = auto_merge.evaluate_merge_gate
+    seen: dict[str, Any] = {}
+
+    def with_scripted_forge(pr_number: int, **kwargs: Any) -> auto_merge.GateEvaluation:
+        seen.update(kwargs)
+        return real(
+            pr_number,
+            forge=forge,
+            db_path=tmp_path / "gate.db",
+            wait_seconds=0,
+            poll_interval=1,
+            sleep=lambda _s: None,
+            repo_root=tmp_path,
+            pin_tree=True,
+            keep_tree=True,
+        )
+
+    with patch("repoach.cli.review_cmds.evaluate_merge_gate", with_scripted_forge):
+        result = CliRunner().invoke(review_app, ["gate", "283", "--keep-tree"])
+
+    assert seen["keep_tree"] is True
+    assert json.loads(result.stdout)["tree"] is None
+    assert line in result.stderr.splitlines()
