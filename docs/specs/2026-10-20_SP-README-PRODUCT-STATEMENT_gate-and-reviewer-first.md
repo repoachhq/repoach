@@ -5,7 +5,7 @@ version: 0.1
 status: proposed
 author: agent
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-10-21
 
 owns:
   code: []
@@ -41,7 +41,7 @@ to the tools that review it.
 
 ## Goals
 
-- G1: line 1 of the rendered text (the first non-markup line of `README.md`, the `<div>`/`<picture>` header excluded) is exactly: `Evidence-first merge gate and PR reviewer for GitHub and GitLab. Bring your Claude Code login or your key. 5-minute install.`
+- G1: line 1 of the rendered text (the first non-markup line of `README.md`, the `<div>`/`<picture>` header excluded) is exactly: `Evidence-first merge gate and PR reviewer for GitHub and GitLab. Bring your Claude Code login or your key. Install in minutes.` (D1: "install in minutes" until the clock of `SP-PUBLIC-DEMO-REPO` AC2 is measured; then the measured `N-minute install`)
 - G2: the phrase "self-forging" and the word "factory" do not appear in the first 20 lines; "autonomous" does not appear before the first `##` heading.
 - G3: a section `## Works after your agents, not instead of them`, placed before any section about the Coder or Developer, states that Aider, OpenHands, Copilot coding agent, Cursor and humans are PR sources, and repoach reviews and gates what they open.
 - G4: a section `## What the gate refuses` shows, with a real excerpt from a recorded run, one refuted finding and one refused LGTM (an `APPROVE` with the ledger's `review_complete=False` or a surviving blocker), with the PR link.
@@ -107,7 +107,9 @@ flowchart TD
 
 ## Owner decisions needed
 - D1: ship the G1 sentence with "5-minute install" before the clock of `SP-PUBLIC-DEMO-REPO` AC2 is measured, or ship it with "install in minutes" until then.
+  Decided 2026-10-21: "install in minutes" until the clock is measured.
 - D2: keep "self-forging" anywhere (tagline below the fold, the logo alt text) or retire it.
+  Decided 2026-10-21: retired from the README; the `pyproject.toml` description is left to a code change (NG1).
 
 ## Gaps
 - The excerpt for G4 needs one recorded run where the gate refused an LGTM on a public PR; the Yoob runs are on a private GitLab project, so the first public excerpt comes from the demo repository (`SP-PUBLIC-DEMO-REPO`).
