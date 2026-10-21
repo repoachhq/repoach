@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from repoach.ci_entry.advisory import (
@@ -35,6 +36,7 @@ from repoach.ci_entry.advisory import (
     run_ci_review,
     subprocess_review_runner,
 )
+from repoach.ci_entry.cli import emit
 from repoach.ci_entry.gateway import (
     GatewayHandle,
     GatewayStartError,
@@ -673,11 +675,13 @@ class TestInProcessProviders:
         assert fake.gateway_envs == []
         env = fake.review_envs[0]
         assert env["REPOACH_PROVIDER"] == "ollama"
+        assert report.provider == "ollama"
         assert "REPOACH_ANTHROPIC_API_KEY" not in env
 
     def test_gemini_needs_its_key(self) -> None:
         report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "gemini"}, FakeRun())
         assert report.outcome == Outcome.SKIPPED
+        assert report.provider == "gemini"
         assert "REPOACH_GEMINI_API_KEY / GEMINI_API_KEY / GOOGLE_API_KEY" in report.reason
         fake = FakeRun()
         report = _run({**GITLAB_ENV, "REPOACH_PROVIDER": "gemini", "GEMINI_API_KEY": "g"}, fake)
@@ -697,3 +701,24 @@ class TestInProcessProviders:
         assert isinstance(planned, CiReviewPlan)
         assert planned.provider_mode == "claude_code"
         assert fake.gateway_envs == []
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({**GITLAB_ENV, "REPOACH_PROVIDER": "ollama"}, "provider ollama)"),
+        ({**GITLAB_ENV, "REPOACH_PROVIDER": "gemini"}, "provider gemini)"),
+        (dict(GITLAB_ENV), "provider none)"),
+    ],
+)
+def test_summary_line_names_the_selected_provider(
+    env: dict[str, str], expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The stderr line names the kind or preset chosen, never ``none`` beside a named provider."""
+    report = _run(env, FakeRun())
+    with pytest.raises(typer.Exit):
+        emit(report)
+    line = capsys.readouterr().err.splitlines()[0]
+    assert expected in line
+    if expected != "provider none)":
+        assert "provider none" not in line

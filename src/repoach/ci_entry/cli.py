@@ -64,7 +64,7 @@ def emit(report: CiReviewReport) -> None:
     forge = report.forge or "no forge"
     typer.echo(
         f"repoach ci review: {report.outcome.value}{where} on {forge} "
-        f"({report.mode}, provider {report.provider_mode}): {report.reason}",
+        f"({report.mode}, provider {report.provider or 'none'}): {report.reason}",
         err=True,
     )
     for note in report.notes:

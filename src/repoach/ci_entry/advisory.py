@@ -136,6 +136,10 @@ class CiReviewReport(BaseModel):
         mode: ``post`` or ``dry-run``.
         provider_mode: ``claude_code``, ``anthropic``, ``gateway``,
             ``direct`` (loopback gateway) or ``none``.
+        provider: The provider selected — the kind or preset named
+            (``ollama``, ``gemini``…), else the mode (``gateway``,
+            ``direct``) — also when its key is missing; None only when
+            no provider is named or configured at all.
         final_verdict: The team verdict when a review ran.
         posted_comments: Comments the review posted (0 on a dry run).
         posted_reviews: Reviews the review posted (0 on a dry run).
@@ -158,6 +162,7 @@ class CiReviewReport(BaseModel):
     pr_source: str | None = None
     mode: ReviewMode = "dry-run"
     provider_mode: ProviderMode = "none"
+    provider: str | None = None
     final_verdict: str | None = None
     posted_comments: int = 0
     posted_reviews: int = 0
@@ -368,9 +373,11 @@ def plan_ci_review(
             **common,
         )
     chosen, missing = provider_mode(env, provider_kind)
-    if chosen == "none":
-        return finish(Outcome.SKIPPED, f"skipped, {missing}", strict=strict, **common)
     named = provider_kind or env_value(env, PROVIDER_VAR) or ""
+    if chosen == "none":
+        return finish(
+            Outcome.SKIPPED, f"skipped, {missing}", strict=strict, provider=named or None, **common
+        )
     return CiReviewPlan(
         provider_name=named if chosen in IN_PROCESS_MODES else "",
         forge=forge,
@@ -606,6 +613,7 @@ def interpret_review(
         "pr_source": plan.pr_source,
         "mode": plan.mode,
         "provider_mode": provider,
+        "provider": plan.provider_name or provider,
         "final_verdict": verdict,
         "posted_comments": _count(payload, "posted_comments"),
         "posted_reviews": _count(payload, "posted_reviews"),
@@ -666,6 +674,7 @@ def run_ci_review(
         "pr_source": plan.pr_source,
         "mode": plan.mode,
         "provider_mode": plan.provider_mode,
+        "provider": plan.provider_name or plan.provider_mode,
     }
     if plan.mode == "post" and plan.forge == "gitlab" and not bot_username:
         return finish(
