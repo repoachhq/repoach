@@ -30,7 +30,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": [], \"commits\": [{\"messageHeadline\": \"feat(x): add the thing\", \"messageBody\": \"Why.\\n\\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>\"}]}"
+      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": [], \"commits\": [{\"messageHeadline\": \"feat(x): add the thing\", \"messageBody\": \"Why.\\n\\nCo-Authored-By: Claude Sonnet 5\"}]}"
     },
     {
       "args": [
