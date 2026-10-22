@@ -166,6 +166,8 @@ class AnthropicMessagesTransport(BaseProvider):
             provider_name=self._provider_name,
             rate_limiter=self._global_rate_limiter,
             read_timeout_s=self._config.http_read_timeout,
+            rate_limit_block_default_s=self._config.rate_limit_block_default_s,
+            rate_limit_block_max_s=self._config.rate_limit_block_max_s,
         )
         return self._format_error_message(base_message, request_id)
 
@@ -261,7 +263,14 @@ class AnthropicMessagesTransport(BaseProvider):
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(error).__name__, error)
                 error_message = self._get_error_message(error, request_id)
                 status_code = getattr(
-                    map_error(error, rate_limiter=self._global_rate_limiter), "status_code", None
+                    map_error(
+                        error,
+                        rate_limiter=self._global_rate_limiter,
+                        rate_limit_block_default_s=self._config.rate_limit_block_default_s,
+                        rate_limit_block_max_s=self._config.rate_limit_block_max_s,
+                    ),
+                    "status_code",
+                    None,
                 )
 
                 if response is not None and not response.is_closed:

@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from loguru import logger as loguru_logger
 
 from repoach.llm_proxy.api._failover import (
     PeekResult,
@@ -34,6 +36,8 @@ from repoach.llm_proxy.api.models.anthropic import (
 from repoach.llm_proxy.api.services import ClaudeProxyService
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
+from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
+from repoach.llm_proxy.routing import ModelRef, get_breaker
 
 # ---------------------------------------------------------------------------
 # SSE chunk fixtures
@@ -519,6 +523,54 @@ class _ScriptedProvider(BaseProvider):
             yield chunk
 
 
+class _CountingProvider(BaseProvider):
+    """Like ``_ScriptedProvider``, but counts ``stream_response`` CALLS.
+
+    ``_ScriptedProvider.stream_response`` is an async-generator
+    function: calling it only builds the generator object — its body
+    (including a scripted ``raise``) runs on the first ``__anext__()``,
+    not on the call itself. That makes it useless for asserting "this
+    provider was never dispatched to", since a test would need to
+    iterate the stream to observe the effect, which is exactly the
+    behavior a pre-dispatch skip must avoid. ``stream_response`` here
+    is a plain (non-async) method so the call itself is observable
+    synchronously, before any iteration.
+    """
+
+    SUPPORTS_NATIVE_TOOLS: bool = True
+
+    def __init__(
+        self,
+        config: ProviderConfig,
+        *,
+        chunks: list[str] | None = None,
+        raises: Exception | None = None,
+    ) -> None:
+        super().__init__(config)
+        self._chunks = chunks or []
+        self._raises = raises
+        self.call_count = 0
+
+    async def cleanup(self) -> None:
+        return None
+
+    def stream_response(
+        self,
+        request: Any,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+    ) -> AsyncIterator[str]:
+        self.call_count += 1
+        return self._stream()
+
+    async def _stream(self) -> AsyncIterator[str]:
+        if self._raises is not None:
+            raise self._raises
+        for chunk in self._chunks:
+            yield chunk
+
+
 def _make_request(*, with_tools: bool = True) -> MessagesRequest:
     tools = (
         [
@@ -740,3 +792,134 @@ def test_all_candidates_failing_emits_terminal_sse_error(monkeypatch: pytest.Mon
     payload = json.loads(error_chunk.split("data: ", 1)[1].strip())
     assert payload["error"]["type"] == "chain_exhausted"
     assert "kimi down" in payload["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# SP-FAILOVER-SKIPS-BLOCKED-PROVIDER — pre-dispatch rate-limit skip
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def captured_loguru() -> Any:
+    """Capture loguru records for the duration of a test."""
+    records: list[Any] = []
+    sink_id = loguru_logger.add(
+        lambda msg: records.append(msg.record),
+        format="{message}",
+        level="DEBUG",
+    )
+    try:
+        yield records
+    finally:
+        loguru_logger.remove(sink_id)
+
+
+def _find_event(records: list[Any], event: str) -> Any:
+    for r in records:
+        if r["message"] == event:
+            return r
+    raise AssertionError(f"event {event!r} not in {[r['message'] for r in records]}")
+
+
+def test_blocked_provider_is_skipped_without_dispatch_and_failover_is_fast(
+    monkeypatch: pytest.MonkeyPatch,
+    captured_loguru: list[Any],
+) -> None:
+    """A provider already blocked by a prior 429 is skipped with no request.
+
+    ``nvidia_nim``'s scoped limiter is pre-blocked for 60s to simulate
+    a 429 a previous request already hit. The guarantee under test is
+    structural, not timing-based: ``nvidia_nim.stream_response`` is
+    NEVER called (``call_count == 0``, asserted via
+    ``_CountingProvider``, which counts the call itself rather than
+    the generator being iterated) and
+    ``GlobalRateLimiter.wait_if_blocked`` is never invoked for this
+    dispatch at all — patched here to raise if it is, so a future
+    regression that routes the skip back through the real wait path
+    fails loudly instead of merely running slow. A generous wall-clock
+    ceiling (well under the 20s ``first_byte_deadline_s``) is kept as
+    a cheap sanity check, not the guarantee itself — a tight ``< 1.0``
+    bound measured flaky under ``-n 8`` contention (1.85s observed).
+    """
+
+    async def _wait_if_blocked_must_not_be_called(self: GlobalRateLimiter) -> bool:
+        raise AssertionError(
+            "GlobalRateLimiter.wait_if_blocked must not be called for a "
+            "pre-dispatch skip — the whole point is to avoid the wait"
+        )
+
+    monkeypatch.setattr(GlobalRateLimiter, "wait_if_blocked", _wait_if_blocked_must_not_be_called)
+
+    providers = {
+        "nvidia_nim": _CountingProvider(
+            ProviderConfig(api_key="x"),
+            raises=RuntimeError("must not be dispatched while rate-limited"),
+        ),
+        "kimi": _CountingProvider(
+            ProviderConfig(api_key="x"),
+            chunks=[
+                _MESSAGE_START,
+                _TEXT_CONTENT_START,
+                _REAL_TEXT_DELTA,
+                _CONTENT_BLOCK_STOP,
+                _TERMINAL_REAL_DELTA,
+                _MESSAGE_STOP,
+            ],
+        ),
+        "groq": _CountingProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(monkeypatch, providers)
+    providers["nvidia_nim"]._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
+        "test-nvidia-nim-blocked"
+    )
+    providers["nvidia_nim"]._global_rate_limiter.set_blocked(60)
+
+    started = time.monotonic()
+    response = service.create_message(_make_request())
+    chunks = _drain_stream_response(response)
+    elapsed = time.monotonic() - started
+
+    assert providers["nvidia_nim"].call_count == 0, "blocked provider must never be dispatched to"
+    assert providers["kimi"].call_count == 1
+    assert providers["groq"].call_count == 0
+    assert elapsed < 15.0, f"sanity ceiling only, far below the 20s deadline: took {elapsed}s"
+    assert any(c == _TEXT_CONTENT_START for c in chunks)
+    assert "unused" not in chunks
+
+    fired = _find_event(captured_loguru, "proxy_chain_skip_rate_limited")
+    assert fired["extra"]["candidate"] == "nvidia_nim/meta/llama-3.3-70b-instruct"
+    assert fired["extra"]["reason"].startswith("rate_limited until ")
+
+
+def test_blocked_provider_skip_does_not_trip_its_own_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skipping a rate-limited candidate must not trip ITS breaker ref.
+
+    The candidate never actually failed — only its provider's shared
+    limiter (set by some OTHER model's 429) is cooling down — so
+    penalising this ref's own consecutive-failure count would be a
+    misattribution.
+    """
+    providers = {
+        "nvidia_nim": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            raises=RuntimeError("must not be dispatched while rate-limited"),
+        ),
+        "kimi": _ScriptedProvider(
+            ProviderConfig(api_key="x"),
+            chunks=[_MESSAGE_START, _TOOL_USE_START, _TERMINAL_REAL_DELTA, _MESSAGE_STOP],
+        ),
+        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+    }
+    service = _build_service(monkeypatch, providers)
+    providers["nvidia_nim"]._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
+        "test-nvidia-nim-breaker-skip"
+    )
+    providers["nvidia_nim"]._global_rate_limiter.set_blocked(60)
+
+    response = service.create_message(_make_request())
+    _drain_stream_response(response)
+
+    ref = ModelRef.parse("nvidia_nim/meta/llama-3.3-70b-instruct")
+    assert get_breaker().is_down(ref, time.monotonic()) is False
