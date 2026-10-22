@@ -29,7 +29,14 @@ import typer
 from sqlalchemy import create_engine, text
 
 from ..core.config import GatewayConfigError, get_settings
-from ..forge import ARCHIVE_MARKER, Forge, ForgeError, select_forge
+from ..forge import (
+    ARCHIVE_MARKER,
+    Forge,
+    ForgeError,
+    ForgeWriteRefusedError,
+    WriteRefusal,
+    select_forge,
+)
 from ..project.config import load_project_config
 from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
 from ..providers.errors import ProviderConfigError
@@ -65,6 +72,26 @@ EXIT_REVIEW_ERROR = 3
 Distinct from 2 (request changes, or a ``--spec`` naming no document)
 and from 5 (a refused merge gate): no review happened, nothing was
 published (SP-REVIEW-TRANSPORT-ERROR-VERDICT)."""
+
+EXIT_WRITE_REFUSED = 8
+"""``review pr`` exit code when a dry run reached the forge write barrier.
+
+Nothing was sent; a step attempted a forge write the run was not allowed
+to make, which is a defect of that step (SP-DRY-RUN-NEVER-POSTS)."""
+
+
+def _dry_run_refusal(value: str) -> WriteRefusal:
+    """Return the :class:`WriteRefusal` a ``--dry-run-reason`` names.
+
+    Raises:
+        typer.Exit: Code 2 after one stderr line when ``value`` names none.
+    """
+    try:
+        return WriteRefusal(value)
+    except ValueError as exc:
+        names = ", ".join(repr(r.value) for r in WriteRefusal)
+        typer.echo(f"repoach: --dry-run-reason must be one of {names}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 def _spec_flag(value: object) -> str | None:
@@ -183,6 +210,17 @@ def review_pr(
         "--keep-tree",
         help="Keep the worktree of the PR head after the review and print its path.",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-run the reviewers on a head that already has a completed review run.",
+    ),
+    dry_run_reason: str = typer.Option(
+        WriteRefusal.DRY_RUN.value,
+        "--dry-run-reason",
+        hidden=True,
+        help="Why a --dry-run writes nothing; set by `repoach ci review`.",
+    ),
 ) -> None:
     """Run the review-bot team on a PR / MR and emit a summary.
 
@@ -220,6 +258,33 @@ def review_pr(
     duration, cost estimate or ``subscription (tokens only)``), and one
     ``repoach: usage: …`` line on stderr says the total.
 
+    Before the team verdict, every unsettled blocking finding raised at
+    an older head is re-checked at the reviewed head, exactly as
+    ``review gate`` does (SP-GATE-REVERIFIES-AT-HEAD G7): the ones the
+    head no longer supports become ``resolved_at_head`` and no longer
+    count, the others stay counted and are named in
+    ``reverify_reasons`` (``raised at <sha7>, still present at
+    <sha7>``). ``reverified`` in the JSON counts them and one
+    ``review: re-verified …`` line on stderr says it. CI is not read,
+    so ``broken_behavior`` findings are left to the gate.
+
+    A finding is recorded once per head (SP-FINDINGS-BRIDGE-DOCFIX 0.2):
+    one ``findings: N new, M already recorded, K refuted earlier`` line
+    on stderr says how many of the reviewers' findings were new at the
+    head, already in the ledger there, or refuted there by an earlier
+    run; a row already judged there is not judged again. ``findings_recorded`` in
+    the JSON carries the same three counts.
+
+    The unit of a review is the run (SP-FINDINGS-BRIDGE-DOCFIX 0.3): when
+    a completed run already exists at the head (every reviewer parsed,
+    its findings written), no reviewer and no refuter is called. The
+    stored outcomes are replayed, the older-head re-check still runs, the
+    JSON has the same shape with ``cached`` true, and one ``review:
+    cached at <sha7> (run <id>, <when>); use --force to re-review`` line
+    on stderr names the run. A dry run and a posting run share that
+    cache; a posting run posts the stored outcomes. ``--force`` runs the
+    reviewers again.
+
     The review reads the PR head, never the checkout's branch
     (SP-REVIEW-PINS-HEAD G2): the head SHA comes from the forge, its tree
     is the checkout when that is at the SHA and clean, else a detached
@@ -235,11 +300,19 @@ def review_pr(
     ``deferred`` / ``unverified``), and one ``refuter: judged …`` line on
     stderr counts them by state and reason
     (SP-REFUTER-JUDGES-WHAT-IT-CAN).
+
+    A dry run closes the forge's write barrier (SP-DRY-RUN-NEVER-POSTS):
+    ``refused_writes`` counts the writes it refused and ``write_refusal``
+    names why it was closed (``dry run``; null when posting). One
+    ``repoach: refused_writes: N (<reason>)`` line on stderr says the
+    same. A refused write is a defect: one ``repoach: dry run attempted
+    a forge write: <head>`` line per write, and the command exits 8.
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
     spec_flag = _spec_flag(spec)
     _require_spec(spec_flag, root)
+    refusal = _dry_run_refusal(dry_run_reason)
     try:
         with usage_run("review pr", pr_number) as run:
             team = run_review(
@@ -248,11 +321,16 @@ def review_pr(
                 spec=spec_flag,
                 keep_tree=keep_tree,
                 announce=lambda line: typer.echo(line, err=True),
+                write_refusal=refusal,
+                force=force,
                 **_forge_kwargs(forge_name),
             )
     except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+    except ForgeWriteRefusedError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=EXIT_WRITE_REFUSED) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     spec_id = team.spec_id
@@ -277,6 +355,12 @@ def review_pr(
         "posted_comments": team.posted_comments,
         "posted_reviews": team.posted_reviews,
         "posting_outcome": team.posting_outcome,
+        "refused_writes": len(team.refused_writes),
+        "write_refusal": team.write_refusal,
+        "reverified": team.reverified,
+        "reverify_reasons": team.reverify_reasons,
+        "findings_recorded": team.findings_recorded,
+        "cached": team.cached,
         "reviews": [
             {
                 "role": o.role.value,
@@ -296,9 +380,25 @@ def review_pr(
         "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    if team.cache_line:
+        typer.echo(team.cache_line, err=True)
+    if team.findings_line:
+        typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
         typer.echo(team.refuter_summary, err=True)
+    if team.reverify_line:
+        typer.echo(team.reverify_line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
+    if team.write_refusal is not None or team.refused_writes:
+        typer.echo(
+            f"repoach: refused_writes: {len(team.refused_writes)} "
+            f"({team.write_refusal or 'writes allowed'})",
+            err=True,
+        )
+    for head in team.refused_writes:
+        typer.echo(f"repoach: {team.write_refusal} attempted a forge write: {head}", err=True)
+    if team.refused_writes:
+        raise typer.Exit(code=EXIT_WRITE_REFUSED)
     if team.final_verdict == ReviewVerdict.ERROR:
         raise typer.Exit(code=EXIT_REVIEW_ERROR)
     if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:

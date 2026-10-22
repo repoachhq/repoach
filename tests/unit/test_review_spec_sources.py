@@ -21,7 +21,7 @@ from typer.testing import CliRunner
 import repoach.core.config as core_config
 from repoach.cli.main import app
 from repoach.cli.review_cmds import review_app
-from repoach.forge import Diff, MergeMethod, PullRequest
+from repoach.forge import Diff, ForgeWriteBarrier, MergeMethod, PullRequest
 from repoach.project.config import ProjectConfig
 from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation
@@ -84,6 +84,7 @@ def _orchestrate(root: Path, body: str, flag: str | None) -> TeamOutcome:
     )
     forge.head_sha.return_value = "abc123"
     forge.comments.return_value = []
+    forge.barrier = ForgeWriteBarrier()
     orch = ReviewTeamOrchestrator(
         forge=forge, db_path=root / "review.db", post_to_github=False, repo_root=root
     )

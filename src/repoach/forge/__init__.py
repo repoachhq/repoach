@@ -21,12 +21,16 @@ from .protocol import (
     ForgeNotFoundError,
     ForgeStateRefusedError,
     ForgeUnavailableError,
+    ForgeWriteBarrier,
+    ForgeWriteBypassError,
+    ForgeWriteRefusedError,
     InlineCommentDraft,
     MergeMethod,
     MergeResult,
     PullRequest,
     Review,
     ReviewDraft,
+    WriteRefusal,
 )
 from .runner import CommandResult
 from .select import merge_preferences, select_forge
@@ -46,12 +50,16 @@ __all__ = [
     "ForgeNotFoundError",
     "ForgeStateRefusedError",
     "ForgeUnavailableError",
+    "ForgeWriteBarrier",
+    "ForgeWriteBypassError",
+    "ForgeWriteRefusedError",
     "InlineCommentDraft",
     "MergeMethod",
     "MergeResult",
     "PullRequest",
     "Review",
     "ReviewDraft",
+    "WriteRefusal",
     "merge_preferences",
     "select_forge",
 ]

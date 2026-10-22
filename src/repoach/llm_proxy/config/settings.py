@@ -175,6 +175,8 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "REGEN_SWEEP_PACING_S": "REPOACH_REGEN_SWEEP_PACING_S",
     "REGEN_SWEEP_RETRY_BACKOFF_S": "REPOACH_REGEN_SWEEP_RETRY_BACKOFF_S",
     "DISPATCH_TOTAL_BUDGET_S": "REPOACH_DISPATCH_TOTAL_BUDGET_S",
+    "RATE_LIMIT_BLOCK_DEFAULT_S": "REPOACH_PROXY_RATE_LIMIT_BLOCK_DEFAULT_S",
+    "RATE_LIMIT_BLOCK_MAX_S": "REPOACH_PROXY_RATE_LIMIT_BLOCK_MAX_S",
 }
 
 
@@ -300,6 +302,20 @@ class Settings(BaseSettings):
     provider_max_concurrency: int = Field(
         default=5, validation_alias=_aliases("PROVIDER_MAX_CONCURRENCY")
     )
+    rate_limit_block_default_s: float = Field(
+        default=60.0, ge=0, validation_alias=_aliases("RATE_LIMIT_BLOCK_DEFAULT_S")
+    )
+    """Reactive block duration a 429 sets on its provider's scoped
+    ``GlobalRateLimiter`` (``providers/error_mapping.py``) when the
+    response carried no usable ``Retry-After`` header. Was hardcoded
+    to ``60`` at both 429 call sites in ``map_error`` before this
+    field existed (SP-FAILOVER-SKIPS-BLOCKED-PROVIDER)."""
+    rate_limit_block_max_s: float = Field(
+        default=300.0, ge=0, validation_alias=_aliases("RATE_LIMIT_BLOCK_MAX_S")
+    )
+    """Upper bound applied to a ``Retry-After`` value honoured by
+    ``map_error`` — a misbehaving or adversarial upstream cannot block
+    a provider scope past this ceiling."""
     enable_thinking: bool = Field(default=True, validation_alias=_aliases("ENABLE_THINKING"))
 
     proxy_log_full_content: bool = Field(

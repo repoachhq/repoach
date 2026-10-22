@@ -135,6 +135,8 @@ def build_provider_config(descriptor: ProviderDescriptor, settings: Settings) ->
         rate_limit=settings.provider_rate_limit,
         rate_window=settings.provider_rate_window,
         max_concurrency=settings.provider_max_concurrency,
+        rate_limit_block_default_s=settings.rate_limit_block_default_s,
+        rate_limit_block_max_s=settings.rate_limit_block_max_s,
         http_read_timeout=settings.http_read_timeout,
         http_write_timeout=settings.http_write_timeout,
         http_connect_timeout=settings.http_connect_timeout,

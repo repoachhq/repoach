@@ -211,6 +211,12 @@ def usage_run(command: str, pr_number: int | None = None) -> Iterator[UsageRun]:
         _RUN.reset(token)
 
 
+def current_run_id() -> str | None:
+    """Return the id of the :func:`usage_run` open in this context, None outside one."""
+    run = _RUN.get()
+    return run.run_id if run is not None else None
+
+
 @contextmanager
 def reviewer_scope(name: str) -> Iterator[None]:
     """Attribute every call made inside the block to reviewer ``name``."""

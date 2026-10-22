@@ -65,6 +65,8 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "PROVIDER_RATE_LIMIT": "provider_rate_limit",
     "PROVIDER_RATE_WINDOW": "provider_rate_window",
     "PROVIDER_MAX_CONCURRENCY": "provider_max_concurrency",
+    "RATE_LIMIT_BLOCK_DEFAULT_S": "rate_limit_block_default_s",
+    "RATE_LIMIT_BLOCK_MAX_S": "rate_limit_block_max_s",
     "ENABLE_THINKING": "enable_thinking",
     "PROXY_LOG_FULL_CONTENT": "proxy_log_full_content",
     "BUDGET_RETRY_ENABLED": "budget_retry_enabled",

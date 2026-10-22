@@ -28,13 +28,18 @@ cheap and explicit instead of being folded into a heavier read.
 from __future__ import annotations
 
 import functools
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from enum import StrEnum
 from typing import Any, Literal, Protocol, TypeVar, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..core.logging import get_logger
 from .runner import CommandResult
+
+_log = get_logger(__name__)
 
 ARCHIVE_MARKER = "<!-- repoach-review-archive -->"
 """HTML marker identifying the sticky review-archive comment / note."""
@@ -146,20 +151,193 @@ class ForgeStateRefusedError(ForgeError):
         self.state = state
 
 
-def write_barrier(method: _WriteMethod) -> _WriteMethod:
-    """Refuse a forge write unless the change it targets is ``open`` (G7).
+class WriteRefusal(StrEnum):
+    """Why a forge handle refuses every write (SP-DRY-RUN-NEVER-POSTS)."""
 
-    Every write method of both forges (``post_comment``, ``post_review``,
-    ``reply``, ``upsert_marked_comment``, ``merge``) is decorated with
-    this one barrier: it reads :meth:`Forge.pr_state` for the method's
-    first argument (the PR / MR number) right before the write and
-    raises :class:`ForgeStateRefusedError` for any state outside
-    :data:`WRITABLE_STATES`. A failed state read propagates — no write
-    happens on an unknown state.
+    DRY_RUN = "dry run"
+    POSTING_DISABLED = "posting disabled"
+    ADVISORY_POST_OFF = "REPOACH_ADVISORY_POST is not 1"
+
+
+class ForgeWriteRefusedError(RuntimeError):
+    """A write was attempted on a read-only forge handle.
+
+    Attributes:
+        head: What was refused: the write method and its target
+            (``post_review #7``) or the argv head (``api --method POST
+            repos/…``).
+        reason: Why the handle is read-only.
+    """
+
+    def __init__(self, head: str, reason: WriteRefusal) -> None:
+        super().__init__(f"{reason.value} attempted a forge write: {head}")
+        self.head = head
+        self.reason = reason
+
+
+class ForgeWriteBypassError(RuntimeError):
+    """A mutating argv reached a forge's read path without passing the barrier."""
+
+
+_API_FIELD_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+_WRITE_VERBS = frozenset(
+    {
+        "approve",
+        "cancel",
+        "close",
+        "comment",
+        "create",
+        "delete",
+        "edit",
+        "lock",
+        "merge",
+        "note",
+        "ready",
+        "rebase",
+        "reopen",
+        "rerun",
+        "review",
+        "revoke",
+        "run",
+        "subscribe",
+        "unlock",
+        "unsubscribe",
+        "update",
+        "upload",
+    }
+)
+
+
+def _api_method(args: Sequence[str]) -> str | None:
+    """The explicit HTTP method of a ``gh api`` / ``glab api`` argv, if any."""
+    for i, arg in enumerate(args):
+        if arg in {"--method", "-X"} and i + 1 < len(args):
+            return args[i + 1].upper()
+        if arg.startswith("--method="):
+            return arg.split("=", 1)[1].upper()
+    return None
+
+
+def is_write_argv(args: Sequence[str]) -> bool:
+    """True when a ``gh`` / ``glab`` argv (binary excluded) changes forge state.
+
+    ``api`` writes with any method but ``GET``, and with no method when it
+    carries a field or an input (both CLIs then default to ``POST``); any
+    other command writes when its verb (``pr comment``, ``mr merge``…) is
+    a mutating one.
+    """
+    if not args:
+        return False
+    if args[0] == "api":
+        method = _api_method(args)
+        if method is not None:
+            return method != "GET"
+        return any(arg in _API_FIELD_FLAGS for arg in args)
+    return len(args) > 1 and args[1] in _WRITE_VERBS
+
+
+def argv_head(args: Sequence[str]) -> str:
+    """The loggable head of a write argv: the command and its endpoint, no body."""
+    if args and args[0] == "api":
+        method = _api_method(args) or "POST"
+        endpoint = next((a for a in args[1:] if "/" in a and not a.startswith("-")), "")
+        return f"api --method {method} {endpoint}".rstrip()
+    return " ".join(args[:3])
+
+
+class ForgeWriteBarrier:
+    """The one gate every forge write passes through (SP-DRY-RUN-NEVER-POSTS).
+
+    A barrier is open (writes go through) or closed with a
+    :class:`WriteRefusal`; closing is one-way. A closed barrier refuses
+    each write before anything is spawned, records what it refused and
+    logs ``forge.write_refused`` once per refusal. Every forge owns one:
+    its write methods call :meth:`refuse_if_closed` first, and its argv
+    writes go through :meth:`admit`, the only context in which the
+    forge's read path accepts a mutating argv (:meth:`require_admitted`).
+
+    Args:
+        refusal: Close the barrier from the start with this reason.
+    """
+
+    def __init__(self, refusal: WriteRefusal | None = None) -> None:
+        self._refusal = refusal
+        self._refused: list[str] = []
+        self._lock = threading.Lock()
+        self._local = threading.local()
+
+    @property
+    def read_only(self) -> bool:
+        """True once the barrier is closed."""
+        return self._refusal is not None
+
+    @property
+    def refusal(self) -> WriteRefusal | None:
+        """Why the barrier is closed; ``None`` while writes go through."""
+        return self._refusal
+
+    @property
+    def refused(self) -> list[str]:
+        """Every refused write, in order (a copy)."""
+        with self._lock:
+            return list(self._refused)
+
+    def close(self, refusal: WriteRefusal) -> None:
+        """Refuse every write from now on; an already closed barrier keeps its reason."""
+        with self._lock:
+            if self._refusal is None:
+                self._refusal = refusal
+
+    def refuse_if_closed(self, head: str) -> None:
+        """Raise :class:`ForgeWriteRefusedError` for ``head`` when the barrier is closed."""
+        refusal = self._refusal
+        if refusal is None:
+            return
+        with self._lock:
+            self._refused.append(head)
+        _log.warning("forge.write_refused", head=head, reason=refusal.value)
+        raise ForgeWriteRefusedError(head, refusal)
+
+    @contextmanager
+    def admit(self, args: Sequence[str]) -> Iterator[None]:
+        """Let one write argv through, or refuse it when the barrier is closed."""
+        self.refuse_if_closed(argv_head(args))
+        depth = getattr(self._local, "depth", 0)
+        self._local.depth = depth + 1
+        try:
+            yield
+        finally:
+            self._local.depth = depth
+
+    def require_admitted(self, args: Sequence[str]) -> None:
+        """Refuse a mutating argv that did not come through :meth:`admit`.
+
+        Raises:
+            ForgeWriteBypassError: ``args`` writes and no admission is open
+                on this thread — a write path that skipped the barrier.
+        """
+        if getattr(self._local, "depth", 0) == 0 and is_write_argv(args):
+            raise ForgeWriteBypassError(
+                f"write argv bypassed the forge write barrier: {argv_head(args)}"
+            )
+
+
+def write_barrier(method: _WriteMethod) -> _WriteMethod:
+    """Guard a numbered forge write: the read-only barrier, then the state (G7).
+
+    Every numbered write method of both forges (``post_comment``,
+    ``post_review``, ``reply``, ``upsert_marked_comment``, ``merge``) is
+    decorated with this one barrier. A closed :class:`ForgeWriteBarrier`
+    refuses first, before any read; otherwise :meth:`Forge.pr_state` is
+    read for the method's first argument (the PR / MR number) right
+    before the write and :class:`ForgeStateRefusedError` is raised for
+    any state outside :data:`WRITABLE_STATES`. A failed state read
+    propagates — no write happens on an unknown state.
     """
 
     @functools.wraps(method)
     def guarded(self: Any, number: int, *args: Any, **kwargs: Any) -> Any:
+        self.barrier.refuse_if_closed(f"{method.__name__} #{number}")
         state = self.pr_state(number)
         if state not in WRITABLE_STATES:
             raise ForgeStateRefusedError(
@@ -168,6 +346,17 @@ def write_barrier(method: _WriteMethod) -> _WriteMethod:
                 state=state,
             )
         return method(self, number, *args, **kwargs)
+
+    return cast(_WriteMethod, guarded)
+
+
+def unnumbered_write(method: _WriteMethod) -> _WriteMethod:
+    """Guard a forge write that targets no existing change (``create_pull_request``)."""
+
+    @functools.wraps(method)
+    def guarded(self: Any, *args: Any, **kwargs: Any) -> Any:
+        self.barrier.refuse_if_closed(method.__name__)
+        return method(self, *args, **kwargs)
 
     return cast(_WriteMethod, guarded)
 
@@ -382,6 +571,21 @@ class Forge(Protocol):
     """
 
     name: str
+
+    @property
+    def barrier(self) -> ForgeWriteBarrier:
+        """The write barrier every write of this forge passes through."""
+        ...
+
+    @property
+    def read_only(self) -> bool:
+        """True when :attr:`barrier` refuses every write."""
+        ...
+
+    @property
+    def refused_writes(self) -> list[str]:
+        """Every write :attr:`barrier` refused, in order."""
+        ...
 
     @property
     def bot_username(self) -> str:

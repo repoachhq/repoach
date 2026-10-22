@@ -117,7 +117,7 @@ def test_record_findings_round_trip(tmp_path: Path) -> None:
         db, pr_number=42, head_sha="abc123", outcomes=[outcome], round_n=1, diff=""
     )
 
-    assert count == 2
+    assert count.new == 2
     findings = fetch_findings(db, pr_number=42)
     assert len(findings) == 2
     assert findings[0].finder == "architect"
@@ -142,7 +142,7 @@ def test_unparsed_outcomes_skipped(tmp_path: Path) -> None:
         round_n=1,
         diff="",
     )
-    assert count == 0
+    assert count.new == 0
 
 
 def test_none_head_sha_empty(tmp_path: Path) -> None:
@@ -174,7 +174,7 @@ def test_off_diff_comment_skipped(tmp_path: Path) -> None:
         db, pr_number=1, head_sha="sha", outcomes=[outcome], round_n=1, diff=_DIFF_TOUCHING_FOO
     )
 
-    assert count == 1
+    assert count.new == 1
     findings = fetch_findings(db, pr_number=1)
     assert len(findings) == 1
     assert findings[0].file == "src/foo.py"
@@ -189,7 +189,7 @@ def test_off_diff_missing_test_skipped(tmp_path: Path) -> None:
         db, pr_number=2, head_sha="sha", outcomes=[outcome], round_n=1, diff=_DIFF_TOUCHING_FOO
     )
 
-    assert count == 0
+    assert count.new == 0
     assert fetch_findings(db, pr_number=2) == []
 
 
@@ -205,7 +205,7 @@ def test_in_diff_comments_recorded(tmp_path: Path) -> None:
         db, pr_number=3, head_sha="sha", outcomes=[outcome], round_n=1, diff=_DIFF_TOUCHING_FOO
     )
 
-    assert count == len(comments)
+    assert count.new == len(comments)
     assert len(fetch_findings(db, pr_number=3)) == len(comments)
 
 
@@ -221,7 +221,7 @@ def test_empty_diff_disables_filter(tmp_path: Path) -> None:
         db, pr_number=4, head_sha="sha", outcomes=[outcome], round_n=1, diff=""
     )
 
-    assert count == len(comments)
+    assert count.new == len(comments)
     assert len(fetch_findings(db, pr_number=4)) == len(comments)
 
 
@@ -235,7 +235,7 @@ def test_unparsed_skipped_with_diff(tmp_path: Path) -> None:
         round_n=1,
         diff=_DIFF_TOUCHING_FOO,
     )
-    assert count == 0
+    assert count.new == 0
 
 
 def test_off_diff_skip_emits_positive_event(tmp_path: Path) -> None:

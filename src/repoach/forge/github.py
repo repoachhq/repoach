@@ -45,6 +45,7 @@ from .protocol import (
     ForgeMergeRefusedError,
     ForgeNotFoundError,
     ForgeUnavailableError,
+    ForgeWriteBarrier,
     MergeMethod,
     MergeRefusal,
     MergeResult,
@@ -52,8 +53,10 @@ from .protocol import (
     PullRequestState,
     Review,
     ReviewDraft,
+    WriteRefusal,
     diff_files,
     trusted,
+    unnumbered_write,
     write_barrier,
 )
 from .runner import CommandResult, spawn
@@ -382,6 +385,8 @@ class GitHubForge:
         gh_path: str | None = None,
         timeout_s: int = 60,
         bot_login: str | None = None,
+        read_only: bool = False,
+        refusal: WriteRefusal = WriteRefusal.POSTING_DISABLED,
     ) -> None:
         """Initialise the wrapper.
 
@@ -395,7 +400,12 @@ class GitHubForge:
                 authored by to be honoured (SP-EVIDENCE-SENTINEL-AUTHOR).
                 Defaults to :attr:`~repoach.core.config.Settings.review_bot_login`
                 when omitted, so production call sites need no change.
+            read_only: Refuse every write from the start
+                (SP-DRY-RUN-NEVER-POSTS); :attr:`barrier` can also be
+                closed later.
+            refusal: The reason a ``read_only`` handle names.
         """
+        self._barrier = ForgeWriteBarrier(refusal if read_only else None)
         self._cwd = cwd or Path.cwd()
         self._gh = gh_path or shutil.which("gh") or shutil.which(str(Path.home() / ".local/bin/gh"))
         self._timeout = timeout_s
@@ -411,6 +421,21 @@ class GitHubForge:
     def bot_username(self) -> str:
         """The GitHub login trust-bearing markers must be authored by."""
         return self._bot_login
+
+    @property
+    def barrier(self) -> ForgeWriteBarrier:
+        """The write barrier every write of this forge passes through."""
+        return self._barrier
+
+    @property
+    def read_only(self) -> bool:
+        """True when :attr:`barrier` refuses every write."""
+        return self._barrier.read_only
+
+    @property
+    def refused_writes(self) -> list[str]:
+        """Every write :attr:`barrier` refused, in order."""
+        return self._barrier.refused
 
     def _is_trusted_author(self, comment: object) -> bool:
         """True when a raw comment payload was authored by :attr:`bot_username`.
@@ -441,7 +466,12 @@ class GitHubForge:
             args: Subargs appended after the ``gh`` binary path.
             input_data: Optional stdin payload, forwarded to
                 :meth:`_spawn` (SP-REVIEW-POST-BATCH).
+
+        Raises:
+            ForgeWriteBypassError: ``args`` writes and did not come
+                through :meth:`_write`.
         """
+        self._barrier.require_admitted(args)
         if not self.available():
             return GhResult(
                 returncode=127,
@@ -450,6 +480,15 @@ class GitHubForge:
                 argv=["gh", *args],
             )
         return self._spawn([str(self._gh), *args], input_data=input_data)
+
+    def _write(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        """Spawn a ``gh`` write through :attr:`barrier` (SP-DRY-RUN-NEVER-POSTS).
+
+        Raises:
+            ForgeWriteRefusedError: The barrier is closed; nothing was spawned.
+        """
+        with self._barrier.admit(args):
+            return self._run(args, input_data=input_data)
 
     def _run_git(self, args: list[str]) -> GhResult:
         """Spawn ``git`` in ``cwd`` and capture output like :meth:`_run`."""
@@ -644,7 +683,7 @@ class GitHubForge:
         ]
         if draft:
             args.append("--draft")
-        return self._run(args)
+        return self._write(args)
 
     def _pr_review_comment(
         self,
@@ -673,8 +712,8 @@ class GitHubForge:
             :class:`GhResult`.
         """
         if file is None or line is None or commit_sha is None:
-            return self._run(["pr", "comment", str(pr_number), "--body", body])
-        return self._run(
+            return self._write(["pr", "comment", str(pr_number), "--body", body])
+        return self._write(
             [
                 "api",
                 "--method",
@@ -716,7 +755,7 @@ class GitHubForge:
             "COMMENT": "--comment",
         }
         flag = flag_map.get(verdict.upper(), "--comment")
-        return self._run(
+        return self._write(
             [
                 "pr",
                 "review",
@@ -777,7 +816,7 @@ class GitHubForge:
                 for comment in comments
             ],
         }
-        return self._run(
+        return self._write(
             [
                 "api",
                 "--method",
@@ -878,7 +917,7 @@ class GitHubForge:
         Returns:
             :class:`GhResult`.
         """
-        return self._run(
+        return self._write(
             [
                 "api",
                 "--method",
@@ -1000,7 +1039,7 @@ class GitHubForge:
     def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
         """POST a new issue comment, or PATCH ``existing`` when given."""
         if existing is None:
-            return self._run(
+            return self._write(
                 [
                     "api",
                     "--method",
@@ -1010,7 +1049,7 @@ class GitHubForge:
                     f"body={body}",
                 ]
             )
-        return self._run(
+        return self._write(
             [
                 "api",
                 "--method",
@@ -1569,7 +1608,7 @@ class GitHubForge:
             args += ["--match-head-commit", head_sha]
         if delete_branch:
             args.append("--delete-branch")
-        res = self._run(args)
+        res = self._write(args)
         if not res.ok:
             raise ForgeMergeRefusedError((res.stderr or res.stdout)[-500:])
         m = _MERGE_SHA_RE.search(res.stdout)
@@ -1664,6 +1703,7 @@ class GitHubForge:
                 merge_shas.add(sha)
         return merge_shas
 
+    @unnumbered_write
     def create_pull_request(
         self, *, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PullRequest:

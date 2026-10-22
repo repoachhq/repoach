@@ -65,6 +65,7 @@ from ..forge import (
     InlineCommentDraft,
     Review,
     ReviewDraft,
+    WriteRefusal,
     select_forge,
 )
 from ..forge.protocol import diff_files
@@ -72,17 +73,34 @@ from ..gates.config import load_gates_config
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
-from ..providers.usage import bind_reviewer, reviewer_scope
+from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
-from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
+from .findings import ReviewRun, fetch_completed_review_run, record_review_run
+from .findings_bridge import (
+    RecordedFindings,
+    record_findings_for_outcomes,
+    record_oversized_findings,
+    recount_findings_at_head,
+)
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
     make_repo_file_reader,
     make_repo_symbol_searcher,
 )
-from .merge_gate import compute_merge_decision, summarise_ledger_facts, verdict_from_facts
+from .head_reverify import (
+    NO_HEAD_TREE,
+    HeadReverification,
+    reverify_older_findings,
+    skipped_reverification,
+)
+from .merge_gate import (
+    NO_REVERIFICATION,
+    compute_merge_decision,
+    summarise_ledger_facts,
+    verdict_from_facts,
+)
 from .notifier import fire_review_routine
 from .persistence import (
     DialogueEntry,
@@ -99,6 +117,13 @@ from .refuter import (
     judge_findings_for_pr,
 )
 from .report import render_ledger_report
+from .review_cache import (
+    cache_line,
+    completed_run,
+    replayed_outcomes,
+    replayed_refutations,
+    replayed_spec,
+)
 from .review_head import materialise_head, require_head_sha
 from .review_lessons import remember_verified_findings
 from .review_memory import recall_review_lessons, review_lessons_section
@@ -163,7 +188,7 @@ def record_review_ledger(
     outcomes: list[ReviewerOutcome],
     round_n: int,
     diff: str,
-) -> bool:
+) -> RecordedFindings | None:
     """Persist the review findings, then the integrity row — fail closed.
 
     The integrity row is written ONLY after the findings write succeeds
@@ -198,17 +223,20 @@ def record_review_ledger(
         diff: The reviewed diff (scopes findings to touched files).
 
     Returns:
-        True when both writes landed; False when either failed (the
-        failure is logged loudly and the head stays non-mergeable).
+        What the findings write did (new / already recorded / refuted
+        earlier, SP-FINDINGS-BRIDGE-DOCFIX 0.2) when both writes landed;
+        None when either failed (the failure is logged loudly and the
+        head stays non-mergeable).
     """
     try:
-        n_findings = record_findings_for_outcomes(
+        recorded = record_findings_for_outcomes(
             db_path,
             pr_number=pr_number,
             head_sha=head_sha,
             outcomes=outcomes,
             round_n=round_n,
             diff=diff,
+            run_id=current_run_id(),
         )
         scoped = scope_diff(diff, _DIFF_HARD_CAP_CHARS)
         n_oversized = record_oversized_findings(
@@ -221,7 +249,9 @@ def record_review_ledger(
         _log.info(
             "review_team.findings_recorded",
             pr_number=pr_number,
-            n_findings=n_findings,
+            n_findings=recorded.new,
+            n_already_recorded=recorded.already_recorded,
+            n_refuted_earlier=recorded.refuted_earlier,
             n_oversized_blocking=n_oversized,
         )
     except Exception as exc:
@@ -236,7 +266,7 @@ def record_review_ledger(
             pr_number=pr_number,
             head_sha=head_sha,
         )
-        return False
+        return None
 
     try:
         from .findings import record_review_integrity
@@ -263,8 +293,8 @@ def record_review_ledger(
             exc=type(exc).__name__,
             message=str(exc)[:200],
         )
-        return False
-    return True
+        return None
+    return recorded
 
 
 @dataclass
@@ -289,7 +319,20 @@ class TeamOutcome:
     (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
     ``tree`` is ``worktree`` or ``checkout`` when the review read a
     pinned head tree (SP-REVIEW-PINS-HEAD), and ``worktree`` its path
-    when it was kept.
+    when it was kept. ``reverified`` counts the findings of older heads
+    re-checked at the head before the verdict (SP-GATE-REVERIFIES-AT-HEAD
+    G7), ``reverify_reasons`` names each one still blocking and
+    ``reverify_line`` is the one stderr line saying it (empty when no
+    head was known). ``findings_recorded`` counts what the review's
+    findings write did at the head (new, already recorded, refuted
+    earlier; SP-FINDINGS-BRIDGE-DOCFIX 0.2) and ``findings_line`` is the
+    stderr line saying it, empty when the write failed. ``cached`` is
+    True when the run replayed a completed run at the same head instead
+    of calling the reviewers (SP-FINDINGS-BRIDGE-DOCFIX 0.3) and
+    ``cache_line`` the stderr line naming that run. ``refused_writes`` lists every write the forge's
+    barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
+    healthy dry run, any entry is a defect) and ``write_refusal`` names
+    why the barrier was closed, None when writes went through.
     """
 
     pr_number: int
@@ -309,8 +352,17 @@ class TeamOutcome:
     spec_missing: bool = False
     refutations: list[Refutation] = field(default_factory=list)
     refuter_summary: str | None = None
+    refused_writes: list[str] = field(default_factory=list)
+    write_refusal: str | None = None
     tree: str | None = None
     worktree: str | None = None
+    reverified: dict[str, int] = field(default_factory=lambda: dict(NO_REVERIFICATION))
+    reverify_reasons: list[str] = field(default_factory=list)
+    reverify_line: str = ""
+    findings_recorded: dict[str, int] = field(default_factory=dict)
+    findings_line: str = ""
+    cached: bool = False
+    cache_line: str = ""
 
 
 class ReviewTeamOrchestrator:
@@ -321,7 +373,11 @@ class ReviewTeamOrchestrator:
             for ``repo_root`` (:func:`~repoach.forge.select_forge`) when omitted.
         db_path: Path to the L4 SQLite db.  Defaults to settings.db_path.
         post_to_github: When False, do not publish anything to GitHub
-            (dry-run mode for tests / local previews).
+            (dry-run mode for tests / local previews); the forge's write
+            barrier is then closed, so a write that reaches it is refused
+            and counted instead of sent (SP-DRY-RUN-NEVER-POSTS).
+        write_refusal: The reason the barrier names when
+            ``post_to_github`` is False; ``posting disabled`` by default.
         max_workers: Thread-pool worker count for the four reviewers.
         repo_root: The tree every reader resolves against (the PR head
             tree under :func:`run_review`); the working directory when
@@ -345,16 +401,25 @@ class ReviewTeamOrchestrator:
         repo_root: Path | None = None,
         head_sha: str | None = None,
         config_root: Path | None = None,
+        write_refusal: WriteRefusal | None = None,
+        force: bool = False,
     ) -> None:
-        """Initialise the orchestrator with optional dependencies."""
+        """Initialise the orchestrator with optional dependencies.
+
+        ``force`` re-reviews a pinned head that already has a completed
+        run instead of replaying it (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
+        """
         settings = get_settings()
         self._pinned_head = head_sha
         self._repo_root = repo_root or Path.cwd()
         self._config_root = config_root or self._repo_root
         self._forge = forge or select_forge(cwd=self._repo_root)
+        if not post_to_github:
+            self._forge.barrier.close(write_refusal or WriteRefusal.POSTING_DISABLED)
         self._db_path = db_path or Path(settings.db_path)
         self._post = post_to_github
         self._max_workers = max_workers
+        self._force = force
         init_schema(self._db_path)
 
     def _load_declared_spec(self, declared: SpecResolution) -> SpecPlan | None:
@@ -387,6 +452,20 @@ class ReviewTeamOrchestrator:
             return None
 
     def review_pr(self, pr_number: int, *, spec_flag: str | None = None) -> TeamOutcome:
+        """Review ``pr_number`` (:meth:`_review_pr`) and report the barrier's refusals.
+
+        ``refused_writes`` on the outcome lists the writes the forge's
+        barrier refused during this run and ``write_refusal`` why it was
+        closed (SP-DRY-RUN-NEVER-POSTS).
+        """
+        refused_before = len(self._forge.barrier.refused)
+        team = self._review_pr(pr_number, spec_flag=spec_flag)
+        team.refused_writes = self._forge.barrier.refused[refused_before:]
+        refusal = self._forge.barrier.refusal
+        team.write_refusal = refusal.value if refusal is not None else None
+        return team
+
+    def _review_pr(self, pr_number: int, *, spec_flag: str | None = None) -> TeamOutcome:
         """Run the four reviewers in parallel and return aggregated outcome.
 
         Args:
@@ -450,7 +529,15 @@ class ReviewTeamOrchestrator:
                retired consensus gate.  Iteration happens at the workflow
                layer : each new commit on the impl branch re-fires
                ``auto-review.yml`` which calls back into us.
+
+        Before any of it, a pinned head with a completed run in the
+        ledger is replayed (:meth:`_replay`) unless ``force`` was given:
+        no reviewer and no refuter is called (SP-FINDINGS-BRIDGE-DOCFIX
+        0.3).
         """
+        cached = self._completed_run(pr_number)
+        if cached is not None:
+            return self._replay(pr_number, cached)
         try:
             diff = self._forge.diff(pr_number).text
         except ForgeError as exc:
@@ -695,7 +782,7 @@ class ReviewTeamOrchestrator:
             head_guard_pool, head_guard_future, pr_number=pr_number
         )
 
-        record_review_ledger(
+        recorded = record_review_ledger(
             self._db_path,
             pr_number=pr_number,
             head_sha=head_sha,
@@ -724,6 +811,7 @@ class ReviewTeamOrchestrator:
 
         refutations: list[Refutation] = []
         refuter_summary: str | None = None
+        refuter_calls = 0
         try:
             with reviewer_scope("Refuter"):
                 judging = judge_findings_for_pr(
@@ -739,6 +827,7 @@ class ReviewTeamOrchestrator:
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
+            refuter_calls = judging.model_calls
             _log.info(
                 "review_team.findings_judged",
                 pr_number=pr_number,
@@ -765,6 +854,10 @@ class ReviewTeamOrchestrator:
                 exc=type(exc).__name__,
                 message=str(exc)[:200],
             )
+
+        reverified = self._reverify_older_heads(
+            pr_number, head_sha=head_sha, refuter_calls=refuter_calls
+        )
 
         state_refused: ForgeStateRefusedError | None = None
         try:
@@ -881,7 +974,17 @@ class ReviewTeamOrchestrator:
             spec_missing=spec_missing,
             refutations=refutations,
             refuter_summary=refuter_summary,
+            reverified=reverified.counts(),
+            reverify_reasons=reverified.reasons(),
+            reverify_line=reverified.summary_line("review") if head_sha else "",
+            findings_recorded=recorded.counts() if recorded is not None else {},
+            findings_line=recorded.summary_line() if recorded is not None else "",
         )
+
+        if not errored_roles and recorded is not None and self._pinned_head:
+            self._store_completed_run(
+                run_id=recorded.run_id, outcomes=outcomes, team=team, head_sha=self._pinned_head
+            )
 
         for outcome in outcomes:
             record_review(
@@ -924,6 +1027,210 @@ class ReviewTeamOrchestrator:
             posted=team.posted_reviews,
         )
         return team
+
+    def _completed_run(self, pr_number: int) -> ReviewRun | None:
+        """Return the completed run at the pinned head to replay, or None.
+
+        None when no head is pinned (the head is only known after the
+        reviewers ran), when ``force`` was given, or when no run at that
+        head completed. A ledger read failure is logged and reviews
+        afresh.
+        """
+        if self._force or not self._pinned_head:
+            return None
+        try:
+            return fetch_completed_review_run(self._db_path, pr_number, self._pinned_head)
+        except Exception as exc:
+            _log.warning(
+                "review_team.cache_read_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="reviewing afresh",
+            )
+            return None
+
+    def _store_completed_run(
+        self,
+        *,
+        run_id: str,
+        outcomes: list[ReviewerOutcome],
+        team: TeamOutcome,
+        head_sha: str,
+    ) -> None:
+        """Store the run just completed so a later run at ``head_sha`` replays it.
+
+        A write failure is logged; the next run at that head then
+        reviews afresh.
+        """
+        try:
+            record_review_run(
+                self._db_path,
+                completed_run(
+                    run_id=run_id,
+                    pr_number=team.pr_number,
+                    head_sha=head_sha,
+                    final_verdict=team.final_verdict,
+                    outcomes=outcomes,
+                    refutations=team.refutations,
+                    spec={
+                        "spec_id": team.spec_id,
+                        "spec_source": team.spec_source,
+                        "spec_covered": team.spec_covered,
+                        "spec_missing": team.spec_missing,
+                    },
+                ),
+            )
+        except Exception as exc:
+            _log.warning(
+                "review_team.run_store_failed",
+                pr_number=team.pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="the next review at this head runs the reviewers again",
+            )
+
+    def _replay(self, pr_number: int, run: ReviewRun) -> TeamOutcome:
+        """Return the outcome of ``run`` at its head without calling any reviewer.
+
+        The stored reviewer outcomes, refutations and spec fields are
+        read back; the findings of the head are already in the ledger, and
+        the ``findings:`` counts are recounted against it without a write
+        (:func:`~repoach.review.findings_bridge.recount_findings_at_head`).
+        The re-check of older heads still runs
+        (SP-GATE-REVERIFIES-AT-HEAD G7; no model call when nothing older
+        is unsettled) and the verdict is derived from the ledger as a
+        fresh run derives it. A posting run posts the stored outcomes
+        through the forge's barrier; a dry run's barrier refuses them.
+        """
+        outcomes = replayed_outcomes(run)
+        spec = replayed_spec(run)
+        head_sha = run.head_sha
+        recounted = recount_findings_at_head(
+            self._db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            outcomes=outcomes,
+            run_id=run.run_id,
+        )
+        reverified = self._reverify_older_heads(pr_number, head_sha=head_sha, refuter_calls=0)
+        facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
+        spec_covered = spec.get("spec_covered")
+        team = TeamOutcome(
+            pr_number=pr_number,
+            final_verdict=verdict_from_facts(facts),
+            n_blockers=sum(1 for o in outcomes for c in o.comments if c.severity == "blocker"),
+            n_majors=sum(1 for o in outcomes for c in o.comments if c.severity == "major"),
+            head_sha=head_sha,
+            reviews=outcomes,
+            spec_id=_optional_str(spec.get("spec_id")),
+            spec_source=_optional_str(spec.get("spec_source")),
+            spec_covered=None if spec_covered is None else bool(spec_covered),
+            spec_missing=bool(spec.get("spec_missing", False)),
+            refutations=replayed_refutations(run),
+            reverified=reverified.counts(),
+            reverify_reasons=reverified.reasons(),
+            reverify_line=reverified.summary_line("review"),
+            findings_recorded=recounted.counts(),
+            findings_line=recounted.summary_line(),
+            cached=True,
+            cache_line=cache_line(run),
+        )
+        if self._post:
+            self._publish_replayed(pr_number, team)
+        _log.info(
+            "review_team.replayed",
+            pr_number=pr_number,
+            head_sha=head_sha[:12],
+            run_id=run.run_id,
+            verdict=team.final_verdict.value,
+        )
+        return team
+
+    def _publish_replayed(self, pr_number: int, team: TeamOutcome) -> None:
+        """Post a replayed run's stored outcomes, as a fresh posting run posts its own."""
+        from .thread_context import fetch_resolved_disagreements
+
+        try:
+            resolved_per_role = {
+                o.role: tuple(fetch_resolved_disagreements(self._forge, pr_number, role=o.role))
+                for o in team.reviews
+            }
+        except Exception as exc:
+            _log.warning(
+                "review_team.resolved_disagreements_fetch_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+            resolved_per_role = {o.role: () for o in team.reviews}
+        try:
+            self._publish_all(
+                pr_number=pr_number,
+                outcomes=team.reviews,
+                head_sha=team.head_sha,
+                team=team,
+                resolved_per_role=resolved_per_role,
+            )
+        except ForgeStateRefusedError as exc:
+            team.posting_outcome = "SKIP_STATE"
+            _log.warning(
+                "review_team.posting_skipped_state",
+                pr_number=pr_number,
+                state=exc.state,
+                posted_reviews=team.posted_reviews,
+                posted_comments=team.posted_comments,
+            )
+
+    def _reverify_older_heads(
+        self, pr_number: int, *, head_sha: str | None, refuter_calls: int
+    ) -> HeadReverification:
+        """Re-check the findings of older heads at ``head_sha`` before the verdict.
+
+        SP-GATE-REVERIFIES-AT-HEAD G7-G10: the same pass as the gate
+        (:func:`~repoach.review.head_reverify.reverify_older_findings`),
+        so a person's fix pushed at ``head_sha`` settles the findings of
+        the head before it and the team verdict counts only what is still
+        open there. It runs only on the pinned head tree; CI is not read
+        (``broken_behavior`` stays with the gate) and the judge calls come
+        out of the refuter cap the review's own refuter pass spent
+        ``refuter_calls`` of. A failure is logged and reported as a
+        skipped re-check, and the findings of older heads keep blocking.
+        """
+        if not head_sha:
+            return HeadReverification(head_sha="")
+        if not self._pinned_head:
+            return skipped_reverification(
+                self._db_path,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                reason=NO_HEAD_TREE,
+                reads_ci=False,
+            )
+        cap = configured_max_judged(self._config_root)
+        try:
+            with reviewer_scope("Refuter"):
+                return reverify_older_findings(
+                    self._db_path,
+                    pr_number=pr_number,
+                    repo_root=self._repo_root,
+                    head_sha=head_sha,
+                    ci_green=None,
+                    config=load_gates_config(self._config_root),
+                    max_judged=max(cap - refuter_calls, 0),
+                    cap=cap,
+                )
+        except Exception as exc:
+            _log.warning(
+                "review_team.head_reverify_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="findings of older heads keep blocking",
+            )
+            return HeadReverification(
+                head_sha=head_sha, skipped=f"re-check failed: {type(exc).__name__}"
+            )
 
     def _publish_all(
         self,
@@ -1395,6 +1702,7 @@ class ReviewTeamOrchestrator:
             return
 
         dossier = build_proposed_escalation_dossier(newly)
+        self._forge.barrier.refuse_if_closed("routine fire proposed_escalation")
         result = fire_review_routine(
             routine_id=routine_id,
             token=token,
@@ -1454,6 +1762,7 @@ class ReviewTeamOrchestrator:
             return
 
         payload = team_outcome_to_dict(team)
+        self._forge.barrier.refuse_if_closed("routine fire review_outcome")
         result = fire_review_routine(
             routine_id=routine_id,
             token=token,
@@ -1592,11 +1901,19 @@ class ReviewTeamOrchestrator:
         this report — the review job runs from the base ref, so on-disk
         re-verification here would be wrong (hence
         :func:`summarise_ledger_facts`, not :func:`gather_merge_facts`).
+        The findings of older heads the review re-checked at its head and
+        found still blocking are named in the headline's reasons, as the
+        gate names them (SP-GATE-REVERIFIES-AT-HEAD G8).
         """
         facts = summarise_ledger_facts(
             self._db_path,
             pr_number=team.pr_number,
             head_sha=team.head_sha or "",
+        ).model_copy(
+            update={
+                "reverified": dict(team.reverified),
+                "reverify_reasons": list(team.reverify_reasons),
+            }
         )
         decision = compute_merge_decision(facts)
         return render_ledger_report(
@@ -1656,6 +1973,11 @@ def _drop_retracted_comments(outcome: ReviewerOutcome) -> ReviewerOutcome:
     )
 
 
+def _optional_str(value: object) -> str | None:
+    """Return ``value`` as a string, None when it is None."""
+    return None if value is None else str(value)
+
+
 def team_outcome_to_dict(team: TeamOutcome) -> dict:
     """Serialise a TeamOutcome to a JSON-friendly dict (idempotent shape).
 
@@ -1671,6 +1993,10 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "posted_comments": team.posted_comments,
         "posted_reviews": team.posted_reviews,
         "n_hallucinations_downgraded": len(team.hallucinations),
+        "reverified": dict(team.reverified),
+        "reverify_reasons": list(team.reverify_reasons),
+        "findings_recorded": dict(team.findings_recorded),
+        "cached": team.cached,
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [
@@ -1978,6 +2304,8 @@ def run_review(
     spec: str | None = None,
     keep_tree: bool = False,
     announce: Callable[[str], None] | None = None,
+    write_refusal: WriteRefusal | None = None,
+    force: bool = False,
 ) -> TeamOutcome:
     """Review the PR head tree and return the aggregated outcome (CLI entry).
 
@@ -1998,6 +2326,11 @@ def run_review(
         keep_tree: Leave the worktree in place and report its path.
         announce: Receives the ``reviewing <N> at <sha7> (<tree> <path>)``
             line before the reviewers start.
+        write_refusal: Why nothing may be written when ``post`` is False
+            (``dry run`` from ``--dry-run``, the advisory variable in CI);
+            the forge is read-only from its selection on.
+        force: Re-review a head that already has a completed run instead
+            of replaying it (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers,
@@ -2012,7 +2345,10 @@ def run_review(
     """
     require_provider_ready()
     checkout = Path.cwd()
+    refusal = None if post else (write_refusal or WriteRefusal.POSTING_DISABLED)
     forge = forge or select_forge(cwd=checkout)
+    if refusal is not None:
+        forge.barrier.close(refusal)
     sha = require_head_sha(resolve_fresh_head(forge, pr_number, repo_root=checkout), pr_number)
     db_path = Path(get_settings().db_path)
     with materialise_head(
@@ -2027,6 +2363,8 @@ def run_review(
             repo_root=tree.root,
             head_sha=sha,
             config_root=checkout,
+            write_refusal=refusal,
+            force=force,
         ).review_pr(pr_number, spec_flag=spec)
     team.tree = tree.tree
     team.worktree = str(tree.root) if tree.tree == "worktree" and tree.kept else None

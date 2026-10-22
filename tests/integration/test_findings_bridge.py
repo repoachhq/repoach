@@ -46,7 +46,7 @@ def test_smoke_bridge_records_valid_skips_garbage(tmp_path: Path) -> None:
         diff="",
     )
 
-    assert result == 2
+    assert result.new == 2
 
     findings = fetch_findings(db, pr_number=101)
     assert len(findings) == 2

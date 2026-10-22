@@ -33,6 +33,9 @@ CLAUDE_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 POST_VAR = "REPOACH_ADVISORY_POST"
 """Posting switch: only the exact value ``1`` posts; anything else is a dry run."""
 
+FORCE_VAR = "REPOACH_REVIEW_FORCE"
+"""Re-review switch: ``1`` passes ``--force``, re-running the reviewers on a head already reviewed."""
+
 MODEL_VARS: tuple[str, ...] = ("REPOACH_MODEL_OPUS", "REPOACH_MODEL_SONNET", "REPOACH_MODEL_HAIKU")
 """Direct-provider mode: per-tier Anthropic model overrides."""
 
@@ -159,6 +162,11 @@ CI_VARIABLES: tuple[CiVariable, ...] = (
         for name in DIRECT_KEY_VARS
     ),
     CiVariable(name=POST_VAR, group="posting", purpose="1 posts; anything else is a dry run"),
+    CiVariable(
+        name=FORCE_VAR,
+        group="posting",
+        purpose="1 re-reviews a head already reviewed; otherwise its run is replayed",
+    ),
     *(
         CiVariable(name=name, group="model", purpose="direct mode: model id override")
         for name in MODEL_VARS

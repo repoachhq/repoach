@@ -38,7 +38,11 @@ def _decision_header(decision: MergeDecision, head_sha: str) -> str:
 
 
 def _facts_table(facts: MergeFacts) -> str:
-    """Render the re-verified merge facts as a markdown table."""
+    """Render the re-verified merge facts as a markdown table.
+
+    The re-check of findings raised at older heads gets its own row
+    when it re-checked any (SP-GATE-REVERIFIES-AT-HEAD G8).
+    """
     spec = facts.spec_covered if facts.spec_coverage_known else "n/a"
     review = facts.review_complete if facts.review_integrity_known else "n/a"
     rows = [
@@ -47,6 +51,16 @@ def _facts_table(facts: MergeFacts) -> str:
         ("Spec covered", spec),
         ("Review complete", review),
     ]
+    if any(facts.reverified.values()):
+        counts = facts.reverified
+        rows.append(
+            (
+                "Findings of older heads re-verified",
+                f"resolved {counts.get('resolved', 0)}, "
+                f"still open {counts.get('still_open', 0)}, "
+                f"needs judgement {counts.get('needs_judgement', 0)}",
+            )
+        )
     lines = ["| Fact | Value |", "| --- | --- |"]
     lines.extend(f"| {name} | {value} |" for name, value in rows)
     return "\n".join(lines)

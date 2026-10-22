@@ -57,6 +57,8 @@ def _gh_stub_with_commits(
         if args[:2] == ["ls-remote", "origin"]:
             stdout = f"{remote_sha}\trefs/heads/develop\n" if remote_sha else ""
             return GhResult(returncode=0, stdout=stdout, stderr="", argv=args)
+        if args[:2] == ["rev-list", "--count"]:
+            return GhResult(returncode=0, stdout="0\n", stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
     gh.git.side_effect = _run_git_side

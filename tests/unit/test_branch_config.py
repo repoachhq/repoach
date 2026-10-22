@@ -213,7 +213,8 @@ def test_release_gate_gather_facts_uses_configured_branch_names(
     assert ["rev-parse", "trunk"] in calls
     assert ["ls-remote", "origin", "trunk"] in calls
     log_calls = [c for c in calls if c[:1] == ["log"]]
-    assert log_calls and log_calls[0][1] == "release..trunk"
+    assert ["fetch", "--quiet", "origin", "release", "trunk"] in calls
+    assert log_calls and log_calls[0][1] == "origin/release..origin/trunk"
     assert not any("develop" in arg for c in calls for arg in c)
     assert not any(arg == "main" for c in calls for arg in c)
 

@@ -49,6 +49,7 @@ from .protocol import (
     ForgeMergeRefusedError,
     ForgeNotFoundError,
     ForgeUnavailableError,
+    ForgeWriteBarrier,
     MergeMethod,
     MergeRefusal,
     MergeResult,
@@ -56,8 +57,10 @@ from .protocol import (
     PullRequestState,
     Review,
     ReviewDraft,
+    WriteRefusal,
     diff_files,
     trusted,
+    unnumbered_write,
     write_barrier,
 )
 from .runner import CommandResult, spawn
@@ -289,6 +292,8 @@ class GitLabForge:
         timeout_s: int = 120,
         bot_username: str = "",
         project: str = PROJECT,
+        read_only: bool = False,
+        refusal: WriteRefusal = WriteRefusal.POSTING_DISABLED,
     ) -> None:
         """Initialise the forge.
 
@@ -300,7 +305,12 @@ class GitLabForge:
                 trusts no marker.
             project: The project path prefix for REST calls; the
                 ``projects/:id`` placeholder by default.
+            read_only: Refuse every write from the start
+                (SP-DRY-RUN-NEVER-POSTS); :attr:`barrier` can also be
+                closed later.
+            refusal: The reason a ``read_only`` handle names.
         """
+        self._barrier = ForgeWriteBarrier(refusal if read_only else None)
         self._cwd = cwd or Path.cwd()
         self._glab = glab_path or shutil.which("glab")
         self._timeout = timeout_s
@@ -311,6 +321,21 @@ class GitLabForge:
     def bot_username(self) -> str:
         """The username whose trust-bearing markers are honoured."""
         return self._bot_username
+
+    @property
+    def barrier(self) -> ForgeWriteBarrier:
+        """The write barrier every write of this forge passes through."""
+        return self._barrier
+
+    @property
+    def read_only(self) -> bool:
+        """True when :attr:`barrier` refuses every write."""
+        return self._barrier.read_only
+
+    @property
+    def refused_writes(self) -> list[str]:
+        """Every write :attr:`barrier` refused, in order."""
+        return self._barrier.refused
 
     def available(self) -> bool:
         """True when a ``glab`` binary is reachable."""
@@ -325,12 +350,27 @@ class GitLabForge:
         return spawn(argv, cwd=self._cwd, timeout_s=self._timeout, input_data=input_data)
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> CommandResult:
-        """Run ``glab`` with ``args``; ``returncode`` 127 when it is missing."""
+        """Run ``glab`` with ``args``; ``returncode`` 127 when it is missing.
+
+        Raises:
+            ForgeWriteBypassError: ``args`` writes and did not come
+                through :meth:`_write`.
+        """
+        self._barrier.require_admitted(args)
         if not self.available():
             return CommandResult(
                 returncode=127, stdout="", stderr="glab CLI not installed", argv=["glab", *args]
             )
         return self._spawn([str(self._glab), *args], input_data=input_data)
+
+    def _write(self, args: list[str], *, input_data: str | None = None) -> CommandResult:
+        """Run a ``glab`` write through :attr:`barrier` (SP-DRY-RUN-NEVER-POSTS).
+
+        Raises:
+            ForgeWriteRefusedError: The barrier is closed; nothing was spawned.
+        """
+        with self._barrier.admit(args):
+            return self._run(args, input_data=input_data)
 
     def git(self, args: list[str]) -> CommandResult:
         """Run ``git`` in the clone."""
@@ -383,7 +423,8 @@ class GitLabForge:
         if payload is not None:
             args += ["--header", "Content-Type: application/json", "--input", "-"]
             input_data = json.dumps(payload)
-        res = self._run(args, input_data=input_data)
+        run = self._run if method == "GET" else self._write
+        res = run(args, input_data=input_data)
         if self._failed(res):
             self._raise(res, number=number)
         return res.stdout
@@ -829,7 +870,7 @@ class GitLabForge:
             args.append("--remove-source-branch")
         if pinned:
             args += ["--sha", pinned]
-        res = self._run(args)
+        res = self._write(args)
         if self._failed(res):
             if res.returncode == 127:
                 self._raise(res, number=number)
@@ -897,6 +938,7 @@ class GitLabForge:
                     shas.add(sha)
         return shas
 
+    @unnumbered_write
     def create_pull_request(
         self, *, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PullRequest:
@@ -916,7 +958,7 @@ class GitLabForge:
         ]
         if draft:
             args.append("--draft")
-        res = self._run(args)
+        res = self._write(args)
         if self._failed(res):
             self._raise(res)
         url = ""
