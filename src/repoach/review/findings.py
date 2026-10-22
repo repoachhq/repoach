@@ -170,6 +170,11 @@ class Finding(BaseModel):
         verification_method: How the verifier checked this finding.
         verification_result: What the verifier concluded.
         checked_at_sha: Commit SHA when the finding was last verified.
+        verify_attempts: Mechanical verification attempts made so far.
+        last_seen_at: UTC ISO-8601 time a review last raised this finding
+            at its head (SP-FINDINGS-BRIDGE-DOCFIX 0.2); empty on rows
+            recorded before that column existed.
+        last_run_id: Identifier of the review run that last raised it.
         id: Database surrogate key; None until persisted.
     """
 
@@ -189,6 +194,8 @@ class Finding(BaseModel):
     verification_result: str = ""
     checked_at_sha: str = ""
     verify_attempts: int = 0
+    last_seen_at: str = ""
+    last_run_id: str = ""
     id: int | None = None
 
 
@@ -212,6 +219,8 @@ pr_findings = Table(
     Column("verification_result", String, nullable=False),
     Column("checked_at_sha", String, nullable=False),
     Column("verify_attempts", Integer, nullable=False, default=0),
+    Column("last_seen_at", String, nullable=False, default=""),
+    Column("last_run_id", String, nullable=False, default=""),
 )
 
 
@@ -346,6 +355,18 @@ def _migrate_missing_findings_columns(engine: Engine) -> None:
             "INTEGER NOT NULL DEFAULT 0",
             "SP-PROPOSED-ESCALATION 1/5",
         ),
+        (
+            "pr_findings",
+            "last_seen_at",
+            "TEXT NOT NULL DEFAULT ''",
+            "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
+        ),
+        (
+            "pr_findings",
+            "last_run_id",
+            "TEXT NOT NULL DEFAULT ''",
+            "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
+        ),
     )
 
     inspector = inspect(engine)
@@ -439,6 +460,8 @@ def record_finding(db_path: Path, finding: Finding) -> int:
         verification_result=finding.verification_result,
         checked_at_sha=finding.checked_at_sha,
         verify_attempts=finding.verify_attempts,
+        last_seen_at=finding.last_seen_at,
+        last_run_id=finding.last_run_id,
     )
     with engine.connect() as conn:
         result = conn.execute(stmt)
@@ -498,6 +521,33 @@ def update_finding_status(
         )
         conn.commit()
         return True
+
+
+def mark_finding_seen(db_path: Path, finding_id: int, *, run_id: str, seen_at: str) -> bool:
+    """Stamp a finding a later review raised again at the same head.
+
+    Only ``last_seen_at`` and ``last_run_id`` change: the lifecycle
+    status, the verification diagnostic and the claim stay as they are,
+    so a re-review never re-opens what was already judged
+    (SP-FINDINGS-BRIDGE-DOCFIX 0.2).
+
+    Args:
+        db_path: Path to the SQLite database file.
+        finding_id: Surrogate key of the row to stamp.
+        run_id: Identifier of the review run that raised it again.
+        seen_at: UTC ISO-8601 time of that run.
+
+    Returns:
+        True when the row exists and was stamped; False otherwise.
+    """
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        result = conn.execute(
+            update(pr_findings)
+            .where(pr_findings.c.id == finding_id)
+            .values(last_seen_at=seen_at, last_run_id=run_id)
+        )
+    return bool(result.rowcount)
 
 
 def record_verification_attempt(
@@ -574,6 +624,8 @@ def _rows_to_findings(rows: list) -> list[Finding]:
             verification_result=row["verification_result"],
             checked_at_sha=row["checked_at_sha"],
             verify_attempts=int(row["verify_attempts"]),
+            last_seen_at=row["last_seen_at"],
+            last_run_id=row["last_run_id"],
         )
         for row in rows
     ]

@@ -263,6 +263,13 @@ def review_pr(
     ``review: re-verified …`` line on stderr says it. CI is not read,
     so ``broken_behavior`` findings are left to the gate.
 
+    A finding is recorded once per head (SP-FINDINGS-BRIDGE-DOCFIX 0.2):
+    one ``findings: N new, M already recorded, K refuted earlier`` line
+    on stderr says how many of the reviewers' findings were new at the
+    head, already in the ledger there, or refuted there by an earlier
+    run; a row already judged there is not judged again. ``findings_recorded`` in
+    the JSON carries the same three counts.
+
     The review reads the PR head, never the checkout's branch
     (SP-REVIEW-PINS-HEAD G2): the head SHA comes from the forge, its tree
     is the checkout when that is at the SHA and clean, else a detached
@@ -336,6 +343,7 @@ def review_pr(
         "write_refusal": team.write_refusal,
         "reverified": team.reverified,
         "reverify_reasons": team.reverify_reasons,
+        "findings_recorded": team.findings_recorded,
         "reviews": [
             {
                 "role": o.role.value,
@@ -355,6 +363,8 @@ def review_pr(
         "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    if team.findings_line:
+        typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
         typer.echo(team.refuter_summary, err=True)
     if team.reverify_line:
