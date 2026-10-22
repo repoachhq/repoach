@@ -61,6 +61,7 @@ from .context import (
 from .gateway import GatewayHandle, GatewayStartError
 from .variables import (
     DIRECT_KEY_VARS,
+    FORCE_VAR,
     GATEWAY_TOKEN_VAR,
     GATEWAY_URL_VAR,
     GITHUB_TOKEN_VARS,
@@ -579,6 +580,8 @@ def subprocess_review_runner(
             argv.append("--dry-run")
             if plan.write_refusal is not None:
                 argv += ["--dry-run-reason", plan.write_refusal.value]
+        if env.get(FORCE_VAR, "").strip() == "1":
+            argv.append("--force")
         process = subprocess.Popen(
             argv, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True, start_new_session=True
         )
