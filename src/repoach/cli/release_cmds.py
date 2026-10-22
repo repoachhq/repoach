@@ -107,6 +107,7 @@ def release_gate(
         "remote_sha": facts.remote_sha,
         "pr_head_sha": facts.pr_head_sha,
         "ci_green": facts.ci_green,
+        "branch_freshness": [freshness.model_dump() for freshness in facts.branch_freshness],
         "merge": decision.merge,
         "reasons": decision.reasons,
     }

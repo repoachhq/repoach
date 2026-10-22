@@ -112,6 +112,8 @@ def _gh_stub_with_commits(
         if args[:2] == ["ls-remote", "origin"]:
             stdout = f"{remote_sha}\trefs/heads/develop\n" if remote_sha else ""
             return GhResult(returncode=0, stdout=stdout, stderr="", argv=args)
+        if args[:2] == ["rev-list", "--count"]:
+            return GhResult(returncode=0, stdout="0\n", stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
     gh.git.side_effect = _run_git_side
@@ -242,6 +244,8 @@ def _gh_stub(*, develop_sha: str, remote_sha: str, pr_head_sha: str | None = Non
         if args[:2] == ["ls-remote", "origin"]:
             stdout = f"{remote_sha}\trefs/heads/develop\n" if remote_sha else ""
             return GhResult(returncode=0, stdout=stdout, stderr="", argv=args)
+        if args[:2] == ["rev-list", "--count"]:
+            return GhResult(returncode=0, stdout="0\n", stderr="", argv=args)
         return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
     gh.git.side_effect = _run_git_side
@@ -622,3 +626,125 @@ def test_verify_release_live_rejects_squash_shape(tmp_path: Path) -> None:
     assert result.verified is False
     assert "squash" in result.detail or "stale" in result.detail
     assert not (tmp_path / "release_gate_receipt.json").exists()
+
+
+def _commit(repo: Path, name: str, subject: str) -> str:
+    """Commit one new file named *name* in *repo* and return the new SHA."""
+    (repo / name).write_text(f"{name}\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", subject)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _release_with_stale_local_main(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    """Build an operator clone whose local ``main`` lags ``origin/main`` by one squash.
+
+    A "developer" clone seeds ``main``, then lands squash ``(#1)`` on
+    ``main`` and branches ``develop`` from it with squash ``(#2)``. The
+    "operator" clone was taken before ``(#1)`` landed: its local
+    ``main`` and its ``origin/main`` tracking ref are both stale, while
+    its local ``develop`` is created from the live ``origin/develop``.
+
+    Returns:
+        ``(developer_dir, operator_dir, released_sha, unreleased_sha)``
+        -- ``released_sha`` is ``(#1)``, already an ancestor of
+        ``origin/main``; ``unreleased_sha`` is ``(#2)``, the one commit
+        in the real release range.
+    """
+    origin_dir = tmp_path / "origin.git"
+    developer_dir = tmp_path / "developer"
+    operator_dir = tmp_path / "operator"
+    _git(tmp_path, "init", "--bare", "-q", "-b", "main", str(origin_dir))
+    _git(tmp_path, "clone", "-q", str(origin_dir), str(developer_dir))
+    _git(developer_dir, "config", "user.email", "test@example.invalid")
+    _git(developer_dir, "config", "user.name", "Test Runner")
+    _commit(developer_dir, "README.md", "chore: init")
+    _git(developer_dir, "push", "-q", "-u", "origin", "main")
+
+    _git(tmp_path, "clone", "-q", str(origin_dir), str(operator_dir))
+    _git(operator_dir, "config", "user.email", "test@example.invalid")
+    _git(operator_dir, "config", "user.name", "Test Runner")
+
+    released_sha = _commit(developer_dir, "released.txt", "Add released feature (#1)")
+    _git(developer_dir, "push", "-q", "origin", "main")
+    _git(developer_dir, "switch", "-q", "-c", "develop")
+    unreleased_sha = _commit(developer_dir, "unreleased.txt", "Add unreleased feature (#2)")
+    _git(developer_dir, "push", "-q", "-u", "origin", "develop")
+
+    _git(operator_dir, "fetch", "-q", "origin", "develop:develop")
+    return developer_dir, operator_dir, released_sha, unreleased_sha
+
+
+def _ledger_with(tmp_path: Path, merged_sha: str) -> Path:
+    """Create a ``pr_merges`` ledger recording one gated merge at *merged_sha*."""
+    db_path = tmp_path / "review.sqlite"
+    init_schema(db_path)
+    record_merge(
+        db_path,
+        pr_number=2,
+        outcome="APPROVE",
+        base_ref="develop",
+        head_ref="feat/unreleased",
+        merged_sha=merged_sha,
+        notes="",
+    )
+    return db_path
+
+
+def test_release_range_reads_fetched_origin_refs_not_stale_local_main(tmp_path: Path) -> None:
+    """A stale local ``main`` is a named freshness reason, never fabricated out-of-band commits.
+
+    The operator's local ``main`` lags ``origin/main`` by squash
+    ``(#1)``, which has no ledger record. Diffing the bare local
+    ``main..develop`` lists ``(#1)`` as out-of-band although it is
+    already released; the real range ``origin/main..origin/develop``
+    holds only the ledger-backed ``(#2)``.
+    """
+    _developer_dir, operator_dir, _released_sha, unreleased_sha = _release_with_stale_local_main(
+        tmp_path
+    )
+    db_path = _ledger_with(tmp_path, unreleased_sha)
+
+    facts = gather_release_facts(
+        repo_root=tmp_path,
+        forge=GitHubForge(cwd=operator_dir),
+        ci_runner=_noop_ci_runner,
+        db_path=db_path,
+    )
+    decision = compute_release_decision(facts)
+
+    assert facts.out_of_band_commits == []
+    assert facts.provenance_error is None
+    assert "local main is 1 commit behind origin/main" in decision.reasons
+    assert not any("out-of-band" in reason for reason in decision.reasons)
+    assert decision.merge is False
+
+
+def test_release_range_on_origin_refs_still_refuses_true_out_of_band_commit(
+    tmp_path: Path,
+) -> None:
+    """A commit pushed straight to ``origin/develop`` without a gated PR is still refused."""
+    developer_dir, operator_dir, _released_sha, unreleased_sha = _release_with_stale_local_main(
+        tmp_path
+    )
+    _git(operator_dir, "pull", "-q", "--ff-only", "origin", "main")
+    _commit(developer_dir, "hotfix.txt", "hotfix pushed straight to develop")
+    _git(developer_dir, "push", "-q", "origin", "develop")
+    _git(operator_dir, "fetch", "-q", "origin", "develop:develop")
+    db_path = _ledger_with(tmp_path, unreleased_sha)
+
+    facts = gather_release_facts(
+        repo_root=tmp_path,
+        forge=GitHubForge(cwd=operator_dir),
+        ci_runner=_noop_ci_runner,
+        db_path=db_path,
+    )
+    decision = compute_release_decision(facts)
+
+    assert facts.out_of_band_commits == ["hotfix pushed straight to develop"]
+    assert all(freshness.behind == 0 for freshness in facts.branch_freshness)
+    assert all(freshness.ahead == 0 for freshness in facts.branch_freshness)
+    assert decision.merge is False
+    assert decision.reasons == [
+        "out-of-band commit not a gated-PR squash: hotfix pushed straight to develop"
+    ]
