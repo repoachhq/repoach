@@ -1,11 +1,12 @@
-"""SP-FINDINGS-BRIDGE-DOCFIX 0.2: a re-review at the same head records nothing twice.
+"""SP-FINDINGS-BRIDGE-DOCFIX 0.2-0.3: a re-review at the same head records nothing twice.
 
 A real git origin carries ``refs/pull/7/head`` and a forge with a stubbed
 ``gh`` serves it. Two reviewers raise one finding each: a security
 finding the judge confirms and a design finding the judge refutes. A
-second ``review pr --dry-run`` at the same head must insert no row,
-make no judge call and say so on stderr; a review at a new head records
-the findings of that head as new.
+second ``review pr --dry-run`` at the same head replays the completed
+run: no reviewer call, no judge call, ``cached: true``, the same
+verdict. ``--force`` runs the reviewers again and the fingerprint keeps
+the ledger free of duplicates; a review at a new head is not cached.
 """
 
 from __future__ import annotations
@@ -13,12 +14,16 @@ from __future__ import annotations
 import functools
 import json
 import sqlite3
+import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import typer
 
+from repoach.ci_entry.advisory import CiReviewPlan, subprocess_review_runner
+from repoach.ci_entry.variables import FORCE_VAR
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.review import orchestrator
@@ -39,7 +44,7 @@ from repoach.review.findings_bridge import (
     record_oversized_findings,
 )
 from repoach.review.head_reverify import reverify_older_findings
-from repoach.review.orchestrator import run_review
+from repoach.review.orchestrator import ReviewTeamOrchestrator, run_review
 from repoach.review.refuter import judge_findings_for_pr
 from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 
@@ -135,11 +140,14 @@ class _Judge:
 
 
 class _StubReviewer:
+    calls = 0
+
     def __init__(self, outcome: ReviewerOutcome) -> None:
         self._outcome = outcome
         self.role = outcome.role
 
     def review_diff(self, diff: str, **_kwargs: object) -> ReviewerOutcome:
+        _StubReviewer.calls += 1
         return self._outcome
 
 
@@ -181,6 +189,7 @@ def judge(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Judge:
             lambda _o=outcome, **_kw: _StubReviewer(_o),
         )
     monkeypatch.setattr("repoach.review.orchestrator.require_provider_ready", lambda: None)
+    monkeypatch.setattr(_StubReviewer, "calls", 0)
     monkeypatch.setenv("REPOACH_DB_PATH", str(_db(tmp_path)))
     monkeypatch.delenv("REPOACH_REFUTER_MAX_JUDGED", raising=False)
     monkeypatch.setattr("repoach.core.config._settings", None)
@@ -199,7 +208,12 @@ def judge(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Judge:
 
 
 def _dry_run(
-    repo: _Repo, head: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    repo: _Repo,
+    head: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    force: bool = False,
 ) -> tuple[dict[str, object], list[str]]:
     monkeypatch.chdir(repo.checkout)
     monkeypatch.setattr(
@@ -215,14 +229,32 @@ def _dry_run(
             spec=None,
             provider=None,
             keep_tree=False,
+            force=force,
             dry_run_reason="dry run",
         )
     assert exited.value.exit_code == 2
     out, err = capsys.readouterr()
-    return json.loads(out), [line for line in err.splitlines() if line.startswith("findings:")]
+    prefixes = ("findings:", "review: cached")
+    return json.loads(out), [line for line in err.splitlines() if line.startswith(prefixes)]
 
 
-def test_second_dry_run_at_the_same_head_inserts_nothing_and_judges_nothing(
+def _first_run(
+    repo: _Repo,
+    head: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    judge: _Judge,
+) -> dict[str, object]:
+    first, lines = _dry_run(repo, head, monkeypatch, capsys)
+    assert lines == ["findings: 2 new, 0 already recorded, 0 refuted earlier"]
+    assert first["findings_recorded"] == {"new": 2, "already_recorded": 0, "refuted_earlier": 0}
+    assert first["cached"] is False
+    assert judge.calls == 2
+    assert _StubReviewer.calls > 0
+    return first
+
+
+def test_second_dry_run_at_the_same_head_replays_the_run(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
@@ -230,33 +262,81 @@ def test_second_dry_run_at_the_same_head_inserts_nothing_and_judges_nothing(
 ) -> None:
     repo = _Repo(tmp_path)
     head = repo.push_head(_STORE, "plant")
-
-    first, first_lines = _dry_run(repo, head, monkeypatch, capsys)
+    first = _first_run(repo, head, monkeypatch, capsys, judge)
     rows_after_first = fetch_findings(_db(tmp_path), 7)
-    calls_after_first = judge.calls
+    reviewer_calls = _StubReviewer.calls
 
-    assert first_lines == ["findings: 2 new, 0 already recorded, 0 refuted earlier"]
-    assert first["findings_recorded"] == {"new": 2, "already_recorded": 0, "refuted_earlier": 0}
-    assert len(rows_after_first) == 2
-    assert calls_after_first == 2
-    statuses = {row.claim_type: row.status for row in rows_after_first}
-    assert statuses[ClaimType.DESIGN] is FindingStatus.REFUTED
-    assert statuses[ClaimType.SECURITY] is FindingStatus.VERIFIED
+    second, lines = _dry_run(repo, head, monkeypatch, capsys)
 
-    second, second_lines = _dry_run(repo, head, monkeypatch, capsys)
+    assert _StubReviewer.calls == reviewer_calls
+    assert judge.calls == 2
+    assert second["cached"] is True
+    assert second["final_verdict"] == first["final_verdict"] == "REQUEST_CHANGES"
+    assert set(second) == set(first)
+    assert second["reviews"] == first["reviews"]
+    assert second["findings"] == first["findings"]
+    [line] = lines
+    assert line.startswith(f"review: cached at {head[:7]} (run ")
+    assert line.endswith("); use --force to re-review")
+    assert fetch_findings(_db(tmp_path), 7) == rows_after_first
+
+
+def test_force_runs_the_reviewers_and_records_nothing_twice(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    judge: _Judge,
+) -> None:
+    repo = _Repo(tmp_path)
+    head = repo.push_head(_STORE, "plant")
+    _first_run(repo, head, monkeypatch, capsys, judge)
+    rows_after_first = fetch_findings(_db(tmp_path), 7)
+    reviewer_calls = _StubReviewer.calls
+
+    second, lines = _dry_run(repo, head, monkeypatch, capsys, force=True)
     rows_after_second = fetch_findings(_db(tmp_path), 7)
 
-    assert second_lines == ["findings: 0 new, 1 already recorded, 1 refuted earlier"]
+    assert _StubReviewer.calls > reviewer_calls
+    assert second["cached"] is False
+    assert lines == ["findings: 0 new, 1 already recorded, 1 refuted earlier"]
     assert second["findings_recorded"] == {"new": 0, "already_recorded": 1, "refuted_earlier": 1}
     assert len(rows_after_second) == 2
-    assert judge.calls == calls_after_first
+    assert judge.calls == 2
+    statuses = {row.claim_type: row.status for row in rows_after_first}
     assert {row.claim_type: row.status for row in rows_after_second} == statuses
+    assert statuses[ClaimType.DESIGN] is FindingStatus.REFUTED
     security_before = next(r for r in rows_after_first if r.claim_type is ClaimType.SECURITY)
     security_after = next(r for r in rows_after_second if r.claim_type is ClaimType.SECURITY)
     assert security_after.last_run_id
     assert security_after.last_run_id != security_before.last_run_id
-    design_after = next(r for r in rows_after_second if r.claim_type is ClaimType.DESIGN)
-    assert design_after.verification_method == "refuter"
+
+
+def test_a_posting_run_at_a_cached_head_posts_the_stored_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    judge: _Judge,
+) -> None:
+    repo = _Repo(tmp_path)
+    head = repo.push_head(_STORE, "plant")
+    first = _first_run(repo, head, monkeypatch, capsys, judge)
+    reviewer_calls = _StubReviewer.calls
+    posted: list[list[ReviewerOutcome]] = []
+
+    def _capture(self: ReviewTeamOrchestrator, **kwargs: object) -> None:
+        posted.append(list(kwargs["outcomes"]))
+
+    monkeypatch.setattr(ReviewTeamOrchestrator, "_publish_all", _capture)
+    monkeypatch.chdir(repo.checkout)
+
+    team = run_review(7, post=True, forge=_HeadForge(repo.checkout, head))
+
+    assert team.cached is True
+    assert _StubReviewer.calls == reviewer_calls
+    assert judge.calls == 2
+    [outcomes] = posted
+    assert [o.role.value for o in outcomes] == [r["role"] for r in first["reviews"]]
+    assert {c.body for o in outcomes for c in o.comments} == {_SECURITY, _DESIGN}
 
 
 def test_a_new_head_records_its_findings_as_new(
@@ -270,8 +350,9 @@ def test_a_new_head_records_its_findings_as_new(
     _dry_run(repo, head_a, monkeypatch, capsys)
     head_b = repo.push_head(_STORE + "\n\nLIMIT = 10\n", "second commit")
 
-    _, lines = _dry_run(repo, head_b, monkeypatch, capsys)
+    second, lines = _dry_run(repo, head_b, monkeypatch, capsys)
 
+    assert second["cached"] is False
     assert lines == ["findings: 2 new, 0 already recorded, 0 refuted earlier"]
     at_b = [row for row in fetch_findings(_db(tmp_path), 7) if row.head_sha == head_b]
     assert len(at_b) == 2
@@ -431,3 +512,31 @@ def test_a_ledger_from_before_the_last_seen_columns_migrates(tmp_path: Path) -> 
 
     [row] = fetch_findings(db, 7)
     assert (row.last_seen_at, row.last_run_id, row.verify_attempts) == ("", "", 0)
+
+
+def test_ci_review_passes_force_only_when_asked(tmp_path: Path) -> None:
+    script = tmp_path / "fakepython"
+    script.write_text(
+        f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    plan = CiReviewPlan(
+        forge="gitlab",
+        forge_source="GITLAB_CI",
+        pr_number=306,
+        pr_source="CI_MERGE_REQUEST_IID",
+        mode="dry-run",
+        provider_mode="gateway",
+        forge_token_var="GITLAB_TOKEN",
+    )
+    runner = subprocess_review_runner(tmp_path, str(script))
+    env = {"PATH": "/usr/bin:/bin"}
+
+    _, plain = runner(plan, env)
+    _, forced = runner(plan, {**env, FORCE_VAR: "1"})
+    _, other = runner(plan, {**env, FORCE_VAR: "yes"})
+
+    assert "--force" not in json.loads(plain)
+    assert json.loads(forced)[-1] == "--force"
+    assert "--force" not in json.loads(other)
