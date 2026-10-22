@@ -458,6 +458,50 @@ def _reopen_refuted_matches(
     return reopened
 
 
+def recount_findings_at_head(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str,
+    outcomes: list[ReviewerOutcome],
+    run_id: str,
+) -> RecordedFindings:
+    """Count a replayed run's comments against the rows of its head, writing nothing.
+
+    A run replayed at its head (SP-FINDINGS-BRIDGE-DOCFIX 0.3 G10)
+    records nothing, yet reports the same ``findings:`` counts a fresh
+    run would: each comment whose fingerprint a non-refuted row of the
+    head carries is already recorded, one matching only refuted rows is
+    refuted earlier, and one matching no row (off the diff when the run
+    recorded) is not counted. ``new`` is always 0.
+
+    Args:
+        db_path: The findings ledger database.
+        pr_number: The PR / MR reviewed.
+        head_sha: The head the run reviewed.
+        outcomes: The replayed reviewer outcomes.
+        run_id: The replayed run's id.
+
+    Returns:
+        The counts, with ``new`` 0 and ``run_id`` the replayed run's.
+    """
+    result = RecordedFindings(run_id=run_id)
+    at_head = _rows_by_fingerprint(db_path, pr_number, head_sha)
+    for outcome in outcomes:
+        if _is_unparsed(outcome):
+            continue
+        for comment in outcome.comments:
+            finding = comment_to_finding(
+                comment, role=outcome.role, pr_number=pr_number, head_sha=head_sha, round_n=1
+            )
+            matches = at_head.get(finding_fingerprint(finding), [])
+            if any(row.status is not FindingStatus.REFUTED for row in matches):
+                result.already_recorded += 1
+            elif matches:
+                result.refuted_earlier += 1
+    return result
+
+
 def record_findings_for_outcomes(
     db_path: Path,
     *,
@@ -500,7 +544,9 @@ def record_findings_for_outcomes(
         outcomes: All reviewer outcomes from the run.
         round_n: Review round index (1 or 2).
         diff: The PR's unified diff; comments off it are dropped.
-        run_id: Identifier of this review run; a fresh one when None.
+        run_id: Identifier of this review run (the `review pr` usage run id,
+            so `repoach usage` and the ledger name the run alike); a fresh
+            one when None.
 
     Returns:
         The new / already recorded / refuted earlier counts of the pass.

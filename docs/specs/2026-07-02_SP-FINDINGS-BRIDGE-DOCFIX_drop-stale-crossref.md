@@ -1,17 +1,17 @@
 ---
 id: SP-FINDINGS-BRIDGE-DOCFIX
 title: Drop the stale coder_loop cross-reference from _files_in_diff
-version: 0.2
+version: 0.3
 status: approved
 author: jfaye (tech-debt survey 2026-07-02, ledger entry 10)
 created: 2026-07-02
 updated: 2026-10-22
 
 owns:
-  code: [src/repoach/review/findings_bridge.py, tests/unit/test_review_pr_records_once_per_head.py]
+  code: [src/repoach/review/findings_bridge.py, src/repoach/review/review_cache.py, tests/unit/test_review_pr_records_once_per_head.py]
   resources: []
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-UNIVERSAL-FORGE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-RETRY-BACKOFF-DEDUP]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-UNIVERSAL-CI-ENTRY, SP-UNIVERSAL-FORGE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints: {}
@@ -78,6 +78,65 @@ judge):
   there; one refuted at an older head is re-opened by a new head.
 - [x] AC10: with no head every comment is recorded.
 - [x] AC11: an oversized file recorded twice at one head yields one row.
+
+## Amendment (0.3, 2026-10-22): the unit of a review is the run
+
+Measured on yoob !306 with 0.2 (two consecutive `review pr --dry-run`,
+`claude_code`): the second run printed `findings: 6 new, 0 already
+recorded, 0 refuted earlier` and `refuter: judged 4`. The reviewers
+rephrased every finding (claim similarity 0.15-0.42, cited lines moved
+1-3), so no text fingerprint can identify a finding across two live
+runs. The owner's decision: a head already reviewed is not reviewed
+again. G4-G8 stay as the dedupe within one head (`--force`, two lenses
+raising one claim).
+
+- G9: a `review pr` run completes when every reviewer outcome is parsed
+  (no `ERROR`) and its findings were written at a pinned head. It then
+  stores one `pr_review_runs` row (run id = its `repoach usage` run id,
+  the same id it stamps on its
+  findings, pr, head, UTC completion time, verdict, and a payload with
+  the reviewer outcomes after guard and round 2, the refutations, the
+  spec fields), in the findings ledger.
+- G10: when a completed run exists at `(pr, head_sha)` and `--force` is
+  not given, `review pr` calls no reviewer and no refuter. It replays
+  the stored outcomes and refutations, still runs the older-head re-check
+  of SP-GATE-REVERIFIES-AT-HEAD G7 (no model call when nothing older is
+  unsettled), derives the verdict from the ledger as a fresh run does,
+  prints `review: cached at <sha7> (run <id>, <when>); use --force to
+  re-review` on stderr, and returns the same JSON shape with
+  `cached: true` (`false` on a fresh run). It also prints the
+  `findings: 0 new, N already recorded, K refuted earlier` line and
+  fills `findings_recorded`, counting the stored comments against the
+  rows of the head without writing.
+- G11: a dry run and a posting run share the cache. A posting run
+  replaying a cached run posts the stored outcomes through the forge's
+  write barrier, as a fresh posting run posts its own.
+- G12: `--force` runs the reviewers again; `repoach ci review` passes it
+  only when `REPOACH_REVIEW_FORCE=1` (listed by `doctor --ci`).
+- G13: a review without a pinned head (an orchestrator built without
+  one) is never cached, since its head is known only after the
+  reviewers ran.
+
+- [x] AC12: a second `review pr --dry-run` at the same head makes 0
+  reviewer calls and 0 judge calls, reports `cached: true`, the same
+  verdict, reviews and findings as the first run, the same JSON keys,
+  the `review: cached at <sha7> (run <usage run id>, …); use --force to
+  re-review` line and `findings: 0 new, 1 already recorded, 1 refuted
+  earlier`; the ledger is unchanged.
+- [x] AC13: `--force` at the same head runs the reviewers, reports
+  `cached: false` and `findings: 0 new, 1 already recorded, 1 refuted
+  earlier`, and makes no judge call.
+- [x] AC14: a posting run at a cached head posts the stored outcomes
+  (same roles, same comments) without calling a reviewer or the judge.
+- [x] AC15: a review at a new head reports `cached: false` and records
+  its findings as new.
+- [x] AC16: the `ci review` child gets `--force` with
+  `REPOACH_REVIEW_FORCE=1` and not with any other value.
+- [x] AC17: on yoob !306 the second consecutive `review pr --dry-run`
+  makes 0 model calls. Measured 2026-10-22: run 1 `usage: 8 calls`,
+  `findings: 6 new`, `refuter: judged 4`, `APPROVE`; run 2 `review:
+  cached at 24b8111 (run e09f7faccb1c, …)`, `usage: 0 calls`, `APPROVE`,
+  `cached: true`.
 
 ## Intent
 
@@ -162,6 +221,7 @@ counterpart in another module.
 - Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-ORCH-DOCSTRING (0.2: owner of `orchestrator.py`; the tests drive `run_review`)
 - Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-REFUTER-JUDGES-WHAT-IT-CAN (0.2: the tests route the refuter pass to the stub judge)
 - Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-RETRY-BACKOFF-DEDUP (0.2: owner of `reviewer.py`; the tests build `ReviewerOutcome` stubs)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-UNIVERSAL-CI-ENTRY (0.3: the tests drive the `ci review` child runner and read `FORCE_VAR`)
 - No edge added or removed. `findings_bridge.py` moves from the
   frontier into this spec's `owns.code`; its imports resolve to
   frontier files (reported, not enforced), so `depends_on` stays

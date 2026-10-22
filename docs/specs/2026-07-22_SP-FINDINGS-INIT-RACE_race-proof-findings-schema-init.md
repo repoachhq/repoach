@@ -1,7 +1,7 @@
 ---
 id: SP-FINDINGS-INIT-RACE
 title: Race-proof findings-ledger schema initialization
-version: 0.2
+version: 0.3
 status: approved
 author: jfaye
 created: 2026-07-22
@@ -33,6 +33,16 @@ creation itself is unchanged.
   empty after `init_findings_schema` (the migration path), pinned by
   `test_a_ledger_from_before_the_last_seen_columns_migrates` in
   `tests/unit/test_review_pr_records_once_per_head.py`.
+
+## Amendment (0.3, 2026-10-22): the review-runs table
+
+`pr_review_runs` joins the ledger for SP-FINDINGS-BRIDGE-DOCFIX 0.3
+(a completed `review pr` run is replayed at its head): `run_id`,
+`pr_number`, `head_sha`, `completed_at`, `final_verdict`,
+`payload_json`, written by `record_review_run` and read back, latest
+first, by `fetch_completed_review_run` (an empty head matches nothing).
+`create_all(checkfirst=True)` creates it in existing databases; the
+retry's final check now requires every ledger table.
 
 ## Intent
 
