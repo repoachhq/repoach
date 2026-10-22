@@ -1,11 +1,11 @@
 ---
 id: SP-FINDINGS-INIT-RACE
 title: Race-proof findings-ledger schema initialization
-version: 0.1
+version: 0.2
 status: approved
 author: jfaye
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-10-22
 
 owns:
   code: [src/repoach/review/findings.py]
@@ -18,6 +18,21 @@ constraints: {}
 ---
 
 # Race-proof findings-ledger schema initialization
+
+## Amendment (0.2, 2026-10-22): two last-seen columns
+
+For SP-FINDINGS-BRIDGE-DOCFIX 0.2 (a re-review at the same head records
+nothing twice), `pr_findings` gains `last_seen_at` and `last_run_id`
+(`TEXT NOT NULL DEFAULT ''`), added to existing databases by
+`_migrate_missing_findings_columns` like `verify_attempts`, carried by
+`Finding`, written by `record_finding` and stamped by the new
+`mark_finding_seen`, which changes nothing else on the row. Schema
+creation itself is unchanged.
+
+- [x] AC-A1: a database created before 0.2 reads back with both columns
+  empty after `init_findings_schema` (the migration path), pinned by
+  `test_a_ledger_from_before_the_last_seen_columns_migrates` in
+  `tests/unit/test_review_pr_records_once_per_head.py`.
 
 ## Intent
 
