@@ -41,6 +41,9 @@ _log = get_logger(__name__)
 _SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)$")
 """Matches GitHub's default squash-merge subject suffix, e.g. ``(#42)``."""
 
+_REMOTE = "origin"
+"""The remote whose fetched release and integration refs bound the release range."""
+
 _DEFAULT_CI_SCRIPT = "scripts/ci_local.sh"
 """Repo-relative path to the local CI parity mirror the gate shells out to."""
 
@@ -133,6 +136,59 @@ def classify_release_range_against_ledger(
     return [subject for sha, subject in commits if sha not in merged_shas]
 
 
+class BranchFreshness(BaseModel):
+    """How a local branch compares with its freshly-fetched remote-tracking ref.
+
+    Attributes:
+        branch: The local branch name (e.g. ``"main"``).
+        remote_ref: The remote-tracking ref compared against (e.g.
+            ``"origin/main"``).
+        behind: Commits on *remote_ref* missing from the local branch;
+            ``None`` when ``git rev-list`` could not count them.
+        ahead: Commits on the local branch missing from *remote_ref*;
+            ``None`` when ``git rev-list`` could not count them.
+    """
+
+    branch: str
+    remote_ref: str
+    behind: int | None
+    ahead: int | None
+
+
+def _commits(count: int) -> str:
+    """Render *count* with a singular or plural ``commit`` noun."""
+    return f"{count} commit" if count == 1 else f"{count} commits"
+
+
+def describe_branch_freshness(freshness: BranchFreshness) -> str | None:
+    """Name how a local branch drifted from its remote ref, ``None`` when in sync.
+
+    Informational only: the release range is read from fetched
+    remote-tracking refs, so the drift never enters a
+    :class:`ReleaseDecision`.
+
+    Args:
+        freshness: One local branch compared with its ``origin/<branch>``.
+
+    Returns:
+        A line such as ``"local main is 46 commits behind origin/main"``,
+        or ``None`` when the local branch matches its remote ref.
+    """
+    local = f"local {freshness.branch}"
+    if freshness.behind is None or freshness.ahead is None:
+        return f"freshness unknown: could not compare {local} with {freshness.remote_ref}"
+    if freshness.behind and freshness.ahead:
+        return (
+            f"{local} has diverged from {freshness.remote_ref} "
+            f"({_commits(freshness.behind)} behind, {_commits(freshness.ahead)} ahead)"
+        )
+    if freshness.behind:
+        return f"{local} is {_commits(freshness.behind)} behind {freshness.remote_ref}"
+    if freshness.ahead:
+        return f"{local} is {_commits(freshness.ahead)} ahead of {freshness.remote_ref}"
+    return None
+
+
 class ReleaseFacts(BaseModel):
     """The facts the pure release gate decides on.
 
@@ -157,6 +213,14 @@ class ReleaseFacts(BaseModel):
             reason rather than a silently-empty ``out_of_band_commits``.
             ``None`` when provenance was verified (or the caller did not
             request ledger verification at all).
+        branch_freshness: One entry per local branch the release
+            involves -- the release and the integration branch --
+            compared with its freshly-fetched ``origin/<branch>``. The
+            release range itself is always read from the fetched
+            remote-tracking refs, so a stale local branch changes
+            nothing in the verdict: it is informational, never a
+            refusal reason and never folded into
+            ``out_of_band_commits``.
     """
 
     develop_sha: str
@@ -166,6 +230,7 @@ class ReleaseFacts(BaseModel):
     ci_green: bool
     ci_checked: bool = True
     provenance_error: str | None = None
+    branch_freshness: list[BranchFreshness] = []
 
 
 class ReleaseDecision(BaseModel):
@@ -191,8 +256,9 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
     Returns:
         A :class:`ReleaseDecision`. ``merge`` is True only when the
         release range is free of out-of-band commits, the local
-        ``develop`` head matches the remote tip, the release PR's head
-        (when known) matches ``develop_sha``, and the local CI mirror
+        ``develop`` head matches the remote tip (the receipt records
+        that head and the CI mirror runs on the local checkout), the
+        release PR's head (when known) matches ``develop_sha``, and the local CI mirror
         is green.
     """
     reasons: list[str] = []
@@ -277,7 +343,17 @@ def gather_release_facts(
     Returns:
         The assembled :class:`ReleaseFacts`.
 
+    The release range is ``origin/<release>..origin/<integration>``
+    after a ``git fetch`` of both branches, never the bare local branch
+    names: a stale local release branch would otherwise list commits
+    already released into the remote release branch as out-of-band.
+    Each local branch's drift from its remote ref is reported in
+    ``branch_freshness``, informational only.
+
     Raises:
+        RuntimeError: When ``git fetch origin <release> <integration>``
+            fails -- fail-closed, since the range is only trustworthy
+            against freshly-fetched remote-tracking refs.
         Exception: Any exception raised while running CI (notably a
             :class:`FileNotFoundError` from the default runner when
             the script is missing or non-executable) propagates
@@ -287,8 +363,16 @@ def gather_release_facts(
     settings = get_settings()
     integration_branch = settings.integration_branch
     release_branch = settings.release_branch
+    fetch_result = forge.git(["fetch", "--quiet", _REMOTE, release_branch, integration_branch])
+    if not fetch_result.ok:
+        raise RuntimeError(
+            f"git fetch {_REMOTE} {release_branch} {integration_branch} failed: "
+            f"{fetch_result.stderr.strip()}"
+        )
     develop_sha = forge.git(["rev-parse", integration_branch]).stdout.strip()
-    log_result = forge.git(["log", f"{release_branch}..{integration_branch}", "--format=%H%x09%s"])
+    release_ref = f"{_REMOTE}/{release_branch}"
+    integration_ref = f"{_REMOTE}/{integration_branch}"
+    log_result = forge.git(["log", f"{release_ref}..{integration_ref}", "--format=%H%x09%s"])
     commits: list[tuple[str, str]] = []
     for line in log_result.stdout.splitlines():
         if not line.strip():
@@ -337,6 +421,9 @@ def gather_release_facts(
     if ls_remote_result.returncode == 0 and first_line:
         tokens = first_line.split()
         remote_sha = tokens[0] if tokens else ""
+    branch_freshness = [
+        _branch_freshness(forge, branch) for branch in (release_branch, integration_branch)
+    ]
     pr_head_sha = _pr_head_sha_or_none(forge, pr_number)
     result = (ci_runner or _default_ci_runner)(repo_root)
     ci_green = result.returncode == 0
@@ -347,6 +434,27 @@ def gather_release_facts(
         pr_head_sha=pr_head_sha,
         ci_green=ci_green,
         provenance_error=provenance_error,
+        branch_freshness=branch_freshness,
+    )
+
+
+def _rev_list_count(forge: Forge, revision_range: str) -> int | None:
+    """Count the commits in *revision_range*, ``None`` when git cannot."""
+    result = forge.git(["rev-list", "--count", revision_range])
+    text = result.stdout.strip()
+    if result.returncode != 0 or not text.isdigit():
+        return None
+    return int(text)
+
+
+def _branch_freshness(forge: Forge, branch: str) -> BranchFreshness:
+    """Compare local *branch* with its fetched ``origin/<branch>``."""
+    remote_ref = f"{_REMOTE}/{branch}"
+    return BranchFreshness(
+        branch=branch,
+        remote_ref=remote_ref,
+        behind=_rev_list_count(forge, f"{branch}..{remote_ref}"),
+        ahead=_rev_list_count(forge, f"{remote_ref}..{branch}"),
     )
 
 

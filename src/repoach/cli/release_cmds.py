@@ -26,6 +26,7 @@ from ..forge import select_forge
 from ..review.release_gate import (
     ProvenanceSource,
     compute_release_decision,
+    describe_branch_freshness,
     gather_release_facts,
     verify_release,
     verify_release_live,
@@ -100,6 +101,10 @@ def release_gate(
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc
     decision = compute_release_decision(facts)
+    for freshness in facts.branch_freshness:
+        note = describe_branch_freshness(freshness)
+        if note is not None:
+            typer.echo(f"release gate: {note} (verdict unaffected)", err=True)
     write_gate_receipt(_RECEIPT_PATH, develop_sha=facts.develop_sha, decision=decision)
     payload = {
         "develop_sha": facts.develop_sha,
@@ -107,6 +112,7 @@ def release_gate(
         "remote_sha": facts.remote_sha,
         "pr_head_sha": facts.pr_head_sha,
         "ci_green": facts.ci_green,
+        "branch_freshness": [freshness.model_dump() for freshness in facts.branch_freshness],
         "merge": decision.merge,
         "reasons": decision.reasons,
     }
