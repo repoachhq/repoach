@@ -22,6 +22,7 @@ from repoach.forge import ForgeMergeRefusedError, ForgeStateRefusedError, MergeM
 from repoach.forge.github import (
     MERGE_STATE_STATUS,
     MERGEABILITY_FIELDS,
+    SQUASH_BODY_UNAVAILABLE,
     pull_request_from_github,
 )
 from repoach.forge.gitlab import DETAILED_MERGE_STATUS, GitLabForge, pull_request_from_gitlab
@@ -146,6 +147,7 @@ def _gh_view(**over: object) -> dict[str, object]:
         "mergeStateStatus": "CLEAN",
         "headRefOid": SHA,
         "statusCheckRollup": [],
+        "commits": [],
     }
     view.update(over)
     return view
@@ -210,6 +212,32 @@ def test_squash_body_strips_ai_attribution() -> None:
     assert body == "* feat(x): add the parser\n\nWhy one.\n\n* fix(x): handle empty input\n"
     assert "anthropic" not in body.lower()
     assert "claude" not in body.lower()
+
+
+def test_squash_with_no_commits_merges_with_an_empty_body() -> None:
+    """``commits: []`` is a well-formed view: the squash runs with an empty stdin body."""
+    forge = _github([_gh_view(commits=[])])
+    result = forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert result.merged is True
+    call = forge._run.call_args
+    assert call.args[0][:2] == ["pr", "merge"]
+    assert call.args[0][-2:] == ["--body-file", "-"]
+    assert call.kwargs["input_data"] == ""
+
+
+def test_squash_refuses_a_view_without_commits() -> None:
+    """A view missing ``commits`` is malformed: refused by name, ``gh pr merge`` never runs."""
+    view = _gh_view()
+    del view["commits"]
+    forge = _github([view, dict(view)])
+    with pytest.raises(ForgeMergeRefusedError) as excinfo:
+        forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert excinfo.value.reason == "refused"
+    assert excinfo.value.message == SQUASH_BODY_UNAVAILABLE
+    assert _merge_calls(forge) == []
+    ok, sha, log, refusal = merge_change(forge, 42, head_sha=SHA)
+    assert (ok, sha, refusal) == (False, None, "refused")
+    assert log == SQUASH_BODY_UNAVAILABLE
 
 
 def test_merge_method_sends_no_body() -> None:

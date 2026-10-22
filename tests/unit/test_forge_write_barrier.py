@@ -45,6 +45,7 @@ _GH_VIEW = {
     "mergeable": "MERGEABLE",
     "isDraft": False,
     "statusCheckRollup": [],
+    "commits": [],
 }
 _GL_MR = {
     "iid": 7,

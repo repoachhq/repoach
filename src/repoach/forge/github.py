@@ -136,15 +136,25 @@ def _rollup_pending(rollup: object) -> bool:
     return False
 
 
+SQUASH_BODY_UNAVAILABLE = "squash body unavailable: gh pr view returned no 'commits' list"
+"""Refusal message when the merge view carries no ``commits`` list (SP-CONVENTIONS-GATE G9)."""
+
+
 def _squash_body_from_view(view: dict[str, object]) -> str:
     """The squash body for a ``gh pr view --json commits`` view, attribution removed.
 
-    A view without a ``commits`` list yields ``""``: an empty body, never
-    GitHub's concatenation of unread commit messages.
+    An empty ``commits`` list yields ``""``; a missing or non-list
+    ``commits`` is a malformed view and the merge is refused rather than
+    run blind, the same rule ``scripts/safe_merge.sh`` applies through
+    ``repoach.conventions.squash_body``.
+
+    Raises:
+        ForgeMergeRefusedError: ``commits`` is missing or not a list;
+            reason ``refused``, message :data:`SQUASH_BODY_UNAVAILABLE`.
     """
     commits = view.get("commits")
     if not isinstance(commits, list):
-        return ""
+        raise ForgeMergeRefusedError(SQUASH_BODY_UNAVAILABLE, reason="refused")
     return squash_body(
         [
             (str(entry.get("messageHeadline") or ""), str(entry.get("messageBody") or ""))

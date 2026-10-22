@@ -113,6 +113,7 @@ def _gh(
                         "statusCheckRollup": _all_green_rollup()
                         if checks_ok
                         else _one_failed_rollup(),
+                        "commits": [],
                     }
                 ),
                 stderr="",
