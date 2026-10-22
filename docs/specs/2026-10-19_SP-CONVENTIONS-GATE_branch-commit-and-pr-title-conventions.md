@@ -1,14 +1,14 @@
 ---
 id: SP-CONVENTIONS-GATE
 title: Branch names, commit headers and PR titles follow Conventional Commits, enforced mechanically and configured per project
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-22
 
 owns:
-  code: [src/repoach/conventions/, src/repoach/cli/conventions_cmds.py, .githooks/commit-msg, tests/unit/test_conventions.py, tests/unit/test_conventions_config.py]
+  code: [src/repoach/conventions/, src/repoach/cli/conventions_cmds.py, .githooks/commit-msg, scripts/lint_no_ai_attribution.py, tests/unit/test_conventions.py, tests/unit/test_conventions_config.py, tests/unit/test_conventions_attribution.py, tests/unit/test_conventions_squash_body.py, tests/unit/test_lint_no_ai_attribution.py]
   resources: [format:conventions-toml-section]
 
 depends_on: [SP-ARCH-REVIEW-WIRE, SP-DEV-STEP-PREFLIGHT, SP-PLAN-CONTRACT-LINTS, SP-ORCH-DOCSTRING, SP-SPEC-TEMPLATE, SP-UNIVERSAL-REPO]
@@ -51,6 +51,7 @@ Conventional Commits defaults; a `fix` lane never rewrites history.
 | F7 | Yoob's reference: a `commit-msg` hook with the closed type list `feat fix perf refactor docs test build ci chore style revert`, header regex `^(types)(\([a-z0-9._/-]+\))?!?: .+`, 72-character limit, lowercase subject, no trailing period, AI-attribution trailers stripped; and a CI job judging the branch name, every new commit and the MR title | `/home/jofaye/Documents/work/yoob_2/scripts/hooks/commit-msg:89-127`; `ci/lib/conventions.py:91-118` (French-word, sprint-code, AI-attribution patterns); `ci/lint-conventions.sh:110-113` |
 | F8 | No history is rewritten by any lane today: no `rebase`, `--amend` or `--force` push in `coder_loop.py`, `coder_findings.py`, `dev_runner.py`, `auto_merge.py`; the one `--force` is `git worktree remove` | measured by grep, `dev_runner.py:1018` |
 | F9 | `repoach init` scaffolds `.env` and `core.hooksPath` and writes no project configuration yet | `src/repoach/cli/init_cmds.py:28-79`; `SP-UNIVERSAL-REPO` G2 |
+| F10 | Measured 2026-10-22: commits on `develop`/`main` carry `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` trailers (`b18425e`), and the squash commits `aafd879` (#232) and `1946dda` (#235) concatenate every branch commit's trailers in their bodies: `gh pr merge --squash` without a body lets GitHub build it from the commits | `git log --format=%B origin/develop`; `src/repoach/forge/github.py` `GitHubForge.merge` |
 
 ## Goals
 
@@ -61,6 +62,7 @@ Conventional Commits defaults; a `fix` lane never rewrites history.
 - G5: enforcement at every layer: `.githooks/commit-msg` (new) judges the message; `.githooks/pre-push` judges the branch name and `origin/<integration>..HEAD`; `ci.yml` gains a `Lint — conventions` step judging branch, range and PR title on `pull_request`; `ActionPlan` validation judges every `commit_message`; the Developer builds its branch and PR title from the spec's `kind`; the Coder's generated subjects pass `check_commit_message` before `git commit`.
 - G6: `repoach review pr` in posting mode refuses to post on a PR whose title fails `check_pr_title` when `pr_title` is on: no forge write, payload `conventions: {title_ok: false, violations: [...]}`, rc 9; dry-run reports the same object and proceeds.
 - G7: the spec frontmatter gains an optional `kind` (one of `types`, default `feat`); the Developer's branch is `<kind>/sp-<id>-impl` and its PR title `<kind>(<id-lowercase>): <title>`; `detect_spec_from_branch` accepts exactly the configured types.
+- G9: no AI attribution reaches history or a PR (owner rule: zero AI attribution, in both repositories). Three layers, delivered ahead of G1–G8: (a) `.githooks/commit-msg` strips every attribution line — `Co-Authored-By:` naming Claude or Anthropic, `Generated with/by … Claude/Anthropic` with or without the robot emoji, `Claude-Session:` — silently but for one stderr line, so an agent's commit still lands clean, then refuses a header that is not `type(scope): subject` with a type from `DEFAULT_TYPES`, or is longer than 72 characters; (b) `GitHubForge.merge` with `squash` reads the PR's `commits` with its merge facts and passes `--body-file -`, the concatenated commit messages minus every attribution line, so a squash never inherits a branch commit's trailer, and `scripts/safe_merge.sh` pipes `gh pr view --json commits` through `python -m repoach.conventions.squash_body` into `gh pr merge --squash --body-file -` for the same result; (c) the CI step `Lint — no AI attribution` runs `scripts/lint_no_ai_attribution.py` on `base_sha..head_sha` and on the PR title and body, rc 1 on any attribution line. Matching is per line and anchored at the line start: a human `Co-Authored-By` and a sentence naming the `claude_code` chain survive. Recognition and stripping are written once, in `repoach.conventions.attribution`.
 - G8: no lane rewrites history: the `fix` lane, the Developer and the auto-merge never run `rebase`, `commit --amend`, `push --force` or `--force-with-lease`; a violation found on an existing commit is reported, never rewritten; the range judged in CI is only the commits the PR adds.
 
 ## Non-Goals
@@ -70,6 +72,7 @@ Conventional Commits defaults; a `fix` lane never rewrites history.
 - NG3: no commit body linting beyond the attribution trailer; bodies are free text.
 - NG4: no semantic-release automation; `breaking` only surfaces the footers, the release gate decides what to do with them in its own spec.
 - NG5: no language detection beyond the French heuristic Yoob uses; the rule is disclosed as a heuristic and `english = false` in `[conventions]` turns it off.
+- NG6: G9(b) is GitHub-only: `glab mr merge --squash` keeps the project's squash template (GitLab's default `%{title}` carries no commit body); a project whose template uses `%{all_commits}` is still stopped by G9(c) on the MR range before merge.
 
 ## Assumptions
 
@@ -180,6 +183,9 @@ flowchart TD
 - [ ] AC10: `repoach init --dry-run` in a throwaway repository lists `repoach.toml` with a commented `[conventions]` section carrying the six keys and their defaults. Today: `init` writes no toml.
 - [ ] AC11: `repoach arch check --base develop` → `edge-honesty: ok`.
 - [ ] AC12: `pytest -q tests/unit/test_conventions_config.py::test_english_on_by_default_and_documented_opt_out` → green: `Conventions().english is True`; `check_commit_message("fix(api): corrige l'état\n", Conventions())` yields one `english` violation; the same with `Conventions(english=False)` yields none; and the toml text `repoach init --dry-run` prints contains both `# english = true` and `english = false`. Today: no module, no section.
+- [ ] AC13: `pytest -q tests/unit/test_conventions_attribution.py` → green: a `git commit` in a fixture repository whose message carries the trailer and the footer lands with neither in `git log -1 --format=%B`; `Update stuff` and an 81-character conventional header are refused. Today: no `commit-msg` hook, both land.
+- [ ] AC14: `pytest -q tests/unit/test_forge_merge_refusals.py::test_squash_body_strips_ai_attribution` → green: a PR whose two commits carry `Co-Authored-By: Claude …` trailers is merged with `--body-file -` and a stdin body holding both commit headlines and no attribution line. Today: `gh pr merge --squash` with no body; GitHub concatenates the trailers.
+- [ ] AC15: `pytest -q tests/unit/test_lint_no_ai_attribution.py` → green: a range holding one commit with the trailer → rc 1 naming its short SHA; a PR body containing `Generated with [Claude Code]` → rc 1; a clean range and body → rc 0. `grep -c lint_no_ai_attribution .github/workflows/ci.yml` → `1`. Today: no script, no step.
 
 ## Open Questions
 - Q1: when a Coder-generated subject fails the check (for instance a `fix(wrapup): <selector>` with a 90-character selector), truncate as specified or refuse the Coder's commit and let the Developer session fail at that step? Recommendation: truncate; a long selector is not a convention breach by the author.

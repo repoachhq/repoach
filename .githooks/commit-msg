@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Commit-msg gate (versioned, .githooks/) — strips AI attribution trailers
+# and footers from the message, then refuses a header that is not
+# Conventional Commits or is longer than 72 characters (SP-CONVENTIONS-GATE).
+#
+# Activated with the other hooks by ``git config core.hooksPath .githooks``.
+# The logic lives in repoach.conventions.commit_msg; this checkout's src/
+# is put first on PYTHONPATH so the hook judges with the sources it ships
+# with. A missing interpreter or module is a refusal, never a pass.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
+
+if ! python -c 'import repoach.conventions.commit_msg' >/dev/null 2>&1 ; then
+    echo "commit-msg: python cannot import repoach.conventions; install repoach (pip install -e .) or set core.hooksPath away" >&2
+    exit 1
+fi
+
+exec python -m repoach.conventions.commit_msg "$1"

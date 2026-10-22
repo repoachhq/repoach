@@ -31,7 +31,9 @@
 #    immediately before the merge. A mismatch aborts with both SHAs
 #    printed and NO emergency-override prompt — stale data is not
 #    overridable.
-# 7. ``gh pr merge <N> --squash --delete-branch``.
+# 7. ``gh pr merge <N> --squash --delete-branch --body-file -``, the body
+#    composed by ``repoach.conventions.squash_body`` from the PR's commits
+#    with every AI attribution line removed (SP-CONVENTIONS-GATE G9).
 #
 # On any exit path (success or gate failure), the script restores the
 # original branch — your working tree returns to whatever you were on
@@ -253,7 +255,11 @@ fi
 ok "head verified api=remote=$api_head"
 
 bold "[7/7] gh pr merge --squash"
-gh pr merge "$pr_number" --squash --delete-branch
+if ! squash_body=$(gh pr view "$pr_number" --json commits | python -m repoach.conventions.squash_body) ; then
+    fail "could not compose the squash body — refusing to merge"
+    exit 1
+fi
+printf '%s' "$squash_body" | gh pr merge "$pr_number" --squash --delete-branch --body-file -
 ok "PR #$pr_number merged into develop"
 
 git fetch origin --quiet

@@ -187,7 +187,38 @@ def test_github_merge_pins_head_with_match_head_commit() -> None:
         "--match-head-commit",
         SHA,
         "--delete-branch",
+        "--body-file",
+        "-",
     ]
+
+
+def test_squash_body_strips_ai_attribution() -> None:
+    """A squash sends every commit message on stdin minus attribution (SP-CONVENTIONS-GATE G9)."""
+    trailer = "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+    commits = [
+        {"messageHeadline": "feat(x): add the parser", "messageBody": f"Why one.\n\n{trailer}"},
+        {
+            "messageHeadline": "fix(x): handle empty input",
+            "messageBody": f"\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)\n\n{trailer}",
+        },
+    ]
+    forge = _github([_gh_view(commits=commits)])
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    call = forge._run.call_args
+    assert call.args[0][-2:] == ["--body-file", "-"]
+    body = call.kwargs["input_data"]
+    assert body == "* feat(x): add the parser\n\nWhy one.\n\n* fix(x): handle empty input\n"
+    assert "anthropic" not in body.lower()
+    assert "claude" not in body.lower()
+
+
+def test_merge_method_sends_no_body() -> None:
+    """A merge commit keeps GitHub's own message: no ``--body-file``, no stdin."""
+    forge = _github([_gh_view(commits=[{"messageHeadline": "feat: x", "messageBody": ""}])])
+    forge.merge(42, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA)
+    call = forge._run.call_args
+    assert "--body-file" not in call.args[0]
+    assert call.kwargs["input_data"] is None
 
 
 @pytest.mark.parametrize(

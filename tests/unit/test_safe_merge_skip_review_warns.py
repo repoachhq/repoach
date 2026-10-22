@@ -63,6 +63,9 @@ case "$*" in
     "pr view"*"--json headRefOid"*)
         echo "{_FAKE_SHA}"
         ;;
+    "pr view"*"--json commits"*)
+        echo '{{"commits": []}}'
+        ;;
     "pr checkout"*)
         exit 0
         ;;

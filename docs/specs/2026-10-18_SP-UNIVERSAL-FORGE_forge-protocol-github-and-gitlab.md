@@ -5,13 +5,13 @@ version: 0.1
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-18
+updated: 2026-10-22
 
 owns:
   code: [src/repoach/forge/, tests/unit/test_forge_conformance.py, tests/unit/test_forge_select.py, tests/fixtures/forge/]
   resources: []
 
-depends_on: [SP-UNIVERSAL-PROJECT-CONFIG, SP-REVIEW-POST-BATCH, SP-EVIDENCE-SENTINEL-AUTHOR, SP-AUTOMERGE-FRESH-HEAD, SP-CI-CHECKNAME-SYNC, SP-RELEASE-PROVENANCE-GH-FALLBACK]
+depends_on: [SP-UNIVERSAL-PROJECT-CONFIG, SP-REVIEW-POST-BATCH, SP-EVIDENCE-SENTINEL-AUTHOR, SP-AUTOMERGE-FRESH-HEAD, SP-CI-CHECKNAME-SYNC, SP-RELEASE-PROVENANCE-GH-FALLBACK, SP-CONVENTIONS-GATE]
 provides_to: []
 
 constraints: {}
@@ -155,6 +155,7 @@ the HTML marker; `auto_merge` reads `ci_status` and calls
 - Adds dependency: SP-UNIVERSAL-FORGE -> SP-AUTOMERGE-FRESH-HEAD (fresh-head guard compares `pull_request().head_sha` with `git ls-remote`, unchanged)
 - Adds dependency: SP-UNIVERSAL-FORGE -> SP-CI-CHECKNAME-SYNC (its tuple is the GitHub fallback of `ci_status`)
 - Adds dependency: SP-UNIVERSAL-FORGE -> SP-RELEASE-PROVENANCE-GH-FALLBACK (`merged_shas` is its data source on both forges)
+- Adds dependency: SP-UNIVERSAL-FORGE -> SP-CONVENTIONS-GATE (`GitHubForge.merge` composes the squash body with `repoach.conventions.attribution.squash_body`, attribution removed; G9(b))
 - Removes coupling: nine modules stop importing `gh_client`; `gh_client.py` becomes `forge/github.py` with a one-release re-export shim.
 
 ## Diagram

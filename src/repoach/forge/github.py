@@ -31,6 +31,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..conventions.attribution import squash_body
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from .protocol import (
@@ -96,7 +97,9 @@ _GH_STATE_TO_PROTOCOL: dict[str, PullRequestState] = {
 }
 """``gh`` states; anything else maps to ``unknown`` (refuses writes)."""
 
-MERGEABILITY_FIELDS = "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+MERGEABILITY_FIELDS = (
+    "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup,commits"
+)
 """``gh pr view --json`` fields :meth:`GitHubForge.merge` reads before merging."""
 
 MERGE_STATE_STATUS: dict[str, MergeRefusal | None] = {
@@ -131,6 +134,24 @@ def _rollup_pending(rollup: object) -> bool:
         if status in _PENDING_STATUSES or context_state in _PENDING_STATUSES:
             return True
     return False
+
+
+def _squash_body_from_view(view: dict[str, object]) -> str:
+    """The squash body for a ``gh pr view --json commits`` view, attribution removed.
+
+    A view without a ``commits`` list yields ``""``: an empty body, never
+    GitHub's concatenation of unread commit messages.
+    """
+    commits = view.get("commits")
+    if not isinstance(commits, list):
+        return ""
+    return squash_body(
+        [
+            (str(entry.get("messageHeadline") or ""), str(entry.get("messageBody") or ""))
+            for entry in commits
+            if isinstance(entry, dict)
+        ]
+    )
 
 
 _MERGE_METHOD_FLAGS: dict[MergeMethod, str] = {
@@ -1594,21 +1615,30 @@ class GitHubForge:
         :meth:`_mergeability` is read first and :meth:`_merge_refusal`
         decides; only then ``gh pr merge --<method> [--match-head-commit
         <sha>] [--delete-branch]`` runs, so GitHub itself also refuses a
-        head that moved in between.
+        head that moved in between. A squash also passes ``--body-file -``
+        with :func:`_squash_body_from_view` on stdin: left to itself
+        GitHub concatenates every commit message, AI attribution trailers
+        included (SP-CONVENTIONS-GATE G9).
 
         Raises:
             ForgeMergeRefusedError: GitHub would refuse or refused; its
                 ``reason`` comes from the read facts, else ``refused``.
         """
-        refusal = self._merge_refusal(self._mergeability(number), head_sha)
+        view = self._mergeability(number)
+        refusal = self._merge_refusal(view, head_sha)
         if refusal is not None:
             raise ForgeMergeRefusedError(refusal[1], reason=refusal[0])
-        args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[MergeMethod(method)]]
+        resolved = MergeMethod(method)
+        args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[resolved]]
         if head_sha:
             args += ["--match-head-commit", head_sha]
         if delete_branch:
             args.append("--delete-branch")
-        res = self._write(args)
+        body: str | None = None
+        if resolved is MergeMethod.SQUASH:
+            args += ["--body-file", "-"]
+            body = _squash_body_from_view(view)
+        res = self._write(args, input_data=body)
         if not res.ok:
             raise ForgeMergeRefusedError((res.stderr or res.stdout)[-500:])
         m = _MERGE_SHA_RE.search(res.stdout)
