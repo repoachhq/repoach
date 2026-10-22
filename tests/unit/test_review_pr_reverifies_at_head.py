@@ -33,7 +33,7 @@ from repoach.review.findings import (
     record_finding,
 )
 from repoach.review.head_reverify import reverify_older_findings
-from repoach.review.orchestrator import TeamOutcome, run_review
+from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome, run_review
 from repoach.review.refuter import JudgingReport
 from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
 
@@ -438,3 +438,33 @@ def test_re_check_budget_is_the_cap_minus_the_refuter_pass_calls(
     assert team.reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 1}
     [deferred] = team.reverify_reasons
     assert deferred.endswith("unresolved: needs judgement (judging cap 2 reached)")
+
+
+def test_unpinned_review_never_re_checks_against_the_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, judge: _Judge
+) -> None:
+    repo, _, head_b, finding_id = _planted_then(tmp_path, _FIXED)
+    assert not (repo.checkout / "src" / "store.py").exists()
+    monkeypatch.chdir(repo.checkout)
+    orch = ReviewTeamOrchestrator(
+        forge=_HeadForge(repo.checkout, head_b),
+        db_path=_db(tmp_path),
+        post_to_github=False,
+        repo_root=repo.checkout,
+    )
+    monkeypatch.setattr(orch, "_join_head_guard", lambda *_a, **_k: head_b)
+
+    team = orch.review_pr(7)
+
+    finding = next(f for f in fetch_findings(_db(tmp_path), 7) if f.id == finding_id)
+    assert finding.status is FindingStatus.VERIFIED
+    assert finding.checked_at_sha != head_b
+    assert judge.calls == 0
+    assert (
+        team.reverify_line
+        == "review: findings of older heads not re-verified (no head tree pinned)"
+    )
+    assert team.reverify_reasons == [
+        "findings of older heads not re-verified (no head tree pinned)"
+    ]
+    assert team.final_verdict is ReviewVerdict.REQUEST_CHANGES
