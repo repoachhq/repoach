@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/findings_bridge.py, tests/unit/test_review_pr_records_once_per_head.py]
   resources: []
 
-depends_on: []
+depends_on: [SP-FINDINGS-INIT-RACE, SP-UNIVERSAL-FORGE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints: {}
@@ -156,8 +156,12 @@ counterpart in another module.
 
 ## Architecture Impact
 
-- 0.2: `findings_bridge.py` now calls `findings.mark_finding_seen`
-  (SP-FINDINGS-INIT-RACE, already the owner of the ledger it writes).
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-FINDINGS-INIT-RACE (0.2: owner of `findings.py`; the bridge calls `mark_finding_seen`, the tests read and seed the ledger)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-UNIVERSAL-FORGE (0.2: the tests drive a `GitHubForge` with a real `git`)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-GATE-REVERIFIES-AT-HEAD (0.2: the tests route the older-head re-check to the stub judge)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-ORCH-DOCSTRING (0.2: owner of `orchestrator.py`; the tests drive `run_review`)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-REFUTER-JUDGES-WHAT-IT-CAN (0.2: the tests route the refuter pass to the stub judge)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-RETRY-BACKOFF-DEDUP (0.2: owner of `reviewer.py`; the tests build `ReviewerOutcome` stubs)
 - No edge added or removed. `findings_bridge.py` moves from the
   frontier into this spec's `owns.code`; its imports resolve to
   frontier files (reported, not enforced), so `depends_on` stays
