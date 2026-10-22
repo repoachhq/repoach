@@ -83,7 +83,18 @@ from .hallucination_guard import (
     make_repo_file_reader,
     make_repo_symbol_searcher,
 )
-from .merge_gate import compute_merge_decision, summarise_ledger_facts, verdict_from_facts
+from .head_reverify import (
+    NO_HEAD_TREE,
+    HeadReverification,
+    reverify_older_findings,
+    skipped_reverification,
+)
+from .merge_gate import (
+    NO_REVERIFICATION,
+    compute_merge_decision,
+    summarise_ledger_facts,
+    verdict_from_facts,
+)
 from .notifier import fire_review_routine
 from .persistence import (
     DialogueEntry,
@@ -290,7 +301,11 @@ class TeamOutcome:
     (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
     ``tree`` is ``worktree`` or ``checkout`` when the review read a
     pinned head tree (SP-REVIEW-PINS-HEAD), and ``worktree`` its path
-    when it was kept. ``refused_writes`` lists every write the forge's
+    when it was kept. ``reverified`` counts the findings of older heads
+    re-checked at the head before the verdict (SP-GATE-REVERIFIES-AT-HEAD
+    G7), ``reverify_reasons`` names each one still blocking and
+    ``reverify_line`` is the one stderr line saying it (empty when no
+    head was known). ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
     why the barrier was closed, None when writes went through.
@@ -317,6 +332,9 @@ class TeamOutcome:
     write_refusal: str | None = None
     tree: str | None = None
     worktree: str | None = None
+    reverified: dict[str, int] = field(default_factory=lambda: dict(NO_REVERIFICATION))
+    reverify_reasons: list[str] = field(default_factory=list)
+    reverify_line: str = ""
 
 
 class ReviewTeamOrchestrator:
@@ -751,6 +769,7 @@ class ReviewTeamOrchestrator:
 
         refutations: list[Refutation] = []
         refuter_summary: str | None = None
+        refuter_calls = 0
         try:
             with reviewer_scope("Refuter"):
                 judging = judge_findings_for_pr(
@@ -766,6 +785,7 @@ class ReviewTeamOrchestrator:
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
+            refuter_calls = judging.model_calls
             _log.info(
                 "review_team.findings_judged",
                 pr_number=pr_number,
@@ -792,6 +812,10 @@ class ReviewTeamOrchestrator:
                 exc=type(exc).__name__,
                 message=str(exc)[:200],
             )
+
+        reverified = self._reverify_older_heads(
+            pr_number, head_sha=head_sha, refuter_calls=refuter_calls
+        )
 
         state_refused: ForgeStateRefusedError | None = None
         try:
@@ -908,6 +932,9 @@ class ReviewTeamOrchestrator:
             spec_missing=spec_missing,
             refutations=refutations,
             refuter_summary=refuter_summary,
+            reverified=reverified.counts(),
+            reverify_reasons=reverified.reasons(),
+            reverify_line=reverified.summary_line("review") if head_sha else "",
         )
 
         for outcome in outcomes:
@@ -951,6 +978,56 @@ class ReviewTeamOrchestrator:
             posted=team.posted_reviews,
         )
         return team
+
+    def _reverify_older_heads(
+        self, pr_number: int, *, head_sha: str | None, refuter_calls: int
+    ) -> HeadReverification:
+        """Re-check the findings of older heads at ``head_sha`` before the verdict.
+
+        SP-GATE-REVERIFIES-AT-HEAD G7-G10: the same pass as the gate
+        (:func:`~repoach.review.head_reverify.reverify_older_findings`),
+        so a person's fix pushed at ``head_sha`` settles the findings of
+        the head before it and the team verdict counts only what is still
+        open there. It runs only on the pinned head tree; CI is not read
+        (``broken_behavior`` stays with the gate) and the judge calls come
+        out of the refuter cap the review's own refuter pass spent
+        ``refuter_calls`` of. A failure is logged and reported as a
+        skipped re-check, and the findings of older heads keep blocking.
+        """
+        if not head_sha:
+            return HeadReverification(head_sha="")
+        if not self._pinned_head:
+            return skipped_reverification(
+                self._db_path,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                reason=NO_HEAD_TREE,
+                reads_ci=False,
+            )
+        cap = configured_max_judged(self._config_root)
+        try:
+            with reviewer_scope("Refuter"):
+                return reverify_older_findings(
+                    self._db_path,
+                    pr_number=pr_number,
+                    repo_root=self._repo_root,
+                    head_sha=head_sha,
+                    ci_green=None,
+                    config=load_gates_config(self._config_root),
+                    max_judged=max(cap - refuter_calls, 0),
+                    cap=cap,
+                )
+        except Exception as exc:
+            _log.warning(
+                "review_team.head_reverify_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="findings of older heads keep blocking",
+            )
+            return HeadReverification(
+                head_sha=head_sha, skipped=f"re-check failed: {type(exc).__name__}"
+            )
 
     def _publish_all(
         self,
@@ -1621,11 +1698,19 @@ class ReviewTeamOrchestrator:
         this report — the review job runs from the base ref, so on-disk
         re-verification here would be wrong (hence
         :func:`summarise_ledger_facts`, not :func:`gather_merge_facts`).
+        The findings of older heads the review re-checked at its head and
+        found still blocking are named in the headline's reasons, as the
+        gate names them (SP-GATE-REVERIFIES-AT-HEAD G8).
         """
         facts = summarise_ledger_facts(
             self._db_path,
             pr_number=team.pr_number,
             head_sha=team.head_sha or "",
+        ).model_copy(
+            update={
+                "reverified": dict(team.reverified),
+                "reverify_reasons": list(team.reverify_reasons),
+            }
         )
         decision = compute_merge_decision(facts)
         return render_ledger_report(
@@ -1700,6 +1785,8 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "posted_comments": team.posted_comments,
         "posted_reviews": team.posted_reviews,
         "n_hallucinations_downgraded": len(team.hallucinations),
+        "reverified": dict(team.reverified),
+        "reverify_reasons": list(team.reverify_reasons),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [

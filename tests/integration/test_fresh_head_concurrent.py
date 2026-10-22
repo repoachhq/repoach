@@ -20,6 +20,7 @@ import pytest
 
 from repoach.forge.github import GitHubForge
 from repoach.forge.runner import CommandResult
+from repoach.review.head_reverify import HeadReverification
 from repoach.review.merge_gate import MergeFacts
 from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.refuter import JudgingReport
@@ -128,6 +129,10 @@ def _silence_downstream_ledger_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: {})
     monkeypatch.setattr(
         "repoach.review.orchestrator.judge_findings_for_pr", lambda *a, **kw: JudgingReport()
+    )
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.skipped_reverification",
+        lambda *a, head_sha, **kw: HeadReverification(head_sha=head_sha),
     )
     monkeypatch.setattr(
         "repoach.review.orchestrator.remember_verified_findings", lambda *a, **kw: None

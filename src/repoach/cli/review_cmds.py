@@ -253,6 +253,16 @@ def review_pr(
     duration, cost estimate or ``subscription (tokens only)``), and one
     ``repoach: usage: …`` line on stderr says the total.
 
+    Before the team verdict, every unsettled blocking finding raised at
+    an older head is re-checked at the reviewed head, exactly as
+    ``review gate`` does (SP-GATE-REVERIFIES-AT-HEAD G7): the ones the
+    head no longer supports become ``resolved_at_head`` and no longer
+    count, the others stay counted and are named in
+    ``reverify_reasons`` (``raised at <sha7>, still present at
+    <sha7>``). ``reverified`` in the JSON counts them and one
+    ``review: re-verified …`` line on stderr says it. CI is not read,
+    so ``broken_behavior`` findings are left to the gate.
+
     The review reads the PR head, never the checkout's branch
     (SP-REVIEW-PINS-HEAD G2): the head SHA comes from the forge, its tree
     is the checkout when that is at the SHA and clean, else a detached
@@ -324,6 +334,8 @@ def review_pr(
         "posting_outcome": team.posting_outcome,
         "refused_writes": len(team.refused_writes),
         "write_refusal": team.write_refusal,
+        "reverified": team.reverified,
+        "reverify_reasons": team.reverify_reasons,
         "reviews": [
             {
                 "role": o.role.value,
@@ -345,6 +357,8 @@ def review_pr(
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
     if team.refuter_summary is not None:
         typer.echo(team.refuter_summary, err=True)
+    if team.reverify_line:
+        typer.echo(team.reverify_line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:
         typer.echo(
