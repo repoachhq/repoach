@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import sqlite3
 import stat
 import subprocess
@@ -23,7 +24,7 @@ import pytest
 import typer
 
 from repoach.ci_entry.advisory import CiReviewPlan, subprocess_review_runner
-from repoach.ci_entry.variables import FORCE_VAR
+from repoach.ci_entry.variables import FORCE_VAR, PASSTHROUGH_VARS
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.review import orchestrator
@@ -517,6 +518,11 @@ def test_a_ledger_from_before_the_last_seen_columns_migrates(tmp_path: Path) -> 
 
 
 def test_ci_review_passes_force_only_when_asked(tmp_path: Path) -> None:
+    """The child keeps the interpreter variables a CI runner sets.
+
+    An ``actions/setup-python`` interpreter started without its
+    ``LD_LIBRARY_PATH`` exits 127 before printing anything (PR #241 CI).
+    """
     script = tmp_path / "fakepython"
     script.write_text(
         f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n",
@@ -533,7 +539,7 @@ def test_ci_review_passes_force_only_when_asked(tmp_path: Path) -> None:
         forge_token_var="GITLAB_TOKEN",
     )
     runner = subprocess_review_runner(tmp_path, str(script))
-    env = {"PATH": "/usr/bin:/bin"}
+    env = {name: os.environ[name] for name in PASSTHROUGH_VARS if name in os.environ}
 
     _, plain = runner(plan, env)
     _, forced = runner(plan, {**env, FORCE_VAR: "1"})
