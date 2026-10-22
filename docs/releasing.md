@@ -4,6 +4,16 @@
 commit to PyPI. Nothing else publishes: no branch push, no PR, no manual
 upload. This page is the owner's procedure and what each check proves.
 
+**Merge the release PR `develop` → `main` with "Create a merge commit",
+never "Squash and merge".** A squash gives `main` a copy of `develop`'s
+content without its history, so every file `develop` touches afterwards
+conflicts textually and the next release PR opens as `CONFLICTING`. This
+happened: release PR #235 was squash-merged (`1946dda`, a single parent),
+and the next release PR #242 conflicted on four files until `main` was
+merged back into `develop`. Leave the repository's "Allow squash merging"
+setting on (feature PRs into `develop` use it); choose the merge-commit
+button on the release PR.
+
 ## Where the version comes from
 
 The git tag is the only source. `pyproject.toml` declares
