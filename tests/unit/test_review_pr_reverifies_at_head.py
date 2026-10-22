@@ -34,6 +34,7 @@ from repoach.review.findings import (
 )
 from repoach.review.head_reverify import reverify_older_findings
 from repoach.review.orchestrator import TeamOutcome, run_review
+from repoach.review.refuter import JudgingReport
 from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
 
 _PLANTED = (
@@ -188,7 +189,13 @@ def _db(tmp_path: Path) -> Path:
     return tmp_path / "state" / "review.db"
 
 
-def _record_security(db: Path, head: str) -> int:
+def _record_security(
+    db: Path,
+    head: str,
+    *,
+    line: int = 3,
+    claim: str = "SQL injection: the prefix is interpolated into the query",
+) -> int:
     init_findings_schema(db)
     return record_finding(
         db,
@@ -200,10 +207,10 @@ def _record_security(db: Path, head: str) -> int:
             claim_type=ClaimType.SECURITY,
             severity=Severity.BLOCKING,
             file="src/store.py",
-            line_start=3,
-            line_end=3,
-            claim="SQL injection: the prefix is interpolated into the query",
-            evidence_pointer="src/store.py:3",
+            line_start=line,
+            line_end=line,
+            claim=claim,
+            evidence_pointer=f"src/store.py:{line}",
             status=FindingStatus.VERIFIED,
             verification_method="refuter",
             verification_result="confirmed at A",
@@ -413,3 +420,21 @@ def test_cli_prints_the_line_and_the_json_keys(
         f"review: re-verified 1 finding(s) of older heads at {head_b[:7]}: "
         "resolved 1, still open 0, needs judgement 0"
     ]
+
+
+def test_re_check_budget_is_the_cap_minus_the_refuter_pass_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, judge: _Judge
+) -> None:
+    monkeypatch.setenv("REPOACH_REFUTER_MAX_JUDGED", "2")
+    monkeypatch.setattr(
+        orchestrator, "judge_findings_for_pr", lambda *_a, **_k: JudgingReport(model_calls=1)
+    )
+    repo, head_a, head_b, _ = _planted_then(tmp_path, _FIXED)
+    _record_security(_db(tmp_path), head_a, line=1, claim="search trusts its caller")
+
+    team = _review(repo, head_b, monkeypatch)
+
+    assert judge.calls == 1
+    assert team.reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 1}
+    [deferred] = team.reverify_reasons
+    assert deferred.endswith("unresolved: needs judgement (judging cap 2 reached)")
