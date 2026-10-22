@@ -62,6 +62,8 @@ class _FakeTeam:
     reverify_line: str = ""
     findings_recorded: dict[str, int] = field(default_factory=dict)
     findings_line: str = ""
+    cached: bool = False
+    cache_line: str = ""
 
 
 _REQUIRED_TOP_LEVEL = {

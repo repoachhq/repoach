@@ -210,6 +210,11 @@ def review_pr(
         "--keep-tree",
         help="Keep the worktree of the PR head after the review and print its path.",
     ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-run the reviewers on a head that already has a completed review run.",
+    ),
     dry_run_reason: str = typer.Option(
         WriteRefusal.DRY_RUN.value,
         "--dry-run-reason",
@@ -270,6 +275,16 @@ def review_pr(
     run; a row already judged there is not judged again. ``findings_recorded`` in
     the JSON carries the same three counts.
 
+    The unit of a review is the run (SP-FINDINGS-BRIDGE-DOCFIX 0.3): when
+    a completed run already exists at the head (every reviewer parsed,
+    its findings written), no reviewer and no refuter is called. The
+    stored outcomes are replayed, the older-head re-check still runs, the
+    JSON has the same shape with ``cached`` true, and one ``review:
+    cached at <sha7> (run <id>, <when>); use --force to re-review`` line
+    on stderr names the run. A dry run and a posting run share that
+    cache; a posting run posts the stored outcomes. ``--force`` runs the
+    reviewers again.
+
     The review reads the PR head, never the checkout's branch
     (SP-REVIEW-PINS-HEAD G2): the head SHA comes from the forge, its tree
     is the checkout when that is at the SHA and clean, else a detached
@@ -307,6 +322,7 @@ def review_pr(
                 keep_tree=keep_tree,
                 announce=lambda line: typer.echo(line, err=True),
                 write_refusal=refusal,
+                force=force,
                 **_forge_kwargs(forge_name),
             )
     except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
@@ -344,6 +360,7 @@ def review_pr(
         "reverified": team.reverified,
         "reverify_reasons": team.reverify_reasons,
         "findings_recorded": team.findings_recorded,
+        "cached": team.cached,
         "reviews": [
             {
                 "role": o.role.value,
@@ -363,6 +380,8 @@ def review_pr(
         "usage": run_usage_json(run),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+    if team.cache_line:
+        typer.echo(team.cache_line, err=True)
     if team.findings_line:
         typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
