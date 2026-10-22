@@ -123,7 +123,7 @@ def _silence_downstream_ledger_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr("repoach.review.orchestrator.fetch_dialogue", lambda *a, **kw: [])
     monkeypatch.setattr("repoach.review.orchestrator.record_dialogue", lambda *a, **kw: None)
-    monkeypatch.setattr("repoach.review.orchestrator.record_review_ledger", lambda *a, **kw: True)
+    monkeypatch.setattr("repoach.review.orchestrator.record_review_ledger", lambda *a, **kw: None)
     monkeypatch.setattr("repoach.review.orchestrator.record_review", lambda *a, **kw: None)
     monkeypatch.setattr("repoach.review.orchestrator.record_hallucination", lambda *a, **kw: None)
     monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: {})

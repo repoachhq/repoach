@@ -2,12 +2,22 @@
 
 Provisional claim_type defaults map each lens to a ClaimType bucket.
 Verifier slices 4-5 own the refinement; proposed status signals unverified.
+
+At a given head a finding is identified by its :func:`finding_fingerprint`
+(SP-FINDINGS-BRIDGE-DOCFIX 0.2): a review that raises a fingerprint
+already recorded at that head stamps the existing row instead of
+inserting another, and never re-opens one refuted at that head.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+
+from pydantic import BaseModel
 
 from ..core.logging import get_logger
 from .diff_scoper import ScopedDiff
@@ -19,6 +29,7 @@ from .findings import (
     Severity,
     fetch_findings,
     init_findings_schema,
+    mark_finding_seen,
     record_finding,
     update_finding_status,
 )
@@ -29,6 +40,11 @@ _log = get_logger(__name__)
 
 _OVERSIZED_FINDER = "diff_scoper"
 """Finder identifier stamped on oversized-omission findings (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
+
+FINGERPRINT_LINE_WINDOW = 5
+"""Lines per bucket of :func:`finding_fingerprint`, the window ``bench`` fingerprints use."""
+
+_NON_WORD = re.compile(r"[^\w\s]")
 
 LENS_DEFAULT_CLAIM_TYPE: dict[BotRole, ClaimType] = {
     BotRole.ARCHITECT: ClaimType.DESIGN,
@@ -109,6 +125,99 @@ def classify_claim_type(body: str, role: BotRole) -> ClaimType:
         if pattern.search(text):
             return claim_type
     return LENS_DEFAULT_CLAIM_TYPE.get(role, ClaimType.DESIGN)
+
+
+def normalised_claim(claim: str) -> str:
+    """Return ``claim`` lowercased, punctuation dropped, whitespace collapsed.
+
+    Args:
+        claim: The finding's claim text.
+
+    Returns:
+        The text :func:`finding_fingerprint` hashes.
+    """
+    return " ".join(_NON_WORD.sub(" ", claim.lower()).split())
+
+
+def finding_fingerprint(finding: Finding) -> str:
+    """Return what identifies ``finding`` at its head, whichever reviewer raised it.
+
+    ``bench``'s fingerprint keys human labels by reviewer and leaves the
+    claim out, so two lenses raising the same claim stay distinct there;
+    the ledger needs the opposite. This one hashes the claim type, the
+    cited file, the line bucket (:data:`FINGERPRINT_LINE_WINDOW` lines,
+    as ``bench`` buckets them) and :func:`normalised_claim`
+    (SP-FINDINGS-BRIDGE-DOCFIX 0.2 G4).
+
+    Args:
+        finding: The finding to identify.
+
+    Returns:
+        The first 16 hex digits of a SHA-256 over those four parts.
+    """
+    window = max(finding.line_start, 0) // FINGERPRINT_LINE_WINDOW
+    raw = "|".join(
+        (finding.claim_type.value, finding.file, str(window), normalised_claim(finding.claim))
+    )
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+class RecordedFindings(BaseModel):
+    """What one review pass did to the findings ledger at its head.
+
+    Attributes:
+        new: Findings inserted because no row of this head had their
+            fingerprint.
+        already_recorded: Findings whose fingerprint a row of this head
+            already carried (recorded by an earlier run, or by another
+            reviewer of this run); that row was stamped, not duplicated.
+        refuted_earlier: Findings whose fingerprint matches only rows
+            refuted at this head; nothing was inserted or re-opened.
+        reopened: Findings refuted at another head that a comment of
+            this pass re-raised and re-opened to ``proposed``.
+        run_id: Identifier stamped on every row this pass inserted or saw.
+    """
+
+    new: int = 0
+    already_recorded: int = 0
+    refuted_earlier: int = 0
+    reopened: int = 0
+    run_id: str = ""
+
+    def summary_line(self) -> str:
+        """Return the stderr line ``review pr`` prints after recording."""
+        return (
+            f"findings: {self.new} new, {self.already_recorded} already recorded, "
+            f"{self.refuted_earlier} refuted earlier"
+        )
+
+    def counts(self) -> dict[str, int]:
+        """Return the three counts of :meth:`summary_line` as a JSON block."""
+        return {
+            "new": self.new,
+            "already_recorded": self.already_recorded,
+            "refuted_earlier": self.refuted_earlier,
+        }
+
+
+def _rows_by_fingerprint(db_path: Path, pr_number: int, head_sha: str) -> dict[str, list[Finding]]:
+    """Group the rows recorded at ``head_sha`` by :func:`finding_fingerprint`.
+
+    An empty ``head_sha`` names no head, so it groups nothing and every
+    comment of an unpinned run is recorded as before.
+    """
+    grouped: dict[str, list[Finding]] = {}
+    if not head_sha:
+        return grouped
+    for row in fetch_findings(db_path, pr_number):
+        if row.head_sha == head_sha:
+            grouped.setdefault(finding_fingerprint(row), []).append(row)
+    return grouped
+
+
+def _refuted_at(finding: Finding) -> str:
+    """Return the head ``finding`` was refuted at (its check head, else its own)."""
+    return finding.checked_at_sha or finding.head_sha
 
 
 def _is_unparsed(outcome: ReviewerOutcome) -> bool:
@@ -279,23 +388,27 @@ def record_oversized_findings(
         return 0
     init_findings_schema(db_path)
     effective_sha = head_sha or ""
+    at_head = _rows_by_fingerprint(db_path, pr_number, effective_sha)
+    recorded = 0
     for path in scoped.oversized:
-        record_finding(
-            db_path,
-            oversized_finding(
-                path,
-                pr_number=pr_number,
-                head_sha=effective_sha,
-                round_n=round_n,
-            ),
+        finding = oversized_finding(
+            path,
+            pr_number=pr_number,
+            head_sha=effective_sha,
+            round_n=round_n,
         )
+        if finding_fingerprint(finding) in at_head:
+            continue
+        record_finding(db_path, finding)
+        recorded += 1
     _log.warning(
         "findings_bridge.oversized_blocking_recorded",
         pr_number=pr_number,
         n_oversized=len(scoped.oversized),
+        n_recorded=recorded,
         oversized=scoped.oversized[:10],
     )
-    return len(scoped.oversized)
+    return recorded
 
 
 def _reopen_refuted_matches(
@@ -313,7 +426,9 @@ def _reopen_refuted_matches(
     and the refuted-finding sentinel stops defending the dismissal — an
     injected refutation verdict can no longer bury a blocking finding
     permanently. Matched rows are removed from *refuted_rows* so one
-    re-raise never re-opens the same row twice in a pass.
+    re-raise never re-opens the same row twice in a pass. The caller
+    passes only rows refuted at another head than the one reviewed
+    (SP-FINDINGS-BRIDGE-DOCFIX 0.2 G6).
     """
     reopened = 0
     for prior in list(refuted_rows):
@@ -351,23 +466,32 @@ def record_findings_for_outcomes(
     outcomes: list[ReviewerOutcome],
     round_n: int,
     diff: str,
-) -> int:
-    """Persist one Finding per in-diff comment across all valid outcomes.
+    run_id: str | None = None,
+) -> RecordedFindings:
+    """Persist one Finding per in-diff comment the head does not carry yet.
 
     Calls init_findings_schema once; skips any outcome where _is_unparsed
     returns True; skips any comment whose file is not touched by ``diff``
     (an off-diff comment cites a path the PR does not change — the legacy
     arbiter's filter, ported here so the findings-driven Coder never
-    fixes a file the PR never touched); returns the recorded count.
-    head_sha=None is stored as empty string. When ``diff`` is empty or
-    malformed (no files parse out) the off-diff filter is disabled and
-    every comment is recorded, matching the arbiter's
-    never-silently-drop-everything contract.
+    fixes a file the PR never touched). head_sha=None is stored as empty
+    string. When ``diff`` is empty or malformed (no files parse out) the
+    off-diff filter is disabled and every comment is kept, matching the
+    arbiter's never-silently-drop-everything contract.
 
-    A recorded comment that re-raises a previously REFUTED finding
-    (same file, same claim type, similar claim) also re-opens that
-    finding to PROPOSED via :func:`_reopen_refuted_matches`
-    (SP-REFUTER-INJECTION-HARDEN G3).
+    At a known head each kept comment is matched by
+    :func:`finding_fingerprint` against the rows of that head
+    (SP-FINDINGS-BRIDGE-DOCFIX 0.2): no match inserts a row; a match on
+    a row that is not refuted stamps it (``last_seen_at``,
+    ``last_run_id``) and inserts nothing; a match only on refuted rows
+    inserts nothing and re-opens nothing. With no head (``head_sha``
+    empty) every kept comment is inserted.
+
+    A comment that re-raises a finding REFUTED at another head (same
+    file, same claim type, similar claim) re-opens that finding to
+    PROPOSED via :func:`_reopen_refuted_matches`
+    (SP-REFUTER-INJECTION-HARDEN G3); a finding refuted at the reviewed
+    head stays refuted.
 
     Args:
         db_path: Path to the SQLite database file.
@@ -376,18 +500,24 @@ def record_findings_for_outcomes(
         outcomes: All reviewer outcomes from the run.
         round_n: Review round index (1 or 2).
         diff: The PR's unified diff; comments off it are dropped.
+        run_id: Identifier of this review run; a fresh one when None.
 
     Returns:
-        Number of findings recorded.
+        The new / already recorded / refuted earlier counts of the pass.
     """
     init_findings_schema(db_path)
     effective_sha = head_sha or ""
+    result = RecordedFindings(run_id=run_id or uuid.uuid4().hex[:12])
+    seen_at = datetime.now(UTC).isoformat(timespec="seconds")
     files_in_diff = _files_in_diff(diff)
     diff_filter_enabled = bool(files_in_diff)
-    refuted_rows = list(fetch_findings(db_path, pr_number, status=FindingStatus.REFUTED))
-    count = 0
+    at_head = _rows_by_fingerprint(db_path, pr_number, effective_sha)
+    refuted_rows = [
+        row
+        for row in fetch_findings(db_path, pr_number, status=FindingStatus.REFUTED)
+        if not effective_sha or _refuted_at(row) != effective_sha
+    ]
     skipped = 0
-    reopened = 0
     for outcome in outcomes:
         if _is_unparsed(outcome):
             continue
@@ -401,14 +531,37 @@ def record_findings_for_outcomes(
                 pr_number=pr_number,
                 head_sha=effective_sha,
                 round_n=round_n,
-            )
-            record_finding(db_path, finding)
-            count += 1
-            reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
+            ).model_copy(update={"last_seen_at": seen_at, "last_run_id": result.run_id})
+            fingerprint = finding_fingerprint(finding)
+            matches = at_head.get(fingerprint, [])
+            live = [row for row in matches if row.status is not FindingStatus.REFUTED]
+            if live:
+                result.already_recorded += 1
+                for row in live:
+                    if row.id is not None and row.last_run_id != result.run_id:
+                        mark_finding_seen(db_path, row.id, run_id=result.run_id, seen_at=seen_at)
+                continue
+            if matches:
+                result.refuted_earlier += 1
+                continue
+            finding_id = record_finding(db_path, finding)
+            result.new += 1
+            if effective_sha:
+                at_head[fingerprint] = [finding.model_copy(update={"id": finding_id})]
+            result.reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
     if skipped:
         _log.info("findings_bridge.off_diff_skipped", pr_number=pr_number, n_skipped=skipped)
-    if reopened:
+    if result.reopened:
         _log.info(
-            "findings_bridge.refuted_reopened_total", pr_number=pr_number, n_reopened=reopened
+            "findings_bridge.refuted_reopened_total",
+            pr_number=pr_number,
+            n_reopened=result.reopened,
         )
-    return count
+    _log.debug(
+        "findings_bridge.recorded",
+        pr_number=pr_number,
+        head_sha=effective_sha[:12],
+        run_id=result.run_id,
+        **result.counts(),
+    )
+    return result

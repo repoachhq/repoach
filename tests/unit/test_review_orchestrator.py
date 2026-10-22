@@ -44,7 +44,7 @@ def test_failed_findings_write_poisons_integrity(
     recorded = record_review_ledger(
         db, pr_number=7, head_sha="head123", outcomes=_bench(), round_n=1, diff=""
     )
-    assert recorded is False
+    assert recorded is None
 
     facts = gather_merge_facts(
         db, pr_number=7, repo_root=tmp_path, head_sha="head123", ci_green=True
@@ -60,7 +60,7 @@ def test_successful_write_keeps_head_approvable(tmp_path: Path) -> None:
     recorded = record_review_ledger(
         db, pr_number=7, head_sha="head123", outcomes=_bench(), round_n=1, diff=""
     )
-    assert recorded is True
+    assert recorded is not None
 
     facts = gather_merge_facts(
         db, pr_number=7, repo_root=tmp_path, head_sha="head123", ci_green=True

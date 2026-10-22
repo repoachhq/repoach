@@ -60,6 +60,8 @@ class _FakeTeam:
     )
     reverify_reasons: list[str] = field(default_factory=list)
     reverify_line: str = ""
+    findings_recorded: dict[str, int] = field(default_factory=dict)
+    findings_line: str = ""
 
 
 _REQUIRED_TOP_LEVEL = {

@@ -76,7 +76,11 @@ from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, reviewer_scope
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
-from .findings_bridge import record_findings_for_outcomes, record_oversized_findings
+from .findings_bridge import (
+    RecordedFindings,
+    record_findings_for_outcomes,
+    record_oversized_findings,
+)
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
@@ -175,7 +179,7 @@ def record_review_ledger(
     outcomes: list[ReviewerOutcome],
     round_n: int,
     diff: str,
-) -> bool:
+) -> RecordedFindings | None:
     """Persist the review findings, then the integrity row — fail closed.
 
     The integrity row is written ONLY after the findings write succeeds
@@ -210,11 +214,13 @@ def record_review_ledger(
         diff: The reviewed diff (scopes findings to touched files).
 
     Returns:
-        True when both writes landed; False when either failed (the
-        failure is logged loudly and the head stays non-mergeable).
+        What the findings write did (new / already recorded / refuted
+        earlier, SP-FINDINGS-BRIDGE-DOCFIX 0.2) when both writes landed;
+        None when either failed (the failure is logged loudly and the
+        head stays non-mergeable).
     """
     try:
-        n_findings = record_findings_for_outcomes(
+        recorded = record_findings_for_outcomes(
             db_path,
             pr_number=pr_number,
             head_sha=head_sha,
@@ -233,7 +239,9 @@ def record_review_ledger(
         _log.info(
             "review_team.findings_recorded",
             pr_number=pr_number,
-            n_findings=n_findings,
+            n_findings=recorded.new,
+            n_already_recorded=recorded.already_recorded,
+            n_refuted_earlier=recorded.refuted_earlier,
             n_oversized_blocking=n_oversized,
         )
     except Exception as exc:
@@ -248,7 +256,7 @@ def record_review_ledger(
             pr_number=pr_number,
             head_sha=head_sha,
         )
-        return False
+        return None
 
     try:
         from .findings import record_review_integrity
@@ -275,8 +283,8 @@ def record_review_ledger(
             exc=type(exc).__name__,
             message=str(exc)[:200],
         )
-        return False
-    return True
+        return None
+    return recorded
 
 
 @dataclass
@@ -305,7 +313,10 @@ class TeamOutcome:
     re-checked at the head before the verdict (SP-GATE-REVERIFIES-AT-HEAD
     G7), ``reverify_reasons`` names each one still blocking and
     ``reverify_line`` is the one stderr line saying it (empty when no
-    head was known). ``refused_writes`` lists every write the forge's
+    head was known). ``findings_recorded`` counts what the review's
+    findings write did at the head (new, already recorded, refuted
+    earlier; SP-FINDINGS-BRIDGE-DOCFIX 0.2) and ``findings_line`` is the
+    stderr line saying it, empty when the write failed. ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
     why the barrier was closed, None when writes went through.
@@ -335,6 +346,8 @@ class TeamOutcome:
     reverified: dict[str, int] = field(default_factory=lambda: dict(NO_REVERIFICATION))
     reverify_reasons: list[str] = field(default_factory=list)
     reverify_line: str = ""
+    findings_recorded: dict[str, int] = field(default_factory=dict)
+    findings_line: str = ""
 
 
 class ReviewTeamOrchestrator:
@@ -740,7 +753,7 @@ class ReviewTeamOrchestrator:
             head_guard_pool, head_guard_future, pr_number=pr_number
         )
 
-        record_review_ledger(
+        recorded = record_review_ledger(
             self._db_path,
             pr_number=pr_number,
             head_sha=head_sha,
@@ -935,6 +948,8 @@ class ReviewTeamOrchestrator:
             reverified=reverified.counts(),
             reverify_reasons=reverified.reasons(),
             reverify_line=reverified.summary_line("review") if head_sha else "",
+            findings_recorded=recorded.counts() if recorded is not None else {},
+            findings_line=recorded.summary_line() if recorded is not None else "",
         )
 
         for outcome in outcomes:
@@ -1787,6 +1802,7 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "n_hallucinations_downgraded": len(team.hallucinations),
         "reverified": dict(team.reverified),
         "reverify_reasons": list(team.reverify_reasons),
+        "findings_recorded": dict(team.findings_recorded),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [
