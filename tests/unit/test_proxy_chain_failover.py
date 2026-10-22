@@ -523,6 +523,54 @@ class _ScriptedProvider(BaseProvider):
             yield chunk
 
 
+class _CountingProvider(BaseProvider):
+    """Like ``_ScriptedProvider``, but counts ``stream_response`` CALLS.
+
+    ``_ScriptedProvider.stream_response`` is an async-generator
+    function: calling it only builds the generator object — its body
+    (including a scripted ``raise``) runs on the first ``__anext__()``,
+    not on the call itself. That makes it useless for asserting "this
+    provider was never dispatched to", since a test would need to
+    iterate the stream to observe the effect, which is exactly the
+    behavior a pre-dispatch skip must avoid. ``stream_response`` here
+    is a plain (non-async) method so the call itself is observable
+    synchronously, before any iteration.
+    """
+
+    SUPPORTS_NATIVE_TOOLS: bool = True
+
+    def __init__(
+        self,
+        config: ProviderConfig,
+        *,
+        chunks: list[str] | None = None,
+        raises: Exception | None = None,
+    ) -> None:
+        super().__init__(config)
+        self._chunks = chunks or []
+        self._raises = raises
+        self.call_count = 0
+
+    async def cleanup(self) -> None:
+        return None
+
+    def stream_response(
+        self,
+        request: Any,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+    ) -> AsyncIterator[str]:
+        self.call_count += 1
+        return self._stream()
+
+    async def _stream(self) -> AsyncIterator[str]:
+        if self._raises is not None:
+            raise self._raises
+        for chunk in self._chunks:
+            yield chunk
+
+
 def _make_request(*, with_tools: bool = True) -> MessagesRequest:
     tools = (
         [
@@ -779,18 +827,35 @@ def test_blocked_provider_is_skipped_without_dispatch_and_failover_is_fast(
 ) -> None:
     """A provider already blocked by a prior 429 is skipped with no request.
 
-    ``nvidia_nim`` is wired to raise if it were ever dispatched, and its
-    scoped limiter is pre-blocked for 60s to simulate a 429 a previous
-    request already hit. The chain must reach ``kimi`` well under the
-    20s ``first_byte_deadline_s`` — in fact under 1s, since the skip
-    never dispatches at all.
+    ``nvidia_nim``'s scoped limiter is pre-blocked for 60s to simulate
+    a 429 a previous request already hit. The guarantee under test is
+    structural, not timing-based: ``nvidia_nim.stream_response`` is
+    NEVER called (``call_count == 0``, asserted via
+    ``_CountingProvider``, which counts the call itself rather than
+    the generator being iterated) and
+    ``GlobalRateLimiter.wait_if_blocked`` is never invoked for this
+    dispatch at all — patched here to raise if it is, so a future
+    regression that routes the skip back through the real wait path
+    fails loudly instead of merely running slow. A generous wall-clock
+    ceiling (well under the 20s ``first_byte_deadline_s``) is kept as
+    a cheap sanity check, not the guarantee itself — a tight ``< 1.0``
+    bound measured flaky under ``-n 8`` contention (1.85s observed).
     """
+
+    async def _wait_if_blocked_must_not_be_called(self: GlobalRateLimiter) -> bool:
+        raise AssertionError(
+            "GlobalRateLimiter.wait_if_blocked must not be called for a "
+            "pre-dispatch skip — the whole point is to avoid the wait"
+        )
+
+    monkeypatch.setattr(GlobalRateLimiter, "wait_if_blocked", _wait_if_blocked_must_not_be_called)
+
     providers = {
-        "nvidia_nim": _ScriptedProvider(
+        "nvidia_nim": _CountingProvider(
             ProviderConfig(api_key="x"),
             raises=RuntimeError("must not be dispatched while rate-limited"),
         ),
-        "kimi": _ScriptedProvider(
+        "kimi": _CountingProvider(
             ProviderConfig(api_key="x"),
             chunks=[
                 _MESSAGE_START,
@@ -801,7 +866,7 @@ def test_blocked_provider_is_skipped_without_dispatch_and_failover_is_fast(
                 _MESSAGE_STOP,
             ],
         ),
-        "groq": _ScriptedProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
+        "groq": _CountingProvider(ProviderConfig(api_key="x"), chunks=["unused"]),
     }
     service = _build_service(monkeypatch, providers)
     providers["nvidia_nim"]._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
@@ -814,7 +879,10 @@ def test_blocked_provider_is_skipped_without_dispatch_and_failover_is_fast(
     chunks = _drain_stream_response(response)
     elapsed = time.monotonic() - started
 
-    assert elapsed < 1.0, f"expected the blocked hop to cost nothing, took {elapsed}s"
+    assert providers["nvidia_nim"].call_count == 0, "blocked provider must never be dispatched to"
+    assert providers["kimi"].call_count == 1
+    assert providers["groq"].call_count == 0
+    assert elapsed < 15.0, f"sanity ceiling only, far below the 20s deadline: took {elapsed}s"
     assert any(c == _TEXT_CONTENT_START for c in chunks)
     assert "unused" not in chunks
 
