@@ -1015,6 +1015,7 @@ class ReviewTeamOrchestrator:
                     ci_green=None,
                     config=load_gates_config(self._config_root),
                     max_judged=max(cap - refuter_calls, 0),
+                    cap=cap,
                 )
         except Exception as exc:
             _log.warning(

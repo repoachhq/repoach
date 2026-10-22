@@ -290,11 +290,15 @@ def _mechanical(
 
 
 def _judged(
-    finding: Finding, repo_root: Path, judge: LazyJudge, max_judged: int
+    finding: Finding, repo_root: Path, judge: LazyJudge, max_judged: int, cap: int
 ) -> tuple[ReverifyState, str, str]:
-    """Hand a finding to the refuter at the head, within the cap."""
+    """Hand a finding to the refuter at the head, within ``max_judged`` calls.
+
+    A finding past the budget names the configured ``cap``, which is
+    larger than ``max_judged`` when the caller already spent part of it.
+    """
     if judge.calls >= max_judged:
-        return "needs_judgement", "refuter", JUDGING_CAP_REACHED.format(cap=max_judged)
+        return "needs_judgement", "refuter", JUDGING_CAP_REACHED.format(cap=cap)
     status, reason = refute_finding(finding, repo_root=repo_root, judge=judge)
     if status is FindingStatus.REFUTED:
         return "resolved", "refuter", reason
@@ -312,6 +316,7 @@ def _recheck(
     config: GatesConfig,
     judge: LazyJudge,
     max_judged: int,
+    cap: int,
 ) -> tuple[ReverifyState, str, str]:
     """Return ``(state, method, reason)`` for one finding at the head."""
     sha7 = head_sha[:7]
@@ -327,7 +332,7 @@ def _recheck(
             return settled
     elif finding.claim_type not in JUDGED_CLAIM_TYPES:
         _log.info("head_reverify.unknown_claim_type", claim_type=finding.claim_type.value)
-    return _judged(finding, repo_root, judge, max_judged)
+    return _judged(finding, repo_root, judge, max_judged, cap)
 
 
 def _persist(
@@ -457,6 +462,7 @@ def reverify_older_findings(
     config: GatesConfig,
     max_judged: int,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
+    cap: int | None = None,
 ) -> HeadReverification:
     """Re-check every unsettled blocking finding of an older head at ``head_sha``.
 
@@ -476,6 +482,9 @@ def reverify_older_findings(
         config: The trusted gate configuration (the checkout's).
         max_judged: Judge calls allowed in this re-check.
         judge_factory: Builds the refuter judge on its first call.
+        cap: The configured refuter cap, named in the reason of a
+            finding the budget defers; ``max_judged`` when omitted
+            (``review pr`` passes the cap it spent part of).
 
     Returns:
         The :class:`HeadReverification`; resolved and still-open
@@ -504,6 +513,7 @@ def reverify_older_findings(
                 config=config,
                 judge=judge,
                 max_judged=max_judged,
+                cap=max_judged if cap is None else cap,
             )
         state, method, reason = seen[key]
         outcome = _outcome(finding, state, reason)
