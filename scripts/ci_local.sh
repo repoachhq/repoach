@@ -142,6 +142,9 @@ if [[ "$mode" != "tests" && "$mode" != "integration" && "$mode" != "wheel" ]] ; 
     run_step "lint — no inline comments / no noqa" python scripts/lint_no_inline_comments.py --summary
     run_step "lint — no silent except" python scripts/lint_no_silent_except.py --summary
     run_step "lint — CONTRIBUTING cites real paths" python scripts/check_contributing.py CONTRIBUTING.md
+    if git rev-parse --verify -q origin/develop >/dev/null ; then
+        run_step "lint — no AI attribution in branch commits" python scripts/lint_no_ai_attribution.py --range origin/develop..HEAD
+    fi
 fi
 
 if [[ "$mode" == "full" || "$mode" == "tests" ]] ; then
