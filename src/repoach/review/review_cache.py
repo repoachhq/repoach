@@ -87,7 +87,8 @@ def completed_run(
     """Return the :class:`ReviewRun` a completed review stores for replay.
 
     Args:
-        run_id: The run id the findings bridge stamped on the findings.
+        run_id: The usage run id of the review (`repoach usage`), also stamped
+            on the findings it recorded.
         pr_number: The PR / MR reviewed.
         head_sha: The head reviewed.
         final_verdict: The team verdict reported.

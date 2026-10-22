@@ -500,7 +500,9 @@ def record_findings_for_outcomes(
         outcomes: All reviewer outcomes from the run.
         round_n: Review round index (1 or 2).
         diff: The PR's unified diff; comments off it are dropped.
-        run_id: Identifier of this review run; a fresh one when None.
+        run_id: Identifier of this review run (the `review pr` usage run id,
+            so `repoach usage` and the ledger name the run alike); a fresh
+            one when None.
 
     Returns:
         The new / already recorded / refuted earlier counts of the pass.

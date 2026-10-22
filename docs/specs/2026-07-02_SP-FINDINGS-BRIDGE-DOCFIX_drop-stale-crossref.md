@@ -92,7 +92,8 @@ raising one claim).
 
 - G9: a `review pr` run completes when every reviewer outcome is parsed
   (no `ERROR`) and its findings were written at a pinned head. It then
-  stores one `pr_review_runs` row (run id = the run id stamped on its
+  stores one `pr_review_runs` row (run id = its `repoach usage` run id,
+  the same id it stamps on its
   findings, pr, head, UTC completion time, verdict, and a payload with
   the reviewer outcomes after guard and round 2, the refutations, the
   spec fields), in the findings ledger.

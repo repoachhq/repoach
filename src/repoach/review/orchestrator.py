@@ -73,7 +73,7 @@ from ..gates.config import load_gates_config
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
-from ..providers.usage import bind_reviewer, reviewer_scope
+from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
 from .finding_verifiers import verify_findings_for_pr
 from .findings import ReviewRun, fetch_completed_review_run, record_review_run
@@ -235,6 +235,7 @@ def record_review_ledger(
             outcomes=outcomes,
             round_n=round_n,
             diff=diff,
+            run_id=current_run_id(),
         )
         scoped = scope_diff(diff, _DIFF_HARD_CAP_CHARS)
         n_oversized = record_oversized_findings(

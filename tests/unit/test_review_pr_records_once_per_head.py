@@ -276,7 +276,7 @@ def test_second_dry_run_at_the_same_head_replays_the_run(
     assert second["reviews"] == first["reviews"]
     assert second["findings"] == first["findings"]
     [line] = lines
-    assert line.startswith(f"review: cached at {head[:7]} (run ")
+    assert line.startswith(f"review: cached at {head[:7]} (run {first['usage']['run_id']}, ")
     assert line.endswith("); use --force to re-review")
     assert fetch_findings(_db(tmp_path), 7) == rows_after_first
 
