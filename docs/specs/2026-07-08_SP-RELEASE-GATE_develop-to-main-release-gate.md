@@ -132,10 +132,16 @@ never squash", writes the receipt. Operator merges on GitHub, runs
   behind, the gate listed 17 commits already released into
   `origin/main` as out-of-band on releases #235 and #242) → the gate
   fetches `origin main develop` first and reads the range as
-  `origin/main..origin/develop`; each local branch's drift from its
-  `origin/<branch>` is a named reason ("local main is N commits behind
-  origin/main"), never a fabricated out-of-band list. A failed fetch
-  is an evaluation error (exit 1).
+  `origin/main..origin/develop`. A stale local branch then changes
+  nothing in the verdict: each local branch's drift from its
+  `origin/<branch>` stays in the JSON `branch_freshness` and is
+  printed on stderr as `release gate: local main is N commits behind
+  origin/main (verdict unaffected)`, never a reason, never a merge
+  flip, never a fabricated out-of-band list. A failed fetch is an
+  evaluation error (exit 1). The local-develop head-freshness refusal
+  (AC2) is kept because the gate still reads the local branch: the
+  receipt records the local develop head and the CI mirror runs on
+  the local checkout.
 
 ### Failure scenarios
 
@@ -175,11 +181,13 @@ changes, no schema changes. ~300 LOC across 1 new src module and
 
 - AC7: The release range is read from fetched remote-tracking refs:
   with local `main` one squash behind `origin/main`,
-  `out_of_band_commits` is empty and the refusal names "local main is
-  1 commit behind origin/main" —
+  `out_of_band_commits` is empty, `merge` is true with no reasons, and
+  `branch_freshness` reports "local main is 1 commit behind
+  origin/main" —
   `tests/unit/test_release_gate.py::test_release_range_reads_fetched_origin_refs_not_stale_local_main`.
 - AC8: A commit pushed to `origin/develop` without a gated PR is still
-  refused on the fetched-ref range —
+  refused on the fetched-ref range, with the out-of-band commit as the
+  only reason —
   `tests/unit/test_release_gate.py::test_release_range_on_origin_refs_still_refuses_true_out_of_band_commit`.
 
 ## Open Questions

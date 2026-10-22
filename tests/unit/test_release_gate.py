@@ -24,6 +24,7 @@ from repoach.review.release_gate import (
     classify_release_range,
     classify_release_range_against_ledger,
     compute_release_decision,
+    describe_branch_freshness,
     gather_release_facts,
     verify_release,
     verify_release_live,
@@ -692,13 +693,15 @@ def _ledger_with(tmp_path: Path, merged_sha: str) -> Path:
 
 
 def test_release_range_reads_fetched_origin_refs_not_stale_local_main(tmp_path: Path) -> None:
-    """A stale local ``main`` is a named freshness reason, never fabricated out-of-band commits.
+    """A stale local ``main`` is reported, never refused, never fabricated out-of-band commits.
 
     The operator's local ``main`` lags ``origin/main`` by squash
     ``(#1)``, which has no ledger record. Diffing the bare local
     ``main..develop`` lists ``(#1)`` as out-of-band although it is
     already released; the real range ``origin/main..origin/develop``
-    holds only the ledger-backed ``(#2)``.
+    holds only the ledger-backed ``(#2)``, so the release may merge
+    and the stale local ``main`` is reported in ``branch_freshness``
+    only.
     """
     _developer_dir, operator_dir, _released_sha, unreleased_sha = _release_with_stale_local_main(
         tmp_path
@@ -713,11 +716,13 @@ def test_release_range_reads_fetched_origin_refs_not_stale_local_main(tmp_path: 
     )
     decision = compute_release_decision(facts)
 
+    notes = [describe_branch_freshness(freshness) for freshness in facts.branch_freshness]
+
     assert facts.out_of_band_commits == []
     assert facts.provenance_error is None
-    assert "local main is 1 commit behind origin/main" in decision.reasons
-    assert not any("out-of-band" in reason for reason in decision.reasons)
-    assert decision.merge is False
+    assert notes == ["local main is 1 commit behind origin/main", None]
+    assert decision.reasons == []
+    assert decision.merge is True
 
 
 def test_release_range_on_origin_refs_still_refuses_true_out_of_band_commit(

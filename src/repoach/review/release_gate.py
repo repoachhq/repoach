@@ -160,8 +160,20 @@ def _commits(count: int) -> str:
     return f"{count} commit" if count == 1 else f"{count} commits"
 
 
-def _freshness_reason(freshness: BranchFreshness) -> str | None:
-    """Name how a local branch drifted from its remote ref, ``None`` when in sync."""
+def describe_branch_freshness(freshness: BranchFreshness) -> str | None:
+    """Name how a local branch drifted from its remote ref, ``None`` when in sync.
+
+    Informational only: the release range is read from fetched
+    remote-tracking refs, so the drift never enters a
+    :class:`ReleaseDecision`.
+
+    Args:
+        freshness: One local branch compared with its ``origin/<branch>``.
+
+    Returns:
+        A line such as ``"local main is 46 commits behind origin/main"``,
+        or ``None`` when the local branch matches its remote ref.
+    """
     local = f"local {freshness.branch}"
     if freshness.behind is None or freshness.ahead is None:
         return f"freshness unknown: could not compare {local} with {freshness.remote_ref}"
@@ -205,8 +217,9 @@ class ReleaseFacts(BaseModel):
             involves -- the release and the integration branch --
             compared with its freshly-fetched ``origin/<branch>``. The
             release range itself is always read from the fetched
-            remote-tracking refs, so a stale local branch is reported
-            here as a named reason, never folded into
+            remote-tracking refs, so a stale local branch changes
+            nothing in the verdict: it is informational, never a
+            refusal reason and never folded into
             ``out_of_band_commits``.
     """
 
@@ -243,9 +256,9 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
     Returns:
         A :class:`ReleaseDecision`. ``merge`` is True only when the
         release range is free of out-of-band commits, the local
-        ``develop`` head matches the remote tip, every local branch in
-        ``branch_freshness`` matches its remote-tracking ref, the release PR's head
-        (when known) matches ``develop_sha``, and the local CI mirror
+        ``develop`` head matches the remote tip (the receipt records
+        that head and the CI mirror runs on the local checkout), the
+        release PR's head (when known) matches ``develop_sha``, and the local CI mirror
         is green.
     """
     reasons: list[str] = []
@@ -258,10 +271,6 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
             f"head-freshness mismatch: local develop {facts.develop_sha} != "
             f"origin/develop {facts.remote_sha}"
         )
-    for freshness in facts.branch_freshness:
-        reason = _freshness_reason(freshness)
-        if reason is not None:
-            reasons.append(reason)
     if facts.pr_head_sha is not None and facts.pr_head_sha != facts.develop_sha:
         reasons.append(
             f"release PR stale: headRefOid {facts.pr_head_sha} != develop {facts.develop_sha}"
@@ -339,7 +348,7 @@ def gather_release_facts(
     names: a stale local release branch would otherwise list commits
     already released into the remote release branch as out-of-band.
     Each local branch's drift from its remote ref is reported in
-    ``branch_freshness`` instead.
+    ``branch_freshness``, informational only.
 
     Raises:
         RuntimeError: When ``git fetch origin <release> <integration>``
