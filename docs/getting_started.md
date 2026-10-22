@@ -62,12 +62,16 @@ repoach --help
 git config core.hooksPath .githooks
 ```
 
-This wires two hooks:
+This wires three hooks:
 
 - **pre-commit** — `ruff check` + `ruff format --check`, the
   no-inline-comments and no-silent-except gates, `repoach arch check
   --staged`, and shellcheck on staged shell files (skipped if
   shellcheck is not installed).
+- **commit-msg** — strips AI attribution trailers and footers
+  (`Co-Authored-By: Claude …`, `Generated with … Claude Code`,
+  `Claude-Session:`) from the message, then refuses a header that is
+  not Conventional Commits or is longer than 72 characters.
 - **pre-push** — refuses direct pushes to `develop`/`main` (PR-only)
   and runs the fast lint mirror (`scripts/ci_local.sh --fast`).
 

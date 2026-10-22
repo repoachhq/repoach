@@ -74,8 +74,8 @@ scripts/ci_local.sh --fast   # lint only
 scripts/ci_local.sh --tests  # pytest tests/unit only
 ```
 
-Install the git hooks once so the fast gate runs before every commit
-and push:
+Install the git hooks once so the fast gate runs before every commit,
+the commit message is cleaned and judged, and every push is gated:
 
 ```bash
 git config core.hooksPath .githooks
