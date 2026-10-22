@@ -43,11 +43,15 @@ withdrawn and replaced by G7-G10; AC10-AC14 pin them.
   (`{"resolved", "still_open", "needs_judgement"}`) and
   `reverify_reasons`; stderr carries one line
   `review: re-verified <n> finding(s) of older heads at <sha7>: resolved <a>, still open <b>, needs judgement <c>`.
+  The sticky ledger report carries both: a `Findings of older heads
+  re-verified` row in its facts table (when any was re-checked) and the
+  carried findings among its decision reasons.
 - G10: `review pr` does not read CI: `broken_behavior` findings are not
   re-checked by it (`ci_green=None`) and stay with the gate. The judge
   calls of the re-check come out of the same refuter cap as the refuter
   pass of the review (`cap - refuter calls already made`); a finding the
-  cap defers is `needs judgement (judging cap N reached)`, is not
+  budget defers is `needs judgement (judging cap N reached)`, N being the
+  configured cap, not the remaining budget; it is not
   stamped, and the next gate judges it. Its outcomes are stamped like
   the gate's, so a second `review pr` or a gate at the same head makes
   no second model call for them. A review that does not read the head
