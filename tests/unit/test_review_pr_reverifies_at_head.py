@@ -468,3 +468,33 @@ def test_unpinned_review_never_re_checks_against_the_checkout(
         "findings of older heads not re-verified (no head tree pinned)"
     ]
     assert team.final_verdict is ReviewVerdict.REQUEST_CHANGES
+
+
+def test_ledger_report_counts_and_names_the_carried_findings(tmp_path: Path) -> None:
+    carried = (
+        "finding 1: security src/store.py:3 raised at aaaaaaa, "
+        "still present at bbbbbbb (the prefix is still interpolated)"
+    )
+    orch = ReviewTeamOrchestrator(
+        forge=_HeadForge(tmp_path, "b" * 40),
+        db_path=_db(tmp_path),
+        post_to_github=False,
+        repo_root=tmp_path,
+    )
+    team = TeamOutcome(
+        pr_number=7,
+        final_verdict=ReviewVerdict.REQUEST_CHANGES,
+        n_blockers=0,
+        n_majors=0,
+        head_sha="b" * 40,
+        reverified={"resolved": 2, "still_open": 1, "needs_judgement": 0},
+        reverify_reasons=[carried],
+    )
+
+    body = orch._render_report_body(team, archive_appendix="")
+
+    assert (
+        "| Findings of older heads re-verified | resolved 2, still open 1, needs judgement 0 |"
+        in body
+    )
+    assert carried in body
