@@ -81,6 +81,7 @@ from .findings_bridge import (
     RecordedFindings,
     record_findings_for_outcomes,
     record_oversized_findings,
+    recount_findings_at_head,
 )
 from .hallucination_guard import (
     GuardEvent,
@@ -1093,7 +1094,9 @@ class ReviewTeamOrchestrator:
         """Return the outcome of ``run`` at its head without calling any reviewer.
 
         The stored reviewer outcomes, refutations and spec fields are
-        read back; the findings of the head are already in the ledger.
+        read back; the findings of the head are already in the ledger, and
+        the ``findings:`` counts are recounted against it without a write
+        (:func:`~repoach.review.findings_bridge.recount_findings_at_head`).
         The re-check of older heads still runs
         (SP-GATE-REVERIFIES-AT-HEAD G7; no model call when nothing older
         is unsettled) and the verdict is derived from the ledger as a
@@ -1103,6 +1106,13 @@ class ReviewTeamOrchestrator:
         outcomes = replayed_outcomes(run)
         spec = replayed_spec(run)
         head_sha = run.head_sha
+        recounted = recount_findings_at_head(
+            self._db_path,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            outcomes=outcomes,
+            run_id=run.run_id,
+        )
         reverified = self._reverify_older_heads(pr_number, head_sha=head_sha, refuter_calls=0)
         facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
         spec_covered = spec.get("spec_covered")
@@ -1121,6 +1131,8 @@ class ReviewTeamOrchestrator:
             reverified=reverified.counts(),
             reverify_reasons=reverified.reasons(),
             reverify_line=reverified.summary_line("review"),
+            findings_recorded=recounted.counts(),
+            findings_line=recounted.summary_line(),
             cached=True,
             cache_line=cache_line(run),
         )

@@ -104,7 +104,10 @@ raising one claim).
   unsettled), derives the verdict from the ledger as a fresh run does,
   prints `review: cached at <sha7> (run <id>, <when>); use --force to
   re-review` on stderr, and returns the same JSON shape with
-  `cached: true` (`false` on a fresh run).
+  `cached: true` (`false` on a fresh run). It also prints the
+  `findings: 0 new, N already recorded, K refuted earlier` line and
+  fills `findings_recorded`, counting the stored comments against the
+  rows of the head without writing.
 - G11: a dry run and a posting run share the cache. A posting run
   replaying a cached run posts the stored outcomes through the forge's
   write barrier, as a fresh posting run posts its own.
@@ -117,8 +120,9 @@ raising one claim).
 - [x] AC12: a second `review pr --dry-run` at the same head makes 0
   reviewer calls and 0 judge calls, reports `cached: true`, the same
   verdict, reviews and findings as the first run, the same JSON keys,
-  and the `review: cached at <sha7> (run …); use --force to re-review`
-  line; the ledger is unchanged.
+  the `review: cached at <sha7> (run <usage run id>, …); use --force to
+  re-review` line and `findings: 0 new, 1 already recorded, 1 refuted
+  earlier`; the ledger is unchanged.
 - [x] AC13: `--force` at the same head runs the reviewers, reports
   `cached: false` and `findings: 0 new, 1 already recorded, 1 refuted
   earlier`, and makes no judge call.

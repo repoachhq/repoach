@@ -271,11 +271,13 @@ def test_second_dry_run_at_the_same_head_replays_the_run(
     assert _StubReviewer.calls == reviewer_calls
     assert judge.calls == 2
     assert second["cached"] is True
+    assert second["findings_recorded"] == {"new": 0, "already_recorded": 1, "refuted_earlier": 1}
     assert second["final_verdict"] == first["final_verdict"] == "REQUEST_CHANGES"
     assert set(second) == set(first)
     assert second["reviews"] == first["reviews"]
     assert second["findings"] == first["findings"]
-    [line] = lines
+    line, findings_line = lines
+    assert findings_line == "findings: 0 new, 1 already recorded, 1 refuted earlier"
     assert line.startswith(f"review: cached at {head[:7]} (run {first['usage']['run_id']}, ")
     assert line.endswith("); use --force to re-review")
     assert fetch_findings(_db(tmp_path), 7) == rows_after_first
