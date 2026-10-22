@@ -17,6 +17,7 @@ the head no longer supports it (SP-GATE-REVERIFIES-AT-HEAD).
 
 from __future__ import annotations
 
+import json
 import threading
 from enum import StrEnum
 from pathlib import Path
@@ -235,6 +236,45 @@ pr_review_integrity = Table(
 )
 
 
+pr_review_runs = Table(
+    "pr_review_runs",
+    _metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", String, nullable=False),
+    Column("pr_number", Integer, nullable=False),
+    Column("head_sha", String, nullable=False),
+    Column("completed_at", String, nullable=False),
+    Column("final_verdict", String, nullable=False),
+    Column("payload_json", String, nullable=False),
+)
+"""One row per completed ``review pr`` run at a head (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
+
+A later ``review pr`` at the same head replays the stored reviewer
+outcomes instead of calling the reviewers again.
+"""
+
+
+class ReviewRun(BaseModel):
+    """A completed review run, as :func:`fetch_completed_review_run` reads it back.
+
+    Attributes:
+        run_id: Identifier the run stamped on the findings it recorded.
+        pr_number: PR / MR the run reviewed.
+        head_sha: Head the run reviewed.
+        completed_at: UTC ISO-8601 time the run completed.
+        final_verdict: The team verdict the run reported.
+        payload: What the run stored to be replayed (reviewer outcomes,
+            refutations, spec fields).
+    """
+
+    run_id: str
+    pr_number: int
+    head_sha: str
+    completed_at: str
+    final_verdict: str
+    payload: dict[str, object]
+
+
 def _engine_for(db_path: Path) -> Engine:
     """Return a SQLite engine, creating the parent directory if needed."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,7 +324,7 @@ def _create_all_with_retries(engine: Engine) -> None:
     missing, so at most one retry per remaining table is needed before
     both are present. The bounded loop re-raises the last
     ``OperationalError`` only if, after exhausting
-    :data:`_INIT_SCHEMA_MAX_ATTEMPTS`, at least one of the two tables
+    :data:`_INIT_SCHEMA_MAX_ATTEMPTS`, at least one ledger table
     genuinely never came to exist -- the signal that this was a real
     database failure rather than a resolved creation race.
 
@@ -293,7 +333,7 @@ def _create_all_with_retries(engine: Engine) -> None:
 
     Raises:
         OperationalError: The database remains unusable after every
-            retry -- both tables still absent.
+            retry -- a ledger table still absent.
     """
     last_error: OperationalError | None = None
     for attempt in range(_INIT_SCHEMA_MAX_ATTEMPTS):
@@ -308,7 +348,7 @@ def _create_all_with_retries(engine: Engine) -> None:
                 error=str(exc),
             )
     inspector = inspect(engine)
-    if inspector.has_table("pr_findings") and inspector.has_table("pr_review_integrity"):
+    if all(inspector.has_table(name) for name in _metadata.tables):
         return
     assert last_error is not None
     raise last_error
@@ -320,7 +360,7 @@ def init_findings_schema(db_path: Path) -> None:
     Concurrent first-creation is race-proof at two layers. In-process
     callers (e.g. the reviewer thread pool) serialize on
     :data:`_INIT_SCHEMA_LOCK` so ``create_all`` runs to completion
-    before the next caller starts, or finds both tables already there
+    before the next caller starts, or finds every table already there
     and no-ops. Cross-process callers (separate SQLite connections
     with no shared lock) are handled by
     :func:`_create_all_with_retries`, which retries the bounded,
@@ -438,6 +478,64 @@ def fetch_review_integrity(db_path: Path, pr_number: int) -> list[dict[str, obje
         }
         for row in rows
     ]
+
+
+def record_review_run(db_path: Path, run: ReviewRun) -> None:
+    """Store a completed review run so a later run at its head can replay it.
+
+    Args:
+        db_path: The findings ledger database.
+        run: The run to store; its ``payload`` must be JSON-serialisable.
+    """
+    init_findings_schema(db_path)
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            insert(pr_review_runs).values(
+                run_id=run.run_id,
+                pr_number=run.pr_number,
+                head_sha=run.head_sha,
+                completed_at=run.completed_at,
+                final_verdict=run.final_verdict,
+                payload_json=json.dumps(run.payload, ensure_ascii=False),
+            )
+        )
+
+
+def fetch_completed_review_run(db_path: Path, pr_number: int, head_sha: str) -> ReviewRun | None:
+    """Return the latest completed review run of ``pr_number`` at ``head_sha``, or None.
+
+    Args:
+        db_path: The findings ledger database.
+        pr_number: The PR / MR reviewed.
+        head_sha: The head; an empty one names no head and matches nothing.
+
+    Returns:
+        The most recently stored run at that head, None when there is none.
+    """
+    if not head_sha:
+        return None
+    init_findings_schema(db_path)
+    engine = _engine_for(db_path)
+    stmt = (
+        select(pr_review_runs)
+        .where(pr_review_runs.c.pr_number == pr_number)
+        .where(pr_review_runs.c.head_sha == head_sha)
+        .order_by(pr_review_runs.c.id.desc())
+        .limit(1)
+    )
+    with engine.connect() as conn:
+        row = conn.execute(stmt).mappings().fetchone()
+    if row is None:
+        return None
+    return ReviewRun(
+        run_id=row["run_id"],
+        pr_number=int(row["pr_number"]),
+        head_sha=row["head_sha"],
+        completed_at=row["completed_at"],
+        final_verdict=row["final_verdict"],
+        payload=json.loads(row["payload_json"]),
+    )
 
 
 def record_finding(db_path: Path, finding: Finding) -> int:
