@@ -12,6 +12,7 @@ never touched: only a line shaped like a trailer or the footer is.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 ATTRIBUTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*co-authored-by:.*\b(claude|anthropic)\b", re.IGNORECASE),
@@ -59,3 +60,23 @@ def strip_attribution(text: str) -> str:
     if not kept:
         return ""
     return "\n".join(kept) + ("\n" if text.endswith("\n") else "")
+
+
+def squash_body(messages: Sequence[tuple[str, str]]) -> str:
+    """Compose a squash commit body from ``(headline, body)`` pairs, attribution removed.
+
+    One ``* headline`` block per commit, its body under it, blocks
+    separated by a blank line — the shape GitHub gives a squash by
+    default, minus every attribution line each commit carried.
+
+    Args:
+        messages: The PR's commits, oldest first.
+
+    Returns:
+        The body to pass to the forge's squash merge; ``""`` for no commit.
+    """
+    blocks: list[str] = []
+    for headline, body in messages:
+        cleaned = strip_attribution(body).strip()
+        blocks.append(f"* {headline.strip()}" + (f"\n\n{cleaned}" if cleaned else ""))
+    return "\n\n".join(blocks) + ("\n" if blocks else "")
