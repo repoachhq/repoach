@@ -162,6 +162,30 @@ class GlobalRateLimiter:
         self._blocked_until = time.monotonic() + seconds
         logger.warning(f"Global provider rate limit set for {seconds:.1f}s (reactive)")
 
+    def is_blocked(self, now: float | None = None) -> bool:
+        """Return whether the reactive block set by :meth:`set_blocked` is still active.
+
+        Public counterpart to the ``_blocked_until`` check inside
+        :meth:`wait_if_blocked`, exposed so a caller (SP-FAILOVER-SKIPS-BLOCKED-PROVIDER's
+        pre-dispatch check in the failover dispatcher) can decide to skip a
+        blocked provider entirely instead of dispatching and sleeping
+        through the block. Pure and clock-free like the rest of this
+        class: pass ``now`` (a ``time.monotonic()`` reading) for a
+        deterministic check, or omit it to read the clock here.
+        """
+        moment = now if now is not None else time.monotonic()
+        return moment < self._blocked_until
+
+    def seconds_until_unblocked(self, now: float | None = None) -> float:
+        """Return how many seconds remain on the reactive block, floored at 0.
+
+        Companion to :meth:`is_blocked` ; used to project the monotonic
+        expiry onto a wall-clock timestamp for logging and client-facing
+        messages without this class importing ``datetime`` itself.
+        """
+        moment = now if now is not None else time.monotonic()
+        return max(0.0, self._blocked_until - moment)
+
     def matches_config(self, rate_limit: int, rate_window: float, max_concurrency: int) -> bool:
         """Return whether this limiter matches the requested runtime config."""
         return (

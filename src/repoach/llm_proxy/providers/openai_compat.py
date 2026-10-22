@@ -346,13 +346,22 @@ class OpenAIChatTransport(BaseProvider):
                 error_occurred = True
                 finish_reason = "error"
                 error_status_code = getattr(
-                    map_error(e, rate_limiter=self._global_rate_limiter), "status_code", None
+                    map_error(
+                        e,
+                        rate_limiter=self._global_rate_limiter,
+                        rate_limit_block_default_s=self._config.rate_limit_block_default_s,
+                        rate_limit_block_max_s=self._config.rate_limit_block_max_s,
+                    ),
+                    "status_code",
+                    None,
                 )
                 base_message = provider_error_message(
                     e,
                     provider_name=tag,
                     rate_limiter=self._global_rate_limiter,
                     read_timeout_s=self._config.http_read_timeout,
+                    rate_limit_block_default_s=self._config.rate_limit_block_default_s,
+                    rate_limit_block_max_s=self._config.rate_limit_block_max_s,
                 )
                 error_message = append_request_id(base_message, request_id)
                 logger.info(
