@@ -32,6 +32,7 @@ from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
 from repoach.review.spec_gate import (
     SPEC_COVERAGE_RULE_VERSION,
     SpecCoverage,
+    coverage_at_head,
     fetch_spec_coverage,
     init_spec_coverage_schema,
     record_spec_coverage,
@@ -78,7 +79,7 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def _plan() -> str:
+def _plan(selectors: list[str] = _SELECTORS) -> str:
     return render_plan_markdown(
         ActionPlan(
             spec_id="SP-DRAFTY",
@@ -92,7 +93,7 @@ def _plan() -> str:
                     action="Create the module.",
                     commit_message="feat(review): add drafty",
                     done_when="the acceptance tests are green",
-                    unit_tests=_SELECTORS,
+                    unit_tests=selectors,
                 )
             ],
         )
@@ -321,3 +322,22 @@ def test_rule_version_column_is_added_to_an_old_table_as_zero(tmp_path: Path) ->
         )
     init_spec_coverage_schema(db)
     assert [row.rule_version for row in fetch_spec_coverage(db, 7)] == [0]
+
+
+def test_coverage_at_head_grades_against_the_base_plan_not_head(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path, "approved", plan=True)
+    (repo / "docs/plans/SP-DRAFTY.md").write_text(_plan([_SELECTORS[0]]), encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "head narrows its own plan")
+
+    coverage, resolution = coverage_at_head(
+        repo,
+        spec_id="SP-DRAFTY",
+        base_ref="develop",
+        changed_files=[_SPEC_PATH, "docs/plans/SP-DRAFTY.md", "tests/unit/test_drafty.py"],
+    )
+
+    assert resolution.fell_back_to_head is False
+    assert coverage.n_promised == 2
+    assert coverage.missing == [_SELECTORS[1]]
+    assert coverage.covered is False
