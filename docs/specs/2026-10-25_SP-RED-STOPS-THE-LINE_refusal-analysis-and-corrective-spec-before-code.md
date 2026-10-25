@@ -1,7 +1,7 @@
 ---
 id: SP-RED-STOPS-THE-LINE
 title: A red stops the line until a refusal analysis and a corrective spec amendment exist, and the Coder works from the amendment
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-25
@@ -25,6 +25,34 @@ constraints:
 ---
 
 # A red stops the line until a refusal analysis and a corrective spec amendment exist, and the Coder works from the amendment
+
+## Decisions (orchestrator 2026-10-25, within the owner's rule « un rouge arrête la ligne »)
+
+The five open questions of version 0.1 are settled. The body below
+already applies them.
+
+- **D1 (Q1) → the hold reaches Yoob's pipelines.** `review pr` reads
+  `line_state`. On every held sibling it exits non-zero
+  (`EXIT_LINE_STOPPED`, 10) and prints `line stopped by <pr>#<head7>: <job>`.
+  Yoob's `review:gate` job therefore goes red, and GitLab does not merge
+  the MR. On release, repoach re-runs the held `review:gate` jobs through
+  `rerun_check` behind the barrier. A held sibling's red gate is not a
+  stop trigger (G1, G4).
+- **D2 (Q2) → a red on the integration branch's own head stops the
+  line.** The marker and the amendment live on the PR/MR that produced
+  the merge commit, resolved from that commit. When no PR/MR produced
+  it, they live on a pinned issue named `repoach line state` (G1).
+- **D3 (Q3) → a required check `cancelled` on every attempt at the head
+  is a stop.** This is aligned with SP-CI-RED-IS-EVIDENCE `ci_cancelled`
+  (G1).
+- **D4 (Q4) → a PR/MR comment `/repoach release-line <reason ≥ 20 chars>`
+  by a user with write access releases the line.** The review job reads
+  it. It is logged identically: the same `human_release` event, with
+  `source: comment` (G4b).
+- **D5 (Q5) → with `[review].bot_username` empty, the bot identity is
+  read from the token** (`GET /user` on GitLab, `/user` on GitHub). It
+  is read once per run and cached in the run. Yoob's `repoach.toml` does
+  not need the key (G1, A3).
 
 ## Intent
 
@@ -62,17 +90,26 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
 ## Goals
 
 - **G1 STOP: a red holds the whole line.**
-  - **Trigger.** With `stop_the_line` on, a *stop* opens when an open PR
-    into the integration branch has `ci_verdict_at_head(...).state == "red"`
-    at its head (SP-CI-RED-IS-EVIDENCE G1: a required check `failed` or
-    `timeout`). A *recurring* `flaky_check` that blocks (its G5b) opens a
-    stop too.
+  - **Trigger.** With `stop_the_line` on, a *stop* opens in each of these
+    cases:
+    - an open PR into the integration branch has
+      `ci_verdict_at_head(...).state == "red"` at its head
+      (SP-CI-RED-IS-EVIDENCE G1: a required check `failed` or `timeout`);
+    - a required check is `cancelled` on **every** attempt at that head
+      (SP-CI-RED-IS-EVIDENCE `ci_cancelled`; D3);
+    - a *recurring* `flaky_check` blocks (its G5b);
+    - the integration branch's own head is red, or cancelled on every
+      attempt, after a merge (D2).
   - **What is not a trigger.** These hold only their own PR, as today:
-    `pending`, `missing`, `cancelled` and `unknown`; a refusal for review
-    findings or spec coverage; a gate refusal whose only reason is a line
-    hold (otherwise a stop would cascade).
-  - **Identity.** A stop is `stop_id = "<pr>#<head7>:<job>"`. Its holder
-    text is `line stopped by <pr>#<head7>: <job>`.
+    `pending`, `missing` and `unknown`; a check that was cancelled on some
+    attempts but not on all; a refusal for review findings or spec
+    coverage; and any refusal whose only reason is a line hold, including
+    a held sibling's red `review:gate` (D1). Otherwise a stop would
+    cascade.
+  - **Identity.** A PR stop is `stop_id = "<pr>#<head7>:<job>"`, and its
+    holder text is `line stopped by <pr>#<head7>: <job>`. An
+    integration-branch stop is `stop_id = "<base>@<head7>:<job>"`, and
+    its holder text is `line stopped by <base>@<head7>: <job>`.
   - **Hold.** While any stop of the same repository and the same base
     branch is not released, `review merge` refuses **every other** PR
     into that base. It exits `5` with the outcome `SKIP_LINE_STOPPED`
@@ -81,18 +118,48 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
     first. `review gate` reaches the same decision through
     `decide_at_head`, so `scripts/safe_merge.sh` is held too. A PR
     targeting another base is not held.
+  - **`review pr` holds too (D1).** When the PR is held, `review pr`
+    prints one `line stopped by …` line per stop on stderr and exits
+    `10`, the new `EXIT_LINE_STOPPED`. The code is free in
+    `cli/review_cmds.py`, where `review pr` uses 0, 2, 3 and 8. Its
+    precedence is 8 > 3 > 10 > 2 > 0. Its JSON carries `line_state`. The
+    review itself still runs and still posts its findings. Only the exit
+    code changes, so Yoob's `review:gate` job (F7) is red on every held
+    sibling MR, and GitLab's `merge_when_pipeline_succeeds` does not
+    merge it. Yoob's `ci/review-gate.sh` already ends every exit it does
+    not recognise with `exit "$EXIT_UNKNOWN"` (`:237`), so exit `10` is
+    red with no change on the Yoob side. A dedicated
+    `line stopped` message there is a Yoob follow-up and is not needed
+    for the hold.
   - **Stopper PR.** The stopper itself is refused by its own red, as
     today. It is also held by any *other* open stop.
   - **Carrier (F5, F6).** The line state of each open stop is upserted
-    on the stopper PR as a marked comment whose marker is
-    `<!-- repoach-line-state:v1 -->`. The comment carries a human-readable
-    table plus the `line-state-json` object. The write goes through the
-    barrier.
+    as a marked comment whose marker is `<!-- repoach-line-state:v1 -->`.
+    The comment carries a human-readable table plus the `line-state-json`
+    object, and the write goes through the barrier. Where it goes:
+    - a PR stop: on the stopper PR;
+    - an integration-branch stop (D2): on the PR/MR that produced the
+      merge commit at the red head, resolved from that commit by
+      `forge.pull_request_for_commit(sha)`;
+    - if no PR/MR produced it: on an open issue titled exactly
+      `repoach line state`, pinned where the forge allows it. repoach
+      creates the issue when it is absent and reuses it when present.
+
+    The amendment of an integration-branch stop (G3) is committed on a
+    new branch `fix/line-<head7>-<job-slug>` and opened as a PR into the
+    base. It is posted on the same PR/MR or issue as the marker.
   - **How a hold is read.** A sibling PR's merge path calls
     `open_pull_requests(base)` (at most `line_scan_open_prs_max`) and
-    `find_marked_comment` on each, and trusts the marker only from
-    `bot_username`. The local db `line_stops` is authoritative inside one
-    job, but a hold is never decided from the local db alone.
+    `find_marked_comment` on each. It also reads the `repoach line state`
+    issue when one exists, and the PR that produced the base head's merge
+    commit. A marker is trusted only from the bot identity (D5). The
+    local db `line_stops` is authoritative inside one job, but a hold is
+    never decided from the local db alone.
+  - **Bot identity (D5).** When `[review].bot_username` is empty, the
+    bot identity is the token's own login: `GET /user` on GitLab, `GET
+    /user` on GitHub. It is read once per run, cached for that run, and
+    its source is named (`config` or `token`). Yoob's `repoach.toml`
+    therefore does not need the key.
   - **Configurable.** `[gates].stop_the_line` (bool) sets it.
     - Default `true` when a `repoach.toml` exists at the project root
       (a repoach-governed repository), with source `default:governed`.
@@ -108,7 +175,7 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
   - `line_state=stopped by <pr>#<head7>: <job> (stage <stage>, since <iso8601>)`,
     one line per open stop, oldest first
   - `line_state=cannot say (<why>)`, for example
-    `no trusted bot username on gitlab: set [review].bot_username` or
+    `bot identity unreadable: GET /user refused (<status>)` or
     `forge unreadable: <message>`
 
   `doctor --ci` exits `2` on `cannot say` while `stop_the_line` is on:
@@ -231,8 +298,16 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
       does not apply.
     - `stopper_closed`: the stopper PR is merged or closed.
     - `human`: G4b.
-  - **On release.** The marked comment is updated to `released` and
+  - **On release.** The marked comment is updated to `released`, and
     siblings are no longer held.
+  - **Held gates re-run (D1).** Each held sibling's latest `review:gate`
+    attempt that ended red with exit `10` (`EXIT_LINE_STOPPED`) at its current
+    head is re-run once, through `rerun_check(attempt_id)` behind the
+    barrier. Each re-run is recorded as a `held_gate_rerun` event with the
+    PR number and the attempt id. A held gate that was red for any other
+    reason is not re-run, and neither is one at a superseded head. This
+    is the second and last exception to SP-CI-RED-IS-EVIDENCE NG1. It
+    hides no flake, because the red attempt was a hold, not a test.
   - **Events.** The ledger `line_cycle_events` holds one row per event,
     in order: `red`, `diagnosis` (or `diagnosis_rejected`), `amendment`,
     `amendment_verified` (or `amendment_rejected`), `fix_pushed`,
@@ -257,6 +332,24 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
     barrier.
   - **Dry-run.** Under dry-run it writes nothing and prints what it
     would write.
+  - **Comment channel (D4).** A PR/MR comment whose first line is
+    exactly `/repoach release-line <reason>` also releases the stops of
+    that PR/MR (or, on the `repoach line state` issue, the
+    integration-branch stops).
+    - **Who may release.** The author must have write access: GitHub
+      `permission ∈ {write, maintain, admin}` from
+      `GET repos/{o}/{r}/collaborators/{login}/permission`; GitLab
+      `access_level >= 30` (Developer) from `GET projects/:id/members/all/:user_id`.
+    - **When it is read.** The review job reads it on its next run
+      (`review pr`, `review fix` or `review merge`). It is honoured once
+      per comment id.
+    - **Logging.** It writes the same `human_release` event, with
+      `released_by` = the comment author, `source: "comment"` and the
+      comment id. The CLI writes `source: "cli"`.
+    - **Refusals.** A reason under 20 characters, an author without
+      write access, the bot itself, or an edited comment (only the
+      original body counts) gives a `human_release_refused` event, and a
+      reply naming the reason is posted through the barrier.
 - **G5 The independent verifier stays.** An amendment is checked like
   any spec before the Coder may use it.
   - **Mechanical checks first.**
@@ -283,7 +376,9 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
 - NG2: No retry without a named infra cause. Only an accepted
   `infra_flaky` diagnosis may request one, at most once per
   `(head, job)`. A retry is never requested for `code`, `test`,
-  `spec_gap`, `dependency` or `undetermined`.
+  `spec_gap`, `dependency` or `undetermined`. The re-run of a held
+  sibling's `review:gate` on release (G4, D1) is not a retry of a red:
+  it re-runs a job that was red only because the line was stopped.
 - NG3: No silent release. Every release is a ledger event with a
   `release_kind`. A human release carries its actor and its reason.
 - NG4: No change to the Coder's local gate, its push transport (still
@@ -304,10 +399,10 @@ Measured on `origin/develop` at `2706bb6` (2026-10-25) in
   (F8). Until then G1 and G2 cannot be implemented.
 - A2: SP-AGENT-CONTEXT-LOOP lands first. The two new roles run its
   inner loop and obey its caps and its contract-turn rule (F9).
-- A3: The bot that posts the line-state marker is the forge's
-  `bot_username`. On GitLab this requires `[review].bot_username` to be
-  set (F6). Without it the line state is `cannot say` (G1a), and the
-  merge path fails closed (Edge cases).
+- A3: The bot that posts the line-state marker is `[review].bot_username`
+  when it is set. Otherwise it is the token's own login, read with `GET
+  /user` once per run (D5). When that call fails, the line state is
+  `cannot say` (G1a) and the merge path fails closed (Edge cases).
 - A4: Files owned by other specs are edited under the `depends_on`
   edges, as earlier specs did: `coder_findings.py`, `merge_gate.py`,
   `coder_loop.py`, `stuck.py`, `findings.py`, `reviewer.py`,
@@ -362,10 +457,22 @@ def check_amendment(a: Amendment, *, head_tree: Path, base: str) -> list[str]: .
 def ac_argv(a: Amendment, config: GatesConfig) -> list[str]: ...  # raises AmendmentCommandError
 ```
 
-Forge (SP-UNIVERSAL-FORGE): `rerun_check(attempt_id: str) -> None`.
-It is `@write_barrier` and raises `ForgeError` on refusal. It is
-implemented on GitHub and GitLab. `LocalDiffForge` and the fixture
-forge refuse it.
+Forge (SP-UNIVERSAL-FORGE), implemented on GitHub and GitLab:
+- `rerun_check(attempt_id: str) -> None` is `@write_barrier` and raises
+  `ForgeError` on refusal. `LocalDiffForge` refuses it, and the fixture
+  forge records it.
+- `token_login() -> str` makes one `GET /user` per forge instance and
+  caches it (D5). `bot_username` returns `[review].bot_username` when set
+  and `token_login()` otherwise. The trusted-author check uses that
+  value.
+- `pull_request_for_commit(sha: str) -> PullRequest | None` returns the
+  merged PR/MR that produced a commit: GitHub `GET
+  repos/{o}/{r}/commits/{sha}/pulls`, GitLab `GET
+  projects/:id/repository/commits/:sha/merge_requests` (D2).
+- `find_issue(title: str) -> int | None` and `create_issue(title, body)
+  -> int` (`@write_barrier`) serve the `repoach line state` issue (D2).
+- `author_can_write(login: str) -> bool` is the write-access check of
+  the comment channel (D4).
 
 Config (`repoach.toml`, `[gates]`):
 ```toml
@@ -433,6 +540,9 @@ shell metacharacter is refused (`ac_command_not_runnable: <why>`).
 New values:
 - `ReasonCode.AWAITING_AMENDMENT = "awaiting_amendment"`
 - outcome `SKIP_LINE_STOPPED` (exit 5)
+- `review pr` exit `10` = `EXIT_LINE_STOPPED` (D1)
+- events `held_gate_rerun`, `human_release_refused`; `human_release`
+  payload `source ∈ {cli, comment}`
 
 Tables (owned here, additive, `[state] db_path`):
 - `line_stops(stop_id PK, repo, base_ref, pr_number, head_sha, job,
@@ -511,8 +621,7 @@ the line gives `state="cannot_say"` with `forge unreadable: <message>`.
   the diagnosis still exist in the local db. `line_state` carries
   `"transport": "local_only (writes refused)"`. Under dry-run, the
   amendment is not committed: its block is in the JSON only.
-- **The line cannot be read** (an untrusted bot on GitLab, a forge
-  error) while `stop_the_line` is on → `review merge` refuses with
+- **The line cannot be read** (`GET /user` refused, a forge error) while `stop_the_line` is on → `review merge` refuses with
   `line state unreadable: <why>` (fail-closed, `SKIP_LINE_STOPPED`), and
   `doctor` says `cannot say`.
 - A recurring blocking `flaky_check` (SP-CI-RED-IS-EVIDENCE G5b) → a
@@ -544,7 +653,7 @@ the line gives `state="cannot_say"` with `forge unreadable: <message>`.
 - Adds dependency: SP-RED-STOPS-THE-LINE -> SP-SCHEMA-INIT-RACE-GENERALIZE (owner of `stuck.py`; the dossier names the stop, and `stuck` never auto-releases)
 - Adds dependency: SP-RED-STOPS-THE-LINE -> SP-FINDINGS-INIT-RACE (owner of `findings.py`; redacting `verification_result` for the Coder)
 - Adds dependency: SP-RED-STOPS-THE-LINE -> SP-RETRY-BACKOFF-DEDUP (owner of `reviewer.py`; `Coder.respond_to_findings` gains `amendment`)
-- Adds dependency: SP-RED-STOPS-THE-LINE -> SP-UNIVERSAL-FORGE (`rerun_check`; `open_pull_requests` gains its first caller)
+- Adds dependency: SP-RED-STOPS-THE-LINE -> SP-UNIVERSAL-FORGE (`rerun_check`, `token_login`, `pull_request_for_commit`, `find_issue`/`create_issue`, `author_can_write`; `open_pull_requests` gains its first caller)
 - Adds dependency: SP-RED-STOPS-THE-LINE -> SP-UNIVERSAL-GATES (`[gates].stop_the_line` in `GatesConfig`)
 - Adds dependency: SP-RED-STOPS-THE-LINE -> SP-UNIVERSAL-PROJECT-CONFIG (the template line)
 - Adds dependency: SP-RED-STOPS-THE-LINE -> SP-DRY-RUN-NEVER-POSTS (marker, amendment comment and re-run behind the barrier)
@@ -581,13 +690,13 @@ attempts and logs per head, marked comments, a write barrier and a
   - `review merge 11` exits `5`.
   - The same fixture with PR 11 targeting another base merges it.
 - [ ] AC2: `pytest -q tests/unit/test_line_stop.py::test_hold_is_read_from_the_forge_not_the_db` → green. The stop is written by a job using db `a.sqlite`. A merge of PR 11 using an empty db `b.sqlite` (the per-PR ledger of F5) is still refused, because it read the `repoach-line-state:v1` marker. A marker authored by a non-bot login is ignored.
-- [ ] AC3: `pytest -q tests/unit/test_line_stop.py::test_non_red_states_do_not_stop` → green. For each of `pending`, `missing`, `cancelled`, `unknown`, a findings-only refusal, and a refusal whose only reason is a line hold, no stop opens and a sibling merges.
+- [ ] AC3: `pytest -q tests/unit/test_line_stop.py::test_non_red_states_do_not_stop` → green. For each of these, no stop opens and a sibling merges: `pending`, `missing`, `unknown`, a check cancelled on one attempt of two (the other green), a findings-only refusal, and a sibling's red `review:gate` whose only reason is a line hold.
 - [ ] AC4: `pytest -q tests/unit/test_line_stop.py::test_setting_resolution` → green.
   - With a `repoach.toml`, absent key → `(True, "default:governed")`; without one → `(False, "default:ungoverned")`.
   - `stop_the_line = false` → `(False, "repoach.toml")`.
   - `REPOACH_STOP_THE_LINE=1` over the toml `false` → `(True, "env")`.
   - With it off, AC1's fixture merges PR 11.
-- [ ] AC5: `pytest -q tests/unit/test_line_doctor.py` → green. `repoach doctor` prints exactly one of the four G1a forms for each case: off, open, stopped, and cannot say (a GitLab fixture with an empty `bot_username`). `doctor --ci` exits `2` on `cannot say` while it is on, and `0` otherwise. `repoach review gate 11 --forge <fixture>` JSON has `line_state` with the keys `enabled, source, state, scanned_prs, stops, held, why`, and `state == "stopped"`.
+- [ ] AC5: `pytest -q tests/unit/test_line_doctor.py` → green. `repoach doctor` prints exactly one of the four G1a forms for each case: off, open, stopped, and cannot say (a GitLab fixture with an empty `bot_username` whose `GET /user` returns 401). `doctor --ci` exits `2` on `cannot say` while it is on, and `0` otherwise. `repoach review gate 11 --forge <fixture>` JSON has `line_state` with the keys `enabled, source, state, scanned_prs, stops, held, why`, and `state == "stopped"`.
 - [ ] AC6: `pytest -q tests/unit/test_refusal_analysis.py::test_diagnosis_shape` → green. A scripted analyst returns a diagnosis for AC1's red.
   - The stored JSON validates against `refusal-diagnosis/1`.
   - It has `category == "code"`, `cause == {"kind": "file_line", "path": …, "line": …}`, at least one `evidence` item whose `quote` is a substring of the served log, `owning_spec_source == "owns.code"` and `retry is None`.
@@ -639,15 +748,27 @@ attempts and logs per head, marked comments, a write barrier and a
 - [ ] AC18: `scripts/ci_local.sh --fast` green and `repoach arch check --base origin/develop` green on the implementation branch.
 - [ ] AC19 (measurement, repoach): on a throwaway PR into `develop` with a deliberately failing test, quote in the delivery PR the output of `repoach review line status` (one stop), `review merge` on a second open PR (`SKIP_LINE_STOPPED` and the hold line), and `repoach review line history <n>` once the PR has been fixed through the cycle.
 
+- [ ] AC20 (D1): `pytest -q tests/unit/test_line_stop.py::test_review_pr_exits_line_stopped` → green.
+  - **Held:** with AC1's stop on PR 10, `repoach review pr 11` still posts its review (barrier-admitted writes > 0), exits `10`, prints `line stopped by 10#abc1234: Test suite (Python 3.11)` on stderr, and has `line_state.held == true` in its JSON.
+  - **Precedence:** a refused write still exits `8`, and an `ERROR` verdict still exits `3`.
+  - **Not a trigger:** PR 11's exit `10` opens no stop.
+- [ ] AC21 (D1): `pytest -q tests/unit/test_line_release.py::test_release_reruns_held_gates` → green.
+  - **Re-run:** PR 11's and PR 12's latest `review:gate` attempts ended exit `10` at their current heads. Releasing PR 10's stop gives exactly two barrier-admitted `rerun_check` calls (one per attempt id) and two `held_gate_rerun` events.
+  - **No re-run:** a PR 13 gate red with exit `2`, and a PR 14 gate at a superseded head, are not re-run.
+  - **Dry-run:** 0 calls are admitted, and the two refusals are recorded.
+- [ ] AC22 (D2): `pytest -q tests/unit/test_line_stop.py::test_integration_branch_red_stops_the_line` → green.
+  - **PR found:** `develop`'s head `def5678…` is red on `wheel-build`, and `pull_request_for_commit` returns merged PR 9. The result is one stop `develop@def5678:wheel-build`, with its marker on PR 9. Every open PR into `develop` is refused with `line stopped by develop@def5678: wheel-build`, and the amendment is opened as a PR from `fix/line-def5678-wheel-build`.
+  - **No PR:** with `pull_request_for_commit` returning `None`, the marker is on an issue titled `repoach line state`. It is created once, and reused on the second stop.
+- [ ] AC23 (D3): `pytest -q tests/unit/test_line_stop.py::test_cancelled_on_every_attempt_stops` → green. A required check whose two attempts at the head are both `cancelled` opens a stop, and a sibling is refused. One `cancelled` attempt followed by a green one opens none (AC3).
+- [ ] AC24 (D4): `pytest -q tests/unit/test_line_release.py::test_comment_release` → green.
+  - **Releases:** a comment `/repoach release-line flaky runner, re-run by hand on 10-25` on PR 10, by a login with `author_can_write == True`, releases on the next `review merge 11`. It gives one `human_release` event with `source == "comment"`, `released_by` = that login, the comment id, and the reason verbatim. PR 11 merges.
+  - **Refused:** a reason of 19 characters, a reader-only author, the bot's own login, and an edited comment each give one `human_release_refused` event and one barrier-admitted reply naming the reason. They release nothing.
+  - **Once per comment:** a second run on the same comment writes nothing new.
+- [ ] AC25 (D5): `pytest -q tests/unit/test_line_stop.py::test_bot_identity_from_token` → green.
+  - **From the token:** with `[review].bot_username` empty, the GitLab and GitHub fixtures answer `GET /user` with `{"username": "repoach-bot"}` / `{"login": "repoach-bot"}`. A marker authored by `repoach-bot` is trusted, `GET /user` is called exactly once across the whole run (three `read_line_state` calls), and `doctor` names the source `token`.
+  - **Config wins:** with the key set, 0 `GET /user` calls are made.
+  - **Unreadable:** `GET /user` returning 401 gives `cannot say` and a fail-closed `review merge`.
+
 ## Open Questions
 
-- Q1 (Yoob cross-pipeline hold): Yoob does not merge through `repoach review merge`. GitLab merges on `merge_when_pipeline_succeeds`, and `review:gate` runs `repoach review pr` (F7). Holding repoach's merge path alone therefore holds **nothing** on Yoob. Options:
-  - **(a)** `review pr` (and so `review:gate`) reads `line_state` and exits non-zero with `line stopped by …` on every sibling MR. This makes their pipelines red. It is a real cross-pipeline hold, but on release every held MR needs its `review:gate` re-run (manually, or by repoach through `rerun_check` behind the barrier).
-  - **(b)** `review:gate` stays green and only reports `line_state`. The hold is then advisory on GitLab.
-  - **(c)** repoach also disarms `merge_when_pipeline_succeeds` on held MRs while a stop is open, and re-arms it on release: two forge writes per MR, with no red pipeline.
-
-  Which one does the owner want on Yoob? The recommendation is **(a)**, with repoach re-running the held `review:gate` jobs on release. Under (a), a held sibling's red `review:gate` is explicitly *not* a stop trigger (G1).
-- Q2 (red on the integration branch itself): should a red on `develop`'s own head after a merge stop the line too? It has no PR to post the marker or the amendment on. One option is that the stop's marker lives on a pinned issue or on the PR that produced the merge commit.
-- Q3 (`cancelled` / `missing`): this spec does not stop the line for them (G1). Should a required check that is `cancelled` on every attempt at the head stop it?
-- Q4 (human release channel): only the CLI is specified (G4b). Should a PR comment `/repoach release-line <reason>` from a user with write access also release the line? It would be read by the review job and logged identically.
-- Q5 (GitLab `bot_username`): the line fails closed on GitLab until `[review].bot_username` is set (A3, Edge cases). Should Yoob's `repoach.toml` set it as part of this spec's delivery, or should the bot identity be read from the token (`GET /user`) when the key is empty?
+None. The five questions of v0.1 were settled on 2026-10-25 (see Decisions D1–D5).
