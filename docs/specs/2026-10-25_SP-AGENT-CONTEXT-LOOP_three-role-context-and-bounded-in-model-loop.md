@@ -1,17 +1,17 @@
 ---
 id: SP-AGENT-CONTEXT-LOOP
 title: Three-role context, a fixed context size with a summarizer, and one inner loop consolidated with the outer loop
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-25
 updated: 2026-10-25
 
 owns:
-  code: [src/repoach/review/agent_context.py, src/repoach/review/review_tools.py, src/repoach/review/context_summarizer.py, src/repoach/review/evidence_reads.py, prompts/review/summarizer_0.1.0.md, tests/unit/test_agent_context.py, tests/unit/test_review_tools_jail.py, tests/unit/test_inner_loop_contract.py, tests/unit/test_context_compaction.py, tests/unit/test_provider_tool_mapping.py, tests/unit/test_claude_code_inner_loop.py, tests/unit/test_outer_inner_consolidation.py]
+  code: [src/repoach/review/agent_context.py, src/repoach/review/review_tools.py, src/repoach/review/context_summarizer.py, src/repoach/review/evidence_reads.py, prompts/review/summarizer_0.1.0.md, tests/unit/test_agent_context.py, tests/unit/test_review_tools_jail.py, tests/unit/test_inner_loop_contract.py, tests/unit/test_context_compaction.py, tests/unit/test_provider_tool_mapping.py, tests/unit/test_outer_inner_consolidation.py]
   resources: [db:table:agent_evidence_reads, format:agent-context-json]
 
-depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-UNIVERSAL-PROVIDERS, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-GATE-REVERIFIES-AT-HEAD, SP-UNIVERSAL-PROJECT-CONFIG, SP-AGENT-THINKING-CONTROL, SP-USAGE-REASONING-SPLIT, SP-PROVIDER-INIT-DEDUP, SP-PRECISION-MEASUREMENT]
+depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-UNIVERSAL-PROVIDERS, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-GATE-REVERIFIES-AT-HEAD, SP-UNIVERSAL-PROJECT-CONFIG, SP-AGENT-THINKING-CONTROL, SP-USAGE-REASONING-SPLIT, SP-PROVIDER-INIT-DEDUP, SP-PRECISION-MEASUREMENT, SP-CLAUDE-CODE-FIRST-CLASS]
 provides_to: []
 
 constraints:
@@ -30,6 +30,16 @@ constraints:
 ---
 
 # Three-role context, a fixed context size with a summarizer, and one inner loop
+
+## Amendment (0.2, 2026-10-25): the claude_code transport belongs to SP-CLAUDE-CODE-FIRST-CLASS
+
+The sibling spec `SP-CLAUDE-CODE-FIRST-CLASS` measures the installed CLI
+flags and the Agent SDK, and decides between an MCP server that exposes
+repoach's read-only tools and the text emulation. This spec no longer
+decides that. The 0.1 G7, the paragraph "Why not the MCP route", AC10,
+AC11, AC12, A3 and Q4 are withdrawn. The later ACs and Qs are renumbered.
+The facts about the current text emulation (F11, F17, F18) stay so the
+sibling spec can cite them.
 
 ## Intent
 
@@ -75,6 +85,8 @@ Measured on `develop` `53bb844` (2026-10-25).
 | F14 | The run cache `pr_review_runs` replays a completed run at `(pr_number, head_sha)`. Its key does not include the reviewer configuration. | `src/repoach/review/findings.py:239-249`, `src/repoach/review/review_cache.py` |
 | F15 | Bench baseline `bench/results/2026-10-21_planted_claude_code.json`: 10 planted cases, 45 findings, 2 383 115 tokens in total (134 989 to 349 091 per case), one-shot reviewers. | `bench/results/`, `bench/corpus/planted/` |
 | F16 | `repoach.toml` has no `[agents]` table. The project configuration is parsed by `src/repoach/project/config.py`. | `repoach.toml`, `src/repoach/project/config.py` |
+| F17 | The tool loop's text-emulation guard: a reply with no native tool call whose text matches `_LEAKED_TOOLCALL_MARKUP_RE` counts as a leak, and the loop asks the model to re-issue the call natively. After two consecutive leaks it adds the model to `skip_models`. The wrap-up turn retries once when it leaks markup. | `src/repoach/agent_engine/agent_loop.py:766-803`, `:971-1005` |
+| F18 | The `claude` child runs in a fresh `tempfile.mkdtemp(prefix="repoach_claude_code_")` working directory, with an optional `child_env` filter. Every turn is a new `--print` process that receives the whole flattened history again on stdin, so the input tokens re-sent grow with the number of turns. | `src/repoach/llm_proxy/providers/claude_code/client.py:177-178`, `:214-260`, `:393-424` |
 
 ## Goals
 
@@ -139,18 +151,11 @@ Measured on `develop` `53bb844` (2026-10-25).
   Interface). `anthropic` uses native `tool_use`/`tool_result` blocks
   and the `{` prefill when thinking is off. `openai_compatible` and
   `gemini` use `function` tools, `tool_calls` and `role: tool` messages,
-  with no prefill. `claude_code` is G7.
-- G7 **The claude_code CLI case (decided).** repoach drives the turns.
-  Each turn is one `claude --print` call with the flattened history and
-  the existing `<tool_use>` text emulation (F11). The command also
-  disables every built-in CLI tool, so the only tools reachable are
-  repoach's jailed ones.
-  - **Named fallback**: when the emulation fails twice in a row on one
-    turn (the existing `consecutive_leaks` rule), the agent stops
-    calling tools, runs the contract turn on the evidence gathered so
-    far, and records `context.fallback = "claude_code_tool_emulation_failed"`.
-    With `max_turns = 0` the role is the one-shot of today. The MCP
-    route is rejected (see Behavior, "Why not the MCP route").
+  with no prefill. `claude_code` is G7 (SP-CLAUDE-CODE-FIRST-CLASS).
+- G7 **The claude_code transport.** The claude_code transport
+  implements the inner loop as SP-CLAUDE-CODE-FIRST-CLASS says; the
+  invariants INV1–INV8 and the ERROR-never-prose rule apply to it
+  unchanged.
 - G8 **One consolidated loop.** The outer loop (reviewers → guard →
   refuter → re-verification at a new head → cache → barrier) and the
   inner loop (turns of one agent) form one state machine (Behavior) and
@@ -206,9 +211,8 @@ Measured on `develop` `53bb844` (2026-10-25).
   (SP-REVIEW-PINS-HEAD G2). When no tree is pinned, the tools are not
   offered: the role runs with `max_turns = 0` and reports
   `context.fallback = "no_head_tree"`.
-- A3: The installed `claude` CLI accepts a flag that disables its
-  built-in tools (`--tools ""`, or `--disallowedTools` listing them).
-  AC12 checks the installed CLI; Q4 covers the case where it does not.
+- A3: withdrawn in 0.2 (the claude_code transport is
+  SP-CLAUDE-CODE-FIRST-CLASS).
 - A4: A provider that reports no price leaves `cost_usd` null
   (SP-USAGE-LEDGER). `max_cost_usd` then cannot be checked, and the
   JSON says so (`context.caps.cost = "unjudgeable: no price"`). The
@@ -303,7 +307,7 @@ New schema (additive, nullable):
 
 Provider mapping (G6):
 
-| `repoach/v1` | anthropic | openai_compatible / gemini | claude_code |
+| `repoach/v1` | anthropic | openai_compatible / gemini | claude_code today (F11; the target is SP-CLAUDE-CODE-FIRST-CLASS) |
 |---|---|---|---|
 | `system` | top-level `system` | first `{"role":"system"}` message | `--system-prompt-file` |
 | `ToolSpec{name, description, parameters_schema}` | `tools[{name, description, input_schema}]` | `tools[{type:"function", function:{name, description, parameters}}]` | text appendix on the system prompt (F11) |
@@ -421,19 +425,6 @@ window 1-200, so the refuter sees `citation_read: full`.
   cancelled (existing cancel grace), and the contract turn runs if
   time remains; otherwise `ERROR cap_reached:wall_clock`.
 
-### Why not the MCP route for claude_code
-
-Mounting repoach's tools as an MCP server inside `claude -p` would hand
-turn control to the CLI's own loop. repoach would then be unable to:
-check `context_tokens` before each turn, run the summarizer, force the
-contract turn, write one `usage_ledger` row per turn (the CLI reports
-usage per invocation, not per turn), or tie each read to a turn. It
-would also open a second tool channel next to the fail-closed whitelist.
-The text emulation already exists (F11), and with it repoach remains
-the one loop. Its cost: each turn re-sends the flattened history, so
-the tokens grow with the number of turns. The fixed context size bounds
-that growth, and the measurement plan (M1) measures it.
-
 ## Measurement plan
 
 - M1: `repoach bench run bench/corpus/planted --provider claude_code
@@ -466,7 +457,8 @@ that growth, and the measurement plan (M1) measures it.
 - Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-USAGE-REASONING-SPLIT (owner of `openai_compat.py`; the `tool_calls` stream for openai_compatible / gemini)
 - Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-PROVIDER-INIT-DEDUP (owner of `anthropic_messages.py`; native tool blocks and prefill)
 - Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-PRECISION-MEASUREMENT (owner of `repoach bench`; `--max-turns` / `--context-tokens`)
-- Frontier files touched without an edge: `diff_scoper.py`, `planner_tools.py` (its `_jail` is reused, not copied), `providers/usage.py`, `providers/direct.py`, `llm_proxy/providers/claude_code/client.py` (built-in tools disabled), `llm_proxy/core/anthropic/conversion.py`.
+- Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-CLAUDE-CODE-FIRST-CLASS (the claude_code transport of the inner loop; INV1–INV8 bind it)
+- Frontier files touched without an edge: `diff_scoper.py`, `planner_tools.py` (its `_jail` is reused, not copied), `providers/usage.py`, `providers/direct.py`, `llm_proxy/core/anthropic/conversion.py`.
 - No cycle: the new modules import `agent_engine`, `providers` and `review.findings`; nothing they import imports them back. They import nothing from `repoach.forge` (INV4).
 
 ## Diagram
@@ -493,24 +485,20 @@ flowchart TD
 - [ ] AC7: `pytest -q tests/unit/test_inner_loop_contract.py` → green, four cases: (a) a cap reached on each of turns, tool_bytes, cost and wall clock ends through a contract turn with `tools=[]`; (b) a contract turn that returns prose → `ERROR [context:contract_missing]`; (c) a summarizer that raises → `ERROR summarizer_failed:RuntimeError`; (d) a provider with no price → `caps.cost == "unjudgeable: no price"`, the other caps still bind.
 - [ ] AC8: `pytest -q tests/unit/test_review_tools_jail.py` → green: `../`, an absolute path, a symlink out of the tree, a path present in the checkout but absent at the pinned head → each returns `path outside the head tree` (or `absent at <H7>`) and writes no `agent_evidence_reads` row. A served window writes one row with the sha256 of the served bytes. A 201-char pattern is refused. The module imports no `socket`, `subprocess` or `repoach.forge` (AST check).
 - [ ] AC9: `pytest -q tests/unit/test_provider_tool_mapping.py` → green: one scripted round trip (tool call → tool result → contract) per route `anthropic`, `openai_compatible`, `gemini`, asserting the exact wire shapes of the mapping table, and the `{` prefill present on anthropic with thinking off and absent otherwise.
-- [ ] AC10: `pytest -q tests/unit/test_claude_code_inner_loop.py::test_cli_builtin_tools_disabled_and_repoach_tools_emulated` → green: the built command carries the flag that disables built-in tools; a `<tool_use>` for `read_file` is served by repoach from the head tree and recorded.
-- [ ] AC11: `pytest -q tests/unit/test_claude_code_inner_loop.py::test_emulation_failure_is_the_named_fallback` → green: two consecutive markup leaks on one turn → contract turn, `context.fallback == "claude_code_tool_emulation_failed"`, outcome parsed or `ERROR`, never prose.
-- [ ] AC12: `claude --help | grep -E -- '--tools|--disallowedTools'` on the installed CLI → a match, quoted with the CLI version in the delivery PR (A3).
-- [ ] AC13: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_refuter_runs_the_inner_loop_and_sees_citation_read` → green: a finding citing `store.py:58` raised by a reviewer that read `store.py:1-200` → the refuter's seed carries `citation_read: full`; one that read nothing on that path → `none`; the refuter can call `read_file` beyond ±25 lines and that read is recorded under role `refuter`.
-- [ ] AC14: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_reverify_replays_evidence_reads_at_new_head` → green: a finding verified at A with two evidence reads, a head B → the re-verification seed holds those two windows re-read at B, and a read path removed at B is named `absent at <B7>`.
-- [ ] AC15: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_guard_scope_is_never_read_paths` → green: a "missing X" claim on a path that was read is left to the refuter (the guard makes no change); the same claim on a path never read and not in the included diff is handled by the guard as today.
-- [ ] AC16: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_budget_change_is_a_new_run` → green: a completed run at `(pr, H, h1)`; `review pr` at H with a changed `max_turns` → no replay, stderr `review: budget changed (<h1[:7]> -> <h2[:7]>), re-reviewing`; the same budget again → replay, no model call.
-- [ ] AC17: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_usage_ledger_rows_per_turn` → green: an agent with 3 turns, 1 compaction and 1 contract turn writes 5 `usage_ledger` rows with `phase` in `{turn, summarize, contract}` and increasing `agent_turn`; `repoach usage --json` sums them under the run.
-- [ ] AC18: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_inner_modules_never_reach_the_forge` → green: the AST of `agent_context.py`, `review_tools.py`, `context_summarizer.py`, `evidence_reads.py` imports nothing under `repoach.forge`; a review run with a forge stub records forge writes only from the orchestrator's barrier stage.
-- [ ] AC19: `pytest -q tests/unit/test_agent_context.py::test_agents_config_read_from_checkout_not_pr_head` → green: a PR head `repoach.toml` setting `max_turns = 99` has no effect; the checkout's value is used (A1).
-- [ ] AC20: M1, M2 and M3 are run and their result files committed under `bench/results/`. The delivery PR quotes, per run: precision, recall over 10 planted defects, total tokens, total `cost_usd`, compactions; and for Yoob !306 the `usage_ledger` cost at `max_turns` 0 and 6.
-- [ ] AC21: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `scripts/ci_local.sh` → green.
+- [ ] AC10: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_refuter_runs_the_inner_loop_and_sees_citation_read` → green: a finding citing `store.py:58` raised by a reviewer that read `store.py:1-200` → the refuter's seed carries `citation_read: full`; one that read nothing on that path → `none`; the refuter can call `read_file` beyond ±25 lines and that read is recorded under role `refuter`.
+- [ ] AC11: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_reverify_replays_evidence_reads_at_new_head` → green: a finding verified at A with two evidence reads, a head B → the re-verification seed holds those two windows re-read at B, and a read path removed at B is named `absent at <B7>`.
+- [ ] AC12: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_guard_scope_is_never_read_paths` → green: a "missing X" claim on a path that was read is left to the refuter (the guard makes no change); the same claim on a path never read and not in the included diff is handled by the guard as today.
+- [ ] AC13: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_budget_change_is_a_new_run` → green: a completed run at `(pr, H, h1)`; `review pr` at H with a changed `max_turns` → no replay, stderr `review: budget changed (<h1[:7]> -> <h2[:7]>), re-reviewing`; the same budget again → replay, no model call.
+- [ ] AC14: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_usage_ledger_rows_per_turn` → green: an agent with 3 turns, 1 compaction and 1 contract turn writes 5 `usage_ledger` rows with `phase` in `{turn, summarize, contract}` and increasing `agent_turn`; `repoach usage --json` sums them under the run.
+- [ ] AC15: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_inner_modules_never_reach_the_forge` → green: the AST of `agent_context.py`, `review_tools.py`, `context_summarizer.py`, `evidence_reads.py` imports nothing under `repoach.forge`; a review run with a forge stub records forge writes only from the orchestrator's barrier stage.
+- [ ] AC16: `pytest -q tests/unit/test_agent_context.py::test_agents_config_read_from_checkout_not_pr_head` → green: a PR head `repoach.toml` setting `max_turns = 99` has no effect; the checkout's value is used (A1).
+- [ ] AC17: M1, M2 and M3 are run and their result files committed under `bench/results/`. The delivery PR quotes, per run: precision, recall over 10 planted defects, total tokens, total `cost_usd`, compactions; and for Yoob !306 the `usage_ledger` cost at `max_turns` 0 and 6.
+- [ ] AC18: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `scripts/ci_local.sh` → green.
 
 ## Open Questions
 
 - Q1: Default budgets: are `max_cost_usd` 0.50 per reviewer and 0.25 for the refuter, and `context_tokens` 60 000 / 40 000, the right starting numbers? With four reviewers that is a worst case of about 2.25 USD per review before the refuter calls. The defaults live in the `constraints` block.
 - Q2: Release gate for the default ON: should the delivery PR be blocked when M1 shows precision at `max_turns = 6` below `max_turns = 0`, or when cost rises by more than a stated factor? Which factor?
 - Q3: Seed share: what fraction of `context_tokens` may the seed take before items go to `truncated[]`? 60% is proposed; it leaves the inner loop at least 40% minus the contract reserve.
-- Q4: If the installed `claude` CLI has no flag that disables its built-in tools (A3 false), do we refuse `max_turns > 0` on `claude_code` (the role runs one-shot with `context.fallback = "claude_code_builtin_tools_not_disableable"`), or accept the CLI's built-in read tools in its temporary working directory?
-- Q5: Summarizer tier: HAIKU is the cheapest tier in the chain. Should the refuter's summarizer instead run on the refuter's own tier (OPUS), since it compacts the evidence a verdict rests on?
-- Q6: Round 2 (F5) stays an outer stage (NG5). Should it be removed once the inner loop is on, since a reviewer can now confirm its own claims with tools?
+- Q4: Summarizer tier: HAIKU is the cheapest tier in the chain. Should the refuter's summarizer instead run on the refuter's own tier (OPUS), since it compacts the evidence a verdict rests on?
+- Q5: Round 2 (F5) stays an outer stage (NG5). Should it be removed once the inner loop is on, since a reviewer can now confirm its own claims with tools?
