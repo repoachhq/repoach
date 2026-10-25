@@ -5,7 +5,7 @@ version: 0.1
 status: approved
 author: jfaye (tech-debt ledger entry 4)
 created: 2026-07-03
-updated: 2026-07-03
+updated: 2026-10-25
 
 owns:
   code: [src/repoach/review/orchestrator.py]
@@ -18,6 +18,17 @@ constraints: {}
 ---
 
 # Truthful orchestrator module docstring
+
+## Amendment (2026-10-25): `TeamOutcome` carries every verdict-driving finding
+
+Measured on Yoob !324 / !327: `final_verdict` blocked on a mechanically
+verified finding that `TeamOutcome.refutations`, the only list the
+report printed, never held. `TeamOutcome` now also carries
+`verifications` (the mechanical outcomes; read back from the ledger on
+a replay), `reverifications`, `findings` (the merged list, each entry
+naming its judge) and `verdict_basis` (`MergeFacts.open_blocking_ids`);
+`team_outcome_to_dict` serialises the last two. Contract and AC7-AC10:
+SP-REFUTER-JUDGES-WHAT-IT-CAN amendment 0.2.
 
 ## Intent
 

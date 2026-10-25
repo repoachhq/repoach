@@ -1,11 +1,11 @@
 ---
 id: SP-REFUTER-JUDGES-WHAT-IT-CAN
 title: Every deferred finding carries a named reason, and the judging cap is a setting
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-25
 
 owns:
   code: [src/repoach/review/refuter.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py]
@@ -18,6 +18,53 @@ constraints: {}
 ---
 
 # Every deferred finding carries a named reason, and the judging cap is a setting
+
+## Amendment (0.2, 2026-10-25): the report lists every finding that drives the verdict
+
+| # | Fact | Where |
+|---|---|---|
+| F12 | Yoob MRs !324 (job 17451293380) and !327 (job 17451279178) ended `final_verdict = REQUEST_CHANGES` on one finding the mechanical pre-check had verified, while the JSON said 8 findings, 8 refuted: the gate blocked on a finding the report never showed | the two CI job logs |
+| F13 | `verify_findings_for_pr` returned only aggregate counts, so no caller could name the findings it verified | `src/repoach/review/finding_verifiers.py` (before this amendment) |
+| F14 | `review pr` printed `findings = [r.as_json() for r in team.refutations]`, the refuter's outcomes alone; a mechanically verified finding is no longer `proposed`, so the refuter never sees it | `src/repoach/cli/review_cmds.py`, `src/repoach/review/orchestrator.py` (`team.refutations = list(judging.outcomes)`) |
+| F15 | `summarise_ledger_facts` / `verdict_from_facts` count a mechanically verified blocking finding as open, which is correct; only the report missed it | `src/repoach/review/merge_gate.py` |
+
+- G6: `verify_findings_for_pr` returns a `VerificationReport`: one
+  `MechanicalVerification` per proposed finding (id, state, the
+  verifier's method and evidence line); `.counts` keeps the former
+  aggregate shape. `recorded_verifications` reads the same outcomes back
+  from the ledger for a replayed run.
+- G7: `MergeFacts.open_blocking_ids` lists exactly the ids
+  `open_blocking_findings` counts, in both `summarise_ledger_facts` and
+  `gather_merge_facts`.
+- G8: the report (`review pr` JSON `findings[]`, the stderr
+  `findings: N listed` table, the sticky report and the archive JSON)
+  lists every finding that can move `final_verdict`, each once, with
+  `judge` in {`mechanical`, `refuter`, `reverify`, `ledger`}, `state`,
+  `verification_method` (`mechanical:<claim_type>` for a mechanical
+  verifier) and `evidence`: mechanically settled findings, every
+  refuter outcome (its `refutation = {state, reason}` kept), the
+  findings of older heads re-checked at the head, and any id of
+  `open_blocking_ids` no judge of the run named.
+- G9: the JSON carries `verdict_basis` = `open_blocking_ids`; every id
+  in it is one `findings[]` entry with `blocking: true`.
+
+- [x] AC7: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "every_blocking_finding_counted" -v`
+  — on a fixture with 1 mechanically verified + 2 refuter-refuted + 1
+  cap-deferred finding, the report lists 4 entries, the blocking ones
+  equal `open_blocking_ids` (1) and each such id appears once.
+- [x] AC8: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "judge_and_method or replay or no_judge_named" -v`
+  — the mechanical entry is `judge = mechanical`,
+  `verification_method = mechanical:missing_test`; a replay rebuilt from
+  the ledger yields the same JSON; a blocking id no judge named is
+  still listed.
+- [x] AC9: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "stderr_table or archive or authoritative" -v`
+  — the stderr table and the sticky report render the judge column and
+  the verdict basis; the archive JSON carries `findings` and
+  `verdict_basis`; `gather_merge_facts` names the same ids.
+- [x] AC10: real check, from a Yoob checkout with this branch on
+  `PYTHONPATH`: `REPOACH_PROVIDER=claude_code repoach review pr 327
+  --dry-run --forge gitlab` lists the mechanically verified finding with
+  its method and `verdict_basis` names it.
 
 ## Intent
 
