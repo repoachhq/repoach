@@ -127,9 +127,16 @@ EVIDENCE_OUTSIDE_WINDOW = "evidence outside window"
 EVIDENCE_NOT_SERVED = "evidence outside window ({identifiers} not served)"
 """Template of the reason when the claim names an identifier none of whose hits were served.
 
-The search timed out, could not run, or the budget, the hit cap or the
-deadline left every hit out: the judge is not called, since it could
-only refute what it cannot see."""
+The search could not run, or the budget or the hit cap left every hit
+out: the judge is not called, since it could only refute what it
+cannot see."""
+
+EVIDENCE_TIMED_OUT = "evidence outside window ({cause}: {identifiers})"
+"""Template of the reason when load kept the search from running.
+
+``cause`` is ``grep timed out after 60 s`` or ``assembly deadline of
+180 s reached``, so a deferral the runner's load caused reads apart from
+an identifier the budget left out."""
 
 VERDICT_UNPARSEABLE = "verdict unparseable"
 """The judge answered without a well-formed ``VERDICT:`` line."""
@@ -150,6 +157,7 @@ DEFERRAL_REASONS = (
     JUDGING_CAP_REACHED,
     EVIDENCE_OUTSIDE_WINDOW,
     EVIDENCE_NOT_SERVED,
+    EVIDENCE_TIMED_OUT,
     VERDICT_UNPARSEABLE,
     JUDGE_CALL_FAILED,
 )
@@ -163,8 +171,16 @@ RefutationState = Literal["verified", "refuted", "deferred", "unverified"]
 
 _STATES: tuple[RefutationState, ...] = ("verified", "refuted", "deferred", "unverified")
 
-JUDGE_MAX_OUTPUT_TOKENS = 800
-"""Tokens the judge may answer with, reserved out of the context budget."""
+JUDGE_MAX_OUTPUT_TOKENS = 2048
+"""Tokens the judge may answer with, reserved out of the context budget.
+
+Wide enough that the reasoning and the verdict line are never cut: a cut
+verdict is unparseable, so deferred, and blocks the merge for a wrong
+reason. The provider enforces it (``claude_code`` passes it to the CLI)."""
+
+JUDGE_THINKING = {"type": "disabled"}
+"""Thinking is off for the judge (SP-AGENT-THINKING-CONTROL): its tokens
+would come out of the reply cap and could cut the verdict line."""
 
 CONTRACT_RESERVE_TOKENS = 4096
 """Tokens kept free for the reply contract (SP-AGENT-CONTEXT-LOOP ``contract_reserve_tokens``)."""
@@ -308,7 +324,10 @@ def make_refuter_judge() -> Judge:
     review with no judged findings never spins up the loop.
     """
     loop = AgentLoop(
-        capability=CapabilityTier.OPUS, max_tokens=JUDGE_MAX_OUTPUT_TOKENS, temperature=0.0
+        capability=CapabilityTier.OPUS,
+        max_tokens=JUDGE_MAX_OUTPUT_TOKENS,
+        temperature=0.0,
+        thinking=dict(JUDGE_THINKING),
     )
     return lambda prompt: loop.run_oneshot(prompt).text
 
@@ -563,6 +582,14 @@ def judge_finding(
     )
     if bundle is None:
         return Judgement(FindingStatus.PROPOSED, reason)
+    if bundle.unserved and bundle.timed_out:
+        return Judgement(
+            FindingStatus.PROPOSED,
+            EVIDENCE_TIMED_OUT.format(
+                cause=bundle.timed_out, identifiers=", ".join(bundle.unserved)
+            ),
+            bundle,
+        )
     if bundle.unserved:
         return Judgement(
             FindingStatus.PROPOSED,

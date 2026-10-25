@@ -49,6 +49,21 @@ _SUBPROCESS_KILL_GRACE_S: float = 2.0
 OUTPUT_CAP_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
 """The variable ``claude`` reads its per-reply output-token cap from."""
 
+THINKING_BUDGET_ENV = "MAX_THINKING_TOKENS"
+"""The variable ``claude`` reads its thinking budget from; 0 turns thinking off."""
+
+
+def _thinking_disabled(request: Any) -> bool:
+    """Return True when the request itself turns thinking off (``{"type": "disabled"}``)."""
+    thinking = getattr(request, "thinking", None)
+    kind = thinking.get("type") if isinstance(thinking, dict) else getattr(thinking, "type", None)
+    enabled = (
+        thinking.get("enabled")
+        if isinstance(thinking, dict)
+        else getattr(thinking, "enabled", None)
+    )
+    return kind == "disabled" or enabled is False
+
 
 def _send(proc: asyncio.subprocess.Process, sig: int, *, group: bool) -> None:
     """Send ``sig`` to ``proc``, or to its whole process group when ``group``.
@@ -387,14 +402,22 @@ class ClaudeCodeProvider(BaseProvider):
         ``claude --print`` has no output-cap flag; it reads
         :data:`OUTPUT_CAP_ENV` instead. Without it the CLI answered past
         the cap the caller asked for (the refuter's 800 tokens, exceeded
-        on 5 of 9 calls of Yoob !327, 2026-10-25). ``None`` keeps the
-        parent environment when there is neither a filter nor a cap.
+        on 5 of 9 calls of Yoob !327, 2026-10-25). A request whose
+        ``thinking`` is ``{"type": "disabled"}`` sets
+        :data:`THINKING_BUDGET_ENV` to 0. ``None`` keeps the parent
+        environment when there is neither a filter, a cap nor a thinking
+        switch.
         """
         base = None if self._child_env is None else self._child_env(os.environ)
+        extra: dict[str, str] = {}
         cap = getattr(request, "max_tokens", None)
-        if not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0:
+        if isinstance(cap, int) and not isinstance(cap, bool) and cap > 0:
+            extra[OUTPUT_CAP_ENV] = str(cap)
+        if _thinking_disabled(request):
+            extra[THINKING_BUDGET_ENV] = "0"
+        if not extra:
             return base
-        return {**(os.environ if base is None else base), OUTPUT_CAP_ENV: str(cap)}
+        return {**(os.environ if base is None else base), **extra}
 
     def _cli_model_for(self, requested: str) -> str:
         """Pick a CLI model alias from the upstream Claude name."""

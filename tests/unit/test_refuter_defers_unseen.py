@@ -43,14 +43,17 @@ from repoach.review.refuter import (
     DEFERRAL_REASONS,
     EVIDENCE_NOT_SERVED,
     EVIDENCE_OUTSIDE_WINDOW,
+    EVIDENCE_TIMED_OUT,
     _parse_verdict,
     _render_prompt,
     judge_finding,
     judge_findings_for_pr,
 )
 from repoach.review.refuter_evidence import (
+    ASSEMBLY_DEADLINE_S,
     EVIDENCE_CONTEXT_LINES,
     GREP_MAX_HITS,
+    GREP_TIMEOUT_S,
     EvidenceBundle,
     build_evidence,
     claim_identifiers,
@@ -670,8 +673,9 @@ def test_grep_timeout_defers_without_calling_the_judge(tmp_path: Path, monkeypat
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
-    assert judgement.reason == "evidence outside window (wanted_symbol not served)"
+    assert judgement.reason == "evidence outside window (grep timed out after 60 s: wanted_symbol)"
     assert "search: git grep could not run" in judgement.truncated
+    assert EVIDENCE_TIMED_OUT in DEFERRAL_REASONS
 
 
 def test_hits_cut_by_the_budget_defer_without_calling_the_judge(tmp_path: Path) -> None:
@@ -720,9 +724,12 @@ def test_assembly_deadline_names_what_it_left_out(tmp_path: Path) -> None:
         deadline_s=0,
     )
     assert bundle is not None
-    assert "head-tree search: 90 s assembly deadline reached" in bundle.truncated
-    assert "diff of src/m.py: 90 s assembly deadline reached" in bundle.truncated
+    assert "head-tree search: 0 s assembly deadline reached" in bundle.truncated
+    assert "diff of src/m.py: 0 s assembly deadline reached" in bundle.truncated
     assert bundle.unserved == ("wanted_symbol",)
+    assert bundle.timed_out == "assembly deadline of 0 s reached"
+    assert GREP_TIMEOUT_S == 60
+    assert ASSEMBLY_DEADLINE_S == 180
 
 
 def test_bare_file_names_cost_one_ls_files_per_finding(tmp_path: Path, monkeypatch) -> None:
@@ -778,3 +785,23 @@ def test_evidence_window_is_measured_in_tokens_never_money() -> None:
     assert not any("cost" in name for name in inspect.signature(build_evidence).parameters)
     assert not any("cost" in name for name in inspect.signature(judge_finding).parameters)
     assert not any("cost" in name for name in inspect.signature(judge_findings_for_pr).parameters)
+
+
+def test_refuter_route_asks_for_a_wide_reply_without_thinking(monkeypatch) -> None:
+    from repoach.review import refuter
+
+    seen: dict[str, object] = {}
+
+    class _Loop:
+        def __init__(self, **kwargs: object) -> None:
+            seen.update(kwargs)
+
+        def run_oneshot(self, prompt: str):
+            raise AssertionError("not called")
+
+    monkeypatch.setattr(refuter, "AgentLoop", _Loop)
+    refuter.make_refuter_judge()
+    max_tokens = seen["max_tokens"]
+    assert isinstance(max_tokens, int)
+    assert max_tokens >= 2048
+    assert seen["thinking"] == {"type": "disabled"}

@@ -80,11 +80,23 @@ _MAX_IDENTIFIERS = 6
 _MIN_IDENTIFIER_LEN = 4
 """Shorter tokens match too widely to say anything about a claim."""
 
-GREP_TIMEOUT_S = 30
-"""Seconds the one ``git grep`` (and the one ``git ls-files``) of a finding may run."""
+GREP_TIMEOUT_S = 60
+"""Seconds the one ``git grep`` (and the one ``git ls-files``) of a finding may run.
 
-ASSEMBLY_DEADLINE_S = 90
+Sized for the review runner, a loaded machine: 30 s deferred every
+finding there."""
+
+ASSEMBLY_DEADLINE_S = 180
 """Wall-clock seconds the evidence of one finding may take; what is left is named, not served."""
+
+
+class GrepTimedOutError(RuntimeError):
+    """The head-tree ``git grep`` ran out of time; the timeout in seconds is its ``seconds``."""
+
+    def __init__(self, seconds: int) -> None:
+        super().__init__(f"git grep timed out after {seconds} s")
+        self.seconds = seconds
+
 
 _TEST_PATH = re.compile(
     r"(?:^|/)(?:tests?|__tests__|spec)/|(?:^|/)test_[^/]*$|_test\.\w+$|\.(?:test|spec)\.\w+$"
@@ -155,6 +167,10 @@ class EvidenceBundle:
         unserved: Identifiers of the claim of which nothing was served
             although the tree holds them, or whose search could not run.
         partial: Identifiers of the claim of which only some hits were served.
+        timed_out: Why the search did not run when load is the cause
+            (``grep timed out after 60 s``, ``assembly deadline of 180 s
+            reached``), else empty: tells a load-caused deferral from an
+            identifier the budget left out.
     """
 
     text: str
@@ -164,6 +180,7 @@ class EvidenceBundle:
     budget_tokens: int = 0
     unserved: tuple[str, ...] = ()
     partial: tuple[str, ...] = ()
+    timed_out: str = ""
 
 
 @dataclass
@@ -172,6 +189,8 @@ class _Assembly:
 
     budget: int
     deadline: float = math.inf
+    deadline_s: float = ASSEMBLY_DEADLINE_S
+    timed_out: str = ""
     sections: list[str] = field(default_factory=list)
     reads: list[str] = field(default_factory=list)
     truncated: list[str] = field(default_factory=list)
@@ -187,7 +206,7 @@ class _Assembly:
         """Return True, naming ``step`` as not served, once the deadline has passed."""
         if self.remaining() > 0:
             return False
-        self.truncated.append(f"{step}: {ASSEMBLY_DEADLINE_S} s assembly deadline reached")
+        self.truncated.append(f"{step}: {self.deadline_s:g} s assembly deadline reached")
         return True
 
     def fits(self, text: str) -> bool:
@@ -362,7 +381,10 @@ def grep_head_tree(
     One ``git grep -n -I -F -w`` over the tracked files of the tree at
     ``repo_root`` (local, read-only) searches every identifier at once.
     Returns ``None`` when the search could not run (not a git work tree,
-    git missing, timeout); an empty list is a measured absence.
+    git missing); an empty list is a measured absence.
+
+    Raises:
+        GrepTimedOutError: The search ran past ``timeout_s``.
     """
     wanted = [i for i in identifiers if _IDENTIFIER.match(i)]
     if not wanted:
@@ -370,7 +392,11 @@ def grep_head_tree(
     argv = ["git", "grep", "--no-color", "--null", "-n", "-I", "-F", "-w"]
     for identifier in wanted:
         argv += ["-e", identifier]
-    result = spawn([*argv, "--"], cwd=repo_root, timeout_s=max(1, math.ceil(timeout_s)))
+    seconds = max(1, math.ceil(timeout_s))
+    result = spawn([*argv, "--"], cwd=repo_root, timeout_s=seconds)
+    if result.returncode == -1:
+        _log.info("refuter.grep_timed_out", identifiers=wanted, timeout_s=seconds)
+        raise GrepTimedOutError(seconds)
     if result.returncode == 1 and not result.stdout:
         return {identifier: [] for identifier in wanted}
     if not result.ok:
@@ -580,13 +606,23 @@ def _search(
     lines_of = _Lines(reader)
     found_hits: dict[str, list[tuple[str, int]]] | None = {}
     if identifiers:
-        found_hits = (
-            None
-            if assembly.out_of_time("head-tree search")
-            else grep_head_tree(
-                repo_root, identifiers, timeout_s=min(GREP_TIMEOUT_S, assembly.remaining())
-            )
-        )
+        if assembly.out_of_time("head-tree search"):
+            assembly.timed_out = f"assembly deadline of {assembly.deadline_s:g} s reached"
+            found_hits = None
+        else:
+            try:
+                found_hits = grep_head_tree(
+                    repo_root, identifiers, timeout_s=min(GREP_TIMEOUT_S, assembly.remaining())
+                )
+            except GrepTimedOutError as exc:
+                _log.warning(
+                    "refuter.search_timed_out",
+                    identifiers=list(identifiers),
+                    timeout_s=exc.seconds,
+                    consequence="claims naming these identifiers are deferred, not judged",
+                )
+                assembly.timed_out = f"grep timed out after {exc.seconds} s"
+                found_hits = None
     if found_hits is None:
         for identifier in identifiers:
             assembly.add(
@@ -764,7 +800,9 @@ def build_evidence(
     Returns:
         The bundle, or ``None`` when the file holds none of the cited lines.
     """
-    assembly = _Assembly(budget=budget_tokens, deadline=time.monotonic() + deadline_s)
+    assembly = _Assembly(
+        budget=budget_tokens, deadline=time.monotonic() + deadline_s, deadline_s=deadline_s
+    )
     served = _cited_file(assembly, source, path=path, line_start=line_start, line_end=line_end)
     if served is None:
         return None
@@ -802,4 +840,5 @@ def build_evidence(
         budget_tokens=budget_tokens,
         unserved=tuple(assembly.unserved),
         partial=tuple(assembly.partial),
+        timed_out=assembly.timed_out,
     )
