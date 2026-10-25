@@ -1,7 +1,7 @@
 ---
 id: SP-CI-RED-IS-EVIDENCE
 title: Red, pending, missing and flaky CI are named findings, and a Coder fix needs the failing log
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-25
@@ -19,9 +19,44 @@ constraints:
   ci_log_min_bytes_for_evidence: 1
   flaky_lookback_attempts: 20
   max_coder_rounds: 3
+  flaky_recurrence_window_days: 14
+  tech_debt_file_default: docs/tech_debt.md
 ---
 
 # Red, pending, missing and flaky CI are named findings, and a Coder fix needs the failing log
+
+## Decisions (owner 2026-10-25)
+
+The six open questions of version 0.1 were settled by the owner on
+2026-10-25. The body below already applies these decisions.
+
+- **Q1 → required checks on `develop` AND `main`.** The six required
+  checks are `Test suite (Python 3.11)`, `Test suite (Python 3.13)`,
+  `ShellCheck (warning-level)`, `wheel-build`, `wheel-smoke (3.11)` and
+  `wheel-smoke (3.13)`. repoach's own review and merge jobs are left
+  out, because requiring them would be circular: `Architect / Sentinel /
+  Tester / Scribe`, `Coder auto-fix loop`, `Auto-merge to develop`.
+  `repoach.toml` `[ci] required_checks` lists the six until the ruleset
+  rule exists (AC12, AC13).
+- **Q2 → `doctor --ci` exits `2` when no required checks are configured.**
+  A gate that cannot see CI is a missing precondition. Plain `doctor`
+  stays a report: it prints the same line and exits `0` (G2, AC17).
+- **Q3 → the Coder's `git push` goes through the write barrier in a
+  follow-up spec.** This spec keeps D5 unchanged and names the
+  follow-up in NG4.
+- **Q4 → `FindingStatus.DEFERRED` is a real status.** The readers that
+  must learn it are listed, and AC18 checks each of them.
+- **Q5 → a recurring flaky check blocks.** The first occurrence of a
+  `flaky_check` is advisory. When a `flaky_check` for the **same check
+  name** has been recorded on another PR within the last 14 days, the
+  new one is **blocking** until `docs/tech_debt.md` has a row naming
+  that check. The gate reads the file for the check name (G5b, AC19,
+  AC20).
+- **Q6 → accepted.** SP-AGENT-CONTEXT-LOOP v0.5 (PR #246) now defines the
+  `ci-log:<check name>@<attempt id>` / `role='ci'` namespace in
+  `agent_evidence_reads`. Rows in that namespace are written only by
+  this spec's CI evidence path and are never served by the jailed tools
+  (its G9b, AC23).
 
 ## Intent
 
@@ -56,7 +91,7 @@ Measured on `origin/develop` at `53bb844` (2026-10-25), on
 | F13 | **Yoob (GitLab):** `only_allow_merge_if_pipeline_succeeds = true` and `merge_method = merge`. Two jobs are `allow_failure: true`: `prepare:runner-quota` (`.gitlab-ci.yml:363-369`) and `review:advisory` (`:1497-1505`). Every other job is required by GitLab's own semantics. repoach's GitLab adapter reads this as `required_checks=["pipeline"]` and judges `head_pipeline.status` alone, with `canceled` and `skipped` counted as failure. | `src/repoach/forge/gitlab.py:84-86`, `:732-773`, `:891-918`; measured with `glab api projects/josephwfaye%2Fyoob_2` |
 | F14 | **Flakes are real and leave no trace.** Of 60 Yoob merge-request pipelines (2026-10-18 → 2026-10-25), 3 contain a job that failed and then succeeded inside the same pipeline: `2985935610` `test:api:unit` at `5aa17688`, `2972485058` `prepare:runner-quota` at `c4970719` (allow_failure), and `2968989923` `lint:conventions` at `d62ae6f5`. All three pipelines ended `success`. On repoach, 1 of 100 PR workflow runs (2026-10-21 → 10-25) is a second attempt: `Auto Review (review bots)`, `success` at `e5a6d2fc`. | `glab api …/pipelines/<id>/jobs?include_retried=true`; `gh api …/actions/runs?event=pull_request` |
 | F15 | The forge write barrier (`ForgeWriteBarrier`, SP-DRY-RUN-NEVER-POSTS) gates every **forge** write: API calls and mutating `gh`/`glab` argv. The Coder's `git push` (F7) is a git transport write and does not pass through it. | `src/repoach/forge/protocol.py:248-300`, `src/repoach/review/coder_loop.py:795-797` |
-| F16 | SP-AGENT-CONTEXT-LOOP (draft, branch `docs/sp-agent-context-loop`) defines the evidence ledger `agent_evidence_reads(id, run_id, pr_number, head_sha, role, turn, path, line_start, line_end, sha256, created_at)`. The ledger is keyed on windows of the head tree, so a CI log has no place in it yet. | that spec, G9 and Interface |
+| F16 | SP-AGENT-CONTEXT-LOOP (draft v0.5, PR #246) defines the evidence ledger `agent_evidence_reads(id, run_id, pr_number, head_sha, role, turn, path, line_start, line_end, sha256, created_at)`. Its G9b reserves the `ci-log:<check name>@<attempt id>` / `role='ci'` namespace for this spec. Its AC23 pins the namespace: rows are written through the ledger API, and `read_file`/`grep` refuse such a path, so no tool can serve or write one. | that spec, G9, G9b, AC23 |
 | F17 | `FindingStatus` has no `deferred` value. "Deferred" exists only as a refuter count with named tags (SP-REFUTER-JUDGES-WHAT-IT-CAN). | `src/repoach/review/findings.py:86-109` |
 
 The tech-debt ledger tracks these gaps as rows that this spec is to
@@ -99,12 +134,18 @@ cited here by their text, not by their number:
   With none configured it prints
   `ci.required_checks=none (review gate will refuse: ci_unknown: no required checks configured)`.
   When no forge can be resolved it prints `ci.required_checks=cannot say (<why>)`.
-  Its exit code is unchanged (0).
+  `doctor --ci` exits `2` on `none`, because the gate cannot see CI
+  without them (owner 2026-10-25, Q2). Otherwise it exits `0`, as
+  today. Plain `doctor` prints the same `ci.required_checks=` line, and
+  this spec does not change its exit code.
 - **G3 (D1) `init --ci` offers to configure the required checks.**
   `init --ci github|gitlab` prints a `required checks:` section. It
   shows what repoach would set and the exact forge call it would make:
   - GitHub: a ruleset rule `required_status_checks` on the integration
-    branch. The check names come from the latest integration-branch
+    branch and on the release branch (`develop` and `main` for repoach,
+    Q1). The names are `[ci] required_checks` when declared (for repoach,
+    the six checks of Q1). Without that key, they come from the latest
+    integration-branch
     head: every check reported there that did not end `SKIPPED`/`NEUTRAL`
     and is not one of repoach's own review/merge jobs.
   - GitLab: `PUT projects/:id only_allow_merge_if_pipeline_succeeds=true`.
@@ -144,12 +185,32 @@ cited here by their text, not by their number:
   verdict is `green` and a flaky was observed, the gate JSON lists it
   under `flaky_checks`, and the ledger holds it even when the post is
   refused (dry-run, closed barrier).
+- **G5b (D3, owner 2026-10-25 Q5) A recurring flaky blocks until it is
+  a debt row.** A new `flaky_check` is recorded `severity=blocking`
+  when both of these hold:
+  - the findings ledger holds another `flaky_check` with the **same
+    check name** on a **different PR**, recorded within the last 14
+    days (`flaky_recurrence_window_days`);
+  - no table row of the tech-debt file names that check. "Names" means
+    the check name appears verbatim on a line that starts with `|`.
+    The file is `[ci] tech_debt_file`, default `docs/tech_debt.md`.
+
+  Otherwise it is `advisory`. The gate re-reads the file at the head on
+  every evaluation. Once a row names the check, the blocking finding
+  becomes `resolved` with
+  `verification_result="debt row present: <first 80 chars of the row>"`.
+  While it blocks, `reasons` carries
+  `flaky_check recurring: <check> (<n> PRs in 14 days), no tech-debt row names it`.
+  The JSON entry carries `recurrence: {"prs": [<numbers>], "window_days": 14}`
+  and `blocking: true|false`.
 - **G6 (D4) No fix without evidence.** A CI finding becomes Coder work
   only after the log was read. "Read" means: an `agent_evidence_reads`
   row (SP-AGENT-CONTEXT-LOOP) exists for that PR and head, with
   `role='ci'` and `path='ci-log:<check name>@<attempt id>'`, written
   when the log was fetched, whose `sha256` is that of a non-empty log
-  body. A placeholder never counts. When no such row exists, the
+  body. A placeholder never counts.
+  The namespace is defined by SP-AGENT-CONTEXT-LOOP v0.5 G9b and pinned
+  by its AC23 (owner 2026-10-25, Q6). When no such row exists, the
   finding is `deferred` with reason `logs_unavailable: <why>`, and the
   Coder must not attempt a fix for it. `cancelled` and `missing`
   findings are never Coder work: there is no code fact to fix.
@@ -171,7 +232,12 @@ cited here by their text, not by their number:
   `docs/tech_debt.md`.
 - NG3: No change to the Coder's local gate, `MAX_CODER_ROUNDS` or the
   `stuck` policy.
-- NG4: No routing of `git push` through `ForgeWriteBarrier`. See Q3.
+- NG4: No routing of `git push` through `ForgeWriteBarrier` here.
+  Owner 2026-10-25 (Q3): a follow-up spec,
+  `SP-CODER-PUSH-BEHIND-BARRIER` (not yet written), routes the Coder's
+  `git push` (F7, F15) through the write barrier. With it, a dry-run
+  or closed barrier refuses the push the same way it refuses any forge
+  write. This spec keeps D5 exactly as F7 measures it.
 - NG5: No failing-test extraction beyond the patterns listed under
   Interface. Other runners get `tests_source: "not_extracted"`, named.
 - NG6: The forge settings are never changed silently. G3 writes only
@@ -181,7 +247,8 @@ cited here by their text, not by their number:
 
 - A1: SP-AGENT-CONTEXT-LOOP lands `agent_evidence_reads` before this
   spec's implementation. Until then G6 cannot be implemented (it is
-  `depends_on`). Its jailed read tools refuse non-tree paths, so the
+  `depends_on`). Its G9b and AC23 (v0.5, PR #246) reserve the `ci-log:`
+  namespace and make its jailed read tools refuse such paths, so the
   `ci-log:` rows are written by `ci_evidence.py`, which is an
   orchestrator stage, never by an agent tool.
 - A2: GitHub returns every attempt of a check run at a SHA with
@@ -240,20 +307,41 @@ Both new tags join `NON_FATAL_SKIP_OUTCOMES` (exit 5).
 
 New enum values (`review/findings.py`):
 - `ClaimType.FLAKY_CHECK = "flaky_check"`
-- `FindingStatus.DEFERRED = "deferred"`. Non-terminal. It counts as
+- `FindingStatus.DEFERRED = "deferred"` is a real status, not a prefix
+  on `proposed` (owner 2026-10-25, Q4). It is non-terminal. It counts as
   open blocking for the merge gate when its severity is blocking, and
   the gate names it `<n> deferred CI finding(s): logs_unavailable`.
+  Every reader that switches on status learns it (AC18):
+
+  | Reader | Where | DEFERRED |
+  |--------|-------|----------|
+  | `CONFIRMED_REAL_STATUSES` | `review/findings.py:111-113` | **excluded** (nothing confirmed yet) |
+  | `ALLOWED_TRANSITIONS` | `review/findings.py:118-138` | new key `DEFERRED → {VERIFIED, RESOLVED, RESOLVED_AT_HEAD}`; `PROPOSED → DEFERRED` added |
+  | merge-gate `_SETTLED` | `review/merge_gate.py:57-64` | **excluded** (it is not settled) |
+  | merge-gate blocking counter (`open_blocking_findings`, `_BLOCKING_STATUSES`) | `review/merge_gate.py:72`, `:338` | **counted** when `severity=blocking`, named separately in `reasons` |
+  | `_BROKEN_BEHAVIOR_OPEN` (CI-finding idempotency) | `review/coder_findings.py:205-208` | **included** (a deferred finding is live, so it is not recorded twice) |
+  | `fetch_open_blocking_findings` (Coder work set) | `review/coder_findings.py:77` | **excluded** (never Coder work, G6) |
+  | `review report` grouping | `review/report.py:84-93` | rendered as its own `### deferred (<n>)` group, each line with its `logs_unavailable: <why>` |
 
 Config (`repoach.toml`, SP-UNIVERSAL-PROJECT-CONFIG):
 ```toml
 [ci]
 # Check names the gate requires when the forge declares none.
-# required_checks = ["Test suite (Python 3.11)", "Test suite (Python 3.13)"]
+# required_checks = []
+# The file a recurring flaky_check must be named in (G5b).
+# tech_debt_file = "docs/tech_debt.md"
 ```
 Resolution order: forge (classic protection → ruleset → GitLab project
 flag) → `[ci] required_checks` → none. `DEFAULT_REQUIRED_CHECK_NAMES`
-stops being a silent fallback. repoach's own `repoach.toml` declares
-the two names explicitly until Q1 is answered.
+stops being a silent fallback.
+
+repoach's own `repoach.toml` declares the six checks the owner chose
+(Q1) until the ruleset rule exists on `develop` and `main`. Once the
+forge names them, the forge wins:
+```toml
+[ci]
+required_checks = ["Test suite (Python 3.11)", "Test suite (Python 3.13)", "ShellCheck (warning-level)", "wheel-build", "wheel-smoke (3.11)", "wheel-smoke (3.13)"]
+```
 
 New table (owned here, additive):
 `ci_check_observations(id, pr_number, head_sha, check_name, attempt_id,
@@ -311,7 +399,12 @@ Errors: none raised to callers. Every forge failure becomes
    `failed`/`timeout` attempt and a later `success` attempt yields one
    `flaky_check` finding. Its red log is fetched for the test names; an
    unreadable log gives `tests_source="logs_unavailable"`, never a
-   guessed name. The finding is posted once through the barrier.
+   guessed name. The finding is posted once through the barrier. Its
+   severity follows G5b: it is `blocking` when the same check had a
+   `flaky_check` on another PR in the last 14 days and no tech-debt row
+   names the check, and `advisory` otherwise. A blocking flaky is never
+   Coder work, because there is nothing in the diff to fix; only a
+   debt row settles it.
 5. The Coder's work set = open blocking findings **where
    `coder_actionable` is true**. For a CI finding that requires
    `verification_method ∈ {ci:failed, ci:timeout}` AND a matching
@@ -422,11 +515,31 @@ flowchart TD
 - [ ] AC9: `pytest -q tests/unit/test_ci_evidence.py::test_no_fix_without_evidence` → green. A `failed` check whose `check_log` raises `ForgeError` gives a finding with `status == "deferred"` and `verification_result` starting `deferred: logs_unavailable:`, plus no `agent_evidence_reads` row. `run_findings_coder` returns `reason_code == EVIDENCE_UNAVAILABLE`, applies 0 fixes and calls `git_commit_and_push` 0 times. The same fixture with a 1-byte-or-more log writes one `ci-log:<name>@<id>` row whose `sha256` equals that of the served bytes, and the finding is Coder work.
 - [ ] AC10: `pytest -q tests/unit/test_ci_evidence.py::test_placeholder_is_never_evidence` → green: both placeholder strings of `fetch_failed_check_logs` (F6) and a 0-byte log each give `deferred`, never `verified`.
 - [ ] AC11: `pytest -q tests/unit/test_ci_evidence.py::test_push_path_unchanged` → green. The AST of `coder_findings.py` shows `git_commit_and_push` reachable only after `run_pytest_matrix` and `run_ruff_gate` returned True, `MAX_CODER_ROUNDS == 3`, and `ci_evidence.py` contains no `git` subprocess call.
-- [ ] AC12: `repoach doctor --ci` in a repoach checkout before Q1 is settled prints `ci.required_checks=Test suite (Python 3.11),Test suite (Python 3.13) (repoach.toml)` and exits 0. After the owner adds the ruleset rule (M1), it prints `(… ) (ruleset)`.
-- [ ] AC13: `repoach init --ci github --print` in a repoach checkout prints a `required checks:` section listing `ruleset` + the integration branch + the check names, along with the exact `gh api` call. It writes nothing (`git status --porcelain` unchanged, no forge write admitted). `repoach init --ci gitlab --print` in a Yoob checkout prints `only_allow_merge_if_pipeline_succeeds: true (already set)` and the required job list, which excludes `prepare:runner-quota` and `review:advisory`.
+- [ ] AC12: `repoach doctor --ci` in a repoach checkout, before the ruleset rule exists, prints `ci.required_checks=Test suite (Python 3.11),Test suite (Python 3.13),ShellCheck (warning-level),wheel-build,wheel-smoke (3.11),wheel-smoke (3.13) (repoach.toml)` and exits 0. After the owner adds the ruleset rule on `develop` (M1), it prints the same six names with `(ruleset)`. The test `tests/unit/test_ci_required_checks.py::test_repoach_toml_lists_the_six` asserts that repoach's own `repoach.toml` `[ci] required_checks` equals that list in that order, and that it contains none of `Architect / Sentinel / Tester / Scribe`, `Coder auto-fix loop`, `Auto-merge to develop`.
+- [ ] AC13: `repoach init --ci github --print` in a repoach checkout prints a `required checks:` section with one block per branch, `develop` and `main`. Each block lists `ruleset`, the branch and exactly the six checks of AC12, along with the exact `gh api` call. The three review/merge jobs are absent. It writes nothing (`git status --porcelain` unchanged, no forge write admitted). `repoach init --ci gitlab --print` in a Yoob checkout prints `only_allow_merge_if_pipeline_succeeds: true (already set)` and the required job list, which excludes `prepare:runner-quota` and `review:advisory`.
 - [ ] AC14 (M1, repoach): the measurement below is run and its output quoted in the delivery PR. It covers `doctor --ci`, the ruleset rules read back with `gh api repos/repoachhq/repoach/rules/branches/develop --jq '[.[].type]'` (shows `required_status_checks` once M1 is done), and `review gate` on one open PR, which shows a named CI reason or green.
 - [ ] AC15 (M2, Yoob): `repoach review gate <iid> --forge gitlab` on Yoob MRs whose pipelines are `2985935610`, `2972485058` and `2968989923` (F14). Each run reports one `flaky_check` (`test:api:unit`, `prepare:runner-quota` with `allow_failure: true`, `lint:conventions`), and the delivery PR quotes the three JSON entries. This needs the MRs still readable; otherwise the PR names the substitute pipelines used.
 - [ ] AC16: `scripts/ci_local.sh --fast` green and `repoach arch check --base origin/develop` green on the implementation branch. `.github/workflows/auto-review.yml` no longer claims `fetch_ci_status` reads `CI_UNKNOWN` (`grep -c "reads CI_UNKNOWN"` → 0).
+- [ ] AC17 (Q2): `pytest -q tests/unit/test_ci_doctor.py::test_doctor_ci_exits_2_without_required_checks` → green.
+  - No required checks resolved (no protection, no ruleset rule, no `[ci] required_checks`): `repoach doctor --ci` prints `ci.required_checks=none (review gate will refuse: ci_unknown: no required checks configured)` and exits `2`.
+  - The same fixture under plain `repoach doctor` prints the same line, and the line does not change its exit code: `0` when forge and provider are usable.
+  - With required checks, `doctor --ci` exits `0`.
+- [ ] AC18 (Q4): `pytest -q tests/unit/test_ci_evidence.py::test_deferred_status_readers` → green. Each assertion is one row of the Interface table:
+  - `DEFERRED not in CONFIRMED_REAL_STATUSES`;
+  - `ALLOWED_TRANSITIONS[DEFERRED] == {VERIFIED, RESOLVED, RESOLVED_AT_HEAD}` and `DEFERRED in ALLOWED_TRANSITIONS[PROPOSED]`;
+  - `DEFERRED not in merge_gate._SETTLED`;
+  - a blocking deferred finding raises the gate's `open_blocking_findings` by 1, with `reasons` containing `1 deferred CI finding(s): logs_unavailable`;
+  - `DEFERRED in _BROKEN_BEHAVIOR_OPEN`, so a second `record_ci_findings` call creates no duplicate;
+  - `fetch_open_blocking_findings` excludes it;
+  - `repoach review report <n>` renders a `### deferred (1)` group.
+
+  An AST/grep check that lists every `FindingStatus.` membership set in `src/repoach/review/` finds none that is missing from this test's inventory.
+- [ ] AC19 (Q5, first occurrence): `pytest -q tests/unit/test_ci_flaky.py::test_first_flaky_is_advisory` → green. With no other `flaky_check` for `test:api:unit` in the ledger, a red-then-green observation gives one `flaky_check` with `severity == "advisory"` and JSON `blocking == false`, and the gate's verdict stays `merge: true`.
+- [ ] AC20 (Q5, recurrence): `pytest -q tests/unit/test_ci_flaky.py::test_recurring_flaky_blocks_until_debt_row` → green.
+  - **Blocks:** a `flaky_check` for `test:api:unit` on PR 10, recorded 13 days ago, followed by a new one on PR 11, gives `severity == "blocking"`, JSON `recurrence.prs == [10, 11]`, gate exit `5`, and `reasons` containing `flaky_check recurring: test:api:unit (2 PRs in 14 days), no tech-debt row names it`.
+  - **Debt row unblocks:** adding a line `| 91 | Flaky check \`test:api:unit\` … |` to the head's `docs/tech_debt.md` makes the next gate evaluation resolve the finding with `verification_result` starting `debt row present:`, and the gate passes.
+  - **Outside the window or same PR, advisory:** the same pair 15 days apart, or both on the same PR, gives `advisory`.
+  - **Mention outside a table row, still blocking:** a check name that appears only outside a `|` row still blocks.
 
 ## Measurement plan
 
@@ -435,9 +548,13 @@ flowchart TD
   `[ci] required_checks` is removed. What the owner must click: GitHub
   → `repoachhq/repoach` → Settings → Rules → Rulesets → `develop: pull
   requests only, never rewritten` → Add rule → **Require status checks
-  to pass** → add the checks chosen in Q1 → Save. The same for `main:
-  releases land as merge commits`, if Q1 says so. Then run AC12 and
-  AC14.
+  to pass** → add the six checks below → Save. Then the same for
+  `main: releases land as merge commits` (owner 2026-10-25, Q1). The
+  six checks: `Test suite (Python 3.11)`, `Test suite (Python 3.13)`,
+  `ShellCheck (warning-level)`, `wheel-build`, `wheel-smoke (3.11)`,
+  `wheel-smoke (3.13)`. Then run AC12 and AC14. `doctor --ci` must show
+  `(ruleset)`, and `gh api repos/repoachhq/repoach/rules/branches/main
+  --jq '[.[].type]'` must include `required_status_checks`.
 - **M2 — Yoob (GitLab).** Nothing to click.
   `only_allow_merge_if_pipeline_succeeds` is already true (F13), and
   the required jobs are all jobs except `prepare:runner-quota` and
@@ -445,9 +562,4 @@ flowchart TD
 
 ## Open Questions
 
-- Q1: Which repoach checks become required in the ruleset? The proposal is `Test suite (Python 3.11)`, `Test suite (Python 3.13)`, `ShellCheck (warning-level)`, `wheel-build`, `wheel-smoke (3.11)` and `wheel-smoke (3.13)`. It excludes `Architect / Sentinel / Tester / Scribe`, `Coder auto-fix loop` and `Auto-merge to develop`, because they are repoach's own review/merge jobs and requiring `Auto-merge to develop` would be circular. Also: should `main` get the same rule? Until this is answered, repoach's `repoach.toml` keeps the two current names in `[ci] required_checks`.
-- Q2: Does `doctor --ci` exit `2` when no required checks are configured? This spec keeps `0`, because `doctor --ci` is a report and needs no git tree today. A `2` would make it a CI precondition.
-- Q3: The Coder's `git push` does not pass the forge write barrier (F15). D5 says "unchanged", and this spec keeps it so. Should a later spec route git pushes through the barrier, so that a dry-run Coder can never push? It cannot today, because `run_findings_coder` has no dry-run, but that holds by construction, not by gate.
-- Q4: `FindingStatus.DEFERRED` is new. Should it instead reuse `proposed` with a `deferred:` prefix in `verification_result`, avoiding a status that every status-switching reader (`CONFIRMED_REAL_STATUSES`, the gate counters, `review report`) must learn?
-- Q5: Is a `flaky_check` still advisory on its **second** occurrence for the same check across different PRs within N days? Or does recurrence make it blocking until the debt row exists? This spec keeps it advisory every time.
-- Q6: SP-AGENT-CONTEXT-LOOP is still a draft on `docs/sp-agent-context-loop`, and G6 writes `ci-log:` rows into its `agent_evidence_reads`. The owner of that spec must accept the `role='ci'` / `ci-log:` path namespace, which its jailed tools never serve, before either spec is approved.
+None. All six questions of v0.1 were settled by the owner on 2026-10-25 (see Decisions).
