@@ -1,14 +1,14 @@
 ---
 id: SP-CI-RED-IS-EVIDENCE
 title: Red, pending, missing and flaky CI are named findings, and a Coder fix needs the failing log
-version: 0.3
+version: 0.4
 status: draft
 author: agent
 created: 2026-10-25
 updated: 2026-10-25
 
 owns:
-  code: [src/repoach/review/ci_evidence.py, tests/unit/test_ci_evidence.py, tests/unit/test_ci_verdict.py, tests/unit/test_ci_flaky.py, tests/unit/test_ci_required_checks.py]
+  code: [src/repoach/review/ci_evidence.py, tests/unit/test_ci_evidence.py, tests/unit/test_ci_verdict.py, tests/unit/test_ci_flaky.py, tests/unit/test_ci_required_checks.py, tests/unit/test_ci_doctor_required_checks.py]
   resources: [db:table:ci_check_observations, format:flaky-check-json]
 
 depends_on: [SP-AGENT-CONTEXT-LOOP, SP-CI-STATUS-CLIENT-CLASSIFY, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-FINDINGS-INIT-RACE, SP-REPOACH-INIT-SCAFFOLD, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-CI-ENTRY, SP-UNIVERSAL-PROJECT-CONFIG, SP-DRY-RUN-NEVER-POSTS, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-GATE-REVERIFIES-AT-HEAD]
@@ -513,7 +513,7 @@ flowchart TD
   - exactly one barrier-admitted comment write.
 
   A second call creates no second finding or comment.
-- [ ] AC7: `pytest -q tests/unit/test_ci_flaky.py::test_cancelled_then_green_is_not_flaky` and `::test_timeout_then_green_is_flaky` → green.
+- [ ] AC7: `pytest -q tests/unit/test_ci_flaky.py::test_cancelled_then_green_is_not_flaky` and `pytest -q tests/unit/test_ci_flaky.py::test_timeout_then_green_is_flaky` → green.
 - [ ] AC8: `pytest -q tests/unit/test_ci_flaky.py::test_dry_run_still_records_flaky` → green: under a closed barrier the comment is refused (one `forge.write_refused`), the finding exists, and the gate JSON `flaky_checks` has one entry.
 - [ ] AC9: `pytest -q tests/unit/test_ci_evidence.py::test_no_fix_without_evidence` → green. A `failed` check whose `check_log` raises `ForgeError` gives a finding with `status == "deferred"` and `verification_result` starting `deferred: logs_unavailable:`, plus no `agent_evidence_reads` row. `run_findings_coder` returns `reason_code == EVIDENCE_UNAVAILABLE`, applies 0 fixes and calls `git_commit_and_push` 0 times. The same fixture with a 1-byte-or-more log writes one `ci-log:<name>@<id>` row whose `sha256` equals that of the served bytes, and the finding is Coder work.
 - [ ] AC10: `pytest -q tests/unit/test_ci_evidence.py::test_placeholder_is_never_evidence` → green: both placeholder strings of `fetch_failed_check_logs` (F6) and a 0-byte log each give `deferred`, never `verified`.
@@ -523,7 +523,7 @@ flowchart TD
 - [ ] AC14 (M1, repoach): the measurement below is run and its output quoted in the delivery PR. It covers `doctor --ci`, the ruleset rules read back with `gh api repos/repoachhq/repoach/rules/branches/develop --jq '[.[].type]'` (shows `required_status_checks` once M1 is done), and `review gate` on one open PR, which shows a named CI reason or green.
 - [ ] AC15 (M2, Yoob): `repoach review gate <iid> --forge gitlab` on Yoob MRs whose pipelines are `2985935610`, `2972485058` and `2968989923` (F14). Each run reports one `flaky_check` (`test:api:unit`, `prepare:runner-quota` with `allow_failure: true`, `lint:conventions`), and the delivery PR quotes the three JSON entries. This needs the MRs still readable; otherwise the PR names the substitute pipelines used. The gate's required-job reading assumes Yoob !314 merged (F13): `review:gate` is required, and only `prepare:runner-quota` is `allow_failure`.
 - [ ] AC16: `scripts/ci_local.sh --fast` green and `repoach arch check --base origin/develop` green on the implementation branch. `.github/workflows/auto-review.yml` no longer claims `fetch_ci_status` reads `CI_UNKNOWN` (`grep -c "reads CI_UNKNOWN"` → 0).
-- [ ] AC17 (Q2): `pytest -q tests/unit/test_ci_doctor.py::test_doctor_ci_exits_2_without_required_checks` → green.
+- [ ] AC17 (Q2): `pytest -q tests/unit/test_ci_doctor_required_checks.py::test_doctor_ci_exits_2_without_required_checks` → green.
   - No required checks resolved (no protection, no ruleset rule, no `[ci] required_checks`): `repoach doctor --ci` prints `ci.required_checks=none (review gate will refuse: ci_unknown: no required checks configured)` and exits `2`.
   - The same fixture under plain `repoach doctor` prints the same line, and the line does not change its exit code: `0` when forge and provider are usable.
   - With required checks, `doctor --ci` exits `0`.
@@ -533,7 +533,7 @@ flowchart TD
   - `DEFERRED not in merge_gate._SETTLED`;
   - a blocking DEFERRED `broken_behavior` finding makes `gather_merge_facts(...).open_blocking_findings` exactly 1 greater than the same ledger without it, leaves `blocking_unverified` unchanged (no `has no verifier` line for it), and puts `1 deferred CI finding(s): logs_unavailable` in `reasons`;
   - `summarise_ledger_facts(...)` on the same ledger gives the same `open_blocking_findings` as `gather_merge_facts` and `ci_green == False`;
-  - `DEFERRED in head_reverify._UNSETTLED`. In `::test_deferred_at_a_rechecked_at_b`, a finding deferred at head A (`check_log` raised) is re-checked at head B, where the same check is red and its log is readable. It becomes `verified` at B, one `ci-log:<name>@<id>` row exists with `head_sha == B`, and the finding becomes Coder work. A variant where the check is green at B gives `resolved_at_head`;
+  - `DEFERRED in head_reverify._UNSETTLED`. In `tests/unit/test_ci_evidence.py::test_deferred_at_a_rechecked_at_b`, a finding deferred at head A (`check_log` raised) is re-checked at head B, where the same check is red and its log is readable. It becomes `verified` at B, one `ci-log:<name>@<id>` row exists with `head_sha == B`, and the finding becomes Coder work. A variant where the check is green at B gives `resolved_at_head`;
   - `DEFERRED in _BROKEN_BEHAVIOR_OPEN`, so a second `record_ci_findings` call creates no duplicate;
   - `fetch_open_blocking_findings` excludes it;
   - `repoach review report <n>` renders a `### deferred (1)` group.
