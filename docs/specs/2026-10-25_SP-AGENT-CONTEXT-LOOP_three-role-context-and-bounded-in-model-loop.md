@@ -1,7 +1,7 @@
 ---
 id: SP-AGENT-CONTEXT-LOOP
 title: Three-role context, a fixed context size with a summarizer, and one inner loop consolidated with the outer loop
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-25
@@ -19,6 +19,10 @@ constraints:
   context_tokens_reviewer_default: 60000
   context_tokens_refuter_default: 40000
   summarizer_max_output_tokens: 1500
+  summarizer_tier_reviewer: HAIKU
+  summarizer_tier_refuter: OPUS
+  seed_share: 0.60
+  release_gate_max_cost_ratio: 2.0
   contract_reserve_tokens: 4096
   max_tool_bytes_default: 400000
   max_cost_usd_reviewer_default: 0.50
@@ -40,6 +44,30 @@ decides that. The 0.1 G7, the paragraph "Why not the MCP route", AC10,
 AC11, AC12, A3 and Q4 are withdrawn. The later ACs and Qs are renumbered.
 The facts about the current text emulation (F11, F17, F18) stay so the
 sibling spec can cite them.
+
+## Decisions (owner 2026-10-25)
+
+These decide the open questions of 0.2. The Open Questions section is
+empty. The status stays `draft` until the owner verifies the spec.
+
+- D1 (owner 2026-10-25, was Q1): the starting defaults are
+  `max_cost_usd` 0.50 per reviewer and 0.25 for the refuter, and
+  `context_tokens` 60 000 per reviewer and 40 000 for the refuter. They
+  are revised after M1–M3.
+- D2 (owner 2026-10-25, was Q2): release gate for the default ON. The
+  delivery PR is blocked if M1 precision at `max_turns = 6` is below
+  precision at `max_turns = 0`, OR if the total cost of the
+  `max_turns = 6` run is more than 2× the one-shot run (AC19).
+- D3 (owner 2026-10-25, was Q3): the seed may take 60% of
+  `context_tokens`. Items beyond that go to `truncated[]`.
+- D4 (owner 2026-10-25, was the 0.1 Q4): the claude_code question moves
+  to SP-CLAUDE-CODE-FIRST-CLASS (see the 0.2 amendment).
+- D5 (owner 2026-10-25, was the 0.1 Q5): the refuter's summarizer runs
+  on the refuter's own tier (OPUS). The reviewers' summarizer runs on
+  HAIKU (AC21).
+- D6 (owner 2026-10-25, was the 0.1 Q6): round 2 (F5) is removed once
+  the inner loop is ON, on the condition that M4 shows no precision
+  loss without it (AC20).
 
 ## Intent
 
@@ -125,8 +153,9 @@ Measured on `develop` `53bb844` (2026-10-25).
   names the source (`context.size_source`).
   - If the next turn would exceed the size, the loop calls the
     summarizer first. The summarizer has its own persona
-    (`prompts/review/summarizer_0.1.0.md`), runs on the cheapest tier
-    (HAIKU), and has its own budget (`summarizer_max_output_tokens`).
+    (`prompts/review/summarizer_0.1.0.md`), runs on HAIKU for the
+    reviewers and on OPUS for the refuter (D5), and has its own budget
+    (`summarizer_max_output_tokens`).
     It rewrites the assistant history into a structured summary:
     findings so far with `file:line`, files read with their line
     ranges, open questions, and decisions taken.
@@ -200,7 +229,10 @@ Measured on `develop` `53bb844` (2026-10-25).
 - NG4: No change to the Planner's or the Developer's loops, or to
   `AgentLoop.run`'s prose wrap-up for them.
 - NG5: No reviewer-to-reviewer conversation inside the inner loop.
-  Round 2 (F5) stays an outer-loop stage.
+  Round 2 (F5) is an outer-loop stage. Per D6 it is removed when the
+  inner loop is ON (`max_turns > 0`), provided M4 shows no precision
+  loss (AC20). Until then it runs as it does today. With `max_turns = 0`
+  it always runs.
 
 ## Assumptions
 
@@ -229,7 +261,7 @@ max_cost_usd = 0.50         # refuter default 0.25
 wall_clock_s = 600
 
 [agents.summarizer]
-max_output_tokens = 1500    # capability tier fixed: HAIKU
+max_output_tokens = 1500    # tier fixed: HAIKU for reviewers, OPUS for the refuter (D5)
 ```
 
 ```python
@@ -439,7 +471,10 @@ window 1-200, so the refuter sees `citation_read: full`.
 - M3: Yoob !306 re-run with `--max-turns 0` and `6`: cost and tokens
   read from `usage_ledger` by `run_id`, and findings verified by the
   refuter.
-- The three runs are recorded in one `bench/results/` file each and
+- M4: the same corpus at `--max-turns 6` with round 2 and with
+  `--no-round-two` (a new `bench run` flag). The result gives precision
+  and recall with and without round 2 (D6).
+- The four runs are recorded in one `bench/results/` file each and
   quoted with their numbers in the delivery PR.
 
 ## Architecture Impact
@@ -492,13 +527,12 @@ flowchart TD
 - [ ] AC14: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_usage_ledger_rows_per_turn` → green: an agent with 3 turns, 1 compaction and 1 contract turn writes 5 `usage_ledger` rows with `phase` in `{turn, summarize, contract}` and increasing `agent_turn`; `repoach usage --json` sums them under the run.
 - [ ] AC15: `pytest -q tests/unit/test_outer_inner_consolidation.py::test_inner_modules_never_reach_the_forge` → green: the AST of `agent_context.py`, `review_tools.py`, `context_summarizer.py`, `evidence_reads.py` imports nothing under `repoach.forge`; a review run with a forge stub records forge writes only from the orchestrator's barrier stage.
 - [ ] AC16: `pytest -q tests/unit/test_agent_context.py::test_agents_config_read_from_checkout_not_pr_head` → green: a PR head `repoach.toml` setting `max_turns = 99` has no effect; the checkout's value is used (A1).
-- [ ] AC17: M1, M2 and M3 are run and their result files committed under `bench/results/`. The delivery PR quotes, per run: precision, recall over 10 planted defects, total tokens, total `cost_usd`, compactions; and for Yoob !306 the `usage_ledger` cost at `max_turns` 0 and 6.
+- [ ] AC17: M1, M2, M3 and M4 are run and their result files committed under `bench/results/`. The delivery PR quotes, per run: precision, recall over 10 planted defects, total tokens, total `cost_usd`, compactions; and for Yoob !306 the `usage_ledger` cost at `max_turns` 0 and 6.
 - [ ] AC18: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `scripts/ci_local.sh` → green.
+- [ ] AC19 (D2, release gate): from the two M1 result files, `repoach bench report` gives precision P6 at `max_turns = 6` and P0 at `max_turns = 0`, and total `cost_usd` C6 and C0. The delivery PR that turns the default ON merges only if `P6 >= P0` AND `C6 <= 2.0 × C0`. The PR quotes the four numbers and the verdict. Either condition false → the PR is blocked, and `max_turns` keeps a default of 0 until a new measurement passes.
+- [ ] AC20 (D6, round 2): from the two M4 result files, precision P6 without round 2 and P6r with round 2. Round 2 is removed when `max_turns > 0` only if `P6 >= P6r`. The PR quotes both numbers. Otherwise round 2 stays. `pytest -q tests/unit/test_outer_inner_consolidation.py::test_round_two_skipped_when_inner_loop_on` → green: once removed, a run with `max_turns > 0` makes no round-2 call, and a run with `max_turns = 0` still makes one.
+- [ ] AC21 (D5): `pytest -q tests/unit/test_context_compaction.py::test_summarizer_tier_per_role` → green: a compaction in a reviewer calls the provider with capability HAIKU, and one in the refuter with OPUS. `context.compactions[].summarizer_model` names the model used.
 
 ## Open Questions
 
-- Q1: Default budgets: are `max_cost_usd` 0.50 per reviewer and 0.25 for the refuter, and `context_tokens` 60 000 / 40 000, the right starting numbers? With four reviewers that is a worst case of about 2.25 USD per review before the refuter calls. The defaults live in the `constraints` block.
-- Q2: Release gate for the default ON: should the delivery PR be blocked when M1 shows precision at `max_turns = 6` below `max_turns = 0`, or when cost rises by more than a stated factor? Which factor?
-- Q3: Seed share: what fraction of `context_tokens` may the seed take before items go to `truncated[]`? 60% is proposed; it leaves the inner loop at least 40% minus the contract reserve.
-- Q4: Summarizer tier: HAIKU is the cheapest tier in the chain. Should the refuter's summarizer instead run on the refuter's own tier (OPUS), since it compacts the evidence a verdict rests on?
-- Q5: Round 2 (F5) stays an outer stage (NG5). Should it be removed once the inner loop is on, since a reviewer can now confirm its own claims with tools?
+None. All of them were decided by the owner on 2026-10-25 (D1–D6).
