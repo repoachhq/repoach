@@ -13,12 +13,13 @@ YAML reader here. A legacy/frontier spec (no frontmatter) resolves to
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from repoach.arch import load_registry
+from repoach.arch import SpecNode, load_registry, parse_spec_text
 
-from .spec import _normalise_id, specs_dir_for
+from .spec import _SPEC_ID_IN_FILENAME_RE, _normalise_id, specs_dir_for
 
 
 @dataclass(frozen=True)
@@ -31,12 +32,20 @@ class GovernedSpec:
         owns_resources: Owned resource keys (``db:table:`` / ``queue:topic:``
             / ``format:``).
         depends_on: Declared architecture edges, by SP-ID.
+        status: The frontmatter ``status``, lower-cased.
+        path: The spec file the frontmatter was read from.
     """
 
     id: str
     owns_code: tuple[str, ...]
     owns_resources: tuple[str, ...]
     depends_on: tuple[str, ...]
+    status: str = ""
+    path: Path | None = None
+
+
+class SpecRefUnavailableError(RuntimeError):
+    """A git ref does not resolve to a commit, so its specs cannot be read."""
 
 
 def load_governed_spec(spec_id: str, *, root: Path | None = None) -> GovernedSpec | None:
@@ -58,7 +67,11 @@ def load_governed_spec(spec_id: str, *, root: Path | None = None) -> GovernedSpe
     canonical = _normalise_id(spec_id)
     specs_dir = specs_dir_for(root)
     registry = load_registry(specs_dir)
-    node = registry.nodes.get(canonical)
+    return _governed(registry.nodes.get(canonical))
+
+
+def _governed(node: SpecNode | None) -> GovernedSpec | None:
+    """Project a registry node onto :class:`GovernedSpec` (``None`` for frontier)."""
     if node is None or node.frontier:
         return None
     return GovernedSpec(
@@ -66,7 +79,58 @@ def load_governed_spec(spec_id: str, *, root: Path | None = None) -> GovernedSpe
         owns_code=node.owns_code,
         owns_resources=node.owns_resources,
         depends_on=node.depends_on,
+        status=node.status,
+        path=node.path,
     )
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one read-only git command under *root*."""
+    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, check=False)
+
+
+def load_governed_spec_at_ref(spec_id: str, ref: str, *, root: Path) -> GovernedSpec | None:
+    """Return *spec_id*'s governed frontmatter as committed at *ref*, or ``None``.
+
+    Reads the spec directory of *ref* with ``git ls-tree`` / ``git show``
+    — no checkout — and parses the matching file with the registry's own
+    frontmatter parser, so the base-ref view of a spec follows the same
+    rules as the head view. The match is by the ``_<SP-ID>_`` filename
+    segment, the rule :func:`repoach.review.spec.load_spec` uses; the
+    last match in sort order wins.
+
+    Args:
+        spec_id: Any spelling; normalised like :func:`load_governed_spec`.
+        ref: A git revision (branch, remote-tracking ref or commit).
+        root: Repository root the git commands run against.
+
+    Returns:
+        The governed frontmatter at *ref*; ``None`` when *ref* carries no
+        spec file with that id, or carries it without frontmatter.
+
+    Raises:
+        SpecRefUnavailableError: *ref* does not resolve to a commit.
+        MalformedFrontmatterError: The file at *ref* is malformed.
+    """
+    base = root.resolve()
+    if _git(base, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
+        raise SpecRefUnavailableError(f"ref {ref!r} does not resolve to a commit in {base}")
+    canonical = _normalise_id(spec_id)
+    specs_rel = specs_dir_for(base).resolve().relative_to(base).as_posix()
+    listing = _git(base, "ls-tree", "--name-only", ref, f"{specs_rel}/")
+    matches = sorted(
+        name
+        for name in listing.stdout.splitlines()
+        if name.endswith(".md")
+        and (found := _SPEC_ID_IN_FILENAME_RE.search(Path(name).stem)) is not None
+        and found.group(1) == canonical
+    )
+    if not matches:
+        return None
+    shown = _git(base, "show", f"{ref}:{matches[-1]}")
+    if shown.returncode != 0:
+        return None
+    return _governed(parse_spec_text(shown.stdout, Path(matches[-1])))
 
 
 def render_arch_edges(spec: GovernedSpec | None) -> str:
