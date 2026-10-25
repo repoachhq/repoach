@@ -19,7 +19,7 @@ from pathlib import Path
 
 from repoach.arch import SpecNode, load_registry, parse_spec_text
 
-from .spec import _SPEC_ID_IN_FILENAME_RE, _normalise_id, specs_dir_for
+from .spec import _SPEC_ID_IN_FILENAME_RE, _normalise_id, detect_spec_from_branch, specs_dir_for
 
 
 @dataclass(frozen=True)
@@ -113,24 +113,64 @@ def load_governed_spec_at_ref(spec_id: str, ref: str, *, root: Path) -> Governed
         MalformedFrontmatterError: The file at *ref* is malformed.
     """
     base = root.resolve()
-    if _git(base, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
-        raise SpecRefUnavailableError(f"ref {ref!r} does not resolve to a commit in {base}")
     canonical = _normalise_id(spec_id)
-    specs_rel = specs_dir_for(base).resolve().relative_to(base).as_posix()
-    listing = _git(base, "ls-tree", "--name-only", ref, f"{specs_rel}/")
-    matches = sorted(
-        name
-        for name in listing.stdout.splitlines()
-        if name.endswith(".md")
-        and (found := _SPEC_ID_IN_FILENAME_RE.search(Path(name).stem)) is not None
-        and found.group(1) == canonical
-    )
+    matches = sorted(name for name, found in _spec_files_at_ref(ref, base) if found == canonical)
     if not matches:
         return None
     shown = _git(base, "show", f"{ref}:{matches[-1]}")
     if shown.returncode != 0:
         return None
     return _governed(parse_spec_text(shown.stdout, Path(matches[-1])))
+
+
+def _spec_files_at_ref(ref: str, base: Path) -> list[tuple[str, str]]:
+    """Return ``(path, filename SP-ID)`` for every spec file committed at *ref*.
+
+    Raises:
+        SpecRefUnavailableError: *ref* does not resolve to a commit.
+    """
+    if _git(base, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
+        raise SpecRefUnavailableError(f"ref {ref!r} does not resolve to a commit in {base}")
+    specs_rel = specs_dir_for(base).resolve().relative_to(base).as_posix()
+    listing = _git(base, "ls-tree", "--name-only", ref, f"{specs_rel}/")
+    files: list[tuple[str, str]] = []
+    for name in listing.stdout.splitlines():
+        found = _SPEC_ID_IN_FILENAME_RE.search(Path(name).stem)
+        if name.endswith(".md") and found is not None:
+            files.append((name, found.group(1)))
+    return files
+
+
+def branch_spec_id_at_ref(branch: str, ref: str, *, root: Path) -> str | None:
+    """Return the spec id *branch* names, resolved against the specs committed at *ref*.
+
+    The checkout a command runs from may predate the PR's spec: a branch
+    ``docs/sp-agent-context-loop`` matched against a checkout without
+    ``SP-AGENT-CONTEXT-LOOP`` falls back to the short regex and yields
+    ``SP-AGENT``. Matching against the ids at *ref* (the PR head) and
+    returning the matched spec's frontmatter ``id`` gives the id the
+    review itself graded.
+
+    Args:
+        branch: The PR head branch name.
+        ref: The PR head commit.
+        root: Repository root the git commands run against.
+
+    Returns:
+        The frontmatter ``id`` of the spec the branch names at *ref*;
+        ``None`` when no spec at *ref* matches the branch.
+
+    Raises:
+        SpecRefUnavailableError: *ref* does not resolve to a commit.
+        MalformedFrontmatterError: The matched spec's frontmatter is malformed.
+    """
+    base = root.resolve()
+    known = tuple({found for _, found in _spec_files_at_ref(ref, base)})
+    detected = detect_spec_from_branch(branch, known_ids=known)
+    if detected is None or detected not in known:
+        return None
+    governed = load_governed_spec_at_ref(detected, ref, root=base)
+    return governed.id if governed is not None else detected
 
 
 def render_arch_edges(spec: GovernedSpec | None) -> str:
