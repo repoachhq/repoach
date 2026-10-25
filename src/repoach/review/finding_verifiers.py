@@ -14,8 +14,13 @@ decision changes here.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
+from ..core.logging import get_logger
 from ..gates.config import GatesConfig, applicable, load_gates_config
 from ..lint.no_inline_comments import scan_file as scan_inline
 from ..lint.no_silent_except import scan_file as scan_silent
@@ -30,13 +35,147 @@ from .findings import (
 from .hallucination_guard import (
     _extract_missing_test_symbols,
     make_repo_file_reader,
-    make_tests_symbol_searcher,
 )
+
+_log = get_logger(__name__)
 
 _LANGUAGE_METHOD = "language"
 """Verification method recorded when a Python-only verifier does not apply."""
 
 _DEFERRED_RESULT = "not mechanically verifiable — slices 5-6"
+
+_TEST_DIR_NAMES = frozenset({"tests", "test"})
+"""Directory names whose ``.py`` files are test files wherever they sit."""
+
+_WALK_SKIPPED_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "dist", "build"})
+"""Directories never walked when the root is not a git work tree."""
+
+
+@dataclass(frozen=True)
+class TestSearch:
+    """Where a ``missing_test`` verifier looked for the covering tests.
+
+    Attributes:
+        found: ``(target, "path:line")`` for each target defined in a test file.
+        searched: Number of Python test files read.
+        at: Short sha of the tree searched, empty when not a git work tree.
+    """
+
+    __test__ = False
+
+    found: tuple[tuple[str, str], ...]
+    searched: int
+    at: str
+
+    def scope(self) -> str:
+        """Name what was searched, ``searched <n> test files[ at <sha7>]``."""
+        where = f" at {self.at}" if self.at else ""
+        return f"searched {self.searched} test files{where}"
+
+
+def is_python_test_file(path: str, test_roots: tuple[str, ...] = ()) -> bool:
+    """Whether ``path`` is a Python test file.
+
+    A ``.py`` file is a test file under a configured test root, under any
+    ``tests/`` or ``test/`` directory (``api/tests/`` in a monorepo whose
+    configured root is ``tests``), or named ``test_*.py`` / ``*_test.py``
+    / ``conftest.py``. Code under review elsewhere never is
+    (SP-MISSING-TEST-VERIFIER-SCOPE).
+    """
+    pure = PurePosixPath(path)
+    if pure.suffix != ".py":
+        return False
+    name = pure.name
+    if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
+        return True
+    if _TEST_DIR_NAMES.intersection(pure.parts[:-1]):
+        return True
+    return any(
+        root and (path == root or path.startswith(root.rstrip("/") + "/")) for root in test_roots
+    )
+
+
+def _git_out(repo_root: Path, *args: str) -> str | None:
+    """Return the stdout of a read-only ``git`` command, ``None`` when it fails."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo_root, capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        _log.debug("finding_verifiers.git_unavailable", error=type(exc).__name__)
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _tracked_files(repo_root: Path) -> tuple[list[str], str] | None:
+    """Return ``(tracked paths, sha7)`` when ``repo_root`` is the top of a git work tree."""
+    top = _git_out(repo_root, "rev-parse", "--show-toplevel")
+    if top is None or Path(top.strip()).resolve() != repo_root.resolve():
+        return None
+    listing = _git_out(repo_root, "ls-files", "-z")
+    if listing is None:
+        return None
+    sha = (_git_out(repo_root, "rev-parse", "HEAD") or "").strip()[:7]
+    return [path for path in listing.split("\0") if path], sha
+
+
+def _walked_files(repo_root: Path) -> list[str]:
+    """Return every file under ``repo_root``, skipping vendored and build directories."""
+    paths: list[str] = []
+    for directory, subdirs, files in os.walk(repo_root):
+        subdirs[:] = [d for d in subdirs if d not in _WALK_SKIPPED_DIRS]
+        for name in files:
+            paths.append(PurePosixPath(Path(directory, name).relative_to(repo_root)).as_posix())
+    return paths
+
+
+def find_tests_by_name(
+    repo_root: Path, targets: list[str], test_roots: tuple[str, ...] = ()
+) -> TestSearch:
+    """Look for ``def`` / ``class`` of each target in every Python test file of the tree.
+
+    The tree is the tracked files of ``repo_root`` when it is a git work
+    tree (the pinned head worktree), else every file under it. Only test
+    files (:func:`is_python_test_file`) are read, so a test that lives
+    in ``api/tests/`` is found while a symbol of the code under review
+    never refutes the claim.
+
+    Args:
+        repo_root: Root of the tree to search.
+        targets: Test names to look for (``test_``-prefixed).
+        test_roots: The project's configured test roots.
+
+    Returns:
+        The :class:`TestSearch`; ``found`` keeps the order of ``targets``.
+    """
+    tracked = _tracked_files(repo_root)
+    paths, sha = tracked if tracked is not None else (_walked_files(repo_root), "")
+    candidates = sorted(p for p in paths if is_python_test_file(p, test_roots))
+    patterns = {
+        target: re.compile(
+            rf"^[ \t]*(?:async\s+)?(?:def|class)\s+{re.escape(target)}\b", re.MULTILINE
+        )
+        for target in targets
+        if target and target.isascii()
+    }
+    found: dict[str, str] = {}
+    for path in candidates:
+        if len(found) == len(patterns):
+            break
+        try:
+            text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            _log.debug("finding_verifiers.test_file_skipped", path=path, error=type(exc).__name__)
+            continue
+        for target, pattern in patterns.items():
+            if target in found:
+                continue
+            match = pattern.search(text)
+            if match:
+                line = text.count("\n", 0, match.start()) + 1
+                found[target] = f"{path}:{line}"
+    ordered = tuple((t, found[t]) for t in targets if t in found)
+    return TestSearch(found=ordered, searched=len(candidates), at=sha)
 
 
 def _missing_test_search_targets(symbols: list[str]) -> list[str]:
@@ -67,21 +206,28 @@ def _missing_test_search_targets(symbols: list[str]) -> list[str]:
 def _verify_missing_test(
     finding: Finding, repo_root: Path, config: GatesConfig
 ) -> tuple[FindingStatus, str, str]:
-    """Refute a missing-test claim only when a covering test exists under ``tests/``.
+    """Refute a missing-test claim only when a covering test exists in a test file.
 
-    The search is scoped to ``tests/`` alone — the existence of the
-    code-under-test in ``src/`` must never refute a "no test for X"
-    claim (SP-MISSING-TEST-VERIFIER-SCOPE).
+    The covering test is looked for by name across every Python test
+    file of the tree (:func:`find_tests_by_name`), not only under the
+    top-level ``tests/`` nor in the file the finding cited: the existence
+    of the code-under-test must never refute a "no test for X" claim
+    (SP-MISSING-TEST-VERIFIER-SCOPE), and a test written in
+    ``api/tests/`` must (SP-GATE-REVERIFIES-AT-HEAD G11).
     """
     symbols = _extract_missing_test_symbols(finding.claim)
     if not symbols:
         return FindingStatus.PROPOSED, "symbol_search", "no checkable symbol"
     targets = _missing_test_search_targets(symbols)
-    searcher = make_tests_symbol_searcher(repo_root)
-    found = [target for target in targets if searcher(target)]
-    if found:
-        return FindingStatus.REFUTED, "symbol_search", f"{found[0]} exists in tests/"
-    return FindingStatus.VERIFIED, "symbol_search", f"no test for {', '.join(symbols)}"
+    search = find_tests_by_name(repo_root, targets, config.test_roots)
+    if search.found:
+        target, where = search.found[0]
+        return FindingStatus.REFUTED, "symbol_search", f"{target} exists at {where}"
+    return (
+        FindingStatus.VERIFIED,
+        "symbol_search",
+        f"no test for {', '.join(symbols)} ({search.scope()})",
+    )
 
 
 def _verify_missing_docstring(
