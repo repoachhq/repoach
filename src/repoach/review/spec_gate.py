@@ -30,10 +30,13 @@ from sqlalchemy import (
     String,
     Table,
     create_engine,
+    inspect,
     select,
+    text,
 )
 from sqlalchemy.engine import Engine
 
+from ..arch import path_contains
 from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
 from ..gates.selectors import SelectorKind, TestSelector, parse_selector, selector_file
@@ -55,7 +58,18 @@ _pr_spec_coverage = Table(
     Column("n_present", Integer, nullable=False),
     Column("missing", String, nullable=False),
     Column("covered", Integer, nullable=False),
+    Column("planned", String, nullable=False, server_default=""),
+    Column("draft_refusals", String, nullable=False, server_default=""),
 )
+
+_ADDED_COLUMNS = (
+    ("planned", "TEXT NOT NULL DEFAULT ''"),
+    ("draft_refusals", "TEXT NOT NULL DEFAULT ''"),
+)
+"""Columns added after the table first shipped (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2)."""
+
+_REFUSAL_SEPARATOR = "\n"
+"""Joins ``draft_refusals`` lines in storage; a refusal line itself holds commas."""
 
 
 class SpecCoverage(BaseModel):
@@ -69,7 +83,12 @@ class SpecCoverage(BaseModel):
         n_promised: Number of selectors promised by the plan.
         n_present: Number of selectors present in the head.
         missing: List of selectors that are absent.
-        covered: True iff promised ≥ 1 and nothing missing.
+        covered: True iff promised ≥ 1, nothing missing and no draft
+            refusal.
+        planned: Selectors of a pre-implementation spec whose file does
+            not exist at head yet — reported, never refusing.
+        draft_refusals: One line per rule that withheld the draft
+            exemption (owned code touched, spec past draft at base).
     """
 
     spec_id: str
@@ -77,6 +96,8 @@ class SpecCoverage(BaseModel):
     n_present: int
     missing: list[str]
     covered: bool
+    planned: list[str] = []
+    draft_refusals: list[str] = []
 
 
 def acceptance_selectors(plan: ActionPlan) -> list[str]:
@@ -486,7 +507,9 @@ def promised_body_non_trivial(repo_root: Path, selector: str) -> bool:
     return False
 
 
-def compute_spec_coverage(repo_root: Path, *, spec_id: str, plan: ActionPlan) -> SpecCoverage:
+def compute_spec_coverage(
+    repo_root: Path, *, spec_id: str, plan: ActionPlan, draft: DraftScope | None = None
+) -> SpecCoverage:
     """Build the presence coverage report for *plan* against the head tree.
 
     *plan* supplies the GRADED acceptance contract — the caller loads
@@ -504,27 +527,182 @@ def compute_spec_coverage(repo_root: Path, *, spec_id: str, plan: ActionPlan) ->
             report).
         plan: The loaded action plan supplying the acceptance
             selectors — the BASE-ref plan in normal operation.
+        draft: The draft scope when the spec is pre-implementation (see
+            :func:`coverage_of_selectors`), else ``None``.
 
     Returns:
         A :class:`SpecCoverage` whose ``covered`` is ``True`` only when
         the plan promised at least one selector and every promised
         selector is present, with a non-trivial body, in the head.
     """
-    selectors = acceptance_selectors(plan)
-    missing = [
-        s
-        for s in selectors
-        if not (selector_present(repo_root, s) and promised_body_non_trivial(repo_root, s))
-    ]
-    n_present = len(selectors) - len(missing)
-    covered = bool(selectors) and not missing
+    return coverage_of_selectors(
+        repo_root, spec_id=spec_id, selectors=acceptance_selectors(plan), draft=draft
+    )
+
+
+def coverage_of_selectors(
+    repo_root: Path,
+    *,
+    spec_id: str,
+    selectors: list[str],
+    draft: DraftScope | None = None,
+) -> SpecCoverage:
+    """Grade *selectors* against the head tree, honouring a draft scope.
+
+    A selector that is present with a non-trivial body counts as present.
+    Any other selector is ``missing``, except one whose FILE is absent at
+    head while *draft* allows planned selectors: that one is ``planned``
+    (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2). A selector whose file exists but
+    whose test does not is always missing, draft or not.
+
+    Args:
+        repo_root: The PR head checkout the selectors resolve against.
+        spec_id: The spec recorded on the report.
+        selectors: The acceptance selectors, in order.
+        draft: The draft scope of a pre-implementation spec, or ``None``.
+
+    Returns:
+        The :class:`SpecCoverage`; ``covered`` holds when at least one
+        selector is promised, none is missing and *draft* names no
+        refusal.
+    """
+    allow_planned = draft is not None and draft.allows_planned
+    missing: list[str] = []
+    planned: list[str] = []
+    for selector in selectors:
+        if selector_present(repo_root, selector) and promised_body_non_trivial(repo_root, selector):
+            continue
+        if allow_planned and not (repo_root / selector_file(selector)).exists():
+            planned.append(selector)
+        else:
+            missing.append(selector)
+    refusals = list(draft.refusals) if draft is not None else []
     return SpecCoverage(
         spec_id=spec_id,
         n_promised=len(selectors),
-        n_present=n_present,
+        n_present=len(selectors) - len(missing) - len(planned),
         missing=missing,
-        covered=covered,
+        covered=bool(selectors) and not missing and not refusals,
+        planned=planned,
+        draft_refusals=refusals,
     )
+
+
+PRE_IMPLEMENTATION_STATUSES = frozenset({"draft", "proposed"})
+"""Frontmatter statuses of a spec whose implementation has not started."""
+
+
+@dataclass(frozen=True)
+class DraftScope:
+    """Whether a pre-implementation spec's absent selectors may be planned.
+
+    Attributes:
+        status: The spec's status at head (one of
+            :data:`PRE_IMPLEMENTATION_STATUSES`).
+        refusals: One line per rule that withholds the exemption — the PR
+            touches code the spec owns, or the spec is past draft at base.
+    """
+
+    status: str
+    refusals: tuple[str, ...] = ()
+
+    @property
+    def allows_planned(self) -> bool:
+        """Whether absent selectors are reported as planned rather than missing."""
+        return not self.refusals
+
+
+def draft_scope(
+    *,
+    head_status: str,
+    base_status: str | None,
+    owns_code: tuple[str, ...],
+    changed_files: list[str],
+    spec_path: str | None,
+) -> DraftScope | None:
+    """Build the draft scope of a spec, or ``None`` when it is not a draft.
+
+    The exemption is for a PR that only writes documentation: it is
+    withheld when the PR changes any path outside :data:`DOCS_ROOT`
+    other than the spec file itself, when it changes a path under
+    :data:`DOCS_ROOT` that the spec owns (head or base ``owns``), and
+    when the spec exists at base with a status past draft — a PR cannot
+    step its own spec back to draft to escape its selectors.
+
+    Args:
+        head_status: The spec's frontmatter status at the PR head.
+        base_status: Its status at the base ref, ``None`` when the base
+            does not carry the spec (a new spec).
+        owns_code: The union of the head and base ``owns.code`` paths.
+        changed_files: The paths the PR diff touches.
+        spec_path: The spec's repo-relative path, never counted as owned code.
+
+    Returns:
+        ``None`` when *head_status* is not pre-implementation; else the scope.
+    """
+    if head_status not in PRE_IMPLEMENTATION_STATUSES:
+        return None
+    refusals: list[str] = []
+    if base_status is not None and base_status not in PRE_IMPLEMENTATION_STATUSES:
+        refusals.append(
+            f"spec is {base_status!r} at base: a {head_status} status at head "
+            "does not make its selectors planned"
+        )
+    others = sorted(path for path in changed_files if path != spec_path)
+    outside_docs = [path for path in others if not path_contains(DOCS_ROOT, path)]
+    if outside_docs:
+        refusals.append(
+            f"{head_status} spec PR touches code outside {DOCS_ROOT} "
+            f"({', '.join(outside_docs)}): its acceptance selectors must be present"
+        )
+    owned_in_docs = [
+        path
+        for path in others
+        if path_contains(DOCS_ROOT, path) and any(path_contains(owned, path) for owned in owns_code)
+    ]
+    if owned_in_docs:
+        refusals.append(
+            f"{head_status} spec PR touches owned code ({', '.join(owned_in_docs)}): "
+            "its acceptance selectors must be present"
+        )
+    return DraftScope(status=head_status, refusals=tuple(refusals))
+
+
+DOCS_ROOT = "docs"
+"""The only tree a draft spec PR may change and keep its planned selectors."""
+
+
+_AC_HEADING = re.compile(r"(?im)^##\s+acceptance criteria\s*$")
+_NEXT_HEADING = re.compile(r"(?m)^##\s")
+_PYTEST_SPAN = re.compile(r"`\s*pytest\s([^`]*)`")
+_PYTEST_TARGET = re.compile(r"^[\w./-]+\.py(?:::[\w\[\]-]+)*$")
+
+
+def spec_acceptance_selectors(markdown: str) -> list[str]:
+    """Return the pytest selectors a spec's Acceptance Criteria name, de-duplicated.
+
+    Reads the ``## Acceptance Criteria`` section only, and only the
+    backticked ``pytest [flags] <file.py>[::node...]`` invocations in it — the
+    contract a spec without a committed plan is graded against.
+
+    Args:
+        markdown: The full spec markdown.
+
+    Returns:
+        The selectors in first-occurrence order; empty when the section
+        is absent or names no pytest selector.
+    """
+    heading = _AC_HEADING.search(markdown)
+    if heading is None:
+        return []
+    following = _NEXT_HEADING.search(markdown, heading.end())
+    section = markdown[heading.end() : following.start() if following else len(markdown)]
+    ordered: list[str] = []
+    for span in _PYTEST_SPAN.finditer(section):
+        for token in span.group(1).split():
+            if _PYTEST_TARGET.match(token) and token not in ordered:
+                ordered.append(token)
+    return ordered
 
 
 class BaseRefUnavailableError(RuntimeError):
@@ -688,8 +866,17 @@ def _engine_for(db_path: Path) -> Engine:
 
 
 def init_spec_coverage_schema(db_path: Path) -> None:
-    """Create the ``pr_spec_coverage`` table if it does not exist (idempotent)."""
-    ensure_schema_created(_engine_for(db_path), _metadata)
+    """Create the ``pr_spec_coverage`` table if absent and add its later columns (idempotent)."""
+    engine = _engine_for(db_path)
+    ensure_schema_created(engine, _metadata)
+    inspector = inspect(engine)
+    if not inspector.has_table("pr_spec_coverage"):
+        return
+    existing = {col["name"] for col in inspector.get_columns("pr_spec_coverage")}
+    with engine.begin() as conn:
+        for column, ddl in _ADDED_COLUMNS:
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE pr_spec_coverage ADD COLUMN {column} {ddl}"))
 
 
 def record_spec_coverage(
@@ -715,6 +902,8 @@ def record_spec_coverage(
                 n_present=coverage.n_present,
                 missing=",".join(coverage.missing),
                 covered=int(coverage.covered),
+                planned=",".join(coverage.planned),
+                draft_refusals=_REFUSAL_SEPARATOR.join(coverage.draft_refusals),
             )
         )
 
@@ -753,6 +942,8 @@ def fetch_spec_coverage(
                 n_present=row["n_present"],
                 missing=[m for m in row["missing"].split(",") if m],
                 covered=bool(row["covered"]),
+                planned=[p for p in row["planned"].split(",") if p],
+                draft_refusals=[r for r in row["draft_refusals"].split(_REFUSAL_SEPARATOR) if r],
             )
             for row in rows
         ]

@@ -1,11 +1,11 @@
 ---
 id: SP-PLAN-SELECTOR-AUDIT-WIRE
 title: Promote the whole-plan promised-selector audit out of tmp/ and wire it into plan loading
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-07-24
-updated: 2026-07-24
+updated: 2026-10-25
 
 owns:
   code:
@@ -13,13 +13,50 @@ owns:
     - src/repoach/review/planner.py
   resources: N/A
 
-depends_on: [SP-DEV-STEP-PREFLIGHT]
+depends_on: [SP-DEV-STEP-PREFLIGHT, SP-ARCH-GRAPH]
 provides_to: []
 
 constraints: {}
 ---
 
 # Promote the whole-plan promised-selector audit out of tmp/ and wire it into plan loading
+
+## Amendment (0.2, 2026-10-25): a draft spec's absent selectors are planned
+
+Measured on PR #246 (spec-only, `status: draft`): the review recorded
+`pr_spec_coverage` = `0|0|base-ref-unavailable|0` and the pure gate
+refused with `spec acceptance selectors not all present`. The base ref
+had resolved; the spec simply had no committed plan, and the
+no-plan branch of the orchestrator reused the `base-ref-unavailable`
+marker. A spec-only PR can never carry the tests its criteria name, so
+every draft spec PR was refused, and the only way through was
+`safe_merge.sh --skip-review`, which the owner forbade on 2026-10-25.
+
+The rule, in `spec_gate.py` (`draft_scope`, `coverage_of_selectors`,
+`spec_acceptance_selectors`) and wired by the orchestrator:
+
+- A spec whose head frontmatter `status` is `draft` or `proposed`
+  (`PRE_IMPLEMENTATION_STATUSES`) has a draft scope. Without a committed
+  plan it is graded against the `pytest` selectors in backticks in its
+  `## Acceptance Criteria` section. With a plan, the plan stays the
+  contract.
+- In a draft scope, a selector whose FILE is absent at head is
+  `planned`: recorded in `pr_spec_coverage.planned`, shown in the gate
+  JSON under `spec_acceptance.planned[]`, and does not refuse. A
+  selector whose file exists but whose test is absent or trivial is
+  still `missing`.
+- The scope holds only when every changed file is under `docs/` or is
+  the spec itself. It is withheld, with one named refusal line each,
+  when the PR changes any path outside `docs/` (`draft spec PR touches
+  code outside docs (...): its acceptance selectors must be present`),
+  when it changes a path under `docs/` that the spec's `owns.code`
+  (head or base) names (`draft spec PR touches owned code (...): its
+  acceptance selectors must be present`), when the spec exists at base
+  with a status past draft (a PR cannot step its own spec back to
+  draft), and when the base ref cannot be read.
+- Any other status grades as before. The no-plan case of a non-draft
+  spec now records `plan-absent` instead of `base-ref-unavailable`;
+  the gate reason is unchanged.
 
 ## Intent
 
@@ -260,6 +297,19 @@ try/except shape; behavior described here is normative.)
 - [ ] AC8: `ruff check` + `ruff format --check` + `pytest tests/unit`
   green; zero inline comments (SP-NO-INLINE-COMMENTS-GATE); no
   `# noqa`; `python scripts/lint_no_inline_comments.py --summary` clean.
+- [ ] AC9 (0.2): `pytest -q tests/unit/test_spec_gate_draft.py` → green:
+  a draft spec whose selectors' files are absent merges with them listed
+  in `spec_planned`; the same spec `approved` is refused with exactly
+  `spec acceptance selectors not all present`; the draft spec with a
+  file outside `docs/` in the diff (owned or unrelated `src/`) is
+  refused with that reason plus `draft spec PR touches code outside
+  docs (<path>): its acceptance selectors must be present`; another
+  `docs/` file keeps the exemption; an owned path under `docs/`
+  withholds it (`draft spec PR touches owned code (<path>): ...`); a
+  spec `approved` at base and `draft` at head is
+  refused; an unreadable base ref withholds the exemption; a selector
+  in an existing file stays missing; an old `pr_spec_coverage` table
+  gains the two columns.
 
 ## Open Questions
 

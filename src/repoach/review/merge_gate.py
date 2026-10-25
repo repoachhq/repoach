@@ -119,6 +119,13 @@ class MergeFacts(BaseModel):
             blocking, naming the head it was raised at.
         reverify_line: The one-line summary of the re-check (empty when
             the gate did not reach the ledger).
+        spec_missing: The acceptance selectors absent at head, from the
+            coverage record at head.
+        spec_planned: The selectors of a pre-implementation spec whose
+            file does not exist yet — reported, never refusing
+            (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
+        spec_draft_refusals: One line per rule that withheld that
+            exemption; each one is a refusal reason.
     """
 
     head_sha: str
@@ -133,6 +140,9 @@ class MergeFacts(BaseModel):
     reverified: dict[str, int] = dict(NO_REVERIFICATION)
     reverify_reasons: list[str] = []
     reverify_line: str = ""
+    spec_missing: list[str] = []
+    spec_planned: list[str] = []
+    spec_draft_refusals: list[str] = []
 
 
 class MergeDecision(BaseModel):
@@ -179,6 +189,7 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
         reasons.append(f"{facts.open_blocking_findings} open blocking finding(s) at head")
     if facts.spec_coverage_known and not facts.spec_covered:
         reasons.append("spec acceptance selectors not all present")
+        reasons.extend(facts.spec_draft_refusals)
     if facts.blocking_unverified:
         reasons.append(
             f"{len(facts.blocking_unverified)} unverified blocking finding(s): "
@@ -378,14 +389,18 @@ def _assemble_facts(
     review_complete = any(
         r["n_unparsed"] == 0 and r["n_reviewers"] >= _MIN_REVIEWERS for r in fresh
     )
+    latest = coverage[-1] if coverage else None
     return MergeFacts(
         head_sha=head_sha,
         ci_green=ci_green,
         open_blocking_findings=open_blocking,
-        spec_covered=bool(coverage) and coverage[-1].covered,
-        spec_coverage_known=bool(coverage),
+        spec_covered=latest is not None and latest.covered,
+        spec_coverage_known=latest is not None,
         review_complete=review_complete,
         review_integrity_known=bool(fresh),
         review_integrity_any=bool(integrity),
         blocking_unverified=blocking_unverified or [],
+        spec_missing=list(latest.missing) if latest is not None else [],
+        spec_planned=list(latest.planned) if latest is not None else [],
+        spec_draft_refusals=list(latest.draft_refusals) if latest is not None else [],
     )

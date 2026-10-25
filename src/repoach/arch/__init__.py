@@ -19,6 +19,8 @@ from repoach.arch.registry import (
     SpecNode,
     has_frontmatter,
     load_registry,
+    parse_spec_text,
+    path_contains,
 )
 from repoach.arch.render import render
 
@@ -32,5 +34,7 @@ __all__ = [
     "SpecNode",
     "has_frontmatter",
     "load_registry",
+    "parse_spec_text",
+    "path_contains",
     "render",
 ]

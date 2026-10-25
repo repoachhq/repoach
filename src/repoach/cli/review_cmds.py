@@ -28,6 +28,7 @@ from pathlib import Path
 import typer
 from sqlalchemy import create_engine, text
 
+from ..arch import MalformedFrontmatterError
 from ..core.config import GatewayConfigError, get_settings
 from ..forge import (
     ARCHIVE_MARKER,
@@ -38,7 +39,12 @@ from ..forge import (
     select_forge,
 )
 from ..project.config import load_project_config
-from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
+from ..project.spec_source import (
+    SpecResolution,
+    declared_spec_missing,
+    resolve_spec,
+    spec_coverage_label,
+)
 from ..providers.errors import ProviderConfigError
 from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
 from ..providers.usage import run_summary_line, run_usage_json, usage_run
@@ -50,6 +56,7 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
+from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.orchestrator import run_review
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
@@ -633,6 +640,27 @@ def review_insights(
     )
 
 
+def _branch_spec_at_head(
+    declared: SpecResolution, *, branch: str, head_sha: str, root: Path
+) -> SpecResolution:
+    """Re-resolve a branch-derived spec id against the specs at the PR head.
+
+    The checkout may not carry the PR's spec yet, so the branch parser
+    falls back to its short regex (``docs/sp-agent-context-loop`` →
+    ``SP-AGENT``). The head's specs and the matched spec's frontmatter
+    ``id`` give the id the review graded; the checkout's resolution is
+    kept when the head names no spec or cannot be read.
+    """
+    try:
+        at_head = branch_spec_id_at_ref(branch, head_sha, root=root)
+    except (SpecRefUnavailableError, MalformedFrontmatterError) as exc:
+        typer.echo(f"gate: spec id from the checkout ({exc})", err=True)
+        return declared
+    if at_head is None:
+        return declared
+    return SpecResolution(at_head, declared.source)
+
+
 @review_app.command("gate")
 def review_gate(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
@@ -668,7 +696,10 @@ def review_gate(
     ``facts.spec_coverage`` is ``not_applicable`` when no spec is
     declared: a PR without a spec is never refused for lacking one; it
     is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
-    a spec that has no document.
+    a spec that has no document. ``spec_acceptance`` lists the selectors
+    ``missing`` at head, the ``planned`` ones of a draft spec (absent
+    files that do not refuse) and the ``draft_refusals`` that withheld
+    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
 
     The verifiers re-check the ledger on the tree of the verified head,
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
@@ -717,6 +748,10 @@ def review_gate(
         sources=load_project_config(root).review.spec_sources,
         root=root,
     )
+    if declared.source == "branch" and pr is not None and evaluation.head_sha:
+        declared = _branch_spec_at_head(
+            declared, branch=pr.head_ref, head_sha=evaluation.head_sha, root=root
+        )
     coverage = spec_coverage_label(
         declared.spec_id,
         facts.spec_covered if facts.spec_coverage_known else None,
@@ -734,6 +769,11 @@ def review_gate(
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
                 "reverified": facts.reverified,
+                "spec_acceptance": {
+                    "missing": facts.spec_missing,
+                    "planned": facts.spec_planned,
+                    "draft_refusals": facts.spec_draft_refusals,
+                },
                 "facts": {
                     "ci_green": facts.ci_green,
                     "open_blocking_findings": facts.open_blocking_findings,
