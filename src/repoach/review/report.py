@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from .finding_verifiers import MECHANICAL_METHODS, MechanicalVerification
-from .findings import ClaimType, Finding, fetch_findings
+from .findings import ClaimType, Finding, fetch_findings, init_findings_schema
 from .merge_gate import MergeDecision, MergeFacts
 
 if TYPE_CHECKING:
@@ -348,8 +348,15 @@ def report_findings(
 
     Returns:
         The entries in report order, each with its ledger severity and
-        status filled in.
+        status filled in; an entry whose id is not in the ledger keeps
+        both empty.
+
+    The findings schema is created when absent (as
+    :func:`~repoach.review.merge_gate.summarise_ledger_facts` does), so
+    an uninitialised ledger yields the run's own outcomes, never a read
+    error that empties the report.
     """
+    init_findings_schema(db_path)
     ledger = {finding.id: finding for finding in fetch_findings(db_path, pr_number)}
     entries: dict[object, ReportFinding] = {}
     judged = [

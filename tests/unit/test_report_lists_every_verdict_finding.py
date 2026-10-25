@@ -22,13 +22,14 @@ from repoach.review.findings import (
     record_review_integrity,
 )
 from repoach.review.merge_gate import (
+    MergeFacts,
     compute_merge_decision,
     gather_merge_facts,
     summarise_ledger_facts,
     verdict_from_facts,
 )
 from repoach.review.orchestrator import TeamOutcome, team_outcome_to_dict
-from repoach.review.refuter import judge_findings_for_pr
+from repoach.review.refuter import Refutation, judge_findings_for_pr
 from repoach.review.report import (
     findings_table_lines,
     render_ledger_report,
@@ -223,3 +224,26 @@ def test_team_outcome_archive_carries_findings_and_verdict_basis(tmp_path: Path)
     assert payload["verdict_basis"] == [mechanical_id]
     assert len(payload["findings"]) == 4
     assert {entry["judge"] for entry in payload["findings"]} == {"mechanical", "refuter"}
+
+
+def test_an_uninitialised_ledger_still_lists_the_run_outcomes(tmp_path: Path) -> None:
+    db = tmp_path / "never-created.db"
+    facts = MergeFacts(
+        head_sha=HEAD,
+        ci_green=True,
+        open_blocking_findings=0,
+        spec_covered=False,
+        spec_coverage_known=False,
+        review_complete=True,
+        review_integrity_known=False,
+    )
+    refutation = Refutation(7, "a.py", 3, ClaimType.DESIGN, "refuted", "vague")
+
+    entries = report_findings(db, pr_number=1, facts=facts, refutations=[refutation])
+
+    assert [(entry.finding_id, entry.judge, entry.state) for entry in entries] == [
+        (7, "refuter", "refuted")
+    ]
+    assert entries[0].severity == ""
+    assert entries[0].status == ""
+    assert report_findings(db, pr_number=1, facts=facts) == []
