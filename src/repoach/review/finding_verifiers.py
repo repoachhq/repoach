@@ -107,16 +107,23 @@ def _git_out(repo_root: Path, *args: str) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
-def _tracked_files(repo_root: Path) -> tuple[list[str], str] | None:
-    """Return ``(tracked paths, sha7)`` when ``repo_root`` is the top of a git work tree."""
-    top = _git_out(repo_root, "rev-parse", "--show-toplevel")
-    if top is None or Path(top.strip()).resolve() != repo_root.resolve():
+def _head_of(repo_root: Path) -> str | None:
+    """Return the full HEAD sha when ``repo_root`` is the top of a git work tree."""
+    top = _git_out(repo_root, "rev-parse", "--show-toplevel", "HEAD")
+    if top is None:
         return None
+    lines = top.split()
+    if len(lines) != 2 or Path(lines[0]).resolve() != repo_root.resolve():
+        return None
+    return lines[1]
+
+
+def _tracked_files(repo_root: Path) -> list[str] | None:
+    """Return the tracked paths of the git work tree ``repo_root``."""
     listing = _git_out(repo_root, "ls-files", "-z")
     if listing is None:
         return None
-    sha = (_git_out(repo_root, "rev-parse", "HEAD") or "").strip()[:7]
-    return [path for path in listing.split("\0") if path], sha
+    return [path for path in listing.split("\0") if path]
 
 
 def _walked_files(repo_root: Path) -> list[str]:
@@ -129,6 +136,70 @@ def _walked_files(repo_root: Path) -> list[str]:
     return paths
 
 
+_DEFINITION = re.compile(r"^[ \t]*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", re.MULTILINE)
+"""A ``def`` / ``class`` line of a Python test file and the name it defines."""
+
+
+@dataclass(frozen=True)
+class _TestIndex:
+    """Every name defined in the Python test files of one tree."""
+
+    where: dict[str, str]
+    searched: int
+    at: str
+
+
+_INDEX_CACHE: dict[tuple[str, str, tuple[str, ...]], _TestIndex] = {}
+"""Test-name indexes of git trees, keyed by ``(root, head sha, test roots)``."""
+
+_INDEX_CACHE_SIZE = 8
+"""Trees kept in :data:`_INDEX_CACHE`; the oldest is dropped past it."""
+
+
+def _build_index(
+    repo_root: Path, paths: list[str], test_roots: tuple[str, ...], at: str
+) -> _TestIndex:
+    """Read every Python test file among ``paths`` once and index its definitions."""
+    candidates = sorted(p for p in paths if is_python_test_file(p, test_roots))
+    where: dict[str, str] = {}
+    for path in candidates:
+        try:
+            text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            _log.debug("finding_verifiers.test_file_skipped", path=path, error=type(exc).__name__)
+            continue
+        for match in _DEFINITION.finditer(text):
+            name = match.group(1)
+            if name not in where:
+                line = text.count("\n", 0, match.start()) + 1
+                where[name] = f"{path}:{line}"
+    return _TestIndex(where=where, searched=len(candidates), at=at)
+
+
+def _test_index(repo_root: Path, test_roots: tuple[str, ...]) -> _TestIndex:
+    """Return the test-name index of ``repo_root``, built once per git head.
+
+    A git work tree is listed and read once per ``(root, head sha, test
+    roots)``, so a gate re-checking N findings at one head walks the
+    tree once; a tree outside git is read on every call.
+    """
+    head = _head_of(repo_root)
+    if head is None:
+        return _build_index(repo_root, _walked_files(repo_root), test_roots, "")
+    key = (str(repo_root.resolve()), head, test_roots)
+    cached = _INDEX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    tracked = _tracked_files(repo_root)
+    if tracked is None:
+        return _build_index(repo_root, _walked_files(repo_root), test_roots, "")
+    index = _build_index(repo_root, tracked, test_roots, head[:7])
+    if len(_INDEX_CACHE) >= _INDEX_CACHE_SIZE:
+        _INDEX_CACHE.pop(next(iter(_INDEX_CACHE)))
+    _INDEX_CACHE[key] = index
+    return index
+
+
 def find_tests_by_name(
     repo_root: Path, targets: list[str], test_roots: tuple[str, ...] = ()
 ) -> TestSearch:
@@ -138,7 +209,7 @@ def find_tests_by_name(
     tree (the pinned head worktree), else every file under it. Only test
     files (:func:`is_python_test_file`) are read, so a test that lives
     in ``api/tests/`` is found while a symbol of the code under review
-    never refutes the claim.
+    never refutes the claim. A git tree is indexed once per head.
 
     Args:
         repo_root: Root of the tree to search.
@@ -148,34 +219,9 @@ def find_tests_by_name(
     Returns:
         The :class:`TestSearch`; ``found`` keeps the order of ``targets``.
     """
-    tracked = _tracked_files(repo_root)
-    paths, sha = tracked if tracked is not None else (_walked_files(repo_root), "")
-    candidates = sorted(p for p in paths if is_python_test_file(p, test_roots))
-    patterns = {
-        target: re.compile(
-            rf"^[ \t]*(?:async\s+)?(?:def|class)\s+{re.escape(target)}\b", re.MULTILINE
-        )
-        for target in targets
-        if target and target.isascii()
-    }
-    found: dict[str, str] = {}
-    for path in candidates:
-        if len(found) == len(patterns):
-            break
-        try:
-            text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            _log.debug("finding_verifiers.test_file_skipped", path=path, error=type(exc).__name__)
-            continue
-        for target, pattern in patterns.items():
-            if target in found:
-                continue
-            match = pattern.search(text)
-            if match:
-                line = text.count("\n", 0, match.start()) + 1
-                found[target] = f"{path}:{line}"
-    ordered = tuple((t, found[t]) for t in targets if t in found)
-    return TestSearch(found=ordered, searched=len(candidates), at=sha)
+    index = _test_index(repo_root, test_roots)
+    found = tuple((t, index.where[t]) for t in targets if t in index.where)
+    return TestSearch(found=found, searched=index.searched, at=index.at)
 
 
 def _missing_test_search_targets(symbols: list[str]) -> list[str]:

@@ -22,7 +22,7 @@ import typer
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.forge.protocol import MergeMethod, PullRequest
-from repoach.review import auto_merge
+from repoach.review import auto_merge, finding_verifiers
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, evaluate_merge_gate
 from repoach.review.findings import (
     ClaimType,
@@ -727,3 +727,37 @@ def test_stale_still_present_stamp_at_the_head_yields_to_the_test_found_there(
     assert _row(db, finding_id).status is FindingStatus.RESOLVED_AT_HEAD
     assert evaluation.facts.reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 0}
     assert evaluation.decision.merge is True
+
+
+def test_two_missing_tests_at_one_head_list_the_tree_once(
+    tmp_path: Path, gate: Callable[..., GateEvaluation], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    head_a, first = _missing_migration_test(repo, db)
+    second = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.MISSING_TEST,
+        file="api/alembic/versions/n0_relabel.py",
+        line=5,
+        claim="downgrade is untested; add test_downgrade_restores_noted_rows",
+        method="symbol_search",
+    )
+    head_b = repo.push_head({"api/tests/test_relabel.py": _MIGRATION_TEST}, "test: relabel")
+    _review_at(db, head_b)
+    listings: list[Path] = []
+    real = finding_verifiers._tracked_files
+
+    def _counting(root: Path) -> list[str] | None:
+        listings.append(root)
+        return real(root)
+
+    monkeypatch.setattr(finding_verifiers, "_tracked_files", _counting)
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert len(listings) == 1
+    assert _row(db, first).status is FindingStatus.RESOLVED_AT_HEAD
+    assert _row(db, second).status is FindingStatus.VERIFIED
+    assert evaluation.facts.reverified == {"resolved": 1, "still_open": 1, "needs_judgement": 0}
