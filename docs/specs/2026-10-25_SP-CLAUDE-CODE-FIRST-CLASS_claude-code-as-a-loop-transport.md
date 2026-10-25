@@ -1,7 +1,7 @@
 ---
 id: SP-CLAUDE-CODE-FIRST-CLASS
 title: Claude Code as a first-class transport for the review inner loop
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-25
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/providers/claude_code/loop_transport.py, src/repoach/llm_proxy/providers/claude_code/stream_events.py, src/repoach/llm_proxy/providers/claude_code/launch.py, src/repoach/review/review_tools_mcp.py, tests/unit/test_claude_code_launch_line.py, tests/unit/test_claude_code_stream_events.py, tests/unit/test_claude_code_loop_transport.py, tests/unit/test_review_tools_mcp.py, tests/integration/test_claude_code_live_probe.py]
   resources: [format:claude-code-launch-line, format:claude-code-stream-json]
 
-depends_on: [SP-AGENT-CONTEXT-LOOP, SP-UNIVERSAL-PROVIDERS, SP-USAGE-LEDGER, SP-PROVIDER-DIRECT-ANTHROPIC, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-REVIEW-PINS-HEAD, SP-PRECISION-MEASUREMENT]
+depends_on: [SP-AGENT-CONTEXT-LOOP, SP-UNIVERSAL-PROVIDERS, SP-USAGE-LEDGER, SP-PROVIDER-DIRECT-ANTHROPIC, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-REVIEW-PINS-HEAD, SP-PRECISION-MEASUREMENT, SP-FAILOVER-SKIPS-BLOCKED-PROVIDER, SP-BUDGET-RETRY-FIXES]
 provides_to: []
 
 constraints:
@@ -21,6 +21,9 @@ constraints:
   mcp_server_name: repoach
   tool_names: [mcp__repoach__read_file, mcp__repoach__grep, mcp__repoach__list_dir, mcp__repoach__arch_edges, mcp__repoach__spec]
   agent_sdk_min_version: "0.2.174"
+  mcp_host_default: stdio
+  cost_basis_values: [billed, list]
+  parent_session_env_scrubbed: [CLAUDECODE, CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_MESSAGING_SOCKET]
   findings_jaccard_min: 0.80
   finding_line_tolerance: 3
 ---
@@ -43,6 +46,50 @@ summarizer stays the only thing that compacts the context. Every
 number comes from `--output-format stream-json`. The login is the only
 credential. INV1–INV8 of the sibling spec hold on this transport
 without exception.
+
+## Owner decisions (owner 2026-10-25)
+
+Version 0.2 records the owner's answers to the six open questions of
+0.1. They are binding on the implementation.
+
+- D1 (was Q1): the Planner, the Developer and the gateway's
+  `ClaudeCodeProvider` keep the text emulation for now (NG3 stays). A
+  follow-up spec will move them. **Rule:** the gateway refuses a
+  request that carries `tools` when the resolved backend is
+  `claude_code`. The refusal is recorded as
+  `claude_code_backend_no_client_tools`, and the gateway's failover
+  moves to the next provider in the chain, the same way it does for any
+  other skipped candidate.
+- D2 (was Q2): `claude_cli_env` also drops `CLAUDECODE`,
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION` and
+  `CLAUDE_CODE_MESSAGING_SOCKET`. This only adds names to the scrub
+  list. Every existing rule stays, including the kept
+  `CLAUDE_CODE_OAUTH_TOKEN`. A test asserts that the four names are
+  absent from the child env (AC15).
+- D3 (was Q3): `usage_ledger` gains `cost_basis TEXT NULL` in
+  `{billed, list}`. On this transport its value is
+  `modelUsage.<model>.costBasis`.
+  - `repoach usage` never sums the two bases into one total. It prints
+    two columns, `cost_billed_usd` and `cost_list_usd`.
+  - On a subscription login, `max_cost_usd` binds on the list-equivalent
+    cost, and the JSON names it that way:
+    `context.caps.cost = "<spent> of <cap> (list-equivalent)"` (AC16).
+- D4 (was Q4): the minimum version stays `2.1.302`, the version
+  measured. Lowering it requires a probe run on the older CLI (the
+  probes P1–P22 of Context), recorded in this spec.
+- D5 (was Q5): the default MCP host is **stdio**. The reasons: the same
+  code runs on every machine, no 121 MB optional dependency is needed,
+  and there is no version drift from the SDK's bundled CLI 2.1.310
+  (S3). The SDK host is opt-in through `[claude_code] host = "sdk"`. M2
+  measures both. G1 is amended accordingly.
+- D6 (was Q6): `rate_limit_event` feeds `GlobalRateLimiter`. When
+  `rate_limit_info.status != "allowed"`, the transport calls
+  `set_blocked(resetsAt - now)` on the `claude_code` scope.
+  `is_blocked` / `seconds_until_unblocked` (SP-FAILOVER-SKIPS-BLOCKED-PROVIDER)
+  then skip the provider before dispatch until `resetsAt`. The block
+  lasts until `resetsAt` and is not cut by `rate_limit_block_max_s`,
+  which bounds `Retry-After` headers. The edge is declared in
+  Architecture Impact (AC17).
 
 ## Context
 
@@ -124,6 +171,7 @@ inspected event by event. Total probe spend: under 0.03 USD.
 | R5 | Reviewers send no system prompt; persona, contract and evidence go as one user message (sibling F1/F2). `AgentLoop.run` already has a jailed read-only loop for the Planner, whose exhaustion returns prose (sibling F6/F7). `Reviewer._allowed_tools` is computed and never read (sibling F10). | `reviewer.py:540`, `agent_loop.py:546`, `planner_tools.py`, `reviewer.py:488-490` |
 | R6 | Bench baseline: `bench/results/2026-10-21_planted_claude_code.json`, 10 planted cases, 45 findings, one-shot. There is no `anthropic` baseline in `bench/results/`. | `bench/results/` |
 | R7 | Yoob !306 dry run, today's figure (reported 2026-10-25): 8 provider calls in the usage ledger, all one-shot. | `usage_ledger` |
+| R8 | `claude auth status` prints the account's real e-mail and organisation id next to `loggedIn` / `authMethod` (verifier, 2026-10-25). `doctor` prints only a derived line, `claude login (<method>; <cli>)`, and keeps neither value (`claude_login` reads only `loggedIn` and `authMethod`). Recorded transcripts must be scrubbed of both (AC2). | `src/repoach/providers/select.py:499-520`, `src/repoach/cli/doctor_cmds.py:111-129` |
 
 ## Goals
 
@@ -134,14 +182,17 @@ inspected event by event. Total probe spend: under 0.03 USD.
   adapter wraps those callables and has no implementation of its own:
   jail, caps, nonce markers and `agent_evidence_reads` rows are the
   sibling's. Two hosts serve it:
-  - **In-process** through `claude_agent_sdk.create_sdk_mcp_server`
-    when `claude_agent_sdk >= 0.2.174` is importable (optional extra
-    `repoach[claude-code-sdk]`). `cli_path` is always the route's
-    resolved `claude`, never the SDK's bundled binary (S3), so the
-    version and the login `doctor` checks are the ones that run.
-  - **stdio** otherwise: `sys.executable -m repoach.review.review_tools_mcp
+  - **stdio, the default (D5):** `sys.executable -m repoach.review.review_tools_mcp
     --tree <head> --role <r> --run <run_id> --turn-file <f>`, declared in
     a `--mcp-config` JSON file written into the per-call tempdir.
+  - **In-process, opt-in** with `[claude_code] host = "sdk"`, through
+    `claude_agent_sdk.create_sdk_mcp_server`. It needs
+    `claude_agent_sdk >= 0.2.174` (optional extra
+    `repoach[claude-code-sdk]`); `host = "sdk"` without the extra is a
+    configuration error that names the extra, not a fallback to stdio.
+    `cli_path` is always the route's resolved `claude`, never the SDK's
+    bundled binary (S3), so the version and the login `doctor` checks
+    are the ones that run.
 - G2 **The launch line is fixed and complete** (`format:claude-code-launch-line`):
   ```
   claude --print --verbose
@@ -213,7 +264,8 @@ inspected event by event. Total probe spend: under 0.03 USD.
     review agent takes.
 - G6 **Login only.** The transport authenticates through the user's
   logged-in CLI or `CLAUDE_CODE_OAUTH_TOKEN`, never an API key.
-  `claude_cli_env` is unchanged (R3). The `system/init` event must say
+  `claude_cli_env` keeps every rule of R3 and also drops the four
+  parent-session variables of D2. The `system/init` event must say
   `apiKeySource: "none"`; any other value kills the segment before the
   first `assistant` event (`ERROR claude_code_api_key_in_use`). The
   gateway mode (`kind = "gateway"`, the shared `repoach-llm-proxy`)
@@ -252,8 +304,9 @@ inspected event by event. Total probe spend: under 0.03 USD.
   in-process functions, and the MCP server is their adapter).
 - NG3: The Planner's and the Developer's `AgentLoop.run` over
   `claude_code` (R5) and the gateway's `ClaudeCodeProvider` backend
-  keep their current text emulation. Q1 asks whether a later spec
-  moves them.
+  keep their current text emulation (D1). A follow-up spec moves them.
+  Until then, the gateway refuses `tools` on a `claude_code` backend and
+  fails over (D1).
 - NG4: No use of `--include-partial-messages`, `--fork-session`,
   `--continue`, `--agents` or sub-agents.
 - NG5: No API-key path for `claude_code`, including `--bare`.
@@ -267,7 +320,7 @@ inspected event by event. Total probe spend: under 0.03 USD.
 - A3: `total_cost_usd` on a subscription login is a list-price
   equivalent (`costBasis: "list"`), not money billed. The sibling's
   `max_cost_usd` cap applies to it as written. The ledger records the
-  basis (Q3).
+  basis (D3).
 - A4: The CLI streams an `assistant` event carrying a `tool_use` before
   the tool runs, so repoach can end the segment before the result
   enters the context. Observed in every probe; AC5 asserts the order.
@@ -332,7 +385,9 @@ becomes `APPROVE`, per SP-REVIEW-TRANSPORT-ERROR-VERDICT):
 | `claude_code_settings_leak: num_turns=0` | `result.num_turns == 0` with no `structured_output` (the hook case of `--setting-sources`) |
 | `claude_code_autocompacted` | the prompt size drops between two turns of one segment |
 | `context:contract_missing` | G4, after the single contract turn |
-| `claude_code_rate_limited: <rateLimitType> resets <ts>` | `rate_limit_event.status != "allowed"` or an API error status of 429 |
+| `claude_code_rate_limited: <rateLimitType> resets <ts>` | `rate_limit_event.status != "allowed"` or an API error status of 429; the limiter is blocked until `resetsAt` (D6) |
+| `claude_code_backend_no_client_tools` | gateway only: a request with `tools` resolved to a `claude_code` backend; failover moves on (D1) |
+| `claude_code_sdk_extra_missing` | `[claude_code] host = "sdk"` and `claude_agent_sdk` is not importable (D5) |
 
 ## Behavior
 
@@ -384,10 +439,10 @@ The Architect reviews at head H with `max_turns = 6`, `context_tokens =
 - `wall_clock_s` is reached inside a segment → kill the group, then the
   contract turn if time remains; otherwise `ERROR cap_reached:wall_clock`.
 - repoach itself runs inside a Claude Code session (`CLAUDECODE`,
-  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET` are
-  inherited; measured in the probe environment) → the child still
-  starts. The probes ran this way. Q2 asks whether those variables
-  should be scrubbed.
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`,
+  `CLAUDE_CODE_MESSAGING_SOCKET` are set; measured in the probe
+  environment) → `claude_cli_env` drops them (D2), so the child never
+  attaches to the parent session.
 - An unknown stream event type → logged once per type and counted in
   `context.transport.unknown_events`, never fatal.
 - Q4 of the sibling ("if no flag disables built-in tools, refuse
@@ -452,6 +507,9 @@ The Architect reviews at head H with `max_turns = 6`, `context_tokens =
 - Adds dependency: SP-CLAUDE-CODE-FIRST-CLASS -> SP-REVIEW-TRANSPORT-ERROR-VERDICT (every named error is `ERROR`, never `APPROVE`)
 - Adds dependency: SP-CLAUDE-CODE-FIRST-CLASS -> SP-REVIEW-PINS-HEAD (the MCP host serves the pinned head tree)
 - Adds dependency: SP-CLAUDE-CODE-FIRST-CLASS -> SP-PRECISION-MEASUREMENT (owner of `repoach bench`; M1, M2)
+- Adds dependency: SP-CLAUDE-CODE-FIRST-CLASS -> SP-FAILOVER-SKIPS-BLOCKED-PROVIDER (D6: `rate_limit_event` blocks the `claude_code` scope of `GlobalRateLimiter` until `resetsAt`, and that spec's `is_blocked` / `seconds_until_unblocked` skip the provider before dispatch; `rate_limit.py` itself stays frontier, as that spec says)
+- Adds dependency: SP-CLAUDE-CODE-FIRST-CLASS -> SP-BUDGET-RETRY-FIXES (owner of `llm_proxy/api/services.py`; D1: the gateway refuses `tools` on a `claude_code` backend and fails over)
+- Changed shared state: `usage_ledger.cost_basis TEXT NULL` (D3), additive, on the table owned by SP-UNIVERSAL-PROVIDERS; `repoach usage` (SP-USAGE-LEDGER) prints `cost_billed_usd` and `cost_list_usd` and never their sum.
 - Frontier files touched without an edge (no owner today): `llm_proxy/providers/claude_code/client.py` (the review path stops using it; the gateway keeps it, NG3), `providers/direct.py`, `providers/select.py` (`claude_cli`, `claude_login`, unchanged `claude_cli_env`), `cli/doctor_cmds.py` (G8).
 - New optional dependency: `claude-agent-sdk>=0.2.174` under the extra `claude-code-sdk`. The base install does not pull its 121 MB wheel.
 - No cycle: the new modules import `agent_engine`, `providers` and `review`; nothing they import imports them back.
@@ -493,12 +551,12 @@ flowchart TD
 - [ ] AC12: M3 is run on Yoob !306 and the delivery PR quotes, for `--max-turns 0` and `6`: the `usage_ledger` row count (today 8), the token sums by kind (input, cache write, cache read, output), the cost, the compactions, and the number of rows whose token counts were not read from stream-json (must be 0).
 - [ ] AC13: `pytest -q tests/unit/test_claude_code_loop_transport.py::test_inner_modules_never_reach_the_forge` → green (INV4 on this transport's four modules).
 - [ ] AC14: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `scripts/ci_local.sh` → green.
+- [ ] AC15: `pytest -q tests/unit/test_claude_code_launch_line.py::test_parent_session_env_scrubbed` → green: with `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_MESSAGING_SOCKET`, `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN` in the parent environment, `claude_cli_env` returns none of the first five and keeps `CLAUDE_CODE_OAUTH_TOKEN`; every name the 0.1 rule already dropped is still dropped (D2).
+- [ ] AC16: `pytest -q tests/unit/test_claude_code_loop_transport.py::test_cost_basis_never_summed` → green: a run with one `claude_code` agent (`costBasis: "list"`) and one `anthropic` agent (billed) writes `usage_ledger.cost_basis` `list` and `billed`; `repoach usage --json` reports `cost_billed_usd` and `cost_list_usd` separately and no field that sums them; the claude_code agent's JSON says `context.caps.cost = "<spent> of <cap> (list-equivalent)"` (D3).
+- [ ] AC17: `pytest -q tests/unit/test_claude_code_loop_transport.py::test_rate_limit_event_blocks_until_resets_at` → green: a scripted `rate_limit_event` with `status: "rejected"` and `resetsAt = now + 3600` → `GlobalRateLimiter` of the `claude_code` scope reports `is_blocked() is True` and `seconds_until_unblocked()` within 1 s of 3600, not capped at `rate_limit_block_max_s`; the next dispatch to that provider is skipped before any spawn; the outcome names `claude_code_rate_limited: five_hour resets <ts>` (D6).
+- [ ] AC18: `pytest -q tests/unit/test_claude_code_loop_transport.py::test_gateway_refuses_tools_on_claude_code_backend` → green: a gateway request carrying `tools` whose chain is `[claude_code, anthropic]` → no `claude` process is spawned, the skip is recorded as `claude_code_backend_no_client_tools`, and the request is served by `anthropic`; the same request without `tools` is served by `claude_code` as today (D1).
+- [ ] AC19: `pytest -q tests/unit/test_review_tools_mcp.py::test_default_host_is_stdio` → green: with no `[claude_code] host`, the launch line has `--mcp-config` pointing at a stdio server even when `claude_agent_sdk` is importable; `host = "sdk"` without the extra → `claude_code_sdk_extra_missing`, with no fallback to stdio (D5).
 
 ## Open Questions
 
-- Q1: NG3 keeps the text emulation for the Planner and the Developer on `claude_code`, and in the gateway's `ClaudeCodeProvider` backend. Should a follow-up spec move them onto this transport? For the gateway that means client-side tools that the proxy host cannot execute, so either the gateway refuses `tools` on a claude_code backend and fails over, or the emulation stays there for good.
-- Q2: Should `claude_cli_env` also drop the parent session's `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION` and `CLAUDE_CODE_MESSAGING_SOCKET` when repoach itself runs inside Claude Code? The probes ran with them inherited and behaved normally, but nothing proves they are inert. The owner decision says "env scrubbing unchanged", so this spec does not do it.
-- Q3: `total_cost_usd` on a subscription login is a list-price equivalent (`costBasis: "list"`). Should `usage_ledger` gain a `cost_basis` column, so `repoach usage` does not add list-equivalent and billed dollars into one total? And should `max_cost_usd` bind on list-equivalent cost at all for a subscription?
-- Q4: Minimum version: 2.1.302 is the only version measured. The SDK says 2.1.257+ for itself. Should the pin go lower after a probe run on an older CLI, or stay at the measured version?
-- Q5: When both hosts are available, which is the default? The SDK host (no extra process, no config file) or the stdio host (no 121 MB optional dependency, same code on every machine)? M2 measures both; this spec defaults to `sdk` when importable, as the owner decided, and the question is whether M2's numbers should be able to reverse that.
-- Q6: `rate_limit_event` (`status`, `resetsAt`, `rateLimitType: "five_hour"`) is exactly what SP-FAILOVER-SKIPS-BLOCKED-PROVIDER needs to block the provider until `resetsAt`. Should this transport feed `GlobalRateLimiter`? That would add an edge to that limiter's owner, which this spec does not declare.
+None. The six questions of 0.1 were decided by the owner on 2026-10-25 (D1–D6).
