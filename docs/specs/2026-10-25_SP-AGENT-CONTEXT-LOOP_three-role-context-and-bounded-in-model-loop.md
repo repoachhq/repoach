@@ -1,14 +1,14 @@
 ---
 id: SP-AGENT-CONTEXT-LOOP
 title: Three-role context, a fixed context size with a summarizer, and one inner loop consolidated with the outer loop
-version: 0.3
+version: 0.4
 status: draft
 author: agent
 created: 2026-10-25
 updated: 2026-10-25
 
 owns:
-  code: [src/repoach/review/agent_context.py, src/repoach/review/review_tools.py, src/repoach/review/context_summarizer.py, src/repoach/review/evidence_reads.py, prompts/review/summarizer_0.1.0.md, tests/unit/test_agent_context.py, tests/unit/test_review_tools_jail.py, tests/unit/test_inner_loop_contract.py, tests/unit/test_context_compaction.py, tests/unit/test_provider_tool_mapping.py, tests/unit/test_outer_inner_consolidation.py]
+  code: [src/repoach/review/agent_context.py, src/repoach/review/review_tools.py, src/repoach/review/context_summarizer.py, src/repoach/review/evidence_reads.py, prompts/review/summarizer_0.1.0.md, tests/unit/test_agent_context.py, tests/unit/test_review_tools_jail.py, tests/unit/test_inner_loop_contract.py, tests/unit/test_context_compaction.py, tests/unit/test_provider_tool_mapping.py, tests/unit/test_outer_inner_consolidation.py, src/repoach/bench/agent_overrides.py, tests/unit/test_bench_agent_overrides.py]
   resources: [db:table:agent_evidence_reads, format:agent-context-json]
 
 depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-UNIVERSAL-PROVIDERS, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-GATE-REVERIFIES-AT-HEAD, SP-UNIVERSAL-PROJECT-CONFIG, SP-AGENT-THINKING-CONTROL, SP-USAGE-REASONING-SPLIT, SP-PROVIDER-INIT-DEDUP, SP-PRECISION-MEASUREMENT, SP-CLAUDE-CODE-FIRST-CLASS]
@@ -119,7 +119,10 @@ Measured on `develop` `53bb844` (2026-10-25).
 ## Goals
 
 - G1 **AgentContext.** Every reviewer and refuter call is built from one
-  `AgentContext(system, user_seed, assistant_history, budget)`.
+  `AgentContext(system, user_seed, assistant_history, budget)`. There is
+  one exception: `max_turns = 0` is the legacy one-shot bypass (G2). It
+  keeps today's single user message with no system split, and it is the
+  only case in which `system` is empty.
   - `system` = persona + output contract + provider capability notes.
   - `user_seed` = evidence bundle in the fixed priority order diff >
     spec > arch edges > prior review > lessons. It is filled until its
@@ -130,8 +133,10 @@ Measured on `develop` `53bb844` (2026-10-25).
     prefill on the contract turn where the provider supports it (G6).
 - G2 **The inner loop is on by default.** `[agents.<role>] max_turns`
   defaults to `6` for the four reviewers and the refuter. `max_turns =
-  0` is an explicit opt-out per role and gives exactly today's one-shot
-  (same prompt bytes, same parse). The assistant history carries the
+  0` is an explicit opt-out per role and is the legacy one-shot bypass.
+  It sends today's single user message, with `system` empty and no
+  system/user split (F1, F2), so the prompt bytes and the parse are
+  those of today. The assistant history carries the
   working context across turns.
 - G3 **Read-only tools**, served by repoach in-process on the pinned head
   tree (SP-REVIEW-PINS-HEAD), path-jailed, with no network and no
@@ -368,11 +373,23 @@ OUTER (one review run at head H; only the outer loop writes to the forge)
   O1 SEED          build one AgentContext per reviewer from the pinned tree at H
   O2 REVIEW        4 x INNER(role) in parallel                     -> outcomes
   O3 GUARD         hallucination guard, only on claims whose path was never read
+  O3b ROUND_TWO    (conditional) today's confirm-or-retract round 2, unchanged (F5);
+                   present while max_turns = 0, or while max_turns > 0 and D6's M4
+                   condition (AC20) is not met; skipped otherwise
+  O3c RECORD       findings + review-integrity rows into pr_findings (unchanged)
+  O3d VERIFY       mechanical verifiers (finding_verifiers.verify_findings_for_pr),
+                   unchanged and out of scope; today's orchestrator step 9, first half
   O4 REFUTE        INNER(refuter) per proposed judged finding, seed = finding + ±25 window
   O5 REVERIFY      for each open finding of an older head A: INNER(refuter) at H,
                    seed = that finding's agent_evidence_reads re-read at H
   O6 CACHE_WRITE   pr_review_runs(pr, H, budget_hash, outcomes incl. context)
   O7 BARRIER       verdict -> forge write barrier (unchanged) -> sticky / review post
+
+Mapping to today's orchestrator steps (`orchestrator.py:1-40`), so that
+nothing is dropped: steps 1-4 (fresh head, spec, resolved disagreements)
+are O1; 5 is O2; 6 is O3; 7 is O3b; 8 is O3c; 9 is O3d (mechanical) then
+O4 (refuter); the re-verification of older heads (SP-GATE-REVERIFIES-AT-HEAD
+G7) is O5; 10-12 (verdict from the ledger, posts, `pr_reviews`) are O6-O7.
 
 INNER(role) (no forge handle; read-only tools on the tree at H)
   I0 ASSEMBLE      system / user seed / empty assistant history; truncated[] named
@@ -512,7 +529,7 @@ flowchart TD
 ## Acceptance Criteria
 
 - [ ] AC1: `pytest -q tests/unit/test_agent_context.py::test_system_user_assistant_roles` → green: a reviewer call sends the persona and the contract as `system`, the seed as the single first `user` message, and the inner-loop turns as `assistant`/`user` pairs. Today `system is None` (F1).
-- [ ] AC2: `pytest -q tests/unit/test_agent_context.py::test_max_turns_zero_is_todays_oneshot` → green: with `max_turns = 0` the provider receives exactly one call whose concatenated `system` + user text is byte-identical to today's `_render_prompt` output, and the parsed outcome is identical.
+- [ ] AC2: `pytest -q tests/unit/test_agent_context.py::test_max_turns_zero_is_todays_oneshot` → green: with `max_turns = 0` (the legacy bypass, G1/G2) the provider receives exactly one call with `system` empty (None) and one user message byte-identical to today's `run_oneshot` text (the JSON instruction + `_render_prompt` output), and the parsed outcome is identical. With `max_turns > 0`, `system` is never empty.
 - [ ] AC3: `pytest -q tests/unit/test_agent_context.py::test_seed_truncation_is_named` → green: a diff of 3 files where one file exceeds the seed share and a 200 000-char spec → `context.truncated[]` names the file (`reachable_by: read_file`) and the spec cut with its omitted size. No truncation appears without an entry (today: F3/F4).
 - [ ] AC4: `pytest -q tests/unit/test_context_compaction.py::test_reads_over_size_trigger_exactly_one_compaction` → green: a scripted provider whose tool reads push the history past `context_tokens = 8000` once → `len(context.compactions) == 1`, the entry carries `turn`, `tokens_before > 8000 >= tokens_after`, `summarizer_model`, `cost_usd`. The final outcome is a parsed JSON contract whose every finding's `file:line` exists in the head tree.
 - [ ] AC5: `pytest -q tests/unit/test_context_compaction.py::test_seed_survives_compaction` → green: after a compaction, the next provider call's first `user` message is byte-identical to the seed sent on turn 1, and the history is exactly one assistant summary turn.
@@ -529,9 +546,10 @@ flowchart TD
 - [ ] AC16: `pytest -q tests/unit/test_agent_context.py::test_agents_config_read_from_checkout_not_pr_head` → green: a PR head `repoach.toml` setting `max_turns = 99` has no effect; the checkout's value is used (A1).
 - [ ] AC17: M1, M2, M3 and M4 are run and their result files committed under `bench/results/`. The delivery PR quotes, per run: precision, recall over 10 planted defects, total tokens, total `cost_usd`, compactions; and for Yoob !306 the `usage_ledger` cost at `max_turns` 0 and 6.
 - [ ] AC18: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `scripts/ci_local.sh` → green.
-- [ ] AC19 (D2, release gate): from the two M1 result files, `repoach bench report` gives precision P6 at `max_turns = 6` and P0 at `max_turns = 0`, and total `cost_usd` C6 and C0. The delivery PR that turns the default ON merges only if `P6 >= P0` AND `C6 <= 2.0 × C0`. The PR quotes the four numbers and the verdict. Either condition false → the PR is blocked, and `max_turns` keeps a default of 0 until a new measurement passes.
-- [ ] AC20 (D6, round 2): from the two M4 result files, precision P6 without round 2 and P6r with round 2. Round 2 is removed when `max_turns > 0` only if `P6 >= P6r`. The PR quotes both numbers. Otherwise round 2 stays. `pytest -q tests/unit/test_outer_inner_consolidation.py::test_round_two_skipped_when_inner_loop_on` → green: once removed, a run with `max_turns > 0` makes no round-2 call, and a run with `max_turns = 0` still makes one.
+- [ ] AC19 (D2, release gate): needs `repoach bench run --max-turns`, which does not exist today (AC22 adds it). From the two M1 result files, `repoach bench report` gives precision P6 at `max_turns = 6` and P0 at `max_turns = 0`, and total `cost_usd` C6 and C0. The delivery PR that turns the default ON merges only if `P6 >= P0` AND `C6 <= 2.0 × C0`. The PR quotes the four numbers and the verdict. Either condition false → the PR is blocked, and `max_turns` keeps a default of 0 until a new measurement passes.
+- [ ] AC20 (D6, round 2): needs `repoach bench run --no-round-two`, which does not exist today (AC22 adds it). From the two M4 result files, precision P6 without round 2 and P6r with round 2. Round 2 is removed when `max_turns > 0` only if `P6 >= P6r`. The PR quotes both numbers. Otherwise round 2 stays. `pytest -q tests/unit/test_outer_inner_consolidation.py::test_round_two_skipped_when_inner_loop_on` → green: once removed, a run with `max_turns > 0` makes no round-2 call, and a run with `max_turns = 0` still makes one.
 - [ ] AC21 (D5): `pytest -q tests/unit/test_context_compaction.py::test_summarizer_tier_per_role` → green: a compaction in a reviewer calls the provider with capability HAIKU, and one in the refuter with OPUS. `context.compactions[].summarizer_model` names the model used.
+- [ ] AC22 (new bench flags; none exists today, measured in `src/repoach/cli/bench_cmds.py` `run`): `repoach bench run --help` lists `--max-turns`, `--context-tokens` and `--no-round-two`. `pytest -q tests/unit/test_bench_agent_overrides.py` → green: each flag is parsed by `src/repoach/bench/agent_overrides.py` into a per-run override of every role's `[agents.*]` value (or into skipping round 2). The bench runner reads the override and passes it to each case's review. The result file records the overrides under `agents_override` and the run's `budget_hash`. A run without the flags records `agents_override: null`.
 
 ## Open Questions
 
