@@ -252,5 +252,5 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
     refuter_lines = [line for line in result.stderr.splitlines() if line.startswith("refuter:")]
     assert refuter_lines == [
         "refuter: judged 1, refuted 1, deferred 1 (evidence outside the diff), "
-        "unverified 1 (not yet mechanically verified)"
+        "unverified 1 (not yet mechanically verified), evidence_tokens total 0"
     ]
