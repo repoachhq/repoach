@@ -46,6 +46,10 @@ from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 _SUBPROCESS_KILL_GRACE_S: float = 2.0
 
 
+OUTPUT_CAP_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+"""The variable ``claude`` reads its per-reply output-token cap from."""
+
+
 def _send(proc: asyncio.subprocess.Process, sig: int, *, group: bool) -> None:
     """Send ``sig`` to ``proc``, or to its whole process group when ``group``.
 
@@ -252,7 +256,7 @@ class ClaudeCodeProvider(BaseProvider):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self._workdir),
                     start_new_session=self._own_process_group,
-                    env=None if self._child_env is None else self._child_env(os.environ),
+                    env=self._spawn_env(request),
                 )
                 register_pid(proc.pid)
                 stdout_b, stderr_b = await asyncio.wait_for(
@@ -376,6 +380,21 @@ class ClaudeCodeProvider(BaseProvider):
             yield event
         yield sse.message_delta(stop_reason, output_tokens)
         yield sse.message_stop()
+
+    def _spawn_env(self, request: Any) -> dict[str, str] | None:
+        """Return the child's environment, carrying the request's ``max_tokens``.
+
+        ``claude --print`` has no output-cap flag; it reads
+        :data:`OUTPUT_CAP_ENV` instead. Without it the CLI answered past
+        the cap the caller asked for (the refuter's 800 tokens, exceeded
+        on 5 of 9 calls of Yoob !327, 2026-10-25). ``None`` keeps the
+        parent environment when there is neither a filter nor a cap.
+        """
+        base = None if self._child_env is None else self._child_env(os.environ)
+        cap = getattr(request, "max_tokens", None)
+        if not isinstance(cap, int) or isinstance(cap, bool) or cap <= 0:
+            return base
+        return {**(os.environ if base is None else base), OUTPUT_CAP_ENV: str(cap)}
 
     def _cli_model_for(self, requested: str) -> str:
         """Pick a CLI model alias from the upstream Claude name."""
