@@ -128,7 +128,8 @@ class MergeFacts(BaseModel):
             exemption; each one is a refusal reason.
         spec_recompute_failure: Why a coverage row graded by a retired
             rule could not be recomputed (SP-PLAN-SELECTOR-AUDIT-WIRE
-            0.3); named after a coverage refusal, empty otherwise.
+            0.3); always a refusal reason, whatever the stored verdict,
+            since that verdict comes from a retired rule. Empty otherwise.
     """
 
     head_sha: str
@@ -194,8 +195,8 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     if facts.spec_coverage_known and not facts.spec_covered:
         reasons.append("spec acceptance selectors not all present")
         reasons.extend(facts.spec_draft_refusals)
-        if facts.spec_recompute_failure:
-            reasons.append(facts.spec_recompute_failure)
+    if facts.spec_recompute_failure:
+        reasons.append(facts.spec_recompute_failure)
     if facts.blocking_unverified:
         reasons.append(
             f"{len(facts.blocking_unverified)} unverified blocking finding(s): "

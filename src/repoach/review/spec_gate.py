@@ -1086,12 +1086,12 @@ def coverage_at_head(
 
 
 class StaleCoverageRecomputeError(RuntimeError):
-    """A stale coverage row could not be recomputed; the stored row stands.
+    """A stale coverage row could not be recomputed; its stored verdict is not trusted.
 
     Attributes:
         head_sha: The head whose row is stale.
         rule_version: The ``rule_version`` of the stored row.
-        reason: The gate reason naming the failure and what stands.
+        reason: The gate reason naming the failure and the untrusted rule.
     """
 
     def __init__(self, *, head_sha: str, rule_version: int, error: Exception) -> None:
@@ -1099,7 +1099,7 @@ class StaleCoverageRecomputeError(RuntimeError):
         self.rule_version = rule_version
         self.reason = (
             f"spec coverage recompute failed at {head_sha[:7]}: {type(error).__name__}: "
-            f"{str(error)[:200]}; stored verdict from rule {rule_version} stands"
+            f"{str(error)[:200]}; stored verdict from rule {rule_version} not trusted"
         )
         super().__init__(self.reason)
 

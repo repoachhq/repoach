@@ -350,13 +350,19 @@ class _DiffDownForge(_Forge):
         raise RuntimeError("diff unavailable")
 
 
-def test_gate_names_a_failed_recompute_and_keeps_the_stored_row(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stored_covered", [False, True])
+def test_gate_refuses_when_a_stale_row_cannot_be_recomputed(
+    tmp_path: Path, stored_covered: bool
+) -> None:
     repo, head = _repo(tmp_path, "draft")
     db = tmp_path / "state" / "review.db"
     init_findings_schema(db)
     init_spec_coverage_schema(db)
     record_review_integrity(db, pr_number=7, head_sha=head, n_reviewers=4, n_unparsed=0)
-    record_spec_coverage(db, pr_number=7, head_sha=head, coverage=_STALE)
+    stale = _STALE.model_copy(
+        update={"covered": stored_covered, "missing": [] if stored_covered else _STALE.missing}
+    )
+    record_spec_coverage(db, pr_number=7, head_sha=head, coverage=stale)
 
     _, facts, decision = decide_at_head(
         7,
@@ -372,9 +378,9 @@ def test_gate_names_a_failed_recompute_and_keeps_the_stored_row(tmp_path: Path) 
 
     failure = (
         f"spec coverage recompute failed at {head[:7]}: RuntimeError: diff unavailable; "
-        "stored verdict from rule 0 stands"
+        "stored verdict from rule 0 not trusted"
     )
     assert decision.merge is False
-    assert decision.reasons == [_REASON, failure]
+    assert decision.reasons == ([failure] if stored_covered else [_REASON, failure])
     assert facts.spec_recompute_failure == failure
     assert len(fetch_spec_coverage(db, 7, head_sha=head)) == 1

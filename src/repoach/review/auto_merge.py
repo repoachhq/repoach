@@ -603,9 +603,10 @@ def decide_at_head(
     rule is recomputed and rewritten first
     (:func:`~repoach.review.spec_gate.refresh_stale_coverage`, no model
     call), so the decision reads what the current rule says. A failed
-    recomputation records nothing: the stored row stands and, when it
-    refuses, the reasons name the failure (``spec coverage recompute
-    failed at <sha7>: <error>; stored verdict from rule <v> stands``).
+    recomputation records nothing and refuses whatever the stored verdict
+    (``spec coverage recompute failed at <sha7>: <error>; stored verdict
+    from rule <v> not trusted``) until a recompute succeeds; a row at the
+    current rule is unaffected.
 
     The single source of the pure merge decision. Both
     :func:`run_auto_merge` (after its CI short-circuit) and
@@ -698,7 +699,7 @@ def _refresh_coverage(
 
     Returns:
         ``""`` when nothing was stale or the row was recomputed; else the
-        gate reason naming the failure and the stored rule that stands.
+        refusal reason naming the failure and the untrusted stored rule.
     """
 
     def fetch_base(ref: str) -> None:
@@ -719,7 +720,7 @@ def _refresh_coverage(
             "auto_merge.stale_coverage_refresh_failed",
             pr_number=pr_number,
             reason=exc.reason,
-            consequence="the stored coverage row stands",
+            consequence="the gate refuses until a recompute succeeds",
         )
         return exc.reason
     return ""
