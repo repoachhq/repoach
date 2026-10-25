@@ -236,17 +236,18 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
         result = CliRunner().invoke(review_app, ["pr", "999", "--dry-run"])
 
     payload = json.loads(result.stdout)
+    unserved = {"evidence": [], "evidence_truncated": [], "evidence_tokens": 0}
     assert [f["refutation"] for f in payload["findings"]] == [
-        {"state": "refuted", "reason": "vague"},
-        {"state": "deferred", "reason": "evidence outside the diff"},
-        {"state": "unverified", "reason": "not yet mechanically verified"},
+        {"state": "refuted", "reason": "vague", **unserved},
+        {"state": "deferred", "reason": "evidence outside the diff", **unserved},
+        {"state": "unverified", "reason": "not yet mechanically verified", **unserved},
     ]
     assert payload["findings"][1] == {
         "id": 8,
         "file": "ci/x.sh",
         "line": 1,
         "claim_type": "security",
-        "refutation": {"state": "deferred", "reason": "evidence outside the diff"},
+        "refutation": {"state": "deferred", "reason": "evidence outside the diff", **unserved},
     }
     refuter_lines = [line for line in result.stderr.splitlines() if line.startswith("refuter:")]
     assert refuter_lines == [
