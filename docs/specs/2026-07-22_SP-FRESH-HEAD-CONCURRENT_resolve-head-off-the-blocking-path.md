@@ -248,6 +248,9 @@ flowchart TD
   `resolve_fresh_head` overlaps with the four-reviewer fan-out
   instead of preceding it, so total `review_pr` wall time approaches
   `max(guard_time, reviewer_time)` rather than their sum.
+  Amended 2026-10-25: the test proves the overlap structurally, as in
+  AC4 (rendezvous, intersecting intervals, max concurrency >= 2, 30s
+  sanity ceiling); the wall-clock threshold described below is retired.
   Test: `tests/unit/test_review_head_guard.py::test_orchestrator_head_guard_overlaps_reviewer_fanout`.
   Drives the real, unmodified `resolve_fresh_head` (not a fake)
   through the real call site, against a real scratch git repository
@@ -314,8 +317,10 @@ flowchart TD
   only time bound kept is a 30s sanity ceiling on `review_pr`. Motivation:
   the previous assertion (`wall < 2.10s`, halfway between a 1.50s
   concurrent floor and a 2.70s serial sum) measured 2.63s on a runner at
-  load average 35-42 (PRs #254, #255) while the overlap held. The unit
-  twin of AC2 still uses the wall-clock bound; tracked as tech-debt row 92.
+  load average 35-42 (PRs #254, #255) while the overlap held. The
+  helpers live in `tests/overlap_fakes.py`, shared with AC2's unit test,
+  which asserts the same way (`assert_guard_overlapped_fanout`). The
+  remaining tight wall-clock bounds in the suites are tech-debt row 94.
 
 ## Open Questions
 (none)

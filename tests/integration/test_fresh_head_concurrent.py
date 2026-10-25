@@ -7,22 +7,15 @@ replaced surface is the public ``review_diff`` contract method — never an ad-h
 class with an invented signature. Asserts ``head_sha`` resolves correctly and that the
 guard's call interval overlapped the reviewer fan-out instead of preceding it.
 
-Overlap is proven structurally, never by a wall clock: the guard's first
-propagation-lag sleep blocks until a reviewer has entered ``review_diff``, and each
-reviewer records how many instrumented tasks are running when it enters. A guard
-awaited before the fan-out cannot see a reviewer start, so it times out and the
-recorded maximum concurrency stays at one; a guard running alongside the fan-out is
-still inside its call when the first reviewer enters, so the maximum reaches two
-whatever the load on the machine.
+Overlap is proven structurally by :mod:`tests.overlap_fakes`, never by a wall
+clock.
 """
 
 from __future__ import annotations
 
 import subprocess
-import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -45,6 +38,12 @@ from repoach.review.reviewer import (
     Tester,
 )
 from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
+from tests.overlap_fakes import (
+    ConcurrencyTracker,
+    assert_guard_overlapped_fanout,
+    make_tracked_guard,
+    make_tracked_review_diff,
+)
 
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
@@ -83,85 +82,6 @@ def _boundary_fake_reviewer(
     instance = _ROLE_TO_CLASS[role](loop=MagicMock())
     instance.review_diff = review_diff
     return instance
-
-
-_RENDEZVOUS_TIMEOUT_S = 20.0
-_SANITY_BOUND_S = 30.0
-
-
-@dataclass
-class _ConcurrencyTracker:
-    """Shared record of which instrumented tasks run, when, and how many at once.
-
-    Every instrumented call (the guard and each reviewer) brackets itself with
-    :meth:`enter` and :meth:`leave`; ``max_running`` is the largest number of
-    such calls observed in flight at the same instant, and ``intervals`` keeps
-    each call's ``(start, end)`` monotonic timestamps by name.
-    """
-
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    running: int = 0
-    max_running: int = 0
-    intervals: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
-    reviewer_entered: threading.Event = field(default_factory=threading.Event)
-
-    def enter(self) -> float:
-        """Count one more call in flight and return its start timestamp."""
-        with self.lock:
-            self.running += 1
-            self.max_running = max(self.max_running, self.running)
-            return time.monotonic()
-
-    def leave(self, name: str, start: float) -> None:
-        """Count one call fewer in flight and record its interval under *name*."""
-        with self.lock:
-            self.running -= 1
-            self.intervals.setdefault(name, []).append((start, time.monotonic()))
-
-
-def _make_tracked_review_diff(
-    outcome: ReviewerOutcome, tracker: _ConcurrencyTracker
-) -> Callable[..., ReviewerOutcome]:
-    """Return a review_diff replacement that records its interval and signals entry."""
-
-    def _review_diff(diff: str, **kwargs: object) -> ReviewerOutcome:
-        start = tracker.enter()
-        tracker.reviewer_entered.set()
-        tracker.leave("reviewer", start)
-        return outcome
-
-    return _review_diff
-
-
-def _make_tracked_guard(
-    real_guard: Callable[..., str | None], tracker: _ConcurrencyTracker
-) -> tuple[Callable[..., str | None], list[bool]]:
-    """Wrap the real ``resolve_fresh_head`` so its call is tracked and rendezvous-bound.
-
-    The wrapper calls the unmodified guard with an injected ``sleep`` whose first
-    call blocks until a reviewer has entered ``review_diff`` (bounded by
-    ``_RENDEZVOUS_TIMEOUT_S``); later calls return at once. The returned list
-    receives one boolean per rendezvous: whether a reviewer entered in time.
-    """
-    rendezvous: list[bool] = []
-
-    def _sleep(_delay_s: float) -> None:
-        if not rendezvous:
-            rendezvous.append(tracker.reviewer_entered.wait(_RENDEZVOUS_TIMEOUT_S))
-
-    def _guard(forge: object, pr_number: int, *, repo_root: Path) -> str | None:
-        start = tracker.enter()
-        try:
-            return real_guard(forge, pr_number, repo_root=repo_root, delay_s=0.0, sleep=_sleep)
-        finally:
-            tracker.leave("guard", start)
-
-    return _guard, rendezvous
-
-
-def _intersects(a: tuple[float, float], b: tuple[float, float]) -> bool:
-    """Whether two closed ``(start, end)`` intervals share at least one instant."""
-    return a[0] <= b[1] and b[0] <= a[1]
 
 
 def _gh_fake(*, head_sha: str = "stale" * 8, head_ref: str = "feat/x") -> GitHubForge:
@@ -271,14 +191,14 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
 
     gh = _gh_fake(head_sha="stale" * 8, head_ref="feat/x")
 
-    tracker = _ConcurrencyTracker()
+    tracker = ConcurrencyTracker()
     for role, cls_name in (
         (BotRole.ARCHITECT, "Architect"),
         (BotRole.SENTINEL, "Sentinel"),
         (BotRole.TESTER, "Tester"),
         (BotRole.SCRIBE, "Scribe"),
     ):
-        review_diff = _make_tracked_review_diff(_canned(role), tracker)
+        review_diff = make_tracked_review_diff(_canned(role), tracker)
         monkeypatch.setattr(
             f"repoach.review.orchestrator.{cls_name}",
             lambda db_path=None, role=role, review_diff=review_diff: _boundary_fake_reviewer(
@@ -288,8 +208,10 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
 
     from repoach.review.orchestrator import resolve_fresh_head
 
-    tracked_guard, rendezvous = _make_tracked_guard(resolve_fresh_head, tracker)
-    monkeypatch.setattr("repoach.review.orchestrator.resolve_fresh_head", tracked_guard)
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.resolve_fresh_head",
+        make_tracked_guard(resolve_fresh_head, tracker),
+    )
     _silence_downstream_ledger_writes(monkeypatch)
 
     orch = ReviewTeamOrchestrator(
@@ -312,20 +234,4 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
 
     assert team.head_sha == "stale" * 8, f"Expected stale head, got {team.head_sha!r}"
 
-    assert rendezvous == [True], (
-        f"Guard rendezvous {rendezvous!r}: no reviewer entered review_diff while the "
-        "guard was blocked in its first propagation-lag sleep; the guard did NOT "
-        "overlap the reviewer fan-out"
-    )
-    guard_intervals = tracker.intervals.get("guard", [])
-    reviewer_intervals = tracker.intervals.get("reviewer", [])
-    assert len(guard_intervals) == 1, f"Guard ran {len(guard_intervals)} times, expected 1"
-    assert len(reviewer_intervals) == 4, f"Reviewers ran {len(reviewer_intervals)} times"
-    assert tracker.max_running >= 2, (
-        f"Max concurrent instrumented calls {tracker.max_running}; the guard did NOT "
-        "overlap the reviewer fan-out"
-    )
-    assert any(_intersects(guard_intervals[0], r) for r in reviewer_intervals), (
-        f"Guard interval {guard_intervals[0]} intersects no reviewer interval {reviewer_intervals}"
-    )
-    assert wall < _SANITY_BOUND_S, f"review_pr took {wall:.2f}s, sanity bound {_SANITY_BOUND_S}s"
+    assert_guard_overlapped_fanout(tracker, n_reviewers=4, wall_s=wall)
