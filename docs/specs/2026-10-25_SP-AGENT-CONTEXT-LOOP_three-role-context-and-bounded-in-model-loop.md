@@ -1,7 +1,7 @@
 ---
 id: SP-AGENT-CONTEXT-LOOP
 title: Three-role context, a fixed context size with a summarizer, and one inner loop consolidated with the outer loop
-version: 0.4
+version: 0.5
 status: draft
 author: agent
 created: 2026-10-25
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/agent_context.py, src/repoach/review/review_tools.py, src/repoach/review/context_summarizer.py, src/repoach/review/evidence_reads.py, prompts/review/summarizer_0.1.0.md, tests/unit/test_agent_context.py, tests/unit/test_review_tools_jail.py, tests/unit/test_inner_loop_contract.py, tests/unit/test_context_compaction.py, tests/unit/test_provider_tool_mapping.py, tests/unit/test_outer_inner_consolidation.py, src/repoach/bench/agent_overrides.py, tests/unit/test_bench_agent_overrides.py]
   resources: [db:table:agent_evidence_reads, format:agent-context-json]
 
-depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-UNIVERSAL-PROVIDERS, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-GATE-REVERIFIES-AT-HEAD, SP-UNIVERSAL-PROJECT-CONFIG, SP-AGENT-THINKING-CONTROL, SP-USAGE-REASONING-SPLIT, SP-PROVIDER-INIT-DEDUP, SP-PRECISION-MEASUREMENT, SP-CLAUDE-CODE-FIRST-CLASS]
+depends_on: [SP-RETRY-BACKOFF-DEDUP, SP-UNIVERSAL-PROVIDERS, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-GATE-REVERIFIES-AT-HEAD, SP-UNIVERSAL-PROJECT-CONFIG, SP-AGENT-THINKING-CONTROL, SP-USAGE-REASONING-SPLIT, SP-PROVIDER-INIT-DEDUP, SP-PRECISION-MEASUREMENT]
 provides_to: []
 
 constraints:
@@ -186,10 +186,11 @@ Measured on `develop` `53bb844` (2026-10-25).
   and the `{` prefill when thinking is off. `openai_compatible` and
   `gemini` use `function` tools, `tool_calls` and `role: tool` messages,
   with no prefill. `claude_code` is G7 (SP-CLAUDE-CODE-FIRST-CLASS).
-- G7 **The claude_code transport.** The claude_code transport
-  implements the inner loop as SP-CLAUDE-CODE-FIRST-CLASS says; the
-  invariants INV1–INV8 and the ERROR-never-prose rule apply to it
-  unchanged.
+- G7 **The claude_code transport.** The claude_code transport is
+  specified by SP-CLAUDE-CODE-FIRST-CLASS, which depends on this spec.
+  There is no edge in the other direction. The transport implements the
+  inner loop as that spec says, and the invariants INV1–INV8 and the
+  ERROR-never-prose rule apply to it unchanged.
 - G8 **One consolidated loop.** The outer loop (reviewers → guard →
   refuter → re-verification at a new head → cache → barrier) and the
   inner loop (turns of one agent) form one state machine (Behavior) and
@@ -209,6 +210,18 @@ Measured on `develop` `53bb844` (2026-10-25).
   partial | none`). The hallucination guard is kept, but only for
   claims whose cited path was never read and is not among the seed's
   included diff files.
+- G9b **The `ci-log:` namespace** (requested by SP-CI-RED-IS-EVIDENCE,
+  #249). `agent_evidence_reads` also holds rows that the CI evidence
+  path writes, with no schema change: `role='ci'`, `turn=0`,
+  `path='ci-log:<check name>@<attempt id>'`, `line_start`/`line_end` =
+  the line range of the served log tail, and `sha256` of the served
+  bytes. The jailed tools never serve these rows and never write them:
+  - A `ci-log:` path given to `read_file`, `grep`, `list_dir`,
+    `arch_edges` or `spec` returns `path outside the head tree`.
+  - The tools refuse to write a row with `role='ci'`, and refuse any
+    row whose path starts with `ci-log:`.
+  - `citation_read` and the guard scope (G9) are computed from rows
+    whose role is not `ci`.
 - G10 **Cache.** The run cache key becomes `(pr_number, head_sha,
   budget_hash)`. `budget_hash` is the sha256 of the canonical JSON of
   every role's `{max_turns, context_tokens, max_tool_bytes,
@@ -337,14 +350,17 @@ New schema (additive, nullable):
   (`turn` | `summarize` | `contract` | `oneshot`). The table is owned by
   SP-UNIVERSAL-PROVIDERS.
 - `agent_evidence_reads(id, run_id, pr_number, head_sha, role, turn,
-  path, line_start, line_end, sha256, created_at)`, owned here.
+  path, line_start, line_end, sha256, created_at)`, owned here. Path
+  namespaces: a repository-relative path (rows written by the jailed
+  tools), and `ci-log:<check name>@<attempt id>` with `role='ci'` (rows
+  written only by the CI evidence path of SP-CI-RED-IS-EVIDENCE, G9b).
 - `pr_review_runs.budget_hash TEXT NULL`. A NULL row (written before
   this spec) never matches, so the first run after the upgrade
   re-reviews once.
 
 Provider mapping (G6):
 
-| `repoach/v1` | anthropic | openai_compatible / gemini | claude_code today (F11; the target is SP-CLAUDE-CODE-FIRST-CLASS) |
+| `repoach/v1` | anthropic | openai_compatible / gemini | claude_code today (F11; the target is SP-CLAUDE-CODE-FIRST-CLASS, which depends on this spec) |
 |---|---|---|---|
 | `system` | top-level `system` | first `{"role":"system"}` message | `--system-prompt-file` |
 | `ToolSpec{name, description, parameters_schema}` | `tools[{name, description, input_schema}]` | `tools[{type:"function", function:{name, description, parameters}}]` | text appendix on the system prompt (F11) |
@@ -509,7 +525,6 @@ window 1-200, so the refuter sees `citation_read: full`.
 - Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-USAGE-REASONING-SPLIT (owner of `openai_compat.py`; the `tool_calls` stream for openai_compatible / gemini)
 - Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-PROVIDER-INIT-DEDUP (owner of `anthropic_messages.py`; native tool blocks and prefill)
 - Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-PRECISION-MEASUREMENT (owner of `repoach bench`; `--max-turns` / `--context-tokens`)
-- Adds dependency: SP-AGENT-CONTEXT-LOOP -> SP-CLAUDE-CODE-FIRST-CLASS (the claude_code transport of the inner loop; INV1–INV8 bind it)
 - Frontier files touched without an edge: `diff_scoper.py`, `planner_tools.py` (its `_jail` is reused, not copied), `providers/usage.py`, `providers/direct.py`, `llm_proxy/core/anthropic/conversion.py`.
 - No cycle: the new modules import `agent_engine`, `providers` and `review.findings`; nothing they import imports them back. They import nothing from `repoach.forge` (INV4).
 
@@ -550,6 +565,7 @@ flowchart TD
 - [ ] AC20 (D6, round 2): needs `repoach bench run --no-round-two`, which does not exist today (AC22 adds it). From the two M4 result files, precision P6 without round 2 and P6r with round 2. Round 2 is removed when `max_turns > 0` only if `P6 >= P6r`. The PR quotes both numbers. Otherwise round 2 stays. `pytest -q tests/unit/test_outer_inner_consolidation.py::test_round_two_skipped_when_inner_loop_on` → green: once removed, a run with `max_turns > 0` makes no round-2 call, and a run with `max_turns = 0` still makes one.
 - [ ] AC21 (D5): `pytest -q tests/unit/test_context_compaction.py::test_summarizer_tier_per_role` → green: a compaction in a reviewer calls the provider with capability HAIKU, and one in the refuter with OPUS. `context.compactions[].summarizer_model` names the model used.
 - [ ] AC22 (new bench flags; none exists today, measured in `src/repoach/cli/bench_cmds.py` `run`): `repoach bench run --help` lists `--max-turns`, `--context-tokens` and `--no-round-two`. `pytest -q tests/unit/test_bench_agent_overrides.py` → green: each flag is parsed by `src/repoach/bench/agent_overrides.py` into a per-run override of every role's `[agents.*]` value (or into skipping round 2). The bench runner reads the override and passes it to each case's review. The result file records the overrides under `agents_override` and the run's `budget_hash`. A run without the flags records `agents_override: null`.
+- [ ] AC23 (G9b): `pytest -q tests/unit/test_review_tools_jail.py::test_ci_log_namespace_is_never_served_by_tools` → green. A row `role='ci'`, `turn=0`, `path='ci-log:unit@123'` written through the evidence ledger API is read back unchanged. `read_file('ci-log:unit@123', 1, 10)` and `grep('x', 'ci-log:*')` both return `path outside the head tree` and write no row. A tool-side write with `role='ci'` or a `ci-log:` path is refused. A finding citing `ci-log:unit@123` gets its `citation_read` from the non-`ci` rows only.
 
 ## Open Questions
 
