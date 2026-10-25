@@ -1,7 +1,7 @@
 ---
 id: SP-POSTING-REPLAY-DEDUPES
 title: A posting review at a head never re-posts a review or comment already on the PR / MR
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-25
@@ -73,6 +73,18 @@ Measured on `origin/develop` 2706bb6 (2026-10-25):
   run (`posted_ids`), so a run that posts no new comment posts no
   challenge.
 
+## Decisions (0.2, 2026-10-25)
+
+- D1 (Q1): a failed dedupe read posts nothing, with the named outcome
+  `posting_outcome = "SKIP_DEDUPE_READ"`: fail closed, as the write
+  barrier does.
+- D2 (Q2): a forced re-review whose verdict for a reviewer changed at
+  the same head posts a new verdict review (a changed verdict is
+  news); an unchanged verdict posts only the new comments, as one
+  `COMMENT` review. The review marker therefore carries the verdict.
+- D3 (Q3): `_fire_routine` is skipped when the run posted nothing new,
+  and the skip is logged.
+
 ## Goals
 
 - G1: every posted inline comment ends with the hidden line
@@ -80,21 +92,29 @@ Measured on `origin/develop` 2706bb6 (2026-10-25):
   fingerprint being `finding_fingerprint(comment_to_finding(...))` of
   that comment.
 - G2: every posted review body ends with
-  `<!-- repoach-review:<role> head:<sha12> -->`.
+  `<!-- repoach-review:<role> head:<sha12> verdict:<VERDICT> -->`, the
+  verdict the reviewer reached (not the downgraded `COMMENT` event a
+  token may force, F2).
 - G3: before the first write of a posting run with a known head, the
   orchestrator reads the PR / MR's inline comments, conversation
   comments and reviews once, keeps those whose author is the bot
   (`trusted(bot_username, author)`), and collects their markers.
-- G4: a reviewer whose review marker and every inline-comment marker
-  are already present at that head posts nothing. A reviewer with its
-  review marker present and some comment markers absent posts only the
-  absent comments, in one `COMMENT` review. A reviewer with no review
-  marker posts as today, minus any comment whose marker is present.
+- G4: per reviewer, at head H:
+  - no review marker for its role at H -> posts as today, minus any
+    comment whose marker is present;
+  - a review marker at H with a different verdict -> posts a new
+    review with the new verdict and the absent comments (D2);
+  - a review marker at H with the same verdict and some comment markers
+    absent -> posts only the absent comments, in one `COMMENT` review;
+  - the same verdict and every comment marker present -> posts nothing.
 - G5: the archive comment is not rewritten when its body is unchanged.
 - G6: the run logs `review_team.posting_deduped` with
   `skipped_duplicates` (inline comments plus reviews skipped) and the
   same count on `TeamOutcome.skipped_duplicates`, reported in the
   `review pr` JSON.
+- G7: when the run made no forge write (every draft skipped),
+  `_fire_routine` is not called and `review_team.routine_skipped` is
+  logged with `reason="nothing new posted"` (D3).
 
 ## Non-Goals
 
@@ -123,8 +143,9 @@ Measured on `origin/develop` 2706bb6 (2026-10-25):
 
 Inputs:
 - `finding_marker(fingerprint: str, head_sha: str) -> str` and
-  `review_marker(role: BotRole, head_sha: str) -> str` (new, pure, in
-  `review/orchestrator.py`); `parse_markers(body: str) -> set[str]`.
+  `review_marker(role: BotRole, head_sha: str, verdict: str) -> str` (new, pure, in
+  `review/orchestrator.py`); `parse_markers(body: str) -> Markers` (the finding markers as a set, the
+  review markers as `{(role, head12): verdict}`).
 - `_render_comment_body(outcome, comment, *, head_sha)` and
   `_render_review_body(outcome, *, head_sha)`: `head_sha` added; the
   marker is appended only when `head_sha` is known.
@@ -137,12 +158,11 @@ Outputs:
   `posted_comments`.
 
 Errors:
-- A failed dedupe read (`ForgeError`) -> the run does not post that
-  reviewer set blind: it logs `review_team.posting_dedupe_read_failed`
-  and posts nothing, with `posting_outcome = "SKIP_DEDUPE_READ"`
-  (posting twice is the defect this spec removes; posting nothing is
-  recoverable by a retry). `ForgeStateRefusedError` keeps its current
-  meaning.
+- A failed dedupe read (`ForgeError`) -> the run posts nothing: it
+  logs `review_team.posting_dedupe_read_failed` and sets
+  `posting_outcome = "SKIP_DEDUPE_READ"` (D1; posting twice is the
+  defect this spec removes, posting nothing is recoverable by a retry).
+  `ForgeStateRefusedError` keeps its current meaning.
 
 ## Behavior
 
@@ -153,12 +173,14 @@ if posting and head_sha:
     present = markers of bot-authored comments + reviews  (one read pass)
 for outcome in outcomes:
     new = [c for c in outcome.comments if finding_marker(fp(c), head) not in present]
-    has_review = review_marker(outcome.role, head) in present
-    if has_review and not new:   skip (skipped += 1 + len(outcome.comments)); continue
-    if has_review:               post_review(COMMENT, body, new); skipped += len(comments) - len(new)
-    else:                        post_review(verdict, body, new); skipped += len(comments) - len(new)
+    prior = present.reviews.get((outcome.role, head12))      # verdict or None
+    if prior == verdict and not new:  skip (skipped += 1 + len(outcome.comments)); continue
+    if prior == verdict:              post_review(COMMENT, body, new)
+    else:                             post_review(verdict, body, new)   # none, or changed (D2)
+    skipped += len(outcome.comments) - len(new)
 archive: upsert only when the stored body differs
 log review_team.posting_deduped(skipped_duplicates=skipped)
+if no write was made: log review_team.routine_skipped; do not fire the routine (D3)
 ```
 
 ### Edge cases
@@ -236,13 +258,14 @@ flowchart TD
   `posting_outcome == "SKIP_DEDUPE_READ"`, the reason logged.
 - [ ] AC8: a dry run makes no dedupe read and its barrier refuses as
   before (`tests/unit/test_dry_run_never_posts.py` still green).
+- [ ] AC9 (D2): the AC1 fixture with one reviewer's stored verdict
+  `REQUEST_CHANGES` against its marker `verdict:APPROVE` at H: exactly
+  1 forge write, a review with event `REQUEST_CHANGES` and marker
+  `verdict:REQUEST_CHANGES`, no inline comment re-posted.
+- [ ] AC10 (D3): in AC1 (0 writes) `_fire_routine` is not called and
+  `review_team.routine_skipped` is logged; in AC2 (1 write) it is
+  called as today.
 
 ## Open Questions
 
-- Q1: on a failed dedupe read, post nothing (this draft) or post as
-  today and risk the duplicate?
-- Q2: a reviewer whose review is present but whose verdict changed at
-  the same head (a forced re-review): post a new verdict review, or
-  only the new comments as `COMMENT` (this draft)?
-- Q3: should `_fire_routine` also be skipped when the run posted
-  nothing new, so a replay does not re-notify the routine?
+(none)
