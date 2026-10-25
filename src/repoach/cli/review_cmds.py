@@ -668,7 +668,10 @@ def review_gate(
     ``facts.spec_coverage`` is ``not_applicable`` when no spec is
     declared: a PR without a spec is never refused for lacking one; it
     is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
-    a spec that has no document.
+    a spec that has no document. ``spec_acceptance`` lists the selectors
+    ``missing`` at head, the ``planned`` ones of a draft spec (absent
+    files that do not refuse) and the ``draft_refusals`` that withheld
+    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
 
     The verifiers re-check the ledger on the tree of the verified head,
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
@@ -734,6 +737,11 @@ def review_gate(
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
                 "reverified": facts.reverified,
+                "spec_acceptance": {
+                    "missing": facts.spec_missing,
+                    "planned": facts.spec_planned,
+                    "draft_refusals": facts.spec_draft_refusals,
+                },
                 "facts": {
                     "ci_green": facts.ci_green,
                     "open_blocking_findings": facts.open_blocking_findings,

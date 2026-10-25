@@ -53,6 +53,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
@@ -146,6 +147,10 @@ from .reviewer import (
 )
 from .spec import SpecPlan, load_spec
 from .thread_context import ResolvedDisagreement
+
+if TYPE_CHECKING:
+    from .governed_spec import GovernedSpec
+    from .spec_gate import DraftScope
 
 _log = get_logger(__name__)
 
@@ -900,8 +905,10 @@ class ReviewTeamOrchestrator:
                 from .spec_gate import (
                     SpecCoverage,
                     compute_spec_coverage,
+                    coverage_of_selectors,
                     record_spec_coverage,
                     resolve_contract_plan,
+                    spec_acceptance_selectors,
                 )
 
                 resolution = resolve_contract_plan(
@@ -922,16 +929,28 @@ class ReviewTeamOrchestrator:
                         base_ref=f"origin/{base_ref}",
                     )
 
+                draft, spec_markdown = self._draft_scope(
+                    spec_id, base_ref=base_ref, changed_files=diff_files(diff)
+                )
                 if resolution.plan is not None:
                     coverage = compute_spec_coverage(
-                        self._repo_root, spec_id=spec_id, plan=resolution.plan
+                        self._repo_root, spec_id=spec_id, plan=resolution.plan, draft=draft
+                    )
+                elif resolution.base_available and draft is not None:
+                    coverage = coverage_of_selectors(
+                        self._repo_root,
+                        spec_id=spec_id,
+                        selectors=spec_acceptance_selectors(spec_markdown),
+                        draft=draft,
                     )
                 else:
                     coverage = SpecCoverage(
                         spec_id=spec_id,
                         n_promised=0,
                         n_present=0,
-                        missing=["base-ref-unavailable"],
+                        missing=[
+                            "plan-absent" if resolution.base_available else "base-ref-unavailable"
+                        ],
                         covered=False,
                     )
                 spec_covered = coverage.covered
@@ -944,6 +963,8 @@ class ReviewTeamOrchestrator:
                     covered=coverage.covered,
                     n_promised=coverage.n_promised,
                     n_present=coverage.n_present,
+                    n_planned=len(coverage.planned),
+                    draft_refusals=coverage.draft_refusals,
                     base_available=resolution.base_available,
                     fell_back_to_head=resolution.fell_back_to_head,
                 )
@@ -1181,6 +1202,57 @@ class ReviewTeamOrchestrator:
                 posted_reviews=team.posted_reviews,
                 posted_comments=team.posted_comments,
             )
+
+    def _draft_scope(
+        self, spec_id: str, *, base_ref: str | None, changed_files: list[str]
+    ) -> tuple[DraftScope | None, str]:
+        """Return the draft scope of *spec_id* at head, and the spec's markdown.
+
+        ``(None, "")`` when the spec is not governed or its head status is
+        not pre-implementation. The base view of the spec is read from
+        *base_ref*, then from ``origin/<base_ref>``; when neither resolves
+        the scope carries a refusal, so an unreadable base never grants
+        the exemption (fail closed).
+        """
+        from .governed_spec import (
+            SpecRefUnavailableError,
+            load_governed_spec,
+            load_governed_spec_at_ref,
+        )
+        from .spec_gate import draft_scope
+
+        head = load_governed_spec(spec_id, root=self._repo_root)
+        if head is None or head.path is None:
+            return None, ""
+        spec_path = head.path.resolve().relative_to(self._repo_root.resolve()).as_posix()
+        base: GovernedSpec | None = None
+        base_unreadable = True
+        for ref in (base_ref, f"origin/{base_ref}") if base_ref else ():
+            try:
+                base = load_governed_spec_at_ref(spec_id, ref, root=self._repo_root)
+            except SpecRefUnavailableError as exc:
+                _log.info("review_team.draft_scope_ref_unavailable", ref=ref, error=str(exc)[:200])
+                continue
+            base_unreadable = False
+            break
+        scope = draft_scope(
+            head_status=head.status,
+            base_status=base.status if base is not None else None,
+            owns_code=tuple(dict.fromkeys((*head.owns_code, *(base.owns_code if base else ())))),
+            changed_files=changed_files,
+            spec_path=spec_path,
+        )
+        if scope is None:
+            return None, ""
+        if base_unreadable:
+            scope = replace(
+                scope,
+                refusals=(
+                    *scope.refusals,
+                    f"base ref {base_ref!r} unreadable: the spec's draft status cannot be checked",
+                ),
+            )
+        return scope, head.path.read_text(encoding="utf-8")
 
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int
