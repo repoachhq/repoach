@@ -341,3 +341,40 @@ def test_coverage_at_head_grades_against_the_base_plan_not_head(tmp_path: Path) 
     assert coverage.n_promised == 2
     assert coverage.missing == [_SELECTORS[1]]
     assert coverage.covered is False
+
+
+class _DiffDownForge(_Forge):
+    """Serves no diff: the recomputation of a stale row cannot read the PR's paths."""
+
+    def diff(self, pr_number: int) -> SimpleNamespace:
+        raise RuntimeError("diff unavailable")
+
+
+def test_gate_names_a_failed_recompute_and_keeps_the_stored_row(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path, "draft")
+    db = tmp_path / "state" / "review.db"
+    init_findings_schema(db)
+    init_spec_coverage_schema(db)
+    record_review_integrity(db, pr_number=7, head_sha=head, n_reviewers=4, n_unparsed=0)
+    record_spec_coverage(db, pr_number=7, head_sha=head, coverage=_STALE)
+
+    _, facts, decision = decide_at_head(
+        7,
+        forge=_DiffDownForge(),
+        db=db,
+        ci_green=True,
+        repo_root=repo,
+        head_sha=head,
+        max_judged=0,
+        head_tree=True,
+        base_ref="develop",
+    )
+
+    failure = (
+        f"spec coverage recompute failed at {head[:7]}: RuntimeError: diff unavailable; "
+        "stored verdict from rule 0 stands"
+    )
+    assert decision.merge is False
+    assert decision.reasons == [_REASON, failure]
+    assert facts.spec_recompute_failure == failure
+    assert len(fetch_spec_coverage(db, 7, head_sha=head)) == 1

@@ -84,7 +84,7 @@ from .review_head import (
     materialise_head,
     require_head_sha,
 )
-from .spec_gate import refresh_stale_coverage
+from .spec_gate import StaleCoverageRecomputeError, refresh_stale_coverage
 
 _log = get_logger(__name__)
 
@@ -603,7 +603,9 @@ def decide_at_head(
     rule is recomputed and rewritten first
     (:func:`~repoach.review.spec_gate.refresh_stale_coverage`, no model
     call), so the decision reads what the current rule says. A failed
-    recomputation is logged and the stored row stands.
+    recomputation records nothing: the stored row stands and, when it
+    refuses, the reasons name the failure (``spec coverage recompute
+    failed at <sha7>: <error>; stored verdict from rule <v> stands``).
 
     The single source of the pure merge decision. Both
     :func:`run_auto_merge` (after its CI short-circuit) and
@@ -661,8 +663,9 @@ def decide_at_head(
         reverified = skipped_reverification(
             db, pr_number=pr_number, head_sha=resolved_head, reason=NO_HEAD_TREE
         )
+    recompute_failure = ""
     if head_tree and resolved_head:
-        _refresh_coverage(
+        recompute_failure = _refresh_coverage(
             db,
             forge=forge,
             pr_number=pr_number,
@@ -682,6 +685,7 @@ def decide_at_head(
             "reverified": reverified.counts(),
             "reverify_reasons": reverified.reasons(),
             "reverify_line": reverified.summary_line(),
+            "spec_recompute_failure": recompute_failure,
         }
     )
     return resolved_head, facts, compute_merge_decision(facts)
@@ -689,8 +693,13 @@ def decide_at_head(
 
 def _refresh_coverage(
     db: Path, *, forge: Forge, pr_number: int, head_sha: str, root: Path, base_ref: str | None
-) -> None:
-    """Recompute a stale coverage row at *head_sha* on the head tree *root*; log a failure."""
+) -> str:
+    """Recompute a stale coverage row at *head_sha* on the head tree *root*.
+
+    Returns:
+        ``""`` when nothing was stale or the row was recomputed; else the
+        gate reason naming the failure and the stored rule that stands.
+    """
 
     def fetch_base(ref: str) -> None:
         forge.git(["fetch", "--quiet", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"])
@@ -705,14 +714,15 @@ def _refresh_coverage(
             changed_files=lambda: diff_files(forge.diff(pr_number).text),
             fetch_base=fetch_base,
         )
-    except Exception as exc:
+    except StaleCoverageRecomputeError as exc:
         _log.warning(
             "auto_merge.stale_coverage_refresh_failed",
             pr_number=pr_number,
-            exc=type(exc).__name__,
-            message=str(exc)[:200],
+            reason=exc.reason,
             consequence="the stored coverage row stands",
         )
+        return exc.reason
+    return ""
 
 
 def evaluate_merge_gate(

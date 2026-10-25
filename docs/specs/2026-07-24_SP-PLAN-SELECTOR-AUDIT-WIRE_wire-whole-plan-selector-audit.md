@@ -76,8 +76,10 @@ makes.
   PR's base ref, the diff's paths; no model call) and records a new
   row, which the decision then reads. A row already at the current
   version is left alone and costs no forge read. A failed recomputation
-  is logged with its consequence and the stored row stands (fail
-  closed).
+  records nothing and the stored row stands (fail closed); when that row
+  refuses, `reasons` (gate JSON and CLI) gains `spec coverage recompute
+  failed at <sha7>: <error>; stored verdict from rule <v> stands`, so a
+  persistent forge or base-ref failure is visible, not only logged.
 - The decision is `rule_version` rather than a code hash: a code hash
   would recompute on every release, a rule marker only when the grading
   changed.
@@ -339,8 +341,12 @@ try/except shape; behavior described here is normative.)
   row `base-ref-unavailable` for a draft spec whose selectors' files
   are absent, records a new row and merges with both selectors in
   `spec_planned`; given the same row at the current version, it reads
-  the diff nowhere, records nothing and refuses; an old table gains
-  `rule_version` with `0` on its rows.
+  the diff nowhere, records nothing and refuses; when the diff cannot be
+  read, it records nothing and refuses with the coverage reason followed
+  by `spec coverage recompute failed at <sha7>: RuntimeError: diff
+  unavailable; stored verdict from rule 0 stands`; a head committing its
+  own narrower plan is still graded against the base plan's selectors;
+  an old table gains `rule_version` with `0` on its rows.
 
 ## Open Questions
 

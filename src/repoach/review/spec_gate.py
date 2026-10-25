@@ -1085,6 +1085,25 @@ def coverage_at_head(
     return coverage, resolution
 
 
+class StaleCoverageRecomputeError(RuntimeError):
+    """A stale coverage row could not be recomputed; the stored row stands.
+
+    Attributes:
+        head_sha: The head whose row is stale.
+        rule_version: The ``rule_version`` of the stored row.
+        reason: The gate reason naming the failure and what stands.
+    """
+
+    def __init__(self, *, head_sha: str, rule_version: int, error: Exception) -> None:
+        self.head_sha = head_sha
+        self.rule_version = rule_version
+        self.reason = (
+            f"spec coverage recompute failed at {head_sha[:7]}: {type(error).__name__}: "
+            f"{str(error)[:200]}; stored verdict from rule {rule_version} stands"
+        )
+        super().__init__(self.reason)
+
+
 def refresh_stale_coverage(
     db_path: Path,
     *,
@@ -1116,19 +1135,28 @@ def refresh_stale_coverage(
 
     Returns:
         The recorded report, or ``None`` when no row at head is stale.
+
+    Raises:
+        StaleCoverageRecomputeError: The diff, the base fetch or the
+            grading failed; nothing was recorded.
     """
     init_spec_coverage_schema(db_path)
     rows = fetch_spec_coverage(db_path, pr_number, head_sha=head_sha)
     if not rows or rows[-1].rule_version >= SPEC_COVERAGE_RULE_VERSION:
         return None
     stale = rows[-1]
-    coverage, _ = coverage_at_head(
-        repo_root,
-        spec_id=stale.spec_id,
-        base_ref=base_ref,
-        changed_files=changed_files(),
-        fetch_base=fetch_base,
-    )
+    try:
+        coverage, _ = coverage_at_head(
+            repo_root,
+            spec_id=stale.spec_id,
+            base_ref=base_ref,
+            changed_files=changed_files(),
+            fetch_base=fetch_base,
+        )
+    except Exception as exc:
+        raise StaleCoverageRecomputeError(
+            head_sha=head_sha, rule_version=stale.rule_version, error=exc
+        ) from exc
     record_spec_coverage(db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage)
     _log.info(
         "spec_gate.stale_coverage_recomputed",
