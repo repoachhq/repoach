@@ -622,11 +622,12 @@ def draft_scope(
 ) -> DraftScope | None:
     """Build the draft scope of a spec, or ``None`` when it is not a draft.
 
-    The exemption is for a PR that only writes the spec: it is withheld
-    when the PR changes any path the spec owns (head or base ``owns``)
-    other than the spec file itself, and when the spec exists at base
-    with a status past draft — a PR cannot step its own spec back to
-    draft to escape its selectors.
+    The exemption is for a PR that only writes documentation: it is
+    withheld when the PR changes any path outside :data:`DOCS_ROOT`
+    other than the spec file itself, when it changes a path under
+    :data:`DOCS_ROOT` that the spec owns (head or base ``owns``), and
+    when the spec exists at base with a status past draft — a PR cannot
+    step its own spec back to draft to escape its selectors.
 
     Args:
         head_status: The spec's frontmatter status at the PR head.
@@ -647,17 +648,28 @@ def draft_scope(
             f"spec is {base_status!r} at base: a {head_status} status at head "
             "does not make its selectors planned"
         )
-    touched = sorted(
-        path
-        for path in changed_files
-        if path != spec_path and any(path_contains(owned, path) for owned in owns_code)
-    )
-    if touched:
+    others = sorted(path for path in changed_files if path != spec_path)
+    outside_docs = [path for path in others if not path_contains(DOCS_ROOT, path)]
+    if outside_docs:
         refusals.append(
-            f"{head_status} spec PR touches owned code ({', '.join(touched)}): "
+            f"{head_status} spec PR touches code outside {DOCS_ROOT} "
+            f"({', '.join(outside_docs)}): its acceptance selectors must be present"
+        )
+    owned_in_docs = [
+        path
+        for path in others
+        if path_contains(DOCS_ROOT, path) and any(path_contains(owned, path) for owned in owns_code)
+    ]
+    if owned_in_docs:
+        refusals.append(
+            f"{head_status} spec PR touches owned code ({', '.join(owned_in_docs)}): "
             "its acceptance selectors must be present"
         )
     return DraftScope(status=head_status, refusals=tuple(refusals))
+
+
+DOCS_ROOT = "docs"
+"""The only tree a draft spec PR may change and keep its planned selectors."""
 
 
 _AC_HEADING = re.compile(r"(?im)^##\s+acceptance criteria\s*$")

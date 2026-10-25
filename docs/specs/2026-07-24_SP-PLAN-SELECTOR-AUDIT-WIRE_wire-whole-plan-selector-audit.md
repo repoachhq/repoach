@@ -45,9 +45,12 @@ The rule, in `spec_gate.py` (`draft_scope`, `coverage_of_selectors`,
   JSON under `spec_acceptance.planned[]`, and does not refuse. A
   selector whose file exists but whose test is absent or trivial is
   still `missing`.
-- The scope is withheld, with one named refusal line each, when the PR
-  changes a path in the spec's `owns.code` (head or base) other than
-  the spec file (`draft spec PR touches owned code (...): its
+- The scope holds only when every changed file is under `docs/` or is
+  the spec itself. It is withheld, with one named refusal line each,
+  when the PR changes any path outside `docs/` (`draft spec PR touches
+  code outside docs (...): its acceptance selectors must be present`),
+  when it changes a path under `docs/` that the spec's `owns.code`
+  (head or base) names (`draft spec PR touches owned code (...): its
   acceptance selectors must be present`), when the spec exists at base
   with a status past draft (a PR cannot step its own spec back to
   draft), and when the base ref cannot be read.
@@ -298,9 +301,12 @@ try/except shape; behavior described here is normative.)
   a draft spec whose selectors' files are absent merges with them listed
   in `spec_planned`; the same spec `approved` is refused with exactly
   `spec acceptance selectors not all present`; the draft spec with a
-  file of its `owns.code` in the diff is refused with that reason plus
-  `draft spec PR touches owned code (<path>): its acceptance selectors
-  must be present`; a spec `approved` at base and `draft` at head is
+  file outside `docs/` in the diff (owned or unrelated `src/`) is
+  refused with that reason plus `draft spec PR touches code outside
+  docs (<path>): its acceptance selectors must be present`; another
+  `docs/` file keeps the exemption; an owned path under `docs/`
+  withholds it (`draft spec PR touches owned code (<path>): ...`); a
+  spec `approved` at base and `draft` at head is
   refused; an unreadable base ref withholds the exemption; a selector
   in an existing file stays missing; an old `pr_spec_coverage` table
   gains the two columns.

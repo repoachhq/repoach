@@ -133,12 +133,48 @@ def test_draft_spec_touching_owned_code_is_refused_naming_the_rule(tmp_path: Pat
     repo = _repo(tmp_path, base_status=None, head_status="draft")
     facts, decision = _gate(repo, tmp_path, [_SPEC_PATH, _OWNED])
     assert decision.merge is False
-    assert decision.reasons[0] == _REASON
-    assert decision.reasons[1] == (
-        f"draft spec PR touches owned code ({_OWNED}): its acceptance selectors must be present"
-    )
+    assert decision.reasons == [
+        _REASON,
+        f"draft spec PR touches code outside docs ({_OWNED}): "
+        "its acceptance selectors must be present",
+    ]
     assert facts.spec_missing == _SELECTORS
     assert facts.spec_planned == []
+
+
+def test_draft_spec_touching_unrelated_code_is_refused(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, base_status=None, head_status="draft")
+    unrelated = "src/repoach/core/unrelated.py"
+    facts, decision = _gate(repo, tmp_path, [_SPEC_PATH, "docs/notes.md", unrelated])
+    assert decision.merge is False
+    assert decision.reasons == [
+        _REASON,
+        f"draft spec PR touches code outside docs ({unrelated}): "
+        "its acceptance selectors must be present",
+    ]
+    assert facts.spec_planned == []
+
+
+def test_draft_spec_with_other_docs_keeps_the_exemption(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, base_status=None, head_status="draft")
+    facts, decision = _gate(repo, tmp_path, [_SPEC_PATH, "docs/notes.md"])
+    assert decision.merge is True
+    assert facts.spec_planned == _SELECTORS
+
+
+def test_owned_path_under_docs_withholds_the_exemption() -> None:
+    owned = "docs/prompts/drafty.md"
+    scope = draft_scope(
+        head_status="draft",
+        base_status=None,
+        owns_code=(owned,),
+        changed_files=[_SPEC_PATH, owned],
+        spec_path=_SPEC_PATH,
+    )
+    assert scope is not None
+    assert scope.refusals == (
+        f"draft spec PR touches owned code ({owned}): its acceptance selectors must be present",
+    )
 
 
 def test_spec_approved_at_base_cannot_step_back_to_draft(tmp_path: Path) -> None:
