@@ -223,7 +223,7 @@ def test_mixed_diff_runs_python_on_py_only(tmp_path: Path) -> None:
     record_finding(db, _finding(ClaimType.MISSING_DOCSTRING, "src/pkg/a.py"))
     record_finding(db, _finding(ClaimType.MISSING_DOCSTRING, "frontend/src/x.ts"))
 
-    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="h1")
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="h1").counts
 
     assert counts == {"verified": 1, "refuted": 0, "deferred": 0, "not_applicable": 1}
     rows = {f.file: f for f in fetch_findings(db, 1)}

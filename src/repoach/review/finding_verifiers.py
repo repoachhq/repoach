@@ -14,7 +14,9 @@ decision changes here.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from ..gates.config import GatesConfig, applicable, load_gates_config
 from ..lint.no_inline_comments import scan_file as scan_inline
@@ -37,6 +39,80 @@ _LANGUAGE_METHOD = "language"
 """Verification method recorded when a Python-only verifier does not apply."""
 
 _DEFERRED_RESULT = "not mechanically verifiable — slices 5-6"
+
+MECHANICAL_METHODS: frozenset[str] = frozenset(
+    {"symbol_search", "ast_docstring", "lint_scan", _LANGUAGE_METHOD}
+)
+"""``verification_method`` values only a mechanical verifier stamps.
+
+The report reads them back from the ledger to name the judge of a
+finding whose run outcomes it does not hold (a replayed run)."""
+
+VerificationState = Literal["verified", "refuted", "not_applicable", "deferred"]
+"""The one state a finding ends in after a mechanical pass."""
+
+
+@dataclass(frozen=True)
+class MechanicalVerification:
+    """What the mechanical verifiers did with one proposed finding.
+
+    Attributes:
+        finding_id: Ledger row id.
+        file: The cited file.
+        line_start: First cited line.
+        claim_type: The finding's claim type.
+        state: ``verified`` / ``refuted`` / ``not_applicable`` (a
+            transition was recorded) or ``deferred`` (left ``proposed``).
+        method: The verifier's own method (``symbol_search``,
+            ``ast_docstring``, ``lint_scan``, ``language``, ``deferred``).
+        result: The verifier's one-line evidence.
+    """
+
+    finding_id: int | None
+    file: str
+    line_start: int
+    claim_type: ClaimType
+    state: VerificationState
+    method: str
+    result: str
+
+    @property
+    def verifier(self) -> str:
+        """Return the verifier's name, ``mechanical:<claim_type>``."""
+        return f"mechanical:{self.claim_type.value}"
+
+    @property
+    def evidence(self) -> str:
+        """Return the evidence line, ``<method>: <result>``."""
+        return f"{self.method}: {self.result}"
+
+
+@dataclass(frozen=True)
+class VerificationReport:
+    """Every proposed finding :func:`verify_findings_for_pr` checked.
+
+    Attributes:
+        outcomes: One :class:`MechanicalVerification` per proposed
+            finding, in ledger order.
+    """
+
+    outcomes: tuple[MechanicalVerification, ...] = ()
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """Return ``{"verified", "refuted", "deferred"}`` counts.
+
+        ``"not_applicable"`` is present only when a finding ended there.
+        """
+        tally = {"verified": 0, "refuted": 0, "deferred": 0}
+        for outcome in self.outcomes:
+            tally[outcome.state] = tally.get(outcome.state, 0) + 1
+        return tally
+
+    @property
+    def settled(self) -> tuple[MechanicalVerification, ...]:
+        """Return the outcomes a mechanical verifier decided (not ``deferred``)."""
+        return tuple(outcome for outcome in self.outcomes if outcome.state != "deferred")
 
 
 def _missing_test_search_targets(symbols: list[str]) -> list[str]:
@@ -191,7 +267,7 @@ def verify_findings_for_pr(
     repo_root: Path,
     head_sha: str | None,
     config: GatesConfig | None = None,
-) -> dict[str, int]:
+) -> VerificationReport:
     """Verify every proposed finding of a PR and persist the transitions.
 
     Args:
@@ -204,34 +280,92 @@ def verify_findings_for_pr(
             PR head's); read from ``repo_root`` when omitted.
 
     Returns:
-        Counts ``{"verified": n, "refuted": n, "deferred": n}``, plus
-        ``"not_applicable": n`` when any finding ended not applicable.
+        One :class:`MechanicalVerification` per proposed finding — id,
+        state, method and evidence line — so the review report can list
+        every finding a mechanical verifier settled; ``counts`` keeps the
+        aggregate ``{"verified", "refuted", "deferred"}`` shape, plus
+        ``"not_applicable"`` when any finding ended there. A finding with
+        no ledger id is checked but neither persisted nor reported.
     """
-    counts = {"verified": 0, "refuted": 0, "deferred": 0}
+    outcomes: list[MechanicalVerification] = []
     config = config if config is not None else load_gates_config(repo_root)
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
     for finding in proposed:
         new_status, method, result = verify_finding(finding, repo_root=repo_root, config=config)
-        if new_status is FindingStatus.PROPOSED:
-            if finding.id is not None:
-                record_verification_attempt(
-                    db_path,
-                    finding.id,
-                    method=method,
-                    result=result,
-                    checked_at_sha=head_sha or "",
-                )
-            counts["deferred"] += 1
-            continue
         if finding.id is None:
             continue
-        update_finding_status(
-            db_path,
-            finding.id,
-            new_status,
-            verification_method=method,
-            verification_result=result,
-            checked_at_sha=head_sha or "",
+        if new_status is FindingStatus.PROPOSED:
+            record_verification_attempt(
+                db_path,
+                finding.id,
+                method=method,
+                result=result,
+                checked_at_sha=head_sha or "",
+            )
+        else:
+            update_finding_status(
+                db_path,
+                finding.id,
+                new_status,
+                verification_method=method,
+                verification_result=result,
+                checked_at_sha=head_sha or "",
+            )
+        outcomes.append(
+            MechanicalVerification(
+                finding_id=finding.id,
+                file=finding.file,
+                line_start=finding.line_start,
+                claim_type=finding.claim_type,
+                state="deferred" if new_status is FindingStatus.PROPOSED else new_status.value,
+                method=method,
+                result=result,
+            )
         )
-        counts[new_status.value] = counts.get(new_status.value, 0) + 1
-    return counts
+    return VerificationReport(outcomes=tuple(outcomes))
+
+
+def recorded_verifications(db_path: Path, *, pr_number: int, head_sha: str) -> VerificationReport:
+    """Rebuild the settled mechanical outcomes the ledger records at ``head_sha``.
+
+    A replayed run holds no verifier outcomes of its own; the ledger
+    rows a mechanical verifier settled at this head (a
+    :data:`MECHANICAL_METHODS` stamp, ``checked_at_sha == head_sha``)
+    are the same facts, read back.
+
+    Args:
+        db_path: The findings ledger database.
+        pr_number: The PR being reported on.
+        head_sha: The head the verification ran against.
+
+    Returns:
+        One outcome per such row; never a ``deferred`` one.
+    """
+    outcomes: list[MechanicalVerification] = []
+    for finding in fetch_findings(db_path, pr_number):
+        if finding.verification_method not in MECHANICAL_METHODS:
+            continue
+        if not head_sha or finding.checked_at_sha != head_sha:
+            continue
+        if finding.status not in _RECORDED_STATES:
+            continue
+        outcomes.append(
+            MechanicalVerification(
+                finding_id=finding.id,
+                file=finding.file,
+                line_start=finding.line_start,
+                claim_type=finding.claim_type,
+                state=_RECORDED_STATES[finding.status],
+                method=finding.verification_method,
+                result=finding.verification_result,
+            )
+        )
+    return VerificationReport(outcomes=tuple(outcomes))
+
+
+_RECORDED_STATES: dict[FindingStatus, VerificationState] = {
+    FindingStatus.VERIFIED: "verified",
+    FindingStatus.REFUTED: "refuted",
+    FindingStatus.NOT_APPLICABLE: "not_applicable",
+}
+"""Ledger statuses a mechanical verifier writes, mapped to their report state."""

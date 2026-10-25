@@ -28,6 +28,7 @@ from .findings import (
     JUDGED_CLAIM_TYPES,
     MECHANICAL_CLAIM_TYPES,
     ClaimType,
+    Finding,
     FindingStatus,
     Severity,
     fetch_findings,
@@ -93,6 +94,11 @@ class MergeFacts(BaseModel):
             SHA-stale included, fail closed). ``stuck`` blocking
             findings count exactly like ``verified`` ones (terminal
             escalation must keep the merge blocked).
+        open_blocking_ids: The ledger ids of exactly the findings
+            ``open_blocking_findings`` counts, in ledger order — what a
+            ``REQUEST_CHANGES`` is traceable to (the report's
+            ``verdict_basis``); ``len(open_blocking_ids) ==
+            open_blocking_findings`` always.
         spec_covered: Whether a coverage record computed at THIS head
             reports every promised acceptance selector present.
         spec_coverage_known: Whether a coverage record exists at this
@@ -131,6 +137,7 @@ class MergeFacts(BaseModel):
     head_sha: str
     ci_green: bool
     open_blocking_findings: int
+    open_blocking_ids: list[int] = []
     spec_covered: bool
     spec_coverage_known: bool
     review_complete: bool
@@ -263,7 +270,7 @@ def gather_merge_facts(
         The assembled :class:`MergeFacts`.
     """
     init_findings_schema(db_path)
-    open_blocking = 0
+    open_blocking: list[int] = []
     blocking_unverified: list[str] = []
     if gates_config is None:
         gates_config = load_gates_config(repo_root)
@@ -283,9 +290,9 @@ def gather_merge_facts(
         if finding.claim_type in _MECHANICAL_TYPES:
             status, _, _ = verify_finding(finding, repo_root=repo_root, config=gates_config)
             if status is FindingStatus.VERIFIED:
-                open_blocking += 1
+                open_blocking.append(_ledger_id(finding))
         elif finding.claim_type in _JUDGED_TYPES:
-            open_blocking += 1
+            open_blocking.append(_ledger_id(finding))
     return _assemble_facts(
         db_path,
         pr_number=pr_number,
@@ -332,7 +339,7 @@ def summarise_ledger_facts(
         The assembled :class:`MergeFacts` from recorded state.
     """
     init_findings_schema(db_path)
-    open_blocking = 0
+    open_blocking: list[int] = []
     ci_red = False
     for finding in fetch_findings(db_path, pr_number):
         if finding.status in _SETTLED:
@@ -344,12 +351,12 @@ def summarise_ledger_facts(
             continue
         if finding.claim_type in _JUDGED_TYPES:
             if finding.status is not FindingStatus.PROPOSED:
-                open_blocking += 1
+                open_blocking.append(_ledger_id(finding))
             continue
         if finding.status not in _BLOCKING_STATUSES:
             continue
         if finding.claim_type in _MECHANICAL_TYPES:
-            open_blocking += 1
+            open_blocking.append(_ledger_id(finding))
     return _assemble_facts(
         db_path,
         pr_number=pr_number,
@@ -359,13 +366,18 @@ def summarise_ledger_facts(
     )
 
 
+def _ledger_id(finding: Finding) -> int:
+    """Return the ledger id of a fetched finding (``-1`` for an unpersisted one)."""
+    return finding.id if finding.id is not None else -1
+
+
 def _assemble_facts(
     db_path: Path,
     *,
     pr_number: int,
     head_sha: str,
     ci_green: bool,
-    open_blocking: int,
+    open_blocking: list[int],
     blocking_unverified: list[str] | None = None,
 ) -> MergeFacts:
     """Fold the spec-coverage and review-integrity records into facts.
@@ -393,7 +405,8 @@ def _assemble_facts(
     return MergeFacts(
         head_sha=head_sha,
         ci_green=ci_green,
-        open_blocking_findings=open_blocking,
+        open_blocking_findings=len(open_blocking),
+        open_blocking_ids=list(open_blocking),
         spec_covered=latest is not None and latest.covered,
         spec_coverage_known=latest is not None,
         review_complete=review_complete,
