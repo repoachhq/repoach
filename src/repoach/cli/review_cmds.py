@@ -288,7 +288,10 @@ def review_pr(
     stored outcomes are replayed, the older-head re-check still runs, the
     JSON has the same shape with ``cached`` true, and one ``review:
     cached at <sha7> (run <id>, <when>); use --force to re-review`` line
-    on stderr names the run. A dry run and a posting run share that
+    on stderr names the run. The spec coverage is not replayed: it is
+    recomputed at the head with the current rule (no model call), its
+    row rewritten, and one ``review: spec coverage recomputed at <sha7>:
+    planned N, missing M`` line on stderr says it. A dry run and a posting run share that
     cache; a posting run posts the stored outcomes. ``--force`` runs the
     reviewers again.
 
@@ -389,6 +392,8 @@ def review_pr(
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
     if team.cache_line:
         typer.echo(team.cache_line, err=True)
+    if team.spec_coverage_line:
+        typer.echo(team.spec_coverage_line, err=True)
     if team.findings_line:
         typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
@@ -699,7 +704,10 @@ def review_gate(
     a spec that has no document. ``spec_acceptance`` lists the selectors
     ``missing`` at head, the ``planned`` ones of a draft spec (absent
     files that do not refuse) and the ``draft_refusals`` that withheld
-    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
+    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2). A coverage row at
+    head graded by a retired rule (``rule_version`` below the current
+    one) is recomputed on the head tree and rewritten before the
+    decision, so it can never refuse on its own (0.3).
 
     The verifiers re-check the ledger on the tree of the verified head,
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
