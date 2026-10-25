@@ -124,6 +124,13 @@ EVIDENCE_UNREADABLE = "evidence unreadable"
 EVIDENCE_OUTSIDE_WINDOW = "evidence outside window"
 """The judge could not see the code the claim concerns (``cannot_judge``)."""
 
+EVIDENCE_NOT_SERVED = "evidence outside window ({identifiers} not served)"
+"""Template of the reason when the claim names an identifier none of whose hits were served.
+
+The search timed out, could not run, or the budget, the hit cap or the
+deadline left every hit out: the judge is not called, since it could
+only refute what it cannot see."""
+
 VERDICT_UNPARSEABLE = "verdict unparseable"
 """The judge answered without a well-formed ``VERDICT:`` line."""
 
@@ -142,6 +149,7 @@ DEFERRAL_REASONS = (
     EVIDENCE_UNREADABLE,
     JUDGING_CAP_REACHED,
     EVIDENCE_OUTSIDE_WINDOW,
+    EVIDENCE_NOT_SERVED,
     VERDICT_UNPARSEABLE,
     JUDGE_CALL_FAILED,
 )
@@ -246,6 +254,15 @@ class JudgingReport:
         return {state: tally.get(state, 0) for state in _STATES}
 
     @property
+    def evidence_tokens(self) -> int:
+        """Return the evidence served to the judge across every outcome, in tokens.
+
+        Reported on the run line only; it never feeds back into the
+        evidence, which ``context_tokens`` alone bounds.
+        """
+        return sum(outcome.evidence_tokens for outcome in self.outcomes)
+
+    @property
     def deferrals(self) -> tuple[Refutation, ...]:
         """Return the outcomes with no verdict (``deferred`` and ``unverified``)."""
         return tuple(o for o in self.outcomes if o.state in ("deferred", "unverified"))
@@ -254,7 +271,8 @@ class JudgingReport:
         """Return the one stderr line naming every state and reason.
 
         Example: ``refuter: judged 3, refuted 1, deferred 2 (evidence
-        unreadable ×2), unverified 1 (not yet mechanically verified)``.
+        unreadable ×2), unverified 1 (not yet mechanically verified),
+        evidence_tokens total 41250``.
         """
         counts = self.counts
         judged = counts["verified"] + counts["refuted"]
@@ -266,6 +284,7 @@ class JudgingReport:
         ]
         if self.stale:
             parts.append(f"stale: {self.stale} (older heads)")
+        parts.append(f"evidence_tokens total {self.evidence_tokens}")
         return "refuter: " + ", ".join(parts)
 
     def _bucket(self, state: RefutationState) -> str:
@@ -491,6 +510,14 @@ def _parse_verdict(raw: str) -> tuple[Verdict, str] | None:
     return verdict
 
 
+def _cites_any(reasoning: str, identifiers: Sequence[str]) -> bool:
+    """Return True when ``reasoning`` names one of ``identifiers`` as a word."""
+    return any(
+        re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", reasoning)
+        for name in identifiers
+    )
+
+
 def judge_finding(
     finding: Finding,
     *,
@@ -509,9 +536,12 @@ def judge_finding(
     reason from :data:`DEFERRAL_REASONS` when the evidence is outside
     the repository or unreadable (the judge is then never called), when
     the judge raised (``judge call failed: <exception type>``), when its
-    verdict is unparseable, and when it answered ``cannot_judge`` or
-    refuted only because the code was not visible
-    (:data:`EVIDENCE_OUTSIDE_WINDOW`). A cited file absent from
+    verdict is unparseable, and when it answered ``cannot_judge``,
+    refuted only because the code was not visible, or refuted on an
+    identifier of which only part of the hits were served
+    (:data:`EVIDENCE_OUTSIDE_WINDOW`). When the claim names an identifier
+    of which nothing was served, the judge is not called
+    (:data:`EVIDENCE_NOT_SERVED`). A cited file absent from
     ``repo_root`` is deferred with ``absent_reason``.
 
     Args:
@@ -533,6 +563,12 @@ def judge_finding(
     )
     if bundle is None:
         return Judgement(FindingStatus.PROPOSED, reason)
+    if bundle.unserved:
+        return Judgement(
+            FindingStatus.PROPOSED,
+            EVIDENCE_NOT_SERVED.format(identifiers=", ".join(bundle.unserved)),
+            bundle,
+        )
     try:
         raw = judge(_render_prompt(finding, bundle.text))
     except Exception as exc:
@@ -544,6 +580,8 @@ def judge_finding(
     if verdict is None:
         return Judgement(FindingStatus.PROPOSED, VERDICT_UNPARSEABLE, bundle)
     answer, reasoning = verdict
+    if answer == "refuted" and _cites_any(reasoning, bundle.partial):
+        answer = "cannot_judge"
     if answer == "cannot_judge":
         return Judgement(FindingStatus.PROPOSED, EVIDENCE_OUTSIDE_WINDOW, bundle, reasoning)
     status = FindingStatus.REFUTED if answer == "refuted" else FindingStatus.VERIFIED

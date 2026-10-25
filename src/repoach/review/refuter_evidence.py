@@ -7,8 +7,9 @@ independent re-read found 8 of those verdicts wrong, each one reasoning
 claims named code outside the window: a test that does not exist, a
 second table elsewhere in the tree, the rest of the cited file.
 
-Owner rule (2026-10-25): the refuter's context must be large enough for
-it to do its job. The evidence budget is therefore the refuter's own
+Owner rules (2026-10-25, 2026-10-26): the refuter's context must be
+large enough for it to do its job, and it is measured in tokens, never
+in money. The evidence budget is therefore the refuter's own
 ``context_tokens`` (:data:`~repoach.project.config.REFUTER_CONTEXT_TOKENS_FLOOR`
 as the floor, ``[gates].refuter_context_tokens``), and
 :func:`build_evidence` fills it in this priority, all read-only from the
@@ -21,18 +22,25 @@ pinned head tree and path-jailed under ``repo_root``:
    snake_case, UPPER_SNAKE, the cited module when the claim is about
    tests), the ``git grep -n -I -F -w`` hits over the tracked files with
    :data:`GREP_CONTEXT_LINES` lines on each side (hit lines marked
-   ``N:*``, at most :data:`GREP_MAX_HITS` hits in all), and whether each
-   path the claim names is present;
+   ``N:*``, at most :data:`GREP_MAX_HITS` hits in all, nearest first:
+   the cited file, the files the claim names, tests, the rest), and
+   whether each path the claim names is present;
 3. the PR's diff hunks touching the cited file;
 4. the spec section the finding cites (rows and paragraphs carrying a
    label such as ``G3`` or ``AC2``; the whole spec when the claim names
    the spec, or is a ``spec_gap``, without a label).
 
-Truncation happens only when the budget is exhausted, and every item not
+One ``git grep`` and at most one ``git ls-files`` run per finding, each
+within :data:`GREP_TIMEOUT_S`, and the whole assembly within
+:data:`ASSEMBLY_DEADLINE_S`. Truncation happens only when the budget,
+the hit cap or the deadline is reached, and every item not
 served is named in :attr:`EvidenceBundle.truncated`; the text then opens
 with a ``PARTIAL EVIDENCE`` line so the judge answers ``cannot_judge``
-for a claim resting on the missing part. Sizes use the disclosed
-estimator of SP-AGENT-CONTEXT-LOOP, ``ceil(utf8_bytes / 3)``.
+for a claim resting on the missing part. Sizes use the one estimator
+the spec names, :data:`TOKEN_ESTIMATOR` (``ceil(utf8_bytes / 3)``). No
+cost figure (``max_cost_usd``, the usage ledger, ``refuter_tokens``)
+reaches this module: cost is reported after the run, and never cuts or
+shapes the evidence.
 
 Every line of the bundle starts with a line number, ``---``, ``path``,
 ``search`` or a diff prefix (``+``, ``-``, space, ``@@``, ``diff``,
@@ -44,7 +52,8 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Sequence
+import time
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -71,11 +80,16 @@ _MAX_IDENTIFIERS = 6
 _MIN_IDENTIFIER_LEN = 4
 """Shorter tokens match too widely to say anything about a claim."""
 
-_GREP_TIMEOUT_S = 120
-"""Seconds the one ``git grep`` of a finding may run (a cold worktree on a loaded disk)."""
+GREP_TIMEOUT_S = 30
+"""Seconds the one ``git grep`` (and the one ``git ls-files``) of a finding may run."""
 
-GREP_COMMON_HITS = 200
-"""An identifier with more hits than this is too common to say anything specific."""
+ASSEMBLY_DEADLINE_S = 90
+"""Wall-clock seconds the evidence of one finding may take; what is left is named, not served."""
+
+_TEST_PATH = re.compile(
+    r"(?:^|/)(?:tests?|__tests__|spec)/|(?:^|/)test_[^/]*$|_test\.\w+$|\.(?:test|spec)\.\w+$"
+)
+"""A test file: ranked right after the files the claim names."""
 
 _PATH_EXTENSIONS = (
     "py|pyi|ts|tsx|js|jsx|sh|bash|yml|yaml|toml|ini|cfg|json|md|rst|txt|"
@@ -138,6 +152,9 @@ class EvidenceBundle:
             out or a hit cap was reached; empty when the evidence is whole.
         tokens: Size of ``text`` under :data:`TOKEN_ESTIMATOR`.
         budget_tokens: The budget the evidence was assembled against.
+        unserved: Identifiers of the claim of which nothing was served
+            although the tree holds them, or whose search could not run.
+        partial: Identifiers of the claim of which only some hits were served.
     """
 
     text: str
@@ -145,6 +162,8 @@ class EvidenceBundle:
     truncated: tuple[str, ...] = ()
     tokens: int = 0
     budget_tokens: int = 0
+    unserved: tuple[str, ...] = ()
+    partial: tuple[str, ...] = ()
 
 
 @dataclass
@@ -152,10 +171,24 @@ class _Assembly:
     """The evidence under construction against a token budget."""
 
     budget: int
+    deadline: float = math.inf
     sections: list[str] = field(default_factory=list)
     reads: list[str] = field(default_factory=list)
     truncated: list[str] = field(default_factory=list)
+    unserved: list[str] = field(default_factory=list)
+    partial: list[str] = field(default_factory=list)
     used: int = 0
+
+    def remaining(self) -> float:
+        """Return the wall-clock seconds left before :data:`ASSEMBLY_DEADLINE_S`."""
+        return self.deadline - time.monotonic()
+
+    def out_of_time(self, step: str) -> bool:
+        """Return True, naming ``step`` as not served, once the deadline has passed."""
+        if self.remaining() > 0:
+            return False
+        self.truncated.append(f"{step}: {ASSEMBLY_DEADLINE_S} s assembly deadline reached")
+        return True
 
     def fits(self, text: str) -> bool:
         """Return True when ``text`` still fits in the remaining budget."""
@@ -291,23 +324,29 @@ def _inside(repo_root: Path, rel: str) -> bool:
     return target.is_relative_to(root) and target.is_file()
 
 
-def resolve_claim_path(repo_root: Path, rel: str) -> tuple[str, ...]:
-    """Return the tracked files a path the claim names designates, ``()`` when absent.
+def tracked_files(repo_root: Path, *, timeout_s: float) -> tuple[str, ...] | None:
+    """Return the tracked files of the tree at ``repo_root``; ``None`` when ``git`` could not say.
+
+    One ``git ls-files`` per finding, shared by every bare file name the
+    claim names.
+    """
+    result = spawn(["git", "ls-files", "-z"], cwd=repo_root, timeout_s=max(1, math.ceil(timeout_s)))
+    if not result.ok:
+        _log.info("refuter.ls_files_unavailable", returncode=result.returncode)
+        return None
+    return tuple(p for p in result.stdout.split("\0") if p)
+
+
+def resolve_claim_path(repo_root: Path, rel: str, tracked: Sequence[str]) -> tuple[str, ...]:
+    """Return the files a path the claim names designates, ``()`` when absent.
 
     A path with a directory is checked as given (path-jailed); a bare
-    file name (``test_x.py``) is looked up among the tracked files with
-    ``git ls-files``, so "the test file test_x.py" meets wherever it lives.
+    file name (``test_x.py``) is looked up in ``tracked``, so "the test
+    file test_x.py" meets wherever it lives.
     """
     if "/" in rel:
         return (rel,) if _inside(repo_root, rel) else ()
-    result = spawn(
-        ["git", "ls-files", "-z", "--", rel, f"*/{rel}"], cwd=repo_root, timeout_s=_GREP_TIMEOUT_S
-    )
-    if not result.ok:
-        _log.info("refuter.ls_files_unavailable", path=rel, returncode=result.returncode)
-        return ()
-    found = [p for p in result.stdout.split("\0") if p and Path(p).name == rel]
-    return tuple(p for p in found if _inside(repo_root, p))
+    return tuple(p for p in tracked if Path(p).name == rel and _inside(repo_root, p))
 
 
 def _word(identifier: str) -> re.Pattern[str]:
@@ -316,15 +355,14 @@ def _word(identifier: str) -> re.Pattern[str]:
 
 
 def grep_head_tree(
-    repo_root: Path, identifiers: Sequence[str]
+    repo_root: Path, identifiers: Sequence[str], *, timeout_s: float = GREP_TIMEOUT_S
 ) -> dict[str, list[tuple[str, int]]] | None:
     """Return, per identifier, every ``(path, line)`` where it occurs as a word.
 
     One ``git grep -n -I -F -w`` over the tracked files of the tree at
-    ``repo_root`` (local, read-only) searches every identifier at once,
-    so a slow disk costs one timeout, not one per identifier. Returns
-    ``None`` when the search could not run (not a git work tree, git
-    missing, timeout); an empty list is a measured absence.
+    ``repo_root`` (local, read-only) searches every identifier at once.
+    Returns ``None`` when the search could not run (not a git work tree,
+    git missing, timeout); an empty list is a measured absence.
     """
     wanted = [i for i in identifiers if _IDENTIFIER.match(i)]
     if not wanted:
@@ -332,7 +370,7 @@ def grep_head_tree(
     argv = ["git", "grep", "--no-color", "--null", "-n", "-I", "-F", "-w"]
     for identifier in wanted:
         argv += ["-e", identifier]
-    result = spawn([*argv, "--"], cwd=repo_root, timeout_s=_GREP_TIMEOUT_S)
+    result = spawn([*argv, "--"], cwd=repo_root, timeout_s=max(1, math.ceil(timeout_s)))
     if result.returncode == 1 and not result.stdout:
         return {identifier: [] for identifier in wanted}
     if not result.ok:
@@ -355,16 +393,56 @@ def grep_head_tree(
     return hits
 
 
+def rank_hits(
+    hits: Sequence[tuple[str, int]], *, cited_path: str, named_files: Collection[str]
+) -> list[tuple[str, int]]:
+    """Order hits by proximity to the finding: cited file, files the claim names, tests, rest.
+
+    The order is stable inside each rank, so ``git grep``'s path order
+    is kept.
+    """
+
+    def _rank(hit: tuple[str, int]) -> int:
+        path = hit[0]
+        if path == cited_path:
+            return 0
+        if path in named_files:
+            return 1
+        if _TEST_PATH.search(path):
+            return 2
+        return 3
+
+    return sorted(hits, key=_rank)
+
+
+def _allocate(wanted: Mapping[str, int], cap: int) -> dict[str, int]:
+    """Split ``cap`` hits between identifiers: an equal share each, the rest to who wants more."""
+    share = {name: min(n, cap // max(1, len(wanted))) for name, n in wanted.items()}
+    left = cap - sum(share.values())
+    for name, n in wanted.items():
+        extra = min(n - share[name], left)
+        share[name] += extra
+        left -= extra
+    return share
+
+
 def _hit_blocks(hits: Sequence[tuple[str, int]]) -> list[tuple[str, int, int, tuple[int, ...]]]:
-    """Group hits into ``(path, first, last, hit lines)`` blocks of ±:data:`GREP_CONTEXT_LINES`."""
-    blocks: list[tuple[str, int, int, tuple[int, ...]]] = []
+    """Group hits into ``(path, first, last, hit lines)`` blocks of ±:data:`GREP_CONTEXT_LINES`.
+
+    Files keep the order of their first hit in ``hits`` (the proximity rank).
+    """
+    by_path: dict[str, list[int]] = {}
     for path, line in hits:
-        first, last = max(1, line - GREP_CONTEXT_LINES), line + GREP_CONTEXT_LINES
-        if blocks and blocks[-1][0] == path and first <= blocks[-1][2] + 1:
-            prev = blocks[-1]
-            blocks[-1] = (path, prev[1], max(prev[2], last), (*prev[3], line))
-        else:
-            blocks.append((path, first, last, (line,)))
+        by_path.setdefault(path, []).append(line)
+    blocks: list[tuple[str, int, int, tuple[int, ...]]] = []
+    for path, lines in by_path.items():
+        for line in sorted(lines):
+            first, last = max(1, line - GREP_CONTEXT_LINES), line + GREP_CONTEXT_LINES
+            if blocks and blocks[-1][0] == path and first <= blocks[-1][2] + 1:
+                prev = blocks[-1]
+                blocks[-1] = (path, prev[1], max(prev[2], last), (*prev[3], line))
+            else:
+                blocks.append((path, first, last, (line,)))
     return blocks
 
 
@@ -389,6 +467,8 @@ def _serve_hits(
     """Serve ``allowed`` hits of ``identifier`` with context; return the hits served."""
     served = 0
     for path, first, last, marks in _hit_blocks(allowed):
+        if assembly.out_of_time(f"search {identifier}: hits in {_one_line(path)}"):
+            continue
         file_lines = lines_of(path)
         if file_lines is None:
             assembly.truncated.append(f"search {identifier}: {_one_line(path)} unreadable")
@@ -422,6 +502,8 @@ def _serve_hits(
 
 def _serve_named_file(assembly: _Assembly, lines_of: _Lines, path: str) -> None:
     """Serve a file the claim names, whole, when it fits; name it otherwise."""
+    if assembly.out_of_time(f"file {_one_line(path)}"):
+        return
     file_lines = lines_of(path)
     if file_lines is None:
         assembly.truncated.append(f"file {_one_line(path)}: unreadable")
@@ -438,6 +520,36 @@ def _serve_named_file(assembly: _Assembly, lines_of: _Lines, path: str) -> None:
         assembly.truncated.append(f"file {_one_line(path)}: {len(file_lines)} lines (budget)")
 
 
+def _named_paths(
+    assembly: _Assembly, repo_root: Path, paths: tuple[str, ...], cited_path: str
+) -> tuple[list[str], list[str]]:
+    """Report whether each path the claim names is present; return ``(header lines, files)``."""
+    lines: list[str] = []
+    files: list[str] = []
+    tracked: tuple[str, ...] | None = ()
+    if any("/" not in rel for rel in paths):
+        tracked = (
+            None
+            if assembly.out_of_time("bare file names of the claim")
+            else tracked_files(repo_root, timeout_s=min(GREP_TIMEOUT_S, assembly.remaining()))
+        )
+    for rel in paths:
+        if "/" not in rel and tracked is None:
+            lines.append(f"path {_one_line(rel)}: could not check")
+            assembly.reads.append(f"path {_one_line(rel)}: could not check")
+            assembly.truncated.append(f"path {_one_line(rel)}: git ls-files could not run")
+            continue
+        found = resolve_claim_path(repo_root, rel, tracked or ())
+        state = "present" if found else "absent"
+        where = (
+            f" ({', '.join(_one_line(p) for p in found[:5])})" if found and found[0] != rel else ""
+        )
+        lines.append(f"path {_one_line(rel)}: {state} in the head tree{where}")
+        assembly.reads.append(f"path {_one_line(rel)}: {state}")
+        files.extend(p for p in found[:2] if p != cited_path and p not in files)
+    return lines, files
+
+
 def _search(
     assembly: _Assembly,
     reader: FileReader,
@@ -450,11 +562,12 @@ def _search(
 ) -> None:
     """Serve the head-tree search (priority 2).
 
-    Path presence first; then, per identifier, its hits with context.
-    An identifier with more than :data:`GREP_COMMON_HITS` hits says
-    nothing specific: its count is given and its hits are named as not
-    served, leaving the :data:`GREP_MAX_HITS` cap to the specific ones.
-    Last, the files the claim names, whole when they fit.
+    Path presence first; then, per identifier, its hits with context,
+    ranked by :func:`rank_hits` and capped at :data:`GREP_MAX_HITS` in
+    all; last, the files the claim names, whole when they fit. Each
+    identifier ends in :attr:`_Assembly.unserved` (hits exist, none
+    served, or the search could not run), :attr:`_Assembly.partial`
+    (some served) or neither (all served, or a measured absence).
     """
     if not identifiers and not paths:
         return
@@ -462,24 +575,24 @@ def _search(
         f"--- head-tree search: git grep -w over tracked files, "
         f"±{GREP_CONTEXT_LINES} lines per hit ---"
     ]
-    named_files: list[str] = []
-    for rel in paths:
-        found = resolve_claim_path(repo_root, rel)
-        state = "present" if found else "absent"
-        where = (
-            f" ({', '.join(_one_line(p) for p in found[:5])})" if found and found[0] != rel else ""
-        )
-        header.append(f"path {_one_line(rel)}: {state} in the head tree{where}")
-        assembly.reads.append(f"path {_one_line(rel)}: {state}")
-        named_files.extend(p for p in found[:2] if p != cited_path and p not in named_files)
-    assembly.add("\n".join(header))
+    path_lines, named_files = _named_paths(assembly, repo_root, paths, cited_path)
+    assembly.add("\n".join([*header, *path_lines]))
     lines_of = _Lines(reader)
-    found_hits = grep_head_tree(repo_root, identifiers) if identifiers else {}
+    found_hits: dict[str, list[tuple[str, int]]] | None = {}
+    if identifiers:
+        found_hits = (
+            None
+            if assembly.out_of_time("head-tree search")
+            else grep_head_tree(
+                repo_root, identifiers, timeout_s=min(GREP_TIMEOUT_S, assembly.remaining())
+            )
+        )
     if found_hits is None:
         for identifier in identifiers:
             assembly.add(
                 f"search `{identifier}`: could not run", f"grep {identifier}: could not run"
             )
+            assembly.unserved.append(identifier)
         assembly.truncated.append("search: git grep could not run")
         found_hits = {}
 
@@ -490,30 +603,29 @@ def _search(
             if not (h[0] == cited_path and cited_served[0] < h[1] <= cited_served[1])
         ]
 
-    specific = [i for i in found_hits if len(_outside(found_hits[i])) <= GREP_COMMON_HITS]
-    per_identifier = max(1, GREP_MAX_HITS // max(1, len(specific)))
-    remaining_hits = GREP_MAX_HITS
+    outside = {name: _outside(hits) for name, hits in found_hits.items()}
+    shares = _allocate({name: len(hits) for name, hits in outside.items()}, GREP_MAX_HITS)
     for identifier, hits in found_hits.items():
-        others = _outside(hits)
+        others = outside[identifier]
         own = len(hits) - len(others)
-        allowed = others[: min(per_identifier, remaining_hits)] if identifier in specific else []
-        remaining_hits -= len(allowed)
-        if identifier not in specific:
-            assembly.truncated.append(
-                f"search {identifier}: {len(others)} hits, too common to serve "
-                f"(over {GREP_COMMON_HITS})"
-            )
-        elif len(others) > len(allowed):
+        allowed = rank_hits(others, cited_path=cited_path, named_files=named_files)[
+            : shares[identifier]
+        ]
+        if len(others) > len(allowed):
             assembly.truncated.append(
                 f"search {identifier}: {len(others) - len(allowed)} hits over the "
                 f"{GREP_MAX_HITS}-hit cap"
             )
         assembly.add(
             f"search `{identifier}`: {len(hits)} hits, {own} inside the cited file above, "
-            f"{len(allowed)} below"
+            f"{len(allowed)} below (nearest first)"
         )
         served = _serve_hits(assembly, lines_of, identifier, allowed)
         assembly.reads.append(f"grep {identifier}: {len(hits)} hits ({served} served)")
+        if others and served == 0:
+            assembly.unserved.append(identifier)
+        elif served < len(others):
+            assembly.partial.append(identifier)
     for path in named_files:
         _serve_named_file(assembly, lines_of, path)
 
@@ -627,6 +739,7 @@ def build_evidence(
     diff: str = "",
     specs: Sequence[tuple[str, str]] = (),
     claim_is_spec_gap: bool = False,
+    deadline_s: float = ASSEMBLY_DEADLINE_S,
 ) -> EvidenceBundle | None:
     """Assemble the judge's evidence for one finding within ``budget_tokens``.
 
@@ -644,11 +757,14 @@ def build_evidence(
         diff: The PR's unified diff; its hunks on ``path`` are served.
         specs: ``(spec id, markdown)`` candidates for the cited section.
         claim_is_spec_gap: Serve a whole spec when the claim cites no label.
+        deadline_s: Wall-clock seconds the assembly may take
+            (:data:`ASSEMBLY_DEADLINE_S`); steps past it are named in
+            ``truncated``.
 
     Returns:
         The bundle, or ``None`` when the file holds none of the cited lines.
     """
-    assembly = _Assembly(budget=budget_tokens)
+    assembly = _Assembly(budget=budget_tokens, deadline=time.monotonic() + deadline_s)
     served = _cited_file(assembly, source, path=path, line_start=line_start, line_end=line_end)
     if served is None:
         return None
@@ -662,13 +778,15 @@ def build_evidence(
         cited_path=path,
         cited_served=served,
     )
-    _diff(assembly, diff, path)
-    _specs(assembly, specs, claim=claim, claim_is_spec_gap=claim_is_spec_gap)
+    if diff and not assembly.out_of_time(f"diff of {_one_line(path)}"):
+        _diff(assembly, diff, path)
+    if specs and not assembly.out_of_time("spec section"):
+        _specs(assembly, specs, claim=claim, claim_is_spec_gap=claim_is_spec_gap)
     sections = list(assembly.sections)
     if assembly.truncated:
         sections.insert(
             0,
-            f"--- PARTIAL EVIDENCE: the {budget_tokens}-token budget or a hit cap left "
+            f"--- PARTIAL EVIDENCE: the {budget_tokens}-token budget, the hit cap or the deadline left "
             f"{len(assembly.truncated)} item(s) unserved, listed at the end ---",
         )
         sections.append(
@@ -682,4 +800,6 @@ def build_evidence(
         truncated=tuple(assembly.truncated),
         tokens=estimate_tokens(text),
         budget_tokens=budget_tokens,
+        unserved=tuple(assembly.unserved),
+        partial=tuple(assembly.partial),
     )

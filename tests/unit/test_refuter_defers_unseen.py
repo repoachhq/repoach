@@ -22,11 +22,14 @@ from pathlib import Path
 
 import pytest
 
+from repoach.cli.review_cmds import refuter_tokens_json
+from repoach.forge.runner import CommandResult
 from repoach.gates.config import (
     GatesConfigError,
     load_gates_config,
     resolve_refuter_context_tokens,
 )
+from repoach.review import refuter_evidence
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -38,6 +41,7 @@ from repoach.review.findings import (
 from repoach.review.hallucination_guard import make_repo_file_reader
 from repoach.review.refuter import (
     DEFERRAL_REASONS,
+    EVIDENCE_NOT_SERVED,
     EVIDENCE_OUTSIDE_WINDOW,
     _parse_verdict,
     _render_prompt,
@@ -165,7 +169,7 @@ def _search_summary(prompt: str, identifier: str) -> tuple[int, int, int] | None
     """Return ``(total, inside the cited file, served below)`` of one search, ``None`` if absent."""
     match = re.search(
         rf"^search `{re.escape(identifier)}`: (\d+) hits, (\d+) inside the cited file above, "
-        r"(\d+) below$",
+        r"(\d+) below \(nearest first\)$",
         prompt,
         re.MULTILINE,
     )
@@ -613,9 +617,164 @@ def test_bare_file_name_is_found_and_served_whole(tmp_path: Path) -> None:
     assert "file api/tests/test_unknown_board.py: whole (2 lines)" in bundle.reads
 
 
-def test_too_common_identifier_is_named_not_served(tmp_path: Path) -> None:
-    files = {f"src/user_{n}.py": "rare_symbol = 2\n" for n in range(210)}
+def test_common_identifier_serves_the_nearest_fifty_hits(tmp_path: Path) -> None:
+    files = {f"src/user_{n:03}.py": "COMMON_TABLE = 1\n" for n in range(210)}
+    files["api/tests/test_table.py"] = "COMMON_TABLE = 2\n"
+    files["src/named.py"] = "COMMON_TABLE = 3\n"
     _git_tree(tmp_path, {"src/m.py": "a = 1\n", **files})
-    bundle = _bundle(tmp_path, "a = 1\n", path="src/m.py", claim="`rare_symbol` is shadowed")
-    assert "grep rare_symbol: 210 hits (0 served)" in bundle.reads
-    assert "search rare_symbol: 210 hits, too common to serve (over 200)" in bundle.truncated
+    bundle = _bundle(
+        tmp_path, "a = 1\n", path="src/m.py", claim="`COMMON_TABLE` drifts from src/named.py"
+    )
+    served = re.findall(r"^--- (\S+): lines \d+-\d+ \(hit lines", bundle.text, re.MULTILINE)
+    assert served[:2] == ["src/named.py", "api/tests/test_table.py"]
+    assert len(served) == GREP_MAX_HITS
+    assert "grep COMMON_TABLE: 212 hits (50 served)" in bundle.reads
+    assert "search COMMON_TABLE: 162 hits over the 50-hit cap" in bundle.truncated
+    assert bundle.partial == ("COMMON_TABLE",)
+    assert bundle.unserved == ()
+
+
+def test_refutation_resting_on_a_partly_served_identifier_is_deferred(tmp_path: Path) -> None:
+    files = {f"src/user_{n:03}.py": "COMMON_TABLE = 1\n" for n in range(210)}
+    _git_tree(tmp_path, {"src/m.py": "a = 1\n", **files})
+    citing = judge_finding(
+        _finding("src/m.py", "`COMMON_TABLE` has a divergent copy"),
+        repo_root=tmp_path,
+        judge=lambda _p: _reply("refuted", "every COMMON_TABLE copy agrees"),
+    )
+    assert citing.status is FindingStatus.PROPOSED
+    assert citing.reason == EVIDENCE_OUTSIDE_WINDOW
+    elsewhere = judge_finding(
+        _finding("src/m.py", "`COMMON_TABLE` has a divergent copy"),
+        repo_root=tmp_path,
+        judge=lambda _p: _reply("refuted", "line 1 of the cited file is a constant"),
+    )
+    assert elsewhere.status is FindingStatus.REFUTED
+
+
+def test_grep_timeout_defers_without_calling_the_judge(tmp_path: Path, monkeypatch) -> None:
+    _git_tree(tmp_path, {"src/m.py": "a = 1\n", "src/other.py": "wanted_symbol = 1\n"})
+    real_spawn = refuter_evidence.spawn
+
+    def _slow_grep(argv, **kwargs):
+        if argv[:2] == ["git", "grep"]:
+            return CommandResult(returncode=-1, stdout="", stderr="timeout after 30s", argv=argv)
+        return real_spawn(argv, **kwargs)
+
+    monkeypatch.setattr(refuter_evidence, "spawn", _slow_grep)
+    calls: list[str] = []
+    judgement = judge_finding(
+        _finding("src/m.py", "`wanted_symbol` is duplicated"),
+        repo_root=tmp_path,
+        judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
+    )
+    assert calls == []
+    assert judgement.status is FindingStatus.PROPOSED
+    assert judgement.reason == "evidence outside window (wanted_symbol not served)"
+    assert "search: git grep could not run" in judgement.truncated
+
+
+def test_hits_cut_by_the_budget_defer_without_calling_the_judge(tmp_path: Path) -> None:
+    other = "".join(f"pad_{n} = '{'y' * 300}'\n" for n in range(1, 60))
+    other = other.replace("pad_30 =", "wanted_symbol =")
+    cited = "".join(f"cited_{n} = {n}\n" for n in range(1, 50))
+    _git_tree(tmp_path, {"src/m.py": cited, "src/other.py": other})
+    bundle = _bundle(
+        tmp_path,
+        cited,
+        path="src/m.py",
+        claim="`wanted_symbol` duplicates this table",
+        budget=estimate_tokens(cited) + 120,
+    )
+    assert bundle.unserved == ("wanted_symbol",)
+    assert "search wanted_symbol: hit src/other.py:30 (budget)" in bundle.truncated
+    calls: list[str] = []
+    judgement = judge_finding(
+        _finding("src/m.py", "`wanted_symbol` duplicates this table"),
+        repo_root=tmp_path,
+        judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
+        context_tokens=1,
+    )
+    assert calls == []
+    assert judgement.status is FindingStatus.PROPOSED
+    assert judgement.reason == "evidence outside window (wanted_symbol not served)"
+
+
+def test_unserved_reason_is_a_closed_set_template() -> None:
+    assert EVIDENCE_NOT_SERVED in DEFERRAL_REASONS
+    assert EVIDENCE_NOT_SERVED.format(identifiers="X") == "evidence outside window (X not served)"
+
+
+def test_assembly_deadline_names_what_it_left_out(tmp_path: Path) -> None:
+    _git_tree(tmp_path, {"src/m.py": "a = 1\n", "src/other.py": "wanted_symbol = 1\n"})
+    bundle = build_evidence(
+        "a = 1\n",
+        repo_root=tmp_path,
+        reader=make_repo_file_reader(tmp_path),
+        path="src/m.py",
+        line_start=1,
+        line_end=1,
+        claim="`wanted_symbol` is duplicated",
+        budget_tokens=36_000,
+        diff="diff --git a/src/m.py b/src/m.py\n@@ -1 +1 @@\n+a = 1\n",
+        deadline_s=0,
+    )
+    assert bundle is not None
+    assert "head-tree search: 90 s assembly deadline reached" in bundle.truncated
+    assert "diff of src/m.py: 90 s assembly deadline reached" in bundle.truncated
+    assert bundle.unserved == ("wanted_symbol",)
+
+
+def test_bare_file_names_cost_one_ls_files_per_finding(tmp_path: Path, monkeypatch) -> None:
+    _git_tree(tmp_path, {"src/m.py": "a = 1\n", "a/x_one.py": "", "b/x_two.py": ""})
+    real_spawn = refuter_evidence.spawn
+    seen: list[list[str]] = []
+
+    def _counting(argv, **kwargs):
+        seen.append(argv)
+        return real_spawn(argv, **kwargs)
+
+    monkeypatch.setattr(refuter_evidence, "spawn", _counting)
+    bundle = _bundle(tmp_path, "a = 1\n", path="src/m.py", claim="x_one.py and x_two.py differ")
+    assert sum(1 for argv in seen if argv[:2] == ["git", "ls-files"]) == 1
+    assert "path x_one.py: present in the head tree (a/x_one.py)" in bundle.text
+    assert "path x_two.py: present in the head tree (b/x_two.py)" in bundle.text
+
+
+def test_run_line_and_payload_show_the_refuter_cost(tmp_path: Path) -> None:
+    root = _yoob_like_tree(tmp_path)
+    db = tmp_path / "f.db"
+    init_findings_schema(db)
+    record_finding(db, _finding(MIGRATION_FILE, MIGRATION_CLAIM, line=6))
+    report = judge_findings_for_pr(
+        db,
+        pr_number=327,
+        repo_root=root,
+        head_sha="abc1234",
+        judge_factory=lambda: lambda _p: _reply("verified", "real"),
+        context_tokens=40_000,
+    )
+    tokens = report.outcomes[0].evidence_tokens
+    assert tokens > 0
+    assert report.evidence_tokens == tokens
+    assert report.summary_line().endswith(f", evidence_tokens total {tokens}")
+    usage = {"per_reviewer": [{"reviewer": "Refuter", "total_tokens": 397_057}]}
+    assert refuter_tokens_json(report.outcomes, usage) == {"evidence": tokens, "total": 397_057}
+    assert refuter_tokens_json((), {"per_reviewer": []}) == {"evidence": 0, "total": 0}
+
+
+def test_evidence_window_is_measured_in_tokens_never_money() -> None:
+    import ast
+    import inspect
+
+    from repoach.review import refuter
+
+    for module in (refuter_evidence, refuter):
+        tree = ast.parse(inspect.getsource(module))
+        imported = {
+            node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        }
+        assert not any("usage" in name for name in imported), module.__name__
+    assert not any("cost" in name for name in inspect.signature(build_evidence).parameters)
+    assert not any("cost" in name for name in inspect.signature(judge_finding).parameters)
+    assert not any("cost" in name for name in inspect.signature(judge_findings_for_pr).parameters)
