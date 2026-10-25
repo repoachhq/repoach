@@ -315,7 +315,7 @@ def review_pr(
     ``verdict_basis`` is the ids the verdict counts as open blocking,
     each one entry of ``findings``. One ``refuter: judged …`` line on
     stderr counts the refuter's states and reasons
-    (SP-REFUTER-JUDGES-WHAT-IT-CAN), then a ``findings: N listed`` table
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN), then a ``report: N finding(s) listed`` table
     names each finding's judge and a ``verdict basis:`` line closes it.
 
     A dry run closes the forge's write barrier (SP-DRY-RUN-NEVER-POSTS):

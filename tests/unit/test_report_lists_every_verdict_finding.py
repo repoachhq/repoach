@@ -188,7 +188,7 @@ def test_stderr_table_and_sticky_report_carry_the_judge(tmp_path: Path) -> None:
     db, mechanical_id, _, _, facts, entries = _run(tmp_path)
 
     lines = findings_table_lines(entries, facts.open_blocking_ids)
-    assert lines[0] == "findings: 4 listed"
+    assert lines[0] == "report: 4 finding(s) listed"
     assert lines[-1] == f"verdict basis: #{mechanical_id}"
     mechanical_row = next(line for line in lines if line.startswith(f"  #{mechanical_id} "))
     assert "mechanical" in mechanical_row

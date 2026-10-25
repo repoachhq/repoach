@@ -37,7 +37,7 @@ constraints: {}
   `open_blocking_findings` counts, in both `summarise_ledger_facts` and
   `gather_merge_facts`.
 - G8: the report (`review pr` JSON `findings[]`, the stderr
-  `findings: N listed` table, the sticky report and the archive JSON)
+  `report: N finding(s) listed` table, the sticky report and the archive JSON)
   lists every finding that can move `final_verdict`, each once, with
   `judge` in {`mechanical`, `refuter`, `reverify`, `ledger`}, `state`,
   `verification_method` (`mechanical:<claim_type>` for a mechanical

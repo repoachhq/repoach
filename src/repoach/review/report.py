@@ -392,11 +392,11 @@ def findings_table_lines(entries: list[ReportFinding], basis: list[int]) -> list
         basis: The ids the verdict rests on.
 
     Returns:
-        A ``findings: N listed`` header, one row per finding (id, judge,
+        A ``report: N finding(s) listed`` header, one row per finding (id, judge,
         state, method, claim type, location, ``BLOCKING`` when in the
         basis) and a closing ``verdict basis:`` line.
     """
-    lines = [f"findings: {len(entries)} listed"]
+    lines = [f"report: {len(entries)} finding(s) listed"]
     for entry in entries:
         mark = " BLOCKING" if entry.blocking else ""
         lines.append(
