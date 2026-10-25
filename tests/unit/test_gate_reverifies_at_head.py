@@ -33,6 +33,7 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
     record_review_integrity,
+    record_verification_attempt,
 )
 from repoach.review.head_reverify import REVERIFY_METHOD
 from repoach.review.merge_gate import MergeDecision, MergeFacts
@@ -640,3 +641,89 @@ def test_identical_claims_of_several_reviewers_cost_one_judge_call(
     assert _row(db, first).status is FindingStatus.RESOLVED_AT_HEAD
     assert _row(db, second).status is FindingStatus.RESOLVED_AT_HEAD
     assert evaluation.facts.reverified == {"resolved": 2, "still_open": 0, "needs_judgement": 0}
+
+
+_MIGRATION = '"""Relabel the generic board."""\n\n\ndef upgrade():\n    """Relabel."""\n'
+_MIGRATION_TEST = '"""Migration tests."""\n\n\ndef test_relabels_generic_rows():\n    assert True\n'
+_MIGRATION_CLAIM = "upgrade() is untested; add test_relabels_generic_rows"
+
+
+def _missing_migration_test(repo: _Repo, db: Path) -> tuple[str, int]:
+    head_a = repo.push_head({"api/alembic/versions/n0_relabel.py": _MIGRATION}, "feat: relabel")
+    finding_id = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.MISSING_TEST,
+        file="api/alembic/versions/n0_relabel.py",
+        line=4,
+        claim=_MIGRATION_CLAIM,
+        method="symbol_search",
+    )
+    return head_a, finding_id
+
+
+def test_python_test_written_under_a_nested_tests_dir_resolves_missing_test(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _missing_migration_test(repo, db)
+    head_b = repo.push_head({"api/tests/test_relabel.py": _MIGRATION_TEST}, "test: relabel")
+    _review_at(db, head_b)
+
+    evaluation = gate(repo, head_b, _never)
+
+    row = _row(db, finding_id)
+    assert row.status is FindingStatus.RESOLVED_AT_HEAD
+    assert row.verification_result == (
+        f"resolved at {head_b[:7]}: test_relabels_generic_rows exists at api/tests/test_relabel.py:4"
+    )
+    assert evaluation.decision.merge is True
+
+
+def test_python_test_absent_at_head_names_what_was_searched(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _missing_migration_test(repo, db)
+    head_b = repo.push_head(
+        {"api/tests/test_other.py": '"""Other."""\n\n\ndef test_other():\n    assert True\n'},
+        "test: other",
+    )
+    _review_at(db, head_b)
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert _row(db, finding_id).status is FindingStatus.VERIFIED
+    assert evaluation.decision.merge is False
+    assert any(
+        r.endswith(
+            f"still present at {head_b[:7]} (no test for test_relabels_generic_rows "
+            f"(searched 1 test files at {head_b[:7]}))"
+        )
+        for r in evaluation.decision.reasons
+    )
+
+
+def test_stale_still_present_stamp_at_the_head_yields_to_the_test_found_there(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _missing_migration_test(repo, db)
+    head_b = repo.push_head({"api/tests/test_relabel.py": _MIGRATION_TEST}, "test: relabel")
+    _review_at(db, head_b)
+    record_verification_attempt(
+        db,
+        finding_id,
+        method=REVERIFY_METHOD,
+        result=f"still present at {head_b[:7]}: no test for test_relabels_generic_rows",
+        checked_at_sha=head_b,
+    )
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert _row(db, finding_id).status is FindingStatus.RESOLVED_AT_HEAD
+    assert evaluation.facts.reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 0}
+    assert evaluation.decision.merge is True

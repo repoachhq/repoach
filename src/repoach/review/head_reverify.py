@@ -324,15 +324,27 @@ def _recheck(
         if ci_green:
             return "resolved", "ci", f"CI green at {sha7}"
         return "still_open", "ci", f"CI not green at {sha7}"
-    if _cited_file_absent(finding, repo_root):
-        return "resolved", "file_presence", f"{finding.file} absent at {sha7}"
-    if finding.claim_type in MECHANICAL_CLAIM_TYPES:
-        settled = _mechanical(finding, repo_root, config)
-        if settled is not None:
-            return settled
-    elif finding.claim_type not in JUDGED_CLAIM_TYPES:
+    settled = _settled_on_disk(finding, repo_root=repo_root, head_sha=head_sha, config=config)
+    if settled is not None:
+        return settled
+    if finding.claim_type not in MECHANICAL_CLAIM_TYPES | JUDGED_CLAIM_TYPES:
         _log.info("head_reverify.unknown_claim_type", claim_type=finding.claim_type.value)
     return _judged(finding, repo_root, judge, max_judged, cap)
+
+
+def _settled_on_disk(
+    finding: Finding, *, repo_root: Path, head_sha: str, config: GatesConfig
+) -> tuple[ReverifyState, str, str] | None:
+    """Settle a finding from the head tree alone, without a model call.
+
+    ``None`` when neither the cited file's absence nor a mechanical check
+    settles it (the refuter decides).
+    """
+    if _cited_file_absent(finding, repo_root):
+        return "resolved", "file_presence", f"{finding.file} absent at {head_sha[:7]}"
+    if finding.claim_type in MECHANICAL_CLAIM_TYPES:
+        return _mechanical(finding, repo_root, config)
+    return None
 
 
 def _persist(
@@ -390,6 +402,9 @@ def _cached(finding: Finding, head_sha: str) -> Reverification | None:
 
     ``broken_behavior`` is never reused: its re-check is CI at the head,
     which a later gate may read green where an earlier one read pending.
+    A mechanical claim's stamp is reused only when no on-disk check
+    settles it now: that check costs no model call, and a stamp left by
+    an earlier, narrower check must not outlive it (G11).
     """
     if (
         finding.claim_type is ClaimType.BROKEN_BEHAVIOR
@@ -499,11 +514,20 @@ def reverify_older_findings(
     for finding in fetch_findings(db_path, pr_number):
         if not _older_unsettled(finding, head_sha, reads_ci=ci_green is not None):
             continue
+        key = _claim_key(finding)
         cached = _cached(finding, head_sha)
         if cached is not None:
-            outcomes.append(cached)
-            continue
-        key = _claim_key(finding)
+            if finding.claim_type not in MECHANICAL_CLAIM_TYPES:
+                outcomes.append(cached)
+                continue
+            if key not in seen:
+                fresh = _settled_on_disk(
+                    finding, repo_root=repo_root, head_sha=head_sha, config=config
+                )
+                if fresh is None or fresh[0] == cached.state:
+                    outcomes.append(cached)
+                    continue
+                seen[key] = fresh
         if key not in seen:
             seen[key] = _recheck(
                 finding,
