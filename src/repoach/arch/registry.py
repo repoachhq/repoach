@@ -74,6 +74,8 @@ class SpecNode:
             / ``format:``).
         depends_on: Declared architecture edges, by SP-ID.
         frontier: True when the file carried no frontmatter (un-governed).
+        status: The frontmatter ``status``, lower-cased (empty for a
+            frontier node).
     """
 
     id: str
@@ -82,6 +84,7 @@ class SpecNode:
     owns_resources: tuple[str, ...] = ()
     depends_on: tuple[str, ...] = ()
     frontier: bool = False
+    status: str = ""
 
 
 def _split_frontmatter(text: str) -> str | None:
@@ -153,7 +156,30 @@ def _parse_node(path: Path) -> SpecNode:
             the YAML is invalid, not a mapping, missing a required key, or
             carries a malformed ``owns`` block.
     """
-    block = _split_frontmatter(path.read_text(encoding="utf-8"))
+    return parse_spec_text(path.read_text(encoding="utf-8"), path)
+
+
+def parse_spec_text(text: str, path: Path) -> SpecNode:
+    """Parse one spec's markdown *text* into a :class:`SpecNode`.
+
+    The single frontmatter parser behind :func:`load_registry`, exposed so
+    a caller holding a spec's text from another tree (a ``git show`` of
+    the base ref) reads it with the same rules.
+
+    Args:
+        text: The spec markdown.
+        path: The spec's path, recorded on the node and used in errors.
+
+    Returns:
+        A governed node when the text carries valid frontmatter, else a
+        frontier node.
+
+    Raises:
+        MalformedFrontmatterError: The text opens a frontmatter fence but
+            the YAML is invalid, not a mapping, missing a required key, or
+            carries a malformed ``owns`` block.
+    """
+    block = _split_frontmatter(text)
     if block is None:
         return SpecNode(id=_frontier_id(path), path=path, frontier=True)
     try:
@@ -174,10 +200,11 @@ def _parse_node(path: Path) -> SpecNode:
         owns_code=_as_tuple(owns.get("code")),
         owns_resources=_as_tuple(owns.get("resources")),
         depends_on=_as_tuple(data.get("depends_on")),
+        status=str(data["status"]).strip().lower(),
     )
 
 
-def _path_contains(owned: str, artifact: str) -> bool:
+def path_contains(owned: str, artifact: str) -> bool:
     """Return whether an owned code path is the artifact or an ancestor of it."""
     base = owned.rstrip("/")
     return artifact == base or artifact.startswith(base + "/")
@@ -257,7 +284,7 @@ class Registry:
         for node in self.nodes.values():
             for owned in node.owns_code:
                 base = owned.rstrip("/")
-                if _path_contains(owned, artifact) and len(base) > best_len:
+                if path_contains(owned, artifact) and len(base) > best_len:
                     best_id = node.id
                     best_len = len(base)
         return best_id
@@ -283,7 +310,7 @@ class Registry:
                 id_b, path_b = owned_paths[inner]
                 if id_a == id_b:
                     continue
-                if _path_contains(path_a, path_b) or _path_contains(path_b, path_a):
+                if path_contains(path_a, path_b) or path_contains(path_b, path_a):
                     deeper = path_a if len(path_a) >= len(path_b) else path_b
                     conflicts.append(
                         OwnershipConflict(artifact=deeper, spec_ids=tuple(sorted((id_a, id_b))))
