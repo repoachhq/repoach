@@ -17,6 +17,10 @@ the origin remote. A forge that cannot be selected exits ``2``.
   off PR ``<N>`` and emit the full TeamOutcome as JSON.  Works
   regardless of where the workflow ran (local machine vs. Actions
   runner) — the comment lives on the PR itself.
+* ``repoach review merge-attempts <N>`` — every recorded merge attempt
+  of PR ``<N>`` (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5).
+* ``repoach review stranded`` — the open PRs green at their head that no
+  merge reached, ``--dispatch`` re-arms them (G3, D3).
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -58,6 +63,16 @@ from ..review.auto_merge import (
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
+from ..review.merge_wait import (
+    attempts_line,
+    attempts_report,
+    check_producers,
+    dispatch_stranded,
+    judge_pull_request,
+    load_attempts,
+    required_checks,
+    stranded,
+)
 from ..review.orchestrator import run_review
 from ..review.refuter import Refutation
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
@@ -632,6 +647,110 @@ def review_merge(
         )
     )
     raise typer.Exit(code=merge_exit_code(result.outcome))
+
+
+@review_app.command("merge-attempts")
+def review_merge_attempts(
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab)."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+) -> None:
+    """Print every recorded merge attempt of a PR (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5).
+
+    Reads the PR's ``<!-- repoach-merge-attempts:v1 -->`` comment, else the
+    local ``pr_merges`` table. Stdout is one ``format:merge-attempts-json``
+    object; stderr is the line
+    ``merge attempts: <n>, last: <OUTCOME> on <check|reason> at <t> (<trigger>)``.
+    Read-only; exits 0, or 2 when the forge cannot be selected.
+    """
+    project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    if forge is None:
+        try:
+            forge = select_forge()
+        except ForgeError as exc:
+            raise _forge_failure(exc) from exc
+    attempts = load_attempts(forge, Path(get_settings().db_path), pr_number)
+    report = attempts_report(pr_number, attempts)
+    typer.echo(attempts_line(attempts), err=True)
+    typer.echo(json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False))
+
+
+@review_app.command("stranded")
+def review_stranded(
+    base: str | None = typer.Option(
+        None, "--base", help="Only PRs targeting this branch (default: the integration branch)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object on stdout."),
+    dispatch: bool = typer.Option(
+        False, "--dispatch", help="Dispatch merge-on-ci.yml once for each stranded PR."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="With --dispatch, name what would be dispatched; write nothing."
+    ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+) -> None:
+    """List the open PRs that are green at their head with no merge since.
+
+    SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G3: a PR is stranded when its
+    required checks have been green for ``stranded_grace_s`` and its last
+    attempt at that head is absent, older, or a skip. Read-only unless
+    ``--dispatch``, which starts ``merge-on-ci.yml -f pr=<n>`` once per
+    stranded PR through the write barrier and prints ``dispatched #<n>
+    (<reason>)`` on stderr (D3, the release sweep). ``--dry-run`` writes
+    nothing. PRs whose required checks are cancelled-only or missing are
+    listed under ``unjudged``. Exits 0, or 2 when the forge cannot be
+    selected or read.
+    """
+    root = project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    try:
+        forge = forge or select_forge(cwd=root)
+        target = base or get_settings().integration_branch
+        prs = forge.open_pull_requests(target)
+        names = required_checks(root)
+        producers = check_producers(root)
+        verdicts = {pr.number: judge_pull_request(forge, pr, names, producers) for pr in prs}
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    db = Path(get_settings().db_path)
+    attempts = {pr.number: load_attempts(forge, db, pr.number) for pr in prs}
+    rows = stranded(prs, verdicts, attempts, datetime.now(UTC))
+    dispatched: list[int] = []
+    if dispatch:
+        dispatched = dispatch_stranded(
+            forge, rows, dry_run=dry_run, echo=lambda line: typer.echo(line, err=True)
+        )
+    unjudged = [
+        {"pr": number, "state": v.state, "checks": v.cancelled or v.missing}
+        for number, v in verdicts.items()
+        if v.state in {"cancelled", "missing"}
+    ]
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "base": target,
+                    "stranded": [
+                        {
+                            "pr": row.pr_number,
+                            "head_sha": row.head_sha,
+                            "gate": "stranded",
+                            "reason": row.reason,
+                        }
+                        for row in rows
+                    ],
+                    "unjudged": unjudged,
+                    "dispatched": dispatched,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+    for row in rows:
+        typer.echo(f"#{row.pr_number}\t{row.head_sha[:7]}\tstranded\t{row.reason}")
+    for entry in unjudged:
+        typer.echo(f"#{entry['pr']}\t\t{entry['state']}\t{', '.join(entry['checks'])}")
 
 
 @review_app.command("insights")
