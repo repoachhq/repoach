@@ -1,14 +1,14 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
-version: 0.4
+version: 0.5
 status: draft
 author: agent
 created: 2026-10-26
 updated: 2026-10-26
 
 owns:
-  code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_context_window.py, src/repoach/review/thread_commands.py, src/repoach/cli/threads_cmds.py, src/repoach/review/thread_webhook.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_commands.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_threads_cli.py, tests/unit/test_gate_open_threads.py, tests/unit/test_forge_review_threads.py, tests/unit/test_thread_webhook.py, tests/unit/test_threads_owners.py, tests/integration/test_pr_threads_lifecycle.py]
+  code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_context_window.py, src/repoach/review/thread_commands.py, src/repoach/cli/threads_cmds.py, src/repoach/review/thread_webhook.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_commands.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_threads_cli.py, tests/unit/test_gate_open_threads.py, tests/unit/test_forge_review_threads.py, tests/unit/test_thread_webhook.py, tests/unit/test_threads_owners.py, tests/unit/test_threads_triggers.py, tests/unit/test_threads_serve_unit.py, deploy/systemd/repoach-threads-serve.service, tests/integration/test_pr_threads_lifecycle.py]
   resources: [db:table:finding_threads, db:table:finding_thread_events, format:thread-state-line, format:thread-reply-marker, format:thread-owner-command, format:gitlab-note-webhook, format:threads-serve-unit]
 
 depends_on: [SP-UNIVERSAL-FORGE, SP-FINDING-THREAD-IDS, SP-POSTING-REPLAY-DEDUPES, SP-GATE-REVERIFIES-AT-HEAD, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-AGENT-CONTEXT-LOOP, SP-RED-STOPS-THE-LINE, SP-DRY-RUN-NEVER-POSTS, SP-FINDINGS-INIT-RACE, SP-FINDINGS-BRIDGE-DOCFIX, SP-ORCH-DOCSTRING, SP-UNIVERSAL-PROJECT-CONFIG, SP-CLI-STDOUT-ONE-JSON, SP-JUDGE-FAILURE-IS-RETRIED]
@@ -556,7 +556,8 @@ API read returns credentials, so the owner reads them.
 
 ### Steps (Yoob-side files are changed by a Yoob MR, not by this spec)
 
-1. **The unit** `/etc/systemd/system/repoach-threads-serve.service`:
+1. **The unit**, shipped as `deploy/systemd/repoach-threads-serve.service`
+   and installed at `/etc/systemd/system/repoach-threads-serve.service`:
 
    ```ini
    [Unit]
@@ -685,7 +686,7 @@ All on the fixture forge `tests/thread_fakes.py` (an in-memory forge
 implementing the protocol's thread methods and recording every write)
 unless an AC names a recorded fixture or a live measurement.
 
-- [ ] AC1: `review_threads`, `resolve_thread` and `unresolve_thread` run
+- [ ] AC1: `pytest -q tests/unit/test_forge_review_threads.py::test_github_review_threads_resolve_and_unresolve` and `pytest -q tests/unit/test_forge_review_threads.py::test_gitlab_review_threads_resolve_and_unresolve` and `pytest -q tests/unit/test_forge_review_threads.py::test_thread_writes_refused_in_dry_run` → green: `review_threads`, `resolve_thread` and `unresolve_thread` run
   against recorded conformance fixtures
   (`tests/fixtures/forge/{github,gitlab}/review_threads*.json`). GitHub
   makes a GraphQL `reviewThreads` read and the
@@ -693,75 +694,75 @@ unless an AC names a recorded fixture or a live measurement.
   id. GitLab reads `discussions` (mapping `resolved`/`resolved_by`) and
   sends `PUT …/discussions/<id>` with `resolved=true|false`. In dry run
   both writes raise `ForgeWriteRefusedError`.
-- [ ] AC2: A posting run with 3 findings (one shared by two roles)
+- [ ] AC2: `pytest -q tests/unit/test_pr_threads.py::test_posting_opens_one_thread_per_fingerprint` → green: A posting run with 3 findings (one shared by two roles)
   opens exactly 2 threads and writes 2 `finding_threads` rows (state
   `open`, `rounds = 0`, `last_head` = head, forge thread id set), with
   the second role in `co_roles`.
-- [ ] AC3 (open → fixed-at-head → resolved): F is posted at head A as
+- [ ] AC3 (open → fixed-at-head → resolved): `pytest -q tests/integration/test_pr_threads_lifecycle.py::test_open_fixed_at_head_resolved` → green: F is posted at head A as
   T1. Head B is pushed where re-verification says `resolved`. Then
   `threads reply` posts one reply ending `state: resolved (fixed at
   <B7>)`, calls `resolve_thread(T1)` once, the row is `resolved` /
   `fixed`, and F is `resolved_at_head`.
-- [ ] AC4 (D7, coder): T1 is confirmed at head A. `threads reply`
+- [ ] AC4 (D7, coder): `pytest -q tests/unit/test_thread_coder_dispatch.py::test_confirmed_thread_dispatches_coder_once` and `pytest -q tests/integration/test_pr_threads_lifecycle.py::test_coder_fix_resolves_thread` → green: T1 is confirmed at head A. `threads reply`
   dispatches the fake coder exactly once, with a brief containing F's
   id, claim, evidence pointer, A and the thread history. A second
   `threads reply` at A dispatches 0. The coder's commit lands on the
   PR branch as head B (fast-forward, no force). The next `threads
   reply` resolves T1 with `state: resolved (fixed at <B7>)`.
-- [ ] AC5 (D7, coder fails): the fake coder ends without settling F,
+- [ ] AC5 (D7, coder fails): `pytest -q tests/unit/test_thread_coder_dispatch.py::test_coder_failing_twice_escalates` → green: the fake coder ends without settling F,
   and the reply ends `coder round 1 did not settle: <reason>` and
   `state: open`. A second failure gives `state: escalated to owner`,
   the row is `escalated`, and there is no third dispatch.
-- [ ] AC6 (disputed twice → escalated): the author disputes; the fake
+- [ ] AC6 (disputed twice → escalated): `pytest -q tests/unit/test_thread_reply.py::test_disputed_twice_escalates` → green: the author disputes; the fake
   refuter upholds. The reply quotes evidence lines and ends `state:
   open`, and `disputed_rounds = 1`. The author disputes again: no
   refuter call, the reply ends `state: escalated to owner`, and the
   row is `escalated`.
-- [ ] AC7 (disputed, refuted): the author disputes; the refuter
+- [ ] AC7 (disputed, refuted): `pytest -q tests/unit/test_thread_reply.py::test_disputed_and_refuted_resolves` → green: the author disputes; the refuter
   refutes. The reply ends `state: resolved (refuted: <why>)`, T is
   resolved on the forge, and F is `refuted`.
-- [ ] AC8 (deferral): the author writes "will do later". State,
+- [ ] AC8 (deferral): `pytest -q tests/unit/test_thread_reply.py::test_deferral_changes_nothing` → green: the author writes "will do later". State,
   `rounds` and `coder_rounds` are unchanged, at most one reply is
   posted at that head, and a second deferral at the same head posts
   nothing.
-- [ ] AC9 (author resolves): the author resolves T1 on the fixture
+- [ ] AC9 (author resolves): `pytest -q tests/unit/test_pr_threads.py::test_author_resolve_is_reopened_by_role` → green: the author resolves T1 on the fixture
   forge. The next `threads reply` calls `unresolve_thread(T1)` once
   and posts exactly `reopened: only <role> or an owner closes this
   thread (resolved by @<author>)` followed by `state: open`. The row
   stays `open` and one `forge_resolved` event is stored.
-- [ ] AC10 (gate): with T3 and T7 open, `review gate` refuses and its
+- [ ] AC10 (gate): `pytest -q tests/unit/test_gate_open_threads.py::test_gate_names_open_and_escalated_threads` and `pytest -q tests/unit/test_gate_open_threads.py::test_gate_merges_when_every_thread_resolved` → green: with T3 and T7 open, `review gate` refuses and its
   reasons contain `open threads: T3, T7`. With an escalated T5 they
   contain `escalated threads: T5 (owner)`. A blocking verified
   finding without a thread gives `blocking findings without a
   resolved thread: #<id>`. `review pr` reports `REQUEST_CHANGES` in
   each case. With every thread resolved and nothing else failing,
   the gate merges.
-- [ ] AC11 (owner `/wontfix`): a configured owner writes `/wontfix
+- [ ] AC11 (owner `/wontfix`): `pytest -q tests/unit/test_thread_commands.py::test_owner_wontfix_resolves_and_waives` and `pytest -q tests/unit/test_thread_commands.py::test_non_owner_command_changes_nothing` → green: a configured owner writes `/wontfix
   covered by the integration test`. The bot posts one line ending
   `state: resolved (wontfix: covered by the integration test)`,
   resolves the thread, and F is `waived`. The same comment from a
   non-owner changes nothing and gets one reply naming the owners.
   `/wontfix` without a reason is refused with a line. `/resolve <r>`
   and `/reopen` behave as Behavior step 4 says.
-- [ ] AC12 (replay): running `threads reply` twice on the same forge
+- [ ] AC12 (replay): `pytest -q tests/unit/test_pr_threads.py::test_replay_posts_no_duplicate` → green: running `threads reply` twice on the same forge
   state posts 0 comments and makes 0 resolve/unresolve calls the
   second time; its JSON reports `skipped_duplicates` ≥ 1. Every agent
   reply carries the `repoach-thread` marker.
-- [ ] AC13 (bounds): across a scripted 5-event exchange, no thread
+- [ ] AC13 (bounds): `pytest -q tests/unit/test_thread_reply.py::test_two_agent_rounds_then_escalated` → green: across a scripted 5-event exchange, no thread
   receives more than 2 agent rounds. The next qualifying event yields
   `state: escalated to owner`, and the escalated thread gets no
   further agent reply; only owner commands are acted on.
-- [ ] AC14 (force-push): head C moves F's lines by 30, and the new
+- [ ] AC14 (force-push): `pytest -q tests/unit/test_pr_threads.py::test_force_push_reanchors_without_new_thread` → green: head C moves F's lines by 30, and the new
   review raises the same claim. No new thread is posted, the thread
   count is unchanged, `anchor_line` and `last_head` are updated, and
   exactly one `re-anchored at <file>:<line> (head <C7>)` reply is
   posted.
-- [ ] AC15 (file deleted): head D removes F's file, and the reply ends
+- [ ] AC15 (file deleted): `pytest -q tests/unit/test_pr_threads.py::test_deleted_file_resolves_thread` → green: head D removes F's file, and the reply ends
   `state: resolved (file removed at <D7>)`.
-- [ ] AC16 (owner override): T1 was resolved by its role and the owner
+- [ ] AC16 (owner override): `pytest -q tests/unit/test_thread_commands.py::test_owner_reopen_overrides_role` → green: T1 was resolved by its role and the owner
   writes `/reopen`. The thread is `open`, the forge thread is
   unresolved, and no role reply resolves it again at the same head.
-- [ ] AC17 (D6 context): a 12-turn fixture thread (6 author, 6 role,
+- [ ] AC17 (D6 context): `pytest -q tests/unit/test_thread_context_window.py::test_twelve_turns_give_summary_and_last_turns` and `pytest -q tests/unit/test_thread_context_window.py::test_reply_cites_evidence_from_the_row` → green: a 12-turn fixture thread (6 author, 6 role,
   over 3 heads) with a role context size that fits system, the current
   event and 3 turns yields a context of exactly `system` + one `assistant`
   turn `thread summary (9 turns, heads <a7>..<c7>)` + the last 3 turns
@@ -770,64 +771,67 @@ unless an AC names a recorded fixture or a live measurement.
   (no summarizer call) by a reply on the next event. The reply cites
   F's `evidence_pointer` and claim taken from the row, which the test
   proves by making them absent from the replayed turns.
-- [ ] AC18 (CLI): `repoach threads <pr> --json` prints one JSON
+- [ ] AC18 (CLI): `pytest -q tests/unit/test_threads_cli.py::test_threads_table_and_json` → green: `repoach threads <pr> --json` prints one JSON
   document listing every row with the columns of Interface/CLI, and
   without `--json` a table with one line per thread. On a PR with no
   rows it prints an empty list and exits 0.
-- [ ] AC19 (forge settings, measured live after rollout):
+- [ ] AC19 (forge settings, measured live after rollout): live measurement, no pytest selector:
   `glab api projects/67827362` returns
   `"only_allow_merge_if_all_discussions_are_resolved":true`, and `gh
   api repos/repoachhq/repoach/rulesets/25641051` and `…/25641050`
   each return `"required_review_thread_resolution":true`. `review
   gate` prints the measured value as `threads_setting=true`, and
   prints the named line when false.
-- [ ] AC20 (dry run): `threads reply --dry-run` on AC3's state makes
+- [ ] AC20 (dry run): `pytest -q tests/unit/test_pr_threads.py::test_dry_run_writes_nothing` → green: `threads reply --dry-run` on AC3's state makes
   no forge write, stores no `agent_reply` event, and lists the
   refused writes in its JSON.
 
-- [ ] AC21 (human thread, D8): a human reviewer's unresolved thread
+- [ ] AC21 (human thread, D8): `pytest -q tests/unit/test_gate_open_threads.py::test_human_thread_blocks_and_is_listed` → green: a human reviewer's unresolved thread
   with no finding is listed by `repoach threads <pr>` with role
   `human`, and `review gate` refuses naming `open human threads:
   H<id>`. No agent reply is posted in it. After its author resolves
   it, the gate no longer names it.
-- [ ] AC22 (owners, D9): with `owners = ["alice"]`, `/wontfix <r>`
+- [ ] AC22 (owners, D9): `pytest -q tests/unit/test_threads_owners.py::test_owner_list_and_admin_fallback` and `pytest -q tests/unit/test_threads_owners.py::test_admin_read_failure_fails_closed` → green: with `owners = ["alice"]`, `/wontfix <r>`
   from `alice` applies and from `bob` does not. With `owners = []`
   and a fixture admin list `["carol"]`, `carol`'s command applies,
   and the admin list is read exactly once per run. When that read
   fails, no command applies and the reply names the failed read.
-- [ ] AC23 (receiver, signed, D10/D14): `threads serve` receives a
+- [ ] AC23 (receiver, signed, D10/D14): `pytest -q tests/unit/test_thread_webhook.py::test_signed_note_triggers_one_pipeline` → green: `threads serve` receives a
   note event for MR !12 with the right `X-Gitlab-Token`. It answers
   `202` and makes exactly one trigger call: a pipeline on !12's source
   branch with `REPOACH_THREADS_REPLY_MR=12`. A second identical
   delivery inside the 60 s window makes no second call, and the
   triggered `threads reply 12` posts nothing new on replay (AC12).
-- [ ] AC24 (receiver, bad token, D10): the same event with a wrong or
+- [ ] AC24 (receiver, bad token, D10): `pytest -q tests/unit/test_thread_webhook.py::test_bad_token_is_401_and_no_trigger` and `pytest -q tests/unit/test_thread_webhook.py::test_missing_secret_exits_2` → green: the same event with a wrong or
   missing `X-Gitlab-Token` gets `401`, no trigger call is made, and one
   log line names the rejection without echoing the token. A non-note,
   non-MR event with the right token gets `202` and makes no call.
   `threads serve` with either secret unset exits 2 naming the
   variable.
-- [ ] AC25 (fallback and GitHub triggers, D10): the GitLab CI
+- [ ] AC25 (fallback and GitHub triggers, D10): `pytest -q tests/unit/test_threads_triggers.py::test_gitlab_ci_schedules_threads_reply` and `pytest -q tests/unit/test_threads_triggers.py::test_github_workflow_runs_on_review_comment` → green: the GitLab CI
   configuration generated by `repoach ci` holds a scheduled job that
   runs `threads reply` on every open MR, and the schedule interval
   documented is 15 minutes. `.github/workflows/auto-review.yml` lists
   `pull_request_review_comment` (types `created`, `edited`) and
   `pull_request_review` among its triggers, and both lead to
   `threads reply` (D15).
-- [ ] AC26 (fix branch, D11): a fake coder producing one commit pushes
+- [ ] AC26 (fix branch, D11): `pytest -q tests/unit/test_thread_coder_dispatch.py::test_one_commit_on_pr_branch_several_on_fix_branch` → green: a fake coder producing one commit pushes
   it straight on the PR branch. A fake coder producing three commits
   pushes them on `fix/<pr>-<fp8>`, which is merged into the PR branch
   with one merge commit whose parents are the old PR head and the fix
   branch tip. No push is forced and no commit is squashed.
-- [ ] AC27 (no severity exempt, D12): a `nit` finding's thread goes
+- [ ] AC27 (no severity exempt, D12): `pytest -q tests/unit/test_thread_coder_dispatch.py::test_nit_follows_the_same_path` → green: a `nit` finding's thread goes
   through the same coder dispatch as AC4, and a `nit` thread with no
   fix and no owner `/wontfix` makes the gate refuse.
-- [ ] AC28 (fork, D13): on a fork PR the coder cannot push to, the
+- [ ] AC28 (fork, D13): `pytest -q tests/unit/test_thread_coder_dispatch.py::test_fork_escalates_without_coder` → green: on a fork PR the coder cannot push to, the
   confirmed thread's reply ends `coder cannot push to <fork>` and
   `state: escalated to owner`; the coder is never invoked and
   `coder_rounds = 0`.
 
-- [ ] AC29 (deployment on hel1, measured, D14):
+- [ ] AC29 (deployment on hel1, D14): `pytest -q tests/unit/test_threads_serve_unit.py::test_unit_binds_bridge_and_keeps_secrets_out_of_argv` → green: the shipped unit `deploy/systemd/repoach-threads-serve.service`
+  binds `172.18.0.1:8787`, reads `EnvironmentFile=/etc/repoach/threads-serve.env`
+  and passes no secret in `ExecStart`, and `threads serve` accepts no
+  secret option. Then, measured live on hel1 after rollout:
   - `systemctl is-active repoach-threads-serve` prints `active`.
   - `ss -ltn` shows `172.18.0.1:8787` and no `0.0.0.0:8787`.
   - `stat -c '%U:%G %a' /etc/repoach/threads-serve.env` prints
@@ -837,7 +841,7 @@ unless an AC names a recorded fixture or a live measurement.
     https://yoob.dev/hooks/repoach -H 'X-Gitlab-Token: wrong'` prints
     `401`, a direct connection to `65.108.199.28:8787` fails, and a
     `GET` on the path is refused by nginx (`403`).
-- [ ] AC30 (webhook, measured by the owner): the project's hook list
+- [ ] AC30 (webhook, measured by the owner): live measurement, no pytest selector: the project's hook list
   shows one hook with URL `https://yoob.dev/hooks/repoach`,
   `note_events: true`, `merge_requests_events: true`,
   `push_events: false` and `enable_ssl_verification: true`. Its
