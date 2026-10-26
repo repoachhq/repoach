@@ -410,42 +410,67 @@ CONTEXT_TOKENS_ENV = "REPOACH_REFUTER_CONTEXT_TOKENS"
 """Environment override of ``[gates].refuter_context_tokens`` (env > toml > 40000)."""
 
 
-def resolve_refuter_context_tokens(repo_root: Path) -> tuple[int, str]:
-    """Return the refuter's context size for the project at ``repo_root`` and its source.
+def _resolve_refuter_size(
+    repo_root: Path, *, env: str, attribute: str, default: int, event: str
+) -> tuple[int, str]:
+    """Return one refuter context size and its source: env > ``repoach.toml`` > ``default``.
 
-    :data:`CONTEXT_TOKENS_ENV` (an integer of at least
-    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`) wins, then
-    ``[gates].refuter_context_tokens``, then the floor itself. An invalid
-    environment value or a malformed ``repoach.toml`` is logged at
-    warning and skipped: the refuter never fails a review over its size.
+    ``env`` must hold an integer of at least
+    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`; an invalid value, or a malformed
+    ``repoach.toml``, is logged at warning (``gates.<event>_env_invalid``,
+    ``gates.<event>_config_invalid``) and skipped: the refuter never
+    fails a review over its size.
+
+    Args:
+        repo_root: The project whose configuration is read.
+        env: The environment variable that outranks the file.
+        attribute: The :class:`GatesConfig` attribute of the setting.
+        default: The value when neither sets it.
+        event: The setting's name in the warning event.
 
     Returns:
-        ``(tokens, source)`` with ``source`` one of ``env
-        REPOACH_REFUTER_CONTEXT_TOKENS``, ``repoach.toml`` or ``default``.
+        ``(tokens, source)`` with ``source`` one of ``env <env>``,
+        ``repoach.toml`` or ``default``.
     """
-    raw = configured_env_value((CONTEXT_TOKENS_ENV,), repo_root)
+    raw = configured_env_value((env,), repo_root)
     if raw is not None:
         value = raw.strip()
         if value.isdigit() and int(value) >= REFUTER_CONTEXT_TOKENS_FLOOR:
-            return int(value), f"env {CONTEXT_TOKENS_ENV}"
+            return int(value), f"env {env}"
         _log.warning(
-            "gates.refuter_context_tokens_env_invalid",
-            variable=CONTEXT_TOKENS_ENV,
+            f"gates.{event}_env_invalid",
+            variable=env,
             value=raw[:40],
             floor=REFUTER_CONTEXT_TOKENS_FLOOR,
         )
     try:
         config = load_gates_config(repo_root)
     except GatesConfigError as exc:
-        _log.warning(
-            "gates.refuter_context_tokens_config_invalid",
-            error=str(exc)[:200],
-            fallback=REFUTER_CONTEXT_TOKENS_FLOOR,
-        )
-        return REFUTER_CONTEXT_TOKENS_FLOOR, "default"
-    if config.builtin or config.refuter_context_tokens == REFUTER_CONTEXT_TOKENS_FLOOR:
-        return config.refuter_context_tokens, "default"
-    return config.refuter_context_tokens, "repoach.toml"
+        _log.warning(f"gates.{event}_config_invalid", error=str(exc)[:200], fallback=default)
+        return default, "default"
+    configured = int(getattr(config, attribute))
+    if config.builtin or configured == default:
+        return configured, "default"
+    return configured, "repoach.toml"
+
+
+def resolve_refuter_context_tokens(repo_root: Path) -> tuple[int, str]:
+    """Return the refuter's context floor for the project at ``repo_root`` and its source.
+
+    :data:`CONTEXT_TOKENS_ENV` wins, then ``[gates].refuter_context_tokens``,
+    then :data:`REFUTER_CONTEXT_TOKENS_FLOOR` (:func:`_resolve_refuter_size`).
+
+    Returns:
+        ``(tokens, source)`` with ``source`` one of ``env
+        REPOACH_REFUTER_CONTEXT_TOKENS``, ``repoach.toml`` or ``default``.
+    """
+    return _resolve_refuter_size(
+        repo_root,
+        env=CONTEXT_TOKENS_ENV,
+        attribute="refuter_context_tokens",
+        default=REFUTER_CONTEXT_TOKENS_FLOOR,
+        event="refuter_context_tokens",
+    )
 
 
 CONTEXT_CEILING_ENV = "REPOACH_REFUTER_CONTEXT_CEILING"
@@ -455,40 +480,44 @@ CONTEXT_CEILING_ENV = "REPOACH_REFUTER_CONTEXT_CEILING"
 def resolve_refuter_context_ceiling(repo_root: Path) -> tuple[int, str]:
     """Return the most tokens the refuter's context of one finding may grow to, and its source.
 
-    :data:`CONTEXT_CEILING_ENV` (an integer of at least
-    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`) wins, then
-    ``[gates].refuter_context_ceiling``, then
-    :data:`REFUTER_CONTEXT_CEILING_DEFAULT`. An invalid value is logged at
-    warning and skipped. The caller never uses a ceiling below the floor
-    it resolved (``max(ceiling, floor)``).
+    :data:`CONTEXT_CEILING_ENV` wins, then ``[gates].refuter_context_ceiling``,
+    then :data:`REFUTER_CONTEXT_CEILING_DEFAULT` (:func:`_resolve_refuter_size`).
+    :func:`resolve_refuter_budget` never lets it fall below the floor.
 
     Returns:
         ``(tokens, source)`` with ``source`` one of ``env
         REPOACH_REFUTER_CONTEXT_CEILING``, ``repoach.toml`` or ``default``.
     """
-    raw = configured_env_value((CONTEXT_CEILING_ENV,), repo_root)
-    if raw is not None:
-        value = raw.strip()
-        if value.isdigit() and int(value) >= REFUTER_CONTEXT_TOKENS_FLOOR:
-            return int(value), f"env {CONTEXT_CEILING_ENV}"
-        _log.warning(
-            "gates.refuter_context_ceiling_env_invalid",
-            variable=CONTEXT_CEILING_ENV,
-            value=raw[:40],
-            floor=REFUTER_CONTEXT_TOKENS_FLOOR,
-        )
-    try:
-        config = load_gates_config(repo_root)
-    except GatesConfigError as exc:
-        _log.warning(
-            "gates.refuter_context_ceiling_config_invalid",
-            error=str(exc)[:200],
-            fallback=REFUTER_CONTEXT_CEILING_DEFAULT,
-        )
-        return REFUTER_CONTEXT_CEILING_DEFAULT, "default"
-    if config.builtin or config.refuter_context_ceiling == REFUTER_CONTEXT_CEILING_DEFAULT:
-        return config.refuter_context_ceiling, "default"
-    return config.refuter_context_ceiling, "repoach.toml"
+    return _resolve_refuter_size(
+        repo_root,
+        env=CONTEXT_CEILING_ENV,
+        attribute="refuter_context_ceiling",
+        default=REFUTER_CONTEXT_CEILING_DEFAULT,
+        event="refuter_context_ceiling",
+    )
+
+
+def resolve_refuter_budget(
+    repo_root: Path, *, floor: int | None = None, ceiling: int | None = None
+) -> tuple[int, int]:
+    """Return the refuter's ``(floor, ceiling)`` for the project at ``repo_root``.
+
+    The one place the gate, the review and the refuter read their context
+    sizes from (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
+
+    Args:
+        repo_root: The project whose configuration is read.
+        floor: A caller's floor; ``None`` reads
+            :func:`resolve_refuter_context_tokens`.
+        ceiling: A caller's ceiling; ``None`` reads
+            :func:`resolve_refuter_context_ceiling`.
+
+    Returns:
+        ``(floor, ceiling)``, the ceiling raised to the floor when below it.
+    """
+    low = resolve_refuter_context_tokens(repo_root)[0] if floor is None else floor
+    high = resolve_refuter_context_ceiling(repo_root)[0] if ceiling is None else ceiling
+    return low, max(low, high)
 
 
 def current_gates_config() -> GatesConfig:
@@ -522,6 +551,7 @@ __all__ = [
     "current_gates_config",
     "load_gates_config",
     "python_packages",
+    "resolve_refuter_budget",
     "resolve_refuter_context_ceiling",
     "resolve_refuter_context_tokens",
     "resolve_refuter_max_judged",

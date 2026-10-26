@@ -82,8 +82,7 @@ from ..forge.protocol import WRITABLE_STATES, diff_files
 from ..gates.config import (
     GatesConfig,
     load_gates_config,
-    resolve_refuter_context_ceiling,
-    resolve_refuter_context_tokens,
+    resolve_refuter_budget,
     resolve_refuter_max_judged,
 )
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
@@ -758,6 +757,7 @@ def decide_at_head(
     config = gates_config if gates_config is not None else load_gates_config(root)
     cap = max_judged if max_judged is not None else resolve_refuter_max_judged(root)[0]
     if head_tree:
+        floor, ceiling = resolve_refuter_budget(root, floor=context_tokens, ceiling=context_ceiling)
         reverified = reverify_older_findings(
             db,
             pr_number=pr_number,
@@ -767,16 +767,8 @@ def decide_at_head(
             config=config,
             max_judged=cap,
             judge_factory=judge_factory or make_refuter_judge,
-            context_tokens=(
-                context_tokens
-                if context_tokens is not None
-                else resolve_refuter_context_tokens(root)[0]
-            ),
-            context_ceiling=(
-                context_ceiling
-                if context_ceiling is not None
-                else resolve_refuter_context_ceiling(root)[0]
-            ),
+            context_tokens=floor,
+            context_ceiling=ceiling,
         )
     else:
         reverified = skipped_reverification(
@@ -968,6 +960,7 @@ def evaluate_merge_gate(
         ) as tree:
             if announce is not None:
                 announce(tree.announcement(pr_number))
+            floor, ceiling = resolve_refuter_budget(checkout)
             head_sha, facts, decision = decide_at_head(
                 pr_number,
                 forge=forge,
@@ -980,8 +973,8 @@ def evaluate_merge_gate(
                 judge_factory=judge_factory,
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
-                context_tokens=resolve_refuter_context_tokens(checkout)[0],
-                context_ceiling=resolve_refuter_context_ceiling(checkout)[0],
+                context_tokens=floor,
+                context_ceiling=ceiling,
             )
         tree_kind = tree.tree
     else:
