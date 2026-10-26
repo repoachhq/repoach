@@ -152,6 +152,7 @@ def test_report_names_each_judge_and_method(tmp_path: Path) -> None:
         "evidence": [],
         "evidence_truncated": [],
         "evidence_tokens": 0,
+        "budget_used": 0,
     }
 
 
@@ -307,5 +308,6 @@ def test_a_refuter_entry_carries_what_the_judge_was_served(tmp_path: Path) -> No
         "evidence": ["a.py:1-40 (whole file)"],
         "evidence_truncated": ["grep Foo: 60 hits (50 served)"],
         "evidence_tokens": 812,
+        "budget_used": 0,
         "detail": "the caller is not served",
     }

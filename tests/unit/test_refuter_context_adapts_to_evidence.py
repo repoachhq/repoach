@@ -41,6 +41,7 @@ from repoach.review.refuter import (
     judge_findings_for_pr,
 )
 from repoach.review.refuter_evidence import estimate_tokens
+from repoach.review.report import _from_ledger
 
 CITED = "src/big.py"
 HEAD_A = "a" * 40
@@ -199,3 +200,18 @@ def test_ceiling_setting_resolves_and_refuses_a_ceiling_below_the_floor(
     )
     with pytest.raises(GatesConfigError, match="refuter_context_ceiling"):
         load_gates_config(tmp_path)
+
+
+def test_report_entry_of_a_ledger_row_carries_its_budget_used() -> None:
+    row = _finding(head=HEAD_B).model_copy(
+        update={
+            "id": 3,
+            "status": FindingStatus.REFUTED,
+            "verification_method": "refuter",
+            "verification_result": "wanted_symbol masks the value",
+            "budget_used": 65_829,
+        }
+    )
+    payload = _from_ledger(row).as_json()
+    assert payload["judge"] == "refuter"
+    assert payload["refutation"]["budget_used"] == 65_829
