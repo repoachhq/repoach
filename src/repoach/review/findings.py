@@ -743,6 +743,24 @@ def fetch_all_findings(db_path: Path) -> list[Finding]:
     return _rows_to_findings(rows)
 
 
+def fetch_findings_if_recorded(db_path: Path, pr_number: int) -> list[Finding]:
+    """Return the PR's findings, ordered by id, without creating the ledger.
+
+    A read-only caller (the review report) must not pay for, or cause,
+    the schema's creation: an absent database file or an absent
+    ``pr_findings`` table is an empty ledger, and nothing is written.
+    """
+    if not db_path.is_file():
+        return []
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        if not inspect(engine).has_table(pr_findings.name):
+            return []
+    finally:
+        engine.dispose()
+    return fetch_findings(db_path, pr_number)
+
+
 def fetch_findings(
     db_path: Path,
     pr_number: int,
