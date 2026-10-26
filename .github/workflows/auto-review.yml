@@ -25,28 +25,54 @@ on:
         required: true
         type: number
 
-concurrency:
-  # Resolve the PR number across every supported event type:
-  #   pull_request          → github.event.pull_request.number
-  #   pull_request_review   → github.event.pull_request.number
-  #   issue_comment         → github.event.issue.number  (PR comments
-  #                            arrive as issue_comment events; the
-  #                            issue *is* the PR for review purposes)
-  #   workflow_dispatch     → github.event.inputs.pr_number
-  group: >-
-    review-${{ github.event.pull_request.number
-            || github.event.issue.number
-            || github.event.inputs.pr_number }}
-  # SP-CI-FIX-LOOP-CLOSURE follow-up: a Coder push fires a synchronize
-  # run in this same group — with unconditional cancellation it KILLS
-  # the in-progress parent run right before its in-run re-review and
-  # merge (observed live on PR #372).  Bot-triggered runs therefore
-  # never cancel; they queue, the parent finishes its loop, then the
-  # queued run starts and skips on the actor gate.  Owner pushes keep
-  # cancelling stale runs as before.
-  cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
+# SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G4: no workflow-level
+# concurrency.  A workflow-level group is entered by every run, even one
+# whose jobs are all skipped by their ``if``: on 2026-10-25 the bot's own
+# archive-comment edit (actor: the owner's token) entered it last and
+# cancelled the review run of every owner burst (#246, 16 runs, zero
+# reviews).  Concurrency now lives on the jobs, so a job skipped by its
+# ``if`` takes no slot:
+#   coalesce      coalesce-<pr>, cancel-in-progress: only the last owner
+#                 event of a burst survives its 60 s sleep;
+#   review        review-<pr>, cancels stale owner runs as before;
+#   auto_fix,     merge-<head branch>, never cancelled, shared with
+#   auto_merge    merge-on-ci.yml so the two merge paths serialize per PR.
+# The PR number resolves across every supported event type:
+#   pull_request / pull_request_review → github.event.pull_request.number
+#   issue_comment                      → github.event.issue.number
+#   workflow_dispatch                  → github.event.inputs.pr_number
 
 jobs:
+  coalesce:
+    name: Coalesce owner events
+    # Owner review / comment events only, with the same author filters
+    # as ``review``: a Bot-authored comment never reaches this job, so it
+    # can cancel nothing.  A pull_request event skips it and is not
+    # delayed.  GitHub-hosted (free on this public repository) so the
+    # wait never holds the single self-hosted runner it protects.
+    if: >-
+      (github.event_name == 'pull_request_review'
+       || github.event_name == 'issue_comment')
+      && github.event.pull_request.draft != true
+      && (github.event_name != 'issue_comment'
+          || github.event.issue.pull_request != null)
+      && (github.event_name != 'issue_comment'
+          || github.event.comment.user.type != 'Bot')
+      && (github.event_name != 'pull_request_review'
+          || github.event.review.user.type != 'Bot')
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    concurrency:
+      group: >-
+        coalesce-${{ github.event.pull_request.number
+                  || github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Wait for the burst to end (coalesce_window_s)
+        run: sleep 60
+
   review:
     name: Architect / Sentinel / Tester / Scribe
     # Skip when:
@@ -61,8 +87,15 @@ jobs:
     #     provider keys, so only owner-triggered events may run it;
     #     untrusted actors still get the secret-free ci.yml. Extend the
     #     fromJSON list as collaborators are added.)
+    #   * the coalesce job was cancelled by a newer event of the burst
+    #     (it ran and succeeded for the last one; it is skipped for a
+    #     pull_request event, which is not delayed)
+    needs: coalesce
     if: >-
-      github.event.pull_request.draft != true
+      !cancelled()
+      && (needs.coalesce.result == 'success'
+          || needs.coalesce.result == 'skipped')
+      && github.event.pull_request.draft != true
       && (github.event_name != 'issue_comment'
           || github.event.issue.pull_request != null)
       && (github.event_name != 'issue_comment'
@@ -70,6 +103,16 @@ jobs:
       && (github.event_name != 'pull_request_review'
           || github.event.review.user.type != 'Bot')
       && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    # SP-CI-FIX-LOOP-CLOSURE follow-up, kept at job level: a Coder push
+    # fires a synchronize run whose review must not kill the parent's
+    # in-progress review, so bot-triggered runs queue; owner events keep
+    # cancelling the stale review.
+    concurrency:
+      group: >-
+        review-${{ github.event.pull_request.number
+                || github.event.issue.number
+                || github.event.inputs.pr_number }}
+      cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
     # ONLY in the ``bots`` Environment (no repo-level copies), so this
@@ -86,6 +129,7 @@ jobs:
     outputs:
       verdict: ${{ steps.run_review.outputs.verdict }}
       pr_number: ${{ steps.pr.outputs.number }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
     steps:
       # SP-CI-SECRETS-ISOLATION layer 2: this job holds all six
       # provider keys, so it must never install or import PR-authored
@@ -113,6 +157,9 @@ jobs:
 
       - name: Resolve PR number
         id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           # Resolve from any of the supported event payloads:
           # pull_request / pull_request_review carry the PR object;
@@ -126,6 +173,16 @@ jobs:
           else
             echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           fi
+          # The head branch keys the merge-<head branch> concurrency of
+          # auto_fix / auto_merge; issue_comment and dispatch payloads do
+          # not carry it, so read it from the PR.
+          number="${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}"
+          head_ref="$EVENT_HEAD_REF"
+          if [ -z "$head_ref" ]; then
+            head_ref="$(gh pr view "$number" --repo "${{ github.repository }}" \
+              --json headRefName --jq .headRefName)"
+          fi
+          echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"
 
       # Data-only checkout of the PR head: the hallucination guard,
       # round-2 file excerpts and ``load_spec`` read file contents
@@ -295,6 +352,14 @@ jobs:
     if: >-
       needs.review.outputs.verdict != 'ERROR'
       && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    # SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G4: the merge group is
+    # shared with merge-on-ci.yml and never cancels a running job.
+    # GitHub keeps one pending job per group, so a newer pending job may
+    # replace an older pending one for the same PR — the only
+    # replacement, documented and not avoidable.
+    concurrency:
+      group: merge-${{ needs.review.outputs.head_ref }}
+      cancel-in-progress: false
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION layer 3 — residual trust grant: unlike
     # the review job, auto_fix MUST execute PR-authored code by
@@ -638,6 +703,9 @@ jobs:
            && needs.auto_fix.outputs.re_verdict == 'APPROVE_OR_COMMENT')
           || (needs.auto_fix.outputs.pushed != 'true'
            && needs.review.outputs.verdict == 'APPROVE_OR_COMMENT'))
+    concurrency:
+      group: merge-${{ needs.review.outputs.head_ref }}
+      cancel-in-progress: false
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     permissions:
       contents: write
@@ -708,8 +776,8 @@ jobs:
           # Exit 0 == merged or already-merged (idempotent).
           # Exit 5 == a non-fatal gate skip (SP-MERGE-EXIT-CONTRACT):
           #   CI pending/red, verdict not APPROVE, base != develop,
-          #   stale head. Pending-CI skips are picked up by
-          #   merge-on-ci.yml when the CI workflow completes.
+          #   stale head. A pending required check is re-armed by
+          #   merge-on-ci.yml when CI or this workflow completes.
           if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
             exit 0
           fi

@@ -13,35 +13,57 @@ name: Merge on CI (event-driven gate)
 # trusted checkout below has the same consequence for CODE: this lane
 # runs MAIN's merge-gate code, so gate fixes landing on develop reach
 # it only after the next develop→main release.
+#
+# SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G2: a merge skipped on a
+# pending required check is re-armed by the completion of the workflow
+# that produces it.  Both CI and the review workflow re-arm: whichever
+# finishes last triggers the merge that succeeds.  workflow_dispatch
+# (input ``pr``) is the operator's lever and the release sweep's
+# (``repoach review stranded --dispatch``).
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "Auto Review (review bots)"]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to re-judge"
+        required: true
+        type: number
 
 # The PR number is only known after in-job resolution, so the group
-# keys on head_branch — per-PR under this repo's branch convention.
+# keys on head_branch — per-PR under this repo's branch convention —
+# and is shared with auto-review.yml's auto_fix / auto_merge jobs.  A
+# dispatch carries no branch until resolved, so it keys on its PR.
 concurrency:
-  group: merge-${{ github.event.workflow_run.head_branch }}
+  group: merge-${{ github.event.workflow_run.head_branch || inputs.pr }}
   cancel-in-progress: false
 
 jobs:
   merge:
     name: Event-driven merge gate
     # Payload-level gates, evaluated before the job takes the runner
-    # slot: CI green; PR-head runs only (post-merge pushes to
-    # develop/main and workflow_dispatch runs never queue here);
+    # slot: the triggering run succeeded; PR-head runs only
+    # (pull_request, or pull_request_review whose workflow_run carries
+    # the PR head SHA — issue_comment runs carry the default branch's
+    # SHA and post-merge pushes to develop/main never queue here);
     # same-repo heads only; actor allowlist admits the owner AND the
     # fix-loop bot — coder-pushed heads have their released CI runs
     # actored by github-actions[bot] (SP-CI-FIX-LOOP-CLOSURE), which is
     # safe because the merge decision is re-verified by the pure gate
-    # at head, never trusted from the event.
+    # at head, never trusted from the event.  A dispatch is admitted
+    # for the same actors; the PR is resolved and checked below.
     if: >-
-      github.event.workflow_run.conclusion == 'success'
-      && github.event.workflow_run.event == 'pull_request'
-      && github.event.workflow_run.head_repository.full_name == github.repository
-      && (github.event.workflow_run.actor.login == 'github-actions[bot]'
-      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.event.workflow_run.actor.login))
+      (github.event_name == 'workflow_dispatch'
+       && (github.actor == 'github-actions[bot]'
+           || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)))
+      || (github.event.workflow_run.conclusion == 'success'
+          && (github.event.workflow_run.event == 'pull_request'
+              || github.event.workflow_run.event == 'pull_request_review')
+          && github.event.workflow_run.head_repository.full_name == github.repository
+          && (github.event.workflow_run.actor.login == 'github-actions[bot]'
+              || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.event.workflow_run.actor.login)))
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     permissions:
@@ -76,25 +98,39 @@ jobs:
       # Same-repo, non-draft, develop-based, SAME-REPO-HEAD PRs only:
       # ``isCrossRepository | not`` blocks a fork PR that mirrors a
       # same-repo branch head (identical SHA) from shadowing the
-      # legitimate PR and consuming its CI-completion event.
+      # legitimate PR and consuming its CI-completion event.  A dispatch
+      # names its PR; the same filters apply to it, and its head is the
+      # PR's current head.
       - name: Resolve the open PR at this head
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          DISPATCH_PR: ${{ inputs.pr }}
         run: |
-          pr=$(gh pr list --state open --base develop --limit 100 \
-                 --json number,headRefOid,isDraft,isCrossRepository \
-               | jq -r --arg sha "$HEAD_SHA" \
-                 '[.[] | select(.headRefOid == $sha
-                                and (.isDraft | not)
-                                and (.isCrossRepository | not))][0].number // empty')
-          if [ -z "$pr" ]; then
-            echo "::notice::no open non-draft same-repo develop-based PR at $HEAD_SHA — nothing to merge."
+          query='[.[] | select((.isDraft | not) and (.isCrossRepository | not))]'
+          if [ -n "$DISPATCH_PR" ]; then
+            row=$(gh pr list --state open --base develop --limit 100 \
+                    --json number,headRefOid,headRefName,isDraft,isCrossRepository \
+                  | jq -c --argjson n "$DISPATCH_PR" "$query"' | map(select(.number == $n)) | .[0] // empty')
           else
-            echo "resolved PR #$pr at $HEAD_SHA"
+            row=$(gh pr list --state open --base develop --limit 100 \
+                    --json number,headRefOid,headRefName,isDraft,isCrossRepository \
+                  | jq -c --arg sha "$RUN_HEAD_SHA" "$query"' | map(select(.headRefOid == $sha)) | .[0] // empty')
           fi
-          echo "pr_number=$pr" >> "$GITHUB_OUTPUT"
+          pr=$(printf '%s' "$row" | jq -r '.number // empty')
+          head_sha=$(printf '%s' "$row" | jq -r '.headRefOid // empty')
+          head_branch=$(printf '%s' "$row" | jq -r '.headRefName // empty')
+          if [ -z "$pr" ]; then
+            echo "::notice::no open non-draft same-repo develop-based PR at ${RUN_HEAD_SHA:-#$DISPATCH_PR} — nothing to merge."
+          else
+            echo "resolved PR #$pr at $head_sha ($head_branch)"
+          fi
+          {
+            echo "pr_number=$pr"
+            echo "head_sha=$head_sha"
+            echo "head_branch=$head_branch"
+          } >> "$GITHUB_OUTPUT"
 
       # The pure gate re-verifies mechanical findings ON DISK "at the
       # exact head" (merge_gate.py contract) — give it the PR head
@@ -108,7 +144,7 @@ jobs:
       - name: Materialize the PR head tree (data only)
         if: steps.resolve.outputs.pr_number != ''
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
         run: |
           git fetch origin "$HEAD_SHA"
           git worktree remove --force "${RUNNER_TEMP}/head-tree" 2>/dev/null || true
@@ -129,7 +165,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.resolve.outputs.pr_number }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_BRANCH: ${{ steps.resolve.outputs.head_branch }}
         run: |
           echo "db_ready=" >> "$GITHUB_OUTPUT"
           candidate=$(gh api \
@@ -184,8 +220,9 @@ jobs:
           rc=$?
           # Exit 0 == merged or already-merged (idempotent).
           # Exit 5 == a non-fatal gate skip (SP-MERGE-EXIT-CONTRACT) —
-          #   stale head, gate refusal, CI regression at head.  Leave
-          #   the PR for the next event.
+          #   stale head, gate refusal, CI regression at head, or a
+          #   pending required check (re-armed by the completion of the
+          #   workflow that produces it).  Leave the PR for that event.
           if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
             exit 0
           fi

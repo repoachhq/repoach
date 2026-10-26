@@ -16,6 +16,12 @@ import yaml
 
 _WORKFLOW_DIR = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 _RUNNER_EXPR = "${{ vars.REPOACH_RUNNER || 'self-hosted' }}"
+_GITHUB_HOSTED = {("auto-review.yml", "coalesce")}
+"""Jobs that run GitHub-hosted on purpose (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D1).
+
+``coalesce`` only sleeps; it must never queue behind the self-hosted
+runner it protects, and on the public repository it costs no minutes.
+"""
 
 
 def _workflow_files() -> list[Path]:
@@ -25,7 +31,10 @@ def _workflow_files() -> list[Path]:
 @pytest.mark.parametrize("path", _workflow_files(), ids=lambda p: p.name)
 def test_every_runs_on_is_the_configurable_runner(path: Path) -> None:
     workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
-    for job in workflow["jobs"].values():
+    for job_id, job in workflow["jobs"].items():
+        if (path.name, job_id) in _GITHUB_HOSTED:
+            assert job["runs-on"] == "ubuntu-latest"
+            continue
         assert job["runs-on"] == _RUNNER_EXPR
 
 
