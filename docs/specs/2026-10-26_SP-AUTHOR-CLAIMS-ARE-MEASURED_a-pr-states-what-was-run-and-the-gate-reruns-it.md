@@ -1,7 +1,7 @@
 ---
 id: SP-AUTHOR-CLAIMS-ARE-MEASURED
 title: A PR states what was run, and the gate re-runs it at the head
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-26
@@ -35,6 +35,15 @@ whitelist and a budget, and turns a refuted claim into a blocking
 finding. A claim nobody can measure is named as such, never counted as
 green.
 
+**The live example (F12).** #254 stated "`pytest -q -n 8 tests/unit`:
+3425 passed". This spec re-ran that command at #254's head `f3050df`, in
+another environment, and measured **11 failed, 3436 passed, 50 skipped**
+(813.88 s). Neither the claim nor this re-run is wrong: both are true in
+their own environment, and the body never named its environment.
+That is why every verdict records the environment it ran in (D12), and
+why a full-suite claim is judged from CI evidence and never re-run
+(D10).
+
 ## Context
 
 Facts measured on `origin/develop` `51a4065`, 2026-10-26 (read-only).
@@ -52,7 +61,7 @@ Facts measured on `origin/develop` `51a4065`, 2026-10-26 (read-only).
 | F9 | repoach's own `develop` opens its PR with a body that holds no measurement: "Autonomous NIM Developer implementation of …", `Spec:`, `Summary:` (`dev_runner.py:2091-2098`). | file cited |
 | F10 | The gate's refusal reasons are a flat list of strings appended in `merge_gate.py:180-201`. | file cited |
 | F11 | SP-CI-RED-IS-EVIDENCE is a draft (PR #249); SP-AGENT-CONTEXT-LOOP is a draft on `docs/sp-agent-context-loop`; SP-PR-THREADS-REMEMBER-AND-CLOSE is being written in parallel. They are cited by id; this spec does not restate them. | branches, F8 of SP-RED-STOPS-THE-LINE |
-| F12 | Re-measured for this spec: `pytest -q -n 8 tests/unit` at #254's head `f3050df`, claimed "3425 passed". Measured: `11 failed, 3436 passed, 50 skipped in 813.88s`, on a local venv (Python of `repoach/.venv`, detached worktree, load ~7). The 11 failures are in `test_review_plan_executor.py` (for example, `self_verified is False`, reason `pytest_red`), and they look environmental. So one honest re-run, outside the CI's environment, already disagrees with the claim on both `passed` and `failed`. A re-run is only evidence when its environment is named. The run also took 13.5 minutes (cost, Q3). | run 2026-10-26, `PYTHONPATH=<head>/src`, `-n 8` |
+| F12 | Re-measured for this spec: `pytest -q -n 8 tests/unit` at #254's head `f3050df`, claimed "3425 passed". Measured: `11 failed, 3436 passed, 50 skipped in 813.88s`, on a local venv (Python of `repoach/.venv`, detached worktree, load ~7). The 11 failures are in `test_review_plan_executor.py` (for example, `self_verified is False`, reason `pytest_red`), and they look environmental. So one honest re-run, outside the CI's environment, already disagrees with the claim on both `passed` and `failed`. A re-run is only evidence when its environment is named (D12). The run also took 13.5 minutes (cost, D10). | run 2026-10-26, `PYTHONPATH=<head>/src`, `-n 8` |
 
 The five bodies (F4):
 
@@ -73,8 +82,9 @@ The five bodies (F4):
   template grammar is parsed exactly. Prose elsewhere is read
   best-effort by R1-R8. An indicative success sentence with no command
   is reported, not guessed at.
-- D3. **Execution never happens in the review job** (F7). Extraction is
-  pure text and runs in the review job. Re-running runs in the
+- D3. **PR code is never executed in the review job** (F7). Extraction
+  is pure text and runs in the review job, and so do the kinds that run
+  no PR code (D12). Re-running runs in the
   secret-free verification context: repoach installed from the base
   ref, the head checked out in a separate directory, environment
   scrubbed of every provider key and write token. Locally, it runs in
@@ -90,6 +100,49 @@ The five bodies (F4):
   finding of claim type `author_claim_refuted` with status `verified`.
   It reaches the gate's open-blocking count with no other gate change.
 - D7. This spec does not re-verify reviewers (G6).
+
+Owner decisions, 2026-10-26, closing Q1-Q4 of v0.1:
+
+- D8 (Q1). **An indicative sentence with no command blocks from the
+  first head.** The finding `author_claim_unmeasured` is blocking (severity
+  `blocker`). It is closed in one of two ways: the sentence is rewritten
+  into a measurable claim (a whitelisted command plus the expected
+  value), or it is deleted. Owner rule of the day: no statement in the
+  indicative without its measurement. The fix costs one edit of the
+  body. Every `unmeasurable` claim is indicative (R8 already drops
+  future and conditional statements), except the categories that cannot
+  be made measurable at all: repetition under load (R3) and the NG5
+  kinds (mutation checks, timings, load figures, token counts). Those
+  are `indicative = false`, reported, and never block.
+- D9 (Q2). **A claim about another PR or MR is measured only when it
+  carries the head it was measured at** (`review gate 246 at <sha7>`).
+  The verifier then fetches that exact head through the forge and
+  measures there. Without a SHA, the claim is `NOT_MEASURABLE` with
+  reason `state the head the claim was measured at`. That claim is
+  indicative, so it also blocks through D8 until a SHA is added.
+- D10 (Q3). **A full-suite claim is judged from CI evidence only.** A
+  full suite is a selector that is a directory or a configured test
+  root. When the CI run for that head produced no junit for that suite,
+  the claim is `SKIPPED`, with reason
+  `cost: full suite, no ci evidence`, and the gate prints it. Targeted
+  selectors (a file or a node id) are re-run within the budget.
+- D11 (Q4). **Yoob from day one.** Yoob is repoach's first client. Its
+  `review:gate` (`ci/review-gate.sh`) already maps the team verdict
+  `REQUEST_CHANGES` to exit 4 and prints the findings table through
+  `ci/lib/review_gate_report.py`. Rollout:
+  - a refuted or unmeasured author claim at the head makes
+    `repoach review pr`'s `final_verdict` `REQUEST_CHANGES`;
+  - the report JSON's `author_claims` is printed by Yoob's table, one
+    line per non-`CONFIRMED` claim, quoting the claim text;
+  - Yoob gains `.gitlab/merge_request_templates/Default.md` with the
+    same `## Measured` section (none exists today).
+- D12. **Kinds that execute no PR code run in the review job itself:**
+  `exists`, `count` (`git ls-files`, forge), `ruff`, and
+  `repoach arch check` (a trusted tool reading files). Only the pytest
+  kind needs the secret-free verification context (D3). That is what
+  makes D11 work in Yoob, whose `review:gate` runs only
+  `repoach review pr`. Every verdict records `env` (Python, platform,
+  dependency hash). This is the lesson of F12.
 
 ## Goals
 
@@ -154,8 +207,9 @@ The five bodies (F4):
   - The gate adds one reason per refuted claim:
     `author claim refuted: "<text>" measured <value>`.
   - An `unmeasurable` claim with `indicative = true` ("tests pass") is a
-    non-blocking finding `author_claim_unmeasured` (severity `minor`). It
-    asks for the command and the counts in the `## Measured` shape.
+    **blocking** finding `author_claim_unmeasured` (D8). It asks for the
+    command and the counts in the `## Measured` shape, and the gate adds
+    `author claim unmeasured: "<text>": state the command and the expected value`.
   - `docs/PR_TEMPLATE.md` gains a `## Measured` section with that shape,
     and `.github/pull_request_template.md` carries the same text.
 - G4. **The agent's hand-back is the PR body.**
@@ -174,6 +228,9 @@ The five bodies (F4):
   `measured_from: ci:<check>@<attempt>`. The CI must emit junit
   (`--junitxml`) for this to work (F6). That workflow edit is
   hand-implemented, per the SP-CI-SECRETS-ISOLATION executor rule.
+  A full-suite pytest claim (a directory or a test root) is never
+  re-run. Without junit for that suite at that head, it is `SKIPPED`
+  with `cost: full suite, no ci evidence` (D10).
 - G6. Reviewers' own claims are re-checked by SP-REFUTER-JUDGES-WHAT-IT-CAN
   and SP-GATE-REVERIFIES-AT-HEAD. This spec only covers the author.
 
@@ -203,8 +260,9 @@ The five bodies (F4):
   is verified `NOT_MEASURABLE` with
   `not whitelisted: <cmd>; whitelist: pytest, repoach arch check, ruff, git ls-files, forge PR count`.
 - R5. **Other PRs.** A claim whose command names another PR or MR
-  number (`review gate 246`) is verified `NOT_MEASURABLE` with
-  `claim measures #246, not this PR's head` (see Q2).
+  number (`review gate 246`) is measured at the SHA stated next to it
+  (`at <sha7>`, D9). Without a SHA, it is `NOT_MEASURABLE` with
+  `state the head the claim was measured at`.
 - R6. **Paths.** An `exists` claim is a standalone backticked token
   (not inside a command) with a `/` and either a file extension or a
   `::symbol`. Bare file names, bare symbols and refs such as
@@ -300,7 +358,8 @@ def verify_claims(claims, *, head_tree: Path, head_sha: str, gates: GatesConfig,
 
 `ClaimType` (`findings.py`) gains `AUTHOR_CLAIM_REFUTED = "author_claim_refuted"`
 (blocking, in `MECHANICAL_CLAIM_TYPES`) and
-`AUTHOR_CLAIM_UNMEASURED = "author_claim_unmeasured"` (never blocking).
+`AUTHOR_CLAIM_UNMEASURED = "author_claim_unmeasured"`. Both are blocking
+(D6, D8). The second is raised only for `indicative = true`.
 
 Table `author_claims(pr_number, head_sha, claim_id, text, type, status, measured_json, reason, measured_from, recorded_at)`,
 primary key `(pr_number, head_sha, claim_id)`. It is written by the
@@ -328,7 +387,8 @@ Report JSON (`repoach review pr`): `author_claims: [{text, type, status, measure
 3. A `REFUTED` verdict upserts a finding keyed on
    `(pr, claim_id)`. It is posted once, as its own thread, with the
    replay marker. An `indicative` `unmeasurable` claim upserts the
-   non-blocking finding.
+   blocking `author_claim_unmeasured` finding the same way (D8). Either
+   one makes `final_verdict` `REQUEST_CHANGES` (D11).
 4. The gate reads `author_claims` at its head. Each `REFUTED` row adds
    `author claim refuted: "<text>" measured <value>`. A missing
    verification at the head is reported as `author claims not verified
@@ -341,9 +401,9 @@ Report JSON (`repoach review pr`): `author_claims: [{text, type, status, measure
   `claimed 3425, measured 3431 at <sha7>`. The author updates the body,
   and the next verification at that head confirms it. The reason never
   says "lie": it states both numbers and the head.
-- **A typo in the selector** (`tests/unti`): the path does not exist at
+- **A typo in the selector** (`tests/unti/test_a.py`): the path does not exist at
   the head, so the claim is `REFUTED` with
-  `selector not found: tests/unti`. The author named something
+  `selector not found: tests/unti/test_a.py`. The author named something
   that is not there. An existing selector that collects 0 tests is
   `REFUTED` with `measured 0 collected`.
 - **`Spec:` / `Merge-After:` lines** are trailers (R0), not claims.
@@ -418,38 +478,32 @@ flowchart TD
 ## Acceptance Criteria
 
 - [ ] AC1: `pytest -q tests/unit/test_author_claims_extract.py::test_five_real_bodies` → green. `tests/fixtures/author_claims/<n>.json` holds the body of each of #258 (`574612f`), #257 (`5be3b2f`), #254 (`f3050df`), #253 (`56aa61c`) and #252 (`4156810`), copied verbatim with its head SHA. The extracted table equals `<n>.expected.json`, which holds exactly these measurable claims:
-  - #258: `exists` `docs/specs/2026-10-26_SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES_sequential-merges-follow-the-spec-graph.md`. The three counts ("7 PRs", "11 MRs", "6 MRs") are `unmeasurable`, not indicative.
-  - #257: `test_run` `pytest -n 8 tests/unit` {passed 3403, skipped 50}; `test_run` `pytest -q tests/integration` {passed 74, skipped 2}; `command_green` `repoach arch check --base origin/develop`; `command_green` `repoach arch check --base develop`; `command_green` `scripts/ci_local.sh --fast`. `exists`: `tests/integration/test_fresh_head_concurrent.py::test_concurrent_head_guard_integration`, `tests/unit/test_review_head_guard.py::test_orchestrator_head_guard_overlaps_reviewer_fanout` and `tests/overlap_fakes.py`. One `unmeasurable`: the Verification bullet's "5/5 passed" (R3). The Update's "5/5 passed" sits under a heading that is out of scope. Its `arch check` and `ci_local.sh --fast` merge into the claims above (R1b, R7).
+  - #258: `exists` `docs/specs/2026-10-26_SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES_sequential-merges-follow-the-spec-graph.md`. The three counts ("7 PRs", "11 MRs", "6 MRs") are `unmeasurable` and `indicative = true`. Under D8 each one is a blocking `author_claim_unmeasured`: #258 would be refused until its baseline names the forge count it came from.
+  - #257: `test_run` `pytest -n 8 tests/unit` {passed 3403, skipped 50}; `test_run` `pytest -q tests/integration` {passed 74, skipped 2}; `command_green` `repoach arch check --base origin/develop`; `command_green` `repoach arch check --base develop`; `command_green` `scripts/ci_local.sh --fast`. `exists`: `tests/integration/test_fresh_head_concurrent.py::test_concurrent_head_guard_integration`, `tests/unit/test_review_head_guard.py::test_orchestrator_head_guard_overlaps_reviewer_fanout` and `tests/overlap_fakes.py`. One `unmeasurable`: the Verification bullet's "5/5 passed" (R3), `indicative = false` (D8: repetition under load), so it does not block. The Update's "5/5 passed" sits under a heading that is out of scope. Its `arch check` and `ci_local.sh --fast` merge into the claims above (R1b, R7).
   - #254: `test_run` `pytest -q -n 8 tests/unit` {passed 3425}; `test_run` `pytest tests/integration` {passed 74}; `command_green` arch check with `--base origin/develop` and with `--base origin/main`; `command_green` `scripts/ci_local.sh --fast`. Nothing else: `judged 8, refuted 2, deferred 1` is not a command (R1b), and "13 of 13 findings" sits under `## Why`, which is out of scope.
-  - #253: two `measured` claims, `review gate 246` {merge true, planned 20, missing 0} and `review pr 246 --dry-run` {planned 20, missing 0, model calls 0}. The `Spec:` line yields nothing.
+  - #253: two `measured` claims, `review gate 246` {merge true, planned 20, missing 0} and `review pr 246 --dry-run` {planned 20, missing 0, model calls 0}. Neither names a SHA, so both verify `NOT_MEASURABLE` with `state the head the claim was measured at` (D9). The `Spec:` line yields nothing.
   - #252: `command_green` `repoach arch check --base origin/develop` (canonical default base, R1b) and `command_green` `scripts/ci_local.sh --fast`, both through the alias rule.
-- [ ] AC2: `pytest -q tests/unit/test_claim_verifier.py::test_true_pytest_count_is_confirmed` → green. A fixture repository has 3 passing tests. The claim "`pytest -q tests/unit`: 3 passed" is `CONFIRMED`, with `measured {passed: 3}` and `measured_from: rerun`.
+- [ ] AC2: `pytest -q tests/unit/test_claim_verifier.py::test_true_pytest_count_is_confirmed` → green. A fixture repository has 3 passing tests. The claim "`pytest -q tests/unit/test_a.py`: 3 passed" is `CONFIRMED`, with `measured {passed: 3}` and `measured_from: rerun`.
 - [ ] AC3: `pytest -q tests/unit/test_claim_verifier.py::test_false_pytest_count_is_refuted_with_value` → green. The same fixture with the claim "5 passed" is `REFUTED`, with `measured {passed: 3}`, the head SHA, and reason `claimed 5 passed, measured 3 passed at <sha7>`.
-- [ ] AC4: `pytest -q tests/unit/test_claim_verifier.py::test_prose_is_not_measurable` → green. For the body `## Checks\n- tests pass\n- works fine`, both statements are `unmeasurable` and verified `NOT_MEASURABLE` with reason `no command stated`. Each raises one `author_claim_unmeasured` finding. The gate's decision is unchanged by them. "works fine" under `## Why` yields no claim.
+- [ ] AC4: `pytest -q tests/unit/test_claim_verifier.py::test_prose_is_not_measurable` → green. For the body `## Checks\n- tests pass\n- works fine`, both statements are `unmeasurable` and verified `NOT_MEASURABLE` with reason `no command stated`. Each raises one blocking `author_claim_unmeasured` finding (D8). The gate returns `merge: false` with two reasons `author claim unmeasured: "<text>": state the command and the expected value`. Rewriting "tests pass" as "`pytest -q tests/unit/test_a.py`: 3 passed" and deleting "works fine" at the same head clears both reasons. "works fine" under `## Why` yields no claim.
 - [ ] AC5: `pytest -q tests/unit/test_claim_verifier.py::test_unwhitelisted_command_names_the_whitelist` → green. "`make check`: ok" is `NOT_MEASURABLE`, and the reason contains `whitelist: pytest, repoach arch check, ruff, git ls-files, forge PR count`. No subprocess with argv[0] `make` is spawned (asserted on the injected runner).
-- [ ] AC6: `pytest -q tests/unit/test_claim_verifier.py::test_selector_typo_is_refuted` → green. "`pytest tests/unti`: 3 passed" is `REFUTED`, reason `selector not found: tests/unti`, and pytest is not run.
+- [ ] AC6: `pytest -q tests/unit/test_claim_verifier.py::test_selector_typo_is_refuted` → green. "`pytest tests/unti/test_a.py`: 3 passed" is `REFUTED`, reason `selector not found: tests/unti/test_a.py`, and pytest is not run.
 - [ ] AC7: `pytest -q tests/unit/test_claim_verifier.py::test_budget_exceeded_is_skipped_named` → green. With `claims_total_budget_s=1` and a runner that takes 2 s, the first claim is `SKIPPED` (`timeout`) and the rest are `SKIPPED` (`budget: …`). The gate prints `author claims skipped: <n> (budget)`, and no claim is `CONFIRMED`.
 - [ ] AC8: `pytest -q tests/unit/test_claim_verifier.py::test_ci_junit_is_reused` → green. Given a CI evidence row with a junit report for `tests/unit` at the head, the claim "`pytest -q -n 8 tests/unit`: 3425 passed" is judged from it: `measured_from: ci:Test suite (Python 3.13)@1`, and the runner is called zero times.
 - [ ] AC9: `pytest -q tests/unit/test_claim_verifier.py::test_moved_number_names_both_values` → green. Claimed 3425, measured 3431: `REFUTED`, reason `claimed 3425 passed, measured 3431 passed at <sha7>`.
-- [ ] AC10: `pytest -q tests/unit/test_author_claims_gate.py::test_refuted_claim_blocks_with_text` → green. One `REFUTED` row at the head makes the gate return `merge: false`, with reason `author claim refuted: "`pytest -q tests/unit`: 5 passed" measured 3`. With the row `CONFIRMED`, that reason is absent.
+- [ ] AC10: `pytest -q tests/unit/test_author_claims_gate.py::test_refuted_claim_blocks_with_text` → green. One `REFUTED` row at the head makes the gate return `merge: false`, with reason `author claim refuted: "`pytest -q tests/unit/test_a.py`: 5 passed" measured 3`. With the row `CONFIRMED`, that reason is absent.
 - [ ] AC11: `pytest -q tests/unit/test_author_claims_gate.py::test_refuted_claim_posted_once` → green. Posting at the head twice (fresh, then replay) leaves exactly one thread for the claim on the fake forge. The thread carries the replay marker.
 - [ ] AC12: `pytest -q tests/unit/test_author_claims_gate.py::test_corrected_body_closes_thread` → green. The body is edited to the measured value at the same head: the claim is `CONFIRMED`, the finding settles, the thread closes, and the gate reason disappears.
 - [ ] AC13: `pytest -q tests/unit/test_author_claims_extract.py::test_trailers_are_not_claims` → green. `Spec: SP-X`, `Merge-After: #12` and `Implements: SP-Y` yield no claims.
 - [ ] AC14: `pytest -q tests/unit/test_pr_template_measured.py` → green. `docs/PR_TEMPLATE.md` contains a `## Measured` section whose example lines all parse under `format:pr-measured-section`. `.github/pull_request_template.md` is byte-equal to it.
 - [ ] AC15: `pytest -q tests/unit/test_author_claims_extract.py::test_developer_pr_body_has_measured_section` → green. The PR body built by `dev_runner` for a run whose gates were green contains a `## Measured` section. Its claims (test command plus counts, lint, arch) are extracted as `test_run` / `command_green`.
 - [ ] AC16: `pytest -q tests/integration/test_author_claims_cycle.py` → green. On a fixture PR, `repoach review pr <n> --dry-run` prints `author_claims` with one entry per extracted claim, and `status` is null. `repoach claims verify <n>` then fills the statuses, and `repoach review gate <n>` refuses on the refuted one. The review step spawns no pytest subprocess (asserted).
+- [ ] AC17: `pytest -q tests/unit/test_claim_verifier.py::test_full_suite_without_junit_is_skipped` → green. The claim "`pytest -q -n 8 tests/unit`: 3425 passed" with no CI junit for `tests/unit` at the head is `SKIPPED`, reason `cost: full suite, no ci evidence`. The runner is called zero times, and the gate prints `author claims skipped: 1 (cost: full suite, no ci evidence)`. The same claim on `tests/unit/test_a.py` (a file) is re-run.
+- [ ] AC18: `pytest -q tests/unit/test_claim_verifier.py::test_other_pr_claim_needs_its_head` → green. "`review gate 246` -> 20 planned, 0 missing" is `NOT_MEASURABLE`, reason `state the head the claim was measured at`. "`review gate 246 at abc1234` -> 20 planned, 0 missing" is measured on the tree of `abc1234`, fetched through the fake forge: `CONFIRMED` when the coverage there is 20/0, and `REFUTED` with both values otherwise.
+- [ ] AC19: `pytest -q tests/unit/test_claim_verifier.py::test_verdict_records_env` → green. Every verdict that ran something carries `env.python`, `env.platform` and `env.deps_hash`. A test_run whose only discrepancy is `failed > 0` in an env that differs from the CI evidence's env is `NOT_MEASURABLE`, reason `env differs from CI: …` (F12).
+- [ ] AC20 (Yoob, D11): in the Yoob repository, `bash tests/scripts/test_review_gate.sh` → green, with a new case. The fake `repoach review pr` runs on an MR body whose `## Measured` line is `` `git ls-files -- docs/specs` → 999 `` (the measured count differs). Its JSON has `final_verdict: REQUEST_CHANGES` and one `author_claims` entry `REFUTED`. `ci/review-gate.sh` exits 4, and its table prints a line quoting the claim text with `measured <n> at <sha7>`.
+- [ ] AC21 (Yoob, D11): `.gitlab/merge_request_templates/Default.md` exists in Yoob, and its `## Measured` section is byte-equal to the section of repoach's `docs/PR_TEMPLATE.md`. A Yoob shell suite asserts the equality against the pinned repoach ref.
 
 ## Open Questions
 
-- Q1. Does an indicative unmeasurable claim ("tests pass", no command)
-  become blocking after a grace period (for example, from the second
-  head of a PR on), or stay a non-blocking ask forever?
-- Q2. Is a claim measured on another PR (#253's `review gate 246`)
-  verified by fetching that PR's current head, or is it always
-  `NOT_MEASURABLE`, as R5 does in v0.1?
-- Q3. When CI evidence is missing, is a full-suite re-run (minutes,
-  F12) acceptable within the budget, or should a full-suite claim be
-  `SKIPPED (cost)` and only targeted selectors be re-run?
-- Q4. Does the same rule apply to Yoob merge requests from day one
-  (bodies such as "88/88 cœurs"), or after repoach's own PRs have
-  carried a `## Measured` section for some time?
+None. Q1-Q4 of v0.1 are closed by D8-D11 (owner, 2026-10-26).
