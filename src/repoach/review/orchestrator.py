@@ -1291,7 +1291,7 @@ class ReviewTeamOrchestrator:
         )
 
         row = SpecCoverage(
-            spec_id=spec_id or OWNERSHIP_UNRESOLVED,
+            spec_id=str(spec_id) if spec_id else OWNERSHIP_UNRESOLVED,
             n_promised=0,
             n_present=0,
             missing=[],
