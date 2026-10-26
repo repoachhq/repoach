@@ -1,7 +1,7 @@
 ---
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-26
@@ -52,6 +52,32 @@ Taken by the owner on 2026-10-26, on the 0.1 open questions and F7.
   owns a path of its diff (G7). Code owned by no spec is reported, never
   refused, in the frontier style of SP-ARCH-GRAPH / SP-SPEC-TEMPLATE
   ("reported, never enforced").
+
+## Amendment (0.3, 2026-10-26): what the implementation added to the interface
+
+- An example selector inside a criterion is quoted in a double-backtick
+  span, as AC15 already did: under D1 a
+  plain backticked node id in this section is a selector, so AC2, AC3
+  and AC12 would have graded this spec's own PR against three test
+  files that are fixtures of the tests, not deliverables.
+- `pr_spec_coverage` gains three more additive columns than the two the
+  Interface names: `report` (the lines reported and never refusing,
+  `plan-absent: …` and the `no selectors to grade: …` of a
+  documentation-only PR), `resolution` (`declared` / `ownership`, which
+  prefixes a refusal with `<id>: `) and `batch` (the rows one grading
+  recorded for one head; the gate folds the latest batch, so a PR whose
+  declaration changes at the same head is not graded against the specs
+  of an earlier resolution).
+- `repoach spec audit --plans` also lists, per committed plan, the
+  steps over `PLAN_STEP_MAX_FILES` / `PLAN_STEP_MAX_UNIT_SELECTORS`:
+  `<id>\tstep <n>\t<files>/<cap> files\t<selectors>/<cap> selectors`,
+  after the summary line, and `--json` carries them in
+  `oversized_steps`. The gate does not enforce the caps (tech_debt row
+  98).
+- An undeclared PR whose base ref cannot be read is not graded by
+  ownership; the review and the gate report `spec resolution by
+  ownership skipped: base ref <ref> unavailable` and the PR is graded as
+  undeclared PRs were before G7.
 
 ## Context
 
@@ -278,12 +304,12 @@ flowchart TD
   diff touching `src/`; `decide_at_head` merges, the row has
   `contract == "acceptance-criteria"` and `missing == []`.
 - [ ] AC2: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_approved_spec_without_plan_names_the_absent_selector_and_its_ac`
-  → green: same fixture, AC3's selector `tests/x.py::test_y` absent;
+  → green: same fixture, AC3's selector `` `tests/x.py::test_y` `` absent;
   `reasons` contains exactly
   `spec acceptance selectors not all present: tests/x.py::test_y (AC3)`,
   and no reason contains `plan-absent`.
 - [ ] AC3: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_plan_wins_over_the_ac_section`
-  → green: an approved spec whose base plan promises `tests/p.py::test_p`
+  → green: an approved spec whose base plan promises `` `tests/p.py::test_p` ``
   (present) while its AC names an absent selector → merges,
   `contract == "plan"`; the plan's selector absent instead → reason
   `… not all present: tests/p.py::test_p (plan step 1)`.
@@ -329,7 +355,7 @@ flowchart TD
 
 - [ ] AC12: `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_touching_owned_code_is_refused_naming_the_selector`
   → green: `src/a.py` owned by an `approved` spec SP-A whose AC names
-  one absent selector `tests/a.py::test_a`; a PR with no `Spec:` line and
+  one absent selector `` `tests/a.py::test_a` ``; a PR with no `Spec:` line and
   a non-matching branch touching `src/a.py`; `decide_at_head` refuses
   with `SP-A: spec acceptance selectors not all present: tests/a.py::test_a (AC1)`
   and reports `spec resolved by ownership: SP-A (1 paths)`.
