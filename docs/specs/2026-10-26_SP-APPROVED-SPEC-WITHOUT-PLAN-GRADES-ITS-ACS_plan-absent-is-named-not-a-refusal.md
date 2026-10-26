@@ -1,7 +1,7 @@
 ---
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
-version: 0.2
+version: 0.5
 status: draft
 author: agent
 created: 2026-10-26
@@ -52,6 +52,79 @@ Taken by the owner on 2026-10-26, on the 0.1 open questions and F7.
   owns a path of its diff (G7). Code owned by no spec is reported, never
   refused, in the frontier style of SP-ARCH-GRAPH / SP-SPEC-TEMPLATE
   ("reported, never enforced").
+
+## Amendment (0.3, 2026-10-26): what the implementation added to the interface
+
+- An example selector inside a criterion is quoted in a double-backtick
+  span, as AC15 already did: under D1 a
+  plain backticked node id in this section is a selector, so AC2, AC3
+  and AC12 would have graded this spec's own PR against three test
+  files that are fixtures of the tests, not deliverables.
+- `pr_spec_coverage` gains three more additive columns than the two the
+  Interface names: `report` (the lines reported and never refusing,
+  `plan-absent: …` and the `no selectors to grade: …` of a
+  documentation-only PR), `resolution` (`declared` / `ownership`, which
+  prefixes a refusal with `<id>: `) and `batch` (the rows one grading
+  recorded for one head; the gate folds the latest batch, so a PR whose
+  declaration changes at the same head is not graded against the specs
+  of an earlier resolution).
+- `repoach spec audit --plans` also lists, per committed plan, the
+  steps over `PLAN_STEP_MAX_FILES` / `PLAN_STEP_MAX_UNIT_SELECTORS`:
+  `<id>\tstep <n>\t<files>/<cap> files\t<selectors>/<cap> selectors`,
+  after the summary line, and `--json` carries them in
+  `oversized_steps`. The gate does not enforce the caps (tech_debt row
+  98).
+- An undeclared PR whose base ref cannot be read: superseded by 0.4.
+
+## Amendment (0.5, 2026-10-26): an example is never a selector; a failed grading refuses
+
+Measured on the gated merge of #260 (try 2): the gate refused
+`spec acceptance selectors not all present: tests/x.py::test_y (AC2), tests/p.py::test_p (AC3), tests/a.py::test_a (AC12)`.
+These are examples in prose, written with single backticks in the 0.2
+text merged by #259; the contract is the union of base and head, so
+quoting them at head (0.3) cannot remove them from the base half.
+
+- D1 is amended: an example in an Acceptance Criterion is marked, and
+  the extractor skips it. A backticked span prefixed `fixture:`
+  (`fixture:tests/x.py::test_y`) and any target under `tests/fixtures/`
+  (bare or in a `pytest …` invocation) are examples, never selectors. A
+  span quoted inside a double-backtick span stays an example too.
+  AC2, AC3 and AC12 name their examples with the prefix.
+- The base half of the contract still holds the 0.2 examples until the
+  base itself carries the prefixed text: a documentation-only PR
+  carrying this text lands on develop first (graded by develop's rule,
+  which does not read bare node ids), and this PR merges it.
+- A grading that raises (a malformed spec at head, a git failure while
+  resolving ownership) records a not-covered row
+  `spec coverage not graded: <Type>: <message> (fail closed)` instead of
+  recording nothing (F10, the Sentinel finding 41 of #260): no row reads
+  as "coverage unknown", which the gate does not refuse.
+
+## Amendment (0.4, 2026-10-26): a prose plan is no plan; an unresolvable ownership fails closed
+
+Measured on develop `51a4065`: 33 files under `docs/plans/` carry no
+`<!-- repoach-action-plan -->` marker. G4 as written refused every PR
+declaring (or, by G7, owning code of) one of these specs.
+
+- G4 is narrowed. A `docs/plans/<id>.md` without the marker is not an
+  action plan: the spec is graded exactly as if it had no plan (G1, or
+  G3 when its Acceptance Criteria name no selector), and the report
+  carries `plan file present but not an action plan: <path>` next to the
+  `plan-absent:` line. `spec plan unparseable at <ref>: <error>` (fail
+  closed) applies only to a file that carries the marker and does not
+  parse.
+- `repoach spec audit --plans` counts a spec whose plan file lacks the
+  marker as a spec without a plan, and prints one
+  `<id>\tnot an action plan: <path>` line per such file, distinct from
+  `<id>\tplan does not parse: <error>` for a marked file that does not
+  parse.
+- G7 fails closed: an undeclared PR whose base ref cannot be read (so
+  its specs cannot be resolved by ownership) is refused with
+  `spec resolution by ownership not graded: base ref <ref> unavailable (fail closed)`,
+  consistent with AC7; `spec_resolution.source` is `ownership`.
+- AC7 is split into AC7a (unresolvable base ref, marked plan that does
+  not parse) and AC7b (plan file without the marker); AC17 pins the
+  fail-closed ownership refusal; AC9's fixture gains AC9b.
 
 ## Context
 
@@ -278,12 +351,12 @@ flowchart TD
   diff touching `src/`; `decide_at_head` merges, the row has
   `contract == "acceptance-criteria"` and `missing == []`.
 - [ ] AC2: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_approved_spec_without_plan_names_the_absent_selector_and_its_ac`
-  → green: same fixture, AC3's selector `tests/x.py::test_y` absent;
+  → green: same fixture, AC3's selector `fixture:tests/x.py::test_y` absent;
   `reasons` contains exactly
   `spec acceptance selectors not all present: tests/x.py::test_y (AC3)`,
   and no reason contains `plan-absent`.
 - [ ] AC3: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_plan_wins_over_the_ac_section`
-  → green: an approved spec whose base plan promises `tests/p.py::test_p`
+  → green: an approved spec whose base plan promises `fixture:tests/p.py::test_p`
   (present) while its AC names an absent selector → merges,
   `contract == "plan"`; the plan's selector absent instead → reason
   `… not all present: tests/p.py::test_p (plan step 1)`.
@@ -302,11 +375,17 @@ flowchart TD
   → green: draft at base with AC selectors {a}, approved at head with
   {a, b}; both are graded, neither is `planned`; removing `a` from the
   head AC does not remove it from the contract.
-- [ ] AC7: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences`
+- [ ] AC7a (0.4): `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences`
   → green: an unresolvable base ref yields
   `spec coverage not graded: base ref <ref> unavailable, the contract cannot be read (fail closed)`;
-  an unparseable base plan yields `spec plan unparseable at <ref>: …`
-  and a recorded not-covered row; neither sentence lists a selector.
+  a base plan that carries the marker and does not parse yields
+  `spec plan unparseable at <ref>: …` and a recorded not-covered row;
+  neither sentence lists a selector.
+- [ ] AC7b (0.4): `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_plan_file_without_the_marker_is_not_an_action_plan`
+  → green: a base plan file without the marker is graded on the AC
+  section (`contract == "acceptance-criteria"`), the report carries
+  `plan file present but not an action plan: docs/plans/<id>.md`, and
+  the refusal names the absent AC selector, never `unparseable`.
 - [ ] AC8: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_stored_plan_absent_row_is_regraded_by_the_new_rule`
   → green: a `rule_version 1` row `missing == ["plan-absent"]` at head
   is recomputed (rule 2) and the decision merges when the AC selectors
@@ -329,7 +408,7 @@ flowchart TD
 
 - [ ] AC12: `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_touching_owned_code_is_refused_naming_the_selector`
   → green: `src/a.py` owned by an `approved` spec SP-A whose AC names
-  one absent selector `tests/a.py::test_a`; a PR with no `Spec:` line and
+  one absent selector `fixture:tests/a.py::test_a`; a PR with no `Spec:` line and
   a non-matching branch touching `src/a.py`; `decide_at_head` refuses
   with `SP-A: spec acceptance selectors not all present: tests/a.py::test_a (AC1)`
   and reports `spec resolved by ownership: SP-A (1 paths)`.
@@ -347,6 +426,23 @@ flowchart TD
 - [ ] AC16: SP-SPEC-TEMPLATE is at version 0.2 with an amendment naming
   the three selector forms, and `docs/specs/_TEMPLATE.md`'s Acceptance
   Criteria guidance names them (this PR).
+
+- [ ] AC9b (0.4): `pytest -q tests/unit/test_spec_audit_cmd.py::test_audit_plans_tells_a_prose_plan_from_a_corrupt_action_plan`
+  → green: a plan file without the marker counts as no plan and prints
+  `<id>\tnot an action plan: <path>`; a marked plan that does not parse
+  prints `<id>\tplan does not parse: …`.
+- [ ] AC17 (0.4): `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_with_an_unreadable_base_is_refused`
+  → green: an undeclared PR whose base ref does not resolve is refused
+  with exactly
+  `spec resolution by ownership not graded: base ref <ref> unavailable (fail closed)`.
+
+- [ ] AC18 (0.5): `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_a_grading_failure_records_a_refusing_row`
+  → green: a grading that raises records a not-covered row and the gate
+  refuses with exactly
+  `spec coverage not graded: RuntimeError: <message> (fail closed)`.
+- [ ] AC19 (0.5): `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_fixture_prefix_and_fixtures_tree_are_examples_not_selectors`
+  → green: an AC naming `fixture:tests/x.py::test_y`, or a target
+  under the fixtures tree, yields no selector.
 
 ## Open Questions
 
