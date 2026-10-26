@@ -22,8 +22,10 @@ from repoach.cli.review_cmds import review_app
 from repoach.forge import Diff, ForgeWriteBarrier, PullRequest
 from repoach.project.spec_source import resolve_spec
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, decide_at_head
+from repoach.review.findings import init_findings_schema, record_review_integrity
+from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
-from repoach.review.spec_gate import coverage_rows_at_head
+from repoach.review.spec_gate import coverage_rows_at_head, record_spec_coverages
 
 _SPEC_PATH = "docs/specs/2026-10-26_SP-A_owner.md"
 _OWNED = "src/a.py"
@@ -209,3 +211,22 @@ def test_ownership_is_read_at_base(tmp_path: Path) -> None:
     assert grading.rows[0].covered is False
     assert grading.ownership is not None
     assert grading.ownership.specs == {"SP-A": [_OWNED]}
+
+
+def test_undeclared_pr_with_an_unreadable_base_is_refused(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path, {_UNOWNED: "Z = 2\n"})
+
+    grading = coverage_rows_at_head(
+        repo, spec_id=None, base_ref="no-such-branch", changed_files=[_UNOWNED]
+    )
+    db = repo.parent / "unreadable.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=9, head_sha=head, n_reviewers=4, n_unparsed=0)
+    record_spec_coverages(db, pr_number=9, head_sha=head, coverages=grading.rows)
+    decision = compute_merge_decision(summarise_ledger_facts(db, pr_number=9, head_sha=head))
+
+    assert grading.source == "ownership"
+    assert decision.merge is False
+    assert decision.reasons == [
+        "spec resolution by ownership not graded: base ref no-such-branch unavailable (fail closed)"
+    ]

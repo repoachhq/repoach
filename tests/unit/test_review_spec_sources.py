@@ -73,6 +73,19 @@ def _spec_repo(tmp_path: Path) -> Path:
     specs = root / "docs/specs"
     specs.mkdir(parents=True)
     (specs / "2026-10-19_SP-YOOB-MR-CREATE_mr-helper.md").write_text("# MR helper\n\nBody.\n")
+    _git(root, "checkout", "-q", "-b", "develop")
+    _git(root, "-c", "user.email=t@example.invalid", "-c", "user.name=T", "add", "-A")
+    _git(
+        root,
+        "-c",
+        "user.email=t@example.invalid",
+        "-c",
+        "user.name=T",
+        "commit",
+        "-q",
+        "-m",
+        "base",
+    )
     return root
 
 

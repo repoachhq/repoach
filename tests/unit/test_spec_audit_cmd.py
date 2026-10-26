@@ -141,3 +141,27 @@ def test_audit_without_plans_flag_is_a_usage_error(
     monkeypatch.chdir(_repo(tmp_path))
     result = CliRunner().invoke(app, ["spec", "audit"])
     assert result.exit_code == 2
+
+
+def test_audit_plans_tells_a_prose_plan_from_a_corrupt_action_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo(tmp_path)
+    (root / "docs/plans/SP-B.md").write_text("# Plan\n\nProse only.\n", encoding="utf-8")
+    (root / "docs/plans/SP-C.md").write_text(
+        "# Plan\n\n<!-- repoach-action-plan -->\n```json\n{not json\n```\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(root)
+
+    result = CliRunner().invoke(app, ["spec", "audit", "--plans"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[:2] == [
+        "SP-B\tapproved\t2 selectors\tsrc/a.py",
+        "1 specs past draft without a plan (0 with no selector to grade)",
+    ]
+    assert "SP-B\tnot an action plan: docs/plans/SP-B.md" in lines
+    assert next(line for line in lines if "does not parse" in line).startswith(
+        "SP-C\tplan does not parse: "
+    )

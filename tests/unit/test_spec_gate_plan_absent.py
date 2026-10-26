@@ -45,6 +45,7 @@ _PRESENT = ["tests/unit/test_planless.py::test_one", "tests/unit/test_planless.p
 _ABSENT = "tests/x.py::test_y"
 _PLAN_SELECTOR = "tests/p.py::test_p"
 _HEADER = "spec acceptance selectors not all present"
+_CORRUPT_PLAN = "# Plan\n\n<!-- repoach-action-plan -->\n```json\n{not json\n```\n"
 
 
 @pytest.fixture(autouse=True)
@@ -401,7 +402,7 @@ def test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences(
     spec = _spec("approved", _criteria(_ABSENT))
     repo, head = _repo(
         tmp_path,
-        base={_SPEC_PATH: spec, f"docs/plans/{_ID}.md": "# not a plan\n\nno fence here\n"},
+        base={_SPEC_PATH: spec, f"docs/plans/{_ID}.md": _CORRUPT_PLAN},
         head={_CODE: "VALUE = 1\n"},
     )
 
@@ -427,6 +428,31 @@ def test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences(
     assert reasons.reasons[0].startswith("spec plan unparseable at develop: ")
     assert _ABSENT not in reasons.reasons[0]
     assert not any(_HEADER in reason for reason in reasons.reasons)
+
+
+def test_plan_file_without_the_marker_is_not_an_action_plan(tmp_path: Path) -> None:
+    plan_path = f"docs/plans/{_ID}.md"
+    spec = _spec("approved", _criteria(*_PRESENT, _ABSENT))
+    repo, head = _repo(
+        tmp_path,
+        base={_SPEC_PATH: spec, plan_path: "# Plan\n\nProse steps, no marker.\n"},
+        head={_CODE: "VALUE = 1\n", **_present_tests()},
+    )
+    changed = [_CODE, "tests/unit/test_planless.py"]
+
+    coverage, _ = coverage_at_head(repo, spec_id=_ID, base_ref="develop", changed_files=changed)
+
+    assert coverage.contract == "acceptance-criteria"
+    assert coverage.missing == [_ABSENT]
+    assert coverage.report == [
+        f"plan-absent: graded against the acceptance criteria of {_ID} (3 selectors)",
+        f"plan file present but not an action plan: {plan_path}",
+    ]
+    db = _ledger(tmp_path, head)
+    record_spec_coverage(db, pr_number=7, head_sha=head, coverage=coverage)
+    reasons = compute_merge_decision(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    assert reasons.reasons == [f"{_HEADER}: {_ABSENT} (AC3)"]
+    assert not any("unparseable" in reason for reason in reasons.reasons)
 
 
 def test_stored_plan_absent_row_is_regraded_by_the_new_rule(tmp_path: Path) -> None:
