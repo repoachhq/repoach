@@ -9,6 +9,7 @@ from loguru import logger
 from repoach.health.credits import get_cached_credits
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.core.anthropic import get_token_count
+from repoach.llm_proxy.instance import current_instance
 from repoach.llm_proxy.routing import RoutingTable, Tier, get_breaker
 
 from . import dependencies
@@ -194,9 +195,18 @@ async def health(
     * ``credits`` — the OpenRouter account balance (SP-CREDITS-CHECK)
       when ``open_router_api_key`` is configured and a snapshot is
       available; ``null`` when the key is absent or the fetch fails.
+
+    Every caller also gets ``instance`` when the process was started with
+    ``REPOACH_PROXY_INSTANCE`` (SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB): an
+    opaque per-job nonce, not a credential, that lets the job which
+    started this proxy prove ``/health`` was answered by its own process.
     """
+    liveness: dict[str, str] = {"status": "healthy"}
+    instance = current_instance()
+    if instance:
+        liveness["instance"] = instance
     if not authenticated:
-        return {"status": "healthy"}
+        return liveness
 
     breaker_entries = get_breaker().snapshot(time.monotonic())
     credits = None
@@ -216,7 +226,7 @@ async def health(
                 }
             }
     return {
-        "status": "healthy",
+        **liveness,
         "breaker": [
             {
                 "ref": str(entry.ref),
