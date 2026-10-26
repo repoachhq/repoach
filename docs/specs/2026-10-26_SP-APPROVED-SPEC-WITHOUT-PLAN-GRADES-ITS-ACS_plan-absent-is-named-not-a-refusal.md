@@ -2,7 +2,7 @@
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
 version: 0.3
-status: draft
+status: approved
 author: agent
 created: 2026-10-26
 updated: 2026-10-26
