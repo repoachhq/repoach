@@ -1,7 +1,7 @@
 ---
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-10-26
@@ -74,10 +74,33 @@ Taken by the owner on 2026-10-26, on the 0.1 open questions and F7.
   after the summary line, and `--json` carries them in
   `oversized_steps`. The gate does not enforce the caps (tech_debt row
   98).
-- An undeclared PR whose base ref cannot be read is not graded by
-  ownership; the review and the gate report `spec resolution by
-  ownership skipped: base ref <ref> unavailable` and the PR is graded as
-  undeclared PRs were before G7.
+- An undeclared PR whose base ref cannot be read: superseded by 0.4.
+
+## Amendment (0.4, 2026-10-26): a prose plan is no plan; an unresolvable ownership fails closed
+
+Measured on develop `51a4065`: 33 files under `docs/plans/` carry no
+`<!-- repoach-action-plan -->` marker. G4 as written refused every PR
+declaring (or, by G7, owning code of) one of these specs.
+
+- G4 is narrowed. A `docs/plans/<id>.md` without the marker is not an
+  action plan: the spec is graded exactly as if it had no plan (G1, or
+  G3 when its Acceptance Criteria name no selector), and the report
+  carries `plan file present but not an action plan: <path>` next to the
+  `plan-absent:` line. `spec plan unparseable at <ref>: <error>` (fail
+  closed) applies only to a file that carries the marker and does not
+  parse.
+- `repoach spec audit --plans` counts a spec whose plan file lacks the
+  marker as a spec without a plan, and prints one
+  `<id>\tnot an action plan: <path>` line per such file, distinct from
+  `<id>\tplan does not parse: <error>` for a marked file that does not
+  parse.
+- G7 fails closed: an undeclared PR whose base ref cannot be read (so
+  its specs cannot be resolved by ownership) is refused with
+  `spec resolution by ownership not graded: base ref <ref> unavailable (fail closed)`,
+  consistent with AC7; `spec_resolution.source` is `ownership`.
+- AC7 is split into AC7a (unresolvable base ref, marked plan that does
+  not parse) and AC7b (plan file without the marker); AC17 pins the
+  fail-closed ownership refusal; AC9's fixture gains AC9b.
 
 ## Context
 
@@ -328,11 +351,17 @@ flowchart TD
   → green: draft at base with AC selectors {a}, approved at head with
   {a, b}; both are graded, neither is `planned`; removing `a` from the
   head AC does not remove it from the contract.
-- [ ] AC7: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences`
+- [ ] AC7a (0.4): `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences`
   → green: an unresolvable base ref yields
   `spec coverage not graded: base ref <ref> unavailable, the contract cannot be read (fail closed)`;
-  an unparseable base plan yields `spec plan unparseable at <ref>: …`
-  and a recorded not-covered row; neither sentence lists a selector.
+  a base plan that carries the marker and does not parse yields
+  `spec plan unparseable at <ref>: …` and a recorded not-covered row;
+  neither sentence lists a selector.
+- [ ] AC7b (0.4): `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_plan_file_without_the_marker_is_not_an_action_plan`
+  → green: a base plan file without the marker is graded on the AC
+  section (`contract == "acceptance-criteria"`), the report carries
+  `plan file present but not an action plan: docs/plans/<id>.md`, and
+  the refusal names the absent AC selector, never `unparseable`.
 - [ ] AC8: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_stored_plan_absent_row_is_regraded_by_the_new_rule`
   → green: a `rule_version 1` row `missing == ["plan-absent"]` at head
   is recomputed (rule 2) and the decision merges when the AC selectors
@@ -373,6 +402,15 @@ flowchart TD
 - [ ] AC16: SP-SPEC-TEMPLATE is at version 0.2 with an amendment naming
   the three selector forms, and `docs/specs/_TEMPLATE.md`'s Acceptance
   Criteria guidance names them (this PR).
+
+- [ ] AC9b (0.4): `pytest -q tests/unit/test_spec_audit_cmd.py::test_audit_plans_tells_a_prose_plan_from_a_corrupt_action_plan`
+  → green: a plan file without the marker counts as no plan and prints
+  `<id>\tnot an action plan: <path>`; a marked plan that does not parse
+  prints `<id>\tplan does not parse: …`.
+- [ ] AC17 (0.4): `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_with_an_unreadable_base_is_refused`
+  → green: an undeclared PR whose base ref does not resolve is refused
+  with exactly
+  `spec resolution by ownership not graded: base ref <ref> unavailable (fail closed)`.
 
 ## Open Questions
 
