@@ -93,6 +93,14 @@ schema = 1
 # itself, false on any other repository.
 # require_frontmatter = false
 
+[auto_merge]
+# Check names the merge waits on. Default: the CI workflow's job names.
+# required_checks = ["Test suite (Python 3.11)", "Test suite (Python 3.13)", "wheel-build", "wheel-smoke (3.11)", "wheel-smoke (3.13)"]
+# Workflows whose completion re-arms the merge.
+# rearm_workflows = ["CI", "Auto Review (review bots)"]
+# Seconds an owner-event burst is coalesced into before a review starts.
+# coalesce_s = 60
+
 [state]
 # Ledger and diagnostic dumps; empty means ~/.local/share/repoach/<project>/.
 # A path here must stay inside the repository.

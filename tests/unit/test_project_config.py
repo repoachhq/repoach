@@ -444,6 +444,7 @@ class TestAsMapping:
             "arch",
             "state",
             "conventions",
+            "auto_merge",
         ]
         assert mapping["repoach"]["schema"] == 1
         assert mapping["repoach"]["forge"] == "gitlab"
