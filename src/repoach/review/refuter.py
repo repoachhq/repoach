@@ -621,10 +621,19 @@ def refute_finding(
     repo_root: Path,
     judge: Judge,
     absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
+    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
 ) -> tuple[FindingStatus, str]:
-    """Judge one finding, returning ``(new_status, reason)`` of :func:`judge_finding`."""
+    """Judge one finding, returning ``(new_status, reason)`` of :func:`judge_finding`.
+
+    ``context_tokens`` is the refuter's configured context, which the
+    evidence fills (:func:`judge_finding`).
+    """
     judgement = judge_finding(
-        finding, repo_root=repo_root, judge=judge, absent_reason=absent_reason
+        finding,
+        repo_root=repo_root,
+        judge=judge,
+        absent_reason=absent_reason,
+        context_tokens=context_tokens,
     )
     return judgement.status, judgement.reason
 

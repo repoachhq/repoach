@@ -22,7 +22,7 @@ import typer
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.forge.protocol import MergeMethod, PullRequest
-from repoach.review import auto_merge, finding_verifiers
+from repoach.review import auto_merge, finding_verifiers, head_reverify
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, evaluate_merge_gate
 from repoach.review.findings import (
     ClaimType,
@@ -761,3 +761,27 @@ def test_two_missing_tests_at_one_head_list_the_tree_once(
     assert _row(db, first).status is FindingStatus.RESOLVED_AT_HEAD
     assert _row(db, second).status is FindingStatus.VERIFIED
     assert evaluation.facts.reverified == {"resolved": 1, "still_open": 1, "needs_judgement": 0}
+
+
+def test_re_check_fills_the_configured_refuter_context(
+    tmp_path: Path, gate: Callable[..., GateEvaluation], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _planted(repo, db)
+    head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
+    _review_at(db, head_b)
+    seen: list[int] = []
+    real = head_reverify.refute_finding
+
+    def spy(finding: Finding, **kwargs: object) -> object:
+        seen.append(int(kwargs["context_tokens"]))
+        return real(finding, **kwargs)
+
+    monkeypatch.setattr(head_reverify, "refute_finding", spy)
+    monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_TOKENS", "150000")
+
+    evaluation = gate(repo, head_b, _Judge)
+
+    assert seen == [150000]
+    assert evaluation.decision.merge is True

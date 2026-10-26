@@ -35,7 +35,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from ..core.logging import get_logger
-from ..gates.config import GatesConfig
+from ..gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig
 from ..gates.selectors import is_js_test_file
 from .finding_verifiers import verify_finding
 from .findings import (
@@ -290,7 +290,12 @@ def _mechanical(
 
 
 def _judged(
-    finding: Finding, repo_root: Path, judge: LazyJudge, max_judged: int, cap: int
+    finding: Finding,
+    repo_root: Path,
+    judge: LazyJudge,
+    max_judged: int,
+    cap: int,
+    context_tokens: int,
 ) -> tuple[ReverifyState, str, str]:
     """Hand a finding to the refuter at the head, within ``max_judged`` calls.
 
@@ -299,7 +304,9 @@ def _judged(
     """
     if judge.calls >= max_judged:
         return "needs_judgement", "refuter", JUDGING_CAP_REACHED.format(cap=cap)
-    status, reason = refute_finding(finding, repo_root=repo_root, judge=judge)
+    status, reason = refute_finding(
+        finding, repo_root=repo_root, judge=judge, context_tokens=context_tokens
+    )
     if status is FindingStatus.REFUTED:
         return "resolved", "refuter", reason
     if status is FindingStatus.VERIFIED:
@@ -317,6 +324,7 @@ def _recheck(
     judge: LazyJudge,
     max_judged: int,
     cap: int,
+    context_tokens: int,
 ) -> tuple[ReverifyState, str, str]:
     """Return ``(state, method, reason)`` for one finding at the head."""
     sha7 = head_sha[:7]
@@ -329,7 +337,7 @@ def _recheck(
         return settled
     if finding.claim_type not in MECHANICAL_CLAIM_TYPES | JUDGED_CLAIM_TYPES:
         _log.info("head_reverify.unknown_claim_type", claim_type=finding.claim_type.value)
-    return _judged(finding, repo_root, judge, max_judged, cap)
+    return _judged(finding, repo_root, judge, max_judged, cap, context_tokens)
 
 
 def _settled_on_disk(
@@ -478,6 +486,7 @@ def reverify_older_findings(
     max_judged: int,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
     cap: int | None = None,
+    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
 ) -> HeadReverification:
     """Re-check every unsettled blocking finding of an older head at ``head_sha``.
 
@@ -500,6 +509,10 @@ def reverify_older_findings(
         cap: The configured refuter cap, named in the reason of a
             finding the budget defers; ``max_judged`` when omitted
             (``review pr`` passes the cap it spent part of).
+        context_tokens: The refuter's configured context
+            (``[gates].refuter_context_tokens``), which the evidence of a
+            re-judged finding fills, as it does in the review's own
+            refuter pass; the floor when omitted.
 
     Returns:
         The :class:`HeadReverification`; resolved and still-open
@@ -538,6 +551,7 @@ def reverify_older_findings(
                 judge=judge,
                 max_judged=max_judged,
                 cap=max_judged if cap is None else cap,
+                context_tokens=context_tokens,
             )
         state, method, reason = seen[key]
         outcome = _outcome(finding, state, reason)
