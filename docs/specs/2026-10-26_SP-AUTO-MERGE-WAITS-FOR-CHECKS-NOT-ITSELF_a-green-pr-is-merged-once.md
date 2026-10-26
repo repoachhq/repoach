@@ -2,7 +2,7 @@
 id: SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF
 title: Auto-merge waits for the named required checks, never for itself, and a green PR is merged once
 version: 0.3
-status: draft
+status: approved
 author: agent
 created: 2026-10-26
 updated: 2026-10-26
@@ -441,6 +441,16 @@ merge-attempts comments of every PR merged in the following 7 days.
   SP-UNIVERSAL-FORGE), so a green attempt is upserted into the comment
   just before `forge.merge`, and replaced by the refusal if the forge then
   refuses. The `pr_merges` row is written after the merge either way.
+- Status `approved` with the implementation: a `draft` spec whose PR touches
+  code outside `docs/` is refused by the draft scope whatever its selectors
+  (`covered` requires no draft refusal), and the delivery PR is exactly that.
+  Under develop's rule an `approved` spec is graded on its plan, so
+  `docs/plans/SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF.md` records the
+  delivered steps; it promises the eleven AC selectors of this spec plus
+  `tests/integration/test_automerge_fail_fast_gate.py`, AC11 excepted.
+- `repoach.toml` carries `[auto_merge]` commented out: a repoach older than
+  the section refuses it as an unknown key, and develop's gate reads the
+  head tree's file.
 
 ## Open Questions
 
