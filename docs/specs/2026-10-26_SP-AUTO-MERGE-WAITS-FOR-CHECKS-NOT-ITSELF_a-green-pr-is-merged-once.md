@@ -1,7 +1,7 @@
 ---
 id: SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF
 title: Auto-merge waits for the named required checks, never for itself, and a green PR is merged once
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-26
@@ -70,7 +70,7 @@ Measured on `repoachhq/repoach`, `origin/develop` at `51a4065`, `main` at
 
 - **G1 The merge waits on named required checks, never on the rollup.**
   - `[auto_merge].required_checks` in `repoach.toml` is the committed
-    list. Default: the job names of the `CI` workflow, with the matrix
+    list. Default (D4): the job names of the `CI` workflow, with the matrix
     expanded. Today that is the five names of F11.
     `DEFAULT_REQUIRED_CHECK_NAMES` becomes that default, and
     SP-CI-CHECKNAME-SYNC's derivation test covers all five.
@@ -144,6 +144,14 @@ Measured on `repoachhq/repoach`, `origin/develop` at `51a4065`, `main` at
     `repoach review stranded [--base develop]` prints the same rows
     (table on stdout, `--json` one object). Both are read-only and make
     zero forge writes.
+  - **Release sweep (D3).** `repoach review stranded --dispatch` runs
+    `gh workflow run merge-on-ci.yml -f pr=<n>` once for each stranded
+    PR, through the write barrier. It prints one
+    `dispatched #<n> (<reason>)` line per PR on stderr, and the JSON
+    lists the dispatched numbers. The `develop → main` release job runs
+    it after the release lands, so a PR left behind by a gate-rule
+    change (F8) is re-judged under the new rule. The sweep is retired
+    when `queue run` lands.
 
 - **G4 Owner-event bursts coalesce, and the merge job is never cancelled.**
   - `auto-review.yml` loses its workflow-level `concurrency`. A job
@@ -151,7 +159,7 @@ Measured on `repoachhq/repoach`, `origin/develop` at `51a4065`, `main` at
     archive-comment run can no longer cancel anything (F9).
   - A new first job, `coalesce`, runs only for `pull_request_review` and
     `issue_comment` events that pass the existing author filters (no
-    `Bot`, allow-listed actor). It runs on `ubuntu-latest` (F14: free,
+    `Bot`, allow-listed actor). It runs on `ubuntu-latest` (D1, F14: free,
     and it leaves the self-hosted runner alone), sleeps
     `coalesce_window_s` (60), and has job concurrency
     `coalesce-<pr>` with `cancel-in-progress: true`. Only the last event
@@ -189,6 +197,27 @@ Measured on `repoachhq/repoach`, `origin/develop` at `51a4065`, `main` at
     `repoach review line history <pr>` (SP-RED-STOPS-THE-LINE) shows
     the same line when it lands.
 
+## Decisions (coordinator 2026-10-26, on open questions Q1–Q5 of v0.1)
+
+- **D1 (Q1) `coalesce` runs on a GitHub-hosted runner** (`ubuntu-latest`).
+  The repository is public, so it costs nothing (F14). It must never
+  queue behind the self-hosted runner it protects.
+- **D2 (Q2) The trusted-code fix is its own spec.** The in-run
+  `auto_merge` job holds `contents: write` and installs the PR's merge-ref
+  code, which violates SP-CI-SECRETS-ISOLATION (F13). It is tracked as
+  `docs/tech_debt.md` row 101 and becomes SP-MERGE-JOB-RUNS-TRUSTED-CODE-ONLY.
+  This spec does not touch it (NG5).
+- **D3 (Q3) A release sweep re-arms stranded PRs.** `repoach review
+  stranded --dispatch` dispatches merge-on-ci for every stranded PR. The
+  release job runs it until `queue run` lands (G3).
+- **D4 (Q4) `required_checks` defaults to all five CI jobs**: both
+  `Test suite` jobs, `wheel-build` and both `wheel-smoke` jobs (G1). A
+  wheel that does not install is a red the merge must see.
+- **D5 (Q5) Coalesce only, never filter.** Review events that carry the
+  bot signature are coalesced like any owner event (G4), never dropped.
+  The re-fire exists so that a local `repoach review pr` re-runs CI's
+  review.
+
 ## Non-Goals
 
 - NG1: Replacing the bot merge paths with the queue. That is #258 /
@@ -201,8 +230,10 @@ Measured on `repoachhq/repoach`, `origin/develop` at `51a4065`, `main` at
 - NG4: No GitLab change. GitLab's adapter judges `head_pipeline.status`.
   Yoob's MRs arm `merge_when_pipeline_succeeds` themselves, and GitLab
   waits on the pipeline without an `UNSTABLE` analogue.
-- NG5: Not fixing F13's second half (the `contents: write` in-run job
-  installs PR merge-ref code). Named here, left to its own spec (Q2).
+- NG5: Not fixing F13's second half: the in-run job holds
+  `contents: write` and installs the PR merge ref's code. It is left to
+  SP-MERGE-JOB-RUNS-TRUSTED-CODE-ONLY, tracked as `docs/tech_debt.md`
+  row 101 (D2).
 
 ## Assumptions
 
@@ -278,7 +309,7 @@ New outcome: `OUTCOME_SKIP_CI_CANCELLED = "SKIP_CI_CANCELLED"`, in
 `format:merge-attempts-json`: `{"pr": int, "attempts": [MergeAttempt…], "count": int, "last": MergeAttempt | null}`.
 
 CLI: `repoach review merge-attempts <pr>`,
-`repoach review stranded [--base B] [--json]`.
+`repoach review stranded [--base B] [--json] [--dispatch] [--dry-run]`.
 
 ## Behavior
 
@@ -361,6 +392,7 @@ and it logs merge calls and comment writes.
 - [ ] AC9: `pytest -q tests/unit/test_merge_attempts_ledger.py::test_cli_attempts_line` → green. `repoach review merge-attempts 259` prints exactly one JSON object on stdout with `count == 2`, and on stderr prints `merge attempts: 2, last: APPROVE`. After the first invocation only, it prints `merge attempts: 1, last: SKIP_CI_PENDING on Test suite (Python 3.11)`.
 - [ ] AC10: `pytest -q tests/unit/test_merge_wait_stranded.py::test_stranded_listed` → green. #256 green since t, no attempt at its head after t: `stranded(...)` gives `stranded: green since <t>, no merge attempt`. #247 green, last attempt `SKIP_GATE (spec acceptance selectors not all present)` before t: the reason names it. #259 with an `APPROVE` attempt is not listed. `repoach review stranded --json` prints one object with those two rows, and the forge records zero writes.
 - [ ] AC11: (applied by the queue implementation, SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES) `pytest -q tests/unit/test_queue_cli.py::test_stranded_row` → green. On the AC10 fixture, `repoach queue --json` rows for #256 and #247 have `gate == "stranded"` and the AC10 reasons. `queue run` judges CI through `judge_required_checks`.
+- [ ] AC13: `pytest -q tests/unit/test_merge_wait_stranded.py::test_dispatch_sweep` → green. On the AC10 fixture, `repoach review stranded --dispatch` records exactly two forge writes, `workflow_run merge-on-ci.yml pr=256` and `pr=247`, and prints `dispatched #256 (stranded: green since <t>, no merge attempt)` on stderr. With `--dry-run` the barrier records zero writes. A PR with an `APPROVE` attempt or a pending required check is never dispatched.
 - [ ] AC12 (measurement): the delivery PR quotes the replay below, run on the code of the PR.
 
 ## Measurement plan
@@ -391,31 +423,4 @@ merge-attempts comments of every PR merged in the following 7 days.
 
 ## Open Questions
 
-- Q1 (owner): `coalesce` on a GitHub-hosted runner (free on this public
-  repo, F14) or on the self-hosted runner, which holds the slot 60 s per
-  owner event?
-  **Recommendation:** hosted. The single runner is the scarce resource
-  this spec protects.
-- Q2 (owner): the in-run `auto_merge` job holds a `contents: write`
-  token and installs the PR merge ref's code (F13). SP-CI-SECRETS-ISOLATION's
-  rule ("a merge-capable token must never execute PR-authored code")
-  says it should check out the base. Should that be its own spec?
-  **Recommendation:** yes, a separate spec. Note that a base checkout
-  delays G1 on that path until the PR carrying it is merged.
-- Q3 (owner): after a gate-rule change lands (as #259 will), should a
-  sweep dispatch `merge-on-ci.yml -f pr=<n>` for every open green PR?
-  **Recommendation:** yes. `review stranded --json` feeds a
-  `workflow_dispatch` loop run by the release job, until `queue run`
-  makes it moot.
-- Q4 (owner): default `required_checks` = all five CI jobs, which adds
-  `wheel-build` and `wheel-smoke` to today's two, so merges wait about
-  1 min longer. Or keep the two?
-  **Recommendation:** five. A wheel that does not install is a red the
-  merge must see.
-- Q5 (owner): the four-review bursts come from repoach itself
-  (`repoach review pr` posting under the owner token, F9). Should review
-  events whose body carries the bot signature be filtered out entirely,
-  rather than coalesced?
-  **Recommendation:** coalesce only. The re-fire exists so that a local
-  review re-runs CI's review, and G4 already reduces the burst to one
-  run.
+None. Q1–Q5 of v0.1 are closed by D1–D5.
