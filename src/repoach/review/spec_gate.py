@@ -849,19 +849,34 @@ _PYTEST_TARGET = re.compile(r"^[\w./-]+\.py(?:::[\w\[\]-]+)*$")
 _TEST_FILE_NAME = re.compile(r"^(?:test_[\w-]*|[\w-]*_test)\.py$")
 
 
+EXAMPLE_PREFIX = "fixture:"
+"""Marks a backticked path in an Acceptance Criterion as an example, never graded."""
+
+EXAMPLE_ROOT = "tests/fixtures/"
+"""Paths under this tree are test fixtures, never acceptance selectors."""
+
+
 def _span_selectors(span: str) -> list[str]:
     """Return the selectors one inline code span names (D1).
 
     A ``pytest [flags] <target>…`` invocation names each of its targets;
     a span that is exactly a node id (``file.py::test``) or a test file
     path (under ``tests/`` or named ``test_*.py`` / ``*_test.py``) names
-    itself. Any other span names nothing.
+    itself. Any other span names nothing. An example is never a selector
+    (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS 0.5): a span prefixed
+    ``fixture:``, and a target under ``tests/fixtures/``.
     """
     text = span.strip()
+    if text.startswith(EXAMPLE_PREFIX):
+        return []
     words = text.split()
     if words and words[0] == "pytest":
-        return [token for token in words[1:] if _PYTEST_TARGET.match(token)]
-    if not _PYTEST_TARGET.match(text):
+        return [
+            token
+            for token in words[1:]
+            if _PYTEST_TARGET.match(token) and not token.startswith(EXAMPLE_ROOT)
+        ]
+    if not _PYTEST_TARGET.match(text) or text.startswith(EXAMPLE_ROOT):
         return []
     if "::" in text:
         return [text]

@@ -492,3 +492,16 @@ def test_bare_node_id_and_test_file_path_are_selectors() -> None:
     )
     found = [(entry.selector, entry.origin) for entry in spec_acceptance_criteria(markdown)]
     assert found == [("tests/x.py::test_y", "AC1"), ("tests/z.py", "AC2")]
+
+
+def test_fixture_prefix_and_fixtures_tree_are_examples_not_selectors() -> None:
+    markdown = (
+        "## Acceptance Criteria\n\n"
+        "- [ ] AC1: `pytest -q tests/unit/test_real.py::test_it` -> green, with "
+        "`fixture:tests/x.py::test_y` absent.\n"
+        "- [ ] AC2: `tests/fixtures/x/test_y.py::test_y` and "
+        "`pytest -q tests/fixtures/x/test_z.py` are fixtures.\n\n"
+        "## Open Questions\n"
+    )
+    found = [(entry.selector, entry.origin) for entry in spec_acceptance_criteria(markdown)]
+    assert found == [("tests/unit/test_real.py::test_it", "AC1")]
