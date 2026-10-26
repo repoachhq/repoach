@@ -21,6 +21,7 @@ depends_on:
   - SP-REFUTER-JUDGES-WHAT-IT-CAN
   - SP-RETRY-BACKOFF-DEDUP
   - SP-SCHEMA-INIT-RACE-GENERALIZE
+  - SP-GATE-REVERIFIES-AT-HEAD
 provides_to: []
 
 constraints: {}

@@ -31,6 +31,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from repoach.forge import Comment, Diff, PullRequest, Review
+from repoach.review.finding_verifiers import VerificationReport
 from repoach.review.head_reverify import HeadReverification
 from repoach.review.merge_gate import MergeFacts
 from repoach.review.orchestrator import (
@@ -283,7 +284,9 @@ def _silence_downstream_ledger_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("repoach.review.orchestrator.record_review_ledger", lambda *a, **kw: None)
     monkeypatch.setattr("repoach.review.orchestrator.record_review", lambda *a, **kw: None)
     monkeypatch.setattr("repoach.review.orchestrator.record_hallucination", lambda *a, **kw: None)
-    monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: {})
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: VerificationReport()
+    )
     monkeypatch.setattr(
         "repoach.review.orchestrator.judge_findings_for_pr", lambda *a, **kw: JudgingReport()
     )

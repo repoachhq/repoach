@@ -75,6 +75,7 @@ from ..review.merge_wait import (
 )
 from ..review.orchestrator import run_review
 from ..review.refuter import Refutation
+from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
@@ -349,11 +350,20 @@ def review_pr(
     null). A head the forge does not serve, or one that cannot be
     fetched, exits 2 before any reviewer runs.
 
-    ``findings`` lists every finding the refuter saw, each with
-    ``refutation = {state, reason}`` (``verified`` / ``refuted`` /
-    ``deferred`` / ``unverified``), and one ``refuter: judged …`` line on
-    stderr counts them by state and reason
-    (SP-REFUTER-JUDGES-WHAT-IT-CAN).
+    ``findings`` lists every finding that can move ``final_verdict``,
+    each once, with ``judge`` (``mechanical`` / ``refuter`` /
+    ``reverify`` / ``ledger``), ``state``, ``verification_method``
+    (``mechanical:<claim_type>`` for a mechanical verifier),
+    ``evidence`` and ``blocking``: the findings a mechanical verifier
+    settled, every finding the refuter saw (its ``refutation = {state,
+    reason}`` kept — ``verified`` / ``refuted`` / ``deferred`` /
+    ``unverified``), the findings of older heads re-checked at the head,
+    and any finding still counted as open blocking.
+    ``verdict_basis`` is the ids the verdict counts as open blocking,
+    each one entry of ``findings``. One ``refuter: judged …`` line on
+    stderr counts the refuter's states and reasons
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN), then a ``report: N finding(s) listed`` table
+    names each finding's judge and a ``verdict basis:`` line closes it.
 
     A dry run closes the forge's write barrier (SP-DRY-RUN-NEVER-POSTS):
     ``refused_writes`` counts the writes it refused and ``write_refusal``
@@ -431,7 +441,8 @@ def review_pr(
             }
             for o in team.reviews
         ],
-        "findings": [refutation.as_json() for refutation in team.refutations],
+        "findings": [entry.as_json() for entry in team.findings],
+        "verdict_basis": list(team.verdict_basis),
         "usage": usage,
         "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
@@ -444,6 +455,8 @@ def review_pr(
         typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
         typer.echo(team.refuter_summary, err=True)
+    for line in findings_table_lines(team.findings, team.verdict_basis):
+        typer.echo(line, err=True)
     if team.reverify_line:
         typer.echo(team.reverify_line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)

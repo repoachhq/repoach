@@ -50,6 +50,8 @@ class _FakeTeam:
     posting_outcome: str | None = None
     refutations: list[Any] = field(default_factory=list)
     refuter_summary: str | None = None
+    findings: list[Any] = field(default_factory=list)
+    verdict_basis: list[int] = field(default_factory=list)
     refused_writes: list[str] = field(default_factory=list)
     write_refusal: str | None = None
     head_sha: str | None = None
@@ -78,6 +80,8 @@ _REQUIRED_TOP_LEVEL = {
     "refused_writes",
     "write_refusal",
     "reviews",
+    "findings",
+    "verdict_basis",
 }
 
 _REQUIRED_REVIEW_ENTRY = {
@@ -218,6 +222,7 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
 
     from repoach.review.findings import ClaimType
     from repoach.review.refuter import JudgingReport, Refutation
+    from repoach.review.report import ReportFinding
 
     report = JudgingReport(
         outcomes=(
@@ -233,6 +238,21 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
     team = _build_fake_team()
     team.refutations = list(report.outcomes)
     team.refuter_summary = report.summary_line()
+    team.findings = [
+        ReportFinding(
+            finding_id=outcome.finding_id,
+            file=outcome.file,
+            line_start=outcome.line_start,
+            claim_type=outcome.claim_type,
+            judge="refuter",
+            state=outcome.state,
+            verification_method="refuter",
+            evidence=outcome.reason,
+            severity="blocking",
+            status="proposed",
+        )
+        for outcome in report.outcomes
+    ]
     with patch("repoach.cli.review_cmds.run_review", return_value=team):
         result = CliRunner().invoke(review_app, ["pr", "999", "--dry-run"])
 
@@ -248,8 +268,16 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
         "file": "ci/x.sh",
         "line": 1,
         "claim_type": "security",
+        "severity": "blocking",
+        "status": "proposed",
+        "judge": "refuter",
+        "state": "deferred",
+        "verification_method": "refuter",
+        "evidence": "evidence outside the diff",
+        "blocking": False,
         "refutation": {"state": "deferred", "reason": "evidence outside the diff", **unserved},
     }
+    assert payload["verdict_basis"] == []
     refuter_lines = [line for line in result.stderr.splitlines() if line.startswith("refuter:")]
     assert refuter_lines == [
         "refuter: judged 1, refuted 1, deferred 1 (evidence outside the diff), "
