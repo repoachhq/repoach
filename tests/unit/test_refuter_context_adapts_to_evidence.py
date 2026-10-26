@@ -10,8 +10,7 @@ context used is recorded as ``budget_used``.
 
 from __future__ import annotations
 
-import json
-import subprocess
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -22,16 +21,17 @@ from repoach.gates.config import (
     GatesConfig,
     GatesConfigError,
     load_gates_config,
+    resolve_refuter_budget,
     resolve_refuter_context_ceiling,
 )
 from repoach.review.findings import (
-    ClaimType,
     Finding,
     FindingStatus,
-    Severity,
     fetch_findings,
     init_findings_schema,
     record_finding,
+    record_verification_attempt,
+    update_finding_status,
 )
 from repoach.review.head_reverify import reverify_older_findings
 from repoach.review.refuter import (
@@ -42,20 +42,13 @@ from repoach.review.refuter import (
 )
 from repoach.review.refuter_evidence import estimate_tokens
 from repoach.review.report import _from_ledger
+from tests.refuter_fakes import blocking_finding
+from tests.refuter_fakes import git_tree as _git_tree
+from tests.refuter_fakes import judge_reply as _reply
 
 CITED = "src/big.py"
 HEAD_A = "a" * 40
 HEAD_B = "b" * 40
-
-
-def _git_tree(root: Path, files: dict[str, str]) -> Path:
-    for rel, text in files.items():
-        target = root / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    return root
 
 
 def _big_source(tokens: int) -> str:
@@ -68,23 +61,7 @@ def _big_source(tokens: int) -> str:
 
 
 def _finding(claim: str = "`wanted_symbol` leaks the value", *, head: str = HEAD_A) -> Finding:
-    return Finding(
-        pr_number=7,
-        head_sha=head,
-        round=1,
-        finder="sentinel",
-        claim_type=ClaimType.SECURITY,
-        severity=Severity.BLOCKING,
-        file=CITED,
-        line_start=2,
-        line_end=2,
-        claim=claim,
-        evidence_pointer=f"{CITED}:2",
-    )
-
-
-def _reply(verdict: str, reasoning: str) -> str:
-    return "VERDICT: " + json.dumps({"verdict": verdict, "reasoning": reasoning})
+    return blocking_finding(claim, file=CITED, line=2, head=head, pr_number=7)
 
 
 def _tree(tmp_path: Path, cited_tokens: int) -> Path:
@@ -215,3 +192,61 @@ def test_report_entry_of_a_ledger_row_carries_its_budget_used() -> None:
     payload = _from_ledger(row).as_json()
     assert payload["judge"] == "refuter"
     assert payload["refutation"]["budget_used"] == 65_829
+
+
+@pytest.mark.parametrize("value", ["true", '"1"', "1.5"], ids=["bool", "string", "float"])
+def test_ceiling_refuses_a_bool_or_a_non_integer(tmp_path: Path, value: str) -> None:
+    (tmp_path / "repoach.toml").write_text(
+        f"[gates]\nrefuter_context_ceiling = {value}\n", encoding="utf-8"
+    )
+    with pytest.raises(GatesConfigError, match="refuter_context_ceiling"):
+        load_gates_config(tmp_path)
+
+
+@pytest.mark.parametrize("env_value", ["abc", "100", ""], ids=["non-digit", "below-floor", "empty"])
+def test_ceiling_env_invalid_falls_back_to_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env_value: str
+) -> None:
+    (tmp_path / "repoach.toml").write_text(
+        "[gates]\nrefuter_context_ceiling = 120000\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_CEILING", env_value)
+    assert resolve_refuter_context_ceiling(tmp_path) == (120_000, "repoach.toml")
+
+
+def test_budget_raises_a_ceiling_below_the_floor_and_takes_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_CEILING", "50000")
+    (tmp_path / "repoach.toml").write_text(
+        "[gates]\nrefuter_context_tokens = 60000\n", encoding="utf-8"
+    )
+    assert resolve_refuter_budget(tmp_path) == (60_000, 60_000)
+    assert resolve_refuter_budget(tmp_path, floor=45_000, ceiling=90_000) == (45_000, 90_000)
+
+
+def test_budget_used_column_is_added_to_a_pre_existing_pr_findings_table(tmp_path: Path) -> None:
+    db = tmp_path / "old.db"
+    init_findings_schema(db)
+    row_id = record_finding(db, _finding())
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE pr_findings DROP COLUMN budget_used")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(pr_findings)")}
+    assert "budget_used" not in columns
+    init_findings_schema(db)
+    row = next(f for f in fetch_findings(db, 7) if f.id == row_id)
+    assert row.budget_used == 0
+
+
+def test_none_budget_used_keeps_the_recorded_value(tmp_path: Path) -> None:
+    db = tmp_path / "review.db"
+    init_findings_schema(db)
+    row_id = record_finding(db, _finding())
+    record_verification_attempt(
+        db, row_id, method="m", result="r", checked_at_sha="x", budget_used=512
+    )
+    record_verification_attempt(db, row_id, method="m", result="r2", checked_at_sha="x")
+    assert next(f for f in fetch_findings(db, 7) if f.id == row_id).budget_used == 512
+    assert update_finding_status(db, row_id, FindingStatus.VERIFIED, verification_method="m")
+    assert next(f for f in fetch_findings(db, 7) if f.id == row_id).budget_used == 512

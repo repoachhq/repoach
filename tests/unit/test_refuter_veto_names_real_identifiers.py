@@ -13,9 +13,7 @@ the cited-file rule (G2), the re-judging of a ``needs judgement`` stamp
 from __future__ import annotations
 
 import builtins
-import json
 import keyword
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,10 +22,8 @@ import pytest
 from repoach.gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig
 from repoach.review import head_reverify, refuter_evidence
 from repoach.review.findings import (
-    ClaimType,
     Finding,
     FindingStatus,
-    Severity,
     fetch_findings,
     init_findings_schema,
     record_finding,
@@ -37,7 +33,9 @@ from repoach.review.hallucination_guard import make_repo_file_reader
 from repoach.review.head_reverify import (
     NEEDS_JUDGEMENT_METHOD,
     judgement_key,
+    needs_judgement_stamp,
     reverify_older_findings,
+    stamp_key,
 )
 from repoach.review.refuter import (
     DEFERRAL_REASONS,
@@ -58,6 +56,9 @@ from repoach.review.refuter_evidence import (
     defined_names,
     is_stop_word,
 )
+from tests.refuter_fakes import blocking_finding
+from tests.refuter_fakes import git_tree as _git_tree
+from tests.refuter_fakes import judge_reply as _reply
 
 MEASURED_COMMON_WORDS = (
     "except",
@@ -86,34 +87,8 @@ HEAD_A = "a" * 40
 HEAD_B = "b" * 40
 
 
-def _git_tree(root: Path, files: dict[str, str]) -> Path:
-    for rel, text in files.items():
-        target = root / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    return root
-
-
 def _finding(claim: str, *, file: str = CITED, line: int = 2, head: str = HEAD_A) -> Finding:
-    return Finding(
-        pr_number=260,
-        head_sha=head,
-        round=1,
-        finder="sentinel",
-        claim_type=ClaimType.SECURITY,
-        severity=Severity.BLOCKING,
-        file=file,
-        line_start=line,
-        line_end=line,
-        claim=claim,
-        evidence_pointer=f"{file}:{line}",
-    )
-
-
-def _reply(verdict: str, reasoning: str) -> str:
-    return "VERDICT: " + json.dumps({"verdict": verdict, "reasoning": reasoning})
+    return blocking_finding(claim, file=file, line=line, head=head, pr_number=260)
 
 
 def _bundle(root: Path, claim: str, *, budget: int = 200_000) -> EvidenceBundle:
@@ -415,3 +390,12 @@ def test_defined_stop_word_stays_an_identifier_and_d2_applies(tmp_path: Path) ->
 def test_is_stop_word_reads_stop_words_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(refuter_evidence, "STOP_WORDS", frozenset())
     assert not any(refuter_evidence.is_stop_word(word) for word in MEASURED_COMMON_WORDS)
+
+
+def test_stamp_is_written_and_read_by_one_format() -> None:
+    key = judgement_key(40_000, 200_000)
+    stamp = needs_judgement_stamp("abc1234", key, "evidence outside window (x: y)")
+    assert stamp == f"needs judgement at abc1234 ({key}): evidence outside window (x: y)"
+    assert stamp_key(stamp) == key
+    assert stamp_key("needs judgement at abc1234: evidence outside window") is None
+    assert stamp_key("still present at abc1234: confirmed") is None

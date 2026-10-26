@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -60,6 +59,8 @@ from repoach.review.refuter_evidence import (
     estimate_tokens,
 )
 from repoach.review.review_cache import refutation_from_json, refutation_to_json
+from tests.refuter_fakes import git_tree as _git_tree
+from tests.refuter_fakes import judge_reply as _reply
 
 ENUM_FILE = "api/schemas/accelerator.py"
 ENUM_SOURCE = (
@@ -126,17 +127,6 @@ UNSEEN_REFUTATION = (
 """The reply shape the 8 wrong !327 refutations took."""
 
 
-def _git_tree(root: Path, files: dict[str, str]) -> Path:
-    """Write ``files`` under ``root`` and track them in a git work tree."""
-    for rel, text in files.items():
-        target = root / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    return root
-
-
 def _yoob_like_tree(root: Path) -> Path:
     """Return a head tree holding the three !327 cases the window hid."""
     return _git_tree(
@@ -201,10 +191,6 @@ def _hits(prompt: str, identifier: str) -> list[str]:
         if mark and path:
             hits.append(f"{path}:{mark.group(1)}")
     return hits
-
-
-def _reply(verdict: str, reasoning: str) -> str:
-    return "VERDICT: " + json.dumps({"verdict": verdict, "reasoning": reasoning})
 
 
 def _bundle(
