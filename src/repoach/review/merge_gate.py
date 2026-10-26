@@ -35,7 +35,13 @@ from .findings import (
     init_findings_schema,
 )
 from .reviewer import ReviewVerdict
-from .spec_gate import fetch_spec_coverage, init_spec_coverage_schema
+from .spec_gate import (
+    SpecCoverage,
+    coverage_refusals,
+    fetch_spec_coverage,
+    init_spec_coverage_schema,
+    latest_batch,
+)
 
 _MIN_REVIEWERS = 4
 """A complete review has at least four reviewers parsed (the bench)."""
@@ -130,6 +136,18 @@ class MergeFacts(BaseModel):
             rule could not be recomputed (SP-PLAN-SELECTOR-AUDIT-WIRE
             0.3); always a refusal reason, whatever the stored verdict,
             since that verdict comes from a retired rule. Empty otherwise.
+        spec_contract: What the coverage was graded against — ``plan``,
+            ``acceptance-criteria``, ``none`` or ``unavailable``
+            (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS).
+        spec_origins: Selector to origin (``AC3``, ``plan step 1``) for
+            naming each missing selector.
+        spec_no_selectors_line: The ``no selectors to grade: …`` line of a
+            contract with nothing to grade, empty otherwise (G3).
+        spec_report: Lines reported and never refusing (``plan-absent: …``).
+        spec_rows: The coverage rows of the latest grading at head, one
+            per graded spec; the decision names each not-covered row's
+            causes, prefixed with the spec id for a spec resolved by
+            ownership (G7).
     """
 
     head_sha: str
@@ -148,6 +166,11 @@ class MergeFacts(BaseModel):
     spec_planned: list[str] = []
     spec_draft_refusals: list[str] = []
     spec_recompute_failure: str = ""
+    spec_contract: str = ""
+    spec_origins: dict[str, str] = {}
+    spec_no_selectors_line: str = ""
+    spec_report: list[str] = []
+    spec_rows: list[SpecCoverage] = []
 
 
 class MergeDecision(BaseModel):
@@ -193,8 +216,7 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     if facts.open_blocking_findings > 0:
         reasons.append(f"{facts.open_blocking_findings} open blocking finding(s) at head")
     if facts.spec_coverage_known and not facts.spec_covered:
-        reasons.append("spec acceptance selectors not all present")
-        reasons.extend(facts.spec_draft_refusals)
+        reasons.extend(_coverage_reasons(facts))
     if facts.spec_recompute_failure:
         reasons.append(facts.spec_recompute_failure)
     if facts.blocking_unverified:
@@ -205,6 +227,33 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     if reasons:
         reasons.extend(facts.reverify_reasons)
     return MergeDecision(merge=not reasons, reasons=reasons)
+
+
+def _coverage_reasons(facts: MergeFacts) -> list[str]:
+    """Return the coverage refusals, each naming its cause (G2, G3, G7).
+
+    Every not-covered row contributes its lines
+    (:func:`~repoach.review.spec_gate.coverage_refusals`); a row of a
+    spec resolved by ownership prefixes each with ``<id>: ``. Facts built
+    without rows render from their flat fields.
+    """
+    rows = facts.spec_rows or [
+        SpecCoverage(
+            spec_id="",
+            n_promised=len(facts.spec_missing),
+            n_present=0,
+            missing=facts.spec_missing,
+            covered=False,
+            planned=facts.spec_planned,
+            draft_refusals=facts.spec_draft_refusals,
+            origins=facts.spec_origins,
+        )
+    ]
+    reasons: list[str] = []
+    for row in rows:
+        prefix = f"{row.spec_id}: " if row.resolution == "ownership" else ""
+        reasons.extend(f"{prefix}{line}" for line in coverage_refusals(row))
+    return reasons
 
 
 def verdict_from_facts(facts: MergeFacts) -> ReviewVerdict:
@@ -396,18 +445,30 @@ def _assemble_facts(
     review_complete = any(
         r["n_unparsed"] == 0 and r["n_reviewers"] >= _MIN_REVIEWERS for r in fresh
     )
-    latest = coverage[-1] if coverage else None
+    rows = latest_batch(coverage)
+    latest = rows[-1] if rows else None
+    no_selectors = [
+        line
+        for row in rows
+        if row.contract == "none"
+        for line in (*row.draft_refusals, *row.report)
+    ]
     return MergeFacts(
         head_sha=head_sha,
         ci_green=ci_green,
         open_blocking_findings=open_blocking,
-        spec_covered=latest is not None and latest.covered,
+        spec_covered=bool(rows) and all(row.covered for row in rows),
         spec_coverage_known=latest is not None,
         review_complete=review_complete,
         review_integrity_known=bool(fresh),
         review_integrity_any=bool(integrity),
         blocking_unverified=blocking_unverified or [],
-        spec_missing=list(latest.missing) if latest is not None else [],
-        spec_planned=list(latest.planned) if latest is not None else [],
-        spec_draft_refusals=list(latest.draft_refusals) if latest is not None else [],
+        spec_missing=[selector for row in rows for selector in row.missing],
+        spec_planned=[selector for row in rows for selector in row.planned],
+        spec_draft_refusals=[line for row in rows for line in row.draft_refusals],
+        spec_contract=latest.contract if latest is not None else "",
+        spec_origins={k: v for row in rows for k, v in row.origins.items()},
+        spec_no_selectors_line=no_selectors[0] if no_selectors else "",
+        spec_report=[line for row in rows for line in row.report],
+        spec_rows=rows,
     )

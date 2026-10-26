@@ -17,11 +17,14 @@ changes here.
 from __future__ import annotations
 
 import ast
+import json
 import re
 import subprocess
+import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 from sqlalchemy import (
@@ -45,8 +48,10 @@ from ..gates.selectors import selector_present as gate_selector_present
 from .governed_spec import (
     GovernedSpec,
     SpecRefUnavailableError,
+    governed_specs_at_ref,
     load_governed_spec,
     load_governed_spec_at_ref,
+    spec_markdown_at_ref,
 )
 from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
@@ -54,12 +59,15 @@ _log = get_logger(__name__)
 
 _metadata = MetaData()
 
-SPEC_COVERAGE_RULE_VERSION = 1
+SPEC_COVERAGE_RULE_VERSION = 2
 """Version of the rule that graded a coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
 
 ``0`` marks a row recorded before the marker existed, by code that knew
-neither planned selectors nor the ``origin/<base>`` retry; ``1`` is
-today's rule. ``review gate`` recomputes a row at head whose version is
+neither planned selectors nor the ``origin/<base>`` retry; ``1`` graded a
+spec past draft only against its plan (``plan-absent`` otherwise); ``2``
+is today's rule, which grades a spec without a plan against its
+Acceptance Criteria whatever its status
+(SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS). ``review gate`` recomputes a row at head whose version is
 below this one (:func:`refresh_stale_coverage`), so a row graded by
 retired code can never refuse on its own. Bump it whenever the grading
 of a selector changes.
@@ -79,38 +87,70 @@ _pr_spec_coverage = Table(
     Column("planned", String, nullable=False, server_default=""),
     Column("draft_refusals", String, nullable=False, server_default=""),
     Column("rule_version", Integer, nullable=False, server_default="0"),
+    Column("contract", String, nullable=False, server_default=""),
+    Column("origins", String, nullable=False, server_default=""),
+    Column("report", String, nullable=False, server_default=""),
+    Column("resolution", String, nullable=False, server_default=""),
+    Column("batch", String, nullable=False, server_default=""),
 )
 
 _ADDED_COLUMNS = (
     ("planned", "TEXT NOT NULL DEFAULT ''"),
     ("draft_refusals", "TEXT NOT NULL DEFAULT ''"),
     ("rule_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("contract", "TEXT NOT NULL DEFAULT ''"),
+    ("origins", "TEXT NOT NULL DEFAULT ''"),
+    ("report", "TEXT NOT NULL DEFAULT ''"),
+    ("resolution", "TEXT NOT NULL DEFAULT ''"),
+    ("batch", "TEXT NOT NULL DEFAULT ''"),
 )
-"""Columns added after the table first shipped (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2, 0.3)."""
+"""Columns added after the table first shipped (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2, 0.3;
+SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS)."""
 
 _REFUSAL_SEPARATOR = "\n"
 """Joins ``draft_refusals`` lines in storage; a refusal line itself holds commas."""
 
+ContractKind = Literal["plan", "acceptance-criteria", "none", "unavailable", ""]
+"""What a coverage row was graded against; ``""`` for a row recorded before the field."""
+
+PLAN_ABSENT = "plan-absent"
+BASE_REF_UNAVAILABLE = "base-ref-unavailable"
+_SENTINELS = frozenset({PLAN_ABSENT, BASE_REF_UNAVAILABLE})
+"""Markers a rule-1 row stored in ``missing``; never rendered as selectors."""
+
+MISSING_SELECTORS_REASON = "spec acceptance selectors not all present"
+"""Head of the refusal naming the absent selectors (G2)."""
+
 
 class SpecCoverage(BaseModel):
-    """Presence report for a plan's promised acceptance selectors.
+    """Presence report for a spec's acceptance contract at head.
 
-    ``covered`` is true only when the plan promised at least one
-    selector and every promised selector is present in the head.
+    ``covered`` is true only when the contract names at least one
+    selector and every one is present in the head, or when the contract
+    names none and the PR changes documentation only (G3).
 
     Attributes:
-        spec_id: The spec whose plan is being checked.
-        n_promised: Number of selectors promised by the plan.
+        spec_id: The spec whose contract is being checked.
+        n_promised: Number of selectors in the contract.
         n_present: Number of selectors present in the head.
-        missing: List of selectors that are absent.
-        covered: True iff promised ≥ 1, nothing missing and no draft
-            refusal.
+        missing: The selectors that are absent, in contract order.
+        covered: Whether the contract holds at head.
         planned: Selectors of a pre-implementation spec whose file does
             not exist at head yet — reported, never refusing.
-        draft_refusals: One line per rule that withheld the draft
-            exemption (owned code touched, spec past draft at base).
+        draft_refusals: One refusal line per rule that withheld the
+            draft exemption, or that kept the contract from being graded
+            (base ref unavailable, plan unparseable, no selector to grade).
         rule_version: The :data:`SPEC_COVERAGE_RULE_VERSION` that graded
             the report; ``0`` for a row recorded before the marker.
+        contract: ``plan``, ``acceptance-criteria``, ``none`` (nothing to
+            grade) or ``unavailable`` (the base ref did not resolve).
+        origins: Selector to origin — ``AC3``, ``plan step 1`` or ``plan
+            integration`` — for rendering ``missing``.
+        report: Lines reported and never refusing (``plan-absent: …``,
+            ``no selectors to grade: …`` of a documentation-only PR).
+        resolution: ``declared`` or ``ownership`` (the PR declared no
+            spec and touches code this spec owns); ``""`` before the field.
+        batch: Groups the rows one grading recorded for one head.
     """
 
     spec_id: str
@@ -121,6 +161,86 @@ class SpecCoverage(BaseModel):
     planned: list[str] = []
     draft_refusals: list[str] = []
     rule_version: int = SPEC_COVERAGE_RULE_VERSION
+    contract: ContractKind = ""
+    origins: dict[str, str] = {}
+    report: list[str] = []
+    resolution: str = ""
+    batch: str = ""
+
+
+@dataclass(frozen=True)
+class AcceptanceSelector:
+    """One selector of an acceptance contract and where it was promised.
+
+    Attributes:
+        selector: The pytest selector (``file.py`` or ``file.py::test``).
+        origin: ``AC<n>`` for a spec criterion (``AC`` before the first
+            label), ``plan step <n>`` or ``plan integration`` for a plan.
+    """
+
+    selector: str
+    origin: str
+
+
+def base_ref_unavailable_reason(ref: str) -> str:
+    """Return the refusal of a contract that could not be read (G2)."""
+    return (
+        f"spec coverage not graded: base ref {ref} unavailable, the contract cannot be read "
+        "(fail closed)"
+    )
+
+
+def plan_absent_line(spec_id: str, n_selectors: int) -> str:
+    """Return the line reporting a spec graded on its Acceptance Criteria (G1)."""
+    return (
+        f"plan-absent: graded against the acceptance criteria of {spec_id} "
+        f"({n_selectors} selectors)"
+    )
+
+
+def no_selectors_line(spec_id: str, status: str, *, root: Path | None = None) -> str:
+    """Return the line naming a contract with nothing to grade (G3)."""
+    return (
+        f"no selectors to grade: {spec_id} ({status}) has no {plan_relpath(spec_id, root=root)} "
+        "and its Acceptance Criteria name no pytest selector"
+    )
+
+
+def coverage_refusals(coverage: SpecCoverage) -> list[str]:
+    """Return the refusal lines of a coverage row, each naming its cause (G2).
+
+    Args:
+        coverage: One coverage row.
+
+    Returns:
+        Empty when the row is covered. Otherwise the absent selectors,
+        each with its origin, in contract order, then the row's refusal
+        lines. A sentinel of a rule-1 row gets its own sentence and never
+        appears in the selector list.
+    """
+    if coverage.covered:
+        return []
+    lines: list[str] = []
+    named = [
+        f"{selector} ({coverage.origins[selector]})" if selector in coverage.origins else selector
+        for selector in coverage.missing
+        if selector not in _SENTINELS
+    ]
+    if named:
+        lines.append(f"{MISSING_SELECTORS_REASON}: {', '.join(named)}")
+    lines.extend(coverage.draft_refusals)
+    if BASE_REF_UNAVAILABLE in coverage.missing:
+        lines.append(base_ref_unavailable_reason("(unrecorded)"))
+    if PLAN_ABSENT in coverage.missing:
+        lines.append(
+            f"spec coverage not graded: {coverage.spec_id} has no plan "
+            f"(row graded by rule {coverage.rule_version})"
+        )
+    if not lines:
+        lines.append(
+            f"spec coverage of {coverage.spec_id or 'the spec'}: the contract names no selector"
+        )
+    return lines
 
 
 def acceptance_selectors(plan: ActionPlan) -> list[str]:
@@ -134,18 +254,27 @@ def acceptance_selectors(plan: ActionPlan) -> list[str]:
         The unit-test selectors of every step followed by the
         integration selectors, first-occurrence order, no duplicates.
     """
-    seen: set[str] = set()
-    ordered: list[str] = []
+    return [entry.selector for entry in plan_acceptance_contract(plan)]
+
+
+def plan_acceptance_contract(plan: ActionPlan) -> list[AcceptanceSelector]:
+    """Return the plan's promised selectors with their origins, de-duplicated in order.
+
+    Args:
+        plan: The plan whose steps' ``unit_tests`` and ``integration_tests``
+            are the acceptance contract.
+
+    Returns:
+        ``plan step <n>`` for a step's selector, ``plan integration`` for
+        a plan-level one; the first occurrence wins.
+    """
+    ordered: dict[str, str] = {}
     for step in plan.steps:
         for selector in step.unit_tests:
-            if selector not in seen:
-                seen.add(selector)
-                ordered.append(selector)
+            ordered.setdefault(selector, f"plan step {step.index}")
     for selector in plan.integration_tests:
-        if selector not in seen:
-            seen.add(selector)
-            ordered.append(selector)
-    return ordered
+        ordered.setdefault(selector, "plan integration")
+    return [AcceptanceSelector(selector, origin) for selector, origin in ordered.items()]
 
 
 def promised_present(repo_root: Path, selector: str) -> bool:
@@ -558,9 +687,14 @@ def compute_spec_coverage(
         the plan promised at least one selector and every promised
         selector is present, with a non-trivial body, in the head.
     """
+    contract = plan_acceptance_contract(plan)
     return coverage_of_selectors(
-        repo_root, spec_id=spec_id, selectors=acceptance_selectors(plan), draft=draft
-    )
+        repo_root,
+        spec_id=spec_id,
+        selectors=[entry.selector for entry in contract],
+        draft=draft,
+        origins={entry.selector: entry.origin for entry in contract},
+    ).model_copy(update={"contract": "plan"})
 
 
 def coverage_of_selectors(
@@ -569,6 +703,7 @@ def coverage_of_selectors(
     spec_id: str,
     selectors: list[str],
     draft: DraftScope | None = None,
+    origins: dict[str, str] | None = None,
 ) -> SpecCoverage:
     """Grade *selectors* against the head tree, honouring a draft scope.
 
@@ -583,6 +718,7 @@ def coverage_of_selectors(
         spec_id: The spec recorded on the report.
         selectors: The acceptance selectors, in order.
         draft: The draft scope of a pre-implementation spec, or ``None``.
+        origins: Selector to origin, recorded on the report.
 
     Returns:
         The :class:`SpecCoverage`; ``covered`` holds when at least one
@@ -608,6 +744,7 @@ def coverage_of_selectors(
         covered=bool(selectors) and not missing and not refusals,
         planned=planned,
         draft_refusals=refusals,
+        origins={sel: origin for sel, origin in (origins or {}).items() if sel in selectors},
     )
 
 
@@ -697,35 +834,86 @@ DOCS_ROOT = "docs"
 
 _AC_HEADING = re.compile(r"(?im)^##\s+acceptance criteria\s*$")
 _NEXT_HEADING = re.compile(r"(?m)^##\s")
-_PYTEST_SPAN = re.compile(r"`\s*pytest\s([^`]*)`")
+_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
+_AC_LABEL = re.compile(r"(?m)^\s*[-*]\s*\[[ xX]\]\s*(AC\d+)\b")
 _PYTEST_TARGET = re.compile(r"^[\w./-]+\.py(?:::[\w\[\]-]+)*$")
+_TEST_FILE_NAME = re.compile(r"^(?:test_[\w-]*|[\w-]*_test)\.py$")
 
 
-def spec_acceptance_selectors(markdown: str) -> list[str]:
-    """Return the pytest selectors a spec's Acceptance Criteria name, de-duplicated.
+def _span_selectors(span: str) -> list[str]:
+    """Return the selectors one inline code span names (D1).
 
-    Reads the ``## Acceptance Criteria`` section only, and only the
-    backticked ``pytest [flags] <file.py>[::node...]`` invocations in it — the
-    contract a spec without a committed plan is graded against.
+    A ``pytest [flags] <target>…`` invocation names each of its targets;
+    a span that is exactly a node id (``file.py::test``) or a test file
+    path (under ``tests/`` or named ``test_*.py`` / ``*_test.py``) names
+    itself. Any other span names nothing.
+    """
+    text = span.strip()
+    words = text.split()
+    if words and words[0] == "pytest":
+        return [token for token in words[1:] if _PYTEST_TARGET.match(token)]
+    if not _PYTEST_TARGET.match(text):
+        return []
+    if "::" in text:
+        return [text]
+    path = Path(text)
+    if path.parts[0] == "tests" or _TEST_FILE_NAME.match(path.name):
+        return [text]
+    return []
+
+
+def spec_acceptance_criteria(markdown: str) -> list[AcceptanceSelector]:
+    """Return the selectors a spec's Acceptance Criteria name, with their labels.
+
+    Reads the ``## Acceptance Criteria`` section only. A selector is a
+    backticked ``pytest [flags] <file.py>[::node...]`` invocation, a
+    backticked node id ``file.py::test`` or a backticked test file path
+    (SP-SPEC-TEMPLATE 0.2). Its origin is the ``AC<n>`` label of the
+    criterion it is written in (``- [ ] AC<n>`` or ``- [x] AC<n>``, the
+    continuation lines included); a selector before the first label
+    takes ``AC``. A span quoted inside a longer code span (a double
+    backtick span holding a single backticked path) is an example, not
+    a selector.
 
     Args:
         markdown: The full spec markdown.
 
     Returns:
-        The selectors in first-occurrence order; empty when the section
-        is absent or names no pytest selector.
+        The selectors in first-occurrence order, de-duplicated by
+        selector (the first origin wins); empty when the section is
+        absent or names no selector.
     """
     heading = _AC_HEADING.search(markdown)
     if heading is None:
         return []
     following = _NEXT_HEADING.search(markdown, heading.end())
     section = markdown[heading.end() : following.start() if following else len(markdown)]
-    ordered: list[str] = []
-    for span in _PYTEST_SPAN.finditer(section):
-        for token in span.group(1).split():
-            if _PYTEST_TARGET.match(token) and token not in ordered:
-                ordered.append(token)
-    return ordered
+    labels = [(match.start(), match.group(1)) for match in _AC_LABEL.finditer(section)]
+    ordered: dict[str, str] = {}
+    for span in _CODE_SPAN.finditer(section):
+        origin = "AC"
+        for position, label in labels:
+            if position > span.start():
+                break
+            origin = label
+        for selector in _span_selectors(span.group(2)):
+            ordered.setdefault(selector, origin)
+    return [AcceptanceSelector(selector, origin) for selector, origin in ordered.items()]
+
+
+def spec_acceptance_selectors(markdown: str) -> list[str]:
+    """Return the selectors a spec's Acceptance Criteria name, de-duplicated.
+
+    The projection of :func:`spec_acceptance_criteria` onto the selector.
+
+    Args:
+        markdown: The full spec markdown.
+
+    Returns:
+        The selectors in first-occurrence order; empty when the section
+        is absent or names no selector.
+    """
+    return [entry.selector for entry in spec_acceptance_criteria(markdown)]
 
 
 class BaseRefUnavailableError(RuntimeError):
@@ -816,11 +1004,16 @@ class ContractResolution:
             no plan for this spec — a spec/plan introduced only on the
             PR head — so the head plan is graded instead (logged by
             the caller as a fallback, SP-SPEC-CONTRACT-BASE Edge cases).
+        ref: The ref the base contract was read from (or tried).
+        error: Why the base plan, present at *ref*, does not parse; the
+            caller refuses on it (G4, fail closed). Empty otherwise.
     """
 
     plan: ActionPlan | None
     base_available: bool
     fell_back_to_head: bool
+    ref: str = ""
+    error: str = ""
 
 
 def resolve_contract_plan(
@@ -837,7 +1030,8 @@ def resolve_contract_plan(
     first-introduction policy. A *base_ref* that does not resolve at
     all is reported as unavailable and NOT retried here — the caller
     (which owns the git remote / fetch policy) decides whether to fetch
-    and call this again with a remote-tracking ref.
+    and call this again with a remote-tracking ref. A base plan that
+    exists but does not parse is reported in ``error``, never skipped.
 
     Args:
         spec_id: The spec whose plan is the acceptance contract.
@@ -854,7 +1048,9 @@ def resolve_contract_plan(
         return ContractResolution(plan=None, base_available=False, fell_back_to_head=False)
     try:
         plan = load_plan_from_ref(spec_id, base_ref, root=repo_root)
-        return ContractResolution(plan=plan, base_available=True, fell_back_to_head=False)
+        return ContractResolution(
+            plan=plan, base_available=True, fell_back_to_head=False, ref=base_ref
+        )
     except BaseRefUnavailableError as exc:
         _log.warning(
             "spec_gate.base_ref_unavailable",
@@ -862,7 +1058,9 @@ def resolve_contract_plan(
             base_ref=base_ref,
             error=str(exc)[:200],
         )
-        return ContractResolution(plan=None, base_available=False, fell_back_to_head=False)
+        return ContractResolution(
+            plan=None, base_available=False, fell_back_to_head=False, ref=base_ref
+        )
     except FileNotFoundError as exc:
         _log.info(
             "spec_gate.base_plan_absent_fallback_to_head",
@@ -878,8 +1076,26 @@ def resolve_contract_plan(
                 spec_id=spec_id,
                 error=str(head_exc)[:200],
             )
-            return ContractResolution(plan=None, base_available=True, fell_back_to_head=True)
-        return ContractResolution(plan=head_plan, base_available=True, fell_back_to_head=True)
+            return ContractResolution(
+                plan=None, base_available=True, fell_back_to_head=True, ref=base_ref
+            )
+        return ContractResolution(
+            plan=head_plan, base_available=True, fell_back_to_head=True, ref=base_ref
+        )
+    except ValueError as exc:
+        _log.warning(
+            "spec_gate.base_plan_unparseable",
+            spec_id=spec_id,
+            base_ref=base_ref,
+            error=str(exc)[:200],
+        )
+        return ContractResolution(
+            plan=None,
+            base_available=True,
+            fell_back_to_head=False,
+            ref=base_ref,
+            error=str(exc)[:200],
+        )
 
 
 def _engine_for(db_path: Path) -> Engine:
@@ -905,7 +1121,7 @@ def init_spec_coverage_schema(db_path: Path) -> None:
 def record_spec_coverage(
     db_path: Path, *, pr_number: int, head_sha: str | None, coverage: SpecCoverage
 ) -> None:
-    """Persist one coverage report for a PR.
+    """Persist one coverage report for a PR, as a batch of its own.
 
     Args:
         db_path: Path to the SQLite database.
@@ -913,23 +1129,70 @@ def record_spec_coverage(
         head_sha: The commit SHA of the PR head.
         coverage: The coverage report to persist.
     """
+    record_spec_coverages(db_path, pr_number=pr_number, head_sha=head_sha, coverages=[coverage])
+
+
+def record_spec_coverages(
+    db_path: Path, *, pr_number: int, head_sha: str | None, coverages: list[SpecCoverage]
+) -> None:
+    """Persist the coverage reports of one grading of a PR head as one batch.
+
+    The gate folds the latest batch at a head (:func:`latest_batch`): a
+    PR resolved by ownership records one row per resolved spec (G7).
+
+    Args:
+        db_path: Path to the SQLite database.
+        pr_number: The PR number being reviewed.
+        head_sha: The commit SHA of the PR head.
+        coverages: The reports of one grading, in spec order.
+    """
+    if not coverages:
+        return
     init_spec_coverage_schema(db_path)
     engine = _engine_for(db_path)
+    batch = uuid.uuid4().hex
     with engine.begin() as conn:
-        conn.execute(
-            _pr_spec_coverage.insert().values(
-                pr_number=pr_number,
-                head_sha=head_sha or "",
-                spec_id=coverage.spec_id,
-                n_promised=coverage.n_promised,
-                n_present=coverage.n_present,
-                missing=",".join(coverage.missing),
-                covered=int(coverage.covered),
-                planned=",".join(coverage.planned),
-                draft_refusals=_REFUSAL_SEPARATOR.join(coverage.draft_refusals),
-                rule_version=coverage.rule_version,
+        for coverage in coverages:
+            conn.execute(
+                _pr_spec_coverage.insert().values(
+                    pr_number=pr_number,
+                    head_sha=head_sha or "",
+                    spec_id=coverage.spec_id,
+                    n_promised=coverage.n_promised,
+                    n_present=coverage.n_present,
+                    missing=",".join(coverage.missing),
+                    covered=int(coverage.covered),
+                    planned=",".join(coverage.planned),
+                    draft_refusals=_REFUSAL_SEPARATOR.join(coverage.draft_refusals),
+                    rule_version=coverage.rule_version,
+                    contract=coverage.contract,
+                    origins=json.dumps(coverage.origins) if coverage.origins else "",
+                    report=_REFUSAL_SEPARATOR.join(coverage.report),
+                    resolution=coverage.resolution,
+                    batch=batch,
+                )
             )
-        )
+
+
+def _origins(stored: str) -> dict[str, str]:
+    """Decode a stored ``origins`` column; an unreadable value is no origin."""
+    if not stored:
+        return {}
+    try:
+        decoded = json.loads(stored)
+    except json.JSONDecodeError as exc:
+        _log.info("spec_gate.origins_unreadable", error=str(exc)[:200])
+        return {}
+    return {str(k): str(v) for k, v in decoded.items()} if isinstance(decoded, dict) else {}
+
+
+def _contract(stored: str) -> ContractKind:
+    """Decode a stored ``contract`` column; an unknown value reads as unrecorded."""
+    known: tuple[ContractKind, ...] = ("plan", "acceptance-criteria", "none", "unavailable")
+    for kind in known:
+        if stored == kind:
+            return kind
+    return ""
 
 
 def fetch_spec_coverage(
@@ -969,9 +1232,38 @@ def fetch_spec_coverage(
                 planned=[p for p in row["planned"].split(",") if p],
                 draft_refusals=[r for r in row["draft_refusals"].split(_REFUSAL_SEPARATOR) if r],
                 rule_version=row["rule_version"],
+                contract=_contract(row["contract"]),
+                origins=_origins(row["origins"]),
+                report=[r for r in row["report"].split(_REFUSAL_SEPARATOR) if r],
+                resolution=row["resolution"],
+                batch=row["batch"],
             )
             for row in rows
         ]
+
+
+def latest_batch(rows: list[SpecCoverage]) -> list[SpecCoverage]:
+    """Return the rows of the latest grading among *rows* (ordered by id).
+
+    A row recorded before batches existed is a batch of its own. Within a
+    batch the latest row of each spec wins.
+
+    Args:
+        rows: Coverage rows of one head, ordered by insertion id.
+
+    Returns:
+        The latest batch, in spec order; empty when *rows* is.
+    """
+    if not rows:
+        return []
+    last = rows[-1]
+    if not last.batch:
+        return [last]
+    by_spec: dict[str, SpecCoverage] = {}
+    for row in rows:
+        if row.batch == last.batch:
+            by_spec[row.spec_id] = row
+    return list(by_spec.values())
 
 
 def draft_scope_at_head(
@@ -1036,13 +1328,20 @@ def coverage_at_head(
     changed_files: list[str],
     fetch_base: Callable[[str], None] | None = None,
 ) -> tuple[SpecCoverage, ContractResolution]:
-    """Grade *spec_id*'s acceptance selectors at the head tree, without any model call.
+    """Grade *spec_id*'s acceptance contract at the head tree, without any model call.
 
     A pure function of the spec and plan (base contract first), the head
     tree and the diff's paths: a fresh review, a replayed review and the
     gate all reach the same report through it. When *base_ref* does not
     resolve locally, *fetch_base* is asked to fetch it and the contract is
     read from ``origin/<base_ref>``.
+
+    The contract is, in order: the plan (base, or new on the PR) — a base
+    plan that does not parse is refused (G4); else the union, base first,
+    of the Acceptance Criteria selectors at base and at head, whatever
+    the spec's status (G1); else nothing to grade, which refuses a PR
+    that changes code and is only reported for a documentation-only PR
+    (G3). A base ref that does not resolve is refused (G2).
 
     Args:
         repo_root: The PR head tree the selectors resolve against.
@@ -1060,29 +1359,261 @@ def coverage_at_head(
         resolution = resolve_contract_plan(
             spec_id, repo_root=repo_root, base_ref=f"origin/{base_ref}"
         )
-    draft, spec_markdown = draft_scope_at_head(
+    coverage = _grade(
+        repo_root,
+        spec_id=spec_id,
+        base_ref=base_ref,
+        changed_files=changed_files,
+        resolution=resolution,
+    )
+    return coverage, resolution
+
+
+def _not_graded(spec_id: str, contract: ContractKind, refusal: str) -> SpecCoverage:
+    """Return a not-covered report whose only content is one refusal line."""
+    return SpecCoverage(
+        spec_id=spec_id,
+        n_promised=0,
+        n_present=0,
+        missing=[],
+        covered=False,
+        draft_refusals=[refusal],
+        contract=contract,
+    )
+
+
+def _grade(
+    repo_root: Path,
+    *,
+    spec_id: str,
+    base_ref: str | None,
+    changed_files: list[str],
+    resolution: ContractResolution,
+) -> SpecCoverage:
+    """Grade *spec_id* against the contract *resolution* names (see :func:`coverage_at_head`)."""
+    if resolution.error:
+        return _not_graded(
+            spec_id, "plan", f"spec plan unparseable at {resolution.ref}: {resolution.error}"
+        )
+    if not resolution.base_available:
+        return _not_graded(
+            spec_id, "unavailable", base_ref_unavailable_reason(resolution.ref or "(unknown)")
+        )
+    draft, _ = draft_scope_at_head(
         repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
     )
     if resolution.plan is not None:
-        coverage = compute_spec_coverage(
-            repo_root, spec_id=spec_id, plan=resolution.plan, draft=draft
+        return compute_spec_coverage(repo_root, spec_id=spec_id, plan=resolution.plan, draft=draft)
+    head = load_governed_spec(spec_id, root=repo_root)
+    if head is None or head.path is None:
+        return _not_graded(
+            spec_id, "none", f"spec coverage not graded: {spec_id} has no frontmatter"
         )
-    elif resolution.base_available and draft is not None:
+    contract: dict[str, str] = {}
+    for entry in (
+        *_criteria_at_ref(spec_id, resolution.ref, repo_root),
+        *spec_acceptance_criteria(head.path.read_text(encoding="utf-8")),
+    ):
+        contract.setdefault(entry.selector, entry.origin)
+    if contract:
         coverage = coverage_of_selectors(
+            repo_root, spec_id=spec_id, selectors=list(contract), draft=draft, origins=contract
+        )
+        return coverage.model_copy(
+            update={
+                "contract": "acceptance-criteria",
+                "report": [plan_absent_line(spec_id, len(contract))],
+            }
+        )
+    spec_path = head.path.resolve().relative_to(repo_root.resolve()).as_posix()
+    code = [
+        path for path in changed_files if path != spec_path and not path_contains(DOCS_ROOT, path)
+    ]
+    line = no_selectors_line(spec_id, head.status, root=repo_root)
+    return SpecCoverage(
+        spec_id=spec_id,
+        n_promised=0,
+        n_present=0,
+        missing=[],
+        covered=not code,
+        draft_refusals=[line] if code else [],
+        contract="none",
+        report=[] if code else [line],
+    )
+
+
+def _criteria_at_ref(spec_id: str, ref: str, repo_root: Path) -> list[AcceptanceSelector]:
+    """Return the Acceptance Criteria selectors of *spec_id* at *ref* (empty when absent)."""
+    if not ref:
+        return []
+    try:
+        markdown = spec_markdown_at_ref(spec_id, ref, root=repo_root)
+    except SpecRefUnavailableError as exc:
+        _log.info("spec_gate.base_spec_unreadable", ref=ref, error=str(exc)[:200])
+        return []
+    return spec_acceptance_criteria(markdown) if markdown is not None else []
+
+
+@dataclass(frozen=True)
+class SpecsByOwnership:
+    """The specs owning the paths of an undeclared PR (G7).
+
+    Attributes:
+        specs: Spec id to the changed paths it owns, in id order.
+        ungoverned: The changed paths outside :data:`DOCS_ROOT` no spec
+            owns, in diff order — reported, never refusing.
+    """
+
+    specs: dict[str, list[str]] = field(default_factory=dict)
+    ungoverned: list[str] = field(default_factory=list)
+
+    def lines(self) -> list[str]:
+        """Return the report lines of this resolution, one per spec then the ungoverned paths."""
+        out = [
+            f"spec resolved by ownership: {spec_id} ({len(paths)} paths)"
+            for spec_id, paths in self.specs.items()
+        ]
+        if self.ungoverned:
+            out.append(f"ungoverned paths: {', '.join(self.ungoverned)}")
+        return out
+
+
+def specs_owning(paths: list[str], *, root: Path, ref: str) -> SpecsByOwnership:
+    """Return the governed specs owning *paths*, ownership read at *ref*.
+
+    Ownership is the ``owns.code`` registry of SP-ARCH-GRAPH as committed
+    at *ref* (the PR's base), so a PR cannot disown its code by editing a
+    spec's ``owns``. A path goes to the spec owning its longest prefix.
+
+    Args:
+        paths: The paths the PR diff touches.
+        root: Repository root the git commands run against.
+        ref: The base ref the registry is read at.
+
+    Returns:
+        The owning specs and the ungoverned paths.
+
+    Raises:
+        SpecRefUnavailableError: *ref* does not resolve to a commit.
+    """
+    governed = governed_specs_at_ref(ref, root=root)
+    owners: dict[str, list[str]] = {}
+    ungoverned: list[str] = []
+    for path in paths:
+        best: str | None = None
+        best_len = -1
+        for spec in governed:
+            for owned in spec.owns_code:
+                if path_contains(owned, path) and len(owned.rstrip("/")) > best_len:
+                    best, best_len = spec.id, len(owned.rstrip("/"))
+        if best is not None:
+            owners.setdefault(best, []).append(path)
+        elif not path_contains(DOCS_ROOT, path):
+            ungoverned.append(path)
+    return SpecsByOwnership(
+        specs={spec_id: owners[spec_id] for spec_id in sorted(owners)}, ungoverned=ungoverned
+    )
+
+
+def _readable_base(
+    repo_root: Path, base_ref: str | None, fetch_base: Callable[[str], None] | None
+) -> str | None:
+    """Return *base_ref* or ``origin/<base_ref>`` when it resolves, fetching once."""
+    if not base_ref:
+        return None
+
+    def resolves(ref: str) -> bool:
+        return (
+            subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            ).returncode
+            == 0
+        )
+
+    if resolves(base_ref):
+        return base_ref
+    if fetch_base is not None:
+        fetch_base(base_ref)
+    remote = f"origin/{base_ref}"
+    return remote if resolves(remote) else None
+
+
+@dataclass(frozen=True)
+class CoverageGrading:
+    """The coverage rows of one PR head and how its specs were resolved.
+
+    Attributes:
+        rows: One report per graded spec; empty when nothing resolved.
+        ownership: The ownership resolution of an undeclared PR, else ``None``.
+        lines: Report lines of the resolution (never refusing).
+    """
+
+    rows: list[SpecCoverage]
+    ownership: SpecsByOwnership | None = None
+    lines: list[str] = field(default_factory=list)
+
+    @property
+    def source(self) -> str:
+        """``declared``, ``ownership`` or ``none`` (G7)."""
+        if self.ownership is None:
+            return "declared" if self.rows else "none"
+        return "ownership" if self.ownership.specs else "none"
+
+
+def coverage_rows_at_head(
+    repo_root: Path,
+    *,
+    spec_id: str | None,
+    base_ref: str | None,
+    changed_files: list[str],
+    fetch_base: Callable[[str], None] | None = None,
+) -> CoverageGrading:
+    """Grade a PR head against its declared spec, or against the specs owning its code.
+
+    A declared spec is graded alone (:func:`coverage_at_head`). With none
+    declared, every governed spec owning a changed path at the base ref
+    is graded exactly as if declared (G7), each row marked
+    ``resolution="ownership"``. When the base ref cannot be read, the
+    ownership cannot be resolved: nothing is graded and the line says so.
+
+    Args:
+        repo_root: The PR head tree.
+        spec_id: The declared spec, or ``None``.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+        changed_files: The paths the PR diff touches.
+        fetch_base: Fetches ``origin/<base_ref>`` into *repo_root*.
+
+    Returns:
+        The rows to record and the resolution lines to report.
+    """
+    if spec_id is not None:
+        coverage, _ = coverage_at_head(
             repo_root,
             spec_id=spec_id,
-            selectors=spec_acceptance_selectors(spec_markdown),
-            draft=draft,
+            base_ref=base_ref,
+            changed_files=changed_files,
+            fetch_base=fetch_base,
         )
-    else:
-        coverage = SpecCoverage(
-            spec_id=spec_id,
-            n_promised=0,
-            n_present=0,
-            missing=["plan-absent" if resolution.base_available else "base-ref-unavailable"],
-            covered=False,
+        return CoverageGrading(rows=[coverage.model_copy(update={"resolution": "declared"})])
+    ref = _readable_base(repo_root, base_ref, fetch_base)
+    if ref is None:
+        _log.warning("spec_gate.ownership_unresolved", base_ref=base_ref)
+        return CoverageGrading(
+            rows=[],
+            lines=[f"spec resolution by ownership skipped: base ref {base_ref} unavailable"],
         )
-    return coverage, resolution
+    ownership = specs_owning(changed_files, root=repo_root, ref=ref)
+    rows = [
+        coverage_at_head(repo_root, spec_id=owner, base_ref=ref, changed_files=changed_files)[
+            0
+        ].model_copy(update={"resolution": "ownership"})
+        for owner in ownership.specs
+    ]
+    return CoverageGrading(rows=rows, ownership=ownership, lines=ownership.lines())
 
 
 class StaleCoverageRecomputeError(RuntimeError):
@@ -1113,14 +1644,15 @@ def refresh_stale_coverage(
     base_ref: str | None,
     changed_files: Callable[[], list[str]],
     fetch_base: Callable[[str], None] | None = None,
-) -> SpecCoverage | None:
-    """Recompute and record the coverage at *head_sha* when its latest row is stale.
+) -> list[SpecCoverage] | None:
+    """Recompute and record the coverage at *head_sha* when its latest batch is stale.
 
     A row is stale when its ``rule_version`` is below
     :data:`SPEC_COVERAGE_RULE_VERSION`: it was graded by code whose rule
     has since changed, so it no longer says what the current rule says
     about the same head (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3). The spec is the
-    row's own; *repo_root* must be the tree of *head_sha*.
+    row's own, or the specs owning the diff for a batch resolved by
+    ownership; *repo_root* must be the tree of *head_sha*.
 
     Args:
         db_path: The coverage ledger.
@@ -1134,38 +1666,41 @@ def refresh_stale_coverage(
             resolve locally.
 
     Returns:
-        The recorded report, or ``None`` when no row at head is stale.
+        The recorded reports, or ``None`` when no row at head is stale.
 
     Raises:
         StaleCoverageRecomputeError: The diff, the base fetch or the
             grading failed; nothing was recorded.
     """
     init_spec_coverage_schema(db_path)
-    rows = fetch_spec_coverage(db_path, pr_number, head_sha=head_sha)
-    if not rows or rows[-1].rule_version >= SPEC_COVERAGE_RULE_VERSION:
+    batch = latest_batch(fetch_spec_coverage(db_path, pr_number, head_sha=head_sha))
+    stale = [row for row in batch if row.rule_version < SPEC_COVERAGE_RULE_VERSION]
+    if not stale:
         return None
-    stale = rows[-1]
+    oldest = min(row.rule_version for row in stale)
+    by_ownership = batch[0].resolution == "ownership"
     try:
-        coverage, _ = coverage_at_head(
+        grading = coverage_rows_at_head(
             repo_root,
-            spec_id=stale.spec_id,
+            spec_id=None if by_ownership else batch[-1].spec_id,
             base_ref=base_ref,
             changed_files=changed_files(),
             fetch_base=fetch_base,
         )
     except Exception as exc:
         raise StaleCoverageRecomputeError(
-            head_sha=head_sha, rule_version=stale.rule_version, error=exc
+            head_sha=head_sha, rule_version=oldest, error=exc
         ) from exc
-    record_spec_coverage(db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage)
-    _log.info(
-        "spec_gate.stale_coverage_recomputed",
-        pr_number=pr_number,
-        head_sha=head_sha[:12],
-        spec_id=stale.spec_id,
-        stale_rule_version=stale.rule_version,
-        covered=coverage.covered,
-        n_planned=len(coverage.planned),
-        n_missing=len(coverage.missing),
-    )
-    return coverage
+    record_spec_coverages(db_path, pr_number=pr_number, head_sha=head_sha, coverages=grading.rows)
+    for coverage in grading.rows:
+        _log.info(
+            "spec_gate.stale_coverage_recomputed",
+            pr_number=pr_number,
+            head_sha=head_sha[:12],
+            spec_id=coverage.spec_id,
+            stale_rule_version=oldest,
+            covered=coverage.covered,
+            n_planned=len(coverage.planned),
+            n_missing=len(coverage.missing),
+        )
+    return grading.rows

@@ -17,9 +17,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from repoach.arch import SpecNode, load_registry, parse_spec_text
+from repoach.arch import MalformedFrontmatterError, SpecNode, load_registry, parse_spec_text
+from repoach.core.logging import get_logger
 
 from .spec import _SPEC_ID_IN_FILENAME_RE, _normalise_id, detect_spec_from_branch, specs_dir_for
+
+_log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,64 @@ def load_governed_spec_at_ref(spec_id: str, ref: str, *, root: Path) -> Governed
     if shown.returncode != 0:
         return None
     return _governed(parse_spec_text(shown.stdout, Path(matches[-1])))
+
+
+def spec_markdown_at_ref(spec_id: str, ref: str, *, root: Path) -> str | None:
+    """Return *spec_id*'s markdown as committed at *ref*, or ``None`` when absent.
+
+    The file is matched as :func:`load_governed_spec_at_ref` matches it.
+
+    Args:
+        spec_id: Any spelling; normalised like :func:`load_governed_spec`.
+        ref: A git revision (branch, remote-tracking ref or commit).
+        root: Repository root the git commands run against.
+
+    Returns:
+        The markdown at *ref*; ``None`` when *ref* carries no spec file
+        with that id.
+
+    Raises:
+        SpecRefUnavailableError: *ref* does not resolve to a commit.
+    """
+    base = root.resolve()
+    canonical = _normalise_id(spec_id)
+    matches = sorted(name for name, found in _spec_files_at_ref(ref, base) if found == canonical)
+    if not matches:
+        return None
+    shown = _git(base, "show", f"{ref}:{matches[-1]}")
+    return shown.stdout if shown.returncode == 0 else None
+
+
+def governed_specs_at_ref(ref: str, *, root: Path) -> list[GovernedSpec]:
+    """Return every governed spec committed at *ref*, in path order.
+
+    Frontier (frontmatter-less) and malformed specs are left out: a
+    malformed spec owns nothing a PR can be graded against.
+
+    Args:
+        ref: A git revision (branch, remote-tracking ref or commit).
+        root: Repository root the git commands run against.
+
+    Returns:
+        The governed frontmatter of each spec file at *ref*.
+
+    Raises:
+        SpecRefUnavailableError: *ref* does not resolve to a commit.
+    """
+    base = root.resolve()
+    specs: list[GovernedSpec] = []
+    for name, _ in sorted(_spec_files_at_ref(ref, base)):
+        shown = _git(base, "show", f"{ref}:{name}")
+        if shown.returncode != 0:
+            continue
+        try:
+            governed = _governed(parse_spec_text(shown.stdout, Path(name)))
+        except MalformedFrontmatterError as exc:
+            _log.info("governed_spec.malformed_at_ref", ref=ref, path=name, error=str(exc)[:200])
+            continue
+        if governed is not None:
+            specs.append(governed)
+    return specs
 
 
 def _spec_files_at_ref(ref: str, base: Path) -> list[tuple[str, str]]:
