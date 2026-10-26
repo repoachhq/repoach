@@ -1,7 +1,7 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-26
@@ -9,7 +9,7 @@ updated: 2026-10-26
 
 owns:
   code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_context_window.py, src/repoach/review/thread_commands.py, src/repoach/cli/threads_cmds.py, src/repoach/review/thread_webhook.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_commands.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_threads_cli.py, tests/unit/test_gate_open_threads.py, tests/unit/test_forge_review_threads.py, tests/unit/test_thread_webhook.py, tests/unit/test_threads_owners.py, tests/integration/test_pr_threads_lifecycle.py]
-  resources: [db:table:finding_threads, db:table:finding_thread_events, format:thread-state-line, format:thread-reply-marker, format:thread-owner-command, format:gitlab-note-webhook]
+  resources: [db:table:finding_threads, db:table:finding_thread_events, format:thread-state-line, format:thread-reply-marker, format:thread-owner-command, format:gitlab-note-webhook, format:threads-serve-unit]
 
 depends_on: [SP-UNIVERSAL-FORGE, SP-FINDING-THREAD-IDS, SP-POSTING-REPLAY-DEDUPES, SP-GATE-REVERIFIES-AT-HEAD, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-AGENT-CONTEXT-LOOP, SP-RED-STOPS-THE-LINE, SP-DRY-RUN-NEVER-POSTS, SP-FINDINGS-INIT-RACE, SP-FINDINGS-BRIDGE-DOCFIX, SP-ORCH-DOCSTRING, SP-UNIVERSAL-PROJECT-CONFIG, SP-CLI-STDOUT-ONE-JSON, SP-JUDGE-FAILURE-IS-RETRIED]
 provides_to: []
@@ -167,10 +167,12 @@ Measured on `origin/develop` `51a4065` (2026-10-26), read-only.
     `pull_request_review_comment` trigger next to
     `pull_request_review`, and runs `threads reply <pr>` on both.
   - GitLab: a webhook receiver, `repoach threads serve`, accepts note
-    events only, checks `X-Gitlab-Token` against the configured secret
-    in constant time, and runs one `threads reply` for the MR the note
-    belongs to. It is deployed beside the review runner. A 15-minute
-    scheduled pipeline runs `threads reply` on every open MR as the
+    events (and MR events) only and compares `X-Gitlab-Token` with the
+    configured secret in constant time (`hmac.compare_digest`; GitLab
+    sends the secret verbatim, it does not sign the body). For an
+    accepted note on an MR it starts exactly one `threads reply` run
+    for that MR (D14 says where that run executes). A 15-minute
+    scheduled pipeline starts the same run for every open MR as the
     fallback, so a lost webhook delays a reply but never drops it.
 - **D11 Where the coder commits** (was Q4). By default the coder
   commits straight on the PR branch. Only when its fix spans several
@@ -183,6 +185,18 @@ Measured on `origin/develop` `51a4065` (2026-10-26), read-only.
   from a fork the coder cannot push to, the thread is escalated
   immediately with `coder cannot push to <fork>`. No coder round is
   spent.
+
+- **D14 The GitLab receiver runs on hel1** (owner, 2026-10-26; was
+  the last open question). It runs beside the review runner and
+  `yoob.dev`, as the systemd unit `repoach-threads-serve.service`,
+  reached through the existing nginx at `https://yoob.dev/hooks/repoach`,
+  with the 15-minute scheduled pipeline as fallback. The Deployment
+  section gives the measured facts and the exact steps.
+- **D15 GitHub has no receiver.** GitHub Actions already re-runs on
+  `issue_comment` and `pull_request_review`. `auto-review.yml` gains
+  `pull_request_review_comment` (types `created`, `edited`) so a reply
+  inside an inline thread re-runs `threads reply`. The repoach runners
+  stay where they are.
 
 ## Goals
 
@@ -523,6 +537,101 @@ not refuse on threads.
   and prints `forge does not require resolved threads
   (<setting>=false)`; this is a named line, not a refusal.
 
+## Deployment (D14, D15)
+
+Measured on hel1 (`ssh hel1`, 2026-10-26) and on Yoob `origin/develop`.
+
+| # | Fact | Consequence for the receiver |
+|---|---|---|
+| H1 | nginx runs as the container `yoob_nginx` (`nginx:1.25-alpine`) on the bridge network `yoob_2_yoob_network`, subnet `172.18.0.0/16`, gateway `172.18.0.1`, publishing 80 and 443. Its vhosts are bind-mounted from `~/yoob_2/nginx/conf.d` (compose files `docker-compose.prod.yml`, `docker-compose.hetzner.yml`, `docker-compose.prod-toolchain.yml`). There is no host nginx (`/etc/nginx` is absent) | A unit bound to `127.0.0.1` is **unreachable from that container**: inside it, `127.0.0.1` is the container itself. The receiver binds the bridge gateway `172.18.0.1:8787`. `docker-compose.prod.yml` pins that subnet so the address cannot move when the network is recreated |
+| H2 | `ufw` is active and allows only `22/tcp`; docker publishes 80 and 443 itself. `ss -ltn` shows nothing else listening on a public address | Port 8787 is never published. One `ufw` rule admits only the nginx bridge: `ufw allow in on br-<id of yoob_2_yoob_network> to 172.18.0.1 port 8787 proto tcp` |
+| H3 | DNS: `yoob.dev`, `www.yoob.dev` and `studio.yoob.dev` resolve straight to `65.108.199.28` (no Cloudflare proxy in front, the response `server` is `nginx/1.25.5`). `hooks.yoob.dev` does not resolve. The Let's Encrypt certificate's SANs are exactly `yoob.dev`, `www.yoob.dev` and `studio.yoob.dev` | **The path, not a subdomain.** A `location = /hooks/repoach` inside the existing `listen 443 ssl` server block for `yoob.dev` (`nginx/conf.d/yoob.conf:76-77`) needs no DNS record and no certificate change. A subdomain would need both, plus a certbot re-issue under HSTS (`max-age=63072000`) |
+| H4 | `nginx/nginx.conf:45-46` defines only `api_limit` (10 r/s) and `upload_limit` (1 r/s) | A new zone `hooks_limit` (`5r/s`, `burst=10`), with `client_max_body_size 1m` on the location |
+| H5 | Runners on hel1 run as systemd units `gitlab-runner-{light,heavy,deploy}.service`. No repoach is installed system-wide (`which repoach` is empty, `/etc/repoach*` absent) | The unit runs repoach from its own virtualenv, `/opt/repoach-threads/venv`, under a dedicated system user `repoach-threads` |
+| H6 | The findings ledger of an MR lives in that MR's CI cache (`SP-CI-LEDGER-PERSISTS`; Yoob `ci/review-gate.sh:12-15`), not on hel1's disk | **The receiver does not run `threads reply` in-process.** It starts a pipeline on the MR's source branch with `REPOACH_THREADS_REPLY_MR=<iid>`, through a pipeline trigger token. The `threads:reply` job restores that MR's ledger cache, runs `repoach threads reply <iid>` and saves the cache. Triggers for one MR are coalesced: at most one pending per MR, 60 s window |
+| H7 | Yoob's `workflow:rules` let a pipeline through on `schedule`, `merge_request_event`, `main`/`develop`, `tp/*` and tags, and refuse a branch pipeline while an MR is open (`$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS → never`) | A rule `$CI_PIPELINE_SOURCE == "trigger" && $REPOACH_THREADS_REPLY_MR` must come **before** the `never` rule, as the schedule rule already does. Every other job excludes trigger pipelines, so the run carries only `threads:reply` |
+
+Not measured: the project's existing webhooks and trigger tokens. Their
+API read returns credentials, so the owner reads them.
+
+### Steps (Yoob-side files are changed by a Yoob MR, not by this spec)
+
+1. **The unit** `/etc/systemd/system/repoach-threads-serve.service`:
+
+   ```ini
+   [Unit]
+   Description=repoach GitLab note-event receiver (SP-PR-THREADS-REMEMBER-AND-CLOSE D14)
+   After=network-online.target docker.service
+   Wants=network-online.target
+
+   [Service]
+   User=repoach-threads
+   EnvironmentFile=/etc/repoach/threads-serve.env
+   ExecStart=/opt/repoach-threads/venv/bin/repoach threads serve --host 172.18.0.1 --port 8787
+   Restart=on-failure
+   NoNewPrivileges=yes
+   ProtectSystem=strict
+   ProtectHome=yes
+   PrivateTmp=yes
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   `/etc/repoach/threads-serve.env` is `root:root 0600`. It holds
+   `REPOACH_GITLAB_WEBHOOK_SECRET` (the webhook's secret token) and
+   `REPOACH_GITLAB_TRIGGER_TOKEN` (the pipeline trigger token).
+   systemd reads it as root before dropping to `repoach-threads`.
+   **No secret is ever in argv**: `threads serve` takes none on its
+   command line and refuses to start (exit 2, the variable named)
+   when either is unset.
+2. **nginx** (Yoob `nginx/conf.d/yoob.conf`, in the `yoob.dev` 443
+   server block; `nginx/nginx.conf` gets the zone):
+
+   ```nginx
+   location = /hooks/repoach {
+       limit_req zone=hooks_limit burst=10 nodelay;
+       client_max_body_size 1m;
+       limit_except POST { deny all; }
+       proxy_pass http://172.18.0.1:8787/hooks/gitlab;
+       proxy_set_header X-Gitlab-Token $http_x_gitlab_token;
+       proxy_set_header X-Gitlab-Event $http_x_gitlab_event;
+   }
+   ```
+
+   `docker-compose.prod.yml` pins `yoob_network`'s subnet to
+   `172.18.0.0/16` (H1), and the `ufw` rule of H2 is added on the host.
+3. **CI** (Yoob `.gitlab-ci.yml`): the trigger rule of H7, the
+   `threads:reply` job (ledger cache keyed by MR iid, the same key as
+   `review:gate`), and a pipeline schedule every 15 minutes
+   (`*/15 * * * *`) whose job lists open MRs and starts one triggered
+   run per MR.
+4. **The project webhook**, created by the owner, who pastes the
+   secret into the prompt instead of into argv:
+
+   ```bash
+   read -rs REPOACH_GITLAB_WEBHOOK_SECRET
+   printf '{"url":"https://yoob.dev/hooks/repoach","note_events":true,"merge_requests_events":true,"push_events":false,"enable_ssl_verification":true,"token":"%s"}' \
+       "$REPOACH_GITLAB_WEBHOOK_SECRET" \
+     | glab api --method POST projects/67827362/hooks \
+         -H 'Content-Type: application/json' --input -
+   unset REPOACH_GITLAB_WEBHOOK_SECRET
+   ```
+
+   The trigger token is created once with `glab api --method POST
+   projects/67827362/triggers -f description=repoach-threads-serve`
+   and copied into the env file. It is never committed or logged.
+5. **GitHub (D15)**: `.github/workflows/auto-review.yml` adds
+
+   ```yaml
+   pull_request_review_comment:
+     types: [created, edited]
+   ```
+
+   and resolves the PR number from
+   `github.event.pull_request.number` for that event, as it already
+   does for `pull_request_review`.
+
 ## Architecture Impact
 
 - Adds dependency → SP-UNIVERSAL-FORGE: new protocol methods and
@@ -686,20 +795,25 @@ unless an AC names a recorded fixture or a live measurement.
   and a fixture admin list `["carol"]`, `carol`'s command applies,
   and the admin list is read exactly once per run. When that read
   fails, no command applies and the reply names the failed read.
-- [ ] AC23 (receiver, signed, D10): `threads serve` receives a note
-  event for MR !12 with the right `X-Gitlab-Token`. It answers `202`
-  and runs exactly one `threads reply 12`; a second identical delivery
-  posts nothing new (AC12 replay).
+- [ ] AC23 (receiver, signed, D10/D14): `threads serve` receives a
+  note event for MR !12 with the right `X-Gitlab-Token`. It answers
+  `202` and makes exactly one trigger call: a pipeline on !12's source
+  branch with `REPOACH_THREADS_REPLY_MR=12`. A second identical
+  delivery inside the 60 s window makes no second call, and the
+  triggered `threads reply 12` posts nothing new on replay (AC12).
 - [ ] AC24 (receiver, bad token, D10): the same event with a wrong or
-  missing `X-Gitlab-Token` gets `401`, no `threads reply` runs, and
-  one log line names the rejection. A non-note event with the right
-  token gets `202` and runs nothing.
+  missing `X-Gitlab-Token` gets `401`, no trigger call is made, and one
+  log line names the rejection without echoing the token. A non-note,
+  non-MR event with the right token gets `202` and makes no call.
+  `threads serve` with either secret unset exits 2 naming the
+  variable.
 - [ ] AC25 (fallback and GitHub triggers, D10): the GitLab CI
   configuration generated by `repoach ci` holds a scheduled job that
   runs `threads reply` on every open MR, and the schedule interval
   documented is 15 minutes. `.github/workflows/auto-review.yml` lists
-  `pull_request_review_comment` and `pull_request_review` among its
-  triggers, and both lead to `threads reply`.
+  `pull_request_review_comment` (types `created`, `edited`) and
+  `pull_request_review` among its triggers, and both lead to
+  `threads reply` (D15).
 - [ ] AC26 (fix branch, D11): a fake coder producing one commit pushes
   it straight on the PR branch. A fake coder producing three commits
   pushes them on `fix/<pr>-<fp8>`, which is merged into the PR branch
@@ -713,6 +827,23 @@ unless an AC names a recorded fixture or a live measurement.
   `state: escalated to owner`; the coder is never invoked and
   `coder_rounds = 0`.
 
+- [ ] AC29 (deployment on hel1, measured, D14):
+  - `systemctl is-active repoach-threads-serve` prints `active`.
+  - `ss -ltn` shows `172.18.0.1:8787` and no `0.0.0.0:8787`.
+  - `stat -c '%U:%G %a' /etc/repoach/threads-serve.env` prints
+    `root:root 600`.
+  - `ps -o args= -C repoach` shows no secret.
+  - From outside hel1, `curl -s -o /dev/null -w '%{http_code}' -X POST
+    https://yoob.dev/hooks/repoach -H 'X-Gitlab-Token: wrong'` prints
+    `401`, a direct connection to `65.108.199.28:8787` fails, and a
+    `GET` on the path is refused by nginx (`403`).
+- [ ] AC30 (webhook, measured by the owner): the project's hook list
+  shows one hook with URL `https://yoob.dev/hooks/repoach`,
+  `note_events: true`, `merge_requests_events: true`,
+  `push_events: false` and `enable_ssl_verification: true`. Its
+  "Test → Note events" delivery returns `202` and starts one
+  `threads:reply` pipeline.
+
 ## Rollout
 
 - R1: protocol (AC1).
@@ -720,8 +851,8 @@ unless an AC names a recorded fixture or a live measurement.
 - R3: handler, coder, owners and gate (AC3–AC11, AC13, AC15, AC16,
   AC18, AC20–AC22, AC26–AC28).
 - R4: D6 context once #246 is merged (AC17).
-- R5: the GitLab receiver, the scheduled fallback and the GitHub
-  triggers (AC23–AC25).
+- R5: the GitLab receiver, its deployment on hel1, the webhook, the
+  scheduled fallback and the GitHub trigger (AC23–AC25, AC29, AC30).
 - R6: the forge settings go on only after R3 is merged (AC19).
   Turned on earlier, every repoach thread would be resolvable only by
   the author, which D3 forbids. Yoob's backlog row B-174 points at
@@ -729,7 +860,4 @@ unless an AC names a recorded fixture or a live measurement.
 
 ## Open Questions
 
-- Q1 (owner): where does the GitLab receiver (D10) run? Either on
-  hel1, beside the review runner (it also hosts `yoob.dev`), or on a
-  separate small VM so a webhook flood or a receiver fault cannot
-  touch the product host.
+None. The last one (where the GitLab receiver runs) is decided by D14.
