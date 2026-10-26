@@ -29,6 +29,7 @@ from .init_cmds import init
 from .migrate_cmds import migrate_config
 from .release_cmds import release_app
 from .review_cmds import review_app, review_develop, review_plan
+from .spec_cmds import spec_app
 from .usage_cmds import usage
 
 app = typer.Typer(
@@ -38,6 +39,7 @@ app = typer.Typer(
 app.add_typer(review_app, name="review")
 app.add_typer(release_app, name="release")
 app.add_typer(ci_app, name="ci")
+app.add_typer(spec_app, name="spec")
 
 
 @arch_app.command("check")
