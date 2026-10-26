@@ -2,16 +2,16 @@
 id: SP-REFUTER-JUDGES-WHAT-IT-CAN
 title: Every deferred finding carries a named reason, and the judging cap is a setting
 version: 0.2
-status: draft
+status: approved
 author: agent
 created: 2026-10-21
-updated: 2026-10-25
+updated: 2026-10-26
 
 owns:
-  code: [src/repoach/review/refuter.py, src/repoach/review/refuter_evidence.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py]
+  code: [src/repoach/review/refuter.py, src/repoach/review/refuter_evidence.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py, prompts/review/refuter_0.3.0.md, tests/unit/test_refuter_defers_unseen.py]
   resources: N/A
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-GATES, SP-FINDINGS-BRIDGE-DOCFIX]
 provides_to: []
 
 constraints: {}
