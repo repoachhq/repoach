@@ -1695,6 +1695,25 @@ def coverage_rows_at_head(
     return CoverageGrading(rows=rows, ownership=ownership, lines=ownership.lines())
 
 
+_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
+"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
+
+
+def redact_error(text: str) -> str:
+    """Return *text* with URL credentials and forge tokens replaced by ``***``.
+
+    A grading error becomes a merge reason that the gate publishes (its
+    JSON, notes and PR comment) and a log line; a failed ``git fetch``
+    can carry a credentialed remote URL.
+    """
+    from ..forge.recording import SECRET_VALUE_PATTERNS
+
+    cleaned = _URL_USERINFO.sub("***@", text)
+    for pattern in SECRET_VALUE_PATTERNS:
+        cleaned = pattern.sub("***", cleaned)
+    return cleaned
+
+
 class StaleCoverageRecomputeError(RuntimeError):
     """A stale coverage row could not be recomputed; its stored verdict is not trusted.
 
@@ -1709,7 +1728,8 @@ class StaleCoverageRecomputeError(RuntimeError):
         self.rule_version = rule_version
         self.reason = (
             f"spec coverage recompute failed at {head_sha[:7]}: {type(error).__name__}: "
-            f"{str(error)[:200]}; stored verdict from rule {rule_version} not trusted"
+            f"{redact_error(str(error))[:200]}; stored verdict from rule {rule_version} "
+            "not trusted"
         )
         super().__init__(self.reason)
 

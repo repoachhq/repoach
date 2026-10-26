@@ -505,3 +505,18 @@ def test_fixture_prefix_and_fixtures_tree_are_examples_not_selectors() -> None:
     )
     found = [(entry.selector, entry.origin) for entry in spec_acceptance_criteria(markdown)]
     assert found == [("tests/unit/test_real.py::test_it", "AC1")]
+
+
+def test_a_published_grading_error_carries_no_credential() -> None:
+    from repoach.review.spec_gate import StaleCoverageRecomputeError, redact_error
+
+    token = "ghp_" + "a1" * 12
+    assert redact_error(f"fatal: https://bot:{token}@github.com/o/r") == (
+        "fatal: https://***@github.com/o/r"
+    )
+    assert redact_error(f"auth failed with {token}") == "auth failed with ***"
+    stale = StaleCoverageRecomputeError(
+        head_sha="abcdef1234", rule_version=1, error=RuntimeError(f"https://x:{token}@h/r")
+    )
+    assert token not in stale.reason
+    assert "https://***@h/r" in stale.reason
