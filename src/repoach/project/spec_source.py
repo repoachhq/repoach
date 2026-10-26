@@ -3,8 +3,10 @@
 Resolution order, restricted to ``[review].spec_sources``: the
 ``--spec`` flag, then the first ``Spec: SP-…`` line of the PR / MR
 description, then the branch name (``<type>/sp-<id>…``, the historical
-convention).  When none declares a spec the review runs without one —
-``spec`` is ``null`` and spec coverage is ``not_applicable`` — so a
+convention).  When none declares a spec, the PR is graded against every
+governed spec owning a path of its diff (source ``ownership``,
+SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7); when no spec owns one
+either, ``spec`` is ``null`` and spec coverage is ``not_applicable`` — so a
 documentation or measurement branch is never refused for lacking a spec.
 """
 
@@ -14,6 +16,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from ..review.spec import _normalise_id, detect_spec_from_branch, spec_exists
 from .config import DEFAULT_SPEC_SOURCES, SpecSource
@@ -25,17 +28,44 @@ The ``Spec:`` key and the ``SP-`` prefix match in any case; the id is
 returned verbatim, as written in the description."""
 
 
+OwnershipSource = Literal["ownership"]
+"""The source of the specs an undeclared PR is graded against (G7)."""
+
+
 @dataclass(frozen=True)
 class SpecResolution:
     """The resolved spec id and where it came from.
 
     Attributes:
         spec_id: Canonical ``SP-…`` id, or None when nothing declares one.
-        source: ``flag``, ``description`` or ``branch``; None with no spec.
+        source: ``flag``, ``description`` or ``branch``; ``ownership``
+            when nothing declares a spec and specs own the diff's code;
+            None with no spec.
+        owners: The specs owning the diff's code, for ``ownership``.
     """
 
     spec_id: str | None = None
-    source: SpecSource | None = None
+    source: SpecSource | OwnershipSource | None = None
+    owners: tuple[str, ...] = ()
+
+
+def resolve_by_ownership(declared: SpecResolution, owners: Sequence[str]) -> SpecResolution:
+    """Return *declared*, or the ownership resolution when nothing is declared.
+
+    A declared spec keeps today's behaviour (only that spec is graded);
+    ownership applies only when nothing is declared and at least one
+    governed spec owns a path of the diff (NG3, G7).
+
+    Args:
+        declared: The resolution of :func:`resolve_spec`.
+        owners: The ids of the specs owning a changed path, at base.
+
+    Returns:
+        The resolution the PR is graded under.
+    """
+    if declared.spec_id is not None or not owners:
+        return declared
+    return SpecResolution(spec_id=None, source="ownership", owners=tuple(owners))
 
 
 def spec_from_description(description: str) -> str | None:

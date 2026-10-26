@@ -444,6 +444,10 @@ class GateEvaluation:
             forge answered (its description and branch declare the spec).
         tree: ``worktree`` / ``checkout`` when the ledger was re-verified
             on a pinned head tree (SP-REVIEW-PINS-HEAD), else None.
+        changed_files: The paths the PR diff touches, when already known.
+        read_changed_files: Reads them from the forge on demand; the gate
+            CLI calls it only for a PR declaring no spec, whose specs it
+            resolves by ownership (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7).
     """
 
     head_sha: str
@@ -452,6 +456,8 @@ class GateEvaluation:
     decision: MergeDecision
     pull_request: PullRequest | None = None
     tree: str | None = None
+    changed_files: list[str] | None = None
+    read_changed_files: Callable[[], list[str]] | None = None
 
 
 def _unknown_facts() -> MergeFacts:
@@ -885,6 +891,7 @@ def evaluate_merge_gate(
         decision=decision,
         pull_request=pr,
         tree=tree_kind,
+        read_changed_files=lambda: diff_files(forge.diff(pr_number).text),
     )
 
 
