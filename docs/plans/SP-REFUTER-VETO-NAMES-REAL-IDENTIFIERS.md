@@ -74,6 +74,14 @@ Drop Python names, common tokens and generic English words from a claim's identi
 - **Done when**: pytest tests/unit/test_refuter.py tests/unit/test_review_ci_mode.py tests/unit/test_gate_reverifies_at_head.py passes
 - **Unit tests**: `tests/unit/test_refuter.py::test_summary_line_matches_the_documented_shape`, `tests/unit/test_review_ci_mode.py::test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line`, `tests/unit/test_gate_reverifies_at_head.py::test_re_check_fills_the_configured_refuter_context`
 
+## Step 10 — A stop word the cited code defines stays an identifier
+
+- **Files**: `src/repoach/review/refuter_evidence.py`, `tests/unit/test_refuter_veto_names_real_identifiers.py`
+- **Action**: Add defined_names (def, class, self.<name> =, <name> = over the cited file and its diff hunks), keep a stop word in claim_identifiers when it is defined there, and make is_stop_word read STOP_WORDS alone.
+- **Commit**: `fix(refuter): keep a stop word the cited code defines`
+- **Done when**: pytest tests/unit/test_refuter_veto_names_real_identifiers.py passes
+- **Unit tests**: `tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_names_reads_definitions_not_keyword_arguments`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_stop_word_stays_an_identifier_and_d2_applies`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_is_stop_word_reads_stop_words_only`
+
 ## Integration tests
 
 - `tests/integration/test_refuter_veto_replays_pr260.py::test_measured_refutation_settles_the_finding_at_the_next_head`
@@ -236,6 +244,22 @@ Drop Python names, common tokens and generic English words from a claim's identi
         "tests/unit/test_refuter.py::test_summary_line_matches_the_documented_shape",
         "tests/unit/test_review_ci_mode.py::test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line",
         "tests/unit/test_gate_reverifies_at_head.py::test_re_check_fills_the_configured_refuter_context"
+      ]
+    },
+    {
+      "index": 10,
+      "title": "A stop word the cited code defines stays an identifier",
+      "files": [
+        "src/repoach/review/refuter_evidence.py",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py"
+      ],
+      "action": "Add defined_names (def, class, self.<name> =, <name> = over the cited file and its diff hunks), keep a stop word in claim_identifiers when it is defined there, and make is_stop_word read STOP_WORDS alone.",
+      "commit_message": "fix(refuter): keep a stop word the cited code defines",
+      "done_when": "pytest tests/unit/test_refuter_veto_names_real_identifiers.py passes",
+      "unit_tests": [
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_names_reads_definitions_not_keyword_arguments",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_stop_word_stays_an_identifier_and_d2_applies",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_is_stop_word_reads_stop_words_only"
       ]
     }
   ],
