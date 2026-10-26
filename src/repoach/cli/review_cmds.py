@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import typer
@@ -60,6 +61,7 @@ from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.orchestrator import run_review
+from ..review.refuter import Refutation
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
@@ -88,6 +90,33 @@ EXIT_WRITE_REFUSED = 8
 
 Nothing was sent; a step attempted a forge write the run was not allowed
 to make, which is a defect of that step (SP-DRY-RUN-NEVER-POSTS)."""
+
+
+def refuter_tokens_json(
+    refutations: Sequence[Refutation], usage: Mapping[str, object]
+) -> dict[str, int]:
+    """Report what the refuter consumed in the run: evidence estimate and ledger total.
+
+    ``evidence`` sums each finding's ``evidence_tokens`` (the
+    ``ceil(utf8_bytes / 3)`` estimate); ``total`` is the ``Refuter`` row
+    of the usage ledger (input, output and cache tokens, as the provider
+    counts them). Reported only: the evidence window is governed by
+    ``[gates].refuter_context_tokens`` alone, never by these figures.
+    """
+    rows = usage.get("per_reviewer")
+    refuter = (
+        next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("reviewer") == "Refuter"),
+            None,
+        )
+        if isinstance(rows, list)
+        else None
+    )
+    total = refuter.get("total_tokens", 0) if refuter else 0
+    return {
+        "evidence": sum(r.evidence_tokens for r in refutations),
+        "total": int(total) if isinstance(total, int) else 0,
+    }
 
 
 def _dry_run_refusal(value: str) -> WriteRefusal:
@@ -355,6 +384,7 @@ def review_pr(
             err=True,
         )
     spec_resolution: dict[str, object] = getattr(team, "spec_resolution", {})
+    usage = run_usage_json(run)
     payload = {
         "pr_number": team.pr_number,
         "head_sha": team.head_sha,
@@ -396,7 +426,8 @@ def review_pr(
             for o in team.reviews
         ],
         "findings": [refutation.as_json() for refutation in team.refutations],
-        "usage": run_usage_json(run),
+        "usage": usage,
+        "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
     if team.cache_line:

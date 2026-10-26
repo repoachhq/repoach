@@ -70,7 +70,7 @@ from ..forge import (
     select_forge,
 )
 from ..forge.protocol import diff_files
-from ..gates.config import load_gates_config
+from ..gates.config import load_gates_config, resolve_refuter_context_tokens
 from ..project.config import load_project_config
 from ..project.spec_source import (
     SpecResolution,
@@ -846,6 +846,9 @@ class ReviewTeamOrchestrator:
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
                     scope_head=head_sha,
+                    diff=diff,
+                    pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
+                    context_tokens=resolve_refuter_context_tokens(self._config_root)[0],
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()

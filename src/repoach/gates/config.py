@@ -39,6 +39,7 @@ from ..project.config import (
     DEFAULT_PROMPTS_DIR,
     DEFAULT_REFUTER_MAX_JUDGED,
     DEFAULT_TIMEOUT_S,
+    REFUTER_CONTEXT_TOKENS_FLOOR,
     REPOACH_DOCSTRING_EXEMPT,
     ConfigError,
     config_path,
@@ -159,6 +160,9 @@ class GatesConfig:
         refuter_max_judged: ``[gates].refuter_max_judged``, the findings
             the refuter sends to its judge per PR; the overflow is
             reported deferred, each finding named.
+        refuter_context_tokens: ``[gates].refuter_context_tokens``, the
+            refuter's context size its evidence fills, at least
+            :data:`REFUTER_CONTEXT_TOKENS_FLOOR`.
         builtin: True for :meth:`builtin` (no configuration file).
     """
 
@@ -179,6 +183,7 @@ class GatesConfig:
     named_commands: Mapping[str, str] = field(default_factory=dict)
     verifier_commands: Mapping[str, str] = field(default_factory=dict)
     refuter_max_judged: int = DEFAULT_REFUTER_MAX_JUDGED
+    refuter_context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR
     builtin: bool = True
 
     @classmethod
@@ -248,6 +253,16 @@ class GatesConfig:
             raise ValueError(
                 f"gates.refuter_max_judged: must be a positive integer, got {max_judged!r}"
             )
+        context_tokens = gates.get("refuter_context_tokens", REFUTER_CONTEXT_TOKENS_FLOOR)
+        if (
+            not isinstance(context_tokens, int)
+            or isinstance(context_tokens, bool)
+            or context_tokens < REFUTER_CONTEXT_TOKENS_FLOOR
+        ):
+            raise ValueError(
+                "gates.refuter_context_tokens: must be an integer of at least "
+                f"{REFUTER_CONTEXT_TOKENS_FLOOR}, got {context_tokens!r}"
+            )
         return cls(
             languages=languages,
             src_roots=src_roots,
@@ -273,6 +288,7 @@ class GatesConfig:
             named_commands=_named_commands(commands),
             verifier_commands=dict(overrides_raw),
             refuter_max_judged=max_judged,
+            refuter_context_tokens=context_tokens,
             builtin=False,
         )
 
@@ -374,6 +390,48 @@ def resolve_refuter_max_judged(repo_root: Path) -> tuple[int, str]:
     return config.refuter_max_judged, "repoach.toml"
 
 
+CONTEXT_TOKENS_ENV = "REPOACH_REFUTER_CONTEXT_TOKENS"
+"""Environment override of ``[gates].refuter_context_tokens`` (env > toml > 40000)."""
+
+
+def resolve_refuter_context_tokens(repo_root: Path) -> tuple[int, str]:
+    """Return the refuter's context size for the project at ``repo_root`` and its source.
+
+    :data:`CONTEXT_TOKENS_ENV` (an integer of at least
+    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`) wins, then
+    ``[gates].refuter_context_tokens``, then the floor itself. An invalid
+    environment value or a malformed ``repoach.toml`` is logged at
+    warning and skipped: the refuter never fails a review over its size.
+
+    Returns:
+        ``(tokens, source)`` with ``source`` one of ``env
+        REPOACH_REFUTER_CONTEXT_TOKENS``, ``repoach.toml`` or ``default``.
+    """
+    raw = configured_env_value((CONTEXT_TOKENS_ENV,), repo_root)
+    if raw is not None:
+        value = raw.strip()
+        if value.isdigit() and int(value) >= REFUTER_CONTEXT_TOKENS_FLOOR:
+            return int(value), f"env {CONTEXT_TOKENS_ENV}"
+        _log.warning(
+            "gates.refuter_context_tokens_env_invalid",
+            variable=CONTEXT_TOKENS_ENV,
+            value=raw[:40],
+            floor=REFUTER_CONTEXT_TOKENS_FLOOR,
+        )
+    try:
+        config = load_gates_config(repo_root)
+    except GatesConfigError as exc:
+        _log.warning(
+            "gates.refuter_context_tokens_config_invalid",
+            error=str(exc)[:200],
+            fallback=REFUTER_CONTEXT_TOKENS_FLOOR,
+        )
+        return REFUTER_CONTEXT_TOKENS_FLOOR, "default"
+    if config.builtin or config.refuter_context_tokens == REFUTER_CONTEXT_TOKENS_FLOOR:
+        return config.refuter_context_tokens, "default"
+    return config.refuter_context_tokens, "repoach.toml"
+
+
 def current_gates_config() -> GatesConfig:
     """Return the configuration of the project the working directory sits in.
 
@@ -390,10 +448,12 @@ def current_gates_config() -> GatesConfig:
 
 __all__ = [
     "CONFIG_FILE_NAME",
+    "CONTEXT_TOKENS_ENV",
     "DEFAULT_PROMPTS_DIR",
     "DEFAULT_REFUTER_MAX_JUDGED",
     "DEFAULT_TIMEOUT_S",
     "MAX_JUDGED_ENV",
+    "REFUTER_CONTEXT_TOKENS_FLOOR",
     "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
     "GatesConfigError",
@@ -401,6 +461,7 @@ __all__ = [
     "current_gates_config",
     "load_gates_config",
     "python_packages",
+    "resolve_refuter_context_tokens",
     "resolve_refuter_max_judged",
 ]
 
