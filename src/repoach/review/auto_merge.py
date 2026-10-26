@@ -6,13 +6,18 @@ The gate verifies, in order:
    ``main`` — that promotion is reserved for the human owner.
 2. **PR state** is ``OPEN`` and ``mergeable``.  Already-merged or
    conflicted PRs short-circuit with an idempotent no-op.
-3. **CI gate** (SP-AUTOMERGE-CI-GATE) — ``statusCheckRollup`` must
-   not show any required check in FAILURE / CANCELLED / TIMED_OUT /
-   ACTION_REQUIRED.  Required checks default to the matrix
-   ``Test suite (Python 3.11)`` + ``Test suite (Python 3.13)``;
-   missing entries and pending checks past the 12-min deadline are
-   refused with structured reasons (``required_check_failed``,
-   ``required_check_timed_out``, ``required_check_missing``).
+3. **CI gate** (SP-AUTOMERGE-CI-GATE, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF)
+   — the committed list of required checks
+   (:func:`~repoach.review.merge_wait.required_checks`: ``[auto_merge]``,
+   else every job of the ``CI`` workflow) is judged name by name at the
+   head by :func:`~repoach.review.merge_wait.judge_required_checks`. A
+   check outside the list (the merge job's own run, a review-bot job)
+   never makes the merge wait, and a cancelled placeholder next to a real
+   run of the same name is ignored. A pending required check skips with
+   ``SKIP_CI_PENDING`` naming the check and the workflow whose completion
+   re-runs the merge; a check with only cancelled runs skips with
+   ``SKIP_CI_CANCELLED``; failures and missing checks are refused with
+   ``required_check_failed`` / ``required_check_missing``.
 4. **Pure merge gate** (SP-PURE-MERGE-GATE / SP-VERDICT-FLIP 10a) —
    :func:`decide_at_head` re-verifies the findings ledger at the exact
    head: CI green ∧ zero open blocking findings ∧ a complete review ∧
@@ -30,7 +35,11 @@ Module-level constants :
       umbrella tag preserved for back-compat; new refused-on-CI
       paths emit one of the more specific tags
       (``OUTCOME_SKIP_CI_FAILED``, ``OUTCOME_SKIP_CI_TIMEOUT``,
-      ``OUTCOME_SKIP_CI_MISSING``, ``OUTCOME_SKIP_CI_PENDING``).
+      ``OUTCOME_SKIP_CI_MISSING``, ``OUTCOME_SKIP_CI_PENDING``,
+      ``OUTCOME_SKIP_CI_CANCELLED``).
+    - Every attempt is recorded with its head, pending checks, trigger
+      and rule version, in ``pr_merges`` and in the PR's
+      ``<!-- repoach-merge-attempts:v1 -->`` comment (G5).
     - CI facts come from :meth:`repoach.forge.protocol.Forge.ci_status`
       (SP-UNIVERSAL-FORGE G5): on GitHub the required checks of the
       branch protection when readable, else
@@ -49,9 +58,11 @@ Module-level constants :
 from __future__ import annotations
 
 import json
+import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..core.config import get_settings
@@ -81,6 +92,16 @@ from .merge_gate import (
     MergeFacts,
     compute_merge_decision,
     gather_merge_facts,
+)
+from .merge_wait import (
+    MERGE_RULE_VERSION,
+    MergeAttempt,
+    check_producers,
+    judge_required_checks,
+    required_checks,
+    trigger_from_env,
+    unrearmed_checks,
+    upsert_attempt,
 )
 from .persistence import init_schema, record_merge
 from .refuter import Judge, make_refuter_judge
@@ -114,6 +135,7 @@ OUTCOME_SKIP_CI_FAILED: str = "SKIP_CI_FAILED"
 OUTCOME_SKIP_CI_TIMEOUT: str = "SKIP_CI_TIMEOUT"
 OUTCOME_SKIP_CI_MISSING: str = "SKIP_CI_MISSING"
 OUTCOME_SKIP_CI_PENDING: str = "SKIP_CI_PENDING"
+OUTCOME_SKIP_CI_CANCELLED: str = "SKIP_CI_CANCELLED"
 OUTCOME_SKIP_NOT_APPROVED: str = "SKIP_NOT_APPROVED"
 OUTCOME_SKIP_DISCUSSIONS: str = "SKIP_DISCUSSIONS_UNRESOLVED"
 OUTCOME_SKIP_CONFLICT: str = "SKIP_CONFLICT"
@@ -136,6 +158,7 @@ NON_FATAL_SKIP_OUTCOMES: frozenset[str] = frozenset(
         OUTCOME_SKIP_CI_TIMEOUT,
         OUTCOME_SKIP_CI_MISSING,
         OUTCOME_SKIP_CI_PENDING,
+        OUTCOME_SKIP_CI_CANCELLED,
         OUTCOME_SKIP_NOT_APPROVED,
         OUTCOME_SKIP_DISCUSSIONS,
         OUTCOME_SKIP_CONFLICT,
@@ -163,6 +186,9 @@ _REFUSAL_OUTCOMES: dict[str, str] = {
     "unrecognized": OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
 }
 """Forge merge refusals read from facts → non-fatal outcomes; ``refused`` stays FAILED."""
+
+_NAMED_CI_SKIPS: frozenset[str] = frozenset({OUTCOME_SKIP_CI_PENDING, OUTCOME_SKIP_CI_CANCELLED})
+"""CI skips whose notes are exactly the verdict's named reason, no rollup dump (G2, G3)."""
 
 __all__ = [
     "DEFAULT_REQUIRED_CHECK_NAMES",
@@ -210,6 +236,7 @@ class CIGateOutcome:
     outcome_tag: str
     reason: str
     rollup_snapshot: list[dict] = field(default_factory=list)
+    pending: list[str] = field(default_factory=list)
 
 
 def evaluate_ci_gate(
@@ -222,6 +249,7 @@ def evaluate_ci_gate(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     head_sha: str | None = None,
+    producers: Mapping[str, str] | None = None,
 ) -> CIGateOutcome:
     """Block until every required check succeeds, fails, or times out.
 
@@ -238,6 +266,15 @@ def evaluate_ci_gate(
     the PR ``statusCheckRollup`` is only a fallback when the commit
     API fails. Both live behind :meth:`Forge.ci_status`; ``required_names``
     ``None`` lets the forge resolve them (SP-UNIVERSAL-FORGE G5).
+
+    On GitHub the forge's buckets are not trusted: the check runs are
+    re-judged by :func:`~repoach.review.merge_wait.judge_required_checks`
+    over ``required_names`` only (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF
+    G1). Still pending at the deadline is ``SKIP_CI_PENDING`` with
+    ``wait_seconds=0`` (the event-driven contract: the producing
+    workflow's completion re-runs the merge, ``producers`` names it) and
+    ``SKIP_CI_TIMEOUT`` after a real wait. GitLab keeps its one pipeline
+    fact.
     """
     wait_seconds, poll_interval = _resolve_wait_poll(wait_seconds, poll_interval)
     deadline = monotonic() + wait_seconds
@@ -280,6 +317,18 @@ def evaluate_ci_gate(
             for check in status.checks
         ]
         failed, pending, missing = status.failed, status.pending, status.missing
+        cancelled: list[str] = []
+        pending_note = ""
+        if getattr(forge, "name", "") == "github":
+            verdict = judge_required_checks(
+                status.checks,
+                status.required or list(required_names or ()),
+                head_sha or "",
+                producers=producers,
+            )
+            failed, pending, missing = verdict.failed, verdict.pending, verdict.missing
+            cancelled = verdict.cancelled
+            pending_note = verdict.note() if verdict.state == "pending" else ""
         _log.info(
             "auto_merge.ci_gate_poll",
             pr_number=pr_number,
@@ -297,6 +346,13 @@ def evaluate_ci_gate(
                 reason=f"required_check_failed: {', '.join(failed)}",
                 rollup_snapshot=last_snapshot,
             )
+        if cancelled and not pending:
+            return CIGateOutcome(
+                green=False,
+                outcome_tag=OUTCOME_SKIP_CI_CANCELLED,
+                reason=f"cancelled with no other run: {', '.join(cancelled)}",
+                rollup_snapshot=last_snapshot,
+            )
         if missing and not pending:
             return CIGateOutcome(
                 green=False,
@@ -311,6 +367,14 @@ def evaluate_ci_gate(
                 reason="all required checks succeeded",
                 rollup_snapshot=last_snapshot,
             )
+        if monotonic() >= deadline and wait_seconds == 0 and pending:
+            return CIGateOutcome(
+                green=False,
+                outcome_tag=OUTCOME_SKIP_CI_PENDING,
+                reason=pending_note or f"pending: {', '.join(pending)}",
+                rollup_snapshot=last_snapshot,
+                pending=list(pending),
+            )
         if monotonic() >= deadline:
             return CIGateOutcome(
                 green=False,
@@ -321,6 +385,7 @@ def evaluate_ci_gate(
                     + f" (deadline {wait_seconds}s)"
                 ),
                 rollup_snapshot=last_snapshot,
+                pending=list(pending),
             )
         sleep(poll_interval)
 
@@ -352,6 +417,37 @@ def required_checks_green(
         sleep=sleep,
     )
     return outcome.green, outcome.reason
+
+
+def resolve_required_checks(
+    forge: Forge, required_names: Sequence[str] | None, root: Path, *, read_forge: bool = True
+) -> tuple[list[str] | None, dict[str, str]]:
+    """The required check names the merge waits on, and which workflow re-arms each.
+
+    GitHub: ``required_names`` when given, else the committed list
+    (:func:`~repoach.review.merge_wait.required_checks`). A required check
+    no re-arming workflow produces is logged
+    (``auto_merge.required_check_not_rearmed``), and so is a check the
+    forge enforces that the list lacks:
+    ``forge requires <names> not in [auto_merge].required_checks``. The
+    decision still runs on the list; ``read_forge`` False (the read-only
+    ``review gate``) skips that protection read. GitLab keeps its one pipeline fact:
+    the names pass through unchanged and nothing is re-armed by name.
+    """
+    if getattr(forge, "name", "") == "gitlab":
+        return (list(required_names) if required_names is not None else None), {}
+    names = list(required_names) if required_names is not None else required_checks(root)
+    for problem in unrearmed_checks(root, names):
+        _log.warning("auto_merge.required_check_not_rearmed", problem=problem)
+    protection = forge.branch_protection(get_settings().integration_branch) if read_forge else None
+    if protection is not None and protection.readable:
+        unlisted = [name for name in protection.required_checks if name not in names]
+        if unlisted:
+            _log.warning(
+                "auto_merge.forge_requires_unlisted",
+                detail=f"forge requires {unlisted} not in [auto_merge].required_checks",
+            )
+    return names, check_producers(root)
 
 
 def _summarise_rollup(rollup: Sequence[dict]) -> str:
@@ -845,15 +941,19 @@ def evaluate_merge_gate(
             pull_request=pr,
         )
 
+    names, producers = resolve_required_checks(
+        forge, required_names, repo_root or Path.cwd(), read_forge=False
+    )
     ci_gate = evaluate_ci_gate(
         forge,
         pr_number,
-        required_names=required_names,
+        required_names=names,
         wait_seconds=wait_seconds,
         poll_interval=poll_interval,
         monotonic=monotonic,
         sleep=sleep,
         head_sha=verified_head,
+        producers=producers,
     )
     tree_kind: str | None = None
     if pin_tree:
@@ -927,8 +1027,18 @@ def run_auto_merge(
     delete_branch: bool | None = None,
     pin_tree: bool = False,
     judge_factory: Callable[[], Judge] | None = None,
+    trigger: str | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> AutoMergeResult:
     """Evaluate the merge gates and (if all green) merge with the configured method.
+
+    Every outcome is an attempt (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF
+    G5): one ``pr_merges`` row with the head, the pending required checks,
+    ``trigger`` (default: read from the GitHub Actions environment, else
+    ``cli``) and the rule version, stamped by ``clock``; and one upsert of
+    the PR's attempts comment through the write barrier. A green attempt
+    is written to the comment just before the merge, since a merged PR
+    refuses writes, and replaced if the forge then refuses.
 
     With ``pin_tree`` (``repoach review merge``), the ledger is
     re-verified on the tree of the verified head exactly as
@@ -966,11 +1076,15 @@ def run_auto_merge(
     settings = get_settings()
     db = db_path or Path(settings.db_path)
     init_schema(db)
+    now = clock or (lambda: datetime.now(UTC))
+    attempt_trigger = trigger if trigger is not None else trigger_from_env(os.environ)
 
     pr = _pull_request_or_none(forge, pr_number)
     base = pr.base_ref if pr is not None else ""
     head = pr.head_ref if pr is not None else ""
     state = pr.state.upper() if pr is not None else ""
+    decided_head = pr.head_sha if pr is not None else ""
+    pending_checks: list[str] = []
 
     _log.info(
         "auto_merge.run_started",
@@ -982,8 +1096,24 @@ def run_auto_merge(
         poll_interval=poll_interval,
     )
 
-    def _persist(result: AutoMergeResult) -> AutoMergeResult:
-        """Persist + return."""
+    def _attempt(outcome: str, notes: str, recorded_at: datetime) -> MergeAttempt:
+        """The attempt record of one outcome at the decided head."""
+        return MergeAttempt(
+            pr_number=pr_number,
+            head_sha=decided_head,
+            outcome=outcome,
+            reason=notes[:1000],
+            pending_checks=list(pending_checks),
+            trigger=attempt_trigger,
+            rule_version=MERGE_RULE_VERSION,
+            recorded_at=recorded_at,
+        )
+
+    def _persist(
+        result: AutoMergeResult, *, recorded_at: datetime | None = None, comment: bool = True
+    ) -> AutoMergeResult:
+        """Record the attempt in ``pr_merges`` and the PR comment, then return it."""
+        attempt = _attempt(result.outcome, result.notes, recorded_at or now())
         try:
             record_merge(
                 db,
@@ -993,9 +1123,16 @@ def run_auto_merge(
                 head_ref=head,
                 merged_sha=result.merged_sha,
                 notes=result.notes,
+                recorded_at=attempt.recorded_at,
+                head_sha=attempt.head_sha,
+                pending_checks=attempt.pending_checks,
+                trigger=attempt.trigger,
+                rule_version=attempt.rule_version,
             )
         except Exception as exc:
             _log.warning("auto_merge.persist_failed", pr_number=pr_number, exc=str(exc))
+        if comment and state == "OPEN":
+            upsert_attempt(forge, attempt, replace_last=recorded_at is not None)
         log_method = _log.info if result.outcome in SUCCESS_OUTCOMES else _log.warning
         log_method(
             "auto_merge.gate_decision",
@@ -1057,17 +1194,25 @@ def run_auto_merge(
                 notes=f"stale head: {stale_reason}",
             )
         )
+    decided_head = verified_head
 
+    names, producers = resolve_required_checks(forge, required_names, repo_root or Path.cwd())
     ci_gate = evaluate_ci_gate(
         forge,
         pr_number,
-        required_names=required_names,
+        required_names=names,
         wait_seconds=wait_seconds,
         poll_interval=poll_interval,
         monotonic=monotonic,
         sleep=sleep,
         head_sha=verified_head,
+        producers=producers,
     )
+    pending_checks = list(ci_gate.pending)
+    if not ci_gate.green and ci_gate.outcome_tag in _NAMED_CI_SKIPS:
+        return _persist(
+            AutoMergeResult(pr_number=pr_number, outcome=ci_gate.outcome_tag, notes=ci_gate.reason)
+        )
     if not ci_gate.green:
         snapshot = _summarise_rollup(ci_gate.rollup_snapshot)
         return _persist(
@@ -1161,6 +1306,11 @@ def run_auto_merge(
             )
         )
 
+    decided_at = now()
+    upsert_attempt(
+        forge,
+        _attempt(OUTCOME_MERGED, f"gate green, merging at {verified_head[:7]}", decided_at),
+    )
     ok, merge_sha, log, refusal = merge_change(
         forge,
         pr_number,
@@ -1174,7 +1324,8 @@ def run_auto_merge(
                 pr_number=pr_number,
                 outcome=_REFUSAL_OUTCOMES[refusal],
                 notes=f"merge refused ({refusal}): {log}",
-            )
+            ),
+            recorded_at=decided_at,
         )
     if not ok:
         return _persist(
@@ -1182,7 +1333,8 @@ def run_auto_merge(
                 pr_number=pr_number,
                 outcome=OUTCOME_FAILED,
                 notes=f"merge failed: {log}",
-            )
+            ),
+            recorded_at=decided_at,
         )
 
     return _persist(
@@ -1191,5 +1343,7 @@ def run_auto_merge(
             outcome=OUTCOME_MERGED,
             merged_sha=merge_sha,
             notes=log,
-        )
+        ),
+        recorded_at=decided_at,
+        comment=False,
     )

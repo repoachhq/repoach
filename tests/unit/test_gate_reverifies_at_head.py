@@ -21,7 +21,7 @@ import typer
 
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
-from repoach.forge.protocol import MergeMethod, PullRequest
+from repoach.forge.protocol import BranchProtection, Comment, MergeMethod, PullRequest
 from repoach.review import auto_merge, finding_verifiers, head_reverify
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, evaluate_merge_gate
 from repoach.review.findings import (
@@ -112,6 +112,15 @@ class _HeadForge(GitHubForge):
 
     def _pr_head_sha(self, pr_number: int) -> str:
         return self._head
+
+    def branch_protection(self, branch: str) -> BranchProtection:
+        return BranchProtection(readable=False)
+
+    def find_marked_comment(self, number: int, marker: str) -> Comment | None:
+        return None
+
+    def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
+        return Comment(id=1, author="bot", body=body)
 
 
 class _Judge:

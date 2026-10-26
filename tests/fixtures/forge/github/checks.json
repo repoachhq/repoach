@@ -27,7 +27,9 @@
   "result": [
     {
       "bucket": "skipping",
+      "completed_at": "",
       "conclusion": "",
+      "head_sha": "",
       "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91308427779",
       "name": "Auto-merge to develop",
       "started_at": "",
@@ -36,7 +38,9 @@
     },
     {
       "bucket": "fail",
+      "completed_at": "",
       "conclusion": "",
+      "head_sha": "",
       "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91307476613",
       "name": "Coder auto-fix loop",
       "started_at": "",
@@ -45,7 +49,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "",
+      "head_sha": "",
       "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91305829550",
       "name": "Architect / Sentinel / Tester / Scribe",
       "started_at": "",
@@ -54,7 +60,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "",
+      "head_sha": "",
       "link": "https://github.com/repoachhq/repoach/actions/runs/30676856865/job/91305829539",
       "name": "ShellCheck (warning-level)",
       "started_at": "",
@@ -63,7 +71,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "",
+      "head_sha": "",
       "link": "https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829439",
       "name": "Test suite (Python 3.11)",
       "started_at": "",
@@ -72,7 +82,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "",
+      "head_sha": "",
       "link": "https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829449",
       "name": "Test suite (Python 3.13)",
       "started_at": "",
@@ -80,6 +92,6 @@
       "workflow": "CI"
     }
   ],
-  "source": "recorded 2026-10-19 from m3",
+  "source": "recorded 2026-10-19 from m3; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
   "trimmed": null
 }

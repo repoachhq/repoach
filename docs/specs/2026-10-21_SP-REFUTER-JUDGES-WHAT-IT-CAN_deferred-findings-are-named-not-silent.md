@@ -1,7 +1,7 @@
 ---
 id: SP-REFUTER-JUDGES-WHAT-IT-CAN
 title: Every deferred finding carries a named reason, and the judging cap is a setting
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-10-21
@@ -18,6 +18,63 @@ constraints: {}
 ---
 
 # Every deferred finding carries a named reason, and the judging cap is a setting
+
+## Amendment (0.3, 2026-10-26): the report lists every finding that drives the verdict
+
+| # | Fact | Where |
+|---|---|---|
+| F16 | Yoob MRs !324 (job 17451293380) and !327 (job 17451279178) ended `final_verdict = REQUEST_CHANGES` on one finding the mechanical pre-check had verified, while the JSON said 8 findings, 8 refuted: the gate blocked on a finding the report never showed | the two CI job logs |
+| F17 | `verify_findings_for_pr` returned only aggregate counts, so no caller could name the findings it verified | `src/repoach/review/finding_verifiers.py` (before this amendment) |
+| F18 | `review pr` printed `findings = [r.as_json() for r in team.refutations]`, the refuter's outcomes alone; a mechanically verified finding is no longer `proposed`, so the refuter never sees it | `src/repoach/cli/review_cmds.py`, `src/repoach/review/orchestrator.py` (`team.refutations = list(judging.outcomes)`) |
+| F19 | `summarise_ledger_facts` / `verdict_from_facts` count a mechanically verified blocking finding as open, which is correct; only the report missed it | `src/repoach/review/merge_gate.py` |
+| F20 | `tests/unit/test_review_head_guard.py::test_orchestrator_head_guard_overlaps_reviewer_fanout` failed on this amendment's first push (run 40241867969, 3.11 and 3.13) and fails alone on a loaded host (4.91 s against a 2.10 s bound) while it passes at the base `2706bb6`: `report_findings` called `init_findings_schema`, and creating the SQLite schema on a ledger nothing had initialised took 3.27 s of DDL there | `tests/unit/test_review_head_guard.py`, `src/repoach/review/report.py` (`755638f`) |
+
+- G16: `verify_findings_for_pr` returns a `VerificationReport`: one
+  `MechanicalVerification` per proposed finding (id, state, the
+  verifier's method and evidence line); `.counts` keeps the former
+  aggregate shape. `recorded_verifications` reads the same outcomes back
+  from the ledger for a replayed run.
+- G17: `MergeFacts.open_blocking_ids` lists exactly the ids
+  `open_blocking_findings` counts, in both `summarise_ledger_facts` and
+  `gather_merge_facts`.
+- G18: the report (`review pr` JSON `findings[]`, the stderr
+  `report: N finding(s) listed` table, the sticky report and the archive JSON)
+  lists every finding that can move `final_verdict`, each once, with
+  `judge` in {`mechanical`, `refuter`, `reverify`, `ledger`}, `state`,
+  `verification_method` (`mechanical:<claim_type>` for a mechanical
+  verifier) and `evidence`: mechanically settled findings, every
+  refuter outcome (its `refutation` object kept whole: `state`,
+  `reason` and, per G10, `evidence`, `evidence_truncated`,
+  `evidence_tokens` and `detail` when set), the
+  findings of older heads re-checked at the head, and any id of
+  `open_blocking_ids` no judge of the run named.
+- G19: the JSON carries `verdict_basis` = `open_blocking_ids`; every id
+  in it is one `findings[]` entry with `blocking: true`.
+- G20: the report only reads the ledger. An absent database or an
+  absent `pr_findings` table is an empty ledger: the run's own outcomes
+  are listed and nothing is written, so building the report never
+  creates the schema (F20).
+
+- [x] AC19: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "every_blocking_finding_counted" -v`
+  — on a fixture with 1 mechanically verified + 2 refuter-refuted + 1
+  cap-deferred finding, the report lists 4 entries, the blocking ones
+  equal `open_blocking_ids` (1) and each such id appears once.
+- [x] AC20: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "judge_and_method or replay or no_judge_named" -v`
+  — the mechanical entry is `judge = mechanical`,
+  `verification_method = mechanical:missing_test`; a replay rebuilt from
+  the ledger yields the same JSON; a blocking id no judge named is
+  still listed.
+- [x] AC21: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "stderr_table or archive or authoritative" -v`
+  — the stderr table and the sticky report render the judge column and
+  the verdict basis; the archive JSON carries `findings` and
+  `verdict_basis`; `gather_merge_facts` names the same ids.
+- [x] AC22: real check, from a Yoob checkout with this branch on
+  `PYTHONPATH`: `REPOACH_PROVIDER=claude_code repoach review pr 327
+  --dry-run --forge gitlab` lists the mechanically verified finding with
+  its method and `verdict_basis` names it.
+- [x] AC23: `pytest tests/unit/test_report_lists_every_verdict_finding.py -k "uninitialised_ledger or never_creates or what_the_judge_was_served" -v`
+  — an absent database stays absent, an empty file stays 0 bytes, and
+  a refuter entry's `refutation` carries its evidence record.
 
 ## Amendment (0.2, 2026-10-25): the refuter defers what it cannot see, and its evidence fills its own context
 

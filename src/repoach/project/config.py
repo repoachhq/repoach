@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -399,6 +399,22 @@ class ConventionsSection(_Section):
     header_max_chars: int = 72
 
 
+class AutoMergeSection(_Section):
+    """``[auto_merge]``: what the bot merge waits on (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF).
+
+    ``required_checks`` None means the job names of the ``CI`` workflow,
+    matrix expanded (:func:`repoach.review.merge_wait.required_checks`);
+    an empty list is refused, since it would merge on no check at all.
+    Every name must be produced by a workflow of ``rearm_workflows``,
+    whose completion re-runs the merge; ``coalesce_s`` is the window an
+    owner-event burst is folded into before a review run starts.
+    """
+
+    required_checks: Annotated[list[str], Field(min_length=1)] | None = None
+    rearm_workflows: list[str] = Field(default_factory=lambda: ["CI", "Auto Review (review bots)"])
+    coalesce_s: int = Field(default=60, ge=0)
+
+
 class ProjectConfig(_Section):
     """The whole ``repoach.toml``; ``ProjectConfig()`` is the no-file behaviour."""
 
@@ -412,6 +428,7 @@ class ProjectConfig(_Section):
     arch: ArchSection = Field(default_factory=ArchSection)
     state: StateSection = Field(default_factory=StateSection)
     conventions: ConventionsSection = Field(default_factory=ConventionsSection)
+    auto_merge: AutoMergeSection = Field(default_factory=AutoMergeSection)
 
     def is_set(self, dotted: str) -> bool:
         """Return whether the file set ``section.key`` explicitly.

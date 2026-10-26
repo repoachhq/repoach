@@ -22,6 +22,14 @@ from repoach.forge.runner import CommandResult
 from repoach.review.auto_merge import evaluate_merge_gate
 from tests.forge_fakes import scripted_github
 
+PRE_D4_REQUIRED = ("Test suite (Python 3.11)", "Test suite (Python 3.13)")
+"""The required checks when PR #202 was captured, before the wheel jobs joined the list.
+
+SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4 widened the default to every
+CI job; the capture's check runs predate ``wheel-build`` / ``wheel-smoke``,
+so the parity is judged against the list in force at capture time.
+"""
+
 GATE = Path(__file__).resolve().parent.parent / "fixtures" / "forge" / "gate"
 
 
@@ -66,6 +74,7 @@ def test_gate_facts_identical_to_pre_protocol_recording(tmp_path: Path, gate_db:
         capture["pr"],
         forge=scripted_github(run=run, git=git),
         db_path=gate_db,
+        required_names=PRE_D4_REQUIRED,
         wait_seconds=0,
         poll_interval=1,
         sleep=lambda _s: None,

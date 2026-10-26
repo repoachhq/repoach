@@ -10,7 +10,7 @@
         "repos/{owner}/{repo}/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs",
         "--paginate",
         "--jq",
-        ".check_runs[] | {name, status, conclusion, startedAt: .started_at}"
+        ".check_runs[] | {name, status, conclusion, startedAt: .started_at, completedAt: .completed_at, headSha: .head_sha}"
       ],
       "program": "gh",
       "returncode": 0,
@@ -34,7 +34,9 @@
     "checks": [
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "",
+        "head_sha": "",
         "link": "",
         "name": "Test suite (Python 3.11)",
         "started_at": "2026-10-19T10:00:00Z",
@@ -43,7 +45,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "success",
+        "head_sha": "",
         "link": "",
         "name": "Test suite (Python 3.13)",
         "started_at": "2026-10-19T10:00:00Z",
@@ -62,6 +66,6 @@
     ],
     "state": "pending"
   },
-  "source": "synthetic: a red / running / absent pipeline at a fixed head",
+  "source": "synthetic: a red / running / absent pipeline at a fixed head; check-runs --jq argv amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): the recorded lines predate completedAt/headSha and carry neither",
   "trimmed": null
 }

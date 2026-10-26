@@ -226,7 +226,7 @@ def test_verify_findings_for_pr_round_trip(tmp_path: Path) -> None:
     record_finding(db, _finding(ClaimType.MISSING_TEST, claim="missing test_absent_one"))
     record_finding(db, _finding(ClaimType.DESIGN, claim="layering smell"))
 
-    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="dead123")
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="dead123").counts
     assert counts == {"verified": 1, "refuted": 1, "deferred": 1}
 
     refuted = fetch_findings(db, 1, status=FindingStatus.REFUTED)
@@ -248,7 +248,7 @@ def test_deferred_verification_persists_diagnostic(tmp_path: Path) -> None:
         ),
     )
 
-    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="head123")
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="head123").counts
     assert counts == {"verified": 0, "refuted": 0, "deferred": 1}
 
     proposed = fetch_findings(db, 1, status=FindingStatus.PROPOSED)
@@ -257,7 +257,7 @@ def test_deferred_verification_persists_diagnostic(tmp_path: Path) -> None:
     assert proposed[0].verification_result == "no checkable symbol"
     assert proposed[0].verify_attempts == 1
 
-    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="head456")
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=tmp_path, head_sha="head456").counts
     assert counts == {"verified": 0, "refuted": 0, "deferred": 1}
 
     proposed = fetch_findings(db, 1, status=FindingStatus.PROPOSED)

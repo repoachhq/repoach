@@ -1,6 +1,6 @@
 # SP-REFUTER-JUDGES-WHAT-IT-CAN — Every deferred finding carries a named reason, and the refuter defers what it cannot see
 
-Hand-authored after the spec was approved: the gate refused with 'plan-absent' because an approved spec is graded against its committed plan only. Steps 1-3 record what was delivered before this spec (refuter 0.1, injection hardening 0.2, mechanical verifiers); step 4 is spec 0.1 (AC1-AC6, 7940f79); step 5 is this PR's 0.2 amendment (AC7-AC12, AC15-AC18). The plan adds one integration test the spec's unit-only ACs omit (superset), required by the src/ plan form. AC13 and AC14 are a live run and a measurement method, not pytest selectors.
+Hand-authored after the spec was approved: the gate refused with 'plan-absent' because an approved spec is graded against its committed plan only. Steps 1-3 record what was delivered before this spec (refuter 0.1, injection hardening 0.2, mechanical verifiers); step 4 is spec 0.1 (AC1-AC6, 7940f79); step 5 is the 0.2 amendment (AC7-AC12, AC15-AC18); step 6 is the 0.3 amendment (AC19-AC23, PR #255). The plan adds one integration test the spec's unit-only ACs omit (superset), required by the src/ plan form. AC13 and AC14 are a live run and a measurement method, not pytest selectors.
 
 ## Step 1 — The refuter judges design, security and spec_gap findings adversarially
 
@@ -42,6 +42,14 @@ Hand-authored after the spec was approved: the gate refused with 'plan-absent' b
 - **Done when**: pytest tests/unit/test_refuter_defers_unseen.py tests/unit/test_claude_code_output_cap.py tests/integration/test_refuter_defers_unserved_end_to_end.py passes
 - **Unit tests**: `tests/unit/test_refuter_defers_unseen.py::test_parse_verdict_reads_literal_cannot_judge`, `tests/unit/test_refuter_defers_unseen.py::test_parse_verdict_maps_unseen_refutation_to_cannot_judge`, `tests/unit/test_refuter_defers_unseen.py::test_prompt_offers_cannot_judge_and_names_partial_evidence`, `tests/unit/test_refuter_defers_unseen.py::test_evidence_outside_window_is_a_named_deferral`, `tests/unit/test_refuter_defers_unseen.py::test_claim_about_truly_absent_code_is_deferred_with_its_reason`, `tests/unit/test_refuter_defers_unseen.py::test_hand_typed_enum_is_seen_not_refuted`, `tests/unit/test_refuter_defers_unseen.py::test_half_derived_table_is_seen_not_refuted`, `tests/unit/test_refuter_defers_unseen.py::test_untested_migration_is_seen_not_refuted`, `tests/unit/test_refuter_defers_unseen.py::test_whole_cited_file_is_served_beyond_the_old_window`, `tests/unit/test_refuter_defers_unseen.py::test_file_over_the_budget_is_a_named_slice_never_below_the_floor`, `tests/unit/test_refuter_defers_unseen.py::test_claim_identifiers_names_symbols_and_paths`, `tests/unit/test_refuter_defers_unseen.py::test_search_serves_hits_with_ten_lines_of_context`, `tests/unit/test_refuter_defers_unseen.py::test_search_caps_hits_at_fifty_and_names_the_overflow`, `tests/unit/test_refuter_defers_unseen.py::test_budget_exhaustion_is_named_in_priority_order`, `tests/unit/test_refuter_defers_unseen.py::test_diff_hunks_of_the_cited_file_are_served`, `tests/unit/test_refuter_defers_unseen.py::test_cited_spec_section_is_served`, `tests/unit/test_refuter_defers_unseen.py::test_bare_file_name_is_found_and_served_whole`, `tests/unit/test_refuter_defers_unseen.py::test_context_tokens_floor_and_overrides`, `tests/unit/test_refuter_defers_unseen.py::test_judge_receives_a_budget_of_its_own_context`, `tests/unit/test_refuter_defers_unseen.py::test_search_is_path_jailed`, `tests/unit/test_refuter_defers_unseen.py::test_search_hits_cannot_forge_a_verdict_line`, `tests/unit/test_refuter_defers_unseen.py::test_refutation_evidence_survives_the_review_cache`, `tests/unit/test_refuter_defers_unseen.py::test_grep_timeout_defers_without_calling_the_judge`, `tests/unit/test_refuter_defers_unseen.py::test_hits_cut_by_the_budget_defer_without_calling_the_judge`, `tests/unit/test_refuter_defers_unseen.py::test_refutation_resting_on_a_partly_served_identifier_is_deferred`, `tests/unit/test_refuter_defers_unseen.py::test_common_identifier_serves_the_nearest_fifty_hits`, `tests/unit/test_refuter_defers_unseen.py::test_unserved_reason_is_a_closed_set_template`, `tests/unit/test_refuter_defers_unseen.py::test_assembly_deadline_names_what_it_left_out`, `tests/unit/test_refuter_defers_unseen.py::test_bare_file_names_cost_one_ls_files_per_finding`, `tests/unit/test_refuter_defers_unseen.py::test_refuter_route_asks_for_a_wide_reply_without_thinking`, `tests/unit/test_refuter_defers_unseen.py::test_run_line_and_payload_show_the_refuter_cost`, `tests/unit/test_refuter_defers_unseen.py::test_evidence_window_is_measured_in_tokens_never_money`, `tests/unit/test_claude_code_output_cap.py::test_max_tokens_reaches_the_cli_as_its_output_cap`, `tests/unit/test_claude_code_output_cap.py::test_no_cap_keeps_the_parent_environment`, `tests/unit/test_claude_code_output_cap.py::test_cap_rides_on_the_filtered_environment`, `tests/unit/test_claude_code_output_cap.py::test_disabled_thinking_reaches_the_cli_as_a_zero_budget`
 
+## Step 6 — The report lists every finding that drives the verdict
+
+- **Files**: `src/repoach/review/finding_verifiers.py`, `src/repoach/review/merge_gate.py`, `src/repoach/review/report.py`, `src/repoach/review/findings.py`, `src/repoach/review/orchestrator.py`, `src/repoach/cli/review_cmds.py`, `tests/unit/test_report_lists_every_verdict_finding.py`
+- **Action**: PR #255 (amendment 0.3, G16-G20, AC19-AC23): verify_findings_for_pr returns a VerificationReport (one MechanicalVerification per finding, .counts kept) and recorded_verifications reads it back on a replay; MergeFacts.open_blocking_ids lists the ids open_blocking_findings counts; report_findings merges the mechanical, refuter and head re-check outcomes with every still-blocking ledger row, each naming its judge, state, verification_method and evidence, a refuter entry keeping its whole refutation object; review pr JSON carries findings and verdict_basis, a stderr table, the sticky report and the archive JSON list them; the report only reads the ledger and never creates its schema.
+- **Commit**: `fix(report): list every finding that drives the verdict`
+- **Done when**: pytest tests/unit/test_report_lists_every_verdict_finding.py passes
+- **Unit tests**: `tests/unit/test_report_lists_every_verdict_finding.py::test_every_blocking_finding_counted_is_one_report_entry`, `tests/unit/test_report_lists_every_verdict_finding.py::test_report_names_each_judge_and_method`, `tests/unit/test_report_lists_every_verdict_finding.py::test_a_replay_rebuilds_the_mechanical_entries_from_the_ledger`, `tests/unit/test_report_lists_every_verdict_finding.py::test_a_blocking_finding_no_judge_named_is_still_listed`, `tests/unit/test_report_lists_every_verdict_finding.py::test_the_authoritative_gate_names_the_same_ids`, `tests/unit/test_report_lists_every_verdict_finding.py::test_stderr_table_and_sticky_report_carry_the_judge`, `tests/unit/test_report_lists_every_verdict_finding.py::test_team_outcome_archive_carries_findings_and_verdict_basis`, `tests/unit/test_report_lists_every_verdict_finding.py::test_an_uninitialised_ledger_still_lists_the_run_outcomes`, `tests/unit/test_report_lists_every_verdict_finding.py::test_the_report_never_creates_the_ledger_schema`, `tests/unit/test_report_lists_every_verdict_finding.py::test_a_refuter_entry_carries_what_the_judge_was_served`
+
 ## Integration tests
 
 - `tests/integration/test_refuter_defers_unserved_end_to_end.py::test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call`
@@ -51,7 +59,7 @@ Hand-authored after the spec was approved: the gate refused with 'plan-absent' b
 {
   "spec_id": "SP-REFUTER-JUDGES-WHAT-IT-CAN",
   "title": "Every deferred finding carries a named reason, and the refuter defers what it cannot see",
-  "summary": "Hand-authored after the spec was approved: the gate refused with 'plan-absent' because an approved spec is graded against its committed plan only. Steps 1-3 record what was delivered before this spec (refuter 0.1, injection hardening 0.2, mechanical verifiers); step 4 is spec 0.1 (AC1-AC6, 7940f79); step 5 is this PR's 0.2 amendment (AC7-AC12, AC15-AC18). The plan adds one integration test the spec's unit-only ACs omit (superset), required by the src/ plan form. AC13 and AC14 are a live run and a measurement method, not pytest selectors.",
+  "summary": "Hand-authored after the spec was approved: the gate refused with 'plan-absent' because an approved spec is graded against its committed plan only. Steps 1-3 record what was delivered before this spec (refuter 0.1, injection hardening 0.2, mechanical verifiers); step 4 is spec 0.1 (AC1-AC6, 7940f79); step 5 is the 0.2 amendment (AC7-AC12, AC15-AC18); step 6 is the 0.3 amendment (AC19-AC23, PR #255). The plan adds one integration test the spec's unit-only ACs omit (superset), required by the src/ plan form. AC13 and AC14 are a live run and a measurement method, not pytest selectors.",
   "steps": [
     {
       "index": 1,
@@ -213,6 +221,34 @@ Hand-authored after the spec was approved: the gate refused with 'plan-absent' b
         "tests/unit/test_claude_code_output_cap.py::test_no_cap_keeps_the_parent_environment",
         "tests/unit/test_claude_code_output_cap.py::test_cap_rides_on_the_filtered_environment",
         "tests/unit/test_claude_code_output_cap.py::test_disabled_thinking_reaches_the_cli_as_a_zero_budget"
+      ]
+    },
+    {
+      "index": 6,
+      "title": "The report lists every finding that drives the verdict",
+      "files": [
+        "src/repoach/review/finding_verifiers.py",
+        "src/repoach/review/merge_gate.py",
+        "src/repoach/review/report.py",
+        "src/repoach/review/findings.py",
+        "src/repoach/review/orchestrator.py",
+        "src/repoach/cli/review_cmds.py",
+        "tests/unit/test_report_lists_every_verdict_finding.py"
+      ],
+      "action": "PR #255 (amendment 0.3, G16-G20, AC19-AC23): verify_findings_for_pr returns a VerificationReport (one MechanicalVerification per finding, .counts kept) and recorded_verifications reads it back on a replay; MergeFacts.open_blocking_ids lists the ids open_blocking_findings counts; report_findings merges the mechanical, refuter and head re-check outcomes with every still-blocking ledger row, each naming its judge, state, verification_method and evidence, a refuter entry keeping its whole refutation object; review pr JSON carries findings and verdict_basis, a stderr table, the sticky report and the archive JSON list them; the report only reads the ledger and never creates its schema.",
+      "commit_message": "fix(report): list every finding that drives the verdict",
+      "done_when": "pytest tests/unit/test_report_lists_every_verdict_finding.py passes",
+      "unit_tests": [
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_every_blocking_finding_counted_is_one_report_entry",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_report_names_each_judge_and_method",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_a_replay_rebuilds_the_mechanical_entries_from_the_ledger",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_a_blocking_finding_no_judge_named_is_still_listed",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_the_authoritative_gate_names_the_same_ids",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_stderr_table_and_sticky_report_carry_the_judge",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_team_outcome_archive_carries_findings_and_verdict_basis",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_an_uninitialised_ledger_still_lists_the_run_outcomes",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_the_report_never_creates_the_ledger_schema",
+        "tests/unit/test_report_lists_every_verdict_finding.py::test_a_refuter_entry_carries_what_the_judge_was_served"
       ]
     }
   ],
