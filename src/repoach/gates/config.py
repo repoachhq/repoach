@@ -39,6 +39,7 @@ from ..project.config import (
     DEFAULT_PROMPTS_DIR,
     DEFAULT_REFUTER_MAX_JUDGED,
     DEFAULT_TIMEOUT_S,
+    REFUTER_CONTEXT_CEILING_DEFAULT,
     REFUTER_CONTEXT_TOKENS_FLOOR,
     REPOACH_DOCSTRING_EXEMPT,
     ConfigError,
@@ -161,8 +162,11 @@ class GatesConfig:
             the refuter sends to its judge per PR; the overflow is
             reported deferred, each finding named.
         refuter_context_tokens: ``[gates].refuter_context_tokens``, the
-            refuter's context size its evidence fills, at least
+            refuter's context floor, at least
             :data:`REFUTER_CONTEXT_TOKENS_FLOOR`.
+        refuter_context_ceiling: ``[gates].refuter_context_ceiling``, the
+            most the context of one finding may grow to, at least
+            ``refuter_context_tokens``.
         builtin: True for :meth:`builtin` (no configuration file).
     """
 
@@ -184,6 +188,7 @@ class GatesConfig:
     verifier_commands: Mapping[str, str] = field(default_factory=dict)
     refuter_max_judged: int = DEFAULT_REFUTER_MAX_JUDGED
     refuter_context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR
+    refuter_context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT
     builtin: bool = True
 
     @classmethod
@@ -263,6 +268,16 @@ class GatesConfig:
                 "gates.refuter_context_tokens: must be an integer of at least "
                 f"{REFUTER_CONTEXT_TOKENS_FLOOR}, got {context_tokens!r}"
             )
+        ceiling = gates.get("refuter_context_ceiling", REFUTER_CONTEXT_CEILING_DEFAULT)
+        if (
+            not isinstance(ceiling, int)
+            or isinstance(ceiling, bool)
+            or ceiling < max(context_tokens, REFUTER_CONTEXT_TOKENS_FLOOR)
+        ):
+            raise ValueError(
+                "gates.refuter_context_ceiling: must be an integer of at least "
+                f"refuter_context_tokens ({context_tokens}), got {ceiling!r}"
+            )
         return cls(
             languages=languages,
             src_roots=src_roots,
@@ -289,6 +304,7 @@ class GatesConfig:
             verifier_commands=dict(overrides_raw),
             refuter_max_judged=max_judged,
             refuter_context_tokens=context_tokens,
+            refuter_context_ceiling=ceiling,
             builtin=False,
         )
 
@@ -432,6 +448,49 @@ def resolve_refuter_context_tokens(repo_root: Path) -> tuple[int, str]:
     return config.refuter_context_tokens, "repoach.toml"
 
 
+CONTEXT_CEILING_ENV = "REPOACH_REFUTER_CONTEXT_CEILING"
+"""Environment override of ``[gates].refuter_context_ceiling`` (env > toml > 200000)."""
+
+
+def resolve_refuter_context_ceiling(repo_root: Path) -> tuple[int, str]:
+    """Return the most tokens the refuter's context of one finding may grow to, and its source.
+
+    :data:`CONTEXT_CEILING_ENV` (an integer of at least
+    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`) wins, then
+    ``[gates].refuter_context_ceiling``, then
+    :data:`REFUTER_CONTEXT_CEILING_DEFAULT`. An invalid value is logged at
+    warning and skipped. The caller never uses a ceiling below the floor
+    it resolved (``max(ceiling, floor)``).
+
+    Returns:
+        ``(tokens, source)`` with ``source`` one of ``env
+        REPOACH_REFUTER_CONTEXT_CEILING``, ``repoach.toml`` or ``default``.
+    """
+    raw = configured_env_value((CONTEXT_CEILING_ENV,), repo_root)
+    if raw is not None:
+        value = raw.strip()
+        if value.isdigit() and int(value) >= REFUTER_CONTEXT_TOKENS_FLOOR:
+            return int(value), f"env {CONTEXT_CEILING_ENV}"
+        _log.warning(
+            "gates.refuter_context_ceiling_env_invalid",
+            variable=CONTEXT_CEILING_ENV,
+            value=raw[:40],
+            floor=REFUTER_CONTEXT_TOKENS_FLOOR,
+        )
+    try:
+        config = load_gates_config(repo_root)
+    except GatesConfigError as exc:
+        _log.warning(
+            "gates.refuter_context_ceiling_config_invalid",
+            error=str(exc)[:200],
+            fallback=REFUTER_CONTEXT_CEILING_DEFAULT,
+        )
+        return REFUTER_CONTEXT_CEILING_DEFAULT, "default"
+    if config.builtin or config.refuter_context_ceiling == REFUTER_CONTEXT_CEILING_DEFAULT:
+        return config.refuter_context_ceiling, "default"
+    return config.refuter_context_ceiling, "repoach.toml"
+
+
 def current_gates_config() -> GatesConfig:
     """Return the configuration of the project the working directory sits in.
 
@@ -448,11 +507,13 @@ def current_gates_config() -> GatesConfig:
 
 __all__ = [
     "CONFIG_FILE_NAME",
+    "CONTEXT_CEILING_ENV",
     "CONTEXT_TOKENS_ENV",
     "DEFAULT_PROMPTS_DIR",
     "DEFAULT_REFUTER_MAX_JUDGED",
     "DEFAULT_TIMEOUT_S",
     "MAX_JUDGED_ENV",
+    "REFUTER_CONTEXT_CEILING_DEFAULT",
     "REFUTER_CONTEXT_TOKENS_FLOOR",
     "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
@@ -461,6 +522,7 @@ __all__ = [
     "current_gates_config",
     "load_gates_config",
     "python_packages",
+    "resolve_refuter_context_ceiling",
     "resolve_refuter_context_tokens",
     "resolve_refuter_max_judged",
 ]

@@ -81,11 +81,16 @@ schema = 1
 # Findings the refuter judges per pull request; the rest are reported
 # deferred, each one named. REPOACH_REFUTER_MAX_JUDGED outranks it.
 # refuter_max_judged = 10
-# Tokens of the refuter's context, the budget its evidence fills (the
-# whole cited file, the claim's identifiers in the head tree, the diff
-# hunks, the cited spec section). Never below 40000.
+# Tokens of the refuter's context floor. A finding's context grows from
+# it to what its evidence needs (the whole cited file, the claim's
+# identifiers in the head tree, the diff hunks), and the cited spec
+# section fills what is left. Never below 40000.
 # REPOACH_REFUTER_CONTEXT_TOKENS outranks it.
 # refuter_context_tokens = 40000
+# The most tokens a finding's refuter context may grow to. A finding
+# whose evidence needs more is deferred, named, never judged on part of
+# it. REPOACH_REFUTER_CONTEXT_CEILING outranks it.
+# refuter_context_ceiling = 200000
 
 [arch]
 # frontier_suppress = []
