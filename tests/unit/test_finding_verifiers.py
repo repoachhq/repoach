@@ -82,6 +82,43 @@ def test_missing_test_not_refuted_by_src_symbol(tmp_path: Path) -> None:
     assert method == "symbol_search"
 
 
+def test_missing_test_refuted_by_a_test_under_a_nested_tests_dir(tmp_path: Path) -> None:
+    (tmp_path / "api" / "tests").mkdir(parents=True)
+    (tmp_path / "api" / "tests" / "test_relabel.py").write_text(
+        '"""Relabel."""\n\n\ndef test_relabels_generic_rows():\n    assert True\n',
+        encoding="utf-8",
+    )
+    status, method, result = verify_finding(
+        _finding(
+            ClaimType.MISSING_TEST,
+            claim="untested; add test_relabels_generic_rows",
+            file="api/alembic/versions/n0_relabel.py",
+        ),
+        repo_root=tmp_path,
+    )
+    assert status is FindingStatus.REFUTED
+    assert method == "symbol_search"
+    assert result == "test_relabels_generic_rows exists at api/tests/test_relabel.py:4"
+
+
+def test_missing_test_not_refuted_by_a_test_named_def_in_code_under_review(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "api" / "tests").mkdir(parents=True)
+    (tmp_path / "api" / "tests" / "test_other.py").write_text(
+        "def test_other():\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "api" / "probe.py").write_text(
+        "def test_relabels_generic_rows():\n    return 0\n", encoding="utf-8"
+    )
+    status, _, result = verify_finding(
+        _finding(ClaimType.MISSING_TEST, claim="untested; add test_relabels_generic_rows"),
+        repo_root=tmp_path,
+    )
+    assert status is FindingStatus.VERIFIED
+    assert result == "no test for test_relabels_generic_rows (searched 1 test files)"
+
+
 def test_missing_test_refuted_by_real_tests_dir_test(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "verdicts.py").write_text(
