@@ -1,7 +1,7 @@
 ---
 id: SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES
 title: A merge queue that follows the spec graph, one merge at a time
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-26
@@ -19,6 +19,7 @@ constraints:
   merges_in_flight_max: 1
   armed_mrs_max: 1
   branch_updates_per_head_max: 1
+  allow_disjoint_bypass_default: true
 ---
 
 # A merge queue that follows the spec graph, one merge at a time
@@ -121,9 +122,16 @@ same day.
      with `QUEUE_STOPPED_RED` and `#N#<head7>: <check>` (and
      SP-RED-STOPS-THE-LINE opens its stop). `held` → stops with
      `QUEUE_HELD` and the holder lines. `pending` → stops with
-     `QUEUE_WAITING` and `#N pending: <check>` (Q2).
-  3. **Up-to-date check (D4).** If the base head is not an ancestor of
-     the head PR's head, the run updates the branch once per head
+     `QUEUE_WAITING` and `#N pending: <check>`, unless a PR behind it
+     qualifies for the disjoint bypass (D6), which then becomes the head
+     for this evaluation with the reason `bypass: independent and
+     disjoint`.
+  3. **Up-to-date check (D4, D7).** If the base head is not an ancestor
+     of the head PR's head and the head's diff paths are disjoint from
+     every path merged since its last green CI, the re-run is skipped,
+     recorded as `rerun skipped: disjoint from <n> merged paths`, and the
+     run goes to step 4 (a forge that requires an up-to-date branch then
+     answers `SKIP_BEHIND`, handled below). Otherwise the run updates the branch once per head
      (`branch_updates_per_head_max`) by merging the base into it —
      GitHub `update-branch` with `expected_head_sha`, GitLab a merge
      commit pushed by repoach (never a rebase). It records `updated`,
@@ -134,7 +142,8 @@ same day.
   4. **Gate at head.** For an up-to-date green head: `run_auto_merge(N,
      pin_tree=True)`, i.e. `decide_at_head` on the head tree, the fresh-
      head guard and the merge. `SKIP_GATE` → step 1 (D3). `SKIP_STALE_HEAD`
-     or `SKIP_BEHIND` → stops with `QUEUE_WAITING`. On GitLab with the
+     → stops with `QUEUE_WAITING`. `SKIP_BEHIND` → the update of step 3
+     is made, as for a non-disjoint head. On GitLab with the
      pipeline still running, the run **arms** instead of merging (G3).
   5. **After a merge**, re-evaluate from step 1: positions may change.
      The next head is behind the new base by construction, so the run
@@ -211,9 +220,8 @@ same day.
   (`EXIT_QUEUE_ORDER`). D1 of SP-RED-STOPS-THE-LINE is unchanged: a held
   MR is still red with exit `10`, because a hold means a red exists.
 - **D2 `held` reads the line state.** The column comes from
-  SP-RED-STOPS-THE-LINE `read_line_state`. Until that function exists,
-  the column prints `held: cannot say (line state not implemented)` and
-  `queue run` stops on a red head by its own G2 step 2 (Q4).
+  SP-RED-STOPS-THE-LINE `read_line_state` once it exists; until then see
+  D8.
 - **D3 a findings refusal skips, a CI red stops.** As in
   SP-RED-STOPS-THE-LINE G1, a refusal for findings or spec coverage
   holds that PR and its dependents only; the queue moves to the next
@@ -225,10 +233,42 @@ same day.
   ordinary fast-forward of the source branch. A failed push (the head
   moved) is `QUEUE_WAITING`, retried on the next event.
 
+## Decisions (coordinator 2026-10-26, on open questions Q1–Q4 of v0.1)
+
+- **D5 (Q1) `Merge-After` only adds edges.** It never removes or
+  reverses a spec-graph edge. A `Merge-After` that contradicts the spec
+  graph is a cycle, named with both edge kinds, and blocks both PRs.
+- **D6 (Q2) strict head-of-line, with one measured exception.** By
+  default a `pending` head stops the run. A PR Q behind it may become the
+  head for this evaluation only if all of these hold, each checked, never
+  guessed:
+  - Q has no E1–E3 edge, direct or transitive, to any PR ahead of it;
+  - Q's diff path set is disjoint from the diff path set of every PR
+    ahead of it;
+  - Q's diff path set is disjoint from every path merged into the base
+    since Q's last green CI;
+  - `[queue].allow_disjoint_bypass` is true (default `true`).
+  The reason is `bypass: independent and disjoint`, and the ledger row
+  names the PRs it passed. The first PR that qualifies is taken; at most
+  one merge per evaluation still holds.
+- **D7 (Q3) the post-merge re-run is skipped only under the same
+  disjoint-paths rule.** A head whose diff paths are disjoint from every
+  path merged since its last green CI merges on that CI (docs-only spec
+  PRs qualify when no merged PR touched their files). The skip is named
+  in the ledger: `rerun skipped: disjoint from <n> merged paths`. Any
+  overlap, or a path set that cannot be read, means the update and the
+  re-run of G2 step 3.
+- **D8 (Q4) ship before SP-RED-STOPS-THE-LINE.** The queue ships with
+  the `held` column printing `held: cannot say (line state not
+  implemented)` and its own stop on a red head (G2 step 2). Wiring
+  `read_line_state` is a follow-up slice when SP-RED-STOPS-THE-LINE
+  lands; the dependency stays declared.
+
 ## Non-Goals
 
 - NG1: No merge trains, no speculative batch of several PRs tested
-  together. One PR, one CI on its up-to-date head, one merge.
+  together. One PR, one CI on its up-to-date head (or, under D7, on a
+  head proven disjoint from what merged since), one merge.
 - NG2: No prevention of a human merge outside the queue (the forge UI,
   `gh pr merge`, arming an MR whose pipeline is already green). It is
   recorded `merged_out_of_band` (G6), not refused.
@@ -301,6 +341,9 @@ the implementation PR, conformance-tested on both forges):
 bool`, `arm_auto_merge(number, *, head_sha)`, `disarm_auto_merge(number)`.
 `PullRequest` gains `body` for the list call (GitHub `--json body`).
 
+Configuration (`repoach.toml`): `[queue] allow_disjoint_bypass = true`
+(D6, D7 — `false` makes the queue strict and always re-runs).
+
 CLI: `repoach queue [--json] [--forge F]`, `repoach queue head [--json]`,
 `repoach queue run [--expect-head N] [--forge F]`, `repoach queue history
 [--since D]`.
@@ -340,7 +383,7 @@ reason, merged_sha, run_id, recorded_at`.
   (merged)`. N closed unmerged or unknown → Q `blocked: Merge-After #N is
   closed` until the line is removed.
 - `Merge-After` and the spec graph disagree (Merge-After #N while N's
-  spec depends on Q's spec) → a cycle, named with both edge kinds (Q1).
+  spec depends on Q's spec) → a cycle, named with both edge kinds (D5).
 - A spec PR P introduces SP-X and an implementation Q names SP-X but its
   head does not contain the file → `named(Q)` still resolves through P's
   head ids (G1), E2 holds.
@@ -417,6 +460,8 @@ base `develop` and five open PRs:
 - [ ] AC14: `pytest -q tests/unit/test_queue_cli.py::test_table_shape` → green. `repoach queue` on the AC1 fixture prints a header `pos  pr  spec  gate  waits for  reason` and five rows in AC1 order; `--json` prints exactly one JSON object on stdout validating against `queue-json`; the forge records zero writes.
 - [ ] AC15: `pytest -q tests/unit/test_queue_cli.py::test_history` → green. Injected clock: #11 listed at t=0 position 1, merged at t=120; #13 listed at position 2, reordered to 1 at t=120, merged at t=900. `queue history` gives `queued_to_merged_s == {"11": 120, "13": 900}` and #13's reorders `[[0, 2], [120, 1]]`; a PR merged by the fixture outside the queue is `merged_out_of_band`.
 - [ ] AC16: `pytest -q tests/integration/test_merge_queue_cycle.py` → green. The AC1 fixture, every CI turning green one event after an update: five `queue run` events merge `11, 13, 12, 10, 14` in that order, one per event, each on a head whose base is the previous merge.
+- [ ] AC18: `pytest -q tests/unit/test_merge_queue_run.py::test_disjoint_bypass_past_pending_head` → green. #11 pending on `tests`, touching `src/a.py`; #13, #12 and #10 pending too; #14 green, no edge, touching `docs/b.md`, nothing merged since its CI: the merge log is `[14]` with reason `bypass: independent and disjoint` naming #11, #13, #12, #10 as passed. Same fixture with #14 also touching `src/a.py`, or with `[queue].allow_disjoint_bypass = false`: merge log empty, `QUEUE_WAITING` `#11 pending: tests`.
+- [ ] AC19: `pytest -q tests/unit/test_merge_queue_run.py::test_rerun_skipped_when_disjoint` → green. After #11 merges `src/a.py`, #13 (touching only its spec file, green at its head) merges without `update_branch`, with a ledger row `rerun skipped: disjoint from 1 merged paths`. With #11 having touched #13's spec file, `update_branch` is called on #13 and nothing merges.
 - [ ] AC17 (measurement): the delivery PR quotes `repoach queue` (table and `--json`) run read-only on repoach's open PRs into `develop` and on Yoob's open MRs into `develop`, the same day, with the open count, the order, the edges, the cycles and the armed count, and states the zero writes (barrier log).
 
 ## Measurement plan
@@ -439,21 +484,13 @@ hand-computed baseline of 2026-10-26 (rules G1, data of F12) is:
 
 ## Open Questions
 
-- Q1: May an explicit `Merge-After: #N` override the spec graph (drop the
-  spec edge it contradicts), or does it only add edges, a contradiction
-  being a named cycle as written today?
-- Q2: When the head is `pending`, may an independent green PR behind it
-  merge first, or does the queue stay strict head-of-line as written
-  today (one slow CI then delays every PR)?
-- Q3: After each merge the next head is re-run on the new base (NG1).
-  May a PR whose diff is disjoint from everything merged since its last
-  green CI (e.g. a docs-only spec PR) merge without that re-run?
-- Q4: Ship the queue before SP-RED-STOPS-THE-LINE is implemented, with
-  `held: cannot say` and the queue's own stop on a red head (D2), or wait
-  for `read_line_state`, which itself waits for SP-CI-RED-IS-EVIDENCE
-  (#249) and SP-AGENT-CONTEXT-LOOP (#246)?
-- Q5: Yoob's specs carry no SP-id in their filename and no `depends_on`
-  (F11), so on Yoob the queue is arrival order only. Should Yoob adopt
-  the governed frontmatter for new specs, or should repoach read Yoob's
-  `branch:` frontmatter field as `named(P)` and accept a spec without
-  `depends_on` as having none?
+- Q5 (owner): Yoob's specs carry no SP-id in their filename and no
+  `depends_on` (F11), so on Yoob the queue is arrival order only. Should
+  Yoob adopt the governed frontmatter for new specs, or should repoach
+  read Yoob's `branch:` frontmatter field as `named(P)` and accept a
+  spec without `depends_on` as having none?
+  **Recommendation:** Yoob adopts the governed frontmatter (`id`,
+  `depends_on`) for new specs, so the queue can order them. Yoob's
+  `docs/specs/_TEMPLATE.md` forbids it today ("No `owns` / `depends_on`
+  graph"), and on 2026-10-26 six Yoob MRs were armed at once and six were
+  in conflict (F12) — what the queue is built to prevent.
