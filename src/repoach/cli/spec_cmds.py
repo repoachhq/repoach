@@ -18,6 +18,7 @@ import typer
 from ..arch import load_registry
 from ..core.logging import get_logger
 from ..review.plan import (
+    PLAN_MARKER,
     PLAN_STEP_MAX_FILES,
     PLAN_STEP_MAX_UNIT_SELECTORS,
     parse_plan_markdown,
@@ -86,9 +87,13 @@ def spec_audit(
     draft / proposed) with no ``docs/plans/<id>.md``, sorted by first
     ``owns.code`` path then id: ``<id> <status> <n> selectors <owns.code
     or ->``, then ``<N> specs past draft without a plan (<M> with no
-    selector to grade)``. Then one tab-separated line per committed plan
+    selector to grade)``; a plan file without the action-plan marker is
+    no plan. Then one tab-separated line per committed plan
     step over ``PLAN_STEP_MAX_FILES`` or ``PLAN_STEP_MAX_UNIT_SELECTORS``:
-    ``<id> step <n> <files>/<cap> files <selectors>/<cap> selectors``.
+    ``<id> step <n> <files>/<cap> files <selectors>/<cap> selectors``,
+    one ``<id> not an action plan: <path>`` per plan file without the
+    marker and one ``<id> plan does not parse: <error>`` per marked plan
+    that does not parse (the only plan the gate refuses on).
     ``--json`` prints ``{"specs": [...], "total", "no_selectors",
     "oversized_steps": [...]}``. Always exits 0 (a report, not a gate);
     ``--plans`` is required, it is the only audit.
@@ -101,13 +106,19 @@ def spec_audit(
     planless: list[PlanlessSpec] = []
     oversized: list[OversizedStep] = []
     unparseable: list[tuple[str, str]] = []
+    not_action: list[tuple[str, str]] = []
     for node in sorted(registry.nodes.values(), key=lambda n: n.id):
         if node.frontier:
             continue
-        plan_path = root / plan_relpath(node.id, root=root)
-        if plan_path.is_file():
+        relpath = plan_relpath(node.id, root=root)
+        plan_path = root / relpath
+        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.is_file() else None
+        if plan_text is not None and PLAN_MARKER not in plan_text:
+            not_action.append((node.id, relpath))
+            plan_text = None
+        if plan_text is not None:
             try:
-                plan = parse_plan_markdown(plan_path.read_text(encoding="utf-8"))
+                plan = parse_plan_markdown(plan_text)
             except ValueError as exc:
                 _log.info("spec_audit.plan_unparseable", spec_id=node.id, error=str(exc)[:200])
                 unparseable.append((node.id, str(exc)[:200]))
@@ -154,6 +165,9 @@ def spec_audit(
                     "unparseable_plans": [
                         {"id": spec_id, "error": error} for spec_id, error in unparseable
                     ],
+                    "not_action_plans": [
+                        {"id": spec_id, "path": path} for spec_id, path in not_action
+                    ],
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -171,5 +185,7 @@ def spec_audit(
             f"{step.id}\tstep {step.step}\t{step.files}/{PLAN_STEP_MAX_FILES} files\t"
             f"{step.selectors}/{PLAN_STEP_MAX_UNIT_SELECTORS} selectors"
         )
+    for spec_id, path in not_action:
+        typer.echo(f"{spec_id}\tnot an action plan: {path}")
     for spec_id, error in unparseable:
-        typer.echo(f"{spec_id}\tplan unparseable: {error}")
+        typer.echo(f"{spec_id}\tplan does not parse: {error}")
