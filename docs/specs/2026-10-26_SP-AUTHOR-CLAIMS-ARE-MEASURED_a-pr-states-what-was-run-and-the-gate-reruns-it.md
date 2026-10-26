@@ -236,8 +236,19 @@ Owner decisions, 2026-10-26, closing Q1-Q4 of v0.1:
 
 ### Extraction rules (G1, prose tier)
 
-- R0. **Statements.** The text is split into statements: one per bullet
-  item, one per sentence of a paragraph. Excluded: fenced code blocks,
+- R0. **Statements.** The text is split into statements, and the
+  granularity is fixed:
+  - a bullet item (with its wrapped continuation lines) is **one**
+    statement, never split by sentence;
+  - a paragraph is split by sentence (`.`, `!` or `?` followed by a space
+    or the end of the text; a dot inside backticks or inside a number
+    does not split);
+  - a statement emits **zero or more** claims, in the order they occur.
+
+  The rules below run over the whole statement. So in #257's bullet, the
+  `pytest -n 8 tests/unit` of the first sentence binds the
+  "3403 passed, 50 skipped" of the second, and the same bullet also
+  emits the R3 ratio. Excluded: fenced code blocks,
   `>` quotes, HTML comments, and trailer lines matching
   `^(Spec|Merge-After|Implements|Depends-On|Co-Authored-By):`.
 - R1. **Test runs.** A statement holding a backticked `pytest …` or
@@ -483,6 +494,10 @@ flowchart TD
   - #254: `test_run` `pytest -q -n 8 tests/unit` {passed 3425}; `test_run` `pytest tests/integration` {passed 74}; `command_green` arch check with `--base origin/develop` and with `--base origin/main`; `command_green` `scripts/ci_local.sh --fast`. Nothing else: `judged 8, refuted 2, deferred 1` is not a command (R1b), and "13 of 13 findings" sits under `## Why`, which is out of scope.
   - #253: two `measured` claims, `review gate 246` {merge true, planned 20, missing 0} and `review pr 246 --dry-run` {planned 20, missing 0, model calls 0}. Neither names a SHA, so both verify `NOT_MEASURABLE` with `state the head the claim was measured at` (D9). The `Spec:` line yields nothing.
   - #252: `command_green` `repoach arch check --base origin/develop` (canonical default base, R1b) and `command_green` `scripts/ci_local.sh --fast`, both through the alias rule.
+- [ ] AC1b: `pytest -q tests/unit/test_author_claims_extract.py::test_statement_granularity` → green. It pins R0 on the real bodies:
+  - #258's bullet "Yoob, 11 MRs: … `depends_on`; 6 MRs armed at once." is one statement and yields exactly two `unmeasurable` rows ("11 MRs", "6 MRs"), both with the same `text`, the whole bullet.
+  - #257's Verification bullet "Test file 5x … 5/5 passed. Hog suite: 3403 passed, 50 skipped." is one statement and yields exactly two rows, in order: the `unmeasurable` ratio, then the `test_run` `pytest -n 8 tests/unit` {passed 3403, skipped 50}.
+  - The same two-sentence text as a paragraph (not a bullet) yields two statements, and the second sentence emits no `test_run`, because no pytest command is in that sentence.
 - [ ] AC2: `pytest -q tests/unit/test_claim_verifier.py::test_true_pytest_count_is_confirmed` → green. A fixture repository has 3 passing tests. The claim "`pytest -q tests/unit/test_a.py`: 3 passed" is `CONFIRMED`, with `measured {passed: 3}` and `measured_from: rerun`.
 - [ ] AC3: `pytest -q tests/unit/test_claim_verifier.py::test_false_pytest_count_is_refuted_with_value` → green. The same fixture with the claim "5 passed" is `REFUTED`, with `measured {passed: 3}`, the head SHA, and reason `claimed 5 passed, measured 3 passed at <sha7>`.
 - [ ] AC4: `pytest -q tests/unit/test_claim_verifier.py::test_prose_is_not_measurable` → green. For the body `## Checks\n- tests pass\n- works fine`, both statements are `unmeasurable` and verified `NOT_MEASURABLE` with reason `no command stated`. Each raises one blocking `author_claim_unmeasured` finding (D8). The gate returns `merge: false` with two reasons `author claim unmeasured: "<text>": state the command and the expected value`. Rewriting "tests pass" as "`pytest -q tests/unit/test_a.py`: 3 passed" and deleting "works fine" at the same head clears both reasons. "works fine" under `## Why` yields no claim.
