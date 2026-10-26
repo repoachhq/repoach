@@ -92,6 +92,6 @@
       "workflow": "CI"
     }
   ],
-  "source": "recorded 2026-10-19 from m3",
+  "source": "recorded 2026-10-19 from m3; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
   "trimmed": null
 }
