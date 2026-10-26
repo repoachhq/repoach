@@ -68,7 +68,12 @@ from ..forge import (
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
 from ..forge.protocol import WRITABLE_STATES, diff_files
-from ..gates.config import GatesConfig, load_gates_config, resolve_refuter_max_judged
+from ..gates.config import (
+    GatesConfig,
+    load_gates_config,
+    resolve_refuter_context_tokens,
+    resolve_refuter_max_judged,
+)
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
 from .merge_gate import (
     MergeDecision,
@@ -584,6 +589,7 @@ def decide_at_head(
     judge_factory: Callable[[], Judge] | None = None,
     head_tree: bool = False,
     base_ref: str | None = None,
+    context_tokens: int | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -641,6 +647,8 @@ def decide_at_head(
             (:func:`~repoach.review.review_head.materialise_head`).
         base_ref: The PR's base branch, read by the recomputation of a
             stale coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
+        context_tokens: The refuter's context for the re-check of older
+            findings; ``None`` reads it at ``repo_root``.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -659,6 +667,11 @@ def decide_at_head(
             config=config,
             max_judged=cap,
             judge_factory=judge_factory or make_refuter_judge,
+            context_tokens=(
+                context_tokens
+                if context_tokens is not None
+                else resolve_refuter_context_tokens(root)[0]
+            ),
         )
     else:
         reverified = skipped_reverification(
@@ -858,6 +871,7 @@ def evaluate_merge_gate(
                 judge_factory=judge_factory,
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
+                context_tokens=resolve_refuter_context_tokens(checkout)[0],
             )
         tree_kind = tree.tree
     else:

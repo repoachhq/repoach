@@ -304,7 +304,12 @@ def _mechanical(
 
 
 def _judged(
-    finding: Finding, repo_root: Path, judge: LazyJudge, max_judged: int, cap: int
+    finding: Finding,
+    repo_root: Path,
+    judge: LazyJudge,
+    max_judged: int,
+    cap: int,
+    context_tokens: int,
 ) -> tuple[ReverifyState, str, str]:
     """Hand a finding to the refuter at the head, within ``max_judged`` calls.
 
@@ -313,7 +318,9 @@ def _judged(
     """
     if judge.calls >= max_judged:
         return "needs_judgement", "refuter", JUDGING_CAP_REACHED.format(cap=cap)
-    status, reason = refute_finding(finding, repo_root=repo_root, judge=judge)
+    status, reason = refute_finding(
+        finding, repo_root=repo_root, judge=judge, context_tokens=context_tokens
+    )
     if status is FindingStatus.REFUTED:
         return "resolved", "refuter", reason
     if status is FindingStatus.VERIFIED:
@@ -331,6 +338,7 @@ def _recheck(
     judge: LazyJudge,
     max_judged: int,
     cap: int,
+    context_tokens: int,
 ) -> tuple[ReverifyState, str, str]:
     """Return ``(state, method, reason)`` for one finding at the head."""
     sha7 = head_sha[:7]
@@ -343,7 +351,7 @@ def _recheck(
         return settled
     if finding.claim_type not in MECHANICAL_CLAIM_TYPES | JUDGED_CLAIM_TYPES:
         _log.info("head_reverify.unknown_claim_type", claim_type=finding.claim_type.value)
-    return _judged(finding, repo_root, judge, max_judged, cap)
+    return _judged(finding, repo_root, judge, max_judged, cap, context_tokens)
 
 
 def _settled_on_disk(
@@ -528,9 +536,12 @@ def reverify_older_findings(
         cap: The configured refuter cap, named in the reason of a
             finding the budget defers; ``max_judged`` when omitted
             (``review pr`` passes the cap it spent part of).
-        context_tokens: The refuter's configured context; part of the
-            :func:`judgement_key` a ``needs judgement`` stamp carries, so
-            a change of it re-opens the finding at the same head.
+        context_tokens: The refuter's configured context
+            (``[gates].refuter_context_tokens``), which the evidence of a
+            re-judged finding fills, as it does in the review's own
+            refuter pass; the floor when omitted. Part of the
+            :func:`judgement_key` a ``needs judgement`` stamp carries, so a
+            change of it re-opens the finding at the same head.
 
     Returns:
         The :class:`HeadReverification`; resolved and still-open
@@ -570,6 +581,7 @@ def reverify_older_findings(
                 judge=judge,
                 max_judged=max_judged,
                 cap=max_judged if cap is None else cap,
+                context_tokens=context_tokens,
             )
         state, method, reason = seen[key]
         outcome = _outcome(finding, state, reason)
