@@ -27,7 +27,9 @@
     "checks": [
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "",
+        "head_sha": "",
         "link": "",
         "name": "pipeline",
         "started_at": "",
@@ -45,6 +47,6 @@
     ],
     "state": "pending"
   },
-  "source": "synthetic: a red / running / absent pipeline at a fixed head",
+  "source": "synthetic: a red / running / absent pipeline at a fixed head; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
   "trimmed": null
 }

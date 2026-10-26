@@ -261,10 +261,7 @@ RUNNING = [{"name": "Test suite (Python 3.11)", "status": "IN_PROGRESS", "conclu
 @pytest.mark.parametrize(
     ("over", "reason"),
     [
-        ({"mergeStateStatus": "BLOCKED", "statusCheckRollup": RUNNING}, "pending"),
-        ({"mergeStateStatus": "BEHIND", "statusCheckRollup": RUNNING}, "pending"),
-        ({"mergeStateStatus": "UNSTABLE", "statusCheckRollup": RUNNING}, "pending"),
-        ({"mergeStateStatus": "BLOCKED"}, "blocked"),
+        ({"mergeStateStatus": "BEHIND", "statusCheckRollup": RUNNING}, "behind"),
         ({"mergeStateStatus": "BEHIND"}, "behind"),
         ({"mergeStateStatus": "DIRTY"}, "conflict"),
         ({"mergeable": "CONFLICTING"}, "conflict"),
@@ -287,6 +284,19 @@ def test_github_refusal_named_from_view_without_merging(
 
 def test_github_unstable_without_pending_checks_merges() -> None:
     forge = _github([_gh_view(mergeStateStatus="UNSTABLE")])
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert len(_merge_calls(forge)) == 1
+
+
+@pytest.mark.parametrize("merge_state", ["UNSTABLE", "BLOCKED"])
+def test_github_running_checks_never_make_the_merge_wait(merge_state: str) -> None:
+    """The rollup is not the judge (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G1).
+
+    ``UNSTABLE`` / ``BLOCKED`` with a check still running merged nothing
+    before: the running check was the merge job itself. Whether required
+    checks are done is judged before the merge, on the committed list.
+    """
+    forge = _github([_gh_view(mergeStateStatus=merge_state, statusCheckRollup=RUNNING)])
     forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
     assert len(_merge_calls(forge)) == 1
 

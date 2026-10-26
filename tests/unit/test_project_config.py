@@ -166,6 +166,22 @@ class TestValidation:
         assert _decode_error_line(ValueError("Invalid value (at line 7, column 3)")) == 7
         assert _decode_error_line(ValueError("Unexpected end")) is None
 
+    def test_empty_required_checks_is_refused(self, tmp_path: Path) -> None:
+        """An empty list would merge on no check at all (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF)."""
+        (tmp_path / "repoach.toml").write_text(
+            "[auto_merge]\nrequired_checks = []\n", encoding="utf-8"
+        )
+        with pytest.raises(ConfigError) as info:
+            load_project_config(tmp_path)
+        assert info.value.key == "auto_merge.required_checks"
+        assert info.value.line == 2
+        assert "at least 1 item" in info.value.reason
+
+        (tmp_path / "repoach.toml").write_text(
+            "[auto_merge]\nrequired_checks = ['wheel-build']\n", encoding="utf-8"
+        )
+        assert load_project_config(tmp_path).auto_merge.required_checks == ["wheel-build"]
+
     def test_conventions_section_is_read_but_inert(self, tmp_path: Path) -> None:
         text = "[conventions]\ntypes = ['feat', 'fix']\nheader_max_chars = 50\n"
         config = parse_project_config(text, tmp_path / "repoach.toml")
@@ -444,6 +460,7 @@ class TestAsMapping:
             "arch",
             "state",
             "conventions",
+            "auto_merge",
         ]
         assert mapping["repoach"]["schema"] == 1
         assert mapping["repoach"]["forge"] == "gitlab"

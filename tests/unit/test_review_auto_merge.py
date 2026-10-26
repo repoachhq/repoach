@@ -295,7 +295,7 @@ def test_classify_prefers_latest_started_at() -> None:
         },
         green_other,
     ]
-    failed, pending, missing = classify_required_checks(stale_cancel_then_green)
+    failed, pending, missing = classify_required_checks(stale_cancel_then_green, (name, other))
     assert (failed, pending, missing) == ([], [], [])
 
     green_then_regression = [
@@ -313,7 +313,7 @@ def test_classify_prefers_latest_started_at() -> None:
         },
         green_other,
     ]
-    failed, _, _ = classify_required_checks(green_then_regression)
+    failed, _, _ = classify_required_checks(green_then_regression, (name, other))
     assert failed == [f"{name}=FAILURE"]
 
 
