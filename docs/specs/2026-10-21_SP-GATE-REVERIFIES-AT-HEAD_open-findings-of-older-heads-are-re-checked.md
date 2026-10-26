@@ -1,14 +1,14 @@
 ---
 id: SP-GATE-REVERIFIES-AT-HEAD
 title: The gate re-verifies every open blocking finding of an older head at the head it decides on
-version: 0.2
-status: draft
+version: 0.3
+status: approved
 author: agent
 created: 2026-10-21
-updated: 2026-10-22
+updated: 2026-10-25
 
 owns:
-  code: [src/repoach/review/head_reverify.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py, tests/unit/test_review_pr_reverifies_at_head.py]
+  code: [src/repoach/review/head_reverify.py, src/repoach/review/finding_verifiers.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py, tests/unit/test_review_pr_reverifies_at_head.py, tests/unit/test_finding_verifiers.py, tests/integration/test_gate_reverifies_at_head_end_to_end.py]
   resources: []
 
 depends_on: [SP-FINDINGS-INIT-RACE, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-UNIVERSAL-GATES, SP-REVIEW-PINS-HEAD, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-PLAN-SELECTOR-AUDIT-WIRE, SP-PLAN-CONTRACT-LINTS, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
@@ -18,6 +18,47 @@ constraints: {}
 ---
 
 # The gate re-verifies open findings of older heads at the head
+
+## Amendment (0.3, 2026-10-25): a required Python test is found by name at the head
+
+Measured 2026-10-25 on Yoob MR !324, head `910a6cac` (`review:gate`
+job 17451911364): finding 6, `missing_test` on
+`api/alembic/versions/n0g1e2n3r4c5_relabel_generic_board.py:58` raised
+at `606ebe3`, was reported `still present at 910a6ca (no test for
+test_migration_relabels_generic_rows_and_downgrade_restores_only_noted_rows)`
+while `git grep` at that head finds the test at
+`api/tests/test_relabel_generic_board_migration.py:95`. It alone kept
+`REQUEST_CHANGES`. Cause: the Python `missing_test` verifier
+(`finding_verifiers._verify_missing_test`) searched only the top-level
+`tests/` directory (`make_tests_symbol_searcher`), so a monorepo's
+`api/tests/` was never read; the head tree and the recorded file were
+not at fault. A `still present` stamp left at the head by that narrower
+check would also have been reused by every later gate at the same head.
+
+- G11: the re-check of a Python `missing_test` finds the covering test
+  by name across every Python test file of the pinned head tree (the
+  tracked files of the head worktree: a configured test root, any
+  `tests/` or `test/` directory, `test_*.py`, `*_test.py`,
+  `conftest.py`); code under review never counts
+  (SP-MISSING-TEST-VERIFIER-SCOPE holds). A found test resolves the
+  finding with `<test> exists at <path>:<line>`; none keeps it open with
+  `no test for <names> (searched <n> test files at <sha7>)`. A cached
+  `still present` stamp of a mechanical claim type is reused only when
+  no on-disk check settles the finding differently at the head (such a
+  check makes no model call).
+- AC15: `pytest -q tests/unit/test_gate_reverifies_at_head.py::test_python_test_written_under_a_nested_tests_dir_resolves_missing_test`
+  → green: a `missing_test` on `api/alembic/versions/n0_relabel.py`
+  recorded at A where `api/tests/test_relabel.py` does not exist; B adds
+  it → `resolved at <B7>: test_relabels_generic_rows exists at
+  api/tests/test_relabel.py:4`, merge True, no model call. Before: still
+  present, merge False.
+- AC16: `pytest -q tests/unit/test_gate_reverifies_at_head.py::test_python_test_absent_at_head_names_what_was_searched`
+  → green: the reason ends `(searched 1 test files at <B7>))`.
+- AC17: `pytest -q tests/unit/test_gate_reverifies_at_head.py::test_stale_still_present_stamp_at_the_head_yields_to_the_test_found_there`
+  → green: a `still present` stamp at B is overridden by the test found
+  at B. Pinned for the verifier alone by
+  `tests/unit/test_finding_verifiers.py::test_missing_test_refuted_by_a_test_under_a_nested_tests_dir`
+  and `::test_missing_test_not_refuted_by_a_test_named_def_in_code_under_review`.
 
 ## Amendment (0.2, 2026-10-22): `review pr` re-verifies too (Q1)
 
