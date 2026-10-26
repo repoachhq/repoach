@@ -19,7 +19,8 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -41,11 +42,28 @@ from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
 from ..gates.selectors import SelectorKind, TestSelector, parse_selector, selector_file
 from ..gates.selectors import selector_present as gate_selector_present
+from .governed_spec import (
+    GovernedSpec,
+    SpecRefUnavailableError,
+    load_governed_spec,
+    load_governed_spec_at_ref,
+)
 from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
 _log = get_logger(__name__)
 
 _metadata = MetaData()
+
+SPEC_COVERAGE_RULE_VERSION = 1
+"""Version of the rule that graded a coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
+
+``0`` marks a row recorded before the marker existed, by code that knew
+neither planned selectors nor the ``origin/<base>`` retry; ``1`` is
+today's rule. ``review gate`` recomputes a row at head whose version is
+below this one (:func:`refresh_stale_coverage`), so a row graded by
+retired code can never refuse on its own. Bump it whenever the grading
+of a selector changes.
+"""
 
 _pr_spec_coverage = Table(
     "pr_spec_coverage",
@@ -60,13 +78,15 @@ _pr_spec_coverage = Table(
     Column("covered", Integer, nullable=False),
     Column("planned", String, nullable=False, server_default=""),
     Column("draft_refusals", String, nullable=False, server_default=""),
+    Column("rule_version", Integer, nullable=False, server_default="0"),
 )
 
 _ADDED_COLUMNS = (
     ("planned", "TEXT NOT NULL DEFAULT ''"),
     ("draft_refusals", "TEXT NOT NULL DEFAULT ''"),
+    ("rule_version", "INTEGER NOT NULL DEFAULT 0"),
 )
-"""Columns added after the table first shipped (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2)."""
+"""Columns added after the table first shipped (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2, 0.3)."""
 
 _REFUSAL_SEPARATOR = "\n"
 """Joins ``draft_refusals`` lines in storage; a refusal line itself holds commas."""
@@ -89,6 +109,8 @@ class SpecCoverage(BaseModel):
             not exist at head yet — reported, never refusing.
         draft_refusals: One line per rule that withheld the draft
             exemption (owned code touched, spec past draft at base).
+        rule_version: The :data:`SPEC_COVERAGE_RULE_VERSION` that graded
+            the report; ``0`` for a row recorded before the marker.
     """
 
     spec_id: str
@@ -98,6 +120,7 @@ class SpecCoverage(BaseModel):
     covered: bool
     planned: list[str] = []
     draft_refusals: list[str] = []
+    rule_version: int = SPEC_COVERAGE_RULE_VERSION
 
 
 def acceptance_selectors(plan: ActionPlan) -> list[str]:
@@ -904,6 +927,7 @@ def record_spec_coverage(
                 covered=int(coverage.covered),
                 planned=",".join(coverage.planned),
                 draft_refusals=_REFUSAL_SEPARATOR.join(coverage.draft_refusals),
+                rule_version=coverage.rule_version,
             )
         )
 
@@ -944,6 +968,204 @@ def fetch_spec_coverage(
                 covered=bool(row["covered"]),
                 planned=[p for p in row["planned"].split(",") if p],
                 draft_refusals=[r for r in row["draft_refusals"].split(_REFUSAL_SEPARATOR) if r],
+                rule_version=row["rule_version"],
             )
             for row in rows
         ]
+
+
+def draft_scope_at_head(
+    repo_root: Path, spec_id: str, *, base_ref: str | None, changed_files: list[str]
+) -> tuple[DraftScope | None, str]:
+    """Return the draft scope of *spec_id* at head, and the spec's markdown.
+
+    ``(None, "")`` when the spec is not governed or its head status is
+    not pre-implementation. The base view of the spec is read from
+    *base_ref*, then from ``origin/<base_ref>``; when neither resolves
+    the scope carries a refusal, so an unreadable base never grants
+    the exemption (fail closed).
+
+    Args:
+        repo_root: The PR head tree.
+        spec_id: The spec under review.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+        changed_files: The paths the PR diff touches.
+
+    Returns:
+        The scope (or ``None``) and the spec's markdown at head.
+    """
+    head = load_governed_spec(spec_id, root=repo_root)
+    if head is None or head.path is None:
+        return None, ""
+    spec_path = head.path.resolve().relative_to(repo_root.resolve()).as_posix()
+    base: GovernedSpec | None = None
+    base_unreadable = True
+    for ref in (base_ref, f"origin/{base_ref}") if base_ref else ():
+        try:
+            base = load_governed_spec_at_ref(spec_id, ref, root=repo_root)
+        except SpecRefUnavailableError as exc:
+            _log.info("review_team.draft_scope_ref_unavailable", ref=ref, error=str(exc)[:200])
+            continue
+        base_unreadable = False
+        break
+    scope = draft_scope(
+        head_status=head.status,
+        base_status=base.status if base is not None else None,
+        owns_code=tuple(dict.fromkeys((*head.owns_code, *(base.owns_code if base else ())))),
+        changed_files=changed_files,
+        spec_path=spec_path,
+    )
+    if scope is None:
+        return None, ""
+    if base_unreadable:
+        scope = replace(
+            scope,
+            refusals=(
+                *scope.refusals,
+                f"base ref {base_ref!r} unreadable: the spec's draft status cannot be checked",
+            ),
+        )
+    return scope, head.path.read_text(encoding="utf-8")
+
+
+def coverage_at_head(
+    repo_root: Path,
+    *,
+    spec_id: str,
+    base_ref: str | None,
+    changed_files: list[str],
+    fetch_base: Callable[[str], None] | None = None,
+) -> tuple[SpecCoverage, ContractResolution]:
+    """Grade *spec_id*'s acceptance selectors at the head tree, without any model call.
+
+    A pure function of the spec and plan (base contract first), the head
+    tree and the diff's paths: a fresh review, a replayed review and the
+    gate all reach the same report through it. When *base_ref* does not
+    resolve locally, *fetch_base* is asked to fetch it and the contract is
+    read from ``origin/<base_ref>``.
+
+    Args:
+        repo_root: The PR head tree the selectors resolve against.
+        spec_id: The spec under review.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+        changed_files: The paths the PR diff touches.
+        fetch_base: Fetches ``origin/<base_ref>`` into *repo_root*.
+
+    Returns:
+        The coverage report and the contract resolution it used.
+    """
+    resolution = resolve_contract_plan(spec_id, repo_root=repo_root, base_ref=base_ref)
+    if not resolution.base_available and base_ref and fetch_base is not None:
+        fetch_base(base_ref)
+        resolution = resolve_contract_plan(
+            spec_id, repo_root=repo_root, base_ref=f"origin/{base_ref}"
+        )
+    draft, spec_markdown = draft_scope_at_head(
+        repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
+    )
+    if resolution.plan is not None:
+        coverage = compute_spec_coverage(
+            repo_root, spec_id=spec_id, plan=resolution.plan, draft=draft
+        )
+    elif resolution.base_available and draft is not None:
+        coverage = coverage_of_selectors(
+            repo_root,
+            spec_id=spec_id,
+            selectors=spec_acceptance_selectors(spec_markdown),
+            draft=draft,
+        )
+    else:
+        coverage = SpecCoverage(
+            spec_id=spec_id,
+            n_promised=0,
+            n_present=0,
+            missing=["plan-absent" if resolution.base_available else "base-ref-unavailable"],
+            covered=False,
+        )
+    return coverage, resolution
+
+
+class StaleCoverageRecomputeError(RuntimeError):
+    """A stale coverage row could not be recomputed; its stored verdict is not trusted.
+
+    Attributes:
+        head_sha: The head whose row is stale.
+        rule_version: The ``rule_version`` of the stored row.
+        reason: The gate reason naming the failure and the untrusted rule.
+    """
+
+    def __init__(self, *, head_sha: str, rule_version: int, error: Exception) -> None:
+        self.head_sha = head_sha
+        self.rule_version = rule_version
+        self.reason = (
+            f"spec coverage recompute failed at {head_sha[:7]}: {type(error).__name__}: "
+            f"{str(error)[:200]}; stored verdict from rule {rule_version} not trusted"
+        )
+        super().__init__(self.reason)
+
+
+def refresh_stale_coverage(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str,
+    repo_root: Path,
+    base_ref: str | None,
+    changed_files: Callable[[], list[str]],
+    fetch_base: Callable[[str], None] | None = None,
+) -> SpecCoverage | None:
+    """Recompute and record the coverage at *head_sha* when its latest row is stale.
+
+    A row is stale when its ``rule_version`` is below
+    :data:`SPEC_COVERAGE_RULE_VERSION`: it was graded by code whose rule
+    has since changed, so it no longer says what the current rule says
+    about the same head (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3). The spec is the
+    row's own; *repo_root* must be the tree of *head_sha*.
+
+    Args:
+        db_path: The coverage ledger.
+        pr_number: The PR under decision.
+        head_sha: The decided head.
+        repo_root: The materialised tree of *head_sha*.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+        changed_files: Returns the paths the PR diff touches; called only
+            when a row is stale.
+        fetch_base: Fetches ``origin/<base_ref>`` when the base does not
+            resolve locally.
+
+    Returns:
+        The recorded report, or ``None`` when no row at head is stale.
+
+    Raises:
+        StaleCoverageRecomputeError: The diff, the base fetch or the
+            grading failed; nothing was recorded.
+    """
+    init_spec_coverage_schema(db_path)
+    rows = fetch_spec_coverage(db_path, pr_number, head_sha=head_sha)
+    if not rows or rows[-1].rule_version >= SPEC_COVERAGE_RULE_VERSION:
+        return None
+    stale = rows[-1]
+    try:
+        coverage, _ = coverage_at_head(
+            repo_root,
+            spec_id=stale.spec_id,
+            base_ref=base_ref,
+            changed_files=changed_files(),
+            fetch_base=fetch_base,
+        )
+    except Exception as exc:
+        raise StaleCoverageRecomputeError(
+            head_sha=head_sha, rule_version=stale.rule_version, error=exc
+        ) from exc
+    record_spec_coverage(db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage)
+    _log.info(
+        "spec_gate.stale_coverage_recomputed",
+        pr_number=pr_number,
+        head_sha=head_sha[:12],
+        spec_id=stale.spec_id,
+        stale_rule_version=stale.rule_version,
+        covered=coverage.covered,
+        n_planned=len(coverage.planned),
+        n_missing=len(coverage.missing),
+    )
+    return coverage

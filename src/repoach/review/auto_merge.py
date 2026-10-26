@@ -67,7 +67,7 @@ from ..forge import (
     select_forge,
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
-from ..forge.protocol import WRITABLE_STATES
+from ..forge.protocol import WRITABLE_STATES, diff_files
 from ..gates.config import GatesConfig, load_gates_config, resolve_refuter_max_judged
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
 from .merge_gate import (
@@ -84,6 +84,7 @@ from .review_head import (
     materialise_head,
     require_head_sha,
 )
+from .spec_gate import StaleCoverageRecomputeError, refresh_stale_coverage
 
 _log = get_logger(__name__)
 
@@ -582,6 +583,7 @@ def decide_at_head(
     max_judged: int | None = None,
     judge_factory: Callable[[], Judge] | None = None,
     head_tree: bool = False,
+    base_ref: str | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -596,6 +598,15 @@ def decide_at_head(
     otherwise it is skipped with a named reason and the findings of
     older heads keep blocking — a checkout on another branch must never
     settle one.
+
+    On the head tree too, a spec-coverage row at head graded by a retired
+    rule is recomputed and rewritten first
+    (:func:`~repoach.review.spec_gate.refresh_stale_coverage`, no model
+    call), so the decision reads what the current rule says. A failed
+    recomputation records nothing and refuses whatever the stored verdict
+    (``spec coverage recompute failed at <sha7>: <error>; stored verdict
+    from rule <v> not trusted``) until a recompute succeeds; a row at the
+    current rule is unaffected.
 
     The single source of the pure merge decision. Both
     :func:`run_auto_merge` (after its CI short-circuit) and
@@ -628,6 +639,8 @@ def decide_at_head(
             ``None`` means :func:`~repoach.review.refuter.make_refuter_judge`.
         head_tree: Whether ``repo_root`` is the tree of ``head_sha``
             (:func:`~repoach.review.review_head.materialise_head`).
+        base_ref: The PR's base branch, read by the recomputation of a
+            stale coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -651,6 +664,16 @@ def decide_at_head(
         reverified = skipped_reverification(
             db, pr_number=pr_number, head_sha=resolved_head, reason=NO_HEAD_TREE
         )
+    recompute_failure = ""
+    if head_tree and resolved_head:
+        recompute_failure = _refresh_coverage(
+            db,
+            forge=forge,
+            pr_number=pr_number,
+            head_sha=resolved_head,
+            root=root,
+            base_ref=base_ref,
+        )
     facts = gather_merge_facts(
         db,
         pr_number=pr_number,
@@ -663,9 +686,44 @@ def decide_at_head(
             "reverified": reverified.counts(),
             "reverify_reasons": reverified.reasons(),
             "reverify_line": reverified.summary_line(),
+            "spec_recompute_failure": recompute_failure,
         }
     )
     return resolved_head, facts, compute_merge_decision(facts)
+
+
+def _refresh_coverage(
+    db: Path, *, forge: Forge, pr_number: int, head_sha: str, root: Path, base_ref: str | None
+) -> str:
+    """Recompute a stale coverage row at *head_sha* on the head tree *root*.
+
+    Returns:
+        ``""`` when nothing was stale or the row was recomputed; else the
+        refusal reason naming the failure and the untrusted stored rule.
+    """
+
+    def fetch_base(ref: str) -> None:
+        forge.git(["fetch", "--quiet", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"])
+
+    try:
+        refresh_stale_coverage(
+            db,
+            pr_number=pr_number,
+            head_sha=head_sha,
+            repo_root=root,
+            base_ref=base_ref,
+            changed_files=lambda: diff_files(forge.diff(pr_number).text),
+            fetch_base=fetch_base,
+        )
+    except StaleCoverageRecomputeError as exc:
+        _log.warning(
+            "auto_merge.stale_coverage_refresh_failed",
+            pr_number=pr_number,
+            reason=exc.reason,
+            consequence="the gate refuses until a recompute succeeds",
+        )
+        return exc.reason
+    return ""
 
 
 def evaluate_merge_gate(
@@ -799,6 +857,7 @@ def evaluate_merge_gate(
                 max_judged=resolve_refuter_max_judged(checkout)[0],
                 judge_factory=judge_factory,
                 head_tree=True,
+                base_ref=pr.base_ref if pr is not None else None,
             )
         tree_kind = tree.tree
     else:
@@ -1016,6 +1075,7 @@ def run_auto_merge(
                     max_judged=resolve_refuter_max_judged(checkout)[0],
                     judge_factory=judge_factory,
                     head_tree=True,
+                    base_ref=base or None,
                 )
         except (HeadUnavailableError, HeadUnresolvedError) as exc:
             _log.warning("auto_merge.head_tree_unavailable", pr_number=pr_number, error=str(exc))
