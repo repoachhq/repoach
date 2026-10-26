@@ -68,7 +68,7 @@ constraints:
 
 ### Ordering
 
-This branch carries `eb1c275`, a hand-merged adaptation of #260's `5ed6ba2` (`fix(reverify): judge older findings with the configured refuter context`). It is not a byte-identical cherry-pick: in `head_reverify.py` the `reverify_older_findings` docstring for `context_tokens` merges #260's text with this spec's stamp-key sentence. The other files are as in `5ed6ba2`. `reverify_older_findings` takes the `context_tokens` parameter exactly as #260 defines it. #268 merges after #260.
+This branch carries `eb1c275`, a hand-merged adaptation of #260's `5ed6ba2` (`fix(reverify): judge older findings with the configured refuter context`). It is not a byte-identical cherry-pick: in `head_reverify.py` the `reverify_older_findings` docstring for `context_tokens` merges #260's text with this spec's stamp-key sentence. The other files are as in `5ed6ba2`. `reverify_older_findings` takes the `context_tokens` parameter exactly as #260 defines it. #268 merges BEFORE #260, and #260 then merges develop: #260 cannot pass the gate until this veto fix lands, because its findings 41 and 66 end `needs judgement` at every head, which is this spec's own case. When #260 merges develop, its own `5ed6ba2` meets this adaptation; only that docstring can conflict.
 
 ## 0.1
 
