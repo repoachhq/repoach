@@ -8,8 +8,8 @@ ledger, the real mechanical verifiers and the real refuter with its real evidenc
 assembly (``git grep`` over the tree, the 40 000-token default context). The Architect
 raises a design finding on a cited file that fills the evidence budget, about an
 identifier whose only hits live in another file: the budget leaves every hit out, so
-the finding must end ``deferred`` with ``evidence outside window (<identifier> not
-served)`` while the judge, which would refute it, is never called.
+the finding must end ``deferred`` with ``evidence outside window (identifier not served:
+<identifier>)`` while the judge, which would refute it, is never called.
 """
 
 from __future__ import annotations
@@ -198,7 +198,7 @@ def test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call
     assert len(judged) == 1
     outcome = judged[0]
     assert outcome.state == "deferred"
-    assert outcome.reason == f"evidence outside window ({IDENTIFIER} not served)"
+    assert outcome.reason == f"evidence outside window (identifier not served: {IDENTIFIER})"
     assert outcome.evidence and outcome.evidence[0].startswith(CITED)
     assert any(
         item.startswith(f"search {IDENTIFIER}: hit {OTHER}:30")
@@ -206,6 +206,6 @@ def test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call
     )
     assert 0 < outcome.evidence_tokens <= REFUTER_CONTEXT_TOKENS_FLOOR
     assert "refuted 0" in (team.refuter_summary or "")
-    assert f"({IDENTIFIER} not served)" in (team.refuter_summary or "")
+    assert f"(identifier not served: {IDENTIFIER})" in (team.refuter_summary or "")
     assert fetch_findings(db, PR, status=FindingStatus.REFUTED) == []
     assert [f.file for f in fetch_findings(db, PR, status=FindingStatus.PROPOSED)] == [CITED]

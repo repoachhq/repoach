@@ -646,7 +646,9 @@ def test_refutation_resting_on_a_partly_served_identifier_is_deferred(tmp_path: 
         judge=lambda _p: _reply("refuted", "every COMMON_TABLE copy agrees"),
     )
     assert citing.status is FindingStatus.PROPOSED
-    assert citing.reason == EVIDENCE_OUTSIDE_WINDOW
+    assert citing.reason == (
+        "evidence outside window (identifier partly served outside the cited file: COMMON_TABLE)"
+    )
     elsewhere = judge_finding(
         _finding("src/m.py", "`COMMON_TABLE` has a divergent copy"),
         repo_root=tmp_path,
@@ -701,12 +703,14 @@ def test_hits_cut_by_the_budget_defer_without_calling_the_judge(tmp_path: Path) 
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
-    assert judgement.reason == "evidence outside window (wanted_symbol not served)"
+    assert judgement.reason == "evidence outside window (identifier not served: wanted_symbol)"
 
 
 def test_unserved_reason_is_a_closed_set_template() -> None:
     assert EVIDENCE_NOT_SERVED in DEFERRAL_REASONS
-    assert EVIDENCE_NOT_SERVED.format(identifiers="X") == "evidence outside window (X not served)"
+    assert EVIDENCE_NOT_SERVED.format(identifiers="X") == (
+        "evidence outside window (identifier not served: X)"
+    )
 
 
 def test_assembly_deadline_names_what_it_left_out(tmp_path: Path) -> None:
