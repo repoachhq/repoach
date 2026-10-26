@@ -86,10 +86,51 @@ def judgement_key(
     :data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION`, another
     ``[gates].refuter_context_tokens`` or ``refuter_context_ceiling``, or
     none) is not reused.
+
+    Args:
+        context_tokens: The refuter's context floor the re-check used.
+        context_ceiling: The refuter's context ceiling the re-check used.
+
+    Returns:
+        ``refuter rule <V>, context <N>, ceiling <C>``, with ``V`` the
+        :data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION`.
     """
     return (
         f"refuter rule {REFUTER_RULE_VERSION}, context {context_tokens}, ceiling {context_ceiling}"
     )
+
+
+_NEEDS_JUDGEMENT_STAMP = re.compile(r"^needs judgement at (?P<sha7>\S*) \((?P<key>[^)]*)\): ")
+"""The head of a keyed ``needs judgement`` stamp, as :func:`needs_judgement_stamp` writes it."""
+
+
+def needs_judgement_stamp(sha7: str, key: str, reason: str) -> str:
+    """Return the ``verification_result`` a ``needs judgement`` outcome is stamped with.
+
+    Args:
+        sha7: The head the finding was re-checked at, abbreviated.
+        key: The :func:`judgement_key` it was judged under.
+        reason: The deferral reason.
+
+    Returns:
+        ``needs judgement at <sha7> (<key>): <reason>``, which
+        :func:`stamp_key` reads back.
+    """
+    return f"needs judgement at {sha7} ({key}): {reason}"
+
+
+def stamp_key(result: str) -> str | None:
+    """Return the :func:`judgement_key` a ``needs judgement`` stamp carries, ``None`` if it has none.
+
+    Args:
+        result: A row's ``verification_result``.
+
+    Returns:
+        The key :func:`needs_judgement_stamp` wrote, or ``None`` for a
+        stamp written before the key existed or any other text.
+    """
+    match = _NEEDS_JUDGEMENT_STAMP.match(result)
+    return match.group("key") if match else None
 
 
 NO_HEAD_TREE = "no head tree pinned"
@@ -416,7 +457,7 @@ def _persist(
             db_path,
             finding.id,
             method=NEEDS_JUDGEMENT_METHOD,
-            result=f"needs judgement at {sha7} ({key}): {outcome.reason}",
+            result=needs_judgement_stamp(sha7, key, outcome.reason),
             checked_at_sha=head,
             budget_used=outcome.budget_used or None,
         )
@@ -472,7 +513,7 @@ def _cached(finding: Finding, head_sha: str, key: str) -> Reverification | None:
         return None
     if (
         finding.verification_method == NEEDS_JUDGEMENT_METHOD
-        and f"({key}): " not in finding.verification_result
+        and stamp_key(finding.verification_result) != key
     ):
         return None
     state: ReverifyState = (
