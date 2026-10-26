@@ -1,15 +1,15 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-26
 updated: 2026-10-26
 
 owns:
-  code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_context_window.py, src/repoach/review/thread_commands.py, src/repoach/cli/threads_cmds.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_commands.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_threads_cli.py, tests/unit/test_gate_open_threads.py, tests/unit/test_forge_review_threads.py, tests/integration/test_pr_threads_lifecycle.py]
-  resources: [db:table:finding_threads, db:table:finding_thread_events, format:thread-state-line, format:thread-reply-marker, format:thread-owner-command]
+  code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_context_window.py, src/repoach/review/thread_commands.py, src/repoach/cli/threads_cmds.py, src/repoach/review/thread_webhook.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_commands.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_threads_cli.py, tests/unit/test_gate_open_threads.py, tests/unit/test_forge_review_threads.py, tests/unit/test_thread_webhook.py, tests/unit/test_threads_owners.py, tests/integration/test_pr_threads_lifecycle.py]
+  resources: [db:table:finding_threads, db:table:finding_thread_events, format:thread-state-line, format:thread-reply-marker, format:thread-owner-command, format:gitlab-note-webhook]
 
 depends_on: [SP-UNIVERSAL-FORGE, SP-FINDING-THREAD-IDS, SP-POSTING-REPLAY-DEDUPES, SP-GATE-REVERIFIES-AT-HEAD, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-AGENT-CONTEXT-LOOP, SP-RED-STOPS-THE-LINE, SP-DRY-RUN-NEVER-POSTS, SP-FINDINGS-INIT-RACE, SP-FINDINGS-BRIDGE-DOCFIX, SP-ORCH-DOCSTRING, SP-UNIVERSAL-PROJECT-CONFIG, SP-CLI-STDOUT-ONE-JSON, SP-JUDGE-FAILURE-IS-RETRIED]
 provides_to: []
@@ -20,6 +20,7 @@ constraints:
   coder_rounds_max_per_thread: 2
   coder_dispatches_per_thread_and_head: 1
   deferral_replies_per_thread_and_head: 1
+  scheduled_fallback_minutes: 15
 ---
 
 # One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
@@ -128,12 +129,10 @@ Measured on `origin/develop` `51a4065` (2026-10-26), read-only.
     cited files under the evidence budget (`refuter_evidence`).
 
   Each role has a fixed context size. When the replay exceeds it,
-  #246's summarizer folds the oldest turns into one `user` turn
-  headed `thread summary (<n> turns, heads <a7>..<b7>)`. The summary
-  is stored in the ledger so the next reply reuses it. The summary is
-  a `user` turn here, not #246 G4's `assistant` turn, because it mixes
-  the author's voice with the role's. The summarizer is reused; only
-  where its output goes differs.
+  #246's summarizer (the same summarizer, same persona and tier) folds
+  the oldest turns into one `assistant` turn headed `thread summary
+  (<n> turns, heads <a7>..<b7>)`, as #246 G4 places it. The summary is
+  stored in the ledger so the next reply reuses it.
 - **D7 No debt; a fix is the only closure of a confirmed finding**
   (owner: "On n'accepte jamais de dette : on demande à un codeur
   d'implémenter la solution, dans un autre commit ou une branche qui
@@ -150,6 +149,40 @@ Measured on `origin/develop` `51a4065` (2026-10-26), read-only.
   - A coder may write a `docs/tech_debt.md` row for a *separate*
     improvement it noticed. That row never closes a thread.
   - An author reply such as "will do later" never changes the state.
+
+- **D8 Human threads block too** (was Q1). Every unresolved thread
+  blocks the merge: finding threads through the ledger gate, human
+  threads (no finding) through the forge setting. A human thread is
+  closed by its author or an owner, never by an agent. `repoach
+  threads` lists it with role `human`, and the gate names it `open
+  human threads: <ids>`.
+- **D9 Owners** (was Q2). Owners are the explicit `[threads].owners`
+  list in `repoach.toml`, compared to the forge login. An empty list
+  means the repository's admins (GitHub `admin` permission, GitLab
+  Maintainer and above), read from the forge once per run. If that
+  read fails, no one is an owner for the run (fail closed) and owner
+  commands get a reply naming the failed read.
+- **D10 Events reach the handler** (was Q3).
+  - GitHub: `.github/workflows/auto-review.yml` gains the
+    `pull_request_review_comment` trigger next to
+    `pull_request_review`, and runs `threads reply <pr>` on both.
+  - GitLab: a webhook receiver, `repoach threads serve`, accepts note
+    events only, checks `X-Gitlab-Token` against the configured secret
+    in constant time, and runs one `threads reply` for the MR the note
+    belongs to. It is deployed beside the review runner. A 15-minute
+    scheduled pipeline runs `threads reply` on every open MR as the
+    fallback, so a lost webhook delays a reply but never drops it.
+- **D11 Where the coder commits** (was Q4). By default the coder
+  commits straight on the PR branch. Only when its fix spans several
+  commits does it use `fix/<pr>-<fp8>`, which repoach merges into the
+  PR branch with `--no-ff`. It never squashes and never force-pushes.
+- **D12 No severity is exempt** (was Q5). Every severity, nit
+  included, follows the same path: the coder fixes it, or an owner
+  writes `/wontfix <reason>`.
+- **D13 A coder that cannot push escalates at once** (was Q6). On a PR
+  from a fork the coder cannot push to, the thread is escalated
+  immediately with `coder cannot push to <fork>`. No coder round is
+  spent.
 
 ## Goals
 
@@ -191,8 +224,8 @@ Measured on `origin/develop` `51a4065` (2026-10-26), read-only.
 - NG5: No change to how findings are raised or verified. Reviewer,
   refuter and verifiers are unchanged except for being called from
   here.
-- NG6: Human reviewers' own threads (no finding) are not judged by
-  this spec; see Q1.
+- NG6: No agent replies in, classifies or closes a human thread
+  (D8); repoach only lists it and the gate names it.
 
 ## Assumptions
 
@@ -316,8 +349,8 @@ kept. `resolved_at_head` stays the only status a fix reaches.
 
 ```toml
 [threads]
-owners = ["<forge login>", ...]   # empty: owner commands are refused with a named line
-coder_target = "pr"               # "pr" | "fix-branch" (Q4)
+owners = ["<forge login>", ...]   # empty: the repository's admins, read once per run (D9)
+webhook_secret_env = "REPOACH_GITLAB_WEBHOOK_SECRET"  # D10, GitLab receiver only
 ```
 
 The context size per role is `[agents.<role>].context_tokens`
@@ -338,16 +371,25 @@ system, history and summary.
   "escalated": [ids], "coder_dispatched": [ids], "skipped_duplicates":
   n, "refused_writes": [...]}`. Exit `0`; `2` forge unavailable; `8`
   a write was refused (the same meaning as `review pr`).
-- When the first argument is a number it is a PR; `reply` names the
-  handler.
+- `repoach threads serve [--host H] [--port P]` (D10, GitLab): an HTTP
+  receiver for note events. It answers `401` without running anything
+  when `X-Gitlab-Token` does not match the secret, `202` and ignores
+  every non-note event, and `202` plus one `threads reply <iid>`
+  (serialised per MR) for a note on an MR. It logs one line per
+  request: event, MR, outcome.
+- When the first argument is a number it is a PR; `reply` and `serve`
+  name the subcommands.
+- Human threads (D8) appear in the table with role `human`, the state
+  read from the forge, and no rounds.
 
 ### Gate
 
 `MergeFacts` gains `open_threads: list[str]`, `escalated_threads:
 list[str]`, `unthreaded_findings: list[int]`, `threads_judged: bool`
-and `threads_setting: bool | None`. `compute_merge_decision` adds:
+`open_human_threads: list[str]` and `threads_setting: bool | None`. `compute_merge_decision` adds:
 
 - `open threads: T3, T7`
+- `open human threads: H<forge thread id>, …`
 - `escalated threads: T5 (owner)`
 - `blocking findings without a resolved thread: #12, #19`
 
@@ -402,10 +444,9 @@ not refuse on threads.
    dispatches `run_coder_fix_from_findings` once per `(thread, head)`.
    It is restricted to that finding, with a brief built from the row:
    claim, evidence pointer, head, the verification result and the
-   stored summary plus the last turns. With `coder_target = "pr"` the
-   coder commits on the PR head branch. With `"fix-branch"` it commits
-   on `fix/<pr>-<fp8>` and repoach merges that branch into the PR
-   branch with `--no-ff`. Either way it pushes without force. The push
+   stored summary plus the last turns. The coder commits on the PR head
+   branch; a fix of several commits goes on `fix/<pr>-<fp8>`, merged
+   into the PR branch with `--no-ff` (D11). It pushes without force. The push
    is a new head, so step 2 decides. If the coder ends without a push,
    or its head does not settle the finding, the reply ends `coder
    round <n> did not settle: <reason>` and `state: open`. At
@@ -448,13 +489,20 @@ not refuse on threads.
   and the second is added to `co_roles`, may reply, and cannot close.
 - **A slash command from a non-owner** is classified as an ordinary
   author comment, and the reply names the configured owners. With
-  `owners = []` the reply says no owner is configured.
+  `owners = []` the owners are the admins read from the forge (D9);
+  when that read failed, the reply names the failed read.
 - **A coder push races the author's push.** The push is rejected
   (non-fast-forward) and never forced. That is not a coder round; the
   dispatch is retried once at the new head after step 2.
-- **The PR comes from a fork, or the branch is protected**, so the
-  coder cannot push. The reply ends `coder round <n> did not settle:
-  push refused (<forge message>)`; the second such failure escalates.
+- **The PR comes from a fork the coder cannot push to** (D13): the
+  thread is escalated at once with `coder cannot push to <fork>` and
+  `state: escalated to owner`; `coder_rounds` stays 0.
+- **The PR branch is protected against the bot's push**: the push is
+  refused, the reply ends `coder round <n> did not settle: push refused
+  (<forge message>)`, and the second such failure escalates.
+- **A human thread** (D8) is never replied to. If its author or an
+  owner resolves it, it no longer blocks; if anyone else resolves it,
+  nothing is done, because the forge setting governs it.
 - **The thread was deleted on the forge.** The row stays, and the gate
   names it `open threads: T<id> (thread missing on forge)`. Only an
   owner `/resolve`, typed in any of the bot's threads with
@@ -606,7 +654,7 @@ unless an AC names a recorded fixture or a live measurement.
   unresolved, and no role reply resolves it again at the same head.
 - [ ] AC17 (D6 context): a 12-turn fixture thread (6 author, 6 role,
   over 3 heads) with a role context size that fits system, the current
-  event and 3 turns yields a context of exactly `system` + one `user`
+  event and 3 turns yields a context of exactly `system` + one `assistant`
   turn `thread summary (9 turns, heads <a7>..<c7>)` + the last 3 turns
   in alternating voices with `[head · timestamp]` prefixes + the
   current `user` event. The summary is stored on the row and reused
@@ -628,39 +676,60 @@ unless an AC names a recorded fixture or a live measurement.
   no forge write, stores no `agent_reply` event, and lists the
   refused writes in its JSON.
 
+- [ ] AC21 (human thread, D8): a human reviewer's unresolved thread
+  with no finding is listed by `repoach threads <pr>` with role
+  `human`, and `review gate` refuses naming `open human threads:
+  H<id>`. No agent reply is posted in it. After its author resolves
+  it, the gate no longer names it.
+- [ ] AC22 (owners, D9): with `owners = ["alice"]`, `/wontfix <r>`
+  from `alice` applies and from `bob` does not. With `owners = []`
+  and a fixture admin list `["carol"]`, `carol`'s command applies,
+  and the admin list is read exactly once per run. When that read
+  fails, no command applies and the reply names the failed read.
+- [ ] AC23 (receiver, signed, D10): `threads serve` receives a note
+  event for MR !12 with the right `X-Gitlab-Token`. It answers `202`
+  and runs exactly one `threads reply 12`; a second identical delivery
+  posts nothing new (AC12 replay).
+- [ ] AC24 (receiver, bad token, D10): the same event with a wrong or
+  missing `X-Gitlab-Token` gets `401`, no `threads reply` runs, and
+  one log line names the rejection. A non-note event with the right
+  token gets `202` and runs nothing.
+- [ ] AC25 (fallback and GitHub triggers, D10): the GitLab CI
+  configuration generated by `repoach ci` holds a scheduled job that
+  runs `threads reply` on every open MR, and the schedule interval
+  documented is 15 minutes. `.github/workflows/auto-review.yml` lists
+  `pull_request_review_comment` and `pull_request_review` among its
+  triggers, and both lead to `threads reply`.
+- [ ] AC26 (fix branch, D11): a fake coder producing one commit pushes
+  it straight on the PR branch. A fake coder producing three commits
+  pushes them on `fix/<pr>-<fp8>`, which is merged into the PR branch
+  with one merge commit whose parents are the old PR head and the fix
+  branch tip. No push is forced and no commit is squashed.
+- [ ] AC27 (no severity exempt, D12): a `nit` finding's thread goes
+  through the same coder dispatch as AC4, and a `nit` thread with no
+  fix and no owner `/wontfix` makes the gate refuse.
+- [ ] AC28 (fork, D13): on a fork PR the coder cannot push to, the
+  confirmed thread's reply ends `coder cannot push to <fork>` and
+  `state: escalated to owner`; the coder is never invoked and
+  `coder_rounds = 0`.
+
 ## Rollout
 
-R1: protocol (AC1). R2: rows, posting and replay (AC2, AC12, AC14).
-R3: handler, coder and gate (AC3–AC11, AC13, AC15, AC16, AC18,
-AC20). R4: D6 context once #246 is merged (AC17). R5: the forge
-settings go on only after R3 is merged (AC19). Turned on earlier, the
-setting would leave every repoach thread resolvable only by the
-author, which D3 forbids.
+- R1: protocol (AC1).
+- R2: rows, posting and replay (AC2, AC12, AC14).
+- R3: handler, coder, owners and gate (AC3–AC11, AC13, AC15, AC16,
+  AC18, AC20–AC22, AC26–AC28).
+- R4: D6 context once #246 is merged (AC17).
+- R5: the GitLab receiver, the scheduled fallback and the GitHub
+  triggers (AC23–AC25).
+- R6: the forge settings go on only after R3 is merged (AC19).
+  Turned on earlier, every repoach thread would be resolvable only by
+  the author, which D3 forbids. Yoob's backlog row B-174 points at
+  this spec.
 
 ## Open Questions
 
-- Q1: Does a human reviewer's thread that carries no finding block the
-  merge? The forge setting (D3) blocks on every unresolved thread,
-  human ones included, while the ledger gate sees only finding
-  threads. Either human threads block (the forge decides, and the gate
-  adds `human threads unresolved: n`), or they are advisory, which
-  requires leaving the forge setting off and contradicts D3.
-- Q2: Who is an owner? The proposed default is the explicit
-  `[threads].owners` list. The alternative is every user with
-  Maintainer (GitLab) / admin (GitHub) permission on the project,
-  read from the forge.
-- Q3: GitLab has no CI trigger on a new note. How does a comment
-  reach `threads reply`: a project webhook to a runner service, a
-  scheduled pipeline (every N minutes, which costs runner minutes), or
-  only the next push? GitHub would need `pull_request_review_comment`
-  added to `auto-review.yml` (F15).
-- Q4: Default `coder_target`: commit straight on the PR branch (today's
-  coder path, F13) or on `fix/<pr>-<fp8>` merged with `--no-ff`. The
-  owner allowed both; the proposed default is `"pr"`.
-- Q5: Do non-blocking findings (minor, nit) follow the same closure?
-  With no debt (D7) each one needs a coder fix or an owner `/wontfix`
-  before the merge, which is far more coder runs than blocking
-  findings alone.
-- Q6: On a PR the coder cannot push to (a fork, an external
-  contributor), should the thread escalate at once instead of
-  spending two coder rounds?
+- Q1 (owner): where does the GitLab receiver (D10) run? Either on
+  hel1, beside the review runner (it also hosts `yoob.dev`), or on a
+  separate small VM so a webhook flood or a receiver fault cannot
+  touch the product host.
