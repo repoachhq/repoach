@@ -98,7 +98,10 @@ quoting them at head (0.3) cannot remove them from the base half.
   resolving ownership) records a not-covered row
   `spec coverage not graded: <Type>: <message> (fail closed)` instead of
   recording nothing (F10, the Sentinel finding 41 of #260): no row reads
-  as "coverage unknown", which the gate does not refuse.
+  as "coverage unknown", which the gate does not refuse. The message is
+  published as a merge reason, so URL credentials and forge tokens in it
+  are replaced by `***` (Sentinel finding 56 of #260: a failed fetch can
+  echo a credentialed remote URL).
 
 ## Amendment (0.4, 2026-10-26): a prose plan is no plan; an unresolvable ownership fails closed
 
