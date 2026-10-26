@@ -1,14 +1,14 @@
 ---
 id: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB
 title: Each CI job's LLM proxy runs on its own port and proves it is that job's process
-version: 1.0
+version: 1.1
 status: approved
 author: agent
 created: 2026-10-26
 updated: 2026-10-26
 
 owns:
-  code: [src/repoach/llm_proxy/instance.py, scripts/job_proxy.sh, tests/unit/test_job_proxy_instance.py, tests/unit/test_job_proxy_workflow_wiring.py, tests/integration/test_job_proxy_collision.py]
+  code: [src/repoach/llm_proxy/instance.py, scripts/job_proxy.sh, tests/job_proxy_fakes.py, tests/unit/test_job_proxy_instance.py, tests/unit/test_job_proxy_prove.py, tests/unit/test_job_proxy_workflow_wiring.py, tests/integration/test_job_proxy_collision.py]
   resources: [format:proxy-health-instance]
 
 depends_on: [SP-CI-SECRETS-ISOLATION, SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROXY-EDGE-HARDEN, SP-PROXY-SECURE-DEFAULTS, SP-CI-SMOKE-REPAIR, SP-CHAIN-STATUS-PROXY-DEFAULT, SP-RED-STOPS-THE-LINE]
@@ -74,29 +74,58 @@ and `.github/workflows/auto-review.yml` at `origin/develop` `f4d2b41`.
 ## Goals
 
 - G1: A proxy-starting job binds a port that is free when the job starts.
-  `python -m repoach.llm_proxy.instance port` binds port 0 and reads the
-  port back. The job exports `REPOACH_PROXY_PORT`,
-  `REPOACH_PROXY_INSTANCE` and `REPOACH_LLM_PROXY_BASE_URL` to every later
-  step through `$GITHUB_ENV`. No step of a proxy job names a port, and no
-  step sets these keys in its own `env:`, which would shadow `$GITHUB_ENV`.
-- G2: The health poll proves the proxy is the job's own. The job generates
-  an instance token (`<run_id>-<attempt>-<job>-<pid>-<16 hex>`) and passes it
-  as `REPOACH_PROXY_INSTANCE`. `/health` echoes it as `instance`. The poll
-  compares the two. A healthy answer with another token, or with none, fails
-  the job at once with `foreign proxy on <host:port> (instance=<seen>)`,
-  exit 3. A proxy that exits before it answers (a bind failure, say) fails
-  the job at once, with the log tail.
+  The helper asks the kernel for one: it binds port 0 with the Python
+  standard library and reads the port back. The job exports
+  `REPOACH_PROXY_PORT`, `REPOACH_PROXY_INSTANCE` and
+  `REPOACH_LLM_PROXY_BASE_URL` to every later step through `$GITHUB_ENV`.
+  No step of a proxy job names a port, and no step sets these keys in its
+  own `env:`, which would shadow `$GITHUB_ENV`.
+- G2: The job proves the listening proxy is the process it spawned, with
+  two proofs. Neither depends on the proxy's code, so the proof also holds
+  when the proxy comes from an older base ref.
+  - PID proof, which decides. `start` records the PID it spawned. The LISTEN
+    socket on the chosen port is read from `/proc/net/tcp` and
+    `/proc/net/tcp6` (state `0A`, local port in hex), and its inode must
+    appear among the `socket:[<inode>]` links in `/proc/<pid>/fd`.
+    - Why this source: for a process of the same user, both files are
+      readable without root, and nothing outside coreutils and awk is
+      needed. `ss -ltnp` also names the owner without root, but its output
+      would need parsing.
+    - A listener owned by another PID fails at once with `foreign proxy on
+      <host:port> (listener not owned by pid <pid>)`, exit 3.
+    - A spawned PID that is dead (its bind failed, say) fails at once with
+      `spawned proxy (pid <pid>) is dead`.
+  - Token proof, second. The job generates an instance token
+    (`<run_id>-<attempt>-<job>-<shell pid>-<16 hex>`) and passes it as
+    `REPOACH_PROXY_INSTANCE`; `/health` echoes it as `instance`.
+    - Another token fails with `foreign proxy on <host:port>
+      (instance=<seen>)`, exit 3.
+    - No echo means the proxy predates this spec. The PID proof then decides
+      alone, and the helper says `instance echo absent (proxy predates
+      SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB)`.
+- G2b: A job's checkout may predate the helper: the `review` job runs the
+  base ref, and `auto_fix` may run an un-rebased PR head. The helper
+  therefore imports nothing from `repoach`, and the workflow carries its
+  own copy.
+  - In `review` and `auto_fix`, a `Materialize job proxy helper` step writes
+    `$RUNNER_TEMP/job_proxy.sh` from a heredoc. The workflow file comes from
+    the PR, so this copy is current even when the checkout is not.
+  - A test pins the heredoc byte for byte to `scripts/job_proxy.sh`.
+  - Every PR, including the one that introduces this spec, passes its own
+    `review` job.
 - G3: Every place in the repository that starts a proxy and then talks to
-  it uses the same guard. That covers `ci.yml`'s smoke step and
-  `scripts/ci_local.sh`'s `proxy_smoke`. The latter used to skip whenever
-  8082 was bound; it now always runs, on its own port, and can neither be
-  answered by the operator's live proxy nor kill it.
-  `scripts/safe_merge.sh` starts no proxy (verified: no `llm_proxy`, no port
-  in it), so it needs nothing.
+  it uses the same helper: `ci.yml`'s smoke step and `scripts/ci_local.sh`'s
+  `proxy_smoke`.
+  - The local smoke used to skip whenever 8082 was bound. It now always
+    runs, on its own port, and can neither be answered by the operator's
+    live proxy nor kill it.
+  - `scripts/safe_merge.sh` starts no proxy (verified: no `llm_proxy` and no
+    port in it), so it needs nothing.
 - G4: The job stops its own proxy. The last step of `review` and of
-  `auto_fix` is `bash scripts/job_proxy.sh stop` under `if: always()`. It
-  sends SIGTERM, waits up to 5 s, then sends SIGKILL. The runner's orphan
-  cleanup (F7) is no longer the only thing that frees the port.
+  `auto_fix` is `bash "$RUNNER_TEMP/job_proxy.sh" stop` under
+  `if: always()`. It sends SIGTERM, waits up to 5 s, then sends SIGKILL.
+  The runner's orphan cleanup (F7) is no longer the only thing that frees
+  the port.
 
 ## Non-Goals
 
@@ -105,70 +134,85 @@ and `.github/workflows/auto-review.yml` at `origin/develop` `f4d2b41`.
   the URL; the value only satisfies Settings validation on an older PR head
   (comment in the workflow). `merge-on-ci.yml:174` is the same case.
 - NG2: The instance token is not a credential. Authentication stays the
-  bearer token of SP-PROXY-EDGE-HARDEN. The instance token is a per-job
-  nonce, shown to anonymous `/health` callers on purpose, so that the
-  unauthenticated poll can read it. It reveals nothing about routing or
-  failure state.
+  bearer token of SP-PROXY-EDGE-HARDEN. The token is a per-job nonce, shown
+  to anonymous `/health` callers on purpose. It reveals nothing about
+  routing or failure state.
 - NG3: No change to the operator's systemd proxy or to the 8082 default.
   A process started without `REPOACH_PROXY_INSTANCE` answers `/health`
   exactly as before.
+- NG4: Runners in different network namespaces (containers) would each see
+  only their own `/proc/net/tcp`. That is fine, because they cannot collide
+  on loopback either. Only the shared-host case of F1 is in scope.
 
 ## Assumptions
 
-- A1: The window between `port` closing its probe socket and uvicorn binding
-  is short (milliseconds). If another process takes the port in that window,
-  G2 catches it, either as a foreign proxy or as our own proxy exiting with
-  `Errno 98`. Nothing in this design depends on the window being empty.
-- A2: Each runner has its own workspace (`_work`), so `logs/llm_proxy.pid`
-  of one job is never read by another job.
+- A1: The window between the port pick and uvicorn's bind is short
+  (milliseconds). If another process takes the port in that window, the
+  PID proof catches it: our process is either dead (`Errno 98`) or does not
+  own the listener. Nothing in this design depends on the window being
+  empty.
+- A2: Each runner has its own workspace and `$RUNNER_TEMP`, so one job
+  never reads another job's pid file.
+- A3: `python -m repoach.llm_proxy` runs uvicorn in the spawned process
+  itself: `nohup` execs, with no worker fork. The listening socket's inode
+  is therefore among the spawned PID's fds. Measured: AC5 and AC7 pass on
+  the real proxy.
 
 ## Interface
 
-`python -m repoach.llm_proxy.instance port [--host H]` prints a free TCP
-port on `H` (default `127.0.0.1`).
+`scripts/job_proxy.sh start|stop|prove PID PORT INSTANCE`. It reads
+`JOB_PROXY_HOST` (127.0.0.1), `JOB_PROXY_DIR` (logs), `JOB_PROXY_TIMEOUT_S`
+(20) and `PYTHON` (python). Its dependencies are bash, coreutils, awk, curl
+and the Python standard library.
 
-`python -m repoach.llm_proxy.instance check --url URL --expect TOKEN` probes
-`URL` once. It prints one line and exits with:
+`prove` makes one probe and prints one line:
 
 | exit | meaning | line |
 |---|---|---|
-| 0 | `/health` is healthy and echoes `TOKEN` | `own proxy on <host:port>` |
-| 1 | nothing healthy answered | `no healthy proxy on <host:port>` |
-| 2 | `--expect` is empty | (stderr) |
-| 3 | healthy, and echoes another token or none | `foreign proxy on <host:port> (instance=<seen or none>)` |
+| 0 | the PID owns the listener, and `/health` echoes INSTANCE or nothing | `own proxy on <h:p> (pid <pid>, instance <token>)` or `... ; instance echo absent (proxy predates SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB)` |
+| 1 | not ready: no listener yet, or `/health` not healthy yet | `no listener on <h:p> yet` / `own listener ..., /health not healthy yet` |
+| 2 | usage | (stderr) |
+| 3 | foreign: the listener is not the PID's, or another token | `foreign proxy on <h:p> (listener not owned by pid <pid>)` / `foreign proxy on <h:p> (instance=<seen>)` |
+| 4 | the spawned PID is dead | `spawned proxy (pid <pid>) is dead — ...` |
 
-`scripts/job_proxy.sh start|stop`. It reads `JOB_PROXY_HOST` (127.0.0.1),
-`JOB_PROXY_DIR` (logs), `JOB_PROXY_TIMEOUT_S` (20) and `PYTHON` (python).
-`start` writes `<dir>/llm_proxy.log` and `<dir>/llm_proxy.pid`. It appends
-`REPOACH_PROXY_PORT=`, `REPOACH_PROXY_INSTANCE=` and
-`REPOACH_LLM_PROXY_BASE_URL=` to `$GITHUB_ENV` when that is set, prints the
-same three lines on stdout, and exits 0, 1 or 3 as in G2.
+`start`:
+- writes `<dir>/llm_proxy.log` and `<dir>/llm_proxy.pid`;
+- runs `prove` every 0.5 s until it gets 0, 3 or 4;
+- on 0, appends `REPOACH_PROXY_PORT=`, `REPOACH_PROXY_INSTANCE=` and `REPOACH_LLM_PROXY_BASE_URL=` to `$GITHUB_ENV` when that is set, and prints the same lines on stdout;
+- exits 0 (own), 3 (foreign) or 1 (dead or timeout).
 
 `format:proxy-health-instance`: `GET /health` returns `{"status":
 "healthy", "instance": "<token>"}` to an anonymous caller when the process
 has `REPOACH_PROXY_INSTANCE`. An authenticated caller gets `instance` as
 well, next to `breaker` and `credits`. Without the variable, the body is
-unchanged.
+unchanged. `repoach.llm_proxy.instance.current_instance()` reads the
+variable.
 
 ## Behavior
 
 ### Nominal
 
-1. `start` picks a port and a token, then starts the proxy with
+1. `Materialize job proxy helper` writes `$RUNNER_TEMP/job_proxy.sh`. This
+   step exists in the two `auto-review.yml` jobs only; `ci.yml` and
+   `ci_local.sh` run `scripts/job_proxy.sh` from their own checkout.
+2. `start` picks a port and a token, then spawns the proxy with
    `REPOACH_PROXY_HOST`, `REPOACH_PROXY_PORT` and `REPOACH_PROXY_INSTANCE`.
-2. Every 0.5 s until the timeout, `start` runs `check`. On 0 it exports the
-   three keys and returns.
-3. The later steps read `REPOACH_LLM_PROXY_BASE_URL` from the environment.
-4. The last step runs `stop`.
+3. `start` loops on `prove` until own, foreign, dead or timeout. On own it
+   exports the three keys.
+4. The later steps read `REPOACH_LLM_PROXY_BASE_URL` from the environment.
+5. The last step runs `stop`.
 
 ### Edge cases
 
-- Two jobs overlap on one host → they get two ports. Each proves its own
-  token, and each token is foreign on the other job's port (AC5).
-- The port is taken between the pick and the bind:
-  - by another proxy → the check answers 3, and the job stops at once;
-  - by something else → our proxy exits with `Errno 98`, and `start`
-    sees the pid is gone and exits 1 with the log tail.
+- Two jobs overlap on one host → they get two ports. Each passes both
+  proofs for itself and fails both for the other job (AC5).
+- The 2026-10-26 scenario on one fixed port → the second job's spawned PID
+  is dead, so the result is exit 4 → exit 1. A prober whose PID is alive
+  but does not own the listener gets exit 3. The old poll, by contrast,
+  passed (AC6).
+- The proxy comes from a base ref without the echo → the PID proof decides,
+  and the helper logs `instance echo absent` (AC7, and measured against
+  `origin/develop` `f4d2b41`).
 - `stop` without a pid file → a no-op with a message, exit 0. `stop`
   when the pid is already gone → removes the pid file, exit 0.
 
@@ -176,17 +220,12 @@ unchanged.
 
 - The proxy never becomes healthy within `JOB_PROXY_TIMEOUT_S` → exit 1, the
   log tail is printed, and the proxy is killed.
-- The bootstrap PR. The `review` job installs the BASE ref and runs
-  `scripts/job_proxy.sh` from the base checkout (SP-CI-SECRETS-ISOLATION
-  layer 2), but the workflow file comes from the PR. On the PR that
-  introduces this spec, the base has neither the helper nor the
-  `instance` echo, so that PR's own `review` job cannot start its proxy.
-  It is checked locally (AC1–AC7) and merged by the owner. Every later PR
-  runs on a base that has both.
+- The embedded copy drifts from `scripts/job_proxy.sh` → the parity test
+  fails (AC3).
 
 ## Architecture Impact
 
-- Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-CI-SECRETS-ISOLATION (the helper runs from the base checkout of the secret-holding review job, never from PR code)
+- Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-CI-SECRETS-ISOLATION (the review job still executes only the base-ref install; the helper comes from the workflow file, not from the PR checkout)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-PROXY-EDGE-HARDEN (the anonymous `/health` body gains exactly one field, `instance`; breaker/credits stay authenticated-only)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-PROXY-FIRST-BYTE-DEADLINE (the tests build the proxy `Settings` it owns to drive `/health` hermetically)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-PROXY-SECURE-DEFAULTS (the bind stays on loopback, and every job still passes a token)
@@ -199,23 +238,23 @@ unchanged.
 
 ```mermaid
 flowchart TD
-    A[job_proxy.sh start] --> B[instance port: free port + token]
-    B --> C[python -m repoach.llm_proxy with PORT + INSTANCE]
-    C --> D{instance check on /health}
-    D -->|own| E[export to GITHUB_ENV, later steps]
-    D -->|foreign| F[fail: foreign proxy on host:port]
-    E --> G[job_proxy.sh stop, if always]
+    A[Materialize helper into RUNNER_TEMP] --> B[start: free port + token, spawn proxy, record PID]
+    B --> C{PID owns the LISTEN socket?}
+    C -->|no / PID dead| F[fail: foreign proxy or dead spawn]
+    C -->|yes| D{/health instance}
+    D -->|matches or absent| E[export to GITHUB_ENV; stop at job end]
+    D -->|other token| F
 ```
 
 ## Acceptance Criteria
 
-- [x] AC1: the token check classifies own / foreign / unreachable, the CLI returns 0 / 3 / 1, and the foreign message names `host:port` — `tests/unit/test_job_proxy_instance.py`.
-- [x] AC2: `/health` echoes `instance` to anonymous and authenticated callers, and is unchanged without the variable — `tests/unit/test_job_proxy_instance.py::test_health_echoes_instance_to_anonymous_and_authenticated`, `tests/unit/test_job_proxy_instance.py::test_health_without_instance_keeps_the_liveness_only_body`.
-- [x] AC3: no step of `review` or `auto_fix` names a port or sets the proxy keys in `env:`; each job starts through the helper, and the helper writes the three keys to `$GITHUB_ENV` — `tests/unit/test_job_proxy_workflow_wiring.py`.
-- [x] AC4: the last step of `review` and of `auto_fix` is `job_proxy.sh stop` under `if: always()`; the ci.yml smoke uses the helper with no fixed port — `tests/unit/test_job_proxy_workflow_wiring.py::test_proxy_jobs_stop_their_proxy_last_and_always`, `tests/unit/test_job_proxy_workflow_wiring.py::test_ci_smoke_uses_the_helper_and_no_fixed_port`.
-- [x] AC5: simulated collision with two real proxies: two concurrent `start` calls get two ports, each `/health` matches its own token and is foreign for the other job's token, and `stop` leaves no pid alive — `tests/integration/test_job_proxy_collision.py::test_two_overlapping_jobs_get_two_ports_and_prove_their_own_proxy`.
-- [x] AC6: the measurement, replaying runs 40301029793 / 40301669894 locally on one fixed port. The second proxy logs `[Errno 98]`, the old `GET /health` poll still gets 200, and the new check exits 3 with `foreign proxy on 127.0.0.1:<port> (instance=first-job)` — `tests/integration/test_job_proxy_collision.py::test_old_fixed_port_wiring_is_caught_as_foreign`.
-- [x] AC7: the helper refuses unknown commands with exit 2 — `tests/integration/test_job_proxy_collision.py::test_helper_rejects_unknown_commands`.
+- [x] AC1: `prove`, PID proof then token. The cases are: own PID with a matching token → 0; own PID without an echo → 0 with `instance echo absent (proxy predates SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB)`; own PID with another token → 3 `(instance=…)`; a listener owned by another PID → 3 `(listener not owned by pid …)`; a dead spawned PID → 4; no listener → 1; unhealthy `/health` → 1; usage → 2 — `tests/unit/test_job_proxy_prove.py`.
+- [x] AC2: `/health` echoes `instance` to anonymous and authenticated callers, and is unchanged without the variable — `tests/unit/test_job_proxy_instance.py`.
+- [x] AC3: both proxy jobs materialize a helper byte-identical to `scripts/job_proxy.sh`, start through it, name no port, and set no proxy key in `env:`; the helper exports the three keys to `$GITHUB_ENV` and imports no `repoach` module beyond the spawned `repoach.llm_proxy` — `tests/unit/test_job_proxy_workflow_wiring.py`.
+- [x] AC4: the last step of `review` and of `auto_fix` is the helper's `stop` under `if: always()`; the ci.yml smoke uses the helper with no fixed port — `tests/unit/test_job_proxy_workflow_wiring.py::test_proxy_jobs_stop_their_proxy_last_and_always`, `tests/unit/test_job_proxy_workflow_wiring.py::test_ci_smoke_uses_the_helper_and_no_fixed_port`.
+- [x] AC5: simulated collision with two real proxies. Two concurrent `start` calls get two ports. For each job's port, the job's own PID and token → 0, the other job's PID → 3 (`listener not owned by pid`), and the other job's token → 3 (`instance=`). No pid survives `stop` — `tests/integration/test_job_proxy_collision.py::test_two_overlapping_jobs_get_two_ports_and_prove_their_own_proxy`.
+- [x] AC6: the measurement, replaying runs 40301029793 / 40301669894 locally on one fixed port. The second proxy logs `[Errno 98]`, and the old `GET /health` poll still gets 200. `prove` with the second job's (dead) PID → 4. `prove` with a live PID that does not own the listener → 3 — `tests/integration/test_job_proxy_collision.py::test_old_fixed_port_wiring_is_refused_by_the_pid_proof`.
+- [x] AC7: this PR's own review job, simulated. A `python -m repoach.llm_proxy` that predates the echo (a shadow package answering `{"status": "healthy"}` only) is started by `start` and accepted on the PID proof alone. The three keys are exported, and `stop` leaves no process — `tests/integration/test_job_proxy_collision.py::test_base_proxy_without_instance_echo_starts_on_the_pid_proof`. Measured as well against the real `origin/develop` `f4d2b41` source: two concurrent jobs got ports 33177 and 53981, both `instance echo absent`, and the cross-PID probe → 3. The CI confirmation is the `Architect / Sentinel / Tester / Scribe` check on PR #264, which runs the base-ref proxy.
 
 ## Open Questions
 
