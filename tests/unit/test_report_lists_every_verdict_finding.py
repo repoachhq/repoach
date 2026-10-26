@@ -131,7 +131,9 @@ def test_report_names_each_judge_and_method(tmp_path: Path) -> None:
     assert mechanical.judge == "mechanical"
     assert mechanical.state == "verified"
     assert mechanical.verification_method == "mechanical:missing_test"
-    assert mechanical.evidence == "symbol_search: no test for test_migration_upgrade"
+    assert mechanical.evidence == (
+        "symbol_search: no test for test_migration_upgrade (searched 0 test files)"
+    )
 
     refuter_states = sorted(entry.state for entry in entries if entry.judge == "refuter")
     assert refuter_states == ["deferred", "refuted", "refuted"]
