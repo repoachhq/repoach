@@ -264,6 +264,13 @@ def defined_names(*texts: str) -> frozenset[str]:
     Read over the cited file and the PR's hunks on it, so a stop word the
     cited code defines (``def call``, a ``name`` property) is still an
     identifier of the claim (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G1, 0.3).
+
+    Args:
+        *texts: The cited file's source and the PR's diff hunks on it
+            (a ``+`` or space prefix is allowed at line start).
+
+    Returns:
+        The names defined anywhere in ``texts``, as a frozenset.
     """
     names: set[str] = set()
     for text in texts:
