@@ -250,6 +250,27 @@ def test_an_uninitialised_ledger_still_lists_the_run_outcomes(tmp_path: Path) ->
     assert entries[0].severity == ""
     assert entries[0].status == ""
     assert report_findings(db, pr_number=1, facts=facts) == []
+    assert not db.exists()
+
+
+def test_the_report_never_creates_the_ledger_schema(tmp_path: Path) -> None:
+    db = tmp_path / "empty.db"
+    db.touch()
+    facts = MergeFacts(
+        head_sha=HEAD,
+        ci_green=True,
+        open_blocking_findings=0,
+        spec_covered=False,
+        spec_coverage_known=False,
+        review_complete=True,
+        review_integrity_known=False,
+    )
+    refutation = Refutation(7, "a.py", 3, ClaimType.DESIGN, "refuted", "vague")
+
+    entries = report_findings(db, pr_number=1, facts=facts, refutations=[refutation])
+
+    assert [entry.finding_id for entry in entries] == [7]
+    assert db.stat().st_size == 0
 
 
 def test_a_refuter_entry_carries_what_the_judge_was_served(tmp_path: Path) -> None:
