@@ -1,7 +1,7 @@
 ---
 id: SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS
 title: Common words and fully served identifiers never defer a refuter verdict
-version: 1.0
+version: 0.2
 status: approved
 author: agent
 created: 2026-10-26
@@ -17,9 +17,41 @@ provides_to: []
 constraints:
   min_identifier_chars: 4
   refuter_rule_version: 2
+  refuter_context_ceiling_default: 200000
 ---
 
 # Common words and fully served identifiers never defer a refuter verdict
+
+## Amendment (0.2, 2026-10-26): the context adapts to the evidence, within a ceiling (Q1 decided)
+
+### Facts
+
+| # | Fact | Where |
+|---|---|---|
+| F9 | Owner rule (2026-10-25), restated by the coordinator: the refuter's context must be large enough for it to do its job, and it is measured in tokens. Decision D5: `refuter_context_tokens` is a floor, the budget adapts to the evidence, and it stops at a ceiling | coordinator message, 2026-10-26 |
+| F10 | On the `5ed6ba2` tree at the 40 000 floor, with 0.1's stop-list, finding 41 leaves `_readable_base`, `specs_owning` and `spec_coverage_known` unserved. They are defined in `spec_gate.py`, and the 2 576-line `orchestrator.py` takes the budget (0.1 Q1) | probe over `build_evidence` at 40 000 |
+| F11 | With this amendment, at the default settings (floor 40 000, ceiling 200 000) on the `5ed6ba2` tree, with the refuting reasoning: finding 41 is `refuted` with `budget_used` 65 829, and finding 66 is `refuted` with `budget_used` 46 899 | probe over `judge_finding` with defaults |
+
+### Goals
+
+- G5 (D5): the budget of one finding is `max(floor, needed)`, where `needed` = tokens of the whole cited file + the hits of the claim's identifiers (cited file and elsewhere, within the 50-hit cap, ±10 lines each) + the diff hunks on the cited file + the prompt and the reply reserves. It is capped by `[gates].refuter_context_ceiling` (default 200 000, `REPOACH_REFUTER_CONTEXT_CEILING` outranks it, never below the floor; a ceiling below `refuter_context_tokens` is refused). The cited spec section fills what is left of that budget. When even the ceiling cannot hold the cited file, the identifiers' hits and the hunks, the judge is not called and the finding defers with `evidence exceeds the ceiling (<n> tokens needed, ceiling <c>)`. The gate prints that reason as `needs judgement (...)`. Nothing is judged on a silent partial. Tokens use the existing estimator, `ceil(utf8_bytes / 3)`; no money figure enters.
+- G6: the context used is recorded as `budget_used` on the refutation payload (`review pr` JSON, the review cache) and on the ledger row (`pr_findings.budget_used`, added by migration, `INTEGER NOT NULL DEFAULT 0`). Both a refuter verdict and a re-check at the head (resolved, still present, needs judgement) write it.
+- G7: the `needs judgement` stamp key of G3 also names the ceiling: `refuter rule <V>, context <N>, ceiling <C>`.
+
+### Acceptance criteria (0.2)
+
+- [x] AC9 (G5): a cited file past the floor is served whole and judged, and `budget_used` is above the floor. Small evidence keeps the floor. A cited file over the ceiling defers with `evidence exceeds the ceiling (<n> tokens needed, ceiling <c>)`, without a judge call, and the gate names it — `pytest -q tests/unit/test_refuter_context_adapts_to_evidence.py -k "grows_past_the_floor or keeps_the_floor or over_the_ceiling or named_by_the_gate"`.
+- [x] AC10 (G5, G6): finding 41's shape, a 2 576-line cited file with the claim's identifiers defined in `spec_gate.py`, resolves at the default settings, and the ledger row records `budget_used` above the floor — `pytest -q tests/integration/test_refuter_veto_replays_pr260.py -k 2576-lines`.
+- [x] AC11 (G6): a verdict writes `budget_used` on the outcome, its JSON and the ledger row — `pytest -q tests/unit/test_refuter_context_adapts_to_evidence.py::test_verdict_records_budget_used_on_the_ledger_row`.
+- [x] AC12 (G5): the ceiling resolves env > `repoach.toml` > 200 000, and a ceiling below `refuter_context_tokens` is refused — `pytest -q tests/unit/test_refuter_context_adapts_to_evidence.py::test_ceiling_setting_resolves_and_refuses_a_ceiling_below_the_floor`.
+- [x] AC13 (G7): a ceiling change re-judges a `needs judgement` stamp at the same head — `pytest -q tests/unit/test_refuter_veto_names_real_identifiers.py::test_needs_judgement_is_re_judged_when_the_ceiling_changes`.
+- [x] AC14: the existing budget tests now pin the ceiling. `test_judge_receives_a_budget_of_its_own_context` and `test_hits_cut_by_the_budget_defer_without_calling_the_judge` pass a ceiling. The unserved end-to-end test sets `REPOACH_REFUTER_CONTEXT_CEILING=40000` and expects `evidence exceeds the ceiling` — `pytest -q tests/integration/test_refuter_defers_unserved_end_to_end.py tests/unit/test_refuter_defers_unseen.py`.
+
+### Ordering
+
+This branch carries #260's `5ed6ba2` (`fix(reverify): judge older findings with the configured refuter context`) as a cherry-pick. `reverify_older_findings` takes the `context_tokens` parameter exactly as #260 defines it. #268 merges after #260.
+
+## 0.1
 
 ## Intent
 
@@ -65,7 +97,7 @@ under change.
 
 ## Non-Goals
 
-- No change to the evidence budget, the 50-hit cap, the ranking or the persona.
+- No change to the 50-hit cap, the ranking or the persona. (0.1 left the budget alone; 0.2 G5 makes it adapt.)
 - No change to the context passed to the re-check of older findings. That is F7, on PR #260.
 - The `reverify_older_findings` `context_tokens` parameter added here only keys the stamp. #260 adds the same parameter and threads it into the refuter.
 
@@ -133,4 +165,4 @@ flowchart TD
 
 ## Open Questions
 
-- Q1: with F7 merged and the floor context, finding 41's own identifiers `_readable_base`, `specs_owning` and `spec_coverage_known` live in `spec_gate.py` and are not served at 40 000 tokens, because the cited 2 576-line file takes the budget. The finding then defers as `identifier not served: …`, which names what is missing. Raising `[gates].refuter_context_tokens` is the owner's call, not this slice's.
+- Q1 (decided in 0.2, G5): with F7 merged and the floor context, finding 41's own identifiers `_readable_base`, `specs_owning` and `spec_coverage_known` live in `spec_gate.py` and are not served at 40 000 tokens, because the cited 2 576-line file takes the budget. The finding then defers as `identifier not served: …`, which names what is missing. Decided: the budget adapts to the evidence up to a ceiling.
