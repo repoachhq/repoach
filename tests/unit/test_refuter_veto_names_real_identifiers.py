@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from repoach.gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig
-from repoach.review import head_reverify
+from repoach.review import head_reverify, refuter_evidence
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -55,6 +55,7 @@ from repoach.review.refuter_evidence import (
     _classify,
     build_evidence,
     claim_identifiers,
+    defined_names,
     is_stop_word,
 )
 
@@ -365,3 +366,52 @@ def test_needs_judgement_is_re_judged_when_the_ceiling_changes(tmp_path: Path) -
     _reverify(db, root, HEAD_B, calls)
     _reverify(db, root, HEAD_B, calls, context_ceiling=120_000)
     assert len(calls) == 2
+
+
+def test_defined_names_reads_definitions_not_keyword_arguments() -> None:
+    source = (
+        "class Adapter:\n"
+        "    def call(self, prompt):\n"
+        "        self.name = prompt\n"
+        "        log(message=prompt)\n"
+        "case: str = 'x'\n"
+    )
+    names = defined_names(source, "@@ -1 +1 @@\n+def without(x):\n+    return x\n")
+    assert {"Adapter", "call", "name", "case", "without"} <= names
+    assert "message" not in names
+
+
+def test_defined_stop_word_stays_an_identifier_and_d2_applies(tmp_path: Path) -> None:
+    cited = "class Provider:\n    def call(self, prompt):\n        return self.send(prompt)\n"
+    users = {f"src/user_{n:03}.py": "def use(p):\n    p.call('x')\n" for n in range(80)}
+    _git_tree(tmp_path, {CITED: cited, "src/plain.py": "x = 1\ny = 2\n", **users})
+    claim = "`call` sends the prompt unredacted"
+    assert claim_identifiers(claim, cited_file=CITED, defined=defined_names(cited))[0] == ("call",)
+    bundle = _bundle(tmp_path, claim)
+    assert "grep call: 81 hits (50 served)" in bundle.reads
+    assert bundle.partial == ()
+    assert bundle.partial_elsewhere == ("call",)
+    judgement = judge_finding(
+        _finding(claim),
+        repo_root=tmp_path,
+        judge=lambda _p: _reply("refuted", "call now passes the prompt through _redacted"),
+    )
+    assert judgement.status is FindingStatus.REFUTED
+    elsewhere = build_evidence(
+        "x = 1\ny = 2\n",
+        repo_root=tmp_path,
+        reader=make_repo_file_reader(tmp_path),
+        path="src/plain.py",
+        line_start=2,
+        line_end=2,
+        claim=claim,
+        budget_tokens=200_000,
+    )
+    assert elsewhere is not None
+    assert not any(read.startswith("grep call") for read in elsewhere.reads)
+    assert claim_identifiers(claim, cited_file="src/plain.py")[0] == ()
+
+
+def test_is_stop_word_reads_stop_words_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(refuter_evidence, "STOP_WORDS", frozenset())
+    assert not any(refuter_evidence.is_stop_word(word) for word in MEASURED_COMMON_WORDS)

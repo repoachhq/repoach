@@ -242,8 +242,34 @@ match exactly; the common tokens and English words match case-insensitively."""
 
 
 def is_stop_word(token: str) -> bool:
-    """Return True when ``token`` is a keyword, builtin, common token or generic English word."""
-    return token in _PYTHON_WORDS or token.lower() in _COMMON_TOKENS | _ENGLISH_WORDS
+    """Return True when ``token``, as written or lower-cased, is in :data:`STOP_WORDS`."""
+    return token in STOP_WORDS or token.lower() in STOP_WORDS
+
+
+_DEFINITION = re.compile(
+    r"\b(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"|\bself\.([A-Za-z_][A-Za-z0-9_]*)(?:\s*:[^=\n]*)?\s=(?!=)"
+    r"|^[+ ]?[ \t]*([A-Za-z_][A-Za-z0-9_]*)(?:\s*:[^=\n]*)?\s=(?!=)",
+    re.MULTILINE,
+)
+"""A name a Python line defines: ``def``/``class``, or a ``self.<name> =`` / ``<name> =`` assignment.
+
+The ``=`` must follow whitespace, so a keyword argument (``message=...``) on a
+continuation line is not read as a definition."""
+
+
+def defined_names(*texts: str) -> frozenset[str]:
+    """Return the names ``texts`` define (``def``, ``class``, ``self.<name> =``, ``<name> =``).
+
+    Read over the cited file and the PR's hunks on it, so a stop word the
+    cited code defines (``def call``, a ``name`` property) is still an
+    identifier of the claim (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G1, 0.3).
+    """
+    names: set[str] = set()
+    for text in texts:
+        for match in _DEFINITION.finditer(text):
+            names.update(group for group in match.groups() if group)
+    return frozenset(names)
 
 
 GREP_TIMEOUT_S = 60
@@ -479,13 +505,16 @@ def _is_version(token: str) -> bool:
     return bool(re.fullmatch(r"[\d.]+\.\w+", token))
 
 
-def claim_identifiers(claim: str, *, cited_file: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def claim_identifiers(
+    claim: str, *, cited_file: str, defined: Collection[str] = ()
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return ``(identifiers, paths)`` the claim names, each deduplicated, in order.
 
     Identifiers come from backticked spans (``Foo.bar()`` yields ``Foo``
     and ``bar``) and from bare CamelCase / snake_case / UPPER_SNAKE
     words, never shorter than four characters and never a
-    :data:`STOP_WORDS` entry; paths from file-name-shaped tokens (a bare file name is
+    :data:`STOP_WORDS` entry unless ``defined`` holds it (the cited file or
+    the diff defines it, :func:`defined_names`); paths from file-name-shaped tokens (a bare file name is
     looked up among the tracked files, :func:`resolve_claim_path`). When
     the claim talks about tests, the cited file's module name is
     searched first, so "no test covers this module" meets the tests that
@@ -499,7 +528,7 @@ def claim_identifiers(claim: str, *, cited_file: str) -> tuple[tuple[str, ...], 
             len(token) >= _MIN_IDENTIFIER_LEN
             and _IDENTIFIER.match(token)
             and not _SPEC_LABEL.fullmatch(token)
-            and not is_stop_word(token)
+            and (token in defined or not is_stop_word(token))
             and token not in identifiers
         ):
             identifiers.append(token)
@@ -1039,7 +1068,8 @@ def build_evidence(
     served = _cited_file(assembly, source, path=path, line_start=line_start, line_end=line_end)
     if served is None:
         return None
-    identifiers, paths = claim_identifiers(claim, cited_file=path)
+    defined = defined_names(source, *(_diff_hunks(diff, path) if diff else ()))
+    identifiers, paths = claim_identifiers(claim, cited_file=path, defined=defined)
     _search(
         assembly,
         reader,
