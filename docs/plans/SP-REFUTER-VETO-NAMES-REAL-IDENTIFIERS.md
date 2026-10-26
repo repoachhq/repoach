@@ -82,6 +82,22 @@ Drop Python names, common tokens and generic English words from a claim's identi
 - **Done when**: pytest tests/unit/test_refuter_veto_names_real_identifiers.py passes
 - **Unit tests**: `tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_names_reads_definitions_not_keyword_arguments`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_stop_word_stays_an_identifier_and_d2_applies`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_is_stop_word_reads_stop_words_only`
 
+## Step 11 — One resolver for the refuter budget, one format for the stamp
+
+- **Files**: `src/repoach/gates/config.py`, `src/repoach/review/head_reverify.py`, `tests/unit/test_refuter_context_adapts_to_evidence.py`
+- **Action**: Extract _resolve_refuter_size shared by the floor and the ceiling, add resolve_refuter_budget used by auto_merge, the orchestrator and the refuter, and write and read the needs-judgement stamp through needs_judgement_stamp and stamp_key; render the judge prompt once per finding.
+- **Commit**: `refactor(refuter): one budget resolver and one stamp format`
+- **Done when**: pytest tests/unit/test_refuter_context_adapts_to_evidence.py tests/unit/test_refuter_veto_names_real_identifiers.py passes
+- **Unit tests**: `tests/unit/test_refuter_context_adapts_to_evidence.py::test_ceiling_refuses_a_bool_or_a_non_integer`, `tests/unit/test_refuter_context_adapts_to_evidence.py::test_ceiling_env_invalid_falls_back_to_toml`, `tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_raises_a_ceiling_below_the_floor_and_takes_overrides`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_stamp_is_written_and_read_by_one_format`
+
+## Step 12 — Pin the budget_used migration and shared refuter test fixtures
+
+- **Files**: `tests/refuter_fakes.py`, `src/repoach/review/findings.py`, `tests/unit/test_refuter_context_adapts_to_evidence.py`
+- **Action**: Lift git_tree, judge_reply and blocking_finding into tests/refuter_fakes.py for the three refuter suites, and test the budget_used column migration and that a None budget keeps the recorded value.
+- **Commit**: `test(refuter): pin the budget migration and share fixtures`
+- **Done when**: pytest tests/unit/test_refuter_context_adapts_to_evidence.py passes
+- **Unit tests**: `tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_used_column_is_added_to_a_pre_existing_pr_findings_table`, `tests/unit/test_refuter_context_adapts_to_evidence.py::test_none_budget_used_keeps_the_recorded_value`
+
 ## Integration tests
 
 - `tests/integration/test_refuter_veto_replays_pr260.py::test_measured_refutation_settles_the_finding_at_the_next_head`
@@ -260,6 +276,40 @@ Drop Python names, common tokens and generic English words from a claim's identi
         "tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_names_reads_definitions_not_keyword_arguments",
         "tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_stop_word_stays_an_identifier_and_d2_applies",
         "tests/unit/test_refuter_veto_names_real_identifiers.py::test_is_stop_word_reads_stop_words_only"
+      ]
+    },
+    {
+      "index": 11,
+      "title": "One resolver for the refuter budget, one format for the stamp",
+      "files": [
+        "src/repoach/gates/config.py",
+        "src/repoach/review/head_reverify.py",
+        "tests/unit/test_refuter_context_adapts_to_evidence.py"
+      ],
+      "action": "Extract _resolve_refuter_size shared by the floor and the ceiling, add resolve_refuter_budget used by auto_merge, the orchestrator and the refuter, and write and read the needs-judgement stamp through needs_judgement_stamp and stamp_key; render the judge prompt once per finding.",
+      "commit_message": "refactor(refuter): one budget resolver and one stamp format",
+      "done_when": "pytest tests/unit/test_refuter_context_adapts_to_evidence.py tests/unit/test_refuter_veto_names_real_identifiers.py passes",
+      "unit_tests": [
+        "tests/unit/test_refuter_context_adapts_to_evidence.py::test_ceiling_refuses_a_bool_or_a_non_integer",
+        "tests/unit/test_refuter_context_adapts_to_evidence.py::test_ceiling_env_invalid_falls_back_to_toml",
+        "tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_raises_a_ceiling_below_the_floor_and_takes_overrides",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_stamp_is_written_and_read_by_one_format"
+      ]
+    },
+    {
+      "index": 12,
+      "title": "Pin the budget_used migration and shared refuter test fixtures",
+      "files": [
+        "tests/refuter_fakes.py",
+        "src/repoach/review/findings.py",
+        "tests/unit/test_refuter_context_adapts_to_evidence.py"
+      ],
+      "action": "Lift git_tree, judge_reply and blocking_finding into tests/refuter_fakes.py for the three refuter suites, and test the budget_used column migration and that a None budget keeps the recorded value.",
+      "commit_message": "test(refuter): pin the budget migration and share fixtures",
+      "done_when": "pytest tests/unit/test_refuter_context_adapts_to_evidence.py passes",
+      "unit_tests": [
+        "tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_used_column_is_added_to_a_pre_existing_pr_findings_table",
+        "tests/unit/test_refuter_context_adapts_to_evidence.py::test_none_budget_used_keeps_the_recorded_value"
       ]
     }
   ],
