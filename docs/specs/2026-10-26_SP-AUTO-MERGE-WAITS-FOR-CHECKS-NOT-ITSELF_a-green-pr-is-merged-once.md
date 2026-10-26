@@ -1,17 +1,17 @@
 ---
 id: SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF
 title: Auto-merge waits for the named required checks, never for itself, and a green PR is merged once
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-26
 updated: 2026-10-26
 
 owns:
-  code: [src/repoach/review/merge_wait.py, tests/merge_wait_fakes.py, tests/github_concurrency_sim.py, tests/unit/test_merge_wait_required_checks.py, tests/unit/test_merge_wait_rearm.py, tests/unit/test_merge_wait_workflows.py, tests/unit/test_merge_attempts_ledger.py, tests/unit/test_merge_wait_stranded.py]
+  code: [src/repoach/review/merge_wait.py, tests/merge_wait_fakes.py, tests/github_concurrency_sim.py, tests/unit/test_merge_wait_required_checks.py, tests/unit/test_merge_wait_rearm.py, tests/unit/test_merge_wait_workflows.py, tests/unit/test_merge_attempts_ledger.py, tests/unit/test_merge_wait_stranded.py, tests/fixtures/merge_wait/]
   resources: [format:merge-attempts-comment, format:merge-attempts-json]
 
-depends_on: [SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES, SP-RED-STOPS-THE-LINE, SP-CI-RED-IS-EVIDENCE, SP-AUTOMERGE-EVENT-DRIVEN, SP-MERGE-EXIT-CONTRACT, SP-AUTOMERGE-FRESH-HEAD, SP-CI-STATUS-CLIENT-CLASSIFY, SP-CI-CHECKNAME-SYNC, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROJECT-CONFIG, SP-DRY-RUN-NEVER-POSTS, SP-CLI-STDOUT-ONE-JSON]
+depends_on: [SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES, SP-RED-STOPS-THE-LINE, SP-CI-RED-IS-EVIDENCE, SP-AUTOMERGE-EVENT-DRIVEN, SP-MERGE-EXIT-CONTRACT, SP-AUTOMERGE-FRESH-HEAD, SP-CI-STATUS-CLIENT-CLASSIFY, SP-CI-CHECKNAME-SYNC, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-PROJECT-CONFIG, SP-DRY-RUN-NEVER-POSTS, SP-CLI-STDOUT-ONE-JSON, SP-FINDINGS-INIT-RACE, SP-DEDUP-CLASSIFICATION-CONSTANTS]
 provides_to: []
 
 constraints:
@@ -359,7 +359,9 @@ CLI: `repoach review merge-attempts <pr>`,
 - Adds dependency: → SP-AUTOMERGE-EVENT-DRIVEN, SP-MERGE-EXIT-CONTRACT, SP-AUTOMERGE-FRESH-HEAD (the paths and exit codes amended here).
 - Adds dependency: → SP-CI-STATUS-CLIENT-CLASSIFY, SP-CI-CHECKNAME-SYNC (classification and the derived name list).
 - Adds dependency: → SP-UNIVERSAL-FORGE (`GitHubForge.merge`), SP-UNIVERSAL-PROJECT-CONFIG (`[auto_merge]` section), SP-DRY-RUN-NEVER-POSTS (comment write), SP-CLI-STDOUT-ONE-JSON (CLI output).
+- Adds dependency (v0.3, tests only): → SP-FINDINGS-INIT-RACE (`record_review_integrity` seeds the fixture ledger), SP-DEDUP-CLASSIFICATION-CONSTANTS (`MergeDecision` replays a logged gate decision).
 - Changed coupling: `pr_merges` (frontier table) gains four columns. Two workflows change triggers and concurrency. No cycle.
+- Changed coupling (v0.3): the `Forge` protocol gains `dispatch_workflow(workflow, inputs)` (a barrier write; GitLab refuses it with a `ForgeError`), and `CheckRun` gains `completed_at` and `head_sha`, read from the commit's check-runs, so `judge_required_checks` can cut at the head and `stranded` can date `green since`. `release-verify.yml` gains the `stranded_sweep` job (D3).
 
 ## Diagram
 
@@ -391,7 +393,7 @@ and it logs merge calls and comment writes.
 - [ ] AC8: `pytest -q tests/unit/test_merge_attempts_ledger.py::test_row_shape` → green. After AC2's two invocations, `pr_merges` holds two rows for #259 with `head_sha` = 40 hex, `pending_checks` `["Test suite (Python 3.11)"]` then `[]`, `trigger` `merge-on-ci:<run_id>` and a non-empty `rule_version`. One comment carries `<!-- repoach-merge-attempts:v1 -->`, written twice (one upsert per attempt), and its JSON validates against `format:merge-attempts-comment`. Under `--dry-run` the barrier records zero writes. No artifact named `findings-ledger-*` is produced.
 - [ ] AC9: `pytest -q tests/unit/test_merge_attempts_ledger.py::test_cli_attempts_line` → green. `repoach review merge-attempts 259` prints exactly one JSON object on stdout with `count == 2`, and on stderr prints `merge attempts: 2, last: APPROVE`. After the first invocation only, it prints `merge attempts: 1, last: SKIP_CI_PENDING on Test suite (Python 3.11)`.
 - [ ] AC10: `pytest -q tests/unit/test_merge_wait_stranded.py::test_stranded_listed` → green. #256 green since t, no attempt at its head after t: `stranded(...)` gives `stranded: green since <t>, no merge attempt`. #247 green, last attempt `SKIP_GATE (spec acceptance selectors not all present)` before t: the reason names it. #259 with an `APPROVE` attempt is not listed. `repoach review stranded --json` prints one object with those two rows, and the forge records zero writes.
-- [ ] AC11: (applied by the queue implementation, SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES) `pytest -q tests/unit/test_queue_cli.py::test_stranded_row` → green. On the AC10 fixture, `repoach queue --json` rows for #256 and #247 have `gate == "stranded"` and the AC10 reasons. `queue run` judges CI through `judge_required_checks`.
+- [ ] AC11: (applied and graded by the queue implementation, SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES; not a selector of this spec's delivery) `tests/unit/test_queue_cli.py::test_stranded_row` green. On the AC10 fixture, `repoach queue --json` rows for #256 and #247 have `gate == "stranded"` and the AC10 reasons. `queue run` judges CI through `judge_required_checks`.
 - [ ] AC13: `pytest -q tests/unit/test_merge_wait_stranded.py::test_dispatch_sweep` → green. On the AC10 fixture, `repoach review stranded --dispatch` records exactly two forge writes, `workflow_run merge-on-ci.yml pr=256` and `pr=247`, and prints `dispatched #256 (stranded: green since <t>, no merge attempt)` on stderr. With `--dry-run` the barrier records zero writes. A PR with an `APPROVE` attempt or a pending required check is never dispatched.
 - [ ] AC12 (measurement): the delivery PR quotes the replay below, run on the code of the PR.
 
@@ -420,6 +422,25 @@ Count after release: from the first `develop → main` release that
 carries G1 and G2, the number of `SKIP_CI_PENDING` outcomes whose notes
 name no required check must be 0. That is read from the
 merge-attempts comments of every PR merged in the following 7 days.
+
+## Amendments (v0.3, from the implementation)
+
+- AC11 names its node id without `pytest`: it is graded on the queue
+  PR, which owns `tests/unit/test_queue_cli.py`; graded here it could
+  only be missing.
+- merge-on-ci's concurrency group is
+  `merge-${{ github.event.workflow_run.head_branch || inputs.pr }}`: a
+  dispatch carries no branch until the job resolves its PR, so a
+  dispatched run serializes per PR number, not with `merge-<branch>`.
+- With `wait_seconds = 0` (both merge jobs) a pending required check is
+  `SKIP_CI_PENDING`; an explicit wait that runs out (`review gate` with a
+  budget) stays `SKIP_CI_TIMEOUT`.
+- `[auto_merge].required_checks = []` is refused by the configuration
+  loader: an empty list would merge on no check at all.
+- The pre-merge attempt: a merged PR refuses writes (G7 of
+  SP-UNIVERSAL-FORGE), so a green attempt is upserted into the comment
+  just before `forge.merge`, and replaced by the refusal if the forge then
+  refuses. The `pr_merges` row is written after the merge either way.
 
 ## Open Questions
 
