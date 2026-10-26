@@ -1,7 +1,7 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
-version: 0.3
+version: 0.4
 status: draft
 author: agent
 created: 2026-10-26
@@ -544,7 +544,7 @@ Measured on hel1 (`ssh hel1`, 2026-10-26) and on Yoob `origin/develop`.
 | # | Fact | Consequence for the receiver |
 |---|---|---|
 | H1 | nginx runs as the container `yoob_nginx` (`nginx:1.25-alpine`) on the bridge network `yoob_2_yoob_network`, subnet `172.18.0.0/16`, gateway `172.18.0.1`, publishing 80 and 443. Its vhosts are bind-mounted from `~/yoob_2/nginx/conf.d` (compose files `docker-compose.prod.yml`, `docker-compose.hetzner.yml`, `docker-compose.prod-toolchain.yml`). There is no host nginx (`/etc/nginx` is absent) | A unit bound to `127.0.0.1` is **unreachable from that container**: inside it, `127.0.0.1` is the container itself. The receiver binds the bridge gateway `172.18.0.1:8787`. `docker-compose.prod.yml` pins that subnet so the address cannot move when the network is recreated |
-| H2 | `ufw` is active and allows only `22/tcp`; docker publishes 80 and 443 itself. `ss -ltn` shows nothing else listening on a public address | Port 8787 is never published. One `ufw` rule admits only the nginx bridge: `ufw allow in on br-<id of yoob_2_yoob_network> to 172.18.0.1 port 8787 proto tcp` |
+| H2 | `sudo -n ufw status numbered` (2026-10-26): `Status: active`, six rules, all `ALLOW IN` from `Anywhere`: `[1] 22/tcp`, `[2] 80/tcp`, `[3] 443/tcp`, `[4] 22/tcp (v6)`, `[5] 80/tcp (v6)`, `[6] 443/tcp (v6)`. Nothing else is allowed in, and `ss -ltn` shows nothing else listening on a public address | Port 8787 is never published. One `ufw` rule admits only the nginx bridge: `ufw allow in on br-<id of yoob_2_yoob_network> from 172.18.0.0/16 to 172.18.0.1 port 8787 proto tcp` |
 | H3 | DNS: `yoob.dev`, `www.yoob.dev` and `studio.yoob.dev` resolve straight to `65.108.199.28` (no Cloudflare proxy in front, the response `server` is `nginx/1.25.5`). `hooks.yoob.dev` does not resolve. The Let's Encrypt certificate's SANs are exactly `yoob.dev`, `www.yoob.dev` and `studio.yoob.dev` | **The path, not a subdomain.** A `location = /hooks/repoach` inside the existing `listen 443 ssl` server block for `yoob.dev` (`nginx/conf.d/yoob.conf:76-77`) needs no DNS record and no certificate change. A subdomain would need both, plus a certbot re-issue under HSTS (`max-age=63072000`) |
 | H4 | `nginx/nginx.conf:45-46` defines only `api_limit` (10 r/s) and `upload_limit` (1 r/s) | A new zone `hooks_limit` (`5r/s`, `burst=10`), with `client_max_body_size 1m` on the location |
 | H5 | Runners on hel1 run as systemd units `gitlab-runner-{light,heavy,deploy}.service`. No repoach is installed system-wide (`which repoach` is empty, `/etc/repoach*` absent) | The unit runs repoach from its own virtualenv, `/opt/repoach-threads/venv`, under a dedicated system user `repoach-threads` |
