@@ -43,6 +43,17 @@ PR's hunks on that file and the cited spec section, filling the
 refuter's own ``context_tokens`` (:mod:`refuter_evidence`); what was
 served, what was not and its size are recorded on each outcome as
 ``evidence``, ``evidence_truncated`` and ``evidence_tokens``.
+
+SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS: measured on PR #260
+(2026-10-26), two correct refutations were deferred at every head
+because the reasoning named ``except``, ``None``, ``message`` or
+``token``, words capped at the hit limit and so "partly served". The
+claim's identifiers now exclude Python names, common tokens and generic
+English words (:data:`~repoach.review.refuter_evidence.STOP_WORDS`); an
+identifier whose every hit inside the cited file was served never
+vetoes; the deferral names the rule that held; and
+:data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION` keys the ``needs judgement`` stamp of
+:mod:`head_reverify`, so a change of these rules re-opens it.
 """
 
 from __future__ import annotations
@@ -124,12 +135,24 @@ EVIDENCE_UNREADABLE = "evidence unreadable"
 EVIDENCE_OUTSIDE_WINDOW = "evidence outside window"
 """The judge could not see the code the claim concerns (``cannot_judge``)."""
 
-EVIDENCE_NOT_SERVED = "evidence outside window ({identifiers} not served)"
+EVIDENCE_NOT_SERVED = "evidence outside window (identifier not served: {identifiers})"
 """Template of the reason when the claim names an identifier none of whose hits were served.
 
 The search could not run, or the budget or the hit cap left every hit
 out: the judge is not called, since it could only refute what it
 cannot see."""
+
+EVIDENCE_PARTLY_SERVED_OUTSIDE = (
+    "evidence outside window (identifier partly served outside the cited file: {identifiers})"
+)
+"""Template of the reason when a refutation names an identifier the cited file does not hold,
+some of whose hits elsewhere were cut."""
+
+EVIDENCE_PARTLY_SERVED_IN_CITED = (
+    "evidence outside window (identifier partly served in the cited file: {identifiers})"
+)
+"""Template of the reason when a refutation names an identifier some of whose hits
+inside the cited file were cut."""
 
 EVIDENCE_TIMED_OUT = "evidence outside window ({cause}: {identifiers})"
 """Template of the reason when load kept the search from running.
@@ -157,6 +180,8 @@ DEFERRAL_REASONS = (
     JUDGING_CAP_REACHED,
     EVIDENCE_OUTSIDE_WINDOW,
     EVIDENCE_NOT_SERVED,
+    EVIDENCE_PARTLY_SERVED_OUTSIDE,
+    EVIDENCE_PARTLY_SERVED_IN_CITED,
     EVIDENCE_TIMED_OUT,
     VERDICT_UNPARSEABLE,
     JUDGE_CALL_FAILED,
@@ -529,12 +554,29 @@ def _parse_verdict(raw: str) -> tuple[Verdict, str] | None:
     return verdict
 
 
-def _cites_any(reasoning: str, identifiers: Sequence[str]) -> bool:
-    """Return True when ``reasoning`` names one of ``identifiers`` as a word."""
-    return any(
-        re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", reasoning)
+def _cited(reasoning: str, identifiers: Sequence[str]) -> tuple[str, ...]:
+    """Return the ``identifiers`` that ``reasoning`` names as a word."""
+    return tuple(
+        name
         for name in identifiers
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", reasoning)
     )
+
+
+def _partial_veto(reasoning: str, bundle: EvidenceBundle) -> str:
+    """Return the deferral reason when a refutation rests on a partly served identifier, else ``""``.
+
+    Only :attr:`EvidenceBundle.partial` vetoes: an identifier every hit of
+    which inside the cited file was served does not (G2). A cut inside
+    the cited file is named first (G4).
+    """
+    named = _cited(reasoning, bundle.partial)
+    if not named:
+        return ""
+    inside = tuple(name for name in named if name in bundle.partial_in_cited)
+    if inside:
+        return EVIDENCE_PARTLY_SERVED_IN_CITED.format(identifiers=", ".join(inside))
+    return EVIDENCE_PARTLY_SERVED_OUTSIDE.format(identifiers=", ".join(named))
 
 
 def judge_finding(
@@ -555,11 +597,13 @@ def judge_finding(
     reason from :data:`DEFERRAL_REASONS` when the evidence is outside
     the repository or unreadable (the judge is then never called), when
     the judge raised (``judge call failed: <exception type>``), when its
-    verdict is unparseable, and when it answered ``cannot_judge``,
-    refuted only because the code was not visible, or refuted on an
-    identifier of which only part of the hits were served
-    (:data:`EVIDENCE_OUTSIDE_WINDOW`). When the claim names an identifier
-    of which nothing was served, the judge is not called
+    verdict is unparseable, and when it answered ``cannot_judge`` or
+    refuted only because the code was not visible
+    (:data:`EVIDENCE_OUTSIDE_WINDOW`), or refuted on an identifier of
+    which part of the hits that matter were cut
+    (:data:`EVIDENCE_PARTLY_SERVED_IN_CITED`,
+    :data:`EVIDENCE_PARTLY_SERVED_OUTSIDE`). When the claim names an
+    identifier of which nothing was served, the judge is not called
     (:data:`EVIDENCE_NOT_SERVED`). A cited file absent from
     ``repo_root`` is deferred with ``absent_reason``.
 
@@ -607,8 +651,10 @@ def judge_finding(
     if verdict is None:
         return Judgement(FindingStatus.PROPOSED, VERDICT_UNPARSEABLE, bundle)
     answer, reasoning = verdict
-    if answer == "refuted" and _cites_any(reasoning, bundle.partial):
-        answer = "cannot_judge"
+    if answer == "refuted":
+        vetoed = _partial_veto(reasoning, bundle)
+        if vetoed:
+            return Judgement(FindingStatus.PROPOSED, vetoed, bundle, reasoning)
     if answer == "cannot_judge":
         return Judgement(FindingStatus.PROPOSED, EVIDENCE_OUTSIDE_WINDOW, bundle, reasoning)
     status = FindingStatus.REFUTED if answer == "refuted" else FindingStatus.VERIFIED
