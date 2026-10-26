@@ -1,7 +1,7 @@
 ---
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-10-26
@@ -75,6 +75,30 @@ Taken by the owner on 2026-10-26, on the 0.1 open questions and F7.
   `oversized_steps`. The gate does not enforce the caps (tech_debt row
   98).
 - An undeclared PR whose base ref cannot be read: superseded by 0.4.
+
+## Amendment (0.5, 2026-10-26): an example is never a selector; a failed grading refuses
+
+Measured on the gated merge of #260 (try 2): the gate refused
+`spec acceptance selectors not all present: tests/x.py::test_y (AC2), tests/p.py::test_p (AC3), tests/a.py::test_a (AC12)`.
+These are examples in prose, written with single backticks in the 0.2
+text merged by #259; the contract is the union of base and head, so
+quoting them at head (0.3) cannot remove them from the base half.
+
+- D1 is amended: an example in an Acceptance Criterion is marked, and
+  the extractor skips it. A backticked span prefixed `fixture:`
+  (`fixture:tests/x.py::test_y`) and any target under `tests/fixtures/`
+  (bare or in a `pytest …` invocation) are examples, never selectors. A
+  span quoted inside a double-backtick span stays an example too.
+  AC2, AC3 and AC12 name their examples with the prefix.
+- The base half of the contract still holds the 0.2 examples until the
+  base itself carries the prefixed text: a documentation-only PR
+  carrying this text lands on develop first (graded by develop's rule,
+  which does not read bare node ids), and this PR merges it.
+- A grading that raises (a malformed spec at head, a git failure while
+  resolving ownership) records a not-covered row
+  `spec coverage not graded: <Type>: <message> (fail closed)` instead of
+  recording nothing (F10, the Sentinel finding 41 of #260): no row reads
+  as "coverage unknown", which the gate does not refuse.
 
 ## Amendment (0.4, 2026-10-26): a prose plan is no plan; an unresolvable ownership fails closed
 
@@ -327,12 +351,12 @@ flowchart TD
   diff touching `src/`; `decide_at_head` merges, the row has
   `contract == "acceptance-criteria"` and `missing == []`.
 - [ ] AC2: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_approved_spec_without_plan_names_the_absent_selector_and_its_ac`
-  → green: same fixture, AC3's selector `` `tests/x.py::test_y` `` absent;
+  → green: same fixture, AC3's selector `fixture:tests/x.py::test_y` absent;
   `reasons` contains exactly
   `spec acceptance selectors not all present: tests/x.py::test_y (AC3)`,
   and no reason contains `plan-absent`.
 - [ ] AC3: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_plan_wins_over_the_ac_section`
-  → green: an approved spec whose base plan promises `` `tests/p.py::test_p` ``
+  → green: an approved spec whose base plan promises `fixture:tests/p.py::test_p`
   (present) while its AC names an absent selector → merges,
   `contract == "plan"`; the plan's selector absent instead → reason
   `… not all present: tests/p.py::test_p (plan step 1)`.
@@ -384,7 +408,7 @@ flowchart TD
 
 - [ ] AC12: `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_touching_owned_code_is_refused_naming_the_selector`
   → green: `src/a.py` owned by an `approved` spec SP-A whose AC names
-  one absent selector `` `tests/a.py::test_a` ``; a PR with no `Spec:` line and
+  one absent selector `fixture:tests/a.py::test_a`; a PR with no `Spec:` line and
   a non-matching branch touching `src/a.py`; `decide_at_head` refuses
   with `SP-A: spec acceptance selectors not all present: tests/a.py::test_a (AC1)`
   and reports `spec resolved by ownership: SP-A (1 paths)`.
@@ -411,6 +435,14 @@ flowchart TD
   → green: an undeclared PR whose base ref does not resolve is refused
   with exactly
   `spec resolution by ownership not graded: base ref <ref> unavailable (fail closed)`.
+
+- [ ] AC18 (0.5): `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_a_grading_failure_records_a_refusing_row`
+  → green: a grading that raises records a not-covered row and the gate
+  refuses with exactly
+  `spec coverage not graded: RuntimeError: <message> (fail closed)`.
+- [ ] AC19 (0.5): `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_fixture_prefix_and_fixtures_tree_are_examples_not_selectors`
+  → green: an AC naming `fixture:tests/x.py::test_y`, or a target
+  under the fixtures tree, yields no selector.
 
 ## Open Questions
 
