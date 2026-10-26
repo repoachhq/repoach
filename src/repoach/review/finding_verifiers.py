@@ -14,8 +14,13 @@ decision changes here.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
+from ..core.logging import get_logger
 from ..gates.config import GatesConfig, applicable, load_gates_config
 from ..lint.no_inline_comments import scan_file as scan_inline
 from ..lint.no_silent_except import scan_file as scan_silent
@@ -30,13 +35,193 @@ from .findings import (
 from .hallucination_guard import (
     _extract_missing_test_symbols,
     make_repo_file_reader,
-    make_tests_symbol_searcher,
 )
+
+_log = get_logger(__name__)
 
 _LANGUAGE_METHOD = "language"
 """Verification method recorded when a Python-only verifier does not apply."""
 
 _DEFERRED_RESULT = "not mechanically verifiable — slices 5-6"
+
+_TEST_DIR_NAMES = frozenset({"tests", "test"})
+"""Directory names whose ``.py`` files are test files wherever they sit."""
+
+_WALK_SKIPPED_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "dist", "build"})
+"""Directories never walked when the root is not a git work tree."""
+
+
+@dataclass(frozen=True)
+class TestSearch:
+    """Where a ``missing_test`` verifier looked for the covering tests.
+
+    Attributes:
+        found: ``(target, "path:line")`` for each target defined in a test file.
+        searched: Number of Python test files read.
+        at: Short sha of the tree searched, empty when not a git work tree.
+    """
+
+    __test__ = False
+
+    found: tuple[tuple[str, str], ...]
+    searched: int
+    at: str
+
+    def scope(self) -> str:
+        """Name what was searched, ``searched <n> test files[ at <sha7>]``."""
+        where = f" at {self.at}" if self.at else ""
+        return f"searched {self.searched} test files{where}"
+
+
+def is_python_test_file(path: str, test_roots: tuple[str, ...] = ()) -> bool:
+    """Whether ``path`` is a Python test file.
+
+    A ``.py`` file is a test file under a configured test root, under any
+    ``tests/`` or ``test/`` directory (``api/tests/`` in a monorepo whose
+    configured root is ``tests``), or named ``test_*.py`` / ``*_test.py``
+    / ``conftest.py``. Code under review elsewhere never is
+    (SP-MISSING-TEST-VERIFIER-SCOPE).
+    """
+    pure = PurePosixPath(path)
+    if pure.suffix != ".py":
+        return False
+    name = pure.name
+    if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
+        return True
+    if _TEST_DIR_NAMES.intersection(pure.parts[:-1]):
+        return True
+    return any(
+        root and (path == root or path.startswith(root.rstrip("/") + "/")) for root in test_roots
+    )
+
+
+def _git_out(repo_root: Path, *args: str) -> str | None:
+    """Return the stdout of a read-only ``git`` command, ``None`` when it fails."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo_root, capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        _log.debug("finding_verifiers.git_unavailable", error=type(exc).__name__)
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _head_of(repo_root: Path) -> str | None:
+    """Return the full HEAD sha when ``repo_root`` is the top of a git work tree."""
+    top = _git_out(repo_root, "rev-parse", "--show-toplevel", "HEAD")
+    if top is None:
+        return None
+    lines = top.split()
+    if len(lines) != 2 or Path(lines[0]).resolve() != repo_root.resolve():
+        return None
+    return lines[1]
+
+
+def _tracked_files(repo_root: Path) -> list[str] | None:
+    """Return the tracked paths of the git work tree ``repo_root``."""
+    listing = _git_out(repo_root, "ls-files", "-z")
+    if listing is None:
+        return None
+    return [path for path in listing.split("\0") if path]
+
+
+def _walked_files(repo_root: Path) -> list[str]:
+    """Return every file under ``repo_root``, skipping vendored and build directories."""
+    paths: list[str] = []
+    for directory, subdirs, files in os.walk(repo_root):
+        subdirs[:] = [d for d in subdirs if d not in _WALK_SKIPPED_DIRS]
+        for name in files:
+            paths.append(PurePosixPath(Path(directory, name).relative_to(repo_root)).as_posix())
+    return paths
+
+
+_DEFINITION = re.compile(r"^[ \t]*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", re.MULTILINE)
+"""A ``def`` / ``class`` line of a Python test file and the name it defines."""
+
+
+@dataclass(frozen=True)
+class _TestIndex:
+    """Every name defined in the Python test files of one tree."""
+
+    where: dict[str, str]
+    searched: int
+    at: str
+
+
+_INDEX_CACHE: dict[tuple[str, str, tuple[str, ...]], _TestIndex] = {}
+"""Test-name indexes of git trees, keyed by ``(root, head sha, test roots)``."""
+
+_INDEX_CACHE_SIZE = 8
+"""Trees kept in :data:`_INDEX_CACHE`; the oldest is dropped past it."""
+
+
+def _build_index(
+    repo_root: Path, paths: list[str], test_roots: tuple[str, ...], at: str
+) -> _TestIndex:
+    """Read every Python test file among ``paths`` once and index its definitions."""
+    candidates = sorted(p for p in paths if is_python_test_file(p, test_roots))
+    where: dict[str, str] = {}
+    for path in candidates:
+        try:
+            text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            _log.debug("finding_verifiers.test_file_skipped", path=path, error=type(exc).__name__)
+            continue
+        for match in _DEFINITION.finditer(text):
+            name = match.group(1)
+            if name not in where:
+                line = text.count("\n", 0, match.start()) + 1
+                where[name] = f"{path}:{line}"
+    return _TestIndex(where=where, searched=len(candidates), at=at)
+
+
+def _test_index(repo_root: Path, test_roots: tuple[str, ...]) -> _TestIndex:
+    """Return the test-name index of ``repo_root``, built once per git head.
+
+    A git work tree is listed and read once per ``(root, head sha, test
+    roots)``, so a gate re-checking N findings at one head walks the
+    tree once; a tree outside git is read on every call.
+    """
+    head = _head_of(repo_root)
+    if head is None:
+        return _build_index(repo_root, _walked_files(repo_root), test_roots, "")
+    key = (str(repo_root.resolve()), head, test_roots)
+    cached = _INDEX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    tracked = _tracked_files(repo_root)
+    if tracked is None:
+        return _build_index(repo_root, _walked_files(repo_root), test_roots, "")
+    index = _build_index(repo_root, tracked, test_roots, head[:7])
+    if len(_INDEX_CACHE) >= _INDEX_CACHE_SIZE:
+        _INDEX_CACHE.pop(next(iter(_INDEX_CACHE)))
+    _INDEX_CACHE[key] = index
+    return index
+
+
+def find_tests_by_name(
+    repo_root: Path, targets: list[str], test_roots: tuple[str, ...] = ()
+) -> TestSearch:
+    """Look for ``def`` / ``class`` of each target in every Python test file of the tree.
+
+    The tree is the tracked files of ``repo_root`` when it is a git work
+    tree (the pinned head worktree), else every file under it. Only test
+    files (:func:`is_python_test_file`) are read, so a test that lives
+    in ``api/tests/`` is found while a symbol of the code under review
+    never refutes the claim. A git tree is indexed once per head.
+
+    Args:
+        repo_root: Root of the tree to search.
+        targets: Test names to look for (``test_``-prefixed).
+        test_roots: The project's configured test roots.
+
+    Returns:
+        The :class:`TestSearch`; ``found`` keeps the order of ``targets``.
+    """
+    index = _test_index(repo_root, test_roots)
+    found = tuple((t, index.where[t]) for t in targets if t in index.where)
+    return TestSearch(found=found, searched=index.searched, at=index.at)
 
 
 def _missing_test_search_targets(symbols: list[str]) -> list[str]:
@@ -67,21 +252,28 @@ def _missing_test_search_targets(symbols: list[str]) -> list[str]:
 def _verify_missing_test(
     finding: Finding, repo_root: Path, config: GatesConfig
 ) -> tuple[FindingStatus, str, str]:
-    """Refute a missing-test claim only when a covering test exists under ``tests/``.
+    """Refute a missing-test claim only when a covering test exists in a test file.
 
-    The search is scoped to ``tests/`` alone — the existence of the
-    code-under-test in ``src/`` must never refute a "no test for X"
-    claim (SP-MISSING-TEST-VERIFIER-SCOPE).
+    The covering test is looked for by name across every Python test
+    file of the tree (:func:`find_tests_by_name`), not only under the
+    top-level ``tests/`` nor in the file the finding cited: the existence
+    of the code-under-test must never refute a "no test for X" claim
+    (SP-MISSING-TEST-VERIFIER-SCOPE), and a test written in
+    ``api/tests/`` must (SP-GATE-REVERIFIES-AT-HEAD G11).
     """
     symbols = _extract_missing_test_symbols(finding.claim)
     if not symbols:
         return FindingStatus.PROPOSED, "symbol_search", "no checkable symbol"
     targets = _missing_test_search_targets(symbols)
-    searcher = make_tests_symbol_searcher(repo_root)
-    found = [target for target in targets if searcher(target)]
-    if found:
-        return FindingStatus.REFUTED, "symbol_search", f"{found[0]} exists in tests/"
-    return FindingStatus.VERIFIED, "symbol_search", f"no test for {', '.join(symbols)}"
+    search = find_tests_by_name(repo_root, targets, config.test_roots)
+    if search.found:
+        target, where = search.found[0]
+        return FindingStatus.REFUTED, "symbol_search", f"{target} exists at {where}"
+    return (
+        FindingStatus.VERIFIED,
+        "symbol_search",
+        f"no test for {', '.join(symbols)} ({search.scope()})",
+    )
 
 
 def _verify_missing_docstring(
