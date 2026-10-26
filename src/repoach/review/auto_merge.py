@@ -71,6 +71,7 @@ from ..forge.protocol import WRITABLE_STATES, diff_files
 from ..gates.config import (
     GatesConfig,
     load_gates_config,
+    resolve_refuter_context_ceiling,
     resolve_refuter_context_tokens,
     resolve_refuter_max_judged,
 )
@@ -590,6 +591,7 @@ def decide_at_head(
     head_tree: bool = False,
     base_ref: str | None = None,
     context_tokens: int | None = None,
+    context_ceiling: int | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -649,6 +651,8 @@ def decide_at_head(
             stale coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
         context_tokens: The refuter's context for the re-check of older
             findings; ``None`` reads it at ``repo_root``.
+        context_ceiling: The most that context may grow to for one
+            finding; ``None`` reads it at ``repo_root``.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -671,6 +675,11 @@ def decide_at_head(
                 context_tokens
                 if context_tokens is not None
                 else resolve_refuter_context_tokens(root)[0]
+            ),
+            context_ceiling=(
+                context_ceiling
+                if context_ceiling is not None
+                else resolve_refuter_context_ceiling(root)[0]
             ),
         )
     else:
@@ -872,6 +881,7 @@ def evaluate_merge_gate(
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
                 context_tokens=resolve_refuter_context_tokens(checkout)[0],
+                context_ceiling=resolve_refuter_context_ceiling(checkout)[0],
             )
         tree_kind = tree.tree
     else:

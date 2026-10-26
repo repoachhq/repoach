@@ -70,7 +70,11 @@ from ..forge import (
     select_forge,
 )
 from ..forge.protocol import diff_files
-from ..gates.config import load_gates_config, resolve_refuter_context_tokens
+from ..gates.config import (
+    load_gates_config,
+    resolve_refuter_context_ceiling,
+    resolve_refuter_context_tokens,
+)
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
@@ -835,6 +839,7 @@ class ReviewTeamOrchestrator:
                     diff=diff,
                     pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
                     context_tokens=resolve_refuter_context_tokens(self._config_root)[0],
+                    context_ceiling=resolve_refuter_context_ceiling(self._config_root)[0],
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
@@ -1296,6 +1301,7 @@ class ReviewTeamOrchestrator:
                     max_judged=max(cap - refuter_calls, 0),
                     cap=cap,
                     context_tokens=resolve_refuter_context_tokens(self._config_root)[0],
+                    context_ceiling=resolve_refuter_context_ceiling(self._config_root)[0],
                 )
         except Exception as exc:
             _log.warning(
