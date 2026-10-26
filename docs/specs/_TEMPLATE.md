@@ -132,7 +132,12 @@ flowchart TD
 ```
 
 ## Acceptance Criteria
-<!-- These map to SP-SPEC-GATE's coverage fact. Each should be testable. -->
+<!-- These map to SP-SPEC-GATE's coverage fact. Each should be testable.
+Without a committed plan, the gate grades the selectors named here, in
+backticks, in any of three forms: `pytest -q tests/x.py::test_y`,
+`tests/x.py::test_y`, or a test file `tests/x.py`. Name at least one per
+criterion that a test can check (SP-SPEC-TEMPLATE 0.2). -->
+
 - [ ] AC1: <verifiable condition, ideally translatable into a test>
 - [ ] AC2: ...
 - [ ] AC3: ...
