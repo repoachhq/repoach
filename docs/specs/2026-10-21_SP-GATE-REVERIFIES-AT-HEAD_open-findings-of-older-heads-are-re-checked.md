@@ -8,7 +8,7 @@ created: 2026-10-21
 updated: 2026-10-25
 
 owns:
-  code: [src/repoach/review/head_reverify.py, src/repoach/review/finding_verifiers.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py, tests/unit/test_review_pr_reverifies_at_head.py, tests/unit/test_finding_verifiers.py]
+  code: [src/repoach/review/head_reverify.py, src/repoach/review/finding_verifiers.py, tests/unit/test_gate_reverifies_at_head.py, tests/unit/test_spec_gate_vitest_body.py, tests/unit/test_review_pr_reverifies_at_head.py, tests/unit/test_finding_verifiers.py, tests/integration/test_gate_reverifies_at_head_end_to_end.py]
   resources: []
 
 depends_on: [SP-FINDINGS-INIT-RACE, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-UNIVERSAL-GATES, SP-REVIEW-PINS-HEAD, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-PLAN-SELECTOR-AUDIT-WIRE, SP-PLAN-CONTRACT-LINTS, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
