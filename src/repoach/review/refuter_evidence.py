@@ -341,6 +341,12 @@ class EvidenceBundle:
         partial_elsewhere: Identifiers every hit of which inside the
             cited file was served, with hits elsewhere cut; recorded, never
             a veto (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G2).
+        needed_tokens: Evidence tokens the cited file, the hits of the
+            claim's identifiers and the diff hunks take in full (what was
+            served plus :attr:`shortfall_tokens`).
+        shortfall_tokens: Tokens of that core evidence the ceiling left
+            unserved; 0 when the cited file, the hits and the hunks were
+            all served (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
         timed_out: Why the search did not run when load is the cause
             (``grep timed out after 60 s``, ``assembly deadline of 180 s
             reached``), else empty: tells a load-caused deferral from an
@@ -357,6 +363,8 @@ class EvidenceBundle:
     timed_out: str = ""
     partial_in_cited: tuple[str, ...] = ()
     partial_elsewhere: tuple[str, ...] = ()
+    needed_tokens: int = 0
+    shortfall_tokens: int = 0
 
 
 @dataclass
@@ -375,6 +383,7 @@ class _Assembly:
     partial_in_cited: list[str] = field(default_factory=list)
     partial_elsewhere: list[str] = field(default_factory=list)
     used: int = 0
+    shortfall: int = 0
 
     def remaining(self) -> float:
         """Return the wall-clock seconds left before :data:`ASSEMBLY_DEADLINE_S`."""
@@ -457,6 +466,7 @@ def _cited_file(
     )
     body = _numbered(lines, start, end, lambda n: ":>" if line_start <= n <= last else ":")
     assembly.add("\n".join([header, *body]), f"{_one_line(path)}:{start + 1}-{end} ({shown})")
+    assembly.shortfall += sum(widths[:start]) + sum(widths[end:])
     if start > 0:
         assembly.truncated.append(f"{_one_line(path)}: lines 1-{start} (budget)")
     if end < len(lines):
@@ -690,6 +700,7 @@ def _serve_hits(
             assembly.add(block)
             served.extend((path, mark) for mark in marks)
             continue
+        used_before = assembly.used
         for mark in marks:
             hit_line = f"{mark}:* {file_lines[mark - 1]}" if mark <= len(file_lines) else ""
             single = f"--- {_one_line(path)}: hit line only (budget) ---\n{hit_line}"
@@ -703,6 +714,7 @@ def _serve_hits(
                 assembly.truncated.append(
                     f"search {identifier}: hit {_one_line(path)}:{mark} (budget)"
                 )
+        assembly.shortfall += max(0, estimate_tokens(block) + 1 - (assembly.used - used_before))
     return served
 
 
@@ -906,6 +918,7 @@ def _diff(assembly: _Assembly, diff: str, path: str) -> None:
             assembly.add(block)
             served += 1
         else:
+            assembly.shortfall += estimate_tokens(block) + 1
             assembly.truncated.append(
                 f"diff {_one_line(path)}: hunk {index} of {len(hunks)} (budget)"
             )
@@ -987,6 +1000,7 @@ def build_evidence(
     specs: Sequence[tuple[str, str]] = (),
     claim_is_spec_gap: bool = False,
     deadline_s: float = ASSEMBLY_DEADLINE_S,
+    ceiling_tokens: int | None = None,
 ) -> EvidenceBundle | None:
     """Assemble the judge's evidence for one finding within ``budget_tokens``.
 
@@ -1000,19 +1014,27 @@ def build_evidence(
         claim: The finding's claim, searched for identifiers, paths,
             spec ids and spec labels.
         budget_tokens: Tokens the evidence may take (the refuter's
-            ``context_tokens`` less the prompt and the reply reserve).
+            ``context_tokens`` less the prompt and the reply reserve); with
+            ``ceiling_tokens``, the floor the budget grows from.
         diff: The PR's unified diff; its hunks on ``path`` are served.
         specs: ``(spec id, markdown)`` candidates for the cited section.
         claim_is_spec_gap: Serve a whole spec when the claim cites no label.
         deadline_s: Wall-clock seconds the assembly may take
             (:data:`ASSEMBLY_DEADLINE_S`); steps past it are named in
             ``truncated``.
+        ceiling_tokens: When given, the budget adapts to the evidence
+            (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5): the cited file,
+            the identifiers' hits and the diff hunks are served up to this
+            many tokens, and the final budget is ``max(budget_tokens,
+            what they took)``, which the spec section fills. What the
+            ceiling left out is :attr:`EvidenceBundle.shortfall_tokens`.
 
     Returns:
         The bundle, or ``None`` when the file holds none of the cited lines.
     """
+    core_budget = budget_tokens if ceiling_tokens is None else max(ceiling_tokens, budget_tokens)
     assembly = _Assembly(
-        budget=budget_tokens, deadline=time.monotonic() + deadline_s, deadline_s=deadline_s
+        budget=core_budget, deadline=time.monotonic() + deadline_s, deadline_s=deadline_s
     )
     served = _cited_file(assembly, source, path=path, line_start=line_start, line_end=line_end)
     if served is None:
@@ -1029,13 +1051,16 @@ def build_evidence(
     )
     if diff and not assembly.out_of_time(f"diff of {_one_line(path)}"):
         _diff(assembly, diff, path)
+    needed = assembly.used + assembly.shortfall
+    if ceiling_tokens is not None:
+        assembly.budget = max(budget_tokens, assembly.used)
     if specs and not assembly.out_of_time("spec section"):
         _specs(assembly, specs, claim=claim, claim_is_spec_gap=claim_is_spec_gap)
     sections = list(assembly.sections)
     if assembly.truncated:
         sections.insert(
             0,
-            f"--- PARTIAL EVIDENCE: the {budget_tokens}-token budget, the hit cap or the deadline left "
+            f"--- PARTIAL EVIDENCE: the {assembly.budget}-token budget, the hit cap or the deadline left "
             f"{len(assembly.truncated)} item(s) unserved, listed at the end ---",
         )
         sections.append(
@@ -1048,10 +1073,12 @@ def build_evidence(
         reads=tuple(assembly.reads),
         truncated=tuple(assembly.truncated),
         tokens=estimate_tokens(text),
-        budget_tokens=budget_tokens,
+        budget_tokens=assembly.budget,
         unserved=tuple(assembly.unserved),
         partial=tuple(assembly.partial),
         timed_out=assembly.timed_out,
         partial_in_cited=tuple(assembly.partial_in_cited),
         partial_elsewhere=tuple(assembly.partial_elsewhere),
+        needed_tokens=needed,
+        shortfall_tokens=assembly.shortfall,
     )
