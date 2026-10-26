@@ -66,6 +66,7 @@ class _FakeTeam:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    spec_coverage_line: str = ""
 
 
 _REQUIRED_TOP_LEVEL = {
@@ -256,10 +257,11 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
         result = CliRunner().invoke(review_app, ["pr", "999", "--dry-run"])
 
     payload = json.loads(result.stdout)
+    unserved = {"evidence": [], "evidence_truncated": [], "evidence_tokens": 0}
     assert [f["refutation"] for f in payload["findings"]] == [
-        {"state": "refuted", "reason": "vague"},
-        {"state": "deferred", "reason": "evidence outside the diff"},
-        {"state": "unverified", "reason": "not yet mechanically verified"},
+        {"state": "refuted", "reason": "vague", **unserved},
+        {"state": "deferred", "reason": "evidence outside the diff", **unserved},
+        {"state": "unverified", "reason": "not yet mechanically verified", **unserved},
     ]
     assert payload["findings"][1] == {
         "id": 8,
@@ -273,11 +275,11 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
         "verification_method": "refuter",
         "evidence": "evidence outside the diff",
         "blocking": False,
-        "refutation": {"state": "deferred", "reason": "evidence outside the diff"},
+        "refutation": {"state": "deferred", "reason": "evidence outside the diff", **unserved},
     }
     assert payload["verdict_basis"] == []
     refuter_lines = [line for line in result.stderr.splitlines() if line.startswith("refuter:")]
     assert refuter_lines == [
         "refuter: judged 1, refuted 1, deferred 1 (evidence outside the diff), "
-        "unverified 1 (not yet mechanically verified)"
+        "unverified 1 (not yet mechanically verified), evidence_tokens total 0"
     ]

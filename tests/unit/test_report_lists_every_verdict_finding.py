@@ -147,6 +147,9 @@ def test_report_names_each_judge_and_method(tmp_path: Path) -> None:
     assert deferred.as_json()["refutation"] == {
         "state": "deferred",
         "reason": "judging cap 2 reached",
+        "evidence": [],
+        "evidence_truncated": [],
+        "evidence_tokens": 0,
     }
 
 
@@ -247,3 +250,39 @@ def test_an_uninitialised_ledger_still_lists_the_run_outcomes(tmp_path: Path) ->
     assert entries[0].severity == ""
     assert entries[0].status == ""
     assert report_findings(db, pr_number=1, facts=facts) == []
+
+
+def test_a_refuter_entry_carries_what_the_judge_was_served(tmp_path: Path) -> None:
+    db = tmp_path / "never-created.db"
+    facts = MergeFacts(
+        head_sha=HEAD,
+        ci_green=True,
+        open_blocking_findings=0,
+        spec_covered=False,
+        spec_coverage_known=False,
+        review_complete=True,
+        review_integrity_known=False,
+    )
+    refutation = Refutation(
+        7,
+        "a.py",
+        3,
+        ClaimType.DESIGN,
+        "deferred",
+        "evidence outside window",
+        evidence=("a.py:1-40 (whole file)",),
+        detail="the caller is not served",
+        evidence_truncated=("grep Foo: 60 hits (50 served)",),
+        evidence_tokens=812,
+    )
+
+    (entry,) = report_findings(db, pr_number=1, facts=facts, refutations=[refutation])
+
+    assert entry.as_json()["refutation"] == {
+        "state": "deferred",
+        "reason": "evidence outside window",
+        "evidence": ["a.py:1-40 (whole file)"],
+        "evidence_truncated": ["grep Foo: 60 hits (50 served)"],
+        "evidence_tokens": 812,
+        "detail": "the caller is not served",
+    }

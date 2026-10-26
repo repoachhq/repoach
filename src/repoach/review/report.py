@@ -207,6 +207,9 @@ class ReportFinding:
         status: The ledger status when the report was built.
         blocking: Whether the verdict counts it as an open blocking
             finding (its id is in ``verdict_basis``).
+        refutation: The refuter's outcome a refuter entry was built
+            from, so its evidence record reaches the report; ``None``
+            for every other judge.
     """
 
     finding_id: int | None
@@ -220,17 +223,27 @@ class ReportFinding:
     severity: str = ""
     status: str = ""
     blocking: bool = False
+    refutation: Refutation | None = None
 
     def as_json(self) -> dict[str, object]:
         """Return the finding entry of the ``review pr`` JSON payload.
 
-        A refuter entry keeps its ``refutation = {state, reason}``
-        object (SP-REFUTER-JUDGES-WHAT-IT-CAN); every other entry has
-        ``refutation`` null.
+        A refuter entry keeps its ``refutation`` object, with what the
+        judge was served (``evidence``, ``evidence_truncated``,
+        ``evidence_tokens``) (SP-REFUTER-JUDGES-WHAT-IT-CAN); every other
+        entry has ``refutation`` null.
         """
-        refutation = (
-            {"state": self.state, "reason": self.evidence} if self.judge == "refuter" else None
-        )
+        refutation: object = None
+        if self.refutation is not None:
+            refutation = self.refutation.as_json()["refutation"]
+        elif self.judge == "refuter":
+            refutation = {
+                "state": self.state,
+                "reason": self.evidence,
+                "evidence": [],
+                "evidence_truncated": [],
+                "evidence_tokens": 0,
+            }
         return {
             "id": self.finding_id,
             "file": self.file,
@@ -272,6 +285,7 @@ def _from_refutation(outcome: Refutation) -> ReportFinding:
         state=outcome.state,
         verification_method=REFUTER_METHOD,
         evidence=outcome.reason,
+        refutation=outcome,
     )
 
 

@@ -49,6 +49,12 @@ from repoach.review.reviewer import (
     Sentinel,
     Tester,
 )
+from tests.overlap_fakes import (
+    ConcurrencyTracker,
+    assert_guard_overlapped_fanout,
+    make_tracked_guard,
+    make_tracked_review_diff,
+)
 
 
 @pytest.fixture
@@ -222,18 +228,6 @@ def _make_event_setting_review_diff(
         arch_edges: str = "",
     ) -> ReviewerOutcome:
         event.set()
-        return outcome
-
-    return _review_diff
-
-
-def _make_sleepy_review_diff(
-    outcome: ReviewerOutcome, delay: float
-) -> Callable[..., ReviewerOutcome]:
-    """Return a review_diff replacement that sleeps *delay* seconds first."""
-
-    def _review_diff(diff: str, **kwargs: object) -> ReviewerOutcome:
-        time.sleep(delay)
         return outcome
 
     return _review_diff
@@ -424,36 +418,36 @@ def test_orchestrator_head_guard_call_site_is_non_blocking(
 def test_orchestrator_head_guard_overlaps_reviewer_fanout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The guard's wait overlaps with the reviewer fan-out instead of preceding it.
+    """The guard's call overlaps the reviewer fan-out instead of preceding it.
 
     Drives the real, unmodified ``resolve_fresh_head`` through the real call site
     against a real scratch git repository, with a truthful stale-forever forge
-    fake so every poll returns a served SHA that never matches local HEAD. Speeds up
-    the retry cadence via ``resolve_fresh_head.__kwdefaults__["delay_s"]`` (a
-    legitimate override of a keyword-only default; ``attempts`` and the retry
-    algorithm are untouched). Boundary-fake reviewers each sleep before returning a
-    canned APPROVE outcome. Every downstream ledger write is neutralised (see
-    ``_silence_downstream_ledger_writes``) so the wall-clock assertion measures only
-    the guard/fan-out overlap, not incidental SQLite commit latency. Asserts total
-    elapsed wall time sits comfortably below the serial sum of the guard's six
-    retries (``6 * delay_s``) plus the reviewer delay, and close to the concurrent
-    floor of ``max(guard_time, reviewer_time)`` — true today only after paying the
-    full serial sum, true after the fix once the two phases overlap.
+    fake so every poll returns a served SHA that never matches local HEAD. The
+    guard is wrapped by :func:`tests.overlap_fakes.make_tracked_guard`, whose
+    injected ``sleep`` blocks on its first call until a boundary-fake reviewer has
+    entered ``review_diff``; every downstream ledger write is neutralised (see
+    ``_silence_downstream_ledger_writes``). Asserts structurally, never against a
+    wall clock, that a reviewer ran while the guard was still inside its call
+    (see :func:`tests.overlap_fakes.assert_guard_overlapped_fanout`). A guard
+    awaited before the fan-out times out at the rendezvous and fails the test
+    whatever the machine load.
     """
     repo_root = tmp_path / "repo"
     _init_scratch_repo(repo_root)
 
     gh = _make_gh_stub(head_sha="stale" * 8, head_ref="feat/x")
 
-    reviewer_delay = 1.5
+    tracker = ConcurrencyTracker()
     review_diff_by_role = {
-        role: _make_sleepy_review_diff(_canned_outcome(role), reviewer_delay)
-        for role in _ROLE_TO_CLASS
+        role: make_tracked_review_diff(_canned_outcome(role), tracker) for role in _ROLE_TO_CLASS
     }
     _patch_reviewer_classes(monkeypatch, review_diff_by_role)
     _silence_downstream_ledger_writes(monkeypatch)
 
-    monkeypatch.setitem(resolve_fresh_head.__kwdefaults__, "delay_s", 0.2)
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.resolve_fresh_head",
+        make_tracked_guard(resolve_fresh_head, tracker),
+    )
 
     orch = ReviewTeamOrchestrator(
         forge=gh,
@@ -464,19 +458,10 @@ def test_orchestrator_head_guard_overlaps_reviewer_fanout(
     )
     _silence_publish_side_effects(orch, monkeypatch)
 
-    guard_time = 6 * 0.2
-    serial_sum = guard_time + reviewer_delay
-    concurrent_floor = max(guard_time, reviewer_delay)
-
     t0 = time.monotonic()
     team = orch.review_pr(pr_number=3)
     wall = time.monotonic() - t0
 
     assert team.head_sha == "stale" * 8
 
-    threshold = (concurrent_floor + serial_sum) / 2
-    assert wall < threshold, (
-        f"Wall time {wall:.2f}s >= {threshold:.2f}s (halfway between the "
-        f"{concurrent_floor:.2f}s concurrent floor and the {serial_sum:.2f}s serial "
-        "sum); the guard did NOT overlap the reviewer fan-out"
-    )
+    assert_guard_overlapped_fanout(tracker, n_reviewers=4, wall_s=wall)

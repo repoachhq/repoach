@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import typer
@@ -58,6 +59,7 @@ from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.orchestrator import run_review
+from ..review.refuter import Refutation
 from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
@@ -86,6 +88,33 @@ EXIT_WRITE_REFUSED = 8
 
 Nothing was sent; a step attempted a forge write the run was not allowed
 to make, which is a defect of that step (SP-DRY-RUN-NEVER-POSTS)."""
+
+
+def refuter_tokens_json(
+    refutations: Sequence[Refutation], usage: Mapping[str, object]
+) -> dict[str, int]:
+    """Report what the refuter consumed in the run: evidence estimate and ledger total.
+
+    ``evidence`` sums each finding's ``evidence_tokens`` (the
+    ``ceil(utf8_bytes / 3)`` estimate); ``total`` is the ``Refuter`` row
+    of the usage ledger (input, output and cache tokens, as the provider
+    counts them). Reported only: the evidence window is governed by
+    ``[gates].refuter_context_tokens`` alone, never by these figures.
+    """
+    rows = usage.get("per_reviewer")
+    refuter = (
+        next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("reviewer") == "Refuter"),
+            None,
+        )
+        if isinstance(rows, list)
+        else None
+    )
+    total = refuter.get("total_tokens", 0) if refuter else 0
+    return {
+        "evidence": sum(r.evidence_tokens for r in refutations),
+        "total": int(total) if isinstance(total, int) else 0,
+    }
 
 
 def _dry_run_refusal(value: str) -> WriteRefusal:
@@ -289,7 +318,10 @@ def review_pr(
     stored outcomes are replayed, the older-head re-check still runs, the
     JSON has the same shape with ``cached`` true, and one ``review:
     cached at <sha7> (run <id>, <when>); use --force to re-review`` line
-    on stderr names the run. A dry run and a posting run share that
+    on stderr names the run. The spec coverage is not replayed: it is
+    recomputed at the head with the current rule (no model call), its
+    row rewritten, and one ``review: spec coverage recomputed at <sha7>:
+    planned N, missing M`` line on stderr says it. A dry run and a posting run share that
     cache; a posting run posts the stored outcomes. ``--force`` runs the
     reviewers again.
 
@@ -358,6 +390,7 @@ def review_pr(
             f"{where}; reviewed without a spec",
             err=True,
         )
+    usage = run_usage_json(run)
     payload = {
         "pr_number": team.pr_number,
         "head_sha": team.head_sha,
@@ -395,11 +428,14 @@ def review_pr(
         ],
         "findings": [entry.as_json() for entry in team.findings],
         "verdict_basis": list(team.verdict_basis),
-        "usage": run_usage_json(run),
+        "usage": usage,
+        "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
     if team.cache_line:
         typer.echo(team.cache_line, err=True)
+    if team.spec_coverage_line:
+        typer.echo(team.spec_coverage_line, err=True)
     if team.findings_line:
         typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
@@ -712,7 +748,10 @@ def review_gate(
     a spec that has no document. ``spec_acceptance`` lists the selectors
     ``missing`` at head, the ``planned`` ones of a draft spec (absent
     files that do not refuse) and the ``draft_refusals`` that withheld
-    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
+    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2). A coverage row at
+    head graded by a retired rule (``rule_version`` below the current
+    one) is recomputed on the head tree and rewritten before the
+    decision, so it can never refuse on its own (0.3).
 
     The verifiers re-check the ledger on the tree of the verified head,
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one

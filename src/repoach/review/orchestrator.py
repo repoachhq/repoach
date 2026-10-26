@@ -70,7 +70,7 @@ from ..forge import (
     select_forge,
 )
 from ..forge.protocol import diff_files
-from ..gates.config import load_gates_config
+from ..gates.config import load_gates_config, resolve_refuter_context_tokens
 from ..project.config import load_project_config
 from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
 from ..providers.select import require_provider_ready
@@ -156,8 +156,7 @@ from .spec import SpecPlan, load_spec
 from .thread_context import ResolvedDisagreement
 
 if TYPE_CHECKING:
-    from .governed_spec import GovernedSpec
-    from .spec_gate import DraftScope
+    from .spec_gate import DraftScope, SpecCoverage
 
 _log = get_logger(__name__)
 
@@ -349,7 +348,10 @@ class TeamOutcome:
     stderr line saying it, empty when the write failed. ``cached`` is
     True when the run replayed a completed run at the same head instead
     of calling the reviewers (SP-FINDINGS-BRIDGE-DOCFIX 0.3) and
-    ``cache_line`` the stderr line naming that run. ``refused_writes`` lists every write the forge's
+    ``cache_line`` the stderr line naming that run; a replay recomputes
+    the spec coverage at its head with the current rule and
+    ``spec_coverage_line`` says so (empty on a fresh run).
+    ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
     why the barrier was closed, None when writes went through.
@@ -387,6 +389,7 @@ class TeamOutcome:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    spec_coverage_line: str = ""
 
 
 class ReviewTeamOrchestrator:
@@ -849,6 +852,9 @@ class ReviewTeamOrchestrator:
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
                     scope_head=head_sha,
+                    diff=diff,
+                    pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
+                    context_tokens=resolve_refuter_context_tokens(self._config_root)[0],
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
@@ -921,80 +927,15 @@ class ReviewTeamOrchestrator:
             )
 
         if spec_id is not None and not spec_missing:
-            try:
-                from .spec_gate import (
-                    SpecCoverage,
-                    compute_spec_coverage,
-                    coverage_of_selectors,
-                    record_spec_coverage,
-                    resolve_contract_plan,
-                    spec_acceptance_selectors,
-                )
-
-                resolution = resolve_contract_plan(
-                    spec_id, repo_root=self._repo_root, base_ref=base_ref
-                )
-                if not resolution.base_available and base_ref:
-                    self._forge.git(
-                        [
-                            "fetch",
-                            "--quiet",
-                            "origin",
-                            f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
-                        ]
-                    )
-                    resolution = resolve_contract_plan(
-                        spec_id,
-                        repo_root=self._repo_root,
-                        base_ref=f"origin/{base_ref}",
-                    )
-
-                draft, spec_markdown = self._draft_scope(
-                    spec_id, base_ref=base_ref, changed_files=diff_files(diff)
-                )
-                if resolution.plan is not None:
-                    coverage = compute_spec_coverage(
-                        self._repo_root, spec_id=spec_id, plan=resolution.plan, draft=draft
-                    )
-                elif resolution.base_available and draft is not None:
-                    coverage = coverage_of_selectors(
-                        self._repo_root,
-                        spec_id=spec_id,
-                        selectors=spec_acceptance_selectors(spec_markdown),
-                        draft=draft,
-                    )
-                else:
-                    coverage = SpecCoverage(
-                        spec_id=spec_id,
-                        n_promised=0,
-                        n_present=0,
-                        missing=[
-                            "plan-absent" if resolution.base_available else "base-ref-unavailable"
-                        ],
-                        covered=False,
-                    )
+            coverage = self._record_spec_coverage(
+                pr_number,
+                spec_id=spec_id,
+                head_sha=head_sha,
+                base_ref=base_ref,
+                changed_files=diff_files(diff),
+            )
+            if coverage is not None:
                 spec_covered = coverage.covered
-                record_spec_coverage(
-                    self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
-                )
-                _log.info(
-                    "review_team.spec_coverage",
-                    pr_number=pr_number,
-                    covered=coverage.covered,
-                    n_promised=coverage.n_promised,
-                    n_present=coverage.n_present,
-                    n_planned=len(coverage.planned),
-                    draft_refusals=coverage.draft_refusals,
-                    base_available=resolution.base_available,
-                    fell_back_to_head=resolution.fell_back_to_head,
-                )
-            except Exception as exc:
-                _log.info(
-                    "review_team.spec_coverage_skipped",
-                    pr_number=pr_number,
-                    exc=type(exc).__name__,
-                    message=str(exc)[:200],
-                )
 
         ledger_facts = summarise_ledger_facts(
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
@@ -1146,7 +1087,9 @@ class ReviewTeamOrchestrator:
         """Return the outcome of ``run`` at its head without calling any reviewer.
 
         The stored reviewer outcomes, refutations and spec fields are
-        read back; the findings of the head are already in the ledger, and
+        read back, except the spec coverage: it is derived data, so it is
+        recomputed at the head with the current rule and its row rewritten
+        (:meth:`_replayed_spec_coverage`, no model call); the findings of the head are already in the ledger, and
         the ``findings:`` counts are recounted against it without a write
         (:func:`~repoach.review.findings_bridge.recount_findings_at_head`).
         The re-check of older heads still runs
@@ -1166,8 +1109,19 @@ class ReviewTeamOrchestrator:
             run_id=run.run_id,
         )
         reverified = self._reverify_older_heads(pr_number, head_sha=head_sha, refuter_calls=0)
-        facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
+        spec_id = _optional_str(spec.get("spec_id"))
+        spec_missing = bool(spec.get("spec_missing", False))
         spec_covered = spec.get("spec_covered")
+        spec_coverage_line = ""
+        if spec_id is not None and not spec_missing:
+            coverage = self._replayed_spec_coverage(pr_number, spec_id=spec_id, head_sha=head_sha)
+            if coverage is not None:
+                spec_covered = coverage.covered
+                spec_coverage_line = (
+                    f"review: spec coverage recomputed at {head_sha[:7]}: "
+                    f"planned {len(coverage.planned)}, missing {len(coverage.missing)}"
+                )
+        facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
         verifications = recorded_verifications(
             self._db_path, pr_number=pr_number, head_sha=head_sha
         ).settled
@@ -1179,10 +1133,10 @@ class ReviewTeamOrchestrator:
             n_majors=sum(1 for o in outcomes for c in o.comments if c.severity == "major"),
             head_sha=head_sha,
             reviews=outcomes,
-            spec_id=_optional_str(spec.get("spec_id")),
+            spec_id=spec_id,
             spec_source=_optional_str(spec.get("spec_source")),
             spec_covered=None if spec_covered is None else bool(spec_covered),
-            spec_missing=bool(spec.get("spec_missing", False)),
+            spec_missing=spec_missing,
             refutations=refutations,
             verifications=list(verifications),
             reverifications=list(reverified.outcomes),
@@ -1201,6 +1155,7 @@ class ReviewTeamOrchestrator:
             findings_line=recounted.summary_line(),
             cached=True,
             cache_line=cache_line(run),
+            spec_coverage_line=spec_coverage_line,
         )
         if self._post:
             self._publish_replayed(pr_number, team)
@@ -1284,53 +1239,102 @@ class ReviewTeamOrchestrator:
     def _draft_scope(
         self, spec_id: str, *, base_ref: str | None, changed_files: list[str]
     ) -> tuple[DraftScope | None, str]:
-        """Return the draft scope of *spec_id* at head, and the spec's markdown.
+        """Return the draft scope of *spec_id* at head (:func:`~repoach.review.spec_gate.draft_scope_at_head`)."""
+        from .spec_gate import draft_scope_at_head
 
-        ``(None, "")`` when the spec is not governed or its head status is
-        not pre-implementation. The base view of the spec is read from
-        *base_ref*, then from ``origin/<base_ref>``; when neither resolves
-        the scope carries a refusal, so an unreadable base never grants
-        the exemption (fail closed).
+        return draft_scope_at_head(
+            self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
+        )
+
+    def _fetch_base(self, base_ref: str) -> None:
+        """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""
+        self._forge.git(
+            [
+                "fetch",
+                "--quiet",
+                "origin",
+                f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
+            ]
+        )
+
+    def _record_spec_coverage(
+        self,
+        pr_number: int,
+        *,
+        spec_id: str,
+        head_sha: str | None,
+        base_ref: str | None,
+        changed_files: list[str],
+    ) -> SpecCoverage | None:
+        """Grade the spec's selectors at the head tree and record the row; ``None`` on failure.
+
+        No model call: the report is a pure function of the spec, the head
+        tree and the diff's paths (:func:`~repoach.review.spec_gate.coverage_at_head`),
+        so a replayed run recomputes it with the current rule exactly as a
+        fresh run computes it. A failure is logged and records nothing.
         """
-        from .governed_spec import (
-            SpecRefUnavailableError,
-            load_governed_spec,
-            load_governed_spec_at_ref,
-        )
-        from .spec_gate import draft_scope
+        from .spec_gate import coverage_at_head, record_spec_coverage
 
-        head = load_governed_spec(spec_id, root=self._repo_root)
-        if head is None or head.path is None:
-            return None, ""
-        spec_path = head.path.resolve().relative_to(self._repo_root.resolve()).as_posix()
-        base: GovernedSpec | None = None
-        base_unreadable = True
-        for ref in (base_ref, f"origin/{base_ref}") if base_ref else ():
-            try:
-                base = load_governed_spec_at_ref(spec_id, ref, root=self._repo_root)
-            except SpecRefUnavailableError as exc:
-                _log.info("review_team.draft_scope_ref_unavailable", ref=ref, error=str(exc)[:200])
-                continue
-            base_unreadable = False
-            break
-        scope = draft_scope(
-            head_status=head.status,
-            base_status=base.status if base is not None else None,
-            owns_code=tuple(dict.fromkeys((*head.owns_code, *(base.owns_code if base else ())))),
-            changed_files=changed_files,
-            spec_path=spec_path,
-        )
-        if scope is None:
-            return None, ""
-        if base_unreadable:
-            scope = replace(
-                scope,
-                refusals=(
-                    *scope.refusals,
-                    f"base ref {base_ref!r} unreadable: the spec's draft status cannot be checked",
-                ),
+        try:
+            coverage, resolution = coverage_at_head(
+                self._repo_root,
+                spec_id=spec_id,
+                base_ref=base_ref,
+                changed_files=changed_files,
+                fetch_base=self._fetch_base,
             )
-        return scope, head.path.read_text(encoding="utf-8")
+            record_spec_coverage(
+                self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
+            )
+        except Exception as exc:
+            _log.info(
+                "review_team.spec_coverage_skipped",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+            return None
+        _log.info(
+            "review_team.spec_coverage",
+            pr_number=pr_number,
+            covered=coverage.covered,
+            n_promised=coverage.n_promised,
+            n_present=coverage.n_present,
+            n_planned=len(coverage.planned),
+            draft_refusals=coverage.draft_refusals,
+            base_available=resolution.base_available,
+            fell_back_to_head=resolution.fell_back_to_head,
+        )
+        return coverage
+
+    def _replayed_spec_coverage(
+        self, pr_number: int, *, spec_id: str, head_sha: str
+    ) -> SpecCoverage | None:
+        """Recompute the coverage of a replayed run at its head with the current rule.
+
+        The PR's base ref and diff paths are read from the forge (no
+        model call). ``None`` when they cannot be read or the grading
+        fails; the stored row then stands, and the gate recomputes it
+        when its rule is retired (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
+        """
+        try:
+            base_ref = self._forge.pull_request(pr_number).base_ref or None
+            changed = diff_files(self._forge.diff(pr_number).text)
+        except ForgeError as exc:
+            _log.warning(
+                "review_team.replay_spec_coverage_unread",
+                pr_number=pr_number,
+                stderr=exc.message[:200],
+                consequence="the stored coverage row stands",
+            )
+            return None
+        return self._record_spec_coverage(
+            pr_number,
+            spec_id=spec_id,
+            head_sha=head_sha,
+            base_ref=base_ref,
+            changed_files=changed,
+        )
 
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int

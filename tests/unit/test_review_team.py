@@ -1513,7 +1513,7 @@ def test_orchestrator_logs_one_finding_deferred_event_per_deferral(monkeypatch, 
     ]
     assert team.refuter_summary == (
         "refuter: judged 0, refuted 0, deferred 1 (evidence outside the diff), "
-        "unverified 1 (not yet mechanically verified)"
+        "unverified 1 (not yet mechanically verified), evidence_tokens total 0"
     )
 
 
