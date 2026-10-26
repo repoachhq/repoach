@@ -77,7 +77,9 @@ docstring_exempt = ["tests/", "scripts/", "src/repoach/llm_proxy/"]
 # itself, false on any other repository.
 require_frontmatter = true
 
-[auto_merge]
+# What the bot merge waits on (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF). Left
+# commented: a repoach older than this section refuses it as an unknown key.
+# [auto_merge]
 # Check names the merge waits on. Default: the CI workflow's job names.
 # required_checks = ["Test suite (Python 3.11)", "Test suite (Python 3.13)", "wheel-build", "wheel-smoke (3.11)", "wheel-smoke (3.13)"]
 # Workflows whose completion re-arms the merge.
