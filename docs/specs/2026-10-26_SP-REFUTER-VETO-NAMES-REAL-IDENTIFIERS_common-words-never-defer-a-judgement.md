@@ -28,7 +28,7 @@ constraints:
 
 | # | Fact | Where |
 |---|---|---|
-| F12 | Stop words that `src/` defines as names today: `name` (a property, `src/repoach/gates/selectors.py:71`), `call` (`src/repoach/agent_engine/adapters.py`, `src/repoach/providers/direct.py`, `src/repoach/providers/protocol.py`), `case` (`src/repoach/bench/corpus.py:222`), `without` (`src/repoach/routing/chain.py:69`). A claim about `call` on `providers/direct.py` named a real symbol, and 0.2 dropped it | verifier report, 2026-10-26 |
+| F12 | Stop words that `src/` defines as names today: `name` (a property, `src/repoach/gates/selectors.py:71`), `call` (`src/repoach/agent_engine/adapters.py`, `src/repoach/providers/direct.py`, `src/repoach/providers/protocol.py`), `case` (`src/repoach/bench/corpus.py:222`), `without` (`src/repoach/llm_proxy/routing/chain.py:69`). A claim about `call` on `providers/direct.py` named a real symbol, and 0.2 dropped it | verifier report, 2026-10-26 |
 | F13 | 0.2's `is_stop_word` read `_PYTHON_WORDS`, `_COMMON_TOKENS` and `_ENGLISH_WORDS`, not `STOP_WORDS`. A mutant emptying `STOP_WORDS` therefore left AC2 and AC3 green | verifier mutant report |
 
 ### Goals
@@ -49,7 +49,7 @@ constraints:
 |---|---|---|
 | F9 | Owner rule (2026-10-25), restated by the coordinator: the refuter's context must be large enough for it to do its job, and it is measured in tokens. Decision D5: `refuter_context_tokens` is a floor, the budget adapts to the evidence, and it stops at a ceiling | coordinator message, 2026-10-26 |
 | F10 | On the `5ed6ba2` tree at the 40 000 floor, with 0.1's stop-list, finding 41 leaves `_readable_base`, `specs_owning` and `spec_coverage_known` unserved. They are defined in `spec_gate.py`, and the 2 576-line `orchestrator.py` takes the budget (0.1 Q1) | probe over `build_evidence` at 40 000 |
-| F11 | With this amendment, at the default settings (floor 40 000, ceiling 200 000) on the `5ed6ba2` tree, with the refuting reasoning: finding 41 is `refuted` with `budget_used` 65 829, and finding 66 is `refuted` with `budget_used` 46 899 | probe over `judge_finding` with defaults |
+| F11 | With this amendment, at the default settings (floor 40 000, ceiling 200 000) on the `5ed6ba2` tree, with the refuting reasoning: finding 41 is `refuted` with `budget_used` 65 829, and finding 66 is `refuted` with `budget_used` 46 899 under 0.2. Re-measured after 0.3: finding 41 at 65 828/65 829, finding 66 at 57 030. The cited `orchestrator.py` defines one of finding 66's stop words, which 0.3 searches again | probe over `judge_finding` with defaults, on 0.2 and on 0.3 |
 
 ### Goals
 
