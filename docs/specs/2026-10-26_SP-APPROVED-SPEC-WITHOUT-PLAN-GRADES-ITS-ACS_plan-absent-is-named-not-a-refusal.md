@@ -1,7 +1,7 @@
 ---
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-26
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/cli/spec_cmds.py]
   resources: N/A
 
-depends_on: [SP-PLAN-SELECTOR-AUDIT-WIRE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-SPEC-TEMPLATE, SP-ARCH-REVIEW-WIRE, SP-PLAN-CONTRACT-LINTS]
+depends_on: [SP-PLAN-SELECTOR-AUDIT-WIRE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-SPEC-TEMPLATE, SP-ARCH-REVIEW-WIRE, SP-PLAN-CONTRACT-LINTS, SP-ARCH-GRAPH, SP-UNIVERSAL-PROJECT-CONFIG, SP-ORCH-DOCSTRING]
 provides_to: []
 
 constraints: {}
@@ -31,7 +31,27 @@ therefore stricter on an approved spec than on a draft one, and the
 refusal is about process history (no plan was ever committed), not about
 the PR. This spec makes the Acceptance Criteria the contract whenever no
 plan exists, whatever the status, and makes every coverage refusal name
-what is missing.
+what is missing, and stops a PR from escaping its specs by not
+declaring one: an undeclared PR is graded against the specs that own the
+code it touches.
+
+## Decisions
+
+Taken by the owner on 2026-10-26, on the 0.1 open questions and F7.
+
+- D1 (Q1): A bare backticked node id containing `::`
+  (`` `tests/x.py::test_y` ``) and a bare backticked test file path
+  (`` `tests/x.py` ``) are selectors, as is a backticked `pytest …`
+  invocation. Documented in SP-SPEC-TEMPLATE by its 0.2 amendment, in
+  this PR. Measured effect on F2: 35 of the 51 zero-selector specs gain a
+  contract (24 by node id, 11 by test file path only); 16 stay at zero.
+- D2 (Q2): Moving a spec to `approved` will require at least one AC
+  selector. That is a follow-up spec, named in tech_debt row 97, not
+  specified here.
+- D3 (F7): A PR that declares no spec is graded against every spec that
+  owns a path of its diff (G7). Code owned by no spec is reported, never
+  refused, in the frontier style of SP-ARCH-GRAPH / SP-SPEC-TEMPLATE
+  ("reported, never enforced").
 
 ## Context
 
@@ -51,6 +71,7 @@ Measured 2026-10-26 on `origin/develop` `3412d55`, read-only
 | F9 | `coverage_of_selectors` sets `covered = bool(selectors) and not missing and not refusals`: zero selectors is never covered, draft or not, so a docs-only draft spec PR whose AC names no pytest selector is refused with the same unnamed sentence. | `spec_gate.py:608` |
 | F10 | `resolve_contract_plan` catches `BaseRefUnavailableError` and `FileNotFoundError` from `load_plan_from_ref`, not the `ValueError` of an unparseable base plan; the orchestrator's `_spec_coverage` catches every exception, logs `review_team.spec_coverage_skipped` and records no row, so the gate reads `spec_coverage_known=False` and does not refuse on coverage. By reading; not observed on a PR. | `spec_gate.py:826-882`, `orchestrator.py:1195-1215`, `merge_gate.py:195` |
 | F11 | `SPEC_COVERAGE_RULE_VERSION = 1`; a row below the current version is recomputed at head before the decision (0.3), so bumping it re-grades every stored `plan-absent` row with the new rule. | `spec_gate.py:57`, `refresh_stale_coverage` |
+| F13 | Open PRs on 2026-10-26 (7): 5 declare a spec (#259 and #256 by `Spec:` line; #249, #247, #246 by branch). **2 declare none and both touch owned code: #254** (17 code paths; owners SP-ORCH-DOCSTRING and SP-FINDINGS-BRIDGE-DOCFIX approved, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-UNIVERSAL-GATES, SP-UNIVERSAL-PROJECT-CONFIG draft; 10 code paths unowned) **and #255** (15 code paths; owners SP-DEDUP-CLASSIFICATION-CONSTANTS and SP-ORCH-DOCSTRING approved, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-DRY-RUN-NEVER-POSTS, SP-UNIVERSAL-GATES draft; 10 unowned). Ownership read from develop's governed specs. | `gh pr list --state open --json number,headRefName,body,files`, `resolve_spec`, `load_governed_spec` |
 | F12 | No `repoach spec` command exists (`repoach --help`: develop, plan, chain-status, init, doctor, …, review). `cli/main.py` and `cli/review_cmds.py` are frontier (no owner); `spec_gate.py` is owned by SP-PLAN-SELECTOR-AUDIT-WIRE, `merge_gate.py` by SP-DEDUP-CLASSIFICATION-CONSTANTS, `governed_spec.py` by SP-ARCH-REVIEW-WIRE, `plan.py` by SP-PLAN-CONTRACT-LINTS. | `repoach --help`, governed-spec ownership scan |
 
 ## Goals
@@ -104,16 +125,30 @@ Measured 2026-10-26 on `origin/develop` `3412d55`, read-only
   `plan-absent` row is re-graded at head by the 0.3 mechanism before the
   next decision.
 
+- G7: A PR that declares no spec (no `--spec`, no `Spec:` line, no
+  branch match) is graded against every governed spec whose `owns.code`
+  matches at least one path of its diff, ownership read at base (a PR
+  cannot disown its code by editing a spec's `owns`), each spec graded
+  exactly as if declared (G1–G4, draft scope included: a draft spec whose
+  owned code the PR touches loses its exemption, as today). The merge
+  needs every resolved spec covered; each coverage refusal line is
+  prefixed with `<id>: `. One line per resolved spec is reported:
+  `spec resolved by ownership: <id> (<n> paths)`. The changed paths
+  outside `docs/` that no spec owns are reported in one line
+  `ungoverned paths: <path>, …` and never refuse. A declared spec keeps
+  today's behaviour (only that spec is graded); ownership resolution
+  applies only when nothing is declared. The gate JSON gains
+  `spec_resolution: {"source": "declared" | "ownership" | "none", "specs": [...], "ungoverned": [...]}`.
+
 ## Non-Goals
 
 - NG1: Writing the 62 missing plans or rewriting the 51 zero-selector AC
   sections. G5 lists them; the backfill is the tech_debt row.
 - NG2: Executing the selectors. Coverage stays a presence + non-trivial
   body fact (SP-SPEC-GATE); execution is CI's.
-- NG3: Changing how the PR's spec is resolved (`--spec` > `Spec:` line >
-  branch). F7's incentive disappears once declaring a spec no longer
-  costs a process-history refusal; making declaration mandatory is a
-  separate decision.
+- NG3: Changing the declared-spec order (`--spec` > `Spec:` line >
+  branch) or making declaration mandatory. G7 only fills the case where
+  nothing is declared.
 - NG4: Changing the draft exemption rules of SP-PLAN-SELECTOR-AUDIT-WIRE
   0.2 (planned selectors, docs-only scope, base status check), except
   the zero-selector outcome (G3).
@@ -154,6 +189,15 @@ Measured 2026-10-26 on `origin/develop` `3412d55`, read-only
   sentences from them; the bare sentence of F4 is never emitted without
   its list.
 
+Ownership resolution (G7): `spec_gate.specs_owning(paths: list[str], *, root: Path, ref: str) -> SpecsByOwnership`
+with `specs: dict[str, list[str]]` (spec id → owned changed paths, id
+order) and `ungoverned: list[str]` (changed paths outside `docs/` owned
+by none), built on the `owns.code` registry SP-ARCH-GRAPH derives, read
+at the base ref. The orchestrator records one coverage row per resolved
+spec at the head; `gather_merge_facts` folds them (covered iff every row
+is covered). The resolution step in `project/spec_source.py` returns
+`source="ownership"` when it applies.
+
 `src/repoach/cli/spec_cmds.py` (new, owned here): typer group `spec`,
 command `audit` with `--plans` (required for now; the only audit) and
 `--json`; registered in `cli/main.py`.
@@ -170,7 +214,21 @@ command `audit` with `--plans` (required for now; the only audit) and
 - Approved spec with a plan → graded against the plan, AC ignored, no
   `plan-absent` line.
 
+- No spec declared, diff touches `src/a.py` owned by approved SP-A
+  (AC selector absent) and `src/z.py` owned by nobody → refused
+  `SP-A: spec acceptance selectors not all present: tests/a.py::test_a (AC1)`;
+  reported `spec resolved by ownership: SP-A (1 paths)` and
+  `ungoverned paths: src/z.py`.
+
 ### Edge cases
+
+- No spec declared, diff touches only unowned code → merges (other facts
+  green), `ungoverned paths: …` reported, `spec_resolution.source == "none"`.
+- No spec declared, diff touches only `docs/` paths no spec owns →
+  nothing resolved, nothing reported as ungoverned.
+- Selector forms (D1): `` `pytest -q tests/x.py::t` ``, `` `tests/x.py::t` ``
+  and `` `tests/x.py` `` each yield a selector; a backticked `src/…py`
+  path without `::` does not.
 
 - Spec draft at base, approved at head (F5's shape) → union of base and
   head AC selectors, all graded as an approved spec (no planned).
@@ -193,7 +251,10 @@ command `audit` with `--plans` (required for now; the only audit) and
 - Adds dependency: -> SP-SPEC-TEMPLATE (reads the `## Acceptance Criteria` / `AC<n>` format)
 - Adds dependency: -> SP-ARCH-REVIEW-WIRE (`load_governed_spec`, `load_governed_spec_at_ref` for status and AC at base)
 - Adds dependency: -> SP-PLAN-CONTRACT-LINTS (`plan_relpath`, plan parsing for G4 and G5)
-- New coupling: `pr_spec_coverage` gains two additive columns; no new table.
+- Adds dependency: -> SP-ARCH-GRAPH (the `owns.code` registry G7 resolves paths through)
+- Adds dependency: -> SP-UNIVERSAL-PROJECT-CONFIG (`project/spec_source.py` gains the `ownership` source)
+- Adds dependency: -> SP-ORCH-DOCSTRING (`orchestrator.py` records one coverage row per resolved spec)
+- New coupling: `pr_spec_coverage` gains two additive columns and may hold several rows per head (one per resolved spec); no new table.
 
 ## Diagram
 
@@ -266,15 +327,27 @@ flowchart TD
   stays until `repoach spec audit --plans` reports
   `0 specs past draft without a plan`.
 
+- [ ] AC12: `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_touching_owned_code_is_refused_naming_the_selector`
+  → green: `src/a.py` owned by an `approved` spec SP-A whose AC names
+  one absent selector `tests/a.py::test_a`; a PR with no `Spec:` line and
+  a non-matching branch touching `src/a.py`; `decide_at_head` refuses
+  with `SP-A: spec acceptance selectors not all present: tests/a.py::test_a (AC1)`
+  and reports `spec resolved by ownership: SP-A (1 paths)`.
+- [ ] AC13: `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_undeclared_pr_touching_only_unowned_code_merges_with_the_ungoverned_line`
+  → green: the same PR touching only `src/z.py` (owned by no spec)
+  merges, the JSON carries `spec_resolution.source == "none"` and the
+  report carries `ungoverned paths: src/z.py`.
+- [ ] AC14: `pytest -q tests/unit/test_spec_resolved_by_ownership.py::test_ownership_is_read_at_base`
+  → green: a PR that removes `src/a.py` from SP-A's head `owns.code`
+  while touching it is still graded against SP-A.
+- [ ] AC15: `pytest -q tests/unit/test_spec_gate_plan_absent.py::test_bare_node_id_and_test_file_path_are_selectors`
+  → green: an AC section with `` `tests/x.py::test_y` `` (AC1),
+  `` `tests/z.py` `` (AC2) and `` `src/repoach/a.py` `` (AC3) yields
+  exactly `[("tests/x.py::test_y", "AC1"), ("tests/z.py", "AC2")]`.
+- [ ] AC16: SP-SPEC-TEMPLATE is at version 0.2 with an amendment naming
+  the three selector forms, and `docs/specs/_TEMPLATE.md`'s Acceptance
+  Criteria guidance names them (this PR).
+
 ## Open Questions
 
-- Q1: Should `spec_acceptance_selectors` also accept a bare backticked
-  node id (`` `tests/x.py::test_y` `` without `pytest`)? It would give a
-  contract to 24 of the 51 zero-selector specs (F2) without editing
-  them, at the cost of a second accepted form that SP-SPEC-TEMPLATE
-  does not document today. Recommendation: yes, node ids only (a
-  `::` is required, a bare file is not), documented in the template.
-- Q2: Should moving a spec to `approved` require at least one AC
-  selector (a lint on the status transition), so the zero-selector set
-  stops growing? Recommendation: yes, as a follow-up spec once G5's
-  backfill shows the cost.
+(none — the 0.1 questions are decided by D1 and D2)
