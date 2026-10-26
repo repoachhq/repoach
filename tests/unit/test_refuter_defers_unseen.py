@@ -455,15 +455,22 @@ def test_judge_receives_a_budget_of_its_own_context(tmp_path: Path) -> None:
         prompts.append(prompt)
         return _reply("cannot_judge", "partial")
 
-    small = judge_finding(_finding("src/huge.py", "c", line=1000), repo_root=tmp_path, judge=_judge)
+    small = judge_finding(
+        _finding("src/huge.py", "c", line=1000),
+        repo_root=tmp_path,
+        judge=_judge,
+        context_ceiling=40_000,
+    )
     large = judge_finding(
         _finding("src/huge.py", "c", line=1000),
         repo_root=tmp_path,
         judge=_judge,
         context_tokens=200_000,
     )
-    assert estimate_tokens(prompts[0]) <= 40_000
     assert small.truncated
+    assert small.reason.startswith("evidence exceeds the ceiling (")
+    assert len(prompts) == 1
+    assert estimate_tokens(prompts[0]) > 40_000
     assert not large.truncated
     assert large.tokens > small.tokens
 
@@ -700,10 +707,12 @@ def test_hits_cut_by_the_budget_defer_without_calling_the_judge(tmp_path: Path) 
         repo_root=tmp_path,
         judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
         context_tokens=1,
+        context_ceiling=1,
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
-    assert judgement.reason == "evidence outside window (identifier not served: wanted_symbol)"
+    assert judgement.reason.startswith("evidence exceeds the ceiling (")
+    assert judgement.reason.endswith(" tokens needed, ceiling 1)")
 
 
 def test_unserved_reason_is_a_closed_set_template() -> None:

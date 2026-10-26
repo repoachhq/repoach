@@ -357,3 +357,11 @@ def test_stamp_written_before_the_rule_version_is_re_judged(tmp_path: Path) -> N
     calls: list[str] = []
     _reverify(db, root, HEAD_B, calls)
     assert len(calls) == 1
+
+
+def test_needs_judgement_is_re_judged_when_the_ceiling_changes(tmp_path: Path) -> None:
+    root, db, _ = _ledger(tmp_path)
+    calls: list[str] = []
+    _reverify(db, root, HEAD_B, calls)
+    _reverify(db, root, HEAD_B, calls, context_ceiling=120_000)
+    assert len(calls) == 2

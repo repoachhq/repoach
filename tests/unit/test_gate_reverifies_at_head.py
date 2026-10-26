@@ -772,13 +772,13 @@ def test_re_check_fills_the_configured_refuter_context(
     head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
     _review_at(db, head_b)
     seen: list[int] = []
-    real = head_reverify.refute_finding
+    real = head_reverify.judge_finding
 
     def spy(finding: Finding, **kwargs: object) -> object:
         seen.append(int(kwargs["context_tokens"]))
         return real(finding, **kwargs)
 
-    monkeypatch.setattr(head_reverify, "refute_finding", spy)
+    monkeypatch.setattr(head_reverify, "judge_finding", spy)
     monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_TOKENS", "150000")
 
     evaluation = gate(repo, head_b, _Judge)

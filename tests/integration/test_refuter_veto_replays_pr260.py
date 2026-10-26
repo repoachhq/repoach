@@ -13,7 +13,11 @@ use every one of those words, so every word is over the cap. It drives
 the real :func:`~repoach.review.head_reverify.reverify_older_findings`
 with the real ledger, the real evidence assembly (``git grep``) at the
 40 000-token floor, and a judge that refutes with the measured
-reasoning (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS AC7).
+reasoning (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS AC7). The ``2576-lines``
+case pads the cited file to the real ``orchestrator.py`` length, past the
+floor, with the claim's identifiers defined in ``spec_gate.py``: at the
+default settings the context grows to serve both, and the ledger row
+records the ``budget_used`` (G5, AC10).
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from repoach.gates.config import GatesConfig
+from repoach.gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -129,9 +133,19 @@ def _git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _head_tree(root: Path) -> str:
+def _cited_source(lines: int) -> str:
+    """Return the cited file padded to ``lines`` lines after the fixed code."""
+    rows = [CITED_SOURCE]
+    count = CITED_SOURCE.count("\n")
+    while count < lines:
+        rows.append(f"PAD_{count} = '{'p' * 60}'\n")
+        count += 1
+    return "".join(rows)
+
+
+def _head_tree(root: Path, cited_lines: int) -> str:
     files = {
-        CITED: CITED_SOURCE,
+        CITED: _cited_source(cited_lines),
         "src/repoach/review/spec_gate.py": SPEC_GATE_SOURCE,
         **{f"src/repoach/users/user_{n:03}.py": USER_SOURCE.format(n=n) for n in range(80)},
     }
@@ -153,9 +167,11 @@ def _head_tree(root: Path) -> str:
     ],
     ids=["finding-41", "finding-66"],
 )
+@pytest.mark.parametrize("cited_lines", [0, 2576], ids=["short", "2576-lines"])
 def test_measured_refutation_settles_the_finding_at_the_next_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cited_lines: int,
     finding_id: int,
     line: int,
     claim: str,
@@ -163,9 +179,10 @@ def test_measured_refutation_settles_the_finding_at_the_next_head(
     words: tuple[str, ...],
 ) -> None:
     monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_CEILING", raising=False)
     root = tmp_path / "repo"
     root.mkdir()
-    head_b = _head_tree(root)
+    head_b = _head_tree(root, cited_lines)
     for word in words:
         hits = _git(root, "grep", "-n", "-F", "-w", word).splitlines()
         assert len(hits) > 50, word
@@ -215,3 +232,8 @@ def test_measured_refutation_settles_the_finding_at_the_next_head(
     row = next(f for f in fetch_findings(db, PR) if f.id == row_id)
     assert row.status is FindingStatus.RESOLVED_AT_HEAD
     assert row.verification_result.startswith(f"resolved at {head_b[:7]}: ")
+    if cited_lines:
+        assert row.budget_used > REFUTER_CONTEXT_TOKENS_FLOOR
+        assert "def _readable_base(base):" in prompts[0]
+    else:
+        assert row.budget_used == REFUTER_CONTEXT_TOKENS_FLOOR
