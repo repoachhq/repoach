@@ -36,7 +36,9 @@
   "result": [
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "SUCCESS",
+      "head_sha": "",
       "link": "https://gitlab.com/josephwfaye/yoob_2/-/jobs/17266158661",
       "name": "security:licenses:npm",
       "started_at": "2026-10-18T15:30:24.069Z",
@@ -45,7 +47,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "SUCCESS",
+      "head_sha": "",
       "link": "https://gitlab.com/josephwfaye/yoob_2/-/jobs/17266158660",
       "name": "security:licenses",
       "started_at": "2026-10-18T15:34:03.900Z",
@@ -54,7 +58,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "SUCCESS",
+      "head_sha": "",
       "link": "https://gitlab.com/josephwfaye/yoob_2/-/jobs/17266158659",
       "name": "security:pip-audit:api",
       "started_at": "2026-10-18T15:33:12.310Z",
@@ -63,7 +69,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "SUCCESS",
+      "head_sha": "",
       "link": "https://gitlab.com/josephwfaye/yoob_2/-/jobs/17266158658",
       "name": "security:pip-audit",
       "started_at": "2026-10-18T15:32:13.972Z",
@@ -72,7 +80,9 @@
     },
     {
       "bucket": "pass",
+      "completed_at": "",
       "conclusion": "SUCCESS",
+      "head_sha": "",
       "link": "https://gitlab.com/josephwfaye/yoob_2/-/jobs/17266158657",
       "name": "security:trivy",
       "started_at": "2026-10-18T15:30:23.461Z",

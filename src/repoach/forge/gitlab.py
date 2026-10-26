@@ -939,6 +939,15 @@ class GitLabForge:
         return shas
 
     @unnumbered_write
+    def dispatch_workflow(self, workflow: str, inputs: dict[str, str]) -> None:
+        """GitLab has no GitHub Actions workflow to dispatch; always refused.
+
+        Raises:
+            ForgeError: Always, naming the workflow; nothing is spawned.
+        """
+        raise ForgeError(f"gitlab has no workflow {workflow!r} to dispatch (inputs {inputs})")
+
+    @unnumbered_write
     def create_pull_request(
         self, *, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PullRequest:

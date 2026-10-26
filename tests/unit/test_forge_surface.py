@@ -39,5 +39,6 @@ def test_every_write_goes_through_the_barrier(cls: type) -> None:
         "upsert_marked_comment",
         "merge",
         "create_pull_request",
+        "dispatch_workflow",
     ):
         assert getattr(getattr(cls, name), "__wrapped__", None) is not None, name

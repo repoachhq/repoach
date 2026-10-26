@@ -25,7 +25,9 @@
     "checks": [
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "SUCCESS",
+        "head_sha": "",
         "link": "https://gitlab.com/josephwfaye/yoob_2/-/pipelines/2960453037",
         "name": "pipeline",
         "started_at": "2026-10-18T15:30:23.639Z",

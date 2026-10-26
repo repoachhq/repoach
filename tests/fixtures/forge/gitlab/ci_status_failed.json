@@ -25,7 +25,9 @@
     "checks": [
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "FAILED",
+        "head_sha": "",
         "link": "",
         "name": "pipeline",
         "started_at": "",
