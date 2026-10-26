@@ -1,11 +1,11 @@
 ---
 id: SP-SPEC-TEMPLATE
 title: Spec format and frontmatter contract
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-06-20
-updated: 2026-06-20
+updated: 2026-10-26
 
 owns:
   code: [docs/specs/_TEMPLATE.md]     # the canonical template artifact (a doc, not importable)
@@ -18,6 +18,24 @@ constraints: {}
 ---
 
 # SP-SPEC-TEMPLATE — spec format and frontmatter contract
+
+## Amendment (0.2, 2026-10-26): the selector forms an Acceptance Criterion may name
+
+Owner decision D1 of SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS. When a
+spec has no committed plan, the merge gate grades the selectors its
+`## Acceptance Criteria` section names. A selector is any backticked span
+of one of three forms:
+
+- a `pytest` invocation: `` `pytest -q tests/x.py::test_y` ``;
+- a bare node id containing `::`: `` `tests/x.py::test_y` ``;
+- a bare test file path: `` `tests/x.py` ``.
+
+A selector takes the label of the criterion it appears in (`AC3`). A
+backticked source path such as `` `src/repoach/a.py` `` is not a selector.
+`docs/specs/_TEMPLATE.md` names the three forms in its Acceptance
+Criteria guidance. Measured 2026-10-26: of the 51 specs past draft with
+no plan whose AC section held no `pytest` selector, 35 gain a contract
+from the two bare forms.
 
 ## Intent
 Define the canonical spec template and the machine-readable
