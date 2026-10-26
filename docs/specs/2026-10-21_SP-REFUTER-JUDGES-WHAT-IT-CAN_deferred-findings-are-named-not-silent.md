@@ -1,23 +1,122 @@
 ---
 id: SP-REFUTER-JUDGES-WHAT-IT-CAN
 title: Every deferred finding carries a named reason, and the judging cap is a setting
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-26
 
 owns:
-  code: [src/repoach/review/refuter.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py]
+  code: [src/repoach/review/refuter.py, src/repoach/review/refuter_evidence.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py, prompts/review/refuter_0.3.0.md, tests/unit/test_refuter_defers_unseen.py]
   resources: N/A
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-GATES, SP-FINDINGS-BRIDGE-DOCFIX]
 provides_to: []
 
 constraints: {}
 ---
 
 # Every deferred finding carries a named reason, and the judging cap is a setting
+
+## Amendment (0.2, 2026-10-25): the refuter defers what it cannot see, and its evidence fills its own context
+
+### Facts
+
+| # | Fact | Where |
+|---|---|---|
+| F12 | Yoob MRs !324/!327, `review:gate` artefacts (2026-10-25): the refuter marked 13/13 findings `refuted`. An independent re-read of each one against the head tree found 8 of the 13 verdicts wrong. Every wrong one reasons "<X> is not in the evidence, so the claim cannot be confirmed": a hand-typed `AcceleratorBoard` enum with no parity test, a half-derived hls4ml board table with 4 divergent boards, an Alembic migration with zero tests | `review-gate.json` of job 17451279178 (pipeline 2987034797, !327 head `8740195`), findings 1-4, 6-9 |
+| F13 | The judge saw `_EVIDENCE_CONTEXT = 25` lines on each side of the cited range and nothing else. Persona v0.2.1 told it to answer **refuted** whenever the claim was "about code you cannot see". Not seeing the code was turned into the claim being false | `src/repoach/review/refuter.py:72` (develop `2706bb6`), `prompts/review/refuter_0.2.1.md` "Your task" |
+| F14 | Owner rule (2026-10-25): "la fenêtre de contexte pour le réfuteur doit en tout cas être suffisamment grande pour qu'il fasse son travail". SP-AGENT-CONTEXT-LOOP D1 (draft) sets the refuter's `context_tokens` to 40 000 and discloses the estimator `ceil(utf8_chars / 3)`. This slice divides UTF-8 **bytes**, `ceil(utf8_bytes / 3)`: equal on ASCII, larger on multi-byte text, so it never under-counts | branch `docs/sp-agent-context-loop`, `docs/specs/2026-10-25_SP-AGENT-CONTEXT-LOOP_*.md` D1 and constraints |
+| F15 | No `evidence_reads` ledger table exists on develop (#246 is a draft spec). So what the judge was served is recorded on the finding's refutation payload | `grep -rn evidence_reads src/` on develop `2706bb6`: no hit |
+
+### Goals
+
+- G6: The judge answers one of three verdicts: `refuted`, `verified` or `cannot_judge`. `cannot_judge` defers the finding with `evidence outside window`. So does a `refuted` whose reasoning only says the code was not visible ("not in the evidence", "cannot be confirmed", "cannot see", "unseen", "not visible", "outside the window"). Such a finding is never `refuted`. It stays `proposed`, is reported deferred and counts as not validated, exactly like a cap-deferred finding.
+- G7: The evidence budget is the refuter's own `context_tokens`. The default and floor is 40 000 (F14). It is set by `[gates].refuter_context_tokens`, and `REPOACH_REFUTER_CONTEXT_TOKENS` outranks it. A value below the floor is refused. The budget is the context less the prompt, a 4 096-token contract reserve and the 2 048-token reply.
+- G8: The evidence fills that budget in this priority order, read-only, path-jailed, from the pinned head tree:
+  1. the whole cited file, with the cited lines marked `N:>`. A file over the budget is cut to a slice around the cited range. The slice never goes below the old ±25 lines: that window is now a floor, not the default;
+  2. for every identifier, path and test name the claim names, the `git grep -n -I -F -w` hits over the tracked files with ±10 lines each (hit lines marked `N:*`, at most 50 hits in all, one `git grep` per finding, ranked nearest first: the cited file, then the files the claim names, then tests, then the rest), and whether each named path is present. A bare file name is looked up among the tracked files, and a file the claim names is served whole when it fits;
+  3. the PR's diff hunks on the cited file;
+  4. the spec section the finding cites: the blocks carrying a cited label (`G3`, `AC2`, ...) of the PR's spec or of a spec the claim names. A claim that names the spec, or a `spec_gap`, with no label gets the whole spec.
+- G9: Content is cut only when the budget runs out, or when the 50-hit cap is reached. Then every item left out is named in the payload (`evidence_truncated`). The evidence opens with `PARTIAL EVIDENCE`, and the persona tells the judge that a claim resting on an item not served is `cannot_judge`.
+- G11: The refuter cannot refute what it was not served. When the claim names an identifier whose hits exist but none was served (the search timed out or could not run, or the budget, the hit cap or the deadline left every hit out), the finding is deferred with `evidence outside window (<identifier> not served)` and the judge is not called. When only some hits were served, the judge may answer, but a `refuted` whose reasoning names that identifier becomes `cannot_judge`.
+- G12: Bounds per finding: one `git grep` and at most one `git ls-files` (shared by every bare file name), each within 60 s; the whole assembly within 180 s (30/90 deferred everything on the review runner, a loaded machine). A step the deadline leaves out is named in `evidence_truncated`. When load kept the search from running, the deferral names it: `evidence outside window (grep timed out after 60 s: <ids>)` or `(assembly deadline of 180 s reached: <ids>)`, apart from `(<ids> not served)`. The judge's reply cap is 2 048 tokens, so the reasoning and the verdict line are never cut (a cut verdict is deferred and blocks the merge for a wrong reason). Thinking is off for the judge (`{"type": "disabled"}`, SP-AGENT-THINKING-CONTROL). The `claude_code` CLI receives both: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` from the request's `max_tokens`, and `MAX_THINKING_TOKENS=0`.
+- G13: Consumption is reported per run, and only reported. The run line ends `evidence_tokens total T`. The `review pr` / `review:gate` JSON carries `refuter_tokens: {evidence, total}`, where `total` is the `Refuter` row of the usage ledger. On !327 that row went from 14 299 to 397 057 tokens (×28, mostly cache writes); tech_debt #92 tracks prompt caching across the findings of one run.
+- G14 (owner rule 2026-10-26: "la fenêtre de contexte doit se mesurer en tokens, pas en argent"): the evidence window is governed by `context_tokens` alone (floor 40 000). No cost figure — `max_cost_usd` of SP-AGENT-CONTEXT-LOOP, the usage ledger, `refuter_tokens` — cuts or shapes the evidence; they are reported after the run. Sizes use the one estimator this spec names, `ceil(utf8_bytes / 3)`.
+- G15: The estimator's error is measured, not guessed. On !327 (claude_code, 9 calls), the estimate per call was about 16 550 tokens: 15 152 of evidence on average, plus the persona and the claim. The provider counted 43 281 input tokens per call: (18 + 162 108 cache read + 227 402 cache write) / 9, a ratio of 2.6. That gap includes the `claude` CLI's own system prompt, which this run cannot separate from the estimator's own error. A calibration factor per provider, derived from the usage ledger, is tech_debt #93. Until it lands, the budget stays the raw estimate.
+- G10: Each outcome records what was served (`evidence`), what was not (`evidence_truncated`) and its size (`evidence_tokens`). They are in the `review pr` JSON and in the stored review run.
+
+### Interface (delta)
+
+```python
+Verdict = Literal["refuted", "verified", "cannot_judge"]
+EVIDENCE_OUTSIDE_WINDOW = "evidence outside window"   # added to DEFERRAL_REASONS
+
+@dataclass(frozen=True)
+class Refutation:
+    ...
+    evidence: tuple[str, ...] = ()            # e.g. "src/m.py:1-120 (whole file)", "grep X: 9 hits (9 served)"
+    detail: str = ""                          # the judge's reasoning behind a cannot_judge
+    evidence_truncated: tuple[str, ...] = ()  # items not served, each named
+    evidence_tokens: int = 0                  # ceil(utf8_bytes / 3)
+
+def judge_finding(finding, *, repo_root, judge, absent_reason=..., context_tokens=40_000,
+                  diff="", pr_spec=None) -> Judgement: ...
+def judge_findings_for_pr(..., diff: str = "", pr_spec: tuple[str, str] | None = None,
+                          context_tokens: int | None = None) -> JudgingReport: ...
+```
+
+Persona `prompts/review/refuter_0.3.0.md` replaces `refuter_0.2.1.md`. Verdict line: `VERDICT: {"verdict": "refuted" | "verified" | "cannot_judge", "reasoning": "..."}`. The parser still reads the old `{"refuted": <bool>}` shape. Evidence assembly lives in `src/repoach/review/refuter_evidence.py`.
+
+### Acceptance Criteria (amendment)
+
+- [x] AC7: `pytest tests/unit/test_refuter_defers_unseen.py -k "cannot_judge or unseen_refutation"`: the literal `cannot_judge`, and a refutation whose reasoning says the code is not in the evidence, both parse to `cannot_judge`. A refutation that cites proof stays `refuted`.
+- [x] AC8: `-k truly_absent`: the claims end `deferred` with `evidence outside window`. The ledger keeps them `proposed`, none is `refuted`, `summary_line()` reads `deferred 2 (evidence outside window ×2)`, and the payload carries `evidence`, `evidence_truncated` and `evidence_tokens`.
+- [x] AC9: `-k "hand_typed_enum or half_derived_table or untested_migration"`: the three hidden !327 cases are built as fixtures. The judge now sees the enum's other users, the second table and its contents, and the migration's absent test. It returns `verified`, never `refuted`.
+- [x] AC10: `-k "whole_cited_file or over_the_budget or ten_lines or fifty or priority_order or diff_hunks or spec_section or bare_file_name or too_common"`: the whole file is served (300 lines, no truncation). A file over the budget becomes a named slice that never goes below ±25 lines. Hits come with ±10 lines and are capped at 50, the overflow named. Budget exhaustion is named. Diff hunks and the cited spec block are served.
+- [x] AC11: `-k context_tokens_floor`: the default is 40 000. `repoach.toml` and then the env override it. A value below 40 000 is refused.
+- [x] AC12: `-k "path_jailed or forge_a_verdict"`: a path outside the tree is reported absent, and no evidence line can start with `VERDICT:` at column one.
+- [x] AC13: the real check, read-only. `REPOACH_PROVIDER=claude_code repoach review pr 327 --dry-run --forge gitlab --force` from the Yoob checkout, with this branch on `PYTHONPATH`. It reports every finding's state and its `evidence_tokens`. Several of the findings formerly `refuted` for unseen code are now `verified` or `deferred`.
+- [x] AC15: `-k "grep_timeout or cut_by_the_budget or partly_served or nearest_fifty or closed_set_template"`. A `git grep` timeout and hits cut by the budget both defer with `evidence outside window (<identifier> not served)`, and the judge is not called. An identifier with 212 hits serves the 50 nearest (the named file first, then the test). A `refuted` that names a partly served identifier ends `deferred`; one that does not stays `refuted`.
+- [x] AC16: `-k "deadline or one_ls_files"`: a passed deadline names the search and the diff as not served; two bare file names cost one `git ls-files`.
+- [x] AC17: `pytest tests/unit/test_claude_code_output_cap.py`: `max_tokens` reaches the CLI child as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, also through a filtered environment, and a disabled `thinking` as `MAX_THINKING_TOKENS=0`. `-k refuter_route`: the refuter's loop asks for at least 2 048 tokens with thinking disabled. `-k grep_timeout`: the reason reads `evidence outside window (grep timed out after 60 s: <ids>)`.
+- [x] AC18: `-k "refuter_cost or tokens_never_money"`: the run line ends `evidence_tokens total T`, and `refuter_tokens_json` returns `{evidence, total}` from the usage row. Neither the evidence assembly nor the refuter imports the usage ledger, and no parameter of `build_evidence`, `judge_finding` or `judge_findings_for_pr` names a cost (G14).
+- [x] AC14: measurement method. A refuter verdict is checked by an **independent re-read**: a reviewer who did not produce it re-reads each `refuted` claim against the head tree. A refutation is wrong when the claim holds at the head. The ratio of wrong refutations is the metric, never the refuter's own counts.
+
+### Measurement (AC13, 2026-10-25)
+
+Before: `review:gate` artefact of job 17451279178, head `8740195`, persona v0.2.1, ±25-line window. All 8 judged findings (ids 1-4, 6-9) were `refuted`. After (run after the last code edit): `REPOACH_PROVIDER=claude_code repoach review pr 327 --dry-run --forge gitlab --force` from the Yoob checkout, run on this branch at the same head. The reviewers ran again, so the after-run carries its own findings. A finding is matched to the earlier one at the same file within 6 lines. Findings 7, 8 and 9 of the earlier run were not raised again.
+
+| id | finding | type | before | after | evidence tokens | truncated items | reason / detail |
+|---|---|---|---|---|---|---|---|
+| 31 | `src/yoob/codegen/hls4ml/pipeline.py:294` | design | refuted (#2) | verified | 29070 | 2 | BOARD_FPGA_PARTS derives only orangecrab from BOARD_CONFIGS; the other 7 entries are hand-typed; open B-201 lists clock/part mismatches; the parity te |
+| 42 | `api/exceptions.py:585` | design | new | refuted | 19206 | 0 | Import is lazy (l.599), API→core like yoob.errors at l.40; spec requires one shared message helper, so building the message at raise sites duplicates  |
+| 43 | `api/schemas/accelerator.py:57` | design | refuted (#1) | refuted | 15883 | 0 | validate_board takes valid boards from AcceleratorBoard itself (no copied list); runs mode=before to swap pydantic's enum error for UnknownBoardError  |
+| 44 | `api/routes/reference_apps.py:143` | design | refuted (#4) | verified | 5983 | 1 | SoCBody.__post_init__ (reference_application.py:484) already raises on board not in BOARD_CONFIGS; route lines 141-145 re-import and re-run the identi |
+| 45 | `src/yoob/codegen/hls4ml/pipeline.py:294` | design | refuted (#2) | verified | 29070 | 2 | Seven boards in BOARD_FPGA_PARTS are hand-typed; only orangecrab reads BOARD_CONFIGS. The parity test checks keys only and no other hit compares value |
+| 35 | `api/schemas/accelerator.py:58` | missing_test | refuted (#6) | verified | 12202 | 3 | Named test has 0 hits; test_unknown_board_refusal.py (served whole) only posts 'generic'; all AcceleratorBoard hits served, none passes an enum member |
+| 46 | `api/alembic/versions/n0g1e2n3r4c5_relabel_generic_board.py:47` | missing_test | new | verified | 2833 | 1 | Head-tree search finds 0 hits for the named roundtrip test and 0 for the migration's file stem, so no test loads it by path; the diff adds only the mi |
+| 47 | `api/alembic/versions/n0g1e2n3r4c5_relabel_generic_board.py:98` | missing_test | new | deferred | 2830 | 1 | evidence outside window / 0 hits for the suggested test name and module stem, but the revision ID and generic offline/--sql migration tests weren' |
+| 48 | `api/tests/test_unknown_board_refusal.py:109` | missing_test | new | verified | 19295 | 2 | Line 118 hard-codes len(boards)==8 right after line 117's sorted equality with sorted(BOARD_CONFIGS), which already fixes the count. The literal is re |
+
+Run line: `refuter: judged 8, refuted 2, deferred 1 (evidence outside window), unverified 0`. There are 9 outcomes: 6 `verified`, 2 `refuted`, 1 `deferred` (`judged 8` counts the verdicts of this pass; 31 and 45 are two findings on the same site). Finding 31 was deferred by an earlier run on the same head. It was still `proposed`, so this run judged it again, and it ended `verified`.
+
+How the earlier refuted sites ended, where the reviewers raised them again:
+
+| earlier `refuted` | now |
+|---|---|
+| #2 `hls4ml/pipeline.py:294`, half-derived table | `verified` (31 and 45): 7 of the 8 boards are hand-typed, and the parity test checks keys only |
+| #4 `reference_apps.py:144`, duplicated board check | `verified` (44) |
+| #6 `accelerator.py:58`, missing validator test | `verified` (35): the named test has 0 hits, and the test file was served whole |
+| #9 migration, missing test | `verified` (46, line 47) and `deferred` (47, line 98) |
+| #1 `accelerator.py:57`, hand-typed enum | `verified` in the first after-run (30 in `after_v1.json`: "validate_board derives `valid` from the hand-typed AcceleratorBoard enum"). In this run the reviewers raised a different claim at that site (43: `validate_board` duplicates the enum and imports `api.exceptions`), and its refutation is accurate |
+| #3 `exceptions.py:596` | `refuted` (42, line 585), on cited lines |
+| #7, #8 | not raised again by the reviewers in this run |
+
+Evidence size per judged finding, under `ceil(utf8_bytes / 3)`: min 2 830, median 15 883, max 29 070 tokens across the 9 outcomes. Every finding fit in the 40 000-token context with the prompt and the 4 896-token reserve of that run (6 144 since the reply cap is 2 048). No item was left out for budget. Every `truncated items` entry is either the 50-hit cap or an identifier over 200 hits that this run left unserved. That rule left `BOARD_CONFIGS` (202 hits) unserved on 3 findings and is replaced by G11/G12: the 50 nearest hits are served, and a refutation resting on the rest is deferred. 9 judge calls in 109.4 s. The run was not repeated after G11–G13: the table above measures the code before them.
+
+The run before the last edit used one `git grep` per identifier with a 30 s timeout. On the loaded tower it timed out 5 times, and two deferrals came from it. It was replaced by one `git grep` per finding with a 120 s timeout: 0 timeouts in this run. G12 brings the timeout back to 30 s, now for the one search of the finding, under a 90 s deadline; a timeout now defers the finding without a judge call (G11).
 
 ## Intent
 

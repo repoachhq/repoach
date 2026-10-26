@@ -58,6 +58,10 @@ def refutation_to_json(refutation: Refutation) -> dict[str, object]:
         "claim_type": refutation.claim_type.value,
         "state": refutation.state,
         "reason": refutation.reason,
+        "evidence": list(refutation.evidence),
+        "detail": refutation.detail,
+        "evidence_truncated": list(refutation.evidence_truncated),
+        "evidence_tokens": refutation.evidence_tokens,
     }
 
 
@@ -71,7 +75,16 @@ def refutation_from_json(data: dict[str, object]) -> Refutation:
         claim_type=ClaimType(str(data["claim_type"])),
         state=data["state"],
         reason=str(data.get("reason", "")),
+        evidence=tuple(str(entry) for entry in _as_list(data.get("evidence"))),
+        detail=str(data.get("detail", "")),
+        evidence_truncated=tuple(str(entry) for entry in _as_list(data.get("evidence_truncated"))),
+        evidence_tokens=int(str(data.get("evidence_tokens", 0) or 0)),
     )
+
+
+def _as_list(value: object) -> list[object]:
+    """Return ``value`` when it is a list, else an empty list (a run stored before ``evidence``)."""
+    return value if isinstance(value, list) else []
 
 
 def completed_run(
