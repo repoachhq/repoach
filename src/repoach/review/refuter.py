@@ -79,8 +79,7 @@ from ..core.resources import prompts_dir
 from ..gates.config import (
     REFUTER_CONTEXT_CEILING_DEFAULT,
     REFUTER_CONTEXT_TOKENS_FLOOR,
-    resolve_refuter_context_ceiling,
-    resolve_refuter_context_tokens,
+    resolve_refuter_budget,
     resolve_refuter_max_judged,
 )
 from ..llm.capability import CapabilityTier
@@ -433,9 +432,13 @@ def _overhead(finding: Finding) -> int:
     )
 
 
-def _evidence_budget(finding: Finding, context_tokens: int) -> int:
-    """Return the tokens the evidence may take: the context less prompt and reserves."""
-    return max(0, context_tokens - _overhead(finding))
+def _evidence_budget(finding: Finding, context_tokens: int, overhead: int | None = None) -> int:
+    """Return the tokens the evidence may take: the context less prompt and reserves.
+
+    ``overhead`` is :func:`_overhead` of ``finding`` when the caller has it
+    already, so the prompt is rendered once per finding.
+    """
+    return max(0, context_tokens - (_overhead(finding) if overhead is None else overhead))
 
 
 def _evidence_excerpt(
@@ -443,17 +446,19 @@ def _evidence_excerpt(
     repo_root: Path,
     absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
     *,
-    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
+    evidence_tokens: int,
     diff: str = "",
     specs: Sequence[tuple[str, str]] = (),
-    context_ceiling: int | None = None,
+    evidence_ceiling: int | None = None,
 ) -> tuple[EvidenceBundle | None, str]:
     """Return ``(evidence bundle, "")``, or ``(None, deferral reason)``.
 
-    The bundle fills ``context_tokens`` less the prompt and the reply
-    reserves (:func:`refuter_evidence.build_evidence`); with
-    ``context_ceiling``, that is the floor and the budget grows to what
-    the core evidence needs, up to the ceiling less the same reserves. The reason is
+    ``evidence_tokens`` and ``evidence_ceiling`` are already net of the
+    prompt and the reply reserves (:func:`judge_finding` computes them
+    once): the bundle fills ``evidence_tokens``
+    (:func:`refuter_evidence.build_evidence`), and with
+    ``evidence_ceiling`` that is the floor and the budget grows to what
+    the core evidence needs, up to the ceiling. The reason is
     ``absent_reason`` (by default :data:`EVIDENCE_OUTSIDE_DIFF`) when the
     cited file is not a file inside ``repo_root``, and
     :data:`EVIDENCE_UNREADABLE` when it is but cannot be read or holds
@@ -473,13 +478,11 @@ def _evidence_excerpt(
         line_start=finding.line_start,
         line_end=finding.line_end,
         claim=finding.claim,
-        budget_tokens=_evidence_budget(finding, context_tokens),
+        budget_tokens=evidence_tokens,
         diff=diff,
         specs=specs,
         claim_is_spec_gap=finding.claim_type is ClaimType.SPEC_GAP,
-        ceiling_tokens=(
-            None if context_ceiling is None else _evidence_budget(finding, context_ceiling)
-        ),
+        ceiling_tokens=evidence_ceiling,
     )
     if bundle is None:
         return None, EVIDENCE_UNREADABLE
@@ -663,18 +666,18 @@ def judge_finding(
             ``context_tokens``.
     """
     ceiling = max(context_ceiling, context_tokens)
+    overhead = _overhead(finding)
     bundle, reason = _evidence_excerpt(
         finding,
         repo_root,
         absent_reason,
-        context_tokens=context_tokens,
+        evidence_tokens=_evidence_budget(finding, context_tokens, overhead),
         diff=diff,
         specs=claim_specs(finding, repo_root, pr_spec),
-        context_ceiling=ceiling,
+        evidence_ceiling=_evidence_budget(finding, ceiling, overhead),
     )
     if bundle is None:
         return Judgement(FindingStatus.PROPOSED, reason)
-    overhead = _overhead(finding)
     used = max(context_tokens, min(ceiling, bundle.budget_tokens + overhead))
 
     def _deferred(why: str, detail: str = "") -> Judgement:
@@ -862,13 +865,8 @@ def judge_findings_for_pr(
         judge calls made.
     """
     cap = configured_max_judged(repo_root) if max_judged is None else max_judged
-    budget = (
-        resolve_refuter_context_tokens(repo_root)[0] if context_tokens is None else context_tokens
-    )
-    ceiling = (
-        resolve_refuter_context_ceiling(repo_root)[0]
-        if context_ceiling is None
-        else context_ceiling
+    budget, ceiling = resolve_refuter_budget(
+        repo_root, floor=context_tokens, ceiling=context_ceiling
     )
     reviewed = review_head or head_sha
     tree_behind = bool(reviewed and tree_sha and tree_sha != reviewed)
