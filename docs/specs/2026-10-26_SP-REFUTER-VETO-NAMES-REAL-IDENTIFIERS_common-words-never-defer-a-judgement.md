@@ -1,7 +1,7 @@
 ---
 id: SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS
 title: Common words and fully served identifiers never defer a refuter verdict
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-10-26
@@ -21,6 +21,25 @@ constraints:
 ---
 
 # Common words and fully served identifiers never defer a refuter verdict
+
+## Amendment (0.3, 2026-10-26): a stop word the cited code defines is still an identifier
+
+### Facts
+
+| # | Fact | Where |
+|---|---|---|
+| F12 | Stop words that `src/` defines as names today: `name` (a property, `src/repoach/gates/selectors.py:71`), `call` (`src/repoach/agent_engine/adapters.py`, `src/repoach/providers/direct.py`, `src/repoach/providers/protocol.py`), `case` (`src/repoach/bench/corpus.py:222`), `without` (`src/repoach/routing/chain.py:69`). A claim about `call` on `providers/direct.py` named a real symbol, and 0.2 dropped it | verifier report, 2026-10-26 |
+| F13 | 0.2's `is_stop_word` read `_PYTHON_WORDS`, `_COMMON_TOKENS` and `_ENGLISH_WORDS`, not `STOP_WORDS`. A mutant emptying `STOP_WORDS` therefore left AC2 and AC3 green | verifier mutant report |
+
+### Goals
+
+- G1 amended: a stop word is still an identifier when the cited file or the PR's hunks on it define it. A definition is `def <name>`, `class <name>`, `self.<name> =` or `<name> =` at line start, as found by `defined_names` over the cited file's text and its diff hunks. G2 then applies to it like any identifier. The same word, on a cited file that does not define it, is dropped.
+- G8: `STOP_WORDS` is the single source. `is_stop_word(token)` is `token in STOP_WORDS or token.lower() in STOP_WORDS`.
+
+### Acceptance criteria (0.3)
+
+- [x] AC15 (G1): a claim naming `call` on a cited file that defines `def call` keeps `call` as an identifier. Its hits are searched, and a refutation naming it stays `refuted` when every hit in the cited file was served (G2). The same claim on a file that does not define `call` drops it. `defined_names` covers `def`, `class`, `self.<name> =`, `<name> =` and a `+def` diff line — `pytest -q tests/unit/test_refuter_veto_names_real_identifiers.py -k "defined_stop_word or defined_names"`.
+- [x] AC16 (G8): emptying `STOP_WORDS` makes `is_stop_word` false for every measured word — `pytest -q tests/unit/test_refuter_veto_names_real_identifiers.py::test_is_stop_word_reads_stop_words_only`.
 
 ## Amendment (0.2, 2026-10-26): the context adapts to the evidence, within a ceiling (Q1 decided)
 
@@ -49,7 +68,7 @@ constraints:
 
 ### Ordering
 
-This branch carries #260's `5ed6ba2` (`fix(reverify): judge older findings with the configured refuter context`) as a cherry-pick. `reverify_older_findings` takes the `context_tokens` parameter exactly as #260 defines it. #268 merges after #260.
+This branch carries `eb1c275`, a hand-merged adaptation of #260's `5ed6ba2` (`fix(reverify): judge older findings with the configured refuter context`). It is not a byte-identical cherry-pick: in `head_reverify.py` the `reverify_older_findings` docstring for `context_tokens` merges #260's text with this spec's stamp-key sentence. The other files are as in `5ed6ba2`. `reverify_older_findings` takes the `context_tokens` parameter exactly as #260 defines it. #268 merges after #260.
 
 ## 0.1
 
