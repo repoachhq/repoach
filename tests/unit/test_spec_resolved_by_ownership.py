@@ -238,7 +238,9 @@ def test_a_grading_failure_records_a_refusing_row(
     repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
 
     def broken(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("git show failed")
+        raise RuntimeError(
+            "git show failed: fatal: https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz@github.com"
+        )
 
     monkeypatch.setattr("repoach.review.spec_gate.coverage_rows_at_head", broken)
     team = _review(repo, head, [_OWNED])
@@ -247,5 +249,7 @@ def test_a_grading_failure_records_a_refusing_row(
     assert team.spec_covered is False
     assert decision.merge is False
     assert decision.reasons == [
-        "spec coverage not graded: RuntimeError: git show failed (fail closed)"
+        "spec coverage not graded: RuntimeError: git show failed: fatal: "
+        "https://***@github.com (fail closed)"
     ]
+    assert "ghs_" not in decision.reasons[0]

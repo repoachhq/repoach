@@ -1297,8 +1297,8 @@ class ReviewTeamOrchestrator:
             missing=[],
             covered=False,
             draft_refusals=[
-                f"spec coverage not graded: {type(error).__name__}: {str(error)[:200]} "
-                "(fail closed)"
+                f"spec coverage not graded: {type(error).__name__}: "
+                f"{_redacted(str(error))[:200]} (fail closed)"
             ],
             contract="unavailable",
             resolution="declared" if spec_id else OWNERSHIP_UNRESOLVED,
@@ -2156,6 +2156,25 @@ def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> di
         "specs": [row.spec_id for row in grading.rows if row.resolution != OWNERSHIP_UNRESOLVED],
         "ungoverned": list(ownership.ungoverned) if ownership is not None else [],
     }
+
+
+_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
+"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
+
+
+def _redacted(text: str) -> str:
+    """Return *text* with URL credentials and forge tokens replaced by ``***``.
+
+    A grading error becomes a merge reason that the gate publishes (its
+    JSON, notes and PR comment); a failed ``git fetch`` can carry a
+    credentialed remote URL.
+    """
+    from ..forge.recording import SECRET_VALUE_PATTERNS
+
+    cleaned = _URL_USERINFO.sub("***@", text)
+    for pattern in SECRET_VALUE_PATTERNS:
+        cleaned = pattern.sub("***", cleaned)
+    return cleaned
 
 
 def _optional_str(value: object) -> str | None:
