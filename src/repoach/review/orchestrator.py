@@ -1252,7 +1252,7 @@ class ReviewTeamOrchestrator:
                 "review_team.spec_coverage_failed",
                 pr_number=pr_number,
                 exc=type(exc).__name__,
-                message=str(exc)[:200],
+                message=_redacted(str(exc))[:200],
                 consequence="a not-covered row is recorded (fail closed)",
             )
             return self._record_grading_failure(
@@ -1312,7 +1312,7 @@ class ReviewTeamOrchestrator:
                 "review_team.spec_coverage_failure_unrecorded",
                 pr_number=pr_number,
                 exc=type(exc).__name__,
-                message=str(exc)[:200],
+                message=_redacted(str(exc))[:200],
             )
             return None
         return CoverageGrading(rows=[row])
