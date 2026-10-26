@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/instance.py, scripts/job_proxy.sh, tests/unit/test_job_proxy_instance.py, tests/unit/test_job_proxy_workflow_wiring.py, tests/integration/test_job_proxy_collision.py]
   resources: [format:proxy-health-instance]
 
-depends_on: [SP-CI-SECRETS-ISOLATION, SP-PROXY-EDGE-HARDEN, SP-PROXY-SECURE-DEFAULTS, SP-CI-SMOKE-REPAIR, SP-CHAIN-STATUS-PROXY-DEFAULT, SP-RED-STOPS-THE-LINE]
+depends_on: [SP-CI-SECRETS-ISOLATION, SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROXY-EDGE-HARDEN, SP-PROXY-SECURE-DEFAULTS, SP-CI-SMOKE-REPAIR, SP-CHAIN-STATUS-PROXY-DEFAULT, SP-RED-STOPS-THE-LINE]
 provides_to: []
 
 constraints:
@@ -188,6 +188,7 @@ unchanged.
 
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-CI-SECRETS-ISOLATION (the helper runs from the base checkout of the secret-holding review job, never from PR code)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-PROXY-EDGE-HARDEN (the anonymous `/health` body gains exactly one field, `instance`; breaker/credits stay authenticated-only)
+- Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-PROXY-FIRST-BYTE-DEADLINE (the tests build the proxy `Settings` it owns to drive `/health` hermetically)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-PROXY-SECURE-DEFAULTS (the bind stays on loopback, and every job still passes a token)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-CI-SMOKE-REPAIR (the smoke stays a real gate, now on its own port)
 - Adds dependency: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB -> SP-CHAIN-STATUS-PROXY-DEFAULT (exporting `REPOACH_PROXY_PORT` keeps its settings-port default pointing at the job's proxy)
