@@ -5,7 +5,10 @@ against a real scratch git repository under ``tmp_path``, a truthful ``gh`` fake
 and REAL ``Architect`` / ``Sentinel`` / ``Tester`` / ``Scribe`` instances whose only
 replaced surface is the public ``review_diff`` contract method — never an ad-hoc stub
 class with an invented signature. Asserts ``head_sha`` resolves correctly and that the
-guard's wait overlapped the reviewer fan-out instead of preceding it.
+guard's call interval overlapped the reviewer fan-out instead of preceding it.
+
+Overlap is proven structurally by :mod:`tests.overlap_fakes`, never by a wall
+clock.
 """
 
 from __future__ import annotations
@@ -35,6 +38,12 @@ from repoach.review.reviewer import (
     Tester,
 )
 from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
+from tests.overlap_fakes import (
+    ConcurrencyTracker,
+    assert_guard_overlapped_fanout,
+    make_tracked_guard,
+    make_tracked_review_diff,
+)
 
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
@@ -75,18 +84,6 @@ def _boundary_fake_reviewer(
     return instance
 
 
-def _make_sleepy_review_diff(
-    outcome: ReviewerOutcome, delay: float
-) -> Callable[..., ReviewerOutcome]:
-    """Return a review_diff replacement that sleeps *delay* seconds first."""
-
-    def _review_diff(diff: str, **kwargs: object) -> ReviewerOutcome:
-        time.sleep(delay)
-        return outcome
-
-    return _review_diff
-
-
 def _gh_fake(*, head_sha: str = "stale" * 8, head_ref: str = "feat/x") -> GitHubForge:
     """A real :class:`GitHubForge` whose ``gh`` surfaces a stale-forever head SHA.
 
@@ -118,8 +115,8 @@ def _silence_downstream_ledger_writes(monkeypatch: pytest.MonkeyPatch) -> None:
 
     None of these functions are the subject under test — SP-FRESH-HEAD-CONCURRENT is
     a scheduling change to the call site, not to findings persistence — so replacing
-    them keeps the wall-clock assertion honest about what it measures instead of
-    entangling it with incidental SQLite commit latency.
+    them keeps the test about scheduling instead of entangling it with incidental
+    SQLite commit latency.
     """
     monkeypatch.setattr("repoach.review.orchestrator.fetch_dialogue", lambda *a, **kw: [])
     monkeypatch.setattr("repoach.review.orchestrator.record_dialogue", lambda *a, **kw: None)
@@ -165,10 +162,12 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
 
     Constructs an orchestrator with a real scratch git repo under ``tmp_path``, a
     truthful stale-forever ``_gh_fake``, the real, unmodified ``resolve_fresh_head``
-    (sped up via its ``delay_s`` keyword-only default), and boundary-fake reviewers
-    that each sleep briefly. Asserts ``head_sha`` is the stale SHA the fake returns
-    after the guard exhausts its retries, and that total wall time sits below the
-    serial sum of guard time plus reviewer time (confirming overlap).
+    wrapped by a tracker whose injected ``sleep`` waits for the first reviewer, and
+    boundary-fake reviewers that record their own interval. Asserts ``head_sha`` is
+    the stale SHA the fake returns after the guard exhausts its retries, that a
+    reviewer entered while the guard was still inside its call (maximum
+    concurrency of at least two, and intersecting intervals), and only a generous
+    sanity bound on wall time.
     """
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -192,14 +191,14 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
 
     gh = _gh_fake(head_sha="stale" * 8, head_ref="feat/x")
 
-    reviewer_delay = 1.5
+    tracker = ConcurrencyTracker()
     for role, cls_name in (
         (BotRole.ARCHITECT, "Architect"),
         (BotRole.SENTINEL, "Sentinel"),
         (BotRole.TESTER, "Tester"),
         (BotRole.SCRIBE, "Scribe"),
     ):
-        review_diff = _make_sleepy_review_diff(_canned(role), reviewer_delay)
+        review_diff = make_tracked_review_diff(_canned(role), tracker)
         monkeypatch.setattr(
             f"repoach.review.orchestrator.{cls_name}",
             lambda db_path=None, role=role, review_diff=review_diff: _boundary_fake_reviewer(
@@ -209,7 +208,10 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
 
     from repoach.review.orchestrator import resolve_fresh_head
 
-    monkeypatch.setitem(resolve_fresh_head.__kwdefaults__, "delay_s", 0.2)
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.resolve_fresh_head",
+        make_tracked_guard(resolve_fresh_head, tracker),
+    )
     _silence_downstream_ledger_writes(monkeypatch)
 
     orch = ReviewTeamOrchestrator(
@@ -226,19 +228,10 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(orch, "_run_auto_challenge_pass", lambda **kw: None)
     monkeypatch.setattr(orch, "_publish_outcome", lambda **kw: None)
 
-    guard_time = 6 * 0.2
-    serial_sum = guard_time + reviewer_delay
-    concurrent_floor = max(guard_time, reviewer_delay)
-
     t0 = time.monotonic()
     team = orch.review_pr(pr_number=3)
     wall = time.monotonic() - t0
 
     assert team.head_sha == "stale" * 8, f"Expected stale head, got {team.head_sha!r}"
 
-    threshold = (concurrent_floor + serial_sum) / 2
-    assert wall < threshold, (
-        f"Wall time {wall:.2f}s >= {threshold:.2f}s (halfway between the "
-        f"{concurrent_floor:.2f}s concurrent floor and the {serial_sum:.2f}s serial "
-        "sum); the guard did NOT overlap the reviewer fan-out"
-    )
+    assert_guard_overlapped_fanout(tracker, n_reviewers=4, wall_s=wall)

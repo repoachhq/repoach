@@ -1,17 +1,17 @@
 ---
 id: SP-FINDINGS-BRIDGE-DOCFIX
 title: Drop the stale coder_loop cross-reference from _files_in_diff
-version: 0.3
+version: 0.4
 status: approved
 author: jfaye (tech-debt survey 2026-07-02, ledger entry 10)
 created: 2026-07-02
-updated: 2026-10-22
+updated: 2026-10-25
 
 owns:
-  code: [src/repoach/review/findings_bridge.py, src/repoach/review/review_cache.py, tests/unit/test_review_pr_records_once_per_head.py]
+  code: [src/repoach/review/findings_bridge.py, src/repoach/review/review_cache.py, tests/unit/test_review_pr_records_once_per_head.py, tests/unit/test_replay_recomputes_spec_coverage.py]
   resources: []
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-UNIVERSAL-CI-ENTRY, SP-UNIVERSAL-FORGE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-RETRY-BACKOFF-DEDUP]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-UNIVERSAL-CI-ENTRY, SP-UNIVERSAL-FORGE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-RETRY-BACKOFF-DEDUP, SP-PLAN-SELECTOR-AUDIT-WIRE, SP-PLAN-CONTRACT-LINTS, SP-DEDUP-CLASSIFICATION-CONSTANTS]
 provides_to: []
 
 constraints: {}
@@ -138,6 +138,27 @@ raising one claim).
   cached at 24b8111 (run e09f7faccb1c, …)`, `usage: 0 calls`, `APPROVE`,
   `cached: true`.
 
+## Amendment (0.4, 2026-10-25): a replay recomputes the spec coverage
+
+Measured on PR #246 (2026-10-25 20:05, after #250 graded a draft
+spec's absent selectors as `planned`): `safe_merge.sh` ran `review pr
+246`, which replayed the run cached at `88ab476` and so left the
+`pr_spec_coverage` row the pre-#250 code had written
+(`base-ref-unavailable`, not covered); the gate read that row and
+refused `spec acceptance selectors not all present`. The replay treated
+derived data as part of the run.
+
+- G14: the spec coverage is not part of the cached run. It is a pure
+  function of the spec (and its base-ref plan), the head tree and the
+  diff's paths, computed without any model call
+  (`spec_gate.coverage_at_head`). On a replay, `review pr` reads the
+  PR's base ref and diff from the forge, recomputes it with the current
+  code at the head tree, rewrites the `pr_spec_coverage` row, reports
+  it in `spec_coverage`, and prints `review: spec coverage recomputed
+  at <sha7>: planned N, missing M` on stderr, exactly as the verdict is
+  re-derived from the ledger. When the forge cannot serve the base ref
+  or the diff, the stored row stands and the line is not printed.
+
 ## Intent
 
 Make the `_files_in_diff` docstring in `findings_bridge.py` truthful
@@ -212,6 +233,15 @@ counterpart in another module.
 ### Failure scenarios
 
 - N/A (documentation-only).
+- [x] AC18 (0.4): `pytest -q tests/unit/test_replay_recomputes_spec_coverage.py`
+  → green: a cached run whose coverage row is a stale `not_covered`, for
+  a draft spec whose selectors' files are all absent, replays with 0
+  model calls, `spec_covered` true, the `review: spec coverage
+  recomputed at <sha7>: planned 2, missing 0` line, a rewritten row
+  listing both selectors as planned, and a gate that merges; the same
+  run for an `approved` spec whose plan names a test absent at head
+  replays with `missing 1` and stays refused with `spec acceptance
+  selectors not all present`.
 
 ## Architecture Impact
 
@@ -222,6 +252,9 @@ counterpart in another module.
 - Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-REFUTER-JUDGES-WHAT-IT-CAN (0.2: the tests route the refuter pass to the stub judge)
 - Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-RETRY-BACKOFF-DEDUP (0.2: owner of `reviewer.py`; the tests build `ReviewerOutcome` stubs)
 - Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-UNIVERSAL-CI-ENTRY (0.3: the tests drive the `ci review` child runner and read `FORCE_VAR`)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-PLAN-SELECTOR-AUDIT-WIRE (0.4: owner of `spec_gate.py`; the tests seed and read `pr_spec_coverage`)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-PLAN-CONTRACT-LINTS (0.4: owner of `plan.py`; the tests commit a base-ref plan)
+- Adds dependency: SP-FINDINGS-BRIDGE-DOCFIX -> SP-DEDUP-CLASSIFICATION-CONSTANTS (0.4: owner of `merge_gate.py`; the tests read the pure decision)
 - No edge added or removed. `findings_bridge.py` moves from the
   frontier into this spec's `owns.code`; its imports resolve to
   frontier files (reported, not enforced), so `depends_on` stays

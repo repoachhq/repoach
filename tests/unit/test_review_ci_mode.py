@@ -64,6 +64,7 @@ class _FakeTeam:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    spec_coverage_line: str = ""
 
 
 _REQUIRED_TOP_LEVEL = {

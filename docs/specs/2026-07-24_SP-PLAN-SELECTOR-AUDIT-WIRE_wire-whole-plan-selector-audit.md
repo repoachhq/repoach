@@ -1,7 +1,7 @@
 ---
 id: SP-PLAN-SELECTOR-AUDIT-WIRE
 title: Promote the whole-plan promised-selector audit out of tmp/ and wire it into plan loading
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-07-24
@@ -57,6 +57,34 @@ The rule, in `spec_gate.py` (`draft_scope`, `coverage_of_selectors`,
 - Any other status grades as before. The no-plan case of a non-draft
   spec now records `plan-absent` instead of `base-ref-unavailable`;
   the gate reason is unchanged.
+
+## Amendment (0.3, 2026-10-25): a row graded by a retired rule never refuses on its own
+
+Measured on PR #246 after 0.2 landed: the row at head had been written
+by the pre-0.2 code, and nothing recomputes a row unless a fresh review
+runs, so the gate refused on a grading the current rule no longer
+makes.
+
+- `pr_spec_coverage` gains `rule_version INTEGER NOT NULL DEFAULT 0`
+  (additive; an existing row reads `0`). Every row written records
+  `SPEC_COVERAGE_RULE_VERSION` (`1` = the 0.2 rule); the constant is
+  bumped whenever the grading of a selector changes.
+- `review gate` (and the auto-merge, on the pinned head tree) calls
+  `refresh_stale_coverage` before gathering the facts: when the latest
+  row at the decided head has a `rule_version` below the current one, it
+  recomputes the coverage with `coverage_at_head` (the row's spec, the
+  PR's base ref, the diff's paths; no model call) and records a new
+  row, which the decision then reads. A row already at the current
+  version is left alone and costs no forge read. A failed recomputation
+  records nothing and refuses, whatever the stored verdict (fail
+  closed): `reasons` (gate JSON and CLI) gains `spec coverage recompute
+  failed at <sha7>: <error>; stored verdict from rule <v> not trusted`,
+  so `merge` is false until a recompute succeeds and a persistent forge
+  or base-ref failure is visible, not only logged. A row at the current
+  rule is unaffected.
+- The decision is `rule_version` rather than a code hash: a code hash
+  would recompute on every release, a rule marker only when the grading
+  changed.
 
 ## Intent
 
@@ -310,6 +338,18 @@ try/except shape; behavior described here is normative.)
   refused; an unreadable base ref withholds the exemption; a selector
   in an existing file stays missing; an old `pr_spec_coverage` table
   gains the two columns.
+- [ ] AC10 (0.3): `pytest -q tests/unit/test_replay_recomputes_spec_coverage.py`
+  → green: `decide_at_head` on the head tree, given a `rule_version 0`
+  row `base-ref-unavailable` for a draft spec whose selectors' files
+  are absent, records a new row and merges with both selectors in
+  `spec_planned`; given the same row at the current version, it reads
+  the diff nowhere, records nothing and refuses; when the diff cannot be
+  read, it records nothing and refuses with `spec coverage recompute
+  failed at <sha7>: RuntimeError: diff unavailable; stored verdict from
+  rule 0 not trusted` — after the coverage reason for a not-covered
+  stale row, and as the only reason for a covered stale row; a head committing its
+  own narrower plan is still graded against the base plan's selectors;
+  an old table gains `rule_version` with `0` on its rows.
 
 ## Open Questions
 
