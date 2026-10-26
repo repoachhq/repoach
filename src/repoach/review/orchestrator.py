@@ -1248,13 +1248,16 @@ class ReviewTeamOrchestrator:
                 self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=grading.rows
             )
         except Exception as exc:
-            _log.info(
-                "review_team.spec_coverage_skipped",
+            _log.warning(
+                "review_team.spec_coverage_failed",
                 pr_number=pr_number,
                 exc=type(exc).__name__,
                 message=str(exc)[:200],
+                consequence="a not-covered row is recorded (fail closed)",
             )
-            return None
+            return self._record_grading_failure(
+                pr_number, spec_id=spec_id, head_sha=head_sha, error=exc
+            )
         for coverage in grading.rows:
             _log.info(
                 "review_team.spec_coverage",
@@ -1269,6 +1272,50 @@ class ReviewTeamOrchestrator:
                 draft_refusals=coverage.draft_refusals,
             )
         return grading
+
+    def _record_grading_failure(
+        self, pr_number: int, *, spec_id: str | None, head_sha: str | None, error: Exception
+    ) -> CoverageGrading | None:
+        """Record a not-covered row naming why the grading failed, so the gate refuses.
+
+        A grading that raised (a malformed spec, a git failure while
+        resolving ownership) must not leave the head without a row: the
+        gate reads no row as "coverage unknown" and does not refuse on it.
+        ``None`` only when even the row cannot be recorded.
+        """
+        from .spec_gate import (
+            OWNERSHIP_UNRESOLVED,
+            CoverageGrading,
+            SpecCoverage,
+            record_spec_coverages,
+        )
+
+        row = SpecCoverage(
+            spec_id=spec_id or OWNERSHIP_UNRESOLVED,
+            n_promised=0,
+            n_present=0,
+            missing=[],
+            covered=False,
+            draft_refusals=[
+                f"spec coverage not graded: {type(error).__name__}: {str(error)[:200]} "
+                "(fail closed)"
+            ],
+            contract="unavailable",
+            resolution="declared" if spec_id else OWNERSHIP_UNRESOLVED,
+        )
+        try:
+            record_spec_coverages(
+                self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=[row]
+            )
+        except Exception as exc:
+            _log.error(
+                "review_team.spec_coverage_failure_unrecorded",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+            return None
+        return CoverageGrading(rows=[row])
 
     def _replayed_spec_coverage(
         self, pr_number: int, *, spec_id: str | None, head_sha: str

@@ -230,3 +230,22 @@ def test_undeclared_pr_with_an_unreadable_base_is_refused(tmp_path: Path) -> Non
     assert decision.reasons == [
         "spec resolution by ownership not graded: base ref no-such-branch unavailable (fail closed)"
     ]
+
+
+def test_a_grading_failure_records_a_refusing_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("git show failed")
+
+    monkeypatch.setattr("repoach.review.spec_gate.coverage_rows_at_head", broken)
+    team = _review(repo, head, [_OWNED])
+    _, decision = _decide(repo, head)
+
+    assert team.spec_covered is False
+    assert decision.merge is False
+    assert decision.reasons == [
+        "spec coverage not graded: RuntimeError: git show failed (fail closed)"
+    ]
