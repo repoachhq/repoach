@@ -53,7 +53,7 @@ from .governed_spec import (
     load_governed_spec_at_ref,
     spec_markdown_at_ref,
 )
-from .plan import ActionPlan, load_plan, parse_plan_markdown, plan_relpath
+from .plan import PLAN_MARKER, ActionPlan, load_plan, parse_plan_markdown, plan_relpath
 
 _log = get_logger(__name__)
 
@@ -180,6 +180,15 @@ class AcceptanceSelector:
 
     selector: str
     origin: str
+
+
+OWNERSHIP_UNRESOLVED = "ownership-unresolved"
+"""Spec id and resolution of the row of an undeclared PR whose base could not be read."""
+
+
+def ownership_unavailable_reason(ref: str) -> str:
+    """Return the refusal of an undeclared PR whose specs cannot be resolved (G7, fail closed)."""
+    return f"spec resolution by ownership not graded: base ref {ref} unavailable (fail closed)"
 
 
 def base_ref_unavailable_reason(ref: str) -> str:
@@ -835,7 +844,7 @@ DOCS_ROOT = "docs"
 _AC_HEADING = re.compile(r"(?im)^##\s+acceptance criteria\s*$")
 _NEXT_HEADING = re.compile(r"(?m)^##\s")
 _CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
-_AC_LABEL = re.compile(r"(?m)^\s*[-*]\s*\[[ xX]\]\s*(AC\d+)\b")
+_AC_LABEL = re.compile(r"(?m)^\s*[-*]\s*\[[ xX]\]\s*(AC\d+[a-z]?)\b")
 _PYTEST_TARGET = re.compile(r"^[\w./-]+\.py(?:::[\w\[\]-]+)*$")
 _TEST_FILE_NAME = re.compile(r"^(?:test_[\w-]*|[\w-]*_test)\.py$")
 
@@ -983,7 +992,51 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
         raise FileNotFoundError(
             f"no committed plan at {relpath!r} on ref {ref!r}: {show.stderr.strip()[:200]}"
         )
+    if PLAN_MARKER not in show.stdout:
+        raise NotAnActionPlanError(relpath)
     return parse_plan_markdown(show.stdout)
+
+
+class NotAnActionPlanError(FileNotFoundError):
+    """A plan file exists but carries no action-plan marker: it is not an action plan.
+
+    A prose document under the plans directory is not the acceptance
+    contract; the spec is graded as if it had no plan (G1), and the file
+    is named in the report (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
+    0.4). Only a file that carries the marker and does not parse is
+    refused (G4).
+
+    Attributes:
+        relpath: The plan file's repo-relative path.
+    """
+
+    def __init__(self, relpath: str) -> None:
+        self.relpath = relpath
+        super().__init__(f"{relpath} carries no {PLAN_MARKER!r} marker: not an action plan")
+
+
+def not_action_plan_line(relpath: str) -> str:
+    """Return the line reporting a plan file that is not an action plan."""
+    return f"plan file present but not an action plan: {relpath}"
+
+
+def _non_action_plan(spec_id: str, ref: str, repo_root: Path) -> str | None:
+    """Return the plan path of *spec_id* when the file at *ref* or at head lacks the marker."""
+    relpath = plan_relpath(spec_id, root=repo_root)
+    if ref:
+        shown = subprocess.run(
+            ["git", "show", f"{ref}:{relpath}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if shown.returncode == 0:
+            return relpath if PLAN_MARKER not in shown.stdout else None
+    head = repo_root / relpath
+    if head.is_file() and PLAN_MARKER not in head.read_text(encoding="utf-8"):
+        return relpath
+    return None
 
 
 @dataclass(frozen=True)
@@ -1409,6 +1462,8 @@ def _grade(
         return _not_graded(
             spec_id, "none", f"spec coverage not graded: {spec_id} has no frontmatter"
         )
+    prose_plan = _non_action_plan(spec_id, resolution.ref, repo_root)
+    plan_lines = [not_action_plan_line(prose_plan)] if prose_plan else []
     contract: dict[str, str] = {}
     for entry in (
         *_criteria_at_ref(spec_id, resolution.ref, repo_root),
@@ -1422,7 +1477,7 @@ def _grade(
         return coverage.model_copy(
             update={
                 "contract": "acceptance-criteria",
-                "report": [plan_absent_line(spec_id, len(contract))],
+                "report": [plan_absent_line(spec_id, len(contract)), *plan_lines],
             }
         )
     spec_path = head.path.resolve().relative_to(repo_root.resolve()).as_posix()
@@ -1438,7 +1493,7 @@ def _grade(
         covered=not code,
         draft_refusals=[line] if code else [],
         contract="none",
-        report=[] if code else [line],
+        report=[*([] if code else [line]), *plan_lines],
     )
 
 
@@ -1560,6 +1615,8 @@ class CoverageGrading:
     def source(self) -> str:
         """``declared``, ``ownership`` or ``none`` (G7)."""
         if self.ownership is None:
+            if any(row.resolution == OWNERSHIP_UNRESOLVED for row in self.rows):
+                return "ownership"
             return "declared" if self.rows else "none"
         return "ownership" if self.ownership.specs else "none"
 
@@ -1602,10 +1659,17 @@ def coverage_rows_at_head(
     ref = _readable_base(repo_root, base_ref, fetch_base)
     if ref is None:
         _log.warning("spec_gate.ownership_unresolved", base_ref=base_ref)
-        return CoverageGrading(
-            rows=[],
-            lines=[f"spec resolution by ownership skipped: base ref {base_ref} unavailable"],
+        unresolved = SpecCoverage(
+            spec_id=OWNERSHIP_UNRESOLVED,
+            n_promised=0,
+            n_present=0,
+            missing=[],
+            covered=False,
+            draft_refusals=[ownership_unavailable_reason(base_ref or "(unknown)")],
+            contract="unavailable",
+            resolution=OWNERSHIP_UNRESOLVED,
         )
+        return CoverageGrading(rows=[unresolved])
     ownership = specs_owning(changed_files, root=repo_root, ref=ref)
     rows = [
         coverage_at_head(repo_root, spec_id=owner, base_ref=ref, changed_files=changed_files)[
@@ -1678,7 +1742,7 @@ def refresh_stale_coverage(
     if not stale:
         return None
     oldest = min(row.rule_version for row in stale)
-    by_ownership = batch[0].resolution == "ownership"
+    by_ownership = batch[0].resolution in {"ownership", OWNERSHIP_UNRESOLVED}
     try:
         grading = coverage_rows_at_head(
             repo_root,

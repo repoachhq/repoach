@@ -2099,12 +2099,14 @@ def _spec_report(grading: CoverageGrading | None) -> list[str]:
 
 def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> dict[str, object]:
     """Return the ``spec_resolution`` object of the review JSON (G7)."""
+    from .spec_gate import OWNERSHIP_UNRESOLVED
+
     if grading is None:
         return {"source": "declared" if spec_id else "none", "specs": [], "ungoverned": []}
     ownership = grading.ownership
     return {
         "source": grading.source,
-        "specs": [row.spec_id for row in grading.rows],
+        "specs": [row.spec_id for row in grading.rows if row.resolution != OWNERSHIP_UNRESOLVED],
         "ungoverned": list(ownership.ungoverned) if ownership is not None else [],
     }
 

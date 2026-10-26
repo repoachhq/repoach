@@ -65,7 +65,7 @@ from ..review.refuter import Refutation
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
-from ..review.spec_gate import SpecsByOwnership, specs_owning
+from ..review.spec_gate import SpecsByOwnership, ownership_unavailable_reason, specs_owning
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
@@ -747,7 +747,9 @@ def _gate_spec_resolution(
             continue
         break
     if ownership is None:
-        return empty, [f"spec resolution by ownership skipped: base ref {base_ref} unavailable"]
+        return {"source": "ownership", "specs": [], "ungoverned": []}, [
+            ownership_unavailable_reason(base_ref or "(unknown)")
+        ]
     source = "ownership" if ownership.specs else "none"
     payload: dict[str, object] = {
         "source": source,
