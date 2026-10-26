@@ -44,6 +44,10 @@ _SELECTORS = [
     "tests/unit/test_drafty.py::test_second",
 ]
 _REASON = "spec acceptance selectors not all present"
+_UNRECORDED_BASE = (
+    "spec coverage not graded: base ref (unrecorded) unavailable, "
+    "the contract cannot be read (fail closed)"
+)
 _STALE = SpecCoverage(
     spec_id="SP-DRAFTY",
     n_promised=0,
@@ -252,7 +256,7 @@ def test_replay_of_an_approved_spec_with_missing_selectors_stays_refused(
     )
     facts = summarise_ledger_facts(db, pr_number=7, head_sha=head)
     assert facts.spec_missing == [_SELECTORS[1]]
-    assert compute_merge_decision(facts).reasons == [_REASON]
+    assert compute_merge_decision(facts).reasons == [f"{_REASON}: {_SELECTORS[1]} (plan step 1)"]
 
 
 def test_gate_recomputes_a_row_graded_by_a_retired_rule(tmp_path: Path) -> None:
@@ -302,7 +306,7 @@ def test_gate_leaves_a_current_row_alone(tmp_path: Path) -> None:
         base_ref="develop",
     )
 
-    assert decision.reasons == [_REASON]
+    assert decision.reasons == [_UNRECORDED_BASE]
     assert forge.reads == 0
     assert len(fetch_spec_coverage(db, 7, head_sha=head)) == 1
 
@@ -381,6 +385,6 @@ def test_gate_refuses_when_a_stale_row_cannot_be_recomputed(
         "stored verdict from rule 0 not trusted"
     )
     assert decision.merge is False
-    assert decision.reasons == ([failure] if stored_covered else [_REASON, failure])
+    assert decision.reasons == ([failure] if stored_covered else [_UNRECORDED_BASE, failure])
     assert facts.spec_recompute_failure == failure
     assert len(fetch_spec_coverage(db, 7, head_sha=head)) == 1
