@@ -155,8 +155,11 @@ class SpecCoverage(BaseModel):
             integration`` — for rendering ``missing``.
         report: Lines reported and never refusing (``plan-absent: …``,
             ``no selectors to grade: …`` of a documentation-only PR).
-        resolution: ``declared`` or ``ownership`` (the PR declared no
-            spec and touches code this spec owns); ``""`` before the field.
+        resolution: ``declared``; ``ownership`` (the PR declared no
+            spec and touches code this spec owns); ``ownership-unresolved``
+            (:data:`OWNERSHIP_UNRESOLVED`: the PR declared no spec and its
+            base could not be read, or its grading failed); ``""`` before
+            the field.
         batch: Groups the rows one grading recorded for one head.
     """
 
