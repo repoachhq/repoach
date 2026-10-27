@@ -48,7 +48,7 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -97,7 +97,12 @@ from .findings_bridge import (
     recount_findings_at_head,
 )
 from .generated_artefacts import (
+    GeneratedCheck,
+    GeneratedTiming,
     ReviewScope,
+    load_review_evidence,
+    record_generated_checks,
+    record_generated_findings,
     review_scope,
 )
 from .hallucination_guard import (
@@ -222,6 +227,8 @@ def record_review_ledger(
     outcomes: list[ReviewerOutcome],
     round_n: int,
     diff: str,
+    generated: Sequence[GeneratedCheck] = (),
+    generated_timing: GeneratedTiming | None = None,
 ) -> RecordedFindings | None:
     """Persist the review findings, then the integrity row — fail closed.
 
@@ -254,7 +261,14 @@ def record_review_ledger(
         head_sha: The head the review ran against.
         outcomes: Every reviewer outcome of the pass, parsed or not.
         round_n: The dialogue round the findings belong to.
-        diff: The reviewed diff (scopes findings to touched files).
+        diff: The reviewed diff (scopes findings to touched files), the
+            declared generated artefacts already summarised.
+        generated: The check runs of the declared generated artefacts the
+            diff touches, recorded as ``generated_checks`` rows with one
+            blocking ``generated_artefact`` finding per path they do not
+            prove (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G2, G3), inside
+            the same fail-closed write.
+        generated_timing: The evidence's measured delay, stored on the rows.
 
     Returns:
         What the findings write did (new / already recorded / refuted
@@ -280,9 +294,22 @@ def record_review_ledger(
             round_n=round_n,
             scoped=scoped,
         )
+        n_generated = 0
+        if generated:
+            record_generated_checks(
+                db_path,
+                pr_number=pr_number,
+                head_sha=head_sha or "",
+                checks=generated,
+                timing=generated_timing,
+            )
+            n_generated = record_generated_findings(
+                db_path, generated, pr_number=pr_number, round_n=round_n
+            )
         _log.info(
             "review_team.findings_recorded",
             pr_number=pr_number,
+            n_generated_blocking=n_generated,
             n_findings=recorded.new,
             n_already_recorded=recorded.already_recorded,
             n_refuted_earlier=recorded.refuted_earlier,
@@ -462,11 +489,15 @@ class ReviewTeamOrchestrator:
         config_root: Path | None = None,
         write_refusal: WriteRefusal | None = None,
         force: bool = False,
+        generated_evidence: Path | None = None,
     ) -> None:
         """Initialise the orchestrator with optional dependencies.
 
         ``force`` re-reviews a pinned head that already has a completed
         run instead of replaying it (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
+        ``generated_evidence`` is the ``review-generated.json`` the
+        secret-free verification job wrote; the review never runs a check
+        itself (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G2).
         """
         settings = get_settings()
         self._pinned_head = head_sha
@@ -479,6 +510,7 @@ class ReviewTeamOrchestrator:
         self._post = post_to_github
         self._max_workers = max_workers
         self._force = force
+        self._generated_evidence = generated_evidence
         init_schema(self._db_path)
 
     def _load_declared_spec(self, declared: SpecResolution) -> SpecPlan | None:
@@ -844,6 +876,13 @@ class ReviewTeamOrchestrator:
             head_guard_pool, head_guard_future, pr_number=pr_number
         )
 
+        generated_checks, generated_timing = load_review_evidence(
+            self._generated_evidence,
+            generated_scope.touched,
+            head_sha=head_sha or "",
+            head_dir=self._repo_root,
+            changed_files=generated_scope.changed,
+        )
         recorded = record_review_ledger(
             self._db_path,
             pr_number=pr_number,
@@ -851,6 +890,8 @@ class ReviewTeamOrchestrator:
             outcomes=outcomes,
             round_n=2 if round2_ran else 1,
             diff=reviewed_diff,
+            generated=generated_checks,
+            generated_timing=generated_timing,
         )
 
         verification = VerificationReport()
@@ -2585,6 +2626,7 @@ def run_review(
     announce: Callable[[str], None] | None = None,
     write_refusal: WriteRefusal | None = None,
     force: bool = False,
+    generated_evidence: Path | None = None,
 ) -> TeamOutcome:
     """Review the PR head tree and return the aggregated outcome (CLI entry).
 
@@ -2610,6 +2652,9 @@ def run_review(
             the forge is read-only from its selection on.
         force: Re-review a head that already has a completed run instead
             of replaying it (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
+        generated_evidence: The ``review-generated.json`` of the
+            secret-free verification job, bound to this head
+            (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ).
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers,
@@ -2644,6 +2689,7 @@ def run_review(
             config_root=checkout,
             write_refusal=refusal,
             force=force,
+            generated_evidence=generated_evidence,
         ).review_pr(pr_number, spec_flag=spec)
     team.tree = tree.tree
     team.worktree = str(tree.root) if tree.tree == "worktree" and tree.kept else None

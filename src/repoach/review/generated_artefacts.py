@@ -27,12 +27,33 @@ older oversized findings of a newly declared path, from the
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
+from typing import Any, Literal, Protocol
+
+from sqlalchemy import (
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    create_engine,
+    delete,
+    insert,
+    select,
+)
+from sqlalchemy.engine import Engine
 
 from ..core.logging import get_logger
+from ..core.sqlite_schema_init import ensure_schema_created
 from ..project.config import (
     CONFIG_FILE_NAME,
     GENERATED_CHECK_TIMEOUT_S,
@@ -43,8 +64,42 @@ from ..project.config import (
     refuse_generated_conflicts,
 )
 from .diff_scoper import split_diff
+from .findings import (
+    ClaimType,
+    Finding,
+    FindingStatus,
+    Severity,
+    fetch_findings,
+    init_findings_schema,
+    record_finding,
+)
+from .findings_bridge import finding_fingerprint
+from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
+
+
+CHECKS_TOTAL_BUDGET_S = 300
+"""Seconds every check of one PR may take together (``checks_total_budget_s``)."""
+
+
+OUTPUT_TAIL_LINES = 20
+"""Lines of a check's output kept on its row and in the evidence."""
+
+
+EVIDENCE_FORMAT = "review-generated-json"
+"""The ``format`` field of the evidence file (``format:review-generated-json``)."""
+
+
+EVIDENCE_VERSION = 1
+"""The evidence file's schema version."""
+
+
+GENERATED_FINDER = "generated_check"
+"""Finder and verification method of a ``generated_artefact`` finding."""
+
+
+_CLAIM_PREFIX = "generated artefact not derived from its sources: "
 
 
 @dataclass(frozen=True)
@@ -73,6 +128,173 @@ class GeneratedEntry:
     def argv_line(self) -> str:
         """The declared check, joined by spaces, as the report prints it."""
         return " ".join(self.check)
+
+
+class GeneratedState(StrEnum):
+    """The state of one check run (one ``generated_checks`` row)."""
+
+    VERIFIED = "generated_artefact_verified"
+    STALE = "generated_artefact_stale"
+    NO_SOURCE_CHANGED = "generated_artefact_no_source_changed"
+    CHECK_ABSENT = "generated_check_absent"
+    SKIPPED_COST = "skipped (cost)"
+    NOT_RUN = "generated_check_not_run"
+
+
+ScriptRef = Literal["head", "base"]
+
+
+@dataclass(frozen=True)
+class GeneratedCheck:
+    """The outcome of one check run against the head tree.
+
+    Attributes:
+        path: The artefact's path.
+        argv: The declared check, placeholders replaced.
+        head_sha: The head the check ran against.
+        artefact_sha256: The artefact's sha256 at that head.
+        sources_changed: Source paths the diff changes.
+        state: The run's :class:`GeneratedState`.
+        exit_code: The check's exit code; ``None`` when it did not exit.
+        duration_ms: Wall time of the run.
+        output_tail: The last :data:`OUTPUT_TAIL_LINES` lines of output,
+            or the reason it did not run.
+        script_ref: ``base`` for the run with the base-ref script (D3).
+        producer_inputs_changed: Producer-input paths the diff changes.
+        runs_for_path: How many runs the path had (2 under D3).
+    """
+
+    path: str
+    argv: tuple[str, ...]
+    head_sha: str
+    artefact_sha256: str
+    sources_changed: tuple[str, ...]
+    state: GeneratedState
+    exit_code: int | None
+    duration_ms: int
+    output_tail: str
+    script_ref: ScriptRef = "head"
+    producer_inputs_changed: tuple[str, ...] = ()
+    runs_for_path: int = 1
+
+    def as_json(self) -> dict[str, Any]:
+        """The evidence entry of this run."""
+        return {
+            "path": self.path,
+            "argv": list(self.argv),
+            "head_sha": self.head_sha,
+            "artefact_sha256": self.artefact_sha256,
+            "sources_changed": list(self.sources_changed),
+            "producer_inputs_changed": list(self.producer_inputs_changed),
+            "state": self.state.value,
+            "exit_code": self.exit_code,
+            "duration_ms": self.duration_ms,
+            "output_tail": self.output_tail,
+            "script_ref": self.script_ref,
+            "runs_for_path": self.runs_for_path,
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> GeneratedCheck:
+        """Rebuild a run from its evidence entry."""
+        exit_code = data.get("exit_code")
+        return cls(
+            path=str(data["path"]),
+            argv=tuple(str(arg) for arg in data["argv"]),
+            head_sha=str(data["head_sha"]),
+            artefact_sha256=str(data["artefact_sha256"]),
+            sources_changed=tuple(str(p) for p in data.get("sources_changed", ())),
+            state=GeneratedState(str(data["state"])),
+            exit_code=None if exit_code is None else int(exit_code),
+            duration_ms=int(data.get("duration_ms", 0)),
+            output_tail=str(data.get("output_tail", "")),
+            script_ref="base" if data.get("script_ref") == "base" else "head",
+            producer_inputs_changed=tuple(str(p) for p in data.get("producer_inputs_changed", ())),
+            runs_for_path=int(data.get("runs_for_path", 1)),
+        )
+
+
+@dataclass(frozen=True)
+class GeneratedTiming:
+    """Wall time of ``repoach review generated`` (G7).
+
+    Attributes:
+        checks_ms: Sum of the check runs.
+        overhead_ms: Everything else: reading the declarations, the head
+            tree, writing the evidence.
+    """
+
+    checks_ms: int
+    overhead_ms: int
+
+    def line(self) -> str:
+        """The report line ``generated checks: <n> ms + <m> ms overhead``."""
+        return f"generated checks: {self.checks_ms} ms + {self.overhead_ms} ms overhead"
+
+
+class GeneratedEvidenceMismatchError(ValueError):
+    """The evidence file names another head or another artefact blob than the reviewed one."""
+
+
+GeneratedEvidenceMismatch = GeneratedEvidenceMismatchError
+"""The name the spec's interface gives the error."""
+
+
+@dataclass(frozen=True)
+class RunResult:
+    """What a :class:`Runner` returns: the exit code and the merged output."""
+
+    exit_code: int
+    output: str
+
+
+class Runner(Protocol):
+    """The subprocess seam ``run_checks`` calls (tests replace it).
+
+    Raises ``subprocess.TimeoutExpired`` when the check outlives ``timeout_s``.
+    """
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        timeout_s: float,
+        shell: bool,
+    ) -> RunResult:
+        """Run ``argv`` in ``cwd`` with ``env`` and return its result."""
+        ...
+
+
+def subprocess_runner(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout_s: float,
+    shell: bool = False,
+) -> RunResult:
+    """Run one check with :func:`subprocess.run`, never through a shell.
+
+    Raises:
+        ValueError: ``shell`` is True (NG3: no shell, ever).
+        subprocess.TimeoutExpired: The check outlived ``timeout_s``.
+    """
+    if shell:
+        raise ValueError("a generated-artefact check never runs through a shell")
+    proc = subprocess.run(
+        list(argv),
+        cwd=cwd,
+        env=dict(env),
+        shell=False,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=timeout_s,
+        check=False,
+    )
+    return RunResult(proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
 
 
 def _entries(config: ProjectConfig) -> tuple[GeneratedEntry, ...]:
@@ -332,14 +554,599 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
     return ReviewScope(review_diff=summarised, touched=touched, changed=changed)
 
 
+def _interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
+    """Prefix the check's script with its interpreter (``.py`` python3, ``.sh`` bash)."""
+    script = argv[0]
+    if script.endswith(".py"):
+        return ["python3", *argv]
+    if script.endswith(".sh"):
+        return ["bash", *argv]
+    return [str(head_dir / script), *argv[1:]]
+
+
+def _declared_argv(entry: GeneratedEntry, head_sha: str, base_sha: str) -> tuple[str, ...]:
+    """The declared check with ``{head}`` / ``{base}`` replaced by the SHAs."""
+    return tuple(arg.replace("{head}", head_sha).replace("{base}", base_sha) for arg in entry.check)
+
+
+def _tail(output: str) -> str:
+    """The last :data:`OUTPUT_TAIL_LINES` non-empty lines of ``output``."""
+    lines = [line for line in output.splitlines() if line.strip()]
+    return "\n".join(lines[-OUTPUT_TAIL_LINES:])
+
+
+@contextmanager
+def _script_at(head_dir: Path, script: str, content: bytes | None) -> Iterator[None]:
+    """Put ``content`` at ``script`` in the head tree for one run, then restore it (D3)."""
+    if content is None:
+        yield
+        return
+    target = head_dir / script
+    original = target.read_bytes()
+    mode = target.stat().st_mode
+    target.write_bytes(content)
+    try:
+        yield
+    finally:
+        target.write_bytes(original)
+        target.chmod(mode)
+
+
+@dataclass
+class _Budget:
+    """The PR's check budget, measured on ``clock``."""
+
+    total_s: float
+    clock: Callable[[], float]
+    started: float = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Start the budget now."""
+        self.started = self.clock()
+
+    def remaining(self) -> float:
+        """Seconds left before the budget is spent."""
+        return self.total_s - (self.clock() - self.started)
+
+
+def _run_once(
+    entry: GeneratedEntry,
+    path: str,
+    *,
+    head_dir: Path,
+    head_sha: str,
+    base_sha: str,
+    runner: Runner,
+    timeout_s: int,
+    budget: _Budget,
+    script_content: bytes | None,
+    env: Mapping[str, str],
+) -> tuple[GeneratedState, int | None, int, str]:
+    """Run one check and return ``(state, exit code, ms, output tail)``."""
+    limit = min(entry.check_timeout_s, timeout_s)
+    remaining = budget.remaining()
+    if remaining <= 0:
+        return (
+            GeneratedState.SKIPPED_COST,
+            None,
+            0,
+            f"check not run within {budget.total_s:g} s: {path}",
+        )
+    allowed = min(limit, remaining)
+    argv = _interpreted(_declared_argv(entry, head_sha, base_sha), head_dir)
+    started = budget.clock()
+    try:
+        with _script_at(head_dir, entry.check[0], script_content):
+            result = runner(argv, cwd=head_dir, env=env, timeout_s=allowed, shell=False)
+    except subprocess.TimeoutExpired:
+        ms = round((budget.clock() - started) * 1000)
+        return GeneratedState.SKIPPED_COST, None, ms, f"check not run within {allowed:g} s: {path}"
+    except Exception as exc:
+        ms = round((budget.clock() - started) * 1000)
+        _log.warning("generated.check_raised", path=path, exc=type(exc).__name__)
+        return GeneratedState.STALE, None, ms, type(exc).__name__
+    elapsed = budget.clock() - started
+    ms = round(elapsed * 1000)
+    if elapsed > allowed:
+        return GeneratedState.SKIPPED_COST, None, ms, f"check not run within {allowed:g} s: {path}"
+    state = GeneratedState.VERIFIED if result.exit_code == 0 else GeneratedState.STALE
+    return state, result.exit_code, ms, _tail(result.output)
+
+
+def run_checks(
+    touched: Mapping[str, GeneratedEntry],
+    *,
+    head_dir: Path,
+    head_sha: str,
+    runner: Runner,
+    budget_s: int = CHECKS_TOTAL_BUDGET_S,
+    timeout_s: int = GENERATED_CHECK_TIMEOUT_S,
+    changed_files: Sequence[str] = (),
+    base_sha: str = "",
+    base_blob: Callable[[str], bytes | None] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    env: Mapping[str, str] | None = None,
+) -> list[GeneratedCheck]:
+    """Run each touched artefact's check against the head tree, in declaration order.
+
+    Never called by the review job (G2): only ``repoach review generated``
+    runs it, in the secret-free verification job. Every run gets
+    ``shell=False`` and :func:`scrubbed_env`. When ``check[0]`` itself
+    changed in the diff, the check runs twice against the head tree: with
+    the base-ref script, then with the head script (D3).
+
+    Args:
+        touched: The declared artefacts the diff changes.
+        head_dir: The head tree.
+        head_sha: The head SHA (``{head}``).
+        runner: The subprocess seam.
+        budget_s: Seconds every run of the PR may take together.
+        timeout_s: Seconds one run may take, at most.
+        changed_files: The paths the diff changes.
+        base_sha: The base SHA (``{base}``).
+        base_blob: Reads a path at the base (the D3 base script).
+        clock: The monotonic clock the budget and durations read.
+        env: The environment; :func:`scrubbed_env` when omitted.
+
+    Returns:
+        One :class:`GeneratedCheck` per run; an artefact deleted at the
+        head gets none.
+    """
+    environment = dict(env) if env is not None else scrubbed_env()
+    budget = _Budget(float(budget_s), clock)
+    checks: list[GeneratedCheck] = []
+    for path, entry in touched.items():
+        artefact = head_dir / path
+        if not artefact.is_file():
+            continue
+        artefact_sha = _sha256(artefact.read_bytes())
+        sources, producers = changed_inputs(entry, path, changed_files)
+        script = entry.check[0]
+        template = GeneratedCheck(
+            path=path,
+            argv=_declared_argv(entry, head_sha, base_sha),
+            head_sha=head_sha,
+            artefact_sha256=artefact_sha,
+            sources_changed=sources,
+            state=GeneratedState.NOT_RUN,
+            exit_code=None,
+            duration_ms=0,
+            output_tail="",
+            producer_inputs_changed=producers,
+        )
+        if not (head_dir / script).is_file():
+            checks.append(
+                replace(
+                    template,
+                    state=GeneratedState.CHECK_ABSENT,
+                    output_tail=f"check script {script} absent at {head_sha[:7]}",
+                )
+            )
+            continue
+        runs: list[tuple[ScriptRef, bytes | None]] = [("head", None)]
+        if script in changed_files and base_blob is not None:
+            base_script = base_blob(script)
+            if base_script is not None:
+                runs = [("base", base_script), ("head", None)]
+        for ref, content in runs:
+            state, exit_code, ms, tail = _run_once(
+                entry,
+                path,
+                head_dir=head_dir,
+                head_sha=head_sha,
+                base_sha=base_sha,
+                runner=runner,
+                timeout_s=timeout_s,
+                budget=budget,
+                script_content=content,
+                env=environment,
+            )
+            if state is GeneratedState.VERIFIED and not (sources or producers):
+                state = GeneratedState.NO_SOURCE_CHANGED
+            checks.append(
+                replace(
+                    template,
+                    state=state,
+                    exit_code=exit_code,
+                    duration_ms=ms,
+                    output_tail=tail,
+                    script_ref=ref,
+                    runs_for_path=len(runs),
+                )
+            )
+    return checks
+
+
+def not_run_checks(
+    touched: Mapping[str, GeneratedEntry],
+    *,
+    head_dir: Path,
+    head_sha: str,
+    changed_files: Sequence[str],
+) -> list[GeneratedCheck]:
+    """Return a ``generated_check_not_run`` row for each touched artefact present at the head."""
+    checks: list[GeneratedCheck] = []
+    for path, entry in touched.items():
+        artefact = head_dir / path
+        if not artefact.is_file():
+            continue
+        sources, producers = changed_inputs(entry, path, changed_files)
+        checks.append(
+            GeneratedCheck(
+                path=path,
+                argv=entry.check,
+                head_sha=head_sha,
+                artefact_sha256=_sha256(artefact.read_bytes()),
+                sources_changed=sources,
+                state=GeneratedState.NOT_RUN,
+                exit_code=None,
+                duration_ms=0,
+                output_tail=f"no check evidence for {path} at {head_sha[:7]}",
+                producer_inputs_changed=producers,
+            )
+        )
+    return checks
+
+
+def _last_line(tail: str) -> str:
+    """The last line of an output tail."""
+    lines = tail.splitlines()
+    return lines[-1].strip() if lines else ""
+
+
+def check_cause(check: GeneratedCheck) -> str:
+    """Name why ``check`` does not show the derivation (the finding's ``verification_result``)."""
+    if check.state is GeneratedState.NO_SOURCE_CHANGED:
+        return "no source changed"
+    if check.state is GeneratedState.STALE:
+        prefix = f"{check.script_ref} " if check.runs_for_path > 1 else ""
+        if check.exit_code is None:
+            return f"{prefix}check failed: {_last_line(check.output_tail)}"
+        return f"{prefix}check exited {check.exit_code}: {_last_line(check.output_tail)}"
+    return _last_line(check.output_tail) or check.state.value
+
+
+def _by_path(checks: Sequence[GeneratedCheck]) -> dict[str, list[GeneratedCheck]]:
+    """Group runs by artefact path, keeping the order of first appearance."""
+    grouped: dict[str, list[GeneratedCheck]] = {}
+    for check in checks:
+        grouped.setdefault(check.path, []).append(check)
+    return grouped
+
+
+def path_verified(runs: Sequence[GeneratedCheck]) -> bool:
+    """Whether every run of one path verified the derivation (a source changed, exit 0)."""
+    return bool(runs) and all(run.state is GeneratedState.VERIFIED for run in runs)
+
+
+def generated_findings(
+    checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
+) -> list[Finding]:
+    """Build one blocking ``generated_artefact`` finding per path the checks do not prove (G3).
+
+    Args:
+        checks: The runs of this head.
+        pr_number: The pull request.
+        round_n: The review round.
+
+    Returns:
+        The findings, ``verified`` (the check is the verification).
+    """
+    findings: list[Finding] = []
+    for path, runs in _by_path(checks).items():
+        if path_verified(runs):
+            continue
+        causes = [check_cause(run) for run in runs if run.state is not GeneratedState.VERIFIED]
+        head = runs[0].head_sha
+        findings.append(
+            Finding(
+                pr_number=pr_number,
+                head_sha=head,
+                round=round_n,
+                finder=GENERATED_FINDER,
+                claim_type=ClaimType.GENERATED_ARTEFACT,
+                severity=Severity.BLOCKING,
+                file=path,
+                line_start=0,
+                line_end=0,
+                claim=f"{_CLAIM_PREFIX}{path}",
+                evidence_pointer=f"{path}: proved by {' '.join(runs[0].argv)}",
+                status=FindingStatus.VERIFIED,
+                verification_method=GENERATED_FINDER,
+                verification_result="; ".join(causes),
+                checked_at_sha=head,
+            )
+        )
+    return findings
+
+
+def record_generated_findings(
+    db_path: Path, checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
+) -> int:
+    """Persist :func:`generated_findings` once per head; return how many were new."""
+    findings = generated_findings(checks, pr_number=pr_number, round_n=round_n)
+    if not findings:
+        return 0
+    init_findings_schema(db_path)
+    head = findings[0].head_sha
+    at_head = {
+        finding_fingerprint(row)
+        for row in fetch_findings(db_path, pr_number)
+        if row.head_sha == head
+    }
+    recorded = 0
+    for finding in findings:
+        if finding_fingerprint(finding) in at_head:
+            continue
+        record_finding(db_path, finding)
+        recorded += 1
+    return recorded
+
+
+_metadata = MetaData()
+
+
+generated_checks = Table(
+    "generated_checks",
+    _metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("pr_number", Integer, nullable=False, index=True),
+    Column("head_sha", String, nullable=False),
+    Column("path", String, nullable=False),
+    Column("argv", Text, nullable=False),
+    Column("exit_code", Integer, nullable=True),
+    Column("duration_ms", Integer, nullable=False),
+    Column("output_tail", Text, nullable=False),
+    Column("state", String, nullable=False),
+    Column("script_ref", String, nullable=False),
+    Column("runs_for_path", Integer, nullable=False),
+    Column("sources_changed", Text, nullable=False),
+    Column("producer_inputs_changed", Text, nullable=False),
+    Column("artefact_sha256", String, nullable=False),
+    Column("checks_ms", Integer, nullable=True),
+    Column("overhead_ms", Integer, nullable=True),
+    Column("recorded_at", String, nullable=False),
+)
+"""One row per check run at a head (``db:table:generated_checks``)."""
+
+
+def _engine_for(db_path: Path) -> Engine:
+    """Return a SQLite engine on ``db_path``, creating its directory."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return create_engine(f"sqlite:///{db_path}")
+
+
+def init_generated_schema(db_path: Path) -> None:
+    """Create the ``generated_checks`` table if absent (idempotent)."""
+    ensure_schema_created(_engine_for(db_path), _metadata)
+
+
+def record_generated_checks(
+    db_path: Path,
+    *,
+    pr_number: int,
+    head_sha: str,
+    checks: Sequence[GeneratedCheck],
+    timing: GeneratedTiming | None = None,
+) -> None:
+    """Replace the ``generated_checks`` rows of ``head_sha`` by ``checks``."""
+    init_generated_schema(db_path)
+    now = datetime.now(UTC).isoformat()
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        conn.execute(
+            delete(generated_checks).where(
+                generated_checks.c.pr_number == pr_number,
+                generated_checks.c.head_sha == head_sha,
+            )
+        )
+        for check in checks:
+            conn.execute(
+                insert(generated_checks).values(
+                    pr_number=pr_number,
+                    head_sha=head_sha,
+                    path=check.path,
+                    argv=json.dumps(list(check.argv)),
+                    exit_code=check.exit_code,
+                    duration_ms=check.duration_ms,
+                    output_tail=check.output_tail,
+                    state=check.state.value,
+                    script_ref=check.script_ref,
+                    runs_for_path=check.runs_for_path,
+                    sources_changed=json.dumps(list(check.sources_changed)),
+                    producer_inputs_changed=json.dumps(list(check.producer_inputs_changed)),
+                    artefact_sha256=check.artefact_sha256,
+                    checks_ms=None if timing is None else timing.checks_ms,
+                    overhead_ms=None if timing is None else timing.overhead_ms,
+                    recorded_at=now,
+                )
+            )
+
+
+def fetch_generated_checks(
+    db_path: Path, pr_number: int, head_sha: str
+) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
+    """Return the runs recorded at ``head_sha`` and the timing they came with."""
+    init_generated_schema(db_path)
+    engine = _engine_for(db_path)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(generated_checks)
+            .where(
+                generated_checks.c.pr_number == pr_number,
+                generated_checks.c.head_sha == head_sha,
+            )
+            .order_by(generated_checks.c.id)
+        ).fetchall()
+    checks = [
+        GeneratedCheck(
+            path=row.path,
+            argv=tuple(json.loads(row.argv)),
+            head_sha=row.head_sha,
+            artefact_sha256=row.artefact_sha256,
+            sources_changed=tuple(json.loads(row.sources_changed)),
+            state=GeneratedState(row.state),
+            exit_code=row.exit_code,
+            duration_ms=row.duration_ms,
+            output_tail=row.output_tail,
+            script_ref="base" if row.script_ref == "base" else "head",
+            producer_inputs_changed=tuple(json.loads(row.producer_inputs_changed)),
+            runs_for_path=row.runs_for_path,
+        )
+        for row in rows
+    ]
+    timing = None
+    if rows and rows[0].checks_ms is not None and rows[0].overhead_ms is not None:
+        timing = GeneratedTiming(rows[0].checks_ms, rows[0].overhead_ms)
+    return checks, timing
+
+
+def evidence_payload(
+    *,
+    pr_number: int,
+    head_sha: str,
+    base_sha: str,
+    checks: Sequence[GeneratedCheck],
+    timing: GeneratedTiming,
+) -> dict[str, Any]:
+    """Build the ``format:review-generated-json`` evidence document."""
+    return {
+        "format": EVIDENCE_FORMAT,
+        "version": EVIDENCE_VERSION,
+        "pr_number": pr_number,
+        "head_sha": head_sha,
+        "base_sha": base_sha,
+        "checks_ms": timing.checks_ms,
+        "overhead_ms": timing.overhead_ms,
+        "checks": [check.as_json() for check in checks],
+    }
+
+
+def checks_from_evidence(
+    payload: Mapping[str, Any],
+    touched: Mapping[str, GeneratedEntry],
+    *,
+    head_sha: str,
+    head_dir: Path,
+    changed_files: Sequence[str],
+) -> tuple[list[GeneratedCheck], GeneratedTiming]:
+    """Read the runs of the touched artefacts out of an evidence document.
+
+    Args:
+        payload: The parsed evidence file.
+        touched: The declared artefacts the reviewed diff changes.
+        head_sha: The reviewed head.
+        head_dir: The reviewed head tree (the artefacts' blobs).
+        changed_files: The paths the diff changes.
+
+    Returns:
+        The runs, in declaration order, and the evidence's timing; an
+        artefact the evidence does not name gets a ``not_run`` row.
+
+    Raises:
+        GeneratedEvidenceMismatch: The evidence is of another format,
+            another head, or another blob of a touched artefact.
+    """
+    if payload.get("format") != EVIDENCE_FORMAT:
+        raise GeneratedEvidenceMismatchError(f"not a {EVIDENCE_FORMAT} file")
+    if payload.get("head_sha") != head_sha:
+        raise GeneratedEvidenceMismatchError(
+            f"evidence of head {str(payload.get('head_sha'))[:7]}, reviewing {head_sha[:7]}"
+        )
+    recorded = _by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
+    checks: list[GeneratedCheck] = []
+    for path in touched:
+        artefact = head_dir / path
+        if not artefact.is_file():
+            continue
+        runs = recorded.get(path)
+        if not runs:
+            checks.extend(
+                not_run_checks(
+                    {path: touched[path]},
+                    head_dir=head_dir,
+                    head_sha=head_sha,
+                    changed_files=changed_files,
+                )
+            )
+            continue
+        blob = _sha256(artefact.read_bytes())
+        if any(run.artefact_sha256 != blob for run in runs):
+            raise GeneratedEvidenceMismatchError(
+                f"evidence of {path} names blob {runs[0].artefact_sha256[:7]}, head has {blob[:7]}"
+            )
+        checks.extend(runs)
+    timing = GeneratedTiming(int(payload.get("checks_ms", 0)), int(payload.get("overhead_ms", 0)))
+    return checks, timing
+
+
+def load_review_evidence(
+    evidence: Path | None,
+    touched: Mapping[str, GeneratedEntry],
+    *,
+    head_sha: str,
+    head_dir: Path,
+    changed_files: Sequence[str],
+) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
+    """Return the runs the review job records for the touched artefacts.
+
+    A missing, unreadable or mismatched evidence file is never green:
+    each touched artefact then gets a ``generated_check_not_run`` row.
+    """
+    if not touched:
+        return [], None
+    if evidence is not None and evidence.is_file():
+        try:
+            payload = json.loads(evidence.read_text(encoding="utf-8"))
+            return checks_from_evidence(
+                payload,
+                touched,
+                head_sha=head_sha,
+                head_dir=head_dir,
+                changed_files=changed_files,
+            )
+        except (GeneratedEvidenceMismatch, ValueError, KeyError, OSError) as exc:
+            _log.warning(
+                "generated.evidence_refused",
+                path=str(evidence),
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="each touched artefact is reported not run",
+            )
+    else:
+        _log.warning("generated.evidence_absent", head_sha=head_sha[:12], touched=list(touched))
+    return (
+        not_run_checks(touched, head_dir=head_dir, head_sha=head_sha, changed_files=changed_files),
+        None,
+    )
+
+
 __all__ = [
+    "CHECKS_TOTAL_BUDGET_S",
+    "EVIDENCE_FORMAT",
+    "GENERATED_FINDER",
+    "GeneratedCheck",
     "GeneratedEntry",
+    "GeneratedEvidenceMismatch",
+    "GeneratedEvidenceMismatchError",
+    "GeneratedState",
+    "GeneratedTiming",
     "ReviewScope",
+    "RunResult",
+    "Runner",
     "blob_at",
     "declared_at_base",
+    "evidence_payload",
+    "fetch_generated_checks",
+    "generated_findings",
     "load_generated_entries",
+    "load_review_evidence",
     "merge_base",
+    "record_generated_checks",
+    "record_generated_findings",
     "review_scope",
+    "run_checks",
+    "subprocess_runner",
     "summarise",
     "touched_artefacts",
 ]
