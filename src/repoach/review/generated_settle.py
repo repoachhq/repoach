@@ -14,7 +14,7 @@ from typing import Literal
 
 from .findings import ClaimType, Finding
 from .findings_bridge import OVERSIZED_FINDER
-from .generated_store import fetch_generated_checks
+from .generated_store import fetch_generated_checks, has_generated_checks
 from .generated_types import GENERATED_FINDER, GeneratedState, by_path, check_cause, path_verified
 
 ReverifyOutcome = tuple[Literal["resolved", "still_open"], str, str]
@@ -38,7 +38,7 @@ def settlements_at_head(db_path: Path, pr_number: int, head_sha: str) -> dict[st
     Returns:
         ``{path: (state, method, reason)}`` for every path with a row at the head.
     """
-    if not head_sha:
+    if not head_sha or not has_generated_checks(db_path):
         return {}
     checks, _ = fetch_generated_checks(db_path, pr_number, head_sha)
     settled: dict[str, ReverifyOutcome] = {}

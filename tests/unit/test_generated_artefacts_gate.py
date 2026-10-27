@@ -43,8 +43,8 @@ from repoach.review.generated_artefacts import (
 )
 from repoach.review.generated_evidence import evidence_payload
 from repoach.review.generated_process import RunResult, subprocess_runner
-from repoach.review.generated_settle import settle_at_head
-from repoach.review.generated_store import fetch_generated_checks
+from repoach.review.generated_settle import settle_at_head, settlements_at_head
+from repoach.review.generated_store import fetch_generated_checks, has_generated_checks
 from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts
 from repoach.review.report import render_ledger_report
@@ -1035,3 +1035,12 @@ def test_settle_at_head_leaves_every_other_finding_to_the_refuter() -> None:
         settle_at_head(finding("diff_scoper", ClaimType.SPEC_GAP, "other.json"), settlements)
         is None
     )
+
+
+def test_a_re_check_without_generated_rows_creates_no_table(tmp_path: Path) -> None:
+    """A ledger that never recorded a generated check is read for nothing and left as it was."""
+    db_path = tmp_path / "ledger.db"
+    init_findings_schema(db_path)
+
+    assert settlements_at_head(db_path, 7, "a" * 40) == {}
+    assert not has_generated_checks(db_path)

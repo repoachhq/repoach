@@ -26,6 +26,7 @@ from sqlalchemy import (
     create_engine,
     delete,
     insert,
+    inspect,
     select,
 )
 from sqlalchemy.engine import Engine
@@ -67,6 +68,23 @@ def _engine_for(db_path: Path) -> Engine:
     """Return a SQLite engine on ``db_path``, creating its directory."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return create_engine(f"sqlite:///{db_path}")
+
+
+def has_generated_checks(db_path: Path) -> bool:
+    """Whether the ledger holds a ``generated_checks`` table, without creating one.
+
+    A pull request that never touched a declared artefact never wrote the
+    table; a re-check then reads nothing and creates nothing.
+
+    Args:
+        db_path: The ledger database.
+
+    Returns:
+        True when the database file exists and has the table.
+    """
+    if not db_path.is_file():
+        return False
+    return bool(inspect(_engine_for(db_path)).has_table(generated_checks.name))
 
 
 def init_generated_schema(db_path: Path) -> None:
@@ -178,6 +196,7 @@ def fetch_generated_checks(
 __all__ = [
     "fetch_generated_checks",
     "generated_checks",
+    "has_generated_checks",
     "init_generated_schema",
     "record_generated_checks",
 ]
