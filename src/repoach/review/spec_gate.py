@@ -1021,6 +1021,11 @@ class NotAnActionPlanError(FileNotFoundError):
     0.4). Only a file that carries the marker and does not parse is
     refused (G4).
 
+    It subclasses :class:`FileNotFoundError` on purpose: a prose file is
+    no plan, so :func:`resolve_contract_plan`'s ``except FileNotFoundError``
+    falls back to the head plan exactly as for an absent file, and reads
+    :attr:`relpath` to name the file in the report.
+
     Attributes:
         relpath: The plan file's repo-relative path.
     """
