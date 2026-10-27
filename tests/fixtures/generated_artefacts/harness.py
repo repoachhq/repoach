@@ -24,7 +24,7 @@ import typer
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.review import orchestrator
-from repoach.review.generated_artefacts import RunResult, subprocess_runner
+from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.head_reverify import reverify_older_findings
 from repoach.review.orchestrator import run_review
 from repoach.review.refuter import judge_findings_for_pr

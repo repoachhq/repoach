@@ -3,7 +3,7 @@
 The verification half of SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ (G2,
 G7): read the declarations at the base, clone a tree at the head,
 run each touched check through the injected runner (by default
-:func:`~repoach.review.generated_artefacts.subprocess_runner`) and build
+:func:`~repoach.review.generated_process.subprocess_runner`) and build
 the ``format:review-generated-json`` evidence.
 """
 
@@ -19,14 +19,13 @@ from typing import Any
 from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
-    Runner,
     declared_at_base,
     evidence_payload,
     run_checks,
-    subprocess_runner,
     touched_artefacts,
 )
 from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
+from .generated_process import Runner, subprocess_runner
 
 
 @contextmanager

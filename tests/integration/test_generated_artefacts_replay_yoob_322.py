@@ -32,7 +32,7 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
 )
-from repoach.review.generated_artefacts import RunResult
+from repoach.review.generated_process import RunResult
 from repoach.review.reviewer import _DIFF_HARD_CAP_CHARS
 from tests.fixtures.generated_artefacts.harness import (
     RecordingRunner,

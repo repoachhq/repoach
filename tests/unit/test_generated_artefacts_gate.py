@@ -23,7 +23,6 @@ from pathlib import Path
 import pytest
 
 from repoach.cli import review_cmds
-from repoach.review import generated_artefacts
 from repoach.review.findings import (
     ClaimType,
     FindingStatus,
@@ -36,10 +35,10 @@ from repoach.review.generated_artefacts import (
     GeneratedEntry,
     GeneratedState,
     GeneratedTiming,
-    RunResult,
     evidence_payload,
     run_checks,
 )
+from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_store import fetch_generated_checks
 from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts
@@ -765,7 +764,7 @@ def test_no_process_of_the_check_outlives_its_run(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = generated_artefacts.subprocess_runner(
+    result = subprocess_runner(
         ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
     )
 
@@ -813,7 +812,7 @@ def test_a_detached_descendant_of_the_check_is_killed(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = generated_artefacts.subprocess_runner(
+    result = subprocess_runner(
         ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
     )
 

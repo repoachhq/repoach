@@ -67,7 +67,8 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.generated_artefacts import Runner, report_lines, subprocess_runner
+from ..review.generated_artefacts import report_lines
+from ..review.generated_process import Runner, subprocess_runner
 from ..review.generated_verify import GeneratedRefusalError, verify_generated
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (
