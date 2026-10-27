@@ -56,8 +56,13 @@ When the diff touches a declared artefact:
    script and with the head script, and both must pass. A check script
    reached through a symlink is refused. When the command itself holds a
    secret-bearing variable (`CI_JOB_TOKEN` included), it names it on
-   stderr and re-runs itself from the scrubbed environment, so no check
-   can read it from the parent process.
+   stderr and re-runs itself from the scrubbed environment, so the check
+   cannot read it from repoach's own process. It can still read what the
+   runner holds outside repoach: the CI shell's environment and, where the
+   runner writes it into the remote URL, the job token in the checkout's
+   `.git/config`. Treat the job token as visible to the check, and give
+   that job no right beyond reading the repository (on GitLab, restrict
+   the project's CI/CD job token permissions).
 3. The review recomputes everything it can derive (the argv from the base
    declaration, the changed sources from the diff, the state from the exit
    code), so the evidence is trusted for the check's exit code and output
