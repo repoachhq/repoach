@@ -41,7 +41,10 @@ class GeneratedEvidenceMismatchError(ValueError):
 
 
 GeneratedEvidenceMismatch = GeneratedEvidenceMismatchError
-"""The name the spec's interface gives the error."""
+"""The name SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ's interface gives the error.
+
+Kept for that contract; code catches :class:`GeneratedEvidenceMismatchError`,
+the name the house lint (an ``Error`` suffix) wants."""
 
 
 def not_run_checks(
@@ -286,7 +289,7 @@ def load_review_evidence(
                 head_dir=head_dir,
                 changed_files=changed_files,
             )
-        except (GeneratedEvidenceMismatch, ValueError, KeyError, OSError) as exc:
+        except (GeneratedEvidenceMismatchError, ValueError, KeyError, OSError) as exc:
             _log.warning(
                 "generated.evidence_refused",
                 path=str(evidence),
