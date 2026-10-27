@@ -7,6 +7,7 @@ malformed-frontmatter propagation.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,12 @@ import pytest
 from repoach.arch import MalformedFrontmatterError
 from repoach.review.governed_spec import (
     GovernedSpec,
+    SpecRefUnavailableError,
+    governed_specs_at_ref,
     load_governed_spec,
+    ref_resolves,
     render_arch_edges,
+    spec_markdown_at_ref,
 )
 
 
@@ -92,3 +97,37 @@ def test_malformed_frontmatter_propagates(tmp_path: Path) -> None:
     _corpus(tmp_path, {"01_SP-BAD_b.md": "---\nid: SP-BAD\nowns: not-a-mapping\n---\n"})
     with pytest.raises(MalformedFrontmatterError):
         load_governed_spec("SP-BAD", root=tmp_path)
+
+
+def _committed_corpus(tmp_path: Path, specs: dict[str, str]) -> Path:
+    _corpus(tmp_path, specs)
+    for args in (
+        ("init", "-q", "-b", "develop"),
+        ("config", "user.email", "test@example.invalid"),
+        ("config", "user.name", "Test Runner"),
+        ("add", "-A"),
+        ("commit", "-q", "-m", "base"),
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True)
+    return tmp_path
+
+
+def test_specs_at_ref_skip_frontier_and_malformed_and_miss_unknown(tmp_path: Path) -> None:
+    root = _committed_corpus(
+        tmp_path,
+        {
+            "2026-10-27_SP-GOOD_good.md": _governed("SP-GOOD"),
+            "2026-10-27_SP-FRONT_front.md": "# Frontier\n\nNo frontmatter.\n",
+            "2026-10-27_SP-BAD_bad.md": "---\nid: SP-BAD\n---\n\n# Missing keys\n",
+        },
+    )
+
+    assert [spec.id for spec in governed_specs_at_ref("develop", root=root)] == ["SP-GOOD"]
+    assert spec_markdown_at_ref("SP-GOOD", "develop", root=root) == _governed("SP-GOOD")
+    assert spec_markdown_at_ref("SP-NONE", "develop", root=root) is None
+    assert ref_resolves(root, "develop") is True
+    assert ref_resolves(root, "no-such-branch") is False
+    with pytest.raises(SpecRefUnavailableError):
+        governed_specs_at_ref("no-such-branch", root=root)
+    with pytest.raises(SpecRefUnavailableError):
+        spec_markdown_at_ref("SP-GOOD", "no-such-branch", root=root)
