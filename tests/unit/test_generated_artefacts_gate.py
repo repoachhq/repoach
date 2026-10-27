@@ -739,3 +739,26 @@ def test_symlinked_check_script_is_never_run(tmp_path: Path) -> None:
     assert [(c.state, c.output_tail) for c in checks] == [
         (GeneratedState.STALE, f"check script {CHECK} is a symlink or leaves the head tree")
     ]
+
+
+def test_no_process_of_the_check_outlives_its_run(tmp_path: Path) -> None:
+    """A process the check leaves behind is killed, so it cannot rewrite the evidence later."""
+    marker = tmp_path / "late-write"
+    child = tmp_path / "late_child.py"
+    child.write_text(
+        f"import pathlib, time\ntime.sleep(1)\npathlib.Path({str(marker)!r}).write_text('x')\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "leave_child.py"
+    script.write_text(
+        f"import subprocess, sys\nsubprocess.Popen([sys.executable, {str(child)!r}])\nprint('done')\n",
+        encoding="utf-8",
+    )
+
+    result = generated_artefacts.subprocess_runner(
+        ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
+    )
+
+    assert (result.exit_code, result.output.strip()) == (0, "done")
+    subprocess.run(["sleep", "2"], check=True)
+    assert not marker.exists()

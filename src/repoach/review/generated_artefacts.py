@@ -31,8 +31,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -264,7 +267,7 @@ def subprocess_runner(
     timeout_s: float,
     shell: bool = False,
 ) -> RunResult:
-    """Run one check with :func:`subprocess.run`, never through a shell.
+    """Run one check in its own session, never through a shell, and kill what it leaves.
 
     Args:
         argv: The interpreter and the declared check, placeholders replaced.
@@ -274,7 +277,9 @@ def subprocess_runner(
         shell: Must be False; present so a caller's intent is checked.
 
     Returns:
-        The exit code and stdout followed by stderr.
+        The exit code and the merged stdout and stderr. The check is
+        waited on, not its output pipes: a process it leaves behind holds
+        no pipe open and is killed with its session.
 
     Raises:
         ValueError: ``shell`` is True (NG3: no shell, ever).
@@ -282,18 +287,38 @@ def subprocess_runner(
     """
     if shell:
         raise ValueError("a generated-artefact check never runs through a shell")
-    proc = subprocess.run(
-        list(argv),
-        cwd=cwd,
-        env=dict(env),
-        shell=False,
-        capture_output=True,
-        text=True,
-        errors="replace",
-        timeout=timeout_s,
-        check=False,
-    )
-    return RunResult(proc.returncode, (proc.stdout or "") + (proc.stderr or ""))
+    with tempfile.TemporaryFile() as output:
+        proc = subprocess.Popen(
+            list(argv),
+            cwd=cwd,
+            env=dict(env),
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            proc.wait(timeout=timeout_s)
+        finally:
+            _kill_group(proc)
+        output.seek(0)
+        text = output.read().decode("utf-8", errors="replace")
+    return RunResult(proc.returncode, text)
+
+
+def _kill_group(proc: subprocess.Popen[bytes]) -> None:
+    """Kill every process the check left in its session, then reap the check.
+
+    The check is pull-request code: a process it leaves behind could
+    rewrite the evidence after ``repoach review generated`` wrote it, so
+    nothing it started may outlive its run.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        _log.debug("generated.check_group_gone", pid=proc.pid)
+    proc.wait()
 
 
 def _entries(config: ProjectConfig) -> tuple[GeneratedEntry, ...]:
