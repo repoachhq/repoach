@@ -87,13 +87,13 @@ def _repo(tmp_path: Path, head: dict[str, str]) -> tuple[Path, str]:
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
-def _review(repo: Path, head: str, changed: list[str]) -> TeamOutcome:
+def _review(repo: Path, head: str, changed: list[str], body: str = _BODY) -> TeamOutcome:
     forge = MagicMock()
     forge.diff.return_value = Diff(
         text="".join(f"diff --git a/{p} b/{p}\n" for p in changed), files=changed
     )
     forge.pull_request.return_value = PullRequest(
-        number=9, head_ref=_BRANCH, base_ref="develop", body=_BODY
+        number=9, head_ref=_BRANCH, base_ref="develop", body=body
     )
     forge.head_sha.return_value = head
     forge.comments.return_value = []
@@ -343,3 +343,23 @@ def test_specs_owning_picks_the_longest_prefix_and_reports_ungoverned(tmp_path: 
         "SP-OUTER": ["src/pkg/other.py"],
     }
     assert ownership.ungoverned == ["src/pkgx/b.py"]
+
+
+def test_a_grading_failure_of_a_declared_spec_records_its_refusing_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("spec frontmatter malformed")
+
+    monkeypatch.setattr("repoach.review.orchestrator.coverage_rows_at_head", broken)
+    team = _review(repo, head, [_OWNED], body="Spec: SP-A\n")
+    facts, decision = _decide(repo, head)
+
+    (row,) = facts.spec_rows
+    assert (team.spec_id, team.spec_covered) == ("SP-A", False)
+    assert (row.spec_id, row.resolution, row.contract) == ("SP-A", "declared", "unavailable")
+    assert decision.reasons == [
+        "spec coverage not graded: RuntimeError: spec frontmatter malformed (fail closed)"
+    ]
