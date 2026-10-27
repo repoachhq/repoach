@@ -127,6 +127,12 @@ _SENTINELS = frozenset({PLAN_ABSENT, BASE_REF_UNAVAILABLE})
 MISSING_SELECTORS_REASON = "spec acceptance selectors not all present"
 """Head of the refusal naming the absent selectors (G2)."""
 
+RESOLUTION_DECLARED = "declared"
+"""``SpecCoverage.resolution`` of the spec the PR declared."""
+
+RESOLUTION_OWNERSHIP = "ownership"
+"""``SpecCoverage.resolution`` of a spec owning code of an undeclared PR (G7)."""
+
 
 class SpecCoverage(BaseModel):
     """Presence report for a spec's acceptance contract at head.
