@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from repoach.cli import review_cmds
 from repoach.review import generated_artefacts
 from repoach.review.findings import (
     ClaimType,
@@ -306,7 +307,7 @@ def test_check_never_runs_in_review_job(
     assert "REPOACH_ANTHROPIC_AUTH_TOKEN" not in call.env
 
     in_review = RecordingRunner()
-    monkeypatch.setattr(generated_artefacts, "subprocess_runner", in_review)
+    monkeypatch.setattr(review_cmds, "GENERATED_RUNNER", in_review)
     spawned = _SpawnLog()
     real_popen = subprocess.Popen
 

@@ -22,7 +22,7 @@ import typer
 
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
-from repoach.review import generated_artefacts, orchestrator
+from repoach.review import orchestrator
 from repoach.review.generated_artefacts import RunResult, subprocess_runner
 from repoach.review.head_reverify import reverify_older_findings
 from repoach.review.orchestrator import run_review
@@ -293,10 +293,10 @@ def verify(
     """Run ``review generated --pr <pr> --head <head> --base main`` from the checkout."""
     recorder = runner or RecordingRunner()
     monkeypatch.chdir(repo.checkout)
-    monkeypatch.setattr(generated_artefacts, "subprocess_runner", recorder)
+    monkeypatch.setattr(review_cmds, "GENERATED_RUNNER", recorder)
     git(repo.checkout, "fetch", "-q", "origin", f"+refs/pull/{pr}/head:refs/pull/{pr}/head")
     capsys.readouterr()
     review_cmds.review_generated(pr_number=pr, head=head, out=str(out), base="main")
     _, err = capsys.readouterr()
-    monkeypatch.setattr(generated_artefacts, "subprocess_runner", subprocess_runner)
+    monkeypatch.setattr(review_cmds, "GENERATED_RUNNER", subprocess_runner)
     return json.loads(out.read_text(encoding="utf-8")), err.splitlines(), recorder

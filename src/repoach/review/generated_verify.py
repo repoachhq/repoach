@@ -2,9 +2,9 @@
 
 The verification half of SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ (G2,
 G7): read the declarations at the base, clone a tree at the head,
-run each touched check through
-:data:`~repoach.review.generated_artefacts.subprocess_runner` (looked up
-at call time) and build the ``format:review-generated-json`` evidence.
+run each touched check through the injected runner (by default
+:func:`~repoach.review.generated_artefacts.subprocess_runner`) and build
+the ``format:review-generated-json`` evidence.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from . import generated_artefacts as artefacts
 from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
@@ -27,6 +26,7 @@ from .generated_artefacts import (
     merge_base,
     run_checks,
     run_git,
+    subprocess_runner,
     touched_artefacts,
 )
 
@@ -80,7 +80,7 @@ def verify_generated(
     head: str,
     base_ref: str,
     state_dir: Path,
-    runner: Runner | None = None,
+    runner: Runner = subprocess_runner,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[dict[str, Any], list[GeneratedCheck], GeneratedTiming]:
     """Run the touched checks of a PR at its head and build the evidence (``repoach review generated``).
@@ -98,8 +98,7 @@ def verify_generated(
         head: The head SHA (or a ref naming it).
         base_ref: The base ref (``origin/develop``).
         state_dir: Where a worktree of the head may be created.
-        runner: The subprocess seam; :func:`~repoach.review.generated_artefacts.subprocess_runner`, looked up
-            at call time, when omitted.
+        runner: The subprocess seam.
         clock: The monotonic clock.
 
     Returns:
@@ -125,7 +124,7 @@ def verify_generated(
                 touched,
                 head_dir=tree,
                 head_sha=head_sha,
-                runner=runner if runner is not None else artefacts.subprocess_runner,
+                runner=runner,
                 changed_files=changed,
                 base_sha=base_sha,
                 base_blob=lambda path: blob_at(root, base_sha, path),
