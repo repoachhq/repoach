@@ -114,7 +114,15 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert`, `tests/unit/test_generated_artefacts_gate.py::test_only_the_end_of_a_long_output_is_read`, `tests/unit/test_generated_artefacts_gate.py::test_without_a_subreaper_the_session_is_still_killed`, `tests/unit/test_generated_artefacts_gate.py::test_settle_at_head_leaves_every_other_finding_to_the_refuter`, `tests/unit/test_generated_artefacts_gate.py::test_a_re_check_without_generated_rows_creates_no_table`
 
-## Step 15 — Document the declaration and the Yoob job
+## Step 15 — Read the declarations in their own module
+
+- **Files**: `src/repoach/review/generated_config.py`
+- **Action**: generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can match a file always reviewed (CI configuration, hooks, repoach.toml, dependency manifests). Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.
+- **Commit**: `refactor(review): read the generated declarations in generated_config`
+- **Done when**: pytest -q tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused passes
+- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_a_double_star_slash_matches_zero_directories`, `tests/unit/test_generated_artefacts_gate.py::test_each_run_gets_its_own_tree_and_may_not_change_the_artefact`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_missing_its_base_run_is_reported_not_run`, `tests/unit/test_generated_artefacts_gate.py::test_generated_checks_round_trip_keeps_script_ref_and_timing`
+
+## Step 16 — Document the declaration and the Yoob job
 
 - **Files**: `docs/generated_artefacts.md`
 - **Action**: Describe the [[review.generated]] keys and rules, what the review shows, runs and records, what of the evidence is trusted, the causes a finding names, the report lines, and the GitLab snippet: a secret-free review:generated job writing review-generated.json and review:gate needing it.
@@ -372,6 +380,23 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
     },
     {
       "index": 15,
+      "title": "Read the declarations in their own module",
+      "files": [
+        "src/repoach/review/generated_config.py"
+      ],
+      "action": "generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can match a file always reviewed (CI configuration, hooks, repoach.toml, dependency manifests). Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.",
+      "commit_message": "refactor(review): read the generated declarations in generated_config",
+      "done_when": "pytest -q tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused passes",
+      "unit_tests": [
+        "tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused",
+        "tests/unit/test_generated_artefacts_config.py::test_a_double_star_slash_matches_zero_directories",
+        "tests/unit/test_generated_artefacts_gate.py::test_each_run_gets_its_own_tree_and_may_not_change_the_artefact",
+        "tests/unit/test_generated_artefacts_gate.py::test_evidence_missing_its_base_run_is_reported_not_run",
+        "tests/unit/test_generated_artefacts_gate.py::test_generated_checks_round_trip_keeps_script_ref_and_timing"
+      ]
+    },
+    {
+      "index": 16,
       "title": "Document the declaration and the Yoob job",
       "files": [
         "docs/generated_artefacts.md"
