@@ -81,11 +81,7 @@ from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
-from ..review.spec_grading import (
-    SpecsByOwnership,
-    ownership_unavailable_reason,
-    specs_owning,
-)
+from ..review.spec_grading import ownership_at_base, ownership_unavailable_reason
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
@@ -865,23 +861,18 @@ def _gate_spec_resolution(
     """Return the gate's ``spec_resolution`` object and its stderr lines (G7).
 
     A declared spec is graded alone. With none declared, the specs owning
-    the diff's paths are read at the base ref (then ``origin/<base>``)
-    of the checkout; a diff or a base that cannot be read leaves the
-    resolution ``none`` with a line naming why.
+    the diff's paths are resolved as the review resolves them
+    (:func:`~repoach.review.spec_grading.ownership_at_base`, on the
+    checkout, without a fetch); a diff that cannot be read leaves the
+    resolution ``none`` and a base that cannot be read refuses, each with
+    a line naming why.
     """
     if declared.spec_id is not None:
         return {"source": "declared", "specs": [declared.spec_id], "ungoverned": []}, []
     empty: dict[str, object] = {"source": "none", "specs": [], "ungoverned": []}
     if changed_files is None:
         return empty, ["spec resolution by ownership skipped: the diff could not be read"]
-    ownership: SpecsByOwnership | None = None
-    for ref in (base_ref, f"origin/{base_ref}") if base_ref else ():
-        try:
-            ownership = specs_owning(changed_files, root=root, ref=ref)
-        except SpecRefUnavailableError as exc:
-            _log.info("gate.ownership_ref_unavailable", ref=ref, error=str(exc)[:200])
-            continue
-        break
+    ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref or None)
     if ownership is None:
         return {"source": "ownership", "specs": [], "ungoverned": []}, [
             ownership_unavailable_reason(base_ref or "(unknown)")

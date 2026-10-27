@@ -129,6 +129,36 @@ def readable_base(
     return remote if ref_resolves(repo_root, remote) else None
 
 
+def ownership_at_base(
+    paths: list[str],
+    *,
+    root: Path,
+    base_ref: str | None,
+    fetch_base: Callable[[str], None] | None = None,
+) -> tuple[SpecsByOwnership | None, str | None]:
+    """Resolve an undeclared PR's specs by ownership at its base (G7).
+
+    The one resolution the review (:func:`coverage_rows_at_head`) and
+    ``review gate`` share: the base is :func:`readable_base`, the
+    ownership :func:`specs_owning` read there.
+
+    Args:
+        paths: The paths the PR diff touches.
+        root: Repository root the git commands run against.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+        fetch_base: Fetches ``origin/<base_ref>``; ``None`` never fetches.
+
+    Returns:
+        ``(ownership, ref)``; ``(None, None)`` when the base does not
+        resolve, which the caller refuses on (fail closed).
+    """
+    ref = readable_base(root, base_ref, fetch_base)
+    if ref is None:
+        _log.warning("spec_grading.ownership_unresolved", base_ref=base_ref)
+        return None, None
+    return specs_owning(paths, root=root, ref=ref), ref
+
+
 @dataclass(frozen=True)
 class CoverageGrading:
     """The coverage rows of one PR head and how its specs were resolved.
@@ -188,9 +218,10 @@ def coverage_rows_at_head(
             fetch_base=fetch_base,
         )
         return CoverageGrading(rows=[coverage.model_copy(update={"resolution": "declared"})])
-    ref = readable_base(repo_root, base_ref, fetch_base)
-    if ref is None:
-        _log.warning("spec_gate.ownership_unresolved", base_ref=base_ref)
+    ownership, ref = ownership_at_base(
+        changed_files, root=repo_root, base_ref=base_ref, fetch_base=fetch_base
+    )
+    if ownership is None or ref is None:
         unresolved = SpecCoverage(
             spec_id=OWNERSHIP_UNRESOLVED,
             n_promised=0,
@@ -202,7 +233,6 @@ def coverage_rows_at_head(
             resolution=OWNERSHIP_UNRESOLVED,
         )
         return CoverageGrading(rows=[unresolved])
-    ownership = specs_owning(changed_files, root=repo_root, ref=ref)
     rows = [
         coverage_at_head(repo_root, spec_id=owner, base_ref=ref, changed_files=changed_files)[
             0
