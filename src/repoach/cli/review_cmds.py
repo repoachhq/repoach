@@ -28,7 +28,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping, Sequence
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -525,25 +526,23 @@ def _evidence_path(value: object) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
 
-CI_RUNTIME_PREFIXES: tuple[str, ...] = ("CI_", "ACTIONS_")
-"""Secret-looking variables every CI job carries (``CI_JOB_TOKEN``): job-scoped, not named."""
-
-
 def held_secrets() -> list[str]:
     """Return the secret-bearing variables of this process a check could read from it.
 
-    :func:`scrubbed_env` keeps them out of the check's environment; a
-    same-user process can still read this process's own environment, so
-    ``review generated`` names them. The CI runtime's job-scoped
-    variables (:data:`CI_RUNTIME_PREFIXES`) are not named.
+    :func:`scrubbed_env` keeps them out of the check's environment, but a
+    process of the same user can read this process's own environment
+    (``/proc/<pid>/environ``), CI runtime tokens (``CI_JOB_TOKEN``,
+    ``ACTIONS_ID_TOKEN_REQUEST_TOKEN``) included.
 
     Returns:
         The variable names, sorted.
     """
     kept = scrubbed_env()
-    return sorted(
-        name for name in os.environ if name not in kept and not name.startswith(CI_RUNTIME_PREFIXES)
-    )
+    return sorted(name for name in os.environ if name not in kept)
+
+
+REEXEC: Callable[[str, list[str], dict[str, str]], None] = os.execve
+"""How ``review generated`` replaces itself with a copy started without secrets."""
 
 
 GENERATED_RUNNER: Runner = subprocess_runner
@@ -575,7 +574,10 @@ def review_generated(
     ``generated checks: <n> ms + <m> ms overhead`` line go to stderr.
 
     Run it only in a job holding no forge token and no model credential:
-    the check is pull-request code. Exits 0 once the evidence is written,
+    the check is pull-request code. A process that still holds a
+    secret-bearing variable names it on stderr and replaces itself (exec)
+    with a copy started from the scrubbed environment, so no check can
+    read the variable from it. Exits 0 once the evidence is written,
     whatever the checks said (the review decides); 2 when the head or the
     base does not resolve or the base declarations are invalid.
     """
@@ -583,11 +585,14 @@ def review_generated(
     held = held_secrets()
     if held:
         typer.echo(
-            "repoach: warning: review generated runs pull-request code while holding "
-            f"{', '.join(held)}; the check cannot see them in its environment, but a process "
-            "of the same user can read this one's; run it in a job without them",
+            f"repoach: review generated re-runs itself without {', '.join(held)}: "
+            "a check is pull-request code and could read them from this process",
             err=True,
         )
+        argv = ["review", "generated", "--pr", str(pr_number), "--head", head, "--out", out]
+        argv += ["--base", base] if base else []
+        REEXEC(sys.executable, [sys.executable, "-m", "repoach", *argv], scrubbed_env())
+        return
     base_ref = base or f"origin/{load_project_config(root).repoach.integration_branch}"
     state_dir = Path(get_settings().db_path).parent
     try:

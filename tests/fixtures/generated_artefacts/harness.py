@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -218,6 +219,7 @@ class RecordingRunner:
 
     def __init__(self, scripted: Sequence[RunResult] = ()) -> None:
         self.calls: list[Call] = []
+        self.reexecs: list[tuple[str, list[str], dict[str, str]]] = []
         self._scripted = list(scripted)
 
     def __call__(
@@ -294,6 +296,14 @@ def verify(
     recorder = runner or RecordingRunner()
     monkeypatch.chdir(repo.checkout)
     monkeypatch.setattr(review_cmds, "GENERATED_RUNNER", recorder)
+
+    def reexec(executable: str, argv: list[str], env: dict[str, str]) -> None:
+        recorder.reexecs.append((executable, list(argv), dict(env)))
+        for name in [name for name in os.environ if name not in env]:
+            monkeypatch.delenv(name)
+        review_cmds.review_generated(pr_number=pr, head=head, out=str(out), base="main")
+
+    monkeypatch.setattr(review_cmds, "REEXEC", reexec)
     git(repo.checkout, "fetch", "-q", "origin", f"+refs/pull/{pr}/head:refs/pull/{pr}/head")
     capsys.readouterr()
     review_cmds.review_generated(pr_number=pr, head=head, out=str(out), base="main")
