@@ -43,6 +43,7 @@ from sqlalchemy.engine import Engine
 from ..arch import path_contains
 from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
+from ..forge.recording import SECRET_VALUE_PATTERNS
 from ..gates.selectors import SelectorKind, TestSelector, parse_selector, selector_file
 from ..gates.selectors import selector_present as gate_selector_present
 from .governed_spec import (
@@ -204,6 +205,23 @@ def base_ref_unavailable_reason(ref: str) -> str:
         f"spec coverage not graded: base ref {ref} unavailable, the contract cannot be read "
         "(fail closed)"
     )
+
+
+_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
+"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
+
+
+def redact_error(text: str) -> str:
+    """Return *text* with URL credentials and forge tokens replaced by ``***``.
+
+    A grading error becomes a merge reason that the gate publishes (its
+    JSON, notes and PR comment) and a log line; a failed ``git fetch``
+    can carry a credentialed remote URL.
+    """
+    cleaned = _URL_USERINFO.sub("***@", text)
+    for pattern in SECRET_VALUE_PATTERNS:
+        cleaned = pattern.sub("***", cleaned)
+    return cleaned
 
 
 def plan_absent_line(spec_id: str, n_selectors: int) -> str:
@@ -1467,7 +1485,9 @@ def _grade(
     """Grade *spec_id* against the contract *resolution* names (see :func:`coverage_at_head`)."""
     if resolution.error:
         return _not_graded(
-            spec_id, "plan", f"spec plan unparseable at {resolution.ref}: {resolution.error}"
+            spec_id,
+            "plan",
+            f"spec plan unparseable at {resolution.ref}: {redact_error(resolution.error)}",
         )
     if not resolution.base_available:
         return _not_graded(

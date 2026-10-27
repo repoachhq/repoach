@@ -11,14 +11,12 @@ refusal publishes.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..arch import path_contains
 from ..core.logging import get_logger
-from ..forge.recording import SECRET_VALUE_PATTERNS
 from .governed_spec import governed_specs_at_ref, ref_resolves
 from .spec_gate import (
     DOCS_ROOT,
@@ -31,6 +29,7 @@ from .spec_gate import (
     init_spec_coverage_schema,
     latest_batch,
     record_spec_coverages,
+    redact_error,
 )
 
 _log = get_logger(__name__)
@@ -267,23 +266,6 @@ def coverage_rows_at_head(
         for owner in ownership.specs
     ]
     return CoverageGrading(rows=rows, ownership=ownership, lines=ownership.lines())
-
-
-_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
-"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
-
-
-def redact_error(text: str) -> str:
-    """Return *text* with URL credentials and forge tokens replaced by ``***``.
-
-    A grading error becomes a merge reason that the gate publishes (its
-    JSON, notes and PR comment) and a log line; a failed ``git fetch``
-    can carry a credentialed remote URL.
-    """
-    cleaned = _URL_USERINFO.sub("***@", text)
-    for pattern in SECRET_VALUE_PATTERNS:
-        cleaned = pattern.sub("***", cleaned)
-    return cleaned
 
 
 def failed_grading_row(spec_id: str | None, error: Exception) -> SpecCoverage:
