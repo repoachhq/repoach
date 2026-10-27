@@ -1,7 +1,7 @@
 ---
 id: SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ
 title: A declared generated artefact is proved by its check command, not read by the reviewers
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-27
@@ -59,6 +59,28 @@ file below the cap". A derived file cannot be split by its author without
 changing its producer and its consumer, so no edit of the branch clears
 the finding, even though F10 proves the content.
 
+## Decisions (coordinator, 2026-10-27)
+
+- D1 (Q1). An entry may name `producer_inputs`: paths that count as
+  sources for G3, such as a header file carrying the model digest. A
+  change to a producer input alone satisfies "a source changed". Yoob's
+  companion spec SP-EMBEDDINGS-ONE-VECTOR-PER-CHUNK (Yoob !335) removes
+  the host and the timestamp from the embeddings key, so a re-embed with
+  an unchanged model is byte-identical and produces no diff, and it
+  declares `_header.json` as a producer input.
+- D2 (Q2). Option A. Yoob runs the check in a secret-free
+  `review:generated` job; `review:gate` gains `needs: [review:generated]`
+  and reads its evidence artefact. The delay this adds to the gate is the
+  check's own time plus the job's overhead; both are measured and printed.
+- D3 (Q3). When `check[0]` changed in the same diff, the check runs
+  twice: once with the script at the base ref, once at the head, both
+  against the head tree. Both must pass; either failing is
+  `generated_artefact_stale` (fail closed), and the report names both
+  runs.
+- D4 (Q4). This spec lands first: it unblocks four Yoob MRs.
+  SP-AUTHOR-CLAIMS-ARE-MEASURED reuses the same secret-free context
+  afterwards.
+
 ## Goals
 
 - **G1. Declaration.** `repoach.toml` accepts `[[review.generated]]`
@@ -68,6 +90,7 @@ the finding, even though F10 proves the content.
   path = "api/data/knowledge_embeddings.json"
   check = ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"]
   sources = ["api/data/knowledge_corpus.json", "docs/user_guide/**"]
+  producer_inputs = ["api/data/_header.json"]
   ```
   - `path`: a glob, repository-relative, no `..`, no leading `/`. It must
     not match a file whose extension belongs to a language declared in
@@ -81,6 +104,10 @@ the finding, even though F10 proves the content.
     are the only placeholders, replaced by the SHAs.
   - `sources`: a non-empty list of globs, the paths the artefact derives
     from.
+  - `producer_inputs` (optional, D1): globs of paths that pin the
+    producer (a header carrying the model digest, a lockfile). For G3
+    they count as sources; the report lists them apart
+    (`producer inputs changed: <list>`).
   - The declarations are read from the **base ref**, never the head. A PR
     that adds or changes an entry is reviewed like any `repoach.toml`
     change; the entry applies from the next PR on.
@@ -114,7 +141,10 @@ the finding, even though F10 proves the content.
   - the artefact changed and no file matching its `sources` changed in
     the same diff (`no source changed`); or
   - the check's state is `generated_artefact_stale` (`check exited <n>:
-    <last line>`).
+    <last line>`); or
+  - `check[0]` changed in the same diff and either the base-ref script or
+    the head script fails against the head tree (D3): `base check exited
+    <n>: <last line>` or `head check exited <n>: <last line>`.
   At a later head, `head_reverify` settles such a finding from the
   `generated_checks` row at that head, never through the refuter:
   `resolved_at_head` when the row is `generated_artefact_verified` and a
@@ -124,7 +154,7 @@ the finding, even though F10 proves the content.
   its claim gains the sentence `declare it under [[review.generated]]
   with its check, or split it`.
 - **G5. The line that says what proved it.** The `review pr` JSON gains
-  `generated: [{path, check, state, ms, sources_changed}]`, the Markdown
+  `generated: [{path, check, state, ms, sources_changed, producer_inputs_changed, script_ref}]`, the Markdown
   report a `## Generated artefacts` section, and each verified entry
   prints `generated: <path> verified by <check argv joined by spaces>
   (<ms> ms)`. Yoob's `ci/lib/review_gate_report.py` prints the same line
@@ -135,6 +165,13 @@ the finding, even though F10 proves the content.
   finding on that path ends `resolved_at_head` with `declared generated
   at <sha7>, verified by <check>`, without a refuter call. This is what
   releases !322, whose ledger already holds findings 3 and 6.
+- **G7. The delay is measured, not guessed (D2).** `repoach review
+  generated` records in the evidence its wall time, split into
+  `checks_ms` (sum of the check runs) and `overhead_ms` (install, checkout
+  and evidence writing). The report prints `generated checks: <checks_ms>
+  ms + <overhead_ms> ms overhead`. Yoob's `review:generated` job is
+  secret-free (no gateway secret, no forge token in its variables or
+  environment), and `review:gate` declares `needs: [review:generated]`.
 
 ## Non-Goals
 
@@ -173,6 +210,7 @@ class GeneratedEntry:
     path: str                 # glob
     check: tuple[str, ...]    # argv, validated (G1)
     sources: tuple[str, ...]  # globs, non-empty
+    producer_inputs: tuple[str, ...] = ()  # globs, count as sources (D1)
 
 class GeneratedState(StrEnum):
     VERIFIED = "generated_artefact_verified"
@@ -193,6 +231,7 @@ class GeneratedCheck:
     exit_code: int | None
     duration_ms: int
     output_tail: str
+    script_ref: Literal["head", "base"] = "head"  # D3: base run when check[0] changed
 
 def load_generated_entries(base_toml_text: str, path: Path, languages: Sequence[str]) -> tuple[GeneratedEntry, ...]: ...
 def touched_artefacts(entries: Sequence[GeneratedEntry], diff_files: Sequence[str]) -> dict[str, GeneratedEntry]: ...
@@ -246,10 +285,15 @@ of another head or another artefact blob).
   `no check evidence for <path> at <sha7>`. Never green.
 - **Artefact deleted by the diff** → no check; the deletion is shown in
   the paragraph (`<size_before> -> deleted`) and reviewed as a deletion.
-- **`check[0]` itself changed in the diff** → the script's diff is read
-  by the reviewers like any code (it is small); the check runs the head
-  version, and the report line adds `(check script changed in this
-  diff)`.
+- **`check[0]` itself changed in the diff** (D3) → the script's diff is
+  read by the reviewers like any code; the check runs twice against the
+  head tree, with the base-ref script and with the head script. Both
+  must exit 0. The report prints one line per run: `generated: <path>
+  verified by <argv> (base script, <ms> ms)` and `(head script, <ms>
+  ms)`. A script absent at the base ref (new in this diff) cannot be
+  declared: G1 already requires `check[0]` tracked at the base ref.
+- **Only a producer input changed** (D1) → counts as a source change;
+  the check decides.
 - **A declared glob matching a code file** (G1 language rule) →
   `ConfigError` at load, before any review.
 
@@ -362,38 +406,31 @@ flowchart TD
   `resolved_at_head` —
   `pytest -q tests/integration/test_generated_artefacts_replay_yoob_322.py`.
 - [ ] AC12 (Yoob, live): after the declaration lands on Yoob develop and
-  a secret-free `review:generated` job feeds `review:gate`, the next
+  a secret-free `review:generated` job (no `REPOACH_GITLAB_TOKEN`,
+  `REPOACH_ANTHROPIC_AUTH_TOKEN` or `REPOACH_ANTHROPIC_API_KEY` in its
+  environment, asserted by a Yoob shell suite on `.gitlab-ci.yml`) feeds
+  `review:gate` through `needs: [review:generated]`, the next
   review of !322 (or of the MR that supersedes it) prints `generated:
   api/data/knowledge_embeddings.json verified by
   scripts/index_knowledge_corpus.py --repo-root . --check (<ms> ms)` and
   ends APPROVE unless another finding blocks. Measured on the pipeline,
   recorded in the PR.
+- [ ] AC13 (D1): declared artefact changed with only a `producer_inputs`
+  path changed and the check exiting 0 → verified, no finding, report
+  contains `producer inputs changed: data/_header.json`; the same diff
+  with `producer_inputs` absent → refused `no source changed` —
+  `pytest -q tests/unit/test_generated_artefacts_gate.py::test_producer_input_counts_as_source`.
+- [ ] AC14 (D3): `check[0]` changed in the diff, the head script exits 0
+  and the base script exits 1 → refused with `base check exited 1`;
+  both exit 0 → verified and the report holds both lines `(base script,`
+  and `(head script,`; the runner is called twice, the first argv[0]
+  read from the base ref —
+  `pytest -q tests/unit/test_generated_artefacts_gate.py::test_changed_check_script_runs_base_and_head`.
+- [ ] AC15 (G7): the evidence holds integer `checks_ms` and
+  `overhead_ms`, and the report contains `generated checks: <n> ms + <m>
+  ms overhead` —
+  `pytest -q tests/unit/test_generated_artefacts_gate.py::test_delay_is_measured_and_printed`.
 
 ## Open Questions
 
-- Q1. **Regeneration without a source change.** Yoob's embeddings key
-  also names the Ollama version, digest and host: a re-embed after an
-  Ollama upgrade changes the artefact and no source, and G3 refuses it.
-  Options: (a) keep the refusal; the author changes nothing else and the
-  owner overrides; (b) an entry field `producer_inputs` (paths such as a
-  lockfile or a model pin) counted as sources; (c) accept a verified
-  check alone when the diff touches only declared artefacts. Proposed
-  (b).
-- Q2. **Who runs the check in Yoob.** A new job `review:generated`
-  (secret-free, runner `yoob-light`, image with the API's Python deps),
-  with `review:gate` gaining `needs: [review:generated]` and reading its
-  artefact. That changes the gate's `needs: []` (F12) and delays the
-  first verdict by that job's duration. Alternative: CI evidence first
-  (SP-AUTHOR-CLAIMS-ARE-MEASURED D5): Yoob's `test:api:unit` already runs
-  `test_committed_embeddings_are_keyed_to_the_committed_corpus` without
-  secrets, and the declaration could name that test node as its proof.
-  Proposed: argv check now, CI-evidence form when SP-CI-RED-IS-EVIDENCE
-  lands.
-- Q3. **A check script changed in the same diff** runs the head
-  version, which the PR author controls. The script's diff is reviewed,
-  but a PR could weaken the check and regenerate in one push. Should a
-  changed `check[0]` force the base version of the script to run as
-  well, and require both to pass?
-- Q4. **Shared verification context with SP-AUTHOR-CLAIMS-ARE-MEASURED.**
-  Both specs need the same secret-free job; whichever lands first owns
-  it, and the other reuses it. Owner to order the two.
+None. Q1 to Q4 were decided on 2026-10-27 (D1 to D4 above).
