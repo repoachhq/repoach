@@ -745,9 +745,12 @@ def decide_at_head(
         base_ref: The PR's base branch, read by the recomputation of a
             stale coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
         context_tokens: The refuter's context for the re-check of older
-            findings; ``None`` reads it at ``repo_root``.
+            findings; ``None`` reads it at ``repo_root``, like
+            ``gates_config`` and ``max_judged``. A caller whose
+            ``repo_root`` is the PR's head tree passes the checkout's
+            values, so a pull request never sizes its own refuter.
         context_ceiling: The most that context may grow to for one
-            finding; ``None`` reads it at ``repo_root``.
+            finding; ``None`` reads it at ``repo_root``, as above.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -1226,6 +1229,7 @@ def run_auto_merge(
                 repo_root=checkout,
                 state_dir=db.parent,
             ) as tree:
+                budget = resolve_refuter_budget(checkout)
                 _, facts, decision = decide_at_head(
                     pr_number,
                     forge=forge,
@@ -1238,6 +1242,8 @@ def run_auto_merge(
                     judge_factory=judge_factory,
                     head_tree=True,
                     base_ref=base or None,
+                    context_tokens=budget.floor,
+                    context_ceiling=budget.ceiling,
                 )
         except (HeadUnavailableError, HeadUnresolvedError) as exc:
             _log.warning("auto_merge.head_tree_unavailable", pr_number=pr_number, error=str(exc))
