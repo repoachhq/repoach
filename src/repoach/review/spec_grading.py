@@ -17,10 +17,12 @@ from pathlib import Path
 
 from ..arch import path_contains
 from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from .governed_spec import governed_specs_at_ref, ref_resolves
 from .spec_gate import (
     DOCS_ROOT,
     RESOLUTION_DECLARED,
+    RESOLUTION_NONE,
     RESOLUTION_OWNERSHIP,
     SPEC_COVERAGE_RULE_VERSION,
     SpecCoverage,
@@ -29,10 +31,29 @@ from .spec_gate import (
     init_spec_coverage_schema,
     latest_batch,
     record_spec_coverages,
-    redact_error,
 )
 
 _log = get_logger(__name__)
+
+__all__ = [
+    "OWNERSHIP_UNRESOLVED",
+    "RESOLUTION_DECLARED",
+    "RESOLUTION_NONE",
+    "RESOLUTION_OWNERSHIP",
+    "CoverageGrading",
+    "SpecsByOwnership",
+    "StaleCoverageRecomputeError",
+    "coverage_rows_at_head",
+    "failed_grading_row",
+    "ownership_at_base",
+    "ownership_unavailable_reason",
+    "readable_base",
+    "redact_error",
+    "refresh_stale_coverage",
+    "resolution_payload",
+    "resolution_report",
+    "specs_owning",
+]
 
 OWNERSHIP_UNRESOLVED = "ownership-unresolved"
 """Spec id and resolution of the row of an undeclared PR whose base could not be read."""
@@ -69,7 +90,9 @@ class SpecsByOwnership:
     def payload(self) -> dict[str, object]:
         """Return the ``spec_resolution`` object of this resolution (G7)."""
         return resolution_payload(
-            "ownership" if self.specs else "none", list(self.specs), self.ungoverned
+            RESOLUTION_OWNERSHIP if self.specs else RESOLUTION_NONE,
+            list(self.specs),
+            self.ungoverned,
         )
 
 
@@ -203,7 +226,7 @@ def resolution_report(
     if spec_id is not None:
         return resolution_payload(RESOLUTION_DECLARED, [spec_id]), []
     if changed_files is None:
-        return resolution_payload("none"), [
+        return resolution_payload(RESOLUTION_NONE), [
             "spec resolution by ownership skipped: the diff could not be read"
         ]
     ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref)
@@ -233,9 +256,9 @@ class CoverageGrading:
         """``declared``, ``ownership`` or ``none`` (G7)."""
         if self.ownership is None:
             if any(row.resolution == OWNERSHIP_UNRESOLVED for row in self.rows):
-                return "ownership"
-            return "declared" if self.rows else "none"
-        return "ownership" if self.ownership.specs else "none"
+                return RESOLUTION_OWNERSHIP
+            return RESOLUTION_DECLARED if self.rows else RESOLUTION_NONE
+        return RESOLUTION_OWNERSHIP if self.ownership.specs else RESOLUTION_NONE
 
     def resolution_payload(self) -> dict[str, object]:
         """Return the ``spec_resolution`` object of the review JSON (G7)."""

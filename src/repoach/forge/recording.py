@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ..core.logging import get_logger
+from ..core.redaction import SECRET_VALUE_PATTERNS
 from .protocol import InlineCommentDraft, MergeMethod, ReviewDraft
 from .runner import CommandResult
 
@@ -113,17 +114,6 @@ conformance suite never reads are dropped at record time, so a fixture
 cannot carry a secret the protocol does not need.
 """
 
-SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"glrt-[A-Za-z0-9_-]{10,}"),
-    re.compile(r"glpat-[A-Za-z0-9_-]{10,}"),
-    re.compile(r"GR1348941[A-Za-z0-9_-]{10,}"),
-    re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"),
-    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(
-        r"(?<![\\\w])[A-Za-z0-9][A-Za-z0-9._%+-]*[A-Za-z0-9]@(?!incoming\.)[A-Za-z0-9-]+\.[a-z]{2,}"
-    ),
-)
-"""Values that must never appear in a fixture: forge tokens and email addresses."""
 
 SECRET_KEY_RE = re.compile(r"(token|secret|password|private_key|api_key|node_id|email)", re.I)
 """Keys whose presence in a recorded answer means redaction failed."""

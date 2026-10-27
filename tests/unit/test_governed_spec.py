@@ -137,8 +137,22 @@ def test_spec_markdown_at_ref_reads_a_spec_and_misses_an_unknown_id(
 
 
 def test_ref_resolves_only_a_commit(corpus_at_ref: Path) -> None:
+    def rev(spec: str) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", spec],
+            cwd=corpus_at_ref,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
     assert ref_resolves(corpus_at_ref, "develop") is True
+    assert ref_resolves(corpus_at_ref, rev("develop")) is True
     assert ref_resolves(corpus_at_ref, "no-such-branch") is False
+    assert ref_resolves(corpus_at_ref, rev("develop^{tree}")) is False
+    assert (
+        ref_resolves(corpus_at_ref, rev("develop:docs/specs/2026-10-27_SP-GOOD_good.md")) is False
+    )
 
 
 def test_readers_at_an_unresolvable_ref_raise(corpus_at_ref: Path) -> None:

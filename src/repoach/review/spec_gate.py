@@ -42,8 +42,8 @@ from sqlalchemy.engine import Engine
 
 from ..arch import path_contains
 from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from ..core.sqlite_schema_init import ensure_schema_created
-from ..forge.recording import SECRET_VALUE_PATTERNS
 from ..gates.selectors import SelectorKind, TestSelector, parse_selector, selector_file
 from ..gates.selectors import selector_present as gate_selector_present
 from .governed_spec import (
@@ -134,6 +134,13 @@ RESOLUTION_DECLARED = "declared"
 RESOLUTION_OWNERSHIP = "ownership"
 """``SpecCoverage.resolution`` of a spec owning code of an undeclared PR (G7)."""
 
+RESOLUTION_NONE = "none"
+"""``spec_resolution.source`` of a PR that declares no spec and whose code no spec owns.
+
+``spec_resolution.source`` takes :data:`RESOLUTION_DECLARED`,
+:data:`RESOLUTION_OWNERSHIP` or this value (G7).
+"""
+
 
 class SpecCoverage(BaseModel):
     """Presence report for a spec's acceptance contract at head.
@@ -205,23 +212,6 @@ def base_ref_unavailable_reason(ref: str) -> str:
         f"spec coverage not graded: base ref {ref} unavailable, the contract cannot be read "
         "(fail closed)"
     )
-
-
-_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
-"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
-
-
-def redact_error(text: str) -> str:
-    """Return *text* with URL credentials and forge tokens replaced by ``***``.
-
-    A grading error becomes a merge reason that the gate publishes (its
-    JSON, notes and PR comment) and a log line; a failed ``git fetch``
-    can carry a credentialed remote URL.
-    """
-    cleaned = _URL_USERINFO.sub("***@", text)
-    for pattern in SECRET_VALUE_PATTERNS:
-        cleaned = pattern.sub("***", cleaned)
-    return cleaned
 
 
 def plan_absent_line(spec_id: str, n_selectors: int) -> str:
@@ -1007,10 +997,10 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
             ``docs/plans/<SPEC-ID>.md`` — a genuinely new spec/plan
             introduced only on the PR head.
         NotAnActionPlanError: The file exists at *ref* without the
-            action-plan marker (a :class:`FileNotFoundError`: a prose
-            plan is no plan).
-        ValueError: The file carries the marker at *ref* but fails to parse (see
-            :func:`repoach.review.plan.parse_plan_markdown`).
+            action-plan marker. It subclasses :class:`FileNotFoundError`,
+            so a caller treats a prose plan like an absent one.
+        ValueError: The file carries the marker at *ref* but fails to
+            parse (see :func:`repoach.review.plan.parse_plan_markdown`).
     """
     base = (root or Path.cwd()).resolve()
     if not ref_resolves(base, ref):
@@ -1079,7 +1069,8 @@ class ContractResolution:
             PR head — so the head plan is graded instead (logged by
             the caller as a fallback, SP-SPEC-CONTRACT-BASE Edge cases).
         ref: The ref the base contract was read from (or tried).
-        error: Why the base plan, present at *ref*, does not parse; the
+        error: Why the base plan, present at *ref*, does not parse (redacted
+            at creation, :func:`~repoach.core.redaction.redact_error`); the
             caller refuses on it (G4, fail closed). Empty otherwise.
         prose_plan: The plan path when the file at *ref*, or at head for
             a plan new on the PR, carries no action-plan marker: no plan,
@@ -1143,7 +1134,7 @@ def resolve_contract_plan(
             "spec_gate.base_ref_unavailable",
             spec_id=spec_id,
             base_ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
         return ContractResolution(
             plan=None, base_available=False, fell_back_to_head=False, ref=base_ref
@@ -1153,7 +1144,7 @@ def resolve_contract_plan(
             "spec_gate.base_plan_absent_fallback_to_head",
             spec_id=spec_id,
             base_ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
         prose = exc.relpath if isinstance(exc, NotAnActionPlanError) else ""
         try:
@@ -1162,7 +1153,7 @@ def resolve_contract_plan(
             _log.info(
                 "spec_gate.head_plan_also_unavailable",
                 spec_id=spec_id,
-                error=str(head_exc)[:200],
+                error=redact_error(str(head_exc))[:200],
             )
             return ContractResolution(
                 plan=None,
@@ -1179,14 +1170,14 @@ def resolve_contract_plan(
             "spec_gate.base_plan_unparseable",
             spec_id=spec_id,
             base_ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
         return ContractResolution(
             plan=None,
             base_available=True,
             fell_back_to_head=False,
             ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
 
 
@@ -1487,7 +1478,7 @@ def _grade(
         return _not_graded(
             spec_id,
             "plan",
-            f"spec plan unparseable at {resolution.ref}: {redact_error(resolution.error)}",
+            f"spec plan unparseable at {resolution.ref}: {resolution.error}",
         )
     if not resolution.base_available:
         return _not_graded(

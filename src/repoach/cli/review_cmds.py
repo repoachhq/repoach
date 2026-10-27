@@ -82,6 +82,7 @@ from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
+    RESOLUTION_OWNERSHIP,
     redact_error,
     resolution_report,
 )
@@ -849,7 +850,7 @@ _log = get_logger(__name__)
 def _owned_specs_label(resolution: dict[str, object]) -> str | None:
     """Return the specs a PR was graded against by ownership, joined; None otherwise."""
     specs = resolution.get("specs")
-    if resolution.get("source") != "ownership" or not isinstance(specs, list) or not specs:
+    if resolution.get("source") != RESOLUTION_OWNERSHIP or not isinstance(specs, list) or not specs:
         return None
     return ", ".join(str(spec) for spec in specs)
 
@@ -864,7 +865,10 @@ def _gate_spec_resolution(
     """Return the gate's ``spec_resolution`` object and its stderr lines (G7).
 
     :func:`~repoach.review.spec_grading.resolution_report` decides it; the
-    CLI only passes the declared spec and the checkout.
+    CLI only passes the declared spec and the checkout. A declared spec is
+    graded alone; with none declared, a diff that cannot be read leaves the
+    source ``none`` (skipped, named), a base that cannot be read names the
+    fail-closed refusal, and otherwise the specs owning the diff resolve.
     """
     return resolution_report(
         declared.spec_id, changed_files=changed_files, root=root, base_ref=base_ref or None

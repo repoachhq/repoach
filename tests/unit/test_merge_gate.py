@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from repoach.review.diff_scoper import ScopedDiff
 from repoach.review.findings import (
     ClaimType,
@@ -596,3 +599,45 @@ def test_decision_prefixes_only_specs_resolved_by_ownership() -> None:
         "SP-A: spec acceptance selectors not all present: tests/SP-A.py::test_it (AC1)",
         "spec acceptance selectors not all present: tests/SP-C.py::test_it (AC1)",
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("spec_missing", ["tests/x.py::test_y"]),
+        ("spec_planned", ["tests/x.py::test_y"]),
+        ("spec_draft_refusals", ["a refusal"]),
+        ("spec_contract", "plan"),
+        ("spec_origins", {"tests/x.py::test_y": "AC1"}),
+        ("spec_no_selectors_line", "no selectors to grade: SP-A"),
+        ("spec_report", ["plan-absent: ..."]),
+    ],
+)
+def test_merge_facts_refuse_a_derived_spec_fact_as_input(field: str, value: object) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _facts(spec_covered=False, **{field: value})
+
+
+def test_derived_spec_facts_over_several_rows() -> None:
+    nothing = SpecCoverage(
+        spec_id="SP-A",
+        n_promised=0,
+        n_present=0,
+        missing=[],
+        covered=True,
+        contract="none",
+        report=["no selectors to grade: SP-A (approved) has no docs/plans/SP-A.md ..."],
+    )
+    graded = SpecCoverage(
+        spec_id="SP-B",
+        n_promised=1,
+        n_present=1,
+        missing=[],
+        covered=True,
+        contract="plan",
+    )
+    facts = _facts(spec_rows=[nothing, graded])
+
+    assert facts.spec_contract == "plan"
+    assert facts.spec_no_selectors_line == nothing.report[0]
+    assert facts.spec_report == nothing.report
