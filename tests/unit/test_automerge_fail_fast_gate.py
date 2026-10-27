@@ -20,6 +20,7 @@ from repoach.core.config import Settings
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
+    OUTCOME_SKIP_CI_PENDING,
     OUTCOME_SKIP_CI_TIMEOUT,
     evaluate_ci_gate,
     evaluate_merge_gate,
@@ -107,7 +108,12 @@ def _pending_gh(*, head: str = "feat/x", base: str = "develop", state: str = "OP
 
 
 def test_wait_zero_single_evaluation_no_sleep() -> None:
-    """``wait_seconds=0`` reads the rollup exactly once and never sleeps."""
+    """``wait_seconds=0`` reads the rollup once, never sleeps, and skips as pending.
+
+    SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G2: a pending required check
+    at the fail-fast evaluation is ``SKIP_CI_PENDING`` (the producing
+    workflow's completion re-runs the merge), no longer a timeout.
+    """
     gh = _pending_gh()
     sleeps: list[float] = []
 
@@ -120,7 +126,7 @@ def test_wait_zero_single_evaluation_no_sleep() -> None:
         sleep=lambda seconds: sleeps.append(seconds),
     )
 
-    assert outcome.outcome_tag == OUTCOME_SKIP_CI_TIMEOUT
+    assert outcome.outcome_tag == OUTCOME_SKIP_CI_PENDING
     assert DEFAULT_REQUIRED_CHECK_NAMES[0] in outcome.reason
     assert sleeps == []
     check_run_calls = [
@@ -138,7 +144,8 @@ def test_run_auto_merge_wait_zero_persists_fail_fast_skip(tmp_path: Path) -> Non
 
     result = run_auto_merge(1, forge=gh, db_path=db, wait_seconds=0)
 
-    assert result.outcome == OUTCOME_SKIP_CI_TIMEOUT
+    assert result.outcome == OUTCOME_SKIP_CI_PENDING
+    assert result.notes == (f"pending: {DEFAULT_REQUIRED_CHECK_NAMES[0]}; re-armed by workflow CI")
     merge_calls = [call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]]
     assert merge_calls == []
 
@@ -147,7 +154,7 @@ def test_run_auto_merge_wait_zero_persists_fail_fast_skip(tmp_path: Path) -> Non
         outcome = conn.execute(
             text("SELECT outcome FROM pr_merges ORDER BY id DESC LIMIT 1")
         ).scalar()
-    assert outcome == OUTCOME_SKIP_CI_TIMEOUT
+    assert outcome == OUTCOME_SKIP_CI_PENDING
 
 
 def test_explicit_wait_argument_beats_settings(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -67,6 +67,13 @@ REFUTER_CONTEXT_TOKENS_FLOOR = 40_000
 The refuter's own ``context_tokens`` of SP-AGENT-CONTEXT-LOOP D1 (owner
 2026-10-25): the window must be large enough for the refuter to do its
 job, so a smaller value is refused."""
+
+REFUTER_CONTEXT_CEILING_DEFAULT = 200_000
+"""The most tokens the refuter's context may grow to when ``[gates].refuter_context_ceiling`` is unset.
+
+``refuter_context_tokens`` is the floor; the context of one finding
+grows to what its cited file, its identifiers' hits and its diff need,
+up to this ceiling (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5)."""
 
 DEFAULT_PROMPTS_DIR = "prompts/review"
 """Where the reviewer personas live; always forbidden to the Coder."""
@@ -300,9 +307,12 @@ class GatesSection(_Section):
     are reported deferred, each one named (SP-REFUTER-JUDGES-WHAT-IT-CAN);
     ``REPOACH_REFUTER_MAX_JUDGED`` outranks it, so the value is coerced
     from the environment's string but never from a boolean.
-    ``refuter_context_tokens`` is the refuter's context size, the budget
-    its evidence fills, never below :data:`REFUTER_CONTEXT_TOKENS_FLOOR`;
+    ``refuter_context_tokens`` is the refuter's context floor, never
+    below :data:`REFUTER_CONTEXT_TOKENS_FLOOR`;
     ``REPOACH_REFUTER_CONTEXT_TOKENS`` outranks it.
+    ``refuter_context_ceiling`` is the most the context of one finding
+    may grow to (:data:`REFUTER_CONTEXT_CEILING_DEFAULT`);
+    ``REPOACH_REFUTER_CONTEXT_CEILING`` outranks it.
     """
 
     docstring_exempt: list[str] | None = None
@@ -313,8 +323,13 @@ class GatesSection(_Section):
     refuter_context_tokens: int = Field(
         default=REFUTER_CONTEXT_TOKENS_FLOOR, ge=REFUTER_CONTEXT_TOKENS_FLOOR
     )
+    refuter_context_ceiling: int = Field(
+        default=REFUTER_CONTEXT_CEILING_DEFAULT, ge=REFUTER_CONTEXT_TOKENS_FLOOR
+    )
 
-    @field_validator("refuter_max_judged", "refuter_context_tokens", mode="before")
+    @field_validator(
+        "refuter_max_judged", "refuter_context_tokens", "refuter_context_ceiling", mode="before"
+    )
     @classmethod
     def _no_bool_cap(cls, value: object) -> object:
         """Refuse ``true`` / ``false`` for a refuter size (an int, not a switch).
@@ -384,6 +399,22 @@ class ConventionsSection(_Section):
     header_max_chars: int = 72
 
 
+class AutoMergeSection(_Section):
+    """``[auto_merge]``: what the bot merge waits on (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF).
+
+    ``required_checks`` None means the job names of the ``CI`` workflow,
+    matrix expanded (:func:`repoach.review.merge_wait.required_checks`);
+    an empty list is refused, since it would merge on no check at all.
+    Every name must be produced by a workflow of ``rearm_workflows``,
+    whose completion re-runs the merge; ``coalesce_s`` is the window an
+    owner-event burst is folded into before a review run starts.
+    """
+
+    required_checks: Annotated[list[str], Field(min_length=1)] | None = None
+    rearm_workflows: list[str] = Field(default_factory=lambda: ["CI", "Auto Review (review bots)"])
+    coalesce_s: int = Field(default=60, ge=0)
+
+
 class ProjectConfig(_Section):
     """The whole ``repoach.toml``; ``ProjectConfig()`` is the no-file behaviour."""
 
@@ -397,6 +428,7 @@ class ProjectConfig(_Section):
     arch: ArchSection = Field(default_factory=ArchSection)
     state: StateSection = Field(default_factory=StateSection)
     conventions: ConventionsSection = Field(default_factory=ConventionsSection)
+    auto_merge: AutoMergeSection = Field(default_factory=AutoMergeSection)
 
     def is_set(self, dotted: str) -> bool:
         """Return whether the file set ``section.key`` explicitly.

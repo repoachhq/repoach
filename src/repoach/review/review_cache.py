@@ -62,6 +62,7 @@ def refutation_to_json(refutation: Refutation) -> dict[str, object]:
         "detail": refutation.detail,
         "evidence_truncated": list(refutation.evidence_truncated),
         "evidence_tokens": refutation.evidence_tokens,
+        "budget_used": refutation.budget_used,
     }
 
 
@@ -79,6 +80,7 @@ def refutation_from_json(data: dict[str, object]) -> Refutation:
         detail=str(data.get("detail", "")),
         evidence_truncated=tuple(str(entry) for entry in _as_list(data.get("evidence_truncated"))),
         evidence_tokens=int(str(data.get("evidence_tokens", 0) or 0)),
+        budget_used=int(str(data.get("budget_used", 0) or 0)),
     )
 
 

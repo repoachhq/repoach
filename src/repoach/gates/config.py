@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..core.config import configured_env_value
 from ..core.logging import get_logger
@@ -39,6 +39,7 @@ from ..project.config import (
     DEFAULT_PROMPTS_DIR,
     DEFAULT_REFUTER_MAX_JUDGED,
     DEFAULT_TIMEOUT_S,
+    REFUTER_CONTEXT_CEILING_DEFAULT,
     REFUTER_CONTEXT_TOKENS_FLOOR,
     REPOACH_DOCSTRING_EXEMPT,
     ConfigError,
@@ -161,8 +162,11 @@ class GatesConfig:
             the refuter sends to its judge per PR; the overflow is
             reported deferred, each finding named.
         refuter_context_tokens: ``[gates].refuter_context_tokens``, the
-            refuter's context size its evidence fills, at least
+            refuter's context floor, at least
             :data:`REFUTER_CONTEXT_TOKENS_FLOOR`.
+        refuter_context_ceiling: ``[gates].refuter_context_ceiling``, the
+            most the context of one finding may grow to, at least
+            ``refuter_context_tokens``.
         builtin: True for :meth:`builtin` (no configuration file).
     """
 
@@ -184,6 +188,7 @@ class GatesConfig:
     verifier_commands: Mapping[str, str] = field(default_factory=dict)
     refuter_max_judged: int = DEFAULT_REFUTER_MAX_JUDGED
     refuter_context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR
+    refuter_context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT
     builtin: bool = True
 
     @classmethod
@@ -263,6 +268,16 @@ class GatesConfig:
                 "gates.refuter_context_tokens: must be an integer of at least "
                 f"{REFUTER_CONTEXT_TOKENS_FLOOR}, got {context_tokens!r}"
             )
+        ceiling = gates.get("refuter_context_ceiling", REFUTER_CONTEXT_CEILING_DEFAULT)
+        if (
+            not isinstance(ceiling, int)
+            or isinstance(ceiling, bool)
+            or ceiling < max(context_tokens, REFUTER_CONTEXT_TOKENS_FLOOR)
+        ):
+            raise ValueError(
+                "gates.refuter_context_ceiling: must be an integer of at least "
+                f"refuter_context_tokens ({context_tokens}), got {ceiling!r}"
+            )
         return cls(
             languages=languages,
             src_roots=src_roots,
@@ -289,6 +304,7 @@ class GatesConfig:
             verifier_commands=dict(overrides_raw),
             refuter_max_judged=max_judged,
             refuter_context_tokens=context_tokens,
+            refuter_context_ceiling=ceiling,
             builtin=False,
         )
 
@@ -394,42 +410,151 @@ CONTEXT_TOKENS_ENV = "REPOACH_REFUTER_CONTEXT_TOKENS"
 """Environment override of ``[gates].refuter_context_tokens`` (env > toml > 40000)."""
 
 
-def resolve_refuter_context_tokens(repo_root: Path) -> tuple[int, str]:
-    """Return the refuter's context size for the project at ``repo_root`` and its source.
+def _resolve_refuter_size(
+    repo_root: Path, *, env: str, attribute: str, default: int, event: str
+) -> tuple[int, str]:
+    """Return one refuter context size and its source: env > ``repoach.toml`` > ``default``.
 
-    :data:`CONTEXT_TOKENS_ENV` (an integer of at least
-    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`) wins, then
-    ``[gates].refuter_context_tokens``, then the floor itself. An invalid
-    environment value or a malformed ``repoach.toml`` is logged at
-    warning and skipped: the refuter never fails a review over its size.
+    ``env`` must hold an integer of at least
+    :data:`REFUTER_CONTEXT_TOKENS_FLOOR`; an invalid value, or a malformed
+    ``repoach.toml``, is logged at warning (``gates.<event>_env_invalid``,
+    ``gates.<event>_config_invalid``) and skipped: the refuter never
+    fails a review over its size.
+
+    Args:
+        repo_root: The project whose configuration is read.
+        env: The environment variable that outranks the file.
+        attribute: The :class:`GatesConfig` attribute of the setting.
+        default: The value when neither sets it.
+        event: The setting's name in the warning event.
 
     Returns:
-        ``(tokens, source)`` with ``source`` one of ``env
-        REPOACH_REFUTER_CONTEXT_TOKENS``, ``repoach.toml`` or ``default``.
+        ``(tokens, source)`` with ``source`` one of ``env <env>``,
+        ``repoach.toml`` or ``default``.
     """
-    raw = configured_env_value((CONTEXT_TOKENS_ENV,), repo_root)
+    raw = configured_env_value((env,), repo_root)
     if raw is not None:
         value = raw.strip()
         if value.isdigit() and int(value) >= REFUTER_CONTEXT_TOKENS_FLOOR:
-            return int(value), f"env {CONTEXT_TOKENS_ENV}"
+            return int(value), f"env {env}"
         _log.warning(
-            "gates.refuter_context_tokens_env_invalid",
-            variable=CONTEXT_TOKENS_ENV,
+            f"gates.{event}_env_invalid",
+            variable=env,
             value=raw[:40],
             floor=REFUTER_CONTEXT_TOKENS_FLOOR,
         )
     try:
         config = load_gates_config(repo_root)
     except GatesConfigError as exc:
-        _log.warning(
-            "gates.refuter_context_tokens_config_invalid",
-            error=str(exc)[:200],
-            fallback=REFUTER_CONTEXT_TOKENS_FLOOR,
-        )
-        return REFUTER_CONTEXT_TOKENS_FLOOR, "default"
-    if config.builtin or config.refuter_context_tokens == REFUTER_CONTEXT_TOKENS_FLOOR:
-        return config.refuter_context_tokens, "default"
-    return config.refuter_context_tokens, "repoach.toml"
+        _log.warning(f"gates.{event}_config_invalid", error=str(exc)[:200], fallback=default)
+        return default, "default"
+    configured = int(getattr(config, attribute))
+    if config.builtin or configured == default:
+        return configured, "default"
+    return configured, "repoach.toml"
+
+
+def resolve_refuter_context_tokens(repo_root: Path) -> tuple[int, str]:
+    """Return the refuter's context floor for the project at ``repo_root`` and its source.
+
+    :data:`CONTEXT_TOKENS_ENV` wins, then ``[gates].refuter_context_tokens``,
+    then :data:`REFUTER_CONTEXT_TOKENS_FLOOR` (:func:`_resolve_refuter_size`).
+
+    Returns:
+        ``(tokens, source)`` with ``source`` one of ``env
+        REPOACH_REFUTER_CONTEXT_TOKENS``, ``repoach.toml`` or ``default``.
+    """
+    return _resolve_refuter_size(
+        repo_root,
+        env=CONTEXT_TOKENS_ENV,
+        attribute="refuter_context_tokens",
+        default=REFUTER_CONTEXT_TOKENS_FLOOR,
+        event="refuter_context_tokens",
+    )
+
+
+CONTEXT_CEILING_ENV = "REPOACH_REFUTER_CONTEXT_CEILING"
+"""Environment override of ``[gates].refuter_context_ceiling`` (env > toml > 200000)."""
+
+
+def resolve_refuter_context_ceiling(repo_root: Path) -> tuple[int, str]:
+    """Return the most tokens the refuter's context of one finding may grow to, and its source.
+
+    :data:`CONTEXT_CEILING_ENV` wins, then ``[gates].refuter_context_ceiling``,
+    then :data:`REFUTER_CONTEXT_CEILING_DEFAULT` (:func:`_resolve_refuter_size`).
+    :func:`resolve_refuter_budget` never lets it fall below the floor.
+
+    Returns:
+        ``(tokens, source)`` with ``source`` one of ``env
+        REPOACH_REFUTER_CONTEXT_CEILING``, ``repoach.toml`` or ``default``.
+    """
+    return _resolve_refuter_size(
+        repo_root,
+        env=CONTEXT_CEILING_ENV,
+        attribute="refuter_context_ceiling",
+        default=REFUTER_CONTEXT_CEILING_DEFAULT,
+        event="refuter_context_ceiling",
+    )
+
+
+class RefuterBudget(NamedTuple):
+    """The refuter's context sizes, in tokens (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
+
+    Attributes:
+        floor: ``[gates].refuter_context_tokens``, the least context a finding gets.
+        ceiling: ``[gates].refuter_context_ceiling``, the most it may grow to;
+            never below ``floor``.
+    """
+
+    floor: int
+    ceiling: int
+
+    @classmethod
+    def clamped(cls, floor: int, ceiling: int) -> RefuterBudget:
+        """Return the budget of ``floor`` and ``ceiling``, the ceiling raised to the floor.
+
+        The one place the ``ceiling >= floor`` invariant is enforced.
+
+        Args:
+            floor: The least context a finding gets.
+            ceiling: The most it may grow to, before the clamp.
+
+        Returns:
+            ``RefuterBudget(floor, max(floor, ceiling))``.
+        """
+        return cls(floor, max(floor, ceiling))
+
+
+DEFAULT_REFUTER_BUDGET = RefuterBudget(
+    REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT
+)
+"""The refuter's budget when nothing is configured.
+
+Its floor is :data:`REFUTER_CONTEXT_TOKENS_FLOOR` and its ceiling
+:data:`REFUTER_CONTEXT_CEILING_DEFAULT`."""
+
+
+def resolve_refuter_budget(
+    repo_root: Path, *, floor: int | None = None, ceiling: int | None = None
+) -> RefuterBudget:
+    """Return the refuter's ``(floor, ceiling)`` for the project at ``repo_root``.
+
+    The one place the gate, the review and the refuter read their context
+    sizes from (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
+
+    Args:
+        repo_root: The project whose configuration is read.
+        floor: A caller's floor; ``None`` reads
+            :func:`resolve_refuter_context_tokens`.
+        ceiling: A caller's ceiling; ``None`` reads
+            :func:`resolve_refuter_context_ceiling`.
+
+    Returns:
+        The :class:`RefuterBudget`, its ceiling raised to the floor when below it.
+    """
+    low = resolve_refuter_context_tokens(repo_root)[0] if floor is None else floor
+    high = resolve_refuter_context_ceiling(repo_root)[0] if ceiling is None else ceiling
+    return RefuterBudget.clamped(low, high)
 
 
 def current_gates_config() -> GatesConfig:
@@ -448,19 +573,25 @@ def current_gates_config() -> GatesConfig:
 
 __all__ = [
     "CONFIG_FILE_NAME",
+    "CONTEXT_CEILING_ENV",
     "CONTEXT_TOKENS_ENV",
     "DEFAULT_PROMPTS_DIR",
+    "DEFAULT_REFUTER_BUDGET",
     "DEFAULT_REFUTER_MAX_JUDGED",
     "DEFAULT_TIMEOUT_S",
     "MAX_JUDGED_ENV",
+    "REFUTER_CONTEXT_CEILING_DEFAULT",
     "REFUTER_CONTEXT_TOKENS_FLOOR",
     "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
     "GatesConfigError",
+    "RefuterBudget",
     "applicable",
     "current_gates_config",
     "load_gates_config",
     "python_packages",
+    "resolve_refuter_budget",
+    "resolve_refuter_context_ceiling",
     "resolve_refuter_context_tokens",
     "resolve_refuter_max_judged",
 ]

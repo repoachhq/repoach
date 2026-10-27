@@ -32,6 +32,7 @@ from repoach.forge import ForgeWriteRefusedError, WriteRefusal
 from repoach.forge.github import GitHubForge
 from repoach.forge.protocol import is_write_argv
 from repoach.forge.runner import CommandResult
+from repoach.review.finding_verifiers import VerificationReport
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -179,7 +180,9 @@ def _stub_models(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         monkeypatch.setattr(
             f"repoach.review.orchestrator.{cls}", lambda _r=role, **_kw: _Approving(_r)
         )
-    monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **k: {})
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: VerificationReport()
+    )
     monkeypatch.setattr(
         "repoach.review.orchestrator.judge_findings_for_pr", lambda *a, **k: JudgingReport()
     )

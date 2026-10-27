@@ -7,9 +7,11 @@ head is that tree's ``HEAD``, REAL ``Architect`` / ``Sentinel`` / ``Tester`` /
 ledger, the real mechanical verifiers and the real refuter with its real evidence
 assembly (``git grep`` over the tree, the 40 000-token default context). The Architect
 raises a design finding on a cited file that fills the evidence budget, about an
-identifier whose only hits live in another file: the budget leaves every hit out, so
-the finding must end ``deferred`` with ``evidence outside window (<identifier> not
-served)`` while the judge, which would refute it, is never called.
+identifier whose only hits live in another file. With the context ceiling set to the
+floor (``REPOACH_REFUTER_CONTEXT_CEILING``), the ceiling leaves every hit out, so the
+finding must end ``deferred`` with ``evidence exceeds the ceiling (<n> tokens needed,
+ceiling 40000)`` while the judge, which would refute it, is never called
+(SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
 """
 
 from __future__ import annotations
@@ -171,6 +173,7 @@ def test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_CEILING", str(REFUTER_CONTEXT_TOKENS_FLOOR))
     root = tmp_path / "repo"
     root.mkdir()
     head, hits = _head_tree(root)
@@ -198,7 +201,9 @@ def test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call
     assert len(judged) == 1
     outcome = judged[0]
     assert outcome.state == "deferred"
-    assert outcome.reason == f"evidence outside window ({IDENTIFIER} not served)"
+    assert outcome.reason.startswith("evidence exceeds the ceiling (")
+    assert outcome.reason.endswith(f" tokens needed, ceiling {REFUTER_CONTEXT_TOKENS_FLOOR})")
+    assert outcome.budget_used == REFUTER_CONTEXT_TOKENS_FLOOR
     assert outcome.evidence and outcome.evidence[0].startswith(CITED)
     assert any(
         item.startswith(f"search {IDENTIFIER}: hit {OTHER}:30")
@@ -206,6 +211,6 @@ def test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call
     )
     assert 0 < outcome.evidence_tokens <= REFUTER_CONTEXT_TOKENS_FLOOR
     assert "refuted 0" in (team.refuter_summary or "")
-    assert f"({IDENTIFIER} not served)" in (team.refuter_summary or "")
+    assert "deferred 1 (evidence exceeds the ceiling (" in (team.refuter_summary or "")
     assert fetch_findings(db, PR, status=FindingStatus.REFUTED) == []
     assert [f.file for f in fetch_findings(db, PR, status=FindingStatus.PROPOSED)] == [CITED]

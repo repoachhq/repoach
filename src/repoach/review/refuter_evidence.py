@@ -50,6 +50,8 @@ Every line of the bundle starts with a line number, ``---``, ``path``,
 
 from __future__ import annotations
 
+import builtins
+import keyword
 import math
 import re
 import time
@@ -79,6 +81,203 @@ _MAX_IDENTIFIERS = 6
 
 _MIN_IDENTIFIER_LEN = 4
 """Shorter tokens match too widely to say anything about a claim."""
+
+REFUTER_RULE_VERSION = 2
+"""Version of the rules that decide which words of a claim are identifiers and which veto.
+
+Bumped whenever :data:`STOP_WORDS` or the partial-hit veto changes: a
+finding left ``needs judgement`` under an earlier version is re-judged
+at its head (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G3). Version 1 was
+SP-REFUTER-JUDGES-WHAT-IT-CAN as first shipped."""
+
+_PYTHON_WORDS = (
+    frozenset(keyword.kwlist)
+    | frozenset(keyword.softkwlist)
+    | frozenset(name for name in dir(builtins) if not name.startswith("_"))
+)
+"""Python keywords, soft keywords and builtins (``None``, ``return``, ``Exception``...)."""
+
+_COMMON_TOKENS = frozenset(
+    {
+        "self",
+        "args",
+        "kwargs",
+        "true",
+        "false",
+        "null",
+        "none",
+        "nil",
+        "undefined",
+        "http",
+        "https",
+        "github",
+        "gitlab",
+        "localhost",
+        "www",
+        "html",
+        "json",
+        "yaml",
+        "toml",
+        "utf8",
+        "ascii",
+        "const",
+        "function",
+        "func",
+        "void",
+        "string",
+        "bool",
+        "boolean",
+        "number",
+        "public",
+        "private",
+        "protected",
+        "static",
+        "final",
+        "async",
+        "await",
+        "yield",
+        "this",
+        "super",
+        "throw",
+        "throws",
+        "catch",
+        "else",
+        "elif",
+        "then",
+        "done",
+        "todo",
+        "fixme",
+        "info",
+        "debug",
+        "warn",
+        "warning",
+        "error",
+        "errors",
+    }
+)
+"""Tokens every language and log line carries; their hits say nothing about a claim."""
+
+_ENGLISH_WORDS = frozenset(
+    {
+        "access",
+        "after",
+        "again",
+        "also",
+        "always",
+        "before",
+        "call",
+        "calls",
+        "case",
+        "cases",
+        "change",
+        "check",
+        "code",
+        "could",
+        "data",
+        "does",
+        "each",
+        "every",
+        "fails",
+        "field",
+        "file",
+        "files",
+        "from",
+        "here",
+        "into",
+        "item",
+        "items",
+        "just",
+        "line",
+        "lines",
+        "message",
+        "messages",
+        "must",
+        "name",
+        "names",
+        "never",
+        "only",
+        "path",
+        "paths",
+        "result",
+        "results",
+        "should",
+        "show",
+        "some",
+        "test",
+        "tests",
+        "text",
+        "that",
+        "there",
+        "these",
+        "they",
+        "those",
+        "token",
+        "tokens",
+        "used",
+        "user",
+        "users",
+        "uses",
+        "value",
+        "values",
+        "when",
+        "where",
+        "which",
+        "while",
+        "will",
+        "with",
+        "without",
+        "would",
+    }
+)
+"""Generic English words a claim's backticked spans or URLs split into."""
+
+STOP_WORDS = _PYTHON_WORDS | _COMMON_TOKENS | _ENGLISH_WORDS
+"""Words never searched as a claim's identifiers, so never a veto (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G1).
+
+Measured on PR #260 (2026-10-26): the veto deferred two correct
+refutations on ``except``, ``Exception``, ``return``, ``None``,
+``message``, ``https``, ``access`` and ``token`` — words any fix of the
+claim must contain, so the finding could never be settled. Python names
+match exactly; the common tokens and English words match case-insensitively."""
+
+
+def is_stop_word(token: str) -> bool:
+    """Return True when ``token``, as written or lower-cased, is in :data:`STOP_WORDS`."""
+    return token in STOP_WORDS or token.lower() in STOP_WORDS
+
+
+_DEFINITION = re.compile(
+    r"\b(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"|\bself\.([A-Za-z_][A-Za-z0-9_]*)(?:\s*:[^=\n]*)?\s=(?!=)"
+    r"|^[+ ]?[ \t]*([A-Za-z_][A-Za-z0-9_]*)(?:\s*:[^=\n]*)?\s=(?!=)",
+    re.MULTILINE,
+)
+"""A name a Python line defines: ``def``/``class``, or a ``self.<name> =`` / ``<name> =`` assignment.
+
+The ``=`` must follow whitespace, so a keyword argument (``message=...``) on a
+continuation line is not read as a definition."""
+
+
+def defined_names(*texts: str) -> frozenset[str]:
+    """Return the names ``texts`` define (``def``, ``class``, ``self.<name> =``, ``<name> =``).
+
+    Read over the cited file and the PR's hunks on it, so a stop word the
+    cited code defines (``def call``, a ``name`` property) is still an
+    identifier of the claim (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G1, 0.3).
+
+    Args:
+        *texts: The cited file's source and the PR's diff hunks on it
+            (a ``+`` or space prefix is allowed at line start).
+
+    Returns:
+        The names defined anywhere in ``texts``, as a frozenset.
+    """
+    names: set[str] = set()
+    for text in texts:
+        for match in _DEFINITION.finditer(text):
+            names.update(group for group in match.groups() if group)
+    return frozenset(names)
+
 
 GREP_TIMEOUT_S = 60
 """Seconds the one ``git grep`` (and the one ``git ls-files``) of a finding may run.
@@ -166,7 +365,21 @@ class EvidenceBundle:
         budget_tokens: The budget the evidence was assembled against.
         unserved: Identifiers of the claim of which nothing was served
             although the tree holds them, or whose search could not run.
-        partial: Identifiers of the claim of which only some hits were served.
+        partial: Identifiers of the claim whose cut hits may hold what the
+            claim rests on: some hits inside the cited file were cut
+            (``partial_in_cited``), or the cited file holds none and some
+            hits elsewhere were cut. A refutation naming one is deferred.
+        partial_in_cited: The identifiers of ``partial`` with a hit
+            inside the cited file left unserved.
+        partial_elsewhere: Identifiers every hit of which inside the
+            cited file was served, with hits elsewhere cut; recorded, never
+            a veto (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G2).
+        needed_tokens: Evidence tokens the cited file, the hits of the
+            claim's identifiers and the diff hunks take in full (what was
+            served plus :attr:`shortfall_tokens`).
+        shortfall_tokens: Tokens of that core evidence the ceiling left
+            unserved; 0 when the cited file, the hits and the hunks were
+            all served (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
         timed_out: Why the search did not run when load is the cause
             (``grep timed out after 60 s``, ``assembly deadline of 180 s
             reached``), else empty: tells a load-caused deferral from an
@@ -181,6 +394,10 @@ class EvidenceBundle:
     unserved: tuple[str, ...] = ()
     partial: tuple[str, ...] = ()
     timed_out: str = ""
+    partial_in_cited: tuple[str, ...] = ()
+    partial_elsewhere: tuple[str, ...] = ()
+    needed_tokens: int = 0
+    shortfall_tokens: int = 0
 
 
 @dataclass
@@ -196,7 +413,10 @@ class _Assembly:
     truncated: list[str] = field(default_factory=list)
     unserved: list[str] = field(default_factory=list)
     partial: list[str] = field(default_factory=list)
+    partial_in_cited: list[str] = field(default_factory=list)
+    partial_elsewhere: list[str] = field(default_factory=list)
     used: int = 0
+    shortfall: int = 0
 
     def remaining(self) -> float:
         """Return the wall-clock seconds left before :data:`ASSEMBLY_DEADLINE_S`."""
@@ -279,6 +499,7 @@ def _cited_file(
     )
     body = _numbered(lines, start, end, lambda n: ":>" if line_start <= n <= last else ":")
     assembly.add("\n".join([header, *body]), f"{_one_line(path)}:{start + 1}-{end} ({shown})")
+    assembly.shortfall += sum(widths[:start]) + sum(widths[end:])
     if start > 0:
         assembly.truncated.append(f"{_one_line(path)}: lines 1-{start} (budget)")
     if end < len(lines):
@@ -291,12 +512,16 @@ def _is_version(token: str) -> bool:
     return bool(re.fullmatch(r"[\d.]+\.\w+", token))
 
 
-def claim_identifiers(claim: str, *, cited_file: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def claim_identifiers(
+    claim: str, *, cited_file: str, defined: Collection[str] = ()
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return ``(identifiers, paths)`` the claim names, each deduplicated, in order.
 
     Identifiers come from backticked spans (``Foo.bar()`` yields ``Foo``
     and ``bar``) and from bare CamelCase / snake_case / UPPER_SNAKE
-    words; paths from file-name-shaped tokens (a bare file name is
+    words, never shorter than four characters and never a
+    :data:`STOP_WORDS` entry unless ``defined`` holds it (the cited file or
+    the diff defines it, :func:`defined_names`); paths from file-name-shaped tokens (a bare file name is
     looked up among the tracked files, :func:`resolve_claim_path`). When
     the claim talks about tests, the cited file's module name is
     searched first, so "no test covers this module" meets the tests that
@@ -310,6 +535,7 @@ def claim_identifiers(claim: str, *, cited_file: str) -> tuple[tuple[str, ...], 
             len(token) >= _MIN_IDENTIFIER_LEN
             and _IDENTIFIER.match(token)
             and not _SPEC_LABEL.fullmatch(token)
+            and (token in defined or not is_stop_word(token))
             and token not in identifiers
         ):
             identifiers.append(token)
@@ -489,9 +715,9 @@ class _Lines:
 
 def _serve_hits(
     assembly: _Assembly, lines_of: _Lines, identifier: str, allowed: Sequence[tuple[str, int]]
-) -> int:
+) -> list[tuple[str, int]]:
     """Serve ``allowed`` hits of ``identifier`` with context; return the hits served."""
-    served = 0
+    served: list[tuple[str, int]] = []
     for path, first, last, marks in _hit_blocks(allowed):
         if assembly.out_of_time(f"search {identifier}: hits in {_one_line(path)}"):
             continue
@@ -508,14 +734,15 @@ def _serve_hits(
         )
         if assembly.fits(block):
             assembly.add(block)
-            served += len(marks)
+            served.extend((path, mark) for mark in marks)
             continue
+        used_before = assembly.used
         for mark in marks:
             hit_line = f"{mark}:* {file_lines[mark - 1]}" if mark <= len(file_lines) else ""
             single = f"--- {_one_line(path)}: hit line only (budget) ---\n{hit_line}"
             if hit_line and assembly.fits(single):
                 assembly.add(single)
-                served += 1
+                served.append((path, mark))
                 assembly.truncated.append(
                     f"search {identifier}: context of {_one_line(path)}:{mark} (budget)"
                 )
@@ -523,6 +750,7 @@ def _serve_hits(
                 assembly.truncated.append(
                     f"search {identifier}: hit {_one_line(path)}:{mark} (budget)"
                 )
+        assembly.shortfall += max(0, estimate_tokens(block) + 1 - (assembly.used - used_before))
     return served
 
 
@@ -593,7 +821,10 @@ def _search(
     all; last, the files the claim names, whole when they fit. Each
     identifier ends in :attr:`_Assembly.unserved` (hits exist, none
     served, or the search could not run), :attr:`_Assembly.partial`
-    (some served) or neither (all served, or a measured absence).
+    (a hit inside the cited file cut, or the cited file holds none and a
+    hit elsewhere cut), :attr:`_Assembly.partial_elsewhere` (every hit
+    inside the cited file served, some elsewhere cut) or none of them
+    (all served, or a measured absence).
     """
     if not identifiers and not paths:
         return
@@ -657,13 +888,41 @@ def _search(
             f"{len(allowed)} below (nearest first)"
         )
         served = _serve_hits(assembly, lines_of, identifier, allowed)
-        assembly.reads.append(f"grep {identifier}: {len(hits)} hits ({served} served)")
-        if others and served == 0:
-            assembly.unserved.append(identifier)
-        elif served < len(others):
-            assembly.partial.append(identifier)
+        assembly.reads.append(f"grep {identifier}: {len(hits)} hits ({len(served)} served)")
+        _classify(assembly, identifier, hits=hits, own=own, served=served, cited_path=cited_path)
     for path in named_files:
         _serve_named_file(assembly, lines_of, path)
+
+
+def _classify(
+    assembly: _Assembly,
+    identifier: str,
+    *,
+    hits: Sequence[tuple[str, int]],
+    own: int,
+    served: Sequence[tuple[str, int]],
+    cited_path: str,
+) -> None:
+    """File ``identifier`` as unserved, partial, partly served elsewhere, or whole.
+
+    The claim is about the cited file (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS
+    G2): an identifier whose every hit inside it was served never vetoes,
+    whatever was cut elsewhere.
+    """
+    if not hits or len(served) + own == len(hits):
+        return
+    if not served and not own:
+        assembly.unserved.append(identifier)
+        return
+    in_cited = sum(1 for path, _ in hits if path == cited_path)
+    served_in_cited = own + sum(1 for path, _ in served if path == cited_path)
+    if served_in_cited < in_cited:
+        assembly.partial.append(identifier)
+        assembly.partial_in_cited.append(identifier)
+    elif in_cited:
+        assembly.partial_elsewhere.append(identifier)
+    else:
+        assembly.partial.append(identifier)
 
 
 def _diff_hunks(diff: str, path: str) -> list[str]:
@@ -695,6 +954,7 @@ def _diff(assembly: _Assembly, diff: str, path: str) -> None:
             assembly.add(block)
             served += 1
         else:
+            assembly.shortfall += estimate_tokens(block) + 1
             assembly.truncated.append(
                 f"diff {_one_line(path)}: hunk {index} of {len(hunks)} (budget)"
             )
@@ -776,6 +1036,7 @@ def build_evidence(
     specs: Sequence[tuple[str, str]] = (),
     claim_is_spec_gap: bool = False,
     deadline_s: float = ASSEMBLY_DEADLINE_S,
+    ceiling_tokens: int | None = None,
 ) -> EvidenceBundle | None:
     """Assemble the judge's evidence for one finding within ``budget_tokens``.
 
@@ -789,24 +1050,33 @@ def build_evidence(
         claim: The finding's claim, searched for identifiers, paths,
             spec ids and spec labels.
         budget_tokens: Tokens the evidence may take (the refuter's
-            ``context_tokens`` less the prompt and the reply reserve).
+            ``context_tokens`` less the prompt and the reply reserve); with
+            ``ceiling_tokens``, the floor the budget grows from.
         diff: The PR's unified diff; its hunks on ``path`` are served.
         specs: ``(spec id, markdown)`` candidates for the cited section.
         claim_is_spec_gap: Serve a whole spec when the claim cites no label.
         deadline_s: Wall-clock seconds the assembly may take
             (:data:`ASSEMBLY_DEADLINE_S`); steps past it are named in
             ``truncated``.
+        ceiling_tokens: When given, the budget adapts to the evidence
+            (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5): the cited file,
+            the identifiers' hits and the diff hunks are served up to this
+            many tokens, and the final budget is ``max(budget_tokens,
+            what they took)``, which the spec section fills. What the
+            ceiling left out is :attr:`EvidenceBundle.shortfall_tokens`.
 
     Returns:
         The bundle, or ``None`` when the file holds none of the cited lines.
     """
+    core_budget = budget_tokens if ceiling_tokens is None else max(ceiling_tokens, budget_tokens)
     assembly = _Assembly(
-        budget=budget_tokens, deadline=time.monotonic() + deadline_s, deadline_s=deadline_s
+        budget=core_budget, deadline=time.monotonic() + deadline_s, deadline_s=deadline_s
     )
     served = _cited_file(assembly, source, path=path, line_start=line_start, line_end=line_end)
     if served is None:
         return None
-    identifiers, paths = claim_identifiers(claim, cited_file=path)
+    defined = defined_names(source, *(_diff_hunks(diff, path) if diff else ()))
+    identifiers, paths = claim_identifiers(claim, cited_file=path, defined=defined)
     _search(
         assembly,
         reader,
@@ -818,13 +1088,16 @@ def build_evidence(
     )
     if diff and not assembly.out_of_time(f"diff of {_one_line(path)}"):
         _diff(assembly, diff, path)
+    needed = assembly.used + assembly.shortfall
+    if ceiling_tokens is not None:
+        assembly.budget = max(budget_tokens, assembly.used)
     if specs and not assembly.out_of_time("spec section"):
         _specs(assembly, specs, claim=claim, claim_is_spec_gap=claim_is_spec_gap)
     sections = list(assembly.sections)
     if assembly.truncated:
         sections.insert(
             0,
-            f"--- PARTIAL EVIDENCE: the {budget_tokens}-token budget, the hit cap or the deadline left "
+            f"--- PARTIAL EVIDENCE: the {assembly.budget}-token budget, the hit cap or the deadline left "
             f"{len(assembly.truncated)} item(s) unserved, listed at the end ---",
         )
         sections.append(
@@ -837,8 +1110,12 @@ def build_evidence(
         reads=tuple(assembly.reads),
         truncated=tuple(assembly.truncated),
         tokens=estimate_tokens(text),
-        budget_tokens=budget_tokens,
+        budget_tokens=assembly.budget,
         unserved=tuple(assembly.unserved),
         partial=tuple(assembly.partial),
         timed_out=assembly.timed_out,
+        partial_in_cited=tuple(assembly.partial_in_cited),
+        partial_elsewhere=tuple(assembly.partial_elsewhere),
+        needed_tokens=needed,
+        shortfall_tokens=assembly.shortfall,
     )

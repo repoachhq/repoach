@@ -5,7 +5,8 @@ in the environment, through the settings singleton, into
 :func:`repoach.review.auto_merge.run_auto_merge` called with no explicit
 ``wait_seconds`` / ``poll_interval`` arguments. Proves the fail-fast
 contract end to end — a still-pending required check yields exactly one
-rollup evaluation, zero sleeps, ``SKIP_CI_TIMEOUT``, a persisted L4 row,
+rollup evaluation, zero sleeps, ``SKIP_CI_PENDING`` (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF
+G2; ``SKIP_CI_TIMEOUT`` before it), a persisted L4 row,
 and no squash-merge call.
 """
 
@@ -21,7 +22,7 @@ import repoach.core.config as config
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.review.auto_merge import (
     DEFAULT_REQUIRED_CHECK_NAMES,
-    OUTCOME_SKIP_CI_TIMEOUT,
+    OUTCOME_SKIP_CI_PENDING,
     run_auto_merge,
 )
 from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
@@ -121,8 +122,8 @@ def test_automerge_fail_fast_settings_end_to_end(
 
         result = run_auto_merge(1, forge=gh, db_path=db, sleep=_record_sleep)
 
-        assert result.outcome == OUTCOME_SKIP_CI_TIMEOUT
-        assert _last_outcome(db) == OUTCOME_SKIP_CI_TIMEOUT
+        assert result.outcome == OUTCOME_SKIP_CI_PENDING
+        assert _last_outcome(db) == OUTCOME_SKIP_CI_PENDING
         merge_calls = [
             call for call in gh._run.call_args_list if call.args[0][:2] == ["pr", "merge"]
         ]

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from repoach.forge.protocol import ForgeWriteBarrier
+from repoach.gates.config import DEFAULT_REFUTER_BUDGET
 from repoach.review import orchestrator
 from repoach.review.auto_merge import decide_at_head
 from repoach.review.findings import (
@@ -276,6 +277,7 @@ def test_gate_recomputes_a_row_graded_by_a_retired_rule(tmp_path: Path) -> None:
         head_sha=head,
         max_judged=0,
         head_tree=True,
+        budget=DEFAULT_REFUTER_BUDGET,
         base_ref="develop",
     )
 
@@ -303,6 +305,7 @@ def test_gate_leaves_a_current_row_alone(tmp_path: Path) -> None:
         head_sha=head,
         max_judged=0,
         head_tree=True,
+        budget=DEFAULT_REFUTER_BUDGET,
         base_ref="develop",
     )
 
@@ -377,6 +380,7 @@ def test_gate_refuses_when_a_stale_row_cannot_be_recomputed(
         head_sha=head,
         max_judged=0,
         head_tree=True,
+        budget=DEFAULT_REFUTER_BUDGET,
         base_ref="develop",
     )
 

@@ -36,6 +36,7 @@ from ..core.paths import (
     user_config_dir,
     user_data_dir,
 )
+from ..forge import ForgeError, select_forge
 from ..gates.config import (
     CONFIG_FILE_NAME,
     GatesConfig,
@@ -43,7 +44,7 @@ from ..gates.config import (
     resolve_refuter_max_judged,
 )
 from ..gates.verifiers import availability_table, node_install_hint
-from ..project.config import ConfigError, config_path
+from ..project.config import ConfigError, config_path, load_project_config
 from ..project.resolve import (
     UNDECLARED_COMMAND_NOTE,
     ResolvedProjectConfig,
@@ -71,8 +72,19 @@ from ..providers.select import (
     provider_needs_key,
     resolve_route,
 )
+from ..review.merge_wait import (
+    rearm_workflows,
+    required_checks,
+    unrearmed_checks,
+    workflow_checks,
+)
 
 DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
+
+_NONE_NOTES: dict[str, str] = {
+    "auto_merge.required_checks": "not declared: the CI workflow's job names",
+}
+"""What an undeclared key means, when it is not an undeclared command."""
 """External executables whose presence ``doctor`` reports."""
 
 GATEWAY_SECRET_NAME = "REPOACH_ANTHROPIC_AUTH_TOKEN"
@@ -307,6 +319,43 @@ def _forge_status(resolved: ResolvedProjectConfig) -> tuple[str, str | None]:
     return f"{name} ({source}; {binary} found)", None
 
 
+def auto_merge_report(root: Path, forge_name: str) -> tuple[list[str], list[str]]:
+    """Report what the bot merge waits on, and every configuration problem.
+
+    SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G1/G2: a required check that
+    no workflow of ``[auto_merge].rearm_workflows`` produces would strand
+    every PR, and a check the forge enforces that the committed list lacks
+    would make GitHub refuse merges the gate allowed. Judged only on a
+    GitHub project that declares ``[auto_merge].required_checks`` or has a
+    workflow to re-arm from; the forge's protection is read only when
+    ``gh`` is on PATH.
+
+    Returns:
+        ``(lines, problems)``.
+    """
+    if forge_name != "github":
+        return [], []
+    produced = workflow_checks(root)
+    declared = load_project_config(root).auto_merge.required_checks is not None
+    if not declared and not any(w in produced for w in rearm_workflows(root)):
+        return ["auto_merge.required_checks=(no re-arming workflow: not judged)"], []
+    names = required_checks(root)
+    lines = [f"auto_merge.required_checks={', '.join(names)}"]
+    problems = list(unrearmed_checks(root, names))
+    if shutil.which("gh") is not None:
+        try:
+            protection = select_forge(cwd=root).branch_protection(
+                resolve_project_config(root).config.repoach.integration_branch
+            )
+        except ForgeError as exc:
+            lines.append(f"auto_merge.forge_required=unreadable ({exc.message[:80]})")
+        else:
+            unlisted = [n for n in protection.required_checks if n not in names]
+            if protection.readable and unlisted:
+                problems.append(f"forge requires {unlisted} not in [auto_merge].required_checks")
+    return lines, problems
+
+
 def _command_line(name: str, value: str | None, builtin: str) -> str:
     """Return the ``commands.<name>=`` line of ``doctor --gates``."""
     if value is None:
@@ -407,7 +456,8 @@ def doctor(
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=EXIT_UNUSABLE) from exc
     for dotted, value, source in effective_rows(resolved):
-        shown = f"<{UNDECLARED_COMMAND_NOTE}>" if value is None else toml_value(value)
+        note = _NONE_NOTES.get(dotted, UNDECLARED_COMMAND_NOTE)
+        shown = f"<{note}>" if value is None else toml_value(value)
         typer.echo(f"config.{dotted}={shown} ({source})")
 
     problems: list[str] = []
@@ -423,6 +473,10 @@ def doctor(
     typer.echo(f"forge={forge}")
     if forge_problem is not None:
         problems.append(forge_problem)
+    merge_lines, merge_problems = auto_merge_report(root, resolved.forge)
+    for line in merge_lines:
+        typer.echo(line)
+    problems.extend(merge_problems)
 
     provider_lines, provider_problems, provider_warnings = _provider_report(
         resolved, settings, root

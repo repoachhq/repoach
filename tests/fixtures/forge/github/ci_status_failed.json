@@ -6,17 +6,6 @@
   "calls": [
     {
       "args": [
-        "api",
-        "repos/{owner}/{repo}/branches/develop/protection"
-      ],
-      "program": "gh",
-      "returncode": 1,
-      "stderr": "gh: Branch not protected (HTTP 404)",
-      "stdin": null,
-      "stdout": ""
-    },
-    {
-      "args": [
         "pr",
         "view",
         "42",
@@ -35,7 +24,7 @@
         "repos/{owner}/{repo}/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs",
         "--paginate",
         "--jq",
-        ".check_runs[] | {name, status, conclusion, startedAt: .started_at}"
+        ".check_runs[] | {name, status, conclusion, startedAt: .started_at, completedAt: .completed_at, headSha: .head_sha}"
       ],
       "program": "gh",
       "returncode": 0,
@@ -46,14 +35,21 @@
   ],
   "case": "ci_status_failed",
   "forge": "github",
-  "kwargs": {},
+  "kwargs": {
+    "required": [
+      "Test suite (Python 3.11)",
+      "Test suite (Python 3.13)"
+    ]
+  },
   "method": "ci_status",
   "raises": null,
   "result": {
     "checks": [
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "failure",
+        "head_sha": "",
         "link": "",
         "name": "Test suite (Python 3.11)",
         "started_at": "2026-10-19T10:00:00Z",
@@ -62,7 +58,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "success",
+        "head_sha": "",
         "link": "",
         "name": "Test suite (Python 3.13)",
         "started_at": "2026-10-19T10:00:00Z",
@@ -81,6 +79,6 @@
     ],
     "state": "failure"
   },
-  "source": "synthetic: a red / running / absent pipeline at a fixed head",
+  "source": "synthetic: a red / running / absent pipeline at a fixed head; check-runs --jq argv amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): the recorded lines predate completedAt/headSha and carry neither; required names passed explicitly and the protection read dropped 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4 widened the default list to five names, this recording predates the wheel jobs)",
   "trimmed": null
 }

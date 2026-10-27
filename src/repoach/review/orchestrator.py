@@ -48,7 +48,7 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -70,7 +70,10 @@ from ..forge import (
     select_forge,
 )
 from ..forge.protocol import diff_files
-from ..gates.config import load_gates_config, resolve_refuter_context_tokens
+from ..gates.config import (
+    load_gates_config,
+    resolve_refuter_budget,
+)
 from ..project.config import load_project_config
 from ..project.spec_source import (
     SpecResolution,
@@ -81,7 +84,12 @@ from ..project.spec_source import (
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
-from .finding_verifiers import verify_findings_for_pr
+from .finding_verifiers import (
+    MechanicalVerification,
+    VerificationReport,
+    recorded_verifications,
+    verify_findings_for_pr,
+)
 from .findings import ReviewRun, fetch_completed_review_run, record_review_run
 from .findings_bridge import (
     RecordedFindings,
@@ -98,11 +106,13 @@ from .hallucination_guard import (
 from .head_reverify import (
     NO_HEAD_TREE,
     HeadReverification,
+    Reverification,
     reverify_older_findings,
     skipped_reverification,
 )
 from .merge_gate import (
     NO_REVERIFICATION,
+    MergeFacts,
     compute_merge_decision,
     summarise_ledger_facts,
     verdict_from_facts,
@@ -122,7 +132,7 @@ from .refuter import (
     configured_max_judged,
     judge_findings_for_pr,
 )
-from .report import render_ledger_report
+from .report import ReportFinding, render_ledger_report, report_findings
 from .review_cache import (
     cache_line,
     completed_run,
@@ -326,6 +336,14 @@ class TeamOutcome:
     holds one entry per finding the refuter saw, each with its state and
     reason; ``refuter_summary`` is the one line naming them
     (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
+    ``verifications`` holds one entry per finding a mechanical verifier
+    settled at the head (read back from the ledger on a replay) and
+    ``reverifications`` one per finding of an older head re-checked
+    there. ``findings`` merges the three into one list, each entry
+    naming its judge (``mechanical`` / ``refuter`` / ``reverify`` /
+    ``ledger``), plus every finding the ledger counts as open blocking
+    that no judge of this run named; ``verdict_basis`` is the ids the
+    verdict counts as open blocking, each one entry of ``findings``.
     ``tree`` is ``worktree`` or ``checkout`` when the review read a
     pinned head tree (SP-REVIEW-PINS-HEAD), and ``worktree`` its path
     when it was kept. ``reverified`` counts the findings of older heads
@@ -371,6 +389,10 @@ class TeamOutcome:
     spec_missing: bool = False
     refutations: list[Refutation] = field(default_factory=list)
     refuter_summary: str | None = None
+    verifications: list[MechanicalVerification] = field(default_factory=list)
+    reverifications: list[Reverification] = field(default_factory=list)
+    findings: list[ReportFinding] = field(default_factory=list)
+    verdict_basis: list[int] = field(default_factory=list)
     refused_writes: list[str] = field(default_factory=list)
     write_refusal: str | None = None
     tree: str | None = None
@@ -813,15 +835,16 @@ class ReviewTeamOrchestrator:
             diff=diff,
         )
 
+        verification = VerificationReport()
         try:
-            verify_counts = verify_findings_for_pr(
+            verification = verify_findings_for_pr(
                 self._db_path,
                 pr_number=pr_number,
                 repo_root=self._repo_root,
                 head_sha=head_sha,
                 config=load_gates_config(self._config_root),
             )
-            _log.info("review_team.findings_verified", pr_number=pr_number, **verify_counts)
+            _log.info("review_team.findings_verified", pr_number=pr_number, **verification.counts)
         except Exception as exc:
             _log.warning(
                 "review_team.findings_verify_failed",
@@ -834,6 +857,7 @@ class ReviewTeamOrchestrator:
         refutations: list[Refutation] = []
         refuter_summary: str | None = None
         refuter_calls = 0
+        budget = resolve_refuter_budget(self._config_root)
         try:
             with reviewer_scope("Refuter"):
                 judging = judge_findings_for_pr(
@@ -848,7 +872,7 @@ class ReviewTeamOrchestrator:
                     scope_head=head_sha,
                     diff=diff,
                     pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
-                    context_tokens=resolve_refuter_context_tokens(self._config_root)[0],
+                    budget=budget,
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
@@ -941,6 +965,13 @@ class ReviewTeamOrchestrator:
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
         )
         final = ReviewVerdict.ERROR if errored_roles else verdict_from_facts(ledger_facts)
+        verdict_findings = self._verdict_findings(
+            pr_number,
+            facts=ledger_facts,
+            verifications=verification.settled,
+            refutations=refutations,
+            reverifications=reverified.outcomes,
+        )
 
         team = TeamOutcome(
             pr_number=pr_number,
@@ -958,6 +989,10 @@ class ReviewTeamOrchestrator:
             spec_resolution=_spec_resolution(grading, spec_id),
             refutations=refutations,
             refuter_summary=refuter_summary,
+            verifications=list(verification.settled),
+            reverifications=list(reverified.outcomes),
+            findings=verdict_findings,
+            verdict_basis=list(ledger_facts.open_blocking_ids),
             reverified=reverified.counts(),
             reverify_reasons=reverified.reasons(),
             reverify_line=reverified.summary_line("review") if head_sha else "",
@@ -1125,6 +1160,10 @@ class ReviewTeamOrchestrator:
                         [row.spec_id for row in grading.rows],
                     ).source
         facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
+        verifications = recorded_verifications(
+            self._db_path, pr_number=pr_number, head_sha=head_sha
+        ).settled
+        refutations = replayed_refutations(run)
         team = TeamOutcome(
             pr_number=pr_number,
             final_verdict=verdict_from_facts(facts),
@@ -1138,7 +1177,17 @@ class ReviewTeamOrchestrator:
             spec_missing=spec_missing,
             spec_report=_spec_report(grading),
             spec_resolution=_spec_resolution(grading, spec_id),
-            refutations=replayed_refutations(run),
+            refutations=refutations,
+            verifications=list(verifications),
+            reverifications=list(reverified.outcomes),
+            findings=self._verdict_findings(
+                pr_number,
+                facts=facts,
+                verifications=verifications,
+                refutations=refutations,
+                reverifications=reverified.outcomes,
+            ),
+            verdict_basis=list(facts.open_blocking_ids),
             reverified=reverified.counts(),
             reverify_reasons=reverified.reasons(),
             reverify_line=reverified.summary_line("review"),
@@ -1158,6 +1207,39 @@ class ReviewTeamOrchestrator:
             verdict=team.final_verdict.value,
         )
         return team
+
+    def _verdict_findings(
+        self,
+        pr_number: int,
+        *,
+        facts: MergeFacts,
+        verifications: Iterable[MechanicalVerification],
+        refutations: Iterable[Refutation],
+        reverifications: Iterable[Reverification],
+    ) -> list[ReportFinding]:
+        """List every finding that can move the verdict, each with its judge.
+
+        A ledger read failure is logged and yields an empty list; the
+        verdict itself is unaffected (it was already derived).
+        """
+        try:
+            return report_findings(
+                self._db_path,
+                pr_number=pr_number,
+                facts=facts,
+                verifications=verifications,
+                refutations=refutations,
+                reverifications=reverifications,
+            )
+        except Exception as exc:
+            _log.warning(
+                "review_team.report_findings_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="the report lists no finding",
+            )
+            return []
 
     def _publish_replayed(self, pr_number: int, team: TeamOutcome) -> None:
         """Post a replayed run's stored outcomes, as a fresh posting run posts its own."""
@@ -1373,6 +1455,7 @@ class ReviewTeamOrchestrator:
                 reads_ci=False,
             )
         cap = configured_max_judged(self._config_root)
+        budget = resolve_refuter_budget(self._config_root)
         try:
             with reviewer_scope("Refuter"):
                 return reverify_older_findings(
@@ -1384,7 +1467,7 @@ class ReviewTeamOrchestrator:
                     config=load_gates_config(self._config_root),
                     max_judged=max(cap - refuter_calls, 0),
                     cap=cap,
-                    context_tokens=resolve_refuter_context_tokens(self._config_root)[0],
+                    budget=budget,
                 )
         except Exception as exc:
             _log.warning(
@@ -2088,6 +2171,7 @@ class ReviewTeamOrchestrator:
             decision=decision,
             facts=facts,
             archive_appendix=archive_appendix,
+            judged=team.findings,
         )
 
 
@@ -2184,6 +2268,8 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "reverify_reasons": list(team.reverify_reasons),
         "findings_recorded": dict(team.findings_recorded),
         "cached": team.cached,
+        "findings": [entry.as_json() for entry in team.findings],
+        "verdict_basis": list(team.verdict_basis),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [

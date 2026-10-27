@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 import repoach.core.config as core_config
 from repoach.cli.review_cmds import review_app
 from repoach.forge import Diff, ForgeWriteBarrier, PullRequest
+from repoach.gates.config import DEFAULT_REFUTER_BUDGET
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, decide_at_head
 from repoach.review.findings import init_findings_schema, record_review_integrity
 from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
@@ -188,6 +189,7 @@ def _decide(repo: Path, db: Path, head: str, changed: list[str]) -> tuple[object
         head_sha=head,
         max_judged=0,
         head_tree=True,
+        budget=DEFAULT_REFUTER_BUDGET,
         base_ref="develop",
     )
     return facts, decision

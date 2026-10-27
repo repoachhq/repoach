@@ -15,13 +15,15 @@ import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import typer
 
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
-from repoach.forge.protocol import MergeMethod, PullRequest
+from repoach.forge.protocol import BranchProtection, Comment, MergeMethod, PullRequest
+from repoach.gates.config import REFUTER_CONTEXT_CEILING_DEFAULT, REFUTER_CONTEXT_TOKENS_FLOOR
 from repoach.review import auto_merge, finding_verifiers, head_reverify
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, evaluate_merge_gate
 from repoach.review.findings import (
@@ -112,6 +114,15 @@ class _HeadForge(GitHubForge):
 
     def _pr_head_sha(self, pr_number: int) -> str:
         return self._head
+
+    def branch_protection(self, branch: str) -> BranchProtection:
+        return BranchProtection(readable=False)
+
+    def find_marked_comment(self, number: int, marker: str) -> Comment | None:
+        return None
+
+    def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
+        return Comment(id=1, author="bot", body=body)
 
 
 class _Judge:
@@ -772,16 +783,73 @@ def test_re_check_fills_the_configured_refuter_context(
     head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
     _review_at(db, head_b)
     seen: list[int] = []
-    real = head_reverify.refute_finding
+    real = head_reverify.judge_finding
 
     def spy(finding: Finding, **kwargs: object) -> object:
-        seen.append(int(kwargs["context_tokens"]))
+        seen.append(kwargs["budget"].floor)
         return real(finding, **kwargs)
 
-    monkeypatch.setattr(head_reverify, "refute_finding", spy)
+    monkeypatch.setattr(head_reverify, "judge_finding", spy)
     monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_TOKENS", "150000")
 
     evaluation = gate(repo, head_b, _Judge)
 
     assert seen == [150000]
     assert evaluation.decision.merge is True
+
+
+def test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _planted(repo, db)
+    head_b = repo.push_head(
+        {
+            "src/store.py": _FIXED,
+            "repoach.toml": "[gates]\nrefuter_context_tokens = 150000\n"
+            "refuter_context_ceiling = 150000\n",
+        },
+        "fix: bind the prefix",
+    )
+    _review_at(db, head_b)
+    seen: list[tuple[int, int]] = []
+    real = head_reverify.judge_finding
+
+    def spy(finding: Finding, **kwargs: object) -> object:
+        seen.append(tuple(kwargs["budget"]))
+        return real(finding, **kwargs)
+
+    monkeypatch.setattr(head_reverify, "judge_finding", spy)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_CEILING", raising=False)
+
+    _merge(monkeypatch, tmp_path, repo, head_b, _Judge, pin_tree=True)
+
+    assert seen == [(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT)]
+
+
+def test_head_tree_decision_refuses_to_size_the_refuter_itself(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="explicit refuter budget"):
+        auto_merge.decide_at_head(
+            7,
+            forge=MagicMock(),
+            db=tmp_path / "review.db",
+            ci_green=True,
+            repo_root=tmp_path,
+            head_sha="a" * 40,
+            head_tree=True,
+        )
+
+
+def test_decision_off_the_head_tree_needs_no_budget(tmp_path: Path) -> None:
+    _, facts, decision = auto_merge.decide_at_head(
+        7,
+        forge=MagicMock(),
+        db=tmp_path / "review.db",
+        ci_green=True,
+        repo_root=tmp_path,
+        head_sha="a" * 40,
+    )
+    assert facts.reverified == {"resolved": 0, "still_open": 0, "needs_judgement": 0}
+    assert decision is not None
