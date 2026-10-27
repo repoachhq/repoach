@@ -73,33 +73,28 @@ from .findings import (
     init_findings_schema,
     record_finding,
 )
-from .findings_bridge import finding_fingerprint
+from .findings_bridge import OVERSIZED_FINDER, finding_fingerprint
 from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
 
-
 CHECKS_TOTAL_BUDGET_S = 300
 """Seconds every check of one PR may take together (``checks_total_budget_s``)."""
-
 
 OUTPUT_TAIL_LINES = 20
 """Lines of a check's output kept on its row and in the evidence."""
 
-
 EVIDENCE_FORMAT = "review-generated-json"
 """The ``format`` field of the evidence file (``format:review-generated-json``)."""
-
 
 EVIDENCE_VERSION = 1
 """The evidence file's schema version."""
 
-
 GENERATED_FINDER = "generated_check"
 """Finder and verification method of a ``generated_artefact`` finding."""
 
-
 _CLAIM_PREFIX = "generated artefact not derived from its sources: "
+_SETTLEABLE_FINDERS = frozenset({GENERATED_FINDER, OVERSIZED_FINDER})
 
 
 @dataclass(frozen=True)
@@ -885,7 +880,6 @@ def record_generated_findings(
 
 _metadata = MetaData()
 
-
 generated_checks = Table(
     "generated_checks",
     _metadata,
@@ -1158,6 +1152,47 @@ def report_lines(
     return lines
 
 
+ReverifyOutcome = tuple[Literal["resolved", "still_open"], str, str]
+
+
+def settlements_at_head(db_path: Path, pr_number: int, head_sha: str) -> dict[str, ReverifyOutcome]:
+    """Return how the ``generated_checks`` rows of ``head_sha`` settle each recorded path (G3, G6).
+
+    ``resolved`` when every run of the path verified the derivation (a
+    source changed, exit 0), ``still_open`` with the cause otherwise.
+    """
+    if not head_sha:
+        return {}
+    checks, _ = fetch_generated_checks(db_path, pr_number, head_sha)
+    settled: dict[str, ReverifyOutcome] = {}
+    for path, runs in _by_path(checks).items():
+        if path_verified(runs):
+            reason = f"declared generated at {head_sha[:7]}, verified by {' '.join(runs[0].argv)}"
+            settled[path] = ("resolved", GENERATED_FINDER, reason)
+        else:
+            causes = "; ".join(
+                check_cause(r) for r in runs if r.state is not GeneratedState.VERIFIED
+            )
+            settled[path] = ("still_open", GENERATED_FINDER, causes)
+    return settled
+
+
+def settle_at_head(
+    finding: Finding, settlements: Mapping[str, ReverifyOutcome]
+) -> ReverifyOutcome | None:
+    """Settle an older-head finding on a declared path from the head's rows, without a refuter.
+
+    Applies to a ``generated_artefact`` finding and to the oversized
+    finding of a path the base now declares; ``None`` for every other
+    finding or a path with no row at the head.
+    """
+    if finding.finder not in _SETTLEABLE_FINDERS:
+        return None
+    if finding.claim_type not in {ClaimType.GENERATED_ARTEFACT, ClaimType.SPEC_GAP}:
+        return None
+    return settlements.get(finding.file)
+
+
 @contextmanager
 def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
     """Yield a tree at ``sha``: the checkout when it is there and clean, else a detached worktree.
@@ -1297,6 +1332,8 @@ __all__ = [
     "report_lines",
     "review_scope",
     "run_checks",
+    "settle_at_head",
+    "settlements_at_head",
     "subprocess_runner",
     "summarise",
     "touched_artefacts",
