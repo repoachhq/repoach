@@ -9,9 +9,11 @@ the ``format:review-generated-json`` evidence.
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ from .generated_artefacts import (
 )
 from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from .generated_process import Runner, subprocess_runner
+from .secret_env import scrubbed_env
 
 
 @contextmanager
@@ -66,6 +69,39 @@ def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
         yield target
     finally:
         shutil.rmtree(target, ignore_errors=True)
+
+
+def held_secrets() -> list[str]:
+    """Return the secret-bearing variables of this process a check could read from it.
+
+    :func:`~repoach.review.secret_env.scrubbed_env` keeps them out of the
+    check's environment, but a process of the same user can read this
+    process's own environment (``/proc/<pid>/environ``), CI runtime tokens
+    (``CI_JOB_TOKEN``, ``ACTIONS_ID_TOKEN_REQUEST_TOKEN``) included.
+
+    Returns:
+        The variable names, sorted.
+    """
+    kept = scrubbed_env()
+    return sorted(name for name in os.environ if name not in kept)
+
+
+def reexec_scrubbed(
+    argv: Sequence[str],
+    *,
+    execve: Callable[[str, list[str], dict[str, str]], None] = os.execve,
+) -> None:
+    """Replace this process with ``python -P -m repoach <argv>`` started from the scrubbed environment.
+
+    ``-P`` keeps the working directory (the pull request's checkout) off
+    the copy's import path, so the pinned install is what runs.
+
+    Args:
+        argv: The repoach command line (``review generated --pr ...``).
+        execve: The exec call; a test passes one that does not replace
+            the test process.
+    """
+    execve(sys.executable, [sys.executable, "-P", "-m", "repoach", *argv], scrubbed_env())
 
 
 class GeneratedRefusalError(RuntimeError):
@@ -141,5 +177,7 @@ def verify_generated(
 __all__ = [
     "GeneratedRefusalError",
     "head_tree",
+    "held_secrets",
+    "reexec_scrubbed",
     "verify_generated",
 ]

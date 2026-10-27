@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,7 +68,12 @@ from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.generated_artefacts import report_lines
 from ..review.generated_process import Runner, subprocess_runner
-from ..review.generated_verify import GeneratedRefusalError, verify_generated
+from ..review.generated_verify import (
+    GeneratedRefusalError,
+    held_secrets,
+    reexec_scrubbed,
+    verify_generated,
+)
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (
     attempts_line,
@@ -86,7 +90,6 @@ from ..review.refuter import Refutation
 from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
-from ..review.secret_env import scrubbed_env
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
     RESOLUTION_OWNERSHIP,
@@ -527,21 +530,6 @@ def _evidence_path(value: object) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
 
-def held_secrets() -> list[str]:
-    """Return the secret-bearing variables of this process a check could read from it.
-
-    :func:`scrubbed_env` keeps them out of the check's environment, but a
-    process of the same user can read this process's own environment
-    (``/proc/<pid>/environ``), CI runtime tokens (``CI_JOB_TOKEN``,
-    ``ACTIONS_ID_TOKEN_REQUEST_TOKEN``) included.
-
-    Returns:
-        The variable names, sorted.
-    """
-    kept = scrubbed_env()
-    return sorted(name for name in os.environ if name not in kept)
-
-
 REEXEC: Callable[[str, list[str], dict[str, str]], None] = os.execve
 """How ``review generated`` replaces itself with a copy started without secrets."""
 
@@ -593,7 +581,7 @@ def review_generated(
         )
         argv = ["review", "generated", "--pr", str(pr_number), "--head", head, "--out", out]
         argv += ["--base", base] if base else []
-        REEXEC(sys.executable, [sys.executable, "-P", "-m", "repoach", *argv], scrubbed_env())
+        reexec_scrubbed(argv, execve=REEXEC)
         return
     base_ref = base or f"origin/{load_project_config(root).repoach.integration_branch}"
     state_dir = Path(get_settings().db_path).parent
