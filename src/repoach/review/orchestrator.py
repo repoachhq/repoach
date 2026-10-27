@@ -100,9 +100,12 @@ from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
     ReviewScope,
+    fetch_generated_checks,
     load_review_evidence,
     record_generated_checks,
     record_generated_findings,
+    report_json,
+    report_lines,
     review_scope,
 )
 from .hallucination_guard import (
@@ -408,6 +411,11 @@ class TeamOutcome:
     SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7); a PR declaring no
     spec is graded against the specs owning its code, ``spec_source``
     ``ownership``.
+    ``generated`` lists each check run of a declared generated artefact
+    the diff touches (``path``, ``check``, ``state``, ``ms``,
+    ``sources_changed``, ``producer_inputs_changed``, ``script_ref``) and
+    ``generated_lines`` the report lines naming what proved each one
+    (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -449,6 +457,8 @@ class TeamOutcome:
     spec_coverage_line: str = ""
     spec_report: list[str] = field(default_factory=list)
     spec_resolution: dict[str, object] = field(default_factory=dict)
+    generated: list[dict[str, object]] = field(default_factory=list)
+    generated_lines: list[str] = field(default_factory=list)
 
 
 class ReviewTeamOrchestrator:
@@ -1054,6 +1064,8 @@ class ReviewTeamOrchestrator:
             reverify_line=reverified.summary_line("review") if head_sha else "",
             findings_recorded=recorded.counts() if recorded is not None else {},
             findings_line=recorded.summary_line() if recorded is not None else "",
+            generated=report_json(generated_checks),
+            generated_lines=report_lines(generated_checks, generated_timing),
         )
 
         if not errored_roles and recorded is not None and self._pinned_head:
@@ -1250,6 +1262,11 @@ class ReviewTeamOrchestrator:
             cache_line=cache_line(run),
             spec_coverage_line=spec_coverage_line,
         )
+        generated_checks, generated_timing = fetch_generated_checks(
+            self._db_path, pr_number, head_sha
+        )
+        team.generated = report_json(generated_checks)
+        team.generated_lines = report_lines(generated_checks, generated_timing)
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(
@@ -2226,6 +2243,7 @@ class ReviewTeamOrchestrator:
             facts=facts,
             archive_appendix=archive_appendix,
             judged=team.findings,
+            generated_lines=team.generated_lines,
         )
 
 

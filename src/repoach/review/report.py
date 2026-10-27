@@ -138,6 +138,7 @@ def render_ledger_report(
     facts: MergeFacts,
     archive_appendix: str = "",
     judged: list[ReportFinding] | None = None,
+    generated_lines: list[str] | None = None,
 ) -> str:
     """Render the sticky archive report from the ledger and merge facts.
 
@@ -152,6 +153,10 @@ def render_ledger_report(
         judged: The findings that can move the verdict, each with its
             judge (:func:`report_findings`); rendered as a table above
             the ledger listing, with the verdict basis, when given.
+        generated_lines: The lines naming what proved each declared
+            generated artefact the diff touches, rendered as a
+            ``## Generated artefacts`` section
+            (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5); omitted when empty.
 
     Returns:
         The full markdown body for the sticky archive comment.
@@ -176,6 +181,10 @@ def render_ledger_report(
                 judged_findings_section(judged),
                 "",
             ]
+        )
+    if generated_lines:
+        parts.extend(
+            ["## Generated artefacts", "", *(f"- `{line}`" for line in generated_lines), ""]
         )
     parts.extend(["## Findings", "", _findings_section(findings)])
     if archive_appendix:

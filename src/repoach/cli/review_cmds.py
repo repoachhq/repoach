@@ -46,7 +46,7 @@ from ..forge import (
     WriteRefusal,
     select_forge,
 )
-from ..project.config import load_project_config
+from ..project.config import ConfigError, load_project_config
 from ..project.spec_source import (
     SpecResolution,
     declared_spec_missing,
@@ -65,6 +65,7 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
+from ..review.generated_artefacts import GeneratedRefusalError, report_lines, verify_generated
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (
     attempts_line,
@@ -280,6 +281,14 @@ def review_pr(
         hidden=True,
         help="Why a --dry-run writes nothing; set by `repoach ci review`.",
     ),
+    generated_evidence: str | None = typer.Option(
+        None,
+        "--generated-evidence",
+        help=(
+            "The review-generated.json the secret-free `review generated` job wrote "
+            "for this head; without it a touched generated artefact is reported not run."
+        ),
+    ),
 ) -> None:
     """Run the review-bot team on a PR / MR and emit a summary.
 
@@ -378,6 +387,15 @@ def review_pr(
     ``repoach: refused_writes: N (<reason>)`` line on stderr says the
     same. A refused write is a defect: one ``repoach: dry run attempted
     a forge write: <head>`` line per write, and the command exits 8.
+
+    A declared generated artefact the diff touches
+    (``review.generated`` at the base ref) reaches the reviewers as
+    one summary paragraph; its check never runs here: the evidence of
+    ``--generated-evidence`` is read, ``generated`` in the JSON lists each
+    run (``path``, ``check``, ``state``, ``ms``, ``sources_changed``,
+    ``producer_inputs_changed``, ``script_ref``) and one ``generated:
+    <path> verified by <check> (<ms> ms)`` line per verified run is
+    printed on stderr (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5).
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -394,6 +412,7 @@ def review_pr(
                 announce=lambda line: typer.echo(line, err=True),
                 write_refusal=refusal,
                 force=force,
+                generated_evidence=_evidence_path(generated_evidence),
                 **_forge_kwargs(forge_name),
             )
     except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
@@ -456,6 +475,7 @@ def review_pr(
         ],
         "findings": [entry.as_json() for entry in team.findings],
         "verdict_basis": list(team.verdict_basis),
+        "generated": team.generated,
         "usage": usage,
         "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
@@ -474,6 +494,8 @@ def review_pr(
         typer.echo(line, err=True)
     if team.reverify_line:
         typer.echo(team.reverify_line, err=True)
+    for line in team.generated_lines:
+        typer.echo(line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:
         typer.echo(
@@ -489,6 +511,63 @@ def review_pr(
         raise typer.Exit(code=EXIT_REVIEW_ERROR)
     if team.final_verdict == ReviewVerdict.REQUEST_CHANGES:
         raise typer.Exit(code=2)
+
+
+def _evidence_path(value: object) -> Path | None:
+    """Return the ``--generated-evidence`` path; ``None`` when the option was not given.
+
+    A direct call of :func:`review_pr` leaves the option at its Typer
+    default object, which names no file.
+    """
+    return Path(value) if isinstance(value, str) and value else None
+
+
+@review_app.command("generated")
+def review_generated(
+    pr_number: int = typer.Option(..., "--pr", help="PR number (GitHub) or MR iid (GitLab)."),
+    head: str = typer.Option(..., "--head", help="The head SHA the review will run at."),
+    out: str = typer.Option(..., "--out", help="Where to write review-generated.json."),
+    base: str | None = typer.Option(
+        None,
+        "--base",
+        help="The base ref the declarations are read at (default: origin/<integration_branch>).",
+    ),
+) -> None:
+    """Run the checks of the declared generated artefacts a PR touches (secret-free job).
+
+    The verification half of SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ: the
+    ``review.generated`` declarations of the base ref are read, each
+    check whose artefact the PR changes runs once against the head tree
+    (twice, base script then head script, when the check script itself
+    changed), never through a shell and with every secret-bearing
+    variable removed from its environment. The evidence
+    (``format: review-generated-json``, bound to the head SHA and each
+    artefact's sha256) goes to ``--out`` for ``review pr
+    --generated-evidence``. One ``generated: …`` line per run and one
+    ``generated checks: <n> ms + <m> ms overhead`` line go to stderr.
+
+    Run it only in a job holding no forge token and no model credential:
+    the check is pull-request code. Exits 0 once the evidence is written,
+    whatever the checks said (the review decides); 2 when the head or the
+    base does not resolve or the base declarations are invalid.
+    """
+    root = project_root_or_exit()
+    base_ref = base or f"origin/{load_project_config(root).repoach.integration_branch}"
+    state_dir = Path(get_settings().db_path).parent
+    try:
+        payload, checks, timing = verify_generated(
+            root, pr_number=pr_number, head=head, base_ref=base_ref, state_dir=state_dir
+        )
+    except (GeneratedRefusalError, ConfigError) as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    target = Path(out)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    for line in report_lines(checks, timing if checks else None):
+        typer.echo(line, err=True)
+    if not checks:
+        typer.echo("generated: no declared generated artefact touched", err=True)
 
 
 _ARCHIVE_FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
