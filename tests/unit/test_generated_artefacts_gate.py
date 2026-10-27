@@ -625,3 +625,41 @@ def test_delay_is_measured_and_printed(
     assert expected in err
     result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
     assert expected in result.stderr
+
+
+def test_evidence_states_are_recomputed_at_review(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The evidence cannot claim a source the diff lacks, nor verify a non-zero exit."""
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head({ARTEFACT: _vectors(CORPUS_V1, "B")})
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+    forged = payload["checks"][0]
+    forged.update(state="generated_artefact_verified", sources_changed=["data/corpus.json"])
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    assert [f.verification_result for f in _generated_findings(bench.db_path)] == [
+        "no source changed"
+    ]
+    assert result.payload["generated"][0]["sources_changed"] == []
+    assert result.payload["final_verdict"] == "REQUEST_CHANGES"
+
+    other = install(monkeypatch, tmp_path / "exit")
+    repo = Repo(tmp_path / "exit", _base(_toml(_entry())))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V1, "B")})
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+    assert payload["checks"][0]["exit_code"] == 1
+    payload["checks"][0]["state"] = "generated_artefact_verified"
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    refused = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    results = [f.verification_result for f in _generated_findings(other.db_path)]
+    assert len(results) == 1
+    assert results[0].startswith("check exited 1: Embeddings are stale")
+    assert refused.payload["final_verdict"] == "REQUEST_CHANGES"

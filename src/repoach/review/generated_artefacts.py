@@ -1069,9 +1069,77 @@ def checks_from_evidence(
             raise GeneratedEvidenceMismatchError(
                 f"evidence of {path} names blob {runs[0].artefact_sha256[:7]}, head has {blob[:7]}"
             )
-        checks.extend(runs)
+        checks.extend(
+            _rebound(
+                runs,
+                touched[path],
+                path=path,
+                head_sha=head_sha,
+                base_sha=str(payload.get("base_sha") or ""),
+                changed_files=changed_files,
+            )
+        )
     timing = GeneratedTiming(int(payload.get("checks_ms", 0)), int(payload.get("overhead_ms", 0)))
     return checks, timing
+
+
+def _rebound(
+    runs: Sequence[GeneratedCheck],
+    entry: GeneratedEntry,
+    *,
+    path: str,
+    head_sha: str,
+    base_sha: str,
+    changed_files: Sequence[str],
+) -> list[GeneratedCheck]:
+    """Recompute at review time everything the evidence carries that the review can derive.
+
+    The verification job runs pull-request code, so its JSON is trusted
+    for the check's exit code and output only. The argv comes from the
+    base declaration, the changed sources and producer inputs from the
+    reviewed diff, and the state from the exit code and those sources: a
+    run claiming ``verified`` without exit 0, or without a changed source,
+    is not verified. When the check script changed, a missing base-script
+    run (D3) is reported not run, unless the script is absent at the head.
+    """
+    sources, producers = changed_inputs(entry, path, changed_files)
+    argv = _declared_argv(entry, head_sha, base_sha)
+    rebound: list[GeneratedCheck] = []
+    for run in runs:
+        state = run.state
+        if state in {GeneratedState.VERIFIED, GeneratedState.NO_SOURCE_CHANGED}:
+            if run.exit_code != 0:
+                state = GeneratedState.STALE
+            elif not (sources or producers):
+                state = GeneratedState.NO_SOURCE_CHANGED
+            else:
+                state = GeneratedState.VERIFIED
+        rebound.append(
+            replace(
+                run,
+                argv=argv,
+                head_sha=head_sha,
+                sources_changed=sources,
+                producer_inputs_changed=producers,
+                state=state,
+            )
+        )
+    script_changed = entry.check[0] in changed_files
+    absent = any(run.state is GeneratedState.CHECK_ABSENT for run in rebound)
+    if script_changed and not absent and not any(run.script_ref == "base" for run in rebound):
+        rebound.insert(
+            0,
+            replace(
+                rebound[0],
+                state=GeneratedState.NOT_RUN,
+                exit_code=None,
+                duration_ms=0,
+                output_tail=f"no base-script run for {path} at {head_sha[:7]}",
+                script_ref="base",
+                runs_for_path=2,
+            ),
+        )
+    return rebound
 
 
 def load_review_evidence(
