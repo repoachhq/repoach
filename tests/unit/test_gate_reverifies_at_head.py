@@ -15,6 +15,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import typer
@@ -785,7 +786,7 @@ def test_re_check_fills_the_configured_refuter_context(
     real = head_reverify.judge_finding
 
     def spy(finding: Finding, **kwargs: object) -> object:
-        seen.append(int(kwargs["context_tokens"]))
+        seen.append(kwargs["budget"].floor)
         return real(finding, **kwargs)
 
     monkeypatch.setattr(head_reverify, "judge_finding", spy)
@@ -816,7 +817,7 @@ def test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head(
     real = head_reverify.judge_finding
 
     def spy(finding: Finding, **kwargs: object) -> object:
-        seen.append((int(kwargs["context_tokens"]), int(kwargs["context_ceiling"])))
+        seen.append(tuple(kwargs["budget"]))
         return real(finding, **kwargs)
 
     monkeypatch.setattr(head_reverify, "judge_finding", spy)
@@ -826,3 +827,29 @@ def test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head(
     _merge(monkeypatch, tmp_path, repo, head_b, _Judge, pin_tree=True)
 
     assert seen == [(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT)]
+
+
+def test_head_tree_decision_refuses_to_size_the_refuter_itself(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="explicit refuter budget"):
+        auto_merge.decide_at_head(
+            7,
+            forge=MagicMock(),
+            db=tmp_path / "review.db",
+            ci_green=True,
+            repo_root=tmp_path,
+            head_sha="a" * 40,
+            head_tree=True,
+        )
+
+
+def test_decision_off_the_head_tree_needs_no_budget(tmp_path: Path) -> None:
+    _, facts, decision = auto_merge.decide_at_head(
+        7,
+        forge=MagicMock(),
+        db=tmp_path / "review.db",
+        ci_green=True,
+        repo_root=tmp_path,
+        head_sha="a" * 40,
+    )
+    assert facts.reverified == {"resolved": 0, "still_open": 0, "needs_judgement": 0}
+    assert decision is not None

@@ -20,6 +20,7 @@ from repoach.gates.config import (
     REFUTER_CONTEXT_TOKENS_FLOOR,
     GatesConfig,
     GatesConfigError,
+    RefuterBudget,
     load_gates_config,
     resolve_refuter_budget,
     resolve_refuter_context_ceiling,
@@ -99,7 +100,7 @@ def test_cited_file_over_the_ceiling_defers_with_the_named_reason(tmp_path: Path
         _finding(),
         repo_root=root,
         judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
-        context_ceiling=REFUTER_CONTEXT_TOKENS_FLOOR,
+        budget=RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_TOKENS_FLOOR),
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
@@ -126,7 +127,7 @@ def test_ceiling_deferral_is_named_by_the_gate_and_records_budget_used(tmp_path:
         config=GatesConfig.builtin_default(),
         max_judged=5,
         judge_factory=lambda: lambda _p: _reply("refuted", "fine"),
-        context_ceiling=REFUTER_CONTEXT_TOKENS_FLOOR,
+        budget=RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_TOKENS_FLOOR),
     )
     assert report.model_calls == 0
     [reason] = report.reasons()
@@ -147,8 +148,7 @@ def test_verdict_records_budget_used_on_the_ledger_row(tmp_path: Path) -> None:
         repo_root=root,
         head_sha=HEAD_B,
         judge_factory=lambda: lambda _p: _reply("refuted", "wanted_symbol masks the value"),
-        context_tokens=REFUTER_CONTEXT_TOKENS_FLOOR,
-        context_ceiling=REFUTER_CONTEXT_CEILING_DEFAULT,
+        budget=RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT),
     )
     [outcome] = report.outcomes
     assert outcome.state == "refuted"
@@ -250,3 +250,61 @@ def test_none_budget_used_keeps_the_recorded_value(tmp_path: Path) -> None:
     assert next(f for f in fetch_findings(db, 7) if f.id == row_id).budget_used == 512
     assert update_finding_status(db, row_id, FindingStatus.VERIFIED, verification_method="m")
     assert next(f for f in fetch_findings(db, 7) if f.id == row_id).budget_used == 512
+
+
+@pytest.mark.parametrize(
+    ("floor", "ceiling", "expected"),
+    [
+        (60_000, 50_000, RefuterBudget(60_000, 60_000)),
+        (40_000, 200_000, RefuterBudget(40_000, 200_000)),
+        (60_000, 60_000, RefuterBudget(60_000, 60_000)),
+    ],
+    ids=["inverted", "default", "equal"],
+)
+def test_budget_clamp_lives_in_one_constructor(
+    floor: int, ceiling: int, expected: RefuterBudget
+) -> None:
+    assert RefuterBudget.clamped(floor, ceiling) == expected
+
+
+def test_judge_finding_clamps_a_ceiling_below_the_floor(tmp_path: Path) -> None:
+    fits = judge_finding(
+        _finding(),
+        repo_root=_tree(tmp_path / "fits", 45_000),
+        judge=lambda _p: _reply("refuted", "wanted_symbol masks the value"),
+        budget=RefuterBudget(60_000, 50_000),
+    )
+    assert fits.status is FindingStatus.REFUTED
+    assert fits.budget_used == 60_000
+    over = judge_finding(
+        _finding(),
+        repo_root=_tree(tmp_path / "over", 80_000),
+        judge=lambda _p: _reply("refuted", "fine"),
+        budget=RefuterBudget(60_000, 50_000),
+    )
+    assert over.status is FindingStatus.PROPOSED
+    assert over.reason.endswith(" tokens needed, ceiling 60000)")
+
+
+def test_judge_findings_for_pr_reads_budget_from_repo_root_when_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_CEILING", raising=False)
+    root = _tree(tmp_path / "repo", 60_000)
+    (root / "repoach.toml").write_text(
+        "[gates]\nrefuter_context_ceiling = 40000\n", encoding="utf-8"
+    )
+    db = tmp_path / "review.db"
+    init_findings_schema(db)
+    record_finding(db, _finding(head=HEAD_B))
+    report = judge_findings_for_pr(
+        db,
+        pr_number=7,
+        repo_root=root,
+        head_sha=HEAD_B,
+        judge_factory=lambda: lambda _p: _reply("refuted", "fine"),
+    )
+    [outcome] = report.outcomes
+    assert report.model_calls == 0
+    assert outcome.reason.endswith(" tokens needed, ceiling 40000)")

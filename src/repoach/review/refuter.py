@@ -67,8 +67,8 @@ from ..agent_engine.agent_loop import AgentLoop
 from ..core.logging import get_logger
 from ..core.resources import prompts_dir
 from ..gates.config import (
-    REFUTER_CONTEXT_CEILING_DEFAULT,
-    REFUTER_CONTEXT_TOKENS_FLOOR,
+    DEFAULT_REFUTER_BUDGET,
+    RefuterBudget,
     resolve_refuter_budget,
     resolve_refuter_max_judged,
 )
@@ -425,8 +425,15 @@ def _overhead(finding: Finding) -> int:
 def _evidence_budget(finding: Finding, context_tokens: int, overhead: int | None = None) -> int:
     """Return the tokens the evidence may take: the context less prompt and reserves.
 
-    ``overhead`` is :func:`_overhead` of ``finding`` when the caller has it
-    already, so the prompt is rendered once per finding.
+    Args:
+        finding: The finding whose prompt is measured when ``overhead`` is None.
+        context_tokens: A context size (the floor or the ceiling of the
+            refuter's budget).
+        overhead: :func:`_overhead` of ``finding`` when the caller has it
+            already, so the prompt is rendered once per finding.
+
+    Returns:
+        ``context_tokens`` less the overhead, never below 0.
     """
     return max(0, context_tokens - (_overhead(finding) if overhead is None else overhead))
 
@@ -627,10 +634,9 @@ def judge_finding(
     repo_root: Path,
     judge: Judge,
     absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
-    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
+    budget: RefuterBudget = DEFAULT_REFUTER_BUDGET,
     diff: str = "",
     pr_spec: tuple[str, str] | None = None,
-    context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT,
 ) -> Judgement:
     """Judge one finding and say what the judge was served.
 
@@ -650,10 +656,10 @@ def judge_finding(
     (:data:`EVIDENCE_NOT_SERVED`). A cited file absent from
     ``repo_root`` is deferred with ``absent_reason``.
 
-    The context adapts to the evidence (G5): ``context_tokens`` is the
-    floor, and the context grows to the cited file, the hits of the
+    The context adapts to the evidence (G5): ``budget.floor`` is the
+    least it gets, and it grows to the cited file, the hits of the
     claim's identifiers and the diff hunks plus the prompt and reply
-    reserves, up to ``context_ceiling``. When even the ceiling cannot
+    reserves, up to ``budget.ceiling``. When even the ceiling cannot
     hold them, the judge is not called (:data:`EVIDENCE_EXCEEDS_CEILING`).
 
     Args:
@@ -661,26 +667,29 @@ def judge_finding(
         repo_root: The pinned head tree the evidence is read from.
         judge: The judge (tests inject a fake).
         absent_reason: Deferral reason when the cited file is absent.
-        context_tokens: The refuter's context floor.
+        budget: The refuter's context floor and ceiling
+            (:func:`~repoach.gates.config.resolve_refuter_budget`).
         diff: The PR's unified diff (its hunks on the cited file are served).
         pr_spec: ``(spec id, markdown)`` of the PR's governing spec.
-        context_ceiling: The most the context may grow to; never below
-            ``context_tokens``.
+
+    Returns:
+        The :class:`Judgement`: its status, reason, the evidence served
+        and the ``budget_used``.
     """
-    ceiling = max(context_ceiling, context_tokens)
+    floor, ceiling = RefuterBudget.clamped(*budget)
     overhead = _overhead(finding)
     bundle, reason = _evidence_excerpt(
         finding,
         repo_root,
         absent_reason,
-        evidence_tokens=_evidence_budget(finding, context_tokens, overhead),
+        evidence_tokens=_evidence_budget(finding, floor, overhead),
         diff=diff,
         specs=claim_specs(finding, repo_root, pr_spec),
         evidence_ceiling=_evidence_budget(finding, ceiling, overhead),
     )
     if bundle is None:
         return Judgement(FindingStatus.PROPOSED, reason)
-    used = max(context_tokens, min(ceiling, bundle.budget_tokens + overhead))
+    used = max(floor, min(ceiling, bundle.budget_tokens + overhead))
 
     def _deferred(why: str, detail: str = "") -> Judgement:
         return Judgement(FindingStatus.PROPOSED, why, bundle, detail, used)
@@ -728,21 +737,27 @@ def refute_finding(
     repo_root: Path,
     judge: Judge,
     absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
-    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
-    context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT,
+    budget: RefuterBudget = DEFAULT_REFUTER_BUDGET,
 ) -> tuple[FindingStatus, str]:
     """Judge one finding, returning ``(new_status, reason)`` of :func:`judge_finding`.
 
-    ``context_tokens`` is the refuter's configured context, which the
-    evidence fills (:func:`judge_finding`).
+    Args:
+        finding: The proposed finding.
+        repo_root: The pinned head tree the evidence is read from.
+        judge: The judge (tests inject a fake).
+        absent_reason: Deferral reason when the cited file is absent.
+        budget: The refuter's configured floor and ceiling, which the
+            evidence fills (:func:`judge_finding`).
+
+    Returns:
+        ``(status, reason)`` of the :class:`Judgement`.
     """
     judgement = judge_finding(
         finding,
         repo_root=repo_root,
         judge=judge,
         absent_reason=absent_reason,
-        context_tokens=context_tokens,
-        context_ceiling=context_ceiling,
+        budget=budget,
     )
     return judgement.status, judgement.reason
 
@@ -820,8 +835,7 @@ def judge_findings_for_pr(
     scope_head: str | None = None,
     diff: str = "",
     pr_spec: tuple[str, str] | None = None,
-    context_tokens: int | None = None,
-    context_ceiling: int | None = None,
+    budget: RefuterBudget | None = None,
 ) -> JudgingReport:
     """Judge the proposed findings of a PR and name what it could not judge.
 
@@ -856,20 +870,16 @@ def judge_findings_for_pr(
             or with an empty head, are counted in ``stale`` and left alone.
         diff: The PR's unified diff; each finding is served its hunks.
         pr_spec: ``(spec id, markdown)`` of the PR's governing spec.
-        context_tokens: The refuter's context floor; ``None`` reads
-            ``[gates].refuter_context_tokens`` (default and floor 40 000).
-        context_ceiling: The most one finding's context may grow to;
-            ``None`` reads ``[gates].refuter_context_ceiling`` (default
-            200 000).
+        budget: The refuter's context floor and ceiling; ``None`` reads
+            them at ``repo_root``
+            (:func:`~repoach.gates.config.resolve_refuter_budget`).
 
     Returns:
         One :class:`Refutation` per proposed finding, plus the number of
         judge calls made.
     """
     cap = configured_max_judged(repo_root) if max_judged is None else max_judged
-    budget, ceiling = resolve_refuter_budget(
-        repo_root, floor=context_tokens, ceiling=context_ceiling
-    )
+    sizes = resolve_refuter_budget(repo_root) if budget is None else budget
     reviewed = review_head or head_sha
     tree_behind = bool(reviewed and tree_sha and tree_sha != reviewed)
     in_diff = frozenset(diff_files)
@@ -902,10 +912,9 @@ def judge_findings_for_pr(
             repo_root=repo_root,
             judge=judge,
             absent_reason=absent,
-            context_tokens=budget,
+            budget=sizes,
             diff=diff,
             pr_spec=pr_spec,
-            context_ceiling=ceiling,
         )
         new_status, reason = judgement.status, judgement.reason
         if new_status is FindingStatus.PROPOSED:

@@ -127,10 +127,30 @@ under change.
 
 ## Interface
 
-- `repoach.review.refuter_evidence`: `REFUTER_RULE_VERSION: int`, `STOP_WORDS: frozenset[str]`, `is_stop_word(token) -> bool`, and `EvidenceBundle.partial_in_cited` / `partial_elsewhere: tuple[str, ...]`.
-- `repoach.review.refuter`: `EVIDENCE_PARTLY_SERVED_IN_CITED`, `EVIDENCE_PARTLY_SERVED_OUTSIDE` (in `DEFERRAL_REASONS`); `EVIDENCE_NOT_SERVED` becomes `evidence outside window (identifier not served: {identifiers})`.
-- `repoach.review.head_reverify`: `judgement_key(context_tokens) -> str`; `reverify_older_findings(..., context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR)`.
-- Resource `format:refuter-needs-judgement-stamp`: the `verification_result` text of a `head_reverify_needs_judgement` row.
+As shipped (0.1 to 0.3, and the review fixes of #268 and its follow-up):
+
+- `repoach.gates.config`:
+  - `RefuterBudget(floor: int, ceiling: int)`, a NamedTuple, and `RefuterBudget.clamped(floor, ceiling)`, the one place `ceiling >= floor` is enforced;
+  - `DEFAULT_REFUTER_BUDGET = RefuterBudget(40000, 200000)`;
+  - `resolve_refuter_budget(repo_root, *, floor=None, ceiling=None) -> RefuterBudget`;
+  - `resolve_refuter_context_ceiling(repo_root) -> tuple[int, str]` and `CONTEXT_CEILING_ENV = "REPOACH_REFUTER_CONTEXT_CEILING"`;
+  - `GatesConfig.refuter_context_ceiling` (`[gates].refuter_context_ceiling`, default `REFUTER_CONTEXT_CEILING_DEFAULT` = 200000).
+- `repoach.review.refuter_evidence`:
+  - `REFUTER_RULE_VERSION: int`, `STOP_WORDS: frozenset[str]` and `is_stop_word(token) -> bool`, which reads `STOP_WORDS` alone;
+  - `defined_names(*texts) -> frozenset[str]` and `claim_identifiers(claim, *, cited_file, defined=())`;
+  - `build_evidence(..., ceiling_tokens: int | None = None)`;
+  - `EvidenceBundle.partial_in_cited`, `partial_elsewhere`, `needed_tokens` and `shortfall_tokens`.
+- `repoach.review.refuter`:
+  - `judge_finding(..., budget: RefuterBudget = DEFAULT_REFUTER_BUDGET)`, `refute_finding(..., budget=...)` and `judge_findings_for_pr(..., budget: RefuterBudget | None = None)`;
+  - `Judgement.budget_used` and `Refutation.budget_used`;
+  - `EVIDENCE_PARTLY_SERVED_IN_CITED`, `EVIDENCE_PARTLY_SERVED_OUTSIDE` and `EVIDENCE_EXCEEDS_CEILING`, all in `DEFERRAL_REASONS`; `EVIDENCE_NOT_SERVED` becomes `evidence outside window (identifier not served: {identifiers})`.
+- `repoach.review.head_reverify`:
+  - `judgement_key(budget: RefuterBudget) -> str`, which returns `refuter rule <V>, context <N>, ceiling <C>`;
+  - `needs_judgement_stamp(sha7, key, reason) -> str` and `stamp_key(result) -> str | None`, the one writer and the one reader of the stamp;
+  - `reverify_older_findings(..., budget: RefuterBudget = DEFAULT_REFUTER_BUDGET)` and `Reverification.budget_used`.
+- `repoach.review.auto_merge`: `decide_at_head(..., budget: RefuterBudget | None = None)`, which raises `ValueError` when `head_tree=True` and `budget` is None. A PR head tree never sizes its own refuter.
+- `repoach.review.findings`: the `pr_findings.budget_used` column (migration `INTEGER NOT NULL DEFAULT 0`), `Finding.budget_used`, and `budget_used` on `update_finding_status` / `record_verification_attempt`. `None` leaves the stored value unchanged.
+- Resource `format:refuter-needs-judgement-stamp`: the `verification_result` text of a `head_reverify_needs_judgement` row, `needs judgement at <sha7> (<key>): <reason>`, owned by `head_reverify` alone.
 
 ## Behavior
 

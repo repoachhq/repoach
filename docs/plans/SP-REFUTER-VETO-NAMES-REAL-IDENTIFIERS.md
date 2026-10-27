@@ -114,6 +114,14 @@ Drop Python names, common tokens and generic English words from a claim's identi
 - **Done when**: pytest tests/unit/test_refuter_veto_names_real_identifiers.py passes
 - **Unit tests**: `tests/unit/test_refuter_veto_names_real_identifiers.py::test_stamp_is_written_and_read_by_one_format`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_needs_judgement_is_reused_only_under_the_same_key`
 
+## Step 15 — One budget value, a head tree that never sizes the refuter, a stamp name that shadows nothing
+
+- **Files**: `src/repoach/review/refuter.py`, `src/repoach/review/auto_merge.py`, `tests/unit/test_gate_reverifies_at_head.py`
+- **Action**: Take RefuterBudget in judge_finding, refute_finding, judge_findings_for_pr, reverify_older_findings and decide_at_head; clamp through RefuterBudget.clamped; raise ValueError when decide_at_head reads a head tree without an explicit budget; rename the local stamp key; pin comparisons and annotations in defined_names.
+- **Commit**: `refactor(refuter): take the refuter budget as one value everywhere`
+- **Done when**: pytest tests/unit/test_gate_reverifies_at_head.py tests/unit/test_refuter_veto_names_real_identifiers.py tests/unit/test_refuter_context_adapts_to_evidence.py passes
+- **Unit tests**: `tests/unit/test_gate_reverifies_at_head.py::test_head_tree_decision_refuses_to_size_the_refuter_itself`, `tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_clamp_lives_in_one_constructor`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_names_tells_definitions_from_comparisons`
+
 ## Integration tests
 
 - `tests/integration/test_refuter_veto_replays_pr260.py::test_measured_refutation_settles_the_finding_at_the_next_head`
@@ -357,6 +365,23 @@ Drop Python names, common tokens and generic English words from a claim's identi
       "unit_tests": [
         "tests/unit/test_refuter_veto_names_real_identifiers.py::test_stamp_is_written_and_read_by_one_format",
         "tests/unit/test_refuter_veto_names_real_identifiers.py::test_needs_judgement_is_reused_only_under_the_same_key"
+      ]
+    },
+    {
+      "index": 15,
+      "title": "One budget value, a head tree that never sizes the refuter, a stamp name that shadows nothing",
+      "files": [
+        "src/repoach/review/refuter.py",
+        "src/repoach/review/auto_merge.py",
+        "tests/unit/test_gate_reverifies_at_head.py"
+      ],
+      "action": "Take RefuterBudget in judge_finding, refute_finding, judge_findings_for_pr, reverify_older_findings and decide_at_head; clamp through RefuterBudget.clamped; raise ValueError when decide_at_head reads a head tree without an explicit budget; rename the local stamp key; pin comparisons and annotations in defined_names.",
+      "commit_message": "refactor(refuter): take the refuter budget as one value everywhere",
+      "done_when": "pytest tests/unit/test_gate_reverifies_at_head.py tests/unit/test_refuter_veto_names_real_identifiers.py tests/unit/test_refuter_context_adapts_to_evidence.py passes",
+      "unit_tests": [
+        "tests/unit/test_gate_reverifies_at_head.py::test_head_tree_decision_refuses_to_size_the_refuter_itself",
+        "tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_clamp_lives_in_one_constructor",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_defined_names_tells_definitions_from_comparisons"
       ]
     }
   ],
