@@ -38,34 +38,15 @@ class SpecResolution:
 
     Attributes:
         spec_id: Canonical ``SP-…`` id, or None when nothing declares one.
-        source: ``flag``, ``description`` or ``branch``; ``ownership``
-            when nothing declares a spec and specs own the diff's code;
-            None with no spec.
-        owners: The specs owning the diff's code, for ``ownership``.
+        source: ``flag``, ``description`` or ``branch``; None with no
+            spec. A PR declaring none is then graded against the specs
+            owning its code, and the review reports that source as
+            ``ownership`` (:data:`OwnershipSource`,
+            :attr:`repoach.review.spec_grading.CoverageGrading.source`).
     """
 
     spec_id: str | None = None
     source: SpecSource | OwnershipSource | None = None
-    owners: tuple[str, ...] = ()
-
-
-def resolve_by_ownership(declared: SpecResolution, owners: Sequence[str]) -> SpecResolution:
-    """Return *declared*, or the ownership resolution when nothing is declared.
-
-    A declared spec keeps today's behaviour (only that spec is graded);
-    ownership applies only when nothing is declared and at least one
-    governed spec owns a path of the diff (NG3, G7).
-
-    Args:
-        declared: The resolution of :func:`resolve_spec`.
-        owners: The ids of the specs owning a changed path, at base.
-
-    Returns:
-        The resolution the PR is graded under.
-    """
-    if declared.spec_id is not None or not owners:
-        return declared
-    return SpecResolution(spec_id=None, source="ownership", owners=tuple(owners))
 
 
 def spec_from_description(description: str) -> str | None:

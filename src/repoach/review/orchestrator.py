@@ -77,7 +77,6 @@ from ..project.config import load_project_config
 from ..project.spec_source import (
     SpecResolution,
     declared_spec_missing,
-    resolve_by_ownership,
     resolve_spec,
 )
 from ..providers.select import require_provider_ready
@@ -960,10 +959,7 @@ class ReviewTeamOrchestrator:
             if grading is not None and grading.rows:
                 spec_covered = all(row.covered for row in grading.rows)
                 if spec_id is None:
-                    spec_source = resolve_by_ownership(
-                        SpecResolution(),
-                        [row.spec_id for row in grading.rows],
-                    ).source
+                    spec_source = grading.source
 
         ledger_facts = summarise_ledger_facts(
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
@@ -1159,10 +1155,7 @@ class ReviewTeamOrchestrator:
                     f"missing {sum(len(row.missing) for row in grading.rows)}"
                 )
                 if spec_id is None:
-                    spec_source = resolve_by_ownership(
-                        SpecResolution(),
-                        [row.spec_id for row in grading.rows],
-                    ).source
+                    spec_source = grading.source
         facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
         verifications = recorded_verifications(
             self._db_path, pr_number=pr_number, head_sha=head_sha
