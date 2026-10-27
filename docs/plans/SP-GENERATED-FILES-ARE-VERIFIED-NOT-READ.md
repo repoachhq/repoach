@@ -80,7 +80,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Action**: Record !322's diff shape (corpus and user-guide units verbatim, the embeddings unit with its two vectors lines as a placeholder expanded to 1 556 480 characters), findings 3 and 6 as the ledger held them, the recorded --check output (exit 0) and the base repoach.toml declaring the embeddings. The integration test runs review generated with the recorded result, then review pr, and expects APPROVE, findings 3 and 6 resolved_at_head and zero judge calls.
 - **Commit**: `test(review): replay yoob !322 with the embeddings declared`
 - **Done when**: pytest -q tests/integration/test_generated_artefacts_replay_yoob_322.py passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_unknown_key_in_an_entry_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_entries_are_capped`
+- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_unknown_key_in_an_entry_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_entries_are_capped`, `tests/unit/test_generated_artefacts_config.py::test_unterminated_bracket_is_a_literal`, `tests/unit/test_generated_artefacts_config.py::test_negated_class_matches_the_complement`, `tests/unit/test_generated_artefacts_config.py::test_error_names_the_line_of_the_key_in_the_second_block`
 
 ## Step 11 — Supervise the check processes
 
@@ -98,7 +98,15 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir`
 
-## Step 13 — Document the declaration and the Yoob job
+## Step 13 — Share the row types and their causes
+
+- **Files**: `src/repoach/review/generated_types.py`
+- **Action**: generated_types.py holds GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.
+- **Commit**: `refactor(review): move generated rows and causes to generated_types`
+- **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause passes
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause`, `tests/unit/test_generated_artefacts_gate.py::test_a_symlinked_artefact_is_never_read_and_never_green`, `tests/unit/test_generated_artefacts_gate.py::test_review_generated_requires_the_base`, `tests/unit/test_generated_artefacts_gate.py::test_subprocess_runner_refuses_a_shell`, `tests/unit/test_generated_artefacts_gate.py::test_a_timed_out_check_has_its_session_killed`
+
+## Step 14 — Document the declaration and the Yoob job
 
 - **Files**: `docs/generated_artefacts.md`
 - **Action**: Describe the [[review.generated]] keys and rules, what the review shows, runs and records, what of the evidence is trusted, the causes a finding names, the report lines, and the GitLab snippet: a secret-free review:generated job writing review-generated.json and review:gate needing it.
@@ -286,7 +294,10 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "done_when": "pytest -q tests/integration/test_generated_artefacts_replay_yoob_322.py passes",
       "unit_tests": [
         "tests/unit/test_generated_artefacts_config.py::test_unknown_key_in_an_entry_is_refused",
-        "tests/unit/test_generated_artefacts_config.py::test_entries_are_capped"
+        "tests/unit/test_generated_artefacts_config.py::test_entries_are_capped",
+        "tests/unit/test_generated_artefacts_config.py::test_unterminated_bracket_is_a_literal",
+        "tests/unit/test_generated_artefacts_config.py::test_negated_class_matches_the_complement",
+        "tests/unit/test_generated_artefacts_config.py::test_error_names_the_line_of_the_key_in_the_second_block"
       ]
     },
     {
@@ -318,6 +329,23 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
     },
     {
       "index": 13,
+      "title": "Share the row types and their causes",
+      "files": [
+        "src/repoach/review/generated_types.py"
+      ],
+      "action": "generated_types.py holds GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.",
+      "commit_message": "refactor(review): move generated rows and causes to generated_types",
+      "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause passes",
+      "unit_tests": [
+        "tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause",
+        "tests/unit/test_generated_artefacts_gate.py::test_a_symlinked_artefact_is_never_read_and_never_green",
+        "tests/unit/test_generated_artefacts_gate.py::test_review_generated_requires_the_base",
+        "tests/unit/test_generated_artefacts_gate.py::test_subprocess_runner_refuses_a_shell",
+        "tests/unit/test_generated_artefacts_gate.py::test_a_timed_out_check_has_its_session_killed"
+      ]
+    },
+    {
+      "index": 14,
       "title": "Document the declaration and the Yoob job",
       "files": [
         "docs/generated_artefacts.md"
