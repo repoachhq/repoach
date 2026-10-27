@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..arch import path_contains
 from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from .governed_spec import governed_specs_at_ref, ref_resolves
 from .spec_gate import (
     DOCS_ROOT,
@@ -30,10 +31,29 @@ from .spec_gate import (
     init_spec_coverage_schema,
     latest_batch,
     record_spec_coverages,
-    redact_error,
 )
 
 _log = get_logger(__name__)
+
+__all__ = [
+    "OWNERSHIP_UNRESOLVED",
+    "RESOLUTION_DECLARED",
+    "RESOLUTION_NONE",
+    "RESOLUTION_OWNERSHIP",
+    "CoverageGrading",
+    "SpecsByOwnership",
+    "StaleCoverageRecomputeError",
+    "coverage_rows_at_head",
+    "failed_grading_row",
+    "ownership_at_base",
+    "ownership_unavailable_reason",
+    "readable_base",
+    "redact_error",
+    "refresh_stale_coverage",
+    "resolution_payload",
+    "resolution_report",
+    "specs_owning",
+]
 
 OWNERSHIP_UNRESOLVED = "ownership-unresolved"
 """Spec id and resolution of the row of an undeclared PR whose base could not be read."""

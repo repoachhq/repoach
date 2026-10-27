@@ -81,8 +81,8 @@ from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
-from ..review.spec_gate import RESOLUTION_OWNERSHIP
 from ..review.spec_grading import (
+    RESOLUTION_OWNERSHIP,
     redact_error,
     resolution_report,
 )
