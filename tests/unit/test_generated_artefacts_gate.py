@@ -301,7 +301,7 @@ def test_check_never_runs_in_review_job(
     assert "REPOACH_ANTHROPIC_AUTH_TOKEN" in notice
     assert "REPOACH_GITLAB_TOKEN" in notice
     ((executable, argv, env),) = verifier.reexecs
-    assert argv[:5] == [executable, "-m", "repoach", "review", "generated"]
+    assert argv[:6] == [executable, "-P", "-m", "repoach", "review", "generated"]
     assert "REPOACH_GITLAB_TOKEN" not in env
     assert "REPOACH_ANTHROPIC_AUTH_TOKEN" not in env
 

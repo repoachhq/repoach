@@ -577,7 +577,8 @@ def review_generated(
     the check is pull-request code. A process that still holds a
     secret-bearing variable names it on stderr and replaces itself (exec)
     with a copy started from the scrubbed environment, so no check can
-    read the variable from it. Exits 0 once the evidence is written,
+    read the variable from it; the copy runs ``python -P``, so the working
+    directory (the pull request's checkout) is never on its import path. Exits 0 once the evidence is written,
     whatever the checks said (the review decides); 2 when the head or the
     base does not resolve or the base declarations are invalid.
     """
@@ -591,7 +592,7 @@ def review_generated(
         )
         argv = ["review", "generated", "--pr", str(pr_number), "--head", head, "--out", out]
         argv += ["--base", base] if base else []
-        REEXEC(sys.executable, [sys.executable, "-m", "repoach", *argv], scrubbed_env())
+        REEXEC(sys.executable, [sys.executable, "-P", "-m", "repoach", *argv], scrubbed_env())
         return
     base_ref = base or f"origin/{load_project_config(root).repoach.integration_branch}"
     state_dir = Path(get_settings().db_path).parent
