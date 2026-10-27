@@ -980,7 +980,10 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
         FileNotFoundError: *ref* resolves but carries no
             ``docs/plans/<SPEC-ID>.md`` — a genuinely new spec/plan
             introduced only on the PR head.
-        ValueError: The file exists at *ref* but fails to parse (see
+        NotAnActionPlanError: The file exists at *ref* without the
+            action-plan marker (a :class:`FileNotFoundError`: a prose
+            plan is no plan).
+        ValueError: The file carries the marker at *ref* but fails to parse (see
             :func:`repoach.review.plan.parse_plan_markdown`).
     """
     base = (root or Path.cwd()).resolve()
