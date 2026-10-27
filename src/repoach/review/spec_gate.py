@@ -134,6 +134,13 @@ RESOLUTION_DECLARED = "declared"
 RESOLUTION_OWNERSHIP = "ownership"
 """``SpecCoverage.resolution`` of a spec owning code of an undeclared PR (G7)."""
 
+RESOLUTION_NONE = "none"
+"""``spec_resolution.source`` of a PR that declares no spec and whose code no spec owns.
+
+``spec_resolution.source`` takes :data:`RESOLUTION_DECLARED`,
+:data:`RESOLUTION_OWNERSHIP` or this value (G7).
+"""
+
 
 class SpecCoverage(BaseModel):
     """Presence report for a spec's acceptance contract at head.
