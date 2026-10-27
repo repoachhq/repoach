@@ -31,7 +31,7 @@ from sqlalchemy.engine import Engine
 from ..core.sqlite_schema_init import ensure_schema_created
 from .findings import ClaimType, Finding
 from .findings_bridge import OVERSIZED_FINDER
-from .generated_artefacts import (
+from .generated_types import (
     GENERATED_FINDER,
     GeneratedCheck,
     GeneratedState,
