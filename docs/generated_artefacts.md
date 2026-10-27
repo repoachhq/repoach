@@ -50,11 +50,14 @@ When the diff touches a declared artefact:
    whose environment holds neither, with `shell=False` and every
    secret-bearing variable removed, in a throwaway clone of the head with
    its own git directory (never the checkout, whose `.git` a later job
-   would trust), in its own session, killed whole when the check exits;
+   would trust), in its own session, killed whole when the check exits,
+   with any descendant that detached itself adopted and killed too;
    when the check script itself changed, it runs twice, with the base
    script and with the head script, and both must pass. A check script
-   reached through a symlink is refused. The command names, on stderr,
-   any secret-bearing variable it holds itself.
+   reached through a symlink is refused. When the command itself holds a
+   secret-bearing variable (`CI_JOB_TOKEN` included), it names it on
+   stderr and re-runs itself from the scrubbed environment, so no check
+   can read it from the parent process.
 3. The review recomputes everything it can derive (the argv from the base
    declaration, the changed sources from the diff, the state from the exit
    code), so the evidence is trusted for the check's exit code and output
