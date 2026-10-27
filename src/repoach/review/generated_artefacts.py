@@ -29,6 +29,7 @@ job's entry point is :mod:`repoach.review.generated_verify`.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
@@ -285,6 +286,8 @@ def subprocess_runner(
     """
     if shell:
         raise ValueError("a generated-artefact check never runs through a shell")
+    adopting = _adopt_orphans()
+    before = _children()
     with tempfile.TemporaryFile() as output:
         proc = subprocess.Popen(
             list(argv),
@@ -300,6 +303,8 @@ def subprocess_runner(
             proc.wait(timeout=timeout_s)
         finally:
             _kill_group(proc)
+            if adopting:
+                _kill_orphans(before)
         output.seek(0)
         text = output.read().decode("utf-8", errors="replace")
     return RunResult(proc.returncode, text)
@@ -317,6 +322,74 @@ def _kill_group(proc: subprocess.Popen[bytes]) -> None:
     except ProcessLookupError:
         _log.debug("generated.check_group_gone", pid=proc.pid)
     proc.wait()
+
+
+_PR_SET_CHILD_SUBREAPER = 36
+"""``prctl`` option making this process adopt its orphaned descendants (Linux)."""
+
+_ORPHAN_SWEEPS = 50
+_ORPHAN_SWEEP_PAUSE_S = 0.02
+
+
+def _adopt_orphans() -> bool:
+    """Make this process the subreaper of its descendants; False where the kernel cannot.
+
+    A process the check detaches from its session (``setsid``, a double
+    fork) escapes :func:`_kill_group`; as a subreaper, this process
+    adopts it when its parent dies, and :func:`_kill_orphans` kills it.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        return bool(libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0)
+    except (OSError, AttributeError) as exc:
+        _log.warning("generated.subreaper_unavailable", exc=type(exc).__name__)
+        return False
+
+
+def _children() -> set[int]:
+    """Return the pids whose parent is this process (read from ``/proc``)."""
+    me = str(os.getpid())
+    return {
+        int(entry.name)
+        for entry in Path("/proc").iterdir()
+        if entry.name.isdigit() and _parent_of(entry) == me
+    }
+
+
+def _parent_of(proc_dir: Path) -> str:
+    """Return the parent pid ``/proc/<pid>/stat`` names, empty when the process is gone."""
+    try:
+        stat = (proc_dir / "stat").read_text()
+    except OSError as exc:
+        _log.debug("generated.proc_gone", pid=proc_dir.name, exc=type(exc).__name__)
+        return ""
+    fields = stat.rsplit(")", 1)[-1].split()
+    return fields[1] if len(fields) > 1 else ""
+
+
+def _kill_orphans(before: set[int]) -> None:
+    """Kill and reap every child adopted since ``before``, until none is left.
+
+    Sweeps a few times: a grandchild reaches this process only once its
+    own parent has died.
+    """
+    quiet = 0
+    for _ in range(_ORPHAN_SWEEPS):
+        adopted = _children() - before
+        if not adopted:
+            quiet += 1
+            if quiet >= 3:
+                return
+            time.sleep(_ORPHAN_SWEEP_PAUSE_S)
+            continue
+        quiet = 0
+        for pid in adopted:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except (ProcessLookupError, ChildProcessError):
+                _log.debug("generated.orphan_gone", pid=pid)
+    _log.warning("generated.orphans_left", left=sorted(_children() - before))
 
 
 def _entries(config: ProjectConfig) -> tuple[GeneratedEntry, ...]:

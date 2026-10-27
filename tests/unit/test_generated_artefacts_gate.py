@@ -790,3 +790,31 @@ def test_head_tree_is_a_clone_with_its_own_git_dir(tmp_path: Path) -> None:
     assert not tree.exists()
     assert not (repo.checkout / ".git" / "hooks" / "post-checkout").exists()
     assert git(repo.checkout, "worktree", "list").count("\n") == 0
+
+
+def test_a_detached_descendant_of_the_check_is_killed(tmp_path: Path) -> None:
+    """A grandchild that leaves the check's session (setsid, double fork) is killed too."""
+    marker = tmp_path / "late-write"
+    grandchild = tmp_path / "grandchild.py"
+    grandchild.write_text(
+        f"import pathlib, time\ntime.sleep(1)\npathlib.Path({str(marker)!r}).write_text('x')\n",
+        encoding="utf-8",
+    )
+    middle = tmp_path / "middle.py"
+    middle.write_text(
+        f"import subprocess, sys\nsubprocess.Popen([sys.executable, {str(grandchild)!r}], start_new_session=True)\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "check.py"
+    script.write_text(
+        f"import subprocess, sys\nsubprocess.run([sys.executable, {str(middle)!r}])\nprint('done')\n",
+        encoding="utf-8",
+    )
+
+    result = generated_artefacts.subprocess_runner(
+        ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
+    )
+
+    assert (result.exit_code, result.output.strip()) == (0, "done")
+    subprocess.run(["sleep", "2"], check=True)
+    assert not marker.exists()
