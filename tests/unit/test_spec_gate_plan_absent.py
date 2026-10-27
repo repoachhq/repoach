@@ -522,3 +522,23 @@ def test_a_published_grading_error_carries_no_credential() -> None:
     )
     assert token not in stale.reason
     assert "https://***@h/r" in stale.reason
+
+
+def test_a_marked_plan_new_at_head_replaces_a_prose_plan_at_base(tmp_path: Path) -> None:
+    plan_path = f"docs/plans/{_ID}.md"
+    spec = _spec("approved", _criteria(_ABSENT))
+    repo, _ = _repo(
+        tmp_path,
+        base={_SPEC_PATH: spec, plan_path: "# Plan\n\nProse steps, no marker.\n"},
+        head={plan_path: _plan(_PLAN_SELECTOR), "tests/p.py": _tests_file("test_p")},
+    )
+
+    coverage, resolution = coverage_at_head(
+        repo, spec_id=_ID, base_ref="develop", changed_files=[plan_path, "tests/p.py"]
+    )
+
+    assert resolution.fell_back_to_head is True
+    assert resolution.prose_plan == ""
+    assert coverage.contract == "plan"
+    assert coverage.covered is True
+    assert coverage.missing == []
