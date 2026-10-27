@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/generated_artefacts.py, tests/unit/test_generated_artefacts_config.py, tests/unit/test_generated_artefacts_gate.py, tests/integration/test_generated_artefacts_replay_yoob_322.py, tests/fixtures/generated_artefacts]
   resources: [db:table:generated_checks, format:review-generated-json]
 
-depends_on: [SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-DIFF-SCOPER-OVERSIZE-BLOCK, SP-UNIVERSAL-PROJECT-CONFIG, SP-CI-SECRETS-ISOLATION, SP-GATE-REVERIFIES-AT-HEAD, SP-CI-LEDGER-PERSISTS, SP-REVIEW-PINS-HEAD]
+depends_on: [SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-DIFF-SCOPER-OVERSIZE-BLOCK, SP-UNIVERSAL-PROJECT-CONFIG, SP-CI-SECRETS-ISOLATION, SP-GATE-REVERIFIES-AT-HEAD, SP-CI-LEDGER-PERSISTS, SP-REVIEW-PINS-HEAD, SP-FINDINGS-INIT-RACE, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEVAGENT-LOOP, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:

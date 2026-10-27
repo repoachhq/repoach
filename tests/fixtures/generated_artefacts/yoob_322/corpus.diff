@@ -1,0 +1,22 @@
+diff --git a/api/data/knowledge_corpus.json b/api/data/knowledge_corpus.json
+index 50e776ce..517673d1 100644
+--- a/api/data/knowledge_corpus.json
++++ b/api/data/knowledge_corpus.json
+@@ -25,7 +25,7 @@
+     "id": "ACCES_WEB_DISTANT_STAGIAIRE_3",
+     "title": "Guide d'Accès Web Distant : Yoob Studio",
+     "section": "2. Connexion à la Plateforme",
+-    "content": "1. L'URL permanente officielle d'accès à la plateforme est :\n   - **URL fixe** : `https://studio.yoob.dev`\n2. Ouvrez l'URL dans un navigateur moderne (Google Chrome, Mozilla Firefox, Safari ou Microsoft Edge).\n3. L'application charge l'IHM complète de Yoob Studio.\n\n---",
++    "content": "1. L'URL permanente officielle d'accès à la plateforme est :\n   - **URL fixe** : `https://yoob.dev` (l'ancienne adresse `https://studio.yoob.dev` redirige vers elle, chemin compris)\n2. Ouvrez l'URL dans un navigateur moderne (Google Chrome, Mozilla Firefox, Safari ou Microsoft Edge).\n3. L'application charge l'IHM complète de Yoob Studio.\n\n---",
+     "source": "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md",
+     "tags": [
+       "ACCES_WEB_DISTANT_STAGIAIRE",
+@@ -36,7 +36,7 @@
+     "id": "ACCES_WEB_DISTANT_STAGIAIRE_4",
+     "title": "Guide d'Accès Web Distant : Yoob Studio",
+     "section": "3. Vérification de l'État des Services",
+-    "content": "Dès l'ouverture, vous pouvez vérifier le bon fonctionnement des services :\n- **Indicateur de statut** : Un badge vert dans la barre supérieure ou latérale confirme la connexion avec le backend FastAPI.\n- **Point de contrôle de santé** : En accédant à `https://studio.yoob.dev/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :\n  ```json\n  {\n    \"status\": \"healthy\",\n    \"version\": \"0.5.0\",\n    \"services\": {\n      \"postgresql\": { \"status\": \"connected\" },\n      \"redis\": { \"status\": \"connected\" },\n      \"yoob_core\": { \"status\": \"available\" },\n      \"soc_toolchain\": { \"status\": \"available\" },\n      \"celery_worker\": { \"status\": \"connected\" }\n    }\n  }\n  ```\n- **Documentation interactive Swagger** : Accessible à l'adresse `https://studio.yoob.dev/docs` pour tester les points d'API REST.\n\n---",
++    "content": "Dès l'ouverture, vous pouvez vérifier le bon fonctionnement des services :\n- **Indicateur de statut** : Un badge vert dans la barre supérieure ou latérale confirme la connexion avec le backend FastAPI.\n- **Point de contrôle de santé** : En accédant à `https://yoob.dev/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :\n  ```json\n  {\n    \"status\": \"healthy\",\n    \"version\": \"0.5.0\",\n    \"services\": {\n      \"postgresql\": { \"status\": \"connected\" },\n      \"redis\": { \"status\": \"connected\" },\n      \"yoob_core\": { \"status\": \"available\" },\n      \"soc_toolchain\": { \"status\": \"available\" },\n      \"celery_worker\": { \"status\": \"connected\" }\n    }\n  }\n  ```\n- **Documentation interactive Swagger** : Accessible à l'adresse `https://yoob.dev/docs` pour tester les points d'API REST.\n\n---",
+     "source": "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md",
+     "tags": [
+       "ACCES_WEB_DISTANT_STAGIAIRE",

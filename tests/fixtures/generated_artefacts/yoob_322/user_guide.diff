@@ -1,0 +1,31 @@
+diff --git a/docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md b/docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md
+index 1e84991f0..eb2f17a98 100644
+--- a/docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md
++++ b/docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md
+@@ -28,7 +28,7 @@ Avantages pour le stagiaire :
+ ## 2. Connexion à la Plateforme
+ 
+ 1. L'URL permanente officielle d'accès à la plateforme est :
+-   - **URL fixe** : `https://studio.yoob.dev`
++   - **URL fixe** : `https://yoob.dev` (l'ancienne adresse `https://studio.yoob.dev` redirige vers elle, chemin compris)
+ 2. Ouvrez l'URL dans un navigateur moderne (Google Chrome, Mozilla Firefox, Safari ou Microsoft Edge).
+ 3. L'application charge l'IHM complète de Yoob Studio.
+ 
+@@ -38,7 +38,7 @@ Avantages pour le stagiaire :
+ 
+ Dès l'ouverture, vous pouvez vérifier le bon fonctionnement des services :
+ - **Indicateur de statut** : Un badge vert dans la barre supérieure ou latérale confirme la connexion avec le backend FastAPI.
+-- **Point de contrôle de santé** : En accédant à `https://studio.yoob.dev/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :
++- **Point de contrôle de santé** : En accédant à `https://yoob.dev/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :
+   ```json
+   {
+     "status": "healthy",
+@@ -52,7 +52,7 @@ Dès l'ouverture, vous pouvez vérifier le bon fonctionnement des services :
+     }
+   }
+   ```
+-- **Documentation interactive Swagger** : Accessible à l'adresse `https://studio.yoob.dev/docs` pour tester les points d'API REST.
++- **Documentation interactive Swagger** : Accessible à l'adresse `https://yoob.dev/docs` pour tester les points d'API REST.
+ 
+ ---
+ 

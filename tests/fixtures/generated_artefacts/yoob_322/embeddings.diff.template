@@ -1,0 +1,28 @@
+diff --git a/api/data/knowledge_embeddings.json b/api/data/knowledge_embeddings.json
+index ba17c306..c44186d0 100644
+--- a/api/data/knowledge_embeddings.json
++++ b/api/data/knowledge_embeddings.json
+@@ -1,14 +1,14 @@
+ {
+  "key": {
+   "format_version": 1,
+-  "corpus_sha256": "57a9f52bd9670ca88c2f50668767b60b02f7dc8ee7850be7b608a101d6caf583",
++  "corpus_sha256": "aab6fdad9712a5fa0cbf33d5bb69fb8488ccbc679617997a892d897b0f546b57",
+   "chunk_count": 380,
+   "embedding_model": "nomic-embed-text",
+   "embedding_dim": 768,
+   "model_digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+   "ollama_version": "0.21.1",
+   "produced_on": "jofaye",
+-  "produced_at": "2026-10-25T15:05:58Z",
++  "produced_at": "2026-10-25T22:32:40Z",
+   "document_prefix": "search_document: ",
+   "query_prefix": "search_query: "
+  },
+@@ -395,5 +395,5 @@
+   "yoob_tutorial_52"
+  ],
+  "dtype": "float32-le",
+- "vectors": "<<VECTORS>>"
++ "vectors": "<<VECTORS>>"
+ }
