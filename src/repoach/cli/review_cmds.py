@@ -26,6 +26,7 @@ the origin remote. A forge that cannot be selected exits ``2``.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -83,6 +84,7 @@ from ..review.refuter import Refutation
 from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
+from ..review.secret_env import scrubbed_env
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
     RESOLUTION_OWNERSHIP,
@@ -523,6 +525,27 @@ def _evidence_path(value: object) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
 
+CI_RUNTIME_PREFIXES: tuple[str, ...] = ("CI_", "ACTIONS_")
+"""Secret-looking variables every CI job carries (``CI_JOB_TOKEN``): job-scoped, not named."""
+
+
+def held_secrets() -> list[str]:
+    """Return the secret-bearing variables of this process a check could read from it.
+
+    :func:`scrubbed_env` keeps them out of the check's environment; a
+    same-user process can still read this process's own environment, so
+    ``review generated`` names them. The CI runtime's job-scoped
+    variables (:data:`CI_RUNTIME_PREFIXES`) are not named.
+
+    Returns:
+        The variable names, sorted.
+    """
+    kept = scrubbed_env()
+    return sorted(
+        name for name in os.environ if name not in kept and not name.startswith(CI_RUNTIME_PREFIXES)
+    )
+
+
 GENERATED_RUNNER: Runner = subprocess_runner
 """The runner ``review generated`` hands :func:`verify_generated`: the one seam a Typer command has."""
 
@@ -557,6 +580,14 @@ def review_generated(
     base does not resolve or the base declarations are invalid.
     """
     root = project_root_or_exit()
+    held = held_secrets()
+    if held:
+        typer.echo(
+            "repoach: warning: review generated runs pull-request code while holding "
+            f"{', '.join(held)}; the check cannot see them in its environment, but a process "
+            "of the same user can read this one's; run it in a job without them",
+            err=True,
+        )
     base_ref = base or f"origin/{load_project_config(root).repoach.integration_branch}"
     state_dir = Path(get_settings().db_path).parent
     try:

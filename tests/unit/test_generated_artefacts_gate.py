@@ -296,7 +296,10 @@ def test_check_never_runs_in_review_job(
     monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "sk-secret")
     repo = Repo(tmp_path, _base(_toml(_entry())))
     head = repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V2, "B")})
-    evidence, _, _, verifier = _evidence(repo, monkeypatch, capsys, head)
+    evidence, _, err, verifier = _evidence(repo, monkeypatch, capsys, head)
+    (warning,) = [line for line in err if line.startswith("repoach: warning: review generated")]
+    assert "REPOACH_ANTHROPIC_AUTH_TOKEN" in warning
+    assert "REPOACH_GITLAB_TOKEN" in warning
 
     assert len(verifier.calls) == 1
     call = verifier.calls[0]
