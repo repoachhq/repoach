@@ -873,3 +873,44 @@ def test_review_generated_requires_the_base() -> None:
 
     assert result.exit_code == 2
     assert "--base" in result.output
+
+
+def test_a_symlinked_artefact_is_never_read_and_never_green(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The review job, which holds secrets, reads no host file a symlinked artefact points at."""
+    host = tmp_path / "host-token"
+    host.write_text("s3cr3t-token-value\n", encoding="utf-8")
+    repo = Repo(tmp_path / "repo", _base(_toml(_entry())))
+    seed_artefact = repo.seed / ARTEFACT
+    repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: None})
+    seed_artefact.parent.mkdir(parents=True, exist_ok=True)
+    git(repo.seed, "checkout", "-q", "pr-7")
+    seed_artefact.symlink_to(host)
+    git(repo.seed, "add", "-A")
+    git(repo.seed, "commit", "-q", "-m", "link")
+    git(repo.seed, "push", "-q", "-f", "origin", "HEAD:refs/pull/7/head")
+    head = git(repo.seed, "rev-parse", "HEAD")
+    repo.diffs[7] = git(repo.seed, "diff", "main...HEAD") + "\n"
+    git(repo.seed, "checkout", "-q", "main")
+    evidence, payload, _, runner = _evidence(repo, monkeypatch, capsys, head)
+
+    result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    assert runner.calls == []
+    assert (
+        payload["checks"][0]["output_tail"] == f"artefact {ARTEFACT} is a symlink; it is not read"
+    )
+    secret_size = str(len(host.read_bytes()))
+    for diff in bench.prompts.diffs:
+        assert f"{ARTEFACT}: " in diff
+        assert "a symlink, not read" in diff
+        assert f"-> {secret_size} bytes" not in diff
+    findings = _generated_findings(bench.db_path)
+    assert [f.verification_result for f in findings] == [
+        f"check failed: artefact {ARTEFACT} is a symlink; it is not read"
+    ]
+    assert result.payload["final_verdict"] == "REQUEST_CHANGES"

@@ -378,6 +378,7 @@ def summary_paragraph(
     before: bytes | None,
     after: bytes | None,
     diff_files: Sequence[str],
+    symlink: bool = False,
 ) -> str:
     """Build the one paragraph every reviewer lens sees instead of the artefact's diff (G2).
 
@@ -389,6 +390,7 @@ def summary_paragraph(
         before: Its content at the base, ``None`` when it is new.
         after: Its content at the head, ``None`` when the diff deletes it.
         diff_files: The paths the diff changes.
+        symlink: The head commits the artefact as a symlink, which is not read.
 
     Returns:
         ``generated artefact <path>: <before> -> <after> bytes, sha256
@@ -397,6 +399,8 @@ def summary_paragraph(
     """
     size_before = f"{len(before)}" if before is not None else "absent"
     size_after = f"{len(after)}" if after is not None else "deleted"
+    if symlink:
+        size_after = "a symlink, not read"
     sha_before = _sha256(before)[:7] or "none"
     sha_after = _sha256(after)[:7] or "none"
     sources, producers = changed_inputs(entry, path, diff_files)
@@ -417,6 +421,7 @@ def summarise(
     *,
     base_blob: Callable[[str], bytes | None],
     head_blob: Callable[[str], bytes | None],
+    symlinks: frozenset[str] = frozenset(),
 ) -> str:
     """Return ``diff`` with each touched artefact's unit replaced by its summary paragraph.
 
@@ -428,6 +433,7 @@ def summarise(
         touched: The declared artefacts the diff changes.
         base_blob: Reads a path at the base.
         head_blob: Reads a path at the head.
+        symlinks: The touched artefacts the head commits as symlinks.
 
     Returns:
         The diff the reviewers see; ``diff`` itself when nothing is touched.
@@ -448,8 +454,9 @@ def summarise(
             unit.path,
             entry,
             before=base_blob(unit.path),
-            after=head_blob(unit.path),
+            after=None if unit.path in symlinks else head_blob(unit.path),
             diff_files=paths,
+            symlink=unit.path in symlinks,
         )
         rebuilt.append(f"diff --git a/{unit.path} b/{unit.path}\n{paragraph}\n")
     return "".join(rebuilt)
@@ -493,13 +500,14 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
 
     def head_blob(path: str) -> bytes | None:
         target = head_dir / path
-        return target.read_bytes() if target.is_file() else None
+        return target.read_bytes() if _inside(head_dir, path) else None
 
     summarised = summarise(
         diff,
         touched,
         base_blob=lambda path: blob_at(head_dir, before, path),
         head_blob=head_blob,
+        symlinks=frozenset(path for path in touched if symlinked(head_dir, path)),
     )
     return ReviewScope(review_diff=summarised, touched=touched, changed=changed)
 
@@ -526,6 +534,24 @@ def _tail(output: str) -> str:
     return "\n".join(lines[-GENERATED_OUTPUT_TAIL_LINES:])
 
 
+def symlinked(head_dir: Path, path: str) -> bool:
+    """Whether ``path``, or a directory on its way, is a symlink in the head tree.
+
+    Args:
+        head_dir: The head tree.
+        path: A repository-relative path (no ``..``).
+
+    Returns:
+        True when reading or writing ``path`` would follow a symlink.
+    """
+    current = head_dir
+    for part in Path(path).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def _inside(head_dir: Path, script: str) -> bool:
     """Whether ``script`` is a regular file of the head tree, reached without a symlink.
 
@@ -533,12 +559,30 @@ def _inside(head_dir: Path, script: str) -> bool:
     or a directory symlink on the way, would make that write land outside
     the tree.
     """
-    current = head_dir
-    for part in Path(script).parts:
-        current = current / part
-        if current.is_symlink():
-            return False
-    return current.is_file()
+    return not symlinked(head_dir, script) and (head_dir / script).is_file()
+
+
+def _symlink_row(
+    entry: GeneratedEntry, path: str, *, head_sha: str, changed_files: Sequence[str]
+) -> GeneratedCheck:
+    """The stale run of an artefact the head commits as a symlink: never read, never green.
+
+    The review job holds the secrets, so it reads no file a pull request
+    can point at the host (a token file, a device) through a link.
+    """
+    sources, producers = changed_inputs(entry, path, changed_files)
+    return GeneratedCheck(
+        path=path,
+        argv=entry.check,
+        head_sha=head_sha,
+        artefact_sha256="",
+        sources_changed=sources,
+        state=GeneratedState.STALE,
+        exit_code=None,
+        duration_ms=0,
+        output_tail=f"artefact {path} is a symlink; it is not read",
+        producer_inputs_changed=producers,
+    )
 
 
 class ScriptTamperedError(RuntimeError):
@@ -691,6 +735,9 @@ def run_checks(
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
         artefact = head_dir / path
+        if symlinked(head_dir, path):
+            checks.append(_symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
+            continue
         if not artefact.is_file():
             continue
         artefact_sha = _sha256(artefact.read_bytes())
@@ -781,6 +828,9 @@ def not_run_checks(
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
         artefact = head_dir / path
+        if symlinked(head_dir, path):
+            checks.append(_symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
+            continue
         if not artefact.is_file():
             continue
         sources, producers = changed_inputs(entry, path, changed_files)
@@ -1004,6 +1054,11 @@ def checks_from_evidence(
     checks: list[GeneratedCheck] = []
     for path in touched:
         artefact = head_dir / path
+        if symlinked(head_dir, path):
+            checks.append(
+                _symlink_row(touched[path], path, head_sha=head_sha, changed_files=changed_files)
+            )
+            continue
         if not artefact.is_file():
             continue
         runs = recorded.get(path)
@@ -1223,5 +1278,6 @@ __all__ = [
     "review_scope",
     "run_checks",
     "summarise",
+    "symlinked",
     "touched_artefacts",
 ]
