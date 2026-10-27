@@ -1069,7 +1069,8 @@ class ContractResolution:
             PR head — so the head plan is graded instead (logged by
             the caller as a fallback, SP-SPEC-CONTRACT-BASE Edge cases).
         ref: The ref the base contract was read from (or tried).
-        error: Why the base plan, present at *ref*, does not parse; the
+        error: Why the base plan, present at *ref*, does not parse (redacted
+            at creation, :func:`~repoach.core.redaction.redact_error`); the
             caller refuses on it (G4, fail closed). Empty otherwise.
         prose_plan: The plan path when the file at *ref*, or at head for
             a plan new on the PR, carries no action-plan marker: no plan,
@@ -1133,7 +1134,7 @@ def resolve_contract_plan(
             "spec_gate.base_ref_unavailable",
             spec_id=spec_id,
             base_ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
         return ContractResolution(
             plan=None, base_available=False, fell_back_to_head=False, ref=base_ref
@@ -1143,7 +1144,7 @@ def resolve_contract_plan(
             "spec_gate.base_plan_absent_fallback_to_head",
             spec_id=spec_id,
             base_ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
         prose = exc.relpath if isinstance(exc, NotAnActionPlanError) else ""
         try:
@@ -1152,7 +1153,7 @@ def resolve_contract_plan(
             _log.info(
                 "spec_gate.head_plan_also_unavailable",
                 spec_id=spec_id,
-                error=str(head_exc)[:200],
+                error=redact_error(str(head_exc))[:200],
             )
             return ContractResolution(
                 plan=None,
@@ -1169,14 +1170,14 @@ def resolve_contract_plan(
             "spec_gate.base_plan_unparseable",
             spec_id=spec_id,
             base_ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
         return ContractResolution(
             plan=None,
             base_available=True,
             fell_back_to_head=False,
             ref=base_ref,
-            error=str(exc)[:200],
+            error=redact_error(str(exc))[:200],
         )
 
 
@@ -1477,7 +1478,7 @@ def _grade(
         return _not_graded(
             spec_id,
             "plan",
-            f"spec plan unparseable at {resolution.ref}: {redact_error(resolution.error)}",
+            f"spec plan unparseable at {resolution.ref}: {resolution.error}",
         )
     if not resolution.base_available:
         return _not_graded(

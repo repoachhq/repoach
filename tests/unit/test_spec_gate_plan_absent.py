@@ -656,7 +656,7 @@ def test_an_unparseable_plan_error_is_published_without_its_credential(tmp_path:
         repo, spec_id=_ID, base_ref="develop", changed_files=[_CODE]
     )
 
-    assert token in resolution.error
+    assert token not in resolution.error
     (refusal,) = coverage.draft_refusals
     assert refusal.startswith("spec plan unparseable at develop: ")
     assert token not in refusal
