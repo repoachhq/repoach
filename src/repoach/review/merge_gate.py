@@ -37,6 +37,7 @@ from .findings import (
 )
 from .reviewer import ReviewVerdict
 from .spec_gate import (
+    RESOLUTION_OWNERSHIP,
     SpecCoverage,
     coverage_refusals,
     fetch_spec_coverage,
@@ -265,7 +266,7 @@ def _coverage_reasons(facts: MergeFacts) -> list[str]:
     ]
     reasons: list[str] = []
     for row in rows:
-        prefix = f"{row.spec_id}: " if row.resolution == "ownership" else ""
+        prefix = f"{row.spec_id}: " if row.resolution == RESOLUTION_OWNERSHIP else ""
         reasons.extend(f"{prefix}{line}" for line in coverage_refusals(row))
     return reasons
 

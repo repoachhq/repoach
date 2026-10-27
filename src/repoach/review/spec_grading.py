@@ -22,6 +22,8 @@ from ..forge.recording import SECRET_VALUE_PATTERNS
 from .governed_spec import governed_specs_at_ref, ref_resolves
 from .spec_gate import (
     DOCS_ROOT,
+    RESOLUTION_DECLARED,
+    RESOLUTION_OWNERSHIP,
     SPEC_COVERAGE_RULE_VERSION,
     SpecCoverage,
     coverage_at_head,
@@ -240,7 +242,9 @@ def coverage_rows_at_head(
             changed_files=changed_files,
             fetch_base=fetch_base,
         )
-        return CoverageGrading(rows=[coverage.model_copy(update={"resolution": "declared"})])
+        return CoverageGrading(
+            rows=[coverage.model_copy(update={"resolution": RESOLUTION_DECLARED})]
+        )
     ownership, ref = ownership_at_base(
         changed_files, root=repo_root, base_ref=base_ref, fetch_base=fetch_base
     )
@@ -259,7 +263,7 @@ def coverage_rows_at_head(
     rows = [
         coverage_at_head(repo_root, spec_id=owner, base_ref=ref, changed_files=changed_files)[
             0
-        ].model_copy(update={"resolution": "ownership"})
+        ].model_copy(update={"resolution": RESOLUTION_OWNERSHIP})
         for owner in ownership.specs
     ]
     return CoverageGrading(rows=rows, ownership=ownership, lines=ownership.lines())
@@ -310,7 +314,7 @@ def failed_grading_row(spec_id: str | None, error: Exception) -> SpecCoverage:
             f"{redact_error(str(error))[:200]} (fail closed)"
         ],
         contract="unavailable",
-        resolution="declared" if spec_id else OWNERSHIP_UNRESOLVED,
+        resolution=RESOLUTION_DECLARED if spec_id else OWNERSHIP_UNRESOLVED,
     )
 
 
@@ -377,7 +381,7 @@ def refresh_stale_coverage(
     if not stale:
         return None
     oldest = min(row.rule_version for row in stale)
-    by_ownership = batch[0].resolution in {"ownership", OWNERSHIP_UNRESOLVED}
+    by_ownership = batch[0].resolution in {RESOLUTION_OWNERSHIP, OWNERSHIP_UNRESOLVED}
     try:
         grading = coverage_rows_at_head(
             repo_root,
