@@ -53,7 +53,10 @@ When the diff touches a declared artefact:
    would trust), in its own session, killed whole when the check exits,
    with any descendant that detached itself adopted and killed too;
    when the check script itself changed, it runs twice, with the base
-   script and with the head script, and both must pass. A check script
+   script and with the head script, and both must pass. Only `check[0]`
+   is swapped: a module the base script imports is read from the head
+   tree, so a helper the pull request changes is code in the diff, read by
+   the reviewers like any other (D3 runs both against the head tree). A check script
    reached through a symlink is refused. When the command itself holds a
    secret-bearing variable (`CI_JOB_TOKEN` included), it names it on
    stderr and re-runs itself from the scrubbed environment, so the check
