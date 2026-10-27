@@ -9,7 +9,6 @@ at call time) and build the ``format:review-generated-json`` evidence.
 
 from __future__ import annotations
 
-import subprocess
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -26,13 +25,9 @@ from .generated_artefacts import (
     evidence_payload,
     merge_base,
     run_checks,
+    run_git,
     touched_artefacts,
 )
-
-
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
-    """Run one git command in ``root`` and capture its bytes."""
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, check=False)
 
 
 @contextmanager
@@ -41,22 +36,22 @@ def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
 
     The worktree is removed on exit.
     """
-    at = _git(root, "rev-parse", "HEAD").stdout.decode().strip()
-    dirty = _git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
+    at = run_git(root, "rev-parse", "HEAD").stdout.decode().strip()
+    dirty = run_git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
     if at == sha and not dirty:
         yield root
         return
     target = state_dir / "generated" / sha[:12]
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
-        _git(root, "worktree", "remove", "--force", str(target))
-    added = _git(root, "worktree", "add", "--detach", "--force", str(target), sha)
+        run_git(root, "worktree", "remove", "--force", str(target))
+    added = run_git(root, "worktree", "add", "--detach", "--force", str(target), sha)
     if added.returncode != 0:
         raise RuntimeError(added.stderr.decode(errors="replace").strip()[:300])
     try:
         yield target
     finally:
-        _git(root, "worktree", "remove", "--force", str(target))
+        run_git(root, "worktree", "remove", "--force", str(target))
 
 
 class GeneratedRefusalError(RuntimeError):
@@ -65,7 +60,7 @@ class GeneratedRefusalError(RuntimeError):
 
 def _resolve(root: Path, ref: str) -> str | None:
     """Return the commit ``ref`` names in ``root``, ``None`` when it does not resolve."""
-    found = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    found = run_git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
     if found.returncode != 0:
         return None
     return found.stdout.decode().strip() or None
@@ -140,7 +135,7 @@ def verify_generated(
 
 def changed_paths(root: Path, base_sha: str, head_sha: str) -> list[str]:
     """Return the paths changed between ``base_sha`` and ``head_sha``."""
-    listed = _git(root, "diff", "--name-only", "--no-renames", base_sha, head_sha)
+    listed = run_git(root, "diff", "--name-only", "--no-renames", base_sha, head_sha)
     return [line for line in listed.stdout.decode().splitlines() if line]
 
 

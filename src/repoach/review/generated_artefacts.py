@@ -381,20 +381,20 @@ def code_extensions(languages: Sequence[str]) -> tuple[str, ...]:
     return tuple(extensions)
 
 
-def _git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
-    """Run one read-only git command in ``root`` and capture its bytes."""
+def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    """Run one git command in ``root`` and capture its bytes (never raises on its exit)."""
     return subprocess.run(["git", *args], cwd=root, capture_output=True, check=False)
 
 
 def blob_at(root: Path, ref: str, path: str) -> bytes | None:
     """Return ``path``'s content at ``ref``, ``None`` when it is absent there."""
-    shown = _git(root, "show", f"{ref}:{path}")
+    shown = run_git(root, "show", f"{ref}:{path}")
     return shown.stdout if shown.returncode == 0 else None
 
 
 def merge_base(root: Path, base_ref: str, head: str) -> str | None:
     """Return the merge base of ``base_ref`` and ``head``, ``None`` when git cannot say."""
-    found = _git(root, "merge-base", base_ref, head)
+    found = run_git(root, "merge-base", base_ref, head)
     if found.returncode != 0:
         return None
     return found.stdout.decode().strip() or None
@@ -1258,6 +1258,7 @@ __all__ = [
     "report_lines",
     "review_scope",
     "run_checks",
+    "run_git",
     "settle_at_head",
     "subprocess_runner",
     "summarise",
