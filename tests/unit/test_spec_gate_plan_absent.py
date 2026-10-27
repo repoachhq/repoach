@@ -31,13 +31,13 @@ from repoach.review.spec_gate import (
     SPEC_COVERAGE_RULE_VERSION,
     SpecCoverage,
     coverage_at_head,
-    coverage_rows_at_head,
     fetch_spec_coverage,
     init_spec_coverage_schema,
     record_spec_coverage,
     record_spec_coverages,
     spec_acceptance_criteria,
 )
+from repoach.review.spec_grading import coverage_rows_at_head
 
 _ID = "SP-PLANLESS"
 _SPEC_PATH = f"docs/specs/2026-10-26_{_ID}_planless.md"
@@ -510,7 +510,7 @@ def test_fixture_prefix_and_fixtures_tree_are_examples_not_selectors() -> None:
 
 
 def test_a_published_grading_error_carries_no_credential() -> None:
-    from repoach.review.spec_gate import StaleCoverageRecomputeError, redact_error
+    from repoach.review.spec_grading import StaleCoverageRecomputeError, redact_error
 
     token = "ghp_" + "a1" * 12
     assert redact_error(f"fatal: https://bot:{token}@github.com/o/r") == (

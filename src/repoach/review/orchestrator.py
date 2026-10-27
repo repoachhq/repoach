@@ -164,7 +164,8 @@ from .spec import SpecPlan, load_spec
 from .thread_context import ResolvedDisagreement
 
 if TYPE_CHECKING:
-    from .spec_gate import CoverageGrading, DraftScope
+    from .spec_gate import DraftScope
+    from .spec_grading import CoverageGrading
 
 _log = get_logger(__name__)
 
@@ -1310,13 +1311,14 @@ class ReviewTeamOrchestrator:
 
         The declared spec is graded alone; with none declared, every spec
         owning a changed path at the base is
-        (:func:`~repoach.review.spec_gate.coverage_rows_at_head`). No model
+        (:func:`~repoach.review.spec_grading.coverage_rows_at_head`). No model
         call: the report is a pure function of the specs, the head tree
         and the diff's paths, so a replayed run recomputes it with the
         current rule exactly as a fresh run computes it. A failure is
         logged and records nothing.
         """
-        from .spec_gate import coverage_rows_at_head, record_spec_coverages, redact_error
+        from .spec_gate import record_spec_coverages
+        from .spec_grading import coverage_rows_at_head, redact_error
 
         try:
             grading = coverage_rows_at_head(
@@ -1365,13 +1367,8 @@ class ReviewTeamOrchestrator:
         gate reads no row as "coverage unknown" and does not refuse on it.
         ``None`` only when even the row cannot be recorded.
         """
-        from .spec_gate import (
-            OWNERSHIP_UNRESOLVED,
-            CoverageGrading,
-            SpecCoverage,
-            record_spec_coverages,
-            redact_error,
-        )
+        from .spec_gate import SpecCoverage, record_spec_coverages
+        from .spec_grading import OWNERSHIP_UNRESOLVED, CoverageGrading, redact_error
 
         row = SpecCoverage(
             spec_id=str(spec_id) if spec_id else OWNERSHIP_UNRESOLVED,
@@ -2232,7 +2229,7 @@ def _spec_report(grading: CoverageGrading | None) -> list[str]:
 
 def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> dict[str, object]:
     """Return the ``spec_resolution`` object of the review JSON (G7)."""
-    from .spec_gate import OWNERSHIP_UNRESOLVED
+    from .spec_grading import OWNERSHIP_UNRESOLVED
 
     if grading is None:
         return {"source": "declared" if spec_id else "none", "specs": [], "ungoverned": []}

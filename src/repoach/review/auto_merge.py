@@ -111,7 +111,7 @@ from .review_head import (
     materialise_head,
     require_head_sha,
 )
-from .spec_gate import StaleCoverageRecomputeError, refresh_stale_coverage
+from .spec_grading import StaleCoverageRecomputeError, refresh_stale_coverage
 
 _log = get_logger(__name__)
 

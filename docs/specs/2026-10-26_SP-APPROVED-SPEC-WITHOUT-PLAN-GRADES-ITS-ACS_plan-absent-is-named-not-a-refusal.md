@@ -8,7 +8,7 @@ created: 2026-10-26
 updated: 2026-10-26
 
 owns:
-  code: [src/repoach/cli/spec_cmds.py]
+  code: [src/repoach/cli/spec_cmds.py, src/repoach/review/spec_grading.py]
   resources: N/A
 
 depends_on: [SP-PLAN-SELECTOR-AUDIT-WIRE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-SPEC-TEMPLATE, SP-ARCH-REVIEW-WIRE, SP-PLAN-CONTRACT-LINTS, SP-ARCH-GRAPH, SP-UNIVERSAL-PROJECT-CONFIG, SP-ORCH-DOCSTRING]

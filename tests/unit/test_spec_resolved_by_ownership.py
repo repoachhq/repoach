@@ -25,7 +25,8 @@ from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, decide_at_h
 from repoach.review.findings import init_findings_schema, record_review_integrity
 from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
-from repoach.review.spec_gate import coverage_rows_at_head, record_spec_coverages
+from repoach.review.spec_gate import record_spec_coverages
+from repoach.review.spec_grading import coverage_rows_at_head
 
 _SPEC_PATH = "docs/specs/2026-10-26_SP-A_owner.md"
 _OWNED = "src/a.py"
@@ -242,7 +243,7 @@ def test_a_grading_failure_records_a_refusing_row(
             "git show failed: fatal: https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz@github.com"
         )
 
-    monkeypatch.setattr("repoach.review.spec_gate.coverage_rows_at_head", broken)
+    monkeypatch.setattr("repoach.review.spec_grading.coverage_rows_at_head", broken)
     team = _review(repo, head, [_OWNED])
     _, decision = _decide(repo, head)
 

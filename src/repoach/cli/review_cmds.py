@@ -81,7 +81,11 @@ from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
-from ..review.spec_gate import SpecsByOwnership, ownership_unavailable_reason, specs_owning
+from ..review.spec_grading import (
+    SpecsByOwnership,
+    ownership_unavailable_reason,
+    specs_owning,
+)
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
