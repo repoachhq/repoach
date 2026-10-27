@@ -25,9 +25,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
 from repoach.cli import app
+from repoach.core.logging import get_logger
 from repoach.review import generated_process, generated_verify
 from repoach.review.findings import (
     ClaimType,
@@ -1173,3 +1175,18 @@ def test_evidence_of_another_base_is_not_run(
     checks, _ = fetch_generated_checks(bench.db_path, 7, head)
     assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
     assert result.payload["final_verdict"] == "REQUEST_CHANGES"
+
+
+def test_the_orphan_sweep_gives_up_with_a_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child the sweep can never reap ends the sweep after its bound, named in a warning."""
+    ghost = 2**22 + 12345
+    monkeypatch.setattr(generated_process, "_children", lambda: {ghost})
+    monkeypatch.setattr(generated_process, "_log", get_logger(generated_process.__name__))
+
+    with capture_logs() as logs:
+        generated_process._kill_orphans(set())
+
+    warnings = [entry for entry in logs if entry["event"] == "generated.orphans_left"]
+    assert warnings == [
+        {"event": "generated.orphans_left", "left": [ghost], "log_level": "warning"}
+    ]
