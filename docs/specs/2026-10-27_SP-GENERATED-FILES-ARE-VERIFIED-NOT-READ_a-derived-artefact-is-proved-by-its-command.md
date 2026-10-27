@@ -44,7 +44,7 @@ Yoob MR !322, and the same on !324 and !329, on 2026-10-27.
 | F2 | `scope_diff` puts any file whose single diff unit exceeds the cap into `oversized` (and `omitted`); no reviewer lens sees it | `src/repoach/review/diff_scoper.py:75`, `:101-103` |
 | F3 | Each oversized path becomes one finding: claim type `spec_gap`, severity `blocking`, status `verified`, `verification_result="file size exceeds cap_chars at this head"`, recorded at every reviewed head | `src/repoach/review/findings_bridge.py:302-354` (`oversized_finding`), `:357` (`record_oversized_findings`), called from `src/repoach/review/orchestrator.py:270-277` |
 | F4 | `spec_gap` is a judged claim type, not a mechanical one; the mechanical verifiers cover only `missing_test`, `missing_docstring`, `lint_convention` | `src/repoach/review/findings.py:60`, `:70`; `src/repoach/review/finding_verifiers.py:404-408` (`_MECHANICAL`) |
-| F5 | At a newer head, an older-head `spec_gap` is not settled on disk (`_settled_on_disk` returns `None` unless the cited file is absent) and goes to the refuter; the refuter cannot be served a 1.5 MB one-line value and defers it `needs judgement (evidence outside window)`; the row keeps blocking | `src/repoach/review/head_reverify.py:384-421`; `src/repoach/review/refuter.py:132` |
+| F5 | At a newer head, an older-head `spec_gap` is not settled on disk (`_settled_on_disk` returns `None` unless the cited file is absent) and goes to the refuter; the refuter cannot be served a 1.5 MB one-line value and defers it `needs judgement (evidence outside window)`; the row keeps blocking | `src/repoach/review/head_reverify.py:410-422` (`_settled_on_disk`, `return None` at 422); `src/repoach/review/refuter.py:132` |
 | F6 | No "generated", "binary" or path-ignore handling exists in the review path: grep of `src/repoach/review/` and `src/repoach/project/config.py` for `generated`, `binary`, `linguist`, `gitattributes` finds none that touches diff scoping or findings | grep at `dff2d13` |
 | F7 | `[review]` accepts only `bot_username` and `spec_sources`, and every section refuses unknown keys (`extra="forbid"`): a `[[review.generated]]` table is a `ConfigError` today | `src/repoach/project/config.py:159-162`, `:294-298` |
 | F8 | The single subprocess secret scrubber is `scrubbed_env()`; the secret-free verification context of SP-AUTHOR-CLAIMS-ARE-MEASURED D3 is specified but not implemented (`author_claims.py`, `claim_verifier.py` absent) | `src/repoach/review/secret_env.py:43`; `docs/specs/2026-10-26_SP-AUTHOR-CLAIMS-ARE-MEASURED_*.md` D3, D4 |
@@ -315,7 +315,7 @@ of another head or another artefact blob).
 - Adds dependency: -> SP-UNIVERSAL-PROJECT-CONFIG (`ReviewSection` gains
   `generated: list[GeneratedEntry]`).
 - Adds dependency: -> SP-CI-SECRETS-ISOLATION (the check is PR code and
-  runs only in a secret-free job).
+  runs only in a secret-free job). That spec is in the legacy format, status OPEN (a bullet, no governed frontmatter); its migration is tech_debt row 103.
 - Adds dependency: -> SP-GATE-REVERIFIES-AT-HEAD (G3/G6 settlement at a
   later head, from the `generated_checks` row).
 - Adds dependency: -> SP-CI-LEDGER-PERSISTS (evidence crosses from the
