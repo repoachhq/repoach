@@ -108,8 +108,23 @@ ProviderKind = Literal[
 ]
 """A provider kind, or a preset naming an ``openai_compatible`` endpoint (SP-UNIVERSAL-PROVIDERS)."""
 
+GENERATED_ENTRIES_MAX = 32
+"""Most ``[[review.generated]]`` entries a file may declare (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ)."""
+
+GENERATED_CHECK_TIMEOUT_S = 120
+"""Seconds one generated-artefact check may run when its entry names none."""
+
+GENERATED_PLACEHOLDERS: tuple[str, ...] = ("{head}", "{base}")
+"""The only placeholders a check argument may carry, replaced by the SHAs."""
+
+_CHECK_ARG_RE = re.compile(r"^[A-Za-z0-9._/=:@,+-]+$")
+"""What a check argument after the script may contain once its placeholders are removed."""
+
+_GLOB_SPECIALS = frozenset("*?[")
+
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
 _SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
+_ARRAY_TABLE_LINE_RE = re.compile(r"^\s*\[\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\]\s*$")
 
 _DECODE_POSITION_RE = re.compile(r"\(at line (?P<line>\d+), column \d+\)")
 """Position suffix ``tomllib`` puts in its messages on every supported Python."""
@@ -291,11 +306,185 @@ class ProviderSection(_Section):
     base_url: str = ""
 
 
+def glob_regex(pattern: str) -> re.Pattern[str]:
+    """Compile a repository glob: ``**`` crosses directories, ``*`` and ``?`` do not.
+
+    Args:
+        pattern: A repository-relative glob (``docs/user_guide/**``).
+
+    Returns:
+        A regex matching the whole repository-relative path.
+    """
+    parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if pattern.startswith("**/", index):
+            parts.append("(?:.*/)?")
+            index += 3
+            continue
+        if pattern.startswith("**", index):
+            parts.append(".*")
+            index += 2
+            continue
+        if char == "*":
+            parts.append("[^/]*")
+        elif char == "?":
+            parts.append("[^/]")
+        elif char == "[":
+            close = pattern.find("]", index + 1)
+            if close == -1:
+                parts.append(re.escape(char))
+            else:
+                body = pattern[index + 1 : close].replace("\\", "\\\\")
+                if body.startswith("!"):
+                    body = "^" + body[1:]
+                parts.append(f"[{body}]")
+                index = close
+        else:
+            parts.append(re.escape(char))
+        index += 1
+    return re.compile("".join(parts) + r"\Z")
+
+
+def glob_matches(pattern: str, path: str) -> bool:
+    """Return whether the repository glob ``pattern`` matches ``path`` (:func:`glob_regex`)."""
+    return glob_regex(pattern).match(path) is not None
+
+
+def _glob_can_match_suffix(pattern: str, suffix: str) -> bool:
+    """Whether ``pattern`` can match some path ending in ``suffix``.
+
+    Every wildcard is tried, in turn, as the one that swallows ``x`` plus
+    the suffix, the others standing for ``x``; a literal ending is tried
+    as written.
+    """
+    regex = glob_regex(pattern)
+    tokens = re.split(r"(\*\*|\*|\?|\[[^\]]*\])", pattern)
+    wildcards = [i for i, token in enumerate(tokens) if token and token[0] in _GLOB_SPECIALS]
+    probes = ["".join("x" if i in wildcards else token for i, token in enumerate(tokens))]
+    for chosen in wildcards:
+        probes.append(
+            "".join(
+                ("x" + suffix if i == chosen else "x") if i in wildcards else token
+                for i, token in enumerate(tokens)
+            )
+        )
+    return any(probe.endswith(suffix) and regex.match(probe) for probe in probes)
+
+
+def code_extensions(languages: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Return the file extensions of every declared language (``[project].languages``).
+
+    The language table is imported here, not at module level: importing
+    :mod:`repoach.gates` loads the settings, which read this module.
+
+    Args:
+        languages: Declared language names; unknown names contribute nothing.
+
+    Returns:
+        The extensions, with their dot, in declaration order.
+    """
+    from ..gates.languages import Language, spec_for
+
+    known = {language.value for language in Language}
+    extensions: list[str] = []
+    for name in languages:
+        spec = spec_for(Language(name)) if name in known else None
+        if spec is not None:
+            extensions.extend(ext for ext in spec.extensions if ext not in extensions)
+    return tuple(extensions)
+
+
+def glob_code_extension(pattern: str, languages: list[str] | tuple[str, ...]) -> str | None:
+    """Return the code extension ``pattern`` could match, or ``None``.
+
+    A generated-artefact glob may never match a file of a declared
+    language: code is read by the reviewers, never declared away.
+
+    Args:
+        pattern: A ``[[review.generated]]`` ``path`` glob.
+        languages: The declared languages.
+
+    Returns:
+        The first matching extension (``.py``), ``None`` when none can match.
+    """
+    for suffix in code_extensions(languages):
+        if _glob_can_match_suffix(pattern, suffix):
+            return suffix
+    return None
+
+
+def _relative_glob(value: str) -> str:
+    """Refuse a glob that is empty, absolute or climbs out of the repository."""
+    if not value.strip():
+        raise ValueError("must be a non-empty repository-relative glob")
+    if value.startswith("/"):
+        raise ValueError(f"{value!r} must not start with '/'")
+    return _relative_inside(value)
+
+
+class GeneratedSection(_Section):
+    """One ``[[review.generated]]`` entry: a derived file and the command proving it.
+
+    ``check`` is an argv list, never a shell string: ``check[0]`` is a
+    repository script, every later element is a plain token
+    (``^[A-Za-z0-9._/=:@,+-]+$``) where only ``{head}`` and ``{base}`` may
+    appear as placeholders (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G1).
+    """
+
+    path: str
+    check: Annotated[list[str], Field(min_length=1)]
+    sources: Annotated[list[str], Field(min_length=1)]
+    producer_inputs: list[str] = Field(default_factory=list)
+    check_timeout_s: StrictInt = Field(default=GENERATED_CHECK_TIMEOUT_S, gt=0)
+
+    @field_validator("path")
+    @classmethod
+    def _check_path(cls, value: str) -> str:
+        """Keep the artefact glob relative and inside the repository."""
+        return _relative_glob(value)
+
+    @field_validator("sources", "producer_inputs")
+    @classmethod
+    def _check_globs(cls, value: list[str]) -> list[str]:
+        """Keep every source and producer-input glob inside the repository."""
+        return [_relative_glob(item) for item in value]
+
+    @field_validator("check")
+    @classmethod
+    def _check_argv(cls, value: list[str]) -> list[str]:
+        """Refuse a script path leaving the repository and any shell-shaped argument.
+
+        Raises:
+            ValueError: ``check[0]`` is not a relative path, or a later
+                element holds a character outside the plain-token class
+                (a space, ``;``, ``|``, ``&``, a quote, ...).
+        """
+        script = value[0]
+        if not script or any(char in script for char in _GLOB_SPECIALS):
+            raise ValueError("check[0] must name a repository script")
+        _relative_glob(script)
+        for position, argument in enumerate(value[1:], start=1):
+            bare = argument
+            for placeholder in GENERATED_PLACEHOLDERS:
+                bare = bare.replace(placeholder, "x")
+            if not _CHECK_ARG_RE.match(bare):
+                raise ValueError(
+                    f"check[{position}] {argument!r} is not a plain argument "
+                    "(letters, digits and . _ / = : @ , + - only; no shell)"
+                )
+        return value
+
+
 class ReviewSection(_Section):
-    """``[review]``: the bot identity and the spec resolution order."""
+    """``[review]``: the bot identity, the spec resolution order, the generated artefacts."""
 
     bot_username: str = ""
     spec_sources: list[SpecSource] = Field(default_factory=lambda: list(DEFAULT_SPEC_SOURCES))
+    generated: Annotated[list[GeneratedSection], Field(max_length=GENERATED_ENTRIES_MAX)] = Field(
+        default_factory=list
+    )
 
 
 class GatesSection(_Section):
@@ -563,6 +752,85 @@ def _refuse_secret_keys(path: Path, text: str, data: dict[str, Any], prefix: str
             _refuse_secret_keys(path, text, value, dotted)
 
 
+def _array_table_line(text: str, table: str, index: int, key: str) -> int | None:
+    """Return the line of ``key`` inside the ``index``-th ``[[table]]`` block.
+
+    Falls back to the block's header line when the key is not written
+    literally, and to None when the block itself is absent.
+    """
+    seen = -1
+    inside = False
+    header_line: int | None = None
+    for number, line in enumerate(text.splitlines(), start=1):
+        array = _ARRAY_TABLE_LINE_RE.match(line)
+        if array is not None or _SECTION_LINE_RE.match(line) is not None:
+            if inside:
+                return header_line
+            if array is not None and array.group("name") == table:
+                seen += 1
+                if seen == index:
+                    inside, header_line = True, number
+            continue
+        match = _KEY_LINE_RE.match(line)
+        if inside and match is not None and match.group("key") == key:
+            return number
+    return header_line if inside else None
+
+
+def _generated_location(loc: tuple[int | str, ...], text: str) -> tuple[str, int | None] | None:
+    """Name a ``[[review.generated]]`` error ``review.generated[<i>].<key>`` with its line.
+
+    ``None`` when the location is not inside a generated entry.
+    """
+    if len(loc) < 3 or loc[0] != "review" or loc[1] != "generated" or not isinstance(loc[2], int):
+        return None
+    index = loc[2]
+    key = str(loc[3]) if len(loc) > 3 and isinstance(loc[3], str) else ""
+    dotted = f"review.generated[{index}]" + (f".{key}" if key else "")
+    return dotted, _array_table_line(text, "review.generated", index, key)
+
+
+def refuse_generated_conflicts(
+    path: Path,
+    text: str,
+    entries: list[GeneratedSection],
+    languages: list[str] | tuple[str, ...],
+) -> None:
+    """Refuse a generated glob that could match code, or two entries with the same glob.
+
+    Args:
+        path: The file, for the message.
+        text: The file content, for the line lookup.
+        entries: The parsed ``[[review.generated]]`` entries.
+        languages: The declared languages (``[project].languages``).
+
+    Raises:
+        ConfigError: A ``path`` glob can match a file of a declared
+            language, or two entries declare the same ``path``.
+    """
+    seen: dict[str, int] = {}
+    for index, entry in enumerate(entries):
+        dotted = f"review.generated[{index}].path"
+        line = _array_table_line(text, "review.generated", index, "path")
+        suffix = glob_code_extension(entry.path, languages)
+        if suffix is not None:
+            raise ConfigError(
+                path,
+                f"{entry.path!r} can match {suffix} files, code of a declared language; "
+                "code is reviewed, never declared generated",
+                key=dotted,
+                line=line,
+            )
+        if entry.path in seen:
+            raise ConfigError(
+                path,
+                f"{entry.path!r} is already declared by review.generated[{seen[entry.path]}]",
+                key=dotted,
+                line=line,
+            )
+        seen[entry.path] = index
+
+
 def _dotted_location(loc: tuple[int | str, ...]) -> tuple[str, str, str]:
     """Turn a pydantic error location into ``(dotted, section, key)``.
 
@@ -605,11 +873,17 @@ def parse_project_config(text: str, path: Path) -> ProjectConfig:
         config = ProjectConfig.model_validate(data)
     except ValidationError as exc:
         first = exc.errors()[0]
-        dotted, section, key = _dotted_location(tuple(first["loc"]))
+        loc = tuple(first["loc"])
+        dotted, section, key = _dotted_location(loc)
+        line = _line_of(text, section, key)
+        generated = _generated_location(loc, text)
+        if generated is not None:
+            dotted, line = generated
         reason = first["msg"]
         if first["type"] == "extra_forbidden":
             reason = "unknown key"
-        raise ConfigError(path, reason, key=dotted, line=_line_of(text, section, key)) from exc
+        raise ConfigError(path, reason, key=dotted, line=line) from exc
+    refuse_generated_conflicts(path, text, config.review.generated, config.project.languages)
     if config.repoach.schema_ > SCHEMA_VERSION:
         raise ConfigError(
             path,
