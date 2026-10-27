@@ -224,3 +224,10 @@ def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
     assert error.key == "review.generated[0].path"
     assert error.line == 5
     assert "always reviewed" in str(error)
+
+
+def test_a_double_star_slash_matches_zero_directories() -> None:
+    """``a/**/b`` matches ``a/b`` as well as ``a/x/y/b``."""
+    assert glob_matches("api/**/vectors.json", "api/vectors.json")
+    assert glob_matches("api/**/vectors.json", "api/x/y/vectors.json")
+    assert not glob_matches("api/**/vectors.json", "apix/vectors.json")
