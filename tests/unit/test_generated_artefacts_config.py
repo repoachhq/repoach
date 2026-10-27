@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from repoach.project.config import GENERATED_ENTRIES_MAX, ConfigError, parse_project_config
+from repoach.project.globs import glob_matches
 from repoach.review.generated_artefacts import (
     GeneratedEntry,
     load_generated_entries,
@@ -166,3 +167,37 @@ def test_unknown_key_in_an_entry_is_refused() -> None:
     assert error.key == "review.generated[0].shell"
     assert error.line == 9
     assert "unknown key" in str(error)
+
+
+def test_unterminated_bracket_is_a_literal() -> None:
+    """A ``[`` with no closing ``]`` matches itself, never a class."""
+    assert glob_matches("data/[weird.json", "data/[weird.json")
+    assert not glob_matches("data/[weird.json", "data/w")
+
+
+def test_negated_class_matches_the_complement() -> None:
+    """``[!x]`` matches any one character but ``x``, never a slash."""
+    assert glob_matches("data/v[!0].json", "data/v1.json")
+    assert not glob_matches("data/v[!0].json", "data/v0.json")
+    assert not glob_matches("data/v[!0].json", "data/v/.json")
+
+
+def test_error_names_the_line_of_the_key_in_the_second_block() -> None:
+    """An error in the second entry names that entry and the line of its key."""
+    second = _ENTRY.split("\n", 3)[3].replace(
+        "api/data/knowledge_embeddings.json", "api/data/other.json"
+    )
+    error = _refused(_ENTRY + "\n" + second.replace('"--check"]', '"a b"]'))
+    assert error.key == "review.generated[1].check"
+    assert error.line == 12
+
+
+def test_error_without_a_literal_key_names_the_block_header() -> None:
+    """A missing required key is named on its block's header line."""
+    text = (
+        '[project]\nlanguages = ["python"]\n\n[[review.generated]]\n'
+        'path = "d/x.json"\nsources = ["x"]\n'
+    )
+    error = _refused(text)
+    assert error.key == "review.generated[0].check"
+    assert error.line == 4

@@ -49,7 +49,7 @@ def glob_regex(pattern: str) -> re.Pattern[str]:
                 body = pattern[index + 1 : close].replace("\\", "\\\\")
                 if body.startswith("!"):
                     body = "^" + body[1:]
-                parts.append(f"[{body}]")
+                parts.append(f"(?!/)[{body}]")
                 index = close
         else:
             parts.append(re.escape(char))
