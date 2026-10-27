@@ -691,46 +691,57 @@ def _generated_location(loc: tuple[int | str, ...], text: str) -> tuple[str, int
     return dotted, _array_table_line(text, "review.generated", index, key)
 
 
-def refuse_generated_conflicts(
-    path: Path,
-    text: str,
-    entries: list[GeneratedSection],
-    extensions: tuple[str, ...] = (),
-) -> None:
-    """Refuse two entries with the same glob, and a glob that could match one of ``extensions``.
+def refuse_duplicate_generated(path: Path, text: str, entries: list[GeneratedSection]) -> None:
+    """Refuse two ``[[review.generated]]`` entries declaring the same ``path``.
 
     Args:
         path: The file, for the message.
         text: The file content, for the line lookup.
-        entries: The parsed ``[[review.generated]]`` entries.
-        extensions: The file extensions of the declared languages; the
-            review's loader passes them, the plain file parse does not.
+        entries: The parsed entries.
 
     Raises:
-        ConfigError: A ``path`` glob can match a file with one of
-            ``extensions``, or two entries declare the same ``path``.
+        ConfigError: Two entries declare the same ``path``; the second is named.
     """
     seen: dict[str, int] = {}
     for index, entry in enumerate(entries):
-        dotted = f"review.generated[{index}].path"
-        line = _array_table_line(text, "review.generated", index, "path")
+        if entry.path in seen:
+            raise ConfigError(
+                path,
+                f"{entry.path!r} is already declared by review.generated[{seen[entry.path]}]",
+                key=f"review.generated[{index}].path",
+                line=_array_table_line(text, "review.generated", index, "path"),
+            )
+        seen[entry.path] = index
+
+
+def refuse_code_globs(
+    path: Path, text: str, entries: list[GeneratedSection], extensions: tuple[str, ...]
+) -> None:
+    """Refuse a ``[[review.generated]]`` ``path`` glob that could match a code file.
+
+    The plain file parse cannot import the language table (it would cycle
+    through the settings), so the review's loader calls this with the
+    declared languages' extensions.
+
+    Args:
+        path: The file, for the message.
+        text: The file content, for the line lookup.
+        entries: The parsed entries.
+        extensions: The file extensions of the declared languages.
+
+    Raises:
+        ConfigError: A ``path`` glob can match a file with one of ``extensions``.
+    """
+    for index, entry in enumerate(entries):
         suffix = glob_code_extension(entry.path, extensions)
         if suffix is not None:
             raise ConfigError(
                 path,
                 f"{entry.path!r} can match {suffix} files, code of a declared language; "
                 "code is reviewed, never declared generated",
-                key=dotted,
-                line=line,
+                key=f"review.generated[{index}].path",
+                line=_array_table_line(text, "review.generated", index, "path"),
             )
-        if entry.path in seen:
-            raise ConfigError(
-                path,
-                f"{entry.path!r} is already declared by review.generated[{seen[entry.path]}]",
-                key=dotted,
-                line=line,
-            )
-        seen[entry.path] = index
 
 
 def _dotted_location(loc: tuple[int | str, ...]) -> tuple[str, str, str]:
@@ -785,7 +796,7 @@ def parse_project_config(text: str, path: Path) -> ProjectConfig:
         if first["type"] == "extra_forbidden":
             reason = "unknown key"
         raise ConfigError(path, reason, key=dotted, line=line) from exc
-    refuse_generated_conflicts(path, text, config.review.generated)
+    refuse_duplicate_generated(path, text, config.review.generated)
     if config.repoach.schema_ > SCHEMA_VERSION:
         raise ConfigError(
             path,

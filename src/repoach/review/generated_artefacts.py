@@ -54,7 +54,7 @@ from ..project.config import (
     ConfigError,
     ProjectConfig,
     parse_project_config,
-    refuse_generated_conflicts,
+    refuse_code_globs,
 )
 from ..project.globs import glob_matches
 from .diff_scoper import split_diff
@@ -353,9 +353,7 @@ def load_generated_entries(
     """
     config = parse_project_config(base_toml_text, path)
     declared = (*config.project.languages, *languages)
-    refuse_generated_conflicts(
-        path, base_toml_text, config.review.generated, code_extensions(declared)
-    )
+    refuse_code_globs(path, base_toml_text, config.review.generated, code_extensions(declared))
     return _entries(config)
 
 
