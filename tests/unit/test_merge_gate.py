@@ -539,3 +539,44 @@ def test_cap_fit_only_files_not_blocked_by_oversized_rule(tmp_path: Path) -> Non
     )
     assert facts.open_blocking_findings == 0
     assert compute_merge_decision(facts).merge is True
+
+
+def test_decision_renders_flat_spec_facts_without_rows() -> None:
+    facts = _facts(
+        spec_covered=False,
+        spec_missing=["tests/x.py::test_y"],
+        spec_origins={"tests/x.py::test_y": "AC2"},
+        spec_draft_refusals=["draft spec PR touches code outside docs (src/a.py): ..."],
+    )
+
+    assert compute_merge_decision(facts).reasons == [
+        "spec acceptance selectors not all present: tests/x.py::test_y (AC2)",
+        "draft spec PR touches code outside docs (src/a.py): ...",
+    ]
+
+
+def test_decision_prefixes_only_specs_resolved_by_ownership() -> None:
+    def row(spec_id: str, resolution: str, *, covered: bool) -> SpecCoverage:
+        return SpecCoverage(
+            spec_id=spec_id,
+            n_promised=1,
+            n_present=int(covered),
+            missing=[] if covered else [f"tests/{spec_id}.py::test_it"],
+            covered=covered,
+            origins={} if covered else {f"tests/{spec_id}.py::test_it": "AC1"},
+            resolution=resolution,
+        )
+
+    facts = _facts(
+        spec_covered=False,
+        spec_rows=[
+            row("SP-A", "ownership", covered=False),
+            row("SP-B", "ownership", covered=True),
+            row("SP-C", "declared", covered=False),
+        ],
+    )
+
+    assert compute_merge_decision(facts).reasons == [
+        "SP-A: spec acceptance selectors not all present: tests/SP-A.py::test_it (AC1)",
+        "spec acceptance selectors not all present: tests/SP-C.py::test_it (AC1)",
+    ]

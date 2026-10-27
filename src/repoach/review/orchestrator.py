@@ -53,7 +53,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
@@ -75,7 +74,11 @@ from ..gates.config import (
     resolve_refuter_budget,
 )
 from ..project.config import load_project_config
-from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
+from ..project.spec_source import (
+    SpecResolution,
+    declared_spec_missing,
+    resolve_spec,
+)
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
@@ -156,10 +159,15 @@ from .reviewer import (
     make_file_excerpts,
 )
 from .spec import SpecPlan, load_spec
+from .spec_gate import DraftScope, draft_scope_at_head, record_spec_coverages
+from .spec_grading import (
+    CoverageGrading,
+    coverage_rows_at_head,
+    failed_grading_row,
+    redact_error,
+    resolution_payload,
+)
 from .thread_context import ResolvedDisagreement
-
-if TYPE_CHECKING:
-    from .spec_gate import DraftScope, SpecCoverage
 
 _log = get_logger(__name__)
 
@@ -354,6 +362,13 @@ class TeamOutcome:
     ``cache_line`` the stderr line naming that run; a replay recomputes
     the spec coverage at its head with the current rule and
     ``spec_coverage_line`` says so (empty on a fresh run).
+    ``spec_report`` holds the coverage lines reported on stderr
+    (``plan-absent: …``, ``spec resolved by ownership: …``,
+    ``ungoverned paths: …``) and ``spec_resolution`` how the graded specs
+    were found (``declared`` / ``ownership`` / ``none``,
+    SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7); a PR declaring no
+    spec is graded against the specs owning its code, ``spec_source``
+    ``ownership``.
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -393,6 +408,8 @@ class TeamOutcome:
     cached: bool = False
     cache_line: str = ""
     spec_coverage_line: str = ""
+    spec_report: list[str] = field(default_factory=list)
+    spec_resolution: dict[str, object] = field(default_factory=dict)
 
 
 class ReviewTeamOrchestrator:
@@ -930,16 +947,19 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
-        if spec_id is not None and not spec_missing:
-            coverage = self._record_spec_coverage(
+        grading = None
+        if not spec_missing:
+            grading = self._record_spec_coverage(
                 pr_number,
                 spec_id=spec_id,
                 head_sha=head_sha,
                 base_ref=base_ref,
                 changed_files=diff_files(diff),
             )
-            if coverage is not None:
-                spec_covered = coverage.covered
+            if grading is not None and grading.rows:
+                spec_covered = all(row.covered for row in grading.rows)
+                if spec_id is None:
+                    spec_source = grading.source
 
         ledger_facts = summarise_ledger_facts(
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
@@ -965,6 +985,8 @@ class ReviewTeamOrchestrator:
             spec_source=spec_source,
             spec_covered=spec_covered,
             spec_missing=spec_missing,
+            spec_report=_spec_report(grading),
+            spec_resolution=_spec_resolution(grading, spec_id),
             refutations=refutations,
             refuter_summary=refuter_summary,
             verifications=list(verification.settled),
@@ -1117,14 +1139,23 @@ class ReviewTeamOrchestrator:
         spec_missing = bool(spec.get("spec_missing", False))
         spec_covered = spec.get("spec_covered")
         spec_coverage_line = ""
-        if spec_id is not None and not spec_missing:
-            coverage = self._replayed_spec_coverage(pr_number, spec_id=spec_id, head_sha=head_sha)
-            if coverage is not None:
-                spec_covered = coverage.covered
+        spec_source = _optional_str(spec.get("spec_source"))
+        grading = None
+        if not spec_missing:
+            grading = self._replayed_spec_coverage(
+                pr_number,
+                spec_id=None if spec_source == "ownership" else spec_id,
+                head_sha=head_sha,
+            )
+            if grading is not None and grading.rows:
+                spec_covered = all(row.covered for row in grading.rows)
                 spec_coverage_line = (
                     f"review: spec coverage recomputed at {head_sha[:7]}: "
-                    f"planned {len(coverage.planned)}, missing {len(coverage.missing)}"
+                    f"planned {sum(len(row.planned) for row in grading.rows)}, "
+                    f"missing {sum(len(row.missing) for row in grading.rows)}"
                 )
+                if spec_id is None:
+                    spec_source = grading.source
         facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
         verifications = recorded_verifications(
             self._db_path, pr_number=pr_number, head_sha=head_sha
@@ -1138,9 +1169,11 @@ class ReviewTeamOrchestrator:
             head_sha=head_sha,
             reviews=outcomes,
             spec_id=spec_id,
-            spec_source=_optional_str(spec.get("spec_source")),
+            spec_source=spec_source,
             spec_covered=None if spec_covered is None else bool(spec_covered),
             spec_missing=spec_missing,
+            spec_report=_spec_report(grading),
+            spec_resolution=_spec_resolution(grading, spec_id),
             refutations=refutations,
             verifications=list(verifications),
             reverifications=list(reverified.outcomes),
@@ -1244,8 +1277,6 @@ class ReviewTeamOrchestrator:
         self, spec_id: str, *, base_ref: str | None, changed_files: list[str]
     ) -> tuple[DraftScope | None, str]:
         """Return the draft scope of *spec_id* at head (:func:`~repoach.review.spec_gate.draft_scope_at_head`)."""
-        from .spec_gate import draft_scope_at_head
-
         return draft_scope_at_head(
             self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
         )
@@ -1265,55 +1296,85 @@ class ReviewTeamOrchestrator:
         self,
         pr_number: int,
         *,
-        spec_id: str,
+        spec_id: str | None,
         head_sha: str | None,
         base_ref: str | None,
         changed_files: list[str],
-    ) -> SpecCoverage | None:
-        """Grade the spec's selectors at the head tree and record the row; ``None`` on failure.
+    ) -> CoverageGrading | None:
+        """Grade the PR's specs at head and record their rows (a refusing row on failure).
 
-        No model call: the report is a pure function of the spec, the head
-        tree and the diff's paths (:func:`~repoach.review.spec_gate.coverage_at_head`),
-        so a replayed run recomputes it with the current rule exactly as a
-        fresh run computes it. A failure is logged and records nothing.
+        The declared spec is graded alone; with none declared, every spec
+        owning a changed path at the base is
+        (:func:`~repoach.review.spec_grading.coverage_rows_at_head`). No model
+        call: the report is a pure function of the specs, the head tree
+        and the diff's paths, so a replayed run recomputes it with the
+        current rule exactly as a fresh run computes it. A failure is
+        logged (redacted) and records the not-covered row of
+        :func:`~repoach.review.spec_grading.failed_grading_row`, so the gate
+        refuses (fail closed); ``None`` only when that row cannot be recorded.
         """
-        from .spec_gate import coverage_at_head, record_spec_coverage
-
         try:
-            coverage, resolution = coverage_at_head(
+            grading = coverage_rows_at_head(
                 self._repo_root,
                 spec_id=spec_id,
                 base_ref=base_ref,
                 changed_files=changed_files,
                 fetch_base=self._fetch_base,
             )
-            record_spec_coverage(
-                self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
+            record_spec_coverages(
+                self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=grading.rows
             )
         except Exception as exc:
-            _log.info(
-                "review_team.spec_coverage_skipped",
+            _log.warning(
+                "review_team.spec_coverage_failed",
                 pr_number=pr_number,
                 exc=type(exc).__name__,
-                message=str(exc)[:200],
+                message=redact_error(str(exc))[:200],
+                consequence="a not-covered row is recorded (fail closed)",
+            )
+            return self._record_grading_failure(
+                pr_number, spec_id=spec_id, head_sha=head_sha, error=exc
+            )
+        for coverage in grading.rows:
+            _log.info(
+                "review_team.spec_coverage",
+                pr_number=pr_number,
+                spec_id=coverage.spec_id,
+                resolution=coverage.resolution,
+                contract=coverage.contract,
+                covered=coverage.covered,
+                n_promised=coverage.n_promised,
+                n_present=coverage.n_present,
+                n_planned=len(coverage.planned),
+                draft_refusals=coverage.draft_refusals,
+            )
+        return grading
+
+    def _record_grading_failure(
+        self, pr_number: int, *, spec_id: str | None, head_sha: str | None, error: Exception
+    ) -> CoverageGrading | None:
+        """Record the row of a failed grading (:func:`~repoach.review.spec_grading.failed_grading_row`).
+
+        ``None`` only when even that row cannot be recorded.
+        """
+        row = failed_grading_row(spec_id, error)
+        try:
+            record_spec_coverages(
+                self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=[row]
+            )
+        except Exception as exc:
+            _log.error(
+                "review_team.spec_coverage_failure_unrecorded",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
             )
             return None
-        _log.info(
-            "review_team.spec_coverage",
-            pr_number=pr_number,
-            covered=coverage.covered,
-            n_promised=coverage.n_promised,
-            n_present=coverage.n_present,
-            n_planned=len(coverage.planned),
-            draft_refusals=coverage.draft_refusals,
-            base_available=resolution.base_available,
-            fell_back_to_head=resolution.fell_back_to_head,
-        )
-        return coverage
+        return CoverageGrading(rows=[row])
 
     def _replayed_spec_coverage(
-        self, pr_number: int, *, spec_id: str, head_sha: str
-    ) -> SpecCoverage | None:
+        self, pr_number: int, *, spec_id: str | None, head_sha: str
+    ) -> CoverageGrading | None:
         """Recompute the coverage of a replayed run at its head with the current rule.
 
         The PR's base ref and diff paths are read from the forge (no
@@ -2132,6 +2193,20 @@ def _drop_retracted_comments(outcome: ReviewerOutcome) -> ReviewerOutcome:
         tokens_used=outcome.tokens_used,
         raw_response=outcome.raw_response,
     )
+
+
+def _spec_report(grading: CoverageGrading | None) -> list[str]:
+    """Return the coverage lines a review reports on stderr (resolution first)."""
+    if grading is None:
+        return []
+    return [*grading.lines, *(line for row in grading.rows for line in row.report)]
+
+
+def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> dict[str, object]:
+    """Return the ``spec_resolution`` object of the review JSON (G7)."""
+    if grading is None:
+        return resolution_payload("declared" if spec_id else "none")
+    return grading.resolution_payload()
 
 
 def _optional_str(value: object) -> str | None:

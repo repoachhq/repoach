@@ -36,6 +36,7 @@ from sqlalchemy import create_engine, text
 
 from ..arch import MalformedFrontmatterError
 from ..core.config import GatewayConfigError, get_settings
+from ..core.logging import get_logger
 from ..forge import (
     ARCHIVE_MARKER,
     Forge,
@@ -56,6 +57,7 @@ from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
 from ..providers.usage import run_summary_line, run_usage_json, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
+    GateEvaluation,
     evaluate_merge_gate,
     merge_exit_code,
     run_auto_merge,
@@ -79,6 +81,12 @@ from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
+from ..review.spec_grading import (
+    ownership_at_base,
+    ownership_unavailable_reason,
+    redact_error,
+    resolution_payload,
+)
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
@@ -405,6 +413,7 @@ def review_pr(
             f"{where}; reviewed without a spec",
             err=True,
         )
+    spec_resolution = team.spec_resolution
     usage = run_usage_json(run)
     payload = {
         "pr_number": team.pr_number,
@@ -413,7 +422,12 @@ def review_pr(
         "worktree": team.worktree,
         "spec": spec_id,
         "spec_source": team.spec_source,
-        "spec_coverage": spec_coverage_label(spec_id, team.spec_covered, missing=team.spec_missing),
+        "spec_coverage": spec_coverage_label(
+            spec_id or _owned_specs_label(spec_resolution),
+            team.spec_covered,
+            missing=team.spec_missing,
+        ),
+        "spec_resolution": spec_resolution,
         "final_verdict": team.final_verdict.value,
         "n_blockers": team.n_blockers,
         "n_majors": team.n_majors,
@@ -451,6 +465,8 @@ def review_pr(
         typer.echo(team.cache_line, err=True)
     if team.spec_coverage_line:
         typer.echo(team.spec_coverage_line, err=True)
+    for line in team.spec_report:
+        typer.echo(line, err=True)
     if team.findings_line:
         typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
@@ -829,6 +845,62 @@ def _branch_spec_at_head(
     return SpecResolution(at_head, declared.source)
 
 
+_log = get_logger(__name__)
+
+
+def _owned_specs_label(resolution: dict[str, object]) -> str | None:
+    """Return the specs a PR was graded against by ownership, joined; None otherwise."""
+    specs = resolution.get("specs")
+    if resolution.get("source") != "ownership" or not isinstance(specs, list) or not specs:
+        return None
+    return ", ".join(str(spec) for spec in specs)
+
+
+def _gate_spec_resolution(
+    declared: SpecResolution,
+    *,
+    changed_files: list[str] | None,
+    base_ref: str,
+    root: Path,
+) -> tuple[dict[str, object], list[str]]:
+    """Return the gate's ``spec_resolution`` object and its stderr lines (G7).
+
+    A declared spec is graded alone. With none declared, the specs owning
+    the diff's paths are resolved as the review resolves them
+    (:func:`~repoach.review.spec_grading.ownership_at_base`, on the
+    checkout, without a fetch); a diff that cannot be read leaves the
+    resolution ``none`` and a base that cannot be read refuses, each with
+    a line naming why.
+    """
+    if declared.spec_id is not None:
+        return resolution_payload("declared", [declared.spec_id]), []
+    if changed_files is None:
+        return resolution_payload("none"), [
+            "spec resolution by ownership skipped: the diff could not be read"
+        ]
+    ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref or None)
+    if ownership is None:
+        return resolution_payload("ownership"), [
+            ownership_unavailable_reason(base_ref or "(unknown)")
+        ]
+    return ownership.payload(), ownership.lines()
+
+
+def _gate_changed_files(evaluation: GateEvaluation) -> list[str] | None:
+    """Return the paths of the gated PR's diff, or None when they cannot be read."""
+    if evaluation.changed_files is not None:
+        return evaluation.changed_files
+    if evaluation.read_changed_files is None:
+        return None
+    try:
+        return evaluation.read_changed_files()
+    except Exception as exc:
+        _log.warning(
+            "gate.diff_unread", error=f"{type(exc).__name__}: {redact_error(str(exc))[:200]}"
+        )
+        return None
+
+
 @review_app.command("gate")
 def review_gate(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
@@ -871,6 +943,16 @@ def review_gate(
     head graded by a retired rule (``rule_version`` below the current
     one) is recomputed on the head tree and rewritten before the
     decision, so it can never refuse on its own (0.3).
+
+    A spec without a plan is graded on its Acceptance Criteria, whatever
+    its status, and ``plan-absent: graded against the acceptance criteria
+    of <id> (<n> selectors)`` is reported on stderr and in
+    ``spec_acceptance.report``; ``spec_acceptance.contract`` names what
+    was graded. Every coverage refusal names its selectors and their
+    origin. A PR declaring no spec is graded against every spec owning a
+    path of its diff at the base; ``spec_resolution`` says how
+    (``declared`` / ``ownership`` / ``none``) and lists the ``ungoverned``
+    paths, which never refuse (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS).
 
     The verifiers re-check the ledger on the tree of the verified head,
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
@@ -923,8 +1005,14 @@ def review_gate(
         declared = _branch_spec_at_head(
             declared, branch=pr.head_ref, head_sha=evaluation.head_sha, root=root
         )
+    resolution, resolution_lines = _gate_spec_resolution(
+        declared,
+        changed_files=_gate_changed_files(evaluation) if declared.spec_id is None else [],
+        base_ref=pr.base_ref if pr is not None else "",
+        root=root,
+    )
     coverage = spec_coverage_label(
-        declared.spec_id,
+        declared.spec_id or _owned_specs_label(resolution),
         facts.spec_covered if facts.spec_coverage_known else None,
         missing=declared_spec_missing(declared, root),
     )
@@ -937,6 +1025,7 @@ def review_gate(
                 "tree": evaluation.tree,
                 "spec": declared.spec_id,
                 "spec_source": declared.source,
+                "spec_resolution": resolution,
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
                 "reverified": facts.reverified,
@@ -944,6 +1033,8 @@ def review_gate(
                     "missing": facts.spec_missing,
                     "planned": facts.spec_planned,
                     "draft_refusals": facts.spec_draft_refusals,
+                    "contract": facts.spec_contract,
+                    "report": facts.spec_report,
                 },
                 "facts": {
                     "ci_green": facts.ci_green,
@@ -961,6 +1052,8 @@ def review_gate(
     )
     if facts.reverify_line:
         typer.echo(facts.reverify_line, err=True)
+    for line in (*resolution_lines, *facts.spec_report):
+        typer.echo(line, err=True)
     if keep_tree and evaluation.tree is None:
         merged = evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED
         why = "already merged" if merged else evaluation.ci_gate.outcome_tag.lower()

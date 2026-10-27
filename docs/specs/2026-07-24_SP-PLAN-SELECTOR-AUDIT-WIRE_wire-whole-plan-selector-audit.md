@@ -1,11 +1,11 @@
 ---
 id: SP-PLAN-SELECTOR-AUDIT-WIRE
 title: Promote the whole-plan promised-selector audit out of tmp/ and wire it into plan loading
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-07-24
-updated: 2026-10-25
+updated: 2026-10-26
 
 owns:
   code:
@@ -85,6 +85,19 @@ makes.
 - The decision is `rule_version` rather than a code hash: a code hash
   would recompute on every release, a rule marker only when the grading
   changed.
+
+## Amendment (0.4, 2026-10-26): superseded on the no-plan case by SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
+
+AC9's "the same spec `approved` is refused with exactly `spec acceptance
+selectors not all present`" is superseded: a spec without a plan is
+graded on the selectors of its Acceptance Criteria whatever its status,
+the union of base and head, and every coverage refusal names its
+selectors and their origin, `spec acceptance selectors not all present:
+<selector> (<origin>), …` (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
+G1, G2). `plan-absent` is no longer stored in `missing`; a row of rule
+1 carrying it is recomputed by the 0.3 mechanism, since
+`SPEC_COVERAGE_RULE_VERSION` is now `2`. AC9 and AC10 read with the new
+reason shape; their other cases are unchanged.
 
 ## Intent
 
@@ -328,7 +341,8 @@ try/except shape; behavior described here is normative.)
 - [ ] AC9 (0.2): `pytest -q tests/unit/test_spec_gate_draft.py` → green:
   a draft spec whose selectors' files are absent merges with them listed
   in `spec_planned`; the same spec `approved` is refused with exactly
-  `spec acceptance selectors not all present`; the draft spec with a
+  `spec acceptance selectors not all present: <selector> (AC1), <selector> (AC2)`
+  (0.4); the draft spec with a
   file outside `docs/` in the diff (owned or unrelated `src/`) is
   refused with that reason plus `draft spec PR touches code outside
   docs (<path>): its acceptance selectors must be present`; another

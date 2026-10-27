@@ -4,7 +4,10 @@ A spec-only PR for a ``status: draft`` spec names tests that exist only
 once the spec is implemented. Their selectors are reported as
 ``planned`` and do not refuse the merge; any other status refuses as
 before, and a draft PR that also changes code the spec owns, or a spec
-past draft at base, loses the exemption with the rule named.
+past draft at base, loses the exemption with the rule named. Since
+SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS (0.4 amendment of
+SP-PLAN-SELECTOR-AUDIT-WIRE) the refusal names each absent selector and
+the criterion that promised it.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from repoach.review.spec_gate import (
     fetch_spec_coverage,
     init_spec_coverage_schema,
     record_spec_coverage,
+    spec_acceptance_criteria,
     spec_acceptance_selectors,
 )
 
@@ -33,7 +37,7 @@ _SELECTORS = [
     "tests/unit/test_drafty.py::test_first",
     "tests/unit/test_drafty.py::test_second",
 ]
-_REASON = "spec acceptance selectors not all present"
+_REASON = f"spec acceptance selectors not all present: {_SELECTORS[0]} (AC1), {_SELECTORS[1]} (AC2)"
 _HEAD = "head0001"
 
 
@@ -91,11 +95,13 @@ def _scope(repo: Path, changed: list[str]) -> tuple[object, str]:
 
 def _gate(repo: Path, tmp_path: Path, changed: list[str]) -> tuple[object, object]:
     scope, markdown = _scope(repo, changed)
+    contract = spec_acceptance_criteria(markdown or _spec("approved"))
     coverage = coverage_of_selectors(
         repo,
         spec_id="SP-DRAFTY",
-        selectors=spec_acceptance_selectors(markdown or _spec("approved")),
+        selectors=[entry.selector for entry in contract],
         draft=scope,
+        origins={entry.selector: entry.origin for entry in contract},
     )
     db = tmp_path / "ledger.db"
     init_findings_schema(db)
@@ -118,7 +124,9 @@ def test_draft_spec_absent_selectors_are_planned_and_merge(tmp_path: Path) -> No
     assert facts.spec_missing == []
 
 
-def test_active_spec_absent_selectors_refuse_as_today(tmp_path: Path) -> None:
+def test_active_spec_absent_selectors_refuse_naming_each_selector_and_its_ac(
+    tmp_path: Path,
+) -> None:
     repo = _repo(tmp_path, base_status=None, head_status="approved")
     scope, _ = _scope(repo, [_SPEC_PATH])
     assert scope is None
