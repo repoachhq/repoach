@@ -266,6 +266,16 @@ def subprocess_runner(
 ) -> RunResult:
     """Run one check with :func:`subprocess.run`, never through a shell.
 
+    Args:
+        argv: The interpreter and the declared check, placeholders replaced.
+        cwd: The head tree the check runs in.
+        env: The environment, already scrubbed of secrets.
+        timeout_s: Seconds the check may run.
+        shell: Must be False; present so a caller's intent is checked.
+
+    Returns:
+        The exit code and stdout followed by stderr.
+
     Raises:
         ValueError: ``shell`` is True (NG3: no shell, ever).
         subprocess.TimeoutExpired: The check outlived ``timeout_s``.
@@ -404,7 +414,16 @@ def changed_inputs(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return ``(sources changed, producer inputs changed)`` for one artefact.
 
-    The artefact itself never counts as its own source.
+    The artefact itself never counts as its own source, and a path that
+    is a source is not listed again as a producer input.
+
+    Args:
+        entry: The artefact's declaration.
+        path: The artefact's changed path.
+        diff_files: The paths the diff changes.
+
+    Returns:
+        The changed sources and the changed producer inputs, in diff order.
     """
     sources = tuple(
         f for f in diff_files if f != path and any(glob_matches(g, f) for g in entry.sources)
@@ -433,6 +452,18 @@ def summary_paragraph(
     """Build the one paragraph every reviewer lens sees instead of the artefact's diff (G2).
 
     Sizes, hashes and paths only (NG1, NG2).
+
+    Args:
+        path: The artefact's changed path.
+        entry: Its declaration.
+        before: Its content at the base, ``None`` when it is new.
+        after: Its content at the head, ``None`` when the diff deletes it.
+        diff_files: The paths the diff changes.
+
+    Returns:
+        ``generated artefact <path>: <before> -> <after> bytes, sha256
+        <before7> -> <after7>; sources changed in this diff: <list or
+        none>; proved by: <check>``, plus the changed producer inputs.
     """
     size_before = f"{len(before)}" if before is not None else "absent"
     size_after = f"{len(after)}" if after is not None else "deleted"
