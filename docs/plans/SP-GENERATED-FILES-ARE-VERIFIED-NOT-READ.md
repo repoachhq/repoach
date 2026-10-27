@@ -101,7 +101,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 ## Step 13 — Share the row types and their causes
 
 - **Files**: `src/repoach/review/generated_types.py`
-- **Action**: generated_types.py holds GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.
+- **Action**: generated_types.py holds GeneratedEntry, GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause, changed_inputs, symlinked, symlink_row, declared_argv, sha256_hex and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.
 - **Commit**: `refactor(review): move generated rows and causes to generated_types`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause`, `tests/unit/test_generated_artefacts_gate.py::test_a_symlinked_artefact_is_never_read_and_never_green`, `tests/unit/test_generated_artefacts_gate.py::test_review_generated_requires_the_base`, `tests/unit/test_generated_artefacts_gate.py::test_subprocess_runner_refuses_a_shell`, `tests/unit/test_generated_artefacts_gate.py::test_a_timed_out_check_has_its_session_killed`
@@ -109,10 +109,10 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 ## Step 14 — Read the evidence in its own module
 
 - **Files**: `src/repoach/review/generated_evidence.py`, `src/repoach/review/generated_settle.py`
-- **Action**: generated_evidence.py holds the review-generated-json format, evidence_payload, checks_from_evidence, the review-time recomputation and load_review_evidence (another head or blob refused, a tail re-trimmed). generated_settle.py holds ReverifyOutcome, settlements_at_head and settle_at_head, so generated_store stays persistence only.
+- **Action**: generated_evidence.py holds the review-generated-json format, evidence_payload, checks_from_evidence, the review-time recomputation and load_review_evidence (another head or blob refused, a tail re-trimmed). generated_settle.py holds ReverifyOutcome, settlements_at_head and settle_at_head, so generated_store stays persistence only; has_generated_checks lets a re-check skip a ledger that never recorded a generated check.
 - **Commit**: `refactor(review): move evidence reading to generated_evidence`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert`, `tests/unit/test_generated_artefacts_gate.py::test_only_the_end_of_a_long_output_is_read`, `tests/unit/test_generated_artefacts_gate.py::test_without_a_subreaper_the_session_is_still_killed`, `tests/unit/test_generated_artefacts_gate.py::test_settle_at_head_leaves_every_other_finding_to_the_refuter`, `tests/unit/test_generated_artefacts_config.py::test_a_class_never_matches_a_slash`
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert`, `tests/unit/test_generated_artefacts_gate.py::test_only_the_end_of_a_long_output_is_read`, `tests/unit/test_generated_artefacts_gate.py::test_without_a_subreaper_the_session_is_still_killed`, `tests/unit/test_generated_artefacts_gate.py::test_settle_at_head_leaves_every_other_finding_to_the_refuter`, `tests/unit/test_generated_artefacts_gate.py::test_a_re_check_without_generated_rows_creates_no_table`
 
 ## Step 15 — Document the declaration and the Yoob job
 
@@ -341,7 +341,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "files": [
         "src/repoach/review/generated_types.py"
       ],
-      "action": "generated_types.py holds GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.",
+      "action": "generated_types.py holds GeneratedEntry, GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause, changed_inputs, symlinked, symlink_row, declared_argv, sha256_hex and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.",
       "commit_message": "refactor(review): move generated rows and causes to generated_types",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause passes",
       "unit_tests": [
@@ -359,7 +359,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "src/repoach/review/generated_evidence.py",
         "src/repoach/review/generated_settle.py"
       ],
-      "action": "generated_evidence.py holds the review-generated-json format, evidence_payload, checks_from_evidence, the review-time recomputation and load_review_evidence (another head or blob refused, a tail re-trimmed). generated_settle.py holds ReverifyOutcome, settlements_at_head and settle_at_head, so generated_store stays persistence only.",
+      "action": "generated_evidence.py holds the review-generated-json format, evidence_payload, checks_from_evidence, the review-time recomputation and load_review_evidence (another head or blob refused, a tail re-trimmed). generated_settle.py holds ReverifyOutcome, settlements_at_head and settle_at_head, so generated_store stays persistence only; has_generated_checks lets a re-check skip a ledger that never recorded a generated check.",
       "commit_message": "refactor(review): move evidence reading to generated_evidence",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert passes",
       "unit_tests": [
@@ -367,7 +367,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "tests/unit/test_generated_artefacts_gate.py::test_only_the_end_of_a_long_output_is_read",
         "tests/unit/test_generated_artefacts_gate.py::test_without_a_subreaper_the_session_is_still_killed",
         "tests/unit/test_generated_artefacts_gate.py::test_settle_at_head_leaves_every_other_finding_to_the_refuter",
-        "tests/unit/test_generated_artefacts_config.py::test_a_class_never_matches_a_slash"
+        "tests/unit/test_generated_artefacts_gate.py::test_a_re_check_without_generated_rows_creates_no_table"
       ]
     },
     {
