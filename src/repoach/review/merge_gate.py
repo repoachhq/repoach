@@ -154,6 +154,13 @@ class MergeFacts(BaseModel):
             per graded spec; the decision names each not-covered row's
             causes, prefixed with the spec id for a spec resolved by
             ownership (G7).
+
+    ``spec_rows`` is the source of truth: :func:`gather_merge_facts` and
+    :func:`summarise_ledger_facts` derive every flat ``spec_*`` field from
+    it, and the gate JSON prints the flat fields (its documented
+    ``spec_acceptance`` shape). The decision reads ``spec_rows``, and the
+    flat fields only for facts built without rows (a caller or a test
+    assembling them by hand).
     """
 
     head_sha: str
