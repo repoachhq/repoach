@@ -2,7 +2,7 @@
 id: SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ
 title: A declared generated artefact is proved by its check command, not read by the reviewers
 version: 0.2
-status: draft
+status: approved
 author: agent
 created: 2026-10-27
 updated: 2026-10-27
