@@ -1478,7 +1478,7 @@ def _grade(
         return _not_graded(
             spec_id,
             "plan",
-            f"spec plan unparseable at {resolution.ref}: {resolution.error}",
+            f"spec plan unparseable at {resolution.ref}: {redact_error(resolution.error)}",
         )
     if not resolution.base_available:
         return _not_graded(
