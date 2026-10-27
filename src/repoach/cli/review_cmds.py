@@ -560,9 +560,11 @@ def review_generated(
     secret-bearing variable names it on stderr and replaces itself (exec)
     with a copy started from the scrubbed environment, so no check can
     read the variable from it; the copy runs ``python -P``, so the working
-    directory (the pull request's checkout) is never on its import path. Exits 0 once the evidence is written,
-    whatever the checks said (the review decides); 2 when the head or the
-    base does not resolve or the base declarations are invalid.
+    directory (the pull request's checkout) is never on its import path.
+
+    Exits 0 once the evidence is written, whatever the checks said (the
+    review decides); 2 when ``--base`` is missing, the head or the base
+    does not resolve, or the base declarations are invalid.
     """
     root = project_root_or_exit()
     held = held_secrets()
