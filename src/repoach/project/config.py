@@ -348,7 +348,15 @@ def glob_regex(pattern: str) -> re.Pattern[str]:
 
 
 def glob_matches(pattern: str, path: str) -> bool:
-    """Return whether the repository glob ``pattern`` matches ``path`` (:func:`glob_regex`)."""
+    """Return whether the repository glob ``pattern`` matches ``path`` (:func:`glob_regex`).
+
+    Args:
+        pattern: A repository-relative glob (``docs/user_guide/**``).
+        path: A repository-relative path.
+
+    Returns:
+        True when the whole of ``path`` matches.
+    """
     return glob_regex(pattern).match(path) is not None
 
 
