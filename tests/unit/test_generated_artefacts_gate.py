@@ -406,7 +406,7 @@ def test_check_over_timeout_is_skipped_for_cost(
             evidence_payload(
                 pr_number=7,
                 head_sha=head,
-                base_sha="",
+                base_sha=git(repo.seed, "merge-base", "main", head),
                 checks=checks,
                 timing=GeneratedTiming(121_000, 5),
             )
@@ -1153,3 +1153,23 @@ def test_generated_checks_round_trip_keeps_script_ref_and_timing(tmp_path: Path)
     timing = GeneratedTiming(27, 300)
     record_generated_checks(db_path, pr_number=7, head_sha="a" * 40, checks=[run], timing=timing)
     assert fetch_generated_checks(db_path, 7, "a" * 40) == ([run], timing)
+
+
+def test_evidence_of_another_base_is_not_run(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The review computes the base itself; evidence naming another base proved another diff."""
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V2, "B")})
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+    payload["base_sha"] = "0" * 40
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    checks, _ = fetch_generated_checks(bench.db_path, 7, head)
+    assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
+    assert result.payload["final_verdict"] == "REQUEST_CHANGES"

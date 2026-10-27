@@ -126,8 +126,12 @@ def checks_from_evidence(
     head_sha: str,
     head_dir: Path,
     changed_files: Sequence[str],
+    base_sha: str = "",
 ) -> tuple[list[GeneratedCheck], GeneratedTiming]:
     """Read the runs of the touched artefacts out of an evidence document.
+
+    The base the review computed itself, not the evidence's, fills
+    ``{base}``: evidence naming another base proved another diff.
 
     Args:
         payload: The parsed evidence file.
@@ -135,6 +139,8 @@ def checks_from_evidence(
         head_sha: The reviewed head.
         head_dir: The reviewed head tree (the artefacts' blobs).
         changed_files: The paths the diff changes.
+        base_sha: The merge base the review read the diff from; empty
+            when unknown, and the evidence's base is then not compared.
 
     Returns:
         The runs, in declaration order, and the evidence's timing; an
@@ -142,13 +148,17 @@ def checks_from_evidence(
 
     Raises:
         GeneratedEvidenceMismatchError: The evidence is of another format,
-            another head, or another blob of a touched artefact.
+            another head, another base, or another blob of a touched artefact.
     """
     if payload.get("format") != EVIDENCE_FORMAT:
         raise GeneratedEvidenceMismatchError(f"not a {EVIDENCE_FORMAT} file")
     if payload.get("head_sha") != head_sha:
         raise GeneratedEvidenceMismatchError(
             f"evidence of head {str(payload.get('head_sha'))[:7]}, reviewing {head_sha[:7]}"
+        )
+    if base_sha and payload.get("base_sha") != base_sha:
+        raise GeneratedEvidenceMismatchError(
+            f"evidence of base {str(payload.get('base_sha'))[:7]}, reviewing base {base_sha[:7]}"
         )
     recorded = by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
     checks: list[GeneratedCheck] = []
@@ -183,7 +193,7 @@ def checks_from_evidence(
                 touched[path],
                 path=path,
                 head_sha=head_sha,
-                base_sha=str(payload.get("base_sha") or ""),
+                base_sha=base_sha or str(payload.get("base_sha") or ""),
                 changed_files=changed_files,
             )
         )
@@ -257,6 +267,7 @@ def load_review_evidence(
     head_sha: str,
     head_dir: Path,
     changed_files: Sequence[str],
+    base_sha: str = "",
 ) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
     """Return the runs the review job records for the touched artefacts.
 
@@ -269,6 +280,7 @@ def load_review_evidence(
         head_sha: The reviewed head.
         head_dir: The reviewed head tree.
         changed_files: The paths the diff changes.
+        base_sha: The merge base the review computed (:func:`checks_from_evidence`).
 
     Returns:
         The runs to record and the evidence's timing (``None`` without usable evidence).
@@ -284,6 +296,7 @@ def load_review_evidence(
                 head_sha=head_sha,
                 head_dir=head_dir,
                 changed_files=changed_files,
+                base_sha=base_sha,
             )
         except (GeneratedEvidenceMismatchError, ValueError, KeyError, OSError) as exc:
             _log.warning(

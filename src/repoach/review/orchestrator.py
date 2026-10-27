@@ -891,6 +891,7 @@ class ReviewTeamOrchestrator:
             head_sha=head_sha or "",
             head_dir=self._repo_root,
             changed_files=generated_scope.changed,
+            base_sha=generated_scope.base_sha,
         )
         recorded = record_review_ledger(
             self._db_path,

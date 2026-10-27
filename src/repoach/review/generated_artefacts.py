@@ -183,11 +183,13 @@ class ReviewScope:
         review_diff: The diff every reviewer lens sees (:func:`summarise`).
         touched: The declared artefacts the diff changes, in declaration order.
         changed: The paths the diff changes.
+        base_sha: The merge base the diff was read from, computed here.
     """
 
     review_diff: str
     touched: Mapping[str, GeneratedEntry] = field(default_factory=dict)
     changed: tuple[str, ...] = ()
+    base_sha: str = ""
 
 
 def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope:
@@ -222,7 +224,7 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
         head_blob=head_blob,
         symlinks=frozenset(path for path in touched if symlinked(head_dir, path)),
     )
-    return ReviewScope(review_diff=summarised, touched=touched, changed=changed)
+    return ReviewScope(review_diff=summarised, touched=touched, changed=changed, base_sha=before)
 
 
 def _interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
