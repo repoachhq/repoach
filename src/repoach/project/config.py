@@ -153,6 +153,43 @@ What runs or installs on CI (its configuration, hooks, ``repoach.toml``,
 dependency manifests) is always read by the reviewers: a glob such as
 ``**/*.yml`` or ``*.toml`` that would summarise one of them away is refused."""
 
+ALWAYS_REVIEWED_DIRS: tuple[str, ...] = (
+    ".github/",
+    ".gitlab/",
+    ".githooks/",
+    ".circleci/",
+    ".buildkite/",
+    "ci/",
+)
+"""Directories whose files a ``path`` glob may never reach, at any depth below them.
+
+CI definitions and the scripts CI runs live there; a literal path such as
+``.github/workflows/auto-review.yml`` or ``ci/review-gate.sh`` is refused
+like a wildcard reaching them."""
+
+
+def always_reviewed(pattern: str) -> str | None:
+    """Return the always-reviewed file or directory ``pattern`` can reach, or ``None``.
+
+    Args:
+        pattern: A ``[[review.generated]]`` ``path`` glob.
+
+    Returns:
+        The probe file or directory prefix it reaches, ``None`` when it
+        reaches none.
+    """
+    literal = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
+    for directory in ALWAYS_REVIEWED_DIRS:
+        if literal.startswith(directory) or glob_matches(pattern, directory + "x/y.yml"):
+            return directory
+        if glob_matches(pattern, directory + "x.sh") or glob_matches(pattern, directory + "x"):
+            return directory
+    for probe in ALWAYS_REVIEWED_PROBES:
+        if glob_matches(pattern, probe):
+            return probe
+    return None
+
+
 _CHECK_ARG_RE = re.compile(r"^[A-Za-z0-9._/=:@,+-]+$")
 """What a check argument after the script may contain once its placeholders are removed."""
 
@@ -370,16 +407,16 @@ class GeneratedSection(_Section):
         """Keep the artefact glob relative, inside the repository, off the files always read.
 
         Raises:
-            ValueError: The glob leaves the repository, or it can match a
-                file of :data:`ALWAYS_REVIEWED_PROBES` (CI configuration,
-                hooks, ``repoach.toml``, dependency manifests).
+            ValueError: The glob leaves the repository, or it can reach a
+                file :func:`always_reviewed` names (CI definitions and
+                scripts, hooks, ``repoach.toml``, dependency manifests).
         """
         _relative_glob(value)
-        for probe in ALWAYS_REVIEWED_PROBES:
-            if glob_matches(value, probe):
-                raise ValueError(
-                    f"{value!r} can match {probe}, which is always reviewed, never declared generated"
-                )
+        reached = always_reviewed(value)
+        if reached is not None:
+            raise ValueError(
+                f"{value!r} can match {reached}, which is always reviewed, never declared generated"
+            )
         return value
 
     @field_validator("sources", "producer_inputs")

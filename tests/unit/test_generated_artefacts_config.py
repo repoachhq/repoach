@@ -217,7 +217,20 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
     assert error.line == 6
 
 
-@pytest.mark.parametrize("glob", ["**/*.yml", ".github/**", "*.toml", "**/package.json", "*"])
+@pytest.mark.parametrize(
+    "glob",
+    [
+        "**/*.yml",
+        ".github/**",
+        "*.toml",
+        "**/package.json",
+        "*",
+        ".github/workflows/auto-review.yml",
+        ".gitlab/ci/review.yml",
+        "ci/review-gate.sh",
+        "ci/**",
+    ],
+)
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
     """CI configuration, repoach.toml and dependency manifests are never declared away."""
     error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob), languages=())
