@@ -22,6 +22,7 @@ report. The legacy per-reviewer verdict framing was dropped in 10b-4
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -183,13 +184,29 @@ def render_ledger_report(
             ]
         )
     if generated_lines:
-        parts.extend(
-            ["## Generated artefacts", "", *(f"- `{line}`" for line in generated_lines), ""]
-        )
+        parts.extend(["## Generated artefacts", "", fenced(generated_lines), ""])
     parts.extend(["## Findings", "", _findings_section(findings)])
     if archive_appendix:
         parts.extend(["", "---", "", archive_appendix])
     return "\n".join(parts)
+
+
+def fenced(lines: list[str]) -> str:
+    """Wrap ``lines`` in a code fence no line can close.
+
+    The lines may carry pull-request text (a check's output), so the
+    fence is one backtick longer than the longest backtick run they hold,
+    and at least three: nothing inside renders as Markdown.
+
+    Args:
+        lines: The lines to show verbatim.
+
+    Returns:
+        The fenced block.
+    """
+    longest = max((len(run) for line in lines for run in re.findall(r"`+", line)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return "\n".join([f"{fence}text", *lines, fence])
 
 
 @dataclass(frozen=True)

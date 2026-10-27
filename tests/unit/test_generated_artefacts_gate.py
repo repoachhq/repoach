@@ -40,6 +40,8 @@ from repoach.review.generated_artefacts import (
     fetch_generated_checks,
     run_checks,
 )
+from repoach.review.merge_gate import MergeDecision, MergeFacts
+from repoach.review.report import render_ledger_report
 from repoach.review.secret_env import scrubbed_env
 from tests.fixtures.generated_artefacts.harness import (
     Bench,
@@ -686,3 +688,26 @@ def test_check_output_is_made_inert_in_the_cause(
     assert len(cause) <= 200
     for char in "`@<>[]\x1b":
         assert char not in cause
+
+
+def test_report_section_fences_check_output(tmp_path: Path) -> None:
+    """The Generated artefacts section is a fence no backtick run in a line can close."""
+    lines = ["generated: data/vectors.json generated_artefact_stale: check exited 1: ```` [x](y)"]
+    init_findings_schema(tmp_path / "ledger.db")
+    body = render_ledger_report(
+        tmp_path / "ledger.db",
+        pr_number=7,
+        decision=MergeDecision(merge=True, reasons=[]),
+        facts=MergeFacts(
+            head_sha="a" * 40,
+            ci_green=True,
+            open_blocking_findings=0,
+            spec_covered=True,
+            spec_coverage_known=False,
+            review_complete=True,
+            review_integrity_known=True,
+        ),
+        generated_lines=lines,
+    )
+    section = body.split("## Generated artefacts\n\n", 1)[1].split("\n\n## Findings", 1)[0]
+    assert section == "`````text\n" + lines[0] + "\n`````"
