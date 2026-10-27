@@ -618,15 +618,15 @@ def reverify_older_findings(
         return HeadReverification(head_sha="")
     init_findings_schema(db_path)
     judge = LazyJudge(judge_factory)
-    budget = RefuterBudget(context_tokens, max(context_tokens, context_ceiling))
-    stamp_key = judgement_key(budget)
+    budget = RefuterBudget.clamped(context_tokens, context_ceiling)
+    current_key = judgement_key(budget)
     outcomes: list[Reverification] = []
     seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str, int]] = {}
     for finding in fetch_findings(db_path, pr_number):
         if not _older_unsettled(finding, head_sha, reads_ci=ci_green is not None):
             continue
         key = _claim_key(finding)
-        cached = _cached(finding, head_sha, stamp_key)
+        cached = _cached(finding, head_sha, current_key)
         if cached is not None:
             if finding.claim_type not in MECHANICAL_CLAIM_TYPES:
                 outcomes.append(cached)
@@ -653,7 +653,7 @@ def reverify_older_findings(
             )
         state, method, reason, used = seen[key]
         outcome = _outcome(finding, state, reason, used)
-        _persist(db_path, finding, outcome, method=method, head=head_sha, key=stamp_key)
+        _persist(db_path, finding, outcome, method=method, head=head_sha, key=current_key)
         outcomes.append(outcome)
     report = HeadReverification(
         head_sha=head_sha, outcomes=tuple(outcomes), model_calls=judge.calls

@@ -509,6 +509,21 @@ class RefuterBudget(NamedTuple):
     floor: int
     ceiling: int
 
+    @classmethod
+    def clamped(cls, floor: int, ceiling: int) -> RefuterBudget:
+        """Return the budget of ``floor`` and ``ceiling``, the ceiling raised to the floor.
+
+        The one place the ``ceiling >= floor`` invariant is enforced.
+
+        Args:
+            floor: The least context a finding gets.
+            ceiling: The most it may grow to, before the clamp.
+
+        Returns:
+            ``RefuterBudget(floor, max(floor, ceiling))``.
+        """
+        return cls(floor, max(floor, ceiling))
+
 
 def resolve_refuter_budget(
     repo_root: Path, *, floor: int | None = None, ceiling: int | None = None
@@ -530,7 +545,7 @@ def resolve_refuter_budget(
     """
     low = resolve_refuter_context_tokens(repo_root)[0] if floor is None else floor
     high = resolve_refuter_context_ceiling(repo_root)[0] if ceiling is None else ceiling
-    return RefuterBudget(low, max(low, high))
+    return RefuterBudget.clamped(low, high)
 
 
 def current_gates_config() -> GatesConfig:
