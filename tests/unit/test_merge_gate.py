@@ -604,3 +604,28 @@ def test_decision_prefixes_only_specs_resolved_by_ownership() -> None:
 def test_merge_facts_refuse_a_derived_spec_fact_as_input() -> None:
     with pytest.raises(ValidationError, match="spec_missing"):
         _facts(spec_covered=False, spec_missing=["tests/x.py::test_y"])
+
+
+def test_derived_spec_facts_over_several_rows() -> None:
+    nothing = SpecCoverage(
+        spec_id="SP-A",
+        n_promised=0,
+        n_present=0,
+        missing=[],
+        covered=True,
+        contract="none",
+        report=["no selectors to grade: SP-A (approved) has no docs/plans/SP-A.md ..."],
+    )
+    graded = SpecCoverage(
+        spec_id="SP-B",
+        n_promised=1,
+        n_present=1,
+        missing=[],
+        covered=True,
+        contract="plan",
+    )
+    facts = _facts(spec_rows=[nothing, graded])
+
+    assert facts.spec_contract == "plan"
+    assert facts.spec_no_selectors_line == nothing.report[0]
+    assert facts.spec_report == nothing.report
