@@ -83,20 +83,26 @@ def spec_audit(
 ) -> None:
     """Report the specs past draft without a plan, and the plan steps over the caps.
 
-    One tab-separated line per spec past draft (any status outside
-    draft / proposed) with no ``docs/plans/<id>.md``, sorted by first
-    ``owns.code`` path then id: ``<id> <status> <n> selectors <owns.code
-    or ->``, then ``<N> specs past draft without a plan (<M> with no
-    selector to grade)``; a plan file without the action-plan marker is
-    no plan. Then one tab-separated line per committed plan
-    step over ``PLAN_STEP_MAX_FILES`` or ``PLAN_STEP_MAX_UNIT_SELECTORS``:
-    ``<id> step <n> <files>/<cap> files <selectors>/<cap> selectors``,
-    one ``<id> not an action plan: <path>`` per plan file without the
-    marker and one ``<id> plan does not parse: <error>`` per marked plan
-    that does not parse (the only plan the gate refuses on).
-    ``--json`` prints ``{"specs": [...], "total", "no_selectors",
-    "oversized_steps": [...]}``. Always exits 0 (a report, not a gate);
-    ``--plans`` is required, it is the only audit.
+    Fields within a line are separated by one TAB character, written
+    ``<TAB>`` below.
+
+    - One line per spec past draft (any status outside draft /
+      proposed) with no action plan (a plan file without the marker is
+      no plan), sorted by first ``owns.code`` path then id:
+      ``<id><TAB><status><TAB><n> selectors<TAB><owns.code joined by "," or ->``.
+    - Then ``<N> specs past draft without a plan (<M> with no selector to grade)``.
+    - Then one line per committed plan step over ``PLAN_STEP_MAX_FILES``
+      or ``PLAN_STEP_MAX_UNIT_SELECTORS``:
+      ``<id><TAB>step <n><TAB><files>/<cap> files<TAB><selectors>/<cap> selectors``.
+    - Then ``<id><TAB>not an action plan: <path>`` per plan file without
+      the marker, and ``<id><TAB>plan does not parse: <error>`` per
+      marked plan that does not parse (the only plan the gate refuses on).
+
+    ``--json`` prints ``{"specs", "total", "no_selectors",
+    "oversized_steps", "unparseable_plans", "not_action_plans"}``.
+
+    Exits 0 (a report, not a gate), and 2 when ``--plans`` is missing:
+    it is the only audit.
     """
     if not plans:
         typer.echo("repoach: spec audit needs --plans (the only audit)", err=True)
