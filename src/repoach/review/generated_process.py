@@ -24,6 +24,9 @@ from ..core.logging import get_logger
 
 _log = get_logger(__name__)
 
+OUTPUT_READ_MAX_BYTES = 64 * 1024
+"""Bytes read back from the end of a check's output: only its tail is ever kept."""
+
 
 @dataclass(frozen=True)
 class RunResult:
@@ -99,7 +102,8 @@ def subprocess_runner(
             _kill_group(proc)
             if adopting:
                 _kill_orphans(before)
-        output.seek(0)
+        size = output.seek(0, os.SEEK_END)
+        output.seek(max(0, size - OUTPUT_READ_MAX_BYTES))
         text = output.read().decode("utf-8", errors="replace")
     return RunResult(proc.returncode, text)
 

@@ -962,3 +962,17 @@ def test_a_forged_evidence_tail_is_bounded_and_inert(
     assert len(lines) == 20
     assert lines[-1].startswith("line 499 ")
     assert all(len(line) <= 1000 and "\x07" not in line for line in lines)
+
+
+def test_only_the_end_of_a_long_output_is_read(tmp_path: Path) -> None:
+    """A check printing megabytes is read back from its last 64 KiB only."""
+    script = tmp_path / "loud.py"
+    script.write_text("print('x' * 2_000_000)\nprint('the end')\n", encoding="utf-8")
+
+    result = subprocess_runner(
+        ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
+    )
+
+    assert result.exit_code == 0
+    assert len(result.output) <= 64 * 1024
+    assert result.output.strip().endswith("the end")
