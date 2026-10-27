@@ -68,6 +68,7 @@ from .findings import (
     record_finding,
 )
 from .findings_bridge import OVERSIZED_FINDER, finding_fingerprint
+from .generated_git import blob_at, merge_base
 from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
@@ -373,25 +374,6 @@ def code_extensions(languages: Sequence[str]) -> tuple[str, ...]:
         if spec is not None:
             extensions.extend(ext for ext in spec.extensions if ext not in extensions)
     return tuple(extensions)
-
-
-def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
-    """Run one git command in ``root`` and capture its bytes (never raises on its exit)."""
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, check=False)
-
-
-def blob_at(root: Path, ref: str, path: str) -> bytes | None:
-    """Return ``path``'s content at ``ref``, ``None`` when it is absent there."""
-    shown = run_git(root, "show", f"{ref}:{path}")
-    return shown.stdout if shown.returncode == 0 else None
-
-
-def merge_base(root: Path, base_ref: str, head: str) -> str | None:
-    """Return the merge base of ``base_ref`` and ``head``, ``None`` when git cannot say."""
-    found = run_git(root, "merge-base", base_ref, head)
-    if found.returncode != 0:
-        return None
-    return found.stdout.decode().strip() or None
 
 
 def declared_at_base(root: Path, base_ref: str | None) -> tuple[GeneratedEntry, ...]:
@@ -1235,7 +1217,6 @@ __all__ = [
     "ReviewScope",
     "RunResult",
     "Runner",
-    "blob_at",
     "by_path",
     "check_cause",
     "code_extensions",
@@ -1244,14 +1225,12 @@ __all__ = [
     "generated_findings",
     "load_generated_entries",
     "load_review_evidence",
-    "merge_base",
     "path_verified",
     "record_generated_findings",
     "report_json",
     "report_lines",
     "review_scope",
     "run_checks",
-    "run_git",
     "settle_at_head",
     "subprocess_runner",
     "summarise",

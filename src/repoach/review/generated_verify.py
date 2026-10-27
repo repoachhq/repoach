@@ -20,15 +20,13 @@ from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
     Runner,
-    blob_at,
     declared_at_base,
     evidence_payload,
-    merge_base,
     run_checks,
-    run_git,
     subprocess_runner,
     touched_artefacts,
 )
+from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 
 
 @contextmanager
@@ -63,14 +61,6 @@ def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
 
 class GeneratedRefusalError(RuntimeError):
     """``repoach review generated`` cannot run: a ref does not resolve or the base is invalid."""
-
-
-def _resolve(root: Path, ref: str) -> str | None:
-    """Return the commit ``ref`` names in ``root``, ``None`` when it does not resolve."""
-    found = run_git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-    if found.returncode != 0:
-        return None
-    return found.stdout.decode().strip() or None
 
 
 def verify_generated(
@@ -109,10 +99,10 @@ def verify_generated(
         ConfigError: The base declarations are invalid.
     """
     started = clock()
-    head_sha = _resolve(root, head)
+    head_sha = resolve_commit(root, head)
     if head_sha is None:
         raise GeneratedRefusalError(f"head {head!r} does not resolve to a commit")
-    if _resolve(root, base_ref) is None:
+    if resolve_commit(root, base_ref) is None:
         raise GeneratedRefusalError(f"base {base_ref!r} does not resolve to a commit")
     base_sha = merge_base(root, base_ref, head_sha) or base_ref
     changed = changed_paths(root, base_sha, head_sha)
@@ -139,15 +129,8 @@ def verify_generated(
     return payload, checks, timing
 
 
-def changed_paths(root: Path, base_sha: str, head_sha: str) -> list[str]:
-    """Return the paths changed between ``base_sha`` and ``head_sha``."""
-    listed = run_git(root, "diff", "--name-only", "--no-renames", base_sha, head_sha)
-    return [line for line in listed.stdout.decode().splitlines() if line]
-
-
 __all__ = [
     "GeneratedRefusalError",
-    "changed_paths",
     "head_tree",
     "verify_generated",
 ]
