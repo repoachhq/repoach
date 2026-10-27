@@ -87,7 +87,7 @@ CAUSE_LINE_MAX_CHARS = 200
 """Characters of a check's last output line a finding's cause keeps."""
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
-_MARKUP_RE = re.compile(r"[`<>\[\]|@*_~#]")
+_MARKUP_RE = re.compile(r"[`<>\[\]|@]")
 _SETTLEABLE_FINDERS = frozenset({GENERATED_FINDER, OVERSIZED_FINDER})
 
 
@@ -801,6 +801,8 @@ def check_cause(check: GeneratedCheck) -> str:
         if check.exit_code is None:
             return f"{prefix}check failed: {_last_line(check.output_tail)}"
         return f"{prefix}check exited {check.exit_code}: {_last_line(check.output_tail)}"
+    if check.state is GeneratedState.CHECK_ABSENT and check.argv:
+        return f"check script {check.argv[0]} absent at {check.head_sha[:7]}"
     return _last_line(check.output_tail) or check.state.value
 
 
