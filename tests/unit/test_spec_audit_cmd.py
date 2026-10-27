@@ -165,3 +165,22 @@ def test_audit_plans_tells_a_prose_plan_from_a_corrupt_action_plan(
     assert next(line for line in lines if "does not parse" in line).startswith(
         "SP-C\tplan does not parse: "
     )
+
+
+def test_audit_plans_json_carries_prose_and_corrupt_plans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _repo(tmp_path)
+    (root / "docs/plans/SP-B.md").write_text("# Plan\n\nProse only.\n", encoding="utf-8")
+    (root / "docs/plans/SP-C.md").write_text(
+        "# Plan\n\n<!-- repoach-action-plan -->\n```json\n{not json\n```\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(root)
+
+    result = CliRunner().invoke(app, ["spec", "audit", "--plans", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["not_action_plans"] == [{"id": "SP-B", "path": "docs/plans/SP-B.md"}]
+    assert [entry["id"] for entry in payload["unparseable_plans"]] == ["SP-C"]
+    assert payload["unparseable_plans"][0]["error"]
