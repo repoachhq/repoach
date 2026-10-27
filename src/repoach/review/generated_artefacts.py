@@ -30,7 +30,7 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -245,6 +245,13 @@ def _inside(head_dir: Path, script: str) -> bool:
     return not symlinked(head_dir, script) and (head_dir / script).is_file()
 
 
+def _artefact_moved(tree: Path, path: str, bound_sha: str) -> bool:
+    """Whether the run left ``path`` other than the blob the run was bound to."""
+    if symlinked(tree, path) or not (tree / path).is_file():
+        return True
+    return sha256_hex((tree / path).read_bytes()) != bound_sha
+
+
 class ScriptTamperedError(RuntimeError):
     """The check script became a symlink, or left the head tree, while the base script ran."""
 
@@ -364,6 +371,7 @@ def run_checks(
     base_blob: Callable[[str], bytes | None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     env: Mapping[str, str] | None = None,
+    fresh_tree: Callable[[], AbstractContextManager[Path]] | None = None,
 ) -> list[GeneratedCheck]:
     """Run each touched artefact's check against the head tree, in declaration order.
 
@@ -372,6 +380,11 @@ def run_checks(
     ``shell=False`` and :func:`scrubbed_env`. When ``check[0]`` itself
     changed in the diff, the check runs twice against the head tree: with
     the base-ref script, then with the head script (D3).
+
+    A run is pull-request code and may rewrite the tree it runs in, so
+    with ``fresh_tree`` each run gets a tree of its own; and a run that
+    leaves the artefact's bytes different from the blob it was bound to
+    ends stale (``the check changed <path>``), never verified.
 
     Args:
         touched: The declared artefacts the diff changes.
@@ -385,6 +398,8 @@ def run_checks(
         base_blob: Reads a path at the base (the D3 base script).
         clock: The monotonic clock the budget and durations read.
         env: The environment; :func:`scrubbed_env` when omitted.
+        fresh_tree: Makes a new tree at the head for each run; every run
+            uses ``head_dir`` itself when omitted.
 
     Returns:
         One :class:`GeneratedCheck` per run; an artefact deleted at the
@@ -439,18 +454,21 @@ def run_checks(
             if base_script is not None:
                 runs = [("base", base_script), ("head", None)]
         for ref, content in runs:
-            state, exit_code, ms, tail = _run_once(
-                entry,
-                path,
-                head_dir=head_dir,
-                head_sha=head_sha,
-                base_sha=base_sha,
-                runner=runner,
-                timeout_s=timeout_s,
-                budget=budget,
-                script_content=content,
-                env=environment,
-            )
+            with fresh_tree() if fresh_tree is not None else nullcontext(head_dir) as tree:
+                state, exit_code, ms, tail = _run_once(
+                    entry,
+                    path,
+                    head_dir=tree,
+                    head_sha=head_sha,
+                    base_sha=base_sha,
+                    runner=runner,
+                    timeout_s=timeout_s,
+                    budget=budget,
+                    script_content=content,
+                    env=environment,
+                )
+                if state is GeneratedState.VERIFIED and _artefact_moved(tree, path, artefact_sha):
+                    state, tail = GeneratedState.STALE, f"the check changed {path}"
             if state is GeneratedState.VERIFIED and not (sources or producers):
                 state = GeneratedState.NO_SOURCE_CHANGED
             checks.append(

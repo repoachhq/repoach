@@ -183,6 +183,7 @@ def verify_generated(
                 base_sha=base_sha,
                 base_blob=lambda path: blob_at(root, base_sha, path),
                 clock=clock,
+                fresh_tree=lambda: head_tree(root, head_sha, state_dir / "runs"),
             )
     checks_ms = sum(check.duration_ms for check in checks)
     overhead_ms = max(round((clock() - started) * 1000) - checks_ms, 0)

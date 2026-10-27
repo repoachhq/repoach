@@ -17,7 +17,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -1044,3 +1047,47 @@ def test_a_re_check_without_generated_rows_creates_no_table(tmp_path: Path) -> N
 
     assert settlements_at_head(db_path, 7, "a" * 40) == {}
     assert not has_generated_checks(db_path)
+
+
+def test_each_run_gets_its_own_tree_and_may_not_change_the_artefact(tmp_path: Path) -> None:
+    """A run that rewrites the tree leaves the next run untouched, and changing the artefact is stale."""
+    template = tmp_path / "template"
+    (template / "data").mkdir(parents=True)
+    (template / "scripts").mkdir()
+    (template / ARTEFACT).write_text("{}\n", encoding="utf-8")
+    (template / "data" / "index.json").write_text("{}\n", encoding="utf-8")
+    (template / CHECK).write_text("print('head')\n", encoding="utf-8")
+    copies: list[Path] = []
+
+    @contextmanager
+    def fresh_tree() -> Iterator[Path]:
+        copy = tmp_path / f"run-{len(copies)}"
+        shutil.copytree(template, copy)
+        copies.append(copy)
+        yield copy
+
+    seen: list[str] = []
+
+    def rewriting_runner(argv: object, *, cwd: Path, **_kwargs: object) -> RunResult:
+        seen.append((cwd / ARTEFACT).read_text(encoding="utf-8"))
+        (cwd / ARTEFACT).write_text('{"forged": true}\n', encoding="utf-8")
+        return RunResult(0, "ok")
+
+    entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
+    index = GeneratedEntry(path="data/index.json", check=(CHECK,), sources=("data/corpus.json",))
+    checks = run_checks(
+        {ARTEFACT: entry, "data/index.json": index},
+        head_dir=template,
+        head_sha="f" * 40,
+        runner=rewriting_runner,
+        changed_files=[ARTEFACT, "data/index.json", "data/corpus.json"],
+        fresh_tree=fresh_tree,
+    )
+
+    assert len(copies) == 2
+    assert seen == ["{}\n", "{}\n"]
+    assert (template / ARTEFACT).read_text(encoding="utf-8") == "{}\n"
+    assert [(c.path, c.state, c.output_tail) for c in checks] == [
+        (ARTEFACT, GeneratedState.STALE, f"the check changed {ARTEFACT}"),
+        ("data/index.json", GeneratedState.VERIFIED, "ok"),
+    ]
