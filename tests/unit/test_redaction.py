@@ -47,8 +47,23 @@ def test_redact_error_masks_each_secret_pattern(value: str) -> None:
             "fatal: https://***@github.com/o/r failed",
         ),
         ("fatal: https://bot@github.com/o/r", "fatal: https://***@github.com/o/r"),
+        (
+            "from https://a:x@h1/p to https://b:y@h2/q",
+            "from https://***@h1/p to https://***@h2/q",
+        ),
+        (
+            "remotes https://a:x@h1/p,https://b:y@h2/q",
+            "remotes https://***@h1/p,https://***@h2/q",
+        ),
     ],
-    ids=["user-and-secret", "unencoded-at", "slash-in-secret", "user-only"],
+    ids=[
+        "user-and-secret",
+        "unencoded-at",
+        "slash-in-secret",
+        "user-only",
+        "two-urls-spaced",
+        "two-urls-joined",
+    ],
 )
 def test_redact_error_masks_url_userinfo(text: str, expected: str) -> None:
     assert redact_error(text) == expected
