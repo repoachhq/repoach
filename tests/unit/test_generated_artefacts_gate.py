@@ -663,3 +663,26 @@ def test_evidence_states_are_recomputed_at_review(
     assert len(results) == 1
     assert results[0].startswith("check exited 1: Embeddings are stale")
     assert refused.payload["final_verdict"] == "REQUEST_CHANGES"
+
+
+def test_check_output_is_made_inert_in_the_cause(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failing check's last line reaches the finding without markup, controls or excess length."""
+    hostile = "`@owner` <img src=x> [link](http://x) \x1b[31m" + "z" * 400
+    script = f"import sys\nprint({hostile!r})\nsys.exit(3)\n"
+    repo = Repo(tmp_path, _base(_toml(_entry()), **{CHECK: script}))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V2, "B")})
+    evidence, _, _, _ = _evidence(repo, monkeypatch, capsys, head)
+
+    review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    (result,) = [f.verification_result for f in _generated_findings(bench.db_path)]
+    assert result.startswith("check exited 3: ")
+    cause = result.removeprefix("check exited 3: ")
+    assert len(cause) <= 200
+    for char in "`@<>[]\x1b":
+        assert char not in cause

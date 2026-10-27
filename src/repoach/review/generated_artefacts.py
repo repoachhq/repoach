@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -94,6 +95,12 @@ GENERATED_FINDER = "generated_check"
 """Finder and verification method of a ``generated_artefact`` finding."""
 
 _CLAIM_PREFIX = "generated artefact not derived from its sources: "
+
+CAUSE_LINE_MAX_CHARS = 200
+"""Characters of a check's last output line a finding's cause keeps."""
+
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_MARKUP_RE = re.compile(r"[`<>\[\]|@*_~#]")
 _SETTLEABLE_FINDERS = frozenset({GENERATED_FINDER, OVERSIZED_FINDER})
 
 
@@ -565,8 +572,9 @@ def _declared_argv(entry: GeneratedEntry, head_sha: str, base_sha: str) -> tuple
 
 
 def _tail(output: str) -> str:
-    """The last :data:`OUTPUT_TAIL_LINES` non-empty lines of ``output``."""
-    lines = [line for line in output.splitlines() if line.strip()]
+    """The last :data:`OUTPUT_TAIL_LINES` non-empty lines of ``output``, control characters removed."""
+    lines = [_CONTROL_RE.sub("", line) for line in output.splitlines()]
+    lines = [line for line in lines if line.strip()]
     return "\n".join(lines[-OUTPUT_TAIL_LINES:])
 
 
@@ -784,9 +792,17 @@ def not_run_checks(
 
 
 def _last_line(tail: str) -> str:
-    """The last line of an output tail."""
+    """The last line of an output tail, made inert: the check's output is pull-request text.
+
+    Control and Markdown markup characters become spaces and the line is
+    cut at :data:`CAUSE_LINE_MAX_CHARS`, so the cause a finding stores and
+    the report prints cannot carry a mention, a link or an escape sequence.
+    """
     lines = tail.splitlines()
-    return lines[-1].strip() if lines else ""
+    if not lines:
+        return ""
+    plain = _MARKUP_RE.sub(" ", _CONTROL_RE.sub(" ", lines[-1]))
+    return " ".join(plain.split())[:CAUSE_LINE_MAX_CHARS]
 
 
 def check_cause(check: GeneratedCheck) -> str:
