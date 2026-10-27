@@ -87,17 +87,17 @@ def verify_generated(
 
     The verification job's whole work, secret-free (G2, G7): the
     declarations are read at ``base_ref``, the changed paths between the
-    merge base and the head, the checks run against a tree at the head
-    (the checkout when it is there and clean, else a detached worktree
-    under ``state_dir``), and the wall time is split into ``checks_ms``
-    and ``overhead_ms``.
+    merge base and the head, the checks run in a throwaway clone of the
+    head with its own git directory (:func:`head_tree`, under
+    ``state_dir``), and the wall time is split into ``checks_ms`` and
+    ``overhead_ms``.
 
     Args:
         root: The checkout.
         pr_number: The pull request.
         head: The head SHA (or a ref naming it).
         base_ref: The base ref (``origin/develop``).
-        state_dir: Where a worktree of the head may be created.
+        state_dir: Where the throwaway clone of the head is made.
         runner: The subprocess seam.
         clock: The monotonic clock.
 
