@@ -16,7 +16,6 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from ..review.spec import _normalise_id, detect_spec_from_branch, spec_exists
 from .config import DEFAULT_SPEC_SOURCES, SpecSource
@@ -28,10 +27,6 @@ The ``Spec:`` key and the ``SP-`` prefix match in any case; the id is
 returned verbatim, as written in the description."""
 
 
-OwnershipSource = Literal["ownership"]
-"""The source of the specs an undeclared PR is graded against (G7)."""
-
-
 @dataclass(frozen=True)
 class SpecResolution:
     """The resolved spec id and where it came from.
@@ -40,13 +35,13 @@ class SpecResolution:
         spec_id: Canonical ``SP-…`` id, or None when nothing declares one.
         source: ``flag``, ``description`` or ``branch``; None with no
             spec. A PR declaring none is then graded against the specs
-            owning its code, and the review reports that source as
-            ``ownership`` (:data:`OwnershipSource`,
-            :attr:`repoach.review.spec_grading.CoverageGrading.source`).
+            owning its code; that ``ownership`` source is the review's
+            (:attr:`repoach.review.spec_grading.CoverageGrading.source`),
+            never a declaration.
     """
 
     spec_id: str | None = None
-    source: SpecSource | OwnershipSource | None = None
+    source: SpecSource | None = None
 
 
 def spec_from_description(description: str) -> str | None:
