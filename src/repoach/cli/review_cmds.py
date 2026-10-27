@@ -543,10 +543,13 @@ def review_generated(
     pr_number: int = typer.Option(..., "--pr", help="PR number (GitHub) or MR iid (GitLab)."),
     head: str = typer.Option(..., "--head", help="The head SHA the review will run at."),
     out: str = typer.Option(..., "--out", help="Where to write review-generated.json."),
-    base: str | None = typer.Option(
-        None,
+    base: str = typer.Option(
+        ...,
         "--base",
-        help="The base ref the declarations are read at (default: origin/<integration_branch>).",
+        help=(
+            "The base ref the declarations are read at (origin/<target branch>); required: "
+            "the checkout's own repoach.toml is the pull request's and may not choose it."
+        ),
     ),
 ) -> None:
     """Run the checks of the declared generated artefacts a PR touches (secret-free job).
@@ -580,17 +583,17 @@ def review_generated(
             err=True,
         )
         argv = ["review", "generated", "--pr", str(pr_number), "--head", head, "--out", out]
-        argv += ["--base", base] if base else []
+        argv += ["--base", base]
         reexec_scrubbed(argv, execve=REEXEC)
         return
-    base_ref = base or f"origin/{load_project_config(root).repoach.integration_branch}"
+
     state_dir = Path(get_settings().db_path).parent
     try:
         payload, checks, timing = verify_generated(
             root,
             pr_number=pr_number,
             head=head,
-            base_ref=base_ref,
+            base_ref=base,
             state_dir=state_dir,
             runner=GENERATED_RUNNER,
         )

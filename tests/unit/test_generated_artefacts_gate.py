@@ -21,8 +21,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-from repoach.cli import review_cmds
+from repoach.cli import app, review_cmds
 from repoach.review.findings import (
     ClaimType,
     FindingStatus,
@@ -862,3 +863,13 @@ def test_a_script_turned_into_a_symlink_by_the_base_run_is_not_written_through(
             f"check script {CHECK} is a symlink or leaves the head tree",
         ),
     ]
+
+
+def test_review_generated_requires_the_base() -> None:
+    """The base is never read from the pull request's own repoach.toml: --base is required."""
+    result = CliRunner().invoke(
+        app, ["review", "generated", "--pr", "1", "--head", "x", "--out", "y"]
+    )
+
+    assert result.exit_code == 2
+    assert "--base" in result.output
