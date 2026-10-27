@@ -325,6 +325,23 @@ def symlink_row(
     )
 
 
+def plain_file(head_dir: Path, path: str) -> bool:
+    """Whether ``path`` is a regular file of the head tree, reached without a symlink.
+
+    The guard for every read of a pull request's file (the artefact the
+    summary hashes) and every write into its tree (the D3 base script):
+    a symlink, or a directory symlink on the way, would leave the tree.
+
+    Args:
+        head_dir: The head tree.
+        path: A repository-relative path (no ``..``).
+
+    Returns:
+        True when ``path`` is a plain file reached without a symlink.
+    """
+    return not symlinked(head_dir, path) and (head_dir / path).is_file()
+
+
 __all__ = [
     "CAUSE_LINE_MAX_CHARS",
     "CONTROL_RE",
@@ -342,6 +359,7 @@ __all__ = [
     "declared_argv",
     "last_line",
     "path_verified",
+    "plain_file",
     "sha256_hex",
     "symlink_row",
     "symlinked",

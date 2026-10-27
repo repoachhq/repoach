@@ -71,6 +71,7 @@ from .generated_types import (
     check_cause,
     declared_argv,
     path_verified,
+    plain_file,
     sha256_hex,
     symlink_row,
     symlinked,
@@ -215,7 +216,7 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
 
     def head_blob(path: str) -> bytes | None:
         target = head_dir / path
-        return target.read_bytes() if _inside(head_dir, path) else None
+        return target.read_bytes() if plain_file(head_dir, path) else None
 
     summarised = summarise(
         diff,
@@ -235,16 +236,6 @@ def _interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
     if script.endswith(".sh"):
         return ["bash", *argv]
     return [str(head_dir / script), *argv[1:]]
-
-
-def _inside(head_dir: Path, script: str) -> bool:
-    """Whether ``script`` is a regular file of the head tree, reached without a symlink.
-
-    The D3 base run writes the base script over ``script``, so a symlink,
-    or a directory symlink on the way, would make that write land outside
-    the tree.
-    """
-    return not symlinked(head_dir, script) and (head_dir / script).is_file()
 
 
 def _artefact_moved(tree: Path, path: str, bound_sha: str) -> bool:
@@ -280,7 +271,7 @@ def _script_at(head_dir: Path, script: str, content: bytes | None) -> Iterator[N
     try:
         yield
     finally:
-        if not _inside(head_dir, script):
+        if not plain_file(head_dir, script):
             raise ScriptTamperedError(
                 f"check script {script} changed into a symlink during the run"
             )
@@ -329,7 +320,7 @@ def _run_once(
             f"check not run within {budget.total_s:g} s: {path}",
         )
     allowed = min(limit, remaining)
-    if not _inside(head_dir, entry.check[0]):
+    if not plain_file(head_dir, entry.check[0]):
         return (
             GeneratedState.STALE,
             None,
@@ -441,7 +432,7 @@ def run_checks(
                 )
             )
             continue
-        if not _inside(head_dir, script):
+        if not plain_file(head_dir, script):
             checks.append(
                 replace(
                     template,
