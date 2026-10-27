@@ -51,6 +51,7 @@ from .governed_spec import (
     governed_specs_at_ref,
     load_governed_spec,
     load_governed_spec_at_ref,
+    ref_resolves,
     spec_markdown_at_ref,
 )
 from .plan import PLAN_MARKER, ActionPlan, load_plan, parse_plan_markdown, plan_relpath
@@ -983,18 +984,8 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
             :func:`repoach.review.plan.parse_plan_markdown`).
     """
     base = (root or Path.cwd()).resolve()
-    verify = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        cwd=base,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if verify.returncode != 0:
-        raise BaseRefUnavailableError(
-            f"base ref {ref!r} does not resolve to a commit in {base}: "
-            f"{verify.stderr.strip()[:200]}"
-        )
+    if not ref_resolves(base, ref):
+        raise BaseRefUnavailableError(f"base ref {ref!r} does not resolve to a commit in {base}")
     relpath = plan_relpath(spec_id, root=base)
     show = subprocess.run(
         ["git", "show", f"{ref}:{relpath}"],
@@ -1592,24 +1583,12 @@ def _readable_base(
     if not base_ref:
         return None
 
-    def resolves(ref: str) -> bool:
-        return (
-            subprocess.run(
-                ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
-            ).returncode
-            == 0
-        )
-
-    if resolves(base_ref):
+    if ref_resolves(repo_root, base_ref):
         return base_ref
     if fetch_base is not None:
         fetch_base(base_ref)
     remote = f"origin/{base_ref}"
-    return remote if resolves(remote) else None
+    return remote if ref_resolves(repo_root, remote) else None
 
 
 @dataclass(frozen=True)

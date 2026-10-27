@@ -184,13 +184,29 @@ def governed_specs_at_ref(ref: str, *, root: Path) -> list[GovernedSpec]:
     return specs
 
 
+def ref_resolves(root: Path, ref: str) -> bool:
+    """Return whether *ref* resolves to a commit in the repository at *root*.
+
+    The one ``git rev-parse --verify`` check the spec gate and the
+    governed-spec readers share.
+
+    Args:
+        root: Repository root the git command runs against.
+        ref: A git revision (branch, remote-tracking ref or commit).
+
+    Returns:
+        True when ``<ref>^{commit}`` resolves.
+    """
+    return _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode == 0
+
+
 def _spec_files_at_ref(ref: str, base: Path) -> list[tuple[str, str]]:
     """Return ``(path, filename SP-ID)`` for every spec file committed at *ref*.
 
     Raises:
         SpecRefUnavailableError: *ref* does not resolve to a commit.
     """
-    if _git(base, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
+    if not ref_resolves(base, ref):
         raise SpecRefUnavailableError(f"ref {ref!r} does not resolve to a commit in {base}")
     specs_rel = specs_dir_for(base).resolve().relative_to(base).as_posix()
     listing = _git(base, "ls-tree", "--name-only", ref, f"{specs_rel}/")
