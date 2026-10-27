@@ -255,3 +255,46 @@ def test_none_budget_used_keeps_the_recorded_value(tmp_path: Path) -> None:
 def test_budget_clamp_lives_in_one_constructor() -> None:
     assert RefuterBudget.clamped(60_000, 50_000) == RefuterBudget(60_000, 60_000)
     assert RefuterBudget.clamped(40_000, 200_000) == RefuterBudget(40_000, 200_000)
+
+
+def test_judge_finding_clamps_a_ceiling_below_the_floor(tmp_path: Path) -> None:
+    fits = judge_finding(
+        _finding(),
+        repo_root=_tree(tmp_path / "fits", 45_000),
+        judge=lambda _p: _reply("refuted", "wanted_symbol masks the value"),
+        budget=RefuterBudget(60_000, 50_000),
+    )
+    assert fits.status is FindingStatus.REFUTED
+    assert fits.budget_used == 60_000
+    over = judge_finding(
+        _finding(),
+        repo_root=_tree(tmp_path / "over", 80_000),
+        judge=lambda _p: _reply("refuted", "fine"),
+        budget=RefuterBudget(60_000, 50_000),
+    )
+    assert over.status is FindingStatus.PROPOSED
+    assert over.reason.endswith(" tokens needed, ceiling 60000)")
+
+
+def test_judge_findings_for_pr_reads_budget_from_repo_root_when_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_CEILING", raising=False)
+    root = _tree(tmp_path / "repo", 60_000)
+    (root / "repoach.toml").write_text(
+        "[gates]\nrefuter_context_ceiling = 40000\n", encoding="utf-8"
+    )
+    db = tmp_path / "review.db"
+    init_findings_schema(db)
+    record_finding(db, _finding(head=HEAD_B))
+    report = judge_findings_for_pr(
+        db,
+        pr_number=7,
+        repo_root=root,
+        head_sha=HEAD_B,
+        judge_factory=lambda: lambda _p: _reply("refuted", "fine"),
+    )
+    [outcome] = report.outcomes
+    assert report.model_calls == 0
+    assert outcome.reason.endswith(" tokens needed, ceiling 40000)")
