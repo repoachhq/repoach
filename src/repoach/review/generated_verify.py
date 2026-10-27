@@ -238,6 +238,57 @@ def run_verification(
     return report_lines(checks, timing)
 
 
+def review_generated_command(
+    root: Path,
+    *,
+    pr_number: int,
+    head: str,
+    base: str,
+    out: Path,
+    state_dir: Path,
+    echo: Callable[[str], None],
+) -> None:
+    """Do everything ``repoach review generated`` does once its options are parsed.
+
+    A process holding a secret-bearing variable names it and replaces
+    itself with a copy started without it (:func:`reexec_scrubbed`, the
+    command line rebuilt here); otherwise the checks run
+    (:func:`run_verification`) and every report line goes to ``echo``.
+
+    Args:
+        root: The checkout.
+        pr_number: The pull request.
+        head: The head SHA.
+        base: The base ref the declarations are read at.
+        out: Where the evidence is written.
+        state_dir: Where the throwaway copies of the head are made.
+        echo: Prints one line on stderr.
+
+    Raises:
+        GeneratedRefusalError: The head or the base does not resolve.
+        ConfigError: The base declarations are invalid.
+    """
+    held = held_secrets()
+    if held:
+        echo(
+            f"repoach: review generated re-runs itself without {', '.join(held)}: "
+            "a check is pull-request code and could read them from this process"
+        )
+        argv = ["review", "generated", "--pr", str(pr_number), "--head", head]
+        reexec_scrubbed([*argv, "--out", str(out), "--base", base], execve=SEAMS.execve)
+        return
+    for line in run_verification(
+        root,
+        pr_number=pr_number,
+        head=head,
+        base_ref=base,
+        state_dir=state_dir,
+        out=out,
+        runner=SEAMS.runner,
+    ):
+        echo(line)
+
+
 __all__ = [
     "SEAMS",
     "GeneratedRefusalError",
@@ -245,6 +296,7 @@ __all__ = [
     "head_tree",
     "held_secrets",
     "reexec_scrubbed",
+    "review_generated_command",
     "run_verification",
     "verify_generated",
 ]

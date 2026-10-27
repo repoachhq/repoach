@@ -65,13 +65,7 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.generated_verify import (
-    SEAMS,
-    GeneratedRefusalError,
-    held_secrets,
-    reexec_scrubbed,
-    run_verification,
-)
+from ..review.generated_verify import GeneratedRefusalError, review_generated_command
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (
     attempts_line,
@@ -567,34 +561,19 @@ def review_generated(
     does not resolve, or the base declarations are invalid.
     """
     root = project_root_or_exit()
-    held = held_secrets()
-    if held:
-        typer.echo(
-            f"repoach: review generated re-runs itself without {', '.join(held)}: "
-            "a check is pull-request code and could read them from this process",
-            err=True,
-        )
-        argv = ["review", "generated", "--pr", str(pr_number), "--head", head, "--out", out]
-        argv += ["--base", base]
-        reexec_scrubbed(argv, execve=SEAMS.execve)
-        return
-
-    state_dir = Path(get_settings().db_path).parent
     try:
-        lines = run_verification(
+        review_generated_command(
             root,
             pr_number=pr_number,
             head=head,
-            base_ref=base,
-            state_dir=state_dir,
+            base=base,
             out=Path(out),
-            runner=SEAMS.runner,
+            state_dir=Path(get_settings().db_path).parent,
+            echo=lambda line: typer.echo(line, err=True),
         )
     except (GeneratedRefusalError, ConfigError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
-    for line in lines:
-        typer.echo(line, err=True)
 
 
 _ARCHIVE_FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
