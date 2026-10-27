@@ -254,3 +254,38 @@ def test_a_grading_failure_records_a_refusing_row(
         "https://***@github.com (fail closed)"
     ]
     assert "ghs_" not in decision.reasons[0]
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def warning(self, event: str, **fields: object) -> None:
+        self.calls.append((event, fields))
+
+
+def test_gate_logs_an_unreadable_diff_without_its_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from repoach.cli import review_cmds
+
+    token = "ghs_" + "b2" * 12
+
+    def unreadable() -> list[str]:
+        raise RuntimeError(f"fatal: https://x-access-token:{token}@github.com/o/r")
+
+    recorder = _Recorder()
+    monkeypatch.setattr(review_cmds, "_log", recorder)
+    evaluation = GateEvaluation(
+        head_sha="abc",
+        ci_gate=CIGateOutcome(green=True, outcome_tag="", reason=""),
+        facts=MagicMock(),
+        decision=MagicMock(),
+        read_changed_files=unreadable,
+    )
+
+    assert review_cmds._gate_changed_files(evaluation) is None
+    ((event, fields),) = recorder.calls
+    assert event == "gate.diff_unread"
+    assert token not in str(fields["error"])
+    assert "https://***@github.com/o/r" in str(fields["error"])

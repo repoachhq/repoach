@@ -84,6 +84,7 @@ from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
     ownership_at_base,
     ownership_unavailable_reason,
+    redact_error,
     resolution_payload,
 )
 from .doctor_cmds import project_root_or_exit
@@ -894,7 +895,9 @@ def _gate_changed_files(evaluation: GateEvaluation) -> list[str] | None:
     try:
         return evaluation.read_changed_files()
     except Exception as exc:
-        _log.warning("gate.diff_unread", error=f"{type(exc).__name__}: {str(exc)[:200]}")
+        _log.warning(
+            "gate.diff_unread", error=f"{type(exc).__name__}: {redact_error(str(exc))[:200]}"
+        )
         return None
 
 
