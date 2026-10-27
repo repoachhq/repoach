@@ -601,9 +601,21 @@ def test_decision_prefixes_only_specs_resolved_by_ownership() -> None:
     ]
 
 
-def test_merge_facts_refuse_a_derived_spec_fact_as_input() -> None:
-    with pytest.raises(ValidationError, match="spec_missing"):
-        _facts(spec_covered=False, spec_missing=["tests/x.py::test_y"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("spec_missing", ["tests/x.py::test_y"]),
+        ("spec_planned", ["tests/x.py::test_y"]),
+        ("spec_draft_refusals", ["a refusal"]),
+        ("spec_contract", "plan"),
+        ("spec_origins", {"tests/x.py::test_y": "AC1"}),
+        ("spec_no_selectors_line", "no selectors to grade: SP-A"),
+        ("spec_report", ["plan-absent: ..."]),
+    ],
+)
+def test_merge_facts_refuse_a_derived_spec_fact_as_input(field: str, value: object) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _facts(spec_covered=False, **{field: value})
 
 
 def test_derived_spec_facts_over_several_rows() -> None:
