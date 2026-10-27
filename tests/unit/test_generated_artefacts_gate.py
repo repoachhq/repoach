@@ -914,3 +914,27 @@ def test_a_symlinked_artefact_is_never_read_and_never_green(
         f"check failed: artefact {ARTEFACT} is a symlink; it is not read"
     ]
     assert result.payload["final_verdict"] == "REQUEST_CHANGES"
+
+
+def test_subprocess_runner_refuses_a_shell(tmp_path: Path) -> None:
+    """``shell=True`` is refused before anything starts."""
+    with pytest.raises(ValueError, match="never runs through a shell"):
+        subprocess_runner(["true"], cwd=tmp_path, env=scrubbed_env(), timeout_s=5, shell=True)
+
+
+def test_a_timed_out_check_has_its_session_killed(tmp_path: Path) -> None:
+    """A check past its timeout raises TimeoutExpired, and its session is gone."""
+    marker = tmp_path / "late-write"
+    script = tmp_path / "slow.py"
+    script.write_text(
+        f"import pathlib, time\ntime.sleep(2)\npathlib.Path({str(marker)!r}).write_text('x')\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        subprocess_runner(
+            ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=0.5, shell=False
+        )
+
+    subprocess.run(["sleep", "3"], check=True)
+    assert not marker.exists()
