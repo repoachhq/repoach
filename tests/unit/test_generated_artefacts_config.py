@@ -207,3 +207,11 @@ def test_a_class_never_matches_a_slash() -> None:
     """A character class, plain or negated, stays inside one path segment."""
     assert glob_matches("data/v[/x].json", "data/vx.json")
     assert not glob_matches("data/v[/x].json", "data/v/.json")
+
+
+@pytest.mark.parametrize("script", ["-cimport os.py", "scripts/a b.py", "scripts/$(x).sh"])
+def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) -> None:
+    """check[0] goes through the plain-token rule and may not start with '-'."""
+    error = _refused(_ENTRY.replace("scripts/index_knowledge_corpus.py", script))
+    assert error.key == "review.generated[0].check"
+    assert error.line == 6

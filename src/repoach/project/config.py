@@ -363,8 +363,15 @@ class GeneratedSection(_Section):
                 (a space, ``;``, ``|``, ``&``, a quote, ...).
         """
         script = value[0]
-        if not script or any(char in script for char in GLOB_SPECIALS):
-            raise ValueError("check[0] must name a repository script")
+        if (
+            not _CHECK_ARG_RE.match(script)
+            or script.startswith("-")
+            or any(char in script for char in GLOB_SPECIALS)
+        ):
+            raise ValueError(
+                f"check[0] {script!r} must name a repository script: plain characters, "
+                "no leading '-' (an interpreter would read it as an option)"
+            )
         _relative_glob(script)
         for position, argument in enumerate(value[1:], start=1):
             bare = argument
