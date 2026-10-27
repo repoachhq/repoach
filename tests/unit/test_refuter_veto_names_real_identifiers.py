@@ -437,3 +437,12 @@ def test_defined_names_tells_definitions_from_comparisons(line: str, defined: st
         assert names == frozenset()
     else:
         assert defined in names
+
+
+def test_reverify_clamps_an_inverted_budget_in_the_stamp_key(tmp_path: Path) -> None:
+    root, db, finding_id = _ledger(tmp_path)
+    calls: list[str] = []
+    _reverify(db, root, HEAD_B, calls, budget=RefuterBudget(60_000, 50_000))
+    row = next(f for f in fetch_findings(db, 260) if f.id == finding_id)
+    assert stamp_key(row.verification_result) == judgement_key(RefuterBudget(60_000, 60_000))
+    assert "ceiling 60000" in row.verification_result
