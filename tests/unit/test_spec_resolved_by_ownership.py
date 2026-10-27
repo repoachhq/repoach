@@ -26,7 +26,7 @@ from repoach.review.findings import init_findings_schema, record_review_integrit
 from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
 from repoach.review.spec_gate import record_spec_coverages
-from repoach.review.spec_grading import coverage_rows_at_head
+from repoach.review.spec_grading import coverage_rows_at_head, specs_owning
 
 _SPEC_PATH = "docs/specs/2026-10-26_SP-A_owner.md"
 _OWNED = "src/a.py"
@@ -289,3 +289,57 @@ def test_gate_logs_an_unreadable_diff_without_its_credential(
     assert event == "gate.diff_unread"
     assert token not in str(fields["error"])
     assert "https://***@github.com/o/r" in str(fields["error"])
+
+
+def _owner_spec(spec_id: str, owns: str) -> str:
+    return (
+        "---\n"
+        f"id: {spec_id}\n"
+        f"title: {spec_id}\n"
+        "version: 0.1\n"
+        "status: approved\n"
+        "owns:\n"
+        f"  code: [{owns}]\n"
+        "  resources: []\n"
+        "depends_on: []\n"
+        "---\n\n"
+        f"# {spec_id}\n"
+    )
+
+
+def test_specs_owning_picks_the_longest_prefix_and_reports_ungoverned(tmp_path: Path) -> None:
+    repo = tmp_path / "owners"
+    (repo / "docs/specs").mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test Runner")
+    specs = {
+        "2026-10-27_SP-OUTER_outer.md": _owner_spec("SP-OUTER", "src/pkg/"),
+        "2026-10-27_SP-INNER_inner.md": _owner_spec("SP-INNER", "src/pkg/core"),
+        "2026-10-27_SP-DOCS_docs.md": _owner_spec("SP-DOCS", "docs/prompts"),
+        "2026-10-27_SP-FRONTIER_frontier.md": "# Frontier\n\nNo frontmatter.\n",
+    }
+    for name, text in specs.items():
+        (repo / "docs/specs" / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+
+    ownership = specs_owning(
+        [
+            "src/pkg/core/a.py",
+            "src/pkg/core",
+            "src/pkg/other.py",
+            "src/pkgx/b.py",
+            "docs/prompts/p.md",
+            "docs/notes.md",
+        ],
+        root=repo,
+        ref="develop",
+    )
+
+    assert ownership.specs == {
+        "SP-DOCS": ["docs/prompts/p.md"],
+        "SP-INNER": ["src/pkg/core/a.py", "src/pkg/core"],
+        "SP-OUTER": ["src/pkg/other.py"],
+    }
+    assert ownership.ungoverned == ["src/pkgx/b.py"]
