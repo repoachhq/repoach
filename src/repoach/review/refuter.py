@@ -671,6 +671,10 @@ def judge_finding(
             (:func:`~repoach.gates.config.resolve_refuter_budget`).
         diff: The PR's unified diff (its hunks on the cited file are served).
         pr_spec: ``(spec id, markdown)`` of the PR's governing spec.
+
+    Returns:
+        The :class:`Judgement`: its status, reason, the evidence served
+        and the ``budget_used``.
     """
     floor, ceiling = RefuterBudget.clamped(*budget)
     overhead = _overhead(finding)
@@ -737,8 +741,16 @@ def refute_finding(
 ) -> tuple[FindingStatus, str]:
     """Judge one finding, returning ``(new_status, reason)`` of :func:`judge_finding`.
 
-    ``budget`` is the refuter's configured floor and ceiling, which the
-    evidence fills (:func:`judge_finding`).
+    Args:
+        finding: The proposed finding.
+        repo_root: The pinned head tree the evidence is read from.
+        judge: The judge (tests inject a fake).
+        absent_reason: Deferral reason when the cited file is absent.
+        budget: The refuter's configured floor and ceiling, which the
+            evidence fills (:func:`judge_finding`).
+
+    Returns:
+        ``(status, reason)`` of the :class:`Judgement`.
     """
     judgement = judge_finding(
         finding,
