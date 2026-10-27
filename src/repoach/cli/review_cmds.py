@@ -81,6 +81,7 @@ from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
+from ..review.spec_gate import RESOLUTION_OWNERSHIP
 from ..review.spec_grading import (
     redact_error,
     resolution_report,
@@ -849,7 +850,7 @@ _log = get_logger(__name__)
 def _owned_specs_label(resolution: dict[str, object]) -> str | None:
     """Return the specs a PR was graded against by ownership, joined; None otherwise."""
     specs = resolution.get("specs")
-    if resolution.get("source") != "ownership" or not isinstance(specs, list) or not specs:
+    if resolution.get("source") != RESOLUTION_OWNERSHIP or not isinstance(specs, list) or not specs:
         return None
     return ", ".join(str(spec) for spec in specs)
 
