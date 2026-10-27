@@ -41,6 +41,7 @@ from ..gates.config import (
     REFUTER_CONTEXT_CEILING_DEFAULT,
     REFUTER_CONTEXT_TOKENS_FLOOR,
     GatesConfig,
+    RefuterBudget,
 )
 from ..gates.selectors import is_js_test_file
 from .finding_verifiers import verify_finding
@@ -77,9 +78,7 @@ _CACHED_METHODS = frozenset({REVERIFY_METHOD, NEEDS_JUDGEMENT_METHOD})
 """Stamps a later gate at the same head reuses instead of re-checking."""
 
 
-def judgement_key(
-    context_tokens: int, context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT
-) -> str:
+def judgement_key(budget: RefuterBudget) -> str:
     """Return what a ``needs judgement`` stamp was judged under: rule version, floor and ceiling.
 
     A stamp carrying another key (an earlier
@@ -88,16 +87,13 @@ def judgement_key(
     none) is not reused.
 
     Args:
-        context_tokens: The refuter's context floor the re-check used.
-        context_ceiling: The refuter's context ceiling the re-check used.
+        budget: The refuter's floor and ceiling the re-check used.
 
     Returns:
         ``refuter rule <V>, context <N>, ceiling <C>``, with ``V`` the
         :data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION`.
     """
-    return (
-        f"refuter rule {REFUTER_RULE_VERSION}, context {context_tokens}, ceiling {context_ceiling}"
-    )
+    return f"refuter rule {REFUTER_RULE_VERSION}, context {budget.floor}, ceiling {budget.ceiling}"
 
 
 _NEEDS_JUDGEMENT_STAMP = re.compile(r"^needs judgement at (?P<sha7>\S*) \((?P<key>[^)]*)\): ")
@@ -362,8 +358,7 @@ def _judged(
     judge: LazyJudge,
     max_judged: int,
     cap: int,
-    context_tokens: int,
-    context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT,
+    budget: RefuterBudget,
 ) -> tuple[ReverifyState, str, str, int]:
     """Hand a finding to the refuter at the head, within ``max_judged`` calls.
 
@@ -377,8 +372,8 @@ def _judged(
         finding,
         repo_root=repo_root,
         judge=judge,
-        context_tokens=context_tokens,
-        context_ceiling=context_ceiling,
+        context_tokens=budget.floor,
+        context_ceiling=budget.ceiling,
     )
     status, reason, used = judgement.status, judgement.reason, judgement.budget_used
     if status is FindingStatus.REFUTED:
@@ -398,8 +393,7 @@ def _recheck(
     judge: LazyJudge,
     max_judged: int,
     cap: int,
-    context_tokens: int,
-    context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT,
+    budget: RefuterBudget,
 ) -> tuple[ReverifyState, str, str, int]:
     """Return ``(state, method, reason, budget_used)`` for one finding at the head."""
     sha7 = head_sha[:7]
@@ -412,7 +406,7 @@ def _recheck(
         return (*settled, 0)
     if finding.claim_type not in MECHANICAL_CLAIM_TYPES | JUDGED_CLAIM_TYPES:
         _log.info("head_reverify.unknown_claim_type", claim_type=finding.claim_type.value)
-    return _judged(finding, repo_root, judge, max_judged, cap, context_tokens, context_ceiling)
+    return _judged(finding, repo_root, judge, max_judged, cap, budget)
 
 
 def _settled_on_disk(
@@ -624,7 +618,8 @@ def reverify_older_findings(
         return HeadReverification(head_sha="")
     init_findings_schema(db_path)
     judge = LazyJudge(judge_factory)
-    stamp_key = judgement_key(context_tokens, context_ceiling)
+    budget = RefuterBudget(context_tokens, max(context_tokens, context_ceiling))
+    stamp_key = judgement_key(budget)
     outcomes: list[Reverification] = []
     seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str, int]] = {}
     for finding in fetch_findings(db_path, pr_number):
@@ -654,8 +649,7 @@ def reverify_older_findings(
                 judge=judge,
                 max_judged=max_judged,
                 cap=max_judged if cap is None else cap,
-                context_tokens=context_tokens,
-                context_ceiling=context_ceiling,
+                budget=budget,
             )
         state, method, reason, used = seen[key]
         outcome = _outcome(finding, state, reason, used)

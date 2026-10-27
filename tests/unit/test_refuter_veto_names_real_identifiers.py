@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from repoach.gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig
+from repoach.gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig, RefuterBudget
 from repoach.review import head_reverify, refuter_evidence
 from repoach.review.findings import (
     Finding,
@@ -289,7 +289,9 @@ def test_needs_judgement_is_reused_only_under_the_same_key(tmp_path: Path) -> No
     assert first.counts()["needs_judgement"] == 1 and len(calls) == 1
     row = next(f for f in fetch_findings(db, 260) if f.id == finding_id)
     assert row.verification_method == NEEDS_JUDGEMENT_METHOD
-    assert f"({judgement_key(REFUTER_CONTEXT_TOKENS_FLOOR)}): " in row.verification_result
+    assert f"({judgement_key(RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, 200_000))}): " in (
+        row.verification_result
+    )
     _reverify(db, root, HEAD_B, calls)
     assert len(calls) == 1
 
@@ -393,7 +395,7 @@ def test_is_stop_word_reads_stop_words_only(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_stamp_is_written_and_read_by_one_format() -> None:
-    key = judgement_key(40_000, 200_000)
+    key = judgement_key(RefuterBudget(40_000, 200_000))
     stamp = needs_judgement_stamp("abc1234", key, "evidence outside window (x: y)")
     assert stamp == f"needs judgement at abc1234 ({key}): evidence outside window (x: y)"
     assert stamp_key(stamp) == key

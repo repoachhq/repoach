@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from ..core.config import configured_env_value
 from ..core.logging import get_logger
@@ -497,9 +497,22 @@ def resolve_refuter_context_ceiling(repo_root: Path) -> tuple[int, str]:
     )
 
 
+class RefuterBudget(NamedTuple):
+    """The refuter's context sizes, in tokens (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5).
+
+    Attributes:
+        floor: ``[gates].refuter_context_tokens``, the least context a finding gets.
+        ceiling: ``[gates].refuter_context_ceiling``, the most it may grow to;
+            never below ``floor``.
+    """
+
+    floor: int
+    ceiling: int
+
+
 def resolve_refuter_budget(
     repo_root: Path, *, floor: int | None = None, ceiling: int | None = None
-) -> tuple[int, int]:
+) -> RefuterBudget:
     """Return the refuter's ``(floor, ceiling)`` for the project at ``repo_root``.
 
     The one place the gate, the review and the refuter read their context
@@ -513,11 +526,11 @@ def resolve_refuter_budget(
             :func:`resolve_refuter_context_ceiling`.
 
     Returns:
-        ``(floor, ceiling)``, the ceiling raised to the floor when below it.
+        The :class:`RefuterBudget`, its ceiling raised to the floor when below it.
     """
     low = resolve_refuter_context_tokens(repo_root)[0] if floor is None else floor
     high = resolve_refuter_context_ceiling(repo_root)[0] if ceiling is None else ceiling
-    return low, max(low, high)
+    return RefuterBudget(low, max(low, high))
 
 
 def current_gates_config() -> GatesConfig:
@@ -547,6 +560,7 @@ __all__ = [
     "REPOACH_DOCSTRING_EXEMPT",
     "GatesConfig",
     "GatesConfigError",
+    "RefuterBudget",
     "applicable",
     "current_gates_config",
     "load_gates_config",
