@@ -226,7 +226,9 @@ def coverage_refusals(coverage: SpecCoverage) -> list[str]:
         Empty when the row is covered. Otherwise the absent selectors,
         each with its origin, in contract order, then the row's refusal
         lines. A sentinel of a rule-1 row gets its own sentence and never
-        appears in the selector list.
+        appears in the selector list; a rule-1 ``base-ref-unavailable``
+        row names its ref ``(unrecorded)`` because rule 1 did not store
+        the ref it tried.
     """
     if coverage.covered:
         return []
