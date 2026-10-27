@@ -425,8 +425,15 @@ def _overhead(finding: Finding) -> int:
 def _evidence_budget(finding: Finding, context_tokens: int, overhead: int | None = None) -> int:
     """Return the tokens the evidence may take: the context less prompt and reserves.
 
-    ``overhead`` is :func:`_overhead` of ``finding`` when the caller has it
-    already, so the prompt is rendered once per finding.
+    Args:
+        finding: The finding whose prompt is measured when ``overhead`` is None.
+        context_tokens: A context size (the floor or the ceiling of the
+            refuter's budget).
+        overhead: :func:`_overhead` of ``finding`` when the caller has it
+            already, so the prompt is rendered once per finding.
+
+    Returns:
+        ``context_tokens`` less the overhead, never below 0.
     """
     return max(0, context_tokens - (_overhead(finding) if overhead is None else overhead))
 
