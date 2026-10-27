@@ -37,6 +37,8 @@ from pydantic import (
     model_validator,
 )
 
+from .globs import GLOB_SPECIALS, glob_code_extension
+
 CONFIG_FILE_NAME = "repoach.toml"
 """File name of the project configuration, at the git toplevel."""
 
@@ -119,8 +121,6 @@ GENERATED_PLACEHOLDERS: tuple[str, ...] = ("{head}", "{base}")
 
 _CHECK_ARG_RE = re.compile(r"^[A-Za-z0-9._/=:@,+-]+$")
 """What a check argument after the script may contain once its placeholders are removed."""
-
-_GLOB_SPECIALS = frozenset("*?[")
 
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
 _SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
@@ -306,123 +306,6 @@ class ProviderSection(_Section):
     base_url: str = ""
 
 
-def glob_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a repository glob: ``**`` crosses directories, ``*`` and ``?`` do not.
-
-    Args:
-        pattern: A repository-relative glob (``docs/user_guide/**``).
-
-    Returns:
-        A regex matching the whole repository-relative path.
-    """
-    parts: list[str] = []
-    index = 0
-    while index < len(pattern):
-        char = pattern[index]
-        if pattern.startswith("**/", index):
-            parts.append("(?:.*/)?")
-            index += 3
-            continue
-        if pattern.startswith("**", index):
-            parts.append(".*")
-            index += 2
-            continue
-        if char == "*":
-            parts.append("[^/]*")
-        elif char == "?":
-            parts.append("[^/]")
-        elif char == "[":
-            close = pattern.find("]", index + 1)
-            if close == -1:
-                parts.append(re.escape(char))
-            else:
-                body = pattern[index + 1 : close].replace("\\", "\\\\")
-                if body.startswith("!"):
-                    body = "^" + body[1:]
-                parts.append(f"[{body}]")
-                index = close
-        else:
-            parts.append(re.escape(char))
-        index += 1
-    return re.compile("".join(parts) + r"\Z")
-
-
-def glob_matches(pattern: str, path: str) -> bool:
-    """Return whether the repository glob ``pattern`` matches ``path`` (:func:`glob_regex`).
-
-    Args:
-        pattern: A repository-relative glob (``docs/user_guide/**``).
-        path: A repository-relative path.
-
-    Returns:
-        True when the whole of ``path`` matches.
-    """
-    return glob_regex(pattern).match(path) is not None
-
-
-def _glob_can_match_suffix(pattern: str, suffix: str) -> bool:
-    """Whether ``pattern`` can match some path ending in ``suffix``.
-
-    Every wildcard is tried, in turn, as the one that swallows ``x`` plus
-    the suffix, the others standing for ``x``; a literal ending is tried
-    as written.
-    """
-    regex = glob_regex(pattern)
-    tokens = re.split(r"(\*\*|\*|\?|\[[^\]]*\])", pattern)
-    wildcards = [i for i, token in enumerate(tokens) if token and token[0] in _GLOB_SPECIALS]
-    probes = ["".join("x" if i in wildcards else token for i, token in enumerate(tokens))]
-    for chosen in wildcards:
-        probes.append(
-            "".join(
-                ("x" + suffix if i == chosen else "x") if i in wildcards else token
-                for i, token in enumerate(tokens)
-            )
-        )
-    return any(probe.endswith(suffix) and regex.match(probe) for probe in probes)
-
-
-def code_extensions(languages: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    """Return the file extensions of every declared language (``[project].languages``).
-
-    The language table is imported here, not at module level: importing
-    :mod:`repoach.gates` loads the settings, which read this module.
-
-    Args:
-        languages: Declared language names; unknown names contribute nothing.
-
-    Returns:
-        The extensions, with their dot, in declaration order.
-    """
-    from ..gates.languages import Language, spec_for
-
-    known = {language.value for language in Language}
-    extensions: list[str] = []
-    for name in languages:
-        spec = spec_for(Language(name)) if name in known else None
-        if spec is not None:
-            extensions.extend(ext for ext in spec.extensions if ext not in extensions)
-    return tuple(extensions)
-
-
-def glob_code_extension(pattern: str, languages: list[str] | tuple[str, ...]) -> str | None:
-    """Return the code extension ``pattern`` could match, or ``None``.
-
-    A generated-artefact glob may never match a file of a declared
-    language: code is read by the reviewers, never declared away.
-
-    Args:
-        pattern: A ``[[review.generated]]`` ``path`` glob.
-        languages: The declared languages.
-
-    Returns:
-        The first matching extension (``.py``), ``None`` when none can match.
-    """
-    for suffix in code_extensions(languages):
-        if _glob_can_match_suffix(pattern, suffix):
-            return suffix
-    return None
-
-
 def _relative_glob(value: str) -> str:
     """Refuse a glob that is empty, absolute or climbs out of the repository."""
     if not value.strip():
@@ -470,7 +353,7 @@ class GeneratedSection(_Section):
                 (a space, ``;``, ``|``, ``&``, a quote, ...).
         """
         script = value[0]
-        if not script or any(char in script for char in _GLOB_SPECIALS):
+        if not script or any(char in script for char in GLOB_SPECIALS):
             raise ValueError("check[0] must name a repository script")
         _relative_glob(script)
         for position, argument in enumerate(value[1:], start=1):

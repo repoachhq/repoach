@@ -47,10 +47,10 @@ from ..project.config import (
     GENERATED_CHECK_TIMEOUT_S,
     ConfigError,
     ProjectConfig,
-    glob_matches,
     parse_project_config,
     refuse_generated_conflicts,
 )
+from ..project.globs import glob_matches
 from .diff_scoper import split_diff
 from .findings import (
     ClaimType,
