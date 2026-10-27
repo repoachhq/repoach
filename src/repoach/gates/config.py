@@ -528,7 +528,10 @@ class RefuterBudget(NamedTuple):
 DEFAULT_REFUTER_BUDGET = RefuterBudget(
     REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT
 )
-"""The refuter's budget when nothing is configured: floor 40 000, ceiling 200 000."""
+"""The refuter's budget when nothing is configured.
+
+Its floor is :data:`REFUTER_CONTEXT_TOKENS_FLOOR` and its ceiling
+:data:`REFUTER_CONTEXT_CEILING_DEFAULT`."""
 
 
 def resolve_refuter_budget(
