@@ -116,6 +116,16 @@ GENERATED_ENTRIES_MAX = 32
 GENERATED_CHECK_TIMEOUT_S = 120
 """Seconds one generated-artefact check may run when its entry names none."""
 
+GENERATED_CHECKS_TOTAL_BUDGET_S = 300
+"""Seconds every generated-artefact check of one pull request may take together.
+
+A spec constraint (``checks_total_budget_s``), not a setting: the
+verification job's environment is pull-request controlled, so it may not
+extend how long pull-request code runs."""
+
+GENERATED_OUTPUT_TAIL_LINES = 20
+"""Lines of a check's output kept on its row and in the evidence (``output_tail_lines``)."""
+
 GENERATED_PLACEHOLDERS: tuple[str, ...] = ("{head}", "{base}")
 """The only placeholders a check argument may carry, replaced by the SHAs."""
 

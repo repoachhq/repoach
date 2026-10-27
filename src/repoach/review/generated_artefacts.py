@@ -49,6 +49,8 @@ from ..gates.languages import Language, spec_for
 from ..project.config import (
     CONFIG_FILE_NAME,
     GENERATED_CHECK_TIMEOUT_S,
+    GENERATED_CHECKS_TOTAL_BUDGET_S,
+    GENERATED_OUTPUT_TAIL_LINES,
     ConfigError,
     ProjectConfig,
     parse_project_config,
@@ -69,12 +71,6 @@ from .findings_bridge import OVERSIZED_FINDER, finding_fingerprint
 from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
-
-CHECKS_TOTAL_BUDGET_S = 300
-"""Seconds every check of one PR may take together (``checks_total_budget_s``)."""
-
-OUTPUT_TAIL_LINES = 20
-"""Lines of a check's output kept on its row and in the evidence."""
 
 EVIDENCE_FORMAT = "review-generated-json"
 """The ``format`` field of the evidence file (``format:review-generated-json``)."""
@@ -150,7 +146,7 @@ class GeneratedCheck:
         state: The run's :class:`GeneratedState`.
         exit_code: The check's exit code; ``None`` when it did not exit.
         duration_ms: Wall time of the run.
-        output_tail: The last :data:`OUTPUT_TAIL_LINES` lines of output,
+        output_tail: The last :data:`GENERATED_OUTPUT_TAIL_LINES` lines of output,
             or the reason it did not run.
         script_ref: ``base`` for the run with the base-ref script (D3).
         producer_inputs_changed: Producer-input paths the diff changes.
@@ -636,10 +632,10 @@ def _declared_argv(entry: GeneratedEntry, head_sha: str, base_sha: str) -> tuple
 
 
 def _tail(output: str) -> str:
-    """The last :data:`OUTPUT_TAIL_LINES` non-empty lines of ``output``, control characters removed."""
+    """The last :data:`GENERATED_OUTPUT_TAIL_LINES` non-empty lines of ``output``, control characters removed."""
     lines = [_CONTROL_RE.sub("", line) for line in output.splitlines()]
     lines = [line for line in lines if line.strip()]
-    return "\n".join(lines[-OUTPUT_TAIL_LINES:])
+    return "\n".join(lines[-GENERATED_OUTPUT_TAIL_LINES:])
 
 
 def _inside(head_dir: Path, script: str) -> bool:
@@ -741,7 +737,7 @@ def run_checks(
     head_dir: Path,
     head_sha: str,
     runner: Runner,
-    budget_s: int = CHECKS_TOTAL_BUDGET_S,
+    budget_s: int = GENERATED_CHECKS_TOTAL_BUDGET_S,
     timeout_s: int = GENERATED_CHECK_TIMEOUT_S,
     changed_files: Sequence[str] = (),
     base_sha: str = "",
@@ -1229,7 +1225,6 @@ def settle_at_head(
 
 
 __all__ = [
-    "CHECKS_TOTAL_BUDGET_S",
     "EVIDENCE_FORMAT",
     "GENERATED_FINDER",
     "GeneratedCheck",
