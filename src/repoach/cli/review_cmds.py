@@ -66,13 +66,12 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.generated_artefacts import report_lines
 from ..review.generated_process import Runner, subprocess_runner
 from ..review.generated_verify import (
     GeneratedRefusalError,
     held_secrets,
     reexec_scrubbed,
-    verify_generated,
+    run_verification,
 )
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (
@@ -589,24 +588,20 @@ def review_generated(
 
     state_dir = Path(get_settings().db_path).parent
     try:
-        payload, checks, timing = verify_generated(
+        lines = run_verification(
             root,
             pr_number=pr_number,
             head=head,
             base_ref=base,
             state_dir=state_dir,
+            out=Path(out),
             runner=GENERATED_RUNNER,
         )
     except (GeneratedRefusalError, ConfigError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
-    target = Path(out)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    for line in report_lines(checks, timing if checks else None):
+    for line in lines:
         typer.echo(line, err=True)
-    if not checks:
-        typer.echo("generated: no declared generated artefact touched", err=True)
 
 
 _ARCHIVE_FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
