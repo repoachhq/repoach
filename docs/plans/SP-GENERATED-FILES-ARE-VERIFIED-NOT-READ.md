@@ -5,7 +5,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 ## Step 1 — Declare generated artefacts in repoach.toml
 
 - **Files**: `src/repoach/project/globs.py`, `src/repoach/project/config.py`, `tests/unit/test_generated_artefacts_config.py`
-- **Action**: In globs.py add glob_regex and glob_matches (** crosses directories, * and ? stay in one segment) and glob_code_extension(pattern, extensions), which tells whether a glob can match a file with one of the given extensions; globs.py imports nothing of repoach. In config.py add GeneratedSection (path, check, sources, producer_inputs, check_timeout_s): path and every source glob relative, no '..', no leading '/'; check an argv list whose check[0] is a repository script and whose later elements match ^[A-Za-z0-9._/=:@,+-]+$ once {head} and {base} are removed. ReviewSection gains generated, capped at GENERATED_ENTRIES_MAX (32). refuse_generated_conflicts refuses a duplicate path, and a code glob when extensions are given. Errors inside an entry are named review.generated[<i>].<key> with the line of that key in the i-th [[review.generated]] block.
+- **Action**: In globs.py add glob_regex and glob_matches (** crosses directories, * and ? stay in one segment) and glob_code_extension(pattern, extensions), which tells whether a glob can match a file with one of the given extensions; globs.py imports nothing of repoach. In config.py add GeneratedSection (path, check, sources, producer_inputs, check_timeout_s): path and every source glob relative, no '..', no leading '/'; check an argv list whose check[0] is a repository script and whose later elements match ^[A-Za-z0-9._/=:@,+-]+$ once {head} and {base} are removed. ReviewSection gains generated, capped at GENERATED_ENTRIES_MAX (32). refuse_duplicate_generated refuses a duplicate path; refuse_code_globs refuses a code glob, given the extensions. Errors inside an entry are named review.generated[<i>].<key> with the line of that key in the i-th [[review.generated]] block.
 - **Commit**: `feat(config): declare generated artefacts under review.generated`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_config.py passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_one_entry_loads_into_generated_entry`, `tests/unit/test_generated_artefacts_config.py::test_string_check_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_shell_shaped_check_argument_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_empty_sources_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_path_leaving_the_repository_is_refused`
@@ -37,7 +37,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 ## Step 5 — Run checks and build blocking findings
 
 - **Files**: `src/repoach/review/generated_artefacts.py`, `src/repoach/review/findings.py`, `src/repoach/review/finding_verifiers.py`
-- **Action**: ClaimType gains GENERATED_ARTEFACT, a member of MECHANICAL_CLAIM_TYPES; its verifier keeps the finding verified at its own head. In generated_artefacts add GeneratedState, GeneratedCheck, the Runner seam and subprocess_runner (shell=False, its own session killed whole when the check exits), run_checks (scrubbed_env, check_timeout_s per run, checks_total_budget_s per PR on an injected clock, check absent at head, a symlinked check script refused, base script then head script when check[0] changed, no source changed when only the artefact moved), generated_findings (one blocking verified generated_artefact finding per unproved path, its cause made inert), the review-generated-json evidence, and load_review_evidence, which refuses another head or another artefact blob and recomputes argv, sources and state at review time.
+- **Action**: ClaimType gains GENERATED_ARTEFACT, a member of MECHANICAL_CLAIM_TYPES; its verifier keeps the finding verified at its own head. In generated_artefacts add GeneratedState, GeneratedCheck, the Runner seam and subprocess_runner (shell=False, its own session killed whole when the check exits, detached descendants adopted and killed), run_checks (scrubbed_env, check_timeout_s per run, checks_total_budget_s per PR on an injected clock, check absent at head, a symlinked check script refused, base script then head script when check[0] changed, no source changed when only the artefact moved), generated_findings (one blocking verified generated_artefact finding per unproved path, its cause made inert), the review-generated-json evidence, and load_review_evidence, which refuses another head or another artefact blob and recomputes argv, sources and state at review time.
 - **Commit**: `feat(review): record generated checks and their blocking findings`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py -k 'absent or cost or not_run' passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_declared_check_fails_is_refused_with_reason`, `tests/unit/test_generated_artefacts_gate.py::test_declared_sources_untouched_is_refused`, `tests/unit/test_generated_artefacts_gate.py::test_check_script_absent_at_head_is_refused`, `tests/unit/test_generated_artefacts_gate.py::test_check_over_timeout_is_skipped_for_cost`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_of_another_head_is_not_run`
@@ -48,12 +48,12 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Action**: generated_store.py holds the generated_checks table (PR, head, path, argv, exit code, ms, output tail, state, script ref, sources, producer inputs, artefact sha256, timing), record_generated_checks, fetch_generated_checks and settlements_at_head. record_review_ledger records the rows and the findings inside its fail-closed write; the orchestrator loads the evidence named by generated_evidence.
 - **Commit**: `feat(review): store generated checks per head`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_evidence_states_are_recomputed_at_review passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_evidence_states_are_recomputed_at_review`, `tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause`, `tests/unit/test_generated_artefacts_gate.py::test_symlinked_check_script_is_never_run`, `tests/unit/test_generated_artefacts_gate.py::test_no_process_of_the_check_outlives_its_run`, `tests/unit/test_taxonomy_constants_dedup.py::test_mechanical_claim_types_value_unchanged`
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_evidence_states_are_recomputed_at_review`, `tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause`, `tests/unit/test_generated_artefacts_gate.py::test_symlinked_check_script_is_never_run`, `tests/unit/test_generated_artefacts_gate.py::test_no_process_of_the_check_outlives_its_run`, `tests/unit/test_generated_artefacts_gate.py::test_a_detached_descendant_of_the_check_is_killed`
 
 ## Step 7 — Add review generated, the verification job
 
 - **Files**: `src/repoach/review/generated_verify.py`, `src/repoach/cli/review_cmds.py`, `tests/unit/test_review_ci_mode.py`
-- **Action**: generated_verify.py holds head_tree (a throwaway clone with its own git directory, removed on exit) and verify_generated(root, pr, head, base_ref, state_dir, runner): declarations at the base, changed paths from the merge base, run_checks, and the evidence with integer checks_ms and overhead_ms. repoach review generated --pr --head --out [--base] calls it with GENERATED_RUNNER and names any secret-bearing variable it holds. review pr gains --generated-evidence, the JSON generated array and one stderr line per run (generated: <path> verified by <check> (<ms> ms), base script / head script under D3), producer inputs changed: <list>, and generated checks: <n> ms + <m> ms overhead.
+- **Action**: generated_verify.py holds head_tree (a throwaway clone with its own git directory, removed on exit) and verify_generated(root, pr, head, base_ref, state_dir, runner): declarations at the base, changed paths from the merge base, run_checks, and the evidence with integer checks_ms and overhead_ms. repoach review generated --pr --head --out [--base] calls it with GENERATED_RUNNER and re-runs itself without any secret-bearing variable it holds. review pr gains --generated-evidence, the JSON generated array and one stderr line per run (generated: <path> verified by <check> (<ms> ms), base script / head script under D3), producer inputs changed: <list>, and generated checks: <n> ms + <m> ms overhead.
 - **Commit**: `feat(cli): run generated checks in a secret-free job and report them`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_report_names_the_proving_command passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_check_never_runs_in_review_job`, `tests/unit/test_generated_artefacts_gate.py::test_report_names_the_proving_command`, `tests/unit/test_generated_artefacts_gate.py::test_delay_is_measured_and_printed`, `tests/unit/test_generated_artefacts_gate.py::test_changed_check_script_runs_base_and_head`, `tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir`
@@ -64,7 +64,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Action**: render_ledger_report gains generated_lines, rendered as a Generated artefacts section inside a fence one backtick longer than any backtick run in the lines. TeamOutcome carries generated and generated_lines, rebuilt from the rows on a replay.
 - **Commit**: `feat(review): add the generated artefacts section to the report`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_report_section_fences_check_output passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_report_section_fences_check_output`, `tests/unit/test_review_ci_mode.py::test_review_pr_json_payload_matches_documented_schema`
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_report_section_fences_check_output`, `tests/unit/test_review_ci_mode.py::test_review_pr_json_payload_matches_documented_schema`, `tests/unit/test_taxonomy_constants_dedup.py::test_mechanical_claim_types_value_unchanged`
 
 ## Step 9 — Settle generated and older oversized findings at head
 
@@ -82,7 +82,15 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Done when**: pytest -q tests/integration/test_generated_artefacts_replay_yoob_322.py passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_unknown_key_in_an_entry_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_entries_are_capped`
 
-## Step 11 — Document the declaration and the Yoob job
+## Step 11 — Keep the git reads in one module
+
+- **Files**: `src/repoach/review/generated_git.py`
+- **Action**: generated_git.py holds run_git, blob_at, merge_base, resolve_commit and changed_paths, the git reads both the review side and the verification job use.
+- **Commit**: `refactor(review): move the generated git reads to their own module`
+- **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir passes
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir`
+
+## Step 12 — Document the declaration and the Yoob job
 
 - **Files**: `docs/generated_artefacts.md`
 - **Action**: Describe the [[review.generated]] keys and rules, what the review shows, runs and records, what of the evidence is trusted, the causes a finding names, the report lines, and the GitLab snippet: a secret-free review:generated job writing review-generated.json and review:gate needing it.
@@ -109,7 +117,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "src/repoach/project/config.py",
         "tests/unit/test_generated_artefacts_config.py"
       ],
-      "action": "In globs.py add glob_regex and glob_matches (** crosses directories, * and ? stay in one segment) and glob_code_extension(pattern, extensions), which tells whether a glob can match a file with one of the given extensions; globs.py imports nothing of repoach. In config.py add GeneratedSection (path, check, sources, producer_inputs, check_timeout_s): path and every source glob relative, no '..', no leading '/'; check an argv list whose check[0] is a repository script and whose later elements match ^[A-Za-z0-9._/=:@,+-]+$ once {head} and {base} are removed. ReviewSection gains generated, capped at GENERATED_ENTRIES_MAX (32). refuse_generated_conflicts refuses a duplicate path, and a code glob when extensions are given. Errors inside an entry are named review.generated[<i>].<key> with the line of that key in the i-th [[review.generated]] block.",
+      "action": "In globs.py add glob_regex and glob_matches (** crosses directories, * and ? stay in one segment) and glob_code_extension(pattern, extensions), which tells whether a glob can match a file with one of the given extensions; globs.py imports nothing of repoach. In config.py add GeneratedSection (path, check, sources, producer_inputs, check_timeout_s): path and every source glob relative, no '..', no leading '/'; check an argv list whose check[0] is a repository script and whose later elements match ^[A-Za-z0-9._/=:@,+-]+$ once {head} and {base} are removed. ReviewSection gains generated, capped at GENERATED_ENTRIES_MAX (32). refuse_duplicate_generated refuses a duplicate path; refuse_code_globs refuses a code glob, given the extensions. Errors inside an entry are named review.generated[<i>].<key> with the line of that key in the i-th [[review.generated]] block.",
       "commit_message": "feat(config): declare generated artefacts under review.generated",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_config.py passes",
       "unit_tests": [
@@ -175,7 +183,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "src/repoach/review/findings.py",
         "src/repoach/review/finding_verifiers.py"
       ],
-      "action": "ClaimType gains GENERATED_ARTEFACT, a member of MECHANICAL_CLAIM_TYPES; its verifier keeps the finding verified at its own head. In generated_artefacts add GeneratedState, GeneratedCheck, the Runner seam and subprocess_runner (shell=False, its own session killed whole when the check exits), run_checks (scrubbed_env, check_timeout_s per run, checks_total_budget_s per PR on an injected clock, check absent at head, a symlinked check script refused, base script then head script when check[0] changed, no source changed when only the artefact moved), generated_findings (one blocking verified generated_artefact finding per unproved path, its cause made inert), the review-generated-json evidence, and load_review_evidence, which refuses another head or another artefact blob and recomputes argv, sources and state at review time.",
+      "action": "ClaimType gains GENERATED_ARTEFACT, a member of MECHANICAL_CLAIM_TYPES; its verifier keeps the finding verified at its own head. In generated_artefacts add GeneratedState, GeneratedCheck, the Runner seam and subprocess_runner (shell=False, its own session killed whole when the check exits, detached descendants adopted and killed), run_checks (scrubbed_env, check_timeout_s per run, checks_total_budget_s per PR on an injected clock, check absent at head, a symlinked check script refused, base script then head script when check[0] changed, no source changed when only the artefact moved), generated_findings (one blocking verified generated_artefact finding per unproved path, its cause made inert), the review-generated-json evidence, and load_review_evidence, which refuses another head or another artefact blob and recomputes argv, sources and state at review time.",
       "commit_message": "feat(review): record generated checks and their blocking findings",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py -k 'absent or cost or not_run' passes",
       "unit_tests": [
@@ -202,7 +210,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause",
         "tests/unit/test_generated_artefacts_gate.py::test_symlinked_check_script_is_never_run",
         "tests/unit/test_generated_artefacts_gate.py::test_no_process_of_the_check_outlives_its_run",
-        "tests/unit/test_taxonomy_constants_dedup.py::test_mechanical_claim_types_value_unchanged"
+        "tests/unit/test_generated_artefacts_gate.py::test_a_detached_descendant_of_the_check_is_killed"
       ]
     },
     {
@@ -213,7 +221,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "src/repoach/cli/review_cmds.py",
         "tests/unit/test_review_ci_mode.py"
       ],
-      "action": "generated_verify.py holds head_tree (a throwaway clone with its own git directory, removed on exit) and verify_generated(root, pr, head, base_ref, state_dir, runner): declarations at the base, changed paths from the merge base, run_checks, and the evidence with integer checks_ms and overhead_ms. repoach review generated --pr --head --out [--base] calls it with GENERATED_RUNNER and names any secret-bearing variable it holds. review pr gains --generated-evidence, the JSON generated array and one stderr line per run (generated: <path> verified by <check> (<ms> ms), base script / head script under D3), producer inputs changed: <list>, and generated checks: <n> ms + <m> ms overhead.",
+      "action": "generated_verify.py holds head_tree (a throwaway clone with its own git directory, removed on exit) and verify_generated(root, pr, head, base_ref, state_dir, runner): declarations at the base, changed paths from the merge base, run_checks, and the evidence with integer checks_ms and overhead_ms. repoach review generated --pr --head --out [--base] calls it with GENERATED_RUNNER and re-runs itself without any secret-bearing variable it holds. review pr gains --generated-evidence, the JSON generated array and one stderr line per run (generated: <path> verified by <check> (<ms> ms), base script / head script under D3), producer inputs changed: <list>, and generated checks: <n> ms + <m> ms overhead.",
       "commit_message": "feat(cli): run generated checks in a secret-free job and report them",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_report_names_the_proving_command passes",
       "unit_tests": [
@@ -236,7 +244,8 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_report_section_fences_check_output passes",
       "unit_tests": [
         "tests/unit/test_generated_artefacts_gate.py::test_report_section_fences_check_output",
-        "tests/unit/test_review_ci_mode.py::test_review_pr_json_payload_matches_documented_schema"
+        "tests/unit/test_review_ci_mode.py::test_review_pr_json_payload_matches_documented_schema",
+        "tests/unit/test_taxonomy_constants_dedup.py::test_mechanical_claim_types_value_unchanged"
       ]
     },
     {
@@ -275,6 +284,19 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
     },
     {
       "index": 11,
+      "title": "Keep the git reads in one module",
+      "files": [
+        "src/repoach/review/generated_git.py"
+      ],
+      "action": "generated_git.py holds run_git, blob_at, merge_base, resolve_commit and changed_paths, the git reads both the review side and the verification job use.",
+      "commit_message": "refactor(review): move the generated git reads to their own module",
+      "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir passes",
+      "unit_tests": [
+        "tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir"
+      ]
+    },
+    {
+      "index": 12,
       "title": "Document the declaration and the Yoob job",
       "files": [
         "docs/generated_artefacts.md"
