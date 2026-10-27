@@ -603,3 +603,20 @@ def test_latest_batch_folds_only_the_last_grading() -> None:
 def test_span_selector_forms(criterion: str, expected: list[str]) -> None:
     markdown = f"## Acceptance Criteria\n\n- [ ] AC1: {criterion} -> green.\n"
     assert [entry.selector for entry in spec_acceptance_criteria(markdown)] == expected
+
+
+def test_a_spec_without_frontmatter_is_refused_naming_it(tmp_path: Path) -> None:
+    prose_path = "docs/specs/2026-10-27_SP-PROSE_prose.md"
+    repo, _ = _repo(
+        tmp_path,
+        base={prose_path: "# Prose\n\n## Acceptance Criteria\n\n- [ ] AC1: `tests/a.py`\n"},
+        head={_CODE: "VALUE = 1\n"},
+    )
+
+    coverage, _ = coverage_at_head(
+        repo, spec_id="SP-PROSE", base_ref="develop", changed_files=[_CODE]
+    )
+
+    assert coverage.contract == "none"
+    assert coverage.covered is False
+    assert coverage.draft_refusals == ["spec coverage not graded: SP-PROSE has no frontmatter"]
