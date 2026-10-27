@@ -9,9 +9,10 @@ head's re-check settles findings from them (G3, G6) through
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from sqlalchemy import (
     Column,
@@ -28,12 +29,13 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.sqlite_schema_init import ensure_schema_created
+from .findings import ClaimType, Finding
+from .findings_bridge import OVERSIZED_FINDER
 from .generated_artefacts import (
     GENERATED_FINDER,
     GeneratedCheck,
     GeneratedState,
     GeneratedTiming,
-    ReverifyOutcome,
     by_path,
     check_cause,
     path_verified,
@@ -63,6 +65,11 @@ generated_checks = Table(
     Column("recorded_at", String, nullable=False),
 )
 """One row per check run at a head (``db:table:generated_checks``)."""
+
+ReverifyOutcome = tuple[Literal["resolved", "still_open"], str, str]
+"""``(state, method, reason)`` of one settled path, the shape ``head_reverify`` records."""
+
+_SETTLEABLE_FINDERS = frozenset({GENERATED_FINDER, OVERSIZED_FINDER})
 
 
 def _engine_for(db_path: Path) -> Engine:
@@ -207,10 +214,35 @@ def settlements_at_head(db_path: Path, pr_number: int, head_sha: str) -> dict[st
     return settled
 
 
+def settle_at_head(
+    finding: Finding, settlements: Mapping[str, ReverifyOutcome]
+) -> ReverifyOutcome | None:
+    """Settle an older-head finding on a declared path from the head's rows, without a refuter.
+
+    Applies to a ``generated_artefact`` finding and to the oversized
+    finding of a path the base now declares; ``None`` for every other
+    finding or a path with no row at the head.
+
+    Args:
+        finding: An unsettled finding of an older head.
+        settlements: The outcomes :func:`settlements_at_head` computed at the head.
+
+    Returns:
+        ``(state, method, reason)``, or ``None`` when the finding is not settled here.
+    """
+    if finding.finder not in _SETTLEABLE_FINDERS:
+        return None
+    if finding.claim_type not in {ClaimType.GENERATED_ARTEFACT, ClaimType.SPEC_GAP}:
+        return None
+    return settlements.get(finding.file)
+
+
 __all__ = [
+    "ReverifyOutcome",
     "fetch_generated_checks",
     "generated_checks",
     "init_generated_schema",
     "record_generated_checks",
+    "settle_at_head",
     "settlements_at_head",
 ]

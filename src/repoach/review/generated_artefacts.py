@@ -64,7 +64,7 @@ from .findings import (
     init_findings_schema,
     record_finding,
 )
-from .findings_bridge import OVERSIZED_FINDER, finding_fingerprint
+from .findings_bridge import finding_fingerprint
 from .generated_git import blob_at, merge_base
 from .generated_process import Runner
 from .secret_env import scrubbed_env
@@ -87,7 +87,6 @@ CAUSE_LINE_MAX_CHARS = 200
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _MARKUP_RE = re.compile(r"[`<>\[\]|@]")
-_SETTLEABLE_FINDERS = frozenset({GENERATED_FINDER, OVERSIZED_FINDER})
 
 
 @dataclass(frozen=True)
@@ -1199,32 +1198,6 @@ def report_lines(
     return lines
 
 
-ReverifyOutcome = tuple[Literal["resolved", "still_open"], str, str]
-
-
-def settle_at_head(
-    finding: Finding, settlements: Mapping[str, ReverifyOutcome]
-) -> ReverifyOutcome | None:
-    """Settle an older-head finding on a declared path from the head's rows, without a refuter.
-
-    Applies to a ``generated_artefact`` finding and to the oversized
-    finding of a path the base now declares; ``None`` for every other
-    finding or a path with no row at the head.
-
-    Args:
-        finding: An unsettled finding of an older head.
-        settlements: The outcomes :func:`~repoach.review.generated_store.settlements_at_head` computed at the head.
-
-    Returns:
-        ``(state, method, reason)``, or ``None`` when the finding is not settled here.
-    """
-    if finding.finder not in _SETTLEABLE_FINDERS:
-        return None
-    if finding.claim_type not in {ClaimType.GENERATED_ARTEFACT, ClaimType.SPEC_GAP}:
-        return None
-    return settlements.get(finding.file)
-
-
 __all__ = [
     "EVIDENCE_FORMAT",
     "GENERATED_FINDER",
@@ -1234,7 +1207,6 @@ __all__ = [
     "GeneratedEvidenceMismatchError",
     "GeneratedState",
     "GeneratedTiming",
-    "ReverifyOutcome",
     "ReviewScope",
     "by_path",
     "check_cause",
@@ -1250,7 +1222,6 @@ __all__ = [
     "report_lines",
     "review_scope",
     "run_checks",
-    "settle_at_head",
     "summarise",
     "touched_artefacts",
 ]
