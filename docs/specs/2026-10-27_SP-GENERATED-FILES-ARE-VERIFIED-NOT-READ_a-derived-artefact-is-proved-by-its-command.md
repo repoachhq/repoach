@@ -108,6 +108,9 @@ the finding, even though F10 proves the content.
     producer (a header carrying the model digest, a lockfile). For G3
     they count as sources; the report lists them apart
     (`producer inputs changed: <list>`).
+  - `check_timeout_s` (optional, added at implementation): seconds this
+    entry's check may run, default `check_timeout_s` of the constraints
+    (120); the run is also bounded by `checks_total_budget_s`.
   - The declarations are read from the **base ref**, never the head. A PR
     that adds or changes an entry is reviewed like any `repoach.toml`
     change; the entry applies from the next PR on.
