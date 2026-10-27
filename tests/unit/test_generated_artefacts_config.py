@@ -215,3 +215,12 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
     error = _refused(_ENTRY.replace("scripts/index_knowledge_corpus.py", script))
     assert error.key == "review.generated[0].check"
     assert error.line == 6
+
+
+@pytest.mark.parametrize("glob", ["**/*.yml", ".github/**", "*.toml", "**/package.json", "*"])
+def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
+    """CI configuration, repoach.toml and dependency manifests are never declared away."""
+    error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob), languages=())
+    assert error.key == "review.generated[0].path"
+    assert error.line == 5
+    assert "always reviewed" in str(error)

@@ -37,7 +37,7 @@ from pydantic import (
     model_validator,
 )
 
-from .globs import GLOB_SPECIALS, glob_code_extension
+from .globs import GLOB_SPECIALS, glob_code_extension, glob_matches
 
 CONFIG_FILE_NAME = "repoach.toml"
 """File name of the project configuration, at the git toplevel."""
@@ -128,6 +128,30 @@ GENERATED_OUTPUT_TAIL_LINES = 20
 
 GENERATED_PLACEHOLDERS: tuple[str, ...] = ("{head}", "{base}")
 """The only placeholders a check argument may carry, replaced by the SHAs."""
+
+ALWAYS_REVIEWED_PROBES: tuple[str, ...] = (
+    "repoach.toml",
+    ".gitlab-ci.yml",
+    ".gitlab/ci/jobs.yml",
+    ".github/workflows/ci.yml",
+    ".github/CODEOWNERS",
+    "CODEOWNERS",
+    ".githooks/pre-commit",
+    ".gitattributes",
+    ".gitmodules",
+    "Dockerfile",
+    "Makefile",
+    "pyproject.toml",
+    "requirements.txt",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+)
+"""Files a ``[[review.generated]]`` ``path`` glob may never match.
+
+What runs or installs on CI (its configuration, hooks, ``repoach.toml``,
+dependency manifests) is always read by the reviewers: a glob such as
+``**/*.yml`` or ``*.toml`` that would summarise one of them away is refused."""
 
 _CHECK_ARG_RE = re.compile(r"^[A-Za-z0-9._/=:@,+-]+$")
 """What a check argument after the script may contain once its placeholders are removed."""
@@ -343,8 +367,20 @@ class GeneratedSection(_Section):
     @field_validator("path")
     @classmethod
     def _check_path(cls, value: str) -> str:
-        """Keep the artefact glob relative and inside the repository."""
-        return _relative_glob(value)
+        """Keep the artefact glob relative, inside the repository, off the files always read.
+
+        Raises:
+            ValueError: The glob leaves the repository, or it can match a
+                file of :data:`ALWAYS_REVIEWED_PROBES` (CI configuration,
+                hooks, ``repoach.toml``, dependency manifests).
+        """
+        _relative_glob(value)
+        for probe in ALWAYS_REVIEWED_PROBES:
+            if glob_matches(value, probe):
+                raise ValueError(
+                    f"{value!r} can match {probe}, which is always reviewed, never declared generated"
+                )
+        return value
 
     @field_validator("sources", "producer_inputs")
     @classmethod
