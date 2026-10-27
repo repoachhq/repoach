@@ -541,17 +541,33 @@ def test_cap_fit_only_files_not_blocked_by_oversized_rule(tmp_path: Path) -> Non
     assert compute_merge_decision(facts).merge is True
 
 
-def test_decision_renders_flat_spec_facts_without_rows() -> None:
-    facts = _facts(
-        spec_covered=False,
-        spec_missing=["tests/x.py::test_y"],
-        spec_origins={"tests/x.py::test_y": "AC2"},
-        spec_draft_refusals=["draft spec PR touches code outside docs (src/a.py): ..."],
+def test_flat_spec_facts_are_derived_from_the_rows() -> None:
+    row = SpecCoverage(
+        spec_id="SP-A",
+        n_promised=2,
+        n_present=1,
+        missing=["tests/x.py::test_y"],
+        covered=False,
+        draft_refusals=["draft spec PR touches code outside docs (src/a.py): ..."],
+        contract="acceptance-criteria",
+        origins={"tests/x.py::test_y": "AC2"},
+        report=["plan-absent: graded against the acceptance criteria of SP-A (2 selectors)"],
     )
+    facts = _facts(spec_covered=False, spec_rows=[row])
 
+    assert facts.spec_missing == ["tests/x.py::test_y"]
+    assert facts.spec_origins == {"tests/x.py::test_y": "AC2"}
+    assert facts.spec_contract == "acceptance-criteria"
+    assert facts.spec_report == row.report
     assert compute_merge_decision(facts).reasons == [
         "spec acceptance selectors not all present: tests/x.py::test_y (AC2)",
         "draft spec PR touches code outside docs (src/a.py): ...",
+    ]
+
+
+def test_not_covered_facts_without_a_row_still_name_the_refusal() -> None:
+    assert compute_merge_decision(_facts(spec_covered=False)).reasons == [
+        "spec coverage not covered: no coverage row at head names a cause"
     ]
 
 
