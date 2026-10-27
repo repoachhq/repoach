@@ -820,3 +820,46 @@ def test_a_detached_descendant_of_the_check_is_killed(tmp_path: Path) -> None:
     assert (result.exit_code, result.output.strip()) == (0, "done")
     subprocess.run(["sleep", "2"], check=True)
     assert not marker.exists()
+
+
+def test_a_script_turned_into_a_symlink_by_the_base_run_is_not_written_through(
+    tmp_path: Path,
+) -> None:
+    """D3: the base run turning the script into a symlink stops both runs, nothing written outside."""
+    head_dir = tmp_path / "head"
+    (head_dir / "data").mkdir(parents=True)
+    (head_dir / "scripts").mkdir()
+    (head_dir / ARTEFACT).write_text("{}\n", encoding="utf-8")
+    (head_dir / CHECK).write_text("print('head')\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("print('outside')\n", encoding="utf-8")
+    entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
+
+    def swapping_runner(argv: object, *, cwd: Path, **_kwargs: object) -> RunResult:
+        script = cwd / CHECK
+        script.unlink()
+        script.symlink_to(outside)
+        return RunResult(0, "base ok")
+
+    checks = run_checks(
+        {ARTEFACT: entry},
+        head_dir=head_dir,
+        head_sha="f" * 40,
+        runner=swapping_runner,
+        changed_files=[ARTEFACT, "data/corpus.json", CHECK],
+        base_blob=lambda _path: b"print('base')\n",
+    )
+
+    assert outside.read_text(encoding="utf-8") == "print('outside')\n"
+    assert [(c.script_ref, c.state, c.output_tail) for c in checks] == [
+        (
+            "base",
+            GeneratedState.STALE,
+            f"check script {CHECK} changed into a symlink during the run",
+        ),
+        (
+            "head",
+            GeneratedState.STALE,
+            f"check script {CHECK} is a symlink or leaves the head tree",
+        ),
+    ]

@@ -706,9 +706,22 @@ def _inside(head_dir: Path, script: str) -> bool:
     return current.is_file()
 
 
+class ScriptTamperedError(RuntimeError):
+    """The check script became a symlink, or left the head tree, while the base script ran."""
+
+
 @contextmanager
 def _script_at(head_dir: Path, script: str, content: bytes | None) -> Iterator[None]:
-    """Put ``content`` at ``script`` in the head tree for one run, then restore it (D3)."""
+    """Put ``content`` at ``script`` in the head tree for one run, then restore it (D3).
+
+    The run is pull-request code: by the time it returns every process it
+    started is dead, but it may have turned ``script`` (or a directory on
+    its way) into a symlink. The head script is then not written back
+    through it.
+
+    Raises:
+        ScriptTamperedError: ``script`` is no longer a plain file of the tree.
+    """
     if content is None:
         yield
         return
@@ -719,6 +732,10 @@ def _script_at(head_dir: Path, script: str, content: bytes | None) -> Iterator[N
     try:
         yield
     finally:
+        if not _inside(head_dir, script):
+            raise ScriptTamperedError(
+                f"check script {script} changed into a symlink during the run"
+            )
         target.write_bytes(original)
         target.chmod(mode)
 
@@ -764,6 +781,13 @@ def _run_once(
             f"check not run within {budget.total_s:g} s: {path}",
         )
     allowed = min(limit, remaining)
+    if not _inside(head_dir, entry.check[0]):
+        return (
+            GeneratedState.STALE,
+            None,
+            0,
+            f"check script {entry.check[0]} is a symlink or leaves the head tree",
+        )
     argv = _interpreted(_declared_argv(entry, head_sha, base_sha), head_dir)
     started = budget.clock()
     try:
@@ -772,6 +796,10 @@ def _run_once(
     except subprocess.TimeoutExpired:
         ms = round((budget.clock() - started) * 1000)
         return GeneratedState.SKIPPED_COST, None, ms, f"check not run within {allowed:g} s: {path}"
+    except ScriptTamperedError as exc:
+        ms = round((budget.clock() - started) * 1000)
+        _log.warning("generated.check_script_tampered", path=path)
+        return GeneratedState.STALE, None, ms, str(exc)
     except Exception as exc:
         ms = round((budget.clock() - started) * 1000)
         _log.warning("generated.check_raised", path=path, exc=type(exc).__name__)
