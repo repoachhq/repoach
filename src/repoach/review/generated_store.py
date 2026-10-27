@@ -1,18 +1,20 @@
 """The ``generated_checks`` table: one row per check run of a declared generated artefact.
 
+Persistence only; how the rows settle findings is
+:mod:`repoach.review.generated_settle`.
+
 The review job records the runs the verification job's evidence names at
 the reviewed head (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G2); a later
 head's re-check settles findings from them (G3, G6) through
-:func:`settlements_at_head`.
+:func:`~repoach.review.generated_settle.settlements_at_head`.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
 from sqlalchemy import (
     Column,
@@ -29,16 +31,10 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.sqlite_schema_init import ensure_schema_created
-from .findings import ClaimType, Finding
-from .findings_bridge import OVERSIZED_FINDER
 from .generated_types import (
-    GENERATED_FINDER,
     GeneratedCheck,
     GeneratedState,
     GeneratedTiming,
-    by_path,
-    check_cause,
-    path_verified,
 )
 
 _metadata = MetaData()
@@ -65,11 +61,6 @@ generated_checks = Table(
     Column("recorded_at", String, nullable=False),
 )
 """One row per check run at a head (``db:table:generated_checks``)."""
-
-ReverifyOutcome = tuple[Literal["resolved", "still_open"], str, str]
-"""``(state, method, reason)`` of one settled path, the shape ``head_reverify`` records."""
-
-_SETTLEABLE_FINDERS = frozenset({GENERATED_FINDER, OVERSIZED_FINDER})
 
 
 def _engine_for(db_path: Path) -> Engine:
@@ -184,65 +175,9 @@ def fetch_generated_checks(
     return checks, timing
 
 
-def settlements_at_head(db_path: Path, pr_number: int, head_sha: str) -> dict[str, ReverifyOutcome]:
-    """Return how the ``generated_checks`` rows of ``head_sha`` settle each recorded path (G3, G6).
-
-    ``resolved`` when every run of the path verified the derivation (a
-    source changed, exit 0), ``still_open`` with the cause otherwise.
-
-    Args:
-        db_path: The ledger database.
-        pr_number: The pull request.
-        head_sha: The head the re-check decides on.
-
-    Returns:
-        ``{path: (state, method, reason)}`` for every path with a row at the head.
-    """
-    if not head_sha:
-        return {}
-    checks, _ = fetch_generated_checks(db_path, pr_number, head_sha)
-    settled: dict[str, ReverifyOutcome] = {}
-    for path, runs in by_path(checks).items():
-        if path_verified(runs):
-            reason = f"declared generated at {head_sha[:7]}, verified by {' '.join(runs[0].argv)}"
-            settled[path] = ("resolved", GENERATED_FINDER, reason)
-        else:
-            causes = "; ".join(
-                check_cause(r) for r in runs if r.state is not GeneratedState.VERIFIED
-            )
-            settled[path] = ("still_open", GENERATED_FINDER, causes)
-    return settled
-
-
-def settle_at_head(
-    finding: Finding, settlements: Mapping[str, ReverifyOutcome]
-) -> ReverifyOutcome | None:
-    """Settle an older-head finding on a declared path from the head's rows, without a refuter.
-
-    Applies to a ``generated_artefact`` finding and to the oversized
-    finding of a path the base now declares; ``None`` for every other
-    finding or a path with no row at the head.
-
-    Args:
-        finding: An unsettled finding of an older head.
-        settlements: The outcomes :func:`settlements_at_head` computed at the head.
-
-    Returns:
-        ``(state, method, reason)``, or ``None`` when the finding is not settled here.
-    """
-    if finding.finder not in _SETTLEABLE_FINDERS:
-        return None
-    if finding.claim_type not in {ClaimType.GENERATED_ARTEFACT, ClaimType.SPEC_GAP}:
-        return None
-    return settlements.get(finding.file)
-
-
 __all__ = [
-    "ReverifyOutcome",
     "fetch_generated_checks",
     "generated_checks",
     "init_generated_schema",
     "record_generated_checks",
-    "settle_at_head",
-    "settlements_at_head",
 ]

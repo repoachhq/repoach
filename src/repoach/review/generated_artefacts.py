@@ -19,7 +19,7 @@ The flow has two halves that never share a process:
   blocking ``generated_artefact`` finding for every path whose derivation
   is not shown (:func:`generated_findings`).
 
-At a later head, :func:`settle_at_head` settles those findings, and the
+At a later head, :func:`~repoach.review.generated_settle.settle_at_head` settles those findings, and the
 older oversized findings of a newly declared path, from the
 ``generated_checks`` rows of that head, never through the refuter.
 

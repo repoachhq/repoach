@@ -56,7 +56,7 @@ from .findings import (
     record_verification_attempt,
     update_finding_status,
 )
-from .generated_store import settle_at_head, settlements_at_head
+from .generated_settle import settle_at_head, settlements_at_head
 from .refuter import JUDGING_CAP_REACHED, Judge, LazyJudge, judge_finding, make_refuter_judge
 from .refuter_evidence import REFUTER_RULE_VERSION
 from .spec_gate import vitest_test_bodies
