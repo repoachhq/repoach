@@ -489,3 +489,18 @@ def test_readable_base_falls_back_to_origin_after_one_fetch(tmp_path: Path) -> N
     assert readable_base(repo, "main", fetch) == "origin/main"
     assert fetched == ["main"]
     assert readable_base(repo, None, fetch) is None
+
+
+def test_resolution_constants_are_the_documented_sources() -> None:
+    from repoach.review.spec_gate import (
+        RESOLUTION_DECLARED,
+        RESOLUTION_NONE,
+        RESOLUTION_OWNERSHIP,
+    )
+
+    assert (RESOLUTION_DECLARED, RESOLUTION_OWNERSHIP, RESOLUTION_NONE) == (
+        "declared",
+        "ownership",
+        "none",
+    )
+    assert OWNERSHIP_UNRESOLVED == "ownership-unresolved"
