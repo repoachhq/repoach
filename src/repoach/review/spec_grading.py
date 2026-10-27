@@ -231,6 +231,38 @@ def redact_error(text: str) -> str:
     return cleaned
 
 
+def failed_grading_row(spec_id: str | None, error: Exception) -> SpecCoverage:
+    """Return the not-covered row recorded when the grading of a head raised.
+
+    A grading that raised (a malformed spec, a git failure while
+    resolving ownership) must not leave the head without a row: the gate
+    reads no row as "coverage unknown" and does not refuse on it
+    (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS 0.5). The error is
+    published as a merge reason, so it is redacted (:func:`redact_error`).
+
+    Args:
+        spec_id: The declared spec, or ``None`` for an undeclared PR.
+        error: The exception the grading raised.
+
+    Returns:
+        A row with ``contract="unavailable"`` and one refusal line
+        ``spec coverage not graded: <Type>: <message> (fail closed)``.
+    """
+    return SpecCoverage(
+        spec_id=str(spec_id) if spec_id else OWNERSHIP_UNRESOLVED,
+        n_promised=0,
+        n_present=0,
+        missing=[],
+        covered=False,
+        draft_refusals=[
+            f"spec coverage not graded: {type(error).__name__}: "
+            f"{redact_error(str(error))[:200]} (fail closed)"
+        ],
+        contract="unavailable",
+        resolution="declared" if spec_id else OWNERSHIP_UNRESOLVED,
+    )
+
+
 class StaleCoverageRecomputeError(RuntimeError):
     """A stale coverage row could not be recomputed; its stored verdict is not trusted.
 

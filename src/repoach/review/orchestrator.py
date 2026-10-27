@@ -1360,29 +1360,14 @@ class ReviewTeamOrchestrator:
     def _record_grading_failure(
         self, pr_number: int, *, spec_id: str | None, head_sha: str | None, error: Exception
     ) -> CoverageGrading | None:
-        """Record a not-covered row naming why the grading failed, so the gate refuses.
+        """Record the row of a failed grading (:func:`~repoach.review.spec_grading.failed_grading_row`).
 
-        A grading that raised (a malformed spec, a git failure while
-        resolving ownership) must not leave the head without a row: the
-        gate reads no row as "coverage unknown" and does not refuse on it.
-        ``None`` only when even the row cannot be recorded.
+        ``None`` only when even that row cannot be recorded.
         """
-        from .spec_gate import SpecCoverage, record_spec_coverages
-        from .spec_grading import OWNERSHIP_UNRESOLVED, CoverageGrading, redact_error
+        from .spec_gate import record_spec_coverages
+        from .spec_grading import CoverageGrading, failed_grading_row, redact_error
 
-        row = SpecCoverage(
-            spec_id=str(spec_id) if spec_id else OWNERSHIP_UNRESOLVED,
-            n_promised=0,
-            n_present=0,
-            missing=[],
-            covered=False,
-            draft_refusals=[
-                f"spec coverage not graded: {type(error).__name__}: "
-                f"{redact_error(str(error))[:200]} (fail closed)"
-            ],
-            contract="unavailable",
-            resolution="declared" if spec_id else OWNERSHIP_UNRESOLVED,
-        )
+        row = failed_grading_row(spec_id, error)
         try:
             record_spec_coverages(
                 self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=[row]
