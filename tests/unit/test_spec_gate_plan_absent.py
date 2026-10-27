@@ -572,3 +572,30 @@ def test_latest_batch_folds_only_the_last_grading() -> None:
         ("SP-A", "b2", True),
         ("SP-B", "b2", True),
     ]
+
+
+@pytest.mark.parametrize(
+    ("criterion", "expected"),
+    [
+        ("`pytest -q -n 8 tests/unit/test_a.py::test_b`", ["tests/unit/test_a.py::test_b"]),
+        ("`pytest -q -n 8`", []),
+        ("`pytest tests/unit/test_a-b.py`", ["tests/unit/test_a-b.py"]),
+        (
+            "`tests/unit/test_a.py::TestX::test_y[case-1]`",
+            ["tests/unit/test_a.py::TestX::test_y[case-1]"],
+        ),
+        ("`src/repoach/x.py`", []),
+        ("`src/repoach/x.py::helper`", ["src/repoach/x.py::helper"]),
+        ("`lib/test_tool.py`", ["lib/test_tool.py"]),
+        ("`lib/tool_test.py`", ["lib/tool_test.py"]),
+        ("`` `tests/x.py::test_y` ``", []),
+        ("`fixture:tests/x.py::test_y`", []),
+        ("`tests/fixtures/x/test_y.py::test_y`", []),
+        ("`pytest tests/fixtures/x/test_z.py tests/unit/test_c.py`", ["tests/unit/test_c.py"]),
+        ("`tests/ünï/test_a.py`", ["tests/ünï/test_a.py"]),
+        ("`tests/x.py and more`", []),
+    ],
+)
+def test_span_selector_forms(criterion: str, expected: list[str]) -> None:
+    markdown = f"## Acceptance Criteria\n\n- [ ] AC1: {criterion} -> green.\n"
+    assert [entry.selector for entry in spec_acceptance_criteria(markdown)] == expected
