@@ -518,6 +518,9 @@ def test_a_published_grading_error_carries_no_credential() -> None:
         "fatal: https://***@github.com/o/r"
     )
     assert redact_error(f"auth failed with {token}") == "auth failed with ***"
+    assert redact_error("fatal: https://bot:pa/ss@github.com/o/r failed") == (
+        "fatal: https://***@github.com/o/r failed"
+    )
     assert redact_error("fatal: https://bot:p@ss@github.com/o/r failed") == (
         "fatal: https://***@github.com/o/r failed"
     )
