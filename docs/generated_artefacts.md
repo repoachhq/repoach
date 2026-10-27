@@ -48,10 +48,21 @@ When the diff touches a declared artefact:
 2. The check never runs in the review job, which holds the forge token and
    the model credential. `repoach review generated` runs it in a separate job
    whose environment holds neither, with `shell=False` and every
-   secret-bearing variable removed, against the head tree; when the check
-   script itself changed, it runs twice, with the base script and with the
-   head script, and both must pass.
-3. `repoach review pr --generated-evidence review-generated.json` reads that
+   secret-bearing variable removed, in a throwaway clone of the head with
+   its own git directory (never the checkout, whose `.git` a later job
+   would trust), in its own session, killed whole when the check exits;
+   when the check script itself changed, it runs twice, with the base
+   script and with the head script, and both must pass. A check script
+   reached through a symlink is refused. The command names, on stderr,
+   any secret-bearing variable it holds itself.
+3. The review recomputes everything it can derive (the argv from the base
+   declaration, the changed sources from the diff, the state from the exit
+   code), so the evidence is trusted for the check's exit code and output
+   only. Those come from pull-request code: run the verification job on a
+   runner that does not hand its builds directory to `review:gate` (a
+   Docker executor, or a separate runner), since a same-user process can
+   reach any path the job can.
+4. `repoach review pr --generated-evidence review-generated.json` reads that
    job's evidence (refused when it names another head or another artefact
    blob), records one `generated_checks` row per run, and records one
    blocking `generated_artefact` finding per path whose derivation is not
