@@ -1301,7 +1301,7 @@ class ReviewTeamOrchestrator:
         base_ref: str | None,
         changed_files: list[str],
     ) -> CoverageGrading | None:
-        """Grade the PR's specs at the head tree and record their rows; ``None`` on failure.
+        """Grade the PR's specs at head and record their rows (a refusing row on failure).
 
         The declared spec is graded alone; with none declared, every spec
         owning a changed path at the base is
@@ -1309,7 +1309,9 @@ class ReviewTeamOrchestrator:
         call: the report is a pure function of the specs, the head tree
         and the diff's paths, so a replayed run recomputes it with the
         current rule exactly as a fresh run computes it. A failure is
-        logged and records nothing.
+        logged (redacted) and records the not-covered row of
+        :func:`~repoach.review.spec_grading.failed_grading_row`, so the gate
+        refuses (fail closed); ``None`` only when that row cannot be recorded.
         """
         try:
             grading = coverage_rows_at_head(
