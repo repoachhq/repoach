@@ -162,11 +162,11 @@ from .reviewer import (
 from .spec import SpecPlan, load_spec
 from .spec_gate import DraftScope, draft_scope_at_head, record_spec_coverages
 from .spec_grading import (
-    OWNERSHIP_UNRESOLVED,
     CoverageGrading,
     coverage_rows_at_head,
     failed_grading_row,
     redact_error,
+    resolution_payload,
 )
 from .thread_context import ResolvedDisagreement
 
@@ -2210,13 +2210,8 @@ def _spec_report(grading: CoverageGrading | None) -> list[str]:
 def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> dict[str, object]:
     """Return the ``spec_resolution`` object of the review JSON (G7)."""
     if grading is None:
-        return {"source": "declared" if spec_id else "none", "specs": [], "ungoverned": []}
-    ownership = grading.ownership
-    return {
-        "source": grading.source,
-        "specs": [row.spec_id for row in grading.rows if row.resolution != OWNERSHIP_UNRESOLVED],
-        "ungoverned": list(ownership.ungoverned) if ownership is not None else [],
-    }
+        return resolution_payload("declared" if spec_id else "none")
+    return grading.resolution_payload()
 
 
 def _optional_str(value: object) -> str | None:

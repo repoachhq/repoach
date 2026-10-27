@@ -81,7 +81,11 @@ from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
-from ..review.spec_grading import ownership_at_base, ownership_unavailable_reason
+from ..review.spec_grading import (
+    ownership_at_base,
+    ownership_unavailable_reason,
+    resolution_payload,
+)
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
@@ -868,22 +872,17 @@ def _gate_spec_resolution(
     a line naming why.
     """
     if declared.spec_id is not None:
-        return {"source": "declared", "specs": [declared.spec_id], "ungoverned": []}, []
-    empty: dict[str, object] = {"source": "none", "specs": [], "ungoverned": []}
+        return resolution_payload("declared", [declared.spec_id]), []
     if changed_files is None:
-        return empty, ["spec resolution by ownership skipped: the diff could not be read"]
+        return resolution_payload("none"), [
+            "spec resolution by ownership skipped: the diff could not be read"
+        ]
     ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref or None)
     if ownership is None:
-        return {"source": "ownership", "specs": [], "ungoverned": []}, [
+        return resolution_payload("ownership"), [
             ownership_unavailable_reason(base_ref or "(unknown)")
         ]
-    source = "ownership" if ownership.specs else "none"
-    payload: dict[str, object] = {
-        "source": source,
-        "specs": list(ownership.specs),
-        "ungoverned": list(ownership.ungoverned),
-    }
-    return payload, ownership.lines()
+    return ownership.payload(), ownership.lines()
 
 
 def _gate_changed_files(evaluation: GateEvaluation) -> list[str] | None:

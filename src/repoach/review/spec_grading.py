@@ -64,6 +64,22 @@ class SpecsByOwnership:
             out.append(f"ungoverned paths: {', '.join(self.ungoverned)}")
         return out
 
+    def payload(self) -> dict[str, object]:
+        """Return the ``spec_resolution`` object of this resolution (G7)."""
+        return resolution_payload(
+            "ownership" if self.specs else "none", list(self.specs), self.ungoverned
+        )
+
+
+def resolution_payload(
+    source: str, specs: list[str] | None = None, ungoverned: list[str] | None = None
+) -> dict[str, object]:
+    """Return a ``spec_resolution`` object: ``source``, ``specs``, ``ungoverned`` (G7).
+
+    The one shape the review JSON and the gate JSON both print.
+    """
+    return {"source": source, "specs": list(specs or []), "ungoverned": list(ungoverned or [])}
+
 
 def specs_owning(paths: list[str], *, root: Path, ref: str) -> SpecsByOwnership:
     """Return the governed specs owning *paths*, ownership read at *ref*.
@@ -181,6 +197,13 @@ class CoverageGrading:
                 return "ownership"
             return "declared" if self.rows else "none"
         return "ownership" if self.ownership.specs else "none"
+
+    def resolution_payload(self) -> dict[str, object]:
+        """Return the ``spec_resolution`` object of the review JSON (G7)."""
+        if self.ownership is not None:
+            return self.ownership.payload()
+        graded = [row.spec_id for row in self.rows if row.resolution != OWNERSHIP_UNRESOLVED]
+        return resolution_payload(self.source, graded)
 
 
 def coverage_rows_at_head(
