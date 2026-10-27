@@ -252,10 +252,19 @@ def test_none_budget_used_keeps_the_recorded_value(tmp_path: Path) -> None:
     assert next(f for f in fetch_findings(db, 7) if f.id == row_id).budget_used == 512
 
 
-def test_budget_clamp_lives_in_one_constructor() -> None:
-    assert RefuterBudget.clamped(60_000, 50_000) == RefuterBudget(60_000, 60_000)
-    assert RefuterBudget.clamped(40_000, 200_000) == RefuterBudget(40_000, 200_000)
-    assert RefuterBudget.clamped(60_000, 60_000) == RefuterBudget(60_000, 60_000)
+@pytest.mark.parametrize(
+    ("floor", "ceiling", "expected"),
+    [
+        (60_000, 50_000, RefuterBudget(60_000, 60_000)),
+        (40_000, 200_000, RefuterBudget(40_000, 200_000)),
+        (60_000, 60_000, RefuterBudget(60_000, 60_000)),
+    ],
+    ids=["inverted", "default", "equal"],
+)
+def test_budget_clamp_lives_in_one_constructor(
+    floor: int, ceiling: int, expected: RefuterBudget
+) -> None:
+    assert RefuterBudget.clamped(floor, ceiling) == expected
 
 
 def test_judge_finding_clamps_a_ceiling_below_the_floor(tmp_path: Path) -> None:
