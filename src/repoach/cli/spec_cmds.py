@@ -5,7 +5,8 @@ committed plan, with the number of selectors its Acceptance Criteria
 name — the contract the merge gate grades it against — so plans or AC
 selector lines can be backfilled by area. It also lists, per committed
 plan, the steps over the Planner's step caps, which the gate does not
-enforce. A report, never a gate: it always exits 0.
+enforce. A report, never a gate: it exits 0 except for a usage error
+(``audit`` without ``--plans``), which exits 2.
 """
 
 from __future__ import annotations
