@@ -840,3 +840,16 @@ def test_head_tree_decision_refuses_to_size_the_refuter_itself(tmp_path: Path) -
             head_sha="a" * 40,
             head_tree=True,
         )
+
+
+def test_decision_off_the_head_tree_needs_no_budget(tmp_path: Path) -> None:
+    _, facts, decision = auto_merge.decide_at_head(
+        7,
+        forge=MagicMock(),
+        db=tmp_path / "review.db",
+        ci_green=True,
+        repo_root=tmp_path,
+        head_sha="a" * 40,
+    )
+    assert facts.reverified == {"resolved": 0, "still_open": 0, "needs_judgement": 0}
+    assert decision is not None
