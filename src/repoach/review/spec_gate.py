@@ -999,8 +999,8 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
         NotAnActionPlanError: The file exists at *ref* without the
             action-plan marker. It subclasses :class:`FileNotFoundError`,
             so a caller treats a prose plan like an absent one.
-        ValueError: The file carries the marker at *ref* but fails to parse (see
-            :func:`repoach.review.plan.parse_plan_markdown`).
+        ValueError: The file carries the marker at *ref* but fails to
+            parse (see :func:`repoach.review.plan.parse_plan_markdown`).
     """
     base = (root or Path.cwd()).resolve()
     if not ref_resolves(base, ref):
