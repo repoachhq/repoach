@@ -904,7 +904,17 @@ def not_run_checks(
     head_sha: str,
     changed_files: Sequence[str],
 ) -> list[GeneratedCheck]:
-    """Return a ``generated_check_not_run`` row for each touched artefact present at the head."""
+    """Return a ``generated_check_not_run`` row for each touched artefact present at the head.
+
+    Args:
+        touched: The declared artefacts the diff changes.
+        head_dir: The reviewed head tree.
+        head_sha: The reviewed head.
+        changed_files: The paths the diff changes.
+
+    Returns:
+        One run per touched artefact present at the head.
+    """
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
         artefact = head_dir / path
@@ -943,7 +953,14 @@ def _last_line(tail: str) -> str:
 
 
 def check_cause(check: GeneratedCheck) -> str:
-    """Name why ``check`` does not show the derivation (the finding's ``verification_result``)."""
+    """Name why ``check`` does not show the derivation (the finding's ``verification_result``).
+
+    Args:
+        check: A run that did not verify the derivation.
+
+    Returns:
+        The cause a finding stores as its ``verification_result``.
+    """
     if check.state is GeneratedState.NO_SOURCE_CHANGED:
         return "no source changed"
     if check.state is GeneratedState.STALE:
@@ -957,7 +974,14 @@ def check_cause(check: GeneratedCheck) -> str:
 
 
 def by_path(checks: Sequence[GeneratedCheck]) -> dict[str, list[GeneratedCheck]]:
-    """Group runs by artefact path, keeping the order of first appearance."""
+    """Group runs by artefact path, keeping the order of first appearance.
+
+    Args:
+        checks: Runs of any artefacts.
+
+    Returns:
+        ``{path: its runs}``.
+    """
     grouped: dict[str, list[GeneratedCheck]] = {}
     for check in checks:
         grouped.setdefault(check.path, []).append(check)
@@ -965,7 +989,14 @@ def by_path(checks: Sequence[GeneratedCheck]) -> dict[str, list[GeneratedCheck]]
 
 
 def path_verified(runs: Sequence[GeneratedCheck]) -> bool:
-    """Whether every run of one path verified the derivation (a source changed, exit 0)."""
+    """Whether every run of one path verified the derivation (a source changed, exit 0).
+
+    Args:
+        runs: Every run of one artefact.
+
+    Returns:
+        True when there is at least one run and each verified.
+    """
     return bool(runs) and all(run.state is GeneratedState.VERIFIED for run in runs)
 
 
@@ -1013,7 +1044,17 @@ def generated_findings(
 def record_generated_findings(
     db_path: Path, checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
 ) -> int:
-    """Persist :func:`generated_findings` once per head; return how many were new."""
+    """Persist :func:`generated_findings` once per head; return how many were new.
+
+    Args:
+        db_path: The findings ledger.
+        checks: The runs of this head.
+        pr_number: The pull request.
+        round_n: The review round.
+
+    Returns:
+        How many findings were new at the head.
+    """
     findings = generated_findings(checks, pr_number=pr_number, round_n=round_n)
     if not findings:
         return 0
@@ -1041,7 +1082,18 @@ def evidence_payload(
     checks: Sequence[GeneratedCheck],
     timing: GeneratedTiming,
 ) -> dict[str, Any]:
-    """Build the ``format:review-generated-json`` evidence document."""
+    """Build the ``format:review-generated-json`` evidence document.
+
+    Args:
+        pr_number: The pull request.
+        head_sha: The head the checks ran at.
+        base_sha: The merge base the diff was read from.
+        checks: The runs.
+        timing: The measured delay.
+
+    Returns:
+        The JSON-ready document.
+    """
     return {
         "format": EVIDENCE_FORMAT,
         "version": EVIDENCE_VERSION,
@@ -1192,6 +1244,16 @@ def load_review_evidence(
 
     A missing, unreadable or mismatched evidence file is never green:
     each touched artefact then gets a ``generated_check_not_run`` row.
+
+    Args:
+        evidence: The evidence file, ``None`` when none was given.
+        touched: The declared artefacts the diff changes.
+        head_sha: The reviewed head.
+        head_dir: The reviewed head tree.
+        changed_files: The paths the diff changes.
+
+    Returns:
+        The runs to record and the evidence's timing (``None`` without usable evidence).
     """
     if not touched:
         return [], None
@@ -1222,7 +1284,14 @@ def load_review_evidence(
 
 
 def report_json(checks: Sequence[GeneratedCheck]) -> list[dict[str, Any]]:
-    """The ``generated`` array of the ``review pr`` JSON (G5)."""
+    """The ``generated`` array of the ``review pr`` JSON (G5).
+
+    Args:
+        checks: The runs of this head.
+
+    Returns:
+        One JSON entry per run.
+    """
     return [
         {
             "path": check.path,
@@ -1240,7 +1309,15 @@ def report_json(checks: Sequence[GeneratedCheck]) -> list[dict[str, Any]]:
 def report_lines(
     checks: Sequence[GeneratedCheck], timing: GeneratedTiming | None = None
 ) -> list[str]:
-    """The report lines naming what proved each artefact, or why nothing did (G5, G7)."""
+    """The report lines naming what proved each artefact, or why nothing did (G5, G7).
+
+    Args:
+        checks: The runs of this head.
+        timing: The measured delay; its line is printed when given and there were runs.
+
+    Returns:
+        The lines, in declaration order.
+    """
     lines: list[str] = []
     for path, runs in by_path(checks).items():
         for run in runs:
@@ -1269,6 +1346,13 @@ def settle_at_head(
     Applies to a ``generated_artefact`` finding and to the oversized
     finding of a path the base now declares; ``None`` for every other
     finding or a path with no row at the head.
+
+    Args:
+        finding: An unsettled finding of an older head.
+        settlements: The outcomes :func:`~repoach.review.generated_store.settlements_at_head` computed at the head.
+
+    Returns:
+        ``(state, method, reason)``, or ``None`` when the finding is not settled here.
     """
     if finding.finder not in _SETTLEABLE_FINDERS:
         return None

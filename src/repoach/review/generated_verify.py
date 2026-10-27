@@ -41,6 +41,11 @@ def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
     process of the same user can still reach any path the job can; the
     runner, not this tree, is that boundary (docs/generated_artefacts.md).
 
+    Args:
+        root: The checkout the commit is fetched from.
+        sha: The head commit.
+        state_dir: Where the copy is made.
+
     Raises:
         RuntimeError: The copy or its checkout of ``sha`` failed.
     """

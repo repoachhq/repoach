@@ -72,7 +72,11 @@ def _engine_for(db_path: Path) -> Engine:
 
 
 def init_generated_schema(db_path: Path) -> None:
-    """Create the ``generated_checks`` table if absent (idempotent)."""
+    """Create the ``generated_checks`` table if absent (idempotent).
+
+    Args:
+        db_path: The ledger database.
+    """
     ensure_schema_created(_engine_for(db_path), _metadata)
 
 
@@ -84,7 +88,15 @@ def record_generated_checks(
     checks: Sequence[GeneratedCheck],
     timing: GeneratedTiming | None = None,
 ) -> None:
-    """Replace the ``generated_checks`` rows of ``head_sha`` by ``checks``."""
+    """Replace the ``generated_checks`` rows of ``head_sha`` by ``checks``.
+
+    Args:
+        db_path: The ledger database.
+        pr_number: The pull request.
+        head_sha: The head the runs belong to.
+        checks: The runs.
+        timing: The evidence's measured delay, stored on each row.
+    """
     init_generated_schema(db_path)
     now = datetime.now(UTC).isoformat()
     engine = _engine_for(db_path)
@@ -121,7 +133,16 @@ def record_generated_checks(
 def fetch_generated_checks(
     db_path: Path, pr_number: int, head_sha: str
 ) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
-    """Return the runs recorded at ``head_sha`` and the timing they came with."""
+    """Return the runs recorded at ``head_sha`` and the timing they came with.
+
+    Args:
+        db_path: The ledger database.
+        pr_number: The pull request.
+        head_sha: The head.
+
+    Returns:
+        The runs in recording order, and the timing (``None`` when none was recorded).
+    """
     init_generated_schema(db_path)
     engine = _engine_for(db_path)
     with engine.connect() as conn:
@@ -161,6 +182,14 @@ def settlements_at_head(db_path: Path, pr_number: int, head_sha: str) -> dict[st
 
     ``resolved`` when every run of the path verified the derivation (a
     source changed, exit 0), ``still_open`` with the cause otherwise.
+
+    Args:
+        db_path: The ledger database.
+        pr_number: The pull request.
+        head_sha: The head the re-check decides on.
+
+    Returns:
+        ``{path: (state, method, reason)}`` for every path with a row at the head.
     """
     if not head_sha:
         return {}
