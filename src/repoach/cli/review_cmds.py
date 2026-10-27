@@ -37,6 +37,7 @@ from sqlalchemy import create_engine, text
 from ..arch import MalformedFrontmatterError
 from ..core.config import GatewayConfigError, get_settings
 from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from ..forge import (
     ARCHIVE_MARKER,
     Forge,
@@ -83,7 +84,6 @@ from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
     RESOLUTION_OWNERSHIP,
-    redact_error,
     resolution_report,
 )
 from .doctor_cmds import project_root_or_exit
