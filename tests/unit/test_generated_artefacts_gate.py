@@ -711,3 +711,31 @@ def test_report_section_fences_check_output(tmp_path: Path) -> None:
     )
     section = body.split("## Generated artefacts\n\n", 1)[1].split("\n\n## Findings", 1)[0]
     assert section == "`````text\n" + lines[0] + "\n`````"
+
+
+def test_symlinked_check_script_is_never_run(tmp_path: Path) -> None:
+    """A check script that is a symlink is refused before any run, so D3 never writes through it."""
+    head_dir = tmp_path / "head"
+    (head_dir / "data").mkdir(parents=True)
+    (head_dir / "scripts").mkdir()
+    (head_dir / ARTEFACT).write_text("{}\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("print('outside')\n", encoding="utf-8")
+    (head_dir / CHECK).symlink_to(outside)
+    entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
+    runner = RecordingRunner()
+
+    checks = run_checks(
+        {ARTEFACT: entry},
+        head_dir=head_dir,
+        head_sha="f" * 40,
+        runner=runner,
+        changed_files=[ARTEFACT, "data/corpus.json", CHECK],
+        base_blob=lambda _path: b"import sys\nsys.exit(0)\n",
+    )
+
+    assert runner.calls == []
+    assert outside.read_text(encoding="utf-8") == "print('outside')\n"
+    assert [(c.state, c.output_tail) for c in checks] == [
+        (GeneratedState.STALE, f"check script {CHECK} is a symlink or leaves the head tree")
+    ]

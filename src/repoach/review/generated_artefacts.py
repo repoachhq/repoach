@@ -596,6 +596,21 @@ def _tail(output: str) -> str:
     return "\n".join(lines[-OUTPUT_TAIL_LINES:])
 
 
+def _inside(head_dir: Path, script: str) -> bool:
+    """Whether ``script`` is a regular file of the head tree, reached without a symlink.
+
+    The D3 base run writes the base script over ``script``, so a symlink,
+    or a directory symlink on the way, would make that write land outside
+    the tree.
+    """
+    current = head_dir
+    for part in Path(script).parts:
+        current = current / part
+        if current.is_symlink():
+            return False
+    return current.is_file()
+
+
 @contextmanager
 def _script_at(head_dir: Path, script: str, content: bytes | None) -> Iterator[None]:
     """Put ``content`` at ``script`` in the head tree for one run, then restore it (D3)."""
@@ -741,6 +756,15 @@ def run_checks(
                     template,
                     state=GeneratedState.CHECK_ABSENT,
                     output_tail=f"check script {script} absent at {head_sha[:7]}",
+                )
+            )
+            continue
+        if not _inside(head_dir, script):
+            checks.append(
+                replace(
+                    template,
+                    state=GeneratedState.STALE,
+                    output_tail=f"check script {script} is a symlink or leaves the head tree",
                 )
             )
             continue
