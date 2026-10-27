@@ -244,3 +244,10 @@ def test_a_double_star_slash_matches_zero_directories() -> None:
     assert glob_matches("api/**/vectors.json", "api/vectors.json")
     assert glob_matches("api/**/vectors.json", "api/x/y/vectors.json")
     assert not glob_matches("api/**/vectors.json", "apix/vectors.json")
+
+
+def test_an_extensionless_glob_loads_only_where_no_language_could_match() -> None:
+    """``data/*`` can match ``data/x.py``: refused with Python declared, loaded with none."""
+    text = _ENTRY.replace("api/data/knowledge_embeddings.json", "data/*")
+    assert _load(text.replace('languages = ["python"]', "languages = []"), languages=())
+    assert _refused(text).key == "review.generated[0].path"
