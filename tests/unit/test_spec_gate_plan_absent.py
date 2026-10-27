@@ -33,6 +33,7 @@ from repoach.review.spec_gate import (
     coverage_at_head,
     fetch_spec_coverage,
     init_spec_coverage_schema,
+    latest_batch,
     record_spec_coverage,
     record_spec_coverages,
     spec_acceptance_criteria,
@@ -542,3 +543,32 @@ def test_a_marked_plan_new_at_head_replaces_a_prose_plan_at_base(tmp_path: Path)
     assert coverage.contract == "plan"
     assert coverage.covered is True
     assert coverage.missing == []
+
+
+def _row(spec_id: str, *, batch: str, covered: bool) -> SpecCoverage:
+    return SpecCoverage(
+        spec_id=spec_id,
+        n_promised=1,
+        n_present=int(covered),
+        missing=[],
+        covered=covered,
+        batch=batch,
+    )
+
+
+def test_latest_batch_folds_only_the_last_grading() -> None:
+    legacy = _row("SP-A", batch="", covered=True)
+    first = [_row("SP-A", batch="b1", covered=False), _row("SP-B", batch="b1", covered=False)]
+    second = [
+        _row("SP-A", batch="b2", covered=False),
+        _row("SP-B", batch="b2", covered=True),
+        _row("SP-A", batch="b2", covered=True),
+    ]
+
+    assert latest_batch([]) == []
+    assert latest_batch([*first, legacy]) == [legacy]
+    folded = latest_batch([legacy, *first, *second])
+    assert [(row.spec_id, row.batch, row.covered) for row in folded] == [
+        ("SP-A", "b2", True),
+        ("SP-B", "b2", True),
+    ]
