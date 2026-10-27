@@ -3,7 +3,9 @@
 ``**`` crosses directories, ``*`` and ``?`` stay inside one segment. The
 ``[[review.generated]]`` declarations of ``repoach.toml`` use them for
 their ``path``, ``sources`` and ``producer_inputs``, and refuse a ``path``
-that could match code (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G1).
+that could match code (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G1). The
+code extensions come from the caller: this module imports nothing of
+repoach.
 """
 
 from __future__ import annotations
@@ -89,30 +91,7 @@ def _glob_can_match_suffix(pattern: str, suffix: str) -> bool:
     return any(probe.endswith(suffix) and regex.match(probe) for probe in probes)
 
 
-def code_extensions(languages: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    """Return the file extensions of every declared language (``[project].languages``).
-
-    The language table is imported here, not at module level: importing
-    :mod:`repoach.gates` loads the settings, which read this module.
-
-    Args:
-        languages: Declared language names; unknown names contribute nothing.
-
-    Returns:
-        The extensions, with their dot, in declaration order.
-    """
-    from ..gates.languages import Language, spec_for
-
-    known = {language.value for language in Language}
-    extensions: list[str] = []
-    for name in languages:
-        spec = spec_for(Language(name)) if name in known else None
-        if spec is not None:
-            extensions.extend(ext for ext in spec.extensions if ext not in extensions)
-    return tuple(extensions)
-
-
-def glob_code_extension(pattern: str, languages: list[str] | tuple[str, ...]) -> str | None:
+def glob_code_extension(pattern: str, extensions: tuple[str, ...]) -> str | None:
     """Return the code extension ``pattern`` could match, or ``None``.
 
     A generated-artefact glob may never match a file of a declared
@@ -120,15 +99,15 @@ def glob_code_extension(pattern: str, languages: list[str] | tuple[str, ...]) ->
 
     Args:
         pattern: A ``[[review.generated]]`` ``path`` glob.
-        languages: The declared languages.
+        extensions: The file extensions of the declared languages.
 
     Returns:
         The first matching extension (``.py``), ``None`` when none can match.
     """
-    for suffix in code_extensions(languages):
+    for suffix in extensions:
         if _glob_can_match_suffix(pattern, suffix):
             return suffix
     return None
 
 
-__all__ = ["GLOB_SPECIALS", "code_extensions", "glob_code_extension", "glob_matches", "glob_regex"]
+__all__ = ["GLOB_SPECIALS", "glob_code_extension", "glob_matches", "glob_regex"]

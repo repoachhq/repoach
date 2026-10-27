@@ -685,25 +685,26 @@ def refuse_generated_conflicts(
     path: Path,
     text: str,
     entries: list[GeneratedSection],
-    languages: list[str] | tuple[str, ...],
+    extensions: tuple[str, ...] = (),
 ) -> None:
-    """Refuse a generated glob that could match code, or two entries with the same glob.
+    """Refuse two entries with the same glob, and a glob that could match one of ``extensions``.
 
     Args:
         path: The file, for the message.
         text: The file content, for the line lookup.
         entries: The parsed ``[[review.generated]]`` entries.
-        languages: The declared languages (``[project].languages``).
+        extensions: The file extensions of the declared languages; the
+            review's loader passes them, the plain file parse does not.
 
     Raises:
-        ConfigError: A ``path`` glob can match a file of a declared
-            language, or two entries declare the same ``path``.
+        ConfigError: A ``path`` glob can match a file with one of
+            ``extensions``, or two entries declare the same ``path``.
     """
     seen: dict[str, int] = {}
     for index, entry in enumerate(entries):
         dotted = f"review.generated[{index}].path"
         line = _array_table_line(text, "review.generated", index, "path")
-        suffix = glob_code_extension(entry.path, languages)
+        suffix = glob_code_extension(entry.path, extensions)
         if suffix is not None:
             raise ConfigError(
                 path,
@@ -774,7 +775,7 @@ def parse_project_config(text: str, path: Path) -> ProjectConfig:
         if first["type"] == "extra_forbidden":
             reason = "unknown key"
         raise ConfigError(path, reason, key=dotted, line=line) from exc
-    refuse_generated_conflicts(path, text, config.review.generated, config.project.languages)
+    refuse_generated_conflicts(path, text, config.review.generated)
     if config.repoach.schema_ > SCHEMA_VERSION:
         raise ConfigError(
             path,

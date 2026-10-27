@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from ..core.logging import get_logger
+from ..gates.languages import Language, spec_for
 from ..project.config import (
     CONFIG_FILE_NAME,
     GENERATED_CHECK_TIMEOUT_S,
@@ -355,8 +356,29 @@ def load_generated_entries(
             and the line.
     """
     config = parse_project_config(base_toml_text, path)
-    refuse_generated_conflicts(path, base_toml_text, config.review.generated, tuple(languages))
+    declared = (*config.project.languages, *languages)
+    refuse_generated_conflicts(
+        path, base_toml_text, config.review.generated, code_extensions(declared)
+    )
     return _entries(config)
+
+
+def code_extensions(languages: Sequence[str]) -> tuple[str, ...]:
+    """Return the file extensions of every named language (``[project].languages``).
+
+    Args:
+        languages: Language names; unknown names contribute nothing.
+
+    Returns:
+        The extensions, with their dot, in order, each once.
+    """
+    known = {language.value for language in Language}
+    extensions: list[str] = []
+    for name in languages:
+        spec = spec_for(Language(name)) if name in known else None
+        if spec is not None:
+            extensions.extend(ext for ext in spec.extensions if ext not in extensions)
+    return tuple(extensions)
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -399,8 +421,7 @@ def declared_at_base(root: Path, base_ref: str | None) -> tuple[GeneratedEntry, 
     if text is None:
         return ()
     decoded = text.decode("utf-8", errors="replace")
-    config = parse_project_config(decoded, Path(f"{base_ref}:{CONFIG_FILE_NAME}"))
-    return _entries(config)
+    return load_generated_entries(decoded, Path(f"{base_ref}:{CONFIG_FILE_NAME}"), ())
 
 
 def touched_artefacts(
@@ -1224,6 +1245,7 @@ __all__ = [
     "blob_at",
     "by_path",
     "check_cause",
+    "code_extensions",
     "declared_at_base",
     "evidence_payload",
     "generated_findings",
