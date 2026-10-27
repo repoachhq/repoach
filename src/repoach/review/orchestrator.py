@@ -53,7 +53,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
@@ -161,11 +160,15 @@ from .reviewer import (
     make_file_excerpts,
 )
 from .spec import SpecPlan, load_spec
+from .spec_gate import DraftScope, draft_scope_at_head, record_spec_coverages
+from .spec_grading import (
+    OWNERSHIP_UNRESOLVED,
+    CoverageGrading,
+    coverage_rows_at_head,
+    failed_grading_row,
+    redact_error,
+)
 from .thread_context import ResolvedDisagreement
-
-if TYPE_CHECKING:
-    from .spec_gate import DraftScope
-    from .spec_grading import CoverageGrading
 
 _log = get_logger(__name__)
 
@@ -1281,8 +1284,6 @@ class ReviewTeamOrchestrator:
         self, spec_id: str, *, base_ref: str | None, changed_files: list[str]
     ) -> tuple[DraftScope | None, str]:
         """Return the draft scope of *spec_id* at head (:func:`~repoach.review.spec_gate.draft_scope_at_head`)."""
-        from .spec_gate import draft_scope_at_head
-
         return draft_scope_at_head(
             self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
         )
@@ -1317,9 +1318,6 @@ class ReviewTeamOrchestrator:
         current rule exactly as a fresh run computes it. A failure is
         logged and records nothing.
         """
-        from .spec_gate import record_spec_coverages
-        from .spec_grading import coverage_rows_at_head, redact_error
-
         try:
             grading = coverage_rows_at_head(
                 self._repo_root,
@@ -1364,9 +1362,6 @@ class ReviewTeamOrchestrator:
 
         ``None`` only when even that row cannot be recorded.
         """
-        from .spec_gate import record_spec_coverages
-        from .spec_grading import CoverageGrading, failed_grading_row, redact_error
-
         row = failed_grading_row(spec_id, error)
         try:
             record_spec_coverages(
@@ -2214,8 +2209,6 @@ def _spec_report(grading: CoverageGrading | None) -> list[str]:
 
 def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> dict[str, object]:
     """Return the ``spec_resolution`` object of the review JSON (G7)."""
-    from .spec_grading import OWNERSHIP_UNRESOLVED
-
     if grading is None:
         return {"source": "declared" if spec_id else "none", "specs": [], "ungoverned": []}
     ownership = grading.ownership

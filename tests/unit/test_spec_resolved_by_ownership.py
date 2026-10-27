@@ -243,7 +243,7 @@ def test_a_grading_failure_records_a_refusing_row(
             "git show failed: fatal: https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz@github.com"
         )
 
-    monkeypatch.setattr("repoach.review.spec_grading.coverage_rows_at_head", broken)
+    monkeypatch.setattr("repoach.review.orchestrator.coverage_rows_at_head", broken)
     team = _review(repo, head, [_OWNED])
     _, decision = _decide(repo, head)
 
