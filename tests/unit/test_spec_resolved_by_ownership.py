@@ -35,6 +35,7 @@ from repoach.review.spec_gate import (
 from repoach.review.spec_grading import (
     OWNERSHIP_UNRESOLVED,
     coverage_rows_at_head,
+    readable_base,
     refresh_stale_coverage,
     specs_owning,
 )
@@ -438,3 +439,53 @@ def test_a_stale_ownership_batch_is_regraded_by_ownership(
         ("SP-A", "ownership", SPEC_COVERAGE_RULE_VERSION)
     ]
     assert refreshed[0].missing == [_SELECTOR]
+
+
+def test_gate_resolution_covers_each_branch(tmp_path: Path) -> None:
+    from repoach.cli.review_cmds import _gate_spec_resolution
+    from repoach.project.spec_source import SpecResolution
+
+    repo, _ = _repo(tmp_path, {_OWNED: "A = 2\n"})
+    undeclared = SpecResolution()
+
+    assert _gate_spec_resolution(
+        SpecResolution("SP-A", "description"), changed_files=None, base_ref="develop", root=repo
+    ) == ({"source": "declared", "specs": ["SP-A"], "ungoverned": []}, [])
+    assert _gate_spec_resolution(undeclared, changed_files=None, base_ref="develop", root=repo) == (
+        {"source": "none", "specs": [], "ungoverned": []},
+        ["spec resolution by ownership skipped: the diff could not be read"],
+    )
+    assert _gate_spec_resolution(
+        undeclared, changed_files=[_OWNED], base_ref="no-such-branch", root=repo
+    ) == (
+        {"source": "ownership", "specs": [], "ungoverned": []},
+        [
+            "spec resolution by ownership not graded: base ref no-such-branch unavailable "
+            "(fail closed)"
+        ],
+    )
+
+    _git(repo, "update-ref", "refs/remotes/origin/main", "develop")
+    payload, lines = _gate_spec_resolution(
+        undeclared, changed_files=[_OWNED, _UNOWNED], base_ref="main", root=repo
+    )
+    assert payload == {"source": "ownership", "specs": ["SP-A"], "ungoverned": [_UNOWNED]}
+    assert lines == [
+        "spec resolved by ownership: SP-A (1 paths)",
+        f"ungoverned paths: {_UNOWNED}",
+    ]
+
+
+def test_readable_base_falls_back_to_origin_after_one_fetch(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path, {_OWNED: "A = 2\n"})
+    fetched: list[str] = []
+
+    def fetch(ref: str) -> None:
+        fetched.append(ref)
+        _git(repo, "update-ref", f"refs/remotes/origin/{ref}", "develop")
+
+    assert readable_base(repo, "develop", fetch) == "develop"
+    assert fetched == []
+    assert readable_base(repo, "main", fetch) == "origin/main"
+    assert fetched == ["main"]
+    assert readable_base(repo, None, fetch) is None
