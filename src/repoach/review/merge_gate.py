@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..gates.config import GatesConfig, load_gates_config
 from .finding_verifiers import verify_finding
@@ -162,6 +162,8 @@ class MergeFacts(BaseModel):
     properties derived from it, which the gate JSON prints (its
     documented ``spec_acceptance`` shape).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     head_sha: str
     ci_green: bool

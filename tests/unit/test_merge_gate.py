@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from repoach.review.diff_scoper import ScopedDiff
 from repoach.review.findings import (
     ClaimType,
@@ -596,3 +599,8 @@ def test_decision_prefixes_only_specs_resolved_by_ownership() -> None:
         "SP-A: spec acceptance selectors not all present: tests/SP-A.py::test_it (AC1)",
         "spec acceptance selectors not all present: tests/SP-C.py::test_it (AC1)",
     ]
+
+
+def test_merge_facts_refuse_a_derived_spec_fact_as_input() -> None:
+    with pytest.raises(ValidationError, match="spec_missing"):
+        _facts(spec_covered=False, spec_missing=["tests/x.py::test_y"])
