@@ -27,11 +27,15 @@ from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_f
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
 from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
 from repoach.review.spec_gate import (
+    SPEC_COVERAGE_RULE_VERSION,
+    SpecCoverage,
     fetch_spec_coverage,
     record_spec_coverages,
 )
 from repoach.review.spec_grading import (
+    OWNERSHIP_UNRESOLVED,
     coverage_rows_at_head,
+    refresh_stale_coverage,
     specs_owning,
 )
 
@@ -401,3 +405,36 @@ def test_replayed_run_regrades_by_ownership(tmp_path: Path) -> None:
     assert replay.spec_coverage_line.startswith(f"review: spec coverage recomputed at {head[:7]}")
     assert [(row.spec_id, row.resolution) for row in rows] == [("SP-A", "ownership")] * 2
     assert rows[0].batch != rows[1].batch
+
+
+@pytest.mark.parametrize("stale_resolution", ["ownership", OWNERSHIP_UNRESOLVED])
+def test_a_stale_ownership_batch_is_regraded_by_ownership(
+    tmp_path: Path, stale_resolution: str
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
+    db = repo.parent / "stale.db"
+    stale = SpecCoverage(
+        spec_id="SP-A" if stale_resolution == "ownership" else OWNERSHIP_UNRESOLVED,
+        n_promised=0,
+        n_present=0,
+        missing=["plan-absent"],
+        covered=False,
+        rule_version=1,
+        resolution=stale_resolution,
+    )
+    record_spec_coverages(db, pr_number=9, head_sha=head, coverages=[stale])
+
+    refreshed = refresh_stale_coverage(
+        db,
+        pr_number=9,
+        head_sha=head,
+        repo_root=repo,
+        base_ref="develop",
+        changed_files=lambda: [_OWNED],
+    )
+
+    assert refreshed is not None
+    assert [(row.spec_id, row.resolution, row.rule_version) for row in refreshed] == [
+        ("SP-A", "ownership", SPEC_COVERAGE_RULE_VERSION)
+    ]
+    assert refreshed[0].missing == [_SELECTOR]
