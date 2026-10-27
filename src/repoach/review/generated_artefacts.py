@@ -1,35 +1,30 @@
-"""Declared generated artefacts: summarised for the reviewers, proved by their check.
+"""Declared generated artefacts: read at the base, summarised for the reviewers, checked.
 
 A file a committed script derives from other committed files cannot be
 reviewed by reading it: its content is a function of its sources. The
 repository declares such a file under ``[[review.generated]]`` with the
 command that proves the derivation (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ).
 
-The flow has two halves that never share a process:
+This module reads the declarations at the base ref, replaces a touched
+artefact's diff unit by one summary paragraph before any reviewer lens
+sees it (:func:`summarise`), runs the checks for the secret-free
+verification job (:func:`run_checks`) and builds the blocking
+``generated_artefact`` findings (:func:`generated_findings`). The rest of
+the flow lives beside it:
 
-- the secret-free verification job runs ``repoach review generated``,
-  which runs each touched check once at the head (twice when the check
-  script itself changed, D3) through an injected :class:`Runner` with
-  ``shell=False`` and :func:`~repoach.review.secret_env.scrubbed_env`,
-  and writes the ``format:review-generated-json`` evidence file;
-- the review job reads the declarations at the base ref, replaces the
-  artefact's diff unit by one summary paragraph before any reviewer lens
-  sees it (:func:`summarise`), loads the evidence bound to the reviewed
-  head, records one ``generated_checks`` row per run, and records a
-  blocking ``generated_artefact`` finding for every path whose derivation
-  is not shown (:func:`generated_findings`).
-
-At a later head, :func:`~repoach.review.generated_settle.settle_at_head` settles those findings, and the
-older oversized findings of a newly declared path, from the
-``generated_checks`` rows of that head, never through the refuter.
-
-The rows live in :mod:`repoach.review.generated_store`; the verification
-job's entry point is :mod:`repoach.review.generated_verify`.
+- :mod:`~repoach.review.generated_types`: the rows, the entry and the
+  causes every module shares;
+- :mod:`~repoach.review.generated_process`: how one check process runs;
+- :mod:`~repoach.review.generated_verify`: ``repoach review generated``;
+- :mod:`~repoach.review.generated_evidence`: the evidence file and how the
+  review reads it back;
+- :mod:`~repoach.review.generated_store` and
+  :mod:`~repoach.review.generated_settle`: the ``generated_checks`` rows
+  and how they settle findings of older heads, never through the refuter.
 """
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -49,7 +44,6 @@ from ..project.config import (
     parse_project_config,
     refuse_code_globs,
 )
-from ..project.globs import glob_matches
 from .diff_scoper import split_diff
 from .findings import (
     ClaimType,
@@ -66,12 +60,18 @@ from .generated_process import Runner
 from .generated_types import (
     GENERATED_FINDER,
     GeneratedCheck,
+    GeneratedEntry,
     GeneratedState,
     GeneratedTiming,
     ScriptRef,
     by_path,
+    changed_inputs,
     check_cause,
+    declared_argv,
     path_verified,
+    sha256_hex,
+    symlink_row,
+    symlinked,
     tail_lines,
 )
 from .secret_env import scrubbed_env
@@ -80,34 +80,6 @@ _log = get_logger(__name__)
 
 
 _CLAIM_PREFIX = "generated artefact not derived from its sources: "
-
-
-@dataclass(frozen=True)
-class GeneratedEntry:
-    """One declared generated artefact (a ``[[review.generated]]`` entry read at the base).
-
-    Attributes:
-        path: Glob of the artefact, repository-relative.
-        check: The argv proving the derivation; ``check[0]`` is a script.
-        sources: Globs of the files the artefact derives from (non-empty).
-        producer_inputs: Globs of files pinning the producer (D1); they
-            count as sources and are reported apart.
-        check_timeout_s: Seconds the check may run.
-    """
-
-    path: str
-    check: tuple[str, ...]
-    sources: tuple[str, ...]
-    producer_inputs: tuple[str, ...] = ()
-    check_timeout_s: int = GENERATED_CHECK_TIMEOUT_S
-
-    def matches(self, path: str) -> bool:
-        """Whether ``path`` is this artefact."""
-        return glob_matches(self.path, path)
-
-    def argv_line(self) -> str:
-        """The declared check, joined by spaces, as the report prints it."""
-        return " ".join(self.check)
 
 
 def _entries(config: ProjectConfig) -> tuple[GeneratedEntry, ...]:
@@ -220,38 +192,6 @@ def touched_artefacts(
                 )
             touched[path] = entry
     return touched
-
-
-def changed_inputs(
-    entry: GeneratedEntry, path: str, diff_files: Sequence[str]
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return ``(sources changed, producer inputs changed)`` for one artefact.
-
-    The artefact itself never counts as its own source, and a path that
-    is a source is not listed again as a producer input.
-
-    Args:
-        entry: The artefact's declaration.
-        path: The artefact's changed path.
-        diff_files: The paths the diff changes.
-
-    Returns:
-        The changed sources and the changed producer inputs, in diff order.
-    """
-    sources = tuple(
-        f for f in diff_files if f != path and any(glob_matches(g, f) for g in entry.sources)
-    )
-    producers = tuple(
-        f
-        for f in diff_files
-        if f != path and f not in sources and any(glob_matches(g, f) for g in entry.producer_inputs)
-    )
-    return sources, producers
-
-
-def sha256_hex(content: bytes | None) -> str:
-    """Return the hex sha256 of ``content``, empty for an absent file."""
-    return hashlib.sha256(content).hexdigest() if content is not None else ""
 
 
 def summary_paragraph(
@@ -405,29 +345,6 @@ def _interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
     return [str(head_dir / script), *argv[1:]]
 
 
-def declared_argv(entry: GeneratedEntry, head_sha: str, base_sha: str) -> tuple[str, ...]:
-    """The declared check with ``{head}`` / ``{base}`` replaced by the SHAs."""
-    return tuple(arg.replace("{head}", head_sha).replace("{base}", base_sha) for arg in entry.check)
-
-
-def symlinked(head_dir: Path, path: str) -> bool:
-    """Whether ``path``, or a directory on its way, is a symlink in the head tree.
-
-    Args:
-        head_dir: The head tree.
-        path: A repository-relative path (no ``..``).
-
-    Returns:
-        True when reading or writing ``path`` would follow a symlink.
-    """
-    current = head_dir
-    for part in Path(path).parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
-
-
 def _inside(head_dir: Path, script: str) -> bool:
     """Whether ``script`` is a regular file of the head tree, reached without a symlink.
 
@@ -436,29 +353,6 @@ def _inside(head_dir: Path, script: str) -> bool:
     the tree.
     """
     return not symlinked(head_dir, script) and (head_dir / script).is_file()
-
-
-def symlink_row(
-    entry: GeneratedEntry, path: str, *, head_sha: str, changed_files: Sequence[str]
-) -> GeneratedCheck:
-    """The stale run of an artefact the head commits as a symlink: never read, never green.
-
-    The review job holds the secrets, so it reads no file a pull request
-    can point at the host (a token file, a device) through a link.
-    """
-    sources, producers = changed_inputs(entry, path, changed_files)
-    return GeneratedCheck(
-        path=path,
-        argv=entry.check,
-        head_sha=head_sha,
-        artefact_sha256="",
-        sources_changed=sources,
-        state=GeneratedState.STALE,
-        exit_code=None,
-        duration_ms=0,
-        output_tail=f"artefact {path} is a symlink; it is not read",
-        producer_inputs_changed=producers,
-    )
 
 
 class ScriptTamperedError(RuntimeError):
@@ -819,7 +713,6 @@ __all__ = [
     "by_path",
     "check_cause",
     "code_extensions",
-    "declared_argv",
     "declared_at_base",
     "generated_findings",
     "load_generated_entries",
@@ -829,9 +722,6 @@ __all__ = [
     "report_lines",
     "review_scope",
     "run_checks",
-    "sha256_hex",
     "summarise",
-    "symlink_row",
-    "symlinked",
     "touched_artefacts",
 ]

@@ -15,15 +15,18 @@ from pathlib import Path
 from typing import Any
 
 from ..core.logging import get_logger
-from .generated_artefacts import (
+from .generated_types import (
+    GeneratedCheck,
     GeneratedEntry,
+    GeneratedState,
+    GeneratedTiming,
+    by_path,
     changed_inputs,
     declared_argv,
     sha256_hex,
     symlink_row,
     symlinked,
 )
-from .generated_types import GeneratedCheck, GeneratedState, GeneratedTiming, by_path
 
 _log = get_logger(__name__)
 
