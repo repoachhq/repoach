@@ -19,7 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from repoach.gates.config import REFUTER_CONTEXT_TOKENS_FLOOR, GatesConfig, RefuterBudget
+from repoach.gates.config import (
+    DEFAULT_REFUTER_BUDGET,
+    REFUTER_CONTEXT_TOKENS_FLOOR,
+    GatesConfig,
+    RefuterBudget,
+)
 from repoach.review import head_reverify, refuter_evidence
 from repoach.review.findings import (
     Finding,
@@ -160,7 +165,7 @@ def test_measured_words_never_veto_a_refutation(tmp_path: Path) -> None:
         _finding(CLAIM_66),
         repo_root=tmp_path,
         judge=lambda _p: _reply("refuted", reasoning),
-        context_tokens=REFUTER_CONTEXT_TOKENS_FLOOR,
+        budget=DEFAULT_REFUTER_BUDGET,
     )
     assert judgement.status is FindingStatus.REFUTED
     assert not set(MEASURED_COMMON_WORDS) & set(judgement.bundle.partial)
@@ -308,7 +313,7 @@ def test_needs_judgement_is_re_judged_when_the_context_changes(tmp_path: Path) -
     root, db, _ = _ledger(tmp_path)
     calls: list[str] = []
     _reverify(db, root, HEAD_B, calls)
-    _reverify(db, root, HEAD_B, calls, context_tokens=80_000)
+    _reverify(db, root, HEAD_B, calls, budget=RefuterBudget(80_000, 200_000))
     assert len(calls) == 2
 
 
@@ -341,7 +346,7 @@ def test_needs_judgement_is_re_judged_when_the_ceiling_changes(tmp_path: Path) -
     root, db, _ = _ledger(tmp_path)
     calls: list[str] = []
     _reverify(db, root, HEAD_B, calls)
-    _reverify(db, root, HEAD_B, calls, context_ceiling=120_000)
+    _reverify(db, root, HEAD_B, calls, budget=RefuterBudget(40_000, 120_000))
     assert len(calls) == 2
 
 

@@ -38,8 +38,7 @@ from typing import Literal
 
 from ..core.logging import get_logger
 from ..gates.config import (
-    REFUTER_CONTEXT_CEILING_DEFAULT,
-    REFUTER_CONTEXT_TOKENS_FLOOR,
+    DEFAULT_REFUTER_BUDGET,
     GatesConfig,
     RefuterBudget,
 )
@@ -372,8 +371,7 @@ def _judged(
         finding,
         repo_root=repo_root,
         judge=judge,
-        context_tokens=budget.floor,
-        context_ceiling=budget.ceiling,
+        budget=budget,
     )
     status, reason, used = judgement.status, judgement.reason, judgement.budget_used
     if status is FindingStatus.REFUTED:
@@ -576,8 +574,7 @@ def reverify_older_findings(
     max_judged: int,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
     cap: int | None = None,
-    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
-    context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT,
+    budget: RefuterBudget = DEFAULT_REFUTER_BUDGET,
 ) -> HeadReverification:
     """Re-check every unsettled blocking finding of an older head at ``head_sha``.
 
@@ -600,15 +597,12 @@ def reverify_older_findings(
         cap: The configured refuter cap, named in the reason of a
             finding the budget defers; ``max_judged`` when omitted
             (``review pr`` passes the cap it spent part of).
-        context_tokens: The refuter's configured context
-            (``[gates].refuter_context_tokens``), which the evidence of a
-            re-judged finding fills, as it does in the review's own
-            refuter pass; the floor when omitted. Part of the
-            :func:`judgement_key` a ``needs judgement`` stamp carries, so a
-            change of it re-opens the finding at the same head.
-        context_ceiling: The most one finding's context may grow to
-            (``[gates].refuter_context_ceiling``); part of the
-            :func:`judgement_key` as well.
+        budget: The refuter's configured floor and ceiling
+            (:func:`~repoach.gates.config.resolve_refuter_budget`), which
+            the evidence of a re-judged finding fills, as in the review's
+            own refuter pass; the defaults when omitted. Part of the
+            :func:`judgement_key` a ``needs judgement`` stamp carries, so
+            a change of either re-opens the finding at the same head.
 
     Returns:
         The :class:`HeadReverification`; resolved and still-open
@@ -618,7 +612,7 @@ def reverify_older_findings(
         return HeadReverification(head_sha="")
     init_findings_schema(db_path)
     judge = LazyJudge(judge_factory)
-    budget = RefuterBudget.clamped(context_tokens, context_ceiling)
+    budget = RefuterBudget.clamped(*budget)
     current_key = judgement_key(budget)
     outcomes: list[Reverification] = []
     seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str, int]] = {}

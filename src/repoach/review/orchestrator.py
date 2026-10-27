@@ -843,7 +843,7 @@ class ReviewTeamOrchestrator:
         refutations: list[Refutation] = []
         refuter_summary: str | None = None
         refuter_calls = 0
-        floor, ceiling = resolve_refuter_budget(self._config_root)
+        budget = resolve_refuter_budget(self._config_root)
         try:
             with reviewer_scope("Refuter"):
                 judging = judge_findings_for_pr(
@@ -858,8 +858,7 @@ class ReviewTeamOrchestrator:
                     scope_head=head_sha,
                     diff=diff,
                     pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
-                    context_tokens=floor,
-                    context_ceiling=ceiling,
+                    budget=budget,
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
@@ -1367,7 +1366,7 @@ class ReviewTeamOrchestrator:
                 reads_ci=False,
             )
         cap = configured_max_judged(self._config_root)
-        floor, ceiling = resolve_refuter_budget(self._config_root)
+        budget = resolve_refuter_budget(self._config_root)
         try:
             with reviewer_scope("Refuter"):
                 return reverify_older_findings(
@@ -1379,8 +1378,7 @@ class ReviewTeamOrchestrator:
                     config=load_gates_config(self._config_root),
                     max_judged=max(cap - refuter_calls, 0),
                     cap=cap,
-                    context_tokens=floor,
-                    context_ceiling=ceiling,
+                    budget=budget,
                 )
         except Exception as exc:
             _log.warning(

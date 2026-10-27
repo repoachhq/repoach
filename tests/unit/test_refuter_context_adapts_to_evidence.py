@@ -100,7 +100,7 @@ def test_cited_file_over_the_ceiling_defers_with_the_named_reason(tmp_path: Path
         _finding(),
         repo_root=root,
         judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
-        context_ceiling=REFUTER_CONTEXT_TOKENS_FLOOR,
+        budget=RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_TOKENS_FLOOR),
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
@@ -127,7 +127,7 @@ def test_ceiling_deferral_is_named_by_the_gate_and_records_budget_used(tmp_path:
         config=GatesConfig.builtin_default(),
         max_judged=5,
         judge_factory=lambda: lambda _p: _reply("refuted", "fine"),
-        context_ceiling=REFUTER_CONTEXT_TOKENS_FLOOR,
+        budget=RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_TOKENS_FLOOR),
     )
     assert report.model_calls == 0
     [reason] = report.reasons()
@@ -148,8 +148,7 @@ def test_verdict_records_budget_used_on_the_ledger_row(tmp_path: Path) -> None:
         repo_root=root,
         head_sha=HEAD_B,
         judge_factory=lambda: lambda _p: _reply("refuted", "wanted_symbol masks the value"),
-        context_tokens=REFUTER_CONTEXT_TOKENS_FLOOR,
-        context_ceiling=REFUTER_CONTEXT_CEILING_DEFAULT,
+        budget=RefuterBudget(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT),
     )
     [outcome] = report.outcomes
     assert outcome.state == "refuted"

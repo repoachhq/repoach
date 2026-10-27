@@ -785,7 +785,7 @@ def test_re_check_fills_the_configured_refuter_context(
     real = head_reverify.judge_finding
 
     def spy(finding: Finding, **kwargs: object) -> object:
-        seen.append(int(kwargs["context_tokens"]))
+        seen.append(kwargs["budget"].floor)
         return real(finding, **kwargs)
 
     monkeypatch.setattr(head_reverify, "judge_finding", spy)
@@ -816,7 +816,7 @@ def test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head(
     real = head_reverify.judge_finding
 
     def spy(finding: Finding, **kwargs: object) -> object:
-        seen.append((int(kwargs["context_tokens"]), int(kwargs["context_ceiling"])))
+        seen.append(tuple(kwargs["budget"]))
         return real(finding, **kwargs)
 
     monkeypatch.setattr(head_reverify, "judge_finding", spy)

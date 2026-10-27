@@ -25,6 +25,7 @@ from repoach.cli.review_cmds import refuter_tokens_json
 from repoach.forge.runner import CommandResult
 from repoach.gates.config import (
     GatesConfigError,
+    RefuterBudget,
     load_gates_config,
     resolve_refuter_context_tokens,
 )
@@ -445,13 +446,13 @@ def test_judge_receives_a_budget_of_its_own_context(tmp_path: Path) -> None:
         _finding("src/huge.py", "c", line=1000),
         repo_root=tmp_path,
         judge=_judge,
-        context_ceiling=40_000,
+        budget=RefuterBudget(40_000, 40_000),
     )
     large = judge_finding(
         _finding("src/huge.py", "c", line=1000),
         repo_root=tmp_path,
         judge=_judge,
-        context_tokens=200_000,
+        budget=RefuterBudget(200_000, 200_000),
     )
     assert small.truncated
     assert small.reason.startswith("evidence exceeds the ceiling (")
@@ -548,7 +549,7 @@ def test_claim_about_truly_absent_code_is_deferred_with_its_reason(tmp_path: Pat
         repo_root=root,
         head_sha="abc1234",
         judge_factory=_factory,
-        context_tokens=40_000,
+        budget=RefuterBudget(40_000, 200_000),
     )
     assert report.counts == {"verified": 0, "refuted": 0, "deferred": 2, "unverified": 0}
     assert {o.reason for o in report.outcomes} == {EVIDENCE_OUTSIDE_WINDOW}
@@ -580,7 +581,7 @@ def test_refutation_evidence_survives_the_review_cache(tmp_path: Path) -> None:
         repo_root=root,
         head_sha="abc1234",
         judge_factory=lambda: lambda _p: _reply("cannot_judge", "unseen"),
-        context_tokens=40_000,
+        budget=RefuterBudget(40_000, 200_000),
     )
     outcome = report.outcomes[0]
     assert refutation_from_json(refutation_to_json(outcome)) == outcome
@@ -692,8 +693,7 @@ def test_hits_cut_by_the_budget_defer_without_calling_the_judge(tmp_path: Path) 
         _finding("src/m.py", "`wanted_symbol` duplicates this table"),
         repo_root=tmp_path,
         judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
-        context_tokens=1,
-        context_ceiling=1,
+        budget=RefuterBudget(1, 1),
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
@@ -758,7 +758,7 @@ def test_run_line_and_payload_show_the_refuter_cost(tmp_path: Path) -> None:
         repo_root=root,
         head_sha="abc1234",
         judge_factory=lambda: lambda _p: _reply("verified", "real"),
-        context_tokens=40_000,
+        budget=RefuterBudget(40_000, 200_000),
     )
     tokens = report.outcomes[0].evidence_tokens
     assert tokens > 0
