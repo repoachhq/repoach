@@ -1,7 +1,7 @@
 ---
 id: SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS
 title: An approved spec without a plan is graded on its acceptance criteria, and every refusal names what is missing
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-10-26
@@ -75,6 +75,25 @@ Taken by the owner on 2026-10-26, on the 0.1 open questions and F7.
   `oversized_steps`. The gate does not enforce the caps (tech_debt row
   98).
 - An undeclared PR whose base ref cannot be read: superseded by 0.4.
+
+## Amendment (0.6, 2026-10-27): where the PR-level grading lives
+
+From the review threads of #260:
+
+- `src/repoach/review/spec_grading.py` (owned here) holds what grades a
+  PR head against its specs: `SpecsByOwnership` and `specs_owning`,
+  `readable_base` and `ownership_at_base` (the one base resolution the
+  review and `review gate` share), `CoverageGrading` with its
+  `resolution_payload`, `coverage_rows_at_head`, `failed_grading_row`,
+  `redact_error`, and `refresh_stale_coverage`. `spec_gate` keeps the
+  grading of one spec's contract and the coverage ledger. The Interface
+  names below (`spec_gate.specs_owning`) read `spec_grading.specs_owning`.
+- `project/spec_source.py` only types the `ownership` source
+  (`OwnershipSource`); the review takes it from `CoverageGrading.source`.
+  The helper the 0.2 Interface implied (`resolve_by_ownership`) had no
+  caller that read anything but `.source`, and is gone.
+- `governed_spec.ref_resolves` is the one `git rev-parse --verify` check
+  of the spec readers.
 
 ## Amendment (0.5, 2026-10-26): an example is never a selector; a failed grading refuses
 
