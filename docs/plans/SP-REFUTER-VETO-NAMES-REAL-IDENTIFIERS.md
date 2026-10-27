@@ -98,6 +98,22 @@ Drop Python names, common tokens and generic English words from a claim's identi
 - **Done when**: pytest tests/unit/test_refuter_context_adapts_to_evidence.py passes
 - **Unit tests**: `tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_used_column_is_added_to_a_pre_existing_pr_findings_table`, `tests/unit/test_refuter_context_adapts_to_evidence.py::test_none_budget_used_keeps_the_recorded_value`
 
+## Step 13 — The auto-merge head-tree path sizes the refuter from the checkout
+
+- **Files**: `src/repoach/review/auto_merge.py`, `tests/unit/test_gate_reverifies_at_head.py`, `src/repoach/review/refuter.py`
+- **Action**: Pass the checkout's resolve_refuter_budget to decide_at_head on the run_auto_merge head-tree path, so a PR's own repoach.toml never sizes its refuter; document _evidence_excerpt's args and trim the module docstring to a pointer to the spec.
+- **Commit**: `fix(merge): size the refuter from the checkout on the head tree`
+- **Done when**: pytest tests/unit/test_gate_reverifies_at_head.py passes
+- **Unit tests**: `tests/unit/test_gate_reverifies_at_head.py::test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head`
+
+## Step 14 — One RefuterBudget for the floor and the ceiling
+
+- **Files**: `src/repoach/gates/config.py`, `src/repoach/review/head_reverify.py`, `tests/unit/test_refuter_veto_names_real_identifiers.py`
+- **Action**: Return a RefuterBudget(floor, ceiling) NamedTuple from resolve_refuter_budget and pass it through _recheck, _judged and judgement_key instead of two integers.
+- **Commit**: `refactor(reverify): pass the refuter budget as one value`
+- **Done when**: pytest tests/unit/test_refuter_veto_names_real_identifiers.py passes
+- **Unit tests**: `tests/unit/test_refuter_veto_names_real_identifiers.py::test_stamp_is_written_and_read_by_one_format`, `tests/unit/test_refuter_veto_names_real_identifiers.py::test_needs_judgement_is_reused_only_under_the_same_key`
+
 ## Integration tests
 
 - `tests/integration/test_refuter_veto_replays_pr260.py::test_measured_refutation_settles_the_finding_at_the_next_head`
@@ -310,6 +326,37 @@ Drop Python names, common tokens and generic English words from a claim's identi
       "unit_tests": [
         "tests/unit/test_refuter_context_adapts_to_evidence.py::test_budget_used_column_is_added_to_a_pre_existing_pr_findings_table",
         "tests/unit/test_refuter_context_adapts_to_evidence.py::test_none_budget_used_keeps_the_recorded_value"
+      ]
+    },
+    {
+      "index": 13,
+      "title": "The auto-merge head-tree path sizes the refuter from the checkout",
+      "files": [
+        "src/repoach/review/auto_merge.py",
+        "tests/unit/test_gate_reverifies_at_head.py",
+        "src/repoach/review/refuter.py"
+      ],
+      "action": "Pass the checkout's resolve_refuter_budget to decide_at_head on the run_auto_merge head-tree path, so a PR's own repoach.toml never sizes its refuter; document _evidence_excerpt's args and trim the module docstring to a pointer to the spec.",
+      "commit_message": "fix(merge): size the refuter from the checkout on the head tree",
+      "done_when": "pytest tests/unit/test_gate_reverifies_at_head.py passes",
+      "unit_tests": [
+        "tests/unit/test_gate_reverifies_at_head.py::test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head"
+      ]
+    },
+    {
+      "index": 14,
+      "title": "One RefuterBudget for the floor and the ceiling",
+      "files": [
+        "src/repoach/gates/config.py",
+        "src/repoach/review/head_reverify.py",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py"
+      ],
+      "action": "Return a RefuterBudget(floor, ceiling) NamedTuple from resolve_refuter_budget and pass it through _recheck, _judged and judgement_key instead of two integers.",
+      "commit_message": "refactor(reverify): pass the refuter budget as one value",
+      "done_when": "pytest tests/unit/test_refuter_veto_names_real_identifiers.py passes",
+      "unit_tests": [
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_stamp_is_written_and_read_by_one_format",
+        "tests/unit/test_refuter_veto_names_real_identifiers.py::test_needs_judgement_is_reused_only_under_the_same_key"
       ]
     }
   ],
