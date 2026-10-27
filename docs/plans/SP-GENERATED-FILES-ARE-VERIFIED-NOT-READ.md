@@ -106,7 +106,15 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause`, `tests/unit/test_generated_artefacts_gate.py::test_a_symlinked_artefact_is_never_read_and_never_green`, `tests/unit/test_generated_artefacts_gate.py::test_review_generated_requires_the_base`, `tests/unit/test_generated_artefacts_gate.py::test_subprocess_runner_refuses_a_shell`, `tests/unit/test_generated_artefacts_gate.py::test_a_timed_out_check_has_its_session_killed`
 
-## Step 14 — Document the declaration and the Yoob job
+## Step 14 — Read the evidence in its own module
+
+- **Files**: `src/repoach/review/generated_evidence.py`, `src/repoach/review/generated_settle.py`
+- **Action**: generated_evidence.py holds the review-generated-json format, evidence_payload, checks_from_evidence, the review-time recomputation and load_review_evidence (another head or blob refused, a tail re-trimmed). generated_settle.py holds ReverifyOutcome, settlements_at_head and settle_at_head, so generated_store stays persistence only.
+- **Commit**: `refactor(review): move evidence reading to generated_evidence`
+- **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert passes
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert`, `tests/unit/test_generated_artefacts_gate.py::test_only_the_end_of_a_long_output_is_read`, `tests/unit/test_generated_artefacts_gate.py::test_without_a_subreaper_the_session_is_still_killed`, `tests/unit/test_generated_artefacts_gate.py::test_settle_at_head_leaves_every_other_finding_to_the_refuter`, `tests/unit/test_generated_artefacts_config.py::test_a_class_never_matches_a_slash`
+
+## Step 15 — Document the declaration and the Yoob job
 
 - **Files**: `docs/generated_artefacts.md`
 - **Action**: Describe the [[review.generated]] keys and rules, what the review shows, runs and records, what of the evidence is trusted, the causes a finding names, the report lines, and the GitLab snippet: a secret-free review:generated job writing review-generated.json and review:gate needing it.
@@ -346,6 +354,24 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
     },
     {
       "index": 14,
+      "title": "Read the evidence in its own module",
+      "files": [
+        "src/repoach/review/generated_evidence.py",
+        "src/repoach/review/generated_settle.py"
+      ],
+      "action": "generated_evidence.py holds the review-generated-json format, evidence_payload, checks_from_evidence, the review-time recomputation and load_review_evidence (another head or blob refused, a tail re-trimmed). generated_settle.py holds ReverifyOutcome, settlements_at_head and settle_at_head, so generated_store stays persistence only.",
+      "commit_message": "refactor(review): move evidence reading to generated_evidence",
+      "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert passes",
+      "unit_tests": [
+        "tests/unit/test_generated_artefacts_gate.py::test_a_forged_evidence_tail_is_bounded_and_inert",
+        "tests/unit/test_generated_artefacts_gate.py::test_only_the_end_of_a_long_output_is_read",
+        "tests/unit/test_generated_artefacts_gate.py::test_without_a_subreaper_the_session_is_still_killed",
+        "tests/unit/test_generated_artefacts_gate.py::test_settle_at_head_leaves_every_other_finding_to_the_refuter",
+        "tests/unit/test_generated_artefacts_config.py::test_a_class_never_matches_a_slash"
+      ]
+    },
+    {
+      "index": 15,
       "title": "Document the declaration and the Yoob job",
       "files": [
         "docs/generated_artefacts.md"
