@@ -620,3 +620,15 @@ def test_a_spec_without_frontmatter_is_refused_naming_it(tmp_path: Path) -> None
     assert coverage.contract == "none"
     assert coverage.covered is False
     assert coverage.draft_refusals == ["spec coverage not graded: SP-PROSE has no frontmatter"]
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "# Spec\n\nNo criteria section.\n",
+        "# Spec\n\n## Acceptance Criteria\n\n## Open Questions\n",
+        "## Acceptance Criteria\n\n- [ ] AC1: prose only, `src/x.py` changes.\n",
+    ],
+)
+def test_an_absent_or_empty_ac_section_names_no_selector(markdown: str) -> None:
+    assert spec_acceptance_criteria(markdown) == []
