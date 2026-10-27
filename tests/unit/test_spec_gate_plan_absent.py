@@ -511,26 +511,9 @@ def test_fixture_prefix_and_fixtures_tree_are_examples_not_selectors() -> None:
 
 
 def test_a_published_grading_error_carries_no_credential() -> None:
-    from repoach.review.spec_grading import StaleCoverageRecomputeError, redact_error
+    from repoach.review.spec_grading import StaleCoverageRecomputeError
 
     token = "ghp_" + "a1" * 12
-    assert redact_error(f"fatal: https://bot:{token}@github.com/o/r") == (
-        "fatal: https://***@github.com/o/r"
-    )
-    assert redact_error(f"auth failed with {token}") == "auth failed with ***"
-    assert redact_error("fatal: https://bot:pa/ss@github.com/o/r failed") == (
-        "fatal: https://***@github.com/o/r failed"
-    )
-    assert redact_error("fatal: https://bot:p@ss@github.com/o/r failed") == (
-        "fatal: https://***@github.com/o/r failed"
-    )
-    assert redact_error("see https://github.com/o/r and mail a@b") == (
-        "see https://github.com/o/r and mail a@b"
-    )
-    assert redact_error("git show failed: no such path docs/plans/SP-X.md") == (
-        "git show failed: no such path docs/plans/SP-X.md"
-    )
-    assert redact_error("glpat-" + "c3" * 10) == "***"
     stale = StaleCoverageRecomputeError(
         head_sha="abcdef1234", rule_version=1, error=RuntimeError(f"https://x:{token}@h/r")
     )

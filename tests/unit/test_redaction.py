@@ -52,3 +52,16 @@ def test_redact_error_masks_each_secret_pattern(value: str) -> None:
 )
 def test_redact_error_masks_url_userinfo(text: str, expected: str) -> None:
     assert redact_error(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "git show failed: no such path docs/plans/SP-X.md",
+        "see https://github.com/o/r and retry",
+    ],
+    ids=["empty", "plain", "url-without-userinfo"],
+)
+def test_redact_error_leaves_clean_text_alone(text: str) -> None:
+    assert redact_error(text) == text
