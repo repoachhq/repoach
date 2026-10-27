@@ -36,9 +36,9 @@ from repoach.review.generated_artefacts import (
     GeneratedEntry,
     GeneratedState,
     GeneratedTiming,
-    evidence_payload,
     run_checks,
 )
+from repoach.review.generated_evidence import evidence_payload
 from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_store import fetch_generated_checks
 from repoach.review.generated_verify import head_tree

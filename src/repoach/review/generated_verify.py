@@ -23,11 +23,11 @@ from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
     declared_at_base,
-    evidence_payload,
     report_lines,
     run_checks,
     touched_artefacts,
 )
+from .generated_evidence import evidence_payload
 from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from .generated_process import Runner, subprocess_runner
 from .secret_env import scrubbed_env

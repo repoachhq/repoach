@@ -30,7 +30,6 @@ job's entry point is :mod:`repoach.review.generated_verify`.
 from __future__ import annotations
 
 import hashlib
-import json
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -79,12 +78,6 @@ from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
 
-EVIDENCE_FORMAT = "review-generated-json"
-"""The ``format`` field of the evidence file (``format:review-generated-json``)."""
-
-EVIDENCE_VERSION = 1
-"""The evidence file's schema version."""
-
 
 _CLAIM_PREFIX = "generated artefact not derived from its sources: "
 
@@ -115,14 +108,6 @@ class GeneratedEntry:
     def argv_line(self) -> str:
         """The declared check, joined by spaces, as the report prints it."""
         return " ".join(self.check)
-
-
-class GeneratedEvidenceMismatchError(ValueError):
-    """The evidence file names another head or another artefact blob than the reviewed one."""
-
-
-GeneratedEvidenceMismatch = GeneratedEvidenceMismatchError
-"""The name the spec's interface gives the error."""
 
 
 def _entries(config: ProjectConfig) -> tuple[GeneratedEntry, ...]:
@@ -264,7 +249,7 @@ def changed_inputs(
     return sources, producers
 
 
-def _sha256(content: bytes | None) -> str:
+def sha256_hex(content: bytes | None) -> str:
     """Return the hex sha256 of ``content``, empty for an absent file."""
     return hashlib.sha256(content).hexdigest() if content is not None else ""
 
@@ -299,8 +284,8 @@ def summary_paragraph(
     size_after = f"{len(after)}" if after is not None else "deleted"
     if symlink:
         size_after = "a symlink, not read"
-    sha_before = _sha256(before)[:7] or "none"
-    sha_after = _sha256(after)[:7] or "none"
+    sha_before = sha256_hex(before)[:7] or "none"
+    sha_after = sha256_hex(after)[:7] or "none"
     sources, producers = changed_inputs(entry, path, diff_files)
     paragraph = (
         f"generated artefact {path}: {size_before} -> {size_after} bytes, "
@@ -420,7 +405,7 @@ def _interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
     return [str(head_dir / script), *argv[1:]]
 
 
-def _declared_argv(entry: GeneratedEntry, head_sha: str, base_sha: str) -> tuple[str, ...]:
+def declared_argv(entry: GeneratedEntry, head_sha: str, base_sha: str) -> tuple[str, ...]:
     """The declared check with ``{head}`` / ``{base}`` replaced by the SHAs."""
     return tuple(arg.replace("{head}", head_sha).replace("{base}", base_sha) for arg in entry.check)
 
@@ -453,7 +438,7 @@ def _inside(head_dir: Path, script: str) -> bool:
     return not symlinked(head_dir, script) and (head_dir / script).is_file()
 
 
-def _symlink_row(
+def symlink_row(
     entry: GeneratedEntry, path: str, *, head_sha: str, changed_files: Sequence[str]
 ) -> GeneratedCheck:
     """The stale run of an artefact the head commits as a symlink: never read, never green.
@@ -558,7 +543,7 @@ def _run_once(
             0,
             f"check script {entry.check[0]} is a symlink or leaves the head tree",
         )
-    argv = _interpreted(_declared_argv(entry, head_sha, base_sha), head_dir)
+    argv = _interpreted(declared_argv(entry, head_sha, base_sha), head_dir)
     started = budget.clock()
     try:
         with _script_at(head_dir, entry.check[0], script_content):
@@ -627,16 +612,16 @@ def run_checks(
     for path, entry in touched.items():
         artefact = head_dir / path
         if symlinked(head_dir, path):
-            checks.append(_symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
+            checks.append(symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
             continue
         if not artefact.is_file():
             continue
-        artefact_sha = _sha256(artefact.read_bytes())
+        artefact_sha = sha256_hex(artefact.read_bytes())
         sources, producers = changed_inputs(entry, path, changed_files)
         script = entry.check[0]
         template = GeneratedCheck(
             path=path,
-            argv=_declared_argv(entry, head_sha, base_sha),
+            argv=declared_argv(entry, head_sha, base_sha),
             head_sha=head_sha,
             artefact_sha256=artefact_sha,
             sources_changed=sources,
@@ -695,50 +680,6 @@ def run_checks(
                     runs_for_path=len(runs),
                 )
             )
-    return checks
-
-
-def not_run_checks(
-    touched: Mapping[str, GeneratedEntry],
-    *,
-    head_dir: Path,
-    head_sha: str,
-    changed_files: Sequence[str],
-) -> list[GeneratedCheck]:
-    """Return a ``generated_check_not_run`` row for each touched artefact present at the head.
-
-    Args:
-        touched: The declared artefacts the diff changes.
-        head_dir: The reviewed head tree.
-        head_sha: The reviewed head.
-        changed_files: The paths the diff changes.
-
-    Returns:
-        One run per touched artefact present at the head.
-    """
-    checks: list[GeneratedCheck] = []
-    for path, entry in touched.items():
-        artefact = head_dir / path
-        if symlinked(head_dir, path):
-            checks.append(_symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
-            continue
-        if not artefact.is_file():
-            continue
-        sources, producers = changed_inputs(entry, path, changed_files)
-        checks.append(
-            GeneratedCheck(
-                path=path,
-                argv=entry.check,
-                head_sha=head_sha,
-                artefact_sha256=_sha256(artefact.read_bytes()),
-                sources_changed=sources,
-                state=GeneratedState.NOT_RUN,
-                exit_code=None,
-                duration_ms=0,
-                output_tail=f"no check evidence for {path} at {head_sha[:7]}",
-                producer_inputs_changed=producers,
-            )
-        )
     return checks
 
 
@@ -816,220 +757,6 @@ def record_generated_findings(
     return recorded
 
 
-def evidence_payload(
-    *,
-    pr_number: int,
-    head_sha: str,
-    base_sha: str,
-    checks: Sequence[GeneratedCheck],
-    timing: GeneratedTiming,
-) -> dict[str, Any]:
-    """Build the ``format:review-generated-json`` evidence document.
-
-    Args:
-        pr_number: The pull request.
-        head_sha: The head the checks ran at.
-        base_sha: The merge base the diff was read from.
-        checks: The runs.
-        timing: The measured delay.
-
-    Returns:
-        The JSON-ready document.
-    """
-    return {
-        "format": EVIDENCE_FORMAT,
-        "version": EVIDENCE_VERSION,
-        "pr_number": pr_number,
-        "head_sha": head_sha,
-        "base_sha": base_sha,
-        "checks_ms": timing.checks_ms,
-        "overhead_ms": timing.overhead_ms,
-        "checks": [check.as_json() for check in checks],
-    }
-
-
-def checks_from_evidence(
-    payload: Mapping[str, Any],
-    touched: Mapping[str, GeneratedEntry],
-    *,
-    head_sha: str,
-    head_dir: Path,
-    changed_files: Sequence[str],
-) -> tuple[list[GeneratedCheck], GeneratedTiming]:
-    """Read the runs of the touched artefacts out of an evidence document.
-
-    Args:
-        payload: The parsed evidence file.
-        touched: The declared artefacts the reviewed diff changes.
-        head_sha: The reviewed head.
-        head_dir: The reviewed head tree (the artefacts' blobs).
-        changed_files: The paths the diff changes.
-
-    Returns:
-        The runs, in declaration order, and the evidence's timing; an
-        artefact the evidence does not name gets a ``not_run`` row.
-
-    Raises:
-        GeneratedEvidenceMismatch: The evidence is of another format,
-            another head, or another blob of a touched artefact.
-    """
-    if payload.get("format") != EVIDENCE_FORMAT:
-        raise GeneratedEvidenceMismatchError(f"not a {EVIDENCE_FORMAT} file")
-    if payload.get("head_sha") != head_sha:
-        raise GeneratedEvidenceMismatchError(
-            f"evidence of head {str(payload.get('head_sha'))[:7]}, reviewing {head_sha[:7]}"
-        )
-    recorded = by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
-    checks: list[GeneratedCheck] = []
-    for path in touched:
-        artefact = head_dir / path
-        if symlinked(head_dir, path):
-            checks.append(
-                _symlink_row(touched[path], path, head_sha=head_sha, changed_files=changed_files)
-            )
-            continue
-        if not artefact.is_file():
-            continue
-        runs = recorded.get(path)
-        if not runs:
-            checks.extend(
-                not_run_checks(
-                    {path: touched[path]},
-                    head_dir=head_dir,
-                    head_sha=head_sha,
-                    changed_files=changed_files,
-                )
-            )
-            continue
-        blob = _sha256(artefact.read_bytes())
-        if any(run.artefact_sha256 != blob for run in runs):
-            raise GeneratedEvidenceMismatchError(
-                f"evidence of {path} names blob {runs[0].artefact_sha256[:7]}, head has {blob[:7]}"
-            )
-        checks.extend(
-            _rebound(
-                runs,
-                touched[path],
-                path=path,
-                head_sha=head_sha,
-                base_sha=str(payload.get("base_sha") or ""),
-                changed_files=changed_files,
-            )
-        )
-    timing = GeneratedTiming(int(payload.get("checks_ms", 0)), int(payload.get("overhead_ms", 0)))
-    return checks, timing
-
-
-def _rebound(
-    runs: Sequence[GeneratedCheck],
-    entry: GeneratedEntry,
-    *,
-    path: str,
-    head_sha: str,
-    base_sha: str,
-    changed_files: Sequence[str],
-) -> list[GeneratedCheck]:
-    """Recompute at review time everything the evidence carries that the review can derive.
-
-    The verification job runs pull-request code, so its JSON is trusted
-    for the check's exit code and output only. The argv comes from the
-    base declaration, the changed sources and producer inputs from the
-    reviewed diff, and the state from the exit code and those sources: a
-    run claiming ``verified`` without exit 0, or without a changed source,
-    is not verified. When the check script changed, a missing base-script
-    run (D3) is reported not run, unless the script is absent at the head.
-    """
-    sources, producers = changed_inputs(entry, path, changed_files)
-    argv = _declared_argv(entry, head_sha, base_sha)
-    rebound: list[GeneratedCheck] = []
-    for run in runs:
-        state = run.state
-        if state in {GeneratedState.VERIFIED, GeneratedState.NO_SOURCE_CHANGED}:
-            if run.exit_code != 0:
-                state = GeneratedState.STALE
-            elif not (sources or producers):
-                state = GeneratedState.NO_SOURCE_CHANGED
-            else:
-                state = GeneratedState.VERIFIED
-        rebound.append(
-            replace(
-                run,
-                argv=argv,
-                head_sha=head_sha,
-                sources_changed=sources,
-                producer_inputs_changed=producers,
-                state=state,
-            )
-        )
-    script_changed = entry.check[0] in changed_files
-    absent = any(run.state is GeneratedState.CHECK_ABSENT for run in rebound)
-    if script_changed and not absent and not any(run.script_ref == "base" for run in rebound):
-        rebound.insert(
-            0,
-            replace(
-                rebound[0],
-                state=GeneratedState.NOT_RUN,
-                exit_code=None,
-                duration_ms=0,
-                output_tail=f"no base-script run for {path} at {head_sha[:7]}",
-                script_ref="base",
-                runs_for_path=2,
-            ),
-        )
-    return rebound
-
-
-def load_review_evidence(
-    evidence: Path | None,
-    touched: Mapping[str, GeneratedEntry],
-    *,
-    head_sha: str,
-    head_dir: Path,
-    changed_files: Sequence[str],
-) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
-    """Return the runs the review job records for the touched artefacts.
-
-    A missing, unreadable or mismatched evidence file is never green:
-    each touched artefact then gets a ``generated_check_not_run`` row.
-
-    Args:
-        evidence: The evidence file, ``None`` when none was given.
-        touched: The declared artefacts the diff changes.
-        head_sha: The reviewed head.
-        head_dir: The reviewed head tree.
-        changed_files: The paths the diff changes.
-
-    Returns:
-        The runs to record and the evidence's timing (``None`` without usable evidence).
-    """
-    if not touched:
-        return [], None
-    if evidence is not None and evidence.is_file():
-        try:
-            payload = json.loads(evidence.read_text(encoding="utf-8"))
-            return checks_from_evidence(
-                payload,
-                touched,
-                head_sha=head_sha,
-                head_dir=head_dir,
-                changed_files=changed_files,
-            )
-        except (GeneratedEvidenceMismatch, ValueError, KeyError, OSError) as exc:
-            _log.warning(
-                "generated.evidence_refused",
-                path=str(evidence),
-                exc=type(exc).__name__,
-                message=str(exc)[:200],
-                consequence="each touched artefact is reported not run",
-            )
-    else:
-        _log.warning("generated.evidence_absent", head_sha=head_sha[:12], touched=list(touched))
-    return (
-        not_run_checks(touched, head_dir=head_dir, head_sha=head_sha, changed_files=changed_files),
-        None,
-    )
-
-
 def report_json(checks: Sequence[GeneratedCheck]) -> list[dict[str, Any]]:
     """The ``generated`` array of the ``review pr`` JSON (G5).
 
@@ -1083,30 +810,28 @@ def report_lines(
 
 
 __all__ = [
-    "EVIDENCE_FORMAT",
     "GENERATED_FINDER",
     "GeneratedCheck",
     "GeneratedEntry",
-    "GeneratedEvidenceMismatch",
-    "GeneratedEvidenceMismatchError",
     "GeneratedState",
     "GeneratedTiming",
     "ReviewScope",
     "by_path",
     "check_cause",
     "code_extensions",
+    "declared_argv",
     "declared_at_base",
-    "evidence_payload",
     "generated_findings",
     "load_generated_entries",
-    "load_review_evidence",
     "path_verified",
     "record_generated_findings",
     "report_json",
     "report_lines",
     "review_scope",
     "run_checks",
+    "sha256_hex",
     "summarise",
+    "symlink_row",
     "symlinked",
     "touched_artefacts",
 ]
