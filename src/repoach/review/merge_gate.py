@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..gates.config import GatesConfig, load_gates_config
 from .finding_verifiers import verify_finding
@@ -28,6 +28,7 @@ from .findings import (
     JUDGED_CLAIM_TYPES,
     MECHANICAL_CLAIM_TYPES,
     ClaimType,
+    Finding,
     FindingStatus,
     Severity,
     fetch_findings,
@@ -35,7 +36,14 @@ from .findings import (
     init_findings_schema,
 )
 from .reviewer import ReviewVerdict
-from .spec_gate import fetch_spec_coverage, init_spec_coverage_schema
+from .spec_gate import (
+    RESOLUTION_OWNERSHIP,
+    SpecCoverage,
+    coverage_refusals,
+    fetch_spec_coverage,
+    init_spec_coverage_schema,
+    latest_batch,
+)
 
 _MIN_REVIEWERS = 4
 """A complete review has at least four reviewers parsed (the bench)."""
@@ -93,6 +101,11 @@ class MergeFacts(BaseModel):
             SHA-stale included, fail closed). ``stuck`` blocking
             findings count exactly like ``verified`` ones (terminal
             escalation must keep the merge blocked).
+        open_blocking_ids: The ledger ids of exactly the findings
+            ``open_blocking_findings`` counts, in ledger order — what a
+            ``REQUEST_CHANGES`` is traceable to (the report's
+            ``verdict_basis``); ``len(open_blocking_ids) ==
+            open_blocking_findings`` always.
         spec_covered: Whether a coverage record computed at THIS head
             reports every promised acceptance selector present.
         spec_coverage_known: Whether a coverage record exists at this
@@ -119,11 +132,39 @@ class MergeFacts(BaseModel):
             blocking, naming the head it was raised at.
         reverify_line: The one-line summary of the re-check (empty when
             the gate did not reach the ledger).
+        spec_recompute_failure: Why a coverage row graded by a retired
+            rule could not be recomputed (SP-PLAN-SELECTOR-AUDIT-WIRE
+            0.3); always a refusal reason, whatever the stored verdict,
+            since that verdict comes from a retired rule. Empty otherwise.
+        spec_rows: The coverage rows of the latest grading at head, one
+            per graded spec; the decision names each not-covered row's
+            causes, prefixed with the spec id for a spec resolved by
+            ownership (G7).
+
+    Read-only properties derived from ``spec_rows`` (the one source; the
+    gate JSON prints them, its documented ``spec_acceptance`` shape, and
+    they are refused as constructor inputs):
+
+    - ``spec_missing``: the acceptance selectors absent at head.
+    - ``spec_planned``: the selectors of a pre-implementation spec whose
+      file does not exist yet, reported, never refusing
+      (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
+    - ``spec_draft_refusals``: the refusal lines the rows carry.
+    - ``spec_contract``: what the latest row was graded against
+      (``plan``, ``acceptance-criteria``, ``none`` or ``unavailable``).
+    - ``spec_origins``: selector to origin (``AC3``, ``plan step 1``).
+    - ``spec_no_selectors_line``: the ``no selectors to grade: …`` line
+      of a contract with nothing to grade (G3).
+    - ``spec_report``: lines reported and never refusing
+      (``plan-absent: …``).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     head_sha: str
     ci_green: bool
     open_blocking_findings: int
+    open_blocking_ids: list[int] = []
     spec_covered: bool
     spec_coverage_known: bool
     review_complete: bool
@@ -133,6 +174,49 @@ class MergeFacts(BaseModel):
     reverified: dict[str, int] = dict(NO_REVERIFICATION)
     reverify_reasons: list[str] = []
     reverify_line: str = ""
+    spec_recompute_failure: str = ""
+    spec_rows: list[SpecCoverage] = []
+
+    @property
+    def spec_missing(self) -> list[str]:
+        """The acceptance selectors absent at head, every row in order."""
+        return [selector for row in self.spec_rows for selector in row.missing]
+
+    @property
+    def spec_planned(self) -> list[str]:
+        """The planned selectors of a pre-implementation spec, every row in order."""
+        return [selector for row in self.spec_rows for selector in row.planned]
+
+    @property
+    def spec_draft_refusals(self) -> list[str]:
+        """The refusal lines the rows carry, every row in order."""
+        return [line for row in self.spec_rows for line in row.draft_refusals]
+
+    @property
+    def spec_contract(self) -> str:
+        """What the latest row was graded against; empty without a row."""
+        return self.spec_rows[-1].contract if self.spec_rows else ""
+
+    @property
+    def spec_origins(self) -> dict[str, str]:
+        """Selector to origin over every row."""
+        return {k: v for row in self.spec_rows for k, v in row.origins.items()}
+
+    @property
+    def spec_no_selectors_line(self) -> str:
+        """The ``no selectors to grade: …`` line of a contract with nothing to grade."""
+        lines = [
+            line
+            for row in self.spec_rows
+            if row.contract == "none"
+            for line in (*row.draft_refusals, *row.report)
+        ]
+        return lines[0] if lines else ""
+
+    @property
+    def spec_report(self) -> list[str]:
+        """Lines reported and never refusing, every row in order."""
+        return [line for row in self.spec_rows for line in row.report]
 
 
 class MergeDecision(BaseModel):
@@ -178,7 +262,9 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     if facts.open_blocking_findings > 0:
         reasons.append(f"{facts.open_blocking_findings} open blocking finding(s) at head")
     if facts.spec_coverage_known and not facts.spec_covered:
-        reasons.append("spec acceptance selectors not all present")
+        reasons.extend(_coverage_reasons(facts))
+    if facts.spec_recompute_failure:
+        reasons.append(facts.spec_recompute_failure)
     if facts.blocking_unverified:
         reasons.append(
             f"{len(facts.blocking_unverified)} unverified blocking finding(s): "
@@ -187,6 +273,23 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     if reasons:
         reasons.extend(facts.reverify_reasons)
     return MergeDecision(merge=not reasons, reasons=reasons)
+
+
+def _coverage_reasons(facts: MergeFacts) -> list[str]:
+    """Return the coverage refusals, each naming its cause (G2, G3, G7).
+
+    Every not-covered row contributes its lines
+    (:func:`~repoach.review.spec_gate.coverage_refusals`); a row of a
+    spec resolved by ownership prefixes each with ``<id>: ``. Facts that
+    say "not covered" without a row (built by hand) get one line saying so.
+    """
+    if not facts.spec_rows:
+        return ["spec coverage not covered: no coverage row at head names a cause"]
+    reasons: list[str] = []
+    for row in facts.spec_rows:
+        prefix = f"{row.spec_id}: " if row.resolution == RESOLUTION_OWNERSHIP else ""
+        reasons.extend(f"{prefix}{line}" for line in coverage_refusals(row))
+    return reasons
 
 
 def verdict_from_facts(facts: MergeFacts) -> ReviewVerdict:
@@ -252,7 +355,7 @@ def gather_merge_facts(
         The assembled :class:`MergeFacts`.
     """
     init_findings_schema(db_path)
-    open_blocking = 0
+    open_blocking: list[int] = []
     blocking_unverified: list[str] = []
     if gates_config is None:
         gates_config = load_gates_config(repo_root)
@@ -272,9 +375,9 @@ def gather_merge_facts(
         if finding.claim_type in _MECHANICAL_TYPES:
             status, _, _ = verify_finding(finding, repo_root=repo_root, config=gates_config)
             if status is FindingStatus.VERIFIED:
-                open_blocking += 1
+                open_blocking.append(_ledger_id(finding))
         elif finding.claim_type in _JUDGED_TYPES:
-            open_blocking += 1
+            open_blocking.append(_ledger_id(finding))
     return _assemble_facts(
         db_path,
         pr_number=pr_number,
@@ -321,7 +424,7 @@ def summarise_ledger_facts(
         The assembled :class:`MergeFacts` from recorded state.
     """
     init_findings_schema(db_path)
-    open_blocking = 0
+    open_blocking: list[int] = []
     ci_red = False
     for finding in fetch_findings(db_path, pr_number):
         if finding.status in _SETTLED:
@@ -333,12 +436,12 @@ def summarise_ledger_facts(
             continue
         if finding.claim_type in _JUDGED_TYPES:
             if finding.status is not FindingStatus.PROPOSED:
-                open_blocking += 1
+                open_blocking.append(_ledger_id(finding))
             continue
         if finding.status not in _BLOCKING_STATUSES:
             continue
         if finding.claim_type in _MECHANICAL_TYPES:
-            open_blocking += 1
+            open_blocking.append(_ledger_id(finding))
     return _assemble_facts(
         db_path,
         pr_number=pr_number,
@@ -348,13 +451,18 @@ def summarise_ledger_facts(
     )
 
 
+def _ledger_id(finding: Finding) -> int:
+    """Return the ledger id of a fetched finding (``-1`` for an unpersisted one)."""
+    return finding.id if finding.id is not None else -1
+
+
 def _assemble_facts(
     db_path: Path,
     *,
     pr_number: int,
     head_sha: str,
     ci_green: bool,
-    open_blocking: int,
+    open_blocking: list[int],
     blocking_unverified: list[str] | None = None,
 ) -> MergeFacts:
     """Fold the spec-coverage and review-integrity records into facts.
@@ -378,14 +486,18 @@ def _assemble_facts(
     review_complete = any(
         r["n_unparsed"] == 0 and r["n_reviewers"] >= _MIN_REVIEWERS for r in fresh
     )
+    rows = latest_batch(coverage)
+    latest = rows[-1] if rows else None
     return MergeFacts(
         head_sha=head_sha,
         ci_green=ci_green,
-        open_blocking_findings=open_blocking,
-        spec_covered=bool(coverage) and coverage[-1].covered,
-        spec_coverage_known=bool(coverage),
+        open_blocking_findings=len(open_blocking),
+        open_blocking_ids=list(open_blocking),
+        spec_covered=bool(rows) and all(row.covered for row in rows),
+        spec_coverage_known=latest is not None,
         review_complete=review_complete,
         review_integrity_known=bool(fresh),
         review_integrity_any=bool(integrity),
         blocking_unverified=blocking_unverified or [],
+        spec_rows=rows,
     )

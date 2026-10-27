@@ -25,28 +25,54 @@ on:
         required: true
         type: number
 
-concurrency:
-  # Resolve the PR number across every supported event type:
-  #   pull_request          → github.event.pull_request.number
-  #   pull_request_review   → github.event.pull_request.number
-  #   issue_comment         → github.event.issue.number  (PR comments
-  #                            arrive as issue_comment events; the
-  #                            issue *is* the PR for review purposes)
-  #   workflow_dispatch     → github.event.inputs.pr_number
-  group: >-
-    review-${{ github.event.pull_request.number
-            || github.event.issue.number
-            || github.event.inputs.pr_number }}
-  # SP-CI-FIX-LOOP-CLOSURE follow-up: a Coder push fires a synchronize
-  # run in this same group — with unconditional cancellation it KILLS
-  # the in-progress parent run right before its in-run re-review and
-  # merge (observed live on PR #372).  Bot-triggered runs therefore
-  # never cancel; they queue, the parent finishes its loop, then the
-  # queued run starts and skips on the actor gate.  Owner pushes keep
-  # cancelling stale runs as before.
-  cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
+# SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G4: no workflow-level
+# concurrency.  A workflow-level group is entered by every run, even one
+# whose jobs are all skipped by their ``if``: on 2026-10-25 the bot's own
+# archive-comment edit (actor: the owner's token) entered it last and
+# cancelled the review run of every owner burst (#246, 16 runs, zero
+# reviews).  Concurrency now lives on the jobs, so a job skipped by its
+# ``if`` takes no slot:
+#   coalesce      coalesce-<pr>, cancel-in-progress: only the last owner
+#                 event of a burst survives its 60 s sleep;
+#   review        review-<pr>, cancels stale owner runs as before;
+#   auto_fix,     merge-<head branch>, never cancelled, shared with
+#   auto_merge    merge-on-ci.yml so the two merge paths serialize per PR.
+# The PR number resolves across every supported event type:
+#   pull_request / pull_request_review → github.event.pull_request.number
+#   issue_comment                      → github.event.issue.number
+#   workflow_dispatch                  → github.event.inputs.pr_number
 
 jobs:
+  coalesce:
+    name: Coalesce owner events
+    # Owner review / comment events only, with the same author filters
+    # as ``review``: a Bot-authored comment never reaches this job, so it
+    # can cancel nothing.  A pull_request event skips it and is not
+    # delayed.  GitHub-hosted (free on this public repository) so the
+    # wait never holds the single self-hosted runner it protects.
+    if: >-
+      (github.event_name == 'pull_request_review'
+       || github.event_name == 'issue_comment')
+      && github.event.pull_request.draft != true
+      && (github.event_name != 'issue_comment'
+          || github.event.issue.pull_request != null)
+      && (github.event_name != 'issue_comment'
+          || github.event.comment.user.type != 'Bot')
+      && (github.event_name != 'pull_request_review'
+          || github.event.review.user.type != 'Bot')
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    concurrency:
+      group: >-
+        coalesce-${{ github.event.pull_request.number
+                  || github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Wait for the burst to end (coalesce_window_s)
+        run: sleep 60
+
   review:
     name: Architect / Sentinel / Tester / Scribe
     # Skip when:
@@ -61,8 +87,15 @@ jobs:
     #     provider keys, so only owner-triggered events may run it;
     #     untrusted actors still get the secret-free ci.yml. Extend the
     #     fromJSON list as collaborators are added.)
+    #   * the coalesce job was cancelled by a newer event of the burst
+    #     (it ran and succeeded for the last one; it is skipped for a
+    #     pull_request event, which is not delayed)
+    needs: coalesce
     if: >-
-      github.event.pull_request.draft != true
+      !cancelled()
+      && (needs.coalesce.result == 'success'
+          || needs.coalesce.result == 'skipped')
+      && github.event.pull_request.draft != true
       && (github.event_name != 'issue_comment'
           || github.event.issue.pull_request != null)
       && (github.event_name != 'issue_comment'
@@ -70,6 +103,16 @@ jobs:
       && (github.event_name != 'pull_request_review'
           || github.event.review.user.type != 'Bot')
       && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    # SP-CI-FIX-LOOP-CLOSURE follow-up, kept at job level: a Coder push
+    # fires a synchronize run whose review must not kill the parent's
+    # in-progress review, so bot-triggered runs queue; owner events keep
+    # cancelling the stale review.
+    concurrency:
+      group: >-
+        review-${{ github.event.pull_request.number
+                || github.event.issue.number
+                || github.event.inputs.pr_number }}
+      cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
     # ONLY in the ``bots`` Environment (no repo-level copies), so this
@@ -86,6 +129,7 @@ jobs:
     outputs:
       verdict: ${{ steps.run_review.outputs.verdict }}
       pr_number: ${{ steps.pr.outputs.number }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
     steps:
       # SP-CI-SECRETS-ISOLATION layer 2: this job holds all six
       # provider keys, so it must never install or import PR-authored
@@ -113,6 +157,9 @@ jobs:
 
       - name: Resolve PR number
         id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           # Resolve from any of the supported event payloads:
           # pull_request / pull_request_review carry the PR object;
@@ -126,6 +173,16 @@ jobs:
           else
             echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
           fi
+          # The head branch keys the merge-<head branch> concurrency of
+          # auto_fix / auto_merge; issue_comment and dispatch payloads do
+          # not carry it, so read it from the PR.
+          number="${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr_number }}"
+          head_ref="$EVENT_HEAD_REF"
+          if [ -z "$head_ref" ]; then
+            head_ref="$(gh pr view "$number" --repo "${{ github.repository }}" \
+              --json headRefName --jq .headRefName)"
+          fi
+          echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"
 
       # Data-only checkout of the PR head: the hallucination guard,
       # round-2 file excerpts and ``load_spec`` read file contents
@@ -138,6 +195,233 @@ jobs:
           fetch-depth: 0
           ref: refs/pull/${{ steps.pr.outputs.number }}/head
           path: pr_head
+
+      # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: the helper is embedded here,
+      # byte-identical to scripts/job_proxy.sh (pinned by
+      # tests/unit/test_job_proxy_workflow_wiring.py), because this job
+      # runs a checkout that may predate the script: the base ref in
+      # review, an un-rebased PR head in auto_fix.
+      - name: Materialize job proxy helper
+        run: |
+          cat > "$RUNNER_TEMP/job_proxy.sh" <<'JOB_PROXY_SH'
+          #!/usr/bin/env bash
+          # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: start or stop the LLM proxy that
+          # belongs to ONE job, on a port chosen at start, and prove that the
+          # process listening on that port is the one this job spawned.
+          #
+          #   job_proxy.sh start                     pick a free port and an instance
+          #                                          token, spawn the proxy, wait for
+          #                                          the ownership proof
+          #   job_proxy.sh stop                      kill the proxy recorded by start
+          #   job_proxy.sh prove PID PORT INSTANCE   one ownership probe (exit codes
+          #                                          below), used by start and tests
+          #
+          # The proof never relies on the proxy's own code, so it holds when the
+          # proxy comes from an older base ref:
+          #   1. PID proof (decides): the LISTEN socket on PORT, read from
+          #      /proc/net/tcp{,6}, has an inode that appears among PID's
+          #      /proc/PID/fd links. Both are readable without root for a process
+          #      of the same user.
+          #   2. Token proof (second, when available): /health echoes `instance`;
+          #      it must equal INSTANCE. A proxy without the echo is accepted on
+          #      the PID proof alone and the helper says so.
+          #
+          # prove exit codes: 0 own proxy; 1 not ready yet (no listener, or
+          # /health not healthy yet); 3 foreign proxy (listener not owned by PID,
+          # or another instance token); 4 the spawned PID is dead.
+          #
+          # start exports REPOACH_PROXY_PORT, REPOACH_PROXY_INSTANCE and
+          # REPOACH_LLM_PROXY_BASE_URL to "$GITHUB_ENV" when it is set, prints them
+          # as KEY=VALUE lines on stdout, and exits 0, 1 (timeout or spawned proxy
+          # dead) or 3 (foreign proxy).
+          #
+          # The script uses bash, coreutils, awk, curl and the Python standard
+          # library only; it imports nothing from repoach.
+          #
+          # Tunables (env): JOB_PROXY_HOST (127.0.0.1), JOB_PROXY_DIR (logs),
+          # JOB_PROXY_TIMEOUT_S (20), PYTHON (python).
+          set -euo pipefail
+
+          host="${JOB_PROXY_HOST:-127.0.0.1}"
+          dir="${JOB_PROXY_DIR:-logs}"
+          timeout_s="${JOB_PROXY_TIMEOUT_S:-20}"
+          py="${PYTHON:-python}"
+          log="$dir/llm_proxy.log"
+          pidfile="$dir/llm_proxy.pid"
+
+          err() {
+              if [ -n "${GITHUB_ACTIONS:-}" ]; then
+                  echo "::error::$*" >&2
+              else
+                  echo "error: $*" >&2
+              fi
+          }
+
+          listen_inodes() {
+              local hexport
+              hexport="$(printf '%04X' "$1")"
+              { cat /proc/net/tcp; cat /proc/net/tcp6 2>/dev/null || true; } \
+                  | awk -v p=":${hexport}" '$4 == "0A" && substr($2, length($2) - 4) == p { print $10 }'
+          }
+
+          pid_owns_inode() {
+              local pid="$1" inode="$2" fd
+              for fd in /proc/"$pid"/fd/*; do
+                  if [ "$(readlink "$fd" 2>/dev/null)" = "socket:[${inode}]" ]; then
+                      return 0
+                  fi
+              done
+              return 1
+          }
+
+          health_field() {
+              "$py" -c 'import json, sys
+          try:
+              body = json.load(sys.stdin)
+          except ValueError:
+              body = None
+          if not isinstance(body, dict):
+              body = {}
+          print(body.get(sys.argv[1]) or "")' "$1"
+          }
+
+          prove() {
+              local pid="$1" port="$2" instance="$3" inodes inode owned=0 body status seen
+              if ! kill -0 "$pid" 2>/dev/null; then
+                  echo "spawned proxy (pid ${pid}) is dead — nothing of ours listens on ${host}:${port}"
+                  return 4
+              fi
+              inodes="$(listen_inodes "$port")"
+              if [ -z "$inodes" ]; then
+                  echo "no listener on ${host}:${port} yet"
+                  return 1
+              fi
+              for inode in $inodes; do
+                  if pid_owns_inode "$pid" "$inode"; then
+                      owned=1
+                  fi
+              done
+              if [ "$owned" -ne 1 ]; then
+                  echo "foreign proxy on ${host}:${port} (listener not owned by pid ${pid})"
+                  return 3
+              fi
+              body="$(curl --silent --max-time 1 "http://${host}:${port}/health" || true)"
+              status="$(printf '%s' "$body" | health_field status)"
+              if [ "$status" != "healthy" ]; then
+                  echo "own listener on ${host}:${port} (pid ${pid}), /health not healthy yet"
+                  return 1
+              fi
+              seen="$(printf '%s' "$body" | health_field instance)"
+              if [ -z "$seen" ]; then
+                  echo "own proxy on ${host}:${port} (pid ${pid}); instance echo absent (proxy predates SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB)"
+                  return 0
+              fi
+              if [ "$seen" != "$instance" ]; then
+                  echo "foreign proxy on ${host}:${port} (instance=${seen})"
+                  return 3
+              fi
+              echo "own proxy on ${host}:${port} (pid ${pid}, instance ${instance})"
+              return 0
+          }
+
+          start() {
+              mkdir -p "$dir"
+              local port instance base_url pid rc message deadline rand
+              port="$("$py" -c 'import socket, sys
+          s = socket.socket()
+          s.bind((sys.argv[1], 0))
+          print(s.getsockname()[1])
+          s.close()' "$host")"
+              rand="$("$py" -c 'import secrets; print(secrets.token_hex(8))')"
+              instance="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-job}-$$-${rand}"
+              base_url="http://${host}:${port}"
+
+              REPOACH_PROXY_HOST="$host" REPOACH_PROXY_PORT="$port" \
+                  REPOACH_PROXY_INSTANCE="$instance" \
+                  nohup "$py" -m repoach.llm_proxy > "$log" 2>&1 &
+              pid=$!
+              echo "$pid" > "$pidfile"
+
+              deadline=$(( SECONDS + timeout_s ))
+              while [ "$SECONDS" -lt "$deadline" ]; do
+                  set +e
+                  message="$(prove "$pid" "$port" "$instance")"
+                  rc=$?
+                  set -e
+                  case "$rc" in
+                      0)
+                          if [ -n "${GITHUB_ENV:-}" ]; then
+                              {
+                                  echo "REPOACH_PROXY_PORT=${port}"
+                                  echo "REPOACH_PROXY_INSTANCE=${instance}"
+                                  echo "REPOACH_LLM_PROXY_BASE_URL=${base_url}"
+                              } >> "$GITHUB_ENV"
+                          fi
+                          echo "REPOACH_PROXY_PORT=${port}"
+                          echo "REPOACH_PROXY_INSTANCE=${instance}"
+                          echo "REPOACH_LLM_PROXY_BASE_URL=${base_url}"
+                          echo "job proxy ready: ${message}" >&2
+                          return 0
+                          ;;
+                      3)
+                          err "$message"
+                          kill "$pid" 2>/dev/null || true
+                          tail -50 "$log" >&2 || true
+                          return 3
+                          ;;
+                      4)
+                          err "$message"
+                          tail -50 "$log" >&2 || true
+                          return 1
+                          ;;
+                  esac
+                  sleep 0.5
+              done
+              err "job proxy did not become healthy on ${host}:${port} in ${timeout_s}s (${message})"
+              kill "$pid" 2>/dev/null || true
+              tail -50 "$log" >&2 || true
+              return 1
+          }
+
+          stop() {
+              if [ ! -f "$pidfile" ]; then
+                  echo "no job proxy pid file at ${pidfile} — nothing to stop" >&2
+                  return 0
+              fi
+              local pid
+              pid="$(cat "$pidfile")"
+              if kill -0 "$pid" 2>/dev/null; then
+                  kill "$pid" 2>/dev/null || true
+                  for _ in $(seq 1 20); do
+                      kill -0 "$pid" 2>/dev/null || break
+                      sleep 0.25
+                  done
+                  if kill -0 "$pid" 2>/dev/null; then
+                      kill -9 "$pid" 2>/dev/null || true
+                  fi
+                  echo "job proxy (pid ${pid}) stopped" >&2
+              else
+                  echo "job proxy (pid ${pid}) already gone" >&2
+              fi
+              rm -f "$pidfile"
+          }
+
+          case "${1:-}" in
+              start) start ;;
+              stop) stop ;;
+              prove)
+                  if [ "$#" -ne 4 ]; then
+                      echo "usage: $0 prove PID PORT INSTANCE" >&2
+                      exit 2
+                  fi
+                  prove "$2" "$3" "$4"
+                  ;;
+              *)
+                  echo "usage: $0 start|stop|prove PID PORT INSTANCE" >&2
+                  exit 2
+                  ;;
+          esac
+          JOB_PROXY_SH
 
       - name: Start LLM proxy sidecar
         id: start_proxy
@@ -165,8 +449,12 @@ jobs:
           # Proxy auth — random per-run token shared between the
           # sidecar and the agent process.
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOACH_PROXY_HOST: "127.0.0.1"
-          REPOACH_PROXY_PORT: "8083"
+          # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: no fixed port.  Two
+          # self-hosted runners share this host; a hardcoded port let a
+          # second job's /health poll be answered by the first job's
+          # proxy (run 40301669894).  The materialized helper picks a free
+          # port, proves by PID (then instance token) that the listener is
+          # the spawned proxy, and exports the URL through $GITHUB_ENV.
           # SP-PROXY-CHAIN-FAILOVER (2026-05-09): per-attempt read
           # timeout. Defaults to 120s in settings.py — too long for the
           # bot client, which also caps at ~120s, so the bot kills the
@@ -181,27 +469,16 @@ jobs:
           set -a
           source chains.env
           set +a
-          nohup python -m repoach.llm_proxy > logs/llm_proxy.log 2>&1 &
-          echo "$!" > logs/llm_proxy.pid
-          # Wait up to 20s for /health to respond.
-          for i in $(seq 1 40); do
-            if curl --silent --fail --max-time 1 http://127.0.0.1:8083/health > /dev/null; then
-              echo "proxy_ready=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep 0.5
-          done
-          echo "::error::LLM proxy did not become healthy in 20s"
-          tail -50 logs/llm_proxy.log || true
-          exit 1
+          bash "$RUNNER_TEMP/job_proxy.sh" start
+          echo "proxy_ready=true" >> "$GITHUB_OUTPUT"
 
       - name: Run review-bot team
         id: run_review
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Agent process talks to the local proxy only.
+          # Agent process talks to the local proxy only; its URL comes
+          # from $GITHUB_ENV, written by the job proxy helper start.
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           # Optional: when both are set in repo secrets the orchestrator
           # fires a Claude Code routine after posting reviews, delivering
           # the report straight to the user's assistant session.
@@ -280,6 +557,12 @@ jobs:
             echo "(no log file)"
           fi
 
+      # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB G4: the job stops its own
+      # proxy instead of leaving it to the runner's orphan cleanup.
+      - name: Stop LLM proxy sidecar
+        if: always()
+        run: bash "$RUNNER_TEMP/job_proxy.sh" stop
+
   auto_fix:
     name: Coder auto-fix loop
     needs: review
@@ -295,6 +578,14 @@ jobs:
     if: >-
       needs.review.outputs.verdict != 'ERROR'
       && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    # SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G4: the merge group is
+    # shared with merge-on-ci.yml and never cancels a running job.
+    # GitHub keeps one pending job per group, so a newer pending job may
+    # replace an older pending one for the same PR — the only
+    # replacement, documented and not avoidable.
+    concurrency:
+      group: merge-${{ needs.review.outputs.head_ref }}
+      cancel-in-progress: false
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION layer 3 — residual trust grant: unlike
     # the review job, auto_fix MUST execute PR-authored code by
@@ -399,6 +690,233 @@ jobs:
       # candidate), which ``coder_findings`` treats as a no-op; the
       # merge path re-fires via merge-on-ci.yml on CI completion.
 
+      # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: the helper is embedded here,
+      # byte-identical to scripts/job_proxy.sh (pinned by
+      # tests/unit/test_job_proxy_workflow_wiring.py), because this job
+      # runs a checkout that may predate the script: the base ref in
+      # review, an un-rebased PR head in auto_fix.
+      - name: Materialize job proxy helper
+        run: |
+          cat > "$RUNNER_TEMP/job_proxy.sh" <<'JOB_PROXY_SH'
+          #!/usr/bin/env bash
+          # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: start or stop the LLM proxy that
+          # belongs to ONE job, on a port chosen at start, and prove that the
+          # process listening on that port is the one this job spawned.
+          #
+          #   job_proxy.sh start                     pick a free port and an instance
+          #                                          token, spawn the proxy, wait for
+          #                                          the ownership proof
+          #   job_proxy.sh stop                      kill the proxy recorded by start
+          #   job_proxy.sh prove PID PORT INSTANCE   one ownership probe (exit codes
+          #                                          below), used by start and tests
+          #
+          # The proof never relies on the proxy's own code, so it holds when the
+          # proxy comes from an older base ref:
+          #   1. PID proof (decides): the LISTEN socket on PORT, read from
+          #      /proc/net/tcp{,6}, has an inode that appears among PID's
+          #      /proc/PID/fd links. Both are readable without root for a process
+          #      of the same user.
+          #   2. Token proof (second, when available): /health echoes `instance`;
+          #      it must equal INSTANCE. A proxy without the echo is accepted on
+          #      the PID proof alone and the helper says so.
+          #
+          # prove exit codes: 0 own proxy; 1 not ready yet (no listener, or
+          # /health not healthy yet); 3 foreign proxy (listener not owned by PID,
+          # or another instance token); 4 the spawned PID is dead.
+          #
+          # start exports REPOACH_PROXY_PORT, REPOACH_PROXY_INSTANCE and
+          # REPOACH_LLM_PROXY_BASE_URL to "$GITHUB_ENV" when it is set, prints them
+          # as KEY=VALUE lines on stdout, and exits 0, 1 (timeout or spawned proxy
+          # dead) or 3 (foreign proxy).
+          #
+          # The script uses bash, coreutils, awk, curl and the Python standard
+          # library only; it imports nothing from repoach.
+          #
+          # Tunables (env): JOB_PROXY_HOST (127.0.0.1), JOB_PROXY_DIR (logs),
+          # JOB_PROXY_TIMEOUT_S (20), PYTHON (python).
+          set -euo pipefail
+
+          host="${JOB_PROXY_HOST:-127.0.0.1}"
+          dir="${JOB_PROXY_DIR:-logs}"
+          timeout_s="${JOB_PROXY_TIMEOUT_S:-20}"
+          py="${PYTHON:-python}"
+          log="$dir/llm_proxy.log"
+          pidfile="$dir/llm_proxy.pid"
+
+          err() {
+              if [ -n "${GITHUB_ACTIONS:-}" ]; then
+                  echo "::error::$*" >&2
+              else
+                  echo "error: $*" >&2
+              fi
+          }
+
+          listen_inodes() {
+              local hexport
+              hexport="$(printf '%04X' "$1")"
+              { cat /proc/net/tcp; cat /proc/net/tcp6 2>/dev/null || true; } \
+                  | awk -v p=":${hexport}" '$4 == "0A" && substr($2, length($2) - 4) == p { print $10 }'
+          }
+
+          pid_owns_inode() {
+              local pid="$1" inode="$2" fd
+              for fd in /proc/"$pid"/fd/*; do
+                  if [ "$(readlink "$fd" 2>/dev/null)" = "socket:[${inode}]" ]; then
+                      return 0
+                  fi
+              done
+              return 1
+          }
+
+          health_field() {
+              "$py" -c 'import json, sys
+          try:
+              body = json.load(sys.stdin)
+          except ValueError:
+              body = None
+          if not isinstance(body, dict):
+              body = {}
+          print(body.get(sys.argv[1]) or "")' "$1"
+          }
+
+          prove() {
+              local pid="$1" port="$2" instance="$3" inodes inode owned=0 body status seen
+              if ! kill -0 "$pid" 2>/dev/null; then
+                  echo "spawned proxy (pid ${pid}) is dead — nothing of ours listens on ${host}:${port}"
+                  return 4
+              fi
+              inodes="$(listen_inodes "$port")"
+              if [ -z "$inodes" ]; then
+                  echo "no listener on ${host}:${port} yet"
+                  return 1
+              fi
+              for inode in $inodes; do
+                  if pid_owns_inode "$pid" "$inode"; then
+                      owned=1
+                  fi
+              done
+              if [ "$owned" -ne 1 ]; then
+                  echo "foreign proxy on ${host}:${port} (listener not owned by pid ${pid})"
+                  return 3
+              fi
+              body="$(curl --silent --max-time 1 "http://${host}:${port}/health" || true)"
+              status="$(printf '%s' "$body" | health_field status)"
+              if [ "$status" != "healthy" ]; then
+                  echo "own listener on ${host}:${port} (pid ${pid}), /health not healthy yet"
+                  return 1
+              fi
+              seen="$(printf '%s' "$body" | health_field instance)"
+              if [ -z "$seen" ]; then
+                  echo "own proxy on ${host}:${port} (pid ${pid}); instance echo absent (proxy predates SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB)"
+                  return 0
+              fi
+              if [ "$seen" != "$instance" ]; then
+                  echo "foreign proxy on ${host}:${port} (instance=${seen})"
+                  return 3
+              fi
+              echo "own proxy on ${host}:${port} (pid ${pid}, instance ${instance})"
+              return 0
+          }
+
+          start() {
+              mkdir -p "$dir"
+              local port instance base_url pid rc message deadline rand
+              port="$("$py" -c 'import socket, sys
+          s = socket.socket()
+          s.bind((sys.argv[1], 0))
+          print(s.getsockname()[1])
+          s.close()' "$host")"
+              rand="$("$py" -c 'import secrets; print(secrets.token_hex(8))')"
+              instance="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-job}-$$-${rand}"
+              base_url="http://${host}:${port}"
+
+              REPOACH_PROXY_HOST="$host" REPOACH_PROXY_PORT="$port" \
+                  REPOACH_PROXY_INSTANCE="$instance" \
+                  nohup "$py" -m repoach.llm_proxy > "$log" 2>&1 &
+              pid=$!
+              echo "$pid" > "$pidfile"
+
+              deadline=$(( SECONDS + timeout_s ))
+              while [ "$SECONDS" -lt "$deadline" ]; do
+                  set +e
+                  message="$(prove "$pid" "$port" "$instance")"
+                  rc=$?
+                  set -e
+                  case "$rc" in
+                      0)
+                          if [ -n "${GITHUB_ENV:-}" ]; then
+                              {
+                                  echo "REPOACH_PROXY_PORT=${port}"
+                                  echo "REPOACH_PROXY_INSTANCE=${instance}"
+                                  echo "REPOACH_LLM_PROXY_BASE_URL=${base_url}"
+                              } >> "$GITHUB_ENV"
+                          fi
+                          echo "REPOACH_PROXY_PORT=${port}"
+                          echo "REPOACH_PROXY_INSTANCE=${instance}"
+                          echo "REPOACH_LLM_PROXY_BASE_URL=${base_url}"
+                          echo "job proxy ready: ${message}" >&2
+                          return 0
+                          ;;
+                      3)
+                          err "$message"
+                          kill "$pid" 2>/dev/null || true
+                          tail -50 "$log" >&2 || true
+                          return 3
+                          ;;
+                      4)
+                          err "$message"
+                          tail -50 "$log" >&2 || true
+                          return 1
+                          ;;
+                  esac
+                  sleep 0.5
+              done
+              err "job proxy did not become healthy on ${host}:${port} in ${timeout_s}s (${message})"
+              kill "$pid" 2>/dev/null || true
+              tail -50 "$log" >&2 || true
+              return 1
+          }
+
+          stop() {
+              if [ ! -f "$pidfile" ]; then
+                  echo "no job proxy pid file at ${pidfile} — nothing to stop" >&2
+                  return 0
+              fi
+              local pid
+              pid="$(cat "$pidfile")"
+              if kill -0 "$pid" 2>/dev/null; then
+                  kill "$pid" 2>/dev/null || true
+                  for _ in $(seq 1 20); do
+                      kill -0 "$pid" 2>/dev/null || break
+                      sleep 0.25
+                  done
+                  if kill -0 "$pid" 2>/dev/null; then
+                      kill -9 "$pid" 2>/dev/null || true
+                  fi
+                  echo "job proxy (pid ${pid}) stopped" >&2
+              else
+                  echo "job proxy (pid ${pid}) already gone" >&2
+              fi
+              rm -f "$pidfile"
+          }
+
+          case "${1:-}" in
+              start) start ;;
+              stop) stop ;;
+              prove)
+                  if [ "$#" -ne 4 ]; then
+                      echo "usage: $0 prove PID PORT INSTANCE" >&2
+                      exit 2
+                  fi
+                  prove "$2" "$3" "$4"
+                  ;;
+              *)
+                  echo "usage: $0 start|stop|prove PID PORT INSTANCE" >&2
+                  exit 2
+                  ;;
+          esac
+          JOB_PROXY_SH
+
       - name: Start LLM proxy sidecar
         # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): same proxy
         # sidecar pattern as the review job — Coder is a proxy-only
@@ -415,8 +933,8 @@ jobs:
           # The startup step below sources it so the same definition
           # flows into both local and CI.
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOACH_PROXY_HOST: "127.0.0.1"
-          REPOACH_PROXY_PORT: "8083"
+          # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: port picked at start,
+          # see the review job above.
           # SP-PROXY-CHAIN-FAILOVER (2026-05-09): see review job above.
           HTTP_READ_TIMEOUT: "30"
         run: |
@@ -425,24 +943,13 @@ jobs:
           set -a
           source chains.env
           set +a
-          nohup python -m repoach.llm_proxy > logs/llm_proxy.log 2>&1 &
-          echo "$!" > logs/llm_proxy.pid
-          for i in $(seq 1 40); do
-            if curl --silent --fail --max-time 1 http://127.0.0.1:8083/health > /dev/null; then
-              exit 0
-            fi
-            sleep 0.5
-          done
-          echo "::error::LLM proxy did not become healthy in 20s"
-          tail -50 logs/llm_proxy.log || true
-          exit 1
+          bash "$RUNNER_TEMP/job_proxy.sh" start
 
       - name: Run Coder auto-fix
         id: coder
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
           REPOACH_LOGS_DIR: ${{ github.workspace }}/logs
           # Local pre-push gate runs pytest under both interpreters
@@ -516,7 +1023,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
           REPOACH_CLAUDE_CODE_ROUTINE_ID: ${{ secrets.CLAUDE_CODE_ROUTINE_ID }}
           REPOACH_CLAUDE_CODE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_CODE_ROUTINE_TOKEN }}
           REPOACH_DB_PATH: ${{ runner.temp }}/repoach_review.db
@@ -620,6 +1126,11 @@ jobs:
             echo "=== end $f ==="
           done
 
+      # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB G4: see the review job.
+      - name: Stop LLM proxy sidecar
+        if: always()
+        run: bash "$RUNNER_TEMP/job_proxy.sh" stop
+
   auto_merge:
     name: Auto-merge to develop
     # SP-CI-FIX-LOOP-CLOSURE: the loop closes INSIDE this run.  When
@@ -638,6 +1149,9 @@ jobs:
            && needs.auto_fix.outputs.re_verdict == 'APPROVE_OR_COMMENT')
           || (needs.auto_fix.outputs.pushed != 'true'
            && needs.review.outputs.verdict == 'APPROVE_OR_COMMENT'))
+    concurrency:
+      group: merge-${{ needs.review.outputs.head_ref }}
+      cancel-in-progress: false
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     permissions:
       contents: write
@@ -708,8 +1222,8 @@ jobs:
           # Exit 0 == merged or already-merged (idempotent).
           # Exit 5 == a non-fatal gate skip (SP-MERGE-EXIT-CONTRACT):
           #   CI pending/red, verdict not APPROVE, base != develop,
-          #   stale head. Pending-CI skips are picked up by
-          #   merge-on-ci.yml when the CI workflow completes.
+          #   stale head. A pending required check is re-armed by
+          #   merge-on-ci.yml when CI or this workflow completes.
           if [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]; then
             exit 0
           fi

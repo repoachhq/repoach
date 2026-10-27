@@ -53,7 +53,7 @@ def test_frozen_proposed_finding_escalates_end_to_end(tmp_path: Path) -> None:
     )
     fid = record_finding(db, finding)
 
-    counts = verify_findings_for_pr(db, pr_number=1, repo_root=repo, head_sha="head123")
+    counts = verify_findings_for_pr(db, pr_number=1, repo_root=repo, head_sha="head123").counts
     assert counts["deferred"] == 1
 
     after_first = fetch_findings(db, 1)
@@ -65,7 +65,7 @@ def test_frozen_proposed_finding_escalates_end_to_end(tmp_path: Path) -> None:
 
     assert assess_proposed_escalation(after_first) == []
 
-    counts2 = verify_findings_for_pr(db, pr_number=1, repo_root=repo, head_sha="head123")
+    counts2 = verify_findings_for_pr(db, pr_number=1, repo_root=repo, head_sha="head123").counts
     assert counts2["deferred"] == 1
 
     after_second = fetch_findings(db, 1)

@@ -17,18 +17,27 @@ the origin remote. A forge that cannot be selected exits ``2``.
   off PR ``<N>`` and emit the full TeamOutcome as JSON.  Works
   regardless of where the workflow ran (local machine vs. Actions
   runner) — the comment lives on the PR itself.
+* ``repoach review merge-attempts <N>`` — every recorded merge attempt
+  of PR ``<N>`` (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5).
+* ``repoach review stranded`` — the open PRs green at their head that no
+  merge reached, ``--dispatch`` re-arms them (G3, D3).
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 from sqlalchemy import create_engine, text
 
+from ..arch import MalformedFrontmatterError
 from ..core.config import GatewayConfigError, get_settings
+from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from ..forge import (
     ARCHIVE_MARKER,
     Forge,
@@ -38,22 +47,45 @@ from ..forge import (
     select_forge,
 )
 from ..project.config import load_project_config
-from ..project.spec_source import declared_spec_missing, resolve_spec, spec_coverage_label
+from ..project.spec_source import (
+    SpecResolution,
+    declared_spec_missing,
+    resolve_spec,
+    spec_coverage_label,
+)
 from ..providers.errors import ProviderConfigError
 from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
 from ..providers.usage import run_summary_line, run_usage_json, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
+    GateEvaluation,
     evaluate_merge_gate,
     merge_exit_code,
     run_auto_merge,
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
+from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
+from ..review.merge_wait import (
+    attempts_line,
+    attempts_report,
+    check_producers,
+    dispatch_stranded,
+    judge_pull_request,
+    load_attempts,
+    required_checks,
+    stranded,
+)
 from ..review.orchestrator import run_review
+from ..review.refuter import Refutation
+from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
+from ..review.spec_grading import (
+    RESOLUTION_OWNERSHIP,
+    resolution_report,
+)
 from .doctor_cmds import project_root_or_exit
 
 _FORGE_HELP = (
@@ -78,6 +110,33 @@ EXIT_WRITE_REFUSED = 8
 
 Nothing was sent; a step attempted a forge write the run was not allowed
 to make, which is a defect of that step (SP-DRY-RUN-NEVER-POSTS)."""
+
+
+def refuter_tokens_json(
+    refutations: Sequence[Refutation], usage: Mapping[str, object]
+) -> dict[str, int]:
+    """Report what the refuter consumed in the run: evidence estimate and ledger total.
+
+    ``evidence`` sums each finding's ``evidence_tokens`` (the
+    ``ceil(utf8_bytes / 3)`` estimate); ``total`` is the ``Refuter`` row
+    of the usage ledger (input, output and cache tokens, as the provider
+    counts them). Reported only: the evidence window is governed by
+    ``[gates].refuter_context_tokens`` alone, never by these figures.
+    """
+    rows = usage.get("per_reviewer")
+    refuter = (
+        next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("reviewer") == "Refuter"),
+            None,
+        )
+        if isinstance(rows, list)
+        else None
+    )
+    total = refuter.get("total_tokens", 0) if refuter else 0
+    return {
+        "evidence": sum(r.evidence_tokens for r in refutations),
+        "total": int(total) if isinstance(total, int) else 0,
+    }
 
 
 def _dry_run_refusal(value: str) -> WriteRefusal:
@@ -281,7 +340,10 @@ def review_pr(
     stored outcomes are replayed, the older-head re-check still runs, the
     JSON has the same shape with ``cached`` true, and one ``review:
     cached at <sha7> (run <id>, <when>); use --force to re-review`` line
-    on stderr names the run. A dry run and a posting run share that
+    on stderr names the run. The spec coverage is not replayed: it is
+    recomputed at the head with the current rule (no model call), its
+    row rewritten, and one ``review: spec coverage recomputed at <sha7>:
+    planned N, missing M`` line on stderr says it. A dry run and a posting run share that
     cache; a posting run posts the stored outcomes. ``--force`` runs the
     reviewers again.
 
@@ -295,11 +357,20 @@ def review_pr(
     null). A head the forge does not serve, or one that cannot be
     fetched, exits 2 before any reviewer runs.
 
-    ``findings`` lists every finding the refuter saw, each with
-    ``refutation = {state, reason}`` (``verified`` / ``refuted`` /
-    ``deferred`` / ``unverified``), and one ``refuter: judged …`` line on
-    stderr counts them by state and reason
-    (SP-REFUTER-JUDGES-WHAT-IT-CAN).
+    ``findings`` lists every finding that can move ``final_verdict``,
+    each once, with ``judge`` (``mechanical`` / ``refuter`` /
+    ``reverify`` / ``ledger``), ``state``, ``verification_method``
+    (``mechanical:<claim_type>`` for a mechanical verifier),
+    ``evidence`` and ``blocking``: the findings a mechanical verifier
+    settled, every finding the refuter saw (its ``refutation = {state,
+    reason}`` kept — ``verified`` / ``refuted`` / ``deferred`` /
+    ``unverified``), the findings of older heads re-checked at the head,
+    and any finding still counted as open blocking.
+    ``verdict_basis`` is the ids the verdict counts as open blocking,
+    each one entry of ``findings``. One ``refuter: judged …`` line on
+    stderr counts the refuter's states and reasons
+    (SP-REFUTER-JUDGES-WHAT-IT-CAN), then a ``report: N finding(s) listed`` table
+    names each finding's judge and a ``verdict basis:`` line closes it.
 
     A dry run closes the forge's write barrier (SP-DRY-RUN-NEVER-POSTS):
     ``refused_writes`` counts the writes it refused and ``write_refusal``
@@ -341,6 +412,8 @@ def review_pr(
             f"{where}; reviewed without a spec",
             err=True,
         )
+    spec_resolution = team.spec_resolution
+    usage = run_usage_json(run)
     payload = {
         "pr_number": team.pr_number,
         "head_sha": team.head_sha,
@@ -348,7 +421,12 @@ def review_pr(
         "worktree": team.worktree,
         "spec": spec_id,
         "spec_source": team.spec_source,
-        "spec_coverage": spec_coverage_label(spec_id, team.spec_covered, missing=team.spec_missing),
+        "spec_coverage": spec_coverage_label(
+            spec_id or _owned_specs_label(spec_resolution),
+            team.spec_covered,
+            missing=team.spec_missing,
+        ),
+        "spec_resolution": spec_resolution,
         "final_verdict": team.final_verdict.value,
         "n_blockers": team.n_blockers,
         "n_majors": team.n_majors,
@@ -376,16 +454,24 @@ def review_pr(
             }
             for o in team.reviews
         ],
-        "findings": [refutation.as_json() for refutation in team.refutations],
-        "usage": run_usage_json(run),
+        "findings": [entry.as_json() for entry in team.findings],
+        "verdict_basis": list(team.verdict_basis),
+        "usage": usage,
+        "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
     if team.cache_line:
         typer.echo(team.cache_line, err=True)
+    if team.spec_coverage_line:
+        typer.echo(team.spec_coverage_line, err=True)
+    for line in team.spec_report:
+        typer.echo(line, err=True)
     if team.findings_line:
         typer.echo(team.findings_line, err=True)
     if team.refuter_summary is not None:
         typer.echo(team.refuter_summary, err=True)
+    for line in findings_table_lines(team.findings, team.verdict_basis):
+        typer.echo(line, err=True)
     if team.reverify_line:
         typer.echo(team.reverify_line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
@@ -591,6 +677,110 @@ def review_merge(
     raise typer.Exit(code=merge_exit_code(result.outcome))
 
 
+@review_app.command("merge-attempts")
+def review_merge_attempts(
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab)."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+) -> None:
+    """Print every recorded merge attempt of a PR (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5).
+
+    Reads the PR's ``<!-- repoach-merge-attempts:v1 -->`` comment, else the
+    local ``pr_merges`` table. Stdout is one ``format:merge-attempts-json``
+    object; stderr is the line
+    ``merge attempts: <n>, last: <OUTCOME> on <check|reason> at <t> (<trigger>)``.
+    Read-only; exits 0, or 2 when the forge cannot be selected.
+    """
+    project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    if forge is None:
+        try:
+            forge = select_forge()
+        except ForgeError as exc:
+            raise _forge_failure(exc) from exc
+    attempts = load_attempts(forge, Path(get_settings().db_path), pr_number)
+    report = attempts_report(pr_number, attempts)
+    typer.echo(attempts_line(attempts), err=True)
+    typer.echo(json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=False))
+
+
+@review_app.command("stranded")
+def review_stranded(
+    base: str | None = typer.Option(
+        None, "--base", help="Only PRs targeting this branch (default: the integration branch)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object on stdout."),
+    dispatch: bool = typer.Option(
+        False, "--dispatch", help="Dispatch merge-on-ci.yml once for each stranded PR."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="With --dispatch, name what would be dispatched; write nothing."
+    ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+) -> None:
+    """List the open PRs that are green at their head with no merge since.
+
+    SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G3: a PR is stranded when its
+    required checks have been green for ``stranded_grace_s`` and its last
+    attempt at that head is absent, older, or a skip. Read-only unless
+    ``--dispatch``, which starts ``merge-on-ci.yml -f pr=<n>`` once per
+    stranded PR through the write barrier and prints ``dispatched #<n>
+    (<reason>)`` on stderr (D3, the release sweep). ``--dry-run`` writes
+    nothing. PRs whose required checks are cancelled-only or missing are
+    listed under ``unjudged``. Exits 0, or 2 when the forge cannot be
+    selected or read.
+    """
+    root = project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    try:
+        forge = forge or select_forge(cwd=root)
+        target = base or get_settings().integration_branch
+        prs = forge.open_pull_requests(target)
+        names = required_checks(root)
+        producers = check_producers(root)
+        verdicts = {pr.number: judge_pull_request(forge, pr, names, producers) for pr in prs}
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    db = Path(get_settings().db_path)
+    attempts = {pr.number: load_attempts(forge, db, pr.number) for pr in prs}
+    rows = stranded(prs, verdicts, attempts, datetime.now(UTC))
+    dispatched: list[int] = []
+    if dispatch:
+        dispatched = dispatch_stranded(
+            forge, rows, dry_run=dry_run, echo=lambda line: typer.echo(line, err=True)
+        )
+    unjudged = [
+        {"pr": number, "state": v.state, "checks": v.cancelled or v.missing}
+        for number, v in verdicts.items()
+        if v.state in {"cancelled", "missing"}
+    ]
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "base": target,
+                    "stranded": [
+                        {
+                            "pr": row.pr_number,
+                            "head_sha": row.head_sha,
+                            "gate": "stranded",
+                            "reason": row.reason,
+                        }
+                        for row in rows
+                    ],
+                    "unjudged": unjudged,
+                    "dispatched": dispatched,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+    for row in rows:
+        typer.echo(f"#{row.pr_number}\t{row.head_sha[:7]}\tstranded\t{row.reason}")
+    for entry in unjudged:
+        typer.echo(f"#{entry['pr']}\t\t{entry['state']}\t{', '.join(entry['checks'])}")
+
+
 @review_app.command("insights")
 def review_insights(
     pr_number: int | None = typer.Argument(
@@ -633,6 +823,73 @@ def review_insights(
     )
 
 
+def _branch_spec_at_head(
+    declared: SpecResolution, *, branch: str, head_sha: str, root: Path
+) -> SpecResolution:
+    """Re-resolve a branch-derived spec id against the specs at the PR head.
+
+    The checkout may not carry the PR's spec yet, so the branch parser
+    falls back to its short regex (``docs/sp-agent-context-loop`` →
+    ``SP-AGENT``). The head's specs and the matched spec's frontmatter
+    ``id`` give the id the review graded; the checkout's resolution is
+    kept when the head names no spec or cannot be read.
+    """
+    try:
+        at_head = branch_spec_id_at_ref(branch, head_sha, root=root)
+    except (SpecRefUnavailableError, MalformedFrontmatterError) as exc:
+        typer.echo(f"gate: spec id from the checkout ({exc})", err=True)
+        return declared
+    if at_head is None:
+        return declared
+    return SpecResolution(at_head, declared.source)
+
+
+_log = get_logger(__name__)
+
+
+def _owned_specs_label(resolution: dict[str, object]) -> str | None:
+    """Return the specs a PR was graded against by ownership, joined; None otherwise."""
+    specs = resolution.get("specs")
+    if resolution.get("source") != RESOLUTION_OWNERSHIP or not isinstance(specs, list) or not specs:
+        return None
+    return ", ".join(str(spec) for spec in specs)
+
+
+def _gate_spec_resolution(
+    declared: SpecResolution,
+    *,
+    changed_files: list[str] | None,
+    base_ref: str,
+    root: Path,
+) -> tuple[dict[str, object], list[str]]:
+    """Return the gate's ``spec_resolution`` object and its stderr lines (G7).
+
+    :func:`~repoach.review.spec_grading.resolution_report` decides it; the
+    CLI only passes the declared spec and the checkout. A declared spec is
+    graded alone; with none declared, a diff that cannot be read leaves the
+    source ``none`` (skipped, named), a base that cannot be read names the
+    fail-closed refusal, and otherwise the specs owning the diff resolve.
+    """
+    return resolution_report(
+        declared.spec_id, changed_files=changed_files, root=root, base_ref=base_ref or None
+    )
+
+
+def _gate_changed_files(evaluation: GateEvaluation) -> list[str] | None:
+    """Return the paths of the gated PR's diff, or None when they cannot be read."""
+    if evaluation.changed_files is not None:
+        return evaluation.changed_files
+    if evaluation.read_changed_files is None:
+        return None
+    try:
+        return evaluation.read_changed_files()
+    except Exception as exc:
+        _log.warning(
+            "gate.diff_unread", error=f"{type(exc).__name__}: {redact_error(str(exc))[:200]}"
+        )
+        return None
+
+
 @review_app.command("gate")
 def review_gate(
     pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab) to evaluate."),
@@ -668,7 +925,23 @@ def review_gate(
     ``facts.spec_coverage`` is ``not_applicable`` when no spec is
     declared: a PR without a spec is never refused for lacking one; it
     is ``missing`` (with the id in ``spec``) when a ``Spec:`` line names
-    a spec that has no document.
+    a spec that has no document. ``spec_acceptance`` lists the selectors
+    ``missing`` at head, the ``planned`` ones of a draft spec (absent
+    files that do not refuse) and the ``draft_refusals`` that withheld
+    that exemption (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2). A coverage row at
+    head graded by a retired rule (``rule_version`` below the current
+    one) is recomputed on the head tree and rewritten before the
+    decision, so it can never refuse on its own (0.3).
+
+    A spec without a plan is graded on its Acceptance Criteria, whatever
+    its status, and ``plan-absent: graded against the acceptance criteria
+    of <id> (<n> selectors)`` is reported on stderr and in
+    ``spec_acceptance.report``; ``spec_acceptance.contract`` names what
+    was graded. Every coverage refusal names its selectors and their
+    origin. A PR declaring no spec is graded against every spec owning a
+    path of its diff at the base; ``spec_resolution`` says how
+    (``declared`` / ``ownership`` / ``none``) and lists the ``ungoverned``
+    paths, which never refuse (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS).
 
     The verifiers re-check the ledger on the tree of the verified head,
     never on the checkout's branch (SP-REVIEW-PINS-HEAD G2): one
@@ -717,8 +990,18 @@ def review_gate(
         sources=load_project_config(root).review.spec_sources,
         root=root,
     )
+    if declared.source == "branch" and pr is not None and evaluation.head_sha:
+        declared = _branch_spec_at_head(
+            declared, branch=pr.head_ref, head_sha=evaluation.head_sha, root=root
+        )
+    resolution, resolution_lines = _gate_spec_resolution(
+        declared,
+        changed_files=_gate_changed_files(evaluation) if declared.spec_id is None else [],
+        base_ref=pr.base_ref if pr is not None else "",
+        root=root,
+    )
     coverage = spec_coverage_label(
-        declared.spec_id,
+        declared.spec_id or _owned_specs_label(resolution),
         facts.spec_covered if facts.spec_coverage_known else None,
         missing=declared_spec_missing(declared, root),
     )
@@ -731,9 +1014,17 @@ def review_gate(
                 "tree": evaluation.tree,
                 "spec": declared.spec_id,
                 "spec_source": declared.source,
+                "spec_resolution": resolution,
                 "merge": evaluation.decision.merge,
                 "reasons": evaluation.decision.reasons,
                 "reverified": facts.reverified,
+                "spec_acceptance": {
+                    "missing": facts.spec_missing,
+                    "planned": facts.spec_planned,
+                    "draft_refusals": facts.spec_draft_refusals,
+                    "contract": facts.spec_contract,
+                    "report": facts.spec_report,
+                },
                 "facts": {
                     "ci_green": facts.ci_green,
                     "open_blocking_findings": facts.open_blocking_findings,
@@ -750,6 +1041,8 @@ def review_gate(
     )
     if facts.reverify_line:
         typer.echo(facts.reverify_line, err=True)
+    for line in (*resolution_lines, *facts.spec_report):
+        typer.echo(line, err=True)
     if keep_tree and evaluation.tree is None:
         merged = evaluation.ci_gate.outcome_tag == OUTCOME_ALREADY_MERGED
         why = "already merged" if merged else evaluation.ci_gate.outcome_tag.lower()

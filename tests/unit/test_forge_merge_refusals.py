@@ -187,7 +187,38 @@ def test_github_merge_pins_head_with_match_head_commit() -> None:
         "--match-head-commit",
         SHA,
         "--delete-branch",
+        "--body-file",
+        "-",
     ]
+
+
+def test_squash_body_strips_ai_attribution() -> None:
+    """A squash sends every commit message on stdin minus attribution (SP-CONVENTIONS-GATE G9)."""
+    trailer = "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+    commits = [
+        {"messageHeadline": "feat(x): add the parser", "messageBody": f"Why one.\n\n{trailer}"},
+        {
+            "messageHeadline": "fix(x): handle empty input",
+            "messageBody": f"\U0001f916 Generated with [Claude Code](https://claude.com/claude-code)\n\n{trailer}",
+        },
+    ]
+    forge = _github([_gh_view(commits=commits)])
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    call = forge._run.call_args
+    assert call.args[0][-2:] == ["--body-file", "-"]
+    body = call.kwargs["input_data"]
+    assert body == "* feat(x): add the parser\n\nWhy one.\n\n* fix(x): handle empty input\n"
+    assert "anthropic" not in body.lower()
+    assert "claude" not in body.lower()
+
+
+def test_merge_method_sends_no_body() -> None:
+    """A merge commit keeps GitHub's own message: no ``--body-file``, no stdin."""
+    forge = _github([_gh_view(commits=[{"messageHeadline": "feat: x", "messageBody": ""}])])
+    forge.merge(42, method=MergeMethod.MERGE, delete_branch=False, head_sha=SHA)
+    call = forge._run.call_args
+    assert "--body-file" not in call.args[0]
+    assert call.kwargs["input_data"] is None
 
 
 @pytest.mark.parametrize(
@@ -230,10 +261,7 @@ RUNNING = [{"name": "Test suite (Python 3.11)", "status": "IN_PROGRESS", "conclu
 @pytest.mark.parametrize(
     ("over", "reason"),
     [
-        ({"mergeStateStatus": "BLOCKED", "statusCheckRollup": RUNNING}, "pending"),
-        ({"mergeStateStatus": "BEHIND", "statusCheckRollup": RUNNING}, "pending"),
-        ({"mergeStateStatus": "UNSTABLE", "statusCheckRollup": RUNNING}, "pending"),
-        ({"mergeStateStatus": "BLOCKED"}, "blocked"),
+        ({"mergeStateStatus": "BEHIND", "statusCheckRollup": RUNNING}, "behind"),
         ({"mergeStateStatus": "BEHIND"}, "behind"),
         ({"mergeStateStatus": "DIRTY"}, "conflict"),
         ({"mergeable": "CONFLICTING"}, "conflict"),
@@ -256,6 +284,19 @@ def test_github_refusal_named_from_view_without_merging(
 
 def test_github_unstable_without_pending_checks_merges() -> None:
     forge = _github([_gh_view(mergeStateStatus="UNSTABLE")])
+    forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
+    assert len(_merge_calls(forge)) == 1
+
+
+@pytest.mark.parametrize("merge_state", ["UNSTABLE", "BLOCKED"])
+def test_github_running_checks_never_make_the_merge_wait(merge_state: str) -> None:
+    """The rollup is not the judge (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G1).
+
+    ``UNSTABLE`` / ``BLOCKED`` with a check still running merged nothing
+    before: the running check was the merge job itself. Whether required
+    checks are done is judged before the merge, on the committed list.
+    """
+    forge = _github([_gh_view(mergeStateStatus=merge_state, statusCheckRollup=RUNNING)])
     forge.merge(42, method=MergeMethod.SQUASH, delete_branch=True, head_sha=SHA)
     assert len(_merge_calls(forge)) == 1
 

@@ -50,6 +50,8 @@ class _FakeTeam:
     posting_outcome: str | None = None
     refutations: list[Any] = field(default_factory=list)
     refuter_summary: str | None = None
+    findings: list[Any] = field(default_factory=list)
+    verdict_basis: list[int] = field(default_factory=list)
     refused_writes: list[str] = field(default_factory=list)
     write_refusal: str | None = None
     head_sha: str | None = None
@@ -64,6 +66,9 @@ class _FakeTeam:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    spec_report: list[str] = field(default_factory=list)
+    spec_resolution: dict[str, object] = field(default_factory=dict)
+    spec_coverage_line: str = ""
 
 
 _REQUIRED_TOP_LEVEL = {
@@ -77,6 +82,8 @@ _REQUIRED_TOP_LEVEL = {
     "refused_writes",
     "write_refusal",
     "reviews",
+    "findings",
+    "verdict_basis",
 }
 
 _REQUIRED_REVIEW_ENTRY = {
@@ -217,6 +224,7 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
 
     from repoach.review.findings import ClaimType
     from repoach.review.refuter import JudgingReport, Refutation
+    from repoach.review.report import ReportFinding
 
     report = JudgingReport(
         outcomes=(
@@ -232,24 +240,48 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
     team = _build_fake_team()
     team.refutations = list(report.outcomes)
     team.refuter_summary = report.summary_line()
+    team.findings = [
+        ReportFinding(
+            finding_id=outcome.finding_id,
+            file=outcome.file,
+            line_start=outcome.line_start,
+            claim_type=outcome.claim_type,
+            judge="refuter",
+            state=outcome.state,
+            verification_method="refuter",
+            evidence=outcome.reason,
+            severity="blocking",
+            status="proposed",
+        )
+        for outcome in report.outcomes
+    ]
     with patch("repoach.cli.review_cmds.run_review", return_value=team):
         result = CliRunner().invoke(review_app, ["pr", "999", "--dry-run"])
 
     payload = json.loads(result.stdout)
+    unserved = {"evidence": [], "evidence_truncated": [], "evidence_tokens": 0, "budget_used": 0}
     assert [f["refutation"] for f in payload["findings"]] == [
-        {"state": "refuted", "reason": "vague"},
-        {"state": "deferred", "reason": "evidence outside the diff"},
-        {"state": "unverified", "reason": "not yet mechanically verified"},
+        {"state": "refuted", "reason": "vague", **unserved},
+        {"state": "deferred", "reason": "evidence outside the diff", **unserved},
+        {"state": "unverified", "reason": "not yet mechanically verified", **unserved},
     ]
     assert payload["findings"][1] == {
         "id": 8,
         "file": "ci/x.sh",
         "line": 1,
         "claim_type": "security",
-        "refutation": {"state": "deferred", "reason": "evidence outside the diff"},
+        "severity": "blocking",
+        "status": "proposed",
+        "judge": "refuter",
+        "state": "deferred",
+        "verification_method": "refuter",
+        "evidence": "evidence outside the diff",
+        "blocking": False,
+        "refutation": {"state": "deferred", "reason": "evidence outside the diff", **unserved},
     }
+    assert payload["verdict_basis"] == []
     refuter_lines = [line for line in result.stderr.splitlines() if line.startswith("refuter:")]
     assert refuter_lines == [
         "refuter: judged 1, refuted 1, deferred 1 (evidence outside the diff), "
-        "unverified 1 (not yet mechanically verified)"
+        "unverified 1 (not yet mechanically verified), evidence_tokens total 0"
     ]

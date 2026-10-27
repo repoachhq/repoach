@@ -3,8 +3,10 @@
 Resolution order, restricted to ``[review].spec_sources``: the
 ``--spec`` flag, then the first ``Spec: SP-…`` line of the PR / MR
 description, then the branch name (``<type>/sp-<id>…``, the historical
-convention).  When none declares a spec the review runs without one —
-``spec`` is ``null`` and spec coverage is ``not_applicable`` — so a
+convention).  When none declares a spec, the PR is graded against every
+governed spec owning a path of its diff (source ``ownership``,
+SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7); when no spec owns one
+either, ``spec`` is ``null`` and spec coverage is ``not_applicable`` — so a
 documentation or measurement branch is never refused for lacking a spec.
 """
 
@@ -31,7 +33,11 @@ class SpecResolution:
 
     Attributes:
         spec_id: Canonical ``SP-…`` id, or None when nothing declares one.
-        source: ``flag``, ``description`` or ``branch``; None with no spec.
+        source: ``flag``, ``description`` or ``branch``; None with no
+            spec. A PR declaring none is then graded against the specs
+            owning its code; that ``ownership`` source is the review's
+            (:attr:`repoach.review.spec_grading.CoverageGrading.source`),
+            never a declaration.
     """
 
     spec_id: str | None = None

@@ -1,11 +1,11 @@
 ---
 id: SP-FRESH-HEAD-CONCURRENT
 title: Resolve the fresh-head guard off the blocking review path
-version: 0.1
+version: 0.2
 status: approved
 author: jfaye
 created: 2026-07-22
-updated: 2026-07-22
+updated: 2026-10-25
 
 owns:
   code: []
@@ -248,6 +248,9 @@ flowchart TD
   `resolve_fresh_head` overlaps with the four-reviewer fan-out
   instead of preceding it, so total `review_pr` wall time approaches
   `max(guard_time, reviewer_time)` rather than their sum.
+  Amended 2026-10-25: the test proves the overlap structurally, as in
+  AC4 (rendezvous, intersecting intervals, max concurrency >= 2, 30s
+  sanity ceiling); the wall-clock threshold described below is retired.
   Test: `tests/unit/test_review_head_guard.py::test_orchestrator_head_guard_overlaps_reviewer_fanout`.
   Drives the real, unmodified `resolve_fresh_head` (not a fake)
   through the real call site, against a real scratch git repository
@@ -298,6 +301,26 @@ flowchart TD
   This test necessarily runs for several real seconds and belongs to
   the integration tier (`scripts/ci_local.sh --integration`), not the
   fast unit lane.
+
+- [ ] AC4 (integration, amended 2026-10-25): The end-to-end overlap of the
+  guard with the fan-out is asserted structurally, never against a wall
+  clock. Test: `tests/integration/test_fresh_head_concurrent.py::test_concurrent_head_guard_integration`.
+  The real, unmodified `resolve_fresh_head` runs through the real call
+  site, wrapped by a tracker; its injected `sleep` blocks on its first
+  call until a reviewer has entered `review_diff` (bounded at 20s), and
+  every instrumented call (the guard and each reviewer) records its
+  `(start, end)` interval and the number of instrumented calls running
+  when it entered. Asserts the rendezvous succeeded, the guard's interval
+  intersects at least one reviewer interval, and the maximum concurrency
+  is at least two. A guard awaited before the fan-out times out at the
+  rendezvous and records a maximum of one, whatever the machine load; the
+  only time bound kept is a 30s sanity ceiling on `review_pr`. Motivation:
+  the previous assertion (`wall < 2.10s`, halfway between a 1.50s
+  concurrent floor and a 2.70s serial sum) measured 2.63s on a runner at
+  load average 35-42 (PRs #254, #255) while the overlap held. The
+  helpers live in `tests/overlap_fakes.py`, shared with AC2's unit test,
+  which asserts the same way (`assert_guard_overlapped_fanout`). The
+  remaining tight wall-clock bounds in the suites are tech-debt row 94.
 
 ## Open Questions
 (none)

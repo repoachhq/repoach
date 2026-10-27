@@ -15,14 +15,16 @@ import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import typer
 
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
-from repoach.forge.protocol import MergeMethod, PullRequest
-from repoach.review import auto_merge
+from repoach.forge.protocol import BranchProtection, Comment, MergeMethod, PullRequest
+from repoach.gates.config import REFUTER_CONTEXT_CEILING_DEFAULT, REFUTER_CONTEXT_TOKENS_FLOOR
+from repoach.review import auto_merge, finding_verifiers, head_reverify
 from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, evaluate_merge_gate
 from repoach.review.findings import (
     ClaimType,
@@ -33,6 +35,7 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
     record_review_integrity,
+    record_verification_attempt,
 )
 from repoach.review.head_reverify import REVERIFY_METHOD
 from repoach.review.merge_gate import MergeDecision, MergeFacts
@@ -111,6 +114,15 @@ class _HeadForge(GitHubForge):
 
     def _pr_head_sha(self, pr_number: int) -> str:
         return self._head
+
+    def branch_protection(self, branch: str) -> BranchProtection:
+        return BranchProtection(readable=False)
+
+    def find_marked_comment(self, number: int, marker: str) -> Comment | None:
+        return None
+
+    def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
+        return Comment(id=1, author="bot", body=body)
 
 
 class _Judge:
@@ -640,3 +652,204 @@ def test_identical_claims_of_several_reviewers_cost_one_judge_call(
     assert _row(db, first).status is FindingStatus.RESOLVED_AT_HEAD
     assert _row(db, second).status is FindingStatus.RESOLVED_AT_HEAD
     assert evaluation.facts.reverified == {"resolved": 2, "still_open": 0, "needs_judgement": 0}
+
+
+_MIGRATION = '"""Relabel the generic board."""\n\n\ndef upgrade():\n    """Relabel."""\n'
+_MIGRATION_TEST = '"""Migration tests."""\n\n\ndef test_relabels_generic_rows():\n    assert True\n'
+_MIGRATION_CLAIM = "upgrade() is untested; add test_relabels_generic_rows"
+
+
+def _missing_migration_test(repo: _Repo, db: Path) -> tuple[str, int]:
+    head_a = repo.push_head({"api/alembic/versions/n0_relabel.py": _MIGRATION}, "feat: relabel")
+    finding_id = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.MISSING_TEST,
+        file="api/alembic/versions/n0_relabel.py",
+        line=4,
+        claim=_MIGRATION_CLAIM,
+        method="symbol_search",
+    )
+    return head_a, finding_id
+
+
+def test_python_test_written_under_a_nested_tests_dir_resolves_missing_test(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _missing_migration_test(repo, db)
+    head_b = repo.push_head({"api/tests/test_relabel.py": _MIGRATION_TEST}, "test: relabel")
+    _review_at(db, head_b)
+
+    evaluation = gate(repo, head_b, _never)
+
+    row = _row(db, finding_id)
+    assert row.status is FindingStatus.RESOLVED_AT_HEAD
+    assert row.verification_result == (
+        f"resolved at {head_b[:7]}: test_relabels_generic_rows exists at api/tests/test_relabel.py:4"
+    )
+    assert evaluation.decision.merge is True
+
+
+def test_python_test_absent_at_head_names_what_was_searched(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _missing_migration_test(repo, db)
+    head_b = repo.push_head(
+        {"api/tests/test_other.py": '"""Other."""\n\n\ndef test_other():\n    assert True\n'},
+        "test: other",
+    )
+    _review_at(db, head_b)
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert _row(db, finding_id).status is FindingStatus.VERIFIED
+    assert evaluation.decision.merge is False
+    assert any(
+        r.endswith(
+            f"still present at {head_b[:7]} (no test for test_relabels_generic_rows "
+            f"(searched 1 test files at {head_b[:7]}))"
+        )
+        for r in evaluation.decision.reasons
+    )
+
+
+def test_stale_still_present_stamp_at_the_head_yields_to_the_test_found_there(
+    tmp_path: Path, gate: Callable[..., GateEvaluation]
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _, finding_id = _missing_migration_test(repo, db)
+    head_b = repo.push_head({"api/tests/test_relabel.py": _MIGRATION_TEST}, "test: relabel")
+    _review_at(db, head_b)
+    record_verification_attempt(
+        db,
+        finding_id,
+        method=REVERIFY_METHOD,
+        result=f"still present at {head_b[:7]}: no test for test_relabels_generic_rows",
+        checked_at_sha=head_b,
+    )
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert _row(db, finding_id).status is FindingStatus.RESOLVED_AT_HEAD
+    assert evaluation.facts.reverified == {"resolved": 1, "still_open": 0, "needs_judgement": 0}
+    assert evaluation.decision.merge is True
+
+
+def test_two_missing_tests_at_one_head_list_the_tree_once(
+    tmp_path: Path, gate: Callable[..., GateEvaluation], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    head_a, first = _missing_migration_test(repo, db)
+    second = _record(
+        db,
+        head=head_a,
+        claim_type=ClaimType.MISSING_TEST,
+        file="api/alembic/versions/n0_relabel.py",
+        line=5,
+        claim="downgrade is untested; add test_downgrade_restores_noted_rows",
+        method="symbol_search",
+    )
+    head_b = repo.push_head({"api/tests/test_relabel.py": _MIGRATION_TEST}, "test: relabel")
+    _review_at(db, head_b)
+    listings: list[Path] = []
+    real = finding_verifiers._tracked_files
+
+    def _counting(root: Path) -> list[str] | None:
+        listings.append(root)
+        return real(root)
+
+    monkeypatch.setattr(finding_verifiers, "_tracked_files", _counting)
+
+    evaluation = gate(repo, head_b, _never)
+
+    assert len(listings) == 1
+    assert _row(db, first).status is FindingStatus.RESOLVED_AT_HEAD
+    assert _row(db, second).status is FindingStatus.VERIFIED
+    assert evaluation.facts.reverified == {"resolved": 1, "still_open": 1, "needs_judgement": 0}
+
+
+def test_re_check_fills_the_configured_refuter_context(
+    tmp_path: Path, gate: Callable[..., GateEvaluation], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _planted(repo, db)
+    head_b = repo.push_head({"src/store.py": _FIXED}, "fix: bind the prefix")
+    _review_at(db, head_b)
+    seen: list[int] = []
+    real = head_reverify.judge_finding
+
+    def spy(finding: Finding, **kwargs: object) -> object:
+        seen.append(kwargs["budget"].floor)
+        return real(finding, **kwargs)
+
+    monkeypatch.setattr(head_reverify, "judge_finding", spy)
+    monkeypatch.setenv("REPOACH_REFUTER_CONTEXT_TOKENS", "150000")
+
+    evaluation = gate(repo, head_b, _Judge)
+
+    assert seen == [150000]
+    assert evaluation.decision.merge is True
+
+
+def test_merge_sizes_the_refuter_from_the_checkout_not_the_pr_head(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _Repo(tmp_path)
+    db = _db(tmp_path)
+    _planted(repo, db)
+    head_b = repo.push_head(
+        {
+            "src/store.py": _FIXED,
+            "repoach.toml": "[gates]\nrefuter_context_tokens = 150000\n"
+            "refuter_context_ceiling = 150000\n",
+        },
+        "fix: bind the prefix",
+    )
+    _review_at(db, head_b)
+    seen: list[tuple[int, int]] = []
+    real = head_reverify.judge_finding
+
+    def spy(finding: Finding, **kwargs: object) -> object:
+        seen.append(tuple(kwargs["budget"]))
+        return real(finding, **kwargs)
+
+    monkeypatch.setattr(head_reverify, "judge_finding", spy)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("REPOACH_REFUTER_CONTEXT_CEILING", raising=False)
+
+    _merge(monkeypatch, tmp_path, repo, head_b, _Judge, pin_tree=True)
+
+    assert seen == [(REFUTER_CONTEXT_TOKENS_FLOOR, REFUTER_CONTEXT_CEILING_DEFAULT)]
+
+
+def test_head_tree_decision_refuses_to_size_the_refuter_itself(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="explicit refuter budget"):
+        auto_merge.decide_at_head(
+            7,
+            forge=MagicMock(),
+            db=tmp_path / "review.db",
+            ci_green=True,
+            repo_root=tmp_path,
+            head_sha="a" * 40,
+            head_tree=True,
+        )
+
+
+def test_decision_off_the_head_tree_needs_no_budget(tmp_path: Path) -> None:
+    _, facts, decision = auto_merge.decide_at_head(
+        7,
+        forge=MagicMock(),
+        db=tmp_path / "review.db",
+        ci_green=True,
+        repo_root=tmp_path,
+        head_sha="a" * 40,
+    )
+    assert facts.reverified == {"resolved": 0, "still_open": 0, "needs_judgement": 0}
+    assert decision is not None

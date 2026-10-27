@@ -24,7 +24,7 @@
         "view",
         "42",
         "--json",
-        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup,commits"
       ],
       "program": "gh",
       "returncode": 0,
@@ -40,12 +40,14 @@
         "--squash",
         "--match-head-commit",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "--delete-branch"
+        "--delete-branch",
+        "--body-file",
+        "-"
       ],
       "program": "gh",
       "returncode": 1,
       "stderr": "X Pull request o/r#42 is not mergeable: the base branch policy prohibits the merge.",
-      "stdin": null,
+      "stdin": "",
       "stdout": ""
     }
   ],

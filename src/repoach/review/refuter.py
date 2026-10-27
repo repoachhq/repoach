@@ -27,6 +27,29 @@ verdict-less states carry a reason from a closed set
 (:data:`DEFERRAL_REASONS`, :data:`UNVERIFIED_REASONS`). Nothing is
 excluded silently: a finding the refuter does not judge is named, with
 why, in :class:`JudgingReport`.
+
+Measured on Yoob MRs !324/!327 (2026-10-25), the judge refuted 13 of 13
+findings and an independent re-read found 8 of those verdicts wrong,
+each reasoning "<X> is not in the evidence, so the claim cannot be
+confirmed": not seeing the code was read as the claim being false. The
+judge now answers one of three verdicts — ``refuted``, ``verified`` or
+``cannot_judge`` — and both ``cannot_judge`` and a refutation whose
+reasoning only says the code was not visible
+(:data:`_UNSEEN_REASONING`) defer the finding with
+:data:`EVIDENCE_OUTSIDE_WINDOW`: it stays ``proposed``, counted as not
+validated, exactly as a cap-deferred finding. The evidence itself is the
+whole cited file, the head-tree search of what the claim names, the
+PR's hunks on that file and the cited spec section, filling the
+refuter's own ``context_tokens`` (:mod:`refuter_evidence`); what was
+served, what was not and its size are recorded on each outcome as
+``evidence``, ``evidence_truncated`` and ``evidence_tokens``.
+
+SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS (the measurement and the rules
+live in the spec): common words never veto a verdict, the deferral
+names the rule that held, and the context of one finding grows from
+``context_tokens`` to what its evidence needs, up to
+``[gates].refuter_context_ceiling`` (past it,
+:data:`EVIDENCE_EXCEEDS_CEILING`).
 """
 
 from __future__ import annotations
@@ -35,7 +58,7 @@ import json
 import re
 import secrets
 from collections import Counter
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -43,7 +66,12 @@ from typing import Literal
 from ..agent_engine.agent_loop import AgentLoop
 from ..core.logging import get_logger
 from ..core.resources import prompts_dir
-from ..gates.config import resolve_refuter_max_judged
+from ..gates.config import (
+    DEFAULT_REFUTER_BUDGET,
+    RefuterBudget,
+    resolve_refuter_budget,
+    resolve_refuter_max_judged,
+)
 from ..llm.capability import CapabilityTier
 from .findings import (
     JUDGED_CLAIM_TYPES,
@@ -54,11 +82,13 @@ from .findings import (
     update_finding_status,
 )
 from .hallucination_guard import make_repo_file_reader
+from .refuter_evidence import EvidenceBundle, build_evidence, estimate_tokens
+from .spec import load_spec
 
 _log = get_logger(__name__)
 
 _PROMPTS_DIR = prompts_dir()
-_PERSONA = "refuter_0.2.1.md"
+_PERSONA = "refuter_0.3.0.md"
 
 _VERDICT_LINE = re.compile(r"^VERDICT:\s*(\{.*\})\s*$")
 """The judge's verdict line — column one, nothing after the object.
@@ -69,8 +99,25 @@ every evidence line is prefixed with its line number by
 that starts with ``VERDICT:`` at column one inside the prompt or an
 echoed reply."""
 
-_EVIDENCE_CONTEXT = 25
-"""Lines of context fetched on each side of a finding's cited range."""
+Verdict = Literal["refuted", "verified", "cannot_judge"]
+"""The three answers of the judge's output contract (persona v0.3.0)."""
+
+_VERDICT_BY_NAME: dict[str, Verdict] = {
+    "refuted": "refuted",
+    "verified": "verified",
+    "cannot_judge": "cannot_judge",
+}
+
+_UNSEEN_REASONING = re.compile(
+    r"not (?:in|within|part of|present in|included in|shown in|visible in|provided in) "
+    r"the (?:evidence|window|excerpt|provided code|code shown|snippet)"
+    r"|cannot be (?:confirmed|verified|determined|assessed|established)"
+    r"|can ?not (?:see|confirm|verify|determine|assess)"
+    r"|unable to (?:see|confirm|verify|determine|assess)"
+    r"|\bunseen\b|not visible|outside (?:the |of the )?(?:evidence |cited |provided )?window",
+    re.IGNORECASE,
+)
+"""A refutation that only says the code was not visible — deferred, never refuted."""
 
 EVIDENCE_OUTSIDE_DIFF = "evidence outside the diff"
 """The cited file does not resolve to a file inside ``repo_root``."""
@@ -81,6 +128,41 @@ a tree that is not at the reviewed head (the evidence exists, elsewhere)."""
 
 EVIDENCE_UNREADABLE = "evidence unreadable"
 """The cited file exists but could not be read, or the cited lines are not in it."""
+
+EVIDENCE_OUTSIDE_WINDOW = "evidence outside window"
+"""The judge could not see the code the claim concerns (``cannot_judge``)."""
+
+EVIDENCE_NOT_SERVED = "evidence outside window (identifier not served: {identifiers})"
+"""Template of the reason when the claim names an identifier none of whose hits were served.
+
+The search could not run, or the budget or the hit cap left every hit
+out: the judge is not called, since it could only refute what it
+cannot see."""
+
+EVIDENCE_PARTLY_SERVED_OUTSIDE = (
+    "evidence outside window (identifier partly served outside the cited file: {identifiers})"
+)
+"""Template of the reason when a refutation names an identifier the cited file does not hold,
+some of whose hits elsewhere were cut."""
+
+EVIDENCE_PARTLY_SERVED_IN_CITED = (
+    "evidence outside window (identifier partly served in the cited file: {identifiers})"
+)
+"""Template of the reason when a refutation names an identifier some of whose hits
+inside the cited file were cut."""
+
+EVIDENCE_TIMED_OUT = "evidence outside window ({cause}: {identifiers})"
+"""Template of the reason when load kept the search from running.
+
+``cause`` is ``grep timed out after 60 s`` or ``assembly deadline of
+180 s reached``, so a deferral the runner's load caused reads apart from
+an identifier the budget left out."""
+
+EVIDENCE_EXCEEDS_CEILING = (
+    "evidence exceeds the ceiling ({needed} tokens needed, ceiling {ceiling})"
+)
+"""Template of the reason when even the context ceiling cannot hold the cited file,
+the hits of the claim's identifiers and the diff hunks: the judge is not called."""
 
 VERDICT_UNPARSEABLE = "verdict unparseable"
 """The judge answered without a well-formed ``VERDICT:`` line."""
@@ -99,6 +181,12 @@ DEFERRAL_REASONS = (
     CHECKOUT_NOT_HEAD,
     EVIDENCE_UNREADABLE,
     JUDGING_CAP_REACHED,
+    EVIDENCE_OUTSIDE_WINDOW,
+    EVIDENCE_NOT_SERVED,
+    EVIDENCE_PARTLY_SERVED_OUTSIDE,
+    EVIDENCE_PARTLY_SERVED_IN_CITED,
+    EVIDENCE_TIMED_OUT,
+    EVIDENCE_EXCEEDS_CEILING,
     VERDICT_UNPARSEABLE,
     JUDGE_CALL_FAILED,
 )
@@ -111,6 +199,20 @@ RefutationState = Literal["verified", "refuted", "deferred", "unverified"]
 """The one state every finding entering :func:`judge_findings_for_pr` ends in."""
 
 _STATES: tuple[RefutationState, ...] = ("verified", "refuted", "deferred", "unverified")
+
+JUDGE_MAX_OUTPUT_TOKENS = 2048
+"""Tokens the judge may answer with, reserved out of the context budget.
+
+Wide enough that the reasoning and the verdict line are never cut: a cut
+verdict is unparseable, so deferred, and blocks the merge for a wrong
+reason. The provider enforces it (``claude_code`` passes it to the CLI)."""
+
+JUDGE_THINKING = {"type": "disabled"}
+"""Thinking is off for the judge (SP-AGENT-THINKING-CONTROL): its tokens
+would come out of the reply cap and could cut the verdict line."""
+
+CONTRACT_RESERVE_TOKENS = 4096
+"""Tokens kept free for the reply contract (SP-AGENT-CONTEXT-LOOP ``contract_reserve_tokens``)."""
 
 Judge = Callable[[str], str]
 """A judge takes the rendered prompt and returns the raw model reply."""
@@ -132,6 +234,18 @@ class Refutation:
             :data:`DEFERRAL_REASONS` / :data:`UNVERIFIED_REASONS`
             (cap and exception filled in); for a verdict, the judge's
             reasoning.
+        evidence: What the judge was served, one entry per source
+            (:attr:`~repoach.review.refuter_evidence.EvidenceBundle.reads`);
+            empty when the judge was not called.
+        detail: The judge's reasoning when it answered without a
+            verdict (``evidence outside window``), else empty.
+        evidence_truncated: Items the budget or a hit cap left
+            unserved; the judge was told its evidence is partial.
+        evidence_tokens: Size of the evidence served, under
+            :data:`~repoach.review.refuter_evidence.TOKEN_ESTIMATOR`.
+        budget_used: The refuter context this finding was given, in
+            tokens: the floor, or what its evidence needed up to the
+            ceiling; 0 when no evidence was assembled.
     """
 
     finding_id: int | None
@@ -140,15 +254,30 @@ class Refutation:
     claim_type: ClaimType
     state: RefutationState
     reason: str
+    evidence: tuple[str, ...] = ()
+    detail: str = ""
+    evidence_truncated: tuple[str, ...] = ()
+    evidence_tokens: int = 0
+    budget_used: int = 0
 
     def as_json(self) -> dict[str, object]:
         """Return the finding entry of the ``review pr`` JSON payload."""
+        refutation: dict[str, object] = {
+            "state": self.state,
+            "reason": self.reason,
+            "evidence": list(self.evidence),
+            "evidence_truncated": list(self.evidence_truncated),
+            "evidence_tokens": self.evidence_tokens,
+            "budget_used": self.budget_used,
+        }
+        if self.detail:
+            refutation["detail"] = self.detail
         return {
             "id": self.finding_id,
             "file": self.file,
             "line": self.line_start,
             "claim_type": self.claim_type.value,
-            "refutation": {"state": self.state, "reason": self.reason},
+            "refutation": refutation,
         }
 
 
@@ -175,6 +304,15 @@ class JudgingReport:
         return {state: tally.get(state, 0) for state in _STATES}
 
     @property
+    def evidence_tokens(self) -> int:
+        """Return the evidence served to the judge across every outcome, in tokens.
+
+        Reported on the run line only; it never feeds back into the
+        evidence, which ``context_tokens`` alone bounds.
+        """
+        return sum(outcome.evidence_tokens for outcome in self.outcomes)
+
+    @property
     def deferrals(self) -> tuple[Refutation, ...]:
         """Return the outcomes with no verdict (``deferred`` and ``unverified``)."""
         return tuple(o for o in self.outcomes if o.state in ("deferred", "unverified"))
@@ -183,7 +321,8 @@ class JudgingReport:
         """Return the one stderr line naming every state and reason.
 
         Example: ``refuter: judged 3, refuted 1, deferred 2 (evidence
-        unreadable ×2), unverified 1 (not yet mechanically verified)``.
+        unreadable ×2), unverified 1 (not yet mechanically verified),
+        evidence_tokens total 41250``.
         """
         counts = self.counts
         judged = counts["verified"] + counts["refuted"]
@@ -195,6 +334,7 @@ class JudgingReport:
         ]
         if self.stale:
             parts.append(f"stale: {self.stale} (older heads)")
+        parts.append(f"evidence_tokens total {self.evidence_tokens}")
         return "refuter: " + ", ".join(parts)
 
     def _bucket(self, state: RefutationState) -> str:
@@ -217,7 +357,12 @@ def make_refuter_judge() -> Judge:
     the verdict. Built lazily by :func:`judge_findings_for_pr` so a
     review with no judged findings never spins up the loop.
     """
-    loop = AgentLoop(capability=CapabilityTier.OPUS, max_tokens=800, temperature=0.0)
+    loop = AgentLoop(
+        capability=CapabilityTier.OPUS,
+        max_tokens=JUDGE_MAX_OUTPUT_TOKENS,
+        temperature=0.0,
+        thinking=dict(JUDGE_THINKING),
+    )
     return lambda prompt: loop.run_oneshot(prompt).text
 
 
@@ -232,15 +377,101 @@ def _cited_file_inside(finding: Finding, repo_root: Path) -> bool:
     return target.is_relative_to(root) and target.is_file()
 
 
-def _evidence_excerpt(
-    finding: Finding, repo_root: Path, absent_reason: str = EVIDENCE_OUTSIDE_DIFF
-) -> tuple[str | None, str]:
-    """Return ``(cited code window, "")``, or ``(None, deferral reason)``.
+@dataclass(frozen=True)
+class Judgement:
+    """What :func:`judge_finding` concluded about one finding.
 
-    The reason is ``absent_reason`` (by default
-    :data:`EVIDENCE_OUTSIDE_DIFF`) when the cited file is not a file
+    Attributes:
+        status: ``REFUTED``, ``VERIFIED``, or ``PROPOSED`` (no verdict).
+        reason: The judge's reasoning for a verdict, else one reason of
+            :data:`DEFERRAL_REASONS`.
+        bundle: The evidence served; ``None`` when the judge was not called.
+        detail: The judge's reasoning behind :data:`EVIDENCE_OUTSIDE_WINDOW`.
+        budget_used: The context the finding was given, in tokens; 0 when
+            no evidence was assembled.
+    """
+
+    status: FindingStatus
+    reason: str
+    bundle: EvidenceBundle | None = None
+    detail: str = ""
+    budget_used: int = 0
+
+    @property
+    def evidence(self) -> tuple[str, ...]:
+        """Return the sources served, one entry each (empty when none)."""
+        return self.bundle.reads if self.bundle else ()
+
+    @property
+    def truncated(self) -> tuple[str, ...]:
+        """Return the items not served (empty when the evidence is whole)."""
+        return self.bundle.truncated if self.bundle else ()
+
+    @property
+    def tokens(self) -> int:
+        """Return the size of the evidence served (0 when none)."""
+        return self.bundle.tokens if self.bundle else 0
+
+
+def _overhead(finding: Finding) -> int:
+    """Return the context tokens that are not evidence: the prompt and the reply reserves."""
+    return (
+        estimate_tokens(_render_prompt(finding, ""))
+        + CONTRACT_RESERVE_TOKENS
+        + JUDGE_MAX_OUTPUT_TOKENS
+    )
+
+
+def _evidence_budget(finding: Finding, context_tokens: int, overhead: int | None = None) -> int:
+    """Return the tokens the evidence may take: the context less prompt and reserves.
+
+    Args:
+        finding: The finding whose prompt is measured when ``overhead`` is None.
+        context_tokens: A context size (the floor or the ceiling of the
+            refuter's budget).
+        overhead: :func:`_overhead` of ``finding`` when the caller has it
+            already, so the prompt is rendered once per finding.
+
+    Returns:
+        ``context_tokens`` less the overhead, never below 0.
+    """
+    return max(0, context_tokens - (_overhead(finding) if overhead is None else overhead))
+
+
+def _evidence_excerpt(
+    finding: Finding,
+    repo_root: Path,
+    absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
+    *,
+    evidence_tokens: int,
+    diff: str = "",
+    specs: Sequence[tuple[str, str]] = (),
+    evidence_ceiling: int | None = None,
+) -> tuple[EvidenceBundle | None, str]:
+    """Return ``(evidence bundle, "")``, or ``(None, deferral reason)``.
+
+    The reason is ``absent_reason`` when the cited file is not a file
     inside ``repo_root``, and :data:`EVIDENCE_UNREADABLE` when it is but
     cannot be read or holds none of the cited lines.
+
+    Args:
+        finding: The finding whose evidence is assembled.
+        repo_root: The pinned head tree.
+        absent_reason: Deferral reason when the cited file is absent
+            (by default :data:`EVIDENCE_OUTSIDE_DIFF`).
+        evidence_tokens: Tokens the evidence may take, already net of
+            the prompt and the reply reserves (:func:`judge_finding`
+            computes them once).
+        diff: The PR's unified diff; its hunks on the cited file are served.
+        specs: ``(spec id, markdown)`` candidates for the cited section.
+        evidence_ceiling: Optional. When given, ``evidence_tokens`` is a
+            floor: the budget grows to what the cited file, the
+            identifiers' hits and the hunks need, up to this many
+            tokens (net, like ``evidence_tokens``). ``None`` keeps the
+            budget fixed at ``evidence_tokens``.
+
+    Returns:
+        ``(bundle, "")`` or ``(None, reason)``.
     """
     if not _cited_file_inside(finding, repo_root):
         return None, absent_reason
@@ -248,14 +479,43 @@ def _evidence_excerpt(
     source = reader(finding.file)
     if source is None:
         return None, EVIDENCE_UNREADABLE
-    lines = source.splitlines()
-    start = max(0, finding.line_start - 1 - _EVIDENCE_CONTEXT)
-    end = min(len(lines), finding.line_end + _EVIDENCE_CONTEXT)
-    window = lines[start:end]
-    if not window:
+    bundle = build_evidence(
+        source,
+        repo_root=repo_root,
+        reader=reader,
+        path=finding.file,
+        line_start=finding.line_start,
+        line_end=finding.line_end,
+        claim=finding.claim,
+        budget_tokens=evidence_tokens,
+        diff=diff,
+        specs=specs,
+        claim_is_spec_gap=finding.claim_type is ClaimType.SPEC_GAP,
+        ceiling_tokens=evidence_ceiling,
+    )
+    if bundle is None:
         return None, EVIDENCE_UNREADABLE
-    numbered = [f"{start + i + 1}: {line}" for i, line in enumerate(window)]
-    return "\n".join(numbered), ""
+    return bundle, ""
+
+
+def claim_specs(
+    finding: Finding, repo_root: Path, pr_spec: tuple[str, str] | None
+) -> tuple[tuple[str, str], ...]:
+    """Return the ``(spec id, markdown)`` the finding may cite: the PR's, then those its claim names.
+
+    A spec id the claim names that no file under the head tree's specs
+    directory matches is skipped (logged): the claim's spec section is
+    then simply not served.
+    """
+    specs: list[tuple[str, str]] = [pr_spec] if pr_spec else []
+    for spec_id in dict.fromkeys(re.findall(r"\bSP-[A-Z0-9]+(?:-[A-Z0-9]+)*\b", finding.claim)):
+        if any(known == spec_id for known, _ in specs):
+            continue
+        try:
+            specs.append((spec_id, load_spec(spec_id, root=repo_root).raw_markdown))
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            _log.info("refuter.claim_spec_unresolved", spec_id=spec_id, error=type(exc).__name__)
+    return tuple(specs)
 
 
 def _neutralise_fences(evidence: str) -> str:
@@ -293,19 +553,41 @@ def _render_prompt(finding: Finding, evidence: str) -> str:
     )
 
 
-def _parse_verdict(raw: str) -> tuple[bool, str] | None:
-    """Extract ``(refuted, reasoning)`` from the judge's verdict line.
+def _verdict_of(data: dict[str, object]) -> tuple[Verdict, str] | None:
+    """Return the ``(verdict, reasoning)`` one parsed verdict object carries, or ``None``.
+
+    Accepts the v0.3.0 shape ``{"verdict": "refuted" | "verified" |
+    "cannot_judge"}`` and the earlier ``{"refuted": <bool>}``. A
+    ``refuted`` whose reasoning only says the code was not visible
+    (:data:`_UNSEEN_REASONING`) becomes ``cannot_judge``.
+    """
+    reasoning = str(data.get("reasoning", ""))[:300]
+    named = data.get("verdict")
+    verdict: Verdict
+    if isinstance(named, str) and named in _VERDICT_BY_NAME:
+        verdict = _VERDICT_BY_NAME[named]
+    elif isinstance(data.get("refuted"), bool):
+        verdict = "refuted" if data["refuted"] else "verified"
+    else:
+        return None
+    if verdict == "refuted" and _UNSEEN_REASONING.search(reasoning):
+        verdict = "cannot_judge"
+    return verdict, reasoning
+
+
+def _parse_verdict(raw: str) -> tuple[Verdict, str] | None:
+    """Extract ``(verdict, reasoning)`` from the judge's verdict line.
 
     Only a line starting with ``VERDICT:`` at column one counts, and
     the LAST such line with a well-formed object wins — never the first
     JSON blob in the reply, which prose quoted from the evidence window
     could plant (SP-REFUTER-INJECTION-HARDEN G2; the evidence itself
     cannot forge the line because every evidence line carries a
-    line-number prefix). Returns ``None`` when no verdict line with a
-    boolean ``refuted`` exists — the caller leaves the finding
-    ``proposed``, never defaulting to refuted.
+    line-number or section prefix). Returns ``None`` when no verdict
+    line names one of the three verdicts — the caller leaves the
+    finding ``proposed``, never defaulting to refuted.
     """
-    verdict: tuple[bool, str] | None = None
+    verdict: tuple[Verdict, str] | None = None
     for line in raw.splitlines():
         match = _VERDICT_LINE.match(line)
         if match is None:
@@ -315,10 +597,138 @@ def _parse_verdict(raw: str) -> tuple[bool, str] | None:
         except (json.JSONDecodeError, ValueError) as exc:
             _log.debug("refuter.verdict_json_decode_failed", error=str(exc)[:120])
             continue
-        if not isinstance(data, dict) or not isinstance(data.get("refuted"), bool):
+        if not isinstance(data, dict):
             continue
-        verdict = data["refuted"], str(data.get("reasoning", ""))[:300]
+        verdict = _verdict_of(data) or verdict
     return verdict
+
+
+def _cited(reasoning: str, identifiers: Sequence[str]) -> tuple[str, ...]:
+    """Return the ``identifiers`` that ``reasoning`` names as a word."""
+    return tuple(
+        name
+        for name in identifiers
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", reasoning)
+    )
+
+
+def _partial_veto(reasoning: str, bundle: EvidenceBundle) -> str:
+    """Return the deferral reason when a refutation rests on a partly served identifier, else ``""``.
+
+    Only :attr:`EvidenceBundle.partial` vetoes: an identifier every hit of
+    which inside the cited file was served does not (G2). A cut inside
+    the cited file is named first (G4).
+    """
+    named = _cited(reasoning, bundle.partial)
+    if not named:
+        return ""
+    inside = tuple(name for name in named if name in bundle.partial_in_cited)
+    if inside:
+        return EVIDENCE_PARTLY_SERVED_IN_CITED.format(identifiers=", ".join(inside))
+    return EVIDENCE_PARTLY_SERVED_OUTSIDE.format(identifiers=", ".join(named))
+
+
+def judge_finding(
+    finding: Finding,
+    *,
+    repo_root: Path,
+    judge: Judge,
+    absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
+    budget: RefuterBudget = DEFAULT_REFUTER_BUDGET,
+    diff: str = "",
+    pr_spec: tuple[str, str] | None = None,
+) -> Judgement:
+    """Judge one finding and say what the judge was served.
+
+    ``REFUTED`` when the judge proves the claim false over the evidence
+    it sees, ``VERIFIED`` when the evidence proves it, both with the
+    judge's reasoning. ``PROPOSED`` (leave it for a later round) with a
+    reason from :data:`DEFERRAL_REASONS` when the evidence is outside
+    the repository or unreadable (the judge is then never called), when
+    the judge raised (``judge call failed: <exception type>``), when its
+    verdict is unparseable, and when it answered ``cannot_judge`` or
+    refuted only because the code was not visible
+    (:data:`EVIDENCE_OUTSIDE_WINDOW`), or refuted on an identifier of
+    which part of the hits that matter were cut
+    (:data:`EVIDENCE_PARTLY_SERVED_IN_CITED`,
+    :data:`EVIDENCE_PARTLY_SERVED_OUTSIDE`). When the claim names an
+    identifier of which nothing was served, the judge is not called
+    (:data:`EVIDENCE_NOT_SERVED`). A cited file absent from
+    ``repo_root`` is deferred with ``absent_reason``.
+
+    The context adapts to the evidence (G5): ``budget.floor`` is the
+    least it gets, and it grows to the cited file, the hits of the
+    claim's identifiers and the diff hunks plus the prompt and reply
+    reserves, up to ``budget.ceiling``. When even the ceiling cannot
+    hold them, the judge is not called (:data:`EVIDENCE_EXCEEDS_CEILING`).
+
+    Args:
+        finding: The proposed finding.
+        repo_root: The pinned head tree the evidence is read from.
+        judge: The judge (tests inject a fake).
+        absent_reason: Deferral reason when the cited file is absent.
+        budget: The refuter's context floor and ceiling
+            (:func:`~repoach.gates.config.resolve_refuter_budget`).
+        diff: The PR's unified diff (its hunks on the cited file are served).
+        pr_spec: ``(spec id, markdown)`` of the PR's governing spec.
+
+    Returns:
+        The :class:`Judgement`: its status, reason, the evidence served
+        and the ``budget_used``.
+    """
+    floor, ceiling = RefuterBudget.clamped(*budget)
+    overhead = _overhead(finding)
+    bundle, reason = _evidence_excerpt(
+        finding,
+        repo_root,
+        absent_reason,
+        evidence_tokens=_evidence_budget(finding, floor, overhead),
+        diff=diff,
+        specs=claim_specs(finding, repo_root, pr_spec),
+        evidence_ceiling=_evidence_budget(finding, ceiling, overhead),
+    )
+    if bundle is None:
+        return Judgement(FindingStatus.PROPOSED, reason)
+    used = max(floor, min(ceiling, bundle.budget_tokens + overhead))
+
+    def _deferred(why: str, detail: str = "") -> Judgement:
+        return Judgement(FindingStatus.PROPOSED, why, bundle, detail, used)
+
+    if bundle.unserved and bundle.timed_out:
+        return _deferred(
+            EVIDENCE_TIMED_OUT.format(
+                cause=bundle.timed_out, identifiers=", ".join(bundle.unserved)
+            )
+        )
+    if bundle.shortfall_tokens:
+        needed = bundle.needed_tokens + overhead
+        _log.warning(
+            "refuter.evidence_exceeds_ceiling",
+            file=finding.file,
+            needed_tokens=needed,
+            ceiling=ceiling,
+            consequence="the finding is deferred, not judged on partial evidence",
+        )
+        return _deferred(EVIDENCE_EXCEEDS_CEILING.format(needed=needed, ceiling=ceiling))
+    if bundle.unserved:
+        return _deferred(EVIDENCE_NOT_SERVED.format(identifiers=", ".join(bundle.unserved)))
+    try:
+        raw = judge(_render_prompt(finding, bundle.text))
+    except Exception as exc:
+        _log.warning("refuter.judge_call_failed", exc=type(exc).__name__, error=str(exc)[:160])
+        return _deferred(f"{JUDGE_CALL_FAILED}: {type(exc).__name__}")
+    verdict = _parse_verdict(raw)
+    if verdict is None:
+        return _deferred(VERDICT_UNPARSEABLE)
+    answer, reasoning = verdict
+    if answer == "refuted":
+        vetoed = _partial_veto(reasoning, bundle)
+        if vetoed:
+            return _deferred(vetoed, reasoning)
+    if answer == "cannot_judge":
+        return _deferred(EVIDENCE_OUTSIDE_WINDOW, reasoning)
+    status = FindingStatus.REFUTED if answer == "refuted" else FindingStatus.VERIFIED
+    return Judgement(status, reasoning, bundle, budget_used=used)
 
 
 def refute_finding(
@@ -327,30 +737,29 @@ def refute_finding(
     repo_root: Path,
     judge: Judge,
     absent_reason: str = EVIDENCE_OUTSIDE_DIFF,
+    budget: RefuterBudget = DEFAULT_REFUTER_BUDGET,
 ) -> tuple[FindingStatus, str]:
-    """Judge one finding, returning ``(new_status, reason)``.
+    """Judge one finding, returning ``(new_status, reason)`` of :func:`judge_finding`.
 
-    ``REFUTED`` when the judge refutes the claim, ``VERIFIED`` when it
-    cannot, both with the judge's reasoning. ``PROPOSED`` (leave it for
-    a later round) with a reason from :data:`DEFERRAL_REASONS` when the
-    evidence is outside the repository or unreadable (the judge is then
-    never called), when the judge raised (``judge call failed:
-    <exception type>``) or when its verdict is unparseable. A cited file
-    absent from ``repo_root`` is deferred with ``absent_reason``.
+    Args:
+        finding: The proposed finding.
+        repo_root: The pinned head tree the evidence is read from.
+        judge: The judge (tests inject a fake).
+        absent_reason: Deferral reason when the cited file is absent.
+        budget: The refuter's configured floor and ceiling, which the
+            evidence fills (:func:`judge_finding`).
+
+    Returns:
+        ``(status, reason)`` of the :class:`Judgement`.
     """
-    evidence, reason = _evidence_excerpt(finding, repo_root, absent_reason)
-    if evidence is None:
-        return FindingStatus.PROPOSED, reason
-    try:
-        raw = judge(_render_prompt(finding, evidence))
-    except Exception as exc:
-        _log.warning("refuter.judge_call_failed", exc=type(exc).__name__, error=str(exc)[:160])
-        return FindingStatus.PROPOSED, f"{JUDGE_CALL_FAILED}: {type(exc).__name__}"
-    verdict = _parse_verdict(raw)
-    if verdict is None:
-        return FindingStatus.PROPOSED, VERDICT_UNPARSEABLE
-    refuted, reasoning = verdict
-    return (FindingStatus.REFUTED if refuted else FindingStatus.VERIFIED), reasoning
+    judgement = judge_finding(
+        finding,
+        repo_root=repo_root,
+        judge=judge,
+        absent_reason=absent_reason,
+        budget=budget,
+    )
+    return judgement.status, judgement.reason
 
 
 def configured_max_judged(repo_root: Path) -> int:
@@ -389,8 +798,14 @@ class LazyJudge:
         return self._judge(prompt)
 
 
-def _refutation(finding: Finding, state: RefutationState, reason: str) -> Refutation:
-    """Build the :class:`Refutation` of ``finding``."""
+def _refutation(
+    finding: Finding,
+    state: RefutationState,
+    reason: str,
+    *,
+    judgement: Judgement | None = None,
+) -> Refutation:
+    """Build the :class:`Refutation` of ``finding``, with the evidence ``judgement`` served."""
     return Refutation(
         finding_id=finding.id,
         file=finding.file,
@@ -398,6 +813,11 @@ def _refutation(finding: Finding, state: RefutationState, reason: str) -> Refuta
         claim_type=finding.claim_type,
         state=state,
         reason=reason,
+        evidence=judgement.evidence if judgement else (),
+        detail=judgement.detail if judgement else "",
+        evidence_truncated=judgement.truncated if judgement else (),
+        evidence_tokens=judgement.tokens if judgement else 0,
+        budget_used=judgement.budget_used if judgement else 0,
     )
 
 
@@ -413,6 +833,9 @@ def judge_findings_for_pr(
     tree_sha: str | None = None,
     review_head: str | None = None,
     scope_head: str | None = None,
+    diff: str = "",
+    pr_spec: tuple[str, str] | None = None,
+    budget: RefuterBudget | None = None,
 ) -> JudgingReport:
     """Judge the proposed findings of a PR and name what it could not judge.
 
@@ -445,12 +868,18 @@ def judge_findings_for_pr(
         scope_head: When given, only proposed findings recorded at this
             head (this run's) are judged; the others, from earlier runs
             or with an empty head, are counted in ``stale`` and left alone.
+        diff: The PR's unified diff; each finding is served its hunks.
+        pr_spec: ``(spec id, markdown)`` of the PR's governing spec.
+        budget: The refuter's context floor and ceiling; ``None`` reads
+            them at ``repo_root``
+            (:func:`~repoach.gates.config.resolve_refuter_budget`).
 
     Returns:
         One :class:`Refutation` per proposed finding, plus the number of
         judge calls made.
     """
     cap = configured_max_judged(repo_root) if max_judged is None else max_judged
+    sizes = resolve_refuter_budget(repo_root) if budget is None else budget
     reviewed = review_head or head_sha
     tree_behind = bool(reviewed and tree_sha and tree_sha != reviewed)
     in_diff = frozenset(diff_files)
@@ -478,11 +907,18 @@ def judge_findings_for_pr(
             if tree_behind and finding.file in in_diff
             else EVIDENCE_OUTSIDE_DIFF
         )
-        new_status, reason = refute_finding(
-            finding, repo_root=repo_root, judge=judge, absent_reason=absent
+        judgement = judge_finding(
+            finding,
+            repo_root=repo_root,
+            judge=judge,
+            absent_reason=absent,
+            budget=sizes,
+            diff=diff,
+            pr_spec=pr_spec,
         )
+        new_status, reason = judgement.status, judgement.reason
         if new_status is FindingStatus.PROPOSED:
-            outcomes.append(_refutation(finding, "deferred", reason))
+            outcomes.append(_refutation(finding, "deferred", reason, judgement=judgement))
             continue
         if finding.id is not None:
             update_finding_status(
@@ -492,9 +928,10 @@ def judge_findings_for_pr(
                 verification_method="refuter",
                 verification_result=reason,
                 checked_at_sha=head_sha or "",
+                budget_used=judgement.budget_used,
             )
         state: RefutationState = "refuted" if new_status is FindingStatus.REFUTED else "verified"
-        outcomes.append(_refutation(finding, state, reason))
+        outcomes.append(_refutation(finding, state, reason, judgement=judgement))
     outcomes.extend(
         _refutation(finding, "unverified", NOT_YET_MECHANICALLY_VERIFIED) for finding in unverified
     )

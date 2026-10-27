@@ -24,13 +24,13 @@
         "view",
         "42",
         "--json",
-        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+        "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup,commits"
       ],
       "program": "gh",
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": []}"
+      "stdout": "{\"state\": \"OPEN\", \"isDraft\": false, \"mergeable\": \"MERGEABLE\", \"mergeStateStatus\": \"CLEAN\", \"headRefOid\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"statusCheckRollup\": [], \"commits\": [{\"messageHeadline\": \"feat(x): add the thing\", \"messageBody\": \"Why.\\n\\nCo-Authored-By: Claude Sonnet 5\"}]}"
     },
     {
       "args": [
@@ -40,12 +40,14 @@
         "--squash",
         "--match-head-commit",
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "--delete-branch"
+        "--delete-branch",
+        "--body-file",
+        "-"
       ],
       "program": "gh",
       "returncode": 0,
       "stderr": "",
-      "stdin": null,
+      "stdin": "* feat(x): add the thing\n\nWhy.\n",
       "stdout": "Merged pull request #42 (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)\n"
     }
   ],

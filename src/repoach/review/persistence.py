@@ -19,7 +19,7 @@ Schema vocabulary :
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -120,6 +120,10 @@ _pr_merges = Table(
     Column("merged_sha", String, nullable=True),
     Column("notes", String, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("head_sha", String, nullable=True),
+    Column("pending_checks", String, nullable=True),
+    Column("trigger", String, nullable=True),
+    Column("rule_version", String, nullable=True),
 )
 
 
@@ -168,7 +172,13 @@ def _migrate_missing_columns(engine) -> None:
     """
     from sqlalchemy import inspect, text
 
-    migrations = (("pr_reviews", "decision_pivot", "TEXT", "SP-WA-DECISION-TRACE 2c"),)
+    migrations = (
+        ("pr_reviews", "decision_pivot", "TEXT", "SP-WA-DECISION-TRACE 2c"),
+        ("pr_merges", "head_sha", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+        ("pr_merges", "pending_checks", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+        ("pr_merges", "trigger", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+        ("pr_merges", "rule_version", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+    )
 
     inspector = inspect(engine)
     with engine.begin() as conn:
@@ -293,6 +303,10 @@ def record_merge(
     merged_sha: str | None,
     notes: str,
     recorded_at: datetime | None = None,
+    head_sha: str | None = None,
+    pending_checks: Sequence[str] = (),
+    trigger: str | None = None,
+    rule_version: str | None = None,
 ) -> None:
     """Persist one auto-merge attempt to L4 ``pr_merges``.
 
@@ -306,6 +320,12 @@ def record_merge(
         notes: Free-form context string (truncated to 1000 chars).
         recorded_at: Timestamp to stamp on ``created_at``; defaults to
             ``datetime.now(UTC)`` captured at call time when omitted.
+        head_sha: The head the attempt decided at
+            (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5).
+        pending_checks: Required checks still running, stored as a JSON list.
+        trigger: What started the attempt (``merge-on-ci:<run_id>``,
+            ``auto-review:<run_id>``, ``dispatch:<run_id>`` or ``cli``).
+        rule_version: The gate rule in force.
     """
     engine = _engine_for(db_path)
     with engine.begin() as conn:
@@ -318,8 +338,66 @@ def record_merge(
                 merged_sha=merged_sha,
                 notes=notes[:1000],
                 created_at=recorded_at or datetime.now(UTC),
+                head_sha=head_sha,
+                pending_checks=json.dumps(list(pending_checks)),
+                trigger=trigger,
+                rule_version=rule_version,
             )
         )
+
+
+@dataclass(frozen=True)
+class MergeRow:
+    """One ``pr_merges`` row, as :func:`fetch_merge_rows` reads it back."""
+
+    pr_number: int
+    outcome: str
+    notes: str
+    created_at: datetime
+    head_sha: str
+    pending_checks: list[str]
+    trigger: str
+    rule_version: str
+
+
+def fetch_merge_rows(db_path: Path, pr_number: int) -> list[MergeRow]:
+    """Return every ``pr_merges`` row of ``pr_number``, oldest first.
+
+    Rows written before SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF carry
+    no head, checks, trigger or rule: those read back as ``""`` / ``[]``.
+    """
+    if not db_path.exists():
+        return []
+    engine = _engine_for(db_path)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(_pr_merges).where(_pr_merges.c.pr_number == pr_number).order_by(_pr_merges.c.id)
+        ).all()
+    out: list[MergeRow] = []
+    for row in rows:
+        try:
+            pending = json.loads(row.pending_checks) if row.pending_checks else []
+        except json.JSONDecodeError as exc:
+            _log.warning(
+                "persistence.pending_checks_unreadable", pr_number=row.pr_number, error=str(exc)
+            )
+            pending = []
+        created = row.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        out.append(
+            MergeRow(
+                pr_number=row.pr_number,
+                outcome=row.outcome,
+                notes=row.notes,
+                created_at=created,
+                head_sha=row.head_sha or "",
+                pending_checks=[str(name) for name in pending] if isinstance(pending, list) else [],
+                trigger=row.trigger or "",
+                rule_version=row.rule_version or "",
+            )
+        )
+    return out
 
 
 def fetch_merged_pr_shas(db_path: Path) -> set[str]:

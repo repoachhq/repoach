@@ -56,28 +56,18 @@ fail() { printf "\033[31m  ✗ %s\033[0m\n" "$1" ; }
 failures=()
 
 # SP-CI-SMOKE-REPAIR: mirror of the ci.yml "Smoke — llm_proxy boots"
-# step. Boots the proxy with a dummy token on loopback, polls /health
-# with a bounded retry loop, and dumps the captured log on failure.
+# step. SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: scripts/job_proxy.sh boots
+# the proxy on a free port with its own instance token and proves
+# /health is that process, so a live proxy on 8082 can neither answer
+# for the smoke nor be killed by it.
 proxy_smoke() {
-    mkdir -p logs
+    local rc=0
     REPOACH_ANTHROPIC_AUTH_TOKEN="ci-smoke-token" \
-    REPOACH_PROXY_HOST="127.0.0.1" \
-    REPOACH_PROXY_PORT="8082" \
-        python -m repoach.llm_proxy > logs/proxy_smoke.log 2>&1 &
-    local proxy_pid=$!
-    local i
-    for i in $(seq 1 15) ; do
-        if curl --silent --fail --max-time 2 http://127.0.0.1:8082/health > /dev/null ; then
-            echo "  proxy /health answered (attempt $i)"
-            kill "$proxy_pid" 2>/dev/null || true
-            return 0
-        fi
-        sleep 2
-    done
-    echo "  llm_proxy never answered /health within 30s — log tail:" >&2
-    tail -50 logs/proxy_smoke.log >&2 || true
-    kill "$proxy_pid" 2>/dev/null || true
-    return 1
+    JOB_PROXY_DIR="logs/proxy_smoke" \
+    JOB_PROXY_TIMEOUT_S="30" \
+        bash scripts/job_proxy.sh start > /dev/null || rc=$?
+    JOB_PROXY_DIR="logs/proxy_smoke" bash scripts/job_proxy.sh stop || true
+    return "$rc"
 }
 
 run_step() {
@@ -142,6 +132,9 @@ if [[ "$mode" != "tests" && "$mode" != "integration" && "$mode" != "wheel" ]] ; 
     run_step "lint — no inline comments / no noqa" python scripts/lint_no_inline_comments.py --summary
     run_step "lint — no silent except" python scripts/lint_no_silent_except.py --summary
     run_step "lint — CONTRIBUTING cites real paths" python scripts/check_contributing.py CONTRIBUTING.md
+    if git rev-parse --verify -q origin/develop >/dev/null ; then
+        run_step "lint — no AI attribution in branch commits" python scripts/lint_no_ai_attribution.py --range origin/develop..HEAD
+    fi
 fi
 
 if [[ "$mode" == "full" || "$mode" == "tests" ]] ; then
@@ -159,12 +152,7 @@ fi
 
 if [[ "$mode" == "full" ]] ; then
     bold "smoke — llm_proxy boots"
-    # Never boot the smoke proxy on a port that is already bound: on
-    # the operator box 8082 is usually the live systemd proxy and the
-    # smoke's kill would take it down.
-    if ss -tlnp 2>/dev/null | grep -q ':8082 ' ; then
-        ok "skipped — port 8082 already bound (live proxy left untouched)"
-    elif proxy_smoke ; then
+    if proxy_smoke ; then
         ok "smoke — llm_proxy boots"
     else
         fail "smoke — llm_proxy boots"

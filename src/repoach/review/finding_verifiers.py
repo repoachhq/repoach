@@ -14,8 +14,14 @@ decision changes here.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+import os
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
+from ..core.logging import get_logger
 from ..gates.config import GatesConfig, applicable, load_gates_config
 from ..lint.no_inline_comments import scan_file as scan_inline
 from ..lint.no_silent_except import scan_file as scan_silent
@@ -30,13 +36,268 @@ from .findings import (
 from .hallucination_guard import (
     _extract_missing_test_symbols,
     make_repo_file_reader,
-    make_tests_symbol_searcher,
 )
+
+_log = get_logger(__name__)
 
 _LANGUAGE_METHOD = "language"
 """Verification method recorded when a Python-only verifier does not apply."""
 
 _DEFERRED_RESULT = "not mechanically verifiable — slices 5-6"
+
+MECHANICAL_METHODS: frozenset[str] = frozenset(
+    {"symbol_search", "ast_docstring", "lint_scan", _LANGUAGE_METHOD}
+)
+"""``verification_method`` values only a mechanical verifier stamps.
+
+The report reads them back from the ledger to name the judge of a
+finding whose run outcomes it does not hold (a replayed run)."""
+
+VerificationState = Literal["verified", "refuted", "not_applicable", "deferred"]
+"""The one state a finding ends in after a mechanical pass."""
+
+
+@dataclass(frozen=True)
+class MechanicalVerification:
+    """What the mechanical verifiers did with one proposed finding.
+
+    Attributes:
+        finding_id: Ledger row id.
+        file: The cited file.
+        line_start: First cited line.
+        claim_type: The finding's claim type.
+        state: ``verified`` / ``refuted`` / ``not_applicable`` (a
+            transition was recorded) or ``deferred`` (left ``proposed``).
+        method: The verifier's own method (``symbol_search``,
+            ``ast_docstring``, ``lint_scan``, ``language``, ``deferred``).
+        result: The verifier's one-line evidence.
+    """
+
+    finding_id: int | None
+    file: str
+    line_start: int
+    claim_type: ClaimType
+    state: VerificationState
+    method: str
+    result: str
+
+    @property
+    def verifier(self) -> str:
+        """Return the verifier's name, ``mechanical:<claim_type>``."""
+        return f"mechanical:{self.claim_type.value}"
+
+    @property
+    def evidence(self) -> str:
+        """Return the evidence line, ``<method>: <result>``."""
+        return f"{self.method}: {self.result}"
+
+
+@dataclass(frozen=True)
+class VerificationReport:
+    """Every proposed finding :func:`verify_findings_for_pr` checked.
+
+    Attributes:
+        outcomes: One :class:`MechanicalVerification` per proposed
+            finding, in ledger order.
+    """
+
+    outcomes: tuple[MechanicalVerification, ...] = ()
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """Return ``{"verified", "refuted", "deferred"}`` counts.
+
+        ``"not_applicable"`` is present only when a finding ended there.
+        """
+        tally = {"verified": 0, "refuted": 0, "deferred": 0}
+        for outcome in self.outcomes:
+            tally[outcome.state] = tally.get(outcome.state, 0) + 1
+        return tally
+
+    @property
+    def settled(self) -> tuple[MechanicalVerification, ...]:
+        """Return the outcomes a mechanical verifier decided (not ``deferred``)."""
+        return tuple(outcome for outcome in self.outcomes if outcome.state != "deferred")
+
+
+_TEST_DIR_NAMES = frozenset({"tests", "test"})
+"""Directory names whose ``.py`` files are test files wherever they sit."""
+
+_WALK_SKIPPED_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "dist", "build"})
+"""Directories never walked when the root is not a git work tree."""
+
+
+@dataclass(frozen=True)
+class TestSearch:
+    """Where a ``missing_test`` verifier looked for the covering tests.
+
+    Attributes:
+        found: ``(target, "path:line")`` for each target defined in a test file.
+        searched: Number of Python test files read.
+        at: Short sha of the tree searched, empty when not a git work tree.
+    """
+
+    __test__ = False
+
+    found: tuple[tuple[str, str], ...]
+    searched: int
+    at: str
+
+    def scope(self) -> str:
+        """Name what was searched, ``searched <n> test files[ at <sha7>]``."""
+        where = f" at {self.at}" if self.at else ""
+        return f"searched {self.searched} test files{where}"
+
+
+def is_python_test_file(path: str, test_roots: tuple[str, ...] = ()) -> bool:
+    """Whether ``path`` is a Python test file.
+
+    A ``.py`` file is a test file under a configured test root, under any
+    ``tests/`` or ``test/`` directory (``api/tests/`` in a monorepo whose
+    configured root is ``tests``), or named ``test_*.py`` / ``*_test.py``
+    / ``conftest.py``. Code under review elsewhere never is
+    (SP-MISSING-TEST-VERIFIER-SCOPE).
+    """
+    pure = PurePosixPath(path)
+    if pure.suffix != ".py":
+        return False
+    name = pure.name
+    if name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py":
+        return True
+    if _TEST_DIR_NAMES.intersection(pure.parts[:-1]):
+        return True
+    return any(
+        root and (path == root or path.startswith(root.rstrip("/") + "/")) for root in test_roots
+    )
+
+
+def _git_out(repo_root: Path, *args: str) -> str | None:
+    """Return the stdout of a read-only ``git`` command, ``None`` when it fails."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo_root, capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        _log.debug("finding_verifiers.git_unavailable", error=type(exc).__name__)
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _head_of(repo_root: Path) -> str | None:
+    """Return the full HEAD sha when ``repo_root`` is the top of a git work tree."""
+    top = _git_out(repo_root, "rev-parse", "--show-toplevel", "HEAD")
+    if top is None:
+        return None
+    lines = top.split()
+    if len(lines) != 2 or Path(lines[0]).resolve() != repo_root.resolve():
+        return None
+    return lines[1]
+
+
+def _tracked_files(repo_root: Path) -> list[str] | None:
+    """Return the tracked paths of the git work tree ``repo_root``."""
+    listing = _git_out(repo_root, "ls-files", "-z")
+    if listing is None:
+        return None
+    return [path for path in listing.split("\0") if path]
+
+
+def _walked_files(repo_root: Path) -> list[str]:
+    """Return every file under ``repo_root``, skipping vendored and build directories."""
+    paths: list[str] = []
+    for directory, subdirs, files in os.walk(repo_root):
+        subdirs[:] = [d for d in subdirs if d not in _WALK_SKIPPED_DIRS]
+        for name in files:
+            paths.append(PurePosixPath(Path(directory, name).relative_to(repo_root)).as_posix())
+    return paths
+
+
+_DEFINITION = re.compile(r"^[ \t]*(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)", re.MULTILINE)
+"""A ``def`` / ``class`` line of a Python test file and the name it defines."""
+
+
+@dataclass(frozen=True)
+class _TestIndex:
+    """Every name defined in the Python test files of one tree."""
+
+    where: dict[str, str]
+    searched: int
+    at: str
+
+
+_INDEX_CACHE: dict[tuple[str, str, tuple[str, ...]], _TestIndex] = {}
+"""Test-name indexes of git trees, keyed by ``(root, head sha, test roots)``."""
+
+_INDEX_CACHE_SIZE = 8
+"""Trees kept in :data:`_INDEX_CACHE`; the oldest is dropped past it."""
+
+
+def _build_index(
+    repo_root: Path, paths: list[str], test_roots: tuple[str, ...], at: str
+) -> _TestIndex:
+    """Read every Python test file among ``paths`` once and index its definitions."""
+    candidates = sorted(p for p in paths if is_python_test_file(p, test_roots))
+    where: dict[str, str] = {}
+    for path in candidates:
+        try:
+            text = (repo_root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            _log.debug("finding_verifiers.test_file_skipped", path=path, error=type(exc).__name__)
+            continue
+        for match in _DEFINITION.finditer(text):
+            name = match.group(1)
+            if name not in where:
+                line = text.count("\n", 0, match.start()) + 1
+                where[name] = f"{path}:{line}"
+    return _TestIndex(where=where, searched=len(candidates), at=at)
+
+
+def _test_index(repo_root: Path, test_roots: tuple[str, ...]) -> _TestIndex:
+    """Return the test-name index of ``repo_root``, built once per git head.
+
+    A git work tree is listed and read once per ``(root, head sha, test
+    roots)``, so a gate re-checking N findings at one head walks the
+    tree once; a tree outside git is read on every call.
+    """
+    head = _head_of(repo_root)
+    if head is None:
+        return _build_index(repo_root, _walked_files(repo_root), test_roots, "")
+    key = (str(repo_root.resolve()), head, test_roots)
+    cached = _INDEX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    tracked = _tracked_files(repo_root)
+    if tracked is None:
+        return _build_index(repo_root, _walked_files(repo_root), test_roots, "")
+    index = _build_index(repo_root, tracked, test_roots, head[:7])
+    if len(_INDEX_CACHE) >= _INDEX_CACHE_SIZE:
+        _INDEX_CACHE.pop(next(iter(_INDEX_CACHE)))
+    _INDEX_CACHE[key] = index
+    return index
+
+
+def find_tests_by_name(
+    repo_root: Path, targets: list[str], test_roots: tuple[str, ...] = ()
+) -> TestSearch:
+    """Look for ``def`` / ``class`` of each target in every Python test file of the tree.
+
+    The tree is the tracked files of ``repo_root`` when it is a git work
+    tree (the pinned head worktree), else every file under it. Only test
+    files (:func:`is_python_test_file`) are read, so a test that lives
+    in ``api/tests/`` is found while a symbol of the code under review
+    never refutes the claim. A git tree is indexed once per head.
+
+    Args:
+        repo_root: Root of the tree to search.
+        targets: Test names to look for (``test_``-prefixed).
+        test_roots: The project's configured test roots.
+
+    Returns:
+        The :class:`TestSearch`; ``found`` keeps the order of ``targets``.
+    """
+    index = _test_index(repo_root, test_roots)
+    found = tuple((t, index.where[t]) for t in targets if t in index.where)
+    return TestSearch(found=found, searched=index.searched, at=index.at)
 
 
 def _missing_test_search_targets(symbols: list[str]) -> list[str]:
@@ -67,21 +328,28 @@ def _missing_test_search_targets(symbols: list[str]) -> list[str]:
 def _verify_missing_test(
     finding: Finding, repo_root: Path, config: GatesConfig
 ) -> tuple[FindingStatus, str, str]:
-    """Refute a missing-test claim only when a covering test exists under ``tests/``.
+    """Refute a missing-test claim only when a covering test exists in a test file.
 
-    The search is scoped to ``tests/`` alone — the existence of the
-    code-under-test in ``src/`` must never refute a "no test for X"
-    claim (SP-MISSING-TEST-VERIFIER-SCOPE).
+    The covering test is looked for by name across every Python test
+    file of the tree (:func:`find_tests_by_name`), not only under the
+    top-level ``tests/`` nor in the file the finding cited: the existence
+    of the code-under-test must never refute a "no test for X" claim
+    (SP-MISSING-TEST-VERIFIER-SCOPE), and a test written in
+    ``api/tests/`` must (SP-GATE-REVERIFIES-AT-HEAD G11).
     """
     symbols = _extract_missing_test_symbols(finding.claim)
     if not symbols:
         return FindingStatus.PROPOSED, "symbol_search", "no checkable symbol"
     targets = _missing_test_search_targets(symbols)
-    searcher = make_tests_symbol_searcher(repo_root)
-    found = [target for target in targets if searcher(target)]
-    if found:
-        return FindingStatus.REFUTED, "symbol_search", f"{found[0]} exists in tests/"
-    return FindingStatus.VERIFIED, "symbol_search", f"no test for {', '.join(symbols)}"
+    search = find_tests_by_name(repo_root, targets, config.test_roots)
+    if search.found:
+        target, where = search.found[0]
+        return FindingStatus.REFUTED, "symbol_search", f"{target} exists at {where}"
+    return (
+        FindingStatus.VERIFIED,
+        "symbol_search",
+        f"no test for {', '.join(symbols)} ({search.scope()})",
+    )
 
 
 def _verify_missing_docstring(
@@ -191,7 +459,7 @@ def verify_findings_for_pr(
     repo_root: Path,
     head_sha: str | None,
     config: GatesConfig | None = None,
-) -> dict[str, int]:
+) -> VerificationReport:
     """Verify every proposed finding of a PR and persist the transitions.
 
     Args:
@@ -204,34 +472,92 @@ def verify_findings_for_pr(
             PR head's); read from ``repo_root`` when omitted.
 
     Returns:
-        Counts ``{"verified": n, "refuted": n, "deferred": n}``, plus
-        ``"not_applicable": n`` when any finding ended not applicable.
+        One :class:`MechanicalVerification` per proposed finding — id,
+        state, method and evidence line — so the review report can list
+        every finding a mechanical verifier settled; ``counts`` keeps the
+        aggregate ``{"verified", "refuted", "deferred"}`` shape, plus
+        ``"not_applicable"`` when any finding ended there. A finding with
+        no ledger id is checked but neither persisted nor reported.
     """
-    counts = {"verified": 0, "refuted": 0, "deferred": 0}
+    outcomes: list[MechanicalVerification] = []
     config = config if config is not None else load_gates_config(repo_root)
     proposed = fetch_findings(db_path, pr_number, status=FindingStatus.PROPOSED)
     for finding in proposed:
         new_status, method, result = verify_finding(finding, repo_root=repo_root, config=config)
-        if new_status is FindingStatus.PROPOSED:
-            if finding.id is not None:
-                record_verification_attempt(
-                    db_path,
-                    finding.id,
-                    method=method,
-                    result=result,
-                    checked_at_sha=head_sha or "",
-                )
-            counts["deferred"] += 1
-            continue
         if finding.id is None:
             continue
-        update_finding_status(
-            db_path,
-            finding.id,
-            new_status,
-            verification_method=method,
-            verification_result=result,
-            checked_at_sha=head_sha or "",
+        if new_status is FindingStatus.PROPOSED:
+            record_verification_attempt(
+                db_path,
+                finding.id,
+                method=method,
+                result=result,
+                checked_at_sha=head_sha or "",
+            )
+        else:
+            update_finding_status(
+                db_path,
+                finding.id,
+                new_status,
+                verification_method=method,
+                verification_result=result,
+                checked_at_sha=head_sha or "",
+            )
+        outcomes.append(
+            MechanicalVerification(
+                finding_id=finding.id,
+                file=finding.file,
+                line_start=finding.line_start,
+                claim_type=finding.claim_type,
+                state="deferred" if new_status is FindingStatus.PROPOSED else new_status.value,
+                method=method,
+                result=result,
+            )
         )
-        counts[new_status.value] = counts.get(new_status.value, 0) + 1
-    return counts
+    return VerificationReport(outcomes=tuple(outcomes))
+
+
+def recorded_verifications(db_path: Path, *, pr_number: int, head_sha: str) -> VerificationReport:
+    """Rebuild the settled mechanical outcomes the ledger records at ``head_sha``.
+
+    A replayed run holds no verifier outcomes of its own; the ledger
+    rows a mechanical verifier settled at this head (a
+    :data:`MECHANICAL_METHODS` stamp, ``checked_at_sha == head_sha``)
+    are the same facts, read back.
+
+    Args:
+        db_path: The findings ledger database.
+        pr_number: The PR being reported on.
+        head_sha: The head the verification ran against.
+
+    Returns:
+        One outcome per such row; never a ``deferred`` one.
+    """
+    outcomes: list[MechanicalVerification] = []
+    for finding in fetch_findings(db_path, pr_number):
+        if finding.verification_method not in MECHANICAL_METHODS:
+            continue
+        if not head_sha or finding.checked_at_sha != head_sha:
+            continue
+        if finding.status not in _RECORDED_STATES:
+            continue
+        outcomes.append(
+            MechanicalVerification(
+                finding_id=finding.id,
+                file=finding.file,
+                line_start=finding.line_start,
+                claim_type=finding.claim_type,
+                state=_RECORDED_STATES[finding.status],
+                method=finding.verification_method,
+                result=finding.verification_result,
+            )
+        )
+    return VerificationReport(outcomes=tuple(outcomes))
+
+
+_RECORDED_STATES: dict[FindingStatus, VerificationState] = {
+    FindingStatus.VERIFIED: "verified",
+    FindingStatus.REFUTED: "refuted",
+    FindingStatus.NOT_APPLICABLE: "not_applicable",
+}
+"""Ledger statuses a mechanical verifier writes, mapped to their report state."""

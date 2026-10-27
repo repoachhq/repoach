@@ -71,6 +71,16 @@ jobs:
       - name: Lint — CONTRIBUTING cites real paths (SP-CONTRIBUTING)
         run: python scripts/check_contributing.py CONTRIBUTING.md
 
+      - name: Lint — no AI attribution (SP-CONVENTIONS-GATE)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: >-
+          python scripts/lint_no_ai_attribution.py
+          --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          --text-env PR_TITLE --text-env PR_BODY
+
       - name: Lint — edge honesty (SP-ARCH-EDGE-GATE)
         if: github.event_name == 'pull_request'
         run: |
@@ -95,25 +105,15 @@ jobs:
           # authenticated configuration (SP-PROXY-SECURE-DEFAULTS
           # refuses tokenless non-loopback binds).
           REPOACH_ANTHROPIC_AUTH_TOKEN: "ci-smoke-token"
-          REPOACH_PROXY_HOST: "127.0.0.1"
-          REPOACH_PROXY_PORT: "8083"
+          # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: the smoke shares the
+          # self-hosted host with the review jobs, so it picks its own
+          # port and proves /health is its own process too.
+          JOB_PROXY_DIR: logs/proxy_smoke
+          JOB_PROXY_TIMEOUT_S: "30"
         run: |
           set -e
-          mkdir -p logs
-          python -m repoach.llm_proxy > logs/proxy_smoke.log 2>&1 &
-          proxy_pid=$!
-          for i in $(seq 1 15); do
-            if curl --silent --fail --max-time 2 http://127.0.0.1:8083/health > /dev/null; then
-              echo "proxy /health answered (attempt $i)"
-              kill "$proxy_pid" 2>/dev/null || true
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::llm_proxy never answered /health within 30s"
-          kill "$proxy_pid" 2>/dev/null || true
-          tail -100 logs/proxy_smoke.log || true
-          exit 1
+          trap 'bash scripts/job_proxy.sh stop' EXIT
+          bash scripts/job_proxy.sh start
 
   wheel-build:
     name: wheel-build

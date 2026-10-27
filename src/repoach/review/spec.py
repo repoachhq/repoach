@@ -171,6 +171,7 @@ def detect_spec_from_branch(
     branch: str,
     *,
     root: Path | None = None,
+    known_ids: tuple[str, ...] | None = None,
 ) -> str | None:
     """Return the canonical spec id encoded in *branch*, or ``None``.
 
@@ -192,6 +193,8 @@ def detect_spec_from_branch(
         branch: Git branch name.
         root: Repository root.  Defaults to ``Path.cwd()``; injected
             in tests to point at a temp dir.
+        known_ids: The spec ids to match against, instead of the ids
+            found under *root* — the ids of another tree (a PR head).
 
     Returns:
         The canonical ``SP-<ID>`` if the branch resolves, else
@@ -217,7 +220,8 @@ def detect_spec_from_branch(
     if len(parts) == 2:
         body = parts[1].lower()
         if body.startswith("sp-"):
-            for known in _scan_known_spec_ids(root):
+            candidates = known_ids if known_ids is not None else _scan_known_spec_ids(root)
+            for known in sorted(candidates, key=lambda s: (-len(s), s)):
                 expected = known.lower()
                 if body == expected or body.startswith(expected + "-"):
                     return known

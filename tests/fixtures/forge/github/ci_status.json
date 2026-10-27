@@ -6,17 +6,6 @@
   "calls": [
     {
       "args": [
-        "api",
-        "repos/{owner}/{repo}/branches/develop/protection"
-      ],
-      "program": "gh",
-      "returncode": 1,
-      "stderr": "gh: Branch not protected (HTTP 404)\n",
-      "stdin": null,
-      "stdout": "{\"message\": \"Branch not protected\", \"status\": \"404\"}"
-    },
-    {
-      "args": [
         "pr",
         "view",
         "200",
@@ -35,7 +24,7 @@
         "repos/{owner}/{repo}/commits/a39976339afa9f7ece3c4d6a4d51e697faab7e81/check-runs",
         "--paginate",
         "--jq",
-        ".check_runs[] | {name, status, conclusion, startedAt: .started_at}"
+        ".check_runs[] | {name, status, conclusion, startedAt: .started_at, completedAt: .completed_at, headSha: .head_sha}"
       ],
       "program": "gh",
       "returncode": 0,
@@ -46,14 +35,21 @@
   ],
   "case": "ci_status",
   "forge": "github",
-  "kwargs": {},
+  "kwargs": {
+    "required": [
+      "Test suite (Python 3.11)",
+      "Test suite (Python 3.13)"
+    ]
+  },
   "method": "ci_status",
   "raises": null,
   "result": {
     "checks": [
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "skipped",
+        "head_sha": "",
         "link": "",
         "name": "Auto-merge to develop",
         "started_at": "2026-08-01T01:22:47Z",
@@ -62,7 +58,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "failure",
+        "head_sha": "",
         "link": "",
         "name": "Coder auto-fix loop",
         "started_at": "2026-08-01T01:22:33Z",
@@ -71,7 +69,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "success",
+        "head_sha": "",
         "link": "",
         "name": "Architect / Sentinel / Tester / Scribe",
         "started_at": "2026-08-01T01:08:32Z",
@@ -80,7 +80,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "success",
+        "head_sha": "",
         "link": "",
         "name": "ShellCheck (warning-level)",
         "started_at": "2026-08-01T01:08:16Z",
@@ -89,7 +91,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "success",
+        "head_sha": "",
         "link": "",
         "name": "Test suite (Python 3.13)",
         "started_at": "2026-08-01T00:59:02Z",
@@ -98,7 +102,9 @@
       },
       {
         "bucket": "",
+        "completed_at": "",
         "conclusion": "success",
+        "head_sha": "",
         "link": "",
         "name": "Test suite (Python 3.11)",
         "started_at": "2026-08-01T00:59:02Z",
@@ -115,6 +121,6 @@
     ],
     "state": "success"
   },
-  "source": "recorded 2026-10-19 from m3",
+  "source": "recorded 2026-10-19 from m3; check-runs --jq argv amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): the recorded lines predate completedAt/headSha and carry neither; required names passed explicitly and the protection read dropped 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4 widened the default list to five names, this recording predates the wheel jobs)",
   "trimmed": null
 }

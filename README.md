@@ -7,7 +7,7 @@
 
 # Repoach
 
-[![CI](https://github.com/repoachhq/repoach/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/repoachhq/repoach/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Built by Repoach](https://img.shields.io/badge/built%20by-Repoach-orange)](https://github.com/repoachhq/repoach)
+[![CI](https://github.com/repoachhq/repoach/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/repoachhq/repoach/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Built by Repoach](https://img.shields.io/badge/built%20by-Repoach-orange)](https://github.com/repoachhq/repoach)
 
 </div>
 

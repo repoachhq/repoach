@@ -21,6 +21,7 @@ from sqlalchemy import create_engine, text
 
 from repoach.forge import Diff, PullRequest
 from repoach.forge.github import GhResult, GitHubForge
+from repoach.review.finding_verifiers import VerificationReport
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
 from repoach.review.persistence import init_schema, record_review
 from repoach.review.reviewer import (
@@ -805,7 +806,9 @@ def test_proposed_escalation_fired_only_when_posting(tmp_path, monkeypatch, post
             f"repoach.review.orchestrator.{role}",
             lambda **_kw: _StubReviewer(out),
         )
-    monkeypatch.setattr("repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: {})
+    monkeypatch.setattr(
+        "repoach.review.orchestrator.verify_findings_for_pr", lambda *a, **kw: VerificationReport()
+    )
     monkeypatch.setattr(
         "repoach.review.orchestrator.judge_findings_for_pr", lambda *a, **kw: JudgingReport()
     )
@@ -1510,7 +1513,7 @@ def test_orchestrator_logs_one_finding_deferred_event_per_deferral(monkeypatch, 
     ]
     assert team.refuter_summary == (
         "refuter: judged 0, refuted 0, deferred 1 (evidence outside the diff), "
-        "unverified 1 (not yet mechanically verified)"
+        "unverified 1 (not yet mechanically verified), evidence_tokens total 0"
     )
 
 

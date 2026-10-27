@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from repoach.review.diff_scoper import ScopedDiff
 from repoach.review.findings import (
     ClaimType,
@@ -539,3 +542,102 @@ def test_cap_fit_only_files_not_blocked_by_oversized_rule(tmp_path: Path) -> Non
     )
     assert facts.open_blocking_findings == 0
     assert compute_merge_decision(facts).merge is True
+
+
+def test_flat_spec_facts_are_derived_from_the_rows() -> None:
+    row = SpecCoverage(
+        spec_id="SP-A",
+        n_promised=2,
+        n_present=1,
+        missing=["tests/x.py::test_y"],
+        covered=False,
+        draft_refusals=["draft spec PR touches code outside docs (src/a.py): ..."],
+        contract="acceptance-criteria",
+        origins={"tests/x.py::test_y": "AC2"},
+        report=["plan-absent: graded against the acceptance criteria of SP-A (2 selectors)"],
+    )
+    facts = _facts(spec_covered=False, spec_rows=[row])
+
+    assert facts.spec_missing == ["tests/x.py::test_y"]
+    assert facts.spec_origins == {"tests/x.py::test_y": "AC2"}
+    assert facts.spec_contract == "acceptance-criteria"
+    assert facts.spec_report == row.report
+    assert compute_merge_decision(facts).reasons == [
+        "spec acceptance selectors not all present: tests/x.py::test_y (AC2)",
+        "draft spec PR touches code outside docs (src/a.py): ...",
+    ]
+
+
+def test_not_covered_facts_without_a_row_still_name_the_refusal() -> None:
+    assert compute_merge_decision(_facts(spec_covered=False)).reasons == [
+        "spec coverage not covered: no coverage row at head names a cause"
+    ]
+
+
+def test_decision_prefixes_only_specs_resolved_by_ownership() -> None:
+    def row(spec_id: str, resolution: str, *, covered: bool) -> SpecCoverage:
+        return SpecCoverage(
+            spec_id=spec_id,
+            n_promised=1,
+            n_present=int(covered),
+            missing=[] if covered else [f"tests/{spec_id}.py::test_it"],
+            covered=covered,
+            origins={} if covered else {f"tests/{spec_id}.py::test_it": "AC1"},
+            resolution=resolution,
+        )
+
+    facts = _facts(
+        spec_covered=False,
+        spec_rows=[
+            row("SP-A", "ownership", covered=False),
+            row("SP-B", "ownership", covered=True),
+            row("SP-C", "declared", covered=False),
+        ],
+    )
+
+    assert compute_merge_decision(facts).reasons == [
+        "SP-A: spec acceptance selectors not all present: tests/SP-A.py::test_it (AC1)",
+        "spec acceptance selectors not all present: tests/SP-C.py::test_it (AC1)",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("spec_missing", ["tests/x.py::test_y"]),
+        ("spec_planned", ["tests/x.py::test_y"]),
+        ("spec_draft_refusals", ["a refusal"]),
+        ("spec_contract", "plan"),
+        ("spec_origins", {"tests/x.py::test_y": "AC1"}),
+        ("spec_no_selectors_line", "no selectors to grade: SP-A"),
+        ("spec_report", ["plan-absent: ..."]),
+    ],
+)
+def test_merge_facts_refuse_a_derived_spec_fact_as_input(field: str, value: object) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _facts(spec_covered=False, **{field: value})
+
+
+def test_derived_spec_facts_over_several_rows() -> None:
+    nothing = SpecCoverage(
+        spec_id="SP-A",
+        n_promised=0,
+        n_present=0,
+        missing=[],
+        covered=True,
+        contract="none",
+        report=["no selectors to grade: SP-A (approved) has no docs/plans/SP-A.md ..."],
+    )
+    graded = SpecCoverage(
+        spec_id="SP-B",
+        n_promised=1,
+        n_present=1,
+        missing=[],
+        covered=True,
+        contract="plan",
+    )
+    facts = _facts(spec_rows=[nothing, graded])
+
+    assert facts.spec_contract == "plan"
+    assert facts.spec_no_selectors_line == nothing.report[0]
+    assert facts.spec_report == nothing.report

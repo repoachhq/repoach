@@ -496,6 +496,9 @@ class CheckRun(_Model):
             ``skipping``, ``cancel`` (``""`` when unknown).
         link: Web link to the check's log page.
         workflow: Workflow (GitHub) or stage (GitLab) name.
+        completed_at: ISO-8601 completion timestamp (``""`` while running
+            or when absent).
+        head_sha: The commit the check ran on (``""`` when not reported).
     """
 
     name: str
@@ -505,6 +508,8 @@ class CheckRun(_Model):
     bucket: str = ""
     link: str = ""
     workflow: str = ""
+    completed_at: str = ""
+    head_sha: str = ""
 
 
 class CheckStatus(_Model):
@@ -697,6 +702,10 @@ class Forge(Protocol):
         self, *, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PullRequest:
         """Open a new change request."""
+        ...
+
+    def dispatch_workflow(self, workflow: str, inputs: dict[str, str]) -> None:
+        """Start ``workflow`` by hand with ``inputs`` (a write, through the barrier)."""
         ...
 
     def is_trusted_author(self, comment: Comment) -> bool:

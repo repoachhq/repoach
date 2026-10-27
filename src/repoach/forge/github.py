@@ -31,6 +31,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..conventions.attribution import squash_body
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from .protocol import (
@@ -69,11 +70,18 @@ GhResult = CommandResult
 DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
     "Test suite (Python 3.11)",
     "Test suite (Python 3.13)",
+    "wheel-build",
+    "wheel-smoke (3.11)",
+    "wheel-smoke (3.13)",
 )
 """The configured fallback of required check names (SP-CI-CHECKNAME-SYNC).
 
-Mirrors the matrix in ``.github/workflows/ci.yml``; used whenever the
-branch protection cannot be read or names no required check.
+Every job of the ``CI`` workflow, matrix expanded
+(SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4): both test suites, the
+wheel build and both wheel smokes. Used whenever neither
+``[auto_merge].required_checks`` nor ``.github/workflows/ci.yml`` names
+them, and by :meth:`GitHubForge.ci_status` when the branch protection
+cannot be read or names no required check.
 """
 
 _FAIL_CONCLUSIONS: frozenset[str] = frozenset(
@@ -96,14 +104,16 @@ _GH_STATE_TO_PROTOCOL: dict[str, PullRequestState] = {
 }
 """``gh`` states; anything else maps to ``unknown`` (refuses writes)."""
 
-MERGEABILITY_FIELDS = "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup"
+MERGEABILITY_FIELDS = (
+    "state,isDraft,mergeable,mergeStateStatus,headRefOid,statusCheckRollup,commits"
+)
 """``gh pr view --json`` fields :meth:`GitHubForge.merge` reads before merging."""
 
 MERGE_STATE_STATUS: dict[str, MergeRefusal | None] = {
     "CLEAN": None,
     "HAS_HOOKS": None,
     "UNSTABLE": None,
-    "BLOCKED": "blocked",
+    "BLOCKED": None,
     "BEHIND": "behind",
     "DIRTY": "conflict",
     "DRAFT": "draft",
@@ -112,25 +122,33 @@ MERGE_STATE_STATUS: dict[str, MergeRefusal | None] = {
 """Every documented ``mergeStateStatus`` → the refusal it predicts (``None`` merges).
 
 https://docs.github.com/en/graphql/reference/enums#mergestatestatus —
-``UNSTABLE`` (non-passing non-required checks) still merges; ``UNKNOWN``
+``UNSTABLE`` (non-passing non-required checks) and ``BLOCKED`` still
+merge: whether checks are done is judged on the committed list of
+required checks before the merge
+(:func:`repoach.review.merge_wait.judge_required_checks`), never on this
+rollup state, which counts the merge job's own run
+(SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G1). A rule GitHub enforces
+anyway makes ``gh pr merge`` fail, a named ``refused``. ``UNKNOWN``
 twice in a row is refused (FAILED).
 """
 
-_WAITS_ON_CHECKS = frozenset({"BLOCKED", "BEHIND", "UNSTABLE"})
 
+def _squash_body_from_view(view: dict[str, object]) -> str:
+    """The squash body for a ``gh pr view --json commits`` view, attribution removed.
 
-def _rollup_pending(rollup: object) -> bool:
-    """True when a ``statusCheckRollup`` entry is still queued or running."""
-    if not isinstance(rollup, list):
-        return False
-    for entry in rollup:
-        if not isinstance(entry, dict):
-            continue
-        status = str(entry.get("status") or "").upper()
-        context_state = str(entry.get("state") or "").upper()
-        if status in _PENDING_STATUSES or context_state in _PENDING_STATUSES:
-            return True
-    return False
+    A view without a ``commits`` list yields ``""``: an empty body, never
+    GitHub's concatenation of unread commit messages.
+    """
+    commits = view.get("commits")
+    if not isinstance(commits, list):
+        return ""
+    return squash_body(
+        [
+            (str(entry.get("messageHeadline") or ""), str(entry.get("messageBody") or ""))
+            for entry in commits
+            if isinstance(entry, dict)
+        ]
+    )
 
 
 _MERGE_METHOD_FLAGS: dict[MergeMethod, str] = {
@@ -1401,7 +1419,8 @@ class GitHubForge:
                 "repos/{owner}/{repo}/commits/" + head_sha + "/check-runs",
                 "--paginate",
                 "--jq",
-                ".check_runs[] | {name, status, conclusion, startedAt: .started_at}",
+                ".check_runs[] | {name, status, conclusion, startedAt: .started_at, "
+                "completedAt: .completed_at, headSha: .head_sha}",
             ]
         )
         if not res.ok:
@@ -1467,6 +1486,9 @@ class GitHubForge:
                     status=str(entry.get("status") or ""),
                     conclusion=str(entry.get("conclusion") or ""),
                     started_at=str(entry.get("startedAt") or ""),
+                    completed_at=str(entry.get("completedAt") or ""),
+                    head_sha=str(entry.get("headSha") or ""),
+                    workflow=str(entry.get("workflowName") or ""),
                 )
                 for entry in rollup
             ],
@@ -1554,9 +1576,11 @@ class GitHubForge:
         """Name why GitHub would refuse to merge now, from ``gh pr view`` facts.
 
         Order: state, a head that moved off ``head_sha``, draft, conflict,
-        then ``mergeStateStatus`` through :data:`MERGE_STATE_STATUS` —
-        ``BLOCKED`` / ``BEHIND`` / ``UNSTABLE`` count as ``pending`` while
-        a check in ``statusCheckRollup`` is still running. ``None`` when
+        then ``mergeStateStatus`` through :data:`MERGE_STATE_STATUS`
+        (``BEHIND`` refuses; ``UNSTABLE`` and ``BLOCKED`` do not). The
+        ``statusCheckRollup`` is never read here: a running check, the
+        merge job's own included, cannot make the merge wait
+        (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G1). ``None`` when
         GitHub reports the PR mergeable.
         """
         state = _GH_STATE_TO_PROTOCOL.get(str(view.get("state") or "").upper(), "unknown")
@@ -1572,9 +1596,6 @@ class GitHubForge:
             return "conflict", f"mergeStateStatus={merge_state}"
         if merge_state not in MERGE_STATE_STATUS:
             return "unrecognized", f"mergeStateStatus={merge_state!r} is not a documented value"
-        rollup = view.get("statusCheckRollup")
-        if merge_state in _WAITS_ON_CHECKS and _rollup_pending(rollup):
-            return "pending", f"mergeStateStatus={merge_state} with checks still running"
         predicted = MERGE_STATE_STATUS[merge_state]
         if predicted is not None:
             return predicted, f"mergeStateStatus={merge_state}"
@@ -1594,21 +1615,30 @@ class GitHubForge:
         :meth:`_mergeability` is read first and :meth:`_merge_refusal`
         decides; only then ``gh pr merge --<method> [--match-head-commit
         <sha>] [--delete-branch]`` runs, so GitHub itself also refuses a
-        head that moved in between.
+        head that moved in between. A squash also passes ``--body-file -``
+        with :func:`_squash_body_from_view` on stdin: left to itself
+        GitHub concatenates every commit message, AI attribution trailers
+        included (SP-CONVENTIONS-GATE G9).
 
         Raises:
             ForgeMergeRefusedError: GitHub would refuse or refused; its
                 ``reason`` comes from the read facts, else ``refused``.
         """
-        refusal = self._merge_refusal(self._mergeability(number), head_sha)
+        view = self._mergeability(number)
+        refusal = self._merge_refusal(view, head_sha)
         if refusal is not None:
             raise ForgeMergeRefusedError(refusal[1], reason=refusal[0])
-        args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[MergeMethod(method)]]
+        resolved = MergeMethod(method)
+        args = ["pr", "merge", str(number), _MERGE_METHOD_FLAGS[resolved]]
         if head_sha:
             args += ["--match-head-commit", head_sha]
         if delete_branch:
             args.append("--delete-branch")
-        res = self._write(args)
+        body: str | None = None
+        if resolved is MergeMethod.SQUASH:
+            args += ["--body-file", "-"]
+            body = _squash_body_from_view(view)
+        res = self._write(args, input_data=body)
         if not res.ok:
             raise ForgeMergeRefusedError((res.stderr or res.stdout)[-500:])
         m = _MERGE_SHA_RE.search(res.stdout)
@@ -1702,6 +1732,20 @@ class GitHubForge:
             if isinstance(sha, str) and sha:
                 merge_shas.add(sha)
         return merge_shas
+
+    @unnumbered_write
+    def dispatch_workflow(self, workflow: str, inputs: dict[str, str]) -> None:
+        """Run ``gh workflow run <workflow> -f key=value…`` through the barrier.
+
+        Raises:
+            ForgeError: ``gh`` refused the dispatch.
+        """
+        args = ["workflow", "run", workflow]
+        for key, value in inputs.items():
+            args += ["-f", f"{key}={value}"]
+        res = self._write(args)
+        if not res.ok:
+            raise_for_gh(res)
 
     @unnumbered_write
     def create_pull_request(

@@ -48,7 +48,7 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -57,6 +57,7 @@ from pathlib import Path
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..core.paths import project_root
+from ..core.redaction import redact_error
 from ..forge import (
     ARCHIVE_MARKER,
     Forge,
@@ -69,13 +70,25 @@ from ..forge import (
     select_forge,
 )
 from ..forge.protocol import diff_files
-from ..gates.config import load_gates_config
+from ..gates.config import (
+    load_gates_config,
+    resolve_refuter_budget,
+)
 from ..project.config import load_project_config
-from ..project.spec_source import SpecResolution, declared_spec_missing, resolve_spec
+from ..project.spec_source import (
+    SpecResolution,
+    declared_spec_missing,
+    resolve_spec,
+)
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
-from .finding_verifiers import verify_findings_for_pr
+from .finding_verifiers import (
+    MechanicalVerification,
+    VerificationReport,
+    recorded_verifications,
+    verify_findings_for_pr,
+)
 from .findings import ReviewRun, fetch_completed_review_run, record_review_run
 from .findings_bridge import (
     RecordedFindings,
@@ -92,11 +105,13 @@ from .hallucination_guard import (
 from .head_reverify import (
     NO_HEAD_TREE,
     HeadReverification,
+    Reverification,
     reverify_older_findings,
     skipped_reverification,
 )
 from .merge_gate import (
     NO_REVERIFICATION,
+    MergeFacts,
     compute_merge_decision,
     summarise_ledger_facts,
     verdict_from_facts,
@@ -116,7 +131,7 @@ from .refuter import (
     configured_max_judged,
     judge_findings_for_pr,
 )
-from .report import render_ledger_report
+from .report import ReportFinding, render_ledger_report, report_findings
 from .review_cache import (
     cache_line,
     completed_run,
@@ -145,6 +160,20 @@ from .reviewer import (
     make_file_excerpts,
 )
 from .spec import SpecPlan, load_spec
+from .spec_gate import (
+    RESOLUTION_DECLARED,
+    RESOLUTION_NONE,
+    RESOLUTION_OWNERSHIP,
+    DraftScope,
+    draft_scope_at_head,
+    record_spec_coverages,
+)
+from .spec_grading import (
+    CoverageGrading,
+    coverage_rows_at_head,
+    failed_grading_row,
+    resolution_payload,
+)
 from .thread_context import ResolvedDisagreement
 
 _log = get_logger(__name__)
@@ -317,6 +346,14 @@ class TeamOutcome:
     holds one entry per finding the refuter saw, each with its state and
     reason; ``refuter_summary`` is the one line naming them
     (SP-REFUTER-JUDGES-WHAT-IT-CAN), None when the refuter never ran.
+    ``verifications`` holds one entry per finding a mechanical verifier
+    settled at the head (read back from the ledger on a replay) and
+    ``reverifications`` one per finding of an older head re-checked
+    there. ``findings`` merges the three into one list, each entry
+    naming its judge (``mechanical`` / ``refuter`` / ``reverify`` /
+    ``ledger``), plus every finding the ledger counts as open blocking
+    that no judge of this run named; ``verdict_basis`` is the ids the
+    verdict counts as open blocking, each one entry of ``findings``.
     ``tree`` is ``worktree`` or ``checkout`` when the review read a
     pinned head tree (SP-REVIEW-PINS-HEAD), and ``worktree`` its path
     when it was kept. ``reverified`` counts the findings of older heads
@@ -329,7 +366,17 @@ class TeamOutcome:
     stderr line saying it, empty when the write failed. ``cached`` is
     True when the run replayed a completed run at the same head instead
     of calling the reviewers (SP-FINDINGS-BRIDGE-DOCFIX 0.3) and
-    ``cache_line`` the stderr line naming that run. ``refused_writes`` lists every write the forge's
+    ``cache_line`` the stderr line naming that run; a replay recomputes
+    the spec coverage at its head with the current rule and
+    ``spec_coverage_line`` says so (empty on a fresh run).
+    ``spec_report`` holds the coverage lines reported on stderr
+    (``plan-absent: …``, ``spec resolved by ownership: …``,
+    ``ungoverned paths: …``) and ``spec_resolution`` how the graded specs
+    were found (``declared`` / ``ownership`` / ``none``,
+    SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7); a PR declaring no
+    spec is graded against the specs owning its code, ``spec_source``
+    ``ownership``.
+    ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
     why the barrier was closed, None when writes went through.
@@ -352,6 +399,10 @@ class TeamOutcome:
     spec_missing: bool = False
     refutations: list[Refutation] = field(default_factory=list)
     refuter_summary: str | None = None
+    verifications: list[MechanicalVerification] = field(default_factory=list)
+    reverifications: list[Reverification] = field(default_factory=list)
+    findings: list[ReportFinding] = field(default_factory=list)
+    verdict_basis: list[int] = field(default_factory=list)
     refused_writes: list[str] = field(default_factory=list)
     write_refusal: str | None = None
     tree: str | None = None
@@ -363,6 +414,9 @@ class TeamOutcome:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    spec_coverage_line: str = ""
+    spec_report: list[str] = field(default_factory=list)
+    spec_resolution: dict[str, object] = field(default_factory=dict)
 
 
 class ReviewTeamOrchestrator:
@@ -791,15 +845,16 @@ class ReviewTeamOrchestrator:
             diff=diff,
         )
 
+        verification = VerificationReport()
         try:
-            verify_counts = verify_findings_for_pr(
+            verification = verify_findings_for_pr(
                 self._db_path,
                 pr_number=pr_number,
                 repo_root=self._repo_root,
                 head_sha=head_sha,
                 config=load_gates_config(self._config_root),
             )
-            _log.info("review_team.findings_verified", pr_number=pr_number, **verify_counts)
+            _log.info("review_team.findings_verified", pr_number=pr_number, **verification.counts)
         except Exception as exc:
             _log.warning(
                 "review_team.findings_verify_failed",
@@ -812,6 +867,7 @@ class ReviewTeamOrchestrator:
         refutations: list[Refutation] = []
         refuter_summary: str | None = None
         refuter_calls = 0
+        budget = resolve_refuter_budget(self._config_root)
         try:
             with reviewer_scope("Refuter"):
                 judging = judge_findings_for_pr(
@@ -824,6 +880,9 @@ class ReviewTeamOrchestrator:
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
                     scope_head=head_sha,
+                    diff=diff,
+                    pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
+                    budget=budget,
                 )
             refutations = list(judging.outcomes)
             refuter_summary = judging.summary_line()
@@ -895,70 +954,31 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
-        if spec_id is not None and not spec_missing:
-            try:
-                from .spec_gate import (
-                    SpecCoverage,
-                    compute_spec_coverage,
-                    record_spec_coverage,
-                    resolve_contract_plan,
-                )
-
-                resolution = resolve_contract_plan(
-                    spec_id, repo_root=self._repo_root, base_ref=base_ref
-                )
-                if not resolution.base_available and base_ref:
-                    self._forge.git(
-                        [
-                            "fetch",
-                            "--quiet",
-                            "origin",
-                            f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
-                        ]
-                    )
-                    resolution = resolve_contract_plan(
-                        spec_id,
-                        repo_root=self._repo_root,
-                        base_ref=f"origin/{base_ref}",
-                    )
-
-                if resolution.plan is not None:
-                    coverage = compute_spec_coverage(
-                        self._repo_root, spec_id=spec_id, plan=resolution.plan
-                    )
-                else:
-                    coverage = SpecCoverage(
-                        spec_id=spec_id,
-                        n_promised=0,
-                        n_present=0,
-                        missing=["base-ref-unavailable"],
-                        covered=False,
-                    )
-                spec_covered = coverage.covered
-                record_spec_coverage(
-                    self._db_path, pr_number=pr_number, head_sha=head_sha, coverage=coverage
-                )
-                _log.info(
-                    "review_team.spec_coverage",
-                    pr_number=pr_number,
-                    covered=coverage.covered,
-                    n_promised=coverage.n_promised,
-                    n_present=coverage.n_present,
-                    base_available=resolution.base_available,
-                    fell_back_to_head=resolution.fell_back_to_head,
-                )
-            except Exception as exc:
-                _log.info(
-                    "review_team.spec_coverage_skipped",
-                    pr_number=pr_number,
-                    exc=type(exc).__name__,
-                    message=str(exc)[:200],
-                )
+        grading = None
+        if not spec_missing:
+            grading = self._record_spec_coverage(
+                pr_number,
+                spec_id=spec_id,
+                head_sha=head_sha,
+                base_ref=base_ref,
+                changed_files=diff_files(diff),
+            )
+            if grading is not None and grading.rows:
+                spec_covered = all(row.covered for row in grading.rows)
+                if spec_id is None:
+                    spec_source = grading.source
 
         ledger_facts = summarise_ledger_facts(
             self._db_path, pr_number=pr_number, head_sha=head_sha or ""
         )
         final = ReviewVerdict.ERROR if errored_roles else verdict_from_facts(ledger_facts)
+        verdict_findings = self._verdict_findings(
+            pr_number,
+            facts=ledger_facts,
+            verifications=verification.settled,
+            refutations=refutations,
+            reverifications=reverified.outcomes,
+        )
 
         team = TeamOutcome(
             pr_number=pr_number,
@@ -972,8 +992,14 @@ class ReviewTeamOrchestrator:
             spec_source=spec_source,
             spec_covered=spec_covered,
             spec_missing=spec_missing,
+            spec_report=_spec_report(grading),
+            spec_resolution=_spec_resolution(grading, spec_id),
             refutations=refutations,
             refuter_summary=refuter_summary,
+            verifications=list(verification.settled),
+            reverifications=list(reverified.outcomes),
+            findings=verdict_findings,
+            verdict_basis=list(ledger_facts.open_blocking_ids),
             reverified=reverified.counts(),
             reverify_reasons=reverified.reasons(),
             reverify_line=reverified.summary_line("review") if head_sha else "",
@@ -1094,7 +1120,9 @@ class ReviewTeamOrchestrator:
         """Return the outcome of ``run`` at its head without calling any reviewer.
 
         The stored reviewer outcomes, refutations and spec fields are
-        read back; the findings of the head are already in the ledger, and
+        read back, except the spec coverage: it is derived data, so it is
+        recomputed at the head with the current rule and its row rewritten
+        (:meth:`_replayed_spec_coverage`, no model call); the findings of the head are already in the ledger, and
         the ``findings:`` counts are recounted against it without a write
         (:func:`~repoach.review.findings_bridge.recount_findings_at_head`).
         The re-check of older heads still runs
@@ -1114,8 +1142,32 @@ class ReviewTeamOrchestrator:
             run_id=run.run_id,
         )
         reverified = self._reverify_older_heads(pr_number, head_sha=head_sha, refuter_calls=0)
-        facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
+        spec_id = _optional_str(spec.get("spec_id"))
+        spec_missing = bool(spec.get("spec_missing", False))
         spec_covered = spec.get("spec_covered")
+        spec_coverage_line = ""
+        spec_source = _optional_str(spec.get("spec_source"))
+        grading = None
+        if not spec_missing:
+            grading = self._replayed_spec_coverage(
+                pr_number,
+                spec_id=None if spec_source == RESOLUTION_OWNERSHIP else spec_id,
+                head_sha=head_sha,
+            )
+            if grading is not None and grading.rows:
+                spec_covered = all(row.covered for row in grading.rows)
+                spec_coverage_line = (
+                    f"review: spec coverage recomputed at {head_sha[:7]}: "
+                    f"planned {sum(len(row.planned) for row in grading.rows)}, "
+                    f"missing {sum(len(row.missing) for row in grading.rows)}"
+                )
+                if spec_id is None:
+                    spec_source = grading.source
+        facts = summarise_ledger_facts(self._db_path, pr_number=pr_number, head_sha=head_sha)
+        verifications = recorded_verifications(
+            self._db_path, pr_number=pr_number, head_sha=head_sha
+        ).settled
+        refutations = replayed_refutations(run)
         team = TeamOutcome(
             pr_number=pr_number,
             final_verdict=verdict_from_facts(facts),
@@ -1123,11 +1175,23 @@ class ReviewTeamOrchestrator:
             n_majors=sum(1 for o in outcomes for c in o.comments if c.severity == "major"),
             head_sha=head_sha,
             reviews=outcomes,
-            spec_id=_optional_str(spec.get("spec_id")),
-            spec_source=_optional_str(spec.get("spec_source")),
+            spec_id=spec_id,
+            spec_source=spec_source,
             spec_covered=None if spec_covered is None else bool(spec_covered),
-            spec_missing=bool(spec.get("spec_missing", False)),
-            refutations=replayed_refutations(run),
+            spec_missing=spec_missing,
+            spec_report=_spec_report(grading),
+            spec_resolution=_spec_resolution(grading, spec_id),
+            refutations=refutations,
+            verifications=list(verifications),
+            reverifications=list(reverified.outcomes),
+            findings=self._verdict_findings(
+                pr_number,
+                facts=facts,
+                verifications=verifications,
+                refutations=refutations,
+                reverifications=reverified.outcomes,
+            ),
+            verdict_basis=list(facts.open_blocking_ids),
             reverified=reverified.counts(),
             reverify_reasons=reverified.reasons(),
             reverify_line=reverified.summary_line("review"),
@@ -1135,6 +1199,7 @@ class ReviewTeamOrchestrator:
             findings_line=recounted.summary_line(),
             cached=True,
             cache_line=cache_line(run),
+            spec_coverage_line=spec_coverage_line,
         )
         if self._post:
             self._publish_replayed(pr_number, team)
@@ -1146,6 +1211,39 @@ class ReviewTeamOrchestrator:
             verdict=team.final_verdict.value,
         )
         return team
+
+    def _verdict_findings(
+        self,
+        pr_number: int,
+        *,
+        facts: MergeFacts,
+        verifications: Iterable[MechanicalVerification],
+        refutations: Iterable[Refutation],
+        reverifications: Iterable[Reverification],
+    ) -> list[ReportFinding]:
+        """List every finding that can move the verdict, each with its judge.
+
+        A ledger read failure is logged and yields an empty list; the
+        verdict itself is unaffected (it was already derived).
+        """
+        try:
+            return report_findings(
+                self._db_path,
+                pr_number=pr_number,
+                facts=facts,
+                verifications=verifications,
+                refutations=refutations,
+                reverifications=reverifications,
+            )
+        except Exception as exc:
+            _log.warning(
+                "review_team.report_findings_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="the report lists no finding",
+            )
+            return []
 
     def _publish_replayed(self, pr_number: int, team: TeamOutcome) -> None:
         """Post a replayed run's stored outcomes, as a fresh posting run posts its own."""
@@ -1182,6 +1280,134 @@ class ReviewTeamOrchestrator:
                 posted_comments=team.posted_comments,
             )
 
+    def _draft_scope(
+        self, spec_id: str, *, base_ref: str | None, changed_files: list[str]
+    ) -> tuple[DraftScope | None, str]:
+        """Return the draft scope of *spec_id* at head (:func:`~repoach.review.spec_gate.draft_scope_at_head`)."""
+        return draft_scope_at_head(
+            self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
+        )
+
+    def _fetch_base(self, base_ref: str) -> None:
+        """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""
+        self._forge.git(
+            [
+                "fetch",
+                "--quiet",
+                "origin",
+                f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
+            ]
+        )
+
+    def _record_spec_coverage(
+        self,
+        pr_number: int,
+        *,
+        spec_id: str | None,
+        head_sha: str | None,
+        base_ref: str | None,
+        changed_files: list[str],
+    ) -> CoverageGrading | None:
+        """Grade the PR's specs at head and record their rows (a refusing row on failure).
+
+        The declared spec is graded alone; with none declared, every spec
+        owning a changed path at the base is
+        (:func:`~repoach.review.spec_grading.coverage_rows_at_head`). No model
+        call: the report is a pure function of the specs, the head tree
+        and the diff's paths, so a replayed run recomputes it with the
+        current rule exactly as a fresh run computes it. A failure is
+        logged (redacted) and records the not-covered row of
+        :func:`~repoach.review.spec_grading.failed_grading_row`, so the gate
+        refuses (fail closed); ``None`` only when that row cannot be recorded.
+        """
+        try:
+            grading = coverage_rows_at_head(
+                self._repo_root,
+                spec_id=spec_id,
+                base_ref=base_ref,
+                changed_files=changed_files,
+                fetch_base=self._fetch_base,
+            )
+            record_spec_coverages(
+                self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=grading.rows
+            )
+        except Exception as exc:
+            _log.warning(
+                "review_team.spec_coverage_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+                consequence="a not-covered row is recorded (fail closed)",
+            )
+            return self._record_grading_failure(
+                pr_number, spec_id=spec_id, head_sha=head_sha, error=exc
+            )
+        for coverage in grading.rows:
+            _log.info(
+                "review_team.spec_coverage",
+                pr_number=pr_number,
+                spec_id=coverage.spec_id,
+                resolution=coverage.resolution,
+                contract=coverage.contract,
+                covered=coverage.covered,
+                n_promised=coverage.n_promised,
+                n_present=coverage.n_present,
+                n_planned=len(coverage.planned),
+                draft_refusals=coverage.draft_refusals,
+            )
+        return grading
+
+    def _record_grading_failure(
+        self, pr_number: int, *, spec_id: str | None, head_sha: str | None, error: Exception
+    ) -> CoverageGrading | None:
+        """Record the row of a failed grading (:func:`~repoach.review.spec_grading.failed_grading_row`).
+
+        ``None`` only when even that row cannot be recorded.
+        """
+        row = failed_grading_row(spec_id, error)
+        try:
+            record_spec_coverages(
+                self._db_path, pr_number=pr_number, head_sha=head_sha, coverages=[row]
+            )
+        except Exception as exc:
+            _log.error(
+                "review_team.spec_coverage_failure_unrecorded",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+            )
+            return None
+        return CoverageGrading(rows=[row])
+
+    def _replayed_spec_coverage(
+        self, pr_number: int, *, spec_id: str | None, head_sha: str
+    ) -> CoverageGrading | None:
+        """Recompute the coverage of a replayed run at its head with the current rule.
+
+        The PR's base ref and diff paths are read from the forge (no
+        model call). ``None`` when they cannot be read or the grading
+        fails; the stored row then stands, and the gate recomputes it
+        when its rule is retired (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
+        """
+        try:
+            base_ref = self._forge.pull_request(pr_number).base_ref or None
+            changed = diff_files(self._forge.diff(pr_number).text)
+        except ForgeError as exc:
+            _log.warning(
+                "review_team.replay_spec_coverage_unread",
+                pr_number=pr_number,
+                stderr=exc.message[:200],
+                consequence="the stored coverage row stands",
+            )
+            return None
+        return self._record_spec_coverage(
+            pr_number,
+            spec_id=spec_id,
+            head_sha=head_sha,
+            base_ref=base_ref,
+            changed_files=changed,
+        )
+
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int
     ) -> HeadReverification:
@@ -1208,6 +1434,7 @@ class ReviewTeamOrchestrator:
                 reads_ci=False,
             )
         cap = configured_max_judged(self._config_root)
+        budget = resolve_refuter_budget(self._config_root)
         try:
             with reviewer_scope("Refuter"):
                 return reverify_older_findings(
@@ -1219,6 +1446,7 @@ class ReviewTeamOrchestrator:
                     config=load_gates_config(self._config_root),
                     max_judged=max(cap - refuter_calls, 0),
                     cap=cap,
+                    budget=budget,
                 )
         except Exception as exc:
             _log.warning(
@@ -1922,6 +2150,7 @@ class ReviewTeamOrchestrator:
             decision=decision,
             facts=facts,
             archive_appendix=archive_appendix,
+            judged=team.findings,
         )
 
 
@@ -1973,6 +2202,20 @@ def _drop_retracted_comments(outcome: ReviewerOutcome) -> ReviewerOutcome:
     )
 
 
+def _spec_report(grading: CoverageGrading | None) -> list[str]:
+    """Return the coverage lines a review reports on stderr (resolution first)."""
+    if grading is None:
+        return []
+    return [*grading.lines, *(line for row in grading.rows for line in row.report)]
+
+
+def _spec_resolution(grading: CoverageGrading | None, spec_id: str | None) -> dict[str, object]:
+    """Return the ``spec_resolution`` object of the review JSON (G7)."""
+    if grading is None:
+        return resolution_payload(RESOLUTION_DECLARED if spec_id else RESOLUTION_NONE)
+    return grading.resolution_payload()
+
+
 def _optional_str(value: object) -> str | None:
     """Return ``value`` as a string, None when it is None."""
     return None if value is None else str(value)
@@ -1997,6 +2240,8 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "reverify_reasons": list(team.reverify_reasons),
         "findings_recorded": dict(team.findings_recorded),
         "cached": team.cached,
+        "findings": [entry.as_json() for entry in team.findings],
+        "verdict_basis": list(team.verdict_basis),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [

@@ -175,6 +175,9 @@ git config core.hooksPath .githooks
 
 - **`.githooks/pre-commit`** — ruff check + format, no-inline-comments
   lint, shellcheck on staged files.
+- **`.githooks/commit-msg`** — strips AI attribution trailers and
+  footers from the message, then refuses a non-Conventional header or
+  one over 72 characters (SP-CONVENTIONS-GATE G9).
 - **`.githooks/pre-push`** — refuses any direct push to `develop` or
   `main` (PR-only on protected branches), then runs
   `scripts/ci_local.sh --fast`. Override only for hook-internal

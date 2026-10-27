@@ -1,0 +1,506 @@
+"""SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7 — an undeclared PR is graded by ownership.
+
+A PR that declares no spec (no ``--spec``, no ``Spec:`` line, a branch
+that names none) used to be ``not_applicable`` on coverage, so not
+declaring a spec escaped it. It is now graded against every governed
+spec owning a path of its diff, ownership read at the base; changed
+code no spec owns is reported, never refused.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from typer.testing import CliRunner
+
+import repoach.core.config as core_config
+from repoach.cli.review_cmds import review_app
+from repoach.forge import Diff, ForgeWriteBarrier, PullRequest
+from repoach.project.spec_source import resolve_spec
+from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, decide_at_head
+from repoach.review.findings import init_findings_schema, record_review_integrity
+from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
+from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
+from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
+from repoach.review.spec_gate import (
+    SPEC_COVERAGE_RULE_VERSION,
+    SpecCoverage,
+    fetch_spec_coverage,
+    record_spec_coverages,
+)
+from repoach.review.spec_grading import (
+    OWNERSHIP_UNRESOLVED,
+    coverage_rows_at_head,
+    readable_base,
+    refresh_stale_coverage,
+    specs_owning,
+)
+
+_SPEC_PATH = "docs/specs/2026-10-26_SP-A_owner.md"
+_OWNED = "src/a.py"
+_UNOWNED = "src/z.py"
+_SELECTOR = "tests/a.py::test_a"
+_BRANCH = "fix/tidy-things"
+_BODY = "Tidies a few things.\n"
+
+
+@pytest.fixture(autouse=True)
+def _clean_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("REPOACH_DB_PATH", "REPOACH_FORGE", "REPOACH_PROVIDER"):
+        monkeypatch.delenv(name, raising=False)
+    core_config._settings = None
+
+
+def _spec(owns: str) -> str:
+    return (
+        "---\n"
+        "id: SP-A\n"
+        "title: Owner\n"
+        "version: 0.1\n"
+        "status: approved\n"
+        "owns:\n"
+        f"  code: [{owns}]\n"
+        "  resources: []\n"
+        "depends_on: []\n"
+        "---\n\n"
+        "# Owner\n\n"
+        "## Acceptance Criteria\n\n"
+        f"- [ ] AC1: `pytest -q {_SELECTOR}` -> green.\n\n"
+        "## Open Questions\n\nNone.\n"
+    )
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
+    return proc.stdout.strip()
+
+
+def _repo(tmp_path: Path, head: dict[str, str]) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "docs/specs").mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test Runner")
+    (repo / _SPEC_PATH).write_text(_spec(_OWNED), encoding="utf-8")
+    (repo / _OWNED).write_text("A = 1\n", encoding="utf-8")
+    (repo / _UNOWNED).write_text("Z = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", _BRANCH)
+    for path, content in head.items():
+        (repo / path).write_text(content, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "head")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def _review(repo: Path, head: str, changed: list[str], body: str = _BODY) -> TeamOutcome:
+    forge = MagicMock()
+    forge.diff.return_value = Diff(
+        text="".join(f"diff --git a/{p} b/{p}\n" for p in changed), files=changed
+    )
+    forge.pull_request.return_value = PullRequest(
+        number=9, head_ref=_BRANCH, base_ref="develop", body=body
+    )
+    forge.head_sha.return_value = head
+    forge.comments.return_value = []
+    forge.barrier = ForgeWriteBarrier()
+    orch = ReviewTeamOrchestrator(
+        forge=forge,
+        db_path=repo.parent / "review.db",
+        post_to_github=False,
+        repo_root=repo,
+        head_sha=head,
+    )
+    with (
+        patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
+        patch(
+            "repoach.review.reviewer.Architect.review_diff",
+            return_value=_approve(BotRole.ARCHITECT),
+        ),
+        patch(
+            "repoach.review.reviewer.Sentinel.review_diff",
+            return_value=_approve(BotRole.SENTINEL),
+        ),
+        patch("repoach.review.reviewer.Tester.review_diff", return_value=_approve(BotRole.TESTER)),
+        patch("repoach.review.reviewer.Scribe.review_diff", return_value=_approve(BotRole.SCRIBE)),
+    ):
+        return orch.review_pr(9)
+
+
+def _approve(role: BotRole) -> ReviewerOutcome:
+    return ReviewerOutcome(
+        role=role,
+        verdict=ReviewVerdict.APPROVE,
+        summary="ok",
+        comments=[],
+        model_used="stub",
+        elapsed_s=0.0,
+        tokens_used=0,
+        raw_response="{}",
+    )
+
+
+def _decide(repo: Path, head: str) -> tuple[object, object]:
+    _, facts, decision = decide_at_head(
+        9,
+        forge=MagicMock(),
+        db=repo.parent / "review.db",
+        ci_green=True,
+        repo_root=repo,
+        head_sha=head,
+        max_judged=0,
+        head_tree=False,
+        base_ref="develop",
+    )
+    return facts, decision
+
+
+def test_undeclared_pr_touching_owned_code_is_refused_naming_the_selector(
+    tmp_path: Path,
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n", _UNOWNED: "Z = 2\n"})
+    declared = resolve_spec(flag=None, description=_BODY, branch=_BRANCH, root=repo)
+    assert declared.spec_id is None
+
+    team = _review(repo, head, [_OWNED, _UNOWNED])
+    _, decision = _decide(repo, head)
+
+    assert team.spec_source == "ownership"
+    assert team.spec_covered is False
+    assert "spec resolved by ownership: SP-A (1 paths)" in team.spec_report
+    assert f"ungoverned paths: {_UNOWNED}" in team.spec_report
+    assert team.spec_resolution == {
+        "source": "ownership",
+        "specs": ["SP-A"],
+        "ungoverned": [_UNOWNED],
+    }
+    assert decision.merge is False
+    assert f"SP-A: spec acceptance selectors not all present: {_SELECTOR} (AC1)" in (
+        decision.reasons
+    )
+
+
+def test_undeclared_pr_touching_only_unowned_code_merges_with_the_ungoverned_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, head = _repo(tmp_path, {_UNOWNED: "Z = 2\n"})
+
+    team = _review(repo, head, [_UNOWNED])
+    facts, decision = _decide(repo, head)
+    assert team.spec_covered is None
+    assert team.spec_resolution["source"] == "none"
+    assert f"ungoverned paths: {_UNOWNED}" in team.spec_report
+    assert decision.merge is True, decision.reasons
+
+    monkeypatch.chdir(repo)
+    evaluation = GateEvaluation(
+        head_sha=head,
+        ci_gate=CIGateOutcome(green=True, outcome_tag="", reason=""),
+        facts=facts,
+        decision=decision,
+        pull_request=PullRequest(number=9, head_ref=_BRANCH, base_ref="develop", body=_BODY),
+        changed_files=[_UNOWNED],
+    )
+    with patch("repoach.cli.review_cmds.evaluate_merge_gate", return_value=evaluation):
+        result = CliRunner().invoke(review_app, ["gate", "9"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["merge"] is True
+    assert payload["spec_resolution"] == {
+        "source": "none",
+        "specs": [],
+        "ungoverned": [_UNOWNED],
+    }
+    assert f"ungoverned paths: {_UNOWNED}" in result.stderr.splitlines()
+
+
+def test_ownership_is_read_at_base(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path, {_OWNED: "A = 2\n", _SPEC_PATH: _spec("src/elsewhere.py")})
+
+    grading = coverage_rows_at_head(
+        repo, spec_id=None, base_ref="develop", changed_files=[_OWNED, _SPEC_PATH]
+    )
+
+    assert grading.source == "ownership"
+    assert [row.spec_id for row in grading.rows] == ["SP-A"]
+    assert grading.rows[0].resolution == "ownership"
+    assert grading.rows[0].covered is False
+    assert grading.ownership is not None
+    assert grading.ownership.specs == {"SP-A": [_OWNED]}
+
+
+def test_undeclared_pr_with_an_unreadable_base_is_refused(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path, {_UNOWNED: "Z = 2\n"})
+
+    grading = coverage_rows_at_head(
+        repo, spec_id=None, base_ref="no-such-branch", changed_files=[_UNOWNED]
+    )
+    db = repo.parent / "unreadable.db"
+    init_findings_schema(db)
+    record_review_integrity(db, pr_number=9, head_sha=head, n_reviewers=4, n_unparsed=0)
+    record_spec_coverages(db, pr_number=9, head_sha=head, coverages=grading.rows)
+    decision = compute_merge_decision(summarise_ledger_facts(db, pr_number=9, head_sha=head))
+
+    assert grading.source == "ownership"
+    assert decision.merge is False
+    assert decision.reasons == [
+        "spec resolution by ownership not graded: base ref no-such-branch unavailable (fail closed)"
+    ]
+
+
+def test_a_grading_failure_records_a_refusing_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(
+            "git show failed: fatal: https://x-access-token:ghs_abcdefghijklmnopqrstuvwxyz@github.com"
+        )
+
+    monkeypatch.setattr("repoach.review.orchestrator.coverage_rows_at_head", broken)
+    team = _review(repo, head, [_OWNED])
+    _, decision = _decide(repo, head)
+
+    assert team.spec_covered is False
+    assert decision.merge is False
+    assert decision.reasons == [
+        "spec coverage not graded: RuntimeError: git show failed: fatal: "
+        "https://***@github.com (fail closed)"
+    ]
+    assert "ghs_" not in decision.reasons[0]
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def warning(self, event: str, **fields: object) -> None:
+        self.calls.append((event, fields))
+
+
+def test_gate_logs_an_unreadable_diff_without_its_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from repoach.cli import review_cmds
+
+    token = "ghs_" + "b2" * 12
+
+    def unreadable() -> list[str]:
+        raise RuntimeError(f"fatal: https://x-access-token:{token}@github.com/o/r")
+
+    recorder = _Recorder()
+    monkeypatch.setattr(review_cmds, "_log", recorder)
+    evaluation = GateEvaluation(
+        head_sha="abc",
+        ci_gate=CIGateOutcome(green=True, outcome_tag="", reason=""),
+        facts=MagicMock(),
+        decision=MagicMock(),
+        read_changed_files=unreadable,
+    )
+
+    assert review_cmds._gate_changed_files(evaluation) is None
+    ((event, fields),) = recorder.calls
+    assert event == "gate.diff_unread"
+    assert token not in str(fields["error"])
+    assert "https://***@github.com/o/r" in str(fields["error"])
+
+
+def _owner_spec(spec_id: str, owns: str) -> str:
+    return (
+        "---\n"
+        f"id: {spec_id}\n"
+        f"title: {spec_id}\n"
+        "version: 0.1\n"
+        "status: approved\n"
+        "owns:\n"
+        f"  code: [{owns}]\n"
+        "  resources: []\n"
+        "depends_on: []\n"
+        "---\n\n"
+        f"# {spec_id}\n"
+    )
+
+
+def test_specs_owning_picks_the_longest_prefix_and_reports_ungoverned(tmp_path: Path) -> None:
+    repo = tmp_path / "owners"
+    (repo / "docs/specs").mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "develop")
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test Runner")
+    specs = {
+        "2026-10-27_SP-OUTER_outer.md": _owner_spec("SP-OUTER", "src/pkg/"),
+        "2026-10-27_SP-INNER_inner.md": _owner_spec("SP-INNER", "src/pkg/core"),
+        "2026-10-27_SP-DOCS_docs.md": _owner_spec("SP-DOCS", "docs/prompts"),
+        "2026-10-27_SP-FRONTIER_frontier.md": "# Frontier\n\nNo frontmatter.\n",
+    }
+    for name, text in specs.items():
+        (repo / "docs/specs" / name).write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+
+    ownership = specs_owning(
+        [
+            "src/pkg/core/a.py",
+            "src/pkg/core",
+            "src/pkg/other.py",
+            "src/pkgx/b.py",
+            "docs/prompts/p.md",
+            "docs/notes.md",
+        ],
+        root=repo,
+        ref="develop",
+    )
+
+    assert ownership.specs == {
+        "SP-DOCS": ["docs/prompts/p.md"],
+        "SP-INNER": ["src/pkg/core/a.py", "src/pkg/core"],
+        "SP-OUTER": ["src/pkg/other.py"],
+    }
+    assert ownership.ungoverned == ["src/pkgx/b.py"]
+
+
+def test_a_grading_failure_of_a_declared_spec_records_its_refusing_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("spec frontmatter malformed")
+
+    monkeypatch.setattr("repoach.review.orchestrator.coverage_rows_at_head", broken)
+    team = _review(repo, head, [_OWNED], body="Spec: SP-A\n")
+    facts, decision = _decide(repo, head)
+
+    (row,) = facts.spec_rows
+    assert (team.spec_id, team.spec_covered) == ("SP-A", False)
+    assert (row.spec_id, row.resolution, row.contract) == ("SP-A", "declared", "unavailable")
+    assert decision.reasons == [
+        "spec coverage not graded: RuntimeError: spec frontmatter malformed (fail closed)"
+    ]
+
+
+def test_replayed_run_regrades_by_ownership(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n", _UNOWNED: "Z = 2\n"})
+    first = _review(repo, head, [_OWNED, _UNOWNED])
+    assert first.cached is False
+
+    replay = _review(repo, head, [_OWNED, _UNOWNED])
+
+    db = repo.parent / "review.db"
+    rows = fetch_spec_coverage(db, 9, head_sha=head)
+    assert replay.cached is True
+    assert replay.spec_source == "ownership"
+    assert replay.spec_covered is False
+    assert replay.spec_resolution == {
+        "source": "ownership",
+        "specs": ["SP-A"],
+        "ungoverned": [_UNOWNED],
+    }
+    assert replay.spec_coverage_line.startswith(f"review: spec coverage recomputed at {head[:7]}")
+    assert [(row.spec_id, row.resolution) for row in rows] == [("SP-A", "ownership")] * 2
+    assert rows[0].batch != rows[1].batch
+
+
+@pytest.mark.parametrize("stale_resolution", ["ownership", OWNERSHIP_UNRESOLVED])
+def test_a_stale_ownership_batch_is_regraded_by_ownership(
+    tmp_path: Path, stale_resolution: str
+) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n"})
+    db = repo.parent / "stale.db"
+    stale = SpecCoverage(
+        spec_id="SP-A" if stale_resolution == "ownership" else OWNERSHIP_UNRESOLVED,
+        n_promised=0,
+        n_present=0,
+        missing=["plan-absent"],
+        covered=False,
+        rule_version=1,
+        resolution=stale_resolution,
+    )
+    record_spec_coverages(db, pr_number=9, head_sha=head, coverages=[stale])
+
+    refreshed = refresh_stale_coverage(
+        db,
+        pr_number=9,
+        head_sha=head,
+        repo_root=repo,
+        base_ref="develop",
+        changed_files=lambda: [_OWNED],
+    )
+
+    assert refreshed is not None
+    assert [(row.spec_id, row.resolution, row.rule_version) for row in refreshed] == [
+        ("SP-A", "ownership", SPEC_COVERAGE_RULE_VERSION)
+    ]
+    assert refreshed[0].missing == [_SELECTOR]
+
+
+def test_gate_resolution_covers_each_branch(tmp_path: Path) -> None:
+    from repoach.cli.review_cmds import _gate_spec_resolution
+    from repoach.project.spec_source import SpecResolution
+
+    repo, _ = _repo(tmp_path, {_OWNED: "A = 2\n"})
+    undeclared = SpecResolution()
+
+    assert _gate_spec_resolution(
+        SpecResolution("SP-A", "description"), changed_files=None, base_ref="develop", root=repo
+    ) == ({"source": "declared", "specs": ["SP-A"], "ungoverned": []}, [])
+    assert _gate_spec_resolution(undeclared, changed_files=None, base_ref="develop", root=repo) == (
+        {"source": "none", "specs": [], "ungoverned": []},
+        ["spec resolution by ownership skipped: the diff could not be read"],
+    )
+    assert _gate_spec_resolution(
+        undeclared, changed_files=[_OWNED], base_ref="no-such-branch", root=repo
+    ) == (
+        {"source": "ownership", "specs": [], "ungoverned": []},
+        [
+            "spec resolution by ownership not graded: base ref no-such-branch unavailable "
+            "(fail closed)"
+        ],
+    )
+
+    _git(repo, "update-ref", "refs/remotes/origin/main", "develop")
+    payload, lines = _gate_spec_resolution(
+        undeclared, changed_files=[_OWNED, _UNOWNED], base_ref="main", root=repo
+    )
+    assert payload == {"source": "ownership", "specs": ["SP-A"], "ungoverned": [_UNOWNED]}
+    assert lines == [
+        "spec resolved by ownership: SP-A (1 paths)",
+        f"ungoverned paths: {_UNOWNED}",
+    ]
+
+
+def test_readable_base_falls_back_to_origin_after_one_fetch(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path, {_OWNED: "A = 2\n"})
+    fetched: list[str] = []
+
+    def fetch(ref: str) -> None:
+        fetched.append(ref)
+        _git(repo, "update-ref", f"refs/remotes/origin/{ref}", "develop")
+
+    assert readable_base(repo, "develop", fetch) == "develop"
+    assert fetched == []
+    assert readable_base(repo, "main", fetch) == "origin/main"
+    assert fetched == ["main"]
+    assert readable_base(repo, None, fetch) is None
+
+
+def test_resolution_constants_are_the_documented_sources() -> None:
+    from repoach.review.spec_gate import (
+        RESOLUTION_DECLARED,
+        RESOLUTION_NONE,
+        RESOLUTION_OWNERSHIP,
+    )
+
+    assert (RESOLUTION_DECLARED, RESOLUTION_OWNERSHIP, RESOLUTION_NONE) == (
+        "declared",
+        "ownership",
+        "none",
+    )
+    assert OWNERSHIP_UNRESOLVED == "ownership-unresolved"
