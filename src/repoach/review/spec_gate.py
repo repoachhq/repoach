@@ -1026,25 +1026,6 @@ def not_action_plan_line(relpath: str) -> str:
     return f"plan file present but not an action plan: {relpath}"
 
 
-def _non_action_plan(spec_id: str, ref: str, repo_root: Path) -> str | None:
-    """Return the plan path of *spec_id* when the file at *ref* or at head lacks the marker."""
-    relpath = plan_relpath(spec_id, root=repo_root)
-    if ref:
-        shown = subprocess.run(
-            ["git", "show", f"{ref}:{relpath}"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if shown.returncode == 0:
-            return relpath if PLAN_MARKER not in shown.stdout else None
-    head = repo_root / relpath
-    if head.is_file() and PLAN_MARKER not in head.read_text(encoding="utf-8"):
-        return relpath
-    return None
-
-
 @dataclass(frozen=True)
 class ContractResolution:
     """Outcome of resolving the BASE-ref acceptance-contract plan.
@@ -1066,6 +1047,9 @@ class ContractResolution:
         ref: The ref the base contract was read from (or tried).
         error: Why the base plan, present at *ref*, does not parse; the
             caller refuses on it (G4, fail closed). Empty otherwise.
+        prose_plan: The plan path when the file at *ref*, or at head for
+            a plan new on the PR, carries no action-plan marker: no plan,
+            named in the report (0.4). Empty otherwise.
     """
 
     plan: ActionPlan | None
@@ -1073,6 +1057,16 @@ class ContractResolution:
     fell_back_to_head: bool
     ref: str = ""
     error: str = ""
+    prose_plan: str = ""
+
+
+def _prose_plan_at_head(spec_id: str, repo_root: Path) -> str:
+    """Return the plan path when the head file exists without the marker, else ``""``."""
+    relpath = plan_relpath(spec_id, root=repo_root)
+    head = repo_root / relpath
+    if head.is_file() and PLAN_MARKER not in head.read_text(encoding="utf-8"):
+        return relpath
+    return ""
 
 
 def resolve_contract_plan(
@@ -1127,6 +1121,7 @@ def resolve_contract_plan(
             base_ref=base_ref,
             error=str(exc)[:200],
         )
+        prose = exc.relpath if isinstance(exc, NotAnActionPlanError) else ""
         try:
             head_plan = load_plan(spec_id, root=repo_root)
         except (FileNotFoundError, ValueError) as head_exc:
@@ -1136,7 +1131,11 @@ def resolve_contract_plan(
                 error=str(head_exc)[:200],
             )
             return ContractResolution(
-                plan=None, base_available=True, fell_back_to_head=True, ref=base_ref
+                plan=None,
+                base_available=True,
+                fell_back_to_head=True,
+                ref=base_ref,
+                prose_plan=prose or _prose_plan_at_head(spec_id, repo_root),
             )
         return ContractResolution(
             plan=head_plan, base_available=True, fell_back_to_head=True, ref=base_ref
@@ -1468,8 +1467,7 @@ def _grade(
         return _not_graded(
             spec_id, "none", f"spec coverage not graded: {spec_id} has no frontmatter"
         )
-    prose_plan = _non_action_plan(spec_id, resolution.ref, repo_root)
-    plan_lines = [not_action_plan_line(prose_plan)] if prose_plan else []
+    plan_lines = [not_action_plan_line(resolution.prose_plan)] if resolution.prose_plan else []
     contract: dict[str, str] = {}
     for entry in (
         *_criteria_at_ref(spec_id, resolution.ref, repo_root),
