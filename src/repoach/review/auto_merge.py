@@ -751,11 +751,11 @@ def decide_at_head(
             PR's head tree, and a pull request never sizes its own
             refuter. Unused otherwise.
 
-    Raises:
-        ValueError: ``head_tree`` is True and ``budget`` is None.
-
     Returns:
         ``(head_sha, facts, decision)``.
+
+    Raises:
+        ValueError: ``head_tree`` is True and ``budget`` is None.
     """
     resolved_head = head_sha if head_sha is not None else _head_sha_or_empty(forge, pr_number)
     root = repo_root or Path.cwd()
