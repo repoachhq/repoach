@@ -176,6 +176,44 @@ def ownership_at_base(
     return specs_owning(paths, root=root, ref=ref), ref
 
 
+def resolution_report(
+    spec_id: str | None,
+    *,
+    changed_files: list[str] | None,
+    root: Path,
+    base_ref: str | None,
+) -> tuple[dict[str, object], list[str]]:
+    """Return a PR's ``spec_resolution`` object and its report lines (G7).
+
+    The resolution ``review gate`` prints, decided here rather than in the
+    CLI: a declared spec is graded alone; with none declared, the specs
+    owning the diff's paths come from :func:`ownership_at_base` (without
+    a fetch), a diff that cannot be read leaves the resolution ``none``
+    and a base that cannot be read names the fail-closed refusal.
+
+    Args:
+        spec_id: The declared spec, or ``None``.
+        changed_files: The paths of the PR diff; ``None`` when unread.
+        root: Repository root the base is read in.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+
+    Returns:
+        ``(spec_resolution, lines)``.
+    """
+    if spec_id is not None:
+        return resolution_payload(RESOLUTION_DECLARED, [spec_id]), []
+    if changed_files is None:
+        return resolution_payload("none"), [
+            "spec resolution by ownership skipped: the diff could not be read"
+        ]
+    ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref)
+    if ownership is None:
+        return resolution_payload(RESOLUTION_OWNERSHIP), [
+            ownership_unavailable_reason(base_ref or "(unknown)")
+        ]
+    return ownership.payload(), ownership.lines()
+
+
 @dataclass(frozen=True)
 class CoverageGrading:
     """The coverage rows of one PR head and how its specs were resolved.

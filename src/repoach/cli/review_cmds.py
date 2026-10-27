@@ -82,10 +82,8 @@ from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
-    ownership_at_base,
-    ownership_unavailable_reason,
     redact_error,
-    resolution_payload,
+    resolution_report,
 )
 from .doctor_cmds import project_root_or_exit
 
@@ -865,25 +863,12 @@ def _gate_spec_resolution(
 ) -> tuple[dict[str, object], list[str]]:
     """Return the gate's ``spec_resolution`` object and its stderr lines (G7).
 
-    A declared spec is graded alone. With none declared, the specs owning
-    the diff's paths are resolved as the review resolves them
-    (:func:`~repoach.review.spec_grading.ownership_at_base`, on the
-    checkout, without a fetch); a diff that cannot be read leaves the
-    resolution ``none`` and a base that cannot be read refuses, each with
-    a line naming why.
+    :func:`~repoach.review.spec_grading.resolution_report` decides it; the
+    CLI only passes the declared spec and the checkout.
     """
-    if declared.spec_id is not None:
-        return resolution_payload("declared", [declared.spec_id]), []
-    if changed_files is None:
-        return resolution_payload("none"), [
-            "spec resolution by ownership skipped: the diff could not be read"
-        ]
-    ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref or None)
-    if ownership is None:
-        return resolution_payload("ownership"), [
-            ownership_unavailable_reason(base_ref or "(unknown)")
-        ]
-    return ownership.payload(), ownership.lines()
+    return resolution_report(
+        declared.spec_id, changed_files=changed_files, root=root, base_ref=base_ref or None
+    )
 
 
 def _gate_changed_files(evaluation: GateEvaluation) -> list[str] | None:
