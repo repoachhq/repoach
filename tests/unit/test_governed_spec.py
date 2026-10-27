@@ -112,8 +112,9 @@ def _committed_corpus(tmp_path: Path, specs: dict[str, str]) -> Path:
     return tmp_path
 
 
-def test_specs_at_ref_skip_frontier_and_malformed_and_miss_unknown(tmp_path: Path) -> None:
-    root = _committed_corpus(
+@pytest.fixture
+def corpus_at_ref(tmp_path: Path) -> Path:
+    return _committed_corpus(
         tmp_path,
         {
             "2026-10-27_SP-GOOD_good.md": _governed("SP-GOOD"),
@@ -122,12 +123,26 @@ def test_specs_at_ref_skip_frontier_and_malformed_and_miss_unknown(tmp_path: Pat
         },
     )
 
-    assert [spec.id for spec in governed_specs_at_ref("develop", root=root)] == ["SP-GOOD"]
-    assert spec_markdown_at_ref("SP-GOOD", "develop", root=root) == _governed("SP-GOOD")
-    assert spec_markdown_at_ref("SP-NONE", "develop", root=root) is None
-    assert ref_resolves(root, "develop") is True
-    assert ref_resolves(root, "no-such-branch") is False
+
+def test_governed_specs_at_ref_skip_frontier_and_malformed(corpus_at_ref: Path) -> None:
+    specs = governed_specs_at_ref("develop", root=corpus_at_ref)
+    assert [spec.id for spec in specs] == ["SP-GOOD"]
+
+
+def test_spec_markdown_at_ref_reads_a_spec_and_misses_an_unknown_id(
+    corpus_at_ref: Path,
+) -> None:
+    assert spec_markdown_at_ref("SP-GOOD", "develop", root=corpus_at_ref) == _governed("SP-GOOD")
+    assert spec_markdown_at_ref("SP-NONE", "develop", root=corpus_at_ref) is None
+
+
+def test_ref_resolves_only_a_commit(corpus_at_ref: Path) -> None:
+    assert ref_resolves(corpus_at_ref, "develop") is True
+    assert ref_resolves(corpus_at_ref, "no-such-branch") is False
+
+
+def test_readers_at_an_unresolvable_ref_raise(corpus_at_ref: Path) -> None:
     with pytest.raises(SpecRefUnavailableError):
-        governed_specs_at_ref("no-such-branch", root=root)
+        governed_specs_at_ref("no-such-branch", root=corpus_at_ref)
     with pytest.raises(SpecRefUnavailableError):
-        spec_markdown_at_ref("SP-GOOD", "no-such-branch", root=root)
+        spec_markdown_at_ref("SP-GOOD", "no-such-branch", root=corpus_at_ref)

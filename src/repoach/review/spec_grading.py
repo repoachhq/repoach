@@ -11,7 +11,6 @@ refusal publishes.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +20,8 @@ from ..core.logging import get_logger
 from .governed_spec import governed_specs_at_ref, ref_resolves
 from .spec_gate import (
     DOCS_ROOT,
+    RESOLUTION_DECLARED,
+    RESOLUTION_OWNERSHIP,
     SPEC_COVERAGE_RULE_VERSION,
     SpecCoverage,
     coverage_at_head,
@@ -28,6 +29,7 @@ from .spec_gate import (
     init_spec_coverage_schema,
     latest_batch,
     record_spec_coverages,
+    redact_error,
 )
 
 _log = get_logger(__name__)
@@ -136,7 +138,6 @@ def readable_base(
     """
     if not base_ref:
         return None
-
     if ref_resolves(repo_root, base_ref):
         return base_ref
     if fetch_base is not None:
@@ -173,6 +174,44 @@ def ownership_at_base(
         _log.warning("spec_grading.ownership_unresolved", base_ref=base_ref)
         return None, None
     return specs_owning(paths, root=root, ref=ref), ref
+
+
+def resolution_report(
+    spec_id: str | None,
+    *,
+    changed_files: list[str] | None,
+    root: Path,
+    base_ref: str | None,
+) -> tuple[dict[str, object], list[str]]:
+    """Return a PR's ``spec_resolution`` object and its report lines (G7).
+
+    The resolution ``review gate`` prints, decided here rather than in the
+    CLI: a declared spec is graded alone; with none declared, the specs
+    owning the diff's paths come from :func:`ownership_at_base` (without
+    a fetch), a diff that cannot be read leaves the resolution ``none``
+    and a base that cannot be read names the fail-closed refusal.
+
+    Args:
+        spec_id: The declared spec, or ``None``.
+        changed_files: The paths of the PR diff; ``None`` when unread.
+        root: Repository root the base is read in.
+        base_ref: The PR's base branch, or ``None`` when unknown.
+
+    Returns:
+        ``(spec_resolution, lines)``.
+    """
+    if spec_id is not None:
+        return resolution_payload(RESOLUTION_DECLARED, [spec_id]), []
+    if changed_files is None:
+        return resolution_payload("none"), [
+            "spec resolution by ownership skipped: the diff could not be read"
+        ]
+    ownership, _ = ownership_at_base(changed_files, root=root, base_ref=base_ref)
+    if ownership is None:
+        return resolution_payload(RESOLUTION_OWNERSHIP), [
+            ownership_unavailable_reason(base_ref or "(unknown)")
+        ]
+    return ownership.payload(), ownership.lines()
 
 
 @dataclass(frozen=True)
@@ -240,7 +279,9 @@ def coverage_rows_at_head(
             changed_files=changed_files,
             fetch_base=fetch_base,
         )
-        return CoverageGrading(rows=[coverage.model_copy(update={"resolution": "declared"})])
+        return CoverageGrading(
+            rows=[coverage.model_copy(update={"resolution": RESOLUTION_DECLARED})]
+        )
     ownership, ref = ownership_at_base(
         changed_files, root=repo_root, base_ref=base_ref, fetch_base=fetch_base
     )
@@ -259,29 +300,10 @@ def coverage_rows_at_head(
     rows = [
         coverage_at_head(repo_root, spec_id=owner, base_ref=ref, changed_files=changed_files)[
             0
-        ].model_copy(update={"resolution": "ownership"})
+        ].model_copy(update={"resolution": RESOLUTION_OWNERSHIP})
         for owner in ownership.specs
     ]
     return CoverageGrading(rows=rows, ownership=ownership, lines=ownership.lines())
-
-
-_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
-"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
-
-
-def redact_error(text: str) -> str:
-    """Return *text* with URL credentials and forge tokens replaced by ``***``.
-
-    A grading error becomes a merge reason that the gate publishes (its
-    JSON, notes and PR comment) and a log line; a failed ``git fetch``
-    can carry a credentialed remote URL.
-    """
-    from ..forge.recording import SECRET_VALUE_PATTERNS
-
-    cleaned = _URL_USERINFO.sub("***@", text)
-    for pattern in SECRET_VALUE_PATTERNS:
-        cleaned = pattern.sub("***", cleaned)
-    return cleaned
 
 
 def failed_grading_row(spec_id: str | None, error: Exception) -> SpecCoverage:
@@ -312,7 +334,7 @@ def failed_grading_row(spec_id: str | None, error: Exception) -> SpecCoverage:
             f"{redact_error(str(error))[:200]} (fail closed)"
         ],
         contract="unavailable",
-        resolution="declared" if spec_id else OWNERSHIP_UNRESOLVED,
+        resolution=RESOLUTION_DECLARED if spec_id else OWNERSHIP_UNRESOLVED,
     )
 
 
@@ -379,7 +401,7 @@ def refresh_stale_coverage(
     if not stale:
         return None
     oldest = min(row.rule_version for row in stale)
-    by_ownership = batch[0].resolution in {"ownership", OWNERSHIP_UNRESOLVED}
+    by_ownership = batch[0].resolution in {RESOLUTION_OWNERSHIP, OWNERSHIP_UNRESOLVED}
     try:
         grading = coverage_rows_at_head(
             repo_root,

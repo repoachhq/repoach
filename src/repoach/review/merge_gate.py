@@ -37,6 +37,7 @@ from .findings import (
 )
 from .reviewer import ReviewVerdict
 from .spec_gate import (
+    RESOLUTION_OWNERSHIP,
     SpecCoverage,
     coverage_refusals,
     fetch_spec_coverage,
@@ -155,12 +156,11 @@ class MergeFacts(BaseModel):
             causes, prefixed with the spec id for a spec resolved by
             ownership (G7).
 
-    ``spec_rows`` is the source of truth: :func:`gather_merge_facts` and
-    :func:`summarise_ledger_facts` derive every flat ``spec_*`` field from
-    it, and the gate JSON prints the flat fields (its documented
-    ``spec_acceptance`` shape). The decision reads ``spec_rows``, and the
-    flat fields only for facts built without rows (a caller or a test
-    assembling them by hand).
+    ``spec_rows`` is the one source: the flat ``spec_missing``,
+    ``spec_planned``, ``spec_draft_refusals``, ``spec_contract``,
+    ``spec_origins``, ``spec_no_selectors_line`` and ``spec_report`` are
+    properties derived from it, which the gate JSON prints (its
+    documented ``spec_acceptance`` shape).
     """
 
     head_sha: str
@@ -176,15 +176,49 @@ class MergeFacts(BaseModel):
     reverified: dict[str, int] = dict(NO_REVERIFICATION)
     reverify_reasons: list[str] = []
     reverify_line: str = ""
-    spec_missing: list[str] = []
-    spec_planned: list[str] = []
-    spec_draft_refusals: list[str] = []
     spec_recompute_failure: str = ""
-    spec_contract: str = ""
-    spec_origins: dict[str, str] = {}
-    spec_no_selectors_line: str = ""
-    spec_report: list[str] = []
     spec_rows: list[SpecCoverage] = []
+
+    @property
+    def spec_missing(self) -> list[str]:
+        """The acceptance selectors absent at head, every row in order."""
+        return [selector for row in self.spec_rows for selector in row.missing]
+
+    @property
+    def spec_planned(self) -> list[str]:
+        """The planned selectors of a pre-implementation spec, every row in order."""
+        return [selector for row in self.spec_rows for selector in row.planned]
+
+    @property
+    def spec_draft_refusals(self) -> list[str]:
+        """The refusal lines the rows carry, every row in order."""
+        return [line for row in self.spec_rows for line in row.draft_refusals]
+
+    @property
+    def spec_contract(self) -> str:
+        """What the latest row was graded against; empty without a row."""
+        return self.spec_rows[-1].contract if self.spec_rows else ""
+
+    @property
+    def spec_origins(self) -> dict[str, str]:
+        """Selector to origin over every row."""
+        return {k: v for row in self.spec_rows for k, v in row.origins.items()}
+
+    @property
+    def spec_no_selectors_line(self) -> str:
+        """The ``no selectors to grade: …`` line of a contract with nothing to grade."""
+        lines = [
+            line
+            for row in self.spec_rows
+            if row.contract == "none"
+            for line in (*row.draft_refusals, *row.report)
+        ]
+        return lines[0] if lines else ""
+
+    @property
+    def spec_report(self) -> list[str]:
+        """Lines reported and never refusing, every row in order."""
+        return [line for row in self.spec_rows for line in row.report]
 
 
 class MergeDecision(BaseModel):
@@ -248,24 +282,14 @@ def _coverage_reasons(facts: MergeFacts) -> list[str]:
 
     Every not-covered row contributes its lines
     (:func:`~repoach.review.spec_gate.coverage_refusals`); a row of a
-    spec resolved by ownership prefixes each with ``<id>: ``. Facts built
-    without rows render from their flat fields.
+    spec resolved by ownership prefixes each with ``<id>: ``. Facts that
+    say "not covered" without a row (built by hand) get one line saying so.
     """
-    rows = facts.spec_rows or [
-        SpecCoverage(
-            spec_id="",
-            n_promised=len(facts.spec_missing),
-            n_present=0,
-            missing=facts.spec_missing,
-            covered=False,
-            planned=facts.spec_planned,
-            draft_refusals=facts.spec_draft_refusals,
-            origins=facts.spec_origins,
-        )
-    ]
+    if not facts.spec_rows:
+        return ["spec coverage not covered: no coverage row at head names a cause"]
     reasons: list[str] = []
-    for row in rows:
-        prefix = f"{row.spec_id}: " if row.resolution == "ownership" else ""
+    for row in facts.spec_rows:
+        prefix = f"{row.spec_id}: " if row.resolution == RESOLUTION_OWNERSHIP else ""
         reasons.extend(f"{prefix}{line}" for line in coverage_refusals(row))
     return reasons
 
@@ -466,12 +490,6 @@ def _assemble_facts(
     )
     rows = latest_batch(coverage)
     latest = rows[-1] if rows else None
-    no_selectors = [
-        line
-        for row in rows
-        if row.contract == "none"
-        for line in (*row.draft_refusals, *row.report)
-    ]
     return MergeFacts(
         head_sha=head_sha,
         ci_green=ci_green,
@@ -483,12 +501,5 @@ def _assemble_facts(
         review_integrity_known=bool(fresh),
         review_integrity_any=bool(integrity),
         blocking_unverified=blocking_unverified or [],
-        spec_missing=[selector for row in rows for selector in row.missing],
-        spec_planned=[selector for row in rows for selector in row.planned],
-        spec_draft_refusals=[line for row in rows for line in row.draft_refusals],
-        spec_contract=latest.contract if latest is not None else "",
-        spec_origins={k: v for row in rows for k, v in row.origins.items()},
-        spec_no_selectors_line=no_selectors[0] if no_selectors else "",
-        spec_report=[line for row in rows for line in row.report],
         spec_rows=rows,
     )

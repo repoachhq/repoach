@@ -43,6 +43,7 @@ from sqlalchemy.engine import Engine
 from ..arch import path_contains
 from ..core.logging import get_logger
 from ..core.sqlite_schema_init import ensure_schema_created
+from ..forge.recording import SECRET_VALUE_PATTERNS
 from ..gates.selectors import SelectorKind, TestSelector, parse_selector, selector_file
 from ..gates.selectors import selector_present as gate_selector_present
 from .governed_spec import (
@@ -127,6 +128,12 @@ _SENTINELS = frozenset({PLAN_ABSENT, BASE_REF_UNAVAILABLE})
 MISSING_SELECTORS_REASON = "spec acceptance selectors not all present"
 """Head of the refusal naming the absent selectors (G2)."""
 
+RESOLUTION_DECLARED = "declared"
+"""``SpecCoverage.resolution`` of the spec the PR declared."""
+
+RESOLUTION_OWNERSHIP = "ownership"
+"""``SpecCoverage.resolution`` of a spec owning code of an undeclared PR (G7)."""
+
 
 class SpecCoverage(BaseModel):
     """Presence report for a spec's acceptance contract at head.
@@ -200,6 +207,23 @@ def base_ref_unavailable_reason(ref: str) -> str:
     )
 
 
+_URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
+"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo."""
+
+
+def redact_error(text: str) -> str:
+    """Return *text* with URL credentials and forge tokens replaced by ``***``.
+
+    A grading error becomes a merge reason that the gate publishes (its
+    JSON, notes and PR comment) and a log line; a failed ``git fetch``
+    can carry a credentialed remote URL.
+    """
+    cleaned = _URL_USERINFO.sub("***@", text)
+    for pattern in SECRET_VALUE_PATTERNS:
+        cleaned = pattern.sub("***", cleaned)
+    return cleaned
+
+
 def plan_absent_line(spec_id: str, n_selectors: int) -> str:
     """Return the line reporting a spec graded on its Acceptance Criteria (G1)."""
     return (
@@ -226,7 +250,9 @@ def coverage_refusals(coverage: SpecCoverage) -> list[str]:
         Empty when the row is covered. Otherwise the absent selectors,
         each with its origin, in contract order, then the row's refusal
         lines. A sentinel of a rule-1 row gets its own sentence and never
-        appears in the selector list.
+        appears in the selector list; a rule-1 ``base-ref-unavailable``
+        row names its ref ``(unrecorded)`` because rule 1 did not store
+        the ref it tried.
     """
     if coverage.covered:
         return []
@@ -980,7 +1006,10 @@ def load_plan_from_ref(spec_id: str, ref: str, *, root: Path | None = None) -> A
         FileNotFoundError: *ref* resolves but carries no
             ``docs/plans/<SPEC-ID>.md`` — a genuinely new spec/plan
             introduced only on the PR head.
-        ValueError: The file exists at *ref* but fails to parse (see
+        NotAnActionPlanError: The file exists at *ref* without the
+            action-plan marker (a :class:`FileNotFoundError`: a prose
+            plan is no plan).
+        ValueError: The file carries the marker at *ref* but fails to parse (see
             :func:`repoach.review.plan.parse_plan_markdown`).
     """
     base = (root or Path.cwd()).resolve()
@@ -1456,7 +1485,9 @@ def _grade(
     """Grade *spec_id* against the contract *resolution* names (see :func:`coverage_at_head`)."""
     if resolution.error:
         return _not_graded(
-            spec_id, "plan", f"spec plan unparseable at {resolution.ref}: {resolution.error}"
+            spec_id,
+            "plan",
+            f"spec plan unparseable at {resolution.ref}: {redact_error(resolution.error)}",
         )
     if not resolution.base_available:
         return _not_graded(

@@ -603,3 +603,55 @@ def test_latest_batch_folds_only_the_last_grading() -> None:
 def test_span_selector_forms(criterion: str, expected: list[str]) -> None:
     markdown = f"## Acceptance Criteria\n\n- [ ] AC1: {criterion} -> green.\n"
     assert [entry.selector for entry in spec_acceptance_criteria(markdown)] == expected
+
+
+def test_a_spec_without_frontmatter_is_refused_naming_it(tmp_path: Path) -> None:
+    prose_path = "docs/specs/2026-10-27_SP-PROSE_prose.md"
+    repo, _ = _repo(
+        tmp_path,
+        base={prose_path: "# Prose\n\n## Acceptance Criteria\n\n- [ ] AC1: `tests/a.py`\n"},
+        head={_CODE: "VALUE = 1\n"},
+    )
+
+    coverage, _ = coverage_at_head(
+        repo, spec_id="SP-PROSE", base_ref="develop", changed_files=[_CODE]
+    )
+
+    assert coverage.contract == "none"
+    assert coverage.covered is False
+    assert coverage.draft_refusals == ["spec coverage not graded: SP-PROSE has no frontmatter"]
+
+
+@pytest.mark.parametrize(
+    "markdown",
+    [
+        "# Spec\n\nNo criteria section.\n",
+        "# Spec\n\n## Acceptance Criteria\n\n## Open Questions\n",
+        "## Acceptance Criteria\n\n- [ ] AC1: prose only, `src/x.py` changes.\n",
+    ],
+)
+def test_an_absent_or_empty_ac_section_names_no_selector(markdown: str) -> None:
+    assert spec_acceptance_criteria(markdown) == []
+
+
+def test_an_unparseable_plan_error_is_published_without_its_credential(tmp_path: Path) -> None:
+    token = "ghp_" + "d4" * 12
+    corrupt = (
+        "# Plan\n\n<!-- repoach-action-plan -->\n```json\n"
+        f'{{"spec_id": "https://bot:{token}@github.com/o/r"}}\n```\n'
+    )
+    repo, _ = _repo(
+        tmp_path,
+        base={_SPEC_PATH: _spec("approved", _criteria(_ABSENT)), f"docs/plans/{_ID}.md": corrupt},
+        head={_CODE: "VALUE = 1\n"},
+    )
+
+    coverage, resolution = coverage_at_head(
+        repo, spec_id=_ID, base_ref="develop", changed_files=[_CODE]
+    )
+
+    assert token in resolution.error
+    (refusal,) = coverage.draft_refusals
+    assert refusal.startswith("spec plan unparseable at develop: ")
+    assert token not in refusal
+    assert "https://***@github.com/o/r" in refusal
