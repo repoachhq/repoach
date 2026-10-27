@@ -938,3 +938,27 @@ def test_a_timed_out_check_has_its_session_killed(tmp_path: Path) -> None:
 
     subprocess.run(["sleep", "3"], check=True)
     assert not marker.exists()
+
+
+def test_a_forged_evidence_tail_is_bounded_and_inert(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The review re-trims a tail read from the evidence: 20 lines, 1000 characters, no controls."""
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V1, "B")})
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+    payload["checks"][0]["output_tail"] = "\n".join(
+        f"line {n} \x07" + "z" * 5000 for n in range(500)
+    )
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    checks, _ = fetch_generated_checks(bench.db_path, 7, head)
+    lines = checks[0].output_tail.splitlines()
+    assert len(lines) == 20
+    assert lines[-1].startswith("line 499 ")
+    assert all(len(line) <= 1000 and "\x07" not in line for line in lines)

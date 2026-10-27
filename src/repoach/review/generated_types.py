@@ -105,7 +105,7 @@ class GeneratedCheck:
             state=GeneratedState(str(data["state"])),
             exit_code=None if exit_code is None else int(exit_code),
             duration_ms=int(data.get("duration_ms", 0)),
-            output_tail=str(data.get("output_tail", "")),
+            output_tail=tail_lines(str(data.get("output_tail", ""))),
             script_ref="base" if data.get("script_ref") == "base" else "head",
             producer_inputs_changed=tuple(str(p) for p in data.get("producer_inputs_changed", ())),
             runs_for_path=int(data.get("runs_for_path", 1)),
@@ -130,9 +130,26 @@ class GeneratedTiming:
         return f"generated checks: {self.checks_ms} ms + {self.overhead_ms} ms overhead"
 
 
+TAIL_LINE_MAX_CHARS = 1000
+"""Characters one kept output line may hold."""
+
+
 def tail_lines(output: str) -> str:
-    """The last :data:`GENERATED_OUTPUT_TAIL_LINES` non-empty lines of ``output``, control characters removed."""
-    lines = [CONTROL_RE.sub("", line) for line in output.splitlines()]
+    """Keep the last lines of a check's output, bounded and inert.
+
+    The last :data:`GENERATED_OUTPUT_TAIL_LINES` non-empty lines, control
+    characters removed, each cut at :data:`TAIL_LINE_MAX_CHARS`. Applied
+    where the output is captured and again where the review reads the
+    evidence, which the job running pull-request code wrote.
+
+    Args:
+        output: Raw output, or a tail read from the evidence.
+
+    Returns:
+        At most ``GENERATED_OUTPUT_TAIL_LINES`` lines of at most
+        ``TAIL_LINE_MAX_CHARS`` characters.
+    """
+    lines = [CONTROL_RE.sub("", line)[:TAIL_LINE_MAX_CHARS] for line in output.splitlines()]
     lines = [line for line in lines if line.strip()]
     return "\n".join(lines[-GENERATED_OUTPUT_TAIL_LINES:])
 
@@ -204,6 +221,7 @@ __all__ = [
     "CONTROL_RE",
     "GENERATED_FINDER",
     "MARKUP_RE",
+    "TAIL_LINE_MAX_CHARS",
     "GeneratedCheck",
     "GeneratedState",
     "GeneratedTiming",
