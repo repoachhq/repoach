@@ -96,6 +96,10 @@ from .findings_bridge import (
     record_oversized_findings,
     recount_findings_at_head,
 )
+from .generated_artefacts import (
+    ReviewScope,
+    review_scope,
+)
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
@@ -172,6 +176,7 @@ from .spec_grading import (
     CoverageGrading,
     coverage_rows_at_head,
     failed_grading_row,
+    readable_base,
     resolution_payload,
 )
 from .thread_context import ResolvedDisagreement
@@ -684,6 +689,9 @@ class ReviewTeamOrchestrator:
                     error=str(exc),
                 )
 
+        generated_scope = self._generated_scope(diff, base_ref)
+        reviewed_diff = generated_scope.review_diff
+
         reviewers: list[Reviewer] = [
             Architect(db_path=self._db_path),
             Sentinel(db_path=self._db_path),
@@ -711,7 +719,7 @@ class ReviewTeamOrchestrator:
             pr_number, diff_hash=diff_hash, db_path=self._db_path
         )
 
-        lessons_block = _build_review_lessons_block(pr_title, diff)
+        lessons_block = _build_review_lessons_block(pr_title, reviewed_diff)
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
             futures = [
@@ -719,7 +727,7 @@ class ReviewTeamOrchestrator:
                     r,
                     pool.submit(
                         bind_reviewer(r.role.value.title(), r.review_diff),
-                        diff,
+                        reviewed_diff,
                         pr_number=pr_number,
                         spec_plan=spec_plan_md,
                         resolved_disagreements=resolved_per_role.get(r.role, ()),
@@ -783,7 +791,7 @@ class ReviewTeamOrchestrator:
             round1_outcomes=outcomes,
             spec_plan=spec_plan_md,
             guard_events=all_events,
-            diff=diff,
+            diff=reviewed_diff,
             pr_number=pr_number,
             extra_prompt_section=lessons_block,
             arch_edges=arch_edges_block,
@@ -842,7 +850,7 @@ class ReviewTeamOrchestrator:
             head_sha=head_sha,
             outcomes=outcomes,
             round_n=2 if round2_ran else 1,
-            diff=diff,
+            diff=reviewed_diff,
         )
 
         verification = VerificationReport()
@@ -880,7 +888,7 @@ class ReviewTeamOrchestrator:
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
                     scope_head=head_sha,
-                    diff=diff,
+                    diff=reviewed_diff,
                     pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
                     budget=budget,
                 )
@@ -1287,6 +1295,32 @@ class ReviewTeamOrchestrator:
         return draft_scope_at_head(
             self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
         )
+
+    def _generated_scope(self, diff: str, base_ref: str | None) -> ReviewScope:
+        """Summarise the declared generated artefacts the diff touches (G1, G2).
+
+        The declarations are read at the base ref, never the head. A base
+        that cannot be read or declares nothing leaves the diff as it is,
+        so an oversized artefact keeps its blocking finding (fail closed).
+        """
+        try:
+            base = readable_base(self._repo_root, base_ref, self._fetch_base)
+            scope = review_scope(self._repo_root, diff, base)
+        except Exception as exc:
+            _log.warning(
+                "review_team.generated_scope_failed",
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+                consequence="the diff is reviewed as it is; no artefact is summarised",
+            )
+            return ReviewScope(review_diff=diff)
+        if scope.touched:
+            _log.info(
+                "review_team.generated_summarised",
+                base=base,
+                touched=list(scope.touched),
+            )
+        return scope
 
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""

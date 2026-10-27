@@ -38,7 +38,11 @@ from .thread_context import REPEAT_SIMILARITY_THRESHOLD, similarity
 
 _log = get_logger(__name__)
 
-_OVERSIZED_FINDER = "diff_scoper"
+OVERSIZED_FINDER = "diff_scoper"
+"""Finder of the oversized-file finding (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
+
+OVERSIZED_REMEDY = "declare it under [[review.generated]] with its check, or split it"
+"""The remedy the oversized finding names (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G4)."""
 """Finder identifier stamped on oversized-omission findings (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
 
 FINGERPRINT_LINE_WINDOW = 5
@@ -336,7 +340,7 @@ def oversized_finding(
         pr_number=pr_number,
         head_sha=head_sha,
         round=round_n,
-        finder=_OVERSIZED_FINDER,
+        finder=OVERSIZED_FINDER,
         claim_type=ClaimType.SPEC_GAP,
         severity=Severity.BLOCKING,
         file=path,
@@ -344,7 +348,8 @@ def oversized_finding(
         line_end=0,
         claim=(
             f"{path} exceeds the diff-scoping character cap and was omitted "
-            "from every reviewer's prompt — unreviewed content cannot merge."
+            "from every reviewer's prompt — unreviewed content cannot merge; "
+            f"{OVERSIZED_REMEDY}."
         ),
         evidence_pointer=f"{path}: oversized, omitted by diff_scoper.scope_diff",
         status=FindingStatus.VERIFIED,
