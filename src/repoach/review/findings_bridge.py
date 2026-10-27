@@ -39,11 +39,10 @@ from .thread_context import REPEAT_SIMILARITY_THRESHOLD, similarity
 _log = get_logger(__name__)
 
 OVERSIZED_FINDER = "diff_scoper"
-"""Finder of the oversized-file finding (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
+"""Finder identifier stamped on oversized-omission findings (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
 
 OVERSIZED_REMEDY = "declare it under [[review.generated]] with its check, or split it"
 """The remedy the oversized finding names (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G4)."""
-"""Finder identifier stamped on oversized-omission findings (SP-DIFF-SCOPER-OVERSIZE-BLOCK)."""
 
 FINGERPRINT_LINE_WINDOW = 5
 """Lines per bucket of :func:`finding_fingerprint`, the window ``bench`` fingerprints use."""
