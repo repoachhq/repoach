@@ -16,6 +16,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,23 @@ def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
         yield target
     finally:
         shutil.rmtree(target, ignore_errors=True)
+
+
+@dataclass
+class VerificationSeams:
+    """The two process boundaries of ``review generated``, in one place.
+
+    Attributes:
+        runner: Runs one check (:func:`~repoach.review.generated_process.subprocess_runner`).
+        execve: Replaces the process for the secret-free re-run (:func:`os.execve`).
+    """
+
+    runner: Runner = subprocess_runner
+    execve: Callable[[str, list[str], dict[str, str]], None] = os.execve
+
+
+SEAMS = VerificationSeams()
+"""The seams the ``review generated`` command uses; a test replaces their fields."""
 
 
 def held_secrets() -> list[str]:
@@ -221,7 +239,9 @@ def run_verification(
 
 
 __all__ = [
+    "SEAMS",
     "GeneratedRefusalError",
+    "VerificationSeams",
     "head_tree",
     "held_secrets",
     "reexec_scrubbed",

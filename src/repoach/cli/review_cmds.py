@@ -26,9 +26,8 @@ the origin remote. A forge that cannot be selected exits ``2``.
 from __future__ import annotations
 
 import json
-import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,8 +65,8 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.generated_process import Runner, subprocess_runner
 from ..review.generated_verify import (
+    SEAMS,
     GeneratedRefusalError,
     held_secrets,
     reexec_scrubbed,
@@ -529,14 +528,6 @@ def _evidence_path(value: object) -> Path | None:
     return Path(value) if isinstance(value, str) and value else None
 
 
-REEXEC: Callable[[str, list[str], dict[str, str]], None] = os.execve
-"""How ``review generated`` replaces itself with a copy started without secrets."""
-
-
-GENERATED_RUNNER: Runner = subprocess_runner
-"""The runner ``review generated`` hands :func:`verify_generated`: the one seam a Typer command has."""
-
-
 @review_app.command("generated")
 def review_generated(
     pr_number: int = typer.Option(..., "--pr", help="PR number (GitHub) or MR iid (GitLab)."),
@@ -583,7 +574,7 @@ def review_generated(
         )
         argv = ["review", "generated", "--pr", str(pr_number), "--head", head, "--out", out]
         argv += ["--base", base]
-        reexec_scrubbed(argv, execve=REEXEC)
+        reexec_scrubbed(argv, execve=SEAMS.execve)
         return
 
     state_dir = Path(get_settings().db_path).parent
@@ -595,7 +586,7 @@ def review_generated(
             base_ref=base,
             state_dir=state_dir,
             out=Path(out),
-            runner=GENERATED_RUNNER,
+            runner=SEAMS.runner,
         )
     except (GeneratedRefusalError, ConfigError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
