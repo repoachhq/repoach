@@ -176,6 +176,9 @@ class Finding(BaseModel):
             at its head (SP-FINDINGS-BRIDGE-DOCFIX 0.2); empty on rows
             recorded before that column existed.
         last_run_id: Identifier of the review run that last raised it.
+        budget_used: Tokens of refuter context the last judgement used
+            (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5); 0 when no judge
+            budget was recorded.
         id: Database surrogate key; None until persisted.
     """
 
@@ -197,6 +200,7 @@ class Finding(BaseModel):
     verify_attempts: int = 0
     last_seen_at: str = ""
     last_run_id: str = ""
+    budget_used: int = 0
     id: int | None = None
 
 
@@ -222,6 +226,7 @@ pr_findings = Table(
     Column("verify_attempts", Integer, nullable=False, default=0),
     Column("last_seen_at", String, nullable=False, default=""),
     Column("last_run_id", String, nullable=False, default=""),
+    Column("budget_used", Integer, nullable=False, default=0),
 )
 
 
@@ -407,6 +412,12 @@ def _migrate_missing_findings_columns(engine: Engine) -> None:
             "TEXT NOT NULL DEFAULT ''",
             "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
         ),
+        (
+            "pr_findings",
+            "budget_used",
+            "INTEGER NOT NULL DEFAULT 0",
+            "SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS 0.2",
+        ),
     )
 
     inspector = inspect(engine)
@@ -575,6 +586,7 @@ def update_finding_status(
     verification_method: str = "",
     verification_result: str = "",
     checked_at_sha: str = "",
+    budget_used: int | None = None,
 ) -> bool:
     """Transition a finding to a new lifecycle status.
 
@@ -588,6 +600,8 @@ def update_finding_status(
         verification_method: How the verifier checked this finding.
         verification_result: What the verifier concluded.
         checked_at_sha: Commit SHA when the finding was last verified.
+        budget_used: Refuter context tokens the verdict used; left
+            unchanged when ``None``.
 
     Returns:
         True on success; False when the transition is illegal or row not found.
@@ -607,16 +621,15 @@ def update_finding_status(
                 new_status=new_status,
             )
             return False
-        conn.execute(
-            update(pr_findings)
-            .where(pr_findings.c.id == finding_id)
-            .values(
-                status=str(new_status),
-                verification_method=verification_method,
-                verification_result=verification_result,
-                checked_at_sha=checked_at_sha,
-            )
-        )
+        values: dict[str, object] = {
+            "status": str(new_status),
+            "verification_method": verification_method,
+            "verification_result": verification_result,
+            "checked_at_sha": checked_at_sha,
+        }
+        if budget_used is not None:
+            values["budget_used"] = budget_used
+        conn.execute(update(pr_findings).where(pr_findings.c.id == finding_id).values(**values))
         conn.commit()
         return True
 
@@ -655,6 +668,7 @@ def record_verification_attempt(
     method: str,
     result: str,
     checked_at_sha: str,
+    budget_used: int | None = None,
 ) -> int:
     """Record a verification attempt on a finding without changing its status.
 
@@ -670,6 +684,8 @@ def record_verification_attempt(
         method: How the verifier checked this finding (e.g. ``"symbol_search"``).
         result: What the verifier concluded (e.g. ``"no checkable symbol"``).
         checked_at_sha: Commit SHA when the finding was last verified.
+        budget_used: Refuter context tokens the attempt used; left
+            unchanged when ``None``.
 
     Returns:
         The new ``verify_attempts`` count after the increment. Returns ``0``
@@ -688,16 +704,15 @@ def record_verification_attempt(
         if row is None:
             return 0
         new_count = int(row["verify_attempts"]) + 1
-        conn.execute(
-            update(pr_findings)
-            .where(pr_findings.c.id == finding_id)
-            .values(
-                verification_method=method,
-                verification_result=result,
-                checked_at_sha=checked_at_sha,
-                verify_attempts=new_count,
-            )
-        )
+        values: dict[str, object] = {
+            "verification_method": method,
+            "verification_result": result,
+            "checked_at_sha": checked_at_sha,
+            "verify_attempts": new_count,
+        }
+        if budget_used is not None:
+            values["budget_used"] = budget_used
+        conn.execute(update(pr_findings).where(pr_findings.c.id == finding_id).values(**values))
     return new_count
 
 
@@ -724,6 +739,7 @@ def _rows_to_findings(rows: list) -> list[Finding]:
             verify_attempts=int(row["verify_attempts"]),
             last_seen_at=row["last_seen_at"],
             last_run_id=row["last_run_id"],
+            budget_used=int(row["budget_used"]),
         )
         for row in rows
     ]

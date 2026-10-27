@@ -79,7 +79,12 @@ from ..forge import (
 )
 from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES, classify_required_checks
 from ..forge.protocol import WRITABLE_STATES, diff_files
-from ..gates.config import GatesConfig, load_gates_config, resolve_refuter_max_judged
+from ..gates.config import (
+    GatesConfig,
+    load_gates_config,
+    resolve_refuter_budget,
+    resolve_refuter_max_judged,
+)
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
 from .merge_gate import (
     MergeDecision,
@@ -680,6 +685,8 @@ def decide_at_head(
     judge_factory: Callable[[], Judge] | None = None,
     head_tree: bool = False,
     base_ref: str | None = None,
+    context_tokens: int | None = None,
+    context_ceiling: int | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -737,6 +744,13 @@ def decide_at_head(
             (:func:`~repoach.review.review_head.materialise_head`).
         base_ref: The PR's base branch, read by the recomputation of a
             stale coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
+        context_tokens: The refuter's context for the re-check of older
+            findings; ``None`` reads it at ``repo_root``, like
+            ``gates_config`` and ``max_judged``. A caller whose
+            ``repo_root`` is the PR's head tree passes the checkout's
+            values, so a pull request never sizes its own refuter.
+        context_ceiling: The most that context may grow to for one
+            finding; ``None`` reads it at ``repo_root``, as above.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -746,6 +760,7 @@ def decide_at_head(
     config = gates_config if gates_config is not None else load_gates_config(root)
     cap = max_judged if max_judged is not None else resolve_refuter_max_judged(root)[0]
     if head_tree:
+        floor, ceiling = resolve_refuter_budget(root, floor=context_tokens, ceiling=context_ceiling)
         reverified = reverify_older_findings(
             db,
             pr_number=pr_number,
@@ -755,6 +770,8 @@ def decide_at_head(
             config=config,
             max_judged=cap,
             judge_factory=judge_factory or make_refuter_judge,
+            context_tokens=floor,
+            context_ceiling=ceiling,
         )
     else:
         reverified = skipped_reverification(
@@ -946,6 +963,7 @@ def evaluate_merge_gate(
         ) as tree:
             if announce is not None:
                 announce(tree.announcement(pr_number))
+            floor, ceiling = resolve_refuter_budget(checkout)
             head_sha, facts, decision = decide_at_head(
                 pr_number,
                 forge=forge,
@@ -958,6 +976,8 @@ def evaluate_merge_gate(
                 judge_factory=judge_factory,
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
+                context_tokens=floor,
+                context_ceiling=ceiling,
             )
         tree_kind = tree.tree
     else:
@@ -1209,6 +1229,7 @@ def run_auto_merge(
                 repo_root=checkout,
                 state_dir=db.parent,
             ) as tree:
+                budget = resolve_refuter_budget(checkout)
                 _, facts, decision = decide_at_head(
                     pr_number,
                     forge=forge,
@@ -1221,6 +1242,8 @@ def run_auto_merge(
                     judge_factory=judge_factory,
                     head_tree=True,
                     base_ref=base or None,
+                    context_tokens=budget.floor,
+                    context_ceiling=budget.ceiling,
                 )
         except (HeadUnavailableError, HeadUnresolvedError) as exc:
             _log.warning("auto_merge.head_tree_unavailable", pr_number=pr_number, error=str(exc))

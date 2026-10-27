@@ -532,6 +532,7 @@ def test_summary_line_matches_the_documented_shape() -> None:
         "evidence": [],
         "evidence_truncated": [],
         "evidence_tokens": 0,
+        "budget_used": 0,
     }
 
 

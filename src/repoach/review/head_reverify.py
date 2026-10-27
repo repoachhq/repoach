@@ -17,7 +17,9 @@ against the head tree, and ends in exactly one of three states:
   stamped ``still present at <sha7>: <why>`` at the head;
 * ``needs_judgement`` — neither a mechanical check nor the refuter
   could settle it; the row is left as it is (and keeps blocking) and the
-  gate names it.
+  gate names it. The stamp names the refuter's rule version and context
+  (:func:`judgement_key`), and a later gate at the same head re-judges it
+  when either changed (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G3).
 
 The re-check never reads the checkout: ``repo_root`` is the head tree
 the gate pinned (SP-REVIEW-PINS-HEAD G2).
@@ -35,7 +37,12 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from ..core.logging import get_logger
-from ..gates.config import GatesConfig
+from ..gates.config import (
+    REFUTER_CONTEXT_CEILING_DEFAULT,
+    REFUTER_CONTEXT_TOKENS_FLOOR,
+    GatesConfig,
+    RefuterBudget,
+)
 from ..gates.selectors import is_js_test_file
 from .finding_verifiers import verify_finding
 from .findings import (
@@ -50,7 +57,8 @@ from .findings import (
     record_verification_attempt,
     update_finding_status,
 )
-from .refuter import JUDGING_CAP_REACHED, Judge, LazyJudge, make_refuter_judge, refute_finding
+from .refuter import JUDGING_CAP_REACHED, Judge, LazyJudge, judge_finding, make_refuter_judge
+from .refuter_evidence import REFUTER_RULE_VERSION
 from .spec_gate import vitest_test_bodies
 
 _log = get_logger(__name__)
@@ -68,6 +76,58 @@ NEEDS_JUDGEMENT_METHOD = "head_reverify_needs_judgement"
 
 _CACHED_METHODS = frozenset({REVERIFY_METHOD, NEEDS_JUDGEMENT_METHOD})
 """Stamps a later gate at the same head reuses instead of re-checking."""
+
+
+def judgement_key(budget: RefuterBudget) -> str:
+    """Return what a ``needs judgement`` stamp was judged under: rule version, floor and ceiling.
+
+    A stamp carrying another key (an earlier
+    :data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION`, another
+    ``[gates].refuter_context_tokens`` or ``refuter_context_ceiling``, or
+    none) is not reused.
+
+    Args:
+        budget: The refuter's floor and ceiling the re-check used.
+
+    Returns:
+        ``refuter rule <V>, context <N>, ceiling <C>``, with ``V`` the
+        :data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION`.
+    """
+    return f"refuter rule {REFUTER_RULE_VERSION}, context {budget.floor}, ceiling {budget.ceiling}"
+
+
+_NEEDS_JUDGEMENT_STAMP = re.compile(r"^needs judgement at (?P<sha7>\S*) \((?P<key>[^)]*)\): ")
+"""The head of a keyed ``needs judgement`` stamp, as :func:`needs_judgement_stamp` writes it."""
+
+
+def needs_judgement_stamp(sha7: str, key: str, reason: str) -> str:
+    """Return the ``verification_result`` a ``needs judgement`` outcome is stamped with.
+
+    Args:
+        sha7: The head the finding was re-checked at, abbreviated.
+        key: The :func:`judgement_key` it was judged under.
+        reason: The deferral reason.
+
+    Returns:
+        ``needs judgement at <sha7> (<key>): <reason>``, which
+        :func:`stamp_key` reads back.
+    """
+    return f"needs judgement at {sha7} ({key}): {reason}"
+
+
+def stamp_key(result: str) -> str | None:
+    """Return the :func:`judgement_key` a ``needs judgement`` stamp carries, ``None`` if it has none.
+
+    Args:
+        result: A row's ``verification_result``.
+
+    Returns:
+        The key :func:`needs_judgement_stamp` wrote, or ``None`` for a
+        stamp written before the key existed or any other text.
+    """
+    match = _NEEDS_JUDGEMENT_STAMP.match(result)
+    return match.group("key") if match else None
+
 
 NO_HEAD_TREE = "no head tree pinned"
 """Why the re-check is skipped when the gate does not read the head tree."""
@@ -102,6 +162,8 @@ class Reverification:
         recorded_at: The head the finding was raised at.
         state: ``resolved``, ``still_open`` or ``needs_judgement``.
         reason: Why, in a few words (the check's own result).
+        budget_used: Refuter context tokens the re-check used; 0 when
+            the refuter assembled no evidence.
     """
 
     finding_id: int | None
@@ -111,6 +173,7 @@ class Reverification:
     recorded_at: str
     state: ReverifyState
     reason: str
+    budget_used: int = 0
 
     def describe(self, head_sha: str) -> str:
         """Return the gate reason naming this finding at ``head_sha``."""
@@ -290,21 +353,34 @@ def _mechanical(
 
 
 def _judged(
-    finding: Finding, repo_root: Path, judge: LazyJudge, max_judged: int, cap: int
-) -> tuple[ReverifyState, str, str]:
+    finding: Finding,
+    repo_root: Path,
+    judge: LazyJudge,
+    max_judged: int,
+    cap: int,
+    budget: RefuterBudget,
+) -> tuple[ReverifyState, str, str, int]:
     """Hand a finding to the refuter at the head, within ``max_judged`` calls.
 
     A finding past the budget names the configured ``cap``, which is
     larger than ``max_judged`` when the caller already spent part of it.
+    The last item is the context the refuter used (``budget_used``).
     """
     if judge.calls >= max_judged:
-        return "needs_judgement", "refuter", JUDGING_CAP_REACHED.format(cap=cap)
-    status, reason = refute_finding(finding, repo_root=repo_root, judge=judge)
+        return "needs_judgement", "refuter", JUDGING_CAP_REACHED.format(cap=cap), 0
+    judgement = judge_finding(
+        finding,
+        repo_root=repo_root,
+        judge=judge,
+        context_tokens=budget.floor,
+        context_ceiling=budget.ceiling,
+    )
+    status, reason, used = judgement.status, judgement.reason, judgement.budget_used
     if status is FindingStatus.REFUTED:
-        return "resolved", "refuter", reason
+        return "resolved", "refuter", reason, used
     if status is FindingStatus.VERIFIED:
-        return "still_open", "refuter", reason
-    return "needs_judgement", "refuter", reason
+        return "still_open", "refuter", reason, used
+    return "needs_judgement", "refuter", reason, used
 
 
 def _recheck(
@@ -317,19 +393,20 @@ def _recheck(
     judge: LazyJudge,
     max_judged: int,
     cap: int,
-) -> tuple[ReverifyState, str, str]:
-    """Return ``(state, method, reason)`` for one finding at the head."""
+    budget: RefuterBudget,
+) -> tuple[ReverifyState, str, str, int]:
+    """Return ``(state, method, reason, budget_used)`` for one finding at the head."""
     sha7 = head_sha[:7]
     if finding.claim_type is ClaimType.BROKEN_BEHAVIOR:
         if ci_green:
-            return "resolved", "ci", f"CI green at {sha7}"
-        return "still_open", "ci", f"CI not green at {sha7}"
+            return "resolved", "ci", f"CI green at {sha7}", 0
+        return "still_open", "ci", f"CI not green at {sha7}", 0
     settled = _settled_on_disk(finding, repo_root=repo_root, head_sha=head_sha, config=config)
     if settled is not None:
-        return settled
+        return (*settled, 0)
     if finding.claim_type not in MECHANICAL_CLAIM_TYPES | JUDGED_CLAIM_TYPES:
         _log.info("head_reverify.unknown_claim_type", claim_type=finding.claim_type.value)
-    return _judged(finding, repo_root, judge, max_judged, cap)
+    return _judged(finding, repo_root, judge, max_judged, cap, budget)
 
 
 def _settled_on_disk(
@@ -348,14 +425,21 @@ def _settled_on_disk(
 
 
 def _persist(
-    db_path: Path, finding: Finding, outcome: Reverification, *, method: str, head: str
+    db_path: Path,
+    finding: Finding,
+    outcome: Reverification,
+    *,
+    method: str,
+    head: str,
+    key: str,
 ) -> None:
     """Record an outcome on the finding's row at ``head``.
 
-    A ``needs_judgement`` outcome is stamped (status unchanged) so a
-    later gate at the same head makes no second model call, except when
-    the judging cap deferred it: that finding was never judged, and the
-    next gate spends its cap on it.
+    A ``needs_judgement`` outcome is stamped (status unchanged), with the
+    :func:`judgement_key` it was judged under, so a later gate at the same
+    head under the same key makes no second model call, except when the
+    judging cap deferred it: that finding was never judged, and the next
+    gate spends its cap on it.
     """
     if finding.id is None:
         return
@@ -367,8 +451,9 @@ def _persist(
             db_path,
             finding.id,
             method=NEEDS_JUDGEMENT_METHOD,
-            result=f"needs judgement at {sha7}: {outcome.reason}",
+            result=needs_judgement_stamp(sha7, key, outcome.reason),
             checked_at_sha=head,
+            budget_used=outcome.budget_used or None,
         )
         return
     if outcome.state == "resolved":
@@ -379,6 +464,7 @@ def _persist(
             verification_method=method,
             verification_result=f"resolved at {sha7}: {outcome.reason}",
             checked_at_sha=head,
+            budget_used=outcome.budget_used or None,
         )
         return
     result = f"still present at {sha7}: {outcome.reason}"
@@ -390,26 +476,38 @@ def _persist(
             verification_method=REVERIFY_METHOD,
             verification_result=result,
             checked_at_sha=head,
+            budget_used=outcome.budget_used or None,
         )
         return
     record_verification_attempt(
-        db_path, finding.id, method=REVERIFY_METHOD, result=result, checked_at_sha=head
+        db_path,
+        finding.id,
+        method=REVERIFY_METHOD,
+        result=result,
+        checked_at_sha=head,
+        budget_used=outcome.budget_used or None,
     )
 
 
-def _cached(finding: Finding, head_sha: str) -> Reverification | None:
+def _cached(finding: Finding, head_sha: str, key: str) -> Reverification | None:
     """Return the outcome a previous gate at ``head_sha`` stamped on ``finding``.
 
     ``broken_behavior`` is never reused: its re-check is CI at the head,
     which a later gate may read green where an earlier one read pending.
     A mechanical claim's stamp is reused only when no on-disk check
     settles it now: that check costs no model call, and a stamp left by
-    an earlier, narrower check must not outlive it (G11).
+    an earlier, narrower check must not outlive it (G11). A ``needs
+    judgement`` stamp is reused only under the same :func:`judgement_key`.
     """
     if (
         finding.claim_type is ClaimType.BROKEN_BEHAVIOR
         or finding.checked_at_sha != head_sha
         or finding.verification_method not in _CACHED_METHODS
+    ):
+        return None
+    if (
+        finding.verification_method == NEEDS_JUDGEMENT_METHOD
+        and stamp_key(finding.verification_result) != key
     ):
         return None
     state: ReverifyState = (
@@ -478,6 +576,8 @@ def reverify_older_findings(
     max_judged: int,
     judge_factory: Callable[[], Judge] = make_refuter_judge,
     cap: int | None = None,
+    context_tokens: int = REFUTER_CONTEXT_TOKENS_FLOOR,
+    context_ceiling: int = REFUTER_CONTEXT_CEILING_DEFAULT,
 ) -> HeadReverification:
     """Re-check every unsettled blocking finding of an older head at ``head_sha``.
 
@@ -500,6 +600,15 @@ def reverify_older_findings(
         cap: The configured refuter cap, named in the reason of a
             finding the budget defers; ``max_judged`` when omitted
             (``review pr`` passes the cap it spent part of).
+        context_tokens: The refuter's configured context
+            (``[gates].refuter_context_tokens``), which the evidence of a
+            re-judged finding fills, as it does in the review's own
+            refuter pass; the floor when omitted. Part of the
+            :func:`judgement_key` a ``needs judgement`` stamp carries, so a
+            change of it re-opens the finding at the same head.
+        context_ceiling: The most one finding's context may grow to
+            (``[gates].refuter_context_ceiling``); part of the
+            :func:`judgement_key` as well.
 
     Returns:
         The :class:`HeadReverification`; resolved and still-open
@@ -509,13 +618,15 @@ def reverify_older_findings(
         return HeadReverification(head_sha="")
     init_findings_schema(db_path)
     judge = LazyJudge(judge_factory)
+    budget = RefuterBudget(context_tokens, max(context_tokens, context_ceiling))
+    stamp_key = judgement_key(budget)
     outcomes: list[Reverification] = []
-    seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str]] = {}
+    seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str, int]] = {}
     for finding in fetch_findings(db_path, pr_number):
         if not _older_unsettled(finding, head_sha, reads_ci=ci_green is not None):
             continue
         key = _claim_key(finding)
-        cached = _cached(finding, head_sha)
+        cached = _cached(finding, head_sha, stamp_key)
         if cached is not None:
             if finding.claim_type not in MECHANICAL_CLAIM_TYPES:
                 outcomes.append(cached)
@@ -527,7 +638,7 @@ def reverify_older_findings(
                 if fresh is None or fresh[0] == cached.state:
                     outcomes.append(cached)
                     continue
-                seen[key] = fresh
+                seen[key] = (*fresh, 0)
         if key not in seen:
             seen[key] = _recheck(
                 finding,
@@ -538,10 +649,11 @@ def reverify_older_findings(
                 judge=judge,
                 max_judged=max_judged,
                 cap=max_judged if cap is None else cap,
+                budget=budget,
             )
-        state, method, reason = seen[key]
-        outcome = _outcome(finding, state, reason)
-        _persist(db_path, finding, outcome, method=method, head=head_sha)
+        state, method, reason, used = seen[key]
+        outcome = _outcome(finding, state, reason, used)
+        _persist(db_path, finding, outcome, method=method, head=head_sha, key=stamp_key)
         outcomes.append(outcome)
     report = HeadReverification(
         head_sha=head_sha, outcomes=tuple(outcomes), model_calls=judge.calls
@@ -556,7 +668,9 @@ def reverify_older_findings(
     return report
 
 
-def _outcome(finding: Finding, state: ReverifyState, reason: str) -> Reverification:
+def _outcome(
+    finding: Finding, state: ReverifyState, reason: str, budget_used: int = 0
+) -> Reverification:
     """Build the :class:`Reverification` of ``finding``."""
     return Reverification(
         finding_id=finding.id,
@@ -566,4 +680,5 @@ def _outcome(finding: Finding, state: ReverifyState, reason: str) -> Reverificat
         recorded_at=finding.head_sha,
         state=state,
         reason=reason,
+        budget_used=budget_used,
     )

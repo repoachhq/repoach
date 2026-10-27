@@ -68,6 +68,13 @@ The refuter's own ``context_tokens`` of SP-AGENT-CONTEXT-LOOP D1 (owner
 2026-10-25): the window must be large enough for the refuter to do its
 job, so a smaller value is refused."""
 
+REFUTER_CONTEXT_CEILING_DEFAULT = 200_000
+"""The most tokens the refuter's context may grow to when ``[gates].refuter_context_ceiling`` is unset.
+
+``refuter_context_tokens`` is the floor; the context of one finding
+grows to what its cited file, its identifiers' hits and its diff need,
+up to this ceiling (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS G5)."""
+
 DEFAULT_PROMPTS_DIR = "prompts/review"
 """Where the reviewer personas live; always forbidden to the Coder."""
 
@@ -300,9 +307,12 @@ class GatesSection(_Section):
     are reported deferred, each one named (SP-REFUTER-JUDGES-WHAT-IT-CAN);
     ``REPOACH_REFUTER_MAX_JUDGED`` outranks it, so the value is coerced
     from the environment's string but never from a boolean.
-    ``refuter_context_tokens`` is the refuter's context size, the budget
-    its evidence fills, never below :data:`REFUTER_CONTEXT_TOKENS_FLOOR`;
+    ``refuter_context_tokens`` is the refuter's context floor, never
+    below :data:`REFUTER_CONTEXT_TOKENS_FLOOR`;
     ``REPOACH_REFUTER_CONTEXT_TOKENS`` outranks it.
+    ``refuter_context_ceiling`` is the most the context of one finding
+    may grow to (:data:`REFUTER_CONTEXT_CEILING_DEFAULT`);
+    ``REPOACH_REFUTER_CONTEXT_CEILING`` outranks it.
     """
 
     docstring_exempt: list[str] | None = None
@@ -313,8 +323,13 @@ class GatesSection(_Section):
     refuter_context_tokens: int = Field(
         default=REFUTER_CONTEXT_TOKENS_FLOOR, ge=REFUTER_CONTEXT_TOKENS_FLOOR
     )
+    refuter_context_ceiling: int = Field(
+        default=REFUTER_CONTEXT_CEILING_DEFAULT, ge=REFUTER_CONTEXT_TOKENS_FLOOR
+    )
 
-    @field_validator("refuter_max_judged", "refuter_context_tokens", mode="before")
+    @field_validator(
+        "refuter_max_judged", "refuter_context_tokens", "refuter_context_ceiling", mode="before"
+    )
     @classmethod
     def _no_bool_cap(cls, value: object) -> object:
         """Refuse ``true`` / ``false`` for a refuter size (an int, not a switch).

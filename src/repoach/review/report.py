@@ -210,6 +210,9 @@ class ReportFinding:
         refutation: The refuter's outcome a refuter entry was built
             from, so its evidence record reaches the report; ``None``
             for every other judge.
+        budget_used: Refuter context tokens the judgement used, from the
+            ledger row or the re-check (SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS
+            G6); 0 when none was recorded.
     """
 
     finding_id: int | None
@@ -224,14 +227,16 @@ class ReportFinding:
     status: str = ""
     blocking: bool = False
     refutation: Refutation | None = None
+    budget_used: int = 0
 
     def as_json(self) -> dict[str, object]:
         """Return the finding entry of the ``review pr`` JSON payload.
 
         A refuter entry keeps its ``refutation`` object, with what the
         judge was served (``evidence``, ``evidence_truncated``,
-        ``evidence_tokens``) (SP-REFUTER-JUDGES-WHAT-IT-CAN); every other
-        entry has ``refutation`` null.
+        ``evidence_tokens``) (SP-REFUTER-JUDGES-WHAT-IT-CAN) and the
+        context it used (``budget_used``); every other entry has
+        ``refutation`` null.
         """
         refutation: object = None
         if self.refutation is not None:
@@ -243,6 +248,7 @@ class ReportFinding:
                 "evidence": [],
                 "evidence_truncated": [],
                 "evidence_tokens": 0,
+                "budget_used": self.budget_used,
             }
         return {
             "id": self.finding_id,
@@ -300,6 +306,7 @@ def _from_reverification(outcome: Reverification) -> ReportFinding:
         state=outcome.state,
         verification_method=REVERIFY_METHOD_PREFIX,
         evidence=f"raised at {outcome.recorded_at[:7] or 'an unrecorded head'}: {outcome.reason}",
+        budget_used=outcome.budget_used,
     )
 
 
@@ -330,6 +337,7 @@ def _from_ledger(finding: Finding) -> ReportFinding:
         state=finding.status.value,
         verification_method=method,
         evidence=evidence,
+        budget_used=finding.budget_used,
     )
 
 

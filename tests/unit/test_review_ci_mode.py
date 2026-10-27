@@ -257,7 +257,7 @@ def test_review_pr_json_carries_each_finding_refutation_and_one_stderr_line() ->
         result = CliRunner().invoke(review_app, ["pr", "999", "--dry-run"])
 
     payload = json.loads(result.stdout)
-    unserved = {"evidence": [], "evidence_truncated": [], "evidence_tokens": 0}
+    unserved = {"evidence": [], "evidence_truncated": [], "evidence_tokens": 0, "budget_used": 0}
     assert [f["refutation"] for f in payload["findings"]] == [
         {"state": "refuted", "reason": "vague", **unserved},
         {"state": "deferred", "reason": "evidence outside the diff", **unserved},

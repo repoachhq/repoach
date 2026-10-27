@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -60,6 +59,8 @@ from repoach.review.refuter_evidence import (
     estimate_tokens,
 )
 from repoach.review.review_cache import refutation_from_json, refutation_to_json
+from tests.refuter_fakes import git_tree as _git_tree
+from tests.refuter_fakes import judge_reply as _reply
 
 ENUM_FILE = "api/schemas/accelerator.py"
 ENUM_SOURCE = (
@@ -126,17 +127,6 @@ UNSEEN_REFUTATION = (
 """The reply shape the 8 wrong !327 refutations took."""
 
 
-def _git_tree(root: Path, files: dict[str, str]) -> Path:
-    """Write ``files`` under ``root`` and track them in a git work tree."""
-    for rel, text in files.items():
-        target = root / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
-    return root
-
-
 def _yoob_like_tree(root: Path) -> Path:
     """Return a head tree holding the three !327 cases the window hid."""
     return _git_tree(
@@ -201,10 +191,6 @@ def _hits(prompt: str, identifier: str) -> list[str]:
         if mark and path:
             hits.append(f"{path}:{mark.group(1)}")
     return hits
-
-
-def _reply(verdict: str, reasoning: str) -> str:
-    return "VERDICT: " + json.dumps({"verdict": verdict, "reasoning": reasoning})
 
 
 def _bundle(
@@ -455,15 +441,22 @@ def test_judge_receives_a_budget_of_its_own_context(tmp_path: Path) -> None:
         prompts.append(prompt)
         return _reply("cannot_judge", "partial")
 
-    small = judge_finding(_finding("src/huge.py", "c", line=1000), repo_root=tmp_path, judge=_judge)
+    small = judge_finding(
+        _finding("src/huge.py", "c", line=1000),
+        repo_root=tmp_path,
+        judge=_judge,
+        context_ceiling=40_000,
+    )
     large = judge_finding(
         _finding("src/huge.py", "c", line=1000),
         repo_root=tmp_path,
         judge=_judge,
         context_tokens=200_000,
     )
-    assert estimate_tokens(prompts[0]) <= 40_000
     assert small.truncated
+    assert small.reason.startswith("evidence exceeds the ceiling (")
+    assert len(prompts) == 1
+    assert estimate_tokens(prompts[0]) > 40_000
     assert not large.truncated
     assert large.tokens > small.tokens
 
@@ -646,7 +639,9 @@ def test_refutation_resting_on_a_partly_served_identifier_is_deferred(tmp_path: 
         judge=lambda _p: _reply("refuted", "every COMMON_TABLE copy agrees"),
     )
     assert citing.status is FindingStatus.PROPOSED
-    assert citing.reason == EVIDENCE_OUTSIDE_WINDOW
+    assert citing.reason == (
+        "evidence outside window (identifier partly served outside the cited file: COMMON_TABLE)"
+    )
     elsewhere = judge_finding(
         _finding("src/m.py", "`COMMON_TABLE` has a divergent copy"),
         repo_root=tmp_path,
@@ -698,15 +693,19 @@ def test_hits_cut_by_the_budget_defer_without_calling_the_judge(tmp_path: Path) 
         repo_root=tmp_path,
         judge=lambda p: calls.append(p) or _reply("refuted", "fine"),
         context_tokens=1,
+        context_ceiling=1,
     )
     assert calls == []
     assert judgement.status is FindingStatus.PROPOSED
-    assert judgement.reason == "evidence outside window (wanted_symbol not served)"
+    assert judgement.reason.startswith("evidence exceeds the ceiling (")
+    assert judgement.reason.endswith(" tokens needed, ceiling 1)")
 
 
 def test_unserved_reason_is_a_closed_set_template() -> None:
     assert EVIDENCE_NOT_SERVED in DEFERRAL_REASONS
-    assert EVIDENCE_NOT_SERVED.format(identifiers="X") == "evidence outside window (X not served)"
+    assert EVIDENCE_NOT_SERVED.format(identifiers="X") == (
+        "evidence outside window (identifier not served: X)"
+    )
 
 
 def test_assembly_deadline_names_what_it_left_out(tmp_path: Path) -> None:
