@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..arch import path_contains
 from ..core.logging import get_logger
+from ..forge.recording import SECRET_VALUE_PATTERNS
 from .governed_spec import governed_specs_at_ref, ref_resolves
 from .spec_gate import (
     DOCS_ROOT,
@@ -276,8 +277,6 @@ def redact_error(text: str) -> str:
     JSON, notes and PR comment) and a log line; a failed ``git fetch``
     can carry a credentialed remote URL.
     """
-    from ..forge.recording import SECRET_VALUE_PATTERNS
-
     cleaned = _URL_USERINFO.sub("***@", text)
     for pattern in SECRET_VALUE_PATTERNS:
         cleaned = pattern.sub("***", cleaned)
