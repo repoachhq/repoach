@@ -406,3 +406,34 @@ def test_stamp_is_written_and_read_by_one_format() -> None:
     assert stamp_key(stamp) == key
     assert stamp_key("needs judgement at abc1234: evidence outside window") is None
     assert stamp_key("still present at abc1234: confirmed") is None
+
+
+@pytest.mark.parametrize(
+    ("line", "defined"),
+    [
+        ("token: int = 1", "token"),
+        ("    self.message: str = text", "message"),
+        ("+def call(self, prompt):", "call"),
+        ("+name = 'x'", "name"),
+        ("if token == 1:", None),
+        ("    self.message == text", None),
+        ("assert name == 'x'", None),
+        ("log(message=text)", None),
+    ],
+    ids=[
+        "annotated",
+        "self-annotated",
+        "diff-def",
+        "diff-assign",
+        "comparison",
+        "self-comparison",
+        "assert-comparison",
+        "keyword-argument",
+    ],
+)
+def test_defined_names_tells_definitions_from_comparisons(line: str, defined: str | None) -> None:
+    names = defined_names(line)
+    if defined is None:
+        assert names == frozenset()
+    else:
+        assert defined in names
