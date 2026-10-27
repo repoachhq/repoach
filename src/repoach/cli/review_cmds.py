@@ -413,7 +413,7 @@ def review_pr(
             f"{where}; reviewed without a spec",
             err=True,
         )
-    spec_resolution: dict[str, object] = getattr(team, "spec_resolution", {})
+    spec_resolution = team.spec_resolution
     usage = run_usage_json(run)
     payload = {
         "pr_number": team.pr_number,
@@ -465,7 +465,7 @@ def review_pr(
         typer.echo(team.cache_line, err=True)
     if team.spec_coverage_line:
         typer.echo(team.spec_coverage_line, err=True)
-    for line in getattr(team, "spec_report", []):
+    for line in team.spec_report:
         typer.echo(line, err=True)
     if team.findings_line:
         typer.echo(team.findings_line, err=True)

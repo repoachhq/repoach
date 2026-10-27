@@ -66,6 +66,8 @@ class _FakeTeam:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    spec_report: list[str] = field(default_factory=list)
+    spec_resolution: dict[str, object] = field(default_factory=dict)
     spec_coverage_line: str = ""
 
 
