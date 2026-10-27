@@ -137,7 +137,6 @@ def readable_base(
     """
     if not base_ref:
         return None
-
     if ref_resolves(repo_root, base_ref):
         return base_ref
     if fetch_base is not None:
