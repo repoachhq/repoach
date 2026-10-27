@@ -25,8 +25,15 @@ from repoach.review.auto_merge import CIGateOutcome, GateEvaluation, decide_at_h
 from repoach.review.findings import init_findings_schema, record_review_integrity
 from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
-from repoach.review.spec_gate import record_spec_coverages
-from repoach.review.spec_grading import coverage_rows_at_head, specs_owning
+from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
+from repoach.review.spec_gate import (
+    fetch_spec_coverage,
+    record_spec_coverages,
+)
+from repoach.review.spec_grading import (
+    coverage_rows_at_head,
+    specs_owning,
+)
 
 _SPEC_PATH = "docs/specs/2026-10-26_SP-A_owner.md"
 _OWNED = "src/a.py"
@@ -105,24 +112,33 @@ def _review(repo: Path, head: str, changed: list[str], body: str = _BODY) -> Tea
         repo_root=repo,
         head_sha=head,
     )
-    outcome = MagicMock(
-        role=MagicMock(value="x"),
-        verdict=MagicMock(value="APPROVE"),
+    with (
+        patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
+        patch(
+            "repoach.review.reviewer.Architect.review_diff",
+            return_value=_approve(BotRole.ARCHITECT),
+        ),
+        patch(
+            "repoach.review.reviewer.Sentinel.review_diff",
+            return_value=_approve(BotRole.SENTINEL),
+        ),
+        patch("repoach.review.reviewer.Tester.review_diff", return_value=_approve(BotRole.TESTER)),
+        patch("repoach.review.reviewer.Scribe.review_diff", return_value=_approve(BotRole.SCRIBE)),
+    ):
+        return orch.review_pr(9)
+
+
+def _approve(role: BotRole) -> ReviewerOutcome:
+    return ReviewerOutcome(
+        role=role,
+        verdict=ReviewVerdict.APPROVE,
         summary="ok",
         comments=[],
         model_used="stub",
         elapsed_s=0.0,
         tokens_used=0,
-        raw_response="",
+        raw_response="{}",
     )
-    with (
-        patch("repoach.review.reviewer.AgentLoop", return_value=MagicMock()),
-        patch("repoach.review.reviewer.Architect.review_diff", return_value=outcome),
-        patch("repoach.review.reviewer.Sentinel.review_diff", return_value=outcome),
-        patch("repoach.review.reviewer.Tester.review_diff", return_value=outcome),
-        patch("repoach.review.reviewer.Scribe.review_diff", return_value=outcome),
-    ):
-        return orch.review_pr(9)
 
 
 def _decide(repo: Path, head: str) -> tuple[object, object]:
@@ -363,3 +379,25 @@ def test_a_grading_failure_of_a_declared_spec_records_its_refusing_row(
     assert decision.reasons == [
         "spec coverage not graded: RuntimeError: spec frontmatter malformed (fail closed)"
     ]
+
+
+def test_replayed_run_regrades_by_ownership(tmp_path: Path) -> None:
+    repo, head = _repo(tmp_path, {_OWNED: "A = 2\n", _UNOWNED: "Z = 2\n"})
+    first = _review(repo, head, [_OWNED, _UNOWNED])
+    assert first.cached is False
+
+    replay = _review(repo, head, [_OWNED, _UNOWNED])
+
+    db = repo.parent / "review.db"
+    rows = fetch_spec_coverage(db, 9, head_sha=head)
+    assert replay.cached is True
+    assert replay.spec_source == "ownership"
+    assert replay.spec_covered is False
+    assert replay.spec_resolution == {
+        "source": "ownership",
+        "specs": ["SP-A"],
+        "ungoverned": [_UNOWNED],
+    }
+    assert replay.spec_coverage_line.startswith(f"review: spec coverage recomputed at {head[:7]}")
+    assert [(row.spec_id, row.resolution) for row in rows] == [("SP-A", "ownership")] * 2
+    assert rows[0].batch != rows[1].batch
