@@ -44,22 +44,12 @@ refuter's own ``context_tokens`` (:mod:`refuter_evidence`); what was
 served, what was not and its size are recorded on each outcome as
 ``evidence``, ``evidence_truncated`` and ``evidence_tokens``.
 
-SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS: measured on PR #260
-(2026-10-26), two correct refutations were deferred at every head
-because the reasoning named ``except``, ``None``, ``message`` or
-``token``, words capped at the hit limit and so "partly served". The
-claim's identifiers now exclude Python names, common tokens and generic
-English words (:data:`~repoach.review.refuter_evidence.STOP_WORDS`); an
-identifier whose every hit inside the cited file was served never
-vetoes; the deferral names the rule that held; and
-:data:`~repoach.review.refuter_evidence.REFUTER_RULE_VERSION` keys the ``needs judgement`` stamp of
-:mod:`head_reverify`, so a change of these rules re-opens it. The
-context of one finding adapts to its evidence: ``context_tokens`` is the
-floor, and it grows to what the cited file, the identifiers' hits and
-the diff need, up to ``[gates].refuter_context_ceiling``; past the
-ceiling the finding is deferred with :data:`EVIDENCE_EXCEEDS_CEILING`,
-never judged on a silent partial. The context used is recorded as
-``budget_used`` on the outcome and on the ledger row.
+SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS (the measurement and the rules
+live in the spec): common words never veto a verdict, the deferral
+names the rule that held, and the context of one finding grows from
+``context_tokens`` to what its evidence needs, up to
+``[gates].refuter_context_ceiling`` (past it,
+:data:`EVIDENCE_EXCEEDS_CEILING`).
 """
 
 from __future__ import annotations
@@ -453,16 +443,28 @@ def _evidence_excerpt(
 ) -> tuple[EvidenceBundle | None, str]:
     """Return ``(evidence bundle, "")``, or ``(None, deferral reason)``.
 
-    ``evidence_tokens`` and ``evidence_ceiling`` are already net of the
-    prompt and the reply reserves (:func:`judge_finding` computes them
-    once): the bundle fills ``evidence_tokens``
-    (:func:`refuter_evidence.build_evidence`), and with
-    ``evidence_ceiling`` that is the floor and the budget grows to what
-    the core evidence needs, up to the ceiling. The reason is
-    ``absent_reason`` (by default :data:`EVIDENCE_OUTSIDE_DIFF`) when the
-    cited file is not a file inside ``repo_root``, and
-    :data:`EVIDENCE_UNREADABLE` when it is but cannot be read or holds
-    none of the cited lines.
+    The reason is ``absent_reason`` when the cited file is not a file
+    inside ``repo_root``, and :data:`EVIDENCE_UNREADABLE` when it is but
+    cannot be read or holds none of the cited lines.
+
+    Args:
+        finding: The finding whose evidence is assembled.
+        repo_root: The pinned head tree.
+        absent_reason: Deferral reason when the cited file is absent
+            (by default :data:`EVIDENCE_OUTSIDE_DIFF`).
+        evidence_tokens: Tokens the evidence may take, already net of
+            the prompt and the reply reserves (:func:`judge_finding`
+            computes them once).
+        diff: The PR's unified diff; its hunks on the cited file are served.
+        specs: ``(spec id, markdown)`` candidates for the cited section.
+        evidence_ceiling: Optional. When given, ``evidence_tokens`` is a
+            floor: the budget grows to what the cited file, the
+            identifiers' hits and the hunks need, up to this many
+            tokens (net, like ``evidence_tokens``). ``None`` keeps the
+            budget fixed at ``evidence_tokens``.
+
+    Returns:
+        ``(bundle, "")`` or ``(None, reason)``.
     """
     if not _cited_file_inside(finding, repo_root):
         return None, absent_reason
