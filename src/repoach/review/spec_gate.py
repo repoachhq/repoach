@@ -68,10 +68,12 @@ neither planned selectors nor the ``origin/<base>`` retry; ``1`` graded a
 spec past draft only against its plan (``plan-absent`` otherwise); ``2``
 is today's rule, which grades a spec without a plan against its
 Acceptance Criteria whatever its status
-(SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS). ``review gate`` recomputes a row at head whose version is
-below this one (:func:`refresh_stale_coverage`), so a row graded by
-retired code can never refuse on its own. Bump it whenever the grading
-of a selector changes.
+(SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS).
+
+``review gate`` recomputes a row at head whose version is below this one
+(:func:`refresh_stale_coverage`), so a row graded by retired code can
+never refuse on its own. Bump it whenever the grading of a selector
+changes.
 """
 
 _pr_spec_coverage = Table(
@@ -105,8 +107,12 @@ _ADDED_COLUMNS = (
     ("resolution", "TEXT NOT NULL DEFAULT ''"),
     ("batch", "TEXT NOT NULL DEFAULT ''"),
 )
-"""Columns added after the table first shipped (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2, 0.3;
-SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS)."""
+"""Columns added after the table first shipped.
+
+``planned`` and ``draft_refusals`` by SP-PLAN-SELECTOR-AUDIT-WIRE 0.2,
+``rule_version`` by its 0.3, the last five by
+SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS.
+"""
 
 _REFUSAL_SEPARATOR = "\n"
 """Joins ``draft_refusals`` lines in storage; a refusal line itself holds commas."""
