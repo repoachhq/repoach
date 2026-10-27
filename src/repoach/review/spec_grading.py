@@ -48,7 +48,6 @@ __all__ = [
     "ownership_at_base",
     "ownership_unavailable_reason",
     "readable_base",
-    "redact_error",
     "refresh_stale_coverage",
     "resolution_payload",
     "resolution_report",
@@ -336,7 +335,7 @@ def failed_grading_row(spec_id: str | None, error: Exception) -> SpecCoverage:
     resolving ownership) must not leave the head without a row: the gate
     reads no row as "coverage unknown" and does not refuse on it
     (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS 0.5). The error is
-    published as a merge reason, so it is redacted (:func:`redact_error`).
+    published as a merge reason, so it is redacted (:func:`~repoach.core.redaction.redact_error`).
 
     Args:
         spec_id: The declared spec, or ``None`` for an undeclared PR.

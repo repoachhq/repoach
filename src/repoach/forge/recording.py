@@ -114,7 +114,6 @@ conformance suite never reads are dropped at record time, so a fixture
 cannot carry a secret the protocol does not need.
 """
 
-
 SECRET_KEY_RE = re.compile(r"(token|secret|password|private_key|api_key|node_id|email)", re.I)
 """Keys whose presence in a recorded answer means redaction failed."""
 

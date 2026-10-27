@@ -647,3 +647,26 @@ def test_an_unparseable_plan_error_is_published_without_its_credential(tmp_path:
     assert refusal.startswith("spec plan unparseable at develop: ")
     assert token not in refusal
     assert "https://***@github.com/o/r" in refusal
+
+
+def test_an_unparseable_plan_refusal_redacts_whatever_the_resolution_carries(
+    tmp_path: Path,
+) -> None:
+    from repoach.review.spec_gate import ContractResolution, _grade
+
+    token = "ghp_" + "e5" * 12
+    resolution = ContractResolution(
+        plan=None,
+        base_available=True,
+        fell_back_to_head=False,
+        ref="develop",
+        error=f"fatal: https://bot:{token}@github.com/o/r",
+    )
+
+    coverage = _grade(
+        tmp_path, spec_id=_ID, base_ref="develop", changed_files=[], resolution=resolution
+    )
+
+    assert coverage.draft_refusals == [
+        "spec plan unparseable at develop: fatal: https://***@github.com/o/r"
+    ]

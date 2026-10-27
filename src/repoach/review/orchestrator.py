@@ -57,6 +57,7 @@ from pathlib import Path
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..core.paths import project_root
+from ..core.redaction import redact_error
 from ..forge import (
     ARCHIVE_MARKER,
     Forge,
@@ -171,7 +172,6 @@ from .spec_grading import (
     CoverageGrading,
     coverage_rows_at_head,
     failed_grading_row,
-    redact_error,
     resolution_payload,
 )
 from .thread_context import ResolvedDisagreement

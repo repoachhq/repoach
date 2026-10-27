@@ -23,9 +23,13 @@ SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 """Values that must never appear in a fixture: forge tokens and email addresses."""
 
-_URL_USERINFO = re.compile(r"(?<=://)\S+@")
-"""The ``user[:secret]@`` part of a URL, up to the last ``@`` before whitespace (a
-secret may hold an unencoded ``@`` or ``/``), which a failed fetch may echo."""
+_URL_USERINFO = re.compile(r"(?<=://)(?:(?!://)\S)+@")
+"""The ``user[:secret]@`` part of a URL, which a failed fetch may echo.
+
+It runs to the last ``@`` before whitespace or the next ``://`` (a secret
+may hold an unencoded ``@`` or ``/``), so two URLs on one line are masked
+one by one and the text between them is kept.
+"""
 
 
 def redact_error(text: str) -> str:
