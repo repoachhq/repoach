@@ -43,13 +43,6 @@ class GeneratedEvidenceMismatchError(ValueError):
     """The evidence file names another head or another artefact blob than the reviewed one."""
 
 
-GeneratedEvidenceMismatch = GeneratedEvidenceMismatchError
-"""The name SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ's interface gives the error.
-
-Kept for that contract; code catches :class:`GeneratedEvidenceMismatchError`,
-the name the house lint (an ``Error`` suffix) wants."""
-
-
 def not_run_checks(
     touched: Mapping[str, GeneratedEntry],
     *,
@@ -148,7 +141,7 @@ def checks_from_evidence(
         artefact the evidence does not name gets a ``not_run`` row.
 
     Raises:
-        GeneratedEvidenceMismatch: The evidence is of another format,
+        GeneratedEvidenceMismatchError: The evidence is of another format,
             another head, or another blob of a touched artefact.
     """
     if payload.get("format") != EVIDENCE_FORMAT:
@@ -311,7 +304,6 @@ def load_review_evidence(
 __all__ = [
     "EVIDENCE_FORMAT",
     "EVIDENCE_VERSION",
-    "GeneratedEvidenceMismatch",
     "GeneratedEvidenceMismatchError",
     "checks_from_evidence",
     "evidence_payload",

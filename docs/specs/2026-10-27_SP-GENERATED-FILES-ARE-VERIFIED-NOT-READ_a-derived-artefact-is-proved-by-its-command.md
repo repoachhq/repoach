@@ -252,7 +252,7 @@ whose head SHA or artefact sha256 differs from the reviewed head.
 tests replace; the production runner passes `env=scrubbed_env()` and
 `shell=False`.
 
-Errors: `ConfigError` (G1 shape), `GeneratedEvidenceMismatch` (evidence
+Errors: `ConfigError` (G1 shape), `GeneratedEvidenceMismatchError` (evidence
 of another head or another artefact blob).
 
 ## Behavior
@@ -302,7 +302,7 @@ of another head or another artefact blob).
 
 ### Failure scenarios
 
-- Evidence of another head → `GeneratedEvidenceMismatch`, treated as
+- Evidence of another head → `GeneratedEvidenceMismatchError`, treated as
   `generated_check_not_run`.
 - The runner raises (exec format error, permission) → state
   `generated_artefact_stale` with the exception name as output tail.
