@@ -745,10 +745,14 @@ def decide_at_head(
         base_ref: The PR's base branch, read by the recomputation of a
             stale coverage row (SP-PLAN-SELECTOR-AUDIT-WIRE 0.3).
         budget: The refuter's floor and ceiling for the re-check of
-            older findings; ``None`` reads them at ``repo_root``, like
-            ``gates_config`` and ``max_judged``. A caller whose
-            ``repo_root`` is the PR's head tree passes the checkout's,
-            so a pull request never sizes its own refuter.
+            older findings, read from the checkout
+            (:func:`~repoach.gates.config.resolve_refuter_budget`).
+            Required when ``head_tree`` is True: ``repo_root`` is then the
+            PR's head tree, and a pull request never sizes its own
+            refuter. Unused otherwise.
+
+    Raises:
+        ValueError: ``head_tree`` is True and ``budget`` is None.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -758,7 +762,11 @@ def decide_at_head(
     config = gates_config if gates_config is not None else load_gates_config(root)
     cap = max_judged if max_judged is not None else resolve_refuter_max_judged(root)[0]
     if head_tree:
-        sizes = resolve_refuter_budget(root) if budget is None else budget
+        if budget is None:
+            raise ValueError(
+                "decide_at_head: head_tree=True needs an explicit refuter budget "
+                "(the checkout's resolve_refuter_budget); the PR head tree never sizes it"
+            )
         reverified = reverify_older_findings(
             db,
             pr_number=pr_number,
@@ -768,7 +776,7 @@ def decide_at_head(
             config=config,
             max_judged=cap,
             judge_factory=judge_factory or make_refuter_judge,
-            budget=sizes,
+            budget=budget,
         )
     else:
         reverified = skipped_reverification(
