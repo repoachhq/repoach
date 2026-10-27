@@ -201,3 +201,9 @@ def test_error_without_a_literal_key_names_the_block_header() -> None:
     error = _refused(text)
     assert error.key == "review.generated[0].check"
     assert error.line == 4
+
+
+def test_a_class_never_matches_a_slash() -> None:
+    """A character class, plain or negated, stays inside one path segment."""
+    assert glob_matches("data/v[/x].json", "data/vx.json")
+    assert not glob_matches("data/v[/x].json", "data/v/.json")

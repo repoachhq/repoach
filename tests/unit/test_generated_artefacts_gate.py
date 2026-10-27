@@ -24,10 +24,12 @@ import pytest
 from typer.testing import CliRunner
 
 from repoach.cli import app
-from repoach.review import generated_verify
+from repoach.review import generated_process, generated_verify
 from repoach.review.findings import (
     ClaimType,
+    Finding,
     FindingStatus,
+    Severity,
     fetch_findings,
     init_findings_schema,
     record_finding,
@@ -41,6 +43,7 @@ from repoach.review.generated_artefacts import (
 )
 from repoach.review.generated_evidence import evidence_payload
 from repoach.review.generated_process import RunResult, subprocess_runner
+from repoach.review.generated_settle import settle_at_head
 from repoach.review.generated_store import fetch_generated_checks
 from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts
@@ -977,3 +980,58 @@ def test_only_the_end_of_a_long_output_is_read(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert len(result.output) <= 64 * 1024
     assert result.output.strip().endswith("the end")
+
+
+def test_without_a_subreaper_the_session_is_still_killed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where no subreaper can be set, a child left in the check's session still dies."""
+    monkeypatch.setattr(generated_process, "_adopt_orphans", lambda: False)
+    marker = tmp_path / "late-write"
+    child = tmp_path / "late_child.py"
+    child.write_text(
+        f"import pathlib, time\ntime.sleep(1)\npathlib.Path({str(marker)!r}).write_text('x')\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "leave_child.py"
+    script.write_text(
+        f"import subprocess, sys\nsubprocess.Popen([sys.executable, {str(child)!r}])\nprint('done')\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess_runner(
+        ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
+    )
+
+    assert result.exit_code == 0
+    subprocess.run(["sleep", "2"], check=True)
+    assert not marker.exists()
+
+
+def test_settle_at_head_leaves_every_other_finding_to_the_refuter() -> None:
+    """Only generated and oversized findings on a recorded path settle from the rows."""
+    settlements = {ARTEFACT: ("resolved", "generated_check", "declared generated at abc1234")}
+
+    def finding(finder: str, claim_type: ClaimType, path: str = ARTEFACT) -> Finding:
+        return Finding(
+            pr_number=7,
+            head_sha="a" * 40,
+            round=1,
+            finder=finder,
+            claim_type=claim_type,
+            severity=Severity.BLOCKING,
+            file=path,
+            line_start=0,
+            line_end=0,
+            claim="c",
+            evidence_pointer="e",
+        )
+
+    assert settle_at_head(finding("diff_scoper", ClaimType.SPEC_GAP), settlements) is not None
+    assert settle_at_head(finding("generated_check", ClaimType.GENERATED_ARTEFACT), settlements)
+    assert settle_at_head(finding("architect", ClaimType.SPEC_GAP), settlements) is None
+    assert settle_at_head(finding("diff_scoper", ClaimType.SECURITY), settlements) is None
+    assert (
+        settle_at_head(finding("diff_scoper", ClaimType.SPEC_GAP, "other.json"), settlements)
+        is None
+    )
