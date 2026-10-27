@@ -100,14 +100,13 @@ from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
     ReviewScope,
-    fetch_generated_checks,
     load_review_evidence,
-    record_generated_checks,
     record_generated_findings,
     report_json,
     report_lines,
     review_scope,
 )
+from .generated_store import fetch_generated_checks, record_generated_checks
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,

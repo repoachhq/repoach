@@ -22,6 +22,9 @@ The flow has two halves that never share a process:
 At a later head, :func:`settle_at_head` settles those findings, and the
 older oversized findings of a newly declared path, from the
 ``generated_checks`` rows of that head, never through the refuter.
+
+The rows live in :mod:`repoach.review.generated_store`; the verification
+job's entry point is :mod:`repoach.review.generated_verify`.
 """
 
 from __future__ import annotations
@@ -34,27 +37,11 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from sqlalchemy import (
-    Column,
-    Integer,
-    MetaData,
-    String,
-    Table,
-    Text,
-    create_engine,
-    delete,
-    insert,
-    select,
-)
-from sqlalchemy.engine import Engine
-
 from ..core.logging import get_logger
-from ..core.sqlite_schema_init import ensure_schema_created
 from ..project.config import (
     CONFIG_FILE_NAME,
     GENERATED_CHECK_TIMEOUT_S,
@@ -817,7 +804,7 @@ def check_cause(check: GeneratedCheck) -> str:
     return _last_line(check.output_tail) or check.state.value
 
 
-def _by_path(checks: Sequence[GeneratedCheck]) -> dict[str, list[GeneratedCheck]]:
+def by_path(checks: Sequence[GeneratedCheck]) -> dict[str, list[GeneratedCheck]]:
     """Group runs by artefact path, keeping the order of first appearance."""
     grouped: dict[str, list[GeneratedCheck]] = {}
     for check in checks:
@@ -844,7 +831,7 @@ def generated_findings(
         The findings, ``verified`` (the check is the verification).
     """
     findings: list[Finding] = []
-    for path, runs in _by_path(checks).items():
+    for path, runs in by_path(checks).items():
         if path_verified(runs):
             continue
         causes = [check_cause(run) for run in runs if run.state is not GeneratedState.VERIFIED]
@@ -892,123 +879,6 @@ def record_generated_findings(
         record_finding(db_path, finding)
         recorded += 1
     return recorded
-
-
-_metadata = MetaData()
-
-generated_checks = Table(
-    "generated_checks",
-    _metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("pr_number", Integer, nullable=False, index=True),
-    Column("head_sha", String, nullable=False),
-    Column("path", String, nullable=False),
-    Column("argv", Text, nullable=False),
-    Column("exit_code", Integer, nullable=True),
-    Column("duration_ms", Integer, nullable=False),
-    Column("output_tail", Text, nullable=False),
-    Column("state", String, nullable=False),
-    Column("script_ref", String, nullable=False),
-    Column("runs_for_path", Integer, nullable=False),
-    Column("sources_changed", Text, nullable=False),
-    Column("producer_inputs_changed", Text, nullable=False),
-    Column("artefact_sha256", String, nullable=False),
-    Column("checks_ms", Integer, nullable=True),
-    Column("overhead_ms", Integer, nullable=True),
-    Column("recorded_at", String, nullable=False),
-)
-"""One row per check run at a head (``db:table:generated_checks``)."""
-
-
-def _engine_for(db_path: Path) -> Engine:
-    """Return a SQLite engine on ``db_path``, creating its directory."""
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{db_path}")
-
-
-def init_generated_schema(db_path: Path) -> None:
-    """Create the ``generated_checks`` table if absent (idempotent)."""
-    ensure_schema_created(_engine_for(db_path), _metadata)
-
-
-def record_generated_checks(
-    db_path: Path,
-    *,
-    pr_number: int,
-    head_sha: str,
-    checks: Sequence[GeneratedCheck],
-    timing: GeneratedTiming | None = None,
-) -> None:
-    """Replace the ``generated_checks`` rows of ``head_sha`` by ``checks``."""
-    init_generated_schema(db_path)
-    now = datetime.now(UTC).isoformat()
-    engine = _engine_for(db_path)
-    with engine.begin() as conn:
-        conn.execute(
-            delete(generated_checks).where(
-                generated_checks.c.pr_number == pr_number,
-                generated_checks.c.head_sha == head_sha,
-            )
-        )
-        for check in checks:
-            conn.execute(
-                insert(generated_checks).values(
-                    pr_number=pr_number,
-                    head_sha=head_sha,
-                    path=check.path,
-                    argv=json.dumps(list(check.argv)),
-                    exit_code=check.exit_code,
-                    duration_ms=check.duration_ms,
-                    output_tail=check.output_tail,
-                    state=check.state.value,
-                    script_ref=check.script_ref,
-                    runs_for_path=check.runs_for_path,
-                    sources_changed=json.dumps(list(check.sources_changed)),
-                    producer_inputs_changed=json.dumps(list(check.producer_inputs_changed)),
-                    artefact_sha256=check.artefact_sha256,
-                    checks_ms=None if timing is None else timing.checks_ms,
-                    overhead_ms=None if timing is None else timing.overhead_ms,
-                    recorded_at=now,
-                )
-            )
-
-
-def fetch_generated_checks(
-    db_path: Path, pr_number: int, head_sha: str
-) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
-    """Return the runs recorded at ``head_sha`` and the timing they came with."""
-    init_generated_schema(db_path)
-    engine = _engine_for(db_path)
-    with engine.connect() as conn:
-        rows = conn.execute(
-            select(generated_checks)
-            .where(
-                generated_checks.c.pr_number == pr_number,
-                generated_checks.c.head_sha == head_sha,
-            )
-            .order_by(generated_checks.c.id)
-        ).fetchall()
-    checks = [
-        GeneratedCheck(
-            path=row.path,
-            argv=tuple(json.loads(row.argv)),
-            head_sha=row.head_sha,
-            artefact_sha256=row.artefact_sha256,
-            sources_changed=tuple(json.loads(row.sources_changed)),
-            state=GeneratedState(row.state),
-            exit_code=row.exit_code,
-            duration_ms=row.duration_ms,
-            output_tail=row.output_tail,
-            script_ref="base" if row.script_ref == "base" else "head",
-            producer_inputs_changed=tuple(json.loads(row.producer_inputs_changed)),
-            runs_for_path=row.runs_for_path,
-        )
-        for row in rows
-    ]
-    timing = None
-    if rows and rows[0].checks_ms is not None and rows[0].overhead_ms is not None:
-        timing = GeneratedTiming(rows[0].checks_ms, rows[0].overhead_ms)
-    return checks, timing
 
 
 def evidence_payload(
@@ -1063,7 +933,7 @@ def checks_from_evidence(
         raise GeneratedEvidenceMismatchError(
             f"evidence of head {str(payload.get('head_sha'))[:7]}, reviewing {head_sha[:7]}"
         )
-    recorded = _by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
+    recorded = by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
     checks: list[GeneratedCheck] = []
     for path in touched:
         artefact = head_dir / path
@@ -1220,7 +1090,7 @@ def report_lines(
 ) -> list[str]:
     """The report lines naming what proved each artefact, or why nothing did (G5, G7)."""
     lines: list[str] = []
-    for path, runs in _by_path(checks).items():
+    for path, runs in by_path(checks).items():
         for run in runs:
             argv = " ".join(run.argv)
             if run.state is GeneratedState.VERIFIED:
@@ -1239,28 +1109,6 @@ def report_lines(
 ReverifyOutcome = tuple[Literal["resolved", "still_open"], str, str]
 
 
-def settlements_at_head(db_path: Path, pr_number: int, head_sha: str) -> dict[str, ReverifyOutcome]:
-    """Return how the ``generated_checks`` rows of ``head_sha`` settle each recorded path (G3, G6).
-
-    ``resolved`` when every run of the path verified the derivation (a
-    source changed, exit 0), ``still_open`` with the cause otherwise.
-    """
-    if not head_sha:
-        return {}
-    checks, _ = fetch_generated_checks(db_path, pr_number, head_sha)
-    settled: dict[str, ReverifyOutcome] = {}
-    for path, runs in _by_path(checks).items():
-        if path_verified(runs):
-            reason = f"declared generated at {head_sha[:7]}, verified by {' '.join(runs[0].argv)}"
-            settled[path] = ("resolved", GENERATED_FINDER, reason)
-        else:
-            causes = "; ".join(
-                check_cause(r) for r in runs if r.state is not GeneratedState.VERIFIED
-            )
-            settled[path] = ("still_open", GENERATED_FINDER, causes)
-    return settled
-
-
 def settle_at_head(
     finding: Finding, settlements: Mapping[str, ReverifyOutcome]
 ) -> ReverifyOutcome | None:
@@ -1277,115 +1125,6 @@ def settle_at_head(
     return settlements.get(finding.file)
 
 
-@contextmanager
-def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
-    """Yield a tree at ``sha``: the checkout when it is there and clean, else a detached worktree.
-
-    The worktree is removed on exit.
-    """
-    at = _git(root, "rev-parse", "HEAD").stdout.decode().strip()
-    dirty = _git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
-    if at == sha and not dirty:
-        yield root
-        return
-    target = state_dir / "generated" / sha[:12]
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        _git(root, "worktree", "remove", "--force", str(target))
-    added = _git(root, "worktree", "add", "--detach", "--force", str(target), sha)
-    if added.returncode != 0:
-        raise RuntimeError(added.stderr.decode(errors="replace").strip()[:300])
-    try:
-        yield target
-    finally:
-        _git(root, "worktree", "remove", "--force", str(target))
-
-
-class GeneratedRefusalError(RuntimeError):
-    """``repoach review generated`` cannot run: a ref does not resolve or the base is invalid."""
-
-
-def _resolve(root: Path, ref: str) -> str | None:
-    """Return the commit ``ref`` names in ``root``, ``None`` when it does not resolve."""
-    found = _git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-    if found.returncode != 0:
-        return None
-    return found.stdout.decode().strip() or None
-
-
-def verify_generated(
-    root: Path,
-    *,
-    pr_number: int,
-    head: str,
-    base_ref: str,
-    state_dir: Path,
-    runner: Runner | None = None,
-    clock: Callable[[], float] = time.monotonic,
-) -> tuple[dict[str, Any], list[GeneratedCheck], GeneratedTiming]:
-    """Run the touched checks of a PR at its head and build the evidence (``repoach review generated``).
-
-    The verification job's whole work, secret-free (G2, G7): the
-    declarations are read at ``base_ref``, the changed paths between the
-    merge base and the head, the checks run against a tree at the head
-    (the checkout when it is there and clean, else a detached worktree
-    under ``state_dir``), and the wall time is split into ``checks_ms``
-    and ``overhead_ms``.
-
-    Args:
-        root: The checkout.
-        pr_number: The pull request.
-        head: The head SHA (or a ref naming it).
-        base_ref: The base ref (``origin/develop``).
-        state_dir: Where a worktree of the head may be created.
-        runner: The subprocess seam; :func:`subprocess_runner`, looked up
-            at call time, when omitted.
-        clock: The monotonic clock.
-
-    Returns:
-        ``(evidence payload, runs, timing)``.
-
-    Raises:
-        GeneratedRefusalError: The head or the base does not resolve.
-        ConfigError: The base declarations are invalid.
-    """
-    started = clock()
-    head_sha = _resolve(root, head)
-    if head_sha is None:
-        raise GeneratedRefusalError(f"head {head!r} does not resolve to a commit")
-    if _resolve(root, base_ref) is None:
-        raise GeneratedRefusalError(f"base {base_ref!r} does not resolve to a commit")
-    base_sha = merge_base(root, base_ref, head_sha) or base_ref
-    changed = changed_paths(root, base_sha, head_sha)
-    touched = touched_artefacts(declared_at_base(root, base_ref), changed)
-    checks: list[GeneratedCheck] = []
-    if touched:
-        with head_tree(root, head_sha, state_dir) as tree:
-            checks = run_checks(
-                touched,
-                head_dir=tree,
-                head_sha=head_sha,
-                runner=runner if runner is not None else subprocess_runner,
-                changed_files=changed,
-                base_sha=base_sha,
-                base_blob=lambda path: blob_at(root, base_sha, path),
-                clock=clock,
-            )
-    checks_ms = sum(check.duration_ms for check in checks)
-    overhead_ms = max(round((clock() - started) * 1000) - checks_ms, 0)
-    timing = GeneratedTiming(checks_ms=checks_ms, overhead_ms=overhead_ms)
-    payload = evidence_payload(
-        pr_number=pr_number, head_sha=head_sha, base_sha=base_sha, checks=checks, timing=timing
-    )
-    return payload, checks, timing
-
-
-def changed_paths(root: Path, base_sha: str, head_sha: str) -> list[str]:
-    """Return the paths changed between ``base_sha`` and ``head_sha``."""
-    listed = _git(root, "diff", "--name-only", "--no-renames", base_sha, head_sha)
-    return [line for line in listed.stdout.decode().splitlines() if line]
-
-
 __all__ = [
     "CHECKS_TOTAL_BUDGET_S",
     "EVIDENCE_FORMAT",
@@ -1394,32 +1133,29 @@ __all__ = [
     "GeneratedEntry",
     "GeneratedEvidenceMismatch",
     "GeneratedEvidenceMismatchError",
-    "GeneratedRefusalError",
     "GeneratedState",
     "GeneratedTiming",
+    "ReverifyOutcome",
     "ReviewScope",
     "RunResult",
     "Runner",
     "blob_at",
-    "changed_paths",
+    "by_path",
+    "check_cause",
     "declared_at_base",
     "evidence_payload",
-    "fetch_generated_checks",
     "generated_findings",
-    "head_tree",
     "load_generated_entries",
     "load_review_evidence",
     "merge_base",
-    "record_generated_checks",
+    "path_verified",
     "record_generated_findings",
     "report_json",
     "report_lines",
     "review_scope",
     "run_checks",
     "settle_at_head",
-    "settlements_at_head",
     "subprocess_runner",
     "summarise",
     "touched_artefacts",
-    "verify_generated",
 ]

@@ -37,9 +37,9 @@ from repoach.review.generated_artefacts import (
     GeneratedTiming,
     RunResult,
     evidence_payload,
-    fetch_generated_checks,
     run_checks,
 )
+from repoach.review.generated_store import fetch_generated_checks
 from repoach.review.merge_gate import MergeDecision, MergeFacts
 from repoach.review.report import render_ledger_report
 from repoach.review.secret_env import scrubbed_env
