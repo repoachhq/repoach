@@ -785,6 +785,8 @@ def test_head_tree_is_a_clone_with_its_own_git_dir(tmp_path: Path) -> None:
         assert common == tree / ".git"
         assert git(tree, "rev-parse", "HEAD") == sha
         assert (tree / CHECK).is_file()
+        assert not (tree / ".git" / "objects" / "info" / "alternates").exists()
+        assert (tree.parent.stat().st_mode & 0o777) == 0o700
         (tree / ".git" / "hooks" / "post-checkout").write_text("#!/bin/sh\n", encoding="utf-8")
 
     assert not tree.exists()

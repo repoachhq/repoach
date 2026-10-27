@@ -31,25 +31,30 @@ from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, r
 
 @contextmanager
 def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
-    """Yield a throwaway clone of ``root`` at ``sha``, removed on exit.
+    """Yield a throwaway one-commit copy of ``root`` at ``sha``, removed on exit.
 
     The check is pull-request code: it never runs in the checkout, nor in
-    a worktree sharing the checkout's ``.git``, where it could plant a
-    hook or a config the next job of the same runner would execute. The
-    clone has its own git directory and borrows the checkout's objects
-    read-only (``--shared``).
+    a worktree sharing the checkout's ``.git``. The copy is a fresh
+    repository holding only ``sha`` (a depth-1 fetch over ``file://``):
+    its own git directory, its own objects, no alternates file pointing
+    back at the checkout, in a directory only this user can enter. A
+    process of the same user can still reach any path the job can; the
+    runner, not this tree, is that boundary (docs/generated_artefacts.md).
 
     Raises:
-        RuntimeError: The clone or its checkout of ``sha`` failed.
+        RuntimeError: The copy or its checkout of ``sha`` failed.
     """
-    target = state_dir / "generated" / sha[:12]
+    parent = state_dir / "generated"
+    parent.mkdir(parents=True, exist_ok=True)
+    parent.chmod(0o700)
+    target = parent / sha[:12]
     if target.exists():
         shutil.rmtree(target)
-    target.parent.mkdir(parents=True, exist_ok=True)
     try:
         for args in (
-            ("clone", "--quiet", "--shared", "--no-checkout", str(root), str(target)),
-            ("-C", str(target), "checkout", "--quiet", "--detach", sha),
+            ("init", "--quiet", str(target)),
+            ("-C", str(target), "fetch", "--quiet", "--depth", "1", root.resolve().as_uri(), sha),
+            ("-C", str(target), "checkout", "--quiet", "--detach", "FETCH_HEAD"),
         ):
             made = run_git(root, *args)
             if made.returncode != 0:
