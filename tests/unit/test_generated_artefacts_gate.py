@@ -40,6 +40,7 @@ from repoach.review.generated_artefacts import (
     run_checks,
 )
 from repoach.review.generated_store import fetch_generated_checks
+from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts
 from repoach.review.report import render_ledger_report
 from repoach.review.secret_env import scrubbed_env
@@ -47,6 +48,7 @@ from tests.fixtures.generated_artefacts.harness import (
     Bench,
     RecordingRunner,
     Repo,
+    git,
     install,
     review,
     verify,
@@ -762,3 +764,21 @@ def test_no_process_of_the_check_outlives_its_run(tmp_path: Path) -> None:
     assert (result.exit_code, result.output.strip()) == (0, "done")
     subprocess.run(["sleep", "2"], check=True)
     assert not marker.exists()
+
+
+def test_head_tree_is_a_clone_with_its_own_git_dir(tmp_path: Path) -> None:
+    """The check never runs in the checkout nor beside its .git: a clone is made and removed."""
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    sha = git(repo.checkout, "rev-parse", "HEAD")
+
+    with head_tree(repo.checkout, sha, tmp_path / "state") as tree:
+        assert tree != repo.checkout
+        common = Path(git(tree, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+        assert common == tree / ".git"
+        assert git(tree, "rev-parse", "HEAD") == sha
+        assert (tree / CHECK).is_file()
+        (tree / ".git" / "hooks" / "post-checkout").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    assert not tree.exists()
+    assert not (repo.checkout / ".git" / "hooks" / "post-checkout").exists()
+    assert git(repo.checkout, "worktree", "list").count("\n") == 0

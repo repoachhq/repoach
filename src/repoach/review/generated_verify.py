@@ -1,7 +1,7 @@
 """``repoach review generated``: run the touched checks at a head, secret-free.
 
 The verification half of SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ (G2,
-G7): read the declarations at the base, materialise a tree at the head,
+G7): read the declarations at the base, clone a tree at the head,
 run each touched check through
 :data:`~repoach.review.generated_artefacts.subprocess_runner` (looked up
 at call time) and build the ``format:review-generated-json`` evidence.
@@ -9,6 +9,7 @@ at call time) and build the ``format:review-generated-json`` evidence.
 
 from __future__ import annotations
 
+import shutil
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -32,26 +33,32 @@ from .generated_artefacts import (
 
 @contextmanager
 def head_tree(root: Path, sha: str, state_dir: Path) -> Iterator[Path]:
-    """Yield a tree at ``sha``: the checkout when it is there and clean, else a detached worktree.
+    """Yield a throwaway clone of ``root`` at ``sha``, removed on exit.
 
-    The worktree is removed on exit.
+    The check is pull-request code: it never runs in the checkout, nor in
+    a worktree sharing the checkout's ``.git``, where it could plant a
+    hook or a config the next job of the same runner would execute. The
+    clone has its own git directory and borrows the checkout's objects
+    read-only (``--shared``).
+
+    Raises:
+        RuntimeError: The clone or its checkout of ``sha`` failed.
     """
-    at = run_git(root, "rev-parse", "HEAD").stdout.decode().strip()
-    dirty = run_git(root, "status", "--porcelain", "--untracked-files=no").stdout.strip()
-    if at == sha and not dirty:
-        yield root
-        return
     target = state_dir / "generated" / sha[:12]
-    target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
-        run_git(root, "worktree", "remove", "--force", str(target))
-    added = run_git(root, "worktree", "add", "--detach", "--force", str(target), sha)
-    if added.returncode != 0:
-        raise RuntimeError(added.stderr.decode(errors="replace").strip()[:300])
+        shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
     try:
+        for args in (
+            ("clone", "--quiet", "--shared", "--no-checkout", str(root), str(target)),
+            ("-C", str(target), "checkout", "--quiet", "--detach", sha),
+        ):
+            made = run_git(root, *args)
+            if made.returncode != 0:
+                raise RuntimeError(made.stderr.decode(errors="replace").strip()[:300])
         yield target
     finally:
-        run_git(root, "worktree", "remove", "--force", str(target))
+        shutil.rmtree(target, ignore_errors=True)
 
 
 class GeneratedRefusalError(RuntimeError):
