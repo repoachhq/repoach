@@ -21,6 +21,7 @@ import shutil
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,7 @@ from repoach.review.findings import (
 )
 from repoach.review.findings_bridge import oversized_finding
 from repoach.review.generated_artefacts import (
+    GeneratedCheck,
     GeneratedEntry,
     GeneratedState,
     GeneratedTiming,
@@ -47,7 +49,11 @@ from repoach.review.generated_artefacts import (
 from repoach.review.generated_evidence import evidence_payload
 from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_settle import settle_at_head, settlements_at_head
-from repoach.review.generated_store import fetch_generated_checks, has_generated_checks
+from repoach.review.generated_store import (
+    fetch_generated_checks,
+    has_generated_checks,
+    record_generated_checks,
+)
 from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts
 from repoach.review.report import render_ledger_report
@@ -1091,3 +1097,59 @@ def test_each_run_gets_its_own_tree_and_may_not_change_the_artefact(tmp_path: Pa
         (ARTEFACT, GeneratedState.STALE, f"the check changed {ARTEFACT}"),
         ("data/index.json", GeneratedState.VERIFIED, "ok"),
     ]
+
+
+def test_evidence_missing_its_base_run_is_reported_not_run(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """D3 at review time: a changed check script with no base run in the evidence is not green."""
+    cosmetic = CHECK_SCRIPT + 'print("checked")\n'
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head(
+        {"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V2, "B"), CHECK: cosmetic}
+    )
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+    payload["checks"] = [run for run in payload["checks"] if run["script_ref"] == "head"]
+    payload["checks"][0]["runs_for_path"] = 1
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    checks, _ = fetch_generated_checks(bench.db_path, 7, head)
+    assert [(c.script_ref, c.state) for c in checks] == [
+        ("base", GeneratedState.NOT_RUN),
+        ("head", GeneratedState.VERIFIED),
+    ]
+    assert [f.verification_result for f in _generated_findings(bench.db_path)] == [
+        f"no base-script run for {ARTEFACT} at {head[:7]}"
+    ]
+    assert result.payload["final_verdict"] == "REQUEST_CHANGES"
+
+
+def test_generated_checks_round_trip_keeps_script_ref_and_timing(tmp_path: Path) -> None:
+    """Rows read back as written: base/head script refs, and no timing when none was given."""
+    db_path = tmp_path / "ledger.db"
+    run = GeneratedCheck(
+        path=ARTEFACT,
+        argv=(CHECK, "--check"),
+        head_sha="a" * 40,
+        artefact_sha256="b" * 64,
+        sources_changed=("data/corpus.json",),
+        state=GeneratedState.VERIFIED,
+        exit_code=0,
+        duration_ms=12,
+        output_tail="ok",
+        script_ref="base",
+        runs_for_path=2,
+    )
+    head_run = replace(run, script_ref="head", duration_ms=15)
+
+    record_generated_checks(db_path, pr_number=7, head_sha="a" * 40, checks=[run, head_run])
+    assert fetch_generated_checks(db_path, 7, "a" * 40) == ([run, head_run], None)
+
+    timing = GeneratedTiming(27, 300)
+    record_generated_checks(db_path, pr_number=7, head_sha="a" * 40, checks=[run], timing=timing)
+    assert fetch_generated_checks(db_path, 7, "a" * 40) == ([run], timing)
