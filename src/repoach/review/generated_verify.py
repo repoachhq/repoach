@@ -23,11 +23,10 @@ from typing import Any
 from .generated_artefacts import (
     GeneratedCheck,
     GeneratedTiming,
-    declared_at_base,
     report_lines,
     run_checks,
-    touched_artefacts,
 )
+from .generated_config import declared_at_base, touched_artefacts
 from .generated_evidence import evidence_payload
 from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from .generated_process import Runner, subprocess_runner
