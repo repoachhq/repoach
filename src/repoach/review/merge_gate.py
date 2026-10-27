@@ -132,35 +132,31 @@ class MergeFacts(BaseModel):
             blocking, naming the head it was raised at.
         reverify_line: The one-line summary of the re-check (empty when
             the gate did not reach the ledger).
-        spec_missing: The acceptance selectors absent at head, from the
-            coverage record at head.
-        spec_planned: The selectors of a pre-implementation spec whose
-            file does not exist yet — reported, never refusing
-            (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
-        spec_draft_refusals: One line per rule that withheld that
-            exemption; each one is a refusal reason.
         spec_recompute_failure: Why a coverage row graded by a retired
             rule could not be recomputed (SP-PLAN-SELECTOR-AUDIT-WIRE
             0.3); always a refusal reason, whatever the stored verdict,
             since that verdict comes from a retired rule. Empty otherwise.
-        spec_contract: What the coverage was graded against — ``plan``,
-            ``acceptance-criteria``, ``none`` or ``unavailable``
-            (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS).
-        spec_origins: Selector to origin (``AC3``, ``plan step 1``) for
-            naming each missing selector.
-        spec_no_selectors_line: The ``no selectors to grade: …`` line of a
-            contract with nothing to grade, empty otherwise (G3).
-        spec_report: Lines reported and never refusing (``plan-absent: …``).
         spec_rows: The coverage rows of the latest grading at head, one
             per graded spec; the decision names each not-covered row's
             causes, prefixed with the spec id for a spec resolved by
             ownership (G7).
 
-    ``spec_rows`` is the one source: the flat ``spec_missing``,
-    ``spec_planned``, ``spec_draft_refusals``, ``spec_contract``,
-    ``spec_origins``, ``spec_no_selectors_line`` and ``spec_report`` are
-    properties derived from it, which the gate JSON prints (its
-    documented ``spec_acceptance`` shape).
+    Read-only properties derived from ``spec_rows`` (the one source; the
+    gate JSON prints them, its documented ``spec_acceptance`` shape, and
+    they are refused as constructor inputs):
+
+    - ``spec_missing``: the acceptance selectors absent at head.
+    - ``spec_planned``: the selectors of a pre-implementation spec whose
+      file does not exist yet, reported, never refusing
+      (SP-PLAN-SELECTOR-AUDIT-WIRE 0.2).
+    - ``spec_draft_refusals``: the refusal lines the rows carry.
+    - ``spec_contract``: what the latest row was graded against
+      (``plan``, ``acceptance-criteria``, ``none`` or ``unavailable``).
+    - ``spec_origins``: selector to origin (``AC3``, ``plan step 1``).
+    - ``spec_no_selectors_line``: the ``no selectors to grade: …`` line
+      of a contract with nothing to grade (G3).
+    - ``spec_report``: lines reported and never refusing
+      (``plan-absent: …``).
     """
 
     model_config = ConfigDict(extra="forbid")
