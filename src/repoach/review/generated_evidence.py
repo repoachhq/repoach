@@ -20,6 +20,7 @@ from .generated_types import (
     GeneratedEntry,
     GeneratedState,
     GeneratedTiming,
+    ScriptRef,
     artefact_triage,
     by_path,
     changed_inputs,
@@ -216,8 +217,9 @@ def _rebound(
     base declaration, the changed sources and producer inputs from the
     reviewed diff, and the state from the exit code and those sources: a
     run claiming ``verified`` without exit 0, or without a changed source,
-    is not verified. When the check script changed, a missing base-script
-    run (D3) is reported not run, unless the script is absent at the head.
+    is not verified. Exactly the expected runs are kept: a head run, and a
+    base run first when the check script changed (D3); a missing one is
+    reported not run, unless the script is absent at the head.
     """
     sources, producers = changed_inputs(entry, path, changed_files)
     argv = declared_argv(entry, head_sha, base_sha)
@@ -241,22 +243,26 @@ def _rebound(
                 state=state,
             )
         )
-    script_changed = entry.check[0] in changed_files
     absent = any(run.state is GeneratedState.CHECK_ABSENT for run in rebound)
-    if script_changed and not absent and not any(run.script_ref == "base" for run in rebound):
-        rebound.insert(
-            0,
-            replace(
+    if absent:
+        return rebound
+    script_changed = entry.check[0] in changed_files
+    expected: tuple[ScriptRef, ...] = ("base", "head") if script_changed else ("head",)
+    by_ref = {run.script_ref: run for run in rebound}
+    complete: list[GeneratedCheck] = []
+    for ref in expected:
+        run = by_ref.get(ref)
+        if run is None:
+            run = replace(
                 rebound[0],
                 state=GeneratedState.NOT_RUN,
                 exit_code=None,
                 duration_ms=0,
-                output_tail=f"no base-script run for {path} at {head_sha[:7]}",
-                script_ref="base",
-                runs_for_path=2,
-            ),
-        )
-    return rebound
+                output_tail=f"no {ref}-script run for {path} at {head_sha[:7]}",
+                script_ref=ref,
+            )
+        complete.append(replace(run, runs_for_path=len(expected)))
+    return complete
 
 
 def load_review_evidence(
