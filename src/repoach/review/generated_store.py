@@ -32,10 +32,13 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine
 
 from ..core.sqlite_schema_init import ensure_schema_created
+from .findings import fetch_findings, init_findings_schema, record_finding
+from .findings_bridge import finding_fingerprint
 from .generated_types import (
     GeneratedCheck,
     GeneratedState,
     GeneratedTiming,
+    generated_findings,
 )
 
 _metadata = MetaData()
@@ -193,10 +196,44 @@ def fetch_generated_checks(
     return checks, timing
 
 
+def record_generated_findings(
+    db_path: Path, checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
+) -> int:
+    """Persist :func:`generated_findings` once per head; return how many were new.
+
+    Args:
+        db_path: The findings ledger.
+        checks: The runs of this head.
+        pr_number: The pull request.
+        round_n: The review round.
+
+    Returns:
+        How many findings were new at the head.
+    """
+    findings = generated_findings(checks, pr_number=pr_number, round_n=round_n)
+    if not findings:
+        return 0
+    init_findings_schema(db_path)
+    head = findings[0].head_sha
+    at_head = {
+        finding_fingerprint(row)
+        for row in fetch_findings(db_path, pr_number)
+        if row.head_sha == head
+    }
+    recorded = 0
+    for finding in findings:
+        if finding_fingerprint(finding) in at_head:
+            continue
+        record_finding(db_path, finding)
+        recorded += 1
+    return recorded
+
+
 __all__ = [
     "fetch_generated_checks",
     "generated_checks",
     "has_generated_checks",
     "init_generated_schema",
     "record_generated_checks",
+    "record_generated_findings",
 ]

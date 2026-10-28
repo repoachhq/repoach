@@ -96,15 +96,14 @@ from .findings_bridge import (
     record_oversized_findings,
     recount_findings_at_head,
 )
-from .generated_artefacts import (
-    ReviewScope,
-    record_generated_findings,
-    report_json,
-    report_lines,
-    review_scope,
-)
+from .generated_artefacts import ReviewScope, review_scope
 from .generated_evidence import load_review_evidence
-from .generated_store import fetch_generated_checks, record_generated_checks
+from .generated_report import report_json, report_lines
+from .generated_store import (
+    fetch_generated_checks,
+    record_generated_checks,
+    record_generated_findings,
+)
 from .generated_types import GeneratedCheck, GeneratedTiming
 from .hallucination_guard import (
     GuardEvent,

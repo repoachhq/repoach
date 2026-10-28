@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from ..project.config import GENERATED_CHECK_TIMEOUT_S
 from ..project.globs import glob_matches
+from .findings import ClaimType, Finding, FindingStatus, Severity
 
 GENERATED_CHECKS_TOTAL_BUDGET_S = 300
 """Seconds every generated-artefact check of one pull request may take together.
@@ -380,6 +381,51 @@ def artefact_triage(
     return artefact.read_bytes(), None
 
 
+_CLAIM_PREFIX = "generated artefact not derived from its sources: "
+"""The claim of a ``generated_artefact`` finding, before the path (spec G3, word for word)."""
+
+
+def generated_findings(
+    checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
+) -> list[Finding]:
+    """Build one blocking ``generated_artefact`` finding per path the checks do not prove (G3).
+
+    Args:
+        checks: The runs of this head.
+        pr_number: The pull request.
+        round_n: The review round.
+
+    Returns:
+        The findings, ``verified`` (the check is the verification).
+    """
+    findings: list[Finding] = []
+    for path, runs in by_path(checks).items():
+        if path_verified(runs):
+            continue
+        causes = [check_cause(run) for run in runs if run.state is not GeneratedState.VERIFIED]
+        head = runs[0].head_sha
+        findings.append(
+            Finding(
+                pr_number=pr_number,
+                head_sha=head,
+                round=round_n,
+                finder=GENERATED_FINDER,
+                claim_type=ClaimType.GENERATED_ARTEFACT,
+                severity=Severity.BLOCKING,
+                file=path,
+                line_start=0,
+                line_end=0,
+                claim=f"{_CLAIM_PREFIX}{path}",
+                evidence_pointer=f"{path}: proved by {' '.join(runs[0].argv)}",
+                status=FindingStatus.VERIFIED,
+                verification_method=GENERATED_FINDER,
+                verification_result="; ".join(causes),
+                checked_at_sha=head,
+            )
+        )
+    return findings
+
+
 __all__ = [
     "CAUSE_LINE_MAX_CHARS",
     "CONTROL_RE",
@@ -398,6 +444,7 @@ __all__ = [
     "changed_inputs",
     "check_cause",
     "declared_argv",
+    "generated_findings",
     "last_line",
     "path_verified",
     "plain_file",

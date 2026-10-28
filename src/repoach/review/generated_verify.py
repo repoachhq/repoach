@@ -20,11 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .generated_artefacts import report_lines, run_checks
+from .generated_artefacts import run_checks
 from .generated_config import declared_at_base, present_at_base, touched_artefacts
 from .generated_evidence import evidence_payload
 from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from .generated_process import Runner, subprocess_runner
+from .generated_report import report_lines
 from .generated_types import GeneratedCheck, GeneratedTiming
 from .secret_env import scrubbed_env
 

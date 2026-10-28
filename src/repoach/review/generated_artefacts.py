@@ -5,17 +5,18 @@ reviewed by reading it: its content is a function of its sources. The
 repository declares such a file under ``[[review.generated]]`` with the
 command that proves the derivation (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ).
 
-This module reads the declarations at the base ref, replaces a touched
-artefact's diff unit by one summary paragraph before any reviewer lens
-sees it (:func:`summarise`), runs the checks for the secret-free
-verification job (:func:`run_checks`) and builds the blocking
-``generated_artefact`` findings (:func:`generated_findings`). The rest of
-the flow lives beside it:
+This module scopes a review to the declarations read at the base ref,
+replaces a touched artefact's diff unit by one summary paragraph before any
+reviewer lens sees it (:func:`summarise`), and runs the checks for the
+secret-free verification job (:func:`run_checks`). The rest of the flow
+lives beside it:
 
 - :mod:`~repoach.review.generated_config`: the declarations, read at
   the base ref;
-- :mod:`~repoach.review.generated_types`: the rows, the entry and the
-  causes every module shares;
+- :mod:`~repoach.review.generated_types`: the rows, the entry, the causes
+  and the blocking ``generated_artefact`` findings every module shares;
+- :mod:`~repoach.review.generated_report`: the JSON entries and the
+  report lines;
 - :mod:`~repoach.review.generated_process`: how one check process runs;
 - :mod:`~repoach.review.generated_git`: the git reads (base blobs, merge
   base, changed paths);
@@ -23,8 +24,9 @@ the flow lives beside it:
 - :mod:`~repoach.review.generated_evidence`: the evidence file and how the
   review reads it back;
 - :mod:`~repoach.review.generated_store` and
-  :mod:`~repoach.review.generated_settle`: the ``generated_checks`` rows
-  and how they settle findings of older heads, never through the refuter.
+  :mod:`~repoach.review.generated_settle`: the ``generated_checks`` rows,
+  the recorded findings, and how they settle findings of older heads,
+  never through the refuter.
 """
 
 from __future__ import annotations
@@ -34,21 +36,10 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
 
 from ..core.logging import get_logger
 from ..project.config import GENERATED_CHECK_TIMEOUT_S
 from .diff_scoper import split_diff
-from .findings import (
-    ClaimType,
-    Finding,
-    FindingStatus,
-    Severity,
-    fetch_findings,
-    init_findings_schema,
-    record_finding,
-)
-from .findings_bridge import finding_fingerprint
 from .generated_config import (
     declared_at_base,
     present_at_base,
@@ -58,18 +49,13 @@ from .generated_git import blob_at, merge_base
 from .generated_process import Budget, Runner, run_once
 from .generated_types import (
     GENERATED_CHECKS_TOTAL_BUDGET_S,
-    GENERATED_FINDER,
     GeneratedCheck,
     GeneratedEntry,
     GeneratedState,
-    GeneratedTiming,
     ScriptRef,
     artefact_triage,
-    by_path,
     changed_inputs,
-    check_cause,
     declared_argv,
-    path_verified,
     plain_file,
     sha256_hex,
     symlinked,
@@ -77,10 +63,6 @@ from .generated_types import (
 from .secret_env import scrubbed_env
 
 _log = get_logger(__name__)
-
-
-_CLAIM_PREFIX = "generated artefact not derived from its sources: "
-"""The claim of a ``generated_artefact`` finding, before the path (spec G3, word for word)."""
 
 
 def summary_paragraph(
@@ -393,138 +375,8 @@ def run_checks(
     return checks
 
 
-def generated_findings(
-    checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
-) -> list[Finding]:
-    """Build one blocking ``generated_artefact`` finding per path the checks do not prove (G3).
-
-    Args:
-        checks: The runs of this head.
-        pr_number: The pull request.
-        round_n: The review round.
-
-    Returns:
-        The findings, ``verified`` (the check is the verification).
-    """
-    findings: list[Finding] = []
-    for path, runs in by_path(checks).items():
-        if path_verified(runs):
-            continue
-        causes = [check_cause(run) for run in runs if run.state is not GeneratedState.VERIFIED]
-        head = runs[0].head_sha
-        findings.append(
-            Finding(
-                pr_number=pr_number,
-                head_sha=head,
-                round=round_n,
-                finder=GENERATED_FINDER,
-                claim_type=ClaimType.GENERATED_ARTEFACT,
-                severity=Severity.BLOCKING,
-                file=path,
-                line_start=0,
-                line_end=0,
-                claim=f"{_CLAIM_PREFIX}{path}",
-                evidence_pointer=f"{path}: proved by {' '.join(runs[0].argv)}",
-                status=FindingStatus.VERIFIED,
-                verification_method=GENERATED_FINDER,
-                verification_result="; ".join(causes),
-                checked_at_sha=head,
-            )
-        )
-    return findings
-
-
-def record_generated_findings(
-    db_path: Path, checks: Sequence[GeneratedCheck], *, pr_number: int, round_n: int
-) -> int:
-    """Persist :func:`generated_findings` once per head; return how many were new.
-
-    Args:
-        db_path: The findings ledger.
-        checks: The runs of this head.
-        pr_number: The pull request.
-        round_n: The review round.
-
-    Returns:
-        How many findings were new at the head.
-    """
-    findings = generated_findings(checks, pr_number=pr_number, round_n=round_n)
-    if not findings:
-        return 0
-    init_findings_schema(db_path)
-    head = findings[0].head_sha
-    at_head = {
-        finding_fingerprint(row)
-        for row in fetch_findings(db_path, pr_number)
-        if row.head_sha == head
-    }
-    recorded = 0
-    for finding in findings:
-        if finding_fingerprint(finding) in at_head:
-            continue
-        record_finding(db_path, finding)
-        recorded += 1
-    return recorded
-
-
-def report_json(checks: Sequence[GeneratedCheck]) -> list[dict[str, Any]]:
-    """The ``generated`` array of the ``review pr`` JSON (G5).
-
-    Args:
-        checks: The runs of this head.
-
-    Returns:
-        One JSON entry per run.
-    """
-    return [
-        {
-            "path": check.path,
-            "check": " ".join(check.argv),
-            "state": check.state.value,
-            "ms": check.duration_ms,
-            "sources_changed": list(check.sources_changed),
-            "producer_inputs_changed": list(check.producer_inputs_changed),
-            "script_ref": check.script_ref,
-        }
-        for check in checks
-    ]
-
-
-def report_lines(
-    checks: Sequence[GeneratedCheck], timing: GeneratedTiming | None = None
-) -> list[str]:
-    """The report lines naming what proved each artefact, or why nothing did (G5, G7).
-
-    Args:
-        checks: The runs of this head.
-        timing: The measured delay; its line is printed when given and there were runs.
-
-    Returns:
-        The lines, in declaration order.
-    """
-    lines: list[str] = []
-    for path, runs in by_path(checks).items():
-        for run in runs:
-            argv = " ".join(run.argv)
-            if run.state is GeneratedState.VERIFIED:
-                where = f"{run.script_ref} script, " if run.runs_for_path > 1 else ""
-                lines.append(f"generated: {path} verified by {argv} ({where}{run.duration_ms} ms)")
-            else:
-                lines.append(f"generated: {path} {run.state.value}: {check_cause(run)}")
-        producers = runs[0].producer_inputs_changed
-        if producers:
-            lines.append(f"producer inputs changed: {', '.join(producers)}")
-    if timing is not None and checks:
-        lines.append(timing.line())
-    return lines
-
-
 __all__ = [
     "ReviewScope",
-    "generated_findings",
-    "record_generated_findings",
-    "report_json",
-    "report_lines",
     "review_scope",
     "run_checks",
     "summarise",
