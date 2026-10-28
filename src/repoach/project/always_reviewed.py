@@ -193,6 +193,43 @@ A tool reads its settings from such a file (``pytest.ini``, ``ruff.toml``,
 is refused. A project deriving data in one of them keeps it reviewed."""
 
 
+MANIFEST_VARIANTS: dict[str, tuple[str, ...]] = {
+    "requirements": (".txt", ".in"),
+    "constraints": (".txt", ".in"),
+    "CMakeLists": (".txt",),
+    "Makefile": (".in", ".am", ".mk"),
+    "docker-compose": (".yml", ".yaml"),
+    "Gemfile": (".lock",),
+    "Dockerfile": (),
+    "Containerfile": (),
+    "Procfile": (),
+}
+"""Manifests named by a stem and a variant (``requirements-dev.txt``,
+``requirements/base.txt``, ``Dockerfile.prod``), with the extensions their
+variants take: CI installs or builds from them."""
+
+
+def _reaches_manifest(pattern: str, literal: str, head: str) -> str | None:
+    """Return the manifest stem ``pattern`` can reach, by name, variant or directory.
+
+    A literal segment starting with a stem reaches it; a wildcard reaches
+    it when the glob's extension is one the stem's variants take.
+    """
+    last = pattern.rsplit("/", 1)[-1]
+    extension = "." + last.rsplit(".", 1)[-1] if "." in last else ""
+    for stem, extensions in MANIFEST_VARIANTS.items():
+        if any(part.startswith(stem) for part in literal.split("/")):
+            return stem
+        if extension not in extensions:
+            continue
+        names = (stem + extension, stem + "-x" + extension, stem + "_x" + extension)
+        if any(
+            glob_matches(pattern, place + name) for name in names for place in (head, head + "x/")
+        ):
+            return stem
+    return None
+
+
 TOOL_CONFIG_STEMS: tuple[str, ...] = (
     "tsconfig",
     "jsconfig",
@@ -254,6 +291,9 @@ def always_reviewed(pattern: str) -> str | None:
         placed = (probe, head + name, head + "x/" + name, "x/" + name, head + probe)
         if any(glob_matches(pattern, candidate) for candidate in placed):
             return probe
+    manifest = _reaches_manifest(pattern, literal, head)
+    if manifest is not None:
+        return f"a {manifest} manifest, which CI installs or builds from"
     last_literal = literal.rsplit("/", 1)[-1]
     for stem in TOOL_CONFIG_STEMS:
         if last_literal.startswith(stem) or glob_matches(pattern, head + stem + ".json"):
@@ -282,6 +322,7 @@ __all__ = [
     "CI_FILES",
     "CONFIG_EXTENSIONS",
     "DEPENDENCY_FILES",
+    "MANIFEST_VARIANTS",
     "TOOL_CONFIG_STEMS",
     "TOOL_FILES",
     "always_reviewed",

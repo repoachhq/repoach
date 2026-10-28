@@ -276,6 +276,14 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "**/settings.json",
         "scripts/**/x.mts",
         "build/*.groovy",
+        "requirements-dev.txt",
+        "requirements/*.txt",
+        "deps/*.txt",
+        "constraints.txt",
+        "native/CMakeLists.txt",
+        "Dockerfile.prod",
+        "docker/Dockerfile*.prod",
+        "build/Makefile.*.mk",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
