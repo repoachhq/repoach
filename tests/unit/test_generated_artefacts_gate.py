@@ -33,6 +33,7 @@ from typer.testing import CliRunner
 
 from repoach.cli import app, review_cmds
 from repoach.core.logging import get_logger
+from repoach.project.always_reviewed import always_reviewed
 from repoach.review import generated_process, generated_verify
 from repoach.review.finding_verifiers import verify_finding
 from repoach.review.findings import (
@@ -1425,3 +1426,26 @@ def test_malformed_evidence_is_reported_not_run(tmp_path: Path, forged: str) -> 
 
     assert timing is None
     assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
+
+
+@pytest.mark.parametrize(
+    ("glob", "reason"),
+    [
+        (".github/x.json", ".github/"),
+        ("api/package.json", "package.json"),
+        ("web/tsconfig.app.json", "a tsconfig configuration file"),
+        ("tools/*.rb", "a .rb script"),
+        ("conf/*.bzl", "a .bzl configuration file"),
+        ("data/.cache.json", "a dotfile or a file under a dot directory"),
+        ("*/settings.json", "a dotfile or a file under a dot directory"),
+        ("bin/runner", "an extensionless file"),
+        ("data/vectors.npy", None),
+    ],
+)
+def test_always_reviewed_names_each_category_reached(glob: str, reason: str | None) -> None:
+    """Each refusal says which kind of always-read file the glob reaches; a data file reaches none."""
+    reached = always_reviewed(glob)
+    if reason is None:
+        assert reached is None
+    else:
+        assert reached is not None and reached.startswith(reason)
