@@ -42,13 +42,7 @@ from repoach.review.findings import (
     record_finding,
 )
 from repoach.review.findings_bridge import oversized_finding
-from repoach.review.generated_artefacts import (
-    GeneratedCheck,
-    GeneratedEntry,
-    GeneratedState,
-    GeneratedTiming,
-    run_checks,
-)
+from repoach.review.generated_artefacts import run_checks
 from repoach.review.generated_evidence import evidence_payload
 from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_settle import settle_at_head, settlements_at_head
@@ -56,6 +50,12 @@ from repoach.review.generated_store import (
     fetch_generated_checks,
     has_generated_checks,
     record_generated_checks,
+)
+from repoach.review.generated_types import (
+    GeneratedCheck,
+    GeneratedEntry,
+    GeneratedState,
+    GeneratedTiming,
 )
 from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts

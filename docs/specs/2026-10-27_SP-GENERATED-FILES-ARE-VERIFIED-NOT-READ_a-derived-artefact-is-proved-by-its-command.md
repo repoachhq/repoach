@@ -207,7 +207,10 @@ the finding, even though F10 proves the content.
 ## Interface
 
 ```python
-# src/repoach/review/generated_artefacts.py
+# src/repoach/review/generated_types.py: GeneratedEntry, GeneratedState, GeneratedCheck
+# src/repoach/review/generated_config.py: load_generated_entries, touched_artefacts
+# src/repoach/review/generated_artefacts.py: summarise, run_checks, generated_findings
+# (each name is imported from the module that defines it)
 @dataclass(frozen=True)
 class GeneratedEntry:
     path: str                 # glob

@@ -97,8 +97,6 @@ from .findings_bridge import (
     recount_findings_at_head,
 )
 from .generated_artefacts import (
-    GeneratedCheck,
-    GeneratedTiming,
     ReviewScope,
     record_generated_findings,
     report_json,
@@ -107,6 +105,7 @@ from .generated_artefacts import (
 )
 from .generated_evidence import load_review_evidence
 from .generated_store import fetch_generated_checks, record_generated_checks
+from .generated_types import GeneratedCheck, GeneratedTiming
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,

@@ -13,11 +13,8 @@ import pytest
 
 from repoach.project.config import GENERATED_ENTRIES_MAX, ConfigError, parse_project_config
 from repoach.project.globs import glob_matches
-from repoach.review.generated_artefacts import (
-    GeneratedEntry,
-    load_generated_entries,
-    touched_artefacts,
-)
+from repoach.review.generated_config import load_generated_entries, touched_artefacts
+from repoach.review.generated_types import GeneratedEntry
 
 _FILE = Path("repoach.toml")
 

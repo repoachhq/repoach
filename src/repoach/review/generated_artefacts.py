@@ -13,7 +13,7 @@ verification job (:func:`run_checks`) and builds the blocking
 the flow lives beside it:
 
 - :mod:`~repoach.review.generated_config`: the declarations, read at
-  the base ref (re-exported here, the spec's interface);
+  the base ref;
 - :mod:`~repoach.review.generated_types`: the rows, the entry and the
   causes every module shares;
 - :mod:`~repoach.review.generated_process`: how one check process runs;
@@ -52,9 +52,7 @@ from .findings import (
 )
 from .findings_bridge import finding_fingerprint
 from .generated_config import (
-    code_extensions,
     declared_at_base,
-    load_generated_entries,
     touched_artefacts,
 )
 from .generated_git import blob_at, merge_base
@@ -605,24 +603,13 @@ def report_lines(
 
 
 __all__ = [
-    "GENERATED_FINDER",
-    "GeneratedCheck",
-    "GeneratedEntry",
-    "GeneratedState",
-    "GeneratedTiming",
     "ReviewScope",
-    "by_path",
-    "check_cause",
-    "code_extensions",
-    "declared_at_base",
     "generated_findings",
-    "load_generated_entries",
-    "path_verified",
     "record_generated_findings",
     "report_json",
     "report_lines",
     "review_scope",
     "run_checks",
     "summarise",
-    "touched_artefacts",
+    "summary_paragraph",
 ]
