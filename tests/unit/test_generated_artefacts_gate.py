@@ -888,7 +888,15 @@ def test_a_script_turned_into_a_symlink_by_the_base_run_is_not_written_through(
 def test_review_generated_requires_the_base() -> None:
     """The base is never read from the pull request's own repoach.toml: --base is required."""
     result = CliRunner().invoke(
-        app, ["review", "generated", "--pr", "1", "--head", "x", "--out", "y"]
+        app,
+        ["review", "generated", "--pr", "1", "--head", "x", "--out", "y"],
+        env={
+            "NO_COLOR": "1",
+            "TERM": "dumb",
+            "COLUMNS": "200",
+            "FORCE_COLOR": "",
+            "GITHUB_ACTIONS": "",
+        },
     )
 
     assert result.exit_code == 2
