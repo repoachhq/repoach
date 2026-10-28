@@ -271,6 +271,7 @@ def test_an_extensionless_glob_is_refused_whatever_the_languages() -> None:
         ("api/data/knowledge_corpus.json", "api/data/knowledge_corpus.json"),
         ("docs/user_guide/a.md", "docs/user_guide/**"),
         ("api/data/_header.json", "api/data/_header.json"),
+        ("docs/**/*.json", "docs/user_guide/**"),
     ],
 )
 def test_a_path_hiding_its_prover_is_refused(glob: str, hidden: str) -> None:

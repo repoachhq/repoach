@@ -728,13 +728,17 @@ def _hides(pattern: str, target: str) -> bool:
 
     A literal ``target`` is matched directly; a glob ``target`` is matched
     the other way round when ``pattern`` is literal (``data/*`` as a
-    source, ``data/x.json`` as the artefact).
+    source, ``data/x.json`` as the artefact); two globs overlap when the
+    literal head of one starts the other's (``docs/**`` and
+    ``docs/user_guide/**``), a conservative answer.
     """
     if not any(char in target for char in GLOB_SPECIALS):
         return glob_matches(pattern, target)
     if not any(char in pattern for char in GLOB_SPECIALS):
         return glob_matches(target, pattern)
-    return False
+    head = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
+    other = re.split(r"[*?\[]", target, maxsplit=1)[0]
+    return head.startswith(other) or other.startswith(head)
 
 
 def refuse_hidden_provers(path: Path, text: str, entries: list[GeneratedSection]) -> None:
