@@ -193,6 +193,61 @@ A tool reads its settings from such a file (``pytest.ini``, ``ruff.toml``,
 is refused. A project deriving data in one of them keeps it reviewed."""
 
 
+SOURCE_EXTENSIONS: tuple[str, ...] = (
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".kts",
+    ".scala",
+    ".c",
+    ".h",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".hpp",
+    ".cs",
+    ".fs",
+    ".swift",
+    ".m",
+    ".mm",
+    ".zig",
+    ".dart",
+    ".ex",
+    ".exs",
+    ".erl",
+    ".hs",
+    ".ml",
+    ".clj",
+    ".r",
+    ".jl",
+    ".sql",
+    ".html",
+    ".htm",
+    ".vue",
+    ".svelte",
+    ".css",
+    ".scss",
+    ".sass",
+    ".less",
+    ".proto",
+    ".graphql",
+    ".tf",
+    ".hcl",
+    ".j2",
+    ".jinja",
+    ".ejs",
+    ".hbs",
+    ".v",
+    ".sv",
+    ".vhd",
+    ".vhdl",
+    ".vh",
+    ".svh",
+)
+"""Source and markup of common languages, refused whatever ``[project].languages`` says."""
+
+
 LOADED_EXTENSIONS: tuple[str, ...] = (
     ".so",
     ".dll",
@@ -325,6 +380,9 @@ def always_reviewed(pattern: str) -> str | None:
     config = glob_code_extension(pattern, CONFIG_EXTENSIONS)
     if config is not None:
         return f"a {config} configuration file"
+    source = glob_code_extension(pattern, SOURCE_EXTENSIONS)
+    if source is not None:
+        return f"a {source} source file"
     loaded = glob_code_extension(pattern, LOADED_EXTENSIONS)
     if loaded is not None:
         return f"a {loaded} file, code a process loads or runs"
@@ -348,6 +406,7 @@ __all__ = [
     "DEPENDENCY_FILES",
     "LOADED_EXTENSIONS",
     "MANIFEST_VARIANTS",
+    "SOURCE_EXTENSIONS",
     "TOOL_CONFIG_STEMS",
     "TOOL_FILES",
     "always_reviewed",

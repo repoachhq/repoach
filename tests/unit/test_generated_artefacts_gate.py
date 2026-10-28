@@ -1515,14 +1515,14 @@ def test_declared_at_base_refuses_a_code_glob_of_the_base_languages(tmp_path: Pa
     """The base file's own [project].languages decide which extensions are code."""
     git(tmp_path, "init", "-q", "-b", "main")
     toml = (
-        '[project]\nlanguages = ["go"]\n\n[[review.generated]]\n'
+        '[project]\nlanguages = ["markdown"]\n\n[[review.generated]]\n'
         'path = "PATH"\ncheck = ["scripts/check.sh"]\nsources = ["data/in.json"]\n'
     )
-    (tmp_path / "repoach.toml").write_text(toml.replace("PATH", "data/*.go"), encoding="utf-8")
+    (tmp_path / "repoach.toml").write_text(toml.replace("PATH", "docs/gen/*.md"), encoding="utf-8")
     git(tmp_path, "add", "-A")
     git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "go")
 
-    with pytest.raises(ConfigError, match=r"\.go files, code of a declared language"):
+    with pytest.raises(ConfigError, match=r"\.md files, code of a declared language"):
         declared_at_base(tmp_path, "main")
 
     (tmp_path / "repoach.toml").write_text(toml.replace("PATH", "data/*.npy"), encoding="utf-8")

@@ -122,14 +122,14 @@ def test_path_glob_matching_python_is_refused(glob: str) -> None:
 
 
 def test_code_glob_is_judged_against_the_declared_languages() -> None:
-    """``*.go`` (not a script extension) is code only where Go is declared."""
+    """``*.md`` (refused by no fixed list) is code only where Markdown is declared."""
     text = _ENTRY.replace('languages = ["python"]', 'languages = ["shell"]').replace(
-        "api/data/knowledge_embeddings.json", "pkg/gen/*.go"
+        "api/data/knowledge_embeddings.json", "docs/gen/*.md"
     )
-    assert _load(text, languages=())[0].path == "pkg/gen/*.go"
-    error = _refused(text, languages=("go",))
+    assert _load(text, languages=())[0].path == "docs/gen/*.md"
+    error = _refused(text, languages=("markdown",))
     assert error.key == "review.generated[0].path"
-    assert ".go" in str(error)
+    assert ".md" in str(error)
 
 
 def test_a_data_glob_beside_python_loads() -> None:
@@ -290,6 +290,12 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "web/*.wasm",
         "notebooks/*.ipynb",
         "libs/*.jar",
+        "vendor/lib/*.go",
+        "web/*.html",
+        "src/**/*.rs",
+        "db/*.sql",
+        "ui/*.vue",
+        "rtl/*.v",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
