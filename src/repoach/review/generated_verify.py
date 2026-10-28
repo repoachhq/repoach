@@ -210,6 +210,9 @@ def run_verification(
 ) -> list[str]:
     """Run :func:`verify_generated`, write the evidence to ``out`` and return the report lines.
 
+    The evidence is written to a fresh file beside ``out`` and renamed
+    over it, so a link a check left at ``out`` is replaced, never followed.
+
     Args:
         root: The checkout.
         pr_number: The pull request.
@@ -236,7 +239,9 @@ def run_verification(
         runner=runner,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    staged = out.with_name(f".{out.name}.{os.getpid()}.tmp")
+    staged.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(staged, out)
     if not checks:
         return ["generated: no declared generated artefact touched"]
     return report_lines(checks, timing)

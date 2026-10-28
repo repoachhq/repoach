@@ -1449,3 +1449,24 @@ def test_always_reviewed_names_each_category_reached(glob: str, reason: str | No
         assert reached is None
     else:
         assert reached is not None and reached.startswith(reason)
+
+
+def test_the_evidence_replaces_a_link_left_at_out(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A symlink planted at --out is replaced by the evidence, and its target is untouched."""
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V2, "B")})
+    target = tmp_path / "elsewhere.txt"
+    target.write_text("keep me\n", encoding="utf-8")
+    out = tmp_path / "review-generated.json"
+    out.symlink_to(target)
+
+    payload, _, _ = verify(repo, monkeypatch, capsys, head=head, out=out)
+
+    assert not out.is_symlink()
+    assert payload["head_sha"] == head
+    assert target.read_text(encoding="utf-8") == "keep me\n"
