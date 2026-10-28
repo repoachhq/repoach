@@ -1138,7 +1138,7 @@ def test_evidence_missing_its_base_run_is_reported_not_run(
     checks, _ = fetch_generated_checks(bench.db_path, 7, head)
     assert [(c.script_ref, c.state, c.runs_for_path) for c in checks] == [
         ("base", GeneratedState.NOT_RUN, 2),
-        ("head", GeneratedState.VERIFIED, 1),
+        ("head", GeneratedState.VERIFIED, 2),
     ]
     assert [f.verification_result for f in _generated_findings(bench.db_path)] == [
         f"no base-script run for {ARTEFACT} at {head[:7]}"
@@ -1366,3 +1366,32 @@ def test_review_generated_refuses_a_ref_git_would_read_as_an_option(
         verify_generated(tmp_path, pr_number=1, head=ref, base_ref="main", state_dir=tmp_path)
     with pytest.raises(GeneratedRefusalError, match="starts with '-'"):
         verify_generated(tmp_path, pr_number=1, head="HEAD", base_ref=ref, state_dir=tmp_path)
+
+
+def test_evidence_missing_its_head_run_is_reported_not_run(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """D3 at review time: a changed check script with only a base run in the evidence is not green."""
+    cosmetic = CHECK_SCRIPT + 'print("checked")\n'
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head(
+        {"data/corpus.json": CORPUS_V2, ARTEFACT: _vectors(CORPUS_V2, "B"), CHECK: cosmetic}
+    )
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+    payload["checks"] = [run for run in payload["checks"] if run["script_ref"] == "base"]
+    evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    checks, _ = fetch_generated_checks(bench.db_path, 7, head)
+    assert [(c.script_ref, c.state, c.runs_for_path) for c in checks] == [
+        ("base", GeneratedState.VERIFIED, 2),
+        ("head", GeneratedState.NOT_RUN, 2),
+    ]
+    assert [f.verification_result for f in _generated_findings(bench.db_path)] == [
+        f"no head-script run for {ARTEFACT} at {head[:7]}"
+    ]
+    assert result.payload["final_verdict"] == "REQUEST_CHANGES"
