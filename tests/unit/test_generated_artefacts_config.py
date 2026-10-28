@@ -239,6 +239,9 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "tox.ini",
         "scripts/*.sh",
         "tools/deploy",
+        "bin/ru?",
+        "web/*.tsx",
+        "lib/*.php",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:

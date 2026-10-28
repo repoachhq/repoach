@@ -190,7 +190,14 @@ ALWAYS_CODE_EXTENSIONS: tuple[str, ...] = (
     ".js",
     ".mjs",
     ".cjs",
+    ".jsx",
     ".ts",
+    ".tsx",
+    ".php",
+    ".lua",
+    ".psm1",
+    ".pyw",
+    ".tcl",
 )
 """Script extensions a ``path`` glob may never match, whatever languages a project declares."""
 
@@ -218,7 +225,7 @@ def always_reviewed(pattern: str) -> str | None:
     if script is not None:
         return f"a {script} script"
     last = pattern.rsplit("/", 1)[-1]
-    if "." not in last and not any(char in last for char in GLOB_SPECIALS):
+    if "." not in last:
         return "an extensionless file, which may be an executable"
     return None
 
