@@ -60,10 +60,10 @@ When the diff touches a declared artefact:
      base script and with the head script, and both must pass. Only the
      script is swapped: both runs use the head tree, so a helper module the
      script imports is code in the diff, read by the reviewers. The head
-     script is pull-request code run by the job's user: install repoach
-     where that user cannot write (baked into the job image, owned by
-     root) or run the job's commands as another user, or the head run could
-     rewrite repoach or the evidence and forge the base run's result.
+     script is pull-request code run by the job's user, so the job image
+     holds repoach installed by root and the job runs as another user
+     (the snippet refuses otherwise); the evidence is renamed into place,
+     so a link the check leaves at `--out` is never followed.
    - When the command holds a secret-bearing variable (`CI_JOB_TOKEN`
      included), it names it on stderr and re-runs itself without it, so
      the check cannot read it from repoach's own process.
@@ -120,11 +120,14 @@ recompute.
 
 ## Wiring it in GitLab CI (Yoob)
 
-The verification job carries no secret and runs the project's own toolchain
-image (repoach does not install the project's dependencies); the review job
-needs it and reads its artefact. Secrets reach only the review job when they
-are scoped to an environment that only `review:gate` declares; the
-verification job refuses to run if any reached it.
+The verification job carries no secret and runs an image of the project's
+own toolchain (repoach does not install the project's dependencies) into which
+repoach is installed, pinned, by root, with the job's commands running as
+another user: the check is pull-request code and must not be able to rewrite
+repoach. The job checks both before anything runs. The review job needs it and
+reads its artefact. Secrets reach only the review job when they are scoped to
+an environment that only `review:gate` declares; the verification job refuses
+to run if any reached it.
 
 ```yaml
 review:generated:
@@ -132,15 +135,16 @@ review:generated:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   stage: review
-  image: $YOOB_PYTHON_CI_IMAGE
+  image: $YOOB_REVIEW_GENERATED_IMAGE
   timeout: 15 minutes
   variables:
     GIT_DEPTH: "0"
-    REPOACH_REF: e597bc678a1ff3ac0c2806fbe3617ba0c84b7fa5
   script:
     - test -z "${REPOACH_GITLAB_TOKEN:-}${REPOACH_ANTHROPIC_AUTH_TOKEN:-}${REPOACH_ANTHROPIC_API_KEY:-}"
       || { echo "review:generated must hold no secret"; exit 2; }
-    - pip install --quiet "repoach @ git+https://github.com/repoachhq/repoach@${REPOACH_REF}"
+    - test "$(id -u)" != 0 || { echo "review:generated: run the job as a non-root user"; exit 2; }
+    - repoach_dir="$(python3 -c 'import os, repoach; print(os.path.dirname(repoach.__file__))')"
+    - test ! -w "$repoach_dir" || { echo "review:generated: repoach is writable by the job user"; exit 2; }
     - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
     - git remote set-url origin "$CI_PROJECT_URL.git"
     - test -z "${GIT_CONFIG_COUNT:-}${GIT_CONFIG_PARAMETERS:-}"
