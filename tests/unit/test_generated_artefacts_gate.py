@@ -25,10 +25,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import typer
 from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
-from repoach.cli import app
+from repoach.cli import app, review_cmds
 from repoach.core.logging import get_logger
 from repoach.review import generated_process, generated_verify
 from repoach.review.findings import (
@@ -1211,3 +1212,28 @@ def test_without_proc_the_runner_degrades_to_the_session_kill(
     assert [e["platform"] for e in logs if e["event"] == "generated.orphan_sweep_unavailable"] == [
         "darwin"
     ]
+
+
+def test_review_generated_exits_2_on_invalid_base_declarations(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A base declaration the loader refuses (a glob reaching code) ends review generated with 2."""
+    repo = Repo(tmp_path, _base(_toml(_entry(path="scripts/*"))))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2})
+    monkeypatch.chdir(repo.checkout)
+    for name in generated_verify.held_secrets():
+        monkeypatch.delenv(name)
+    git(repo.checkout, "fetch", "-q", "origin", "+refs/pull/7/head:refs/pull/7/head")
+    capsys.readouterr()
+
+    with pytest.raises(typer.Exit) as exited:
+        review_cmds.review_generated(
+            pr_number=7, head=head, out=str(tmp_path / "out.json"), base="main"
+        )
+
+    assert exited.value.exit_code == 2
+    assert "review.generated[0].path" in capsys.readouterr().err
+    assert not (tmp_path / "out.json").exists()
