@@ -397,3 +397,21 @@ def test_array_table_line_falls_back_and_stops_at_the_next_section() -> None:
     assert array_table_line(text, "review.generated", 0, "check") == 1
     assert array_table_line(text, "review.generated", 1, "check") == 7
     assert array_table_line(text, "review.generated", 2, "path") is None
+
+
+@pytest.mark.parametrize(
+    ("glob", "path", "matches"),
+    [
+        ("data/*.npy", "data/a.npy", True),
+        ("data/*.npy", "data/sub/a.npy", False),
+        ("*.npy", "a/b.npy", False),
+        ("data/x*/a.npy", "data/x/y/a.npy", False),
+        ("data/**/a.npy", "data/a.npy", True),
+        ("data/**/a.npy", "data/x/y/a.npy", True),
+        ("data/**", "data/x/y.npy", True),
+        ("data/[a.npy", "data/[a.npy", True),
+    ],
+)
+def test_glob_regex_single_star_never_crosses_a_slash(glob: str, path: str, matches: bool) -> None:
+    """``*`` stays in one segment, ``**/`` spans zero or more, an unterminated ``[`` is literal."""
+    assert glob_matches(glob, path) is matches
