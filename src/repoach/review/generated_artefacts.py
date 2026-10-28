@@ -17,6 +17,8 @@ the flow lives beside it:
 - :mod:`~repoach.review.generated_types`: the rows, the entry and the
   causes every module shares;
 - :mod:`~repoach.review.generated_process`: how one check process runs;
+- :mod:`~repoach.review.generated_git`: the git reads (base blobs, merge
+  base, changed paths);
 - :mod:`~repoach.review.generated_verify`: ``repoach review generated``;
 - :mod:`~repoach.review.generated_evidence`: the evidence file and how the
   review reads it back;
@@ -82,6 +84,7 @@ _log = get_logger(__name__)
 
 
 _CLAIM_PREFIX = "generated artefact not derived from its sources: "
+"""The claim of a ``generated_artefact`` finding, before the path (spec G3, word for word)."""
 
 
 def summary_paragraph(
@@ -302,7 +305,28 @@ def _run_once(
     script_content: bytes | None,
     env: Mapping[str, str],
 ) -> tuple[GeneratedState, int | None, int, str]:
-    """Run one check and return ``(state, exit code, ms, output tail)``."""
+    """Run one check once and say how it ended.
+
+    Args:
+        entry: The artefact's declaration.
+        path: The artefact's path.
+        head_dir: The tree the run uses.
+        head_sha: The head (``{head}``).
+        base_sha: The base (``{base}``).
+        runner: The subprocess seam.
+        timeout_s: Seconds one run may take, at most.
+        budget: What is left of the pull request's budget.
+        script_content: The base script to put in place for this run
+            (D3), ``None`` for the head script.
+        env: The scrubbed environment.
+
+    Returns:
+        ``(state, exit code, ms, output tail)``: ``skipped (cost)`` when the
+        budget is spent or the run outlived its limit, ``stale`` for a
+        symlinked or tampered script, an exception or a non-zero exit,
+        ``verified`` for exit 0 (the caller then checks sources and the
+        artefact's blob).
+    """
     limit = min(entry.check_timeout_s, timeout_s)
     remaining = budget.remaining()
     if remaining <= 0:

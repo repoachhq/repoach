@@ -747,7 +747,10 @@ def refuse_hidden_provers(path: Path, text: str, entries: list[GeneratedSection]
     The check script and the sources are what the reviewers read to trust
     the derivation; an entry whose ``path`` matches its own, or another
     entry's, ``check[0]``, ``sources`` or ``producer_inputs`` would hide
-    the prover behind its own summary.
+    the prover behind its own summary. Two globs are compared by their
+    literal heads (:func:`_hides`), which refuses some declarations that
+    could not overlap (``docs/**/*.npy`` beside a ``docs/user_guide/**``
+    source): fail closed, on purpose.
 
     Args:
         path: The file, for the message.
