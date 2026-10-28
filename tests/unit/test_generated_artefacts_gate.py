@@ -373,6 +373,8 @@ def test_check_script_absent_at_head_is_refused(
     assert [f.verification_result for f in findings] == [
         f"check script {CHECK} absent at {head[:7]}"
     ]
+    checks, _ = fetch_generated_checks(bench.db_path, 7, head)
+    assert [(c.script_ref, c.state) for c in checks] == [("head", GeneratedState.CHECK_ABSENT)]
     assert result.payload["final_verdict"] == "REQUEST_CHANGES"
 
 
