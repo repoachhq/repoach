@@ -110,4 +110,86 @@ def glob_code_extension(pattern: str, extensions: tuple[str, ...]) -> str | None
     return None
 
 
-__all__ = ["GLOB_SPECIALS", "glob_code_extension", "glob_matches", "glob_regex"]
+ALWAYS_REVIEWED_PROBES: tuple[str, ...] = (
+    "repoach.toml",
+    ".gitlab-ci.yml",
+    ".gitlab/ci/jobs.yml",
+    ".github/workflows/ci.yml",
+    ".github/CODEOWNERS",
+    "CODEOWNERS",
+    ".githooks/pre-commit",
+    ".gitattributes",
+    ".gitmodules",
+    "Dockerfile",
+    "Makefile",
+    "pyproject.toml",
+    "requirements.txt",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+    "uv.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "go.sum",
+    "Gemfile.lock",
+    ".pre-commit-config.yaml",
+    "docker-compose.yml",
+    "compose.yaml",
+)
+"""Files a ``[[review.generated]]`` ``path`` glob may never match.
+
+What runs or installs on CI (its configuration, hooks, ``repoach.toml``,
+dependency manifests and lockfiles, whose resolved sources a summary would
+hide) is always read by the reviewers: a glob such as
+``**/*.yml`` or ``*.toml`` that would summarise one of them away is refused."""
+
+ALWAYS_REVIEWED_DIRS: tuple[str, ...] = (
+    ".github/",
+    ".gitlab/",
+    ".githooks/",
+    ".circleci/",
+    ".buildkite/",
+    "ci/",
+)
+"""Directories whose files a ``path`` glob may never reach, at any depth below them.
+
+CI definitions and the scripts CI runs live there; a literal path such as
+``.github/workflows/auto-review.yml`` or ``ci/review-gate.sh`` is refused
+like a wildcard reaching them."""
+
+
+def always_reviewed(pattern: str) -> str | None:
+    """Return the always-reviewed file or directory ``pattern`` can reach, or ``None``.
+
+    Args:
+        pattern: A ``[[review.generated]]`` ``path`` glob.
+
+    Returns:
+        The probe file or directory prefix it reaches, ``None`` when it
+        reaches none.
+    """
+    literal = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
+    for directory in ALWAYS_REVIEWED_DIRS:
+        if literal.startswith(directory) or glob_matches(pattern, directory + "x/y.yml"):
+            return directory
+        if glob_matches(pattern, directory + "x.sh") or glob_matches(pattern, directory + "x"):
+            return directory
+    for probe in ALWAYS_REVIEWED_PROBES:
+        if glob_matches(pattern, probe):
+            return probe
+    return None
+
+
+__all__ = [
+    "ALWAYS_REVIEWED_DIRS",
+    "ALWAYS_REVIEWED_PROBES",
+    "GLOB_SPECIALS",
+    "always_reviewed",
+    "glob_code_extension",
+    "glob_matches",
+    "glob_regex",
+]
