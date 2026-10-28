@@ -284,6 +284,12 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "Dockerfile.prod",
         "docker/Dockerfile*.prod",
         "build/Makefile.*.mk",
+        "vendor/*.so",
+        "lib/**/*.pyc",
+        "dist/*.whl",
+        "web/*.wasm",
+        "notebooks/*.ipynb",
+        "libs/*.jar",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:

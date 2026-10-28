@@ -193,6 +193,27 @@ A tool reads its settings from such a file (``pytest.ini``, ``ruff.toml``,
 is refused. A project deriving data in one of them keeps it reviewed."""
 
 
+LOADED_EXTENSIONS: tuple[str, ...] = (
+    ".so",
+    ".dll",
+    ".dylib",
+    ".pyc",
+    ".pyd",
+    ".jar",
+    ".war",
+    ".class",
+    ".whl",
+    ".egg",
+    ".wasm",
+    ".node",
+    ".exe",
+    ".a",
+    ".o",
+    ".ipynb",
+)
+"""Compiled, packaged or notebook code a process loads or runs: never summarised."""
+
+
 MANIFEST_VARIANTS: dict[str, tuple[str, ...]] = {
     "requirements": (".txt", ".in"),
     "constraints": (".txt", ".in"),
@@ -304,6 +325,9 @@ def always_reviewed(pattern: str) -> str | None:
     config = glob_code_extension(pattern, CONFIG_EXTENSIONS)
     if config is not None:
         return f"a {config} configuration file"
+    loaded = glob_code_extension(pattern, LOADED_EXTENSIONS)
+    if loaded is not None:
+        return f"a {loaded} file, code a process loads or runs"
     if any(part.startswith(".") for part in literal.split("/")) or _wildcard_dir_can_be_dotted(
         pattern
     ):
@@ -322,6 +346,7 @@ __all__ = [
     "CI_FILES",
     "CONFIG_EXTENSIONS",
     "DEPENDENCY_FILES",
+    "LOADED_EXTENSIONS",
     "MANIFEST_VARIANTS",
     "TOOL_CONFIG_STEMS",
     "TOOL_FILES",
