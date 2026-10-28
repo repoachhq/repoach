@@ -357,3 +357,19 @@ def test_a_path_with_classes_or_a_wildcard_extension_is_refused(glob: str) -> No
     error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob), languages=())
     assert error.key == "review.generated[0].path"
     assert error.line == 5
+
+
+def test_two_globs_with_overlapping_heads_are_refused() -> None:
+    """A path glob and a source glob whose literal heads nest are refused (fail closed)."""
+    text = _ENTRY.replace(
+        'path = "api/data/knowledge_embeddings.json"', 'path = "docs/user_guide/a/*.npy"'
+    )
+    error = _refused(text, languages=())
+    assert error.key == "review.generated[0].path"
+    assert "docs/user_guide/**" in str(error)
+
+
+def test_disjoint_literal_heads_are_accepted() -> None:
+    """A path glob under a head no source glob shares loads."""
+    text = _ENTRY.replace('path = "api/data/knowledge_embeddings.json"', 'path = "data/x/*.npy"')
+    assert _load(text, languages=())[0].path == "data/x/*.npy"

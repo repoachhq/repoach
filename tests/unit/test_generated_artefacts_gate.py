@@ -61,7 +61,7 @@ from repoach.review.generated_types import (
     GeneratedState,
     GeneratedTiming,
 )
-from repoach.review.generated_verify import head_tree
+from repoach.review.generated_verify import GeneratedRefusalError, head_tree, verify_generated
 from repoach.review.merge_gate import MergeDecision, MergeFacts
 from repoach.review.report import fenced, render_ledger_report
 from repoach.review.secret_env import scrubbed_env
@@ -1134,9 +1134,9 @@ def test_evidence_missing_its_base_run_is_reported_not_run(
     result = review(repo, monkeypatch, capsys, head=head, evidence=evidence)
 
     checks, _ = fetch_generated_checks(bench.db_path, 7, head)
-    assert [(c.script_ref, c.state) for c in checks] == [
-        ("base", GeneratedState.NOT_RUN),
-        ("head", GeneratedState.VERIFIED),
+    assert [(c.script_ref, c.state, c.runs_for_path) for c in checks] == [
+        ("base", GeneratedState.NOT_RUN, 2),
+        ("head", GeneratedState.VERIFIED, 1),
     ]
     assert [f.verification_result for f in _generated_findings(bench.db_path)] == [
         f"no base-script run for {ARTEFACT} at {head[:7]}"
@@ -1353,3 +1353,14 @@ def test_evidence_path_is_a_path_only_for_a_given_file() -> None:
     assert review_cmds._evidence_path("") is None
     assert review_cmds._evidence_path(None) is None
     assert review_cmds._evidence_path(option_default) is None
+
+
+@pytest.mark.parametrize("ref", ["--output=/tmp/x", "-c"])
+def test_review_generated_refuses_a_ref_git_would_read_as_an_option(
+    tmp_path: Path, ref: str
+) -> None:
+    """A --head or --base beginning with '-' is refused before git sees it."""
+    with pytest.raises(GeneratedRefusalError, match="starts with '-'"):
+        verify_generated(tmp_path, pr_number=1, head=ref, base_ref="main", state_dir=tmp_path)
+    with pytest.raises(GeneratedRefusalError, match="starts with '-'"):
+        verify_generated(tmp_path, pr_number=1, head="HEAD", base_ref=ref, state_dir=tmp_path)
