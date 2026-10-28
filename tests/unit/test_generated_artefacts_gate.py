@@ -1528,3 +1528,30 @@ def test_declared_at_base_refuses_a_code_glob_of_the_base_languages(tmp_path: Pa
     (tmp_path / "repoach.toml").write_text(toml.replace("PATH", "data/*.npy"), encoding="utf-8")
     git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "npy")
     assert [e.path for e in declared_at_base(tmp_path, "main")] == ["data/*.npy"]
+
+
+def test_git_reads_ignore_hooks_a_check_planted_in_the_user_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hook named by the user's git config, which a check can write, never runs in run_git."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a")
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    marker = tmp_path / "ran"
+    hook = hooks / "post-checkout"
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n", encoding="utf-8")
+    hook.chmod(0o755)
+    planted = tmp_path / "planted.gitconfig"
+    planted.write_text(f"[core]\n\thooksPath = {hooks}\n", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(planted))
+
+    assert run_git(repo, "checkout", "-q", "-b", "isolated").returncode == 0
+    assert not marker.exists()
+
+    subprocess.run(["git", "checkout", "-q", "-b", "plain"], cwd=repo, check=True)
+    assert marker.exists()
