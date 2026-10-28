@@ -38,7 +38,7 @@ from pydantic import (
 )
 
 from .always_reviewed import always_reviewed
-from .globs import GLOB_SPECIALS, glob_code_extension, glob_matches
+from .globs import GLOB_SPECIALS
 
 CONFIG_FILE_NAME = "repoach.toml"
 """File name of the project configuration, at the git toplevel."""
@@ -663,7 +663,7 @@ def _refuse_secret_keys(path: Path, text: str, data: dict[str, Any], prefix: str
             _refuse_secret_keys(path, text, value, dotted)
 
 
-def _array_table_line(text: str, table: str, index: int, key: str) -> int | None:
+def array_table_line(text: str, table: str, index: int, key: str) -> int | None:
     """Return the line of ``key`` inside the ``index``-th ``[[table]]`` block.
 
     Falls back to the block's header line when the key is not written
@@ -698,111 +698,7 @@ def _generated_location(loc: tuple[int | str, ...], text: str) -> tuple[str, int
     index = loc[2]
     key = str(loc[3]) if len(loc) > 3 and isinstance(loc[3], str) else ""
     dotted = f"review.generated[{index}]" + (f".{key}" if key else "")
-    return dotted, _array_table_line(text, "review.generated", index, key)
-
-
-def refuse_duplicate_generated(path: Path, text: str, entries: list[GeneratedSection]) -> None:
-    """Refuse two ``[[review.generated]]`` entries declaring the same ``path``.
-
-    Args:
-        path: The file, for the message.
-        text: The file content, for the line lookup.
-        entries: The parsed entries.
-
-    Raises:
-        ConfigError: Two entries declare the same ``path``; the second is named.
-    """
-    seen: dict[str, int] = {}
-    for index, entry in enumerate(entries):
-        if entry.path in seen:
-            raise ConfigError(
-                path,
-                f"{entry.path!r} is already declared by review.generated[{seen[entry.path]}]",
-                key=f"review.generated[{index}].path",
-                line=_array_table_line(text, "review.generated", index, "path"),
-            )
-        seen[entry.path] = index
-
-
-def _hides(pattern: str, target: str) -> bool:
-    """Whether the ``path`` glob ``pattern`` can match ``target``, a path or a glob.
-
-    A literal ``target`` is matched directly; a glob ``target`` is matched
-    the other way round when ``pattern`` is literal (``data/*`` as a
-    source, ``data/x.json`` as the artefact); two globs overlap when the
-    literal head of one starts the other's (``docs/**`` and
-    ``docs/user_guide/**``), a conservative answer.
-    """
-    if not any(char in target for char in GLOB_SPECIALS):
-        return glob_matches(pattern, target)
-    if not any(char in pattern for char in GLOB_SPECIALS):
-        return glob_matches(target, pattern)
-    head = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
-    other = re.split(r"[*?\[]", target, maxsplit=1)[0]
-    return head.startswith(other) or other.startswith(head)
-
-
-def refuse_hidden_provers(path: Path, text: str, entries: list[GeneratedSection]) -> None:
-    """Refuse a ``path`` glob that would summarise away a check script or a source.
-
-    The check script and the sources are what the reviewers read to trust
-    the derivation; an entry whose ``path`` matches its own, or another
-    entry's, ``check[0]``, ``sources`` or ``producer_inputs`` would hide
-    the prover behind its own summary. Two globs are compared by their
-    literal heads (:func:`_hides`), which refuses some declarations that
-    could not overlap (``docs/**/*.npy`` beside a ``docs/user_guide/**``
-    source): fail closed, on purpose.
-
-    Args:
-        path: The file, for the message.
-        text: The file content, for the line lookup.
-        entries: The parsed entries.
-
-    Raises:
-        ConfigError: A ``path`` glob matches a check script, a source or a
-            producer input of any entry.
-    """
-    for index, entry in enumerate(entries):
-        for other in entries:
-            for target in (other.check[0], *other.sources, *other.producer_inputs):
-                if _hides(entry.path, target):
-                    raise ConfigError(
-                        path,
-                        f"{entry.path!r} can match {target}, a check script or source, "
-                        "which the reviewers must read",
-                        key=f"review.generated[{index}].path",
-                        line=_array_table_line(text, "review.generated", index, "path"),
-                    )
-
-
-def refuse_code_globs(
-    path: Path, text: str, entries: list[GeneratedSection], extensions: tuple[str, ...]
-) -> None:
-    """Refuse a ``[[review.generated]]`` ``path`` glob that could match a code file.
-
-    The plain file parse cannot import the language table (it would cycle
-    through the settings), so the review's loader calls this with the
-    declared languages' extensions.
-
-    Args:
-        path: The file, for the message.
-        text: The file content, for the line lookup.
-        entries: The parsed entries.
-        extensions: The file extensions of the declared languages.
-
-    Raises:
-        ConfigError: A ``path`` glob can match a file with one of ``extensions``.
-    """
-    for index, entry in enumerate(entries):
-        suffix = glob_code_extension(entry.path, extensions)
-        if suffix is not None:
-            raise ConfigError(
-                path,
-                f"{entry.path!r} can match {suffix} files, code of a declared language; "
-                "code is reviewed, never declared generated",
-                key=f"review.generated[{index}].path",
-                line=_array_table_line(text, "review.generated", index, "path"),
-            )
+    return dotted, array_table_line(text, "review.generated", index, key)
 
 
 def _dotted_location(loc: tuple[int | str, ...]) -> tuple[str, str, str]:
@@ -857,8 +753,6 @@ def parse_project_config(text: str, path: Path) -> ProjectConfig:
         if first["type"] == "extra_forbidden":
             reason = "unknown key"
         raise ConfigError(path, reason, key=dotted, line=line) from exc
-    refuse_duplicate_generated(path, text, config.review.generated)
-    refuse_hidden_provers(path, text, config.review.generated)
     if config.repoach.schema_ > SCHEMA_VERSION:
         raise ConfigError(
             path,
