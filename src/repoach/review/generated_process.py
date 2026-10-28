@@ -37,6 +37,30 @@ class RunResult:
     output: str
 
 
+INTERPRETERS: dict[str, str] = {".py": "python3", ".sh": "bash"}
+"""The interpreter a check script runs under, by its extension (G1).
+
+Any other script must carry the executable bit and runs as itself."""
+
+
+def interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
+    """Return the command line of a check: its interpreter, then the declared argv.
+
+    Args:
+        argv: The declared check, placeholders replaced.
+        head_dir: The tree the check runs in.
+
+    Returns:
+        ``[interpreter, *argv]`` for a script :data:`INTERPRETERS` names,
+        else the script's path in ``head_dir`` followed by its arguments.
+    """
+    script = argv[0]
+    interpreter = INTERPRETERS.get(Path(script).suffix)
+    if interpreter is not None:
+        return [interpreter, *argv]
+    return [str(head_dir / script), *argv[1:]]
+
+
 class Runner(Protocol):
     """The subprocess seam ``run_checks`` calls (tests replace it).
 
@@ -50,7 +74,7 @@ class Runner(Protocol):
         cwd: Path,
         env: Mapping[str, str],
         timeout_s: float,
-        shell: bool,
+        shell: bool = False,
     ) -> RunResult:
         """Run ``argv`` in ``cwd`` with ``env`` and return its result."""
         ...
@@ -211,4 +235,11 @@ def _kill_orphans(before: set[int]) -> None:
     _log.warning("generated.orphans_left", left=sorted(_children() - before))
 
 
-__all__ = ["RunResult", "Runner", "orphan_sweep_available", "subprocess_runner"]
+__all__ = [
+    "INTERPRETERS",
+    "RunResult",
+    "Runner",
+    "interpreted",
+    "orphan_sweep_available",
+    "subprocess_runner",
+]

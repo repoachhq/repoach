@@ -55,7 +55,7 @@ from .generated_config import (
     touched_artefacts,
 )
 from .generated_git import blob_at, merge_base
-from .generated_process import Runner
+from .generated_process import Runner, interpreted
 from .generated_types import (
     GENERATED_CHECKS_TOTAL_BUDGET_S,
     GENERATED_FINDER,
@@ -226,16 +226,6 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
     return ReviewScope(review_diff=summarised, touched=touched, changed=changed, base_sha=before)
 
 
-def _interpreted(argv: Sequence[str], head_dir: Path) -> list[str]:
-    """Prefix the check's script with its interpreter (``.py`` python3, ``.sh`` bash)."""
-    script = argv[0]
-    if script.endswith(".py"):
-        return ["python3", *argv]
-    if script.endswith(".sh"):
-        return ["bash", *argv]
-    return [str(head_dir / script), *argv[1:]]
-
-
 def _artefact_moved(tree: Path, path: str, bound_sha: str) -> bool:
     """Whether the run left ``path`` other than the blob the run was bound to."""
     if symlinked(tree, path) or not (tree / path).is_file():
@@ -325,7 +315,7 @@ def _run_once(
             0,
             f"check script {entry.check[0]} is a symlink or leaves the head tree",
         )
-    argv = _interpreted(declared_argv(entry, head_sha, base_sha), head_dir)
+    argv = interpreted(declared_argv(entry, head_sha, base_sha), head_dir)
     started = budget.clock()
     try:
         with _script_at(head_dir, entry.check[0], script_content):
