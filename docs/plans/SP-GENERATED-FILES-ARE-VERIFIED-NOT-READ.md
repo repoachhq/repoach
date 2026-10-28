@@ -128,7 +128,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Action**: generated_process.INTERPRETERS maps a script extension to its interpreter and interpreted() builds the command line; Runner and subprocess_runner both default shell to False. run_checks is split into _precheck (triage), _planned_runs (D3 planning) and the run loop.
 - **Commit**: `refactor(review): name check interpreters in one map and align Runner`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_changed_check_script_runs_base_and_head passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_an_extensionless_glob_is_refused_whatever_the_languages`, `tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages`
+- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_an_extensionless_glob_is_refused_whatever_the_languages`, `tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages`, `tests/unit/test_generated_artefacts_gate.py::test_a_file_new_under_a_wildcard_is_reviewed_in_full`, `tests/unit/test_generated_artefacts_gate.py::test_git_reads_say_none_instead_of_guessing`
 
 ## Step 17 — Document the declaration and the Yoob job
 
@@ -415,7 +415,9 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_changed_check_script_runs_base_and_head passes",
       "unit_tests": [
         "tests/unit/test_generated_artefacts_config.py::test_an_extensionless_glob_is_refused_whatever_the_languages",
-        "tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages"
+        "tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages",
+        "tests/unit/test_generated_artefacts_gate.py::test_a_file_new_under_a_wildcard_is_reviewed_in_full",
+        "tests/unit/test_generated_artefacts_gate.py::test_git_reads_say_none_instead_of_guessing"
       ]
     },
     {
