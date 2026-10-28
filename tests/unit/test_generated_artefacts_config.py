@@ -14,7 +14,12 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from repoach.project.config import GENERATED_ENTRIES_MAX, ConfigError, parse_project_config
+from repoach.project.config import (
+    GENERATED_ENTRIES_MAX,
+    ConfigError,
+    array_table_line,
+    parse_project_config,
+)
 from repoach.project.globs import glob_matches
 from repoach.review.generated_config import load_generated_entries, touched_artefacts
 from repoach.review.generated_types import GeneratedEntry
@@ -373,3 +378,20 @@ def test_disjoint_literal_heads_are_accepted() -> None:
     """A path glob under a head no source glob shares loads."""
     text = _ENTRY.replace('path = "api/data/knowledge_embeddings.json"', 'path = "data/x/*.npy"')
     assert _load(text, languages=())[0].path == "data/x/*.npy"
+
+
+def test_array_table_line_falls_back_and_stops_at_the_next_section() -> None:
+    """A key's own line, else its block's header; None for a missing block; a section ends a block."""
+    text = (
+        "[[review.generated]]\n"
+        'path = "a.json"\n'
+        "[gates]\n"
+        "check = 1\n"
+        "[[review.generated]]\n"
+        'path = "b.json"\n'
+        'check = ["s.sh"]\n'
+    )
+    assert array_table_line(text, "review.generated", 0, "path") == 2
+    assert array_table_line(text, "review.generated", 0, "check") == 1
+    assert array_table_line(text, "review.generated", 1, "check") == 7
+    assert array_table_line(text, "review.generated", 2, "path") is None
