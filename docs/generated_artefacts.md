@@ -44,7 +44,9 @@ When the diff touches a declared artefact:
 
 1. Every reviewer lens sees one paragraph in place of the artefact's diff:
    `generated artefact <path>: <size before> -> <size after> bytes, sha256 <before7> -> <after7>; sources changed in this diff: <list or none>; proved by: <check>`.
-   No oversized finding is recorded for it.
+   No oversized finding is recorded for it. A file a wildcard `path`
+   matches that does not exist at the base yet is not summarised: it is
+   reviewed in full, like any new file.
 2. The check never runs in the review job, which holds the forge token and
    the model credential. `repoach review generated` runs it in a separate
    job whose environment holds neither.
