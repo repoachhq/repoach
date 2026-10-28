@@ -70,7 +70,10 @@ When the diff touches a declared artefact:
    removes that credential and fails if any is left before repoach starts.
    The job token stays in the CI shell's environment: treat it as visible
    to the check, and restrict the project's CI/CD job token permissions to
-   reading this repository.
+   reading this repository. To keep it out of the check's reach entirely,
+   run the job where the check cannot read the shell's environment: a
+   runner that starts the job's commands as another user than the CI shell,
+   or a host mounting `/proc` with `hidepid=2`.
 3. The review recomputes everything it can derive (the argv from the base
    declaration, the changed sources from the diff, the state from the exit
    code), so the evidence is trusted for the check's exit code and output
