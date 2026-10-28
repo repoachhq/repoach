@@ -34,6 +34,7 @@ from typer.testing import CliRunner
 from repoach.cli import app, review_cmds
 from repoach.core.logging import get_logger
 from repoach.project.always_reviewed import always_reviewed
+from repoach.project.config import ConfigError
 from repoach.review import generated_evidence, generated_process, generated_verify
 from repoach.review.finding_verifiers import verify_finding
 from repoach.review.findings import (
@@ -47,6 +48,7 @@ from repoach.review.findings import (
 )
 from repoach.review.findings_bridge import oversized_finding
 from repoach.review.generated_artefacts import run_checks
+from repoach.review.generated_config import declared_at_base
 from repoach.review.generated_evidence import evidence_payload, load_review_evidence
 from repoach.review.generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from repoach.review.generated_process import RunResult, subprocess_runner
@@ -1507,3 +1509,22 @@ def test_evidence_over_the_cap_is_reported_not_run(
     )
 
     assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
+
+
+def test_declared_at_base_refuses_a_code_glob_of_the_base_languages(tmp_path: Path) -> None:
+    """The base file's own [project].languages decide which extensions are code."""
+    git(tmp_path, "init", "-q", "-b", "main")
+    toml = (
+        '[project]\nlanguages = ["go"]\n\n[[review.generated]]\n'
+        'path = "PATH"\ncheck = ["scripts/check.sh"]\nsources = ["data/in.json"]\n'
+    )
+    (tmp_path / "repoach.toml").write_text(toml.replace("PATH", "data/*.go"), encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "go")
+
+    with pytest.raises(ConfigError, match=r"\.go files, code of a declared language"):
+        declared_at_base(tmp_path, "main")
+
+    (tmp_path / "repoach.toml").write_text(toml.replace("PATH", "data/*.npy"), encoding="utf-8")
+    git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "npy")
+    assert [e.path for e in declared_at_base(tmp_path, "main")] == ["data/*.npy"]
