@@ -276,8 +276,10 @@ def load_review_evidence(
 ) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
     """Return the runs the review job records for the touched artefacts.
 
-    A missing, unreadable or mismatched evidence file is never green:
-    each touched artefact then gets a ``generated_check_not_run`` row.
+    A missing, unreadable, malformed or mismatched evidence file is never
+    green: each touched artefact then gets a ``generated_check_not_run``
+    row. The file comes from the job that ran pull-request code, so any
+    shape it may take ends there, never in a crash of the review.
 
     Args:
         evidence: The evidence file, ``None`` when none was given.
@@ -295,7 +297,9 @@ def load_review_evidence(
     if evidence is not None and evidence.is_file():
         try:
             payload = json.loads(evidence.read_text(encoding="utf-8"))
-            return checks_from_evidence(
+            if not isinstance(payload, dict):
+                raise GeneratedEvidenceMismatchError("evidence is not a JSON object")
+            checks, timing = checks_from_evidence(
                 payload,
                 touched,
                 head_sha=head_sha,
@@ -303,7 +307,21 @@ def load_review_evidence(
                 changed_files=changed_files,
                 base_sha=base_sha,
             )
-        except (GeneratedEvidenceMismatchError, ValueError, KeyError, OSError) as exc:
+            _log.info(
+                "generated.evidence_used",
+                head_sha=head_sha[:12],
+                runs=len(checks),
+                trusted="exit codes and output of the verification job; the rest recomputed here",
+            )
+            return checks, timing
+        except (
+            GeneratedEvidenceMismatchError,
+            ValueError,
+            KeyError,
+            OSError,
+            TypeError,
+            AttributeError,
+        ) as exc:
             _log.warning(
                 "generated.evidence_refused",
                 path=str(evidence),

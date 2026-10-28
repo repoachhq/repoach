@@ -46,7 +46,7 @@ from repoach.review.findings import (
 )
 from repoach.review.findings_bridge import oversized_finding
 from repoach.review.generated_artefacts import run_checks
-from repoach.review.generated_evidence import evidence_payload
+from repoach.review.generated_evidence import evidence_payload, load_review_evidence
 from repoach.review.generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_settle import settle_at_head, settlements_at_head
@@ -1395,3 +1395,33 @@ def test_evidence_missing_its_head_run_is_reported_not_run(
         f"no head-script run for {ARTEFACT} at {head[:7]}"
     ]
     assert result.payload["final_verdict"] == "REQUEST_CHANGES"
+
+
+@pytest.mark.parametrize(
+    "forged",
+    [
+        "[]",
+        '{"format": "review-generated-json", "head_sha": "HEAD", "checks_ms": {}, "checks": []}',
+        '{"format": "review-generated-json", "head_sha": "HEAD", "checks": [42]}',
+        '{"format": "review-generated-json", "head_sha": "HEAD", "checks": [{"path": 1}]}',
+    ],
+)
+def test_malformed_evidence_is_reported_not_run(tmp_path: Path, forged: str) -> None:
+    """Whatever shape the evidence takes, the review records not_run rows instead of crashing."""
+    head_dir = tmp_path / "head"
+    (head_dir / "data").mkdir(parents=True)
+    (head_dir / ARTEFACT).write_text("{}\n", encoding="utf-8")
+    evidence = tmp_path / "review-generated.json"
+    evidence.write_text(forged.replace("HEAD", "f" * 40), encoding="utf-8")
+    entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
+
+    checks, timing = load_review_evidence(
+        evidence,
+        {ARTEFACT: entry},
+        head_sha="f" * 40,
+        head_dir=head_dir,
+        changed_files=[ARTEFACT, "data/corpus.json"],
+    )
+
+    assert timing is None
+    assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
