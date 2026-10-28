@@ -130,7 +130,7 @@ review:generated:
     - pip install --quiet "repoach @ git+https://github.com/repoachhq/repoach@${REPOACH_REF}"
     - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
     - git remote set-url origin "$CI_PROJECT_URL.git"
-    - git config --get-regexp 'url\..*|remote\..*\.url|http\..*extraheader' | grep -q '@\|AUTHORIZATION'
+    - git config --get-regexp 'url\..*|remote\..*\.url|http\..*extraheader|credential\..*' | grep -qiE '@|authorization|helper'
       && { echo "review:generated: a credential is left in .git/config"; exit 2; } || true
     - repoach review generated
         --pr "$CI_MERGE_REQUEST_IID"
