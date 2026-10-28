@@ -11,6 +11,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from .secret_env import scrubbed_env
+
 GIT_ISOLATION: tuple[str, ...] = (
     "-c",
     "core.hooksPath=/dev/null",
@@ -27,8 +29,10 @@ def _git_env() -> dict[str, str]:
 
     In the verification job a check is pull-request code run by the job's
     user, so it can write that user's ``~/.gitconfig``; git must not read it.
+    Local reads need no secret, so git and any helper it spawns get none
+    (:func:`~repoach.review.secret_env.scrubbed_env`).
     """
-    env = dict(os.environ)
+    env = scrubbed_env()
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
     return env
 

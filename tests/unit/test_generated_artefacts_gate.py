@@ -1612,3 +1612,16 @@ def test_budget_exhausted_marks_remaining_runs_skipped_for_cost(tmp_path: Path) 
     ]
     assert checks[2].output_tail == "check not run within 80 s: data/c.npy"
     assert checks[3].output_tail == "check not run within 300 s: data/d.npy"
+
+
+def test_git_reads_hold_no_secret(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review job's tokens never reach a git child: its environment is scrubbed."""
+    monkeypatch.setenv("REPOACH_GITLAB_TOKEN", "xyzzy-gitlab-marker")
+    monkeypatch.setenv("REPOACH_ANTHROPIC_AUTH_TOKEN", "xyzzy-anthropic-marker")
+    git(tmp_path, "init", "-q", "-b", "main")
+
+    shown = run_git(tmp_path, "-c", "alias.envdump=!env", "envdump")
+
+    assert shown.returncode == 0
+    assert b"GIT_CONFIG_GLOBAL=" in shown.stdout
+    assert b"xyzzy-" not in shown.stdout
