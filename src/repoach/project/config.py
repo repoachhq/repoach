@@ -684,6 +684,15 @@ def array_table_line(text: str, table: str, index: int, key: str) -> int | None:
 
     Falls back to the block's header line when the key is not written
     literally, and to None when the block itself is absent.
+
+    Args:
+        text: The file content.
+        table: The array-of-tables name (``review.generated``).
+        index: Which block, from 0.
+        key: The key looked for in that block.
+
+    Returns:
+        The 1-based line number, or None.
     """
     seen = -1
     inside = False
