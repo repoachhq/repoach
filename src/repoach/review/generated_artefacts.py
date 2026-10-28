@@ -320,6 +320,12 @@ def run_checks(
     Returns:
         One :class:`GeneratedCheck` per run; an artefact deleted at the
         head gets none.
+
+    Raises:
+        Exception: Whatever ``fresh_tree`` raises when it cannot make a
+            tree (:func:`~repoach.review.generated_verify.head_tree` raises
+            ``RuntimeError``). A run's own failure, ``runner`` included, is
+            caught and recorded as its row, never raised.
     """
     environment = dict(env) if env is not None else scrubbed_env()
     budget = Budget(float(budget_s), clock)
