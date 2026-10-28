@@ -34,7 +34,7 @@ from typer.testing import CliRunner
 from repoach.cli import app, review_cmds
 from repoach.core.logging import get_logger
 from repoach.project.always_reviewed import always_reviewed
-from repoach.review import generated_process, generated_verify
+from repoach.review import generated_evidence, generated_process, generated_verify
 from repoach.review.finding_verifiers import verify_finding
 from repoach.review.findings import (
     ClaimType,
@@ -1470,3 +1470,40 @@ def test_the_evidence_replaces_a_link_left_at_out(
     assert not out.is_symlink()
     assert payload["head_sha"] == head
     assert target.read_text(encoding="utf-8") == "keep me\n"
+
+
+def test_evidence_behind_a_link_is_reported_not_run(tmp_path: Path) -> None:
+    """The review never follows a link at the evidence path: the artefact is reported not run."""
+    head_dir = tmp_path / "head"
+    (head_dir / "data").mkdir(parents=True)
+    (head_dir / ARTEFACT).write_text("{}\n", encoding="utf-8")
+    secret = tmp_path / "gate-local.json"
+    secret.write_text("{}", encoding="utf-8")
+    evidence = tmp_path / "review-generated.json"
+    evidence.symlink_to(secret)
+    entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
+
+    checks, _ = load_review_evidence(
+        evidence, {ARTEFACT: entry}, head_sha="f" * 40, head_dir=head_dir, changed_files=[ARTEFACT]
+    )
+
+    assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
+
+
+def test_evidence_over_the_cap_is_reported_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An evidence file bigger than EVIDENCE_MAX_BYTES is refused before it is parsed."""
+    monkeypatch.setattr(generated_evidence, "EVIDENCE_MAX_BYTES", 16)
+    head_dir = tmp_path / "head"
+    (head_dir / "data").mkdir(parents=True)
+    (head_dir / ARTEFACT).write_text("{}\n", encoding="utf-8")
+    evidence = tmp_path / "review-generated.json"
+    evidence.write_text('{"format": "review-generated-json", "checks": []}', encoding="utf-8")
+    entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
+
+    checks, _ = load_review_evidence(
+        evidence, {ARTEFACT: entry}, head_sha="f" * 40, head_dir=head_dir, changed_files=[ARTEFACT]
+    )
+
+    assert [c.state for c in checks] == [GeneratedState.NOT_RUN]

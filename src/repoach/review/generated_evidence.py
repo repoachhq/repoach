@@ -9,6 +9,8 @@ G2): the evidence is trusted for the check's exit code and output only.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -37,6 +39,28 @@ EVIDENCE_FORMAT = "review-generated-json"
 
 EVIDENCE_VERSION = 1
 """The evidence file's schema version."""
+
+
+EVIDENCE_MAX_BYTES = 8 * 1024 * 1024
+"""The largest evidence file the review reads; a bigger one is refused."""
+
+
+def _read_evidence(evidence: Path) -> str:
+    """Read the evidence without following a link and without reading past the cap.
+
+    Raises:
+        GeneratedEvidenceMismatchError: Not a regular file, or bigger than
+            :data:`EVIDENCE_MAX_BYTES`.
+        OSError: A symlink (``O_NOFOLLOW``) or an unreadable file.
+    """
+    fd = os.open(evidence, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise GeneratedEvidenceMismatchError("evidence is not a regular file")
+        data = handle.read(EVIDENCE_MAX_BYTES + 1)
+    if len(data) > EVIDENCE_MAX_BYTES:
+        raise GeneratedEvidenceMismatchError(f"evidence exceeds {EVIDENCE_MAX_BYTES} bytes")
+    return data.decode("utf-8")
 
 
 class GeneratedEvidenceMismatchError(ValueError):
@@ -279,7 +303,8 @@ def load_review_evidence(
     A missing, unreadable, malformed or mismatched evidence file is never
     green: each touched artefact then gets a ``generated_check_not_run``
     row. The file comes from the job that ran pull-request code, so any
-    shape it may take ends there, never in a crash of the review.
+    shape it may take ends there, never in a crash of the review: a link
+    is not followed and a file over :data:`EVIDENCE_MAX_BYTES` is not read.
 
     Args:
         evidence: The evidence file, ``None`` when none was given.
@@ -294,9 +319,9 @@ def load_review_evidence(
     """
     if not touched:
         return [], None
-    if evidence is not None and evidence.is_file():
+    if evidence is not None and os.path.lexists(evidence):
         try:
-            payload = json.loads(evidence.read_text(encoding="utf-8"))
+            payload = json.loads(_read_evidence(evidence))
             if not isinstance(payload, dict):
                 raise GeneratedEvidenceMismatchError("evidence is not a JSON object")
             checks, timing = checks_from_evidence(
@@ -339,6 +364,7 @@ def load_review_evidence(
 
 __all__ = [
     "EVIDENCE_FORMAT",
+    "EVIDENCE_MAX_BYTES",
     "EVIDENCE_VERSION",
     "GeneratedEvidenceMismatchError",
     "checks_from_evidence",
