@@ -107,21 +107,22 @@ def test_path_leaving_the_repository_is_refused(path: str) -> None:
 
 @pytest.mark.parametrize("glob", ["src/*", "**/*.py", "lib/**", "tools/gen?.py"])
 def test_path_glob_matching_python_is_refused(glob: str) -> None:
-    """A glob that can match a ``.py`` file is refused when ``python`` is declared."""
+    """A glob that can match a ``.py`` file (or any script) is refused."""
     error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob))
     assert error.key == "review.generated[0].path"
     assert error.line == 5
-    assert ".py" in str(error)
+    assert "can match" in str(error)
 
 
 def test_code_glob_is_judged_against_the_declared_languages() -> None:
-    """``*.ts`` is code only where TypeScript is declared."""
-    text = _ENTRY.replace('languages = ["python"]', 'languages = ["go"]').replace(
-        "api/data/knowledge_embeddings.json", "web/gen/*.ts"
+    """``*.go`` (not a script extension) is code only where Go is declared."""
+    text = _ENTRY.replace('languages = ["python"]', 'languages = ["shell"]').replace(
+        "api/data/knowledge_embeddings.json", "pkg/gen/*.go"
     )
-    assert _load(text, languages=())[0].path == "web/gen/*.ts"
-    error = _refused(text, languages=("typescript",))
+    assert _load(text, languages=())[0].path == "pkg/gen/*.go"
+    error = _refused(text, languages=("go",))
     assert error.key == "review.generated[0].path"
+    assert ".go" in str(error)
 
 
 def test_a_data_glob_beside_python_loads() -> None:
@@ -232,6 +233,12 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "**/*.yaml",
         "**/package-lock.json",
         "go.sum",
+        "Jenkinsfile",
+        "azure-pipelines.yml",
+        "Dockerfile.*",
+        "tox.ini",
+        "scripts/*.sh",
+        "tools/deploy",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
@@ -249,10 +256,11 @@ def test_a_double_star_slash_matches_zero_directories() -> None:
     assert not glob_matches("api/**/vectors.json", "apix/vectors.json")
 
 
-def test_an_extensionless_glob_loads_only_where_no_language_could_match() -> None:
-    """``data/*`` can match ``data/x.py``: refused with Python declared, loaded with none."""
+def test_an_extensionless_glob_is_refused_whatever_the_languages() -> None:
+    """``data/*`` can match ``data/x.sh``: refused with Python declared and with none."""
     text = _ENTRY.replace("api/data/knowledge_embeddings.json", "data/*")
-    assert _load(text.replace('languages = ["python"]', "languages = []"), languages=())
+    bare = text.replace('languages = ["python"]', "languages = []")
+    assert _refused(bare, languages=()).key == "review.generated[0].path"
     assert _refused(text).key == "review.generated[0].path"
 
 

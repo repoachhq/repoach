@@ -127,6 +127,20 @@ ALWAYS_REVIEWED_PROBES: tuple[str, ...] = (
     "package.json",
     "go.mod",
     "Cargo.toml",
+    "setup.cfg",
+    "setup.py",
+    "tox.ini",
+    "noxfile.py",
+    ".npmrc",
+    ".pypirc",
+    "Jenkinsfile",
+    ".travis.yml",
+    ".drone.yml",
+    ".gitlab-ci.yaml",
+    "azure-pipelines.yml",
+    "bitbucket-pipelines.yml",
+    "Dockerfile.ci",
+    "Containerfile",
     "uv.lock",
     "poetry.lock",
     "Pipfile.lock",
@@ -162,6 +176,25 @@ CI definitions and the scripts CI runs live there; a literal path such as
 like a wildcard reaching them."""
 
 
+ALWAYS_CODE_EXTENSIONS: tuple[str, ...] = (
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".py",
+    ".rb",
+    ".pl",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".ts",
+)
+"""Script extensions a ``path`` glob may never match, whatever languages a project declares."""
+
+
 def always_reviewed(pattern: str) -> str | None:
     """Return the always-reviewed file or directory ``pattern`` can reach, or ``None``.
 
@@ -181,10 +214,17 @@ def always_reviewed(pattern: str) -> str | None:
     for probe in ALWAYS_REVIEWED_PROBES:
         if glob_matches(pattern, probe):
             return probe
+    script = glob_code_extension(pattern, ALWAYS_CODE_EXTENSIONS)
+    if script is not None:
+        return f"a {script} script"
+    last = pattern.rsplit("/", 1)[-1]
+    if "." not in last and not any(char in last for char in GLOB_SPECIALS):
+        return "an extensionless file, which may be an executable"
     return None
 
 
 __all__ = [
+    "ALWAYS_CODE_EXTENSIONS",
     "ALWAYS_REVIEWED_DIRS",
     "ALWAYS_REVIEWED_PROBES",
     "GLOB_SPECIALS",
