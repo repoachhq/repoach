@@ -65,6 +65,7 @@ from .generated_types import (
     GeneratedState,
     GeneratedTiming,
     ScriptRef,
+    artefact_triage,
     by_path,
     changed_inputs,
     check_cause,
@@ -72,7 +73,6 @@ from .generated_types import (
     path_verified,
     plain_file,
     sha256_hex,
-    symlink_row,
     symlinked,
     tail_lines,
 )
@@ -360,18 +360,18 @@ def _precheck(
     reached through a symlink; otherwise the template every run of the
     artefact is built from.
     """
-    if symlinked(head_dir, path):
-        return None, symlink_row(entry, path, head_sha=head_sha, changed_files=changed)
-    artefact = head_dir / path
-    if not artefact.is_file():
-        return None, None
+    content, refused = artefact_triage(
+        entry, path, head_dir=head_dir, head_sha=head_sha, changed=changed
+    )
+    if content is None:
+        return None, refused
     sources, producers = changed_inputs(entry, path, changed)
     script = entry.check[0]
     template = GeneratedCheck(
         path=path,
         argv=declared_argv(entry, head_sha, base_sha),
         head_sha=head_sha,
-        artefact_sha256=sha256_hex(artefact.read_bytes()),
+        artefact_sha256=sha256_hex(content),
         sources_changed=sources,
         state=GeneratedState.NOT_RUN,
         exit_code=None,

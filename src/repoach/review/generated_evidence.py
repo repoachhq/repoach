@@ -20,12 +20,11 @@ from .generated_types import (
     GeneratedEntry,
     GeneratedState,
     GeneratedTiming,
+    artefact_triage,
     by_path,
     changed_inputs,
     declared_argv,
     sha256_hex,
-    symlink_row,
-    symlinked,
 )
 
 _log = get_logger(__name__)
@@ -63,7 +62,7 @@ def not_run_checks(
     """
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
-        blob, refused = _triage(
+        blob, refused = artefact_triage(
             entry, path, head_dir=head_dir, head_sha=head_sha, changed=changed_files
         )
         if refused is not None:
@@ -71,22 +70,6 @@ def not_run_checks(
         elif blob is not None:
             checks.append(_not_run_row(entry, path, blob, head_sha=head_sha, changed=changed_files))
     return checks
-
-
-def _triage(
-    entry: GeneratedEntry, path: str, *, head_dir: Path, head_sha: str, changed: Sequence[str]
-) -> tuple[bytes | None, GeneratedCheck | None]:
-    """Read one touched artefact at the head: ``(its bytes, None)``, or the row that replaces a run.
-
-    ``(None, symlink row)`` for an artefact committed as a symlink (never
-    read), ``(None, None)`` for one the head deletes.
-    """
-    if symlinked(head_dir, path):
-        return None, symlink_row(entry, path, head_sha=head_sha, changed_files=changed)
-    artefact = head_dir / path
-    if not artefact.is_file():
-        return None, None
-    return artefact.read_bytes(), None
 
 
 def _not_run_row(
@@ -184,7 +167,7 @@ def checks_from_evidence(
     recorded = by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
-        content, refused = _triage(
+        content, refused = artefact_triage(
             entry, path, head_dir=head_dir, head_sha=head_sha, changed=changed_files
         )
         if refused is not None:

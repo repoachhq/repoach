@@ -352,6 +352,34 @@ def plain_file(head_dir: Path, path: str) -> bool:
     return not symlinked(head_dir, path) and (head_dir / path).is_file()
 
 
+def artefact_triage(
+    entry: GeneratedEntry, path: str, *, head_dir: Path, head_sha: str, changed: Sequence[str]
+) -> tuple[bytes | None, GeneratedCheck | None]:
+    """Read one touched artefact at the head: ``(its bytes, None)``, or the row that replaces a run.
+
+    The one triage the runs, the evidence and the not-run rows share, so
+    the symlink, deleted and present rules cannot drift between them.
+
+    Args:
+        entry: The artefact's declaration.
+        path: The artefact's changed path.
+        head_dir: The head tree.
+        head_sha: The head.
+        changed: The paths the diff changes.
+
+    Returns:
+        ``(bytes, None)`` for a plain file; ``(None, symlink row)`` for an
+        artefact committed as a symlink (never read); ``(None, None)`` for
+        one the head deletes.
+    """
+    if symlinked(head_dir, path):
+        return None, symlink_row(entry, path, head_sha=head_sha, changed_files=changed)
+    artefact = head_dir / path
+    if not artefact.is_file():
+        return None, None
+    return artefact.read_bytes(), None
+
+
 __all__ = [
     "CAUSE_LINE_MAX_CHARS",
     "CONTROL_RE",
@@ -365,6 +393,7 @@ __all__ = [
     "GeneratedState",
     "GeneratedTiming",
     "ScriptRef",
+    "artefact_triage",
     "by_path",
     "changed_inputs",
     "check_cause",
