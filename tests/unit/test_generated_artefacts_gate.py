@@ -1570,3 +1570,45 @@ def test_git_reads_never_pass_an_option_like_ref(tmp_path: Path) -> None:
     assert resolve_commit(tmp_path, "-h") is None
     assert changed_paths(tmp_path, f"--output={written}", "main") == []
     assert not written.exists()
+
+
+def test_budget_exhausted_marks_remaining_runs_skipped_for_cost(tmp_path: Path) -> None:
+    """On a fake clock the PR budget caps each run and skips every run left once it is spent."""
+    head_dir = tmp_path / "head"
+    (head_dir / "data").mkdir(parents=True)
+    (head_dir / CHECK).parent.mkdir(parents=True, exist_ok=True)
+    (head_dir / CHECK).write_text(CHECK_SCRIPT, encoding="utf-8")
+    paths = ("data/a.npy", "data/b.npy", "data/c.npy", "data/d.npy")
+    for name in (*paths, "data/s.json"):
+        (head_dir / name).write_text(name, encoding="utf-8")
+    entry = GeneratedEntry(path="data/*.npy", check=(CHECK, "--check"), sources=("data/s.json",))
+    now = [0.0]
+    budgets: list[float] = []
+
+    def clock() -> float:
+        return now[0]
+
+    def slow(argv: object, *, timeout_s: float, **_kwargs: object) -> RunResult:
+        budgets.append(timeout_s)
+        now[0] += 110.0
+        return RunResult(0, "ok")
+
+    checks = run_checks(
+        dict.fromkeys(paths, entry),
+        head_dir=head_dir,
+        head_sha="f" * 40,
+        runner=slow,
+        budget_s=300,
+        changed_files=[*paths, "data/s.json"],
+        clock=clock,
+    )
+
+    assert budgets == [120, 120, 80]
+    assert [(c.path, c.state) for c in checks] == [
+        ("data/a.npy", GeneratedState.VERIFIED),
+        ("data/b.npy", GeneratedState.VERIFIED),
+        ("data/c.npy", GeneratedState.SKIPPED_COST),
+        ("data/d.npy", GeneratedState.SKIPPED_COST),
+    ]
+    assert checks[2].output_tail == "check not run within 80 s: data/c.npy"
+    assert checks[3].output_tail == "check not run within 300 s: data/d.npy"
