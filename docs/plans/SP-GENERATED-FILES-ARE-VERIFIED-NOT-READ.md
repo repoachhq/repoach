@@ -117,12 +117,20 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 ## Step 15 — Read the declarations in their own module
 
 - **Files**: `src/repoach/review/generated_config.py`
-- **Action**: generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (project/globs.always_reviewed: CI directories by prefix, hooks, repoach.toml, manifests, lockfiles) or hide a check script or source; the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.
+- **Action**: generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (project/globs.always_reviewed: CI directories by prefix, CI and build files, scripts and extensionless files, repoach.toml, manifests, lockfiles) or hide a check script or source; the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.
 - **Commit**: `refactor(review): read the generated declarations in generated_config`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_a_double_star_slash_matches_zero_directories`, `tests/unit/test_generated_artefacts_gate.py::test_each_run_gets_its_own_tree_and_may_not_change_the_artefact`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_missing_its_base_run_is_reported_not_run`, `tests/unit/test_generated_artefacts_config.py::test_a_path_hiding_its_prover_is_refused`
 
-## Step 16 — Document the declaration and the Yoob job
+## Step 16 — Name interpreters and split the run loop
+
+- **Files**: `src/repoach/review/generated_process.py`, `src/repoach/review/generated_artefacts.py`
+- **Action**: generated_process.INTERPRETERS maps a script extension to its interpreter and interpreted() builds the command line; Runner and subprocess_runner both default shell to False. run_checks is split into _precheck (triage), _planned_runs (D3 planning) and the run loop.
+- **Commit**: `refactor(review): name check interpreters in one map and align Runner`
+- **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_changed_check_script_runs_base_and_head passes
+- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_an_extensionless_glob_is_refused_whatever_the_languages`, `tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages`
+
+## Step 17 — Document the declaration and the Yoob job
 
 - **Files**: `docs/generated_artefacts.md`
 - **Action**: Describe the [[review.generated]] keys and rules, what the review shows, runs and records, what of the evidence is trusted, the causes a finding names, the report lines, and the GitLab snippet: a secret-free review:generated job writing review-generated.json and review:gate needing it.
@@ -384,7 +392,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "files": [
         "src/repoach/review/generated_config.py"
       ],
-      "action": "generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (project/globs.always_reviewed: CI directories by prefix, hooks, repoach.toml, manifests, lockfiles) or hide a check script or source; the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.",
+      "action": "generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (project/globs.always_reviewed: CI directories by prefix, CI and build files, scripts and extensionless files, repoach.toml, manifests, lockfiles) or hide a check script or source; the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.",
       "commit_message": "refactor(review): read the generated declarations in generated_config",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused passes",
       "unit_tests": [
@@ -397,6 +405,21 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
     },
     {
       "index": 16,
+      "title": "Name interpreters and split the run loop",
+      "files": [
+        "src/repoach/review/generated_process.py",
+        "src/repoach/review/generated_artefacts.py"
+      ],
+      "action": "generated_process.INTERPRETERS maps a script extension to its interpreter and interpreted() builds the command line; Runner and subprocess_runner both default shell to False. run_checks is split into _precheck (triage), _planned_runs (D3 planning) and the run loop.",
+      "commit_message": "refactor(review): name check interpreters in one map and align Runner",
+      "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_changed_check_script_runs_base_and_head passes",
+      "unit_tests": [
+        "tests/unit/test_generated_artefacts_config.py::test_an_extensionless_glob_is_refused_whatever_the_languages",
+        "tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages"
+      ]
+    },
+    {
+      "index": 17,
       "title": "Document the declaration and the Yoob job",
       "files": [
         "docs/generated_artefacts.md"
