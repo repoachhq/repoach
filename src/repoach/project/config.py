@@ -37,7 +37,7 @@ from pydantic import (
     model_validator,
 )
 
-from .globs import GLOB_SPECIALS, always_reviewed, glob_code_extension
+from .globs import GLOB_SPECIALS, always_reviewed, glob_code_extension, glob_matches
 
 CONFIG_FILE_NAME = "repoach.toml"
 """File name of the project configuration, at the git toplevel."""
@@ -733,6 +733,50 @@ def refuse_duplicate_generated(path: Path, text: str, entries: list[GeneratedSec
         seen[entry.path] = index
 
 
+def _hides(pattern: str, target: str) -> bool:
+    """Whether the ``path`` glob ``pattern`` can match ``target``, a path or a glob.
+
+    A literal ``target`` is matched directly; a glob ``target`` is matched
+    the other way round when ``pattern`` is literal (``data/*`` as a
+    source, ``data/x.json`` as the artefact).
+    """
+    if not any(char in target for char in GLOB_SPECIALS):
+        return glob_matches(pattern, target)
+    if not any(char in pattern for char in GLOB_SPECIALS):
+        return glob_matches(target, pattern)
+    return False
+
+
+def refuse_hidden_provers(path: Path, text: str, entries: list[GeneratedSection]) -> None:
+    """Refuse a ``path`` glob that would summarise away a check script or a source.
+
+    The check script and the sources are what the reviewers read to trust
+    the derivation; an entry whose ``path`` matches its own, or another
+    entry's, ``check[0]``, ``sources`` or ``producer_inputs`` would hide
+    the prover behind its own summary.
+
+    Args:
+        path: The file, for the message.
+        text: The file content, for the line lookup.
+        entries: The parsed entries.
+
+    Raises:
+        ConfigError: A ``path`` glob matches a check script, a source or a
+            producer input of any entry.
+    """
+    for index, entry in enumerate(entries):
+        for other in entries:
+            for target in (other.check[0], *other.sources, *other.producer_inputs):
+                if _hides(entry.path, target):
+                    raise ConfigError(
+                        path,
+                        f"{entry.path!r} can match {target}, a check script or source, "
+                        "which the reviewers must read",
+                        key=f"review.generated[{index}].path",
+                        line=_array_table_line(text, "review.generated", index, "path"),
+                    )
+
+
 def refuse_code_globs(
     path: Path, text: str, entries: list[GeneratedSection], extensions: tuple[str, ...]
 ) -> None:
@@ -816,6 +860,7 @@ def parse_project_config(text: str, path: Path) -> ProjectConfig:
             reason = "unknown key"
         raise ConfigError(path, reason, key=dotted, line=line) from exc
     refuse_duplicate_generated(path, text, config.review.generated)
+    refuse_hidden_provers(path, text, config.review.generated)
     if config.repoach.schema_ > SCHEMA_VERSION:
         raise ConfigError(
             path,

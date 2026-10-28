@@ -105,7 +105,7 @@ def test_path_leaving_the_repository_is_refused(path: str) -> None:
     assert error.line == 5
 
 
-@pytest.mark.parametrize("glob", ["src/*", "**/*.py", "api/**", "tools/gen?.py"])
+@pytest.mark.parametrize("glob", ["src/*", "**/*.py", "lib/**", "tools/gen?.py"])
 def test_path_glob_matching_python_is_refused(glob: str) -> None:
     """A glob that can match a ``.py`` file is refused when ``python`` is declared."""
     error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob))
@@ -142,7 +142,9 @@ def test_two_globs_matching_one_changed_path_are_refused() -> None:
     text = (
         _ENTRY
         + "\n"
-        + _ENTRY.split("\n", 3)[3].replace("api/data/knowledge_embeddings.json", "api/data/*.json")
+        + _ENTRY.split("\n", 3)[3].replace(
+            "api/data/knowledge_embeddings.json", "api/data/*_embeddings.json"
+        )
     )
     entries = _load(text)
     with pytest.raises(ConfigError, match="matched by two entries"):
@@ -252,3 +254,34 @@ def test_an_extensionless_glob_loads_only_where_no_language_could_match() -> Non
     text = _ENTRY.replace("api/data/knowledge_embeddings.json", "data/*")
     assert _load(text.replace('languages = ["python"]', "languages = []"), languages=())
     assert _refused(text).key == "review.generated[0].path"
+
+
+@pytest.mark.parametrize(
+    ("glob", "hidden"),
+    [
+        ("scripts/index_knowledge_corpus.py", "scripts/index_knowledge_corpus.py"),
+        ("api/data/knowledge_corpus.json", "api/data/knowledge_corpus.json"),
+        ("docs/user_guide/a.md", "docs/user_guide/**"),
+        ("api/data/_header.json", "api/data/_header.json"),
+    ],
+)
+def test_a_path_hiding_its_prover_is_refused(glob: str, hidden: str) -> None:
+    """A path glob may not summarise away a check script, a source or a producer input."""
+    error = _refused(
+        _ENTRY.replace('path = "api/data/knowledge_embeddings.json"', f'path = "{glob}"'),
+        languages=(),
+    )
+    assert error.key == "review.generated[0].path"
+    assert error.line == 5
+    assert hidden in str(error)
+
+
+def test_a_path_hiding_another_entrys_script_is_refused() -> None:
+    """The second entry's path may not match the first entry's check script."""
+    second = (
+        '\n[[review.generated]]\npath = "tools/gen"\ncheck = ["tools/other.sh"]\nsources = ["x"]\n'
+    )
+    first = _ENTRY.replace("scripts/index_knowledge_corpus.py", "tools/gen")
+    error = _refused(first + second, languages=())
+    assert error.key == "review.generated[1].path"
+    assert "tools/gen" in str(error)
