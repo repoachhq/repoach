@@ -1,0 +1,30 @@
+{
+  "source": "GitLab josephwfaye/yoob_2 merge_requests/322/changes, read 2026-10-27",
+  "mr": 322,
+  "base_sha": "0643abd449b612d783f892e64c148b38b77bc692",
+  "head_sha": "619a41363d12535284459b16fb34c0b97a761357",
+  "changes_order": [
+    "api/data/knowledge_corpus.json",
+    "api/data/knowledge_embeddings.json",
+    "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md"
+  ],
+  "embeddings": {
+    "path": "api/data/knowledge_embeddings.json",
+    "gitlab_too_large": true,
+    "bytes_before": 1569032,
+    "bytes_after": 1569032,
+    "sha256_before": "ab83a183695a3f318b93f779e47ea4edd321601c5d6779ca85f2a6aefd0f05b3",
+    "sha256_after": "2e2235956ef8126b863c898b66b9aa51414b70b194cb7cc0efea4d93954eac9f",
+    "vectors_line_chars": 1556480,
+    "diff_unit_chars": 3113902,
+    "template": "embeddings.diff.template",
+    "placeholder": "<<VECTORS>>"
+  },
+  "corpus_diff_chars": 3055,
+  "recorded_check": {
+    "argv": ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"],
+    "exit_code": 0,
+    "duration_ms": 70,
+    "output": "check_output.txt"
+  }
+}

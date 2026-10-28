@@ -56,6 +56,7 @@ from .findings import (
     record_verification_attempt,
     update_finding_status,
 )
+from .generated_settle import settle_at_head, settlements_at_head
 from .refuter import JUDGING_CAP_REACHED, Judge, LazyJudge, judge_finding, make_refuter_judge
 from .refuter_evidence import REFUTER_RULE_VERSION
 from .spec_gate import vitest_test_bodies
@@ -578,6 +579,11 @@ def reverify_older_findings(
 ) -> HeadReverification:
     """Re-check every unsettled blocking finding of an older head at ``head_sha``.
 
+    A ``generated_artefact`` finding, and the oversized finding of a
+    path the base now declares, is settled from the ``generated_checks``
+    rows of ``head_sha`` before any other check and never reaches the
+    refuter (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G3, G6).
+
     The gate and ``review merge`` call it before gathering their facts;
     ``review pr`` calls it after its refuter pass and before computing
     the team verdict (SP-GATE-REVERIFIES-AT-HEAD G7), with ``ci_green``
@@ -616,11 +622,15 @@ def reverify_older_findings(
     current_key = judgement_key(budget)
     outcomes: list[Reverification] = []
     seen: dict[tuple[str, str, int, int, str], tuple[ReverifyState, str, str, int]] = {}
+    generated = settlements_at_head(db_path, pr_number, head_sha)
     for finding in fetch_findings(db_path, pr_number):
         if not _older_unsettled(finding, head_sha, reads_ci=ci_green is not None):
             continue
         key = _claim_key(finding)
-        cached = _cached(finding, head_sha, current_key)
+        settled = settle_at_head(finding, generated)
+        if settled is not None:
+            seen[key] = (*settled, 0)
+        cached = None if settled is not None else _cached(finding, head_sha, current_key)
         if cached is not None:
             if finding.claim_type not in MECHANICAL_CLAIM_TYPES:
                 outcomes.append(cached)

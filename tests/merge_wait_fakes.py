@@ -295,10 +295,10 @@ class MergeWaitFixtureForge:
             self.dispatches.append(f"workflow_run {args[2]} {fields}")
             return self._ok(args, "")
         if args[0] == "api":
-            return self._api(args)
+            return self._api(args, input_data)
         raise AssertionError(f"unexpected gh call: {args}")
 
-    def _api(self, args: list[str]) -> CommandResult:
+    def _api(self, args: list[str], input_data: str | None = None) -> CommandResult:
         endpoint = next(a for a in args[1:] if "/" in a and not a.startswith("-"))
         if endpoint.endswith("/protection"):
             return self._fail(args, "gh: Branch not protected (HTTP 404)")
@@ -308,7 +308,10 @@ class MergeWaitFixtureForge:
             return self._ok(args, "\n".join(json.dumps(e) for e in entries))
         if "--method" in args:
             method = args[args.index("--method") + 1]
-            body = next(a[len("body=") :] for a in args if a.startswith("body="))
+            if "--input" in args:
+                body = json.loads(input_data or "{}")["body"]
+            else:
+                body = next(a[len("body=") :] for a in args if a.startswith("body="))
             if method == "POST":
                 number = int(endpoint.split("/issues/")[1].split("/")[0])
                 self._next_comment += 1

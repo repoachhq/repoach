@@ -55,6 +55,7 @@ class ClaimType(StrEnum):
     SPEC_GAP = "spec_gap"
     DESIGN = "design"
     SECURITY = "security"
+    GENERATED_ARTEFACT = "generated_artefact"
 
 
 JUDGED_CLAIM_TYPES = frozenset({ClaimType.DESIGN, ClaimType.SECURITY, ClaimType.SPEC_GAP})
@@ -68,12 +69,19 @@ blocking finding.
 """
 
 MECHANICAL_CLAIM_TYPES = frozenset(
-    {ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION}
+    {
+        ClaimType.MISSING_TEST,
+        ClaimType.MISSING_DOCSTRING,
+        ClaimType.LINT_CONVENTION,
+        ClaimType.GENERATED_ARTEFACT,
+    }
 )
-"""Claim types resolved by a mechanical on-disk re-check rather than
+"""Claim types resolved by a mechanical re-check rather than
 adversarial judging. The single source of truth (mirrors
 JUDGED_CLAIM_TYPES): merge_gate and coder_findings both import this
-constant rather than keeping their own copies."""
+constant rather than keeping their own copies. ``generated_artefact``
+is settled by the declared check's ``generated_checks`` row at the head
+(SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G3), never by the refuter."""
 
 
 class Severity(StrEnum):

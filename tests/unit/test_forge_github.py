@@ -135,10 +135,12 @@ class _PagedUpsertGhCli(GitHubForge):
         super().__init__(bot_login=bot_login)
         self._get_result = get_result
         self.write_calls: list[list[str]] = []
+        self.write_inputs: list[str | None] = []
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
         if "--method" in args:
             self.write_calls.append(args)
+            self.write_inputs.append(input_data)
             return GhResult(returncode=0, stdout=json.dumps({"id": 999}), stderr="", argv=args)
         return self._get_result
 
@@ -257,3 +259,20 @@ def test_find_marked_comment_ignores_forged_and_raises_on_api_failure() -> None:
     )
     with pytest.raises(ForgeError):
         failing.find_marked_comment(42, _MARKER)
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_a_large_archive_body_goes_on_stdin_not_in_argv(existing: bool) -> None:
+    """A 200 KB archive is sent as JSON on stdin: no argument nears the 128 KiB kernel limit."""
+    body = f"{_MARKER}\n" + "x" * 200_000
+    page = [{"id": 202, "body": body, "user": {"login": _BOT_LOGIN}}] if existing else []
+    canned = GhResult(returncode=0, stdout=json.dumps([page]), stderr="", argv=["gh"])
+    upserter = _PagedUpsertGhCli(canned, bot_login=_BOT_LOGIN)
+
+    upserter._upsert_archive_comment(42, body=body)
+
+    [argv] = upserter.write_calls
+    assert max(len(arg) for arg in argv) < 1_000
+    assert argv[-2:] == ["--input", "-"]
+    assert argv[argv.index("--method") + 1] == ("PATCH" if existing else "POST")
+    assert json.loads(upserter.write_inputs[0] or "") == {"body": body}

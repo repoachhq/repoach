@@ -22,6 +22,7 @@ report. The legacy per-reviewer verdict framing was dropped in 10b-4
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -138,6 +139,7 @@ def render_ledger_report(
     facts: MergeFacts,
     archive_appendix: str = "",
     judged: list[ReportFinding] | None = None,
+    generated_lines: list[str] | None = None,
 ) -> str:
     """Render the sticky archive report from the ledger and merge facts.
 
@@ -152,6 +154,10 @@ def render_ledger_report(
         judged: The findings that can move the verdict, each with its
             judge (:func:`report_findings`); rendered as a table above
             the ledger listing, with the verdict basis, when given.
+        generated_lines: The lines naming what proved each declared
+            generated artefact the diff touches, rendered as a
+            ``## Generated artefacts`` section
+            (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5); omitted when empty.
 
     Returns:
         The full markdown body for the sticky archive comment.
@@ -177,10 +183,30 @@ def render_ledger_report(
                 "",
             ]
         )
+    if generated_lines:
+        parts.extend(["## Generated artefacts", "", fenced(generated_lines), ""])
     parts.extend(["## Findings", "", _findings_section(findings)])
     if archive_appendix:
         parts.extend(["", "---", "", archive_appendix])
     return "\n".join(parts)
+
+
+def fenced(lines: list[str]) -> str:
+    """Wrap ``lines`` in a code fence no line can close.
+
+    The lines may carry pull-request text (a check's output), so the
+    fence is one backtick longer than the longest backtick run they hold,
+    and at least three: nothing inside renders as Markdown.
+
+    Args:
+        lines: The lines to show verbatim.
+
+    Returns:
+        The fenced block.
+    """
+    longest = max((len(run) for line in lines for run in re.findall(r"`+", line)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return "\n".join([f"{fence}text", *lines, fence])
 
 
 @dataclass(frozen=True)

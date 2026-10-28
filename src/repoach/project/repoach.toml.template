@@ -68,6 +68,13 @@ schema = 1
 # bot_username = ""
 # Where a pull request's spec id comes from, in order.
 # spec_sources = ["flag", "description", "branch"]
+# Files a committed script derives from other committed files: the reviewers
+# see one summary line instead of their diff, and the check proves them. Each
+# entry is an [[review.generated]] table read from the base branch, with path
+# (a glob, never code), check (an argv list, never shell), sources (globs) and
+# optional producer_inputs (globs). For instance path "data/embeddings.json",
+# check ["scripts/build_embeddings.py", "--check"], sources ["docs/**"].
+# generated = []
 
 [gates]
 # Paths exempt from docstring rules. Default: the test roots
