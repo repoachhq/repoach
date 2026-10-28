@@ -63,9 +63,11 @@ When the diff touches a declared artefact:
    cannot read it from repoach's own process. It can still read what the
    runner holds outside repoach: the CI shell's environment and, where the
    runner writes it into the remote URL, the job token in the checkout's
-   `.git/config`. Treat the job token as visible to the check, and give
-   that job no right beyond reading the repository (on GitLab, restrict
-   the project's CI/CD job token permissions).
+   `.git/config`. The job snippet below therefore removes the credential
+   from the remote URL and fails if any is left in `.git/config` before
+   repoach starts; the job token itself stays in the CI shell's
+   environment, so treat it as visible to the check and restrict the
+   project's CI/CD job token permissions to reading this repository.
 3. The review recomputes everything it can derive (the argv from the base
    declaration, the changed sources from the diff, the state from the exit
    code), so the evidence is trusted for the check's exit code and output
@@ -124,6 +126,9 @@ review:generated:
       || { echo "review:generated must hold no secret"; exit 2; }
     - pip install --quiet "repoach @ git+https://github.com/repoachhq/repoach@${REPOACH_REF}"
     - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - git remote set-url origin "$CI_PROJECT_URL.git"
+    - git config --get-regexp 'url\..*|remote\..*\.url|http\..*extraheader' | grep -q '@\|AUTHORIZATION'
+      && { echo "review:generated: a credential is left in .git/config"; exit 2; } || true
     - repoach review generated
         --pr "$CI_MERGE_REQUEST_IID"
         --head "$CI_COMMIT_SHA"
@@ -147,5 +152,6 @@ review:gate:
 to the gate; both are printed on the `generated checks:` line, so the delay is
 read from the log, not guessed. A Yoob shell suite on `.gitlab-ci.yml` should
 assert that `review:generated` names none of `REPOACH_GITLAB_TOKEN`,
-`REPOACH_ANTHROPIC_AUTH_TOKEN` and `REPOACH_ANTHROPIC_API_KEY`, and that
-`review:gate` needs it.
+`REPOACH_ANTHROPIC_AUTH_TOKEN` and `REPOACH_ANTHROPIC_API_KEY`, that it
+resets the remote URL and runs the `.git/config` credential check before
+`repoach review generated`, and that `review:gate` needs it.
