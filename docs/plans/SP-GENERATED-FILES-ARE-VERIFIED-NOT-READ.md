@@ -96,11 +96,11 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Action**: generated_git.py holds run_git, blob_at, merge_base, resolve_commit and changed_paths, the git reads both the review side and the verification job use.
 - **Commit**: `refactor(review): move the generated git reads to their own module`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir`
+- **Unit tests**: `tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_path_is_a_path_only_for_a_given_file`, `tests/unit/test_generated_artefacts_config.py::test_a_path_with_classes_or_a_wildcard_extension_is_refused`
 
 ## Step 13 — Share the row types and their causes
 
-- **Files**: `src/repoach/review/generated_types.py`
+- **Files**: `src/repoach/review/generated_types.py`, `src/repoach/review/generated_report.py`
 - **Action**: generated_types.py holds GeneratedEntry, GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause, changed_inputs, symlinked, symlink_row, declared_argv, sha256_hex and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.
 - **Commit**: `refactor(review): move generated rows and causes to generated_types`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_gate.py::test_check_output_is_made_inert_in_the_cause passes
@@ -348,14 +348,17 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "commit_message": "refactor(review): move the generated git reads to their own module",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir passes",
       "unit_tests": [
-        "tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir"
+        "tests/unit/test_generated_artefacts_gate.py::test_head_tree_is_a_clone_with_its_own_git_dir",
+        "tests/unit/test_generated_artefacts_gate.py::test_evidence_path_is_a_path_only_for_a_given_file",
+        "tests/unit/test_generated_artefacts_config.py::test_a_path_with_classes_or_a_wildcard_extension_is_refused"
       ]
     },
     {
       "index": 13,
       "title": "Share the row types and their causes",
       "files": [
-        "src/repoach/review/generated_types.py"
+        "src/repoach/review/generated_types.py",
+        "src/repoach/review/generated_report.py"
       ],
       "action": "generated_types.py holds GeneratedEntry, GeneratedState, GeneratedCheck, GeneratedTiming, GENERATED_FINDER, by_path, path_verified, check_cause, changed_inputs, symlinked, symlink_row, declared_argv, sha256_hex and the output sanitisers (tail_lines, last_line), so generated_store depends on the types, not on the summarising and running logic.",
       "commit_message": "refactor(review): move generated rows and causes to generated_types",
