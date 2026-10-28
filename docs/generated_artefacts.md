@@ -64,16 +64,22 @@ When the diff touches a declared artefact:
      included), it names it on stderr and re-runs itself without it, so
      the check cannot read it from repoach's own process.
 
-   The check can still read what the runner holds outside repoach: the CI
-   shell's environment and, where the runner writes it into the remote URL,
-   the job token in the checkout's `.git/config`. The job snippet below
-   removes that credential and fails if any is left before repoach starts.
-   The job token stays in the CI shell's environment: treat it as visible
-   to the check, and restrict the project's CI/CD job token permissions to
-   reading this repository. To keep it out of the check's reach entirely,
-   run the job where the check cannot read the shell's environment: a
-   runner that starts the job's commands as another user than the CI shell,
-   or a host mounting `/proc` with `hidepid=2`.
+   Outside repoach, the check could still read what the runner holds: the
+   job token in the checkout's `.git/config`, where the runner writes it
+   into the remote URL, and the job shell's environment. The job snippet
+   below closes both, failing the job when it cannot:
+   - it removes the credential from the remote URL and fails if any is
+     left in the git configuration, an `include` or the environment;
+   - it fails if any other process it can see still holds `CI_JOB_TOKEN`
+     (on such a runner, start the job as another user than the CI shell,
+     or mount `/proc` with `hidepid=2`);
+   - it replaces the job shell itself (`exec env -i ...`) with
+     `repoach review generated`, so the only process left that held the
+     token no longer does.
+
+   `--base` is required: the declarations are read at the base ref the
+   job names, never from the checkout's `repoach.toml`, which is the pull
+   request's.
 3. The review recomputes everything it can derive (the argv from the base
    declaration, the changed sources from the diff, the state from the exit
    code), so the evidence is trusted for the check's exit code and output
@@ -137,7 +143,15 @@ review:generated:
       || { echo "review:generated: git configuration injected through the environment"; exit 2; }
     - git config --get-regexp 'url\..*|remote\..*\.url|http\..*extraheader|credential\..*|include\..*|includeif\..*' | grep -qiE '@|authorization|helper|path'
       && { echo "review:generated: a credential is left in .git/config"; exit 2; } || true
-    - repoach review generated
+    - |
+      for environ in /proc/[0-9]*/environ; do
+        [ "$environ" = "/proc/$$/environ" ] && continue
+        if tr '\0' '\n' < "$environ" 2>/dev/null | grep -q '^CI_JOB_TOKEN='; then
+          echo "review:generated: another process holds CI_JOB_TOKEN; isolate the job"; exit 2
+        fi
+      done
+    - exec env -i PATH="$PATH" HOME="$HOME" LANG=C.UTF-8
+        repoach review generated
         --pr "$CI_MERGE_REQUEST_IID"
         --head "$CI_COMMIT_SHA"
         --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
@@ -161,5 +175,6 @@ to the gate; both are printed on the `generated checks:` line, so the delay is
 read from the log, not guessed. A Yoob shell suite on `.gitlab-ci.yml` should
 assert that `review:generated` names none of `REPOACH_GITLAB_TOKEN`,
 `REPOACH_ANTHROPIC_AUTH_TOKEN` and `REPOACH_ANTHROPIC_API_KEY`, that it
-resets the remote URL and runs the `.git/config` credential check before
-`repoach review generated`, and that `review:gate` needs it.
+resets the remote URL, runs the `.git/config` and `CI_JOB_TOKEN` process
+checks, and starts `repoach review generated` with `exec env -i`, and that
+`review:gate` needs it.
