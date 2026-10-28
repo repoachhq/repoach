@@ -268,6 +268,8 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "composer.json",
         "renovate.json",
         "deno.json",
+        "*/settings.json",
+        "**/settings.json",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
@@ -300,7 +302,7 @@ def test_an_extensionless_glob_is_refused_whatever_the_languages() -> None:
         ("api/data/knowledge_corpus.json", "api/data/knowledge_corpus.json"),
         ("docs/user_guide/a.md", "docs/user_guide/**"),
         ("api/data/_header.json", "api/data/_header.json"),
-        ("docs/**/*.npy", "docs/user_guide/**"),
+        ("docs/user_guide/a/*.npy", "docs/user_guide/**"),
     ],
 )
 def test_a_path_hiding_its_prover_is_refused(glob: str, hidden: str) -> None:

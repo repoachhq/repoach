@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from .globs import glob_code_extension, glob_matches
+from .globs import GLOB_SPECIALS, glob_code_extension, glob_matches, glob_regex
 
 CI_FILES: tuple[str, ...] = (
     ".gitlab-ci.yml",
@@ -205,6 +205,21 @@ TOOL_CONFIG_STEMS: tuple[str, ...] = (
 """Name stems of tool configuration files, whatever their extension or suffix (``tsconfig.base.json``)."""
 
 
+def _wildcard_dir_can_be_dotted(pattern: str) -> bool:
+    """Whether a wildcard standing for a directory could name a dot directory (``*/settings.json``)."""
+    regex = glob_regex(pattern)
+    segments = pattern.split("/")
+    for index, segment in enumerate(segments[:-1]):
+        if any(char in segment for char in GLOB_SPECIALS):
+            probe = [
+                ".x" if i == index else re.sub(r"[*?]|\[[^\]]*\]", "x", part)
+                for i, part in enumerate(segments)
+            ]
+            if regex.match("/".join(probe)):
+                return True
+    return False
+
+
 def always_reviewed(pattern: str) -> str | None:
     """Return the always-reviewed file or directory ``pattern`` can reach, or ``None``.
 
@@ -241,7 +256,9 @@ def always_reviewed(pattern: str) -> str | None:
     config = glob_code_extension(pattern, CONFIG_EXTENSIONS)
     if config is not None:
         return f"a {config} configuration file"
-    if any(part.startswith(".") for part in literal.split("/")):
+    if any(part.startswith(".") for part in literal.split("/")) or _wildcard_dir_can_be_dotted(
+        pattern
+    ):
         return "a dotfile or a file under a dot directory, which tools read as configuration"
     last = pattern.rsplit("/", 1)[-1]
     if "." not in last:
