@@ -27,7 +27,7 @@ check_timeout_s = 120
 
 | Key | Rule |
 |---|---|
-| `path` | A repository glob (`**` crosses directories). Never `..`, never a leading `/`, and never a glob that could match a file of a language in `[project].languages`: code is reviewed, not declared away. |
+| `path` | A repository glob (`**` crosses directories). Never `..`, never a leading `/`. It may never match what the reviewers must read: a file of a language in `[project].languages`, a script (`.sh`, `.py`, `.js`, ...) or an extensionless file, CI definitions (`.github/`, `.gitlab/`, `ci/`, `.gitlab-ci.yml`, `Jenkinsfile`, ...), `repoach.toml`, dependency manifests and lockfiles, or any entry's check script, sources and producer inputs. |
 | `check` | An argv list, never a string and never a shell. `check[0]` is a script tracked at the base: `.py` runs under `python3`, `.sh` under `bash`, anything else must be executable. Every later element matches `^[A-Za-z0-9._/=:@,+-]+$`; `{head}` and `{base}` are the only placeholders. |
 | `sources` | Non-empty globs of the files the artefact derives from. |
 | `producer_inputs` | Optional globs of files pinning the producer (a header carrying the model digest, a lockfile). A change to one counts as a source change and is reported apart. |
@@ -46,28 +46,31 @@ When the diff touches a declared artefact:
    `generated artefact <path>: <size before> -> <size after> bytes, sha256 <before7> -> <after7>; sources changed in this diff: <list or none>; proved by: <check>`.
    No oversized finding is recorded for it.
 2. The check never runs in the review job, which holds the forge token and
-   the model credential. `repoach review generated` runs it in a separate job
-   whose environment holds neither, with `shell=False` and every
-   secret-bearing variable removed, in a throwaway clone of the head with
-   its own git directory (never the checkout, whose `.git` a later job
-   would trust), in its own session, killed whole when the check exits,
-   with any descendant that detached itself adopted and killed too;
-   when the check script itself changed, it runs twice, with the base
-   script and with the head script, and both must pass. Only `check[0]`
-   is swapped: a module the base script imports is read from the head
-   tree, so a helper the pull request changes is code in the diff, read by
-   the reviewers like any other (D3 runs both against the head tree). A check script
-   reached through a symlink is refused. When the command itself holds a
-   secret-bearing variable (`CI_JOB_TOKEN` included), it names it on
-   stderr and re-runs itself from the scrubbed environment, so the check
-   cannot read it from repoach's own process. It can still read what the
-   runner holds outside repoach: the CI shell's environment and, where the
-   runner writes it into the remote URL, the job token in the checkout's
-   `.git/config`. The job snippet below therefore removes the credential
-   from the remote URL and fails if any is left in `.git/config` before
-   repoach starts; the job token itself stays in the CI shell's
-   environment, so treat it as visible to the check and restrict the
-   project's CI/CD job token permissions to reading this repository.
+   the model credential. `repoach review generated` runs it in a separate
+   job whose environment holds neither.
+   - Each run is shell-free, with every secret-bearing variable removed.
+   - Each run gets its own throwaway copy of the head, with its own git
+     directory; the checkout, whose `.git` a later job would trust, is
+     never used.
+   - Each run has its own session, killed whole when the check exits; a
+     descendant that detached itself is adopted and killed too.
+   - A run that changes the artefact is stale, never verified.
+   - A check script reached through a symlink is refused.
+   - When the check script itself changed, the check runs twice, with the
+     base script and with the head script, and both must pass. Only the
+     script is swapped: both runs use the head tree, so a helper module the
+     script imports is code in the diff, read by the reviewers.
+   - When the command holds a secret-bearing variable (`CI_JOB_TOKEN`
+     included), it names it on stderr and re-runs itself without it, so
+     the check cannot read it from repoach's own process.
+
+   The check can still read what the runner holds outside repoach: the CI
+   shell's environment and, where the runner writes it into the remote URL,
+   the job token in the checkout's `.git/config`. The job snippet below
+   removes that credential and fails if any is left before repoach starts.
+   The job token stays in the CI shell's environment: treat it as visible
+   to the check, and restrict the project's CI/CD job token permissions to
+   reading this repository.
 3. The review recomputes everything it can derive (the argv from the base
    declaration, the changed sources from the diff, the state from the exit
    code), so the evidence is trusted for the check's exit code and output
