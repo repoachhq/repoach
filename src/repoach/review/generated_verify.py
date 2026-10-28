@@ -160,6 +160,11 @@ def verify_generated(
         ConfigError: The base declarations are invalid.
     """
     started = clock()
+    for name, ref in (("head", head), ("base", base_ref)):
+        if ref.startswith("-"):
+            raise GeneratedRefusalError(
+                f"{name} {ref!r} starts with '-', which git would read as an option"
+            )
     head_sha = resolve_commit(root, head)
     if head_sha is None:
         raise GeneratedRefusalError(f"head {head!r} does not resolve to a commit")
