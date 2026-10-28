@@ -23,7 +23,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 - **Files**: `src/repoach/review/generated_artefacts.py`, `tests/fixtures/generated_artefacts/harness.py`, `tests/unit/test_generated_artefacts_gate.py`
 - **Action**: Create generated_artefacts.py with GeneratedEntry, load_generated_entries(text, path, languages) (refusing a path glob that could match a file of the file's or the given languages, through code_extensions over gates.languages), declared_at_base(root, base_ref) reading repoach.toml with git show at the base ref, touched_artefacts in declaration order (two entries matching one changed path is a ConfigError), changed_inputs, summary_paragraph and summarise replacing each touched unit by its diff --git header and one paragraph of sizes, sha256 prefixes and paths, and review_scope. Add the test harness: a bare origin, a seed pushing refs/pull/<n>/head, a GitHubForge serving the three-dot diff, approving reviewers that record every diff, a counting judge and a recording runner.
 - **Commit**: `feat(review): summarise declared generated artefacts for reviewers`
-- **Done when**: pytest -q tests/unit/test_generated_artefacts_config.py passes
+- **Done when**: pytest -q tests/unit/test_generated_artefacts_config.py tests/unit/test_generated_artefacts_gate.py passes
 - **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_path_glob_matching_python_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages`, `tests/unit/test_generated_artefacts_config.py::test_two_globs_matching_one_changed_path_are_refused`, `tests/unit/test_generated_artefacts_config.py::test_the_same_path_twice_is_refused`
 
 ## Step 4 — Feed the reviewers the summary and name the oversized remedy
@@ -192,7 +192,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       ],
       "action": "Create generated_artefacts.py with GeneratedEntry, load_generated_entries(text, path, languages) (refusing a path glob that could match a file of the file's or the given languages, through code_extensions over gates.languages), declared_at_base(root, base_ref) reading repoach.toml with git show at the base ref, touched_artefacts in declaration order (two entries matching one changed path is a ConfigError), changed_inputs, summary_paragraph and summarise replacing each touched unit by its diff --git header and one paragraph of sizes, sha256 prefixes and paths, and review_scope. Add the test harness: a bare origin, a seed pushing refs/pull/<n>/head, a GitHubForge serving the three-dot diff, approving reviewers that record every diff, a counting judge and a recording runner.",
       "commit_message": "feat(review): summarise declared generated artefacts for reviewers",
-      "done_when": "pytest -q tests/unit/test_generated_artefacts_config.py passes",
+      "done_when": "pytest -q tests/unit/test_generated_artefacts_config.py tests/unit/test_generated_artefacts_gate.py passes",
       "unit_tests": [
         "tests/unit/test_generated_artefacts_config.py::test_path_glob_matching_python_is_refused",
         "tests/unit/test_generated_artefacts_config.py::test_code_glob_is_judged_against_the_declared_languages",
