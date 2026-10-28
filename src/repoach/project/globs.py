@@ -229,6 +229,31 @@ ALWAYS_CODE_EXTENSIONS: tuple[str, ...] = (
 """Script extensions a ``path`` glob may never match, whatever languages a project declares."""
 
 
+CONFIG_EXTENSIONS: tuple[str, ...] = (
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".toml",
+    ".yml",
+    ".yaml",
+    ".lock",
+    ".properties",
+    ".gradle",
+    ".kts",
+    ".xml",
+    ".nix",
+    ".bzl",
+    ".bazel",
+    ".mk",
+    ".env",
+)
+"""Configuration formats a ``path`` glob may never match.
+
+A tool reads its settings from such a file (``pytest.ini``, ``ruff.toml``,
+``Taskfile.yml``); no list of names can be complete, so the format itself
+is refused. A project deriving data in one of them keeps it reviewed."""
+
+
 def always_reviewed(pattern: str) -> str | None:
     """Return the always-reviewed file or directory ``pattern`` can reach, or ``None``.
 
@@ -258,6 +283,11 @@ def always_reviewed(pattern: str) -> str | None:
     script = glob_code_extension(pattern, ALWAYS_CODE_EXTENSIONS)
     if script is not None:
         return f"a {script} script"
+    config = glob_code_extension(pattern, CONFIG_EXTENSIONS)
+    if config is not None:
+        return f"a {config} configuration file"
+    if any(part.startswith(".") for part in literal.split("/")):
+        return "a dotfile or a file under a dot directory, which tools read as configuration"
     last = pattern.rsplit("/", 1)[-1]
     if "." not in last:
         return "an extensionless file, which may be an executable"
@@ -268,6 +298,7 @@ __all__ = [
     "ALWAYS_CODE_EXTENSIONS",
     "ALWAYS_REVIEWED_DIRS",
     "ALWAYS_REVIEWED_PROBES",
+    "CONFIG_EXTENSIONS",
     "GLOB_SPECIALS",
     "always_reviewed",
     "glob_code_extension",

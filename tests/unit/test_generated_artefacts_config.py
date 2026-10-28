@@ -255,6 +255,11 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         ".bazelrc",
         ".envrc",
         "pip.conf",
+        "pytest.ini",
+        "ruff.toml",
+        "Taskfile.yml",
+        ".coveragerc",
+        "conf/app.properties",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
