@@ -250,6 +250,11 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "frontend/package-lock.json",
         "frontend/**/*.json",
         "services/api/pyproject.toml",
+        ".yarnrc.yml",
+        ".cargo/config.toml",
+        ".bazelrc",
+        ".envrc",
+        "pip.conf",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
