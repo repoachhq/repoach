@@ -3,7 +3,7 @@
 A file that a committed script derives from other committed files cannot be
 reviewed by reading it: its content is a function of its sources. A
 regenerated embeddings file, for instance, changes one 1.5 MB line, and its
-diff is twenty times what a reviewer is shown. Before
+diff is twenty-two times what a reviewer is shown. Before
 SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ such a file was dropped from every
 reviewer's prompt and held the pull request with an oversized `spec_gap`
 finding no push could clear.
