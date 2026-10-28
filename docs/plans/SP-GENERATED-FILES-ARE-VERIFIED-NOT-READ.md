@@ -117,10 +117,10 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
 ## Step 15 — Read the declarations in their own module
 
 - **Files**: `src/repoach/review/generated_config.py`
-- **Action**: generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (CI directories by prefix, hooks, repoach.toml, dependency manifests); the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.
+- **Action**: generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (project/globs.always_reviewed: CI directories by prefix, hooks, repoach.toml, manifests, lockfiles) or hide a check script or source; the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.
 - **Commit**: `refactor(review): read the generated declarations in generated_config`
 - **Done when**: pytest -q tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused passes
-- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_a_double_star_slash_matches_zero_directories`, `tests/unit/test_generated_artefacts_gate.py::test_each_run_gets_its_own_tree_and_may_not_change_the_artefact`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_missing_its_base_run_is_reported_not_run`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_of_another_base_is_not_run`
+- **Unit tests**: `tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused`, `tests/unit/test_generated_artefacts_config.py::test_a_double_star_slash_matches_zero_directories`, `tests/unit/test_generated_artefacts_gate.py::test_each_run_gets_its_own_tree_and_may_not_change_the_artefact`, `tests/unit/test_generated_artefacts_gate.py::test_evidence_missing_its_base_run_is_reported_not_run`, `tests/unit/test_generated_artefacts_config.py::test_a_path_hiding_its_prover_is_refused`
 
 ## Step 16 — Document the declaration and the Yoob job
 
@@ -384,7 +384,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
       "files": [
         "src/repoach/review/generated_config.py"
       ],
-      "action": "generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (CI directories by prefix, hooks, repoach.toml, dependency manifests); the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.",
+      "action": "generated_config.py holds load_generated_entries, code_extensions, declared_at_base and touched_artefacts, re-exported by generated_artefacts for the spec's interface. config.py refuses a path glob that can reach a file always reviewed (project/globs.always_reviewed: CI directories by prefix, hooks, repoach.toml, manifests, lockfiles) or hide a check script or source; the review binds the evidence to the base it computed itself. Each run of run_checks gets a fresh tree, and a run that changes the artefact is stale.",
       "commit_message": "refactor(review): read the generated declarations in generated_config",
       "done_when": "pytest -q tests/unit/test_generated_artefacts_config.py::test_a_glob_reaching_ci_or_manifests_is_refused passes",
       "unit_tests": [
@@ -392,7 +392,7 @@ Declare derived files under [[review.generated]] read at the base ref; the revie
         "tests/unit/test_generated_artefacts_config.py::test_a_double_star_slash_matches_zero_directories",
         "tests/unit/test_generated_artefacts_gate.py::test_each_run_gets_its_own_tree_and_may_not_change_the_artefact",
         "tests/unit/test_generated_artefacts_gate.py::test_evidence_missing_its_base_run_is_reported_not_run",
-        "tests/unit/test_generated_artefacts_gate.py::test_evidence_of_another_base_is_not_run"
+        "tests/unit/test_generated_artefacts_config.py::test_a_path_hiding_its_prover_is_refused"
       ]
     },
     {
