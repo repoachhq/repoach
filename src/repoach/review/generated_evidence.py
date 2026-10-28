@@ -63,28 +63,49 @@ def not_run_checks(
     """
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
-        artefact = head_dir / path
-        if symlinked(head_dir, path):
-            checks.append(symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
-            continue
-        if not artefact.is_file():
-            continue
-        sources, producers = changed_inputs(entry, path, changed_files)
-        checks.append(
-            GeneratedCheck(
-                path=path,
-                argv=entry.check,
-                head_sha=head_sha,
-                artefact_sha256=sha256_hex(artefact.read_bytes()),
-                sources_changed=sources,
-                state=GeneratedState.NOT_RUN,
-                exit_code=None,
-                duration_ms=0,
-                output_tail=f"no check evidence for {path} at {head_sha[:7]}",
-                producer_inputs_changed=producers,
-            )
+        blob, refused = _triage(
+            entry, path, head_dir=head_dir, head_sha=head_sha, changed=changed_files
         )
+        if refused is not None:
+            checks.append(refused)
+        elif blob is not None:
+            checks.append(_not_run_row(entry, path, blob, head_sha=head_sha, changed=changed_files))
     return checks
+
+
+def _triage(
+    entry: GeneratedEntry, path: str, *, head_dir: Path, head_sha: str, changed: Sequence[str]
+) -> tuple[bytes | None, GeneratedCheck | None]:
+    """Read one touched artefact at the head: ``(its bytes, None)``, or the row that replaces a run.
+
+    ``(None, symlink row)`` for an artefact committed as a symlink (never
+    read), ``(None, None)`` for one the head deletes.
+    """
+    if symlinked(head_dir, path):
+        return None, symlink_row(entry, path, head_sha=head_sha, changed_files=changed)
+    artefact = head_dir / path
+    if not artefact.is_file():
+        return None, None
+    return artefact.read_bytes(), None
+
+
+def _not_run_row(
+    entry: GeneratedEntry, path: str, blob: bytes, *, head_sha: str, changed: Sequence[str]
+) -> GeneratedCheck:
+    """The row of an artefact no evidence speaks for at this head (never green)."""
+    sources, producers = changed_inputs(entry, path, changed)
+    return GeneratedCheck(
+        path=path,
+        argv=entry.check,
+        head_sha=head_sha,
+        artefact_sha256=sha256_hex(blob),
+        sources_changed=sources,
+        state=GeneratedState.NOT_RUN,
+        exit_code=None,
+        duration_ms=0,
+        output_tail=f"no check evidence for {path} at {head_sha[:7]}",
+        producer_inputs_changed=producers,
+    )
 
 
 def evidence_payload(
@@ -162,27 +183,22 @@ def checks_from_evidence(
         )
     recorded = by_path([GeneratedCheck.from_json(item) for item in payload.get("checks", [])])
     checks: list[GeneratedCheck] = []
-    for path in touched:
-        artefact = head_dir / path
-        if symlinked(head_dir, path):
-            checks.append(
-                symlink_row(touched[path], path, head_sha=head_sha, changed_files=changed_files)
-            )
+    for path, entry in touched.items():
+        content, refused = _triage(
+            entry, path, head_dir=head_dir, head_sha=head_sha, changed=changed_files
+        )
+        if refused is not None:
+            checks.append(refused)
             continue
-        if not artefact.is_file():
+        if content is None:
             continue
         runs = recorded.get(path)
         if not runs:
-            checks.extend(
-                not_run_checks(
-                    {path: touched[path]},
-                    head_dir=head_dir,
-                    head_sha=head_sha,
-                    changed_files=changed_files,
-                )
+            checks.append(
+                _not_run_row(entry, path, content, head_sha=head_sha, changed=changed_files)
             )
             continue
-        blob = sha256_hex(artefact.read_bytes())
+        blob = sha256_hex(content)
         if any(run.artefact_sha256 != blob for run in runs):
             raise GeneratedEvidenceMismatchError(
                 f"evidence of {path} names blob {runs[0].artefact_sha256[:7]}, head has {blob[:7]}"
@@ -190,7 +206,7 @@ def checks_from_evidence(
         checks.extend(
             _rebound(
                 runs,
-                touched[path],
+                entry,
                 path=path,
                 head_sha=head_sha,
                 base_sha=base_sha or str(payload.get("base_sha") or ""),
