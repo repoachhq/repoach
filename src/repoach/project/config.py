@@ -121,10 +121,10 @@ GENERATED_PLACEHOLDERS: tuple[str, ...] = ("{head}", "{base}")
 """The only placeholders a check argument may carry, replaced by the SHAs."""
 
 _CHECK_ARG_RE = re.compile(r"^[A-Za-z0-9._/=:@,+-]+$")
+"""What a check argument after the script may contain once its placeholders are removed."""
 
 _LITERAL_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9_-]+$")
 """A ``path`` glob's last segment must end like this: a dot, then no wildcard."""
-"""What a check argument after the script may contain once its placeholders are removed."""
 
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
 _SECTION_LINE_RE = re.compile(r"^\s*\[\s*(?P<name>[A-Za-z0-9_.-]+)\s*\]\s*$")
