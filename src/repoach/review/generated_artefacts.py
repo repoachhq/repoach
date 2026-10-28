@@ -29,10 +29,9 @@ the flow lives beside it:
 
 from __future__ import annotations
 
-import subprocess
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -56,7 +55,7 @@ from .generated_config import (
     touched_artefacts,
 )
 from .generated_git import blob_at, merge_base
-from .generated_process import Runner, interpreted
+from .generated_process import Budget, Runner, run_once
 from .generated_types import (
     GENERATED_CHECKS_TOTAL_BUDGET_S,
     GENERATED_FINDER,
@@ -74,7 +73,6 @@ from .generated_types import (
     plain_file,
     sha256_hex,
     symlinked,
-    tail_lines,
 )
 from .secret_env import scrubbed_env
 
@@ -239,133 +237,6 @@ def _artefact_moved(tree: Path, path: str, bound_sha: str) -> bool:
     return sha256_hex((tree / path).read_bytes()) != bound_sha
 
 
-class ScriptTamperedError(RuntimeError):
-    """The check script became a symlink, or left the head tree, while the base script ran."""
-
-
-@contextmanager
-def _script_at(head_dir: Path, script: str, content: bytes | None) -> Iterator[None]:
-    """Put ``content`` at ``script`` in the head tree for one run, then restore it (D3).
-
-    The run is pull-request code: by the time it returns every process it
-    started is dead, but it may have turned ``script`` (or a directory on
-    its way) into a symlink. The head script is then not written back
-    through it.
-
-    Raises:
-        ScriptTamperedError: ``script`` is no longer a plain file of the tree.
-    """
-    if content is None:
-        yield
-        return
-    target = head_dir / script
-    original = target.read_bytes()
-    mode = target.stat().st_mode
-    target.write_bytes(content)
-    try:
-        yield
-    finally:
-        if not plain_file(head_dir, script):
-            raise ScriptTamperedError(
-                f"check script {script} changed into a symlink during the run"
-            )
-        target.write_bytes(original)
-        target.chmod(mode)
-
-
-@dataclass
-class _Budget:
-    """The PR's check budget, measured on ``clock``."""
-
-    total_s: float
-    clock: Callable[[], float]
-    started: float = field(init=False)
-
-    def __post_init__(self) -> None:
-        """Start the budget now."""
-        self.started = self.clock()
-
-    def remaining(self) -> float:
-        """Seconds left before the budget is spent."""
-        return self.total_s - (self.clock() - self.started)
-
-
-def _run_once(
-    entry: GeneratedEntry,
-    path: str,
-    *,
-    head_dir: Path,
-    head_sha: str,
-    base_sha: str,
-    runner: Runner,
-    timeout_s: int,
-    budget: _Budget,
-    script_content: bytes | None,
-    env: Mapping[str, str],
-) -> tuple[GeneratedState, int | None, int, str]:
-    """Run one check once and say how it ended.
-
-    Args:
-        entry: The artefact's declaration.
-        path: The artefact's path.
-        head_dir: The tree the run uses.
-        head_sha: The head (``{head}``).
-        base_sha: The base (``{base}``).
-        runner: The subprocess seam.
-        timeout_s: Seconds one run may take, at most.
-        budget: What is left of the pull request's budget.
-        script_content: The base script to put in place for this run
-            (D3), ``None`` for the head script.
-        env: The scrubbed environment.
-
-    Returns:
-        ``(state, exit code, ms, output tail)``: ``skipped (cost)`` when the
-        budget is spent or the run outlived its limit, ``stale`` for a
-        symlinked or tampered script, an exception or a non-zero exit,
-        ``verified`` for exit 0 (the caller then checks sources and the
-        artefact's blob).
-    """
-    limit = min(entry.check_timeout_s, timeout_s)
-    remaining = budget.remaining()
-    if remaining <= 0:
-        return (
-            GeneratedState.SKIPPED_COST,
-            None,
-            0,
-            f"check not run within {budget.total_s:g} s: {path}",
-        )
-    allowed = min(limit, remaining)
-    if not plain_file(head_dir, entry.check[0]):
-        return (
-            GeneratedState.STALE,
-            None,
-            0,
-            f"check script {entry.check[0]} is a symlink or leaves the head tree",
-        )
-    argv = interpreted(declared_argv(entry, head_sha, base_sha), head_dir)
-    started = budget.clock()
-    try:
-        with _script_at(head_dir, entry.check[0], script_content):
-            result = runner(argv, cwd=head_dir, env=env, timeout_s=allowed, shell=False)
-    except subprocess.TimeoutExpired:
-        ms = round((budget.clock() - started) * 1000)
-        return GeneratedState.SKIPPED_COST, None, ms, f"check not run within {allowed:g} s: {path}"
-    except ScriptTamperedError as exc:
-        ms = round((budget.clock() - started) * 1000)
-        _log.warning("generated.check_script_tampered", path=path)
-        return GeneratedState.STALE, None, ms, str(exc)
-    except Exception as exc:
-        ms = round((budget.clock() - started) * 1000)
-        _log.warning("generated.check_raised", path=path, exc=type(exc).__name__)
-        return GeneratedState.STALE, None, ms, type(exc).__name__
-    elapsed = budget.clock() - started
-    ms = round(elapsed * 1000)
-    if elapsed > allowed:
-        return GeneratedState.SKIPPED_COST, None, ms, f"check not run within {allowed:g} s: {path}"
-    state = GeneratedState.VERIFIED if result.exit_code == 0 else GeneratedState.STALE
-    return state, result.exit_code, ms, tail_lines(result.output)
-
-
 def _precheck(
     entry: GeneratedEntry,
     path: str,
@@ -469,7 +340,7 @@ def run_checks(
         head gets none.
     """
     environment = dict(env) if env is not None else scrubbed_env()
-    budget = _Budget(float(budget_s), clock)
+    budget = Budget(float(budget_s), clock)
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
         template, refused = _precheck(
@@ -488,7 +359,7 @@ def run_checks(
         runs = _planned_runs(entry.check[0], changed_files, base_blob)
         for ref, content in runs:
             with fresh_tree() if fresh_tree is not None else nullcontext(head_dir) as tree:
-                state, exit_code, ms, tail = _run_once(
+                state, exit_code, ms, tail = run_once(
                     entry,
                     path,
                     head_dir=tree,
