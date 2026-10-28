@@ -126,8 +126,8 @@ def test_code_glob_is_judged_against_the_declared_languages() -> None:
 
 
 def test_a_data_glob_beside_python_loads() -> None:
-    """``data/*.json`` cannot name a ``.py`` file, so it loads with Python declared."""
-    assert _load(_ENTRY.replace("api/data/knowledge_embeddings.json", "data/*.json"))
+    """``data/*.npy`` can name neither code nor a manifest, so it loads with Python declared."""
+    assert _load(_ENTRY.replace("api/data/knowledge_embeddings.json", "data/*.npy"))
 
 
 def test_the_same_path_twice_is_refused() -> None:
@@ -246,6 +246,10 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "**/*.gradle",
         ".devcontainer/**",
         ".vscode/tasks.json",
+        "api/requirements.txt",
+        "frontend/package-lock.json",
+        "frontend/**/*.json",
+        "services/api/pyproject.toml",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
@@ -278,7 +282,7 @@ def test_an_extensionless_glob_is_refused_whatever_the_languages() -> None:
         ("api/data/knowledge_corpus.json", "api/data/knowledge_corpus.json"),
         ("docs/user_guide/a.md", "docs/user_guide/**"),
         ("api/data/_header.json", "api/data/_header.json"),
-        ("docs/**/*.json", "docs/user_guide/**"),
+        ("docs/**/*.npy", "docs/user_guide/**"),
     ],
 )
 def test_a_path_hiding_its_prover_is_refused(glob: str, hidden: str) -> None:

@@ -225,6 +225,10 @@ def always_reviewed(pattern: str) -> str | None:
     Args:
         pattern: A ``[[review.generated]]`` ``path`` glob.
 
+    A probe file is looked for at the root and in any directory, so
+    ``api/requirements.txt`` and ``frontend/**/*.json`` (which can match
+    ``frontend/package-lock.json``) are caught like the root files.
+
     Returns:
         The probe file or directory prefix it reaches, ``None`` when it
         reaches none.
@@ -235,8 +239,11 @@ def always_reviewed(pattern: str) -> str | None:
             return directory
         if glob_matches(pattern, directory + "x.sh") or glob_matches(pattern, directory + "x"):
             return directory
+    head = literal.rsplit("/", 1)[0] + "/" if "/" in literal else ""
     for probe in ALWAYS_REVIEWED_PROBES:
-        if glob_matches(pattern, probe):
+        name = probe.rsplit("/", 1)[-1]
+        placed = (probe, head + name, head + "x/" + name, "x/" + name, head + probe)
+        if any(glob_matches(pattern, candidate) for candidate in placed):
             return probe
     script = glob_code_extension(pattern, ALWAYS_CODE_EXTENSIONS)
     if script is not None:
