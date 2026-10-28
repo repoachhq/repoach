@@ -265,8 +265,19 @@ LOADED_EXTENSIONS: tuple[str, ...] = (
     ".a",
     ".o",
     ".ipynb",
+    ".pkl",
+    ".pickle",
+    ".joblib",
+    ".dill",
+    ".pt",
+    ".pth",
+    ".ckpt",
 )
-"""Compiled, packaged or notebook code a process loads or runs: never summarised."""
+"""Compiled, packaged, notebook or pickled code a process loads or runs: never summarised.
+
+A pickle runs code when it is loaded (``pickle.load``, ``joblib.load``,
+``torch.load``), so it is code. ``.npy`` and ``.npz`` are not listed:
+``numpy.load`` refuses pickled objects unless ``allow_pickle=True``."""
 
 
 MANIFEST_VARIANTS: dict[str, tuple[str, ...]] = {

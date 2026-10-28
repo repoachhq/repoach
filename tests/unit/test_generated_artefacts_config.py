@@ -296,6 +296,10 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "db/*.sql",
         "ui/*.vue",
         "rtl/*.v",
+        "models/*.pkl",
+        "models/**/*.joblib",
+        "weights/*.pt",
+        "ckpt/*.ckpt",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
