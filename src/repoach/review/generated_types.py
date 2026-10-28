@@ -17,8 +17,18 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from ..project.config import GENERATED_CHECK_TIMEOUT_S, GENERATED_OUTPUT_TAIL_LINES
+from ..project.config import GENERATED_CHECK_TIMEOUT_S
 from ..project.globs import glob_matches
+
+GENERATED_CHECKS_TOTAL_BUDGET_S = 300
+"""Seconds every generated-artefact check of one pull request may take together.
+
+A spec constraint (``checks_total_budget_s``), not a setting: the
+verification job's environment is pull-request controlled, so it may not
+extend how long pull-request code runs."""
+
+GENERATED_OUTPUT_TAIL_LINES = 20
+"""Lines of a check's output kept on its row and in the evidence (``output_tail_lines``)."""
 
 GENERATED_FINDER = "generated_check"
 """Finder and verification method of a ``generated_artefact`` finding."""
@@ -345,7 +355,9 @@ def plain_file(head_dir: Path, path: str) -> bool:
 __all__ = [
     "CAUSE_LINE_MAX_CHARS",
     "CONTROL_RE",
+    "GENERATED_CHECKS_TOTAL_BUDGET_S",
     "GENERATED_FINDER",
+    "GENERATED_OUTPUT_TAIL_LINES",
     "MARKUP_RE",
     "TAIL_LINE_MAX_CHARS",
     "GeneratedCheck",

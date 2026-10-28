@@ -38,7 +38,6 @@ from typing import Any
 from ..core.logging import get_logger
 from ..project.config import (
     GENERATED_CHECK_TIMEOUT_S,
-    GENERATED_CHECKS_TOTAL_BUDGET_S,
 )
 from .diff_scoper import split_diff
 from .findings import (
@@ -58,6 +57,7 @@ from .generated_config import (
 from .generated_git import blob_at, merge_base
 from .generated_process import Runner
 from .generated_types import (
+    GENERATED_CHECKS_TOTAL_BUDGET_S,
     GENERATED_FINDER,
     GeneratedCheck,
     GeneratedEntry,
