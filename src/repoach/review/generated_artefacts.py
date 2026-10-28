@@ -339,6 +339,61 @@ def _run_once(
     return state, result.exit_code, ms, tail_lines(result.output)
 
 
+def _precheck(
+    entry: GeneratedEntry,
+    path: str,
+    *,
+    head_dir: Path,
+    head_sha: str,
+    base_sha: str,
+    changed: Sequence[str],
+) -> tuple[GeneratedCheck | None, GeneratedCheck | None]:
+    """Triage one touched artefact before any run: ``(template, refused row)``.
+
+    ``(None, None)`` for an artefact the head deletes (nothing to run);
+    a refused row for a symlinked artefact, an absent check script or one
+    reached through a symlink; otherwise the template every run of the
+    artefact is built from.
+    """
+    if symlinked(head_dir, path):
+        return None, symlink_row(entry, path, head_sha=head_sha, changed_files=changed)
+    artefact = head_dir / path
+    if not artefact.is_file():
+        return None, None
+    sources, producers = changed_inputs(entry, path, changed)
+    script = entry.check[0]
+    template = GeneratedCheck(
+        path=path,
+        argv=declared_argv(entry, head_sha, base_sha),
+        head_sha=head_sha,
+        artefact_sha256=sha256_hex(artefact.read_bytes()),
+        sources_changed=sources,
+        state=GeneratedState.NOT_RUN,
+        exit_code=None,
+        duration_ms=0,
+        output_tail="",
+        producer_inputs_changed=producers,
+    )
+    if not (head_dir / script).is_file():
+        tail = f"check script {script} absent at {head_sha[:7]}"
+        return template, replace(template, state=GeneratedState.CHECK_ABSENT, output_tail=tail)
+    if not plain_file(head_dir, script):
+        tail = f"check script {script} is a symlink or leaves the head tree"
+        return template, replace(template, state=GeneratedState.STALE, output_tail=tail)
+    return template, None
+
+
+def _planned_runs(
+    script: str, changed: Sequence[str], base_blob: Callable[[str], bytes | None] | None
+) -> list[tuple[ScriptRef, bytes | None]]:
+    """Return the runs of one check: the head script, preceded by the base script when it changed (D3)."""
+    if script in changed and base_blob is not None:
+        base_script = base_blob(script)
+        if base_script is not None:
+            return [("base", base_script), ("head", None)]
+    return [("head", None)]
+
+
 def run_checks(
     touched: Mapping[str, GeneratedEntry],
     *,
@@ -390,50 +445,20 @@ def run_checks(
     budget = _Budget(float(budget_s), clock)
     checks: list[GeneratedCheck] = []
     for path, entry in touched.items():
-        artefact = head_dir / path
-        if symlinked(head_dir, path):
-            checks.append(symlink_row(entry, path, head_sha=head_sha, changed_files=changed_files))
-            continue
-        if not artefact.is_file():
-            continue
-        artefact_sha = sha256_hex(artefact.read_bytes())
-        sources, producers = changed_inputs(entry, path, changed_files)
-        script = entry.check[0]
-        template = GeneratedCheck(
-            path=path,
-            argv=declared_argv(entry, head_sha, base_sha),
+        template, refused = _precheck(
+            entry,
+            path,
+            head_dir=head_dir,
             head_sha=head_sha,
-            artefact_sha256=artefact_sha,
-            sources_changed=sources,
-            state=GeneratedState.NOT_RUN,
-            exit_code=None,
-            duration_ms=0,
-            output_tail="",
-            producer_inputs_changed=producers,
+            base_sha=base_sha,
+            changed=changed_files,
         )
-        if not (head_dir / script).is_file():
-            checks.append(
-                replace(
-                    template,
-                    state=GeneratedState.CHECK_ABSENT,
-                    output_tail=f"check script {script} absent at {head_sha[:7]}",
-                )
-            )
+        if refused is not None:
+            checks.append(refused)
             continue
-        if not plain_file(head_dir, script):
-            checks.append(
-                replace(
-                    template,
-                    state=GeneratedState.STALE,
-                    output_tail=f"check script {script} is a symlink or leaves the head tree",
-                )
-            )
+        if template is None:
             continue
-        runs: list[tuple[ScriptRef, bytes | None]] = [("head", None)]
-        if script in changed_files and base_blob is not None:
-            base_script = base_blob(script)
-            if base_script is not None:
-                runs = [("base", base_script), ("head", None)]
+        runs = _planned_runs(entry.check[0], changed_files, base_blob)
         for ref, content in runs:
             with fresh_tree() if fresh_tree is not None else nullcontext(head_dir) as tree:
                 state, exit_code, ms, tail = _run_once(
@@ -448,9 +473,13 @@ def run_checks(
                     script_content=content,
                     env=environment,
                 )
-                if state is GeneratedState.VERIFIED and _artefact_moved(tree, path, artefact_sha):
+                if state is GeneratedState.VERIFIED and _artefact_moved(
+                    tree, path, template.artefact_sha256
+                ):
                     state, tail = GeneratedState.STALE, f"the check changed {path}"
-            if state is GeneratedState.VERIFIED and not (sources or producers):
+            if state is GeneratedState.VERIFIED and not (
+                template.sources_changed or template.producer_inputs_changed
+            ):
                 state = GeneratedState.NO_SOURCE_CHANGED
             checks.append(
                 replace(
