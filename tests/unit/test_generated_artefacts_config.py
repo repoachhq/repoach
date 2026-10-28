@@ -242,6 +242,10 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         "bin/ru?",
         "web/*.tsx",
         "lib/*.php",
+        "**/*.xml",
+        "**/*.gradle",
+        ".devcontainer/**",
+        ".vscode/tasks.json",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
