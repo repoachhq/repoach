@@ -37,7 +37,8 @@ from pydantic import (
     model_validator,
 )
 
-from .globs import GLOB_SPECIALS, always_reviewed, glob_code_extension, glob_matches
+from .always_reviewed import always_reviewed
+from .globs import GLOB_SPECIALS, glob_code_extension, glob_matches
 
 CONFIG_FILE_NAME = "repoach.toml"
 """File name of the project configuration, at the git toplevel."""
@@ -337,7 +338,7 @@ class GeneratedSection(_Section):
 
         Raises:
             ValueError: The glob leaves the repository, or it can reach a
-                file :func:`~repoach.project.globs.always_reviewed` names (CI definitions and
+                file :func:`~repoach.project.always_reviewed.always_reviewed` names (CI definitions and
                 scripts, hooks, ``repoach.toml``, dependency manifests).
         """
         _relative_glob(value)
