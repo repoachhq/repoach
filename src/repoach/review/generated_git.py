@@ -55,6 +55,11 @@ def run_git(root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     )
 
 
+def _option_like(*refs: str) -> bool:
+    """Whether a revision would reach git as an option (it starts with ``-``)."""
+    return any(ref.startswith("-") for ref in refs)
+
+
 def blob_at(root: Path, ref: str, path: str) -> bytes | None:
     """Return ``path``'s content at ``ref``, ``None`` when it is absent there.
 
@@ -64,8 +69,10 @@ def blob_at(root: Path, ref: str, path: str) -> bytes | None:
         path: The repository-relative path.
 
     Returns:
-        The bytes, or ``None``.
+        The bytes, or ``None`` (also for a ``ref`` starting with ``-``).
     """
+    if _option_like(ref):
+        return None
     shown = run_git(root, "show", f"{ref}:{path}")
     return shown.stdout if shown.returncode == 0 else None
 
@@ -79,8 +86,10 @@ def merge_base(root: Path, base_ref: str, head: str) -> str | None:
         head: The head revision.
 
     Returns:
-        The merge-base SHA, or ``None``.
+        The merge-base SHA, or ``None`` (also for a ref starting with ``-``).
     """
+    if _option_like(base_ref, head):
+        return None
     found = run_git(root, "merge-base", base_ref, head)
     if found.returncode != 0:
         return None
@@ -95,8 +104,10 @@ def resolve_commit(root: Path, ref: str) -> str | None:
         ref: A revision.
 
     Returns:
-        The commit SHA, or ``None``.
+        The commit SHA, or ``None`` (also for a ``ref`` starting with ``-``).
     """
+    if _option_like(ref):
+        return None
     found = run_git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
     if found.returncode != 0:
         return None
@@ -112,8 +123,11 @@ def changed_paths(root: Path, base_sha: str, head_sha: str) -> list[str]:
         head_sha: The head.
 
     Returns:
-        The changed paths, renames listed as deletion plus addition.
+        The changed paths, renames listed as deletion plus addition; none
+        for a revision starting with ``-``.
     """
+    if _option_like(base_sha, head_sha):
+        return []
     listed = run_git(root, "diff", "--name-only", "--no-renames", base_sha, head_sha)
     return [line for line in listed.stdout.decode().splitlines() if line]
 

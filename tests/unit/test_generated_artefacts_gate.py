@@ -1555,3 +1555,18 @@ def test_git_reads_ignore_hooks_a_check_planted_in_the_user_config(
 
     subprocess.run(["git", "checkout", "-q", "-b", "plain"], cwd=repo, check=True)
     assert marker.exists()
+
+
+def test_git_reads_never_pass_an_option_like_ref(tmp_path: Path) -> None:
+    """A revision starting with '-' reads as absent and never reaches git as an option."""
+    git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    git(tmp_path, "add", "-A")
+    git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a")
+    written = tmp_path / "written"
+
+    assert blob_at(tmp_path, f"--output={written}", "a.txt") is None
+    assert merge_base(tmp_path, f"--output={written}", "main") is None
+    assert resolve_commit(tmp_path, "-h") is None
+    assert changed_paths(tmp_path, f"--output={written}", "main") == []
+    assert not written.exists()
