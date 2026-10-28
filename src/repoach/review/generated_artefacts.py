@@ -213,6 +213,7 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
     before = merge_base(head_dir, base_ref, "HEAD") or base_ref
 
     def head_blob(path: str) -> bytes | None:
+        """Read ``path`` at the head, ``None`` unless it is a plain file of the tree."""
         target = head_dir / path
         return target.read_bytes() if plain_file(head_dir, path) else None
 
