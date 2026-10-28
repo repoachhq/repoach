@@ -229,6 +229,10 @@ def test_check_script_that_an_interpreter_would_misread_is_refused(script: str) 
         ".gitlab/ci/review.yml",
         "ci/review-gate.sh",
         "ci/**",
+        "*.lock",
+        "**/*.yaml",
+        "**/package-lock.json",
+        "go.sum",
     ],
 )
 def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:

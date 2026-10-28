@@ -146,11 +146,24 @@ ALWAYS_REVIEWED_PROBES: tuple[str, ...] = (
     "package.json",
     "go.mod",
     "Cargo.toml",
+    "uv.lock",
+    "poetry.lock",
+    "Pipfile.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "go.sum",
+    "Gemfile.lock",
+    ".pre-commit-config.yaml",
+    "docker-compose.yml",
+    "compose.yaml",
 )
 """Files a ``[[review.generated]]`` ``path`` glob may never match.
 
 What runs or installs on CI (its configuration, hooks, ``repoach.toml``,
-dependency manifests) is always read by the reviewers: a glob such as
+dependency manifests and lockfiles, whose resolved sources a summary would
+hide) is always read by the reviewers: a glob such as
 ``**/*.yml`` or ``*.toml`` that would summarise one of them away is refused."""
 
 ALWAYS_REVIEWED_DIRS: tuple[str, ...] = (
