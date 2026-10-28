@@ -11,7 +11,7 @@ import fnmatch
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from repoach.project.config import GENERATED_ENTRIES_MAX, ConfigError, parse_project_config
@@ -346,5 +346,6 @@ def test_a_one_segment_glob_agrees_with_fnmatch(pattern: str, name: str) -> None
 )
 def test_a_star_or_question_mark_never_crosses_a_slash(pattern: str, left: str, right: str) -> None:
     """Without ``**``, a glob of one segment never matches a path of two."""
+    assume("**" not in pattern)
     assert not glob_matches(pattern, f"{left}/{right}")
     assert glob_matches("**", f"{left}/{right}")
