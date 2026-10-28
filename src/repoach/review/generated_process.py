@@ -13,6 +13,7 @@ import ctypes
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
@@ -129,6 +130,19 @@ _ORPHAN_SWEEPS = 50
 _ORPHAN_SWEEP_PAUSE_S = 0.02
 
 
+def orphan_sweep_available() -> bool:
+    """Whether this platform can adopt and sweep a check's detached descendants (Linux only).
+
+    Elsewhere the check's session is still killed whole; only a
+    descendant that left the session can outlive the run, and
+    :func:`subprocess_runner` says so once per process.
+
+    Returns:
+        True on Linux, where ``PR_SET_CHILD_SUBREAPER`` and ``/proc`` exist.
+    """
+    return sys.platform.startswith("linux") and Path("/proc").is_dir()
+
+
 def _adopt_orphans() -> bool:
     """Make this process the subreaper of its descendants; False where the kernel cannot.
 
@@ -136,6 +150,13 @@ def _adopt_orphans() -> bool:
     fork) escapes :func:`_kill_group`; as a subreaper, this process
     adopts it when its parent dies, and :func:`_kill_orphans` kills it.
     """
+    if not orphan_sweep_available():
+        _log.warning(
+            "generated.orphan_sweep_unavailable",
+            platform=sys.platform,
+            consequence="a descendant that leaves the check's session can outlive it",
+        )
+        return False
     try:
         libc = ctypes.CDLL(None, use_errno=True)
         return bool(libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0)
@@ -190,4 +211,4 @@ def _kill_orphans(before: set[int]) -> None:
     _log.warning("generated.orphans_left", left=sorted(_children() - before))
 
 
-__all__ = ["RunResult", "Runner", "subprocess_runner"]
+__all__ = ["RunResult", "Runner", "orphan_sweep_available", "subprocess_runner"]

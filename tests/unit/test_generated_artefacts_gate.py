@@ -1190,3 +1190,24 @@ def test_the_orphan_sweep_gives_up_with_a_warning(monkeypatch: pytest.MonkeyPatc
     assert warnings == [
         {"event": "generated.orphans_left", "left": [ghost], "log_level": "warning"}
     ]
+
+
+def test_without_proc_the_runner_degrades_to_the_session_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a platform without /proc and subreapers the check still runs, with a named warning."""
+    monkeypatch.setattr(generated_process.sys, "platform", "darwin")
+    monkeypatch.setattr(generated_process, "_log", get_logger(generated_process.__name__))
+    script = tmp_path / "ok.py"
+    script.write_text("print('fine')\n", encoding="utf-8")
+
+    with capture_logs() as logs:
+        result = subprocess_runner(
+            ["python3", str(script)], cwd=tmp_path, env=scrubbed_env(), timeout_s=30, shell=False
+        )
+
+    assert (result.exit_code, result.output.strip()) == (0, "fine")
+    assert not generated_process.orphan_sweep_available()
+    assert [e["platform"] for e in logs if e["event"] == "generated.orphan_sweep_unavailable"] == [
+        "darwin"
+    ]
