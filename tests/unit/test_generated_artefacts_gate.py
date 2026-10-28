@@ -44,6 +44,7 @@ from repoach.review.findings import (
 from repoach.review.findings_bridge import oversized_finding
 from repoach.review.generated_artefacts import run_checks
 from repoach.review.generated_evidence import evidence_payload
+from repoach.review.generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_settle import settle_at_head, settlements_at_head
 from repoach.review.generated_store import (
@@ -1237,3 +1238,25 @@ def test_review_generated_exits_2_on_invalid_base_declarations(
     assert exited.value.exit_code == 2
     assert "review.generated[0].path" in capsys.readouterr().err
     assert not (tmp_path / "out.json").exists()
+
+
+def test_git_reads_say_none_instead_of_guessing(tmp_path: Path) -> None:
+    """An unknown ref, an unrelated history and an absent path answer None or nothing."""
+    repo = Repo(tmp_path, _base(_toml(_entry())))
+    head = repo.push_head({"data/corpus.json": CORPUS_V2})
+    git(repo.seed, "checkout", "-q", "--orphan", "unrelated")
+    git(repo.seed, "rm", "-q", "-rf", ".")
+    (repo.seed / "other.txt").write_text("x\n", encoding="utf-8")
+    git(repo.seed, "add", "-A")
+    git(repo.seed, "commit", "-q", "-m", "unrelated")
+    unrelated = git(repo.seed, "rev-parse", "HEAD")
+    main = git(repo.seed, "rev-parse", "main")
+
+    assert resolve_commit(repo.seed, "no-such-ref") is None
+    assert resolve_commit(repo.seed, "main") == main
+    assert merge_base(repo.seed, "main", unrelated) is None
+    assert merge_base(repo.seed, "main", head) == main
+    assert blob_at(repo.seed, "main", "no/such/file") is None
+    assert blob_at(repo.seed, "main", "data/corpus.json") == CORPUS_V1.encode()
+    assert changed_paths(repo.seed, main, head) == ["data/corpus.json"]
+    assert run_git(repo.seed, "rev-parse", "--verify", "nope").returncode != 0
