@@ -59,7 +59,11 @@ When the diff touches a declared artefact:
    - When the check script itself changed, the check runs twice, with the
      base script and with the head script, and both must pass. Only the
      script is swapped: both runs use the head tree, so a helper module the
-     script imports is code in the diff, read by the reviewers.
+     script imports is code in the diff, read by the reviewers. The head
+     script is pull-request code run by the job's user: install repoach
+     where that user cannot write (baked into the job image, owned by
+     root) or run the job's commands as another user, or the head run could
+     rewrite repoach or the evidence and forge the base run's result.
    - When the command holds a secret-bearing variable (`CI_JOB_TOKEN`
      included), it names it on stderr and re-runs itself without it, so
      the check cannot read it from repoach's own process.
