@@ -38,9 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.logging import get_logger
-from ..project.config import (
-    GENERATED_CHECK_TIMEOUT_S,
-)
+from ..project.config import GENERATED_CHECK_TIMEOUT_S
 from .diff_scoper import split_diff
 from .findings import (
     ClaimType,
