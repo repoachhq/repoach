@@ -121,6 +121,9 @@ GENERATED_PLACEHOLDERS: tuple[str, ...] = ("{head}", "{base}")
 """The only placeholders a check argument may carry, replaced by the SHAs."""
 
 _CHECK_ARG_RE = re.compile(r"^[A-Za-z0-9._/=:@,+-]+$")
+
+_LITERAL_EXTENSION_RE = re.compile(r"\.[A-Za-z0-9_-]+$")
+"""A ``path`` glob's last segment must end like this: a dot, then no wildcard."""
 """What a check argument after the script may contain once its placeholders are removed."""
 
 _KEY_LINE_RE = re.compile(r"^\s*(?P<key>[A-Za-z0-9_-]+)\s*=")
@@ -336,12 +339,25 @@ class GeneratedSection(_Section):
     def _check_path(cls, value: str) -> str:
         """Keep the artefact glob relative, inside the repository, off the files always read.
 
+        Only ``*`` and ``**`` may appear, and the last segment ends in a
+        literal extension (``data/*.npy``): a ``?`` or a ``[...]`` class
+        could stand for the very characters that make a file code
+        (``**/*.[p]y``, ``*.?y``), which no probe can rule out.
+
         Raises:
-            ValueError: The glob leaves the repository, or it can reach a
-                file :func:`~repoach.project.always_reviewed.always_reviewed` names (CI definitions and
-                scripts, hooks, ``repoach.toml``, dependency manifests).
+            ValueError: The glob leaves the repository, uses ``?`` or a
+                class, ends without a literal extension, or can reach a
+                file :func:`~repoach.project.always_reviewed.always_reviewed`
+                names (CI definitions and scripts, hooks, ``repoach.toml``,
+                dependency manifests).
         """
         _relative_glob(value)
+        if "?" in value or "[" in value or "]" in value:
+            raise ValueError(f"{value!r} may use only * and ** as wildcards in a generated path")
+        if not _LITERAL_EXTENSION_RE.search(value.rsplit("/", 1)[-1]):
+            raise ValueError(
+                f"{value!r} must end in a literal extension (data/*.npy, not data/x.*)"
+            )
         reached = always_reviewed(value)
         if reached is not None:
             raise ValueError(

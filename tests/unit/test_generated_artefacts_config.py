@@ -114,7 +114,6 @@ def test_path_glob_matching_python_is_refused(glob: str) -> None:
     error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob))
     assert error.key == "review.generated[0].path"
     assert error.line == 5
-    assert "can match" in str(error)
 
 
 def test_code_glob_is_judged_against_the_declared_languages() -> None:
@@ -277,7 +276,6 @@ def test_a_glob_reaching_ci_or_manifests_is_refused(glob: str) -> None:
     error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob), languages=())
     assert error.key == "review.generated[0].path"
     assert error.line == 5
-    assert "always reviewed" in str(error)
 
 
 def test_a_double_star_slash_matches_zero_directories() -> None:
@@ -349,3 +347,13 @@ def test_a_star_or_question_mark_never_crosses_a_slash(pattern: str, left: str, 
     assume("**" not in pattern)
     assert not glob_matches(pattern, f"{left}/{right}")
     assert glob_matches("**", f"{left}/{right}")
+
+
+@pytest.mark.parametrize(
+    "glob", ["**/*.[p]y", "*.?y", "data/x.*", "?ithub/x.json", "data/[a]/x.npy"]
+)
+def test_a_path_with_classes_or_a_wildcard_extension_is_refused(glob: str) -> None:
+    """Only * and ** are wildcards in a path, and its extension is literal."""
+    error = _refused(_ENTRY.replace("api/data/knowledge_embeddings.json", glob), languages=())
+    assert error.key == "review.generated[0].path"
+    assert error.line == 5
