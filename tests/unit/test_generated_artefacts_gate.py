@@ -1340,3 +1340,16 @@ def test_the_fence_is_longer_than_any_backtick_run(lines: list[str]) -> None:
     assert set(fence) == {"`"}
     assert len(fence) == max(3, longest + 1)
     assert block.endswith("\n" + fence)
+
+
+def test_evidence_path_is_a_path_only_for_a_given_file() -> None:
+    """``--generated-evidence`` becomes a Path when given, None for an empty value or Typer's default."""
+    default = review_cmds.review_pr.__defaults__
+    option_default = next(d for d in default or () if type(d).__name__ == "OptionInfo")
+
+    assert review_cmds._evidence_path("out/review-generated.json") == Path(
+        "out/review-generated.json"
+    )
+    assert review_cmds._evidence_path("") is None
+    assert review_cmds._evidence_path(None) is None
+    assert review_cmds._evidence_path(option_default) is None
