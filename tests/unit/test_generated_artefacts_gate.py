@@ -26,12 +26,15 @@ from pathlib import Path
 
 import pytest
 import typer
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
 from repoach.cli import app, review_cmds
 from repoach.core.logging import get_logger
 from repoach.review import generated_process, generated_verify
+from repoach.review.finding_verifiers import verify_finding
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -1292,3 +1295,40 @@ def test_fenced_uses_at_least_three_backticks() -> None:
     assert fenced(["plain", ""]) == "```text\nplain\n\n```"
     assert fenced(["a `b` c"]) == "```text\na `b` c\n```"
     assert fenced(["x ``` y"]) == "````text\nx ``` y\n````"
+
+
+def test_a_generated_finding_stays_verified_at_its_own_head(tmp_path: Path) -> None:
+    """The mechanical verifier never refutes or defers a generated_artefact finding on disk."""
+    finding = Finding(
+        pr_number=7,
+        head_sha="a" * 40,
+        round=1,
+        finder="generated_check",
+        claim_type=ClaimType.GENERATED_ARTEFACT,
+        severity=Severity.BLOCKING,
+        file=ARTEFACT,
+        line_start=0,
+        line_end=0,
+        claim=f"generated artefact not derived from its sources: {ARTEFACT}",
+        evidence_pointer="e",
+        status=FindingStatus.VERIFIED,
+        verification_result="check exited 1: stale",
+    )
+
+    assert verify_finding(finding, repo_root=tmp_path) == (
+        FindingStatus.VERIFIED,
+        "generated_check",
+        "check exited 1: stale",
+    )
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.lists(st.text(alphabet="ab`", max_size=12), max_size=5))
+def test_the_fence_is_longer_than_any_backtick_run(lines: list[str]) -> None:
+    """Whatever the lines, the fence outruns every backtick run in them, and is at least three."""
+    block = fenced(lines)
+    fence = block.split("text", 1)[0]
+    longest = max((len(run) for line in lines for run in re.findall("`+", line)), default=0)
+    assert set(fence) == {"`"}
+    assert len(fence) == max(3, longest + 1)
+    assert block.endswith("\n" + fence)

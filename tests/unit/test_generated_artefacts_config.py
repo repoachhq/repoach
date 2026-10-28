@@ -336,3 +336,15 @@ def test_a_one_segment_glob_agrees_with_fnmatch(pattern: str, name: str) -> None
     """Inside one segment, ``*`` and ``?`` mean what fnmatch means, non-ASCII names included."""
     assert glob_matches(pattern, name) == fnmatch.fnmatchcase(name, pattern)
     assert not glob_matches(pattern, f"{name}/{name}") or "**" in pattern
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    pattern=st.text(alphabet="ab*?", min_size=1, max_size=6),
+    left=st.text(alphabet="ab", min_size=1, max_size=4),
+    right=st.text(alphabet="ab", min_size=1, max_size=4),
+)
+def test_a_star_or_question_mark_never_crosses_a_slash(pattern: str, left: str, right: str) -> None:
+    """Without ``**``, a glob of one segment never matches a path of two."""
+    assert not glob_matches(pattern, f"{left}/{right}")
+    assert glob_matches("**", f"{left}/{right}")

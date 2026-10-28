@@ -79,7 +79,7 @@ def refuse_hidden_provers(path: Path, text: str, entries: Sequence[GeneratedSect
     entry's, ``check[0]``, ``sources`` or ``producer_inputs`` would hide
     the prover behind its own summary. Two globs are compared by their
     literal heads (:func:`_hides`), which refuses some declarations that
-    could not overlap (``docs/**/*.npy`` beside a ``docs/user_guide/**``
+    could not overlap (``data/x/*.npy`` beside a ``data/*.csv``
     source): fail closed, on purpose.
 
     Args:
