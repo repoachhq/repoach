@@ -52,6 +52,7 @@ from .findings import (
 from .findings_bridge import finding_fingerprint
 from .generated_config import (
     declared_at_base,
+    present_at_base,
     touched_artefacts,
 )
 from .generated_git import blob_at, merge_base
@@ -211,6 +212,9 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
     if not touched or base_ref is None:
         return ReviewScope(review_diff=diff, changed=changed)
     before = merge_base(head_dir, base_ref, "HEAD") or base_ref
+    touched = present_at_base(head_dir, before, touched)
+    if not touched:
+        return ReviewScope(review_diff=diff, changed=changed, base_sha=before)
 
     def head_blob(path: str) -> bytes | None:
         """Read ``path`` at the head, ``None`` unless it is a plain file of the tree."""

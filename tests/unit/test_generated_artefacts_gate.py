@@ -1260,3 +1260,28 @@ def test_git_reads_say_none_instead_of_guessing(tmp_path: Path) -> None:
     assert blob_at(repo.seed, "main", "data/corpus.json") == CORPUS_V1.encode()
     assert changed_paths(repo.seed, main, head) == ["data/corpus.json"]
     assert run_git(repo.seed, "rev-parse", "--verify", "nope").returncode != 0
+
+
+def test_a_file_new_under_a_wildcard_is_reviewed_in_full(
+    tmp_path: Path,
+    bench: Bench,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A path a wildcard declaration matches but the base never had is read, not summarised."""
+    toml = _toml(_entry(path="data/*.vec"))
+    repo = Repo(tmp_path, _base(toml, **{"data/a.vec": "old\n"}))
+    head = repo.push_head(
+        {"data/corpus.json": CORPUS_V2, "data/a.vec": "new\n", "data/b.vec": "smuggled line\n"}
+    )
+    evidence, payload, _, _ = _evidence(repo, monkeypatch, capsys, head)
+
+    review(repo, monkeypatch, capsys, head=head, evidence=evidence)
+
+    assert [c["path"] for c in payload["checks"]] == ["data/a.vec"]
+    for diff in bench.prompts.diffs:
+        assert "+smuggled line" in diff
+        assert "generated artefact data/a.vec: " in diff
+        assert "generated artefact data/b.vec" not in diff
+    checks, _ = fetch_generated_checks(bench.db_path, 7, head)
+    assert [c.path for c in checks] == ["data/a.vec"]

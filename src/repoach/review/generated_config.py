@@ -9,7 +9,7 @@ base ref only, and two entries may not match one changed path
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ..gates.languages import Language, spec_for
@@ -136,4 +136,32 @@ def touched_artefacts(
     return touched
 
 
-__all__ = ["code_extensions", "declared_at_base", "load_generated_entries", "touched_artefacts"]
+def present_at_base(
+    root: Path, base: str, touched: Mapping[str, GeneratedEntry]
+) -> dict[str, GeneratedEntry]:
+    """Keep the touched artefacts that already exist at the base; a new file is reviewed in full.
+
+    A wildcard ``path`` would otherwise let a pull request add an
+    unrelated file under it and have it summarised away, proved only by a
+    check that may never read it. The first version of an artefact is
+    read like any file (its oversized finding included); later changes
+    are summarised and checked.
+
+    Args:
+        root: Any checkout of the repository.
+        base: The merge base the diff was read from.
+        touched: The declared artefacts the diff changes.
+
+    Returns:
+        The subset whose path has a blob at ``base``, in the same order.
+    """
+    return {path: entry for path, entry in touched.items() if blob_at(root, base, path) is not None}
+
+
+__all__ = [
+    "code_extensions",
+    "declared_at_base",
+    "load_generated_entries",
+    "present_at_base",
+    "touched_artefacts",
+]

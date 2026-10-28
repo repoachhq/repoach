@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .generated_artefacts import report_lines, run_checks
-from .generated_config import declared_at_base, touched_artefacts
+from .generated_config import declared_at_base, present_at_base, touched_artefacts
 from .generated_evidence import evidence_payload
 from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
 from .generated_process import Runner, subprocess_runner
@@ -166,7 +166,9 @@ def verify_generated(
         raise GeneratedRefusalError(f"base {base_ref!r} does not resolve to a commit")
     base_sha = merge_base(root, base_ref, head_sha) or base_ref
     changed = changed_paths(root, base_sha, head_sha)
-    touched = touched_artefacts(declared_at_base(root, base_ref), changed)
+    touched = present_at_base(
+        root, base_sha, touched_artefacts(declared_at_base(root, base_ref), changed)
+    )
     checks: list[GeneratedCheck] = []
     if touched:
         with head_tree(root, head_sha, state_dir) as tree:
