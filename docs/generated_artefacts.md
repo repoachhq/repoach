@@ -158,7 +158,7 @@ review:generated:
           echo "review:generated: another process holds CI_JOB_TOKEN; isolate the job"; exit 2
         fi
       done
-    - exec env -i PATH="$PATH" HOME="$HOME" LANG=C.UTF-8
+    - exec env -i PATH="$PATH" HOME="$(mktemp -d)" LANG=C.UTF-8
         repoach review generated
         --pr "$CI_MERGE_REQUEST_IID"
         --head "$CI_COMMIT_SHA"
