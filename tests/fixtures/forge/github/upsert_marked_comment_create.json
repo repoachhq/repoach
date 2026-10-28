@@ -39,13 +39,13 @@
         "--method",
         "POST",
         "repos/:owner/:repo/issues/42/comments",
-        "-f",
-        "body=<!-- repoach-review-archive -->\narchive v1"
+        "--input",
+        "-"
       ],
       "program": "gh",
       "returncode": 0,
       "stderr": "",
-      "stdin": null,
+      "stdin": "{\"body\": \"<!-- repoach-review-archive -->\\narchive v1\"}",
       "stdout": "{\"id\": 13, \"body\": \"<!-- repoach-review-archive -->\\narchive v1\", \"user\": {\"login\": \"repoach-bot\"}, \"created_at\": \"2026-10-19T10:00:00Z\"}"
     }
   ],

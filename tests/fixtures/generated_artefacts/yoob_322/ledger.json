@@ -1,0 +1,35 @@
+{
+  "source": "Repoach review archive notes 4097019325, 4097258876, 4097529445 on Yoob !322, read 2026-10-27",
+  "findings": [
+    {
+      "ledger_id": 3,
+      "head_sha": "0cc9008955602f88b24162f93faafa8ca71741c3",
+      "round": 1,
+      "finder": "diff_scoper",
+      "claim_type": "spec_gap",
+      "severity": "blocking",
+      "file": "api/data/knowledge_embeddings.json",
+      "claim": "api/data/knowledge_embeddings.json exceeds the diff-scoping character cap and was omitted from every reviewer's prompt — unreviewed content cannot merge.",
+      "evidence_pointer": "api/data/knowledge_embeddings.json: oversized, omitted by diff_scoper.scope_diff",
+      "status": "verified",
+      "verification_method": "needs_judgement",
+      "verification_result": "needs judgement at 619a413: evidence outside window",
+      "checked_at_sha": "619a41363d12535284459b16fb34c0b97a761357"
+    },
+    {
+      "ledger_id": 6,
+      "head_sha": "7cd8971d9402fe4fe92f380b8ece07f4704ab68c",
+      "round": 1,
+      "finder": "diff_scoper",
+      "claim_type": "spec_gap",
+      "severity": "blocking",
+      "file": "api/data/knowledge_embeddings.json",
+      "claim": "api/data/knowledge_embeddings.json exceeds the diff-scoping character cap and was omitted from every reviewer's prompt — unreviewed content cannot merge.",
+      "evidence_pointer": "api/data/knowledge_embeddings.json: oversized, omitted by diff_scoper.scope_diff",
+      "status": "verified",
+      "verification_method": "needs_judgement",
+      "verification_result": "needs judgement at 619a413: evidence outside window",
+      "checked_at_sha": "619a41363d12535284459b16fb34c0b97a761357"
+    }
+  ]
+}

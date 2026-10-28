@@ -1,0 +1,7 @@
+[project]
+languages = ["python", "typescript", "shell"]
+
+[[review.generated]]
+path = "api/data/knowledge_embeddings.json"
+check = ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"]
+sources = ["api/data/knowledge_corpus.json", "docs/user_guide/**"]

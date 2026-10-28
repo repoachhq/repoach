@@ -401,10 +401,24 @@ def _verify_lint(
     return FindingStatus.REFUTED, "lint_scan", "file clean"
 
 
+def _verify_generated(
+    finding: Finding, repo_root: Path, config: GatesConfig
+) -> tuple[FindingStatus, str, str]:
+    """Keep a ``generated_artefact`` finding verified at its own head.
+
+    The declared check's run is the verification and nothing on disk can
+    overturn it: the finding settles only at a later head, from that
+    head's ``generated_checks`` rows (``head_reverify``;
+    SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G3).
+    """
+    return FindingStatus.VERIFIED, "generated_check", finding.verification_result
+
+
 _MECHANICAL = {
     ClaimType.MISSING_TEST: _verify_missing_test,
     ClaimType.MISSING_DOCSTRING: _verify_missing_docstring,
     ClaimType.LINT_CONVENTION: _verify_lint,
+    ClaimType.GENERATED_ARTEFACT: _verify_generated,
 }
 
 _PYTHON_ONLY: frozenset[ClaimType] = frozenset(

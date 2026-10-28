@@ -23,7 +23,14 @@ from repoach.review.findings import ClaimType, FindingStatus
 
 def test_mechanical_claim_types_value_unchanged() -> None:
     assert (
-        frozenset({ClaimType.MISSING_TEST, ClaimType.MISSING_DOCSTRING, ClaimType.LINT_CONVENTION})
+        frozenset(
+            {
+                ClaimType.MISSING_TEST,
+                ClaimType.MISSING_DOCSTRING,
+                ClaimType.LINT_CONVENTION,
+                ClaimType.GENERATED_ARTEFACT,
+            }
+        )
         == findings.MECHANICAL_CLAIM_TYPES
     )
 

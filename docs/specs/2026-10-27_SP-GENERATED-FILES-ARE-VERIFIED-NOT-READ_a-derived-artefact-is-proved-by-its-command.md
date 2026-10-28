@@ -2,16 +2,16 @@
 id: SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ
 title: A declared generated artefact is proved by its check command, not read by the reviewers
 version: 0.2
-status: draft
+status: approved
 author: agent
 created: 2026-10-27
 updated: 2026-10-27
 
 owns:
-  code: [src/repoach/review/generated_artefacts.py, tests/unit/test_generated_artefacts_config.py, tests/unit/test_generated_artefacts_gate.py, tests/integration/test_generated_artefacts_replay_yoob_322.py, tests/fixtures/generated_artefacts]
+  code: [src/repoach/project/always_reviewed.py, src/repoach/project/globs.py, src/repoach/review/generated_artefacts.py, src/repoach/review/generated_config.py, src/repoach/review/generated_evidence.py, src/repoach/review/generated_git.py, src/repoach/review/generated_process.py, src/repoach/review/generated_report.py, src/repoach/review/generated_settle.py, src/repoach/review/generated_store.py, src/repoach/review/generated_types.py, src/repoach/review/generated_verify.py, tests/unit/test_generated_artefacts_config.py, tests/unit/test_generated_artefacts_gate.py, tests/integration/test_generated_artefacts_replay_yoob_322.py, tests/fixtures/generated_artefacts]
   resources: [db:table:generated_checks, format:review-generated-json]
 
-depends_on: [SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-DIFF-SCOPER-OVERSIZE-BLOCK, SP-UNIVERSAL-PROJECT-CONFIG, SP-CI-SECRETS-ISOLATION, SP-GATE-REVERIFIES-AT-HEAD, SP-CI-LEDGER-PERSISTS, SP-REVIEW-PINS-HEAD]
+depends_on: [SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-DIFF-SCOPER-OVERSIZE-BLOCK, SP-UNIVERSAL-PROJECT-CONFIG, SP-CI-SECRETS-ISOLATION, SP-GATE-REVERIFIES-AT-HEAD, SP-CI-LEDGER-PERSISTS, SP-REVIEW-PINS-HEAD, SP-FINDINGS-INIT-RACE, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEVAGENT-LOOP, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP, SP-DEDUP-CLASSIFICATION-CONSTANTS]
 provides_to: []
 
 constraints:
@@ -108,6 +108,9 @@ the finding, even though F10 proves the content.
     producer (a header carrying the model digest, a lockfile). For G3
     they count as sources; the report lists them apart
     (`producer inputs changed: <list>`).
+  - `check_timeout_s` (optional, added at implementation): seconds this
+    entry's check may run, default `check_timeout_s` of the constraints
+    (120); the run is also bounded by `checks_total_budget_s`.
   - The declarations are read from the **base ref**, never the head. A PR
     that adds or changes an entry is reviewed like any `repoach.toml`
     change; the entry applies from the next PR on.
@@ -204,7 +207,10 @@ the finding, even though F10 proves the content.
 ## Interface
 
 ```python
-# src/repoach/review/generated_artefacts.py
+# src/repoach/review/generated_types.py: GeneratedEntry, GeneratedState, GeneratedCheck
+# src/repoach/review/generated_config.py: load_generated_entries, touched_artefacts
+# src/repoach/review/generated_artefacts.py: summarise, run_checks, generated_findings
+# (each name is imported from the module that defines it)
 @dataclass(frozen=True)
 class GeneratedEntry:
     path: str                 # glob
@@ -249,7 +255,7 @@ whose head SHA or artefact sha256 differs from the reviewed head.
 tests replace; the production runner passes `env=scrubbed_env()` and
 `shell=False`.
 
-Errors: `ConfigError` (G1 shape), `GeneratedEvidenceMismatch` (evidence
+Errors: `ConfigError` (G1 shape), `GeneratedEvidenceMismatchError` (evidence
 of another head or another artefact blob).
 
 ## Behavior
@@ -299,7 +305,7 @@ of another head or another artefact blob).
 
 ### Failure scenarios
 
-- Evidence of another head → `GeneratedEvidenceMismatch`, treated as
+- Evidence of another head → `GeneratedEvidenceMismatchError`, treated as
   `generated_check_not_run`.
 - The runner raises (exec format error, permission) → state
   `generated_artefact_stale` with the exception name as output tail.

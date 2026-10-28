@@ -1055,27 +1055,19 @@ class GitHubForge:
         return self._post_or_patch(pr_number, body, self._find_archive_comment(pr_number))
 
     def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
-        """POST a new issue comment, or PATCH ``existing`` when given."""
+        """POST a new issue comment, or PATCH ``existing`` when given.
+
+        The body goes to ``gh`` as JSON on stdin (``--input -``), never as
+        an argument: a sticky archive outgrows the kernel's per-argument
+        limit (128 KiB) and the spawn would fail with ``E2BIG``.
+        """
         if existing is None:
-            return self._write(
-                [
-                    "api",
-                    "--method",
-                    "POST",
-                    f"repos/:owner/:repo/issues/{pr_number}/comments",
-                    "-f",
-                    f"body={body}",
-                ]
-            )
+            method, endpoint = "POST", f"repos/:owner/:repo/issues/{pr_number}/comments"
+        else:
+            method, endpoint = "PATCH", f"repos/:owner/:repo/issues/comments/{existing}"
         return self._write(
-            [
-                "api",
-                "--method",
-                "PATCH",
-                f"repos/:owner/:repo/issues/comments/{existing}",
-                "-f",
-                f"body={body}",
-            ]
+            ["api", "--method", method, endpoint, "--input", "-"],
+            input_data=json.dumps({"body": body}),
         )
 
     def _fetch_archive_comment(self, pr_number: int) -> str | None:

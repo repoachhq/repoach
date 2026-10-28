@@ -48,7 +48,7 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -96,6 +96,15 @@ from .findings_bridge import (
     record_oversized_findings,
     recount_findings_at_head,
 )
+from .generated_artefacts import ReviewScope, review_scope
+from .generated_evidence import load_review_evidence
+from .generated_report import report_json, report_lines
+from .generated_store import (
+    fetch_generated_checks,
+    record_generated_checks,
+    record_generated_findings,
+)
+from .generated_types import GeneratedCheck, GeneratedTiming
 from .hallucination_guard import (
     GuardEvent,
     apply_hallucination_guard,
@@ -172,6 +181,7 @@ from .spec_grading import (
     CoverageGrading,
     coverage_rows_at_head,
     failed_grading_row,
+    readable_base,
     resolution_payload,
 )
 from .thread_context import ResolvedDisagreement
@@ -217,6 +227,8 @@ def record_review_ledger(
     outcomes: list[ReviewerOutcome],
     round_n: int,
     diff: str,
+    generated: Sequence[GeneratedCheck] = (),
+    generated_timing: GeneratedTiming | None = None,
 ) -> RecordedFindings | None:
     """Persist the review findings, then the integrity row — fail closed.
 
@@ -249,7 +261,14 @@ def record_review_ledger(
         head_sha: The head the review ran against.
         outcomes: Every reviewer outcome of the pass, parsed or not.
         round_n: The dialogue round the findings belong to.
-        diff: The reviewed diff (scopes findings to touched files).
+        diff: The reviewed diff (scopes findings to touched files), the
+            declared generated artefacts already summarised.
+        generated: The check runs of the declared generated artefacts the
+            diff touches, recorded as ``generated_checks`` rows with one
+            blocking ``generated_artefact`` finding per path they do not
+            prove (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G2, G3), inside
+            the same fail-closed write.
+        generated_timing: The evidence's measured delay, stored on the rows.
 
     Returns:
         What the findings write did (new / already recorded / refuted
@@ -275,9 +294,22 @@ def record_review_ledger(
             round_n=round_n,
             scoped=scoped,
         )
+        n_generated = 0
+        if generated:
+            record_generated_checks(
+                db_path,
+                pr_number=pr_number,
+                head_sha=head_sha or "",
+                checks=generated,
+                timing=generated_timing,
+            )
+            n_generated = record_generated_findings(
+                db_path, generated, pr_number=pr_number, round_n=round_n
+            )
         _log.info(
             "review_team.findings_recorded",
             pr_number=pr_number,
+            n_generated_blocking=n_generated,
             n_findings=recorded.new,
             n_already_recorded=recorded.already_recorded,
             n_refuted_earlier=recorded.refuted_earlier,
@@ -376,6 +408,11 @@ class TeamOutcome:
     SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7); a PR declaring no
     spec is graded against the specs owning its code, ``spec_source``
     ``ownership``.
+    ``generated`` lists each check run of a declared generated artefact
+    the diff touches (``path``, ``check``, ``state``, ``ms``,
+    ``sources_changed``, ``producer_inputs_changed``, ``script_ref``) and
+    ``generated_lines`` the report lines naming what proved each one
+    (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -417,6 +454,8 @@ class TeamOutcome:
     spec_coverage_line: str = ""
     spec_report: list[str] = field(default_factory=list)
     spec_resolution: dict[str, object] = field(default_factory=dict)
+    generated: list[dict[str, object]] = field(default_factory=list)
+    generated_lines: list[str] = field(default_factory=list)
 
 
 class ReviewTeamOrchestrator:
@@ -457,11 +496,15 @@ class ReviewTeamOrchestrator:
         config_root: Path | None = None,
         write_refusal: WriteRefusal | None = None,
         force: bool = False,
+        generated_evidence: Path | None = None,
     ) -> None:
         """Initialise the orchestrator with optional dependencies.
 
         ``force`` re-reviews a pinned head that already has a completed
         run instead of replaying it (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
+        ``generated_evidence`` is the ``review-generated.json`` the
+        secret-free verification job wrote; the review never runs a check
+        itself (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G2).
         """
         settings = get_settings()
         self._pinned_head = head_sha
@@ -474,6 +517,7 @@ class ReviewTeamOrchestrator:
         self._post = post_to_github
         self._max_workers = max_workers
         self._force = force
+        self._generated_evidence = generated_evidence
         init_schema(self._db_path)
 
     def _load_declared_spec(self, declared: SpecResolution) -> SpecPlan | None:
@@ -684,6 +728,9 @@ class ReviewTeamOrchestrator:
                     error=str(exc),
                 )
 
+        generated_scope = self._generated_scope(diff, base_ref)
+        reviewed_diff = generated_scope.review_diff
+
         reviewers: list[Reviewer] = [
             Architect(db_path=self._db_path),
             Sentinel(db_path=self._db_path),
@@ -711,7 +758,7 @@ class ReviewTeamOrchestrator:
             pr_number, diff_hash=diff_hash, db_path=self._db_path
         )
 
-        lessons_block = _build_review_lessons_block(pr_title, diff)
+        lessons_block = _build_review_lessons_block(pr_title, reviewed_diff)
 
         with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
             futures = [
@@ -719,7 +766,7 @@ class ReviewTeamOrchestrator:
                     r,
                     pool.submit(
                         bind_reviewer(r.role.value.title(), r.review_diff),
-                        diff,
+                        reviewed_diff,
                         pr_number=pr_number,
                         spec_plan=spec_plan_md,
                         resolved_disagreements=resolved_per_role.get(r.role, ()),
@@ -783,7 +830,7 @@ class ReviewTeamOrchestrator:
             round1_outcomes=outcomes,
             spec_plan=spec_plan_md,
             guard_events=all_events,
-            diff=diff,
+            diff=reviewed_diff,
             pr_number=pr_number,
             extra_prompt_section=lessons_block,
             arch_edges=arch_edges_block,
@@ -836,13 +883,23 @@ class ReviewTeamOrchestrator:
             head_guard_pool, head_guard_future, pr_number=pr_number
         )
 
+        generated_checks, generated_timing = load_review_evidence(
+            self._generated_evidence,
+            generated_scope.touched,
+            head_sha=head_sha or "",
+            head_dir=self._repo_root,
+            changed_files=generated_scope.changed,
+            base_sha=generated_scope.base_sha,
+        )
         recorded = record_review_ledger(
             self._db_path,
             pr_number=pr_number,
             head_sha=head_sha,
             outcomes=outcomes,
             round_n=2 if round2_ran else 1,
-            diff=diff,
+            diff=reviewed_diff,
+            generated=generated_checks,
+            generated_timing=generated_timing,
         )
 
         verification = VerificationReport()
@@ -880,7 +937,7 @@ class ReviewTeamOrchestrator:
                     tree_sha=_local_git(self._repo_root, "rev-parse", "HEAD"),
                     review_head=head_sha or _served_head(self._forge, pr_number),
                     scope_head=head_sha,
-                    diff=diff,
+                    diff=reviewed_diff,
                     pr_spec=(spec_id, spec_plan_md) if spec_id and spec_plan_md else None,
                     budget=budget,
                 )
@@ -1005,6 +1062,8 @@ class ReviewTeamOrchestrator:
             reverify_line=reverified.summary_line("review") if head_sha else "",
             findings_recorded=recorded.counts() if recorded is not None else {},
             findings_line=recorded.summary_line() if recorded is not None else "",
+            generated=report_json(generated_checks),
+            generated_lines=report_lines(generated_checks, generated_timing),
         )
 
         if not errored_roles and recorded is not None and self._pinned_head:
@@ -1201,6 +1260,11 @@ class ReviewTeamOrchestrator:
             cache_line=cache_line(run),
             spec_coverage_line=spec_coverage_line,
         )
+        generated_checks, generated_timing = fetch_generated_checks(
+            self._db_path, pr_number, head_sha
+        )
+        team.generated = report_json(generated_checks)
+        team.generated_lines = report_lines(generated_checks, generated_timing)
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(
@@ -1287,6 +1351,32 @@ class ReviewTeamOrchestrator:
         return draft_scope_at_head(
             self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
         )
+
+    def _generated_scope(self, diff: str, base_ref: str | None) -> ReviewScope:
+        """Summarise the declared generated artefacts the diff touches (G1, G2).
+
+        The declarations are read at the base ref, never the head. A base
+        that cannot be read or declares nothing leaves the diff as it is,
+        so an oversized artefact keeps its blocking finding (fail closed).
+        """
+        try:
+            base = readable_base(self._repo_root, base_ref, self._fetch_base)
+            scope = review_scope(self._repo_root, diff, base)
+        except Exception as exc:
+            _log.warning(
+                "review_team.generated_scope_failed",
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+                consequence="the diff is reviewed as it is; no artefact is summarised",
+            )
+            return ReviewScope(review_diff=diff)
+        if scope.touched:
+            _log.info(
+                "review_team.generated_summarised",
+                base=base,
+                touched=list(scope.touched),
+            )
+        return scope
 
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""
@@ -2151,6 +2241,7 @@ class ReviewTeamOrchestrator:
             facts=facts,
             archive_appendix=archive_appendix,
             judged=team.findings,
+            generated_lines=team.generated_lines,
         )
 
 
@@ -2551,6 +2642,7 @@ def run_review(
     announce: Callable[[str], None] | None = None,
     write_refusal: WriteRefusal | None = None,
     force: bool = False,
+    generated_evidence: Path | None = None,
 ) -> TeamOutcome:
     """Review the PR head tree and return the aggregated outcome (CLI entry).
 
@@ -2576,6 +2668,9 @@ def run_review(
             the forge is read-only from its selection on.
         force: Re-review a head that already has a completed run instead
             of replaying it (SP-FINDINGS-BRIDGE-DOCFIX 0.3).
+        generated_evidence: The ``review-generated.json`` of the
+            secret-free verification job, bound to this head
+            (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ).
 
     Returns:
         The :class:`TeamOutcome` aggregated across the four reviewers,
@@ -2610,6 +2705,7 @@ def run_review(
             config_root=checkout,
             write_refusal=refusal,
             force=force,
+            generated_evidence=generated_evidence,
         ).review_pr(pr_number, spec_flag=spec)
     team.tree = tree.tree
     team.worktree = str(tree.root) if tree.tree == "worktree" and tree.kept else None
