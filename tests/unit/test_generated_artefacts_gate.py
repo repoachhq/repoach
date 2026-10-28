@@ -60,7 +60,7 @@ from repoach.review.generated_types import (
 )
 from repoach.review.generated_verify import head_tree
 from repoach.review.merge_gate import MergeDecision, MergeFacts
-from repoach.review.report import render_ledger_report
+from repoach.review.report import fenced, render_ledger_report
 from repoach.review.secret_env import scrubbed_env
 from tests.fixtures.generated_artefacts.harness import (
     Bench,
@@ -1285,3 +1285,10 @@ def test_a_file_new_under_a_wildcard_is_reviewed_in_full(
         assert "generated artefact data/b.vec" not in diff
     checks, _ = fetch_generated_checks(bench.db_path, 7, head)
     assert [c.path for c in checks] == ["data/a.vec"]
+
+
+def test_fenced_uses_at_least_three_backticks() -> None:
+    """Plain lines get a three-backtick fence; a longer run inside gets a longer one."""
+    assert fenced(["plain", ""]) == "```text\nplain\n\n```"
+    assert fenced(["a `b` c"]) == "```text\na `b` c\n```"
+    assert fenced(["x ``` y"]) == "````text\nx ``` y\n````"
