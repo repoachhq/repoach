@@ -7,9 +7,12 @@ and the line it sits on.
 
 from __future__ import annotations
 
+import fnmatch
 from pathlib import Path
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from repoach.project.config import GENERATED_ENTRIES_MAX, ConfigError, parse_project_config
 from repoach.project.globs import glob_matches
@@ -315,3 +318,14 @@ def test_a_path_hiding_another_entrys_script_is_refused() -> None:
     error = _refused(first + second, languages=())
     assert error.key == "review.generated[1].path"
     assert "tools/gen" in str(error)
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    pattern=st.text(alphabet="abé*?.", min_size=1, max_size=8),
+    name=st.text(alphabet="abé.", min_size=0, max_size=8),
+)
+def test_a_one_segment_glob_agrees_with_fnmatch(pattern: str, name: str) -> None:
+    """Inside one segment, ``*`` and ``?`` mean what fnmatch means, non-ASCII names included."""
+    assert glob_matches(pattern, name) == fnmatch.fnmatchcase(name, pattern)
+    assert not glob_matches(pattern, f"{name}/{name}") or "**" in pattern
