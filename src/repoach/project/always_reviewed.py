@@ -156,6 +156,14 @@ ALWAYS_CODE_EXTENSIONS: tuple[str, ...] = (
     ".psm1",
     ".pyw",
     ".tcl",
+    ".mts",
+    ".cts",
+    ".ksh",
+    ".csh",
+    ".groovy",
+    ".awk",
+    ".vbs",
+    ".lisp",
 )
 """Script extensions a ``path`` glob may never match, whatever languages a project declares."""
 
