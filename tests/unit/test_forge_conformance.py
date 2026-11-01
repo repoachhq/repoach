@@ -30,6 +30,7 @@ from repoach.forge import (
     ARCHIVE_MARKER,
     Comment,
     Forge,
+    ForgeError,
     ForgeForbiddenError,
     ForgeMergeRefusedError,
     ForgeNotFoundError,
@@ -431,3 +432,24 @@ def test_is_maintainer_never_asks_about_the_bot(forge_name: str, tmp_path: Path)
     assert forge.is_maintainer("") is False
     assert forge.is_maintainer("github-actions[bot]") is False
     assert forge.is_maintainer("a/../b") is False
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_not_found(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub 404 (not a collaborator) and an empty GitLab member list are no maintainer."""
+    result, _ = _replay(forge_name, "is_maintainer_not_found", tmp_path)
+    assert result is False
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_failed(forge_name: str, tmp_path: Path) -> None:
+    """Any other failure raises :class:`ForgeError`: the caller fails closed and retries."""
+    _, raised = _replay(forge_name, "is_maintainer_failed", tmp_path)
+    assert isinstance(raised, ForgeError)
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_not_json(forge_name: str, tmp_path: Path) -> None:
+    """An answer that is not JSON raises :class:`ForgeError`, never a guess."""
+    _, raised = _replay(forge_name, "is_maintainer_not_json", tmp_path)
+    assert isinstance(raised, ForgeError)
