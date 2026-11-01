@@ -68,7 +68,12 @@ owner_commands = Table(
     Column("recorded_at", String, nullable=False),
     UniqueConstraint("pr_number", "comment_id", name="uq_owner_commands_comment"),
 )
-"""One row per owner command comment (``db:table:owner_commands``)."""
+"""One row per owner command comment (``db:table:owner_commands``).
+
+``resolution`` is ``owner_resolve`` or ``owner_reopen`` on an applied
+command and empty on every other row; the ``previous_*`` columns are
+filled only on an applied one; ``reply`` is empty when no answer is due.
+"""
 
 
 class OwnerCommandRow(BaseModel):

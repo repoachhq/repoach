@@ -1528,9 +1528,11 @@ class ReviewTeamOrchestrator:
         SP-OWNER-SETTLES-A-FINDING: runs before the re-check of older heads
         and before the ledger facts are summarised, so an owner-resolved
         finding is neither re-checked nor counted. The answers are posted
-        only by a posting run. A forge or ledger failure is logged and
-        applies nothing: the findings keep blocking. Any other error is a
-        defect and propagates, so it cannot hide behind a warning.
+        only by a posting run. A forge failure never reaches here: the run
+        reports it (``error``, ``unreadable``, ``unposted``). A ledger
+        failure is logged and applies nothing: the findings keep blocking.
+        Any other error is a defect and propagates, so it cannot hide
+        behind a warning.
         """
         if not head_sha:
             return OwnerCommandsRun()
@@ -1542,7 +1544,7 @@ class ReviewTeamOrchestrator:
                 head_sha=head_sha,
                 post=self._post,
             )
-        except (ForgeError, SQLAlchemyError) as exc:
+        except SQLAlchemyError as exc:
             _log.warning(
                 "review_team.owner_commands_failed",
                 pr_number=pr_number,
