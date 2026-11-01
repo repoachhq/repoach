@@ -71,6 +71,9 @@ class _FakeTeam:
     spec_coverage_line: str = ""
     generated: list[dict[str, object]] = field(default_factory=list)
     generated_lines: list[str] = field(default_factory=list)
+    owner_resolved: list[dict[str, object]] = field(default_factory=list)
+    owner_commands: list[dict[str, object]] = field(default_factory=list)
+    owner_lines: list[str] = field(default_factory=list)
 
 
 _REQUIRED_TOP_LEVEL = {
@@ -87,6 +90,8 @@ _REQUIRED_TOP_LEVEL = {
     "findings",
     "verdict_basis",
     "generated",
+    "owner_resolved",
+    "owner_commands",
 }
 
 _REQUIRED_REVIEW_ENTRY = {
