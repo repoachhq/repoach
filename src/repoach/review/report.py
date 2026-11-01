@@ -22,6 +22,7 @@ report. The legacy per-reviewer verdict framing was dropped in 10b-4
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
@@ -197,6 +198,26 @@ def render_ledger_report(
     if archive_appendix:
         parts.extend(["", "---", "", archive_appendix])
     return "\n".join(parts)
+
+
+def archive_json(payload: dict[str, object]) -> str:
+    """Serialise the archive payload so no text in it can close its Markdown fence.
+
+    The payload carries people's and models' text (an owner's reason, a
+    reviewer's summary) inside a ```` ```json ```` fence of a comment the bot
+    authors. In JSON a backtick can only sit inside a string, so each one is
+    written as its JSON unicode escape (a backslash, then u0060): the fence
+    cannot be closed from inside, nothing renders as Markdown or mentions,
+    and ``json.loads`` reads the same text back.
+
+    Args:
+        payload: The ``TeamOutcome`` dictionary.
+
+    Returns:
+        The indented JSON, without a literal backtick.
+    """
+    text = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+    return text.replace("`", "\\u0060")
 
 
 def fenced(lines: list[str]) -> str:

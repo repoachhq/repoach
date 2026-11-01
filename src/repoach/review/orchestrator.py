@@ -44,7 +44,6 @@ it never merges one.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import subprocess
 import time
@@ -143,7 +142,7 @@ from .refuter import (
     configured_max_judged,
     judge_findings_for_pr,
 )
-from .report import ReportFinding, render_ledger_report, report_findings
+from .report import ReportFinding, archive_json, render_ledger_report, report_findings
 from .review_cache import (
     cache_line,
     completed_run,
@@ -2300,26 +2299,6 @@ class ReviewTeamOrchestrator:
             generated_lines=team.generated_lines,
             owner_lines=team.owner_settlement_lines,
         )
-
-
-def archive_json(payload: dict[str, object]) -> str:
-    """Serialise the archive payload so no text in it can close its Markdown fence.
-
-    The payload carries people's and models' text (an owner's reason, a
-    reviewer's summary) inside a ```` ```json ```` fence of a comment the bot
-    authors. In JSON a backtick can only sit inside a string, so each one is
-    written as its JSON unicode escape (a backslash, then u0060): the fence
-    cannot be closed from inside, nothing renders as Markdown or mentions,
-    and ``json.loads`` reads the same text back.
-
-    Args:
-        payload: The ``TeamOutcome`` dictionary.
-
-    Returns:
-        The indented JSON, without a literal backtick.
-    """
-    text = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
-    return text.replace("`", "\\u0060")
 
 
 def _locate_comment_index(comments, event) -> int:
