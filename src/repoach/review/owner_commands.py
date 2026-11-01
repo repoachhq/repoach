@@ -323,6 +323,7 @@ def _decide(
     head_sha: str,
     findings: dict[int, Finding],
     root: Comment | None,
+    rows: Sequence[OwnerCommandRow],
 ) -> _Decision:
     """Decide what an owner's command does, and the one answer it gets."""
     if command.verb is OwnerVerb.RESOLVE and len(command.reason) < REASON_MIN_CHARS:
@@ -360,7 +361,12 @@ def _decide(
     return _Decision(
         OwnerOutcome.APPLIED,
         target,
-        f"Finding #{target.id} reopened by @{login}: the gate counts it again.",
+        f"Finding #{target.id} reopened by @{login}: the gate counts it again."
+        + (
+            ""
+            if _last_resolve(rows, target.id or 0)
+            else " No owner settlement of it was recorded, so it is restored as verified."
+        ),
     )
 
 
@@ -409,6 +415,12 @@ def _move(
             checked_at_sha=head_sha,
         )
     resolved = _last_resolve(rows, finding.id)
+    if resolved is None:
+        _log.warning(
+            "owner_commands.reopen_without_recorded_resolve",
+            finding_id=finding.id,
+            consequence="restored as verified with an empty verification; it blocks again",
+        )
     return update_finding_status(
         db_path,
         finding.id,
@@ -519,7 +531,9 @@ def _handle(
         outcome, reply = refusal
         finding_id = command.finding_id
     else:
-        decision = _decide(command, login=login, head_sha=head_sha, findings=findings, root=root)
+        decision = _decide(
+            command, login=login, head_sha=head_sha, findings=findings, root=root, rows=rows
+        )
         outcome, reply = decision.outcome, decision.reply
         finding_id = decision.finding.id if decision.finding else command.finding_id
     row = OwnerCommandRow(

@@ -532,6 +532,7 @@ def test_reopen_without_recorded_resolve_falls_back_to_verified(db: Path) -> Non
     run = _apply(forge, db)
     assert [row.resolution for row in run.handled] == ["owner_reopen"]
     assert _row(db, target).status is FindingStatus.VERIFIED
+    assert "No owner settlement of it was recorded" in forge.posted[0]
     assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]
 
 
