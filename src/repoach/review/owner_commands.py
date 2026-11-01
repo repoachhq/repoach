@@ -18,8 +18,10 @@ request, asks the forge whether each author is a maintainer
 text, never the bot), moves the finding to ``owner_resolved`` (or back to
 the status it held before, on ``/reopen``) and records the command in
 ``owner_commands`` under its comment id, so a re-run applies it and
-answers it once. A command it ignores (no reason, not a maintainer, no
-such finding, nothing to change) gets one reply saying why; a
+answers it once. The bot's own command is recorded and answered by
+nothing, and a command in an edited comment is refused before any
+permission is read. A command it ignores (no reason, not a maintainer,
+no such finding, nothing to change) gets one reply saying why; a
 non-maintainer is answered once per login, whatever the number of their
 commands. A reason echoed in a reply is a code span, so its mentions and
 Markdown stay inert. The replies are posted only by a posting run; a dry
