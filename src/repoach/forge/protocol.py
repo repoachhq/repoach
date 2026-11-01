@@ -809,3 +809,26 @@ def maintainer_candidate(bot_username: str, login: str) -> bool:
     if not login or is_bot_login(bot_username, login):
         return False
     return FORGE_LOGIN_RE.fullmatch(login) is not None
+
+
+def edited_since(created_at: object, updated_at: object, *, resolved_at: object = None) -> bool:
+    """Whether a comment's timestamps say its body changed after it was posted.
+
+    Both forges move ``updated_at`` on an edit. GitLab also moves it to
+    ``resolved_at`` when the note's thread is resolved (measured
+    2026-11-01 on Yoob !339 and !322: 138 resolved notes, every one so; 83
+    open notes, none edited), which is no edit, so ``updated_at`` equal to
+    ``resolved_at`` is read as unedited. GitHub has no ``resolved_at``.
+
+    Args:
+        created_at: The comment's ``created_at`` as the forge reports it.
+        updated_at: Its ``updated_at``, absent on some payloads.
+        resolved_at: GitLab's ``resolved_at`` of the note, when any.
+
+    Returns:
+        True when ``updated_at`` is set and differs from ``created_at``
+        and from ``resolved_at``.
+    """
+    if not updated_at or updated_at == created_at:
+        return False
+    return updated_at != resolved_at

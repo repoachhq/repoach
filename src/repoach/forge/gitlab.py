@@ -60,6 +60,7 @@ from .protocol import (
     ReviewDraft,
     WriteRefusal,
     diff_files,
+    edited_since,
     maintainer_candidate,
     trusted,
     unnumbered_write,
@@ -235,19 +236,6 @@ def _expired(member: dict[str, object]) -> bool:
     return day <= datetime.now(UTC).date()
 
 
-def _edited(note: dict[str, object]) -> bool:
-    """True when a note's ``updated_at`` differs from ``created_at`` and ``resolved_at``.
-
-    Resolving a discussion moves ``updated_at`` to ``resolved_at``
-    (measured 2026-11-01 on Yoob !339 and !322: 138 resolved notes, every
-    one so; 83 open notes, none edited), which is no edit.
-    """
-    updated = note.get("updated_at")
-    if not updated or updated == note.get("created_at"):
-        return False
-    return updated != note.get("resolved_at")
-
-
 def note_to_comment(
     note: dict[str, object],
     *,
@@ -271,7 +259,9 @@ def note_to_comment(
         created_at=str(note.get("created_at") or ""),
         in_reply_to=in_reply_to,
         thread_id=thread_id,
-        edited=_edited(note),
+        edited=edited_since(
+            note.get("created_at"), note.get("updated_at"), resolved_at=note.get("resolved_at")
+        ),
     )
 
 

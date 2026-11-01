@@ -56,6 +56,7 @@ from .protocol import (
     ReviewDraft,
     WriteRefusal,
     diff_files,
+    edited_since,
     maintainer_candidate,
     trusted,
     unnumbered_write,
@@ -309,12 +310,6 @@ def _int_or_none(value: object) -> int | None:
     return None
 
 
-def _edited(payload: dict[str, object]) -> bool:
-    """True when a GitHub comment's ``updated_at`` is set and differs from ``created_at``."""
-    updated = payload.get("updated_at")
-    return bool(updated) and updated != payload.get("created_at")
-
-
 def comment_from_github(payload: dict[str, object]) -> Comment:
     """Normalise a GitHub issue / review comment payload into a :class:`Comment`."""
     return Comment(
@@ -325,7 +320,7 @@ def comment_from_github(payload: dict[str, object]) -> Comment:
         line=_int_or_none(payload.get("line")),
         created_at=str(payload.get("created_at") or ""),
         in_reply_to=_int_or_none(payload.get("in_reply_to_id")),
-        edited=_edited(payload),
+        edited=edited_since(payload.get("created_at"), payload.get("updated_at")),
     )
 
 
