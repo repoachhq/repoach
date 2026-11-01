@@ -825,10 +825,16 @@ def edited_since(created_at: object, updated_at: object, *, resolved_at: object 
         updated_at: Its ``updated_at``, absent on some payloads.
         resolved_at: GitLab's ``resolved_at`` of the note, when any.
 
+    A payload that carries ``created_at`` but no ``updated_at`` cannot
+    say it was not edited, so it reads as edited (fail closed): both forges
+    send both fields on every comment and note.
+
     Returns:
-        True when ``updated_at`` is set and differs from ``created_at``
-        and from ``resolved_at``.
+        True when ``updated_at`` differs from ``created_at`` and from
+        ``resolved_at``, or is missing beside a ``created_at``.
     """
-    if not updated_at or updated_at == created_at:
+    if not updated_at:
+        return bool(created_at)
+    if updated_at == created_at:
         return False
     return updated_at != resolved_at

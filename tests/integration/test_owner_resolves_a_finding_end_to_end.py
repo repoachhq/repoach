@@ -158,6 +158,7 @@ def test_owner_resolve_flips_the_verdict_at_the_same_head(
         "user": {"login": "jwfaye"},
         "body": f"/resolve #{blocker} {REASON}",
         "created_at": "2026-11-01T12:00:00Z",
+        "updated_at": "2026-11-01T12:00:00Z",
     }
     owner = CommentingForge(repo, head, [comment])
     second = _review(repo, owner, monkeypatch, capsys)
