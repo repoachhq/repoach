@@ -422,6 +422,11 @@ class Comment(_Model):
         created_at: ISO-8601 timestamp as reported (``""`` when absent).
         in_reply_to: Root comment id for a reply, ``None`` for a root.
         thread_id: Forge thread handle (GitLab discussion id), when any.
+        edited: True when the forge reports the body changed after it was
+            posted (GitHub ``updated_at`` after ``created_at``; GitLab the
+            same, a thread's resolution excepted, which also moves it).
+            Anyone with write access may edit someone else's comment on
+            GitHub, so an edited comment is not the author's word.
     """
 
     id: int
@@ -432,6 +437,7 @@ class Comment(_Model):
     created_at: str = ""
     in_reply_to: int | None = None
     thread_id: str | None = None
+    edited: bool = False
 
 
 class InlineCommentDraft(_Model):

@@ -21,6 +21,7 @@ forge-neutral contract of the method.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +36,8 @@ from repoach.forge import (
     ForgeMergeRefusedError,
     ForgeNotFoundError,
 )
-from repoach.forge.github import GitHubForge
-from repoach.forge.gitlab import GitLabForge
+from repoach.forge.github import GitHubForge, comment_from_github
+from repoach.forge.gitlab import GitLabForge, note_to_comment
 from repoach.forge.recording import (
     Exchange,
     ReplaySpawn,
@@ -453,3 +454,58 @@ def test_is_maintainer_not_json(forge_name: str, tmp_path: Path) -> None:
     """An answer that is not JSON raises :class:`ForgeError`, never a guess."""
     _, raised = _replay(forge_name, "is_maintainer_not_json", tmp_path)
     assert isinstance(raised, ForgeError)
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_admin(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub ``admin`` permission and a GitLab Owner (``access_level`` 50) are maintainers."""
+    result, _ = _replay(forge_name, "is_maintainer_admin", tmp_path)
+    assert result is True
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_not_object(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub array or a GitLab object where the other is expected raises :class:`ForgeError`."""
+    _, raised = _replay(forge_name, "is_maintainer_not_object", tmp_path)
+    assert isinstance(raised, ForgeError)
+
+
+@pytest.mark.parametrize(
+    ("member", "expected"),
+    [
+        ({"state": "active", "membership_state": "active"}, True),
+        ({"state": "active", "membership_state": "awaiting"}, False),
+        ({"state": "blocked"}, False),
+    ],
+)
+def test_is_maintainer_gitlab_member_must_be_active(
+    tmp_path: Path, member: dict[str, str], expected: bool
+) -> None:
+    """A blocked user or a membership awaiting approval is no maintainer, whatever the level."""
+    forge = _build("gitlab", tmp_path, "repoach-bot")
+    payload = [{"username": "jwfaye", "access_level": 40, **member}]
+    forge._spawn = ReplaySpawn(
+        [
+            Exchange(
+                program="glab",
+                args=["api", "--paginate", "projects/:id/members/all?query=jwfaye&per_page=100"],
+                stdin=None,
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+        ]
+    )
+    assert forge.is_maintainer("jwfaye") is expected
+
+
+def test_is_maintainer_edited_comments_are_flagged() -> None:
+    """An edit moves ``updated_at`` past ``created_at``; a GitLab resolution alone does not count."""
+    base = {"id": 1, "body": "/resolve", "created_at": "2026-11-01T10:00:00Z"}
+    assert comment_from_github({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
+    assert comment_from_github({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
+    assert comment_from_github(base).edited is False
+    resolved = {**base, "updated_at": "2026-11-01T12:00:00Z", "resolved_at": "2026-11-01T12:00:00Z"}
+    assert note_to_comment(resolved).edited is False
+    assert note_to_comment({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
+    assert note_to_comment({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
