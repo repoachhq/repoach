@@ -8,6 +8,7 @@ the re-check at head read, replay idempotence and the report lines.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -727,3 +728,11 @@ def test_local_bench_forge_has_no_maintainers(tmp_path: Path) -> None:
     forge = LocalDiffForge(tmp_path, number=1, base_sha="a" * 40, head_sha="b" * 40, title="t")
     assert forge.is_maintainer("jwfaye") is False
     assert forge.is_maintainer("") is False
+
+
+def test_archive_json_cannot_close_its_fence() -> None:
+    """A reason holding a backtick fence is archived with no literal backtick, read back intact."""
+    reason = "closes ``` the fence and pings @someone"
+    text = orchestrator.archive_json({"owner_resolved": [{"reason": reason}]})
+    assert "`" not in text
+    assert json.loads(text)["owner_resolved"][0]["reason"] == reason
