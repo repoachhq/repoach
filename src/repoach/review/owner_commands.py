@@ -583,6 +583,15 @@ def _record_and_move(
     The row is written first; a move the ledger refuses revises it to a
     no-op, so no finding ever moves without its row.
 
+    Args:
+        db_path: The ledger database.
+        row: The handled command, as :func:`_handle` described it.
+        decision: The decision to apply, ``None`` when nothing moves.
+        command: The parsed command.
+        head_sha: The reviewed head, stamped on a resolved finding.
+        rows: The commands handled before this one (a reopen reads the
+            last applied ``/resolve`` from them).
+
     Returns:
         The row as stored, or ``None`` when a concurrent run stored the
         comment first.
