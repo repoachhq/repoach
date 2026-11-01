@@ -19,8 +19,11 @@ text, never the bot), moves the finding to ``owner_resolved`` (or back to
 the status it held before, on ``/reopen``) and records the command in
 ``owner_commands`` under its comment id, so a re-run applies it and
 answers it once. A command it ignores (no reason, not a maintainer, no
-such finding, nothing to change) gets one reply saying why. The replies
-are posted only by a posting run; a dry run returns them as lines.
+such finding, nothing to change) gets one reply saying why; a
+non-maintainer is answered once per login, whatever the number of their
+commands. A reason echoed in a reply is a code span, so its mentions and
+Markdown stay inert. The replies are posted only by a posting run; a dry
+run returns them as lines.
 """
 
 from __future__ import annotations
@@ -150,9 +153,13 @@ class OwnerCommandsRun:
     unreadable: list[str] = field(default_factory=list)
     error: str = ""
 
+    def settlement_lines(self) -> list[str]:
+        """One ``owner-resolved #<id> by <login>: <reason>`` line per settled finding."""
+        return [settlement.line() for settlement in self.settled]
+
     def lines(self) -> list[str]:
         """The stderr lines of ``review pr``: settlements, then what was not done."""
-        lines = [settlement.line() for settlement in self.settled]
+        lines = self.settlement_lines()
         if self.handled:
             applied = sum(1 for row in self.handled if row.outcome == OwnerOutcome.APPLIED)
             lines.append(
@@ -210,6 +217,24 @@ def parse_command(body: str) -> OwnerCommand | None:
         rest = rest[named.end() :]
     reason = " ".join(rest.split())[:REASON_MAX_CHARS]
     return OwnerCommand(verb=OwnerVerb(match.group("verb")), finding_id=finding_id, reason=reason)
+
+
+def inline_code(text: str) -> str:
+    """Render ``text`` as one Markdown code span no backtick inside can close.
+
+    A reason is a person's text echoed in a comment the bot authors: as a
+    code span, its ``@mentions``, links and Markdown stay inert.
+
+    Args:
+        text: The text to show verbatim.
+
+    Returns:
+        The code span, its delimiter one backtick longer than the longest
+        backtick run in ``text``.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    return f"{fence} {text} {fence}"
 
 
 def _anchored(findings: Sequence[Finding], root: Comment) -> list[Finding]:
@@ -316,7 +341,8 @@ def _decide(
             OwnerOutcome.APPLIED,
             target,
             f"Finding #{target.id} owner-resolved by @{login} at {head_sha[:7]}: "
-            f"{command.reason}. The gate no longer counts it; `/reopen` counts it again.",
+            f"{inline_code(command.reason)}. The gate no longer counts it; `/reopen` counts "
+            "it again.",
         )
     if target.status is not FindingStatus.OWNER_RESOLVED:
         return _Decision(
@@ -347,17 +373,19 @@ def _apply(
     login: str,
     head_sha: str,
     rows: Sequence[OwnerCommandRow],
-) -> OwnerCommandRow | None:
-    """Move the finding for an applied command; return the row fields it changed.
+) -> dict[str, str] | None:
+    """Move the finding for an applied command; return the row fields it sets.
 
     Returns:
-        A partial row carrying ``resolution`` and the ``previous_*``
-        fields, or ``None`` when the ledger refused the transition.
+        ``resolution`` and the ``previous_*`` fields (what the finding
+        held before this command), or ``None`` when the ledger refused
+        the transition.
     """
     finding = decision.finding
     if finding is None or finding.id is None:
         return None
     if command.verb is OwnerVerb.RESOLVE:
+        resolution = OWNER_RESOLVE
         moved = update_finding_status(
             db_path,
             finding.id,
@@ -366,48 +394,26 @@ def _apply(
             verification_result=f"owner-resolved by {login}: {command.reason}",
             checked_at_sha=head_sha,
         )
-        return (
-            OwnerCommandRow(
-                pr_number=finding.pr_number,
-                comment_id=0,
-                command=command.verb.value,
-                author=login,
-                outcome=OwnerOutcome.APPLIED,
-                resolution=OWNER_RESOLVE,
-                previous_status=finding.status.value,
-                previous_method=finding.verification_method,
-                previous_result=finding.verification_result,
-                previous_checked_at=finding.checked_at_sha,
-            )
-            if moved
-            else None
+    else:
+        resolution = OWNER_REOPEN
+        resolved = _last_resolve(rows, finding.id)
+        moved = update_finding_status(
+            db_path,
+            finding.id,
+            FindingStatus(resolved.previous_status) if resolved else FindingStatus.VERIFIED,
+            verification_method=resolved.previous_method if resolved else "",
+            verification_result=resolved.previous_result if resolved else "",
+            checked_at_sha=resolved.previous_checked_at if resolved else "",
         )
-    resolved = _last_resolve(rows, finding.id)
-    previous = FindingStatus(resolved.previous_status) if resolved else FindingStatus.VERIFIED
-    moved = update_finding_status(
-        db_path,
-        finding.id,
-        previous,
-        verification_method=resolved.previous_method if resolved else "",
-        verification_result=resolved.previous_result if resolved else "",
-        checked_at_sha=resolved.previous_checked_at if resolved else "",
-    )
-    return (
-        OwnerCommandRow(
-            pr_number=finding.pr_number,
-            comment_id=0,
-            command=command.verb.value,
-            author=login,
-            outcome=OwnerOutcome.APPLIED,
-            resolution=OWNER_REOPEN,
-            previous_status=finding.status.value,
-            previous_method=finding.verification_method,
-            previous_result=finding.verification_result,
-            previous_checked_at=finding.checked_at_sha,
-        )
-        if moved
-        else None
-    )
+    if not moved:
+        return None
+    return {
+        "resolution": resolution,
+        "previous_status": finding.status.value,
+        "previous_method": finding.verification_method,
+        "previous_result": finding.verification_result,
+        "previous_checked_at": finding.checked_at_sha,
+    }
 
 
 def _commands(forge: Forge, pr_number: int) -> list[tuple[Comment, Comment | None]]:
@@ -470,10 +476,15 @@ def _handle(
     if not login or login == forge.bot_username:
         return base
     if not _maintainer(forge, login, cache):
+        answered = any(
+            row.author == login and row.outcome == OwnerOutcome.NOT_OWNER for row in rows
+        )
         return base.model_copy(
             update={
                 "outcome": OwnerOutcome.NOT_OWNER,
-                "reply": f"Ignored: @{login} is not a maintainer of this repository; only a "
+                "reply": ""
+                if answered
+                else f"Ignored: @{login} is not a maintainer of this repository; only a "
                 "maintainer's `/resolve` or `/reopen` settles a finding.",
             }
         )
@@ -497,17 +508,7 @@ def _handle(
                 "its status changed during this run.",
             }
         )
-    return row.model_copy(
-        update=applied.model_dump(
-            include={
-                "resolution",
-                "previous_status",
-                "previous_method",
-                "previous_result",
-                "previous_checked_at",
-            }
-        )
-    )
+    return row.model_copy(update=applied)
 
 
 def _post_replies(

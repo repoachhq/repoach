@@ -458,3 +458,81 @@ def test_unreadable_comments_apply_nothing(db: Path) -> None:
     run = _apply(Broken(), db)
     assert _row(db, target).status is FindingStatus.VERIFIED
     assert run.lines() == ["owner commands: not read: HTTP 503"]
+
+
+def test_non_owner_is_answered_once_per_login(db: Path) -> None:
+    """Many commands from one non-maintainer get one answer; each is still recorded."""
+    target = _finding(db)
+    forge = FakeForge(
+        conversation=[
+            _pr_comment(43, f"/resolve #{target} {REASON}", author="dev"),
+            _pr_comment(44, f"/resolve #{target} {REASON} again", author="dev"),
+            _pr_comment(45, "/reopen", author="dev"),
+        ],
+        maintainers={"dev": False},
+    )
+    _apply(forge, db)
+    assert len(forge.posted) == 1
+    assert [row.outcome for row in fetch_owner_commands(db, PR)] == ["not_owner"] * 3
+    assert forge.permission_reads == ["dev"]
+
+
+def test_failed_reply_stays_pending_and_is_retried(db: Path) -> None:
+    """A reply the forge refuses is kept pending and posted by the next posting run, once."""
+    target = _finding(db)
+
+    class Flaky(FakeForge):
+        failures: int = 1
+
+        def post_comment(self, number: int, body: str, **kwargs: object) -> Comment:
+            if self.failures:
+                self.failures -= 1
+                raise ForgeError("HTTP 502")
+            return super().post_comment(number, body, **kwargs)
+
+    forge = Flaky(
+        conversation=[_pr_comment(46, f"/resolve #{target} {REASON}")],
+        maintainers={"jwfaye": True},
+    )
+    first = _apply(forge, db)
+    assert forge.posted == [] and len(first.unposted) == 1
+    assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
+    _apply(forge, db)
+    _apply(forge, db)
+    assert len(forge.posted) == 1
+
+
+def test_reopen_on_a_finding_not_owner_resolved_is_a_noop(db: Path) -> None:
+    """``/reopen`` of a finding no owner settled changes nothing and says so."""
+    target = _finding(db)
+    forge = FakeForge(
+        conversation=[_pr_comment(47, f"/reopen #{target}")], maintainers={"jwfaye": True}
+    )
+    run = _apply(forge, db)
+    assert [row.outcome for row in run.handled] == ["noop"]
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert "not owner-resolved" in forge.posted[0]
+
+
+def test_reopen_without_recorded_resolve_falls_back_to_verified(db: Path) -> None:
+    """An owner-resolved row with no recorded ``/resolve`` reopens to ``verified``, counted."""
+    target = _finding(db, status=FindingStatus.OWNER_RESOLVED)
+    forge = FakeForge(
+        conversation=[_pr_comment(48, f"/reopen #{target}")], maintainers={"jwfaye": True}
+    )
+    run = _apply(forge, db)
+    assert [row.resolution for row in run.handled] == ["owner_reopen"]
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]
+
+
+def test_reason_is_echoed_as_inert_code(db: Path) -> None:
+    """The reason quoted in the bot's reply is a code span no backtick inside can close."""
+    target = _finding(db)
+    reason = "pinged @someone about `ptrace_scope` = 1 on the runner host, read back"
+    forge = FakeForge(
+        conversation=[_pr_comment(49, f"/resolve #{target} {reason}")],
+        maintainers={"jwfaye": True},
+    )
+    _apply(forge, db)
+    assert f"`` {reason} ``" in forge.posted[0]

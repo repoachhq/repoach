@@ -417,8 +417,9 @@ class TeamOutcome:
     ``owner_resolved`` lists every finding a maintainer settled with a
     reason (``finding_id``, ``login``, ``reason``, ``comment_id``,
     ``head_sha``), ``owner_commands`` the owner commands this run handled
-    for the first time, and ``owner_lines`` the report lines naming them
-    (SP-OWNER-SETTLES-A-FINDING).
+    for the first time, ``owner_lines`` the stderr lines naming them and
+    ``owner_settlement_lines`` the one line per owner-resolved finding the
+    Markdown report shows (SP-OWNER-SETTLES-A-FINDING).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -465,12 +466,14 @@ class TeamOutcome:
     owner_resolved: list[dict[str, object]] = field(default_factory=list)
     owner_commands: list[dict[str, object]] = field(default_factory=list)
     owner_lines: list[str] = field(default_factory=list)
+    owner_settlement_lines: list[str] = field(default_factory=list)
 
     def record_owner_commands(self, run: OwnerCommandsRun) -> None:
         """Carry what :func:`~repoach.review.owner_commands.apply_owner_commands` did."""
         self.owner_resolved = run.as_json()
         self.owner_commands = run.handled_json()
         self.owner_lines = run.lines()
+        self.owner_settlement_lines = run.settlement_lines()
 
 
 class ReviewTeamOrchestrator:
@@ -2290,7 +2293,7 @@ class ReviewTeamOrchestrator:
             archive_appendix=archive_appendix,
             judged=team.findings,
             generated_lines=team.generated_lines,
-            owner_lines=[line for line in team.owner_lines if line.startswith("owner-resolved #")],
+            owner_lines=team.owner_settlement_lines,
         )
 
 
