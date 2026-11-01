@@ -819,15 +819,14 @@ def edited_since(created_at: object, updated_at: object, *, resolved_at: object 
     2026-11-01 on Yoob !339 and !322: 138 resolved notes, every one so; 83
     open notes, none edited), which is no edit, so ``updated_at`` equal to
     ``resolved_at`` is read as unedited. GitHub has no ``resolved_at``.
+    A payload that carries ``created_at`` but no ``updated_at`` cannot
+    say it was not edited, so it reads as edited (fail closed): both forges
+    send both fields on every comment and note.
 
     Args:
         created_at: The comment's ``created_at`` as the forge reports it.
         updated_at: Its ``updated_at``, absent on some payloads.
         resolved_at: GitLab's ``resolved_at`` of the note, when any.
-
-    A payload that carries ``created_at`` but no ``updated_at`` cannot
-    say it was not edited, so it reads as edited (fail closed): both forges
-    send both fields on every comment and note.
 
     Returns:
         True when ``updated_at`` differs from ``created_at`` and from
