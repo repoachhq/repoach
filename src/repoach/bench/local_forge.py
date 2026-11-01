@@ -201,6 +201,10 @@ class LocalDiffForge:
         """Return False: no comment is trusted."""
         return False
 
+    def is_maintainer(self, login: str) -> bool:
+        """Return False: the local bench has no repository members."""
+        return False
+
     def fetch_head(self, number: int) -> str:
         """Return the head commit, already present."""
         self._check(number)

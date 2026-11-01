@@ -1,0 +1,27 @@
+{
+  "args": [
+    "owner"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/:owner/:repo/collaborators/owner/permission"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"permission\": \"admin\", \"role_name\": \"\", \"user\": {\"login\": \"owner\"}}"
+    }
+  ],
+  "case": "is_maintainer_admin",
+  "forge": "github",
+  "kwargs": {},
+  "method": "is_maintainer",
+  "raises": null,
+  "result": true,
+  "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
+  "trimmed": null
+}

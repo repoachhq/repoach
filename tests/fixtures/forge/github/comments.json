@@ -28,6 +28,7 @@
       "author": "github-actions[bot]",
       "body": "**[tester/minor]** Add a test for the new `if not isinstance(merge_commit, dict): continue` branch — e.g. `test_merged_pr_merge_shas_skips_entries_with_null_merge_commit` feeding a payload like `[{\"mergeCommit\": None}, {\"mergeCommit\": {\"oid\": \"sha-x\"}}]` and asserting only `{\"sha-x\"}` is returned. The fake currently only emits dict-shaped mergeCommit, so the None/in-flight guard is unexercised.\n\n_— Repoach review-bot (minimaxai/minimax-m3)_",
       "created_at": "2026-08-01T01:13:27Z",
+      "edited": false,
       "id": 3694216385,
       "in_reply_to": null,
       "line": 220,

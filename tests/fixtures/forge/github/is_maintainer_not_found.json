@@ -1,0 +1,27 @@
+{
+  "args": [
+    "stranger"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/:owner/:repo/collaborators/stranger/permission"
+      ],
+      "program": "gh",
+      "returncode": 1,
+      "stderr": "gh: Not Found (HTTP 404)",
+      "stdin": null,
+      "stdout": ""
+    }
+  ],
+  "case": "is_maintainer_not_found",
+  "forge": "github",
+  "kwargs": {},
+  "method": "is_maintainer",
+  "raises": null,
+  "result": false,
+  "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
+  "trimmed": null
+}

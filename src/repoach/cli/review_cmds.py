@@ -396,6 +396,16 @@ def review_pr(
     ``producer_inputs_changed``, ``script_ref``) and one ``generated:
     <path> verified by <check> (<ms> ms)`` line per verified run is
     printed on stderr (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5).
+
+    Before the re-check of older heads, the maintainers' ``/resolve``
+    and ``/reopen`` comments are applied (SP-OWNER-SETTLES-A-FINDING):
+    ``owner_resolved`` in the JSON lists every finding a maintainer
+    settled (``finding_id``, ``login``, ``reason``, ``comment_id``,
+    ``head_sha``), ``owner_commands`` the commands this run handled for
+    the first time, and one ``owner-resolved #<id> by <login>:
+    <reason>`` line per settled finding is printed on stderr. A dry run
+    posts no answer: each is printed as ``owner reply not posted: …``
+    and left for the next posting run.
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -476,6 +486,8 @@ def review_pr(
         "findings": [entry.as_json() for entry in team.findings],
         "verdict_basis": list(team.verdict_basis),
         "generated": team.generated,
+        "owner_resolved": team.owner_resolved,
+        "owner_commands": team.owner_commands,
         "usage": usage,
         "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
@@ -495,6 +507,8 @@ def review_pr(
     if team.reverify_line:
         typer.echo(team.reverify_line, err=True)
     for line in team.generated_lines:
+        typer.echo(line, err=True)
+    for line in team.owner_lines:
         typer.echo(line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:

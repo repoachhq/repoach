@@ -1,0 +1,28 @@
+{
+  "args": [
+    "dev"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "projects/:id/members/all?query=dev&per_page=100"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"id\": 8, \"username\": \"dev\", \"access_level\": 30, \"state\": \"active\"}, {\"id\": 9, \"username\": \"devops\", \"access_level\": 50, \"state\": \"active\"}]"
+    }
+  ],
+  "case": "is_maintainer_developer",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "is_maintainer",
+  "raises": null,
+  "result": false,
+  "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
+  "trimmed": null
+}

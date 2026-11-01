@@ -140,6 +140,7 @@ def render_ledger_report(
     archive_appendix: str = "",
     judged: list[ReportFinding] | None = None,
     generated_lines: list[str] | None = None,
+    owner_lines: list[str] | None = None,
 ) -> str:
     """Render the sticky archive report from the ledger and merge facts.
 
@@ -158,6 +159,11 @@ def render_ledger_report(
             generated artefact the diff touches, rendered as a
             ``## Generated artefacts`` section
             (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5); omitted when empty.
+        owner_lines: One ``owner-resolved #<id> by <login>: <reason>``
+            line per finding a maintainer settled, rendered as an
+            ``## Owner-resolved findings`` section, fenced because the
+            reason is a person's text (SP-OWNER-SETTLES-A-FINDING);
+            omitted when empty.
 
     Returns:
         The full markdown body for the sticky archive comment.
@@ -185,6 +191,8 @@ def render_ledger_report(
         )
     if generated_lines:
         parts.extend(["## Generated artefacts", "", fenced(generated_lines), ""])
+    if owner_lines:
+        parts.extend(["## Owner-resolved findings", "", fenced(owner_lines), ""])
     parts.extend(["## Findings", "", _findings_section(findings)])
     if archive_appendix:
         parts.extend(["", "---", "", archive_appendix])

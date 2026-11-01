@@ -28,6 +28,7 @@ cheap and explicit instead of being folded into a heavier read.
 from __future__ import annotations
 
 import functools
+import re
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -421,6 +422,11 @@ class Comment(_Model):
         created_at: ISO-8601 timestamp as reported (``""`` when absent).
         in_reply_to: Root comment id for a reply, ``None`` for a root.
         thread_id: Forge thread handle (GitLab discussion id), when any.
+        edited: True when the forge reports the body changed after it was
+            posted (GitHub ``updated_at`` after ``created_at``; GitLab the
+            same, a thread's resolution excepted, which also moves it).
+            Anyone with write access may edit someone else's comment on
+            GitHub, so an edited comment is not the author's word.
     """
 
     id: int
@@ -431,6 +437,7 @@ class Comment(_Model):
     created_at: str = ""
     in_reply_to: int | None = None
     thread_id: str | None = None
+    edited: bool = False
 
 
 class InlineCommentDraft(_Model):
@@ -712,6 +719,21 @@ class Forge(Protocol):
         """True when ``comment`` was authored by :attr:`bot_username`."""
         ...
 
+    def is_maintainer(self, login: str) -> bool:
+        """True when the forge grants ``login`` maintainer rights on the repository.
+
+        GitHub: collaborator role ``admin`` or ``maintain``. GitLab:
+        project member (inherited included) with ``access_level >= 40``.
+        :attr:`bot_username`, an empty login and a login that is not a
+        plain forge username are never maintainers
+        (SP-OWNER-SETTLES-A-FINDING G2).
+
+        Raises:
+            ForgeError: The permission could not be read; the caller
+                fails closed.
+        """
+        ...
+
     def fetch_head(self, number: int) -> str:
         """Fetch the change's head into the local clone; return the ref fetched."""
         ...
@@ -751,3 +773,62 @@ def trusted(bot_username: str, author: str) -> bool:
         True only when both are non-empty and equal.
     """
     return bool(bot_username) and bool(author) and author == bot_username
+
+
+FORGE_LOGIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+"""A plain GitHub login or GitLab username: what may be put in a permission URL."""
+
+
+def is_bot_login(bot_username: str, login: str) -> bool:
+    """Whether ``login`` names the bot, compared case-insensitively as forges compare logins.
+
+    Args:
+        bot_username: The configured bot identity (may be empty).
+        login: A comment author.
+
+    Returns:
+        True when both are non-empty and equal once casefolded.
+    """
+    return bool(bot_username) and bool(login) and login.casefold() == bot_username.casefold()
+
+
+def maintainer_candidate(bot_username: str, login: str) -> bool:
+    """Whether ``login`` may be asked about at all by :meth:`Forge.is_maintainer`.
+
+    The bot's own login is never an owner, and a login that is empty or
+    not a plain forge username (``[bot]`` suffixes, slashes, query
+    characters) is refused before any URL is built from it.
+
+    Args:
+        bot_username: The configured bot identity.
+        login: The comment author to check.
+
+    Returns:
+        True when ``login`` is a plain username other than the bot's.
+    """
+    if not login or is_bot_login(bot_username, login):
+        return False
+    return FORGE_LOGIN_RE.fullmatch(login) is not None
+
+
+def edited_since(created_at: object, updated_at: object, *, resolved_at: object = None) -> bool:
+    """Whether a comment's timestamps say its body changed after it was posted.
+
+    Both forges move ``updated_at`` on an edit. GitLab also moves it to
+    ``resolved_at`` when the note's thread is resolved (measured
+    2026-11-01 on Yoob !339 and !322: 138 resolved notes, every one so; 83
+    open notes, none edited), which is no edit, so ``updated_at`` equal to
+    ``resolved_at`` is read as unedited. GitHub has no ``resolved_at``.
+
+    Args:
+        created_at: The comment's ``created_at`` as the forge reports it.
+        updated_at: Its ``updated_at``, absent on some payloads.
+        resolved_at: GitLab's ``resolved_at`` of the note, when any.
+
+    Returns:
+        True when ``updated_at`` is set and differs from ``created_at``
+        and from ``resolved_at``.
+    """
+    if not updated_at or updated_at == created_at:
+        return False
+    return updated_at != resolved_at
