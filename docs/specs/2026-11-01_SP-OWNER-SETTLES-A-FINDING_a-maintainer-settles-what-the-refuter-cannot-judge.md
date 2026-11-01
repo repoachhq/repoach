@@ -1,7 +1,7 @@
 ---
 id: SP-OWNER-SETTLES-A-FINDING
 title: A maintainer settles, with a recorded reason, a finding the refuter cannot judge
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-01
@@ -116,7 +116,10 @@ pull request does.
   count `owner_resolved` (`_SETTLED`); the re-check at head never
   re-checks it. An applied `/reopen` restores the four fields recorded
   by the last applied `/resolve` of that finding, and the gate counts it
-  again.
+  again. The `owner_commands` row is written before the finding moves; a
+  move the ledger refuses revises the row to a no-op, and a failure between
+  the two leaves the finding blocking, never a moved finding without its
+  row.
 - **G5. Applied once.** A command is keyed by `(pr_number,
   comment_id)`: a re-run at the same head, or at a later head, neither
   re-applies nor re-answers it. Commands are applied in creation order,
