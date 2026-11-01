@@ -54,6 +54,7 @@ from .owner_store import (
     fetch_owner_commands,
     mark_reply_posted,
     record_owner_command,
+    revise_owner_command,
 )
 
 _log = get_logger(__name__)
@@ -370,7 +371,21 @@ def _last_resolve(rows: Sequence[OwnerCommandRow], finding_id: int) -> OwnerComm
     return applied[-1] if applied else None
 
 
-def _apply(
+def _settlement_fields(finding: Finding, command: OwnerCommand) -> dict[str, str]:
+    """The ``resolution`` and ``previous_*`` fields of an applied command's row.
+
+    Read from the finding before it moves, so the row can be written first.
+    """
+    return {
+        "resolution": OWNER_RESOLVE if command.verb is OwnerVerb.RESOLVE else OWNER_REOPEN,
+        "previous_status": finding.status.value,
+        "previous_method": finding.verification_method,
+        "previous_result": finding.verification_result,
+        "previous_checked_at": finding.checked_at_sha,
+    }
+
+
+def _move(
     db_path: Path,
     decision: _Decision,
     command: OwnerCommand,
@@ -378,20 +393,13 @@ def _apply(
     login: str,
     head_sha: str,
     rows: Sequence[OwnerCommandRow],
-) -> dict[str, str] | None:
-    """Move the finding for an applied command; return the row fields it sets.
-
-    Returns:
-        ``resolution`` and the ``previous_*`` fields (what the finding
-        held before this command), or ``None`` when the ledger refused
-        the transition.
-    """
+) -> bool:
+    """Move the finding of an applied command; False when the ledger refused the transition."""
     finding = decision.finding
     if finding is None or finding.id is None:
-        return None
+        return False
     if command.verb is OwnerVerb.RESOLVE:
-        resolution = OWNER_RESOLVE
-        moved = update_finding_status(
+        return update_finding_status(
             db_path,
             finding.id,
             FindingStatus.OWNER_RESOLVED,
@@ -399,26 +407,15 @@ def _apply(
             verification_result=f"owner-resolved by {login}: {command.reason}",
             checked_at_sha=head_sha,
         )
-    else:
-        resolution = OWNER_REOPEN
-        resolved = _last_resolve(rows, finding.id)
-        moved = update_finding_status(
-            db_path,
-            finding.id,
-            FindingStatus(resolved.previous_status) if resolved else FindingStatus.VERIFIED,
-            verification_method=resolved.previous_method if resolved else "",
-            verification_result=resolved.previous_result if resolved else "",
-            checked_at_sha=resolved.previous_checked_at if resolved else "",
-        )
-    if not moved:
-        return None
-    return {
-        "resolution": resolution,
-        "previous_status": finding.status.value,
-        "previous_method": finding.verification_method,
-        "previous_result": finding.verification_result,
-        "previous_checked_at": finding.checked_at_sha,
-    }
+    resolved = _last_resolve(rows, finding.id)
+    return update_finding_status(
+        db_path,
+        finding.id,
+        FindingStatus(resolved.previous_status) if resolved else FindingStatus.VERIFIED,
+        verification_method=resolved.previous_method if resolved else "",
+        verification_result=resolved.previous_result if resolved else "",
+        checked_at_sha=resolved.previous_checked_at if resolved else "",
+    )
 
 
 def _commands(forge: Forge, pr_number: int) -> list[tuple[Comment, Comment | None]]:
@@ -505,8 +502,12 @@ def _handle(
     findings: dict[int, Finding],
     cache: dict[str, bool],
     rows: list[OwnerCommandRow],
-) -> OwnerCommandRow:
-    """Decide, apply and describe one command not handled before.
+) -> tuple[OwnerCommandRow, _Decision | None]:
+    """Decide and describe one command not handled before; nothing is written here.
+
+    Returns:
+        The row to record and, for a command to apply, its decision (the
+        row then already names the resolution and what the finding held).
 
     Raises:
         ForgeError: The author's permission could not be read.
@@ -532,20 +533,9 @@ def _handle(
         reply=reply,
         reply_to=root.id if root is not None else None,
     )
-    if refusal is not None:
-        return row
-    if decision.outcome is not OwnerOutcome.APPLIED:
-        return row
-    applied = _apply(db_path, decision, command, login=login, head_sha=head_sha, rows=rows)
-    if applied is None:
-        return row.model_copy(
-            update={
-                "outcome": OwnerOutcome.NOOP,
-                "reply": f"No change: finding #{row.finding_id} could not be moved; "
-                "its status changed during this run.",
-            }
-        )
-    return row.model_copy(update=applied)
+    if refusal is not None or decision.outcome is not OwnerOutcome.APPLIED or not decision.finding:
+        return row, None
+    return row.model_copy(update=_settlement_fields(decision.finding, command)), decision
 
 
 def _post_replies(
@@ -661,7 +651,7 @@ def apply_owner_commands(
         if command is None or comment.id in seen:
             continue
         try:
-            row = _handle(
+            row, decision = _handle(
                 forge,
                 db_path,
                 comment,
@@ -683,12 +673,27 @@ def apply_owner_commands(
             if comment.author not in run.unreadable:
                 run.unreadable.append(comment.author)
             continue
-        if record_owner_command(db_path, row):
-            rows.append(row)
-            run.handled.append(row)
-        if row.resolution:
-            findings = _findings_by_id(db_path, pr_number)
         seen.add(comment.id)
+        if not record_owner_command(db_path, row):
+            continue
+        if decision is not None:
+            moved = _move(
+                db_path, decision, command, login=comment.author, head_sha=head_sha, rows=rows
+            )
+            if moved:
+                findings = _findings_by_id(db_path, pr_number)
+            else:
+                row = row.model_copy(
+                    update={
+                        "outcome": OwnerOutcome.NOOP,
+                        "resolution": "",
+                        "reply": f"No change: finding #{row.finding_id} could not be moved; "
+                        "its status changed during this run.",
+                    }
+                )
+                revise_owner_command(db_path, row)
+        rows.append(row)
+        run.handled.append(row)
     run.unposted = _post_replies(
         forge, db_path, fetch_owner_commands(db_path, pr_number), pr_number=pr_number, post=post
     )

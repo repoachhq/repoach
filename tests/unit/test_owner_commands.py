@@ -665,3 +665,25 @@ def test_parse_command_never_raises_and_bounds_the_reason(body: str) -> None:
     assert all(ch.isprintable() for ch in parsed.reason)
     assert "  " not in parsed.reason
     assert parsed.reason == parsed.reason.strip()
+
+
+def test_command_row_is_written_before_the_finding_moves(
+    db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash during the move leaves the row recorded and the finding still blocking."""
+    target = _finding(db)
+
+    def crash(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("disk gone")
+
+    monkeypatch.setattr(owner_commands, "update_finding_status", crash)
+    forge = FakeForge(
+        conversation=[_pr_comment(59, f"/resolve #{target} {REASON}")],
+        maintainers={"jwfaye": True},
+    )
+    with pytest.raises(RuntimeError):
+        _apply(forge, db)
+    stored = fetch_owner_commands(db, PR)
+    assert [(row.comment_id, row.resolution) for row in stored] == [(59, "owner_resolve")]
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]

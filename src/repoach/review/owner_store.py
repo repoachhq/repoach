@@ -186,6 +186,29 @@ def record_owner_command(db_path: Path, row: OwnerCommandRow) -> bool:
     return True
 
 
+def revise_owner_command(db_path: Path, row: OwnerCommandRow) -> None:
+    """Rewrite the outcome, resolution and reply of a stored command.
+
+    The command row is written before its finding moves, so a move the
+    ledger refuses is recorded by revising the row, never by leaving a
+    moved finding without its row.
+
+    Args:
+        db_path: The ledger database.
+        row: The command with its final outcome, resolution and reply.
+    """
+    stmt = (
+        update(owner_commands)
+        .where(
+            owner_commands.c.pr_number == row.pr_number,
+            owner_commands.c.comment_id == row.comment_id,
+        )
+        .values(outcome=row.outcome, resolution=row.resolution, reply=row.reply)
+    )
+    with _engine_for(db_path).begin() as conn:
+        conn.execute(stmt)
+
+
 def mark_reply_posted(db_path: Path, *, pr_number: int, comment_id: int) -> None:
     """Record that the answer to ``comment_id`` reached the forge.
 
