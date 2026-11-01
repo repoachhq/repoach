@@ -194,7 +194,7 @@ def owner_settlements(db_path: Path, pr_number: int) -> list[OwnerSettlement]: .
 ```
 
 Errors: a forge read failure is logged and applies nothing (`owner
-commands: not read: <reason>`); a forge or ledger error escaping
+commands: not read: <reason>`); a ledger error escaping
 `apply_owner_commands` is logged by the orchestrator and the findings
 keep blocking; any other error is a defect and propagates.
 
