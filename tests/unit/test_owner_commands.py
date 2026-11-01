@@ -44,7 +44,11 @@ from repoach.review.owner_commands import (
     apply_owner_commands,
     parse_command,
 )
-from repoach.review.owner_store import fetch_owner_commands
+from repoach.review.owner_store import (
+    OwnerCommandRow,
+    fetch_owner_commands,
+    record_owner_command,
+)
 from repoach.review.report import archive_json, render_ledger_report
 from repoach.review.reviewer import ReviewVerdict
 
@@ -737,3 +741,20 @@ def test_archive_json_cannot_close_its_fence() -> None:
     text = archive_json({"owner_resolved": [{"reason": reason}]})
     assert "`" not in text
     assert json.loads(text)["owner_resolved"][0]["reason"] == reason
+
+
+def test_record_and_move_skips_a_comment_another_run_stored(db: Path) -> None:
+    """A comment a concurrent run already stored is neither recorded twice nor applied."""
+    target = _finding(db)
+    finding = _row(db, target)
+    command = parse_command(f"/resolve #{target} {REASON}")
+    assert command is not None
+    row = OwnerCommandRow(
+        pr_number=PR, comment_id=60, command="resolve", author="jwfaye", outcome="applied"
+    )
+    assert record_owner_command(db, row)
+    decision = owner_commands._Decision(owner_commands.OwnerOutcome.APPLIED, finding, "")
+    stored = owner_commands._record_and_move(db, row, decision, command, head_sha=HEAD, rows=[])
+    assert stored is None
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert len(fetch_owner_commands(db, PR)) == 1
