@@ -91,11 +91,14 @@ Most commands get one answer, in the thread for a thread command, on the
 pull request otherwise. The bot's own command gets none, and neither
 does a non-maintainer's command after the first one of that login.
 
-- applied `/resolve`: ``Finding #<id> owner-resolved by @<login> at
-  <sha7>: `` `<reason>` ``. The gate no longer counts it; `/reopen` counts
-  it again.`` The reason is a code span padded with spaces, its
-  delimiter one backtick longer than any run in it, so its mentions and
-  Markdown stay inert;
+- applied `/resolve`, where the reason is a code span padded with
+  spaces, its delimiter one backtick longer than any run in it, so its
+  mentions and Markdown stay inert:
+
+  ```text
+  Finding #<id> owner-resolved by @<login> at <sha7>: ` <reason> `. The gate no longer counts it; `/reopen` counts it again.
+  ```
+
 - applied `/reopen`: `Finding #<id> reopened by @<login>: the gate counts
   it again.`;
 - refusals start with `Ignored:` and say why: a reason under 20
