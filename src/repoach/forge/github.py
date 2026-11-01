@@ -66,10 +66,10 @@ from .runner import CommandResult, spawn
 _log = get_logger(__name__)
 
 GhResult = CommandResult
+"""Historical name of :class:`~repoach.forge.runner.CommandResult`."""
 
 _MAINTAINER_ROLES = frozenset({"admin", "maintain"})
 """GitHub collaborator roles that count as an owner (SP-OWNER-SETTLES-A-FINDING)."""
-"""Historical name of :class:`~repoach.forge.runner.CommandResult`."""
 
 DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
     "Test suite (Python 3.11)",
