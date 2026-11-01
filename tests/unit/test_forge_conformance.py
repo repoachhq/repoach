@@ -491,7 +491,7 @@ def test_is_maintainer_gitlab_member_must_be_active(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: dict[str, str], expected: bool
 ) -> None:
     """A blocked user or a membership awaiting approval is no maintainer, whatever the level."""
-    monkeypatch.setattr(gitlab_forge, "today", lambda: FROZEN_TODAY)
+    monkeypatch.setattr(gitlab_forge, "_today", lambda: FROZEN_TODAY)
     forge = _build("gitlab", tmp_path, "repoach-bot")
     payload = [{"username": "jwfaye", "access_level": 40, **member}]
     forge._spawn = ReplaySpawn(

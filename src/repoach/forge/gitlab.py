@@ -219,7 +219,7 @@ def pull_request_from_gitlab(mr: dict[str, object]) -> PullRequest:
     )
 
 
-def today() -> date:
+def _today() -> date:
     """The UTC date a membership expiry is judged against (a seam the tests freeze)."""
     return datetime.now(UTC).date()
 
@@ -238,7 +238,7 @@ def _expired(member: dict[str, object]) -> bool:
             error=str(exc),
         )
         return True
-    return day <= today()
+    return day <= _today()
 
 
 def note_to_comment(
