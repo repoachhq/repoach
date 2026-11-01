@@ -45,7 +45,7 @@ from repoach.review.owner_commands import (
     parse_command,
 )
 from repoach.review.owner_store import fetch_owner_commands
-from repoach.review.report import render_ledger_report
+from repoach.review.report import archive_json, render_ledger_report
 from repoach.review.reviewer import ReviewVerdict
 
 PR = 339
@@ -734,6 +734,6 @@ def test_local_bench_forge_has_no_maintainers(tmp_path: Path) -> None:
 def test_archive_json_cannot_close_its_fence() -> None:
     """A reason holding a backtick fence is archived with no literal backtick, read back intact."""
     reason = "closes ``` the fence and pings @someone"
-    text = orchestrator.archive_json({"owner_resolved": [{"reason": reason}]})
+    text = archive_json({"owner_resolved": [{"reason": reason}]})
     assert "`" not in text
     assert json.loads(text)["owner_resolved"][0]["reason"] == reason

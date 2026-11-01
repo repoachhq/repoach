@@ -276,7 +276,13 @@ def _target(
     findings: dict[int, Finding],
     root: Comment | None,
 ) -> _Decision | Finding:
-    """The finding the command addresses, or the refusal when it addresses none or several."""
+    """The finding the command addresses, or the refusal when it addresses none or several.
+
+    Returns:
+        The target :class:`~repoach.review.findings.Finding`, or a
+        :class:`_Decision` refusing the command (unknown id, a conversation
+        comment naming no finding, a thread anchoring none or several).
+    """
     if command.finding_id is not None:
         named = findings.get(command.finding_id)
         if named is None:
@@ -505,7 +511,6 @@ def _author_refusal(
 
 def _handle(
     forge: Forge,
-    db_path: Path,
     comment: Comment,
     root: Comment | None,
     command: OwnerCommand,
@@ -517,6 +522,17 @@ def _handle(
     rows: list[OwnerCommandRow],
 ) -> tuple[OwnerCommandRow, _Decision | None]:
     """Decide and describe one command not handled before; nothing is written here.
+
+    Args:
+        forge: Asked whether the author is a maintainer.
+        comment: The command comment.
+        root: The inline thread root it sits in, ``None`` on the pull request.
+        command: The parsed command.
+        pr_number: The pull / merge request.
+        head_sha: The reviewed head.
+        findings: The pull request's findings by id.
+        cache: Maintainer answers already read this run, by login.
+        rows: The commands handled before this one.
 
     Returns:
         The row to record and, for a command to apply, its decision (the
@@ -551,6 +567,42 @@ def _handle(
     if refusal is not None or decision.outcome is not OwnerOutcome.APPLIED or not decision.finding:
         return row, None
     return row.model_copy(update=_settlement_fields(decision.finding, command)), decision
+
+
+def _record_and_move(
+    db_path: Path,
+    row: OwnerCommandRow,
+    decision: _Decision | None,
+    command: OwnerCommand,
+    *,
+    head_sha: str,
+    rows: Sequence[OwnerCommandRow],
+) -> OwnerCommandRow | None:
+    """Record one handled command, then move its finding when it applies.
+
+    The row is written first; a move the ledger refuses revises it to a
+    no-op, so no finding ever moves without its row.
+
+    Returns:
+        The row as stored, or ``None`` when a concurrent run stored the
+        comment first.
+    """
+    if not record_owner_command(db_path, row):
+        return None
+    if decision is None:
+        return row
+    if _move(db_path, decision, command, login=row.author, head_sha=head_sha, rows=rows):
+        return row
+    refused = row.model_copy(
+        update={
+            "outcome": OwnerOutcome.NOOP,
+            "resolution": "",
+            "reply": f"No change: finding #{row.finding_id} could not be moved; "
+            "its status changed during this run.",
+        }
+    )
+    revise_owner_command(db_path, refused)
+    return refused
 
 
 def _post_replies(
@@ -668,7 +720,6 @@ def apply_owner_commands(
         try:
             row, decision = _handle(
                 forge,
-                db_path,
                 comment,
                 root,
                 command,
@@ -689,26 +740,13 @@ def apply_owner_commands(
                 run.unreadable.append(comment.author)
             continue
         seen.add(comment.id)
-        if not record_owner_command(db_path, row):
+        stored = _record_and_move(db_path, row, decision, command, head_sha=head_sha, rows=rows)
+        if stored is None:
             continue
-        if decision is not None:
-            moved = _move(
-                db_path, decision, command, login=comment.author, head_sha=head_sha, rows=rows
-            )
-            if moved:
-                findings = _findings_by_id(db_path, pr_number)
-            else:
-                row = row.model_copy(
-                    update={
-                        "outcome": OwnerOutcome.NOOP,
-                        "resolution": "",
-                        "reply": f"No change: finding #{row.finding_id} could not be moved; "
-                        "its status changed during this run.",
-                    }
-                )
-                revise_owner_command(db_path, row)
-        rows.append(row)
-        run.handled.append(row)
+        if stored.resolution:
+            findings = _findings_by_id(db_path, pr_number)
+        rows.append(stored)
+        run.handled.append(stored)
     run.unposted = _post_replies(
         forge, db_path, fetch_owner_commands(db_path, pr_number), pr_number=pr_number, post=post
     )
