@@ -1,7 +1,7 @@
 ---
 id: SP-OWNER-SETTLES-A-FINDING
 title: A maintainer settles, with a recorded reason, a finding the refuter cannot judge
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-01
@@ -94,7 +94,8 @@ pull request does.
   `not a maintainer of this repository`, once per login whatever the
   number of its commands (each is still recorded). A command in an
   edited comment (`Comment.edited`: GitHub `updated_at` after
-  `created_at`; GitLab the same unless it equals `resolved_at`, which a
+  `created_at`, or missing beside a `created_at` (fail closed); GitLab the
+  same unless it equals `resolved_at`, which a
   thread's resolution sets, measured on Yoob !339 and !322 on
   2026-11-01: 138 resolved notes all so, 83 open notes none) is refused
   with one reply per login, whoever wrote it: anyone with write access may edit
