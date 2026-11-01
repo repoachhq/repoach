@@ -551,6 +551,8 @@ def test_parse_command_cuts_reason_at_max_chars() -> None:
     assert escaped.reason == "runner host [31m checked by hand today"
     assert all(ch.isprintable() for ch in escaped.reason)
     assert parse_command("/resolve#5 a reason long enough to count") is None
+    bare = parse_command("/resolve #12")
+    assert bare is not None and bare.finding_id == 12 and bare.reason == ""
     assert parse_command("/resolve: a reason long enough to count") is None
 
 
@@ -619,3 +621,16 @@ def test_resolve_reopen_resolve_ends_resolved_again(db: Path) -> None:
     ]
     assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
     assert [s.comment_id for s in run.settled] == [54]
+
+
+def test_bot_login_is_matched_case_insensitively(db: Path) -> None:
+    """A command posted as the bot under another case is the bot's: never applied, no read."""
+    target = _finding(db)
+    forge = FakeForge(
+        conversation=[_pr_comment(55, f"/resolve #{target} {REASON}", author="Repoach-Bot")],
+        maintainers={"Repoach-Bot": True},
+    )
+    run = _apply(forge, db)
+    assert [row.outcome for row in run.handled] == ["bot"]
+    assert forge.permission_reads == []
+    assert _row(db, target).status is FindingStatus.VERIFIED

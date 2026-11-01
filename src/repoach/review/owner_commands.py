@@ -35,7 +35,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from ..core.logging import get_logger
-from ..forge.protocol import Comment, Forge, ForgeError
+from ..forge.protocol import Comment, Forge, ForgeError, is_bot_login
 from .findings import (
     OWNER_SETTLEABLE_STATUSES,
     Finding,
@@ -469,7 +469,7 @@ def _author_refusal(
         ForgeError: The author's permission could not be read.
     """
     login = comment.author
-    if not login or login == forge.bot_username:
+    if not login or is_bot_login(forge.bot_username, login):
         return OwnerOutcome.BOT, ""
     if comment.edited:
         return (
