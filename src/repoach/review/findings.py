@@ -12,7 +12,10 @@ sends the finding back for a fresh judging round.  Without that exit a
 single injected refutation verdict would bury a real blocking finding
 forever, self-defended by the refuted-finding sentinel.  RESOLVED stays
 terminal; STUCK leaves only for RESOLVED_AT_HEAD, when the merge gate finds
-the head no longer supports it (SP-GATE-REVERIFIES-AT-HEAD).
+the head no longer supports it (SP-GATE-REVERIFIES-AT-HEAD), or for
+OWNER_RESOLVED. Every unsettled state may become OWNER_RESOLVED when a
+maintainer settles the finding with a reason, and only a maintainer's
+reopen leaves it, to the state it held before (SP-OWNER-SETTLES-A-FINDING).
 """
 
 from __future__ import annotations
@@ -105,6 +108,13 @@ class FindingStatus(StrEnum):
     settled it (SP-GATE-REVERIFIES-AT-HEAD). It says nothing about
     whether the finding was real at its own head, so it is not in
     :data:`CONFIRMED_REAL_STATUSES`.
+
+    ``owner_resolved`` is non-blocking and settled for the merge gate and
+    the re-check at head: a maintainer of the repository settled the
+    finding with a recorded reason (SP-OWNER-SETTLES-A-FINDING), which no
+    agent can do. Only a maintainer's ``/reopen`` leaves it, back to the
+    status it held before, so it is not terminal; it is not in
+    :data:`CONFIRMED_REAL_STATUSES` either.
     """
 
     PROPOSED = "proposed"
@@ -115,6 +125,7 @@ class FindingStatus(StrEnum):
     STUCK = "stuck"
     NOT_APPLICABLE = "not_applicable"
     RESOLVED_AT_HEAD = "resolved_at_head"
+    OWNER_RESOLVED = "owner_resolved"
 
 
 CONFIRMED_REAL_STATUSES: frozenset[FindingStatus] = frozenset(
@@ -126,6 +137,14 @@ review_lessons both import this constant rather than keeping their own
 copies."""
 
 
+OWNER_SETTLEABLE_STATUSES: frozenset[FindingStatus] = frozenset(
+    {FindingStatus.PROPOSED, FindingStatus.VERIFIED, FindingStatus.OPEN, FindingStatus.STUCK}
+)
+"""Statuses an owner ``/resolve`` may settle and an owner ``/reopen`` returns
+to (SP-OWNER-SETTLES-A-FINDING): the unsettled ones, which the merge gate
+and the re-check at head still act on."""
+
+
 ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
     FindingStatus.PROPOSED: frozenset(
         {
@@ -133,17 +152,26 @@ ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
             FindingStatus.REFUTED,
             FindingStatus.NOT_APPLICABLE,
             FindingStatus.RESOLVED_AT_HEAD,
+            FindingStatus.OWNER_RESOLVED,
         }
     ),
-    FindingStatus.VERIFIED: frozenset({FindingStatus.OPEN, FindingStatus.RESOLVED_AT_HEAD}),
+    FindingStatus.VERIFIED: frozenset(
+        {FindingStatus.OPEN, FindingStatus.RESOLVED_AT_HEAD, FindingStatus.OWNER_RESOLVED}
+    ),
     FindingStatus.OPEN: frozenset(
-        {FindingStatus.RESOLVED, FindingStatus.STUCK, FindingStatus.RESOLVED_AT_HEAD}
+        {
+            FindingStatus.RESOLVED,
+            FindingStatus.STUCK,
+            FindingStatus.RESOLVED_AT_HEAD,
+            FindingStatus.OWNER_RESOLVED,
+        }
     ),
     FindingStatus.REFUTED: frozenset({FindingStatus.PROPOSED}),
     FindingStatus.RESOLVED: frozenset(),
-    FindingStatus.STUCK: frozenset({FindingStatus.RESOLVED_AT_HEAD}),
+    FindingStatus.STUCK: frozenset({FindingStatus.RESOLVED_AT_HEAD, FindingStatus.OWNER_RESOLVED}),
     FindingStatus.NOT_APPLICABLE: frozenset(),
     FindingStatus.RESOLVED_AT_HEAD: frozenset(),
+    FindingStatus.OWNER_RESOLVED: OWNER_SETTLEABLE_STATUSES,
 }
 
 

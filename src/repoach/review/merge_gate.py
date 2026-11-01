@@ -68,12 +68,15 @@ _SETTLED = frozenset(
         FindingStatus.REFUTED,
         FindingStatus.NOT_APPLICABLE,
         FindingStatus.RESOLVED_AT_HEAD,
+        FindingStatus.OWNER_RESOLVED,
     }
 )
 """Statuses that never block: ``not_applicable`` is terminal and non-blocking
 (SP-UNIVERSAL-GATES G4) — the verifier does not apply to the cited file;
 ``resolved_at_head`` is the gate's own re-check finding that the head no
-longer supports a finding of an older head (SP-GATE-REVERIFIES-AT-HEAD)."""
+longer supports a finding of an older head (SP-GATE-REVERIFIES-AT-HEAD);
+``owner_resolved`` is a maintainer's recorded settlement
+(SP-OWNER-SETTLES-A-FINDING), counted again only after a ``/reopen``."""
 
 NO_REVERIFICATION: dict[str, int] = {"resolved": 0, "still_open": 0, "needs_judgement": 0}
 """The ``reverified`` counts of a gate that re-checked nothing."""

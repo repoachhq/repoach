@@ -43,20 +43,36 @@ def test_allowed_transitions_law() -> None:
     ``resolved_at_head`` (SP-GATE-REVERIFIES-AT-HEAD) is reachable from
     every unsettled state, ``stuck`` included: the gate's re-check at a
     newer head is the way out of a finding a person fixed.
+    ``owner_resolved`` (SP-OWNER-SETTLES-A-FINDING) is reachable from the
+    same four unsettled states, and a maintainer's ``/reopen`` leads back
+    to any of them, the one the finding held.
     """
     at_head = FindingStatus.RESOLVED_AT_HEAD
-    assert ALLOWED_TRANSITIONS[FindingStatus.PROPOSED] == frozenset(
-        {FindingStatus.VERIFIED, FindingStatus.REFUTED, FindingStatus.NOT_APPLICABLE, at_head}
+    owner = FindingStatus.OWNER_RESOLVED
+    unsettled = frozenset(
+        {FindingStatus.PROPOSED, FindingStatus.VERIFIED, FindingStatus.OPEN, FindingStatus.STUCK}
     )
-    assert ALLOWED_TRANSITIONS[FindingStatus.VERIFIED] == frozenset({FindingStatus.OPEN, at_head})
+    assert ALLOWED_TRANSITIONS[FindingStatus.PROPOSED] == frozenset(
+        {
+            FindingStatus.VERIFIED,
+            FindingStatus.REFUTED,
+            FindingStatus.NOT_APPLICABLE,
+            at_head,
+            owner,
+        }
+    )
+    assert ALLOWED_TRANSITIONS[FindingStatus.VERIFIED] == frozenset(
+        {FindingStatus.OPEN, at_head, owner}
+    )
     assert ALLOWED_TRANSITIONS[FindingStatus.OPEN] == frozenset(
-        {FindingStatus.RESOLVED, FindingStatus.STUCK, at_head}
+        {FindingStatus.RESOLVED, FindingStatus.STUCK, at_head, owner}
     )
     assert ALLOWED_TRANSITIONS[FindingStatus.REFUTED] == frozenset({FindingStatus.PROPOSED})
     assert ALLOWED_TRANSITIONS[FindingStatus.RESOLVED] == frozenset()
-    assert ALLOWED_TRANSITIONS[FindingStatus.STUCK] == frozenset({at_head})
+    assert ALLOWED_TRANSITIONS[FindingStatus.STUCK] == frozenset({at_head, owner})
     assert ALLOWED_TRANSITIONS[FindingStatus.NOT_APPLICABLE] == frozenset()
     assert ALLOWED_TRANSITIONS[at_head] == frozenset()
+    assert ALLOWED_TRANSITIONS[owner] == unsettled
 
 
 def test_terminal_states_have_no_exits() -> None:
