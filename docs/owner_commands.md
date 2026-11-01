@@ -46,15 +46,23 @@ Only a maintainer, as the forge reports it for each command:
 The comment text never decides who is an owner, and the bot's own login
 never is. A command from anyone else is ignored and answered once per
 login: ``Ignored: @<login> is not a maintainer of this repository; only a
-maintainer's `/resolve` or `/reopen` settles a finding.`` A command in an edited
-comment is refused, whoever wrote it: on GitHub anyone with write access
-may edit someone else's comment, so an edited comment is not its
-author's word, and is answered once per login. Post the command in a new comment. (Resolving a GitLab
-thread moves its notes' `updated_at` too; that alone is not an edit.)
-The edit is read from the forge's timestamps, which have a one-second
-resolution and carry no editor: an edit made within the same second as
-the post, or a GitLab edit followed by the thread's resolution (only a
-Maintainer or Owner may edit another user's GitLab comment), is not seen.
+maintainer's `/resolve` or `/reopen` settles a finding.``
+
+A command in an edited comment is refused, whoever wrote it:
+
+- on GitHub anyone with write access may edit someone else's comment, so
+  an edited comment is not its author's word;
+- the refusal is answered once per login; post the command in a new
+  comment;
+- resolving a GitLab thread moves its notes' `updated_at` too; that
+  alone is not an edit;
+- a comment whose payload has no `updated_at` reads as edited;
+- the edit is read from the forge's timestamps, which have a one-second
+  resolution and carry no editor: an edit made within the same second as
+  the post, or a GitLab edit followed by the thread's resolution (only a
+  Maintainer or Owner may edit another user's GitLab comment), is not
+  seen.
+
 When the forge cannot say (the token may
 not read members, the API fails), nothing is applied, nothing is
 recorded, and the next run asks again.

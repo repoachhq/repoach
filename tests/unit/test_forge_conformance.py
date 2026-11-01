@@ -40,6 +40,7 @@ from repoach.forge import (
 from repoach.forge import gitlab as gitlab_forge
 from repoach.forge.github import GitHubForge, comment_from_github
 from repoach.forge.gitlab import GitLabForge, note_to_comment
+from repoach.forge.protocol import edited_since
 from repoach.forge.recording import (
     Exchange,
     ReplaySpawn,
@@ -514,8 +515,27 @@ def test_is_maintainer_edited_comments_are_flagged() -> None:
     base = {"id": 1, "body": "/resolve", "created_at": "2026-11-01T10:00:00Z"}
     assert comment_from_github({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
     assert comment_from_github({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
-    assert comment_from_github(base).edited is False
+    assert comment_from_github(base).edited is True
+    assert comment_from_github({"id": 2, "body": "/resolve"}).edited is True
     resolved = {**base, "updated_at": "2026-11-01T12:00:00Z", "resolved_at": "2026-11-01T12:00:00Z"}
     assert note_to_comment(resolved).edited is False
     assert note_to_comment({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
     assert note_to_comment({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
+
+
+@pytest.mark.parametrize(
+    ("created_at", "updated_at", "resolved_at", "expected"),
+    [
+        ("t1", None, None, True),
+        ("t1", "", None, True),
+        (None, None, None, True),
+        ("t1", "t1", None, False),
+        ("t1", "t2", None, True),
+        ("t1", "t2", "t2", False),
+    ],
+)
+def test_edited_since_fails_closed(
+    created_at: str | None, updated_at: str | None, resolved_at: str | None, expected: bool
+) -> None:
+    """A missing ``updated_at`` reads as edited; only a resolution moves it without an edit."""
+    assert edited_since(created_at, updated_at, resolved_at=resolved_at) is expected

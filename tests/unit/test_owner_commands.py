@@ -44,8 +44,12 @@ from repoach.review.owner_commands import (
     apply_owner_commands,
     parse_command,
 )
-from repoach.review.owner_store import fetch_owner_commands
-from repoach.review.report import render_ledger_report
+from repoach.review.owner_store import (
+    OwnerCommandRow,
+    fetch_owner_commands,
+    record_owner_command,
+)
+from repoach.review.report import archive_json, render_ledger_report
 from repoach.review.reviewer import ReviewVerdict
 
 PR = 339
@@ -734,6 +738,23 @@ def test_local_bench_forge_has_no_maintainers(tmp_path: Path) -> None:
 def test_archive_json_cannot_close_its_fence() -> None:
     """A reason holding a backtick fence is archived with no literal backtick, read back intact."""
     reason = "closes ``` the fence and pings @someone"
-    text = orchestrator.archive_json({"owner_resolved": [{"reason": reason}]})
+    text = archive_json({"owner_resolved": [{"reason": reason}]})
     assert "`" not in text
     assert json.loads(text)["owner_resolved"][0]["reason"] == reason
+
+
+def test_record_and_move_skips_a_comment_another_run_stored(db: Path) -> None:
+    """A comment a concurrent run already stored is neither recorded twice nor applied."""
+    target = _finding(db)
+    finding = _row(db, target)
+    command = parse_command(f"/resolve #{target} {REASON}")
+    assert command is not None
+    row = OwnerCommandRow(
+        pr_number=PR, comment_id=60, command="resolve", author="jwfaye", outcome="applied"
+    )
+    assert record_owner_command(db, row)
+    decision = owner_commands._Decision(owner_commands.OwnerOutcome.APPLIED, finding, "")
+    stored = owner_commands._record_and_move(db, row, decision, command, head_sha=HEAD, rows=[])
+    assert stored is None
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert len(fetch_owner_commands(db, PR)) == 1
