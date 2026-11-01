@@ -1,0 +1,27 @@
+{
+  "args": [
+    "jwfaye"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "repos/:owner/:repo/collaborators/jwfaye/permission"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "{\"permission\": \"write\", \"role_name\": \"maintain\", \"user\": {\"login\": \"jwfaye\"}}"
+    }
+  ],
+  "case": "is_maintainer",
+  "forge": "github",
+  "kwargs": {},
+  "method": "is_maintainer",
+  "raises": null,
+  "result": true,
+  "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
+  "trimmed": null
+}

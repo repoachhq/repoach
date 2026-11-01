@@ -406,3 +406,28 @@ def test_is_trusted_author(forge_name: str, tmp_path: Path) -> None:
 def test_bot_username(forge_name: str, tmp_path: Path) -> None:
     """The configured bot identity is what the forge exposes."""
     assert _build(forge_name, tmp_path, "repoach-bot").bot_username == "repoach-bot"
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub ``maintain`` role and a GitLab ``access_level`` 40 are maintainers."""
+    result, _ = _replay(forge_name, "is_maintainer", tmp_path)
+    assert result is True
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_developer(forge_name: str, tmp_path: Path) -> None:
+    """A ``write`` role, ``access_level`` 30, or a prefix match of the query are not."""
+    result, _ = _replay(forge_name, "is_maintainer_developer", tmp_path)
+    assert result is False
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_never_asks_about_the_bot(forge_name: str, tmp_path: Path) -> None:
+    """The bot, an empty login and a non-username are refused without a forge call."""
+    forge = _build(forge_name, tmp_path, "repoach-bot")
+    forge._spawn = ReplaySpawn([])
+    assert forge.is_maintainer("repoach-bot") is False
+    assert forge.is_maintainer("") is False
+    assert forge.is_maintainer("github-actions[bot]") is False
+    assert forge.is_maintainer("a/../b") is False

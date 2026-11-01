@@ -56,6 +56,7 @@ from .protocol import (
     ReviewDraft,
     WriteRefusal,
     diff_files,
+    maintainer_candidate,
     trusted,
     unnumbered_write,
     write_barrier,
@@ -65,6 +66,9 @@ from .runner import CommandResult, spawn
 _log = get_logger(__name__)
 
 GhResult = CommandResult
+
+_MAINTAINER_ROLES = frozenset({"admin", "maintain"})
+"""GitHub collaborator roles that count as an owner (SP-OWNER-SETTLES-A-FINDING)."""
 """Historical name of :class:`~repoach.forge.runner.CommandResult`."""
 
 DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
@@ -467,6 +471,36 @@ class GitHubForge:
     def is_trusted_author(self, comment: Comment) -> bool:
         """True when ``comment`` was authored by :attr:`bot_username` (fail-closed)."""
         return trusted(self._bot_login, comment.author)
+
+    def is_maintainer(self, login: str) -> bool:
+        """True when ``login``'s collaborator role is ``admin`` or ``maintain``.
+
+        Reads ``repos/:owner/:repo/collaborators/<login>/permission``;
+        ``role_name`` names ``maintain`` (the legacy ``permission`` field
+        folds it into ``write``). A login the API does not know (404) is
+        no maintainer.
+
+        Raises:
+            ForgeError: The permission could not be read.
+        """
+        if not maintainer_candidate(self._bot_login, login):
+            return False
+        res = self._run(["api", f"repos/:owner/:repo/collaborators/{login}/permission"])
+        if not res.ok:
+            try:
+                raise_for_gh(res)
+            except ForgeNotFoundError as exc:
+                _log.info("forge.github.not_a_collaborator", login=login, error=exc.message[:120])
+                return False
+        try:
+            data = json.loads(res.stdout)
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"JSON decode failed: {str(exc)[:160]}") from exc
+        if not isinstance(data, dict):
+            raise ForgeError("collaborator permission returned a non-object payload")
+        role = str(data.get("role_name") or "")
+        permission = str(data.get("permission") or "")
+        return role in _MAINTAINER_ROLES or permission == "admin"
 
     def _spawn(self, argv: list[str], *, input_data: str | None = None) -> GhResult:
         """Run a subprocess in ``cwd`` and capture output as a GhResult.

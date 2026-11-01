@@ -28,6 +28,7 @@ cheap and explicit instead of being folded into a heavier read.
 from __future__ import annotations
 
 import functools
+import re
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -712,6 +713,21 @@ class Forge(Protocol):
         """True when ``comment`` was authored by :attr:`bot_username`."""
         ...
 
+    def is_maintainer(self, login: str) -> bool:
+        """True when the forge grants ``login`` maintainer rights on the repository.
+
+        GitHub: collaborator role ``admin`` or ``maintain``. GitLab:
+        project member (inherited included) with ``access_level >= 40``.
+        :attr:`bot_username`, an empty login and a login that is not a
+        plain forge username are never maintainers
+        (SP-OWNER-SETTLES-A-FINDING G2).
+
+        Raises:
+            ForgeError: The permission could not be read; the caller
+                fails closed.
+        """
+        ...
+
     def fetch_head(self, number: int) -> str:
         """Fetch the change's head into the local clone; return the ref fetched."""
         ...
@@ -751,3 +767,26 @@ def trusted(bot_username: str, author: str) -> bool:
         True only when both are non-empty and equal.
     """
     return bool(bot_username) and bool(author) and author == bot_username
+
+
+FORGE_LOGIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+"""A plain GitHub login or GitLab username: what may be put in a permission URL."""
+
+
+def maintainer_candidate(bot_username: str, login: str) -> bool:
+    """Whether ``login`` may be asked about at all by :meth:`Forge.is_maintainer`.
+
+    The bot's own login is never an owner, and a login that is empty or
+    not a plain forge username (``[bot]`` suffixes, slashes, query
+    characters) is refused before any URL is built from it.
+
+    Args:
+        bot_username: The configured bot identity.
+        login: The comment author to check.
+
+    Returns:
+        True when ``login`` is a plain username other than the bot's.
+    """
+    if not login or login == bot_username:
+        return False
+    return FORGE_LOGIN_RE.fullmatch(login) is not None
