@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/owner_commands.py, src/repoach/review/owner_store.py, tests/unit/test_owner_commands.py, tests/integration/test_owner_resolves_a_finding_end_to_end.py]
   resources: [db:table:owner_commands, format:owner-settle-command]
 
-depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-UNIVERSAL-FORGE, SP-FINDINGS-INIT-RACE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-DRY-RUN-NEVER-POSTS, SP-SCHEMA-INIT-RACE-GENERALIZE, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ]
+depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-UNIVERSAL-FORGE, SP-FINDINGS-INIT-RACE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-DRY-RUN-NEVER-POSTS, SP-SCHEMA-INIT-RACE-GENERALIZE, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ, SP-UNIVERSAL-GATES, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:
@@ -239,6 +239,9 @@ failure is logged by the orchestrator and the findings keep blocking.
   forge with a stubbed `gh`, approving reviewers).
 - Adds dependency: -> SP-SCHEMA-INIT-RACE-GENERALIZE (`owner_commands` is
   created through `ensure_schema_created`).
+- Adds dependency: -> SP-UNIVERSAL-GATES, SP-DEDUP-CLASSIFICATION-CONSTANTS,
+  SP-RETRY-BACKOFF-DEDUP (the unit tests read the gate configuration, the
+  merge-gate facts and the review verdict they own).
 - New shared state: `db:table:owner_commands`; new contract
   `format:owner-settle-command`. `merge_gate._SETTLED` gains
   `owner_resolved`.
