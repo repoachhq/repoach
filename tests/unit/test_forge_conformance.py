@@ -22,7 +22,7 @@ forge-neutral contract of the method.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,7 @@ from repoach.forge import (
     ForgeMergeRefusedError,
     ForgeNotFoundError,
 )
+from repoach.forge import gitlab as gitlab_forge
 from repoach.forge.github import GitHubForge, comment_from_github
 from repoach.forge.gitlab import GitLabForge, note_to_comment
 from repoach.forge.recording import (
@@ -49,7 +50,7 @@ from repoach.forge.recording import (
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "forge"
 FORGES = ["github", "gitlab"]
-TODAY = datetime.now(UTC).date().isoformat()
+FROZEN_TODAY = date(2026, 11, 1)
 
 
 def _build(forge_name: str, tmp_path: Path, bot: str) -> Forge:
@@ -481,14 +482,16 @@ def test_is_maintainer_not_object(forge_name: str, tmp_path: Path) -> None:
         ({"state": "blocked"}, False),
         ({"state": "active", "expires_at": "2026-01-01"}, False),
         ({"state": "active", "expires_at": "2999-12-31"}, True),
-        ({"state": "active", "expires_at": TODAY}, False),
+        ({"state": "active", "expires_at": "2026-11-01"}, False),
+        ({"state": "active", "expires_at": "2026-11-02"}, True),
         ({"state": "active", "expires_at": "next week"}, False),
     ],
 )
 def test_is_maintainer_gitlab_member_must_be_active(
-    tmp_path: Path, member: dict[str, str], expected: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: dict[str, str], expected: bool
 ) -> None:
     """A blocked user or a membership awaiting approval is no maintainer, whatever the level."""
+    monkeypatch.setattr(gitlab_forge, "today", lambda: FROZEN_TODAY)
     forge = _build("gitlab", tmp_path, "repoach-bot")
     payload = [{"username": "jwfaye", "access_level": 40, **member}]
     forge._spawn = ReplaySpawn(
