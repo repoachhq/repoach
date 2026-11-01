@@ -83,6 +83,7 @@ class OwnerOutcome(StrEnum):
     AMBIGUOUS = "ambiguous"
     NOOP = "noop"
     BOT = "bot"
+    EDITED = "edited"
 
 
 @dataclass(frozen=True)
@@ -197,7 +198,8 @@ def parse_command(body: str) -> OwnerCommand | None:
 
     The body, stripped, must start with ``/resolve`` or ``/reopen`` followed
     by whitespace or its end; an optional ``#<finding-id>`` comes next, and
-    the rest of the body, whitespace collapsed and cut at
+    the rest of the body, every non-printable character (an ANSI escape)
+    turned to a space, whitespace collapsed and cut at
     :data:`REASON_MAX_CHARS`, is the reason.
 
     Args:
@@ -215,7 +217,8 @@ def parse_command(body: str) -> OwnerCommand | None:
     if named is not None:
         finding_id = int(named.group("id"))
         rest = rest[named.end() :]
-    reason = " ".join(rest.split())[:REASON_MAX_CHARS]
+    printable = "".join(ch if ch.isprintable() else " " for ch in rest)
+    reason = " ".join(printable.split())[:REASON_MAX_CHARS]
     return OwnerCommand(verb=OwnerVerb(match.group("verb")), finding_id=finding_id, reason=reason)
 
 
@@ -433,6 +436,11 @@ def _commands(forge: Forge, pr_number: int) -> list[tuple[Comment, Comment | Non
     return sorted(pairs, key=lambda pair: (pair[0].created_at, pair[0].id))
 
 
+def _findings_by_id(db_path: Path, pr_number: int) -> dict[int, Finding]:
+    """The pull request's findings by ledger id, read once and again after each applied move."""
+    return {f.id: f for f in fetch_findings(db_path, pr_number) if f.id is not None}
+
+
 def _maintainer(forge: Forge, login: str, cache: dict[str, bool]) -> bool:
     """Whether ``login`` is a maintainer, read once per run per login.
 
@@ -444,6 +452,43 @@ def _maintainer(forge: Forge, login: str, cache: dict[str, bool]) -> bool:
     return cache[login]
 
 
+def _author_refusal(
+    forge: Forge,
+    comment: Comment,
+    *,
+    cache: dict[str, bool],
+    rows: Sequence[OwnerCommandRow],
+) -> tuple[OwnerOutcome, str] | None:
+    """Why the comment's author or form stops the command, with its answer; ``None`` lets it on.
+
+    The bot's own command is answered by nothing; an edited comment is
+    refused, since anyone with write access may edit someone else's
+    comment on GitHub; a non-maintainer is answered once per login.
+
+    Raises:
+        ForgeError: The author's permission could not be read.
+    """
+    login = comment.author
+    if not login or login == forge.bot_username:
+        return OwnerOutcome.BOT, ""
+    if comment.edited:
+        return (
+            OwnerOutcome.EDITED,
+            "Ignored: an edited comment is not read as a command; post the command in a "
+            "new comment.",
+        )
+    if _maintainer(forge, login, cache):
+        return None
+    answered = any(row.author == login and row.outcome == OwnerOutcome.NOT_OWNER for row in rows)
+    reply = (
+        ""
+        if answered
+        else f"Ignored: @{login} is not a maintainer of this repository; only a maintainer's "
+        "`/resolve` or `/reopen` settles a finding."
+    )
+    return OwnerOutcome.NOT_OWNER, reply
+
+
 def _handle(
     forge: Forge,
     db_path: Path,
@@ -453,6 +498,7 @@ def _handle(
     *,
     pr_number: int,
     head_sha: str,
+    findings: dict[int, Finding],
     cache: dict[str, bool],
     rows: list[OwnerCommandRow],
 ) -> OwnerCommandRow:
@@ -473,22 +519,10 @@ def _handle(
         outcome=OwnerOutcome.BOT,
         reply_to=root.id if root is not None else None,
     )
-    if not login or login == forge.bot_username:
-        return base
-    if not _maintainer(forge, login, cache):
-        answered = any(
-            row.author == login and row.outcome == OwnerOutcome.NOT_OWNER for row in rows
-        )
-        return base.model_copy(
-            update={
-                "outcome": OwnerOutcome.NOT_OWNER,
-                "reply": ""
-                if answered
-                else f"Ignored: @{login} is not a maintainer of this repository; only a "
-                "maintainer's `/resolve` or `/reopen` settles a finding.",
-            }
-        )
-    findings = {f.id: f for f in fetch_findings(db_path, pr_number) if f.id is not None}
+    refusal = _author_refusal(forge, comment, cache=cache, rows=rows)
+    if refusal is not None:
+        outcome, reply = refusal
+        return base.model_copy(update={"outcome": outcome, "reply": reply})
     decision = _decide(command, login=login, head_sha=head_sha, findings=findings, root=root)
     row = base.model_copy(
         update={
@@ -618,6 +652,7 @@ def apply_owner_commands(
     rows = fetch_owner_commands(db_path, pr_number)
     seen = {row.comment_id for row in rows}
     cache: dict[str, bool] = {}
+    findings = _findings_by_id(db_path, pr_number)
     for comment, root in pairs:
         command = parse_command(comment.body)
         if command is None or comment.id in seen:
@@ -631,6 +666,7 @@ def apply_owner_commands(
                 command,
                 pr_number=pr_number,
                 head_sha=head_sha,
+                findings=findings,
                 cache=cache,
                 rows=rows,
             )
@@ -647,6 +683,8 @@ def apply_owner_commands(
         if record_owner_command(db_path, row):
             rows.append(row)
             run.handled.append(row)
+        if row.resolution:
+            findings = _findings_by_id(db_path, pr_number)
         seen.add(comment.id)
     run.unposted = _post_replies(
         forge, db_path, fetch_owner_commands(db_path, pr_number), pr_number=pr_number, post=post

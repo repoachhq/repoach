@@ -15,6 +15,7 @@ import pytest
 
 from repoach.forge.protocol import Comment, ForgeError
 from repoach.gates.config import GatesConfig
+from repoach.review import owner_commands
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -26,8 +27,13 @@ from repoach.review.findings import (
     record_review_integrity,
 )
 from repoach.review.head_reverify import reverify_older_findings
-from repoach.review.merge_gate import summarise_ledger_facts, verdict_from_facts
+from repoach.review.merge_gate import (
+    compute_merge_decision,
+    summarise_ledger_facts,
+    verdict_from_facts,
+)
 from repoach.review.owner_commands import (
+    REASON_MAX_CHARS,
     REASON_MIN_CHARS,
     OwnerVerb,
     apply_owner_commands,
@@ -433,8 +439,6 @@ def test_report_line_and_json_name_the_owner(db: Path) -> None:
             "outcome": "applied",
         }
     ]
-    from repoach.review.merge_gate import compute_merge_decision
-
     facts = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
     report = render_ledger_report(
         db,
@@ -536,3 +540,82 @@ def test_reason_is_echoed_as_inert_code(db: Path) -> None:
     )
     _apply(forge, db)
     assert f"`` {reason} ``" in forge.posted[0]
+
+
+def test_parse_command_cuts_reason_at_max_chars() -> None:
+    """A long reason is cut, control bytes are blanked, and a glued suffix is no command."""
+    parsed = parse_command("/resolve #5 " + "x" * (REASON_MAX_CHARS + 500))
+    assert parsed is not None and len(parsed.reason) == REASON_MAX_CHARS
+    escaped = parse_command("/resolve #5 runner host\x1b[31m checked\x07 by hand today")
+    assert escaped is not None
+    assert escaped.reason == "runner host [31m checked by hand today"
+    assert all(ch.isprintable() for ch in escaped.reason)
+    assert parse_command("/resolve#5 a reason long enough to count") is None
+    assert parse_command("/resolve: a reason long enough to count") is None
+
+
+def test_edited_comment_is_not_a_command(db: Path) -> None:
+    """An edited comment is refused with one reply, whoever wrote it, and changes nothing."""
+    target = _finding(db)
+    edited = _pr_comment(50, f"/resolve #{target} {REASON}").model_copy(update={"edited": True})
+    forge = FakeForge(conversation=[edited], maintainers={"jwfaye": True})
+    run = _apply(forge, db)
+    _apply(forge, db)
+    assert [row.outcome for row in run.handled] == ["edited"]
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert forge.permission_reads == []
+    assert len(forge.posted) == 1 and "edited comment" in forge.posted[0]
+
+
+def test_resolve_refused_by_ledger_is_recorded_as_noop(
+    db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A move the ledger refuses is recorded as a no-op and answered so."""
+    target = _finding(db)
+    monkeypatch.setattr(owner_commands, "update_finding_status", lambda *_a, **_k: False)
+    forge = FakeForge(
+        conversation=[_pr_comment(51, f"/resolve #{target} {REASON}")],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    assert [(row.outcome, row.resolution) for row in run.handled] == [("noop", "")]
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert "could not be moved" in forge.posted[0]
+
+
+def test_thread_anchoring_no_finding_is_answered_and_ignored(db: Path) -> None:
+    """A thread whose root cites no finding's file and line settles nothing, answered once."""
+    target = _finding(db)
+    forge = FakeForge(
+        inline=[
+            _root(60, path="docs/other.md", line=4),
+            _reply(61, f"/resolve {REASON}", root=60),
+        ],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    assert [row.outcome for row in run.handled] == ["unknown_finding"]
+    assert _row(db, target).status is FindingStatus.VERIFIED
+    assert forge.replies[0][0] == 60
+    assert "anchors no finding" in forge.replies[0][1]
+
+
+def test_resolve_reopen_resolve_ends_resolved_again(db: Path) -> None:
+    """``/resolve``, ``/reopen``, ``/resolve``: owner-resolved again, by the last reason."""
+    target = _finding(db)
+    forge = FakeForge(
+        conversation=[
+            _pr_comment(52, f"/resolve #{target} {REASON}"),
+            _pr_comment(53, f"/reopen #{target}"),
+            _pr_comment(54, f"/resolve #{target} {REASON}, confirmed a second time"),
+        ],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    assert [row.resolution for row in run.handled] == [
+        "owner_resolve",
+        "owner_reopen",
+        "owner_resolve",
+    ]
+    assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
+    assert [s.comment_id for s in run.settled] == [54]
