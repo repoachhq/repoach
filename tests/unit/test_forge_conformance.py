@@ -433,6 +433,7 @@ def test_is_maintainer_never_asks_about_the_bot(forge_name: str, tmp_path: Path)
     assert forge.is_maintainer("") is False
     assert forge.is_maintainer("github-actions[bot]") is False
     assert forge.is_maintainer("a/../b") is False
+    assert forge.is_maintainer("Repoach-Bot") is False
 
 
 @pytest.mark.parametrize("forge_name", FORGES)
@@ -476,6 +477,8 @@ def test_is_maintainer_not_object(forge_name: str, tmp_path: Path) -> None:
         ({"state": "active", "membership_state": "active"}, True),
         ({"state": "active", "membership_state": "awaiting"}, False),
         ({"state": "blocked"}, False),
+        ({"state": "active", "expires_at": "2026-01-01"}, False),
+        ({"state": "active", "expires_at": "2999-12-31"}, True),
     ],
 )
 def test_is_maintainer_gitlab_member_must_be_active(

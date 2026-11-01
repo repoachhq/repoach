@@ -54,6 +54,7 @@ RECORDED_FIELDS: frozenset[str] = frozenset(
         "diff_refs",
         "draft",
         "enabled",
+        "expires_at",
         "head_pipeline",
         "head_sha",
         "headRefName",

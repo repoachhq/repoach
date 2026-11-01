@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from ..core.logging import get_logger
@@ -217,6 +218,23 @@ def pull_request_from_gitlab(mr: dict[str, object]) -> PullRequest:
     )
 
 
+def _expired(member: dict[str, object]) -> bool:
+    """True when a membership's ``expires_at`` (``YYYY-MM-DD``) is today or past, or unreadable."""
+    expires = member.get("expires_at")
+    if expires is None:
+        return False
+    try:
+        day = date.fromisoformat(str(expires)[:10])
+    except ValueError as exc:
+        _log.info(
+            "forge.gitlab.membership_expiry_unreadable",
+            expires_at=str(expires)[:40],
+            error=str(exc),
+        )
+        return True
+    return day <= datetime.now(UTC).date()
+
+
 def _edited(note: dict[str, object]) -> bool:
     """True when a note's ``updated_at`` differs from ``created_at`` and ``resolved_at``.
 
@@ -370,7 +388,8 @@ class GitLabForge:
         username, and keeps only the entry whose ``username`` is exactly
         ``login``: the query matches names and username prefixes too. The
         user must be ``active`` (not blocked) and the membership, when the
-        answer names it, ``active`` (not ``awaiting`` approval).
+        answer names it, ``active`` (not ``awaiting`` approval), and not
+        expired (``expires_at`` absent or after today).
 
         Raises:
             ForgeError: The members could not be read.
@@ -386,7 +405,7 @@ class GitLabForge:
                 return False
             active_user = member.get("state") == "active"
             membership = member.get("membership_state")
-            return active_user and membership in (None, "active")
+            return active_user and membership in (None, "active") and not _expired(member)
         return False
 
     def _spawn(self, argv: list[str], *, input_data: str | None = None) -> CommandResult:

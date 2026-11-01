@@ -779,6 +779,19 @@ FORGE_LOGIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 """A plain GitHub login or GitLab username: what may be put in a permission URL."""
 
 
+def is_bot_login(bot_username: str, login: str) -> bool:
+    """Whether ``login`` names the bot, compared case-insensitively as forges compare logins.
+
+    Args:
+        bot_username: The configured bot identity (may be empty).
+        login: A comment author.
+
+    Returns:
+        True when both are non-empty and equal once casefolded.
+    """
+    return bool(bot_username) and bool(login) and login.casefold() == bot_username.casefold()
+
+
 def maintainer_candidate(bot_username: str, login: str) -> bool:
     """Whether ``login`` may be asked about at all by :meth:`Forge.is_maintainer`.
 
@@ -793,6 +806,6 @@ def maintainer_candidate(bot_username: str, login: str) -> bool:
     Returns:
         True when ``login`` is a plain username other than the bot's.
     """
-    if not login or login == bot_username:
+    if not login or is_bot_login(bot_username, login):
         return False
     return FORGE_LOGIN_RE.fullmatch(login) is not None
