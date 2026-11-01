@@ -32,6 +32,7 @@ _log = get_logger(__name__)
 RECORDED_FIELDS: frozenset[str] = frozenset(
     {
         "a_mode",
+        "access_level",
         "allow_force_push",
         "allow_force_pushes",
         "approved_by",
@@ -81,9 +82,11 @@ RECORDED_FIELDS: frozenset[str] = frozenset(
         "old_path",
         "only_allow_merge_if_pipeline_succeeds",
         "path",
+        "permission",
         "position",
         "renamed_file",
         "required_status_checks",
+        "role_name",
         "sha",
         "source_branch",
         "squash_commit_sha",

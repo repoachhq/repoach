@@ -59,6 +59,7 @@ from .protocol import (
     ReviewDraft,
     WriteRefusal,
     diff_files,
+    maintainer_candidate,
     trusted,
     unnumbered_write,
     write_barrier,
@@ -69,6 +70,9 @@ _log = get_logger(__name__)
 
 PROJECT = "projects/:id"
 """``glab api`` placeholder for the clone's project (resolved by ``glab``)."""
+
+MAINTAINER_ACCESS_LEVEL = 40
+"""GitLab Maintainer; Owner is 50 (SP-OWNER-SETTLES-A-FINDING)."""
 
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
 _JOB_LINK_RE = re.compile(r"/-/jobs/(\d+)")
@@ -344,6 +348,26 @@ class GitLabForge:
     def is_trusted_author(self, comment: Comment) -> bool:
         """True when ``comment`` was authored by :attr:`bot_username` (fail-closed)."""
         return trusted(self._bot_username, comment.author)
+
+    def is_maintainer(self, login: str) -> bool:
+        """True when ``login`` is a project member with ``access_level >= 40``.
+
+        Reads ``members/all`` (inherited members included) filtered by the
+        username, and keeps only the entry whose ``username`` is exactly
+        ``login``: the query matches names and username prefixes too.
+
+        Raises:
+            ForgeError: The members could not be read.
+        """
+        if not maintainer_candidate(self._bot_username, login):
+            return False
+        members = self._api_list(f"{self._project}/members/all?query={login}&per_page=100")
+        for member in members:
+            if member.get("username") != login:
+                continue
+            level = _int(member.get("access_level"))
+            return level is not None and level >= MAINTAINER_ACCESS_LEVEL
+        return False
 
     def _spawn(self, argv: list[str], *, input_data: str | None = None) -> CommandResult:
         """Run one subprocess in the clone; the seam the conformance suite replaces."""
