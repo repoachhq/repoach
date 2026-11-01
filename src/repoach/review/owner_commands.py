@@ -598,6 +598,13 @@ def apply_owner_commands(
         did not post. Unreadable comments apply nothing (``error``); a
         login whose permission is unreadable has its commands left
         unhandled, to be retried by the next run.
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: The ledger could not be read or
+            written; the orchestrator logs it and applies nothing. No
+            :class:`~repoach.forge.protocol.ForgeError` is raised: a forge
+            failure is reported in the returned run (``error``,
+            ``unreadable``, ``unposted``).
     """
     init_findings_schema(db_path)
     run = OwnerCommandsRun()
