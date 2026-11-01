@@ -22,6 +22,7 @@ forge-neutral contract of the method.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ from repoach.forge.recording import (
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "forge"
 FORGES = ["github", "gitlab"]
+TODAY = datetime.now(UTC).date().isoformat()
 
 
 def _build(forge_name: str, tmp_path: Path, bot: str) -> Forge:
@@ -479,6 +481,8 @@ def test_is_maintainer_not_object(forge_name: str, tmp_path: Path) -> None:
         ({"state": "blocked"}, False),
         ({"state": "active", "expires_at": "2026-01-01"}, False),
         ({"state": "active", "expires_at": "2999-12-31"}, True),
+        ({"state": "active", "expires_at": TODAY}, False),
+        ({"state": "active", "expires_at": "next week"}, False),
     ],
 )
 def test_is_maintainer_gitlab_member_must_be_active(
