@@ -241,6 +241,21 @@ def _expired(member: dict[str, object]) -> bool:
     return day <= _today()
 
 
+def _eligible_member(member: dict[str, object]) -> bool:
+    """Whether a ``members/all`` entry grants maintainer rights now.
+
+    ``access_level`` 40 or more, an ``active`` user (not blocked), a
+    membership that, when named, is ``active`` (not ``awaiting``), and not
+    expired.
+    """
+    level = _int(member.get("access_level"))
+    if level is None or level < MAINTAINER_ACCESS_LEVEL:
+        return False
+    if member.get("state") != "active":
+        return False
+    return member.get("membership_state") in (None, "active") and not _expired(member)
+
+
 def note_to_comment(
     note: dict[str, object],
     *,
@@ -395,12 +410,7 @@ class GitLabForge:
         for member in members:
             if member.get("username") != login:
                 continue
-            level = _int(member.get("access_level"))
-            if level is None or level < MAINTAINER_ACCESS_LEVEL:
-                return False
-            active_user = member.get("state") == "active"
-            membership = member.get("membership_state")
-            return active_user and membership in (None, "active") and not _expired(member)
+            return _eligible_member(member)
         return False
 
     def _spawn(self, argv: list[str], *, input_data: str | None = None) -> CommandResult:
