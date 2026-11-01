@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from repoach.forge.protocol import Comment, ForgeError
 from repoach.gates.config import GatesConfig
@@ -650,3 +652,16 @@ def test_edited_comments_are_answered_once_per_login(db: Path) -> None:
     assert len(forge.posted) == 1
     assert [row.outcome for row in fetch_owner_commands(db, PR)] == ["edited"] * 3
     assert forge.permission_reads == []
+
+
+@given(st.text(max_size=3000))
+def test_parse_command_never_raises_and_bounds_the_reason(body: str) -> None:
+    """Any body parses or is no command; a reason is printable, single-spaced and bounded."""
+    parsed = parse_command(body)
+    if parsed is None:
+        return
+    assert body.strip().startswith(("/resolve", "/reopen"))
+    assert len(parsed.reason) <= REASON_MAX_CHARS
+    assert all(ch.isprintable() for ch in parsed.reason)
+    assert "  " not in parsed.reason
+    assert parsed.reason == parsed.reason.strip()
