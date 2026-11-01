@@ -49,7 +49,7 @@ login: ``Ignored: @<login> is not a maintainer of this repository; only a
 maintainer's `/resolve` or `/reopen` settles a finding.`` A command in an edited
 comment is refused, whoever wrote it: on GitHub anyone with write access
 may edit someone else's comment, so an edited comment is not its
-author's word. Post the command in a new comment. (Resolving a GitLab
+author's word, and is answered once per login. Post the command in a new comment. (Resolving a GitLab
 thread moves its notes' `updated_at` too; that alone is not an edit.)
 When the forge cannot say (the token may
 not read members, the API fails), nothing is applied, nothing is

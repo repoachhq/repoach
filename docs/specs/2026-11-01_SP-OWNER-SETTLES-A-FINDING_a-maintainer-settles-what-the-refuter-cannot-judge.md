@@ -97,7 +97,7 @@ pull request does.
   `created_at`; GitLab the same unless it equals `resolved_at`, which a
   thread's resolution sets, measured on Yoob !339 and !322 on
   2026-11-01: 138 resolved notes all so, 83 open notes none) is refused
-  with one reply, whoever wrote it: anyone with write access may edit
+  with one reply per login, whoever wrote it: anyone with write access may edit
   someone else's comment on GitHub (docs.github.com, "Managing
   disruptive comments"). A GitLab maintainer must also be an `active`
   user whose membership, when named, is `active` and not expired
