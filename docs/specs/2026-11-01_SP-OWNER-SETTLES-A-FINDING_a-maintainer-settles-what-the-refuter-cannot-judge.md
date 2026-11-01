@@ -1,7 +1,7 @@
 ---
 id: SP-OWNER-SETTLES-A-FINDING
 title: A maintainer settles, with a recorded reason, a finding the refuter cannot judge
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-01
@@ -100,7 +100,8 @@ pull request does.
   with one reply, whoever wrote it: anyone with write access may edit
   someone else's comment on GitHub (docs.github.com, "Managing
   disruptive comments"). A GitLab maintainer must also be an `active`
-  user whose membership, when named, is `active`. A permission the forge cannot
+  user whose membership, when named, is `active` and not expired
+  (`expires_at`). The bot login is compared case-insensitively. A permission the forge cannot
   read applies nothing, records nothing, and the command is retried by
   the next run.
 - **G3. The reason is mandatory.** A `/resolve` whose reason is shorter

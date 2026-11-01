@@ -40,12 +40,13 @@ Only a maintainer, as the forge reports it for each command:
 - GitLab: project member, inherited membership included, with
   `access_level` 40 (Maintainer) or more, an `active` user (not
   blocked) and, when the answer names it, an `active` membership (not
-  `awaiting` approval)
+  `awaiting` approval) that has not expired (`expires_at`)
   (`GET projects/:id/members/all?query=<login>`, exact username).
 
 The comment text never decides who is an owner, and the bot's own login
 never is. A command from anyone else is ignored and answered once per
-login: `not a maintainer of this repository`. A command in an edited
+login: ``Ignored: @<login> is not a maintainer of this repository; only a
+maintainer's `/resolve` or `/reopen` settles a finding.`` A command in an edited
 comment is refused, whoever wrote it: on GitHub anyone with write access
 may edit someone else's comment, so an edited comment is not its
 author's word. Post the command in a new comment. (Resolving a GitLab
