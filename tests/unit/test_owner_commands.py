@@ -634,3 +634,19 @@ def test_bot_login_is_matched_case_insensitively(db: Path) -> None:
     assert [row.outcome for row in run.handled] == ["bot"]
     assert forge.permission_reads == []
     assert _row(db, target).status is FindingStatus.VERIFIED
+
+
+def test_edited_comments_are_answered_once_per_login(db: Path) -> None:
+    """Many edited commands of one commenter get one answer; each is still recorded."""
+    target = _finding(db)
+    edited = [
+        _pr_comment(comment_id, f"/resolve #{target} {REASON}", author="dev").model_copy(
+            update={"edited": True}
+        )
+        for comment_id in (56, 57, 58)
+    ]
+    forge = FakeForge(conversation=edited, maintainers={"dev": False})
+    _apply(forge, db)
+    assert len(forge.posted) == 1
+    assert [row.outcome for row in fetch_owner_commands(db, PR)] == ["edited"] * 3
+    assert forge.permission_reads == []

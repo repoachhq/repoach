@@ -465,7 +465,9 @@ def _author_refusal(
 
     The bot's own command is answered by nothing; an edited comment is
     refused, since anyone with write access may edit someone else's
-    comment on GitHub; a non-maintainer is answered once per login.
+    comment on GitHub; a non-maintainer is refused. Both refusals are
+    answered once per login and outcome, so no commenter can make the bot
+    post one reply per comment.
 
     Raises:
         ForgeError: The author's permission could not be read.
@@ -474,21 +476,21 @@ def _author_refusal(
     if not login or is_bot_login(forge.bot_username, login):
         return OwnerOutcome.BOT, ""
     if comment.edited:
-        return (
-            OwnerOutcome.EDITED,
+        outcome = OwnerOutcome.EDITED
+        reply = (
             "Ignored: an edited comment is not read as a command; post the command in a "
-            "new comment.",
+            "new comment."
         )
-    if _maintainer(forge, login, cache):
+    elif _maintainer(forge, login, cache):
         return None
-    answered = any(row.author == login and row.outcome == OwnerOutcome.NOT_OWNER for row in rows)
-    reply = (
-        ""
-        if answered
-        else f"Ignored: @{login} is not a maintainer of this repository; only a maintainer's "
-        "`/resolve` or `/reopen` settles a finding."
-    )
-    return OwnerOutcome.NOT_OWNER, reply
+    else:
+        outcome = OwnerOutcome.NOT_OWNER
+        reply = (
+            f"Ignored: @{login} is not a maintainer of this repository; only a maintainer's "
+            "`/resolve` or `/reopen` settles a finding."
+        )
+    answered = any(row.author == login and row.outcome == outcome for row in rows)
+    return outcome, "" if answered else reply
 
 
 def _handle(
@@ -510,29 +512,28 @@ def _handle(
         ForgeError: The author's permission could not be read.
     """
     login = comment.author
-    base = OwnerCommandRow(
+    refusal = _author_refusal(forge, comment, cache=cache, rows=rows)
+    if refusal is not None:
+        outcome, reply = refusal
+        finding_id = command.finding_id
+    else:
+        decision = _decide(command, login=login, head_sha=head_sha, findings=findings, root=root)
+        outcome, reply = decision.outcome, decision.reply
+        finding_id = decision.finding.id if decision.finding else command.finding_id
+    row = OwnerCommandRow(
         pr_number=pr_number,
         comment_id=comment.id,
         command=command.verb.value,
         author=login,
-        finding_id=command.finding_id,
+        finding_id=finding_id,
         reason=command.reason,
         head_sha=head_sha,
-        outcome=OwnerOutcome.BOT,
+        outcome=outcome,
+        reply=reply,
         reply_to=root.id if root is not None else None,
     )
-    refusal = _author_refusal(forge, comment, cache=cache, rows=rows)
     if refusal is not None:
-        outcome, reply = refusal
-        return base.model_copy(update={"outcome": outcome, "reply": reply})
-    decision = _decide(command, login=login, head_sha=head_sha, findings=findings, root=root)
-    row = base.model_copy(
-        update={
-            "outcome": decision.outcome,
-            "finding_id": decision.finding.id if decision.finding else command.finding_id,
-            "reply": decision.reply,
-        }
-    )
+        return row
     if decision.outcome is not OwnerOutcome.APPLIED:
         return row
     applied = _apply(db_path, decision, command, login=login, head_sha=head_sha, rows=rows)
