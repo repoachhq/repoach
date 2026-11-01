@@ -14,10 +14,12 @@ from pathlib import Path
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from sqlalchemy.exc import OperationalError
 
+from repoach.bench.local_forge import LocalDiffForge
 from repoach.forge.protocol import Comment, ForgeError
 from repoach.gates.config import GatesConfig
-from repoach.review import owner_commands
+from repoach.review import orchestrator, owner_commands
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -687,3 +689,41 @@ def test_command_row_is_written_before_the_finding_moves(
     assert [(row.comment_id, row.resolution) for row in stored] == [(59, "owner_resolve")]
     assert _row(db, target).status is FindingStatus.VERIFIED
     assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]
+
+
+def _orchestrator(db: Path) -> orchestrator.ReviewTeamOrchestrator:
+    """An orchestrator holding only what ``_apply_owner_commands`` reads."""
+    team = orchestrator.ReviewTeamOrchestrator.__new__(orchestrator.ReviewTeamOrchestrator)
+    team._forge = FakeForge()
+    team._db_path = db
+    team._post = False
+    return team
+
+
+def test_a_ledger_error_applies_nothing_and_keeps_findings_blocking(
+    db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ledger error is logged into the run; any other error is a defect and propagates."""
+    target = _finding(db)
+
+    def ledger_error(*_args: object, **_kwargs: object) -> None:
+        raise OperationalError("UPDATE pr_findings", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(orchestrator, "apply_owner_commands", ledger_error)
+    run = _orchestrator(db)._apply_owner_commands(PR, head_sha=HEAD)
+    assert run.error == "OperationalError" and run.settled == []
+    assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]
+
+    def defect(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("a bug")
+
+    monkeypatch.setattr(orchestrator, "apply_owner_commands", defect)
+    with pytest.raises(TypeError):
+        _orchestrator(db)._apply_owner_commands(PR, head_sha=HEAD)
+
+
+def test_local_bench_forge_has_no_maintainers(tmp_path: Path) -> None:
+    """The bench forge has no repository members: no login is a maintainer."""
+    forge = LocalDiffForge(tmp_path, number=1, base_sha="a" * 40, head_sha="b" * 40, title="t")
+    assert forge.is_maintainer("jwfaye") is False
+    assert forge.is_maintainer("") is False
