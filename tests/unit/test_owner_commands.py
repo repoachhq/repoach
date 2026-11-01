@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from repoach.forge.protocol import Comment, ForgeError
+from repoach.gates.config import GatesConfig
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -22,7 +23,10 @@ from repoach.review.findings import (
     fetch_findings,
     init_findings_schema,
     record_finding,
+    record_review_integrity,
 )
+from repoach.review.head_reverify import reverify_older_findings
+from repoach.review.merge_gate import summarise_ledger_facts, verdict_from_facts
 from repoach.review.owner_commands import (
     REASON_MIN_CHARS,
     OwnerVerb,
@@ -30,6 +34,7 @@ from repoach.review.owner_commands import (
     parse_command,
 )
 from repoach.review.owner_store import fetch_owner_commands
+from repoach.review.reviewer import ReviewVerdict
 
 PR = 339
 OLD = "a" * 40
@@ -225,6 +230,22 @@ def test_resolve_without_reason_is_answered_and_ignored(db: Path) -> None:
     assert f"at least {REASON_MIN_CHARS} characters" in forge.posted[0]
 
 
+def test_unknown_finding_is_answered_and_ignored(db: Path) -> None:
+    """An id of no finding of the pull request, or a PR comment naming none, is refused."""
+    _finding(db)
+    forge = FakeForge(
+        conversation=[
+            _pr_comment(32, f"/resolve #999 {REASON}"),
+            _pr_comment(33, f"/resolve {REASON}"),
+        ],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    assert [row.outcome for row in run.handled] == ["unknown_finding", "unknown_finding"]
+    assert "no finding #999" in forge.posted[0]
+    assert "must name the finding" in forge.posted[1]
+
+
 def test_non_owner_is_answered_once_and_ignored(db: Path) -> None:
     """A command from someone the forge does not grant maintainer is ignored, answered once."""
     target = _finding(db)
@@ -254,6 +275,99 @@ def test_unreadable_permission_applies_nothing_and_is_retried(db: Path) -> None:
     forge.maintainers["jwfaye"] = True
     _apply(forge, db)
     assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
+
+
+def test_ambiguous_thread_asks_for_the_id(db: Path) -> None:
+    """A thread anchoring two open findings settles neither and asks for ``#<id>``."""
+    first = _finding(db)
+    second = _finding(db, claim_type=ClaimType.DESIGN)
+    forge = FakeForge(
+        inline=[_root(), _reply(12, f"/resolve {REASON}")], maintainers={"jwfaye": True}
+    )
+    _apply(forge, db)
+    assert _row(db, first).status is FindingStatus.VERIFIED
+    assert _row(db, second).status is FindingStatus.VERIFIED
+    assert f"#{first}, #{second}" in forge.replies[0][1]
+
+
+def test_resolve_on_a_settled_finding_is_a_noop_with_one_reply(db: Path) -> None:
+    """An advisory or already-settled finding is left as it is, with one reply saying so."""
+    advisory = _finding(db, severity=Severity.ADVISORY)
+    refuted = _finding(db, file="ci/x.sh", status=FindingStatus.REFUTED)
+    forge = FakeForge(
+        conversation=[
+            _pr_comment(36, f"/resolve #{advisory} {REASON}"),
+            _pr_comment(37, f"/resolve #{refuted} {REASON}"),
+        ],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    assert [row.outcome for row in run.handled] == ["noop", "noop"]
+    assert _row(db, advisory).status is FindingStatus.VERIFIED
+    assert _row(db, refuted).status is FindingStatus.REFUTED
+    assert "not an open blocking finding" in forge.posted[0]
+    assert len(forge.posted) == 2
+
+
+def test_owner_resolved_is_settled_and_not_counted(db: Path) -> None:
+    """The ledger facts no longer count an owner-resolved finding: the verdict flips."""
+    target = _finding(db)
+    record_review_integrity(db, pr_number=PR, head_sha=HEAD, n_reviewers=4, n_unparsed=0)
+    before = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
+    assert before.open_blocking_ids == [target]
+    assert verdict_from_facts(before) is ReviewVerdict.REQUEST_CHANGES
+    forge = FakeForge(
+        conversation=[_pr_comment(38, f"/resolve #{target} {REASON}")],
+        maintainers={"jwfaye": True},
+    )
+    _apply(forge, db)
+    after = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
+    assert after.open_blocking_ids == []
+    assert verdict_from_facts(after) is ReviewVerdict.APPROVE
+
+
+def test_reverify_skips_an_owner_resolved_finding(db: Path, tmp_path: Path) -> None:
+    """The re-check at head never re-judges an owner-resolved finding: no judge is built."""
+    target = _finding(db)
+    forge = FakeForge(
+        conversation=[_pr_comment(39, f"/resolve #{target} {REASON}")],
+        maintainers={"jwfaye": True},
+    )
+    _apply(forge, db)
+
+    def no_judge() -> object:
+        raise AssertionError("an owner-resolved finding must not be judged")
+
+    result = reverify_older_findings(
+        db,
+        pr_number=PR,
+        repo_root=tmp_path,
+        head_sha=HEAD,
+        ci_green=None,
+        config=GatesConfig(),
+        max_judged=10,
+        judge_factory=no_judge,
+    )
+    assert result.outcomes == ()
+    assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
+
+
+def test_reopen_counts_the_finding_again(db: Path) -> None:
+    """``/reopen`` restores the status and verification it held, and the gate counts it again."""
+    target = _finding(db)
+    forge = FakeForge(
+        inline=[_root(), _reply(13, f"/resolve {REASON}"), _reply(14, "/reopen")],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    row = _row(db, target)
+    assert row.status is FindingStatus.VERIFIED
+    assert row.verification_result == "needs judgement (evidence outside window)"
+    assert row.checked_at_sha == OLD
+    assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]
+    assert [r.resolution for r in run.handled] == ["owner_resolve", "owner_reopen"]
+    assert run.settled == []
+    assert "reopened by @jwfaye" in forge.replies[1][1]
 
 
 def test_a_command_is_applied_once_across_runs(db: Path) -> None:
