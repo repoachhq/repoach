@@ -515,6 +515,7 @@ def test_is_maintainer_edited_comments_are_flagged() -> None:
     assert comment_from_github({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
     assert comment_from_github({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
     assert comment_from_github(base).edited is True
+    assert comment_from_github({"id": 2, "body": "/resolve"}).edited is True
     resolved = {**base, "updated_at": "2026-11-01T12:00:00Z", "resolved_at": "2026-11-01T12:00:00Z"}
     assert note_to_comment(resolved).edited is False
     assert note_to_comment({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
