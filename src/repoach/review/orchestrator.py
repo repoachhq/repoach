@@ -54,6 +54,8 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..core.paths import project_root
@@ -1526,8 +1528,9 @@ class ReviewTeamOrchestrator:
         SP-OWNER-SETTLES-A-FINDING: runs before the re-check of older heads
         and before the ledger facts are summarised, so an owner-resolved
         finding is neither re-checked nor counted. The answers are posted
-        only by a posting run. A failure is logged and applies nothing:
-        the findings keep blocking.
+        only by a posting run. A forge or ledger failure is logged and
+        applies nothing: the findings keep blocking. Any other error is a
+        defect and propagates, so it cannot hide behind a warning.
         """
         if not head_sha:
             return OwnerCommandsRun()
@@ -1539,7 +1542,7 @@ class ReviewTeamOrchestrator:
                 head_sha=head_sha,
                 post=self._post,
             )
-        except Exception as exc:
+        except (ForgeError, SQLAlchemyError) as exc:
             _log.warning(
                 "review_team.owner_commands_failed",
                 pr_number=pr_number,
