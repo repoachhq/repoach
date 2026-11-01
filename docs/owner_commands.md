@@ -41,7 +41,7 @@ Only a maintainer, as the forge reports it for each command:
   (`GET projects/:id/members/all?query=<login>`, exact username).
 
 The comment text never decides who is an owner, and the bot's own login
-never is. A command from anyone else is ignored and answered once: `not a
+never is. A command from anyone else is ignored and answered once per login: `not a
 maintainer of this repository`. When the forge cannot say (the token may
 not read members, the API fails), nothing is applied, nothing is
 recorded, and the next run asks again.
@@ -81,7 +81,8 @@ reopened.
 Every command gets one answer, in the thread for a thread command, on the
 pull request otherwise:
 
-- applied: `Finding #<id> owner-resolved by @<login> at <sha7>: <reason>.`
+- applied: ``Finding #<id> owner-resolved by @<login> at <sha7>: `<reason>`.``
+  (the reason as a code span, so its mentions and Markdown stay inert)
   or `Finding #<id> reopened by @<login>: the gate counts it again.`;
 - a reason under 20 characters: the rule, and the command is ignored;
 - an unknown `#<id>`, a conversation comment naming no finding, a thread

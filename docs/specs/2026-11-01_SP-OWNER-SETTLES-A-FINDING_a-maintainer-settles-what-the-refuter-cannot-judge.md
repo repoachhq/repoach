@@ -1,7 +1,7 @@
 ---
 id: SP-OWNER-SETTLES-A-FINDING
 title: A maintainer settles, with a recorded reason, a finding the refuter cannot judge
-version: 0.1
+version: 0.2
 status: approved
 author: agent
 created: 2026-11-01
@@ -90,7 +90,8 @@ pull request does.
 - **G2. Owners only.** `Forge.is_maintainer(login)` answers from the
   forge (D2). The bot's own command is recorded and never applied, with
   no reply. A command from anyone else is ignored and answered once:
-  `not a maintainer of this repository`. A permission the forge cannot
+  `not a maintainer of this repository`, once per login whatever the
+  number of its commands (each is still recorded). A permission the forge cannot
   read applies nothing, records nothing, and the command is retried by
   the next run.
 - **G3. The reason is mandatory.** A `/resolve` whose reason is shorter
@@ -120,7 +121,10 @@ pull request does.
   summarised, on a fresh run and on a replay of a completed run alike
   (F6). Replies are posted only by a posting run: on a dry run each is
   printed as `owner reply not posted: <reply>` and left pending, and the
-  next posting run posts it once.
+  next posting run posts it once. A reply that fails to post stays
+  pending the same way. The reason quoted in a reply is a Markdown code
+  span whose delimiter no backtick in it can close, so its mentions and
+  Markdown stay inert under the bot's name.
 - **G8. The report says who and why.** The `review pr` JSON carries
   `owner_resolved: [{finding_id, login, reason, comment_id, head_sha}]`
   and `owner_commands: [{comment_id, command, author, finding_id,
@@ -265,8 +269,10 @@ flowchart TD
 - [ ] AC1 (G2, owner detection on both forges): a GitHub `maintain` role
   and a GitLab member at `access_level` 40 are maintainers; a GitHub
   `write` role, a GitLab member at 30 and a GitLab member whose username
-  only starts with the login are not; the bot, an empty login and a
-  non-username are refused without a forge call —
+  only starts with the login are not, nor a GitHub 404 or an empty
+  GitLab member list; any other failure and an answer that is not JSON
+  raise `ForgeError`; the bot, an empty login and a non-username are
+  refused without a forge call —
   `pytest -q tests/unit/test_forge_conformance.py -k is_maintainer`.
 - [ ] AC2 (G2): the bot's own command is recorded and never applied, and
   no permission is read for it —
@@ -285,8 +291,8 @@ flowchart TD
   finding are refused with one reply each —
   `pytest -q tests/unit/test_owner_commands.py::test_unknown_finding_is_answered_and_ignored`.
 - [ ] AC7 (G2): a non-maintainer's command is ignored and answered once
-  over two runs —
-  `pytest -q tests/unit/test_owner_commands.py::test_non_owner_is_answered_once_and_ignored`.
+  over two runs, and three commands of one non-maintainer get one answer —
+  `pytest -q tests/unit/test_owner_commands.py -k non_owner`.
 - [ ] AC8 (G4, gate): the ledger facts stop counting the finding and the
   verdict flips from REQUEST_CHANGES to APPROVE —
   `pytest -q tests/unit/test_owner_commands.py::test_owner_resolved_is_settled_and_not_counted`.
@@ -295,13 +301,15 @@ flowchart TD
   `pytest -q tests/unit/test_owner_commands.py::test_reverify_skips_an_owner_resolved_finding`.
 - [ ] AC10 (G4, G5, reopen): `/reopen` restores the status, result and
   checked sha the finding held, and the gate counts it again —
-  `pytest -q tests/unit/test_owner_commands.py::test_reopen_counts_the_finding_again`.
+  `pytest -q tests/unit/test_owner_commands.py -k reopen`.
 - [ ] AC11 (G5): a re-run at the same head and at a later head neither
   re-applies nor re-answers —
   `pytest -q tests/unit/test_owner_commands.py::test_a_command_is_applied_once_across_runs`.
 - [ ] AC12 (G7): a dry run applies the command, posts nothing and prints
-  the answer; the next posting run posts it once —
-  `pytest -q tests/unit/test_owner_commands.py::test_dry_run_prints_replies_and_a_posting_run_posts_them_once`.
+  the answer; the next posting run posts it once; a reply the forge
+  refuses stays pending and is posted once later; the quoted reason is
+  an inert code span —
+  `pytest -q tests/unit/test_owner_commands.py -k "dry_run or failed_reply or inert"`.
 - [ ] AC13 (G8): the report line, the JSON entries and the Markdown
   section name the owner and the reason —
   `pytest -q tests/unit/test_owner_commands.py::test_report_line_and_json_name_the_owner`.
