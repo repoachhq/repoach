@@ -1,7 +1,7 @@
 ---
 id: SP-OWNER-SETTLES-A-FINDING
 title: A maintainer settles, with a recorded reason, a finding the refuter cannot judge
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-01
@@ -85,13 +85,22 @@ pull request does.
   reply in a finding's inline thread; `/resolve #<finding-id> <reason>`
   and `/reopen #<finding-id>` in any comment, the pull-request
   conversation included, for findings that were never posted. The
-  reason is the rest of the body, whitespace collapsed, cut at
+  reason is the rest of the body, non-printable characters blanked,
+  whitespace collapsed, cut at
   `reason_max_chars`.
 - **G2. Owners only.** `Forge.is_maintainer(login)` answers from the
   forge (D2). The bot's own command is recorded and never applied, with
   no reply. A command from anyone else is ignored and answered once:
   `not a maintainer of this repository`, once per login whatever the
-  number of its commands (each is still recorded). A permission the forge cannot
+  number of its commands (each is still recorded). A command in an
+  edited comment (`Comment.edited`: GitHub `updated_at` after
+  `created_at`; GitLab the same unless it equals `resolved_at`, which a
+  thread's resolution sets, measured on Yoob !339 and !322 on
+  2026-11-01: 138 resolved notes all so, 83 open notes none) is refused
+  with one reply, whoever wrote it: anyone with write access may edit
+  someone else's comment on GitHub (docs.github.com, "Managing
+  disruptive comments"). A GitLab maintainer must also be an `active`
+  user whose membership, when named, is `active`. A permission the forge cannot
   read applies nothing, records nothing, and the command is retried by
   the next run.
 - **G3. The reason is mandatory.** A `/resolve` whose reason is shorter
@@ -183,9 +192,10 @@ def apply_owner_commands(
 def owner_settlements(db_path: Path, pr_number: int) -> list[OwnerSettlement]: ...
 ```
 
-Errors: none raised to `review pr`. A forge read failure is logged and
-applies nothing (`owner commands: not read: <reason>`); an unexpected
-failure is logged by the orchestrator and the findings keep blocking.
+Errors: a forge read failure is logged and applies nothing (`owner
+commands: not read: <reason>`); a forge or ledger error escaping
+`apply_owner_commands` is logged by the orchestrator and the findings
+keep blocking; any other error is a defect and propagates.
 
 ## Behavior
 

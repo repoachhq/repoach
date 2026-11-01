@@ -19,7 +19,8 @@ the settlement. Specification: `SP-OWNER-SETTLES-A-FINDING`
 | Any comment | `/reopen #<finding-id>` | Counts it again |
 
 The comment body, stripped, must start with the command. The reason is
-the rest of the comment, whitespace collapsed; it must be at least 20
+the rest of the comment, non-printable characters (an ANSI escape)
+blanked and whitespace collapsed; it must be at least 20
 characters and is cut at 1000. `<finding-id>` is the ledger id the review
 report prints (`finding 12: security ci/review-gate.sh:204 …`, `#12` in
 the verdict basis). Most findings are never posted as inline threads
@@ -37,12 +38,19 @@ Only a maintainer, as the forge reports it for each command:
 - GitHub: collaborator role `admin` or `maintain`
   (`GET repos/:owner/:repo/collaborators/<login>/permission`);
 - GitLab: project member, inherited membership included, with
-  `access_level` 40 (Maintainer) or more
+  `access_level` 40 (Maintainer) or more, an `active` user (not
+  blocked) and, when the answer names it, an `active` membership (not
+  `awaiting` approval)
   (`GET projects/:id/members/all?query=<login>`, exact username).
 
 The comment text never decides who is an owner, and the bot's own login
-never is. A command from anyone else is ignored and answered once per login: `not a
-maintainer of this repository`. When the forge cannot say (the token may
+never is. A command from anyone else is ignored and answered once per
+login: `not a maintainer of this repository`. A command in an edited
+comment is refused, whoever wrote it: on GitHub anyone with write access
+may edit someone else's comment, so an edited comment is not its
+author's word. Post the command in a new comment. (Resolving a GitLab
+thread moves its notes' `updated_at` too; that alone is not an edit.)
+When the forge cannot say (the token may
 not read members, the API fails), nothing is applied, nothing is
 recorded, and the next run asks again.
 
@@ -78,17 +86,24 @@ reopened.
 
 ## Answers
 
-Every command gets one answer, in the thread for a thread command, on the
-pull request otherwise:
+Most commands get one answer, in the thread for a thread command, on the
+pull request otherwise. The bot's own command gets none, and neither
+does a non-maintainer's command after the first one of that login.
 
-- applied: ``Finding #<id> owner-resolved by @<login> at <sha7>: `<reason>`.``
-  (the reason as a code span, so its mentions and Markdown stay inert)
-  or `Finding #<id> reopened by @<login>: the gate counts it again.`;
-- a reason under 20 characters: the rule, and the command is ignored;
-- an unknown `#<id>`, a conversation comment naming no finding, a thread
-  anchoring none or several: why, and the command is ignored;
+- applied `/resolve`: ``Finding #<id> owner-resolved by @<login> at
+  <sha7>: `` `<reason>` ``. The gate no longer counts it; `/reopen` counts
+  it again.`` The reason is a code span padded with spaces, its
+  delimiter one backtick longer than any run in it, so its mentions and
+  Markdown stay inert;
+- applied `/reopen`: `Finding #<id> reopened by @<login>: the gate counts
+  it again.`;
+- refusals start with `Ignored:` and say why: a reason under 20
+  characters, not a maintainer, an edited comment, an unknown `#<id>`, a
+  conversation comment naming no finding, a thread anchoring none or
+  several;
 - `/resolve` on an advisory or already settled finding, `/reopen` on a
-  finding that is not owner-resolved: `No change: …`.
+  finding that is not owner-resolved, a move the ledger refuses: `No
+  change: …`.
 
 The answers are posted only by a posting run. A dry run applies the
 commands to the ledger, posts nothing and prints each answer as `owner
