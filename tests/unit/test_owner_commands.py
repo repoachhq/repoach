@@ -34,6 +34,7 @@ from repoach.review.owner_commands import (
     parse_command,
 )
 from repoach.review.owner_store import fetch_owner_commands
+from repoach.review.report import render_ledger_report
 from repoach.review.reviewer import ReviewVerdict
 
 PR = 339
@@ -401,6 +402,49 @@ def test_dry_run_prints_replies_and_a_posting_run_posts_them_once(db: Path) -> N
     _apply(forge, db, post=True)
     _apply(forge, db, post=True)
     assert len(forge.posted) == 1
+
+
+def test_report_line_and_json_name_the_owner(db: Path) -> None:
+    """One ``owner-resolved #<id> by <login>: <reason>`` line, its JSON entry, its report section."""
+    target = _finding(db)
+    forge = FakeForge(
+        conversation=[_pr_comment(42, f"/resolve #{target} {REASON}")],
+        maintainers={"jwfaye": True},
+    )
+    run = _apply(forge, db)
+    line = f"owner-resolved #{target} by jwfaye: {REASON}"
+    assert run.lines()[0] == line
+    assert "owner commands: 1 applied, 0 ignored" in run.lines()
+    assert run.as_json() == [
+        {
+            "finding_id": target,
+            "login": "jwfaye",
+            "reason": REASON,
+            "comment_id": 42,
+            "head_sha": HEAD,
+        }
+    ]
+    assert run.handled_json() == [
+        {
+            "comment_id": 42,
+            "command": "resolve",
+            "author": "jwfaye",
+            "finding_id": target,
+            "outcome": "applied",
+        }
+    ]
+    from repoach.review.merge_gate import compute_merge_decision
+
+    facts = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
+    report = render_ledger_report(
+        db,
+        pr_number=PR,
+        decision=compute_merge_decision(facts),
+        facts=facts,
+        owner_lines=[line],
+    )
+    assert "## Owner-resolved findings" in report
+    assert line in report
 
 
 def test_unreadable_comments_apply_nothing(db: Path) -> None:

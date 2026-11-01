@@ -126,6 +126,7 @@ from .merge_gate import (
     verdict_from_facts,
 )
 from .notifier import fire_review_routine
+from .owner_commands import OwnerCommandsRun, apply_owner_commands
 from .persistence import (
     DialogueEntry,
     fetch_dialogue,
@@ -413,6 +414,11 @@ class TeamOutcome:
     ``sources_changed``, ``producer_inputs_changed``, ``script_ref``) and
     ``generated_lines`` the report lines naming what proved each one
     (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5).
+    ``owner_resolved`` lists every finding a maintainer settled with a
+    reason (``finding_id``, ``login``, ``reason``, ``comment_id``,
+    ``head_sha``), ``owner_commands`` the owner commands this run handled
+    for the first time, and ``owner_lines`` the report lines naming them
+    (SP-OWNER-SETTLES-A-FINDING).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -456,6 +462,15 @@ class TeamOutcome:
     spec_resolution: dict[str, object] = field(default_factory=dict)
     generated: list[dict[str, object]] = field(default_factory=list)
     generated_lines: list[str] = field(default_factory=list)
+    owner_resolved: list[dict[str, object]] = field(default_factory=list)
+    owner_commands: list[dict[str, object]] = field(default_factory=list)
+    owner_lines: list[str] = field(default_factory=list)
+
+    def record_owner_commands(self, run: OwnerCommandsRun) -> None:
+        """Carry what :func:`~repoach.review.owner_commands.apply_owner_commands` did."""
+        self.owner_resolved = run.as_json()
+        self.owner_commands = run.handled_json()
+        self.owner_lines = run.lines()
 
 
 class ReviewTeamOrchestrator:
@@ -971,6 +986,7 @@ class ReviewTeamOrchestrator:
                 message=str(exc)[:200],
             )
 
+        owner_run = self._apply_owner_commands(pr_number, head_sha=head_sha)
         reverified = self._reverify_older_heads(
             pr_number, head_sha=head_sha, refuter_calls=refuter_calls
         )
@@ -1065,6 +1081,7 @@ class ReviewTeamOrchestrator:
             generated=report_json(generated_checks),
             generated_lines=report_lines(generated_checks, generated_timing),
         )
+        team.record_owner_commands(owner_run)
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1200,6 +1217,7 @@ class ReviewTeamOrchestrator:
             outcomes=outcomes,
             run_id=run.run_id,
         )
+        owner_run = self._apply_owner_commands(pr_number, head_sha=head_sha)
         reverified = self._reverify_older_heads(pr_number, head_sha=head_sha, refuter_calls=0)
         spec_id = _optional_str(spec.get("spec_id"))
         spec_missing = bool(spec.get("spec_missing", False))
@@ -1265,6 +1283,7 @@ class ReviewTeamOrchestrator:
         )
         team.generated = report_json(generated_checks)
         team.generated_lines = report_lines(generated_checks, generated_timing)
+        team.record_owner_commands(owner_run)
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(
@@ -1497,6 +1516,35 @@ class ReviewTeamOrchestrator:
             base_ref=base_ref,
             changed_files=changed,
         )
+
+    def _apply_owner_commands(self, pr_number: int, *, head_sha: str | None) -> OwnerCommandsRun:
+        """Apply the maintainers' ``/resolve`` and ``/reopen`` comments before the verdict.
+
+        SP-OWNER-SETTLES-A-FINDING: runs before the re-check of older heads
+        and before the ledger facts are summarised, so an owner-resolved
+        finding is neither re-checked nor counted. The answers are posted
+        only by a posting run. A failure is logged and applies nothing:
+        the findings keep blocking.
+        """
+        if not head_sha:
+            return OwnerCommandsRun()
+        try:
+            return apply_owner_commands(
+                self._forge,
+                self._db_path,
+                pr_number=pr_number,
+                head_sha=head_sha,
+                post=self._post,
+            )
+        except Exception as exc:
+            _log.warning(
+                "review_team.owner_commands_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+                consequence="no owner command applied; the findings keep blocking",
+            )
+            return OwnerCommandsRun(error=f"{type(exc).__name__}")
 
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int
@@ -2242,6 +2290,7 @@ class ReviewTeamOrchestrator:
             archive_appendix=archive_appendix,
             judged=team.findings,
             generated_lines=team.generated_lines,
+            owner_lines=[line for line in team.owner_lines if line.startswith("owner-resolved #")],
         )
 
 
@@ -2333,6 +2382,7 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "cached": team.cached,
         "findings": [entry.as_json() for entry in team.findings],
         "verdict_basis": list(team.verdict_basis),
+        "owner_resolved": list(team.owner_resolved),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [
