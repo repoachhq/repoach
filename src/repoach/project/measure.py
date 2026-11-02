@@ -35,7 +35,7 @@ from ..core.logging import get_logger
 from ..core.paths import origin_url
 from .config import DEFAULT_LINT_COMMAND, DEFAULT_TEST_COMMAND, ForgeName, MergeMethodName
 from .resolve import infer_forge_from_url
-from .toml_write import TomlScalar
+from .toml_write import TomlValue
 
 _log = get_logger(__name__)
 
@@ -74,7 +74,7 @@ class Measurement:
         notes: One human line per decision worth reporting.
     """
 
-    values: dict[str, TomlScalar]
+    values: dict[str, TomlValue]
     notes: list[str] = field(default_factory=list)
 
 
@@ -312,7 +312,7 @@ def measure_defaults(root: Path, *, probe: bool = True) -> Measurement:
     Returns:
         The values to write and the notes to print.
     """
-    values: dict[str, TomlScalar] = {"repoach.schema": 1}
+    values: dict[str, TomlValue] = {"repoach.schema": 1}
     notes: list[str] = []
 
     url = origin_url(root) or ""
