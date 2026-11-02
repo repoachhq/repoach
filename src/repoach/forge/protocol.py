@@ -220,6 +220,19 @@ def _api_method(args: Sequence[str]) -> str | None:
     return None
 
 
+def _is_field_flag(arg: str) -> bool:
+    """Whether ``arg`` gives ``gh api`` / ``glab api`` a body: a field or input flag, alone or joined to its value.
+
+    ``-fkey=v``, ``-Fkey=v``, ``--field=key=v``, ``--raw-field=key=v`` and
+    ``--input=file`` carry a body as surely as ``-f key=v`` does.
+    """
+    if arg in _API_FIELD_FLAGS:
+        return True
+    if arg.startswith(("--field=", "--raw-field=", "--input=")):
+        return True
+    return arg[:2] in ("-f", "-F") and len(arg) > 2 and not arg.startswith("--")
+
+
 _GRAPHQL_OPERATION_RE = re.compile(r"\b(?:mutation|subscription)\b")
 """A GraphQL operation keyword other than ``query``, anywhere in a document."""
 
@@ -231,14 +244,18 @@ def _graphql_read(args: Sequence[str]) -> bool:
     operations. Only a single ``query=`` field whose document starts with
     ``query`` or ``{`` and names no ``mutation`` or ``subscription``
     anywhere, with no ``operationName`` field to pick another operation
-    of the document, is a read. A document read from a file
-    (``query=@…``), two documents or none count as a write (fail closed).
+    of the document, is a read. A body read with ``--input``, a field
+    joined to its flag (``-fquery=…``, ``--raw-field=…``), a document read
+    from a file (``query=@…``), two documents or none count as a write
+    (fail closed): only the separated ``-f``/``-F`` forms are read.
     """
     if (
         len(args) < 2
         or list(args[:2]) != ["api", "graphql"]
         or _api_method(args) not in (None, "POST")
     ):
+        return False
+    if any(_is_field_flag(arg) and arg not in ("-f", "-F") for arg in args):
         return False
     fields = [value for flag, value in itertools.pairwise(args) if flag in _API_FIELD_FLAGS]
     if any(value.startswith("operationName=") for value in fields):
@@ -267,7 +284,7 @@ def is_write_argv(args: Sequence[str]) -> bool:
         method = _api_method(args)
         if method is not None:
             return method != "GET"
-        return any(arg in _API_FIELD_FLAGS for arg in args)
+        return any(_is_field_flag(arg) for arg in args)
     return len(args) > 1 and args[1] in _WRITE_VERBS
 
 
