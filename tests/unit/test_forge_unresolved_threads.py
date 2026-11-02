@@ -83,6 +83,35 @@ def test_github_counts_an_open_thread_without_a_root_id_and_falls_back_to_the_or
         (json.dumps([threads_page([], more=True)]), "listing truncated"),
         (json.dumps([{"errors": [{"message": "rate limited"}]}]), "no data object"),
         (json.dumps([{"data": {"repository": {"pullRequest": None}}}]), "no thread connection"),
+        (
+            json.dumps([{"data": {"repository": {"pullRequest": {"reviewThreads": {}}}}}]),
+            "without nodes or pageInfo",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "pageInfo": {"hasNextPage": False},
+                                        "nodes": None,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            ),
+            "without nodes or pageInfo",
+        ),
+        (
+            json.dumps(
+                [{"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}}]
+            ),
+            "without nodes or pageInfo",
+        ),
         ("", "returned no page"),
         ("[]", "returned no page"),
         ("not json", "JSON decode failed"),

@@ -373,7 +373,8 @@ def unresolved_threads_from_github(pages: object) -> list[ReviewThread]:
         line of its root comment.
 
     Raises:
-        ForgeError: A page is not a GraphQL ``data`` object, or the
+        ForgeError: A page is not a GraphQL ``data`` object, lacks its
+            ``nodes`` list or a boolean ``pageInfo.hasNextPage``, or the
             listing ends on a page announcing a next one.
     """
     listed = pages if isinstance(pages, list) else [pages]
@@ -391,9 +392,11 @@ def unresolved_threads_from_github(pages: object) -> list[ReviewThread]:
         if not isinstance(connection, dict):
             raise ForgeError("reviewThreads returned no thread connection")
         info = connection.get("pageInfo")
-        more = isinstance(info, dict) and info.get("hasNextPage") is True
+        more = info.get("hasNextPage") if isinstance(info, dict) else None
         nodes = connection.get("nodes")
-        for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(more, bool) or not isinstance(nodes, list):
+            raise ForgeError("reviewThreads page without nodes or pageInfo.hasNextPage")
+        for node in nodes:
             if not isinstance(node, dict) or node.get("isResolved") is True:
                 continue
             comments = node.get("comments")
