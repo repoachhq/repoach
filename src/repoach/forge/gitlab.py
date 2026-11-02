@@ -77,6 +77,9 @@ PROJECT = "projects/:id"
 MAINTAINER_ACCESS_LEVEL = 40
 """GitLab Maintainer; Owner is 50 (SP-OWNER-SETTLES-A-FINDING)."""
 
+DISCUSSION_PAGES_MAX = 50
+"""Pages of 100 discussions :meth:`GitLabForge.unresolved_threads` reads before refusing."""
+
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
 _JOB_LINK_RE = re.compile(r"/-/jobs/(\d+)")
 _MR_URL_RE = re.compile(r"/merge_requests/(\d+)")
@@ -340,6 +343,46 @@ def review_threads_from_discussions(discussions: list[object]) -> list[ReviewThr
                 thread_id=thread_id if isinstance(thread_id, str) else None,
                 resolved=first.get("resolved") is True,
                 resolved_by=login if isinstance(login, str) else "",
+            )
+        )
+    return threads
+
+
+def unresolved_threads_from_discussions(discussions: list[object]) -> list[ReviewThread]:
+    """Read the open discussions: a first note ``resolvable`` and not ``resolved``.
+
+    Any resolvable discussion counts, a diff thread or a general one: the
+    merge gate counts what GitLab's own "all threads resolved" setting
+    counts. A system note or a plain comment is not resolvable.
+
+    Args:
+        discussions: The MR's discussions as the API returns them.
+
+    Returns:
+        One open thread per such discussion, with the path and line of its
+        first note when it has a position.
+    """
+    threads: list[ReviewThread] = []
+    for discussion in discussions:
+        if not isinstance(discussion, dict):
+            continue
+        notes = discussion.get("notes")
+        first = notes[0] if isinstance(notes, list) and notes else None
+        if not isinstance(first, dict) or first.get("resolvable") is not True:
+            continue
+        if first.get("resolved") is True:
+            continue
+        position = first.get("position")
+        where = position if isinstance(position, dict) else {}
+        path = where.get("new_path") or where.get("old_path")
+        line = _int(where.get("new_line"))
+        thread_id = discussion.get("id")
+        threads.append(
+            ReviewThread(
+                root_id=_int(first.get("id")) or 0,
+                thread_id=thread_id if isinstance(thread_id, str) else None,
+                path=path if isinstance(path, str) else "",
+                line=line if line is not None else _int(where.get("old_line")),
             )
         )
     return threads
@@ -615,6 +658,35 @@ class GitLabForge:
     def review_threads(self, number: int) -> list[ReviewThread]:
         """Read every diff discussion's resolution and who resolved it."""
         return review_threads_from_discussions(list(self._discussions(number)))
+
+    def unresolved_threads(self, number: int) -> list[ReviewThread]:
+        """Read every open discussion, page after page until an empty one.
+
+        Each page is asked for by number (``per_page=100&page=<n>``) rather
+        than through ``glab --paginate``: an unpaginated discussions read
+        hid open threads three times on Yoob, so the stop is the empty
+        page the API answers past the last, read here, not a header.
+        A listing still going after :data:`DISCUSSION_PAGES_MAX` pages is
+        refused, never truncated.
+
+        Raises:
+            ForgeError: A page could not be read or is not an array, or the
+                listing exceeds :data:`DISCUSSION_PAGES_MAX` pages.
+        """
+        open_threads: list[ReviewThread] = []
+        for page in range(1, DISCUSSION_PAGES_MAX + 1):
+            data = self._api(
+                f"{self._project}/merge_requests/{number}/discussions?per_page=100&page={page}",
+                number=number,
+            )
+            if not isinstance(data, list):
+                raise ForgeError(f"discussions page {page} of !{number} is not a JSON array")
+            if not data:
+                return open_threads
+            open_threads.extend(unresolved_threads_from_discussions(list(data)))
+        raise ForgeError(
+            f"discussions of !{number} exceed {DISCUSSION_PAGES_MAX} pages; not counted"
+        )
 
     def conversation_comments(self, number: int) -> list[Comment]:
         """Read the non-system, non-diff notes, oldest first."""

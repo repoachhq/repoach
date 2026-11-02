@@ -13,7 +13,7 @@ Two shapes, both faking only what crosses the process boundary:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from unittest.mock import MagicMock
 
 from repoach.forge.github import GitHubForge
@@ -83,3 +83,21 @@ def scripted_github(
     )
     forge._run_git = MagicMock(side_effect=git or (lambda a: gh_ok(argv=a)))
     return forge
+
+
+def threads_page(nodes: Sequence[Mapping[str, object]], *, more: bool = False) -> dict[str, object]:
+    """One page of the GraphQL ``reviewThreads`` answer carrying ``nodes``."""
+    connection = {"pageInfo": {"hasNextPage": more, "endCursor": None}, "nodes": list(nodes)}
+    return {"data": {"repository": {"pullRequest": {"reviewThreads": connection}}}}
+
+
+def thread_node(root_id: int, *, resolved: bool, path: str = "", line: int | None = None) -> dict:
+    """One ``reviewThreads`` node as GitHub answers it."""
+    return {
+        "isResolved": resolved,
+        "resolvedBy": {"login": "jwfaye"} if resolved else None,
+        "path": path,
+        "line": line,
+        "originalLine": line,
+        "comments": {"nodes": [{"databaseId": root_id}]},
+    }

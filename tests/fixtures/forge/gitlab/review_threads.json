@@ -24,12 +24,16 @@
   "raises": null,
   "result": [
     {
+      "line": null,
+      "path": "",
       "resolved": true,
       "resolved_by": "josephwfaye",
       "root_id": 4135715720,
       "thread_id": "cfa80cf1b186752ca99062c4ce605194e050a6c2"
     },
     {
+      "line": null,
+      "path": "",
       "resolved": true,
       "resolved_by": "josephwfaye",
       "root_id": 4135715804,

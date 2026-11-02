@@ -574,12 +574,18 @@ class ReviewThread(_Model):
             is named by its root comment.
         resolved: True when the forge reports the thread resolved.
         resolved_by: Login of who resolved it (``""`` when open or unreported).
+        path: File the root comment sits on; ``""`` when the forge names
+            none (a GitLab discussion outside the diff, or a listing that
+            does not read it).
+        line: Line of the root comment in that file; ``None`` when unknown.
     """
 
     root_id: int
     thread_id: str | None = None
     resolved: bool = False
     resolved_by: str = ""
+    path: str = ""
+    line: int | None = None
 
 
 class CheckRun(_Model):
@@ -737,6 +743,21 @@ class Forge(Protocol):
 
         Raises:
             ForgeError: The threads could not be read.
+        """
+        ...
+
+    def unresolved_threads(self, number: int) -> list[ReviewThread]:
+        """Read every review thread still open, over every page (SP-OPEN-THREADS-BLOCK-THE-MERGE).
+
+        The merge gate counts them: a pull request with one open thread
+        does not merge. GitHub: GraphQL ``reviewThreads`` whose
+        ``isResolved`` is false, 100 per page until ``hasNextPage`` is
+        false. GitLab: the discussions whose first note is ``resolvable``
+        and not ``resolved``, 100 per page until an empty page. Each
+        thread names its root comment id, its file and its line.
+
+        Raises:
+            ForgeError: The threads could not be read, or a page is missing.
         """
         ...
 
