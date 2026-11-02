@@ -620,6 +620,29 @@ class TestArrayOfTablesRendering:
         assert shown["commands"]["gate"] == "make check"
         assert shown["review"]["generated"][0]["check_timeout_s"] == 60
 
+    def test_render_show_separates_generated_blocks_and_annotates_each_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        second = YOOB_GENERATED_TOML.replace(
+            "api/data/knowledge_embeddings.json", "api/data/other.json"
+        )
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML + "\n" + second)
+        monkeypatch.chdir(root)
+        lines = CliRunner().invoke(app, ["config", "show"]).stdout.splitlines()
+        headers = [i for i, line in enumerate(lines) if line.startswith("[[review.generated]]")]
+        assert len(headers) == 2
+        for header in headers:
+            assert lines[header - 1] == ""
+            block = lines[header : header + 6]
+            assert all(line.endswith("  # source: file") for line in block)
+            assert [line.split(" = ")[0] for line in block[1:]] == [
+                "path",
+                "check",
+                "sources",
+                "producer_inputs",
+                "check_timeout_s",
+            ]
+
     def test_by_section_puts_arrays_of_tables_after_plain_keys(self) -> None:
         rows = [
             ("review.generated", [{"path": "a.json"}], "file"),
