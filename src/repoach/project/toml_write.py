@@ -23,8 +23,11 @@ TomlValue: TypeAlias = "str | bool | int | Sequence[TomlValue] | Mapping[str, To
 """A value ``repoach.toml`` holds: a string, boolean or integer, or a list or table of them.
 
 Recursive, so an array of tables (``[[review.generated]]``) is one; the
-containers are the read-only ``Sequence`` / ``Mapping`` so a
-``list[str]`` or a ``dict[str, str]`` is one too.
+containers are typed as the read-only ``Sequence`` / ``Mapping`` so a
+``list[str]`` or a ``dict[str, str]`` is one too. At run time
+:func:`toml_value` writes a ``list`` or ``tuple`` and a ``dict`` with
+string keys, the containers ``tomllib`` and ``model_dump`` produce, and
+refuses any other ``Sequence`` or ``Mapping``.
 """
 
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
