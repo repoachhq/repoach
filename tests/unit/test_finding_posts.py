@@ -22,7 +22,7 @@ from repoach.forge.gitlab import GitLabForge
 from repoach.forge.protocol import Comment, ForgeError, InlineCommentDraft, ReviewThread
 from repoach.forge.runner import CommandResult
 from repoach.review import orchestrator
-from repoach.review.finding_post_record import pair_posted
+from repoach.review.finding_post_record import pair_posted, record_posted_comments
 from repoach.review.finding_post_threads import detect_closed_threads
 from repoach.review.finding_posts import (
     FindingPost,
@@ -594,3 +594,53 @@ def test_non_numeric_comment_id_is_not_a_thread_root() -> None:
     assert post.is_root is False
     numeric = post.model_copy(update={"comment_id": "501"})
     assert (numeric.root_id, numeric.is_root) == (501, True)
+
+
+def test_local_forge_records_no_rows(tmp_path: Path) -> None:
+    """A forge that keeps no threads (the bench's ``local``) gets no row, even for a known finding."""
+    db = tmp_path / "review.db"
+    outcome = _outcome(
+        BotRole.SENTINEL,
+        [ReviewComment(file="src/a.py", line=3, severity="blocker", body="a guard is missing")],
+    )
+    _record(db, [outcome])
+
+    written = record_posted_comments(
+        db,
+        forge_name="local",
+        pr_number=PR,
+        role=BotRole.SENTINEL,
+        head_sha=HEAD,
+        posted=[(outcome.comments[0], Comment(id=11, path="src/a.py", line=3))],
+        review_id=None,
+    )
+
+    assert written == 0
+    assert fetch_finding_posts(db, PR) == []
+
+
+def test_a_root_id_match_wins_over_a_discussion_id_match(tmp_path: Path) -> None:
+    """A post is matched to the thread rooted at its comment before any thread sharing its discussion id."""
+    db = tmp_path / "review.db"
+    finding_id = _blocking(db)
+    record_finding_post(
+        db,
+        FindingPost(
+            finding_id=finding_id,
+            pr_number=PR,
+            forge="gitlab",
+            head_sha=HEAD,
+            comment_id="501",
+            thread_id=DISCUSSION,
+        ),
+    )
+    forge = ThreadForge(
+        [
+            ReviewThread(root_id=900, thread_id=DISCUSSION, resolved=True, resolved_by="author"),
+            ReviewThread(root_id=501, thread_id="b" * 40, resolved=True, resolved_by="jwfaye"),
+        ]
+    )
+
+    run = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
+
+    assert run.lines() == [f"thread closed by jwfaye for #{finding_id}"]
