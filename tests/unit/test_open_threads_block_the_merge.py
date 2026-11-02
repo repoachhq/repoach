@@ -12,14 +12,21 @@ import json
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from repoach.cli import review_cmds
-from repoach.forge import ForgeError, ReviewThread
-from repoach.review.auto_merge import OUTCOME_MERGED, OUTCOME_SKIP_GATE, run_auto_merge
+from repoach.forge import ForgeError, PullRequest, ReviewThread
+from repoach.review.auto_merge import (
+    OUTCOME_MERGED,
+    OUTCOME_SKIP_GATE,
+    CIGateOutcome,
+    GateEvaluation,
+    run_auto_merge,
+)
 from repoach.review.findings import init_findings_schema
 from repoach.review.merge_gate import MergeFacts, compute_merge_decision
 from repoach.review.merge_wait import StrandedPR
@@ -350,3 +357,47 @@ def test_merge_on_ci_admits_the_dispatch_and_never_listens_to_thread_events() ->
         }
     )
     assert job_condition(workflow["jobs"]["merge"]["if"], dispatch)
+
+
+def test_review_gate_names_every_thread_it_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``review gate`` prints the count, one line per thread, and carries them in its JSON."""
+    threads = OpenThreads(
+        read=True,
+        threads=[
+            ReviewThread(root_id=4449188625, path="src/repoach/forge/github.py", line=396),
+            ReviewThread(root_id=12, thread_id="e" * 40),
+        ],
+    )
+    facts = _facts().with_threads(threads)
+    evaluation = GateEvaluation(
+        head_sha="a" * 40,
+        ci_gate=CIGateOutcome(green=True, outcome_tag="APPROVE", reason=""),
+        facts=facts,
+        decision=compute_merge_decision(facts),
+        pull_request=PullRequest(number=286, head_ref="feat/x", base_ref="develop", body=""),
+        changed_files=[],
+        open_threads=threads,
+    )
+    monkeypatch.chdir(REPO_ROOT)
+    with patch("repoach.cli.review_cmds.evaluate_merge_gate", return_value=evaluation):
+        result = CliRunner().invoke(review_cmds.review_app, ["gate", "286"])
+
+    assert result.exit_code == 5, result.output
+    payload = json.loads(result.stdout)
+    assert payload["merge"] is False
+    assert payload["reasons"] == ["2 unresolved review thread(s)"]
+    assert payload["facts"]["unresolved_threads"] == 2
+    assert payload["facts"]["threads_read"] is True
+    assert payload["review_threads"]["threads"] == [
+        {
+            "root_id": 4449188625,
+            "thread_id": None,
+            "path": "src/repoach/forge/github.py",
+            "line": 396,
+        },
+        {"root_id": 12, "thread_id": "e" * 40, "path": "", "line": None},
+    ]
+    stderr = result.stderr.splitlines()
+    assert "review threads: 2 unresolved" in stderr
+    assert "open thread 4449188625 at src/repoach/forge/github.py:396" in stderr
+    assert f"open thread 12 ({'e' * 40}) at (no file)" in stderr
