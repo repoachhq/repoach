@@ -45,6 +45,7 @@ from tests.merge_wait_fakes import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MERGE_ON_CI = REPO_ROOT / ".github" / "workflows" / "merge-on-ci.yml"
+THREAD_REARM = REPO_ROOT / ".github" / "workflows" / "thread-rearm.yml"
 NOW = datetime.fromisoformat("2026-10-26T10:00:00+00:00")
 
 
@@ -319,17 +320,36 @@ def _thread_event(
     )
 
 
-def test_merge_on_ci_rearms_on_a_resolved_thread() -> None:
-    """The thread event triggers merge-on-ci for an allowed actor on a same-repo PR into develop."""
-    workflow = yaml.safe_load(MERGE_ON_CI.read_text(encoding="utf-8"))
-    assert workflow[True]["pull_request_review_thread"] == {"types": ["resolved", "unresolved"]}
-    condition = workflow["jobs"]["merge"]["if"]
+def test_a_resolved_thread_dispatches_merge_on_ci_on_main_without_a_merge_token() -> None:
+    """thread-rearm.yml dispatches main's merge-on-ci.yml; it holds no token that could merge."""
+    workflow = yaml.safe_load(THREAD_REARM.read_text(encoding="utf-8"))
+    assert workflow[True] == {"pull_request_review_thread": {"types": ["resolved", "unresolved"]}}
+    assert workflow["permissions"] == {}
+    job = workflow["jobs"]["rearm"]
+    assert job["permissions"] == {"actions": "write"}
+    assert job["runs-on"] == "ubuntu-latest"
+    assert [step["run"] for step in job["steps"]] == [
+        'gh workflow run merge-on-ci.yml --repo "$REPOSITORY" --ref main -f pr="$PR_NUMBER"'
+    ]
+    assert job["steps"][0]["env"]["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    condition = job["if"]
     assert job_condition(condition, _thread_event())
     assert not job_condition(condition, _thread_event(draft=True))
     assert not job_condition(condition, _thread_event(base="main"))
     assert not job_condition(condition, _thread_event(repo="fork/repoach"))
     assert not job_condition(condition, _thread_event(actor="someone-else"))
-    group = workflow["concurrency"]["group"]
-    assert "github.event.pull_request.head.ref" in group
-    resolve = next(s for s in workflow["jobs"]["merge"]["steps"] if s.get("id") == "resolve")
-    assert resolve["env"]["DISPATCH_PR"] == "${{ inputs.pr || github.event.pull_request.number }}"
+
+
+def test_merge_on_ci_admits_the_dispatch_and_never_listens_to_thread_events() -> None:
+    """The merge-capable workflow is only dispatched; a thread event never runs it from a PR ref."""
+    workflow = yaml.safe_load(MERGE_ON_CI.read_text(encoding="utf-8"))
+    assert "pull_request_review_thread" not in workflow[True]
+    dispatch = Context(
+        github={
+            "event_name": "workflow_dispatch",
+            "actor": "github-actions[bot]",
+            "repository": REPOSITORY,
+            "event": {"inputs": {"pr": "259"}},
+        }
+    )
+    assert job_condition(workflow["jobs"]["merge"]["if"], dispatch)

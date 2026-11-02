@@ -16,11 +16,14 @@ import yaml
 
 _WORKFLOW_DIR = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 _RUNNER_EXPR = "${{ vars.REPOACH_RUNNER || 'self-hosted' }}"
-_GITHUB_HOSTED = {("auto-review.yml", "coalesce")}
+_GITHUB_HOSTED = {("auto-review.yml", "coalesce"), ("thread-rearm.yml", "rearm")}
 """Jobs that run GitHub-hosted on purpose (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D1).
 
 ``coalesce`` only sleeps; it must never queue behind the self-hosted
 runner it protects, and on the public repository it costs no minutes.
+``rearm`` (SP-OPEN-THREADS-BLOCK-THE-MERGE) only dispatches
+``merge-on-ci.yml``, and runs the workflow file of a PR's merge ref:
+it never holds the self-hosted slot nor runs PR-authored YAML there.
 """
 
 
