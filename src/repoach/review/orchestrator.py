@@ -1122,7 +1122,7 @@ class ReviewTeamOrchestrator:
         )
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
-        team.record_open_threads(read_open_threads(self._forge, pr_number))
+        self._refresh_open_threads(pr_number, team)
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1326,7 +1326,7 @@ class ReviewTeamOrchestrator:
         team.generated_lines = report_lines(generated_checks, generated_timing)
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
-        team.record_open_threads(read_open_threads(self._forge, pr_number))
+        self._refresh_open_threads(pr_number, team)
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(
@@ -1608,6 +1608,15 @@ class ReviewTeamOrchestrator:
                 message=redact_error(str(exc))[:200],
             )
 
+    def _refresh_open_threads(self, pr_number: int, team: TeamOutcome) -> None:
+        """Read the review threads open on the forge into ``team`` (SP-OPEN-THREADS-BLOCK-THE-MERGE).
+
+        The one place a run reads them: at the end of a fresh or replayed
+        run, and again after posting, so the archive report counts the
+        threads this run opened. A failed read is carried as unread.
+        """
+        team.record_open_threads(read_open_threads(self._forge, pr_number))
+
     def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
         """Record the recorded finding threads resolved on the forge (SP-FINDING-THREAD-IDS G6).
 
@@ -1748,7 +1757,7 @@ class ReviewTeamOrchestrator:
             posted_ids=posted_ids,
             team=team,
         )
-        team.record_open_threads(read_open_threads(self._forge, pr_number))
+        self._refresh_open_threads(pr_number, team)
         self._upsert_archive_comment(team)
         self._fire_routine(team)
         remember_verified_findings(self._db_path, pr_number=pr_number)
