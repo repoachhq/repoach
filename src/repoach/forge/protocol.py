@@ -28,6 +28,7 @@ cheap and explicit instead of being folded into a heavier read.
 from __future__ import annotations
 
 import functools
+import itertools
 import re
 import threading
 from collections.abc import Callable, Iterator, Sequence
@@ -219,15 +220,39 @@ def _api_method(args: Sequence[str]) -> str | None:
     return None
 
 
+def _graphql_read(args: Sequence[str]) -> bool:
+    """Whether a ``gh api graphql`` argv carries a query and no mutation.
+
+    GraphQL is always sent as ``POST``; what it does is its document's
+    first keyword. Only a ``query=`` field whose document starts with
+    ``query`` or ``{`` reads; a mutation, a document read from a file
+    (``query=@…``) or no document at all counts as a write (fail closed).
+    """
+    if (
+        len(args) < 2
+        or list(args[:2]) != ["api", "graphql"]
+        or _api_method(args) not in (None, "POST")
+    ):
+        return False
+    documents = [
+        value.split("=", 1)[1]
+        for flag, value in itertools.pairwise(args)
+        if flag in _API_FIELD_FLAGS and value.startswith("query=")
+    ]
+    return len(documents) == 1 and documents[0].lstrip().startswith(("query", "{"))
+
+
 def is_write_argv(args: Sequence[str]) -> bool:
     """True when a ``gh`` / ``glab`` argv (binary excluded) changes forge state.
 
     ``api`` writes with any method but ``GET``, and with no method when it
-    carries a field or an input (both CLIs then default to ``POST``); any
-    other command writes when its verb (``pr comment``, ``mr merge``…) is
-    a mutating one.
+    carries a field or an input (both CLIs then default to ``POST``), a
+    GraphQL query excepted (:func:`_graphql_read`); any other command
+    writes when its verb (``pr comment``, ``mr merge``…) is a mutating one.
     """
     if not args:
+        return False
+    if _graphql_read(args):
         return False
     if args[0] == "api":
         method = _api_method(args)
