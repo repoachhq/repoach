@@ -74,6 +74,9 @@ class _FakeTeam:
     owner_resolved: list[dict[str, object]] = field(default_factory=list)
     owner_commands: list[dict[str, object]] = field(default_factory=list)
     owner_lines: list[str] = field(default_factory=list)
+    finding_posts: int = 0
+    threads_closed: list[dict[str, object]] = field(default_factory=list)
+    thread_lines: list[str] = field(default_factory=list)
 
 
 _REQUIRED_TOP_LEVEL = {
@@ -92,6 +95,8 @@ _REQUIRED_TOP_LEVEL = {
     "generated",
     "owner_resolved",
     "owner_commands",
+    "finding_posts",
+    "threads_closed",
 }
 
 _REQUIRED_REVIEW_ENTRY = {

@@ -20,6 +20,7 @@ from repoach.forge.github import GhResult, GitHubForge
 from repoach.forge.gitlab import GitLabForge
 from repoach.forge.protocol import Comment, ForgeError, ReviewThread
 from repoach.forge.runner import CommandResult
+from repoach.review import orchestrator
 from repoach.review.finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
@@ -40,6 +41,7 @@ from repoach.review.findings import (
 from repoach.review.findings_bridge import record_findings_for_outcomes
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
 from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
+from tests.fixtures.generated_artefacts.harness import Repo, install, review
 
 PR = 7
 HEAD = "c0ffee" + "0" * 34
@@ -274,6 +276,37 @@ def test_an_older_table_gains_the_missing_columns(tmp_path: Path) -> None:
 
     [post] = fetch_finding_posts(db, PR)
     assert (post.comment_id, post.thread_id, post.thread_closed_at_head) == ("77", None, None)
+
+
+def test_dry_run_writes_no_post_and_reports_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC1 / AC6: a dry run posts nothing, writes no row, and its JSON says ``finding_posts: 0``."""
+    bench = install(monkeypatch, tmp_path)
+
+    class Commenting:
+        def __init__(self, **_kwargs: object) -> None:
+            self.role = BotRole.SENTINEL
+
+        def review_diff(self, diff: str, **_kwargs: object) -> ReviewerOutcome:
+            return _outcome(
+                BotRole.SENTINEL,
+                [ReviewComment(file="src/x.py", line=1, severity="minor", body="rename x")],
+            )
+
+    monkeypatch.setattr(orchestrator, "Sentinel", Commenting)
+    repo = Repo(tmp_path / "repo", {"README.md": "base\n"})
+    head = repo.push_head({"src/x.py": "x = 1\n"})
+
+    result = review(repo, monkeypatch, capsys, head=head)
+
+    assert result.payload["finding_posts"] == 0
+    assert result.payload["threads_closed"] == []
+    assert any(f.file == "src/x.py" for f in fetch_findings(bench.db_path, PR))
+    with sqlite3.connect(bench.db_path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert "finding_posts" in tables
+        assert conn.execute("SELECT count(*) FROM finding_posts").fetchone() == (0,)
 
 
 class ThreadForge(BatchForge):

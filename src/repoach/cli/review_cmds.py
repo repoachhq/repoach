@@ -406,6 +406,13 @@ def review_pr(
     <reason>`` line per settled finding is printed on stderr. A dry run
     posts no answer: each is printed as ``owner reply not posted: …``
     and left for the next posting run.
+
+    Every posted inline comment of a finding is recorded with its forge
+    ids (SP-FINDING-THREAD-IDS): ``finding_posts`` in the JSON counts the
+    rows this run wrote (0 on a dry run), ``threads_closed`` lists the
+    recorded threads seen resolved on the forge, and one ``thread closed
+    by <login> for #<id>`` line per thread resolved by the bot or a
+    maintainer is printed on stderr. A closed thread settles no finding.
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -488,6 +495,8 @@ def review_pr(
         "generated": team.generated,
         "owner_resolved": team.owner_resolved,
         "owner_commands": team.owner_commands,
+        "finding_posts": team.finding_posts,
+        "threads_closed": team.threads_closed,
         "usage": usage,
         "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
@@ -509,6 +518,8 @@ def review_pr(
     for line in team.generated_lines:
         typer.echo(line, err=True)
     for line in team.owner_lines:
+        typer.echo(line, err=True)
+    for line in team.thread_lines:
         typer.echo(line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:
