@@ -221,10 +221,12 @@ def _api_method(args: Sequence[str]) -> str | None:
 
 
 def _is_field_flag(arg: str) -> bool:
-    """Whether ``arg`` gives ``gh api`` / ``glab api`` a body: a field or input flag, alone or joined to its value.
+    """Whether ``arg`` gives ``gh api`` / ``glab api`` a body.
 
-    ``-fkey=v``, ``-Fkey=v``, ``--field=key=v``, ``--raw-field=key=v`` and
-    ``--input=file`` carry a body as surely as ``-f key=v`` does.
+    A field or input flag counts alone (``-f``, ``--input``) or joined to
+    its value: ``-fkey=v``, ``-Fkey=v``, ``--field=key=v``,
+    ``--raw-field=key=v`` and ``--input=file`` carry a body as surely as
+    ``-f key=v`` does.
     """
     if arg in _API_FIELD_FLAGS:
         return True
