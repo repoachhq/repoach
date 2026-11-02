@@ -9,10 +9,11 @@ the merge-on-ci trigger are each driven through their real code.
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -20,6 +21,7 @@ from typer.testing import CliRunner
 
 from repoach.cli import review_cmds
 from repoach.forge import ForgeError, PullRequest, ReviewThread
+from repoach.forge.runner import CommandResult
 from repoach.review.auto_merge import (
     OUTCOME_MERGED,
     OUTCOME_SKIP_GATE,
@@ -35,7 +37,12 @@ from repoach.review.open_threads import (
     hold_open_threads,
     read_open_threads,
 )
-from repoach.review.release_gate import ReleaseFacts, compute_release_decision
+from repoach.review.release_gate import (
+    ProvenanceSource,
+    ReleaseFacts,
+    compute_release_decision,
+    gather_release_facts,
+)
 from repoach.review.report import render_ledger_report
 from tests.forge_fakes import thread_node
 from tests.github_concurrency_sim import Context, job_condition
@@ -401,3 +408,71 @@ def test_review_gate_names_every_thread_it_counted(monkeypatch: pytest.MonkeyPat
     assert "review threads: 2 unresolved" in stderr
     assert "open thread 4449188625 at src/repoach/forge/github.py:396" in stderr
     assert f"open thread 12 ({'e' * 40}) at (no file)" in stderr
+
+
+def _release_forge(threads: list[ReviewThread] | ForgeError) -> MagicMock:
+    """A forge whose develop is clean and fresh, and whose release PR has ``threads``."""
+    sha = "d" * 40
+    forge = MagicMock()
+    forge.head_sha.return_value = sha
+    forge.merged_shas.return_value = {sha}
+
+    def git(args: list[str]) -> CommandResult:
+        stdout = ""
+        if args[:2] == ["rev-parse", "develop"]:
+            stdout = f"{sha}\n"
+        elif args[:1] == ["log"]:
+            stdout = f"{sha}\tfeat: x (#285)\n"
+        elif args[:2] == ["ls-remote", "origin"]:
+            stdout = f"{sha}\trefs/heads/develop\n"
+        elif args[:2] == ["rev-list", "--count"]:
+            stdout = "0\n"
+        return CommandResult(returncode=0, stdout=stdout, stderr="", argv=args)
+
+    forge.git.side_effect = git
+    if isinstance(threads, ForgeError):
+        forge.unresolved_threads.side_effect = threads
+    else:
+        forge.unresolved_threads.return_value = threads
+    return forge
+
+
+def _green_ci(repo_root: Path) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess([], 0)
+
+
+def test_release_gate_reads_the_release_pr_threads_only_when_a_pr_is_given(
+    tmp_path: Path,
+) -> None:
+    """``--pr`` reads the release PR's threads; without it nothing is read and nothing refuses."""
+    open_one = _release_forge([ReviewThread(root_id=7, path="a.py", line=1)])
+    facts = gather_release_facts(
+        repo_root=tmp_path,
+        forge=open_one,
+        pr_number=290,
+        ci_runner=_green_ci,
+        provenance=ProvenanceSource.GITHUB,
+    )
+    assert facts.open_threads is not None and facts.open_threads.count == 1
+    assert compute_release_decision(facts).reasons == ["1 unresolved review thread(s)"]
+    open_one.unresolved_threads.assert_called_once_with(290)
+
+    no_pr = _release_forge([ReviewThread(root_id=7)])
+    facts = gather_release_facts(
+        repo_root=tmp_path, forge=no_pr, ci_runner=_green_ci, provenance=ProvenanceSource.GITHUB
+    )
+    assert facts.open_threads is None
+    assert compute_release_decision(facts).merge is True
+    no_pr.unresolved_threads.assert_not_called()
+
+    failing = _release_forge(ForgeError("gh: Something went wrong (HTTP 502)"))
+    facts = gather_release_facts(
+        repo_root=tmp_path,
+        forge=failing,
+        pr_number=290,
+        ci_runner=_green_ci,
+        provenance=ProvenanceSource.GITHUB,
+    )
+    assert compute_release_decision(facts).reasons == [
+        "review threads unreadable: gh: Something went wrong (HTTP 502)"
+    ]
