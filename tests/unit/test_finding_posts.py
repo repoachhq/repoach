@@ -18,9 +18,10 @@ import pytest
 
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.forge.gitlab import GitLabForge
-from repoach.forge.protocol import Comment, ForgeError, ReviewThread
+from repoach.forge.protocol import Comment, ForgeError, InlineCommentDraft, ReviewThread
 from repoach.forge.runner import CommandResult
 from repoach.review import orchestrator
+from repoach.review.finding_post_record import pair_posted
 from repoach.review.finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
@@ -222,6 +223,27 @@ def test_a_forge_answer_without_an_id_writes_no_row(tmp_path: Path) -> None:
     assert team.posted_comments >= 1
     assert team.finding_posts == 0
     assert fetch_finding_posts(db, PR) == []
+
+
+def test_pair_posted_falls_back_to_a_unique_line_and_skips_an_ambiguous_one() -> None:
+    """A rewritten body pairs on a unique path and line; two drafts on one line pair on body only."""
+    comments = [
+        ReviewComment(file="src/a.py", line=3, severity="minor", body="one"),
+        ReviewComment(file="src/b.py", line=5, severity="minor", body="two"),
+        ReviewComment(file="src/b.py", line=5, severity="minor", body="three"),
+    ]
+    drafts = [
+        InlineCommentDraft(path=c.file, line=c.line, body=f"rendered {c.body}") for c in comments
+    ]
+    created = [
+        Comment(id=31, path="src/a.py", line=3, body="rewritten by the forge"),
+        Comment(id=32, path="src/b.py", line=5, body="rewritten two"),
+        Comment(id=33, path="src/b.py", line=5, body="rendered three"),
+    ]
+
+    pairs = pair_posted(comments, drafts, created)
+
+    assert [(comment.body, made.id) for comment, made in pairs] == [("one", 31), ("three", 33)]
 
 
 def test_gitlab_post_records_the_discussion_and_note_ids(tmp_path: Path) -> None:

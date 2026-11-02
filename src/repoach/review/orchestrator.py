@@ -85,15 +85,8 @@ from ..project.spec_source import (
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
-from .finding_posts import (
-    ClosureRun,
-    FindingPost,
-    FindingPostIntegrityError,
-    detect_closed_threads,
-    init_finding_posts_schema,
-    record_finding_post,
-    thread_id_of,
-)
+from .finding_post_record import pair_posted, record_posted_comments
+from .finding_posts import ClosureRun, detect_closed_threads, init_finding_posts_schema
 from .finding_verifiers import (
     MechanicalVerification,
     VerificationReport,
@@ -101,7 +94,6 @@ from .finding_verifiers import (
     verify_findings_for_pr,
 )
 from .findings import (
-    Finding,
     ReviewRun,
     fetch_completed_review_run,
     fetch_findings,
@@ -109,8 +101,6 @@ from .findings import (
 )
 from .findings_bridge import (
     RecordedFindings,
-    comment_to_finding,
-    finding_fingerprint,
     record_findings_for_outcomes,
     record_oversized_findings,
     recount_findings_at_head,
@@ -237,65 +227,6 @@ def _render_review_body(outcome: ReviewerOutcome) -> str:
         f"_— Repoach review bot, {outcome.model_used}, "
         f"{outcome.tokens_used} tokens, {outcome.elapsed_s}s_"
     )
-
-
-def _posted_finding_id(
-    rows: Sequence[Finding],
-    comment: ReviewComment,
-    *,
-    role: BotRole,
-    pr_number: int,
-    head_sha: str,
-) -> int | None:
-    """The ledger row a posted comment states: same head and fingerprint, its reviewer's first.
-
-    Args:
-        rows: The pull request's findings at ``head_sha``.
-        comment: The posted reviewer comment.
-        role: The reviewer that raised it.
-        pr_number: The pull request.
-        head_sha: The head it was posted at.
-
-    Returns:
-        The newest matching finding id, or ``None`` when the comment was
-        never recorded (off the diff).
-    """
-    probe = comment_to_finding(
-        comment, role=role, pr_number=pr_number, head_sha=head_sha, round_n=1
-    )
-    fingerprint = finding_fingerprint(probe)
-    matches = [row for row in rows if finding_fingerprint(row) == fingerprint]
-    own = [row for row in matches if row.finder == probe.finder]
-    ids = [row.id for row in own or matches if row.id is not None]
-    return max(ids) if ids else None
-
-
-def _pair_posted(
-    outcome: ReviewerOutcome,
-    drafts: Sequence[InlineCommentDraft],
-    created: Sequence[Comment],
-) -> list[tuple[ReviewComment, Comment]]:
-    """Pair each reviewer comment with the forge comment a batched review created for it.
-
-    A created comment is matched on its path, line and body; when the
-    forge rewrote the body, on its path and line alone if exactly one
-    unclaimed comment sits there. An unmatched draft is left out.
-    """
-    unclaimed = list(created)
-    pairs: list[tuple[ReviewComment, Comment]] = []
-    for comment, draft in zip(outcome.comments, drafts, strict=False):
-        exact = [
-            c
-            for c in unclaimed
-            if c.path == draft.path and c.line == draft.line and c.body == draft.body
-        ]
-        placed = [c for c in unclaimed if c.path == draft.path and c.line == draft.line]
-        chosen = exact[0] if exact else placed[0] if len(placed) == 1 else None
-        if chosen is None:
-            continue
-        unclaimed.remove(chosen)
-        pairs.append((comment, chosen))
-    return pairs
 
 
 def record_review_ledger(
@@ -1682,62 +1613,26 @@ class ReviewTeamOrchestrator:
         review_id: int | None,
         team: TeamOutcome,
     ) -> None:
-        """Write one ``finding_posts`` row per posted comment that states a recorded finding.
+        """Record the forge ids of the comments just posted for ``outcome`` (SP-FINDING-THREAD-IDS).
 
-        The finding is the row of this head with the comment's
-        fingerprint, the reviewer's own preferred. A comment with no
-        such row (off the diff) or no forge id is skipped and logged; a
-        failed write is logged and the review continues.
+        :func:`~repoach.review.finding_post_record.record_posted_comments` joins
+        each comment to its finding and writes its row; a ledger read
+        failure is logged and the review continues.
         """
         if not posted:
             return
         try:
-            rows = [
-                finding
-                for finding in fetch_findings(self._db_path, pr_number)
-                if finding.head_sha == (head_sha or "") and finding.id is not None
-            ]
+            team.finding_posts += record_posted_comments(
+                self._db_path,
+                forge_name=self._forge.name,
+                pr_number=pr_number,
+                role=outcome.role,
+                head_sha=head_sha or "",
+                posted=posted,
+                review_id=review_id,
+            )
         except SQLAlchemyError as exc:
             _log.warning("finding_posts.write_failed", pr_number=pr_number, error=str(exc)[:200])
-            return
-        forge_name = "gitlab" if self._forge.name == "gitlab" else "github"
-        for comment, created in posted:
-            finding_id = _posted_finding_id(
-                rows, comment, role=outcome.role, pr_number=pr_number, head_sha=head_sha or ""
-            )
-            if finding_id is None:
-                continue
-            if created.id <= 0:
-                _log.warning(
-                    "finding_posts.id_unparseable",
-                    pr_number=pr_number,
-                    finding_id=finding_id,
-                    file=comment.file,
-                    line=comment.line,
-                )
-                continue
-            post = FindingPost(
-                finding_id=finding_id,
-                pr_number=pr_number,
-                forge=forge_name,
-                head_sha=head_sha or "",
-                comment_id=str(created.id),
-                thread_id=thread_id_of(forge_name, created),
-                review_id=str(review_id) if review_id and forge_name == "github" else None,
-                in_reply_to=str(created.in_reply_to) if created.in_reply_to else None,
-            )
-            try:
-                record_finding_post(self._db_path, post)
-            except (FindingPostIntegrityError, SQLAlchemyError) as exc:
-                _log.warning(
-                    "finding_posts.write_failed",
-                    pr_number=pr_number,
-                    finding_id=finding_id,
-                    comment_id=post.comment_id,
-                    error=str(exc)[:200],
-                )
-                continue
-            team.finding_posts += 1
 
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int
@@ -2139,7 +2034,7 @@ class ReviewTeamOrchestrator:
             pr_number=pr_number,
             outcome=outcome,
             head_sha=head_sha,
-            posted=_pair_posted(outcome, drafts, posted.comments),
+            posted=pair_posted(outcome.comments, drafts, posted.comments),
             review_id=posted.id or None,
             team=team,
         )
@@ -2254,7 +2149,6 @@ class ReviewTeamOrchestrator:
         Args:
             pr_number: The PR whose proposed findings to assess.
         """
-        from .findings import fetch_findings
         from .stuck import (
             assess_proposed_escalation,
             build_proposed_escalation_dossier,

@@ -141,11 +141,16 @@ def _engine_for(db_path: Path) -> Engine:
 def init_finding_posts_schema(db_path: Path) -> None:
     """Create ``finding_posts`` if absent and add any column an older copy lacks.
 
-    Idempotent. A column added after the table was first created is
-    nullable, so ``ALTER TABLE … ADD COLUMN`` keeps every stored row.
+    Idempotent. Each missing column is added with its declared type; a
+    column added after the table was first created is nullable, so
+    ``ALTER TABLE … ADD COLUMN`` keeps every stored row.
 
     Args:
         db_path: The ledger database.
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: The table could not be created or
+            altered (an unwritable ledger, a locked database).
     """
     engine = _engine_for(db_path)
     ensure_schema_created(engine, _metadata)
@@ -155,7 +160,8 @@ def init_finding_posts_schema(db_path: Path) -> None:
         return
     with engine.begin() as conn:
         for column in missing:
-            conn.execute(text(f"ALTER TABLE finding_posts ADD COLUMN {column.name} TEXT"))
+            kind = column.type.compile(dialect=engine.dialect)
+            conn.execute(text(f"ALTER TABLE finding_posts ADD COLUMN {column.name} {kind}"))
 
 
 def _row_to_post(row: RowMapping) -> FindingPost:
