@@ -113,11 +113,8 @@ def test_read_open_threads_names_each_thread_or_the_failure() -> None:
     ]
     read = read_open_threads(_Forge(threads), 281)
     assert read.read is True and read.count == 2
-    assert read.facts_update() == {
-        "threads_read": True,
-        "unresolved_threads": 2,
-        "threads_error": "",
-    }
+    facts = _facts(threads_read=False).with_threads(read)
+    assert (facts.threads_read, facts.unresolved_threads, facts.threads_error) == (True, 2, "")
     assert read.summary_line() == "review threads: 2 unresolved"
     assert read.thread_lines() == [
         "open thread 77 at src/a.py:3",
@@ -139,7 +136,7 @@ def test_read_open_threads_names_each_thread_or_the_failure() -> None:
     assert failed.refusal() == f"review threads unreadable: {failed.error}"
     assert failed.summary_line() == f"review threads: unreadable: {failed.error}"
     assert failed.as_json()["unresolved"] is None
-    assert compute_merge_decision(_facts(**failed.facts_update())).merge is False
+    assert compute_merge_decision(_facts().with_threads(failed)).merge is False
 
 
 def _green(threads: list[dict[str, object]]) -> MergeWaitFixtureForge:

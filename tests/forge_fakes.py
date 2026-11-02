@@ -120,4 +120,4 @@ NO_OPEN_THREADS = json.dumps([threads_page([])])
 
 def no_open_threads(facts: MergeFacts) -> MergeFacts:
     """``facts`` as read from a forge that reports no open review thread."""
-    return facts.model_copy(update=OpenThreads(read=True).facts_update())
+    return facts.with_threads(OpenThreads(read=True))

@@ -35,7 +35,7 @@ from .findings import (
     fetch_review_integrity,
     init_findings_schema,
 )
-from .open_threads import unreadable_reason, unresolved_reason
+from .open_threads import OpenThreads, unreadable_reason, unresolved_reason
 from .reviewer import ReviewVerdict
 from .spec_gate import (
     RESOLUTION_OWNERSHIP,
@@ -192,6 +192,21 @@ class MergeFacts(BaseModel):
     unresolved_threads: int = 0
     threads_read: bool = False
     threads_error: str = ""
+
+    def with_threads(self, threads: OpenThreads) -> MergeFacts:
+        """Return these facts with the open review threads read from the forge.
+
+        The one place the read becomes facts (SP-OPEN-THREADS-BLOCK-THE-MERGE):
+        ``unresolved_threads`` is its count, ``threads_read`` whether the
+        forge answered, ``threads_error`` why not.
+        """
+        return self.model_copy(
+            update={
+                "unresolved_threads": threads.count,
+                "threads_read": threads.read,
+                "threads_error": threads.error,
+            }
+        )
 
     @property
     def spec_missing(self) -> list[str]:

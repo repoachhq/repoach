@@ -2416,16 +2416,19 @@ class ReviewTeamOrchestrator:
         found still blocking are named in the headline's reasons, as the
         gate names them (SP-GATE-REVERIFIES-AT-HEAD G8).
         """
-        facts = summarise_ledger_facts(
-            self._db_path,
-            pr_number=team.pr_number,
-            head_sha=team.head_sha or "",
-        ).model_copy(
-            update={
-                "reverified": dict(team.reverified),
-                "reverify_reasons": list(team.reverify_reasons),
-                **team.open_threads.facts_update(),
-            }
+        facts = (
+            summarise_ledger_facts(
+                self._db_path,
+                pr_number=team.pr_number,
+                head_sha=team.head_sha or "",
+            )
+            .model_copy(
+                update={
+                    "reverified": dict(team.reverified),
+                    "reverify_reasons": list(team.reverify_reasons),
+                }
+            )
+            .with_threads(team.open_threads)
         )
         decision = compute_merge_decision(facts)
         return render_ledger_report(

@@ -816,21 +816,24 @@ def decide_at_head(
             root=root,
             base_ref=base_ref,
         )
-    facts = gather_merge_facts(
-        db,
-        pr_number=pr_number,
-        repo_root=root,
-        head_sha=resolved_head,
-        ci_green=ci_green,
-        gates_config=config,
-    ).model_copy(
-        update={
-            "reverified": reverified.counts(),
-            "reverify_reasons": reverified.reasons(),
-            "reverify_line": reverified.summary_line(),
-            "spec_recompute_failure": recompute_failure,
-            **(open_threads or read_open_threads(forge, pr_number)).facts_update(),
-        }
+    facts = (
+        gather_merge_facts(
+            db,
+            pr_number=pr_number,
+            repo_root=root,
+            head_sha=resolved_head,
+            ci_green=ci_green,
+            gates_config=config,
+        )
+        .model_copy(
+            update={
+                "reverified": reverified.counts(),
+                "reverify_reasons": reverified.reasons(),
+                "reverify_line": reverified.summary_line(),
+                "spec_recompute_failure": recompute_failure,
+            }
+        )
+        .with_threads(open_threads or read_open_threads(forge, pr_number))
     )
     return resolved_head, facts, compute_merge_decision(facts)
 

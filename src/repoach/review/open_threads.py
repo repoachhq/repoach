@@ -86,14 +86,6 @@ class OpenThreads(BaseModel):
             return unresolved_reason(self.count)
         return None
 
-    def facts_update(self) -> dict[str, object]:
-        """The :class:`~repoach.review.merge_gate.MergeFacts` fields this read sets."""
-        return {
-            "threads_read": self.read,
-            "unresolved_threads": self.count,
-            "threads_error": self.error,
-        }
-
     def summary_line(self) -> str:
         """``review threads: <n> unresolved``, or ``review threads: unreadable: <why>``."""
         if not self.read:
