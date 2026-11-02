@@ -31,7 +31,7 @@ from .finding_posts import (
     record_finding_post,
     thread_id_of,
 )
-from .findings import fetch_findings, init_findings_schema
+from .findings import Finding, fetch_findings, init_findings_schema
 
 _log = get_logger(__name__)
 
@@ -63,6 +63,46 @@ class BackfillReport(BaseModel):
         )
 
 
+def match_backfill_roots(
+    findings: Sequence[Finding], roots: Sequence[Comment], linked: set[int]
+) -> dict[int, Comment]:
+    """Pair each unlinked finding with its one bot root, strictly; pure.
+
+    A finding is paired when exactly one of ``roots`` sits at its exact
+    ``(file, line_start)`` and no other unlinked finding has that root as
+    its only one.
+
+    Args:
+        findings: The pull request's findings.
+        roots: The bot-authored inline roots that carry a path and a line.
+        linked: The findings that already have a post row (left out).
+
+    Returns:
+        ``{finding id: root}`` for the findings that can be linked.
+    """
+    candidates: dict[int, list[Comment]] = {}
+    for finding in findings:
+        if finding.id is None or finding.id in linked:
+            continue
+        candidates[finding.id] = [
+            root
+            for root in roots
+            if finding.file
+            and finding.line_start > 0
+            and root.path == finding.file
+            and root.line == finding.line_start
+        ]
+    claims: dict[int, int] = {}
+    for found in candidates.values():
+        if len(found) == 1:
+            claims[found[0].id] = claims.get(found[0].id, 0) + 1
+    return {
+        finding_id: found[0]
+        for finding_id, found in candidates.items()
+        if len(found) == 1 and claims[found[0].id] == 1
+    }
+
+
 def backfill_finding_posts(
     db_path: Path,
     forge: Forge,
@@ -75,9 +115,10 @@ def backfill_finding_posts(
 
     A finding is linked when exactly one bot-authored inline root sits at
     its exact ``(file, line_start)`` and no other unlinked finding claims
-    that root. Anything else (a shifted line, two roots, two findings on
-    one root, a conversation comment, no file) is ``unmatched`` and gets
-    no row: it stays unknown, never an approximated link.
+    that root (:func:`match_backfill_roots`). Anything else (a shifted
+    line, two roots, two findings on one root, a conversation comment,
+    no file) is ``unmatched`` and gets no row: it stays unknown, never an
+    approximated link.
 
     Args:
         db_path: The ledger database.
@@ -90,7 +131,12 @@ def backfill_finding_posts(
         The counts.
 
     Raises:
-        ForgeError: The comments could not be read; nothing is written.
+        ForgeError: The forge keeps no review threads, or the comments
+            could not be read; nothing is written.
+        FindingPostIntegrityError: A finding disappeared from the ledger
+            between the read and the write.
+        sqlalchemy.exc.SQLAlchemyError: The ledger could not be read or
+            written.
     """
     kind = forge_kind(forge.name)
     if kind is None:
@@ -107,39 +153,23 @@ def backfill_finding_posts(
         and comment.line is not None
         and is_bot_login(bot_login, comment.author)
     ]
+    matched = match_backfill_roots(findings, roots, linked_already)
     report = BackfillReport(pr_number=pr_number, findings=len(findings), dry_run=dry_run)
-    candidates: dict[int, list[Comment]] = {}
-    for finding in findings:
-        if finding.id is None or finding.id in linked_already:
-            continue
-        candidates[finding.id] = [
-            root
-            for root in roots
-            if finding.file
-            and finding.line_start > 0
-            and root.path == finding.file
-            and root.line == finding.line_start
-        ]
-    claims: dict[int, int] = {}
-    for found in candidates.values():
-        if len(found) == 1:
-            claims[found[0].id] = claims.get(found[0].id, 0) + 1
     for finding in findings:
         if finding.id in linked_already:
             report.already_linked += 1
             continue
-        found = candidates.get(finding.id or 0, [])
-        if len(found) != 1 or claims.get(found[0].id) != 1:
+        root = matched.get(finding.id or 0)
+        if root is None or finding.id is None:
             report.unmatched += 1
             continue
         report.linked += 1
         if dry_run:
             continue
-        root = found[0]
         record_finding_post(
             db_path,
             FindingPost(
-                finding_id=finding.id or 0,
+                finding_id=finding.id,
                 pr_number=pr_number,
                 forge=kind,
                 head_sha=finding.head_sha,

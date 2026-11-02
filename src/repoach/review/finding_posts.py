@@ -233,6 +233,9 @@ def fetch_finding_posts(
 
     Returns:
         The stored rows.
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: The ledger could not be read.
     """
     init_finding_posts_schema(db_path)
     stmt = select(finding_posts).where(finding_posts.c.pr_number == pr_number)

@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 from repoach.cli import review_cmds
 from repoach.forge.protocol import Comment, ForgeError
-from repoach.review.finding_post_threads import backfill_finding_posts
+from repoach.review.finding_post_threads import backfill_finding_posts, match_backfill_roots
 from repoach.review.finding_posts import (
     fetch_finding_posts,
     resolve_thread,
@@ -169,3 +169,16 @@ def test_backfill_threads_cli_unreachable_forge_exits_2(
 
     assert result.exit_code == 2
     assert fetch_finding_posts(db, PR) == []
+
+
+def test_match_backfill_roots_is_pure_and_strict(tmp_path: Path) -> None:
+    """The matching step pairs only an exact, unclaimed root and leaves linked findings out."""
+    db = tmp_path / "review.db"
+    exact = _finding(db, line=10)
+    shifted = _finding(db, line=20)
+    linked = _finding(db, line=30)
+    roots = [_root(500, 10), _root(501, 21), _root(502, 30)]
+
+    matched = match_backfill_roots([exact, shifted, linked], roots, {linked.id or 0})
+
+    assert {finding_id: root.id for finding_id, root in matched.items()} == {exact.id: 500}
