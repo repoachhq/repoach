@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -23,6 +22,7 @@ from ..forge.protocol import Comment, InlineCommentDraft
 from .finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
+    forge_kind,
     record_finding_post,
     thread_id_of,
 )
@@ -133,7 +133,10 @@ def record_posted_comments(
     Raises:
         sqlalchemy.exc.SQLAlchemyError: The findings could not be read.
     """
-    forge: Literal["github", "gitlab"] = "gitlab" if forge_name == "gitlab" else "github"
+    forge = forge_kind(forge_name)
+    if forge is None:
+        _log.warning("finding_posts.forge_unrecorded", pr_number=pr_number, forge=forge_name)
+        return 0
     rows = [
         finding
         for finding in fetch_findings(db_path, pr_number)

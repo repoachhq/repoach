@@ -488,7 +488,7 @@ class TeamOutcome:
     thread_lines: list[str] = field(default_factory=list)
 
     def record_thread_closures(self, run: ClosureRun) -> None:
-        """Carry what :func:`~repoach.review.finding_posts.detect_closed_threads` saw."""
+        """Carry what :func:`~repoach.review.finding_post_threads.detect_closed_threads` saw."""
         self.threads_closed = run.as_json()
         self.thread_lines = run.lines()
 
@@ -1015,7 +1015,6 @@ class ReviewTeamOrchestrator:
             )
 
         owner_run = self._apply_owner_commands(pr_number, head_sha=head_sha)
-        closures = self._detect_thread_closures(pr_number, head_sha=head_sha)
         reverified = self._reverify_older_heads(
             pr_number, head_sha=head_sha, refuter_calls=refuter_calls
         )
@@ -1111,7 +1110,7 @@ class ReviewTeamOrchestrator:
             generated_lines=report_lines(generated_checks, generated_timing),
         )
         team.record_owner_commands(owner_run)
-        team.record_thread_closures(closures)
+        team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1248,7 +1247,6 @@ class ReviewTeamOrchestrator:
             run_id=run.run_id,
         )
         owner_run = self._apply_owner_commands(pr_number, head_sha=head_sha)
-        closures = self._detect_thread_closures(pr_number, head_sha=head_sha)
         reverified = self._reverify_older_heads(pr_number, head_sha=head_sha, refuter_calls=0)
         spec_id = _optional_str(spec.get("spec_id"))
         spec_missing = bool(spec.get("spec_missing", False))
@@ -1315,7 +1313,7 @@ class ReviewTeamOrchestrator:
         team.generated = report_json(generated_checks)
         team.generated_lines = report_lines(generated_checks, generated_timing)
         team.record_owner_commands(owner_run)
-        team.record_thread_closures(closures)
+        team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(

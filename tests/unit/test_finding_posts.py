@@ -27,6 +27,7 @@ from repoach.review.finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
     fetch_finding_posts,
+    forge_kind,
     init_finding_posts_schema,
     record_finding_post,
 )
@@ -248,6 +249,20 @@ def test_pair_posted_falls_back_to_a_unique_line_and_skips_an_ambiguous_one() ->
     assert [(comment.body, made.id) for comment, made in pairs] == [("one", 31), ("three", 33)]
 
 
+def test_pair_posted_identical_drafts_claim_distinct_comments() -> None:
+    """Two identical drafts on one line each claim their own created comment."""
+    comment = ReviewComment(file="src/a.py", line=3, severity="minor", body="same")
+    draft = InlineCommentDraft(path="src/a.py", line=3, body="rendered same")
+    created = [
+        Comment(id=41, path="src/a.py", line=3, body="rendered same"),
+        Comment(id=42, path="src/a.py", line=3, body="rendered same"),
+    ]
+
+    pairs = pair_posted([comment, comment], [draft, draft], created)
+
+    assert [made.id for _, made in pairs] == [41, 42]
+
+
 def test_gitlab_post_records_the_discussion_and_note_ids(tmp_path: Path) -> None:
     """AC2: on GitLab the thread is the 40-hex discussion, the comment the note, no review id."""
     db = tmp_path / "review.db"
@@ -463,6 +478,49 @@ def test_thread_resolved_with_unreadable_maintainer_permission_records_nothing(
     assert first.closures == [] and second.closures == []
     assert fetch_finding_posts(db, PR)[0].thread_closed_at_head is None
     assert forge.permission_reads == 2
+
+
+def test_two_posts_of_one_finding_closed_by_one_login_report_once(tmp_path: Path) -> None:
+    """Both posts are recorded closed; the report names the finding and login once."""
+    db = tmp_path / "review.db"
+    finding_id = _blocking(db)
+    _post(db, finding_id, 77)
+    _post(db, finding_id, 88)
+    forge = ThreadForge(
+        [
+            ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye"),
+            ReviewThread(root_id=88, resolved=True, resolved_by="jwfaye"),
+        ]
+    )
+
+    run = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
+
+    assert run.lines() == [f"thread closed by jwfaye for #{finding_id}"]
+    assert [p.thread_closed_by for p in fetch_finding_posts(db, PR)] == ["jwfaye", "jwfaye"]
+
+
+def test_unreadable_threads_redact_what_the_forge_echoed(tmp_path: Path) -> None:
+    """A token the forge's error echoes never reaches the report line."""
+    db = tmp_path / "review.db"
+    _post(db, _blocking(db), 77)
+    secret = "ghp_" + "a" * 36
+
+    class Echoing(ThreadForge):
+        def review_threads(self, number: int) -> list[ReviewThread]:
+            raise ForgeError(f"HTTP 401 Authorization: token {secret}")
+
+    [line] = detect_closed_threads(Echoing([]), db, pr_number=PR, head_sha=HEAD).lines()
+    assert line.startswith("thread closures unread: ")
+    assert secret not in line
+
+
+def test_forge_kind_names_only_the_forges_that_keep_threads() -> None:
+    """GitHub and GitLab map to themselves; any other forge maps to nothing."""
+    assert (forge_kind("github"), forge_kind("gitlab"), forge_kind("local")) == (
+        "github",
+        "gitlab",
+        None,
+    )
 
 
 def test_no_recorded_thread_reads_no_forge_thread(tmp_path: Path) -> None:

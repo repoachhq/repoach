@@ -20,11 +20,13 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from ..forge.protocol import Comment, Forge, ForgeError, ReviewThread, is_bot_login
 from .finding_posts import (
     PROVENANCE_BACKFILL,
     FindingPost,
     fetch_finding_posts,
+    forge_kind,
     mark_thread_closed,
     record_finding_post,
     thread_id_of,
@@ -90,6 +92,9 @@ def backfill_finding_posts(
     Raises:
         ForgeError: The comments could not be read; nothing is written.
     """
+    kind = forge_kind(forge.name)
+    if kind is None:
+        raise ForgeError(f"forge {forge.name!r} keeps no review threads to link")
     comments = forge.comments(pr_number)
     init_findings_schema(db_path)
     findings = fetch_findings(db_path, pr_number)
@@ -136,7 +141,7 @@ def backfill_finding_posts(
             FindingPost(
                 finding_id=finding.id or 0,
                 pr_number=pr_number,
-                forge="gitlab" if forge.name == "gitlab" else "github",
+                forge=kind,
                 head_sha=finding.head_sha,
                 comment_id=str(root.id),
                 thread_id=thread_id_of(forge.name, root),
@@ -244,15 +249,19 @@ def detect_closed_threads(
     pending = [
         post
         for post in fetch_finding_posts(db_path, pr_number)
-        if post.in_reply_to is None and post.thread_closed_at_head is None and post.id is not None
+        if post.is_root and post.thread_closed_at_head is None and post.id is not None
     ]
     if not pending:
         return run
     try:
         threads = forge.review_threads(pr_number)
     except ForgeError as exc:
-        _log.warning("finding_posts.threads_unreadable", pr_number=pr_number, error=exc.message)
-        run.error = exc.message[:200]
+        _log.warning(
+            "finding_posts.threads_unreadable",
+            pr_number=pr_number,
+            error=redact_error(exc.message)[:200],
+        )
+        run.error = redact_error(exc.message)[:200]
         return run
     cache: dict[str, bool] = {}
     seen: set[tuple[int, str]] = set()

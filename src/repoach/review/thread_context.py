@@ -73,6 +73,7 @@ from ..forge.protocol import is_bot_login
 from .finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
+    forge_kind,
     record_finding_post,
     resolve_thread,
     thread_id_of,
@@ -541,9 +542,11 @@ def _record_legacy_match(
     key on it. A failed write is logged.
     """
     candidates = _line_candidates(roots, finding)
+    kind = forge_kind(forge.name)
     if (
         len(candidates) != 1
         or finding.id is None
+        or kind is None
         or not is_bot_login(forge.bot_username, root.author)
     ):
         return
@@ -553,7 +556,7 @@ def _record_legacy_match(
             FindingPost(
                 finding_id=finding.id,
                 pr_number=finding.pr_number,
-                forge="gitlab" if forge.name == "gitlab" else "github",
+                forge=kind,
                 head_sha=finding.head_sha,
                 comment_id=str(root.id),
                 thread_id=thread_id_of(forge.name, root),

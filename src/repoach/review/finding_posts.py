@@ -120,6 +120,11 @@ class FindingPost(BaseModel):
     thread_closed_by: str | None = None
 
     @property
+    def is_root(self) -> bool:
+        """Whether the post opened its thread (it answers no other comment)."""
+        return self.in_reply_to is None and self.root_id is not None
+
+    @property
     def root_id(self) -> int | None:
         """The thread root a reply takes: the comment itself, or the one it answers."""
         raw = self.in_reply_to or self.comment_id
@@ -254,9 +259,28 @@ def resolve_thread(db_path: Path, finding: Finding) -> FindingPost | None:
     roots = [
         post
         for post in fetch_finding_posts(db_path, finding.pr_number, finding_id=finding.id)
-        if post.in_reply_to is None and post.root_id is not None
+        if post.is_root
     ]
     return roots[-1] if roots else None
+
+
+def forge_kind(forge_name: str) -> Literal["github", "gitlab"] | None:
+    """The ``forge`` column value for a forge name, or ``None`` for a forge that keeps no threads.
+
+    Only GitHub and GitLab post review threads; any other forge (the
+    bench's ``local``) is named, never mapped to one of them.
+
+    Args:
+        forge_name: :attr:`~repoach.forge.protocol.Forge.name`.
+
+    Returns:
+        ``github``, ``gitlab``, or ``None``.
+    """
+    if forge_name == "github":
+        return "github"
+    if forge_name == "gitlab":
+        return "gitlab"
+    return None
 
 
 def thread_id_of(forge_name: str, comment: Comment) -> str | None:

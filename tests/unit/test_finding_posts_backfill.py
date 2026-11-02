@@ -119,6 +119,17 @@ def test_two_findings_on_one_root_stay_unmatched(tmp_path: Path) -> None:
     assert (report.findings, report.linked, report.unmatched) == (2, 0, 2)
 
 
+def test_a_forge_that_keeps_no_threads_is_refused(tmp_path: Path) -> None:
+    """The bench forge has no review threads: the backfill refuses rather than guessing a forge."""
+    db = tmp_path / "review.db"
+    _finding(db)
+    local = Forge([_root(500, 10)])
+    local.name = "local"
+    with pytest.raises(ForgeError, match="keeps no review threads"):
+        backfill_finding_posts(db, local, PR, bot_login=BOT)
+    assert fetch_finding_posts(db, PR) == []
+
+
 def test_backfill_threads_cli_dry_run_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
