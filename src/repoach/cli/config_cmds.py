@@ -31,8 +31,10 @@ def render_show(resolved: ResolvedProjectConfig) -> str:
 
     Each section lists its plain keys, then each array of tables
     (``[[review.generated]]``) as one ``[[section.key]]`` block per entry
-    (:func:`~repoach.project.resolve.by_section`); every line of a
-    block carries the source of the whole array.
+    (:func:`~repoach.project.resolve.by_section`); every key and header
+    line of a block carries the source of the whole array, and the blank
+    line :func:`~repoach.project.toml_write.array_of_tables_lines` puts
+    before each block stays blank.
 
     Args:
         resolved: The resolved configuration.
