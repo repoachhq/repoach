@@ -17,6 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 import repoach.core.config as core_config
+from repoach.cli.config_cmds import by_section
 from repoach.cli.main import app
 from repoach.core.config import Settings
 from repoach.project.config import (
@@ -29,10 +30,10 @@ from repoach.project.config import (
     parse_project_config,
 )
 from repoach.project.measure import census, layout, measure_defaults
-from repoach.project.resolve import by_section, effective_rows, resolve_project_config
+from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
 from repoach.project.toml_write import (
-    array_of_tables_lines,
+    array_of_tables_blocks,
     is_array_of_tables,
     render_project_toml,
     toml_key,
@@ -630,8 +631,11 @@ class TestArrayOfTablesRendering:
             ("review", [rows[1], rows[3], rows[0]]),
             ("gates", [rows[2]]),
         ]
-        assert array_of_tables_lines("review", "generated", [{"path": "a.json"}]) == [
-            "",
-            "[[review.generated]]",
-            'path = "a.json"',
+        assert array_of_tables_blocks(
+            "review", "generated", [{"path": "a.json"}, {"path": "b"}]
+        ) == [
+            ["[[review.generated]]", 'path = "a.json"'],
+            ["[[review.generated]]", 'path = "b"'],
         ]
+        with pytest.raises(TypeError, match=r"review\.generated is not an array of tables"):
+            array_of_tables_blocks("review", "generated", [{"path": "a.json"}, "b"])
