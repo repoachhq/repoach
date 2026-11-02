@@ -220,13 +220,19 @@ def _api_method(args: Sequence[str]) -> str | None:
     return None
 
 
+_GRAPHQL_OPERATION_RE = re.compile(r"\b(?:mutation|subscription)\b")
+"""A GraphQL operation keyword other than ``query``, anywhere in a document."""
+
+
 def _graphql_read(args: Sequence[str]) -> bool:
-    """Whether a ``gh api graphql`` argv carries a query and no mutation.
+    """Whether a ``gh api graphql`` argv carries one query and nothing that could write.
 
     GraphQL is always sent as ``POST``; what it does is its document's
-    first keyword. Only a ``query=`` field whose document starts with
-    ``query`` or ``{`` reads; a mutation, a document read from a file
-    (``query=@…``) or no document at all counts as a write (fail closed).
+    operations. Only a single ``query=`` field whose document starts with
+    ``query`` or ``{`` and names no ``mutation`` or ``subscription``
+    anywhere, with no ``operationName`` field to pick another operation
+    of the document, is a read. A document read from a file
+    (``query=@…``), two documents or none count as a write (fail closed).
     """
     if (
         len(args) < 2
@@ -234,12 +240,15 @@ def _graphql_read(args: Sequence[str]) -> bool:
         or _api_method(args) not in (None, "POST")
     ):
         return False
-    documents = [
-        value.split("=", 1)[1]
-        for flag, value in itertools.pairwise(args)
-        if flag in _API_FIELD_FLAGS and value.startswith("query=")
-    ]
-    return len(documents) == 1 and documents[0].lstrip().startswith(("query", "{"))
+    fields = [value for flag, value in itertools.pairwise(args) if flag in _API_FIELD_FLAGS]
+    if any(value.startswith("operationName=") for value in fields):
+        return False
+    documents = [value.split("=", 1)[1] for value in fields if value.startswith("query=")]
+    return (
+        len(documents) == 1
+        and documents[0].lstrip().startswith(("query", "{"))
+        and _GRAPHQL_OPERATION_RE.search(documents[0]) is None
+    )
 
 
 def is_write_argv(args: Sequence[str]) -> bool:
