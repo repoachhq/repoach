@@ -10,6 +10,7 @@ origin > default, the spec resolution order, and the ``config show`` /
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,7 @@ from repoach.project.config import (
 from repoach.project.measure import census, layout, measure_defaults
 from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
-from repoach.project.toml_write import render_project_toml
+from repoach.project.toml_write import render_project_toml, toml_value
 from repoach.review import coder_loop
 from repoach.review.plan import plan_relpath
 from repoach.review.spec import SPECS_DIR, specs_dir_for
@@ -496,3 +497,57 @@ def test_undeclared_commands_are_skipped_with_a_reason_on_a_foreign_repo(
     assert (
         "config.commands.test=<not declared in repoach.toml; skipped on this repository>" in doctor
     )
+
+
+YOOB_GENERATED_TOML = """[[review.generated]]
+path = "api/data/knowledge_embeddings.json"
+check = ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"]
+sources = ["api/data/knowledge_corpus.json", "docs/user_guide/*.md"]
+check_timeout_s = 60
+"""
+
+
+class TestArrayOfTablesRendering:
+    """A ``[[review.generated]]`` entry is shown, never a ``TypeError``."""
+
+    def test_config_show_renders_a_generated_entry_as_an_array_of_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML)
+        monkeypatch.chdir(root)
+        result = CliRunner().invoke(app, ["config", "show"])
+        assert result.exit_code == 0, result.output
+        assert "[[review.generated]]  # source: file" in result.stdout
+        body = "\n".join(
+            line.rsplit("  # source: ", 1)[0] for line in result.stdout.splitlines()[1:]
+        )
+        shown = tomllib.loads(body)
+        assert shown["review"]["generated"] == [
+            {
+                "path": "api/data/knowledge_embeddings.json",
+                "check": ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"],
+                "sources": ["api/data/knowledge_corpus.json", "docs/user_guide/*.md"],
+                "producer_inputs": [],
+                "check_timeout_s": 60,
+            }
+        ]
+        assert shown["review"]["spec_sources"] == ["flag", "description", "branch"]
+        assert "gates" in shown
+
+    def test_doctor_writes_a_generated_entry_inline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML)
+        monkeypatch.chdir(root)
+        doctor = CliRunner().invoke(app, ["doctor"])
+        line = next(
+            row for row in doctor.stdout.splitlines() if row.startswith("config.review.generated=")
+        )
+        literal = line.removeprefix("config.review.generated=").removesuffix(" (file)")
+        assert tomllib.loads(f"value = {literal}")["value"][0]["check_timeout_s"] == 60
+
+    def test_toml_value_nests_and_refuses_what_toml_cannot_hold(self) -> None:
+        assert toml_value([{"a b": [1, True]}]) == '[{"a b" = [1, true]}]'
+        assert toml_value({}) == "{}"
+        with pytest.raises(TypeError, match="cannot write float"):
+            toml_value([{"x": 1.5}])

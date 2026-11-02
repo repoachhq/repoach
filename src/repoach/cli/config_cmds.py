@@ -19,7 +19,7 @@ from ..project.resolve import (
     effective_rows,
     resolve_project_config,
 )
-from ..project.toml_write import toml_value
+from ..project.toml_write import is_array_of_tables, toml_key, toml_value
 from .doctor_cmds import EXIT_UNUSABLE, project_root_or_exit
 
 config_app = typer.Typer(help="Inspect the project configuration (repoach.toml).")
@@ -27,6 +27,11 @@ config_app = typer.Typer(help="Inspect the project configuration (repoach.toml).
 
 def render_show(resolved: ResolvedProjectConfig) -> str:
     """Render the effective configuration as annotated TOML.
+
+    An array of tables (``[[review.generated]]``) is written as one
+    ``[[section.key]]`` block per entry after the section's plain keys,
+    since a key written after such a block would belong to its last
+    entry; every line of a block carries the source of the whole array.
 
     Args:
         resolved: The resolved configuration.
@@ -36,15 +41,27 @@ def render_show(resolved: ResolvedProjectConfig) -> str:
     """
     lines = [f"# {config_path(resolved.root)}"]
     current = ""
+    tables: list[str] = []
     for dotted, value, source in effective_rows(resolved):
         section, _, key = dotted.partition(".")
         if section != current:
+            lines.extend(tables)
+            tables = []
             lines.extend(["", f"[{section}]"])
             current = section
         if value is None:
             lines.append(f"# {key}: {UNDECLARED_COMMAND_NOTE}")
             continue
+        if is_array_of_tables(value):
+            for entry in value:
+                tables.extend(["", f"[[{section}.{toml_key(key)}]]  # source: {source}"])
+                tables.extend(
+                    f"{toml_key(name)} = {toml_value(item)}  # source: {source}"
+                    for name, item in entry.items()
+                )
+            continue
         lines.append(f"{key} = {toml_value(value)}  # source: {source}")
+    lines.extend(tables)
     return "\n".join(lines)
 
 
