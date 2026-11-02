@@ -277,7 +277,7 @@ def detect_closed_threads(
                 "finding_posts.resolver_unreadable",
                 pr_number=pr_number,
                 login=login,
-                error=exc.message[:200],
+                error=redact_error(exc.message)[:200],
             )
             continue
         if counted:
