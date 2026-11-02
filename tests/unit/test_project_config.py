@@ -31,7 +31,13 @@ from repoach.project.config import (
 from repoach.project.measure import census, layout, measure_defaults
 from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
-from repoach.project.toml_write import is_array_of_tables, render_project_toml, toml_value
+from repoach.project.toml_write import (
+    array_of_tables_lines,
+    by_section,
+    is_array_of_tables,
+    render_project_toml,
+    toml_value,
+)
 from repoach.review import coder_loop
 from repoach.review.plan import plan_relpath
 from repoach.review.spec import SPECS_DIR, specs_dir_for
@@ -584,3 +590,21 @@ class TestArrayOfTablesRendering:
         assert is_array_of_tables([{"path": "a.json"}, "b"]) is False
         assert toml_value([]) == "[]"
         assert toml_value([{"path": "a.json"}, "b"]) == '[{path = "a.json"}, "b"]'
+        assert is_array_of_tables([{1: "a.json"}]) is False
+
+    def test_by_section_puts_arrays_of_tables_after_plain_keys(self) -> None:
+        rows = [
+            ("review.generated", [{"path": "a.json"}], "file"),
+            ("review.bot_username", "bot", "default"),
+            ("gates.languages", ["python"], "default"),
+            ("review.spec_sources", ["flag"], "default"),
+        ]
+        assert by_section(rows) == [
+            ("review", [rows[1], rows[3], rows[0]]),
+            ("gates", [rows[2]]),
+        ]
+        assert array_of_tables_lines("review", "generated", [{"path": "a.json"}]) == [
+            "",
+            "[[review.generated]]",
+            'path = "a.json"',
+        ]

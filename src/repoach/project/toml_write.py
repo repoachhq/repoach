@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import TypeAlias, TypeGuard
+from typing import Any, TypeAlias, TypeGuard, TypeVar
 
 TEMPLATE_PATH = Path(__file__).with_name("repoach.toml.template")
 """The shipped template, packaged with the module."""
@@ -26,6 +26,9 @@ Recursive, so an array of tables (``[[review.generated]]``) is one; the
 containers are the read-only ``Sequence`` / ``Mapping`` so a
 ``list[str]`` or a ``dict[str, str]`` is one too.
 """
+
+Row = TypeVar("Row", bound=tuple[Any, ...])
+"""A ``(section.key, value, …)`` row, kept whole by :func:`by_section`."""
 
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -84,14 +87,19 @@ def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlScalar]]]:
         value: An effective configuration value.
 
     Returns:
-        True for a non-empty list whose every item is a table; an empty
-        list or one mixing tables and other values is written inline.
+        True for a non-empty list whose every item is a string-keyed
+        table; an empty list, or one mixing tables and other values, is
+        written inline.
     """
-    return isinstance(value, list) and bool(value) and all(isinstance(item, dict) for item in value)
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, dict) and all(isinstance(k, str) for k in item) for item in value)
+    )
 
 
 def array_of_tables_lines(
-    section: str, key: str, entries: Sequence[Mapping[str, TomlScalar]], suffix: str = ""
+    section: str, key: str, entries: Sequence[Mapping[str, TomlScalar]]
 ) -> list[str]:
     """Write ``entries`` as ``[[section.key]]`` blocks, each preceded by a blank line.
 
@@ -99,18 +107,37 @@ def array_of_tables_lines(
         section: The table the array belongs to (``review``).
         key: The array's key (``generated``).
         entries: One table per block.
-        suffix: Appended to every line (``config show``'s source comment).
 
     Returns:
-        The lines, headers and key lines alike carrying ``suffix``.
+        The lines, plain: a caller annotating them does it on its side.
     """
     lines: list[str] = []
     for entry in entries:
-        lines.extend(["", f"[[{section}.{toml_key(key)}]]{suffix}"])
-        lines.extend(
-            f"{toml_key(name)} = {toml_value(item)}{suffix}" for name, item in entry.items()
-        )
+        lines.extend(["", f"[[{section}.{toml_key(key)}]]"])
+        lines.extend(f"{toml_key(name)} = {toml_value(item)}" for name, item in entry.items())
     return lines
+
+
+def by_section(rows: Iterable[Row]) -> list[tuple[str, list[Row]]]:
+    """Group dotted rows by section, the arrays of tables after the plain keys.
+
+    A key written after a ``[[section.key]]`` block belongs to that
+    block's last entry, so each section lists its plain keys first and
+    its arrays of tables last; the order is otherwise kept.
+
+    Args:
+        rows: ``(section.key, value, …)`` tuples in file order.
+
+    Returns:
+        One ``(section, rows)`` pair per section, in first-seen order.
+    """
+    grouped: dict[str, list[Row]] = {}
+    for row in rows:
+        grouped.setdefault(row[0].partition(".")[0], []).append(row)
+    return [
+        (section, sorted(members, key=lambda row: is_array_of_tables(row[1])))
+        for section, members in grouped.items()
+    ]
 
 
 def template_text() -> str:
