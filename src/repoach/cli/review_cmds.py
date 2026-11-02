@@ -65,7 +65,7 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
-from ..review.finding_posts import backfill_finding_posts
+from ..review.finding_post_threads import backfill_finding_posts
 from ..review.generated_verify import GeneratedRefusalError, review_generated_command
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (

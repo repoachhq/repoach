@@ -22,10 +22,10 @@ from repoach.forge.protocol import Comment, ForgeError, InlineCommentDraft, Revi
 from repoach.forge.runner import CommandResult
 from repoach.review import orchestrator
 from repoach.review.finding_post_record import pair_posted
+from repoach.review.finding_post_threads import detect_closed_threads
 from repoach.review.finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
-    detect_closed_threads,
     fetch_finding_posts,
     init_finding_posts_schema,
     record_finding_post,
@@ -40,7 +40,9 @@ from repoach.review.findings import (
     record_finding,
 )
 from repoach.review.findings_bridge import record_findings_for_outcomes
+from repoach.review.merge_gate import compute_merge_decision, summarise_ledger_facts
 from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
+from repoach.review.report import render_ledger_report
 from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 from tests.fixtures.generated_artefacts.harness import Repo, install, review
 
@@ -460,3 +462,24 @@ def test_unreadable_threads_record_nothing_and_say_why(tmp_path: Path) -> None:
 
     run = detect_closed_threads(Broken([]), db, pr_number=PR, head_sha=HEAD)
     assert run.lines() == ["thread closures unread: HTTP 502"]
+
+
+def test_render_ledger_report_includes_closed_threads_section_only_when_thread_lines_given(
+    tmp_path: Path,
+) -> None:
+    """The archive report lists the closures under ``## Closed threads``, and only when there are some."""
+    db = tmp_path / "review.db"
+    finding_id = _blocking(db)
+    facts = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
+    line = f"thread closed by jwfaye for #{finding_id}"
+
+    with_closure = render_ledger_report(
+        db, pr_number=PR, decision=compute_merge_decision(facts), facts=facts, thread_lines=[line]
+    )
+    without = render_ledger_report(
+        db, pr_number=PR, decision=compute_merge_decision(facts), facts=facts, thread_lines=[]
+    )
+
+    assert "## Closed threads" in with_closure
+    assert line in with_closure
+    assert "## Closed threads" not in without

@@ -15,8 +15,8 @@ from typer.testing import CliRunner
 
 from repoach.cli import review_cmds
 from repoach.forge.protocol import Comment, ForgeError
+from repoach.review.finding_post_threads import backfill_finding_posts
 from repoach.review.finding_posts import (
-    backfill_finding_posts,
     fetch_finding_posts,
     resolve_thread,
 )

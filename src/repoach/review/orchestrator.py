@@ -86,7 +86,8 @@ from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
 from .finding_post_record import pair_posted, record_posted_comments
-from .finding_posts import ClosureRun, detect_closed_threads, init_finding_posts_schema
+from .finding_post_threads import ClosureRun, detect_closed_threads
+from .finding_posts import init_finding_posts_schema
 from .finding_verifiers import (
     MechanicalVerification,
     VerificationReport,
@@ -598,6 +599,7 @@ class ReviewTeamOrchestrator:
         closed (SP-DRY-RUN-NEVER-POSTS).
         """
         refused_before = len(self._forge.barrier.refused)
+        self._init_finding_posts(pr_number)
         team = self._review_pr(pr_number, spec_flag=spec_flag)
         team.refused_writes = self._forge.barrier.refused[refused_before:]
         refusal = self._forge.barrier.refusal
@@ -1579,18 +1581,31 @@ class ReviewTeamOrchestrator:
             )
             return OwnerCommandsRun(error=f"{type(exc).__name__}")
 
-    def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
-        """Record the recorded finding threads resolved on the forge (SP-FINDING-THREAD-IDS).
+    def _init_finding_posts(self, pr_number: int) -> None:
+        """Create ``finding_posts`` at the start of every run, dry runs included (SP-FINDING-THREAD-IDS G4).
 
-        Creates ``finding_posts`` when absent, so every run, dry runs
-        included, leaves the table in the ledger. A closure moves no
-        finding: it is recorded and reported only. A ledger failure is
-        logged and records nothing.
+        A ledger failure is logged; the posting path and the closure
+        detection then log their own failures and the review goes on.
         """
         try:
             init_finding_posts_schema(self._db_path)
-            if not head_sha:
-                return ClosureRun()
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "review_team.finding_posts_init_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+
+    def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
+        """Record the recorded finding threads resolved on the forge (SP-FINDING-THREAD-IDS G6).
+
+        A closure moves no finding: it is recorded and reported only. A
+        ledger failure is logged and records nothing.
+        """
+        if not head_sha:
+            return ClosureRun()
+        try:
             return detect_closed_threads(
                 self._forge, self._db_path, pr_number=pr_number, head_sha=head_sha
             )
