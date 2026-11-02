@@ -235,13 +235,22 @@ class ClosureRun:
 
 
 def _match(post: FindingPost, threads: Sequence[ReviewThread]) -> ReviewThread | None:
-    """The forge thread a post opened: by root comment id, or by discussion id."""
-    for thread in threads:
-        if thread.root_id == post.root_id:
-            return thread
-        if post.thread_id and thread.thread_id == post.thread_id:
-            return thread
-    return None
+    """The forge thread a post opened.
+
+    The thread whose first comment is the post's root wins (GitHub, and a
+    GitLab note); otherwise the GitLab discussion the post names.
+
+    Args:
+        post: A recorded root post.
+        threads: The pull request's threads, as the forge lists them.
+
+    Returns:
+        The first thread matching by root id or discussion id, else ``None``.
+    """
+    by_root = next((thread for thread in threads if thread.root_id == post.root_id), None)
+    if by_root is not None or not post.thread_id:
+        return by_root
+    return next((thread for thread in threads if thread.thread_id == post.thread_id), None)
 
 
 def _resolver_counts(forge: Forge, login: str, cache: dict[str, bool]) -> bool:
