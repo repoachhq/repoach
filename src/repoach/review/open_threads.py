@@ -17,15 +17,32 @@ release gate reads the release pull request's own threads.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
 from ..core.logging import get_logger
 from ..core.redaction import redact_error
 from ..forge import Forge, ForgeError, ReviewThread
-from .merge_wait import StrandedPR
 
 _log = get_logger(__name__)
+
+
+class PullRequestRow(Protocol):
+    """Any row naming a pull request and its head, such as a stranded PR."""
+
+    @property
+    def pr_number(self) -> int:
+        """The pull request."""
+        ...
+
+    @property
+    def head_sha(self) -> str:
+        """Its head."""
+        ...
+
+
+RowT = TypeVar("RowT", bound=PullRequestRow)
 
 NOT_READ = "not read"
 """Why the threads are unknown when no read was attempted."""
@@ -153,8 +170,8 @@ class HeldPR(BaseModel):
 
 
 def hold_open_threads(
-    rows: Sequence[StrandedPR], read: Callable[[int], OpenThreads]
-) -> tuple[list[StrandedPR], list[HeldPR]]:
+    rows: Sequence[RowT], read: Callable[[int], OpenThreads]
+) -> tuple[list[RowT], list[HeldPR]]:
     """Split stranded rows into those to dispatch and those their threads hold.
 
     A stranded pull request whose threads are open or unreadable is held:
@@ -162,13 +179,14 @@ def hold_open_threads(
     and the resolution of its last thread re-arms that workflow itself.
 
     Args:
-        rows: The stranded pull requests.
+        rows: The stranded pull requests (any row with ``pr_number`` and
+            ``head_sha``; this module knows nothing of the sweep).
         read: Reads one pull request's open threads.
 
     Returns:
         ``(dispatchable, held)``, each in the order of ``rows``.
     """
-    dispatchable: list[StrandedPR] = []
+    dispatchable: list[RowT] = []
     held: list[HeldPR] = []
     for row in rows:
         refusal = read(row.pr_number).refusal()
@@ -183,6 +201,7 @@ __all__ = [
     "NOT_READ",
     "HeldPR",
     "OpenThreads",
+    "PullRequestRow",
     "hold_open_threads",
     "read_open_threads",
     "thread_label",
