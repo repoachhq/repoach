@@ -20,11 +20,22 @@ name: Merge on CI (event-driven gate)
 # finishes last triggers the merge that succeeds.  workflow_dispatch
 # (input ``pr``) is the operator's lever and the release sweep's
 # (``repoach review stranded --dispatch``).
+#
+# SP-OPEN-THREADS-BLOCK-THE-MERGE: an open review thread refuses the
+# merge, and resolving one fires neither CI nor the review workflow (no
+# run of either was started by ``pull_request_review_thread`` in the
+# last 300 runs, measured 2026-11-02).  So a thread resolved or
+# unresolved re-judges here directly: a green PR whose last thread is
+# closed merges without a push.  That event runs this file from the
+# PR's merge ref, but the code that decides is still main's (trusted
+# checkout below).
 
 on:
   workflow_run:
     workflows: ["CI", "Auto Review (review bots)"]
     types: [completed]
+  pull_request_review_thread:
+    types: [resolved, unresolved]
   workflow_dispatch:
     inputs:
       pr:
@@ -35,9 +46,10 @@ on:
 # The PR number is only known after in-job resolution, so the group
 # keys on head_branch — per-PR under this repo's branch convention —
 # and is shared with auto-review.yml's auto_fix / auto_merge jobs.  A
-# dispatch carries no branch until resolved, so it keys on its PR.
+# thread event names its branch; a dispatch carries no branch until
+# resolved, so it keys on its PR.
 concurrency:
-  group: merge-${{ github.event.workflow_run.head_branch || inputs.pr }}
+  group: merge-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || inputs.pr }}
   cancel-in-progress: false
 
 jobs:
@@ -53,11 +65,19 @@ jobs:
     # actored by github-actions[bot] (SP-CI-FIX-LOOP-CLOSURE), which is
     # safe because the merge decision is re-verified by the pure gate
     # at head, never trusted from the event.  A dispatch is admitted
-    # for the same actors; the PR is resolved and checked below.
+    # for the same actors; the PR is resolved and checked below.  A
+    # review-thread event is admitted for the same actors on a
+    # same-repo, non-draft PR into develop.
     if: >-
       (github.event_name == 'workflow_dispatch'
        && (github.actor == 'github-actions[bot]'
            || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)))
+      || (github.event_name == 'pull_request_review_thread'
+          && github.event.pull_request.draft != true
+          && github.event.pull_request.base.ref == 'develop'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && (github.actor == 'github-actions[bot]'
+              || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)))
       || (github.event.workflow_run.conclusion == 'success'
           && (github.event.workflow_run.event == 'pull_request'
               || github.event.workflow_run.event == 'pull_request_review')
@@ -99,14 +119,14 @@ jobs:
       # ``isCrossRepository | not`` blocks a fork PR that mirrors a
       # same-repo branch head (identical SHA) from shadowing the
       # legitimate PR and consuming its CI-completion event.  A dispatch
-      # names its PR; the same filters apply to it, and its head is the
-      # PR's current head.
+      # or a review-thread event names its PR; the same filters apply to
+      # it, and its head is the PR's current head.
       - name: Resolve the open PR at this head
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          DISPATCH_PR: ${{ inputs.pr }}
+          DISPATCH_PR: ${{ inputs.pr || github.event.pull_request.number }}
         run: |
           query='[.[] | select((.isDraft | not) and (.isCrossRepository | not))]'
           if [ -n "$DISPATCH_PR" ]; then
