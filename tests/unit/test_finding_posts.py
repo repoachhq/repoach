@@ -442,6 +442,29 @@ def test_a_thread_resolved_by_someone_else_is_reported_not_recorded(tmp_path: Pa
     assert fetch_finding_posts(db, PR)[0].thread_closed_at_head is None
 
 
+def test_thread_resolved_with_unreadable_maintainer_permission_records_nothing(
+    tmp_path: Path,
+) -> None:
+    """A resolver whose permission the forge cannot read is not counted and is asked again next run."""
+    db = tmp_path / "review.db"
+    _post(db, _blocking(db), 77)
+
+    class Unreadable(ThreadForge):
+        def is_maintainer(self, login: str) -> bool:
+            self.permission_reads += 1
+            raise ForgeError("HTTP 502 reading permission")
+
+    forge = Unreadable([ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye")])
+    forge.permission_reads = 0
+
+    first = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
+    second = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
+
+    assert first.closures == [] and second.closures == []
+    assert fetch_finding_posts(db, PR)[0].thread_closed_at_head is None
+    assert forge.permission_reads == 2
+
+
 def test_no_recorded_thread_reads_no_forge_thread(tmp_path: Path) -> None:
     """With no post on record the forge is not asked about its threads."""
     db = tmp_path / "review.db"
