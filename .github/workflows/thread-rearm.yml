@@ -17,6 +17,13 @@ name: Re-arm the merge on a review thread
 # to the GITHUB_TOKEN no-trigger rule) whose actor is
 # github-actions[bot], which merge-on-ci.yml admits.  GitHub-hosted, so
 # it never holds the self-hosted runner slot.
+#
+# The `if` and the permissions below are a filter, not a trust boundary:
+# a same-repo branch (push access only) can edit this file in its own PR,
+# as it can edit any workflow a `pull_request` event runs.  The authority
+# stays on main: merge-on-ci.yml's own actor and PR filters, then the pure
+# gate re-read at head (CI, findings, review, spec coverage, open
+# threads), decide whether anything merges.
 
 on:
   pull_request_review_thread:
