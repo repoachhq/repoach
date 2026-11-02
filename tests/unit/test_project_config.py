@@ -31,7 +31,7 @@ from repoach.project.config import (
 from repoach.project.measure import census, layout, measure_defaults
 from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
-from repoach.project.toml_write import render_project_toml, toml_value
+from repoach.project.toml_write import is_array_of_tables, render_project_toml, toml_value
 from repoach.review import coder_loop
 from repoach.review.plan import plan_relpath
 from repoach.review.spec import SPECS_DIR, specs_dir_for
@@ -551,3 +551,36 @@ class TestArrayOfTablesRendering:
         assert toml_value({}) == "{}"
         with pytest.raises(TypeError, match="cannot write float"):
             toml_value([{"x": 1.5}])
+        with pytest.raises(TypeError, match="cannot write dict"):
+            toml_value({1: "a"})
+
+    def test_config_show_renders_each_entry_of_multiple_generated_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        second = YOOB_GENERATED_TOML.replace(
+            "api/data/knowledge_embeddings.json", "api/data/other.json"
+        )
+        toml = "[review]\nbot_username = 'reviewer'\n\n" + YOOB_GENERATED_TOML + "\n" + second
+        root = _repo(tmp_path, "https://github.com/o/r.git", toml)
+        monkeypatch.chdir(root)
+        result = CliRunner().invoke(app, ["config", "show"])
+        assert result.exit_code == 0, result.output
+        lines = result.stdout.splitlines()
+        headers = [i for i, line in enumerate(lines) if line.startswith("[[review.generated]]")]
+        assert len(headers) == 2
+        plain = [i for i, line in enumerate(lines) if line.startswith("bot_username = ")]
+        assert plain and plain[0] < headers[0]
+        body = "\n".join(line.rsplit("  # source: ", 1)[0] for line in lines[1:])
+        shown = tomllib.loads(body)["review"]
+        assert [entry["path"] for entry in shown["generated"]] == [
+            "api/data/knowledge_embeddings.json",
+            "api/data/other.json",
+        ]
+        assert shown["bot_username"] == "reviewer"
+
+    def test_is_array_of_tables_rejects_empty_and_mixed_lists(self) -> None:
+        assert is_array_of_tables([{"path": "a.json"}]) is True
+        assert is_array_of_tables([]) is False
+        assert is_array_of_tables([{"path": "a.json"}, "b"]) is False
+        assert toml_value([]) == "[]"
+        assert toml_value([{"path": "a.json"}, "b"]) == '[{path = "a.json"}, "b"]'
