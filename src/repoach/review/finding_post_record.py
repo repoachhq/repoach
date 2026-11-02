@@ -132,6 +132,8 @@ def record_posted_comments(
 
     Raises:
         sqlalchemy.exc.SQLAlchemyError: The findings could not be read.
+            Only that read propagates: a failed row write is logged and
+            not counted, and the next comment is tried.
     """
     forge = forge_kind(forge_name)
     if forge is None:

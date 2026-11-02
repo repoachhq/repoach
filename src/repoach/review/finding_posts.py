@@ -309,15 +309,16 @@ class ThreadIndex:
     """The pull request's recorded threads, for matching a reply to its finding.
 
     Attributes:
-        posts: Every post of the pull request.
+        posts: Every post of the pull request, read once.
+        posted: The findings that have at least one recorded post,
+            computed once from ``posts``.
     """
 
     posts: list[FindingPost] = field(default_factory=list)
+    posted: frozenset[int] = field(init=False, default=frozenset())
 
-    @property
-    def posted(self) -> set[int]:
-        """The findings that have at least one recorded post."""
-        return {post.finding_id for post in self.posts}
+    def __post_init__(self) -> None:
+        self.posted = frozenset(post.finding_id for post in self.posts)
 
     def findings_for(self, root: Comment) -> list[int]:
         """The findings whose recorded thread is the one ``root`` opens.
