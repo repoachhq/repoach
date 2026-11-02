@@ -1,17 +1,17 @@
 ---
 id: SP-OWNER-SETTLES-A-FINDING
 title: A maintainer settles, with a recorded reason, a finding the refuter cannot judge
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-02
 
 owns:
   code: [src/repoach/review/owner_commands.py, src/repoach/review/owner_store.py, tests/unit/test_owner_commands.py, tests/integration/test_owner_resolves_a_finding_end_to_end.py]
   resources: [db:table:owner_commands, format:owner-settle-command]
 
-depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-UNIVERSAL-FORGE, SP-FINDINGS-INIT-RACE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-DRY-RUN-NEVER-POSTS, SP-SCHEMA-INIT-RACE-GENERALIZE, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ, SP-UNIVERSAL-GATES, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-RETRY-BACKOFF-DEDUP, SP-PRECISION-MEASUREMENT]
+depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-UNIVERSAL-FORGE, SP-FINDINGS-INIT-RACE, SP-GATE-REVERIFIES-AT-HEAD, SP-ORCH-DOCSTRING, SP-DRY-RUN-NEVER-POSTS, SP-SCHEMA-INIT-RACE-GENERALIZE, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ, SP-UNIVERSAL-GATES, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-RETRY-BACKOFF-DEDUP, SP-PRECISION-MEASUREMENT, SP-FINDING-THREAD-IDS]
 provides_to: []
 
 constraints:
@@ -263,6 +263,9 @@ keep blocking; any other error is a defect and propagates.
   merge-gate facts and the review verdict they own).
 - Adds dependency: -> SP-PRECISION-MEASUREMENT (the bench `LocalDiffForge`
   answers `is_maintainer`; a unit test pins it).
+- Adds dependency: -> SP-FINDING-THREAD-IDS (0.7: a thread reply addresses the
+  findings whose recorded post opened the thread, `finding_posts`; the
+  anchor of D3 is the fallback for findings with no recorded post).
 - New shared state: `db:table:owner_commands`; new contract
   `format:owner-settle-command`. `merge_gate._SETTLED` gains
   `owner_resolved`.

@@ -25,6 +25,7 @@ import pytest
 
 from repoach.forge import Comment
 from repoach.forge.github import GhResult, GitHubForge, comment_from_github
+from repoach.review.finding_posts import FindingPost, fetch_finding_posts, record_finding_post
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -267,3 +268,59 @@ def test_posted_sentinel_round_trips_through_reader(db: Path) -> None:
     assert resolved[0].file == "src/m.py"
     assert resolved[0].line == 12
     assert EVIDENCE_REPLY_SENTINEL in resolved[0].coder_evidence
+
+
+def test_recorded_thread_receives_the_sentinel_when_its_root_line_shifted(db: Path) -> None:
+    """SP-FINDING-THREAD-IDS AC3: the recorded thread wins over the ``(file, line)`` match."""
+    finding_id = record_finding(db, _finding(line=12))
+    record_finding_post(
+        db,
+        FindingPost(
+            finding_id=finding_id,
+            pr_number=1,
+            forge="github",
+            head_sha="head123",
+            comment_id="77",
+            thread_id="77",
+            review_id="900",
+        ),
+    )
+    gh = _FakeGh(
+        [
+            _root(77, line=19, body="**[architect/major]** add a test for compute()"),
+            _root(88, line=12, body="**[architect/major]** add a test for compute()"),
+        ]
+    )
+
+    posted = post_refuted_finding_sentinels(gh, db, 1)
+
+    assert posted == 1
+    assert [comment_id for comment_id, _ in gh.replies] == [77]
+
+
+def test_legacy_line_match_is_recorded_as_a_backfill_row(db: Path) -> None:
+    """A finding with no recorded thread matched on one root gets a ``backfill`` row."""
+    finding_id = record_finding(db, _finding())
+    root = {
+        **_root(100, body="**[architect/major]** add a test for compute()"),
+        "user": {"login": _BOT},
+    }
+    gh = _FakeGh([root])
+
+    assert post_refuted_finding_sentinels(gh, db, 1) == 1
+
+    posts = fetch_finding_posts(db, 1, finding_id=finding_id)
+    assert [(p.comment_id, p.thread_id, p.provenance) for p in posts] == [
+        ("100", "100", "backfill")
+    ]
+
+
+def test_a_root_someone_else_opened_is_never_recorded(db: Path) -> None:
+    """A matched root not written by the bot gets the reply but no ``backfill`` row."""
+    finding_id = record_finding(db, _finding())
+    root = {**_root(100, body="a person's thread at the same line"), "user": {"login": "author"}}
+    gh = _FakeGh([root])
+
+    assert post_refuted_finding_sentinels(gh, db, 1) == 1
+
+    assert fetch_finding_posts(db, 1, finding_id=finding_id) == []

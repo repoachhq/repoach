@@ -65,8 +65,19 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from ..core.logging import get_logger
 from ..forge import Comment, Forge, ForgeError, ForgeStateRefusedError
+from ..forge.protocol import is_bot_login
+from .finding_posts import (
+    FindingPost,
+    FindingPostIntegrityError,
+    forge_kind,
+    record_finding_post,
+    resolve_thread,
+    thread_id_of,
+)
 from .findings import Finding, FindingStatus, fetch_findings
 from .reviewer import BotRole, ReviewComment
 
@@ -472,29 +483,95 @@ def _format_finding_evidence_reply(finding: Finding) -> str:
     )
 
 
+def _line_candidates(roots: list[Comment], finding: Finding) -> list[Comment]:
+    """The thread roots at the finding's exact file and first line."""
+    return [
+        root
+        for root in roots
+        if (root.path or "") == finding.file and root.line == finding.line_start
+    ]
+
+
 def _match_finding_thread(
     roots: list[Comment],
     finding: Finding,
 ) -> Comment | None:
     """Return the root thread a ``finding`` originated from, or ``None``.
 
-    A :class:`~repoach.review.findings.Finding` carries no forge comment
-    id (the source :class:`~repoach.review.reviewer.ReviewComment` never
-    had one), so the thread is re-located by ``path`` + ``line``
-    equality, with the highest :func:`similarity` of root body vs the
-    finding's claim breaking ties when several critiques share a line.
+    The legacy match for a finding with no recorded thread
+    (SP-FINDING-THREAD-IDS): the thread is re-located by ``path`` +
+    ``line`` equality (:func:`_line_candidates`), with the highest
+    :func:`similarity` of root body vs the finding's claim breaking ties
+    when several critiques share a line.
     """
-    candidates = [
-        root
-        for root in roots
-        if (root.path or "") == finding.file and root.line == finding.line_start
-    ]
+    candidates = _line_candidates(roots, finding)
     if not candidates:
         return None
     if len(candidates) == 1:
         return candidates[0]
     candidates.sort(key=lambda r: similarity(r.body, finding.claim), reverse=True)
     return candidates[0]
+
+
+def _finding_root(db_path: Path, roots: list[Comment], finding: Finding) -> Comment | int | None:
+    """The thread the sentinel answers: the recorded root id first, else the legacy match.
+
+    SP-FINDING-THREAD-IDS G3: a finding whose post was recorded is
+    answered on its own thread, wherever its root line moved (its root id
+    is returned). Only a finding with no recorded thread falls back to
+    :func:`_match_finding_thread` (the matched root is returned, for
+    :func:`_record_legacy_match`). Reads only.
+    """
+    recorded = resolve_thread(db_path, finding)
+    if recorded is not None:
+        return recorded.root_id
+    root = _match_finding_thread(roots, finding)
+    if root is None or root.id <= 0:
+        return None
+    return root
+
+
+def _record_legacy_match(
+    forge: Forge, db_path: Path, roots: list[Comment], finding: Finding, root: Comment
+) -> None:
+    """Record a legacy ``(file, line)`` match as a ``backfill`` row, under the backfill's rule.
+
+    Written only when ``root`` is the only root at the finding's file and
+    line and the bot wrote it; a thread someone else opened there is
+    never linked, so the closure detection and the owner commands never
+    key on it. A failed write is logged.
+    """
+    candidates = _line_candidates(roots, finding)
+    kind = forge_kind(forge.name)
+    if (
+        len(candidates) != 1
+        or finding.id is None
+        or kind is None
+        or not is_bot_login(forge.bot_username, root.author)
+    ):
+        return
+    try:
+        record_finding_post(
+            db_path,
+            FindingPost(
+                finding_id=finding.id,
+                pr_number=finding.pr_number,
+                forge=kind,
+                head_sha=finding.head_sha,
+                comment_id=str(root.id),
+                thread_id=thread_id_of(forge.name, root),
+                provenance="backfill",
+            ),
+        )
+    except (FindingPostIntegrityError, SQLAlchemyError) as exc:
+        _log.warning(
+            "finding_posts.write_failed",
+            pr_number=finding.pr_number,
+            finding_id=finding.id,
+            comment_id=root.id,
+            exc=type(exc).__name__,
+            message=str(exc)[:200],
+        )
 
 
 def _thread_has_sentinel(replies: list[Comment]) -> bool:
@@ -547,10 +624,14 @@ def post_refuted_finding_sentinels(
     roots, replies_by_root = _partition_review_comments(threads)
     posted = 0
     for finding in refuted:
-        root = _match_finding_thread(roots, finding)
-        if root is None or root.id <= 0:
+        target = _finding_root(db_path, roots, finding)
+        if target is None:
             continue
-        root_id = root.id
+        if isinstance(target, Comment):
+            _record_legacy_match(forge, db_path, roots, finding, target)
+            root_id = target.id
+        else:
+            root_id = target
         if _thread_has_sentinel(replies_by_root.get(root_id, [])):
             continue
         body = _format_finding_evidence_reply(finding)
