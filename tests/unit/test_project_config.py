@@ -625,23 +625,24 @@ class TestArrayOfTablesRendering:
     ) -> None:
         second = YOOB_GENERATED_TOML.replace(
             "api/data/knowledge_embeddings.json", "api/data/other.json"
-        )
+        ).replace("check_timeout_s = 60\n", "")
         root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML + "\n" + second)
         monkeypatch.chdir(root)
         lines = CliRunner().invoke(app, ["config", "show"]).stdout.splitlines()
+        suffix = "  # source: " + resolve_project_config(root).source("review.generated")
         headers = [i for i, line in enumerate(lines) if line.startswith("[[review.generated]]")]
         assert len(headers) == 2
+        blocks = []
         for header in headers:
             assert lines[header - 1] == ""
-            block = lines[header : header + 6]
-            assert all(line.endswith("  # source: file") for line in block)
-            assert [line.split(" = ")[0] for line in block[1:]] == [
-                "path",
-                "check",
-                "sources",
-                "producer_inputs",
-                "check_timeout_s",
-            ]
+            end = next((i for i in range(header, len(lines)) if not lines[i]), len(lines))
+            blocks.append(lines[header:end])
+        for block in blocks:
+            assert all(line.endswith(suffix) for line in block)
+        assert [[line.split(" = ")[0] for line in block[1:]] for block in blocks] == [
+            ["path", "check", "sources", "producer_inputs", "check_timeout_s"],
+            ["path", "check", "sources", "producer_inputs", "check_timeout_s"],
+        ]
 
     def test_by_section_puts_arrays_of_tables_after_plain_keys(self) -> None:
         rows = [
@@ -654,11 +655,19 @@ class TestArrayOfTablesRendering:
             ("review", [rows[1], rows[3], rows[0]]),
             ("gates", [rows[2]]),
         ]
+        plain = [("a.x", 1, "file"), ("a.y", None, "default"), ("b.z", [], "default")]
+        assert by_section(plain) == [("a", plain[:2]), ("b", plain[2:])]
+        assert by_section([]) == []
+
+    def test_array_of_tables_blocks_returns_one_block_per_entry_and_rejects_non_tables(
+        self,
+    ) -> None:
         assert array_of_tables_blocks(
             "review", "generated", [{"path": "a.json"}, {"path": "b"}]
         ) == [
             ["[[review.generated]]", 'path = "a.json"'],
             ["[[review.generated]]", 'path = "b"'],
         ]
-        with pytest.raises(TypeError, match=r"review\.generated is not an array of tables"):
-            array_of_tables_blocks("review", "generated", [{"path": "a.json"}, "b"])
+        for entries in ([], [{"path": "a.json"}, "b"], [{1: "a.json"}], ["a.json"]):
+            with pytest.raises(TypeError, match=r"review\.generated is not an array of tables"):
+                array_of_tables_blocks("review", "generated", entries)
