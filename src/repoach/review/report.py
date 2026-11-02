@@ -22,6 +22,7 @@ report. The legacy per-reviewer verdict framing was dropped in 10b-4
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
@@ -140,6 +141,7 @@ def render_ledger_report(
     archive_appendix: str = "",
     judged: list[ReportFinding] | None = None,
     generated_lines: list[str] | None = None,
+    owner_lines: list[str] | None = None,
 ) -> str:
     """Render the sticky archive report from the ledger and merge facts.
 
@@ -158,6 +160,11 @@ def render_ledger_report(
             generated artefact the diff touches, rendered as a
             ``## Generated artefacts`` section
             (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ G5); omitted when empty.
+        owner_lines: One ``owner-resolved #<id> by <login>: <reason>``
+            line per finding a maintainer settled, rendered as an
+            ``## Owner-resolved findings`` section, fenced because the
+            reason is a person's text (SP-OWNER-SETTLES-A-FINDING);
+            omitted when empty.
 
     Returns:
         The full markdown body for the sticky archive comment.
@@ -185,10 +192,32 @@ def render_ledger_report(
         )
     if generated_lines:
         parts.extend(["## Generated artefacts", "", fenced(generated_lines), ""])
+    if owner_lines:
+        parts.extend(["## Owner-resolved findings", "", fenced(owner_lines), ""])
     parts.extend(["## Findings", "", _findings_section(findings)])
     if archive_appendix:
         parts.extend(["", "---", "", archive_appendix])
     return "\n".join(parts)
+
+
+def archive_json(payload: dict[str, object]) -> str:
+    """Serialise the archive payload so no text in it can close its Markdown fence.
+
+    The payload carries people's and models' text (an owner's reason, a
+    reviewer's summary) inside a ```` ```json ```` fence of a comment the bot
+    authors. In JSON a backtick can only sit inside a string, so each one is
+    written as its JSON unicode escape (a backslash, then u0060): the fence
+    cannot be closed from inside, nothing renders as Markdown or mentions,
+    and ``json.loads`` reads the same text back.
+
+    Args:
+        payload: The ``TeamOutcome`` dictionary.
+
+    Returns:
+        The indented JSON, without a literal backtick.
+    """
+    text = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+    return text.replace("`", "\\u0060")
 
 
 def fenced(lines: list[str]) -> str:

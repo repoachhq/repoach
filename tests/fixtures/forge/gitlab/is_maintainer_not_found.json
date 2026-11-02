@@ -1,0 +1,28 @@
+{
+  "args": [
+    "stranger"
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "projects/:id/members/all?query=stranger&per_page=100"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[]"
+    }
+  ],
+  "case": "is_maintainer_not_found",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "is_maintainer",
+  "raises": null,
+  "result": false,
+  "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
+  "trimmed": null
+}

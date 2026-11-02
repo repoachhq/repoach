@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from ..core.logging import get_logger
@@ -59,6 +60,8 @@ from .protocol import (
     ReviewDraft,
     WriteRefusal,
     diff_files,
+    edited_since,
+    maintainer_candidate,
     trusted,
     unnumbered_write,
     write_barrier,
@@ -69,6 +72,9 @@ _log = get_logger(__name__)
 
 PROJECT = "projects/:id"
 """``glab api`` placeholder for the clone's project (resolved by ``glab``)."""
+
+MAINTAINER_ACCESS_LEVEL = 40
+"""GitLab Maintainer; Owner is 50 (SP-OWNER-SETTLES-A-FINDING)."""
 
 _HTTP_STATUS_RE = re.compile(r"\(HTTP (\d{3})\)")
 _JOB_LINK_RE = re.compile(r"/-/jobs/(\d+)")
@@ -213,6 +219,43 @@ def pull_request_from_gitlab(mr: dict[str, object]) -> PullRequest:
     )
 
 
+def _today() -> date:
+    """The UTC date a membership expiry is judged against (a seam the tests freeze)."""
+    return datetime.now(UTC).date()
+
+
+def _expired(member: dict[str, object]) -> bool:
+    """True when a membership's ``expires_at`` (``YYYY-MM-DD``) is today or past, or unreadable."""
+    expires = member.get("expires_at")
+    if expires is None:
+        return False
+    try:
+        day = date.fromisoformat(str(expires)[:10])
+    except ValueError as exc:
+        _log.info(
+            "forge.gitlab.membership_expiry_unreadable",
+            expires_at=str(expires)[:40],
+            error=str(exc),
+        )
+        return True
+    return day <= _today()
+
+
+def _eligible_member(member: dict[str, object]) -> bool:
+    """Whether a ``members/all`` entry grants maintainer rights now.
+
+    ``access_level`` 40 or more, an ``active`` user (not blocked), a
+    membership that, when named, is ``active`` (not ``awaiting``), and not
+    expired.
+    """
+    level = _int(member.get("access_level"))
+    if level is None or level < MAINTAINER_ACCESS_LEVEL:
+        return False
+    if member.get("state") != "active":
+        return False
+    return member.get("membership_state") in (None, "active") and not _expired(member)
+
+
 def note_to_comment(
     note: dict[str, object],
     *,
@@ -236,6 +279,9 @@ def note_to_comment(
         created_at=str(note.get("created_at") or ""),
         in_reply_to=in_reply_to,
         thread_id=thread_id,
+        edited=edited_since(
+            note.get("created_at"), note.get("updated_at"), resolved_at=note.get("resolved_at")
+        ),
     )
 
 
@@ -344,6 +390,28 @@ class GitLabForge:
     def is_trusted_author(self, comment: Comment) -> bool:
         """True when ``comment`` was authored by :attr:`bot_username` (fail-closed)."""
         return trusted(self._bot_username, comment.author)
+
+    def is_maintainer(self, login: str) -> bool:
+        """True when ``login`` is a project member with ``access_level >= 40``.
+
+        Reads ``members/all`` (inherited members included) filtered by the
+        username, and keeps only the entry whose ``username`` is exactly
+        ``login``: the query matches names and username prefixes too. The
+        user must be ``active`` (not blocked) and the membership, when the
+        answer names it, ``active`` (not ``awaiting`` approval), and not
+        expired (``expires_at`` absent or after today).
+
+        Raises:
+            ForgeError: The members could not be read.
+        """
+        if not maintainer_candidate(self._bot_username, login):
+            return False
+        members = self._api_list(f"{self._project}/members/all?query={login}&per_page=100")
+        for member in members:
+            if member.get("username") != login:
+                continue
+            return _eligible_member(member)
+        return False
 
     def _spawn(self, argv: list[str], *, input_data: str | None = None) -> CommandResult:
         """Run one subprocess in the clone; the seam the conformance suite replaces."""

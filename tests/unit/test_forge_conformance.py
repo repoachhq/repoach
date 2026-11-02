@@ -21,6 +21,8 @@ forge-neutral contract of the method.
 
 from __future__ import annotations
 
+import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -30,12 +32,15 @@ from repoach.forge import (
     ARCHIVE_MARKER,
     Comment,
     Forge,
+    ForgeError,
     ForgeForbiddenError,
     ForgeMergeRefusedError,
     ForgeNotFoundError,
 )
-from repoach.forge.github import GitHubForge
-from repoach.forge.gitlab import GitLabForge
+from repoach.forge import gitlab as gitlab_forge
+from repoach.forge.github import GitHubForge, comment_from_github
+from repoach.forge.gitlab import GitLabForge, note_to_comment
+from repoach.forge.protocol import edited_since
 from repoach.forge.recording import (
     Exchange,
     ReplaySpawn,
@@ -46,6 +51,7 @@ from repoach.forge.recording import (
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "forge"
 FORGES = ["github", "gitlab"]
+FROZEN_TODAY = date(2026, 11, 1)
 
 
 def _build(forge_name: str, tmp_path: Path, bot: str) -> Forge:
@@ -406,3 +412,130 @@ def test_is_trusted_author(forge_name: str, tmp_path: Path) -> None:
 def test_bot_username(forge_name: str, tmp_path: Path) -> None:
     """The configured bot identity is what the forge exposes."""
     assert _build(forge_name, tmp_path, "repoach-bot").bot_username == "repoach-bot"
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub ``maintain`` role and a GitLab ``access_level`` 40 are maintainers."""
+    result, _ = _replay(forge_name, "is_maintainer", tmp_path)
+    assert result is True
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_developer(forge_name: str, tmp_path: Path) -> None:
+    """A ``write`` role, ``access_level`` 30, or a prefix match of the query are not."""
+    result, _ = _replay(forge_name, "is_maintainer_developer", tmp_path)
+    assert result is False
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_never_asks_about_the_bot(forge_name: str, tmp_path: Path) -> None:
+    """The bot, an empty login and a non-username are refused without a forge call."""
+    forge = _build(forge_name, tmp_path, "repoach-bot")
+    forge._spawn = ReplaySpawn([])
+    assert forge.is_maintainer("repoach-bot") is False
+    assert forge.is_maintainer("") is False
+    assert forge.is_maintainer("github-actions[bot]") is False
+    assert forge.is_maintainer("a/../b") is False
+    assert forge.is_maintainer("Repoach-Bot") is False
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_not_found(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub 404 (not a collaborator) and an empty GitLab member list are no maintainer."""
+    result, _ = _replay(forge_name, "is_maintainer_not_found", tmp_path)
+    assert result is False
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_failed(forge_name: str, tmp_path: Path) -> None:
+    """Any other failure raises :class:`ForgeError`: the caller fails closed and retries."""
+    _, raised = _replay(forge_name, "is_maintainer_failed", tmp_path)
+    assert isinstance(raised, ForgeError)
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_not_json(forge_name: str, tmp_path: Path) -> None:
+    """An answer that is not JSON raises :class:`ForgeError`, never a guess."""
+    _, raised = _replay(forge_name, "is_maintainer_not_json", tmp_path)
+    assert isinstance(raised, ForgeError)
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_admin(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub ``admin`` permission and a GitLab Owner (``access_level`` 50) are maintainers."""
+    result, _ = _replay(forge_name, "is_maintainer_admin", tmp_path)
+    assert result is True
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_is_maintainer_not_object(forge_name: str, tmp_path: Path) -> None:
+    """A GitHub array or a GitLab object where the other is expected raises :class:`ForgeError`."""
+    _, raised = _replay(forge_name, "is_maintainer_not_object", tmp_path)
+    assert isinstance(raised, ForgeError)
+
+
+@pytest.mark.parametrize(
+    ("member", "expected"),
+    [
+        ({"state": "active", "membership_state": "active"}, True),
+        ({"state": "active", "membership_state": "awaiting"}, False),
+        ({"state": "blocked"}, False),
+        ({"state": "active", "expires_at": "2026-01-01"}, False),
+        ({"state": "active", "expires_at": "2999-12-31"}, True),
+        ({"state": "active", "expires_at": "2026-11-01"}, False),
+        ({"state": "active", "expires_at": "2026-11-02"}, True),
+        ({"state": "active", "expires_at": "next week"}, False),
+    ],
+)
+def test_is_maintainer_gitlab_member_must_be_active(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, member: dict[str, str], expected: bool
+) -> None:
+    """A blocked user or a membership awaiting approval is no maintainer, whatever the level."""
+    monkeypatch.setattr(gitlab_forge, "_today", lambda: FROZEN_TODAY)
+    forge = _build("gitlab", tmp_path, "repoach-bot")
+    payload = [{"username": "jwfaye", "access_level": 40, **member}]
+    forge._spawn = ReplaySpawn(
+        [
+            Exchange(
+                program="glab",
+                args=["api", "--paginate", "projects/:id/members/all?query=jwfaye&per_page=100"],
+                stdin=None,
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            )
+        ]
+    )
+    assert forge.is_maintainer("jwfaye") is expected
+
+
+def test_is_maintainer_edited_comments_are_flagged() -> None:
+    """An edit moves ``updated_at`` past ``created_at``; a GitLab resolution alone does not count."""
+    base = {"id": 1, "body": "/resolve", "created_at": "2026-11-01T10:00:00Z"}
+    assert comment_from_github({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
+    assert comment_from_github({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
+    assert comment_from_github(base).edited is True
+    assert comment_from_github({"id": 2, "body": "/resolve"}).edited is True
+    resolved = {**base, "updated_at": "2026-11-01T12:00:00Z", "resolved_at": "2026-11-01T12:00:00Z"}
+    assert note_to_comment(resolved).edited is False
+    assert note_to_comment({**base, "updated_at": "2026-11-01T11:00:00Z"}).edited is True
+    assert note_to_comment({**base, "updated_at": "2026-11-01T10:00:00Z"}).edited is False
+
+
+@pytest.mark.parametrize(
+    ("created_at", "updated_at", "resolved_at", "expected"),
+    [
+        ("t1", None, None, True),
+        ("t1", "", None, True),
+        (None, None, None, True),
+        ("t1", "t1", None, False),
+        ("t1", "t2", None, True),
+        ("t1", "t2", "t2", False),
+    ],
+)
+def test_edited_since_fails_closed(
+    created_at: str | None, updated_at: str | None, resolved_at: str | None, expected: bool
+) -> None:
+    """A missing ``updated_at`` reads as edited; only a resolution moves it without an edit."""
+    assert edited_since(created_at, updated_at, resolved_at=resolved_at) is expected

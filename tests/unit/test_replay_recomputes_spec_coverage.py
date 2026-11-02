@@ -149,6 +149,14 @@ class _Forge:
     def git(self, args: list[str]) -> str:
         raise AssertionError(f"the base ref resolves locally, no fetch expected: {args}")
 
+    def comments(self, pr_number: int) -> list[object]:
+        """No inline comment: the replay reads the comments for owner commands."""
+        return []
+
+    def conversation_comments(self, pr_number: int) -> list[object]:
+        """No pull-request comment either."""
+        return []
+
 
 class _ModelCalls:
     """Every reviewer and judge entry point; any call is a counted model call."""
