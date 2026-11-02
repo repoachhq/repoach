@@ -29,11 +29,10 @@ from repoach.project.config import (
     parse_project_config,
 )
 from repoach.project.measure import census, layout, measure_defaults
-from repoach.project.resolve import effective_rows, resolve_project_config
+from repoach.project.resolve import by_section, effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
 from repoach.project.toml_write import (
     array_of_tables_lines,
-    by_section,
     is_array_of_tables,
     render_project_toml,
     toml_value,

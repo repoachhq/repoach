@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, TypeAlias, TypeGuard, TypeVar
+from typing import TypeAlias, TypeGuard
 
 TEMPLATE_PATH = Path(__file__).with_name("repoach.toml.template")
 """The shipped template, packaged with the module."""
 
-TomlScalar: TypeAlias = "str | bool | int | Sequence[TomlScalar] | Mapping[str, TomlScalar]"
+TomlValue: TypeAlias = "str | bool | int | Sequence[TomlValue] | Mapping[str, TomlValue]"
 """A value ``repoach.toml`` holds: a string, boolean or integer, or a list or table of them.
 
 Recursive, so an array of tables (``[[review.generated]]``) is one; the
@@ -27,16 +27,13 @@ containers are the read-only ``Sequence`` / ``Mapping`` so a
 ``list[str]`` or a ``dict[str, str]`` is one too.
 """
 
-Row = TypeVar("Row", bound=tuple[Any, ...])
-"""A ``(section.key, value, …)`` row, kept whole by :func:`by_section`."""
-
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 _SECTION_RE = re.compile(r"^\[(?P<name>[a-z_]+)\]\s*$")
 _KEY_RE = re.compile(r"^(?:#\s*)?(?P<key>[a-z_]+)\s*=")
 
 
-def toml_value(value: TomlScalar) -> str:
+def toml_value(value: TomlValue) -> str:
     """Return ``value`` as a TOML literal.
 
     Lists and tables nest: an array of tables (``[[review.generated]]``)
@@ -80,7 +77,7 @@ def toml_key(key: str) -> str:
     return key if _BARE_KEY_RE.match(key) else json.dumps(key, ensure_ascii=False)
 
 
-def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlScalar]]]:
+def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlValue]]]:
     """Tell whether ``value`` is written as ``[[section.key]]`` blocks.
 
     Args:
@@ -99,7 +96,7 @@ def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlScalar]]]:
 
 
 def array_of_tables_lines(
-    section: str, key: str, entries: Sequence[Mapping[str, TomlScalar]]
+    section: str, key: str, entries: Sequence[Mapping[str, TomlValue]]
 ) -> list[str]:
     """Write ``entries`` as ``[[section.key]]`` blocks, each preceded by a blank line.
 
@@ -118,28 +115,6 @@ def array_of_tables_lines(
     return lines
 
 
-def by_section(rows: Iterable[Row]) -> list[tuple[str, list[Row]]]:
-    """Group dotted rows by section, the arrays of tables after the plain keys.
-
-    A key written after a ``[[section.key]]`` block belongs to that
-    block's last entry, so each section lists its plain keys first and
-    its arrays of tables last; the order is otherwise kept.
-
-    Args:
-        rows: ``(section.key, value, …)`` tuples in file order.
-
-    Returns:
-        One ``(section, rows)`` pair per section, in first-seen order.
-    """
-    grouped: dict[str, list[Row]] = {}
-    for row in rows:
-        grouped.setdefault(row[0].partition(".")[0], []).append(row)
-    return [
-        (section, sorted(members, key=lambda row: is_array_of_tables(row[1])))
-        for section, members in grouped.items()
-    ]
-
-
 def template_text() -> str:
     """Return the shipped template.
 
@@ -149,7 +124,7 @@ def template_text() -> str:
     return TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
-def render_project_toml(values: Mapping[str, TomlScalar], template: str | None = None) -> str:
+def render_project_toml(values: Mapping[str, TomlValue], template: str | None = None) -> str:
     """Fill ``values`` into the template.
 
     Args:

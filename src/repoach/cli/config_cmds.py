@@ -16,15 +16,11 @@ from ..project.config import ConfigError, config_path
 from ..project.resolve import (
     UNDECLARED_COMMAND_NOTE,
     ResolvedProjectConfig,
+    by_section,
     effective_rows,
     resolve_project_config,
 )
-from ..project.toml_write import (
-    array_of_tables_lines,
-    by_section,
-    is_array_of_tables,
-    toml_value,
-)
+from ..project.toml_write import array_of_tables_lines, is_array_of_tables, toml_value
 from .doctor_cmds import EXIT_UNUSABLE, project_root_or_exit
 
 config_app = typer.Typer(help="Inspect the project configuration (repoach.toml).")
@@ -35,7 +31,7 @@ def render_show(resolved: ResolvedProjectConfig) -> str:
 
     Each section lists its plain keys, then each array of tables
     (``[[review.generated]]``) as one ``[[section.key]]`` block per entry
-    (:func:`~repoach.project.toml_write.by_section`); every line of a
+    (:func:`~repoach.project.resolve.by_section`); every line of a
     block carries the source of the whole array.
 
     Args:
