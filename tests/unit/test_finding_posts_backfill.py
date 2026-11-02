@@ -182,3 +182,15 @@ def test_match_backfill_roots_is_pure_and_strict(tmp_path: Path) -> None:
     matched = match_backfill_roots([exact, shifted, linked], roots, {linked.id or 0})
 
     assert {finding_id: root.id for finding_id, root in matched.items()} == {exact.id: 500}
+
+
+def test_match_backfill_roots_two_findings_one_root_links_neither(tmp_path: Path) -> None:
+    """Two unlinked findings whose only root is the same one are both left unmatched."""
+    db = tmp_path / "review.db"
+    first = _finding(db, line=10)
+    second = _finding(db, line=10)
+
+    assert match_backfill_roots([first, second], [_root(500, 10)], set()) == {}
+    assert match_backfill_roots([first, second], [_root(500, 10)], {second.id or 0}) == {
+        first.id: _root(500, 10)
+    }
