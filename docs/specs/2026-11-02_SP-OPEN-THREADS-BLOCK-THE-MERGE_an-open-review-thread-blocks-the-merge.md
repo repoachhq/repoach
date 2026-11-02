@@ -8,7 +8,7 @@ created: 2026-11-02
 updated: 2026-11-02
 
 owns:
-  code: [src/repoach/review/open_threads.py, tests/unit/test_open_threads_block_the_merge.py, tests/unit/test_forge_unresolved_threads.py, tests/integration/test_open_threads_block_the_merge_end_to_end.py, docs/merge_gate.md]
+  code: [src/repoach/review/open_threads.py, tests/unit/test_open_threads_block_the_merge.py, tests/unit/test_forge_unresolved_threads.py, tests/integration/test_open_threads_block_the_merge_end_to_end.py, docs/merge_gate.md, .github/workflows/thread-rearm.yml]
   resources: []
 
 depends_on: [SP-FINDING-THREAD-IDS, SP-UNIVERSAL-FORGE, SP-PURE-MERGE-GATE, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-RELEASE-GATE, SP-CLI-STDOUT-ONE-JSON, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING]
@@ -67,17 +67,23 @@ Measured on `develop` `6fd4662` (2026-11-02).
   of defence; repoach's own gate is the first, so a forge without the
   setting, or a self-hosted runner merging with an owner token, is held
   all the same.
-- D6. A thread event re-arms the merge: `merge-on-ci.yml` gains
-  `pull_request_review_thread` (`resolved`, `unresolved`), admitted for
-  the same actors on a same-repo, non-draft PR into `develop` (F7).
+- D6. A thread event re-arms the merge (F7) without running a
+  merge-capable workflow from a PR ref: `pull_request_review_thread`
+  runs the workflow file of the PR's merge ref, so the event goes to a
+  new `thread-rearm.yml` whose only permission is `actions: write` and
+  whose one step dispatches `merge-on-ci.yml` on `main` for that PR.
+  `merge-on-ci.yml` keeps its triggers; a dispatch made with the job
+  token starts a run whose actor (`github-actions[bot]`) it admits.
+  `thread-rearm.yml` admits an allowlisted actor on a same-repo,
+  non-draft PR into `develop` and runs GitHub-hosted.
 
 ## Goals
 
 - G1: `MergeFacts` gains `unresolved_threads: int`, `threads_read: bool` and `threads_error: str`; `compute_merge_decision` adds `<n> unresolved review thread(s)` while n > 0 and `review threads unreadable: <why>` when not read.
 - G2: `Forge.unresolved_threads(number)` on GitHub (GraphQL `reviewThreads`, 100 per page, `--paginate --slurp`, the last page must say `hasNextPage: false`) and GitLab (discussions, 100 per page until an empty page); the bench `LocalDiffForge` has none.
-- G3: every merge path honours it: `decide_at_head` reads the threads, so `review gate`, `review merge` and the auto-merge refuse, the latter recording `pure gate refused: … unresolved review thread(s)` in its attempts comment; `review stranded --dispatch` holds a stranded PR whose threads are open or unreadable instead of dispatching it; `release gate --pr N` refuses on the release PR's open threads.
+- G3: every merge path honours it: `decide_at_head` reads the threads, so `review gate`, `review merge` and the auto-merge refuse, the latter recording `pure gate refused: … unresolved review thread(s)` in its attempts comment; `review stranded --dispatch` holds a stranded PR whose threads are open or unreadable instead of dispatching it; `release gate --pr N` refuses on the release PR's open threads (`ReleaseFacts.open_threads`, refused through `OpenThreads.refusal()`).
 - G4: `review pr` prints `review threads: <n> unresolved` on stderr and carries `review_threads` in its JSON and archive; the archive's facts table gains `Unresolved review threads`; `review gate` prints the same line plus `open thread <id> at <file>:<line>` per thread and carries `review_threads` in its JSON.
-- G5: `merge-on-ci.yml` re-judges on `pull_request_review_thread`, so a green PR whose last thread is resolved merges without a push.
+- G5: `thread-rearm.yml` dispatches `merge-on-ci.yml` on `main` when a thread is resolved or unresolved, so a green PR whose last thread is resolved merges without a push.
 - G6: `docs/merge_gate.md` states the rule and names the two forge settings as the second line of defence.
 
 ## Non-Goals
@@ -91,7 +97,7 @@ Measured on `develop` `6fd4662` (2026-11-02).
 
 - A1: `gh api graphql --paginate` follows `pageInfo.endCursor` while `hasNextPage` is true and `--slurp` prints every page as one array.
 - A2: GitLab answers `[]` for a discussions page past the last.
-- A3: the merge-on-ci file a `pull_request_review_thread` run uses is the PR's merge ref; the code it executes is main's (trusted checkout), so the gate takes effect on that path after the next release, like every merge-gate change (F7 of SP-AUTOMERGE-EVENT-DRIVEN).
+- A3: a `pull_request_review_thread` run uses the workflow file of the PR's merge ref, which is why `thread-rearm.yml` holds no merge-capable token; a workflow dispatched with the job token starts a run (the documented exception to the GITHUB_TOKEN no-trigger rule), from `main`'s `merge-on-ci.yml`, which executes `main`'s code, so the gate takes effect on that lane after the next release, like every merge-gate change (F7 of SP-AUTOMERGE-EVENT-DRIVEN).
 
 ## Interface
 
@@ -121,7 +127,9 @@ class OpenThreads(BaseModel):
     def thread_lines(self) -> list[str]: ...
     def as_json(self) -> dict[str, object]: ...
 def read_open_threads(forge: Forge, pr_number: int) -> OpenThreads: ...
-def hold_open_threads(rows, read) -> tuple[list[StrandedPR], list[HeldPR]]: ...
+class PullRequestRow(Protocol):  # pr_number: int, head_sha: str
+    ...
+def hold_open_threads(rows: Sequence[RowT], read) -> tuple[list[RowT], list[HeldPR]]: ...
 
 # repoach.review.merge_gate.MergeFacts (added)
 unresolved_threads: int = 0
@@ -129,15 +137,14 @@ threads_read: bool = False
 threads_error: str = ""
 
 # repoach.review.release_gate.ReleaseFacts (added)
-unresolved_threads: int | None = None
-threads_error: str | None = None
+open_threads: OpenThreads | None = None
 ```
 
 ## Behavior
 
 ### Nominal
 
-- A green, approved PR with one open thread: `review gate` exits 5 with `reasons == ["1 unresolved review thread(s)"]`; the auto-merge records `SKIP_GATE` with `pure gate refused: 1 unresolved review thread(s)` and merges nothing. The thread is resolved: the thread event starts merge-on-ci, whose decision merges.
+- A green, approved PR with one open thread: `review gate` exits 5 with `reasons == ["1 unresolved review thread(s)"]`; the auto-merge records `SKIP_GATE` with `pure gate refused: 1 unresolved review thread(s)` and merges nothing. The thread is resolved: `thread-rearm.yml` dispatches merge-on-ci on main, whose decision merges.
 - `review stranded --dispatch` dispatches the stranded PRs without open threads and prints `held #<n> (<reason>)` for the others; the JSON lists them under `held`.
 
 ### Edge cases
@@ -153,11 +160,12 @@ threads_error: str | None = None
 
 ## Architecture Impact
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-UNIVERSAL-FORGE (`Forge.unresolved_threads`, `ReviewThread`)
-- Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF (`StrandedPR`, the fixture forge serves threads)
+- Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF (the stranded sweep holds its rows, the fixture forge serves threads); `open_threads.py` imports nothing of `merge_wait.py`: `hold_open_threads` takes any row with `pr_number` and `head_sha`
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-FINDING-THREAD-IDS (`ReviewThread` comes from it)
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-PURE-MERGE-GATE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-RELEASE-GATE (the tests decide through `merge_gate.py`, `auto_merge.py` and `release_gate.py`)
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-CLI-STDOUT-ONE-JSON (the tests create the ledger, run `review pr` through the orchestrator and read its one JSON object)
 - `merge_gate.py`, `auto_merge.py`, `release_gate.py`, `orchestrator.py`, `review_cmds.py` and `release_cmds.py` import `open_threads.py`; it imports none of them.
+- New workflow `.github/workflows/thread-rearm.yml` (GitHub-hosted, `actions: write` only); `tests/unit/test_ci_portability.py` lists its job among the GitHub-hosted ones on purpose.
 
 ## Diagram
 ```mermaid
@@ -168,12 +176,12 @@ flowchart TD
     D --> M[review merge / auto-merge]
     R --> S[review stranded --dispatch: held]
     R --> L[release gate --pr]
-    T[pull_request_review_thread] --> W[merge-on-ci.yml] --> M
+    T[pull_request_review_thread] --> X[thread-rearm.yml: dispatch on main] --> W[merge-on-ci.yml] --> M
 ```
 
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_forge_unresolved_threads.py` → green: both forges read the only open thread on page 3, GitLab asks pages 1 to 4 with `per_page=100` and stops on the empty one, and a truncated, errored or empty listing raises. Today (`6fd4662`): `ERROR: file or directory not found`.
-- [ ] AC2: `pytest -q tests/unit/test_open_threads_block_the_merge.py` → green: the reasons, fail closed on unread facts, the auto-merge of a green PR with an open thread skipped then merged once it is resolved, the stranded hold, the release gate, the report row and the merge-on-ci trigger. Today: the file does not exist.
+- [ ] AC2: `pytest -q tests/unit/test_open_threads_block_the_merge.py` → green: the reasons, fail closed on unread facts, the auto-merge of a green PR with an open thread skipped then merged once it is resolved, the stranded hold, the release gate, the report row, the thread-rearm dispatch and merge-on-ci admitting it. Today: the file does not exist.
 - [ ] AC3: `pytest -q tests/integration/test_open_threads_block_the_merge_end_to_end.py` → green: `review pr` reports `review threads: 1 unresolved`, the decision at head refuses with exactly `["1 unresolved review thread(s)"]`, and merges after the thread is resolved. Today: the file does not exist.
 - [ ] AC4: `repoach arch check --base develop` → ok.
 - [ ] AC5: `docs/merge_gate.md` names the rule, `required_review_thread_resolution` and `only_allow_merge_if_all_discussions_are_resolved` as the second line of defence.

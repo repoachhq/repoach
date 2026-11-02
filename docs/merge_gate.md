@@ -49,11 +49,14 @@ Where it shows:
 - `repoach release gate --pr <N>` refuses while the release pull request
   has an open thread.
 
-Resolving a thread re-arms the merge: `merge-on-ci.yml` runs on
+Resolving a thread re-arms the merge: `thread-rearm.yml` runs on
 `pull_request_review_thread` (`resolved`, `unresolved`) for an allowed
-actor on a same-repo, non-draft pull request into `develop`, so a green
-pull request whose last thread is closed merges without a push. That
-workflow runs `main`'s code, so the rule reaches it with the next
+actor on a same-repo, non-draft pull request into `develop`, and
+dispatches `merge-on-ci.yml` on `main` for it, so a green pull request
+whose last thread is closed merges without a push. That event runs the
+workflow file of the pull request's merge ref, so `thread-rearm.yml`
+can only dispatch (`actions: write`); the merge itself runs from `main`'s
+workflow and `main`'s code, and the rule reaches that lane with the next
 release.
 
 ### The forge settings are the second line of defence
