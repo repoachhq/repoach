@@ -267,11 +267,14 @@ def test_release_gate_refuses_open_or_unreadable_threads_on_the_release_pr() -> 
     """The release PR's open threads refuse the release; no PR number reads none."""
     clean = {"develop_sha": "d" * 40, "remote_sha": "d" * 40, "ci_green": True}
     assert compute_release_decision(ReleaseFacts(**clean)).merge is True
-    assert compute_release_decision(ReleaseFacts(**clean, unresolved_threads=0)).merge is True
-    assert compute_release_decision(ReleaseFacts(**clean, unresolved_threads=2)).reasons == [
+    none = OpenThreads(read=True)
+    two = OpenThreads(read=True, threads=[ReviewThread(root_id=1), ReviewThread(root_id=2)])
+    unread = OpenThreads(read=False, error="HTTP 502")
+    assert compute_release_decision(ReleaseFacts(**clean, open_threads=none)).merge is True
+    assert compute_release_decision(ReleaseFacts(**clean, open_threads=two)).reasons == [
         "2 unresolved review thread(s)"
     ]
-    assert compute_release_decision(ReleaseFacts(**clean, threads_error="HTTP 502")).reasons == [
+    assert compute_release_decision(ReleaseFacts(**clean, open_threads=unread)).reasons == [
         "review threads unreadable: HTTP 502"
     ]
 
