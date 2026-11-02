@@ -15,6 +15,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from repoach.forge.github import GhResult, GitHubForge
 from repoach.forge.gitlab import GitLabForge
@@ -564,3 +565,32 @@ def test_render_ledger_report_includes_closed_threads_section_only_when_thread_l
     assert "## Closed threads" in with_closure
     assert line in with_closure
     assert "## Closed threads" not in without
+
+
+def test_thread_closure_write_failure_keeps_review_going(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ledger that refuses the closure write ends the detection with its error; the run goes on."""
+    db = tmp_path / "review.db"
+    _post(db, _blocking(db), 77)
+
+    def locked(*_args: object, **_kwargs: object) -> None:
+        raise OperationalError("UPDATE finding_posts", {}, Exception("database is locked"))
+
+    monkeypatch.setattr("repoach.review.finding_post_threads.mark_thread_closed", locked)
+    forge = ThreadForge([ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye")])
+
+    run = ReviewTeamOrchestrator(forge=forge, db_path=db)._detect_thread_closures(PR, head_sha=HEAD)
+
+    assert run.closures == []
+    assert run.lines() == ["thread closures unread: OperationalError"]
+    assert fetch_finding_posts(db, PR)[0].thread_closed_at_head is None
+
+
+def test_non_numeric_comment_id_is_not_a_thread_root() -> None:
+    """A comment id that is not a number names no root a reply could take."""
+    post = FindingPost(finding_id=1, pr_number=PR, forge="gitlab", head_sha=HEAD, comment_id="n/a")
+    assert post.root_id is None
+    assert post.is_root is False
+    numeric = post.model_copy(update={"comment_id": "501"})
+    assert (numeric.root_id, numeric.is_root) == (501, True)
