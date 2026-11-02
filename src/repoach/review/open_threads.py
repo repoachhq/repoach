@@ -130,6 +130,11 @@ def thread_location(thread: ReviewThread) -> str:
 def read_open_threads(forge: Forge, pr_number: int) -> OpenThreads:
     """Read the pull request's open review threads; a failure is a named, unread result.
 
+    A :class:`~repoach.forge.ForgeError` is not raised: it is logged
+    (``open_threads.unreadable``, warning) and returned as ``read=False``
+    with its redacted message, which every gate turns into the refusal
+    ``review threads unreadable: <why>``. Any other exception propagates.
+
     Args:
         forge: The forge the pull request lives on.
         pr_number: The pull / merge request.
