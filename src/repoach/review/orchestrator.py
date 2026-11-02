@@ -1592,7 +1592,7 @@ class ReviewTeamOrchestrator:
                 "review_team.finding_posts_init_failed",
                 pr_number=pr_number,
                 exc=type(exc).__name__,
-                message=str(exc)[:200],
+                message=redact_error(str(exc))[:200],
             )
 
     def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
@@ -1612,7 +1612,7 @@ class ReviewTeamOrchestrator:
                 "review_team.thread_closures_failed",
                 pr_number=pr_number,
                 exc=type(exc).__name__,
-                message=str(exc)[:200],
+                message=redact_error(str(exc))[:200],
             )
             return ClosureRun(error=type(exc).__name__)
 
@@ -1645,7 +1645,11 @@ class ReviewTeamOrchestrator:
                 review_id=review_id,
             )
         except SQLAlchemyError as exc:
-            _log.warning("finding_posts.write_failed", pr_number=pr_number, error=str(exc)[:200])
+            _log.warning(
+                "finding_posts.write_failed",
+                pr_number=pr_number,
+                error=redact_error(str(exc))[:200],
+            )
 
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int
