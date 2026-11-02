@@ -31,8 +31,8 @@ Every inline comment the review posts for a recorded finding writes one finding_
 - **Files**: `src/repoach/review/finding_post_threads.py`, `tests/unit/test_finding_posts.py`, `tests/unit/test_finding_posts_backfill.py`
 - **Action**: finding_post_threads.py reads the forge and writes through finding_posts. backfill_finding_posts links a finding to the one bot root at its exact file and line that no other finding claims, and reports the rest unmatched. detect_closed_threads reads Forge.review_threads only when a root post has no closure, records a thread resolved by the bot or a maintainer and reports anyone else's resolution as not counted; no finding status moves.
 - **Commit**: `feat(review): backfill legacy findings and detect closed threads`
-- **Done when**: pytest -q tests/unit/test_finding_posts.py -k thread_resolved tests/unit/test_finding_posts_backfill.py passes
-- **Unit tests**: `tests/unit/test_finding_posts.py::test_a_thread_resolved_by_a_maintainer_is_recorded_and_settles_nothing`, `tests/unit/test_finding_posts.py::test_a_thread_resolved_by_someone_else_is_reported_not_recorded`, `tests/unit/test_finding_posts_backfill.py::test_backfill_is_strict_and_leaves_unmatched_unknown`
+- **Done when**: pytest -q tests/unit/test_finding_posts.py -k thread_resolved passes, and pytest -q tests/unit/test_finding_posts_backfill.py passes
+- **Unit tests**: `tests/unit/test_finding_posts.py::test_a_thread_resolved_by_a_maintainer_is_recorded_and_settles_nothing`, `tests/unit/test_finding_posts.py::test_a_thread_resolved_by_someone_else_is_reported_not_recorded`, `tests/unit/test_finding_posts_backfill.py::test_backfill_is_strict_and_leaves_unmatched_unknown`, `tests/unit/test_finding_posts_backfill.py::test_match_backfill_roots_is_pure_and_strict`
 
 ## Step 5 — Record the forge ids of every posted finding
 
@@ -149,11 +149,12 @@ Every inline comment the review posts for a recorded finding writes one finding_
       ],
       "action": "finding_post_threads.py reads the forge and writes through finding_posts. backfill_finding_posts links a finding to the one bot root at its exact file and line that no other finding claims, and reports the rest unmatched. detect_closed_threads reads Forge.review_threads only when a root post has no closure, records a thread resolved by the bot or a maintainer and reports anyone else's resolution as not counted; no finding status moves.",
       "commit_message": "feat(review): backfill legacy findings and detect closed threads",
-      "done_when": "pytest -q tests/unit/test_finding_posts.py -k thread_resolved tests/unit/test_finding_posts_backfill.py passes",
+      "done_when": "pytest -q tests/unit/test_finding_posts.py -k thread_resolved passes, and pytest -q tests/unit/test_finding_posts_backfill.py passes",
       "unit_tests": [
         "tests/unit/test_finding_posts.py::test_a_thread_resolved_by_a_maintainer_is_recorded_and_settles_nothing",
         "tests/unit/test_finding_posts.py::test_a_thread_resolved_by_someone_else_is_reported_not_recorded",
-        "tests/unit/test_finding_posts_backfill.py::test_backfill_is_strict_and_leaves_unmatched_unknown"
+        "tests/unit/test_finding_posts_backfill.py::test_backfill_is_strict_and_leaves_unmatched_unknown",
+        "tests/unit/test_finding_posts_backfill.py::test_match_backfill_roots_is_pure_and_strict"
       ]
     },
     {
