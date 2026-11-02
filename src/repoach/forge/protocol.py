@@ -516,6 +516,24 @@ class Review(_Model):
     comments: list[Comment] = Field(default_factory=list)
 
 
+class ReviewThread(_Model):
+    """An inline review thread and whether it is resolved (SP-FINDING-THREAD-IDS).
+
+    Attributes:
+        root_id: Forge id of the thread's first comment (GitHub review
+            comment id, GitLab note id): the id :meth:`Forge.reply` takes.
+        thread_id: GitLab discussion id; ``None`` on GitHub, whose thread
+            is named by its root comment.
+        resolved: True when the forge reports the thread resolved.
+        resolved_by: Login of who resolved it (``""`` when open or unreported).
+    """
+
+    root_id: int
+    thread_id: str | None = None
+    resolved: bool = False
+    resolved_by: str = ""
+
+
 class CheckRun(_Model):
     """One CI check (GitHub check run / GitLab pipeline job).
 
@@ -659,6 +677,19 @@ class Forge(Protocol):
 
     def reviews(self, number: int) -> list[Review]:
         """Read the reviews / approvals."""
+        ...
+
+    def review_threads(self, number: int) -> list[ReviewThread]:
+        """Read every inline thread with its resolution and who resolved it.
+
+        GitHub: GraphQL ``reviewThreads`` (``isResolved``, ``resolvedBy``),
+        keyed by the first comment's ``databaseId``. GitLab: the
+        discussions holding a ``DiffNote``, read on their first note
+        (``resolved``, ``resolved_by.username``).
+
+        Raises:
+            ForgeError: The threads could not be read.
+        """
         ...
 
     def post_comment(

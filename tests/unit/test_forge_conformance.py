@@ -22,6 +22,7 @@ forge-neutral contract of the method.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -38,8 +39,8 @@ from repoach.forge import (
     ForgeNotFoundError,
 )
 from repoach.forge import gitlab as gitlab_forge
-from repoach.forge.github import GitHubForge, comment_from_github
-from repoach.forge.gitlab import GitLabForge, note_to_comment
+from repoach.forge.github import GitHubForge, comment_from_github, review_threads_from_github
+from repoach.forge.gitlab import GitLabForge, note_to_comment, review_threads_from_discussions
 from repoach.forge.protocol import edited_since
 from repoach.forge.recording import (
     Exchange,
@@ -190,6 +191,54 @@ def test_reviews(forge_name: str, tmp_path: Path) -> None:
     """Reviews / approvals are normalised with an author and a state."""
     reviews, _ = _replay(forge_name, "reviews", tmp_path)
     assert all(r.author and r.state for r in reviews)
+
+
+@pytest.mark.parametrize("forge_name", FORGES)
+def test_review_threads(forge_name: str, tmp_path: Path) -> None:
+    """Each inline thread names its root comment, its resolution and who resolved it."""
+    threads, _ = _replay(forge_name, "review_threads", tmp_path)
+    assert threads
+    assert all(t.root_id > 0 and t.resolved and t.resolved_by for t in threads)
+    if forge_name == "gitlab":
+        assert all(t.thread_id and re.fullmatch(r"[0-9a-f]{40}", t.thread_id) for t in threads)
+    else:
+        assert all(t.thread_id is None for t in threads)
+
+
+def test_review_threads_reads_an_open_thread_and_skips_one_without_a_root() -> None:
+    """An open thread reports no resolver; a thread whose first comment has no id is dropped."""
+    github = review_threads_from_github(
+        [
+            {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "nodes": [
+                                    {
+                                        "isResolved": False,
+                                        "resolvedBy": None,
+                                        "comments": {"nodes": [{"databaseId": 77}]},
+                                    },
+                                    {"isResolved": True, "comments": {"nodes": []}},
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+    )
+    assert [(t.root_id, t.resolved, t.resolved_by) for t in github] == [(77, False, "")]
+    gitlab = review_threads_from_discussions(
+        [
+            {"id": "a" * 40, "notes": [{"id": 9, "type": "DiffNote", "resolved": False}]},
+            {"id": "b" * 40, "notes": [{"id": 10, "type": None}]},
+        ]
+    )
+    assert [(t.root_id, t.thread_id, t.resolved) for t in gitlab] == [(9, "a" * 40, False)]
+    with pytest.raises(ForgeError, match="no data object"):
+        review_threads_from_github([{"errors": [{"message": "rate limited"}]}])
 
 
 @pytest.mark.parametrize("forge_name", FORGES)

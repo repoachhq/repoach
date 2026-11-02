@@ -1,0 +1,68 @@
+{
+  "args": [
+    278
+  ],
+  "bot_username": "github-actions[bot]",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "graphql",
+        "--paginate",
+        "--slurp",
+        "-F",
+        "owner={owner}",
+        "-F",
+        "name={repo}",
+        "-F",
+        "number=278",
+        "-f",
+        "query=query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor}nodes{isResolved resolvedBy{login} comments(first:1){nodes{databaseId}}}}}}}"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"data\": {\"repository\": {\"pullRequest\": {\"reviewThreads\": {\"pageInfo\": {\"hasNextPage\": false, \"endCursor\": \"Y3Vyc29yOnYyOpK0MjAyNi0xMS0wMVQyMjoxMTozNVrOsnvMGQ==\"}, \"nodes\": [{\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437504238}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437504247}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437510842}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437567002}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437567005}]}}]}}}}}]"
+    }
+  ],
+  "case": "review_threads",
+  "forge": "github",
+  "kwargs": {},
+  "method": "review_threads",
+  "raises": null,
+  "result": [
+    {
+      "resolved": true,
+      "resolved_by": "jwfaye",
+      "root_id": 4437504238,
+      "thread_id": null
+    },
+    {
+      "resolved": true,
+      "resolved_by": "jwfaye",
+      "root_id": 4437504247,
+      "thread_id": null
+    },
+    {
+      "resolved": true,
+      "resolved_by": "jwfaye",
+      "root_id": 4437510842,
+      "thread_id": null
+    },
+    {
+      "resolved": true,
+      "resolved_by": "jwfaye",
+      "root_id": 4437567002,
+      "thread_id": null
+    },
+    {
+      "resolved": true,
+      "resolved_by": "jwfaye",
+      "root_id": 4437567005,
+      "thread_id": null
+    }
+  ],
+  "source": "recorded 2026-11-02 from repoachhq/repoach PR #278 (merged, five review threads, all resolved)",
+  "trimmed": null
+}

@@ -58,6 +58,7 @@ from .protocol import (
     PullRequestState,
     Review,
     ReviewDraft,
+    ReviewThread,
     WriteRefusal,
     diff_files,
     edited_since,
@@ -304,6 +305,44 @@ def diff_notes_from_discussions(discussions: list[object]) -> list[Comment]:
             if root_id is None:
                 root_id = comment.id
     return comments
+
+
+def review_threads_from_discussions(discussions: list[object]) -> list[ReviewThread]:
+    """Read each diff discussion's resolution on its first ``DiffNote``.
+
+    GitLab marks every note of a resolved discussion ``resolved`` with the
+    same ``resolved_by`` (measured 2026-11-02 on Yoob !339); the first note
+    stands for the thread, as it is the id :meth:`GitLabForge.reply` takes.
+
+    Args:
+        discussions: The MR's discussions as the API returns them.
+
+    Returns:
+        One thread per discussion whose first note is a ``DiffNote``.
+    """
+    threads: list[ReviewThread] = []
+    for discussion in discussions:
+        if not isinstance(discussion, dict):
+            continue
+        notes = discussion.get("notes")
+        first = notes[0] if isinstance(notes, list) and notes else None
+        if not isinstance(first, dict) or first.get("type") != "DiffNote":
+            continue
+        root_id = _int(first.get("id"))
+        if root_id is None:
+            continue
+        thread_id = discussion.get("id")
+        resolver = first.get("resolved_by")
+        login = resolver.get("username") if isinstance(resolver, dict) else None
+        threads.append(
+            ReviewThread(
+                root_id=root_id,
+                thread_id=thread_id if isinstance(thread_id, str) else None,
+                resolved=first.get("resolved") is True,
+                resolved_by=login if isinstance(login, str) else "",
+            )
+        )
+    return threads
 
 
 def render_diff_entry(entry: dict[str, object]) -> str:
@@ -572,6 +611,10 @@ class GitLabForge:
     def comments(self, number: int) -> list[Comment]:
         """Read every inline (``DiffNote``) comment, roots and replies."""
         return diff_notes_from_discussions(list(self._discussions(number)))
+
+    def review_threads(self, number: int) -> list[ReviewThread]:
+        """Read every diff discussion's resolution and who resolved it."""
+        return review_threads_from_discussions(list(self._discussions(number)))
 
     def conversation_comments(self, number: int) -> list[Comment]:
         """Read the non-system, non-diff notes, oldest first."""
