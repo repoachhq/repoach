@@ -55,9 +55,10 @@ actor on a same-repo, non-draft pull request into `develop`, and
 dispatches `merge-on-ci.yml` on `main` for it, so a green pull request
 whose last thread is closed merges without a push. That event runs the
 workflow file of the pull request's merge ref, so `thread-rearm.yml`
-can only dispatch (`actions: write`); the merge itself runs from `main`'s
-workflow and `main`'s code, and the rule reaches that lane with the next
-release.
+holds only `actions: write` and dispatches; a branch with push access
+could edit it in its own pull request, which is why the merge itself runs
+from `main`'s `merge-on-ci.yml` and `main`'s code, whose filters and
+gate decide. The rule reaches that lane with the next release.
 
 ### The forge settings are the second line of defence
 
