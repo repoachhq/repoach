@@ -56,7 +56,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: ReleaseFacts gains open_threads (None without --pr), read for the release PR; compute_release_decision appends OpenThreads.refusal(). The release gate JSON carries review_threads.
 - **Commit**: `feat(release): refuse a release pr with open review threads`
 - **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k release passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_release_gate_refuses_open_or_unreadable_threads_on_the_release_pr`
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_release_gate_refuses_open_or_unreadable_threads_on_the_release_pr`, `tests/unit/test_open_threads_block_the_merge.py::test_release_gate_reads_the_release_pr_threads_only_when_a_pr_is_given`
 
 ## Step 8 — Report the open threads in the review and its archive
 
@@ -221,7 +221,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "commit_message": "feat(release): refuse a release pr with open review threads",
       "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k release passes",
       "unit_tests": [
-        "tests/unit/test_open_threads_block_the_merge.py::test_release_gate_refuses_open_or_unreadable_threads_on_the_release_pr"
+        "tests/unit/test_open_threads_block_the_merge.py::test_release_gate_refuses_open_or_unreadable_threads_on_the_release_pr",
+        "tests/unit/test_open_threads_block_the_merge.py::test_release_gate_reads_the_release_pr_threads_only_when_a_pr_is_given"
       ]
     },
     {
