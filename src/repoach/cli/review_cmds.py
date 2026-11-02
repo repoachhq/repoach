@@ -65,6 +65,7 @@ from ..review.auto_merge import (
 )
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
+from ..review.finding_posts import backfill_finding_posts
 from ..review.generated_verify import GeneratedRefusalError, review_generated_command
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
 from ..review.merge_wait import (
@@ -665,6 +666,37 @@ def review_report(
         typer.echo(f"Archive JSON unparseable: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+@review_app.command("backfill-threads")
+def review_backfill_threads(
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Count only; write nothing."),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+) -> None:
+    """Link findings posted before ``finding_posts`` existed to their threads.
+
+    SP-FINDING-THREAD-IDS G4: a finding is linked when exactly one inline
+    thread root authored by the bot sits at its exact file and line, and
+    no other finding claims that root; every other finding is reported
+    ``unmatched`` and gets no row. Prints ``pr N: F findings, L linked,
+    U unmatched, S already linked``. Exit 0 on success, 2 when the forge
+    cannot be selected or read (nothing is written).
+    """
+    project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    try:
+        forge = forge or select_forge()
+        report = backfill_finding_posts(
+            Path(get_settings().db_path),
+            forge,
+            pr_number,
+            bot_login=forge.bot_username,
+            dry_run=dry_run,
+        )
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    typer.echo(report.line())
 
 
 @review_app.command("fix")

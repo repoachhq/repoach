@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from typer.testing import CliRunner
+
+from repoach.cli import review_cmds
 from repoach.forge.protocol import Comment, ForgeError
 from repoach.review.finding_posts import (
     backfill_finding_posts,
@@ -21,6 +25,7 @@ from repoach.review.findings import (
     Finding,
     FindingStatus,
     Severity,
+    fetch_findings,
     init_findings_schema,
     record_finding,
 )
@@ -112,3 +117,44 @@ def test_two_findings_on_one_root_stay_unmatched(tmp_path: Path) -> None:
     _finding(db)
     report = backfill_finding_posts(db, Forge([_root(500, 10)]), PR, bot_login=BOT)
     assert (report.findings, report.linked, report.unmatched) == (2, 0, 2)
+
+
+def test_backfill_threads_cli_dry_run_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: the dry run prints the counts and leaves the table unchanged; the real run grows it."""
+    db = tmp_path / "review.db"
+    _finding(db)
+    _finding(db, line=20)
+    forge = Forge([_root(500, 10)])
+    monkeypatch.setenv("REPOACH_DB_PATH", str(db))
+    monkeypatch.setattr("repoach.core.config._settings", None)
+    monkeypatch.setattr(review_cmds, "select_forge", lambda: forge)
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
+
+    dry = CliRunner().invoke(review_cmds.review_app, ["backfill-threads", "7", "--dry-run"])
+    assert dry.exit_code == 0, dry.output
+    assert dry.stdout.strip() == "pr 7: 2 findings, 1 linked, 1 unmatched, 0 already linked"
+    assert fetch_finding_posts(db, PR) == []
+
+    real = CliRunner().invoke(review_cmds.review_app, ["backfill-threads", "7"])
+    assert real.exit_code == 0, real.output
+    assert len(fetch_finding_posts(db, PR)) == 1
+    assert len(fetch_findings(db, PR)) == 2
+
+
+def test_backfill_threads_cli_unreachable_forge_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A forge that cannot list the comments ends with rc 2 and writes nothing."""
+    db = tmp_path / "review.db"
+    _finding(db)
+    monkeypatch.setenv("REPOACH_DB_PATH", str(db))
+    monkeypatch.setattr("repoach.core.config._settings", None)
+    monkeypatch.setattr(review_cmds, "select_forge", lambda: Forge([], fail=True))
+    monkeypatch.chdir(Path(__file__).resolve().parents[2])
+
+    result = CliRunner().invoke(review_cmds.review_app, ["backfill-threads", "7"])
+
+    assert result.exit_code == 2
+    assert fetch_finding_posts(db, PR) == []
