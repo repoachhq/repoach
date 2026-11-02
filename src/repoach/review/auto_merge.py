@@ -833,7 +833,9 @@ def decide_at_head(
                 "spec_recompute_failure": recompute_failure,
             }
         )
-        .with_threads(open_threads or read_open_threads(forge, pr_number))
+        .with_threads(
+            open_threads if open_threads is not None else read_open_threads(forge, pr_number)
+        )
     )
     return resolved_head, facts, compute_merge_decision(facts)
 
