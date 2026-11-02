@@ -31,7 +31,12 @@ from repoach.forge import (
 )
 from repoach.forge.github import GhCli, GitHubForge
 from repoach.forge.gitlab import GitLabForge
-from repoach.forge.protocol import argv_head, is_write_argv
+from repoach.forge.protocol import (
+    _graphql_document,
+    _graphql_document_reads,
+    argv_head,
+    is_write_argv,
+)
 from repoach.forge.runner import CommandResult
 
 _BOT = "repoach-bot"
@@ -515,3 +520,13 @@ def test_every_write_argv_is_built_for_the_barrier(source: Path) -> None:
         assert not stray or _self_calls(func, "_write"), (
             f"{func.name} builds a {stray} write without calling self._write"
         )
+
+
+def test_graphql_shape_and_document_are_judged_apart() -> None:
+    """The argv shape yields the one document; the document check reads only its text."""
+    assert _graphql_document(["api", "graphql", "-F", "n=1", "-f", "query=query{x}"]) == "query{x}"
+    assert _graphql_document(["api", "graphql", "-fquery=query{x}"]) is None
+    assert _graphql_document(["api", "graphql", "-f", "query=q", "-f", "operationName=Q"]) is None
+    assert _graphql_document_reads("  {viewer{login}}") is True
+    assert _graphql_document_reads("query{a} mutation{b}") is False
+    assert _graphql_document_reads("@doc.graphql") is False

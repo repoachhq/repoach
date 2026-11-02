@@ -237,35 +237,55 @@ _GRAPHQL_OPERATION_RE = re.compile(r"\b(?:mutation|subscription)\b")
 """A GraphQL operation keyword other than ``query``, anywhere in a document."""
 
 
-def _graphql_read(args: Sequence[str]) -> bool:
-    """Whether a ``gh api graphql`` argv carries one query and nothing that could write.
+def _graphql_document(args: Sequence[str]) -> str | None:
+    """The one GraphQL document a ``gh api graphql`` argv sends, when its shape allows a read.
 
-    GraphQL is always sent as ``POST``; what it does is its document's
-    operations. Only a single ``query=`` field whose document starts with
-    ``query`` or ``{`` and names no ``mutation`` or ``subscription``
-    anywhere, with no ``operationName`` field to pick another operation
-    of the document, is a read. A body read with ``--input``, a field
-    joined to its flag (``-fquery=…``, ``--raw-field=…``), a document read
-    from a file (``query=@…``), two documents or none count as a write
-    (fail closed): only the separated ``-f``/``-F`` forms are read.
+    The argv must be ``api graphql`` sent as ``POST`` (or with no method),
+    carry its fields only in the separated ``-f``/``-F`` form (no
+    ``--input`` body, no ``-fquery=…`` or ``--raw-field=…`` joined form),
+    name no ``operationName`` and hold exactly one ``query=`` field.
+
+    Returns:
+        That field's document, or ``None`` when the shape is anything else.
     """
     if (
         len(args) < 2
         or list(args[:2]) != ["api", "graphql"]
         or _api_method(args) not in (None, "POST")
     ):
-        return False
+        return None
     if any(_is_field_flag(arg) and arg not in ("-f", "-F") for arg in args):
-        return False
+        return None
     fields = [value for flag, value in itertools.pairwise(args) if flag in _API_FIELD_FLAGS]
     if any(value.startswith("operationName=") for value in fields):
-        return False
+        return None
     documents = [value.split("=", 1)[1] for value in fields if value.startswith("query=")]
+    return documents[0] if len(documents) == 1 else None
+
+
+def _graphql_document_reads(document: str) -> bool:
+    """Whether a GraphQL document only queries.
+
+    It must start with ``query`` or ``{`` and name no ``mutation`` or
+    ``subscription`` anywhere; a document read from a file (``@…``) does
+    not start so and counts as a write.
+    """
     return (
-        len(documents) == 1
-        and documents[0].lstrip().startswith(("query", "{"))
-        and _GRAPHQL_OPERATION_RE.search(documents[0]) is None
+        document.lstrip().startswith(("query", "{"))
+        and _GRAPHQL_OPERATION_RE.search(document) is None
     )
+
+
+def _graphql_read(args: Sequence[str]) -> bool:
+    """Whether a ``gh api graphql`` argv is a read: a readable shape and a query-only document.
+
+    GraphQL is always sent as ``POST``; what it does is its document's
+    operations, so the argv shape (:func:`_graphql_document`) and the
+    document (:func:`_graphql_document_reads`) are checked apart; any
+    doubt counts as a write (fail closed).
+    """
+    document = _graphql_document(args)
+    return document is not None and _graphql_document_reads(document)
 
 
 def is_write_argv(args: Sequence[str]) -> bool:
