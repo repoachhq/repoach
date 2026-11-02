@@ -21,7 +21,9 @@ The gate verifies, in order:
 4. **Pure merge gate** (SP-PURE-MERGE-GATE / SP-VERDICT-FLIP 10a) —
    :func:`decide_at_head` re-verifies the findings ledger at the exact
    head: CI green ∧ zero open blocking findings ∧ a complete review ∧
-   spec coverage present-when-known.  The self-reported archive verdict
+   spec coverage present-when-known ∧ zero open review threads read from
+   the forge (SP-OPEN-THREADS-BLOCK-THE-MERGE; an unreadable listing
+   refuses).  The self-reported archive verdict
    is NOT consulted (it was a forgeable, stale signal — audit CRITICAL
    #1); the sticky comment is report-only.
 
@@ -103,6 +105,7 @@ from .merge_wait import (
     unrearmed_checks,
     upsert_attempt,
 )
+from .open_threads import OpenThreads, read_open_threads
 from .persistence import init_schema, record_merge
 from .refuter import Judge, make_refuter_judge
 from .review_head import (
@@ -550,6 +553,9 @@ class GateEvaluation:
         read_changed_files: Reads them from the forge on demand; the gate
             CLI calls it only for a PR declaring no spec, whose specs it
             resolves by ownership (SP-APPROVED-SPEC-WITHOUT-PLAN-GRADES-ITS-ACS G7).
+        open_threads: The open review threads the decision counted
+            (SP-OPEN-THREADS-BLOCK-THE-MERGE); ``None`` when the gate
+            stopped before deciding.
     """
 
     head_sha: str
@@ -560,6 +566,7 @@ class GateEvaluation:
     tree: str | None = None
     changed_files: list[str] | None = None
     read_changed_files: Callable[[], list[str]] | None = None
+    open_threads: OpenThreads | None = None
 
 
 def _unknown_facts() -> MergeFacts:
@@ -693,8 +700,17 @@ def decide_at_head(
     head_tree: bool = False,
     base_ref: str | None = None,
     budget: RefuterBudget | None = None,
+    open_threads: OpenThreads | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
+
+    The pull request's open review threads are read from the forge at
+    decision time (:func:`~repoach.review.open_threads.read_open_threads`,
+    SP-OPEN-THREADS-BLOCK-THE-MERGE) unless ``open_threads`` carries a
+    read the caller already made: one open thread refuses with
+    ``<n> unresolved review thread(s)``, a failed read with
+    ``review threads unreadable: <why>``. Every merge path reaches this
+    function, so none merges with an open thread.
 
     Before the facts are gathered, every unsettled blocking finding
     raised at an older head is re-checked at this head
@@ -756,6 +772,8 @@ def decide_at_head(
             Required when ``head_tree`` is True: ``repo_root`` is then the
             PR's head tree, and a pull request never sizes its own
             refuter. Unused otherwise.
+        open_threads: The open review threads the caller already read
+            (``review gate`` names them); ``None`` reads them here.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -811,6 +829,7 @@ def decide_at_head(
             "reverify_reasons": reverified.reasons(),
             "reverify_line": reverified.summary_line(),
             "spec_recompute_failure": recompute_failure,
+            **(open_threads or read_open_threads(forge, pr_number)).facts_update(),
         }
     )
     return resolved_head, facts, compute_merge_decision(facts)
@@ -962,6 +981,7 @@ def evaluate_merge_gate(
         producers=producers,
     )
     tree_kind: str | None = None
+    threads = read_open_threads(forge, pr_number)
     if pin_tree:
         checkout = repo_root or Path.cwd()
         with materialise_head(
@@ -988,6 +1008,7 @@ def evaluate_merge_gate(
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
                 budget=budget,
+                open_threads=threads,
             )
         tree_kind = tree.tree
     else:
@@ -999,6 +1020,7 @@ def evaluate_merge_gate(
             repo_root=repo_root,
             head_sha=verified_head,
             judge_factory=judge_factory,
+            open_threads=threads,
         )
     _log.info(
         "auto_merge.gate_evaluated",
@@ -1006,6 +1028,7 @@ def evaluate_merge_gate(
         merge=decision.merge,
         ci_green=ci_gate.green,
         open_blocking=facts.open_blocking_findings,
+        unresolved_threads=facts.unresolved_threads,
         reasons=decision.reasons[:5],
     )
     return GateEvaluation(
@@ -1016,6 +1039,7 @@ def evaluate_merge_gate(
         pull_request=pr,
         tree=tree_kind,
         read_changed_files=lambda: diff_files(forge.diff(pr_number).text),
+        open_threads=threads,
     )
 
 
@@ -1067,7 +1091,10 @@ def run_auto_merge(
     forgeable-archive hole (audit CRITICAL #1, the verdict no longer
     gates) and the parse_failed-promote hole (audit CRITICAL #2, an
     unparsed reviewer fails the review-integrity fact). A refused pure
-    gate persists ``OUTCOME_SKIP_GATE`` with the failing reasons.
+    gate persists ``OUTCOME_SKIP_GATE`` with the failing reasons, so a
+    green PR with an open review thread is not merged and its attempts
+    comment says ``<n> unresolved review thread(s)``
+    (SP-OPEN-THREADS-BLOCK-THE-MERGE).
 
     The function never raises on a "we should not merge" outcome —
     the caller (CLI) maps the outcome to an exit code.  An

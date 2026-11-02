@@ -36,6 +36,7 @@ from repoach.review.merge_gate import (
 from repoach.review.refuter import JUDGED_CLAIM_TYPES
 from repoach.review.reviewer import ReviewVerdict
 from repoach.review.spec_gate import SpecCoverage, record_spec_coverage
+from tests.forge_fakes import no_open_threads
 
 
 def _facts(**over: object) -> MergeFacts:
@@ -47,9 +48,15 @@ def _facts(**over: object) -> MergeFacts:
         "spec_coverage_known": True,
         "review_complete": True,
         "review_integrity_known": True,
+        "threads_read": True,
     }
     base.update(over)
     return MergeFacts(**base)
+
+
+def _gathered(*args: object, **kwargs: object) -> MergeFacts:
+    """:func:`gather_merge_facts`, as read from a forge that reports no open review thread."""
+    return no_open_threads(gather_merge_facts(*args, **kwargs))
 
 
 def test_decision_merges_when_all_green() -> None:
@@ -124,9 +131,7 @@ def test_gather_judged_stuck_finding_blocks(tmp_path: Path) -> None:
     sid = record_finding(db, _finding(ClaimType.SECURITY, claim="unfixed vuln"))
     _to_stuck(db, sid, checked_at_sha="head123")
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 1
     assert compute_merge_decision(facts).merge is False
 
@@ -140,9 +145,7 @@ def test_gather_mechanical_stuck_finding_still_reverifies_and_blocks(tmp_path: P
     )
     _to_stuck(db, fid)
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 1
 
 
@@ -167,9 +170,7 @@ def test_gather_reverifies_mechanical_findings_at_head(tmp_path: Path) -> None:
     record_finding(db, _finding(ClaimType.MISSING_TEST, claim="missing test_present"))
     record_finding(db, _finding(ClaimType.MISSING_TEST, claim="missing test_absent_now"))
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 0
     assert len(facts.blocking_unverified) == 2
 
@@ -190,9 +191,7 @@ def test_gather_judged_counts_fresh_and_stale(tmp_path: Path) -> None:
         db, stale_id, FindingStatus.VERIFIED, verification_method="refuter", checked_at_sha="old999"
     )
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 2
 
 
@@ -210,18 +209,14 @@ def test_gather_skips_settled_and_advisory(tmp_path: Path) -> None:
         checked_at_sha="head123",
     )
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 0
 
 
 def test_incomplete_review_not_approved(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 0
     assert facts.review_complete is False
     assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
@@ -232,9 +227,7 @@ def test_gather_review_integrity_fresh_and_complete(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
     record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.review_integrity_known is True
     assert facts.review_complete is True
     assert compute_merge_decision(facts).merge is True
@@ -244,9 +237,7 @@ def test_gather_review_integrity_unparsed_blocks(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
     record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=2)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.review_complete is False
     assert compute_merge_decision(facts).merge is False
 
@@ -255,9 +246,7 @@ def test_gather_review_integrity_stale_head_unknown(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
     record_review_integrity(db, pr_number=1, head_sha="old999", n_reviewers=4, n_unparsed=0)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.review_integrity_known is False
     assert compute_merge_decision(facts).merge is False
 
@@ -273,9 +262,7 @@ def test_gather_reads_spec_coverage(tmp_path: Path) -> None:
             spec_id="SP-X", n_promised=2, n_present=1, missing=["t::x"], covered=False
         ),
     )
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.spec_coverage_known is True
     assert facts.spec_covered is False
     assert compute_merge_decision(facts).merge is False
@@ -322,9 +309,7 @@ def test_open_judged_blocking_fails_closed(tmp_path: Path) -> None:
     )
     update_finding_status(db, fid, FindingStatus.OPEN, verification_method="coder")
 
-    gathered = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    gathered = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert gathered.open_blocking_findings == 1
     assert compute_merge_decision(gathered).merge is False
     assert verdict_from_facts(gathered) is ReviewVerdict.REQUEST_CHANGES
@@ -342,9 +327,7 @@ def test_stale_sha_judged_blocking_fails_closed(tmp_path: Path) -> None:
     )
     record_review_integrity(db, pr_number=1, head_sha="newhead", n_reviewers=4, n_unparsed=0)
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="newhead", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="newhead", ci_green=True)
     assert facts.open_blocking_findings == 1
     assert compute_merge_decision(facts).merge is False
     assert verdict_from_facts(facts) is ReviewVerdict.REQUEST_CHANGES
@@ -359,9 +342,7 @@ def test_spec_coverage_pinned_to_head(tmp_path: Path) -> None:
         head_sha="old999",
         coverage=SpecCoverage(spec_id="SP-X", n_promised=2, n_present=2, missing=[], covered=True),
     )
-    stale = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    stale = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert stale.spec_covered is False
     assert stale.spec_coverage_known is False
 
@@ -371,9 +352,7 @@ def test_spec_coverage_pinned_to_head(tmp_path: Path) -> None:
         head_sha="head123",
         coverage=SpecCoverage(spec_id="SP-X", n_promised=2, n_present=2, missing=[], covered=True),
     )
-    fresh = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    fresh = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert fresh.spec_covered is True
     assert fresh.spec_coverage_known is True
 
@@ -415,9 +394,7 @@ def test_gather_review_integrity_clean_rerun_redeems_flaked_head(tmp_path: Path)
     init_findings_schema(db)
     record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=1)
     record_review_integrity(db, pr_number=1, head_sha="head123", n_reviewers=4, n_unparsed=0)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.review_complete is True
     assert compute_merge_decision(facts).merge is True
 
@@ -426,9 +403,7 @@ def test_missing_ledger_reason_names_artifact_transport(tmp_path: Path) -> None:
     """An empty ledger points at the artifact, not at a review that never ran."""
     db = tmp_path / "f.db"
     init_findings_schema(db)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     decision = compute_merge_decision(facts)
     assert decision.merge is False
     assert any("artifact missing or not transported" in r for r in decision.reasons)
@@ -439,9 +414,7 @@ def test_stale_head_reason_names_the_older_head(tmp_path: Path) -> None:
     db = tmp_path / "f.db"
     init_findings_schema(db)
     record_review_integrity(db, pr_number=1, head_sha="old999", n_reviewers=4, n_unparsed=0)
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     decision = compute_merge_decision(facts)
     assert decision.merge is False
     assert any("review ran at an older head" in r for r in decision.reasons)
@@ -483,9 +456,7 @@ def test_verified_spec_gap_blocks_merge(tmp_path: Path) -> None:
         db, fid, FindingStatus.VERIFIED, verification_method="refuter", checked_at_sha="head123"
     )
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 1
     assert facts.blocking_unverified == []
     assert compute_merge_decision(facts).merge is False
@@ -513,9 +484,7 @@ def test_oversized_omitted_file_blocks_merge(tmp_path: Path) -> None:
     )
     record_oversized_findings(db, pr_number=1, head_sha="head123", round_n=1, scoped=scoped)
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 1
     assert compute_merge_decision(facts).merge is False
 
@@ -537,9 +506,7 @@ def test_cap_fit_only_files_not_blocked_by_oversized_rule(tmp_path: Path) -> Non
     )
     assert n_recorded == 0
 
-    facts = gather_merge_facts(
-        db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True
-    )
+    facts = _gathered(db, pr_number=1, repo_root=tmp_path, head_sha="head123", ci_green=True)
     assert facts.open_blocking_findings == 0
     assert compute_merge_decision(facts).merge is True
 

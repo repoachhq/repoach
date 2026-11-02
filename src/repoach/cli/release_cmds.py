@@ -113,6 +113,8 @@ def release_gate(
         "pr_head_sha": facts.pr_head_sha,
         "ci_green": facts.ci_green,
         "branch_freshness": [freshness.model_dump() for freshness in facts.branch_freshness],
+        "unresolved_threads": facts.unresolved_threads,
+        "threads_error": facts.threads_error,
         "merge": decision.merge,
         "reasons": decision.reasons,
     }

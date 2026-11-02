@@ -25,6 +25,7 @@ from repoach.review.review_head import (
     worktree_path,
 )
 from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
+from tests.forge_fakes import NO_OPEN_THREADS
 
 _UNDOCUMENTED = "def f():\n    return 1\n"
 _DOCUMENTED = '"""Module."""\n\n\ndef f():\n    """Return one."""\n    return 1\n'
@@ -86,6 +87,8 @@ class _HeadForge(GitHubForge):
             )
         if args[:3] == ["api", "--paginate", "--slurp"]:
             return GhResult(0, "[[]]", "", argv=args)
+        if args[:2] == ["api", "graphql"]:
+            return GhResult(0, NO_OPEN_THREADS, "", argv=args)
         raise AssertionError(f"unexpected gh call: {args}")
 
     def _pr_diff(self, pr_number: int) -> GhResult:

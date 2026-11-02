@@ -118,6 +118,8 @@ def _gitlab_gate(tmp_path: Path, gate_db: Path, pipeline_status: str) -> bool:
         if Path(argv[0]).name == "git":
             assert argv[1:3] == ["ls-remote", "origin"], argv
             return CommandResult(0, f"{sha}\trefs/heads/feat/x\n", "", argv)
+        if argv[1:] == ["api", "projects/:id/merge_requests/9/discussions?per_page=100&page=1"]:
+            return CommandResult(0, "[]", "", argv)
         assert argv[1:] == ["api", "projects/:id/merge_requests/9"], argv
         return CommandResult(0, json.dumps(mr), "", argv)
 

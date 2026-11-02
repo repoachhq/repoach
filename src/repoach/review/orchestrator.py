@@ -136,6 +136,7 @@ from .merge_gate import (
     verdict_from_facts,
 )
 from .notifier import fire_review_routine
+from .open_threads import OpenThreads, read_open_threads
 from .owner_commands import OwnerCommandsRun, apply_owner_commands
 from .persistence import (
     DialogueEntry,
@@ -435,7 +436,12 @@ class TeamOutcome:
     ``threads_closed`` lists the recorded threads seen resolved on the
     forge (``finding_id``, ``login``, ``head_sha``, ``comment_id``,
     ``counted``) and ``thread_lines`` the lines naming them
-    (SP-FINDING-THREAD-IDS).
+    (SP-FINDING-THREAD-IDS). ``open_threads`` is the read of the review
+    threads still open on the forge, taken at the end of the run and
+    again after posting, before the archive report is written: the report
+    and ``review pr`` print ``review threads: <n> unresolved`` from it,
+    and the report's headline refuses on it as the merge gate does
+    (SP-OPEN-THREADS-BLOCK-THE-MERGE).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -486,6 +492,11 @@ class TeamOutcome:
     finding_posts: int = 0
     threads_closed: list[dict[str, object]] = field(default_factory=list)
     thread_lines: list[str] = field(default_factory=list)
+    open_threads: OpenThreads = field(default_factory=lambda: OpenThreads(read=False))
+
+    def record_open_threads(self, threads: OpenThreads) -> None:
+        """Carry the open review threads read at the end of the run (SP-OPEN-THREADS-BLOCK-THE-MERGE)."""
+        self.open_threads = threads
 
     def record_thread_closures(self, run: ClosureRun) -> None:
         """Carry what :func:`~repoach.review.finding_post_threads.detect_closed_threads` saw."""
@@ -1111,6 +1122,7 @@ class ReviewTeamOrchestrator:
         )
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
+        team.record_open_threads(read_open_threads(self._forge, pr_number))
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1314,6 +1326,7 @@ class ReviewTeamOrchestrator:
         team.generated_lines = report_lines(generated_checks, generated_timing)
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
+        team.record_open_threads(read_open_threads(self._forge, pr_number))
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(
@@ -1735,6 +1748,7 @@ class ReviewTeamOrchestrator:
             posted_ids=posted_ids,
             team=team,
         )
+        team.record_open_threads(read_open_threads(self._forge, pr_number))
         self._upsert_archive_comment(team)
         self._fire_routine(team)
         remember_verified_findings(self._db_path, pr_number=pr_number)
@@ -2401,6 +2415,7 @@ class ReviewTeamOrchestrator:
             update={
                 "reverified": dict(team.reverified),
                 "reverify_reasons": list(team.reverify_reasons),
+                **team.open_threads.facts_update(),
             }
         )
         decision = compute_merge_decision(facts)
@@ -2506,6 +2521,7 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "findings": [entry.as_json() for entry in team.findings],
         "verdict_basis": list(team.verdict_basis),
         "owner_resolved": list(team.owner_resolved),
+        "review_threads": team.open_threads.as_json(),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [

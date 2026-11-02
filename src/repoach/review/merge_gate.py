@@ -35,6 +35,7 @@ from .findings import (
     fetch_review_integrity,
     init_findings_schema,
 )
+from .open_threads import unreadable_reason, unresolved_reason
 from .reviewer import ReviewVerdict
 from .spec_gate import (
     RESOLUTION_OWNERSHIP,
@@ -143,6 +144,15 @@ class MergeFacts(BaseModel):
             per graded spec; the decision names each not-covered row's
             causes, prefixed with the spec id for a spec resolved by
             ownership (G7).
+        unresolved_threads: The review threads the forge reports open
+            on the pull request at decision time
+            (SP-OPEN-THREADS-BLOCK-THE-MERGE); any one refuses the merge.
+        threads_read: Whether the forge answered that read. False by
+            default: facts nobody read the threads for refuse the merge
+            (fail closed), and :func:`decide_at_head
+            <repoach.review.auto_merge.decide_at_head>` always reads them.
+        threads_error: Why the threads are unknown when ``threads_read``
+            is False (redacted forge error); empty otherwise.
 
     Read-only properties derived from ``spec_rows`` (the one source; the
     gate JSON prints them, its documented ``spec_acceptance`` shape, and
@@ -179,6 +189,9 @@ class MergeFacts(BaseModel):
     reverify_line: str = ""
     spec_recompute_failure: str = ""
     spec_rows: list[SpecCoverage] = []
+    unresolved_threads: int = 0
+    threads_read: bool = False
+    threads_error: str = ""
 
     @property
     def spec_missing(self) -> list[str]:
@@ -244,8 +257,9 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
     Returns:
         A :class:`MergeDecision`. ``merge`` is True only when the head
         is known, CI is green, no blocking finding survives
-        re-verification, and (when coverage was recorded) the spec's
-        acceptance selectors are present.
+        re-verification, (when coverage was recorded) the spec's
+        acceptance selectors are present, and the forge was read and
+        reports no open review thread (SP-OPEN-THREADS-BLOCK-THE-MERGE).
     """
     reasons: list[str] = []
     if not facts.head_sha:
@@ -273,6 +287,10 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
             f"{len(facts.blocking_unverified)} unverified blocking finding(s): "
             f"{'; '.join(facts.blocking_unverified)}"
         )
+    if not facts.threads_read:
+        reasons.append(unreadable_reason(facts.threads_error))
+    elif facts.unresolved_threads > 0:
+        reasons.append(unresolved_reason(facts.unresolved_threads))
     if reasons:
         reasons.extend(facts.reverify_reasons)
     return MergeDecision(merge=not reasons, reasons=reasons)

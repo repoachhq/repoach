@@ -69,7 +69,9 @@ def _facts_table(facts: MergeFacts) -> str:
     """Render the re-verified merge facts as a markdown table.
 
     The re-check of findings raised at older heads gets its own row
-    when it re-checked any (SP-GATE-REVERIFIES-AT-HEAD G8).
+    when it re-checked any (SP-GATE-REVERIFIES-AT-HEAD G8). The open
+    review threads read from the forge get theirs, ``unreadable`` when
+    the read failed (SP-OPEN-THREADS-BLOCK-THE-MERGE).
     """
     spec = facts.spec_covered if facts.spec_coverage_known else "n/a"
     review = facts.review_complete if facts.review_integrity_known else "n/a"
@@ -78,6 +80,10 @@ def _facts_table(facts: MergeFacts) -> str:
         ("Open blocking findings", facts.open_blocking_findings),
         ("Spec covered", spec),
         ("Review complete", review),
+        (
+            "Unresolved review threads",
+            facts.unresolved_threads if facts.threads_read else "unreadable",
+        ),
     ]
     if any(facts.reverified.values()):
         counts = facts.reverified

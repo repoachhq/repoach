@@ -39,6 +39,7 @@ from repoach.review.spec_grading import (
     refresh_stale_coverage,
     specs_owning,
 )
+from tests.forge_fakes import no_open_threads
 
 _SPEC_PATH = "docs/specs/2026-10-26_SP-A_owner.md"
 _OWNED = "src/a.py"
@@ -245,7 +246,9 @@ def test_undeclared_pr_with_an_unreadable_base_is_refused(tmp_path: Path) -> Non
     init_findings_schema(db)
     record_review_integrity(db, pr_number=9, head_sha=head, n_reviewers=4, n_unparsed=0)
     record_spec_coverages(db, pr_number=9, head_sha=head, coverages=grading.rows)
-    decision = compute_merge_decision(summarise_ledger_facts(db, pr_number=9, head_sha=head))
+    decision = compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db, pr_number=9, head_sha=head))
+    )
 
     assert grading.source == "ownership"
     assert decision.merge is False

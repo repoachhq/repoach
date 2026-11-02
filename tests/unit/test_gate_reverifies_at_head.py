@@ -39,6 +39,7 @@ from repoach.review.findings import (
 )
 from repoach.review.head_reverify import REVERIFY_METHOD
 from repoach.review.merge_gate import MergeDecision, MergeFacts
+from tests.forge_fakes import NO_OPEN_THREADS
 
 _PLANTED = (
     "def search(db, prefix):\n"
@@ -110,6 +111,8 @@ class _HeadForge(GitHubForge):
         self._head = head
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["api", "graphql"]:
+            return GhResult(0, NO_OPEN_THREADS, "", argv=args)
         raise AssertionError(f"unexpected gh call: {args}")
 
     def _pr_head_sha(self, pr_number: int) -> str:
