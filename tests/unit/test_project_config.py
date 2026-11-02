@@ -17,6 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 import repoach.core.config as core_config
+from repoach.cli.config_cmds import by_section
 from repoach.cli.main import app
 from repoach.core.config import Settings
 from repoach.project.config import (
@@ -29,10 +30,10 @@ from repoach.project.config import (
     parse_project_config,
 )
 from repoach.project.measure import census, layout, measure_defaults
-from repoach.project.resolve import by_section, effective_rows, resolve_project_config
+from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
 from repoach.project.toml_write import (
-    array_of_tables_lines,
+    array_of_tables_blocks,
     is_array_of_tables,
     render_project_toml,
     toml_key,
@@ -619,6 +620,30 @@ class TestArrayOfTablesRendering:
         assert shown["commands"]["gate"] == "make check"
         assert shown["review"]["generated"][0]["check_timeout_s"] == 60
 
+    def test_render_show_separates_generated_blocks_and_annotates_each_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        second = YOOB_GENERATED_TOML.replace(
+            "api/data/knowledge_embeddings.json", "api/data/other.json"
+        ).replace("check_timeout_s = 60\n", "")
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML + "\n" + second)
+        monkeypatch.chdir(root)
+        lines = CliRunner().invoke(app, ["config", "show"]).stdout.splitlines()
+        suffix = "  # source: " + resolve_project_config(root).source("review.generated")
+        headers = [i for i, line in enumerate(lines) if line.startswith("[[review.generated]]")]
+        assert len(headers) == 2
+        blocks = []
+        for header in headers:
+            assert lines[header - 1] == ""
+            end = next((i for i in range(header, len(lines)) if not lines[i]), len(lines))
+            blocks.append(lines[header:end])
+        for block in blocks:
+            assert all(line.endswith(suffix) for line in block)
+        assert [[line.split(" = ")[0] for line in block[1:]] for block in blocks] == [
+            ["path", "check", "sources", "producer_inputs", "check_timeout_s"],
+            ["path", "check", "sources", "producer_inputs", "check_timeout_s"],
+        ]
+
     def test_by_section_puts_arrays_of_tables_after_plain_keys(self) -> None:
         rows = [
             ("review.generated", [{"path": "a.json"}], "file"),
@@ -630,8 +655,19 @@ class TestArrayOfTablesRendering:
             ("review", [rows[1], rows[3], rows[0]]),
             ("gates", [rows[2]]),
         ]
-        assert array_of_tables_lines("review", "generated", [{"path": "a.json"}]) == [
-            "",
-            "[[review.generated]]",
-            'path = "a.json"',
+        plain = [("a.x", 1, "file"), ("a.y", None, "default"), ("b.z", [], "default")]
+        assert by_section(plain) == [("a", plain[:2]), ("b", plain[2:])]
+        assert by_section([]) == []
+
+    def test_array_of_tables_blocks_returns_one_block_per_entry_and_rejects_non_tables(
+        self,
+    ) -> None:
+        assert array_of_tables_blocks(
+            "review", "generated", [{"path": "a.json"}, {"path": "b"}]
+        ) == [
+            ["[[review.generated]]", 'path = "a.json"'],
+            ["[[review.generated]]", 'path = "b"'],
         ]
+        for entries in ([], [{"path": "a.json"}, "b"], [{1: "a.json"}], ["a.json"]):
+            with pytest.raises(TypeError, match=r"review\.generated is not an array of tables"):
+                array_of_tables_blocks("review", "generated", entries)
