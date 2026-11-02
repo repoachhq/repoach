@@ -55,8 +55,9 @@ wrote.
 - **The refuted-finding sentinel.** The `Verified — challenge with
   evidence` reply goes to the finding's recorded thread. A finding with
   no recorded thread falls back to the file and line match; when exactly
-  one root matches, a `backfill` row is written so the next run finds it
-  directly.
+  one root matches and the bot wrote it, a `backfill` row is written so
+  the next run finds it directly. A thread someone else opened at that
+  line is answered as before but never linked.
 - **Thread closures** (below).
 
 The auto-challenge pass answers comments posted in the same run, from

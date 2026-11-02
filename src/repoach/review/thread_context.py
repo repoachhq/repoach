@@ -69,6 +69,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ..core.logging import get_logger
 from ..forge import Comment, Forge, ForgeError, ForgeStateRefusedError
+from ..forge.protocol import is_bot_login
 from .finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
@@ -481,23 +482,28 @@ def _format_finding_evidence_reply(finding: Finding) -> str:
     )
 
 
+def _line_candidates(roots: list[Comment], finding: Finding) -> list[Comment]:
+    """The thread roots at the finding's exact file and first line."""
+    return [
+        root
+        for root in roots
+        if (root.path or "") == finding.file and root.line == finding.line_start
+    ]
+
+
 def _match_finding_thread(
     roots: list[Comment],
     finding: Finding,
 ) -> Comment | None:
     """Return the root thread a ``finding`` originated from, or ``None``.
 
-    A :class:`~repoach.review.findings.Finding` carries no forge comment
-    id (the source :class:`~repoach.review.reviewer.ReviewComment` never
-    had one), so the thread is re-located by ``path`` + ``line``
-    equality, with the highest :func:`similarity` of root body vs the
-    finding's claim breaking ties when several critiques share a line.
+    The legacy match for a finding with no recorded thread
+    (SP-FINDING-THREAD-IDS): the thread is re-located by ``path`` +
+    ``line`` equality (:func:`_line_candidates`), with the highest
+    :func:`similarity` of root body vs the finding's claim breaking ties
+    when several critiques share a line.
     """
-    candidates = [
-        root
-        for root in roots
-        if (root.path or "") == finding.file and root.line == finding.line_start
-    ]
+    candidates = _line_candidates(roots, finding)
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -514,21 +520,24 @@ def _finding_root_id(
     SP-FINDING-THREAD-IDS G3: a finding whose post was recorded is
     answered on its own thread, wherever its root line moved. Only a
     finding with no recorded thread falls back to the legacy
-    :func:`_match_finding_thread`, and a match on exactly one root is
-    recorded as a ``backfill`` row so the next run finds it directly.
+    :func:`_match_finding_thread`. That match is recorded as a
+    ``backfill`` row only under the backfill's own rule: the root is the
+    only one at the finding's file and line, and the bot wrote it. A
+    thread someone else opened at that line is never linked, so the
+    closure detection and the owner commands never key on it.
     """
     recorded = resolve_thread(db_path, finding)
     if recorded is not None:
         return recorded.root_id
-    candidates = [
-        root
-        for root in roots
-        if (root.path or "") == finding.file and root.line == finding.line_start
-    ]
     root = _match_finding_thread(roots, finding)
     if root is None or root.id <= 0:
         return None
-    if len(candidates) == 1 and finding.id is not None:
+    candidates = _line_candidates(roots, finding)
+    if (
+        len(candidates) == 1
+        and finding.id is not None
+        and is_bot_login(forge.bot_username, root.author)
+    ):
         try:
             record_finding_post(
                 db_path,

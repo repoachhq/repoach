@@ -301,7 +301,11 @@ def test_recorded_thread_receives_the_sentinel_when_its_root_line_shifted(db: Pa
 def test_legacy_line_match_is_recorded_as_a_backfill_row(db: Path) -> None:
     """A finding with no recorded thread matched on one root gets a ``backfill`` row."""
     finding_id = record_finding(db, _finding())
-    gh = _FakeGh([_root(100, body="**[architect/major]** add a test for compute()")])
+    root = {
+        **_root(100, body="**[architect/major]** add a test for compute()"),
+        "user": {"login": _BOT},
+    }
+    gh = _FakeGh([root])
 
     assert post_refuted_finding_sentinels(gh, db, 1) == 1
 
@@ -309,3 +313,14 @@ def test_legacy_line_match_is_recorded_as_a_backfill_row(db: Path) -> None:
     assert [(p.comment_id, p.thread_id, p.provenance) for p in posts] == [
         ("100", "100", "backfill")
     ]
+
+
+def test_a_root_someone_else_opened_is_never_recorded(db: Path) -> None:
+    """A matched root not written by the bot gets the reply but no ``backfill`` row."""
+    finding_id = record_finding(db, _finding())
+    root = {**_root(100, body="a person's thread at the same line"), "user": {"login": "author"}}
+    gh = _FakeGh([root])
+
+    assert post_refuted_finding_sentinels(gh, db, 1) == 1
+
+    assert fetch_finding_posts(db, 1, finding_id=finding_id) == []
