@@ -244,6 +244,8 @@ def test_review_threads_reads_an_open_thread_and_skips_one_without_a_root() -> N
     assert [(t.root_id, t.thread_id, t.resolved) for t in gitlab] == [(9, "a" * 40, False)]
     with pytest.raises(ForgeError, match="no data object"):
         review_threads_from_github([{"errors": [{"message": "rate limited"}]}])
+    with pytest.raises(ForgeError, match="no data object"):
+        review_threads_from_github(["not a page"])
 
 
 class _ThreadsGh(GitHubForge):
