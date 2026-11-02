@@ -65,8 +65,17 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from ..core.logging import get_logger
 from ..forge import Comment, Forge, ForgeError, ForgeStateRefusedError
+from .finding_posts import (
+    FindingPost,
+    FindingPostIntegrityError,
+    record_finding_post,
+    resolve_thread,
+    thread_id_of,
+)
 from .findings import Finding, FindingStatus, fetch_findings
 from .reviewer import BotRole, ReviewComment
 
@@ -497,6 +506,54 @@ def _match_finding_thread(
     return candidates[0]
 
 
+def _finding_root_id(
+    forge: Forge, db_path: Path, roots: list[Comment], finding: Finding
+) -> int | None:
+    """The root comment the sentinel answers: the recorded thread first, else ``(file, line)``.
+
+    SP-FINDING-THREAD-IDS G3: a finding whose post was recorded is
+    answered on its own thread, wherever its root line moved. Only a
+    finding with no recorded thread falls back to the legacy
+    :func:`_match_finding_thread`, and a match on exactly one root is
+    recorded as a ``backfill`` row so the next run finds it directly.
+    """
+    recorded = resolve_thread(db_path, finding)
+    if recorded is not None:
+        return recorded.root_id
+    candidates = [
+        root
+        for root in roots
+        if (root.path or "") == finding.file and root.line == finding.line_start
+    ]
+    root = _match_finding_thread(roots, finding)
+    if root is None or root.id <= 0:
+        return None
+    if len(candidates) == 1 and finding.id is not None:
+        try:
+            record_finding_post(
+                db_path,
+                FindingPost(
+                    finding_id=finding.id,
+                    pr_number=finding.pr_number,
+                    forge="gitlab" if forge.name == "gitlab" else "github",
+                    head_sha=finding.head_sha,
+                    comment_id=str(root.id),
+                    thread_id=thread_id_of(forge.name, root),
+                    provenance="backfill",
+                ),
+            )
+        except (FindingPostIntegrityError, SQLAlchemyError) as exc:
+            _log.warning(
+                "finding_posts.write_failed",
+                pr_number=finding.pr_number,
+                finding_id=finding.id,
+                comment_id=root.id,
+                exc=type(exc).__name__,
+                message=str(exc)[:200],
+            )
+    return root.id
+
+
 def _thread_has_sentinel(replies: list[Comment]) -> bool:
     """Return True when any reply on the thread already carries the sentinel."""
     return any(EVIDENCE_REPLY_SENTINEL in r.body for r in replies)
@@ -547,10 +604,9 @@ def post_refuted_finding_sentinels(
     roots, replies_by_root = _partition_review_comments(threads)
     posted = 0
     for finding in refuted:
-        root = _match_finding_thread(roots, finding)
-        if root is None or root.id <= 0:
+        root_id = _finding_root_id(forge, db_path, roots, finding)
+        if root_id is None:
             continue
-        root_id = root.id
         if _thread_has_sentinel(replies_by_root.get(root_id, [])):
             continue
         body = _format_finding_evidence_reply(finding)
