@@ -19,7 +19,7 @@ from ..project.resolve import (
     effective_rows,
     resolve_project_config,
 )
-from ..project.toml_write import is_array_of_tables, toml_key, toml_value
+from ..project.toml_write import array_of_tables_lines, is_array_of_tables, toml_value
 from .doctor_cmds import EXIT_UNUSABLE, project_root_or_exit
 
 config_app = typer.Typer(help="Inspect the project configuration (repoach.toml).")
@@ -53,12 +53,7 @@ def render_show(resolved: ResolvedProjectConfig) -> str:
             lines.append(f"# {key}: {UNDECLARED_COMMAND_NOTE}")
             continue
         if is_array_of_tables(value):
-            for entry in value:
-                tables.extend(["", f"[[{section}.{toml_key(key)}]]  # source: {source}"])
-                tables.extend(
-                    f"{toml_key(name)} = {toml_value(item)}  # source: {source}"
-                    for name, item in entry.items()
-                )
+            tables.extend(array_of_tables_lines(section, key, value, f"  # source: {source}"))
             continue
         lines.append(f"{key} = {toml_value(value)}  # source: {source}")
     lines.extend(tables)

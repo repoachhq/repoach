@@ -12,15 +12,20 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TypeGuard
+from typing import TypeAlias, TypeGuard
 
 TEMPLATE_PATH = Path(__file__).with_name("repoach.toml.template")
 """The shipped template, packaged with the module."""
 
-TomlScalar = str | bool | int | list[str] | dict[str, str] | list[dict[str, object]]
-"""A value ``repoach.toml`` holds: a scalar, a string list, an inline table, or an array of tables."""
+TomlScalar: TypeAlias = "str | bool | int | Sequence[TomlScalar] | Mapping[str, TomlScalar]"
+"""A value ``repoach.toml`` holds: a string, boolean or integer, or a list or table of them.
+
+Recursive, so an array of tables (``[[review.generated]]``) is one; the
+containers are the read-only ``Sequence`` / ``Mapping`` so a
+``list[str]`` or a ``dict[str, str]`` is one too.
+"""
 
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -28,7 +33,7 @@ _SECTION_RE = re.compile(r"^\[(?P<name>[a-z_]+)\]\s*$")
 _KEY_RE = re.compile(r"^(?:#\s*)?(?P<key>[a-z_]+)\s*=")
 
 
-def toml_value(value: object) -> str:
+def toml_value(value: TomlScalar) -> str:
     """Return ``value`` as a TOML literal.
 
     Lists and tables nest: an array of tables (``[[review.generated]]``)
@@ -52,7 +57,7 @@ def toml_value(value: object) -> str:
         return str(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, list):
+    if isinstance(value, list | tuple):
         return "[" + ", ".join(toml_value(item) for item in value) + "]"
     if isinstance(value, dict) and all(isinstance(key, str) for key in value):
         pairs = [f"{toml_key(key)} = {toml_value(item)}" for key, item in value.items()]
@@ -72,16 +77,40 @@ def toml_key(key: str) -> str:
     return key if _BARE_KEY_RE.match(key) else json.dumps(key, ensure_ascii=False)
 
 
-def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, object]]]:
+def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlScalar]]]:
     """Tell whether ``value`` is written as ``[[section.key]]`` blocks.
 
     Args:
         value: An effective configuration value.
 
     Returns:
-        True for a non-empty list whose every item is a table.
+        True for a non-empty list whose every item is a table; an empty
+        list or one mixing tables and other values is written inline.
     """
     return isinstance(value, list) and bool(value) and all(isinstance(item, dict) for item in value)
+
+
+def array_of_tables_lines(
+    section: str, key: str, entries: Sequence[Mapping[str, TomlScalar]], suffix: str = ""
+) -> list[str]:
+    """Write ``entries`` as ``[[section.key]]`` blocks, each preceded by a blank line.
+
+    Args:
+        section: The table the array belongs to (``review``).
+        key: The array's key (``generated``).
+        entries: One table per block.
+        suffix: Appended to every line (``config show``'s source comment).
+
+    Returns:
+        The lines, headers and key lines alike carrying ``suffix``.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        lines.extend(["", f"[[{section}.{toml_key(key)}]]{suffix}"])
+        lines.extend(
+            f"{toml_key(name)} = {toml_value(item)}{suffix}" for name, item in entry.items()
+        )
+    return lines
 
 
 def template_text() -> str:
