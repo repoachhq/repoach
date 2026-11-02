@@ -21,6 +21,7 @@ from repoach.bench.local_forge import LocalDiffForge
 from repoach.forge.protocol import Comment, ForgeError
 from repoach.gates.config import GatesConfig
 from repoach.review import orchestrator, owner_commands
+from repoach.review.finding_posts import FindingPost, record_finding_post
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -733,6 +734,7 @@ def test_local_bench_forge_has_no_maintainers(tmp_path: Path) -> None:
     forge = LocalDiffForge(tmp_path, number=1, base_sha="a" * 40, head_sha="b" * 40, title="t")
     assert forge.is_maintainer("jwfaye") is False
     assert forge.is_maintainer("") is False
+    assert forge.review_threads(1) == []
 
 
 def test_archive_json_cannot_close_its_fence() -> None:
@@ -758,3 +760,36 @@ def test_record_and_move_skips_a_comment_another_run_stored(db: Path) -> None:
     assert stored is None
     assert _row(db, target).status is FindingStatus.VERIFIED
     assert len(fetch_owner_commands(db, PR)) == 1
+
+
+def test_resolve_reply_settles_the_recorded_finding_after_its_line_moved(db: Path) -> None:
+    """SP-FINDING-THREAD-IDS AC10: the recorded thread names the finding, not the root's line.
+
+    The root was posted for the finding at line 10 and now sits at line
+    14, where another finding with no recorded post is anchored. The
+    reply settles the recorded finding and leaves the other one.
+    """
+    recorded = _finding(db, line=10)
+    other = _finding(db, line=14)
+    record_finding_post(
+        db,
+        FindingPost(
+            finding_id=recorded,
+            pr_number=PR,
+            forge="github",
+            head_sha=OLD,
+            comment_id="77",
+            thread_id="77",
+        ),
+    )
+    root = Comment(id=77, author="repoach-bot", path="ci/review-gate.sh", line=14, created_at="1")
+    reply = Comment(
+        id=78, author="jwfaye", body=f"/resolve {REASON}", in_reply_to=77, created_at="2"
+    )
+    forge = FakeForge(inline=[root, reply], maintainers={"jwfaye": True})
+
+    run = apply_owner_commands(forge, db, pr_number=PR, head_sha=HEAD, post=False)
+
+    assert [entry["finding_id"] for entry in run.as_json()] == [recorded]
+    assert _row(db, recorded).status is FindingStatus.OWNER_RESOLVED
+    assert _row(db, other).status is FindingStatus.VERIFIED

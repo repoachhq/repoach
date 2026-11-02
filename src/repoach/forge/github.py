@@ -54,6 +54,7 @@ from .protocol import (
     PullRequestState,
     Review,
     ReviewDraft,
+    ReviewThread,
     WriteRefusal,
     diff_files,
     edited_since,
@@ -308,6 +309,51 @@ def _int_or_none(value: object) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None
+
+
+def review_threads_from_github(pages: object) -> list[ReviewThread]:
+    """Normalise the ``--paginate --slurp`` pages of the ``reviewThreads`` query.
+
+    A thread whose first comment carries no ``databaseId`` is skipped:
+    nothing could reply to it or join it to a posted finding.
+
+    Args:
+        pages: The decoded outer array of GraphQL responses.
+
+    Returns:
+        One thread per node, in the forge's order.
+
+    Raises:
+        ForgeError: A page is not a GraphQL ``data`` object.
+    """
+    threads: list[ReviewThread] = []
+    for page in pages if isinstance(pages, list) else [pages]:
+        data = page.get("data") if isinstance(page, dict) else None
+        if not isinstance(data, dict):
+            raise ForgeError("reviewThreads returned no data object")
+        repository = data.get("repository")
+        pull = repository.get("pullRequest") if isinstance(repository, dict) else None
+        connection = pull.get("reviewThreads") if isinstance(pull, dict) else None
+        nodes = connection.get("nodes") if isinstance(connection, dict) else None
+        for node in nodes if isinstance(nodes, list) else []:
+            if not isinstance(node, dict):
+                continue
+            comments = node.get("comments")
+            first = comments.get("nodes") if isinstance(comments, dict) else None
+            head = first[0] if isinstance(first, list) and first else None
+            root_id = _int_or_none(head.get("databaseId")) if isinstance(head, dict) else None
+            if root_id is None:
+                continue
+            resolver = node.get("resolvedBy")
+            login = resolver.get("login") if isinstance(resolver, dict) else None
+            threads.append(
+                ReviewThread(
+                    root_id=root_id,
+                    resolved=node.get("isResolved") is True,
+                    resolved_by=login if isinstance(login, str) else "",
+                )
+            )
+    return threads
 
 
 def comment_from_github(payload: dict[str, object]) -> Comment:
@@ -1294,6 +1340,39 @@ class GitHubForge:
             for r in data
             if isinstance(r, dict)
         ]
+
+    def review_threads(self, number: int) -> list[ReviewThread]:
+        """Read every review thread's resolution (GraphQL ``reviewThreads``).
+
+        Raises:
+            ForgeError: The call failed or did not decode.
+        """
+        res = self._run(
+            [
+                "api",
+                "graphql",
+                "--paginate",
+                "--slurp",
+                "-F",
+                "owner={owner}",
+                "-F",
+                "name={repo}",
+                "-F",
+                f"number={number}",
+                "-f",
+                "query=query($owner:String!,$name:String!,$number:Int!,$endCursor:String){"
+                "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+                "reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor}"
+                "nodes{isResolved resolvedBy{login} comments(first:1){nodes{databaseId}}}}}}}",
+            ]
+        )
+        if not res.ok:
+            raise_for_gh(res, number=number)
+        try:
+            pages = json.loads(res.stdout) if res.stdout.strip() else []
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"JSON decode failed: {str(exc)[:160]}") from exc
+        return review_threads_from_github(pages)
 
     @write_barrier
     def post_comment(

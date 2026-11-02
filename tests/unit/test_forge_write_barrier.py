@@ -31,7 +31,12 @@ from repoach.forge import (
 )
 from repoach.forge.github import GhCli, GitHubForge
 from repoach.forge.gitlab import GitLabForge
-from repoach.forge.protocol import argv_head, is_write_argv
+from repoach.forge.protocol import (
+    _graphql_document,
+    _graphql_document_reads,
+    argv_head,
+    is_write_argv,
+)
 from repoach.forge.runner import CommandResult
 
 _BOT = "repoach-bot"
@@ -294,6 +299,24 @@ def test_reads_pass_the_read_path_on_a_read_only_handle(tmp_path: Path, kind: st
         (["api", "--method", "GET", "x/y", "-f", "q=1"], False),
         (["api", "x/y", "--input", "-"], True),
         (["api", "--paginate", "--slurp", "x/y"], False),
+        (["api", "graphql", "--paginate", "-F", "n=1", "-f", "query=query($n:Int!){x}"], False),
+        (["api", "graphql", "-f", "query={ viewer { login } }"], False),
+        (["api", "graphql", "-f", "query=mutation{resolveReviewThread(input:{})}"], True),
+        (["api", "graphql", "-f", "query=@mutation.graphql"], True),
+        (["api", "graphql", "-F", "n=1"], True),
+        (["api", "graphql", "--method", "GET", "-f", "query=query{x}"], False),
+        (["api", "graphql", "-f", "query=query{a} mutation M{b}", "-f", "operationName=M"], True),
+        (["api", "graphql", "-f", "query=query Q{a}", "-f", "operationName=Q"], True),
+        (["api", "graphql", "-f", "query=query{a} subscription S{b}"], True),
+        (["api", "graphql", "-f", "query=query{a}", "-f", "query=query{b}"], True),
+        (["api", "graphql", "--input", "m.json", "-f", "query=query{x}"], True),
+        (["api", "graphql", "-f", "query=  \n query{x}"], False),
+        (["api", "graphql", "--method", "POST", "-f", "query=query{x}"], False),
+        (["api", "graphql", "-f", "query=query{Mutation}"], False),
+        (["api", "graphql", "-f", "query=query{a} mutation{b}"], True),
+        (["api", "graphql", "-fquery=query{x}"], True),
+        (["api", "graphql", "--raw-field=query=query{x}"], True),
+        (["api", "graphql", "-F", "n=1", "-Fquery=query{x}"], True),
         (["pr", "create", "--head", "h"], True),
         (["pr", "review", "7", "--approve"], True),
         (["pr", "merge", "7"], True),
@@ -497,3 +520,13 @@ def test_every_write_argv_is_built_for_the_barrier(source: Path) -> None:
         assert not stray or _self_calls(func, "_write"), (
             f"{func.name} builds a {stray} write without calling self._write"
         )
+
+
+def test_graphql_shape_and_document_are_judged_apart() -> None:
+    """The argv shape yields the one document; the document check reads only its text."""
+    assert _graphql_document(["api", "graphql", "-F", "n=1", "-f", "query=query{x}"]) == "query{x}"
+    assert _graphql_document(["api", "graphql", "-fquery=query{x}"]) is None
+    assert _graphql_document(["api", "graphql", "-f", "query=q", "-f", "operationName=Q"]) is None
+    assert _graphql_document_reads("  {viewer{login}}") is True
+    assert _graphql_document_reads("query{a} mutation{b}") is False
+    assert _graphql_document_reads("@doc.graphql") is False

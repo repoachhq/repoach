@@ -10,12 +10,14 @@ origin > default, the spec resolution order, and the ``config show`` /
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 import repoach.core.config as core_config
+from repoach.cli.config_cmds import by_section
 from repoach.cli.main import app
 from repoach.core.config import Settings
 from repoach.project.config import (
@@ -30,7 +32,13 @@ from repoach.project.config import (
 from repoach.project.measure import census, layout, measure_defaults
 from repoach.project.resolve import effective_rows, resolve_project_config
 from repoach.project.spec_source import resolve_spec, resolve_spec_id, spec_coverage_label
-from repoach.project.toml_write import render_project_toml
+from repoach.project.toml_write import (
+    array_of_tables_blocks,
+    is_array_of_tables,
+    render_project_toml,
+    toml_key,
+    toml_value,
+)
 from repoach.review import coder_loop
 from repoach.review.plan import plan_relpath
 from repoach.review.spec import SPECS_DIR, specs_dir_for
@@ -496,3 +504,170 @@ def test_undeclared_commands_are_skipped_with_a_reason_on_a_foreign_repo(
     assert (
         "config.commands.test=<not declared in repoach.toml; skipped on this repository>" in doctor
     )
+
+
+YOOB_GENERATED_TOML = """[[review.generated]]
+path = "api/data/knowledge_embeddings.json"
+check = ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"]
+sources = ["api/data/knowledge_corpus.json", "docs/user_guide/*.md"]
+check_timeout_s = 60
+"""
+
+
+class TestArrayOfTablesRendering:
+    """A ``[[review.generated]]`` entry is shown, never a ``TypeError``."""
+
+    def test_config_show_renders_a_generated_entry_as_an_array_of_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML)
+        monkeypatch.chdir(root)
+        result = CliRunner().invoke(app, ["config", "show"])
+        assert result.exit_code == 0, result.output
+        assert "[[review.generated]]  # source: file" in result.stdout
+        body = "\n".join(
+            line.rsplit("  # source: ", 1)[0] for line in result.stdout.splitlines()[1:]
+        )
+        shown = tomllib.loads(body)
+        assert shown["review"]["generated"] == [
+            {
+                "path": "api/data/knowledge_embeddings.json",
+                "check": ["scripts/index_knowledge_corpus.py", "--repo-root", ".", "--check"],
+                "sources": ["api/data/knowledge_corpus.json", "docs/user_guide/*.md"],
+                "producer_inputs": [],
+                "check_timeout_s": 60,
+            }
+        ]
+        assert shown["review"]["spec_sources"] == ["flag", "description", "branch"]
+        assert "gates" in shown
+
+    def test_doctor_writes_a_generated_entry_inline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML)
+        monkeypatch.chdir(root)
+        doctor = CliRunner().invoke(app, ["doctor"])
+        line = next(
+            row for row in doctor.stdout.splitlines() if row.startswith("config.review.generated=")
+        )
+        literal = line.removeprefix("config.review.generated=").removesuffix(" (file)")
+        assert tomllib.loads(f"value = {literal}")["value"][0]["check_timeout_s"] == 60
+
+    def test_toml_value_nests_and_refuses_what_toml_cannot_hold(self) -> None:
+        assert toml_value([{"a b": [1, True]}]) == '[{"a b" = [1, true]}]'
+        assert toml_value({}) == "{}"
+        with pytest.raises(TypeError, match="cannot write float"):
+            toml_value([{"x": 1.5}])
+        with pytest.raises(TypeError, match="cannot write dict"):
+            toml_value({1: "a"})
+
+    def test_config_show_renders_each_entry_of_multiple_generated_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        second = YOOB_GENERATED_TOML.replace(
+            "api/data/knowledge_embeddings.json", "api/data/other.json"
+        )
+        toml = "[review]\nbot_username = 'reviewer'\n\n" + YOOB_GENERATED_TOML + "\n" + second
+        root = _repo(tmp_path, "https://github.com/o/r.git", toml)
+        monkeypatch.chdir(root)
+        result = CliRunner().invoke(app, ["config", "show"])
+        assert result.exit_code == 0, result.output
+        lines = result.stdout.splitlines()
+        headers = [i for i, line in enumerate(lines) if line.startswith("[[review.generated]]")]
+        assert len(headers) == 2
+        plain = [i for i, line in enumerate(lines) if line.startswith("bot_username = ")]
+        assert plain and plain[0] < headers[0]
+        body = "\n".join(line.rsplit("  # source: ", 1)[0] for line in lines[1:])
+        shown = tomllib.loads(body)["review"]
+        assert [entry["path"] for entry in shown["generated"]] == [
+            "api/data/knowledge_embeddings.json",
+            "api/data/other.json",
+        ]
+        assert shown["bot_username"] == "reviewer"
+
+    def test_is_array_of_tables_rejects_empty_and_mixed_lists(self) -> None:
+        assert is_array_of_tables([{"path": "a.json"}]) is True
+        assert is_array_of_tables([]) is False
+        assert is_array_of_tables([{"path": "a.json"}, "b"]) is False
+        assert toml_value([]) == "[]"
+        assert toml_value([{"path": "a.json"}, "b"]) == '[{path = "a.json"}, "b"]'
+        assert is_array_of_tables([{1: "a.json"}]) is False
+
+    def test_toml_key_quotes_unicode_and_dotted_keys(self) -> None:
+        assert toml_key("check_timeout_s") == "check_timeout_s"
+        assert toml_key("a-b_1") == "a-b_1"
+        assert toml_key("é") == '"é"'
+        assert toml_key("a.b") == '"a.b"'
+        assert tomllib.loads(f"{toml_key('a.b')} = 1\n{toml_key('é')} = 2\n") == {"a.b": 1, "é": 2}
+
+    def test_config_show_keeps_undeclared_command_note_with_array_of_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        toml = "[commands]\ngate = 'make check'\n\n" + YOOB_GENERATED_TOML
+        root = _repo(tmp_path, "https://github.com/o/r.git", toml)
+        monkeypatch.chdir(root)
+        result = CliRunner().invoke(app, ["config", "show"])
+        assert result.exit_code == 0, result.output
+        lines = result.stdout.splitlines()
+        assert "# lint: not declared in repoach.toml; skipped on this repository" in lines
+        assert "[[review.generated]]  # source: file" in lines
+        commands = lines.index("[commands]")
+        review = lines.index("[review]")
+        note = lines.index("# lint: not declared in repoach.toml; skipped on this repository")
+        assert commands < note < review
+        body = "\n".join(line.rsplit("  # source: ", 1)[0] for line in lines[1:])
+        shown = tomllib.loads(body)
+        assert shown["commands"]["gate"] == "make check"
+        assert shown["review"]["generated"][0]["check_timeout_s"] == 60
+
+    def test_render_show_separates_generated_blocks_and_annotates_each_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        second = YOOB_GENERATED_TOML.replace(
+            "api/data/knowledge_embeddings.json", "api/data/other.json"
+        ).replace("check_timeout_s = 60\n", "")
+        root = _repo(tmp_path, "https://github.com/o/r.git", YOOB_GENERATED_TOML + "\n" + second)
+        monkeypatch.chdir(root)
+        lines = CliRunner().invoke(app, ["config", "show"]).stdout.splitlines()
+        suffix = "  # source: " + resolve_project_config(root).source("review.generated")
+        headers = [i for i, line in enumerate(lines) if line.startswith("[[review.generated]]")]
+        assert len(headers) == 2
+        blocks = []
+        for header in headers:
+            assert lines[header - 1] == ""
+            end = next((i for i in range(header, len(lines)) if not lines[i]), len(lines))
+            blocks.append(lines[header:end])
+        for block in blocks:
+            assert all(line.endswith(suffix) for line in block)
+        assert [[line.split(" = ")[0] for line in block[1:]] for block in blocks] == [
+            ["path", "check", "sources", "producer_inputs", "check_timeout_s"],
+            ["path", "check", "sources", "producer_inputs", "check_timeout_s"],
+        ]
+
+    def test_by_section_puts_arrays_of_tables_after_plain_keys(self) -> None:
+        rows = [
+            ("review.generated", [{"path": "a.json"}], "file"),
+            ("review.bot_username", "bot", "default"),
+            ("gates.languages", ["python"], "default"),
+            ("review.spec_sources", ["flag"], "default"),
+        ]
+        assert by_section(rows) == [
+            ("review", [rows[1], rows[3], rows[0]]),
+            ("gates", [rows[2]]),
+        ]
+        plain = [("a.x", 1, "file"), ("a.y", None, "default"), ("b.z", [], "default")]
+        assert by_section(plain) == [("a", plain[:2]), ("b", plain[2:])]
+        assert by_section([]) == []
+
+    def test_array_of_tables_blocks_returns_one_block_per_entry_and_rejects_non_tables(
+        self,
+    ) -> None:
+        assert array_of_tables_blocks(
+            "review", "generated", [{"path": "a.json"}, {"path": "b"}]
+        ) == [
+            ["[[review.generated]]", 'path = "a.json"'],
+            ["[[review.generated]]", 'path = "b"'],
+        ]
+        for entries in ([], [{"path": "a.json"}, "b"], [{1: "a.json"}], ["a.json"]):
+            with pytest.raises(TypeError, match=r"review\.generated is not an array of tables"):
+                array_of_tables_blocks("review", "generated", entries)

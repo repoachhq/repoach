@@ -27,7 +27,7 @@ from .config import (
     config_path,
     load_project_config,
 )
-from .toml_write import TomlScalar
+from .toml_write import TomlValue
 
 ConfigSource = Literal["default", "file", "env", "origin"]
 """Where an effective value came from (``flag`` is the caller's own layer)."""
@@ -231,7 +231,7 @@ UNDECLARED_COMMAND_NOTE = "not declared in repoach.toml; skipped on this reposit
 
 def effective_rows(
     resolved: ResolvedProjectConfig,
-) -> list[tuple[str, TomlScalar | None, str]]:
+) -> list[tuple[str, TomlValue | None, str]]:
     """Return ``(dotted key, effective value, source)`` for every key.
 
     The forge, the bot identity and the ``[state]`` paths are shown as
@@ -245,13 +245,13 @@ def effective_rows(
         for an undeclared command that will be skipped.
     """
     db_path, logs_dir = effective_state_paths(resolved)
-    special: dict[str, TomlScalar] = {
+    special: dict[str, TomlValue] = {
         "repoach.forge": resolved.forge,
         "review.bot_username": effective_bot_username(resolved, resolved.forge),
         "state.db_path": str(db_path),
         "state.logs_dir": str(logs_dir),
     }
-    rows: list[tuple[str, TomlScalar | None, str]] = []
+    rows: list[tuple[str, TomlValue | None, str]] = []
     for section, values in resolved.config.model_dump(by_alias=True).items():
         for key, value in values.items():
             dotted = f"{section}.{key}"

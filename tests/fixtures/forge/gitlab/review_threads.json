@@ -1,0 +1,41 @@
+{
+  "args": [
+    339
+  ],
+  "bot_username": "repoach-bot",
+  "calls": [
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "projects/:id/merge_requests/339/discussions?per_page=100"
+      ],
+      "program": "glab",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[{\"id\": \"cfa80cf1b186752ca99062c4ce605194e050a6c2\", \"resolved\": true, \"notes\": [{\"id\": 4135715720, \"type\": \"DiffNote\", \"body\": \"**[architect/minor]** review:generated carries ~40 lines of security-hardening shell inline, while review:gate delegates to ci/review-gate.sh. Consider extracting it to ci/review-generated.sh so the YAML stays declarative and the logic can be tested like the gate driver.\\n\\n_\\u2014 Repoach review-bot (sonnet)_\", \"author\": {\"id\": 43546540, \"username\": \"project_67827362_bot_ac1c802c81b407ba58203852c38ea96e\", \"name\": \"****\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/project_67827362_bot_ac1c802c81b407ba58203852c38ea96e\"}, \"created_at\": \"2026-11-01T15:07:34.588Z\", \"updated_at\": \"2026-11-01T15:47:13.364Z\", \"system\": false, \"position\": {\"base_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"start_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"head_sha\": \"2ccf051f4764884dc28c87c09315c22650c36d08\", \"old_path\": \".gitlab-ci.yml\", \"new_path\": \".gitlab-ci.yml\", \"old_line\": null, \"new_line\": 1507}, \"resolved\": true, \"resolved_by\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"resolved_at\": \"2026-11-01T15:47:13.364Z\"}, {\"id\": 4135785758, \"type\": \"DiffNote\", \"body\": \"fixed at 7c55f6ad: the script moved to ci/review-generated.sh, which the job execs (`exec bash ci/review-generated.sh`), and its git configuration steps to ci/lib/review-generated-git.sh, run by the hermetic suite tests/scripts/test_review_generated_git.sh (6 cases) against throwaway repositories.\", \"author\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"created_at\": \"2026-11-01T15:47:12.122Z\", \"updated_at\": \"2026-11-01T15:47:13.364Z\", \"system\": false, \"position\": {\"base_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"start_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"head_sha\": \"2ccf051f4764884dc28c87c09315c22650c36d08\", \"old_path\": \".gitlab-ci.yml\", \"new_path\": \".gitlab-ci.yml\", \"old_line\": null, \"new_line\": 1507}, \"resolved\": true, \"resolved_by\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"resolved_at\": \"2026-11-01T15:47:13.364Z\"}]}, {\"id\": \"bac16f4451acdf6af51d435c6613c1ce787ce26b\", \"resolved\": true, \"notes\": [{\"id\": 4135715804, \"type\": \"DiffNote\", \"body\": \"**[architect/nit]** The default REPOACH_REF SHA is now duplicated in review-gate.sh, .gitlab-ci.yml (anchor), tests and docs. The YAML anchor only dedupes within one file; consider having the driver require REPOACH_REF instead of a literal fallback.\\n\\n_\\u2014 Repoach review-bot (sonnet)_\", \"author\": {\"id\": 43546540, \"username\": \"project_67827362_bot_ac1c802c81b407ba58203852c38ea96e\", \"name\": \"****\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/project_67827362_bot_ac1c802c81b407ba58203852c38ea96e\"}, \"created_at\": \"2026-11-01T15:07:35.697Z\", \"updated_at\": \"2026-11-01T15:47:15.286Z\", \"system\": false, \"position\": {\"base_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"start_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"head_sha\": \"9228756b785b97acaad9cdaca6efa6e3216bdd45\", \"old_path\": \"ci/review-gate.sh\", \"new_path\": \"ci/review-gate.sh\", \"old_line\": null, \"new_line\": 124}, \"resolved\": true, \"resolved_by\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"resolved_at\": \"2026-11-01T15:47:15.286Z\"}, {\"id\": 4135785812, \"type\": \"DiffNote\", \"body\": \"fixed at cf2ae4f1: test_the_two_review_jobs_install_one_repoach_revision fails when review:gate, review:generated or ci/review-gate.sh's own fallback name different revisions. The fallback stays because the driver also runs outside CI (./ci/run-job.sh review:gate, tests/scripts/test_review_gate.sh); the other occurrences in docs and BACKLOG are the pin's history, not pins.\", \"author\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"created_at\": \"2026-11-01T15:47:14.187Z\", \"updated_at\": \"2026-11-01T15:47:15.286Z\", \"system\": false, \"position\": {\"base_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"start_sha\": \"e312e300802d9deb223d4590810bb81e22424d39\", \"head_sha\": \"9228756b785b97acaad9cdaca6efa6e3216bdd45\", \"old_path\": \"ci/review-gate.sh\", \"new_path\": \"ci/review-gate.sh\", \"old_line\": null, \"new_line\": 124}, \"resolved\": true, \"resolved_by\": {\"id\": 5535867, \"username\": \"josephwfaye\", \"name\": \"Joseph Wagane Faye\", \"state\": \"active\", \"web_url\": \"https://gitlab.com/josephwfaye\"}, \"resolved_at\": \"2026-11-01T15:47:15.286Z\"}]}]"
+    }
+  ],
+  "case": "review_threads",
+  "forge": "gitlab",
+  "kwargs": {},
+  "method": "review_threads",
+  "raises": null,
+  "result": [
+    {
+      "resolved": true,
+      "resolved_by": "josephwfaye",
+      "root_id": 4135715720,
+      "thread_id": "cfa80cf1b186752ca99062c4ce605194e050a6c2"
+    },
+    {
+      "resolved": true,
+      "resolved_by": "josephwfaye",
+      "root_id": 4135715804,
+      "thread_id": "bac16f4451acdf6af51d435c6613c1ce787ce26b"
+    }
+  ],
+  "source": "recorded 2026-11-02 from josephwfaye/yoob_2 MR !339 (merged); kept 2 resolved and 0 open DiffNote discussions of the 249 listed, two notes each",
+  "trimmed": null
+}

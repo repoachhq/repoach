@@ -7,7 +7,9 @@ the gate would keep blocking at every head. A maintainer of the
 repository settles such a finding with a reason, in a comment:
 
 - ``/resolve <reason>`` or ``/reopen`` as a reply in the finding's own
-  inline thread (the thread anchors the finding by its file and line);
+  inline thread (the thread recorded when the finding was posted,
+  SP-FINDING-THREAD-IDS; a finding with no recorded thread is anchored
+  by its file and line);
 - ``/resolve #<finding-id> <reason>`` or ``/reopen #<finding-id>`` in any
   comment, for a finding that was never posted.
 
@@ -39,6 +41,7 @@ from pathlib import Path
 
 from ..core.logging import get_logger
 from ..forge.protocol import Comment, Forge, ForgeError, is_bot_login
+from .finding_posts import ThreadIndex, thread_index
 from .findings import (
     OWNER_SETTLEABLE_STATUSES,
     Finding,
@@ -275,8 +278,14 @@ def _target(
     *,
     findings: dict[int, Finding],
     root: Comment | None,
+    threads: ThreadIndex,
 ) -> _Decision | Finding:
     """The finding the command addresses, or the refusal when it addresses none or several.
+
+    A reply in an inline thread addresses the findings whose recorded
+    post opened that thread (SP-FINDING-THREAD-IDS), wherever its line
+    moved since; only a thread no post names falls back to the findings
+    with no recorded post anchored at its file and line.
 
     Returns:
         The target :class:`~repoach.review.findings.Finding`, or a
@@ -299,7 +308,9 @@ def _target(
             None,
             f"Ignored: a comment outside a finding's thread must name the finding: {usage}.",
         )
-    anchored = _anchored(list(findings.values()), root)
+    recorded = [findings[i] for i in threads.findings_for(root) if i in findings]
+    unposted = [finding for finding in findings.values() if finding.id not in threads.posted]
+    anchored = recorded or _anchored(unposted, root)
     if command.verb is OwnerVerb.RESOLVE:
         live = [finding for finding in anchored if _settleable(finding)]
     else:
@@ -330,6 +341,7 @@ def _decide(
     findings: dict[int, Finding],
     root: Comment | None,
     rows: Sequence[OwnerCommandRow],
+    threads: ThreadIndex,
 ) -> _Decision:
     """Decide what an owner's command does, and the one answer it gets."""
     if command.verb is OwnerVerb.RESOLVE and len(command.reason) < REASON_MIN_CHARS:
@@ -340,7 +352,7 @@ def _decide(
             "recorded with the settlement: `/resolve <reason>` in the finding's thread, or "
             "`/resolve #<finding-id> <reason>` on the pull request.",
         )
-    target = _target(command, findings=findings, root=root)
+    target = _target(command, findings=findings, root=root, threads=threads)
     if isinstance(target, _Decision):
         return target
     if command.verb is OwnerVerb.RESOLVE:
@@ -520,6 +532,7 @@ def _handle(
     findings: dict[int, Finding],
     cache: dict[str, bool],
     rows: list[OwnerCommandRow],
+    threads: ThreadIndex,
 ) -> tuple[OwnerCommandRow, _Decision | None]:
     """Decide and describe one command not handled before; nothing is written here.
 
@@ -533,6 +546,7 @@ def _handle(
         findings: The pull request's findings by id.
         cache: Maintainer answers already read this run, by login.
         rows: The commands handled before this one.
+        threads: The pull request's recorded finding threads.
 
     Returns:
         The row to record and, for a command to apply, its decision (the
@@ -548,7 +562,13 @@ def _handle(
         finding_id = command.finding_id
     else:
         decision = _decide(
-            command, login=login, head_sha=head_sha, findings=findings, root=root, rows=rows
+            command,
+            login=login,
+            head_sha=head_sha,
+            findings=findings,
+            root=root,
+            rows=rows,
+            threads=threads,
         )
         outcome, reply = decision.outcome, decision.reply
         finding_id = decision.finding.id if decision.finding else command.finding_id
@@ -722,6 +742,7 @@ def apply_owner_commands(
     seen = {row.comment_id for row in rows}
     cache: dict[str, bool] = {}
     findings = _findings_by_id(db_path, pr_number)
+    threads = thread_index(db_path, pr_number)
     for comment, root in pairs:
         command = parse_command(comment.body)
         if command is None or comment.id in seen:
@@ -737,6 +758,7 @@ def apply_owner_commands(
                 findings=findings,
                 cache=cache,
                 rows=rows,
+                threads=threads,
             )
         except ForgeError as exc:
             _log.warning(

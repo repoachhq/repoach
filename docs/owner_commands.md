@@ -27,9 +27,14 @@ the verdict basis). Most findings are never posted as inline threads
 (posting is capped), so the `#<finding-id>` form on the pull request is
 the usual one.
 
-A thread is joined to its finding by the thread's anchor: the finding's
-file, and its cited line range holding the thread's line. A thread that
-anchors several open findings settles none and asks for `#<finding-id>`.
+A thread is joined to its finding by the thread recorded when the
+finding was posted (`finding_posts`, `SP-FINDING-THREAD-IDS`, see
+[finding_threads.md](finding_threads.md)): a reply in that thread settles
+that finding wherever the thread's line moved since. Only a thread that
+no recorded post names falls back to the anchor, and only for findings
+with no recorded post: the finding's file, and its cited line range
+holding the thread's line. A thread that anchors several open findings
+settles none and asks for `#<finding-id>`.
 
 ## Who may use them
 

@@ -28,6 +28,7 @@ cheap and explicit instead of being folded into a heavier read.
 from __future__ import annotations
 
 import functools
+import itertools
 import re
 import threading
 from collections.abc import Callable, Iterator, Sequence
@@ -219,21 +220,93 @@ def _api_method(args: Sequence[str]) -> str | None:
     return None
 
 
+def _is_field_flag(arg: str) -> bool:
+    """Whether ``arg`` gives ``gh api`` / ``glab api`` a body.
+
+    A field or input flag counts alone (``-f``, ``--input``) or joined to
+    its value: ``-fkey=v``, ``-Fkey=v``, ``--field=key=v``,
+    ``--raw-field=key=v`` and ``--input=file`` carry a body as surely as
+    ``-f key=v`` does.
+    """
+    if arg in _API_FIELD_FLAGS:
+        return True
+    if arg.startswith(("--field=", "--raw-field=", "--input=")):
+        return True
+    return arg[:2] in ("-f", "-F") and len(arg) > 2 and not arg.startswith("--")
+
+
+_GRAPHQL_OPERATION_RE = re.compile(r"\b(?:mutation|subscription)\b")
+"""A GraphQL operation keyword other than ``query``, anywhere in a document."""
+
+
+def _graphql_document(args: Sequence[str]) -> str | None:
+    """The one GraphQL document a ``gh api graphql`` argv sends, when its shape allows a read.
+
+    The argv must be ``api graphql`` sent as ``POST`` (or with no method),
+    carry its fields only in the separated ``-f``/``-F`` form (no
+    ``--input`` body, no ``-fquery=…`` or ``--raw-field=…`` joined form),
+    name no ``operationName`` and hold exactly one ``query=`` field.
+
+    Returns:
+        That field's document, or ``None`` when the shape is anything else.
+    """
+    if (
+        len(args) < 2
+        or list(args[:2]) != ["api", "graphql"]
+        or _api_method(args) not in (None, "POST")
+    ):
+        return None
+    if any(_is_field_flag(arg) and arg not in ("-f", "-F") for arg in args):
+        return None
+    fields = [value for flag, value in itertools.pairwise(args) if flag in _API_FIELD_FLAGS]
+    if any(value.startswith("operationName=") for value in fields):
+        return None
+    documents = [value.split("=", 1)[1] for value in fields if value.startswith("query=")]
+    return documents[0] if len(documents) == 1 else None
+
+
+def _graphql_document_reads(document: str) -> bool:
+    """Whether a GraphQL document only queries.
+
+    It must start with ``query`` or ``{`` and name no ``mutation`` or
+    ``subscription`` anywhere; a document read from a file (``@…``) does
+    not start so and counts as a write.
+    """
+    return (
+        document.lstrip().startswith(("query", "{"))
+        and _GRAPHQL_OPERATION_RE.search(document) is None
+    )
+
+
+def _graphql_read(args: Sequence[str]) -> bool:
+    """Whether a ``gh api graphql`` argv is a read: a readable shape and a query-only document.
+
+    GraphQL is always sent as ``POST``; what it does is its document's
+    operations, so the argv shape (:func:`_graphql_document`) and the
+    document (:func:`_graphql_document_reads`) are checked apart; any
+    doubt counts as a write (fail closed).
+    """
+    document = _graphql_document(args)
+    return document is not None and _graphql_document_reads(document)
+
+
 def is_write_argv(args: Sequence[str]) -> bool:
     """True when a ``gh`` / ``glab`` argv (binary excluded) changes forge state.
 
     ``api`` writes with any method but ``GET``, and with no method when it
-    carries a field or an input (both CLIs then default to ``POST``); any
-    other command writes when its verb (``pr comment``, ``mr merge``…) is
-    a mutating one.
+    carries a field or an input (both CLIs then default to ``POST``), a
+    GraphQL query excepted (:func:`_graphql_read`); any other command
+    writes when its verb (``pr comment``, ``mr merge``…) is a mutating one.
     """
     if not args:
+        return False
+    if _graphql_read(args):
         return False
     if args[0] == "api":
         method = _api_method(args)
         if method is not None:
             return method != "GET"
-        return any(arg in _API_FIELD_FLAGS for arg in args)
+        return any(_is_field_flag(arg) for arg in args)
     return len(args) > 1 and args[1] in _WRITE_VERBS
 
 
@@ -491,6 +564,24 @@ class Review(_Model):
     comments: list[Comment] = Field(default_factory=list)
 
 
+class ReviewThread(_Model):
+    """An inline review thread and whether it is resolved (SP-FINDING-THREAD-IDS).
+
+    Attributes:
+        root_id: Forge id of the thread's first comment (GitHub review
+            comment id, GitLab note id): the id :meth:`Forge.reply` takes.
+        thread_id: GitLab discussion id; ``None`` on GitHub, whose thread
+            is named by its root comment.
+        resolved: True when the forge reports the thread resolved.
+        resolved_by: Login of who resolved it (``""`` when open or unreported).
+    """
+
+    root_id: int
+    thread_id: str | None = None
+    resolved: bool = False
+    resolved_by: str = ""
+
+
 class CheckRun(_Model):
     """One CI check (GitHub check run / GitLab pipeline job).
 
@@ -634,6 +725,19 @@ class Forge(Protocol):
 
     def reviews(self, number: int) -> list[Review]:
         """Read the reviews / approvals."""
+        ...
+
+    def review_threads(self, number: int) -> list[ReviewThread]:
+        """Read every inline thread with its resolution and who resolved it.
+
+        GitHub: GraphQL ``reviewThreads`` (``isResolved``, ``resolvedBy``),
+        keyed by the first comment's ``databaseId``. GitLab: the
+        discussions holding a ``DiffNote``, read on their first note
+        (``resolved``, ``resolved_by.username``).
+
+        Raises:
+            ForgeError: The threads could not be read.
+        """
         ...
 
     def post_comment(

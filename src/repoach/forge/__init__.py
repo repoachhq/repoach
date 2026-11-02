@@ -30,6 +30,7 @@ from .protocol import (
     PullRequest,
     Review,
     ReviewDraft,
+    ReviewThread,
     WriteRefusal,
 )
 from .runner import CommandResult
@@ -59,6 +60,7 @@ __all__ = [
     "PullRequest",
     "Review",
     "ReviewDraft",
+    "ReviewThread",
     "WriteRefusal",
     "merge_preferences",
     "select_forge",

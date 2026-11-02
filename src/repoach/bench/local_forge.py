@@ -25,6 +25,7 @@ from ..forge.protocol import (
     PullRequestState,
     Review,
     ReviewDraft,
+    ReviewThread,
     diff_files,
 )
 from ..forge.runner import CommandResult, spawn
@@ -116,6 +117,11 @@ class LocalDiffForge:
 
     def reviews(self, number: int) -> list[Review]:
         """Return no review."""
+        self._check(number)
+        return []
+
+    def review_threads(self, number: int) -> list[ReviewThread]:
+        """Return no thread."""
         self._check(number)
         return []
 

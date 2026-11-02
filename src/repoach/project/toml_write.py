@@ -12,13 +12,23 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TypeAlias, TypeGuard
 
 TEMPLATE_PATH = Path(__file__).with_name("repoach.toml.template")
 """The shipped template, packaged with the module."""
 
-TomlScalar = str | bool | int | list[str] | dict[str, str]
+TomlValue: TypeAlias = "str | bool | int | Sequence[TomlValue] | Mapping[str, TomlValue]"
+"""A value ``repoach.toml`` holds: a string, boolean or integer, or a list or table of them.
+
+Recursive, so an array of tables (``[[review.generated]]``) is one; the
+containers are typed as the read-only ``Sequence`` / ``Mapping`` so a
+``list[str]`` or a ``dict[str, str]`` is one too. At run time
+:func:`toml_value` writes a ``list`` or ``tuple`` and a ``dict`` with
+string keys, the containers ``tomllib`` and ``model_dump`` produce, and
+refuses any other ``Sequence`` or ``Mapping``.
+"""
 
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -26,19 +36,23 @@ _SECTION_RE = re.compile(r"^\[(?P<name>[a-z_]+)\]\s*$")
 _KEY_RE = re.compile(r"^(?:#\s*)?(?P<key>[a-z_]+)\s*=")
 
 
-def toml_value(value: TomlScalar) -> str:
+def toml_value(value: TomlValue) -> str:
     """Return ``value`` as a TOML literal.
 
+    Lists and tables nest: an array of tables (``[[review.generated]]``)
+    is written as an inline array of inline tables, which TOML parses to
+    the same value.
+
     Args:
-        value: A string, boolean, integer, list of strings, or a
-            string-to-string table (written inline).
+        value: A string, boolean, integer, list, or string-keyed table,
+            nested to any depth.
 
     Returns:
         The literal: basic strings use JSON escaping, which TOML basic
         strings accept.
 
     Raises:
-        TypeError: Any other type.
+        TypeError: Any other type, at any depth.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -46,16 +60,70 @@ def toml_value(value: TomlScalar) -> str:
         return str(value)
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return "[" + ", ".join(json.dumps(item, ensure_ascii=False) for item in value) + "]"
-    if isinstance(value, dict) and all(isinstance(item, str) for item in value.values()):
-        pairs = [
-            f"{key if _BARE_KEY_RE.match(key) else json.dumps(key)} = "
-            f"{json.dumps(item, ensure_ascii=False)}"
-            for key, item in value.items()
-        ]
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        pairs = [f"{toml_key(key)} = {toml_value(item)}" for key, item in value.items()]
         return "{" + ", ".join(pairs) + "}" if pairs else "{}"
     raise TypeError(f"cannot write {type(value).__name__} to repoach.toml")
+
+
+def toml_key(key: str) -> str:
+    """Return ``key`` bare when TOML allows it, quoted otherwise.
+
+    Args:
+        key: A table key.
+
+    Returns:
+        The key as it may stand left of ``=``.
+    """
+    return key if _BARE_KEY_RE.match(key) else json.dumps(key, ensure_ascii=False)
+
+
+def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlValue]]]:
+    """Tell whether ``value`` is written as ``[[section.key]]`` blocks.
+
+    Args:
+        value: An effective configuration value.
+
+    Returns:
+        True for a non-empty list whose every item is a string-keyed
+        table; an empty list, or one mixing tables and other values, is
+        written inline.
+    """
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, dict) and all(isinstance(k, str) for k in item) for item in value)
+    )
+
+
+def array_of_tables_blocks(
+    section: str, key: str, entries: Sequence[Mapping[str, TomlValue]]
+) -> list[list[str]]:
+    """Write each of ``entries`` as one ``[[section.key]]`` block.
+
+    Args:
+        section: The table the array belongs to (``review``).
+        key: The array's key (``generated``).
+        entries: One string-keyed table per block.
+
+    Returns:
+        One list of lines per entry: its header, then one line per key.
+        Separating the blocks is left to the caller.
+
+    Raises:
+        TypeError: ``entries`` is not an array of tables
+            (:func:`is_array_of_tables`); such a value is written inline
+            by :func:`toml_value` instead.
+    """
+    if not is_array_of_tables(list(entries)):
+        raise TypeError(f"{section}.{key} is not an array of tables")
+    return [
+        [f"[[{section}.{toml_key(key)}]]"]
+        + [f"{toml_key(name)} = {toml_value(item)}" for name, item in entry.items()]
+        for entry in entries
+    ]
 
 
 def template_text() -> str:
@@ -67,7 +135,7 @@ def template_text() -> str:
     return TEMPLATE_PATH.read_text(encoding="utf-8")
 
 
-def render_project_toml(values: Mapping[str, TomlScalar], template: str | None = None) -> str:
+def render_project_toml(values: Mapping[str, TomlValue], template: str | None = None) -> str:
     """Fill ``values`` into the template.
 
     Args:

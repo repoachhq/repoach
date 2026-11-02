@@ -142,6 +142,7 @@ def render_ledger_report(
     judged: list[ReportFinding] | None = None,
     generated_lines: list[str] | None = None,
     owner_lines: list[str] | None = None,
+    thread_lines: list[str] | None = None,
 ) -> str:
     """Render the sticky archive report from the ledger and merge facts.
 
@@ -165,6 +166,10 @@ def render_ledger_report(
             ``## Owner-resolved findings`` section, fenced because the
             reason is a person's text (SP-OWNER-SETTLES-A-FINDING);
             omitted when empty.
+        thread_lines: One ``thread closed by <login> for #<id>`` line per
+            recorded finding thread seen resolved on the forge, rendered
+            as a ``## Closed threads`` section, fenced because the login
+            comes from the forge (SP-FINDING-THREAD-IDS); omitted when empty.
 
     Returns:
         The full markdown body for the sticky archive comment.
@@ -194,6 +199,8 @@ def render_ledger_report(
         parts.extend(["## Generated artefacts", "", fenced(generated_lines), ""])
     if owner_lines:
         parts.extend(["## Owner-resolved findings", "", fenced(owner_lines), ""])
+    if thread_lines:
+        parts.extend(["## Closed threads", "", fenced(thread_lines), ""])
     parts.extend(["## Findings", "", _findings_section(findings)])
     if archive_appendix:
         parts.extend(["", "---", "", archive_appendix])

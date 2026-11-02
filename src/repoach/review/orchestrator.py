@@ -61,6 +61,7 @@ from ..core.paths import project_root
 from ..core.redaction import redact_error
 from ..forge import (
     ARCHIVE_MARKER,
+    Comment,
     Forge,
     ForgeError,
     ForgeStateRefusedError,
@@ -84,13 +85,21 @@ from ..project.spec_source import (
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
 from .diff_scoper import scope_diff
+from .finding_post_record import pair_posted, record_posted_comments
+from .finding_post_threads import ClosureRun, detect_closed_threads
+from .finding_posts import init_finding_posts_schema
 from .finding_verifiers import (
     MechanicalVerification,
     VerificationReport,
     recorded_verifications,
     verify_findings_for_pr,
 )
-from .findings import ReviewRun, fetch_completed_review_run, record_review_run
+from .findings import (
+    ReviewRun,
+    fetch_completed_review_run,
+    fetch_findings,
+    record_review_run,
+)
 from .findings_bridge import (
     RecordedFindings,
     record_findings_for_outcomes,
@@ -421,6 +430,12 @@ class TeamOutcome:
     for the first time, ``owner_lines`` the stderr lines naming them and
     ``owner_settlement_lines`` the one line per owner-resolved finding the
     Markdown report shows (SP-OWNER-SETTLES-A-FINDING).
+    ``finding_posts`` counts the ``finding_posts`` rows this run wrote
+    (one per posted inline comment of a finding; 0 on a dry run),
+    ``threads_closed`` lists the recorded threads seen resolved on the
+    forge (``finding_id``, ``login``, ``head_sha``, ``comment_id``,
+    ``counted``) and ``thread_lines`` the lines naming them
+    (SP-FINDING-THREAD-IDS).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -468,6 +483,14 @@ class TeamOutcome:
     owner_commands: list[dict[str, object]] = field(default_factory=list)
     owner_lines: list[str] = field(default_factory=list)
     owner_settlement_lines: list[str] = field(default_factory=list)
+    finding_posts: int = 0
+    threads_closed: list[dict[str, object]] = field(default_factory=list)
+    thread_lines: list[str] = field(default_factory=list)
+
+    def record_thread_closures(self, run: ClosureRun) -> None:
+        """Carry what :func:`~repoach.review.finding_post_threads.detect_closed_threads` saw."""
+        self.threads_closed = run.as_json()
+        self.thread_lines = run.lines()
 
     def record_owner_commands(self, run: OwnerCommandsRun) -> None:
         """Carry what :func:`~repoach.review.owner_commands.apply_owner_commands` did."""
@@ -576,6 +599,7 @@ class ReviewTeamOrchestrator:
         closed (SP-DRY-RUN-NEVER-POSTS).
         """
         refused_before = len(self._forge.barrier.refused)
+        self._init_finding_posts(pr_number)
         team = self._review_pr(pr_number, spec_flag=spec_flag)
         team.refused_writes = self._forge.barrier.refused[refused_before:]
         refusal = self._forge.barrier.refusal
@@ -1086,6 +1110,7 @@ class ReviewTeamOrchestrator:
             generated_lines=report_lines(generated_checks, generated_timing),
         )
         team.record_owner_commands(owner_run)
+        team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1288,6 +1313,7 @@ class ReviewTeamOrchestrator:
         team.generated = report_json(generated_checks)
         team.generated_lines = report_lines(generated_checks, generated_timing)
         team.record_owner_commands(owner_run)
+        team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
         if self._post:
             self._publish_replayed(pr_number, team)
         _log.info(
@@ -1552,6 +1578,78 @@ class ReviewTeamOrchestrator:
                 consequence="no owner command applied; the findings keep blocking",
             )
             return OwnerCommandsRun(error=f"{type(exc).__name__}")
+
+    def _init_finding_posts(self, pr_number: int) -> None:
+        """Create ``finding_posts`` at the start of every run, dry runs included (SP-FINDING-THREAD-IDS G4).
+
+        A ledger failure is logged; the posting path and the closure
+        detection then log their own failures and the review goes on.
+        """
+        try:
+            init_finding_posts_schema(self._db_path)
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "review_team.finding_posts_init_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+            )
+
+    def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
+        """Record the recorded finding threads resolved on the forge (SP-FINDING-THREAD-IDS G6).
+
+        A closure moves no finding: it is recorded and reported only. A
+        ledger failure is logged and records nothing.
+        """
+        if not head_sha:
+            return ClosureRun()
+        try:
+            return detect_closed_threads(
+                self._forge, self._db_path, pr_number=pr_number, head_sha=head_sha
+            )
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "review_team.thread_closures_failed",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+            )
+            return ClosureRun(error=type(exc).__name__)
+
+    def _record_posts(
+        self,
+        *,
+        pr_number: int,
+        outcome: ReviewerOutcome,
+        head_sha: str | None,
+        posted: Sequence[tuple[ReviewComment, Comment]],
+        review_id: int | None,
+        team: TeamOutcome,
+    ) -> None:
+        """Record the forge ids of the comments just posted for ``outcome`` (SP-FINDING-THREAD-IDS).
+
+        :func:`~repoach.review.finding_post_record.record_posted_comments` joins
+        each comment to its finding and writes its row; a ledger read
+        failure is logged and the review continues.
+        """
+        if not posted:
+            return
+        try:
+            team.finding_posts += record_posted_comments(
+                self._db_path,
+                forge_name=self._forge.name,
+                pr_number=pr_number,
+                role=outcome.role,
+                head_sha=head_sha or "",
+                posted=posted,
+                review_id=review_id,
+            )
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "finding_posts.write_failed",
+                pr_number=pr_number,
+                error=redact_error(str(exc))[:200],
+            )
 
     def _reverify_older_heads(
         self, pr_number: int, *, head_sha: str | None, refuter_calls: int
@@ -1949,6 +2047,14 @@ class ReviewTeamOrchestrator:
             for comment in posted.comments:
                 if comment.path is not None and comment.line is not None and comment.id:
                     posted_ids[(comment.path, comment.line)] = comment.id
+        self._record_posts(
+            pr_number=pr_number,
+            outcome=outcome,
+            head_sha=head_sha,
+            posted=pair_posted(outcome.comments, drafts, posted.comments),
+            review_id=posted.id or None,
+            team=team,
+        )
 
     def _publish_per_comment(
         self,
@@ -1977,6 +2083,7 @@ class ReviewTeamOrchestrator:
             fall back to a regular issue comment so each bot's
             verdict still surfaces on the PR conversation.
         """
+        sent: list[tuple[ReviewComment, Comment]] = []
         for comment in outcome.comments:
             body = _render_comment_body(outcome, comment)
             try:
@@ -1999,8 +2106,17 @@ class ReviewTeamOrchestrator:
                 )
                 continue
             team.posted_comments += 1
+            sent.append((comment, created))
             if posted_ids is not None and created.id:
                 posted_ids[(comment.file, comment.line)] = created.id
+        self._record_posts(
+            pr_number=pr_number,
+            outcome=outcome,
+            head_sha=head_sha,
+            posted=sent,
+            review_id=None,
+            team=team,
+        )
 
         review_body = _render_review_body(outcome)
         try:
@@ -2050,7 +2166,6 @@ class ReviewTeamOrchestrator:
         Args:
             pr_number: The PR whose proposed findings to assess.
         """
-        from .findings import fetch_findings
         from .stuck import (
             assess_proposed_escalation,
             build_proposed_escalation_dossier,
@@ -2298,6 +2413,7 @@ class ReviewTeamOrchestrator:
             judged=team.findings,
             generated_lines=team.generated_lines,
             owner_lines=team.owner_settlement_lines,
+            thread_lines=team.thread_lines,
         )
 
 
