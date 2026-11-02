@@ -98,24 +98,32 @@ def is_array_of_tables(value: object) -> TypeGuard[list[dict[str, TomlValue]]]:
     )
 
 
-def array_of_tables_lines(
+def array_of_tables_blocks(
     section: str, key: str, entries: Sequence[Mapping[str, TomlValue]]
-) -> list[str]:
-    """Write ``entries`` as ``[[section.key]]`` blocks, each preceded by a blank line.
+) -> list[list[str]]:
+    """Write each of ``entries`` as one ``[[section.key]]`` block.
 
     Args:
         section: The table the array belongs to (``review``).
         key: The array's key (``generated``).
-        entries: One table per block.
+        entries: One string-keyed table per block.
 
     Returns:
-        The lines, plain: a caller annotating them does it on its side.
+        One list of lines per entry: its header, then one line per key.
+        Separating the blocks is left to the caller.
+
+    Raises:
+        TypeError: ``entries`` is not an array of tables
+            (:func:`is_array_of_tables`); such a value is written inline
+            by :func:`toml_value` instead.
     """
-    lines: list[str] = []
-    for entry in entries:
-        lines.extend(["", f"[[{section}.{toml_key(key)}]]"])
-        lines.extend(f"{toml_key(name)} = {toml_value(item)}" for name, item in entry.items())
-    return lines
+    if not is_array_of_tables(list(entries)):
+        raise TypeError(f"{section}.{key} is not an array of tables")
+    return [
+        [f"[[{section}.{toml_key(key)}]]"]
+        + [f"{toml_key(name)} = {toml_value(item)}" for name, item in entry.items()]
+        for entry in entries
+    ]
 
 
 def template_text() -> str:

@@ -12,9 +12,8 @@ print and the forge selection consumes.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -28,7 +27,7 @@ from .config import (
     config_path,
     load_project_config,
 )
-from .toml_write import TomlValue, is_array_of_tables
+from .toml_write import TomlValue
 
 ConfigSource = Literal["default", "file", "env", "origin"]
 """Where an effective value came from (``flag`` is the caller's own layer)."""
@@ -258,29 +257,3 @@ def effective_rows(
             dotted = f"{section}.{key}"
             rows.append((dotted, special.get(dotted, value), resolved.source(dotted)))
     return rows
-
-
-Row = TypeVar("Row", bound=tuple[Any, ...])
-"""A ``(section.key, value, …)`` row, kept whole by :func:`by_section`."""
-
-
-def by_section(rows: Iterable[Row]) -> list[tuple[str, list[Row]]]:
-    """Group dotted rows by section, the arrays of tables after the plain keys.
-
-    A key written after a ``[[section.key]]`` block belongs to that
-    block's last entry, so each section lists its plain keys first and
-    its arrays of tables last; the order is otherwise kept.
-
-    Args:
-        rows: ``(section.key, value, …)`` tuples in file order.
-
-    Returns:
-        One ``(section, rows)`` pair per section, in first-seen order.
-    """
-    grouped: dict[str, list[Row]] = {}
-    for row in rows:
-        grouped.setdefault(row[0].partition(".")[0], []).append(row)
-    return [
-        (section, sorted(members, key=lambda row: is_array_of_tables(row[1])))
-        for section, members in grouped.items()
-    ]
