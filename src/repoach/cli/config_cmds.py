@@ -16,10 +16,11 @@ from ..project.config import ConfigError, config_path
 from ..project.resolve import (
     UNDECLARED_COMMAND_NOTE,
     ResolvedProjectConfig,
+    by_section,
     effective_rows,
     resolve_project_config,
 )
-from ..project.toml_write import toml_value
+from ..project.toml_write import array_of_tables_lines, is_array_of_tables, toml_value
 from .doctor_cmds import EXIT_UNUSABLE, project_root_or_exit
 
 config_app = typer.Typer(help="Inspect the project configuration (repoach.toml).")
@@ -28,6 +29,13 @@ config_app = typer.Typer(help="Inspect the project configuration (repoach.toml).
 def render_show(resolved: ResolvedProjectConfig) -> str:
     """Render the effective configuration as annotated TOML.
 
+    Each section lists its plain keys, then each array of tables
+    (``[[review.generated]]``) as one ``[[section.key]]`` block per entry
+    (:func:`~repoach.project.resolve.by_section`); every key and header
+    line of a block carries the source of the whole array, and the blank
+    line :func:`~repoach.project.toml_write.array_of_tables_lines` puts
+    before each block stays blank.
+
     Args:
         resolved: The resolved configuration.
 
@@ -35,16 +43,18 @@ def render_show(resolved: ResolvedProjectConfig) -> str:
         The text ``config show`` prints.
     """
     lines = [f"# {config_path(resolved.root)}"]
-    current = ""
-    for dotted, value, source in effective_rows(resolved):
-        section, _, key = dotted.partition(".")
-        if section != current:
-            lines.extend(["", f"[{section}]"])
-            current = section
-        if value is None:
-            lines.append(f"# {key}: {UNDECLARED_COMMAND_NOTE}")
-            continue
-        lines.append(f"{key} = {toml_value(value)}  # source: {source}")
+    for section, rows in by_section(effective_rows(resolved)):
+        lines.extend(["", f"[{section}]"])
+        for dotted, value, source in rows:
+            key = dotted.partition(".")[2]
+            note = f"  # source: {source}"
+            if value is None:
+                lines.append(f"# {key}: {UNDECLARED_COMMAND_NOTE}")
+            elif is_array_of_tables(value):
+                block = array_of_tables_lines(section, key, value)
+                lines.extend(line + note if line else line for line in block)
+            else:
+                lines.append(f"{key} = {toml_value(value)}{note}")
     return "\n".join(lines)
 
 

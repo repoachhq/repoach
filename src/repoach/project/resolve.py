@@ -12,8 +12,9 @@ print and the forge selection consumes.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, TypeVar
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -27,7 +28,7 @@ from .config import (
     config_path,
     load_project_config,
 )
-from .toml_write import TomlScalar
+from .toml_write import TomlValue, is_array_of_tables
 
 ConfigSource = Literal["default", "file", "env", "origin"]
 """Where an effective value came from (``flag`` is the caller's own layer)."""
@@ -231,7 +232,7 @@ UNDECLARED_COMMAND_NOTE = "not declared in repoach.toml; skipped on this reposit
 
 def effective_rows(
     resolved: ResolvedProjectConfig,
-) -> list[tuple[str, TomlScalar | None, str]]:
+) -> list[tuple[str, TomlValue | None, str]]:
     """Return ``(dotted key, effective value, source)`` for every key.
 
     The forge, the bot identity and the ``[state]`` paths are shown as
@@ -245,15 +246,41 @@ def effective_rows(
         for an undeclared command that will be skipped.
     """
     db_path, logs_dir = effective_state_paths(resolved)
-    special: dict[str, TomlScalar] = {
+    special: dict[str, TomlValue] = {
         "repoach.forge": resolved.forge,
         "review.bot_username": effective_bot_username(resolved, resolved.forge),
         "state.db_path": str(db_path),
         "state.logs_dir": str(logs_dir),
     }
-    rows: list[tuple[str, TomlScalar | None, str]] = []
+    rows: list[tuple[str, TomlValue | None, str]] = []
     for section, values in resolved.config.model_dump(by_alias=True).items():
         for key, value in values.items():
             dotted = f"{section}.{key}"
             rows.append((dotted, special.get(dotted, value), resolved.source(dotted)))
     return rows
+
+
+Row = TypeVar("Row", bound=tuple[Any, ...])
+"""A ``(section.key, value, …)`` row, kept whole by :func:`by_section`."""
+
+
+def by_section(rows: Iterable[Row]) -> list[tuple[str, list[Row]]]:
+    """Group dotted rows by section, the arrays of tables after the plain keys.
+
+    A key written after a ``[[section.key]]`` block belongs to that
+    block's last entry, so each section lists its plain keys first and
+    its arrays of tables last; the order is otherwise kept.
+
+    Args:
+        rows: ``(section.key, value, …)`` tuples in file order.
+
+    Returns:
+        One ``(section, rows)`` pair per section, in first-seen order.
+    """
+    grouped: dict[str, list[Row]] = {}
+    for row in rows:
+        grouped.setdefault(row[0].partition(".")[0], []).append(row)
+    return [
+        (section, sorted(members, key=lambda row: is_array_of_tables(row[1])))
+        for section, members in grouped.items()
+    ]
