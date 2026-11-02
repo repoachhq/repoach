@@ -39,7 +39,12 @@ from repoach.forge import (
     ForgeNotFoundError,
 )
 from repoach.forge import gitlab as gitlab_forge
-from repoach.forge.github import GitHubForge, comment_from_github, review_threads_from_github
+from repoach.forge.github import (
+    GhResult,
+    GitHubForge,
+    comment_from_github,
+    review_threads_from_github,
+)
 from repoach.forge.gitlab import GitLabForge, note_to_comment, review_threads_from_discussions
 from repoach.forge.protocol import edited_since
 from repoach.forge.recording import (
@@ -239,6 +244,48 @@ def test_review_threads_reads_an_open_thread_and_skips_one_without_a_root() -> N
     assert [(t.root_id, t.thread_id, t.resolved) for t in gitlab] == [(9, "a" * 40, False)]
     with pytest.raises(ForgeError, match="no data object"):
         review_threads_from_github([{"errors": [{"message": "rate limited"}]}])
+
+
+class _ThreadsGh(GitHubForge):
+    """A GitHub whose one ``gh api graphql`` answer is scripted."""
+
+    def __init__(self, tmp_path: Path, answer: GhResult) -> None:
+        super().__init__(cwd=tmp_path, gh_path="/nonexistent/gh", bot_login="bot")
+        self._answer = answer
+        self.argvs: list[list[str]] = []
+
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        self.argvs.append(args)
+        return self._answer
+
+
+def _threads_page(root_id: int, resolved: bool) -> dict[str, object]:
+    node = {
+        "isResolved": resolved,
+        "resolvedBy": {"login": "jwfaye"} if resolved else None,
+        "comments": {"nodes": [{"databaseId": root_id}]},
+    }
+    return {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [node]}}}}}
+
+
+def test_review_threads_reads_every_slurped_page(tmp_path: Path) -> None:
+    """Two ``--paginate --slurp`` pages give the threads of both, in order."""
+    pages = [_threads_page(11, True), _threads_page(12, False)]
+    forge = _ThreadsGh(tmp_path, GhResult(0, json.dumps(pages), "", argv=["gh"]))
+    threads = forge.review_threads(7)
+    assert [(t.root_id, t.resolved, t.resolved_by) for t in threads] == [
+        (11, True, "jwfaye"),
+        (12, False, ""),
+    ]
+    assert forge.argvs[0][:4] == ["api", "graphql", "--paginate", "--slurp"]
+
+
+def test_review_threads_raises_forge_error_on_bad_json_or_a_failed_call(tmp_path: Path) -> None:
+    """An answer that is not JSON and a failed ``gh`` call both raise ``ForgeError``."""
+    with pytest.raises(ForgeError, match="JSON decode failed"):
+        _ThreadsGh(tmp_path, GhResult(0, "not json", "", argv=["gh"])).review_threads(7)
+    with pytest.raises(ForgeError):
+        _ThreadsGh(tmp_path, GhResult(1, "", "HTTP 502", argv=["gh"])).review_threads(7)
 
 
 @pytest.mark.parametrize("forge_name", FORGES)
