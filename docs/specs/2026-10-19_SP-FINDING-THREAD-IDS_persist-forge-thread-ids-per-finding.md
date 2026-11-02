@@ -8,10 +8,10 @@ created: 2026-10-19
 updated: 2026-11-02
 
 owns:
-  code: [src/repoach/review/finding_posts.py, src/repoach/review/finding_post_record.py, tests/unit/test_finding_posts.py, tests/unit/test_finding_posts_backfill.py, tests/integration/test_finding_thread_ids_end_to_end.py]
+  code: [src/repoach/review/finding_posts.py, src/repoach/review/finding_post_record.py, src/repoach/review/finding_post_threads.py, tests/unit/test_finding_posts.py, tests/unit/test_finding_posts_backfill.py, tests/integration/test_finding_thread_ids_end_to_end.py]
   resources: [db:table:finding_posts]
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-REVIEW-POST-BATCH, SP-FINDINGS-SENTINEL-REHOME, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-RETRY-BACKOFF-DEDUP]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-REVIEW-POST-BATCH, SP-FINDINGS-SENTINEL-REHOME, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-RETRY-BACKOFF-DEDUP, SP-DEDUP-CLASSIFICATION-CONSTANTS]
 provides_to: []
 
 constraints:
@@ -140,6 +140,9 @@ def record_finding_post(db_path: Path, post: FindingPost) -> int: ...
 def fetch_finding_posts(db_path: Path, pr_number: int, *, finding_id: int | None = None) -> list[FindingPost]: ...
 def resolve_thread(db_path: Path, finding: Finding) -> FindingPost | None: ...
 def thread_index(db_path: Path, pr_number: int) -> ThreadIndex: ...
+def mark_thread_closed(db_path: Path, post_id: int, *, head_sha: str, login: str) -> None: ...
+
+# repoach.review.finding_post_threads
 def backfill_finding_posts(db_path: Path, forge: Forge, pr_number: int, *, bot_login: str, dry_run: bool = False) -> BackfillReport: ...
 def detect_closed_threads(forge: Forge, db_path: Path, *, pr_number: int, head_sha: str) -> ClosureRun: ...
 
@@ -153,7 +156,7 @@ class Forge(Protocol):
     def review_threads(self, number: int) -> list[ReviewThread]: ...
 ```
 
-Table `finding_posts` (SQLite, created by `init_finding_posts_schema`, which every review run calls):
+Table `finding_posts` (SQLite, created by `init_finding_posts_schema`, which every review run calls at its start):
 
 | Column | Type | Notes |
 |---|---|---|
@@ -223,11 +226,11 @@ maintainer is recorded (G6).
 - Adds dependency: SP-FINDING-THREAD-IDS -> SP-REVIEW-POST-BATCH (the batched review id and its comment listing are where the ids come from)
 - Adds dependency: SP-FINDING-THREAD-IDS -> SP-FINDINGS-SENTINEL-REHOME (the sentinel in `thread_context.py` resolves through `finding_posts` before matching by line)
 - Adds dependency: SP-FINDING-THREAD-IDS -> SP-UNIVERSAL-FORGE (`Forge.review_threads`, `ReviewThread`; the tests drive the GitHub and GitLab forges)
-- Adds dependency: SP-FINDING-THREAD-IDS -> SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-RETRY-BACKOFF-DEDUP (the tests post through the orchestrator, record findings through the bridge and build reviewer outcomes)
+- Adds dependency: SP-FINDING-THREAD-IDS -> SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-RETRY-BACKOFF-DEDUP, SP-DEDUP-CLASSIFICATION-CONSTANTS (the tests post through the orchestrator, record findings through the bridge, build reviewer outcomes and read the merge-gate facts for the archive report)
 - Adds dependency: SP-OWNER-SETTLES-A-FINDING -> SP-FINDING-THREAD-IDS (`owner_commands.py` reads the thread index)
 - Forge protocol: `ReviewThread` and `Forge.review_threads` on GitHub, GitLab and the bench `LocalDiffForge`; `is_write_argv` lets one `gh api graphql` query through the read path (F12): a document naming `mutation` or `subscription` anywhere, an `operationName` field, a document read from a file or two documents stay writes.
 - New shared state: `db:table:finding_posts`, owned here. `SP-UNIVERSAL-LEDGER` reads it and already declares this spec in its `depends_on`.
-- `finding_posts.py` imports nothing from `orchestrator.py`, `owner_commands.py`, `thread_context.py` or `findings_bridge.py`; they import it. `finding_post_record.py` holds the posting-path join (fingerprint matching, draft pairing, row writes) because it reads `findings_bridge`, which imports `thread_context`, a reader of `finding_posts`: in `finding_posts.py` it would be an import cycle. `repoach arch graph --check` lists 25 cycles on `develop` `fb241b8` and 27 with this spec: the two added close through `SP-UNIVERSAL-LEDGER -> SP-FINDING-THREAD-IDS` (the ledger reads this table) and `SP-UNIVERSAL-FORGE`'s existing path to `SP-UNIVERSAL-LEDGER` (`SP-UNIVERSAL-FORGE -> … -> SP-CONVENTIONS-GATE -> SP-UNIVERSAL-REPO -> SP-UNIVERSAL-LEDGER`). Cutting them belongs to `SP-UNIVERSAL-LEDGER`, which is still a draft.
+- `finding_posts.py` imports nothing from `orchestrator.py`, `owner_commands.py`, `thread_context.py` or `findings_bridge.py`; they import it. `finding_post_threads.py` holds the two parts that read the forge (`backfill_finding_posts`, `detect_closed_threads`), so `finding_posts.py` is the table and its reads and writes only. `finding_post_record.py` holds the posting-path join (fingerprint matching, draft pairing, row writes) because it reads `findings_bridge`, which imports `thread_context`, a reader of `finding_posts`: in `finding_posts.py` it would be an import cycle. `repoach arch graph --check` lists 25 cycles on `develop` `fb241b8` and 27 with this spec: the two added close through `SP-UNIVERSAL-LEDGER -> SP-FINDING-THREAD-IDS` (the ledger reads this table) and `SP-UNIVERSAL-FORGE`'s existing path to `SP-UNIVERSAL-LEDGER` (`SP-UNIVERSAL-FORGE -> … -> SP-CONVENTIONS-GATE -> SP-UNIVERSAL-REPO -> SP-UNIVERSAL-LEDGER`). Cutting them belongs to `SP-UNIVERSAL-LEDGER`, which is still a draft.
 
 ## Diagram
 ```mermaid
