@@ -9,6 +9,7 @@ owner commands and the closure detection read the recorded thread.
 
 from __future__ import annotations
 
+import itertools
 import json
 import sqlite3
 from pathlib import Path
@@ -16,7 +17,9 @@ from pathlib import Path
 import pytest
 
 from repoach.forge.github import GhResult, GitHubForge
+from repoach.forge.gitlab import GitLabForge
 from repoach.forge.protocol import Comment, ForgeError, ReviewThread
+from repoach.forge.runner import CommandResult
 from repoach.review.finding_posts import (
     FindingPost,
     FindingPostIntegrityError,
@@ -34,11 +37,39 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
 )
+from repoach.review.findings_bridge import record_findings_for_outcomes
+from repoach.review.orchestrator import ReviewTeamOrchestrator, TeamOutcome
+from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 
 PR = 7
 HEAD = "c0ffee" + "0" * 34
 BOT = "repoach-bot"
 DISCUSSION = "5f665901a9c4fedc6f4528231c3e5137e7ffa112"
+
+
+def _outcome(role: BotRole, comments: list[ReviewComment]) -> ReviewerOutcome:
+    return ReviewerOutcome(
+        role=role,
+        verdict=ReviewVerdict.REQUEST_CHANGES,
+        summary="changes",
+        comments=comments,
+        model_used="fake",
+        elapsed_s=0.0,
+        tokens_used=0,
+        raw_response="{}",
+    )
+
+
+def _team() -> TeamOutcome:
+    return TeamOutcome(
+        pr_number=PR, final_verdict=ReviewVerdict.REQUEST_CHANGES, n_blockers=0, n_majors=0
+    )
+
+
+def _record(db: Path, outcomes: list[ReviewerOutcome]) -> None:
+    record_findings_for_outcomes(
+        db, pr_number=PR, head_sha=HEAD, outcomes=outcomes, round_n=1, diff=""
+    )
 
 
 class BatchForge(GitHubForge):
@@ -58,6 +89,160 @@ class BatchForge(GitHubForge):
 
     def _list_review_id_comments(self, pr_number: int, review_id: int) -> list[dict[str, object]]:
         return self._created
+
+
+class GitLabSpawner:
+    """A GitLab MR !7 that opens a diff discussion per positioned note."""
+
+    def __init__(self) -> None:
+        self._ids = itertools.count(501)
+
+    def __call__(self, argv: list[str], *, input_data: str | None = None) -> CommandResult:
+        args = argv[1:]
+        endpoint = next((a for a in args if "/" in a and not a.startswith("-")), "")
+        payload = json.loads(input_data) if input_data else {}
+        if endpoint.endswith("merge_requests/7"):
+            answer: object = {
+                "iid": 7,
+                "state": "opened",
+                "sha": HEAD,
+                "diff_refs": {"base_sha": "b", "start_sha": "s", "head_sha": HEAD},
+            }
+        elif endpoint.endswith("/discussions"):
+            note = {
+                "id": next(self._ids),
+                "type": "DiffNote",
+                "body": payload.get("body", ""),
+                "author": {"username": BOT},
+                "position": payload.get("position", {}),
+            }
+            answer = {"id": DISCUSSION, "notes": [note]}
+        elif endpoint.endswith("/notes"):
+            answer = {"id": next(self._ids), "body": payload.get("body", "")}
+        else:
+            answer = []
+        return CommandResult(returncode=0, stdout=json.dumps(answer), stderr="", argv=argv)
+
+
+def _gitlab(tmp_path: Path) -> GitLabForge:
+    binary = tmp_path / "glab"
+    binary.write_text("")
+    forge = GitLabForge(cwd=tmp_path, glab_path=str(binary), bot_username=BOT)
+    forge._spawn = GitLabSpawner()
+    return forge
+
+
+def test_each_posted_comment_records_one_row_with_the_forge_ids(tmp_path: Path) -> None:
+    """AC1: one row per posted inline comment, joined to the finding of its reviewer and line."""
+    db = tmp_path / "review.db"
+    outcome = _outcome(
+        BotRole.SENTINEL,
+        [
+            ReviewComment(file="src/a.py", line=3, severity="blocker", body="a guard is missing"),
+            ReviewComment(file="src/b.py", line=9, severity="major", body="the loop never ends"),
+        ],
+    )
+    _record(db, [outcome])
+    forge = BatchForge(
+        [
+            {"id": 11, "path": "src/a.py", "line": 3, "body": "rendered elsewhere"},
+            {"id": 12, "path": "src/b.py", "line": 9, "body": "rendered elsewhere"},
+        ]
+    )
+    team = _team()
+
+    ReviewTeamOrchestrator(forge=forge, db_path=db)._publish_outcome(
+        pr_number=PR, outcome=outcome, head_sha=HEAD, team=team, posted_ids={}
+    )
+
+    findings = {(f.file, f.line_start): f for f in fetch_findings(db, PR)}
+    posts = fetch_finding_posts(db, PR)
+    assert team.finding_posts == 2
+    assert [
+        (p.finding_id, p.comment_id, p.thread_id, p.review_id, p.forge, p.provenance) for p in posts
+    ] == [
+        (findings[("src/a.py", 3)].id, "11", "11", "900", "github", "posted"),
+        (findings[("src/b.py", 9)].id, "12", "12", "900", "github", "posted"),
+    ]
+    assert {findings[("src/a.py", 3)].finder} == {"sentinel"}
+    assert all(p.head_sha == HEAD and p.posted_at for p in posts)
+
+
+def test_two_reviewers_on_one_line_get_two_rows(tmp_path: Path) -> None:
+    """Two findings at the same place, posted twice, keep two distinct comment ids."""
+    db = tmp_path / "review.db"
+    sentinel = _outcome(
+        BotRole.SENTINEL,
+        [ReviewComment(file="src/a.py", line=3, severity="blocker", body="the token leaks")],
+    )
+    tester = _outcome(
+        BotRole.TESTER,
+        [ReviewComment(file="src/a.py", line=3, severity="major", body="no test covers this")],
+    )
+    _record(db, [sentinel, tester])
+    orch = ReviewTeamOrchestrator(forge=BatchForge([]), db_path=db)
+    team = _team()
+    for outcome, comment_id in ((sentinel, 21), (tester, 22)):
+        orch._forge = BatchForge([{"id": comment_id, "path": "src/a.py", "line": 3}])
+        orch._publish_outcome(
+            pr_number=PR, outcome=outcome, head_sha=HEAD, team=team, posted_ids={}
+        )
+
+    by_finder = {f.id: f.finder for f in fetch_findings(db, PR)}
+    posts = fetch_finding_posts(db, PR)
+    assert [(by_finder[p.finding_id], p.comment_id) for p in posts] == [
+        ("sentinel", "21"),
+        ("tester", "22"),
+    ]
+
+
+def test_a_forge_answer_without_an_id_writes_no_row(tmp_path: Path) -> None:
+    """The per-comment path with an unparseable answer posts, logs and records nothing."""
+    db = tmp_path / "review.db"
+    outcome = _outcome(
+        BotRole.ARCHITECT,
+        [ReviewComment(file="src/a.py", line=3, severity="major", body="split this module")],
+    )
+    _record(db, [outcome])
+
+    class NoIdForge(BatchForge):
+        def _pr_review_comment(self, pr_number: int, **kwargs: object) -> GhResult:
+            return GhResult(0, "not json", "", argv=["gh", "api"])
+
+        def _pr_review_submit(self, pr_number: int, **kwargs: object) -> GhResult:
+            return GhResult(0, "", "", argv=["gh", "pr", "review"])
+
+    team = _team()
+    ReviewTeamOrchestrator(forge=NoIdForge([]), db_path=db)._publish_outcome(
+        pr_number=PR, outcome=outcome, head_sha=None, team=team, posted_ids={}
+    )
+
+    assert team.posted_comments >= 1
+    assert team.finding_posts == 0
+    assert fetch_finding_posts(db, PR) == []
+
+
+def test_gitlab_post_records_the_discussion_and_note_ids(tmp_path: Path) -> None:
+    """AC2: on GitLab the thread is the 40-hex discussion, the comment the note, no review id."""
+    db = tmp_path / "review.db"
+    outcome = _outcome(
+        BotRole.SENTINEL,
+        [ReviewComment(file="src/a.py", line=3, severity="blocker", body="a guard is missing")],
+    )
+    _record(db, [outcome])
+    team = _team()
+
+    ReviewTeamOrchestrator(forge=_gitlab(tmp_path), db_path=db)._publish_outcome(
+        pr_number=PR, outcome=outcome, head_sha=HEAD, team=team, posted_ids={}
+    )
+
+    [post] = fetch_finding_posts(db, PR)
+    assert post.forge == "gitlab"
+    assert post.thread_id == DISCUSSION
+    assert len(post.thread_id) == 40
+    assert post.comment_id == "501"
+    assert post.review_id is None
+    assert post.finding_id == fetch_findings(db, PR)[0].id
 
 
 def test_a_post_for_an_unknown_finding_is_refused(tmp_path: Path) -> None:
