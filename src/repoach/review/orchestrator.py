@@ -437,8 +437,8 @@ class TeamOutcome:
     forge (``finding_id``, ``login``, ``head_sha``, ``comment_id``,
     ``counted``) and ``thread_lines`` the lines naming them
     (SP-FINDING-THREAD-IDS). ``open_threads`` is the read of the review
-    threads still open on the forge, taken at the end of the run and
-    again after posting, before the archive report is written: the report
+    threads still open on the forge, taken after posting and before the
+    archive report is written, else at the end of the run: the report
     and ``review pr`` print ``review threads: <n> unresolved`` from it,
     and the report's headline refuses on it as the merge gate does
     (SP-OPEN-THREADS-BLOCK-THE-MERGE).
@@ -1122,7 +1122,6 @@ class ReviewTeamOrchestrator:
         )
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
-        self._refresh_open_threads(pr_number, team)
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1160,6 +1159,8 @@ class ReviewTeamOrchestrator:
                 posted_reviews=team.posted_reviews,
                 posted_comments=team.posted_comments,
             )
+        if not team.open_threads.read:
+            self._refresh_open_threads(pr_number, team)
 
         _log.info(
             "review_team.done",
@@ -1326,9 +1327,10 @@ class ReviewTeamOrchestrator:
         team.generated_lines = report_lines(generated_checks, generated_timing)
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
-        self._refresh_open_threads(pr_number, team)
         if self._post:
             self._publish_replayed(pr_number, team)
+        if not team.open_threads.read:
+            self._refresh_open_threads(pr_number, team)
         _log.info(
             "review_team.replayed",
             pr_number=pr_number,
@@ -1611,9 +1613,11 @@ class ReviewTeamOrchestrator:
     def _refresh_open_threads(self, pr_number: int, team: TeamOutcome) -> None:
         """Read the review threads open on the forge into ``team`` (SP-OPEN-THREADS-BLOCK-THE-MERGE).
 
-        The one place a run reads them: at the end of a fresh or replayed
-        run, and again after posting, so the archive report counts the
-        threads this run opened. A failed read is carried as unread.
+        The one place a run reads them, once per run in the normal case: a
+        posting run reads them after its inline comments and before the
+        archive, so the report counts the threads it opened; a run that
+        posted nothing (a dry run, a refused write) reads them at its end.
+        A failed read is carried as unread and read once more at the end.
         """
         team.record_open_threads(read_open_threads(self._forge, pr_number))
 
