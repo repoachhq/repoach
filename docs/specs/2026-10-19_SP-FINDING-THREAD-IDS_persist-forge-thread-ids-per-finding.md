@@ -8,7 +8,7 @@ created: 2026-10-19
 updated: 2026-11-02
 
 owns:
-  code: [src/repoach/review/finding_posts.py, tests/unit/test_finding_posts.py, tests/unit/test_finding_posts_backfill.py, tests/integration/test_finding_thread_ids_end_to_end.py]
+  code: [src/repoach/review/finding_posts.py, src/repoach/review/finding_post_record.py, tests/unit/test_finding_posts.py, tests/unit/test_finding_posts_backfill.py, tests/integration/test_finding_thread_ids_end_to_end.py]
   resources: [db:table:finding_posts]
 
 depends_on: [SP-FINDINGS-INIT-RACE, SP-REVIEW-POST-BATCH, SP-FINDINGS-SENTINEL-REHOME, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-RETRY-BACKOFF-DEDUP]
@@ -208,6 +208,7 @@ maintainer is recorded (G6).
 - a comment off the diff states no recorded finding → no row.
 - a GitLab note the forge refuses to position is posted as a plain note → a row with `thread_id` NULL.
 - backfill on a PR whose bot comments carry no `path`/`line` (conversation comments) → counted as `unmatched`, never linked.
+- the sentinel's legacy `(file, line)` match on a root the bot did not write → the sentinel still answers there, as before this spec, but no `backfill` row is written: only a bot root is ever linked.
 - backfill matching is strict: a bot root at the finding's exact `(file, line)` and no other, claimed by no other finding, `backfill_line_tolerance = 0` (owner decision 2026-10-19). A legacy finding with no exact root — the line shifted after a push, or two roots at the same place — is reported `unmatched` and gets no row; it stays `unknown` to every consumer, never an approximated link.
 - a thread resolved by someone who is neither the bot nor a maintainer → reported `not counted`, not recorded; a maintainer permission the forge cannot read → logged, nothing recorded, asked again next run.
 - no recorded post without a closure → the forge's threads are not read.
@@ -224,9 +225,9 @@ maintainer is recorded (G6).
 - Adds dependency: SP-FINDING-THREAD-IDS -> SP-UNIVERSAL-FORGE (`Forge.review_threads`, `ReviewThread`; the tests drive the GitHub and GitLab forges)
 - Adds dependency: SP-FINDING-THREAD-IDS -> SP-ORCH-DOCSTRING, SP-FINDINGS-BRIDGE-DOCFIX, SP-RETRY-BACKOFF-DEDUP (the tests post through the orchestrator, record findings through the bridge and build reviewer outcomes)
 - Adds dependency: SP-OWNER-SETTLES-A-FINDING -> SP-FINDING-THREAD-IDS (`owner_commands.py` reads the thread index)
-- Forge protocol: `ReviewThread` and `Forge.review_threads` on GitHub, GitLab and the bench `LocalDiffForge`; `is_write_argv` lets a `gh api graphql` query (never a mutation, never a document read from a file) through the read path (F12).
+- Forge protocol: `ReviewThread` and `Forge.review_threads` on GitHub, GitLab and the bench `LocalDiffForge`; `is_write_argv` lets one `gh api graphql` query through the read path (F12): a document naming `mutation` or `subscription` anywhere, an `operationName` field, a document read from a file or two documents stay writes.
 - New shared state: `db:table:finding_posts`, owned here. `SP-UNIVERSAL-LEDGER` reads it and already declares this spec in its `depends_on`.
-- `finding_posts.py` imports nothing from `orchestrator.py`, `owner_commands.py` or `thread_context.py`; they import it. `repoach arch graph --check` lists 25 cycles on `develop` `fb241b8` and 27 with this spec: the two added close through `SP-UNIVERSAL-LEDGER -> SP-FINDING-THREAD-IDS` (the ledger reads this table) and `SP-UNIVERSAL-FORGE`'s existing path to `SP-UNIVERSAL-LEDGER` (`SP-UNIVERSAL-FORGE -> … -> SP-CONVENTIONS-GATE -> SP-UNIVERSAL-REPO -> SP-UNIVERSAL-LEDGER`). Cutting them belongs to `SP-UNIVERSAL-LEDGER`, which is still a draft.
+- `finding_posts.py` imports nothing from `orchestrator.py`, `owner_commands.py`, `thread_context.py` or `findings_bridge.py`; they import it. `finding_post_record.py` holds the posting-path join (fingerprint matching, draft pairing, row writes) because it reads `findings_bridge`, which imports `thread_context`, a reader of `finding_posts`: in `finding_posts.py` it would be an import cycle. `repoach arch graph --check` lists 25 cycles on `develop` `fb241b8` and 27 with this spec: the two added close through `SP-UNIVERSAL-LEDGER -> SP-FINDING-THREAD-IDS` (the ledger reads this table) and `SP-UNIVERSAL-FORGE`'s existing path to `SP-UNIVERSAL-LEDGER` (`SP-UNIVERSAL-FORGE -> … -> SP-CONVENTIONS-GATE -> SP-UNIVERSAL-REPO -> SP-UNIVERSAL-LEDGER`). Cutting them belongs to `SP-UNIVERSAL-LEDGER`, which is still a draft.
 
 ## Diagram
 ```mermaid

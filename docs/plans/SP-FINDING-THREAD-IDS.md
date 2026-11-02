@@ -5,7 +5,7 @@ Every inline comment the review posts for a recorded finding writes one finding_
 ## Step 1 — Let a GraphQL query through the read path
 
 - **Files**: `src/repoach/forge/protocol.py`, `tests/unit/test_forge_write_barrier.py`
-- **Action**: In protocol.py add _graphql_read(args): an api graphql argv sent as POST (or with no method) whose single query= field starts with query or { is a read; a mutation, a document read from a file (query=@...) or no document is a write. is_write_argv returns False for such a read before its api rule. Extend the is_write_argv parametrised cases with a query, an anonymous query, a mutation, a file document, fields without a document and an explicit GET.
+- **Action**: In protocol.py add _graphql_read(args): an api graphql argv sent as POST (or with no method) is a read only when it carries a single query= field whose document starts with query or { and names no mutation or subscription anywhere, and no operationName field; a document read from a file (query=@...), two documents or none are writes. is_write_argv returns False for such a read before its api rule. Extend the is_write_argv parametrised cases with each of those shapes.
 - **Commit**: `feat(forge): let a graphql query through the read path`
 - **Done when**: pytest -q tests/unit/test_forge_write_barrier.py passes
 - **Unit tests**: `tests/unit/test_forge_write_barrier.py::test_is_write_argv`
@@ -16,7 +16,7 @@ Every inline comment the review posts for a recorded finding writes one finding_
 - **Action**: protocol.py gains ReviewThread (root_id, thread_id, resolved, resolved_by) and Forge.review_threads. GitHubForge.review_threads runs one paginated, slurped gh api graphql reviewThreads query (isResolved, resolvedBy.login, the first comment's databaseId), normalised by review_threads_from_github; GitLabForge.review_threads reads the discussions on their first DiffNote (resolved, resolved_by.username) through review_threads_from_discussions; the bench LocalDiffForge returns none. recording.py keeps the new GraphQL and GitLab keys. Record review_threads fixtures for GitHub (#278) and GitLab (!339, two discussions kept) and add the conformance case plus an open-thread and no-root parse case.
 - **Commit**: `feat(forge): read review threads and who resolved them`
 - **Done when**: pytest -q tests/unit/test_forge_conformance.py tests/unit/test_forge_surface.py passes
-- **Unit tests**: `tests/unit/test_forge_conformance.py::test_review_threads`, `tests/unit/test_forge_conformance.py::test_review_threads_reads_an_open_thread_and_skips_one_without_a_root`
+- **Unit tests**: `tests/unit/test_forge_conformance.py::test_review_threads`, `tests/unit/test_forge_conformance.py::test_review_threads_reads_an_open_thread_and_skips_one_without_a_root`, `tests/unit/test_forge_conformance.py::test_review_threads_raises_forge_error_on_bad_json_or_a_failed_call`
 
 ## Step 3 — Store finding posts, thread closures and backfill links
 
@@ -28,11 +28,11 @@ Every inline comment the review posts for a recorded finding writes one finding_
 
 ## Step 4 — Record the forge ids of every posted finding
 
-- **Files**: `src/repoach/review/orchestrator.py`, `src/repoach/review/report.py`, `tests/unit/test_finding_posts.py`
-- **Action**: After a batched review or a per-comment post, _record_posts pairs each reviewer comment with the comment the forge created (path, line and body, else path and line when unique), finds the finding of that head with the comment's fingerprint (the reviewer's own first) and writes one posted row with the comment id, thread id (the root id on GitHub, the discussion id on GitLab) and the GitHub review id; a comment with no finding or no id writes nothing and a failed write is logged. Every run creates the table and, after the owner commands, calls detect_closed_threads on both the fresh and the replay path; TeamOutcome carries finding_posts, threads_closed and thread_lines, and the archive report renders thread_lines as a Closed threads section.
+- **Files**: `src/repoach/review/orchestrator.py`, `src/repoach/review/finding_post_record.py`, `tests/unit/test_finding_posts.py`
+- **Action**: finding_post_record.py (apart from finding_posts.py, which findings_bridge's import of thread_context would otherwise close a cycle on) holds posted_finding_id (the finding of that head with the comment's fingerprint, the reviewer's own first), pair_posted (a batched review's created comments paired with their drafts on path, line and body, else on a unique path and line, never guessed) and record_posted_comments (one posted row per comment with the comment id, the thread id - the root id on GitHub, the discussion id on GitLab - and the GitHub review id; a comment with no finding or no id writes nothing and a failed write is logged). The orchestrator calls it after a batched review or a per-comment post, creates the table on every run and, after the owner commands, calls detect_closed_threads on both the fresh and the replay path; TeamOutcome carries finding_posts, threads_closed and thread_lines, and the archive report renders thread_lines as a Closed threads section.
 - **Commit**: `feat(review): record the forge ids of every posted finding`
 - **Done when**: pytest -q tests/unit/test_finding_posts.py -k 'posted or gitlab or reviewers or without_an_id' passes
-- **Unit tests**: `tests/unit/test_finding_posts.py::test_each_posted_comment_records_one_row_with_the_forge_ids`, `tests/unit/test_finding_posts.py::test_gitlab_post_records_the_discussion_and_note_ids`, `tests/unit/test_finding_posts.py::test_two_reviewers_on_one_line_get_two_rows`, `tests/unit/test_finding_posts.py::test_a_forge_answer_without_an_id_writes_no_row`
+- **Unit tests**: `tests/unit/test_finding_posts.py::test_each_posted_comment_records_one_row_with_the_forge_ids`, `tests/unit/test_finding_posts.py::test_gitlab_post_records_the_discussion_and_note_ids`, `tests/unit/test_finding_posts.py::test_two_reviewers_on_one_line_get_two_rows`, `tests/unit/test_finding_posts.py::test_a_forge_answer_without_an_id_writes_no_row`, `tests/unit/test_finding_posts.py::test_pair_posted_falls_back_to_a_unique_line_and_skips_an_ambiguous_one`
 
 ## Step 5 — Report finding posts and closed threads in review pr
 
@@ -53,10 +53,10 @@ Every inline comment the review posts for a recorded finding writes one finding_
 ## Step 7 — Post the refuted-finding sentinel on the recorded thread
 
 - **Files**: `src/repoach/review/thread_context.py`, `tests/unit/test_findings_sentinel_rehome.py`
-- **Action**: post_refuted_finding_sentinels answers on resolve_thread's recorded root first; a finding with no recorded thread falls back to _match_finding_thread and, when exactly one root sits at its file and line, writes a backfill row.
+- **Action**: post_refuted_finding_sentinels answers on resolve_thread's recorded root first; a finding with no recorded thread falls back to _match_finding_thread over _line_candidates and writes a backfill row only when exactly one root sits at its file and line and the bot wrote it.
 - **Commit**: `feat(review): post the sentinel on the finding's recorded thread`
 - **Done when**: pytest -q tests/unit/test_findings_sentinel_rehome.py passes
-- **Unit tests**: `tests/unit/test_findings_sentinel_rehome.py::test_recorded_thread_receives_the_sentinel_when_its_root_line_shifted`, `tests/unit/test_findings_sentinel_rehome.py::test_legacy_line_match_is_recorded_as_a_backfill_row`
+- **Unit tests**: `tests/unit/test_findings_sentinel_rehome.py::test_recorded_thread_receives_the_sentinel_when_its_root_line_shifted`, `tests/unit/test_findings_sentinel_rehome.py::test_legacy_line_match_is_recorded_as_a_backfill_row`, `tests/unit/test_findings_sentinel_rehome.py::test_a_root_someone_else_opened_is_never_recorded`
 
 ## Step 8 — Settle an owner command on the recorded thread
 
@@ -92,7 +92,7 @@ Every inline comment the review posts for a recorded finding writes one finding_
         "src/repoach/forge/protocol.py",
         "tests/unit/test_forge_write_barrier.py"
       ],
-      "action": "In protocol.py add _graphql_read(args): an api graphql argv sent as POST (or with no method) whose single query= field starts with query or { is a read; a mutation, a document read from a file (query=@...) or no document is a write. is_write_argv returns False for such a read before its api rule. Extend the is_write_argv parametrised cases with a query, an anonymous query, a mutation, a file document, fields without a document and an explicit GET.",
+      "action": "In protocol.py add _graphql_read(args): an api graphql argv sent as POST (or with no method) is a read only when it carries a single query= field whose document starts with query or { and names no mutation or subscription anywhere, and no operationName field; a document read from a file (query=@...), two documents or none are writes. is_write_argv returns False for such a read before its api rule. Extend the is_write_argv parametrised cases with each of those shapes.",
       "commit_message": "feat(forge): let a graphql query through the read path",
       "done_when": "pytest -q tests/unit/test_forge_write_barrier.py passes",
       "unit_tests": [
@@ -112,7 +112,8 @@ Every inline comment the review posts for a recorded finding writes one finding_
       "done_when": "pytest -q tests/unit/test_forge_conformance.py tests/unit/test_forge_surface.py passes",
       "unit_tests": [
         "tests/unit/test_forge_conformance.py::test_review_threads",
-        "tests/unit/test_forge_conformance.py::test_review_threads_reads_an_open_thread_and_skips_one_without_a_root"
+        "tests/unit/test_forge_conformance.py::test_review_threads_reads_an_open_thread_and_skips_one_without_a_root",
+        "tests/unit/test_forge_conformance.py::test_review_threads_raises_forge_error_on_bad_json_or_a_failed_call"
       ]
     },
     {
@@ -139,17 +140,18 @@ Every inline comment the review posts for a recorded finding writes one finding_
       "title": "Record the forge ids of every posted finding",
       "files": [
         "src/repoach/review/orchestrator.py",
-        "src/repoach/review/report.py",
+        "src/repoach/review/finding_post_record.py",
         "tests/unit/test_finding_posts.py"
       ],
-      "action": "After a batched review or a per-comment post, _record_posts pairs each reviewer comment with the comment the forge created (path, line and body, else path and line when unique), finds the finding of that head with the comment's fingerprint (the reviewer's own first) and writes one posted row with the comment id, thread id (the root id on GitHub, the discussion id on GitLab) and the GitHub review id; a comment with no finding or no id writes nothing and a failed write is logged. Every run creates the table and, after the owner commands, calls detect_closed_threads on both the fresh and the replay path; TeamOutcome carries finding_posts, threads_closed and thread_lines, and the archive report renders thread_lines as a Closed threads section.",
+      "action": "finding_post_record.py (apart from finding_posts.py, which findings_bridge's import of thread_context would otherwise close a cycle on) holds posted_finding_id (the finding of that head with the comment's fingerprint, the reviewer's own first), pair_posted (a batched review's created comments paired with their drafts on path, line and body, else on a unique path and line, never guessed) and record_posted_comments (one posted row per comment with the comment id, the thread id - the root id on GitHub, the discussion id on GitLab - and the GitHub review id; a comment with no finding or no id writes nothing and a failed write is logged). The orchestrator calls it after a batched review or a per-comment post, creates the table on every run and, after the owner commands, calls detect_closed_threads on both the fresh and the replay path; TeamOutcome carries finding_posts, threads_closed and thread_lines, and the archive report renders thread_lines as a Closed threads section.",
       "commit_message": "feat(review): record the forge ids of every posted finding",
       "done_when": "pytest -q tests/unit/test_finding_posts.py -k 'posted or gitlab or reviewers or without_an_id' passes",
       "unit_tests": [
         "tests/unit/test_finding_posts.py::test_each_posted_comment_records_one_row_with_the_forge_ids",
         "tests/unit/test_finding_posts.py::test_gitlab_post_records_the_discussion_and_note_ids",
         "tests/unit/test_finding_posts.py::test_two_reviewers_on_one_line_get_two_rows",
-        "tests/unit/test_finding_posts.py::test_a_forge_answer_without_an_id_writes_no_row"
+        "tests/unit/test_finding_posts.py::test_a_forge_answer_without_an_id_writes_no_row",
+        "tests/unit/test_finding_posts.py::test_pair_posted_falls_back_to_a_unique_line_and_skips_an_ambiguous_one"
       ]
     },
     {
@@ -190,12 +192,13 @@ Every inline comment the review posts for a recorded finding writes one finding_
         "src/repoach/review/thread_context.py",
         "tests/unit/test_findings_sentinel_rehome.py"
       ],
-      "action": "post_refuted_finding_sentinels answers on resolve_thread's recorded root first; a finding with no recorded thread falls back to _match_finding_thread and, when exactly one root sits at its file and line, writes a backfill row.",
+      "action": "post_refuted_finding_sentinels answers on resolve_thread's recorded root first; a finding with no recorded thread falls back to _match_finding_thread over _line_candidates and writes a backfill row only when exactly one root sits at its file and line and the bot wrote it.",
       "commit_message": "feat(review): post the sentinel on the finding's recorded thread",
       "done_when": "pytest -q tests/unit/test_findings_sentinel_rehome.py passes",
       "unit_tests": [
         "tests/unit/test_findings_sentinel_rehome.py::test_recorded_thread_receives_the_sentinel_when_its_root_line_shifted",
-        "tests/unit/test_findings_sentinel_rehome.py::test_legacy_line_match_is_recorded_as_a_backfill_row"
+        "tests/unit/test_findings_sentinel_rehome.py::test_legacy_line_match_is_recorded_as_a_backfill_row",
+        "tests/unit/test_findings_sentinel_rehome.py::test_a_root_someone_else_opened_is_never_recorded"
       ]
     },
     {
