@@ -35,6 +35,7 @@ from repoach.project.toml_write import (
     array_of_tables_lines,
     is_array_of_tables,
     render_project_toml,
+    toml_key,
     toml_value,
 )
 from repoach.review import coder_loop
@@ -590,6 +591,33 @@ class TestArrayOfTablesRendering:
         assert toml_value([]) == "[]"
         assert toml_value([{"path": "a.json"}, "b"]) == '[{path = "a.json"}, "b"]'
         assert is_array_of_tables([{1: "a.json"}]) is False
+
+    def test_toml_key_quotes_unicode_and_dotted_keys(self) -> None:
+        assert toml_key("check_timeout_s") == "check_timeout_s"
+        assert toml_key("a-b_1") == "a-b_1"
+        assert toml_key("é") == '"é"'
+        assert toml_key("a.b") == '"a.b"'
+        assert tomllib.loads(f"{toml_key('a.b')} = 1\n{toml_key('é')} = 2\n") == {"a.b": 1, "é": 2}
+
+    def test_config_show_keeps_undeclared_command_note_with_array_of_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        toml = "[commands]\ngate = 'make check'\n\n" + YOOB_GENERATED_TOML
+        root = _repo(tmp_path, "https://github.com/o/r.git", toml)
+        monkeypatch.chdir(root)
+        result = CliRunner().invoke(app, ["config", "show"])
+        assert result.exit_code == 0, result.output
+        lines = result.stdout.splitlines()
+        assert "# lint: not declared in repoach.toml; skipped on this repository" in lines
+        assert "[[review.generated]]  # source: file" in lines
+        commands = lines.index("[commands]")
+        review = lines.index("[review]")
+        note = lines.index("# lint: not declared in repoach.toml; skipped on this repository")
+        assert commands < note < review
+        body = "\n".join(line.rsplit("  # source: ", 1)[0] for line in lines[1:])
+        shown = tomllib.loads(body)
+        assert shown["commands"]["gate"] == "make check"
+        assert shown["review"]["generated"][0]["check_timeout_s"] == 60
 
     def test_by_section_puts_arrays_of_tables_after_plain_keys(self) -> None:
         rows = [
