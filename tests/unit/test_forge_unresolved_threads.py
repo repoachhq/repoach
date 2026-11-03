@@ -272,3 +272,10 @@ def test_gitlab_refuses_a_page_that_is_not_an_array_or_fails(tmp_path: Path) -> 
         _gitlab(tmp_path, as_object).unresolved_threads(339)
     with pytest.raises(ForgeError):
         _gitlab(tmp_path, failing).unresolved_threads(339)
+
+
+def test_gitlab_mr_without_discussions_reads_one_empty_page(tmp_path: Path) -> None:
+    """An MR with no discussion answers [] on page 1: no thread, after exactly one request."""
+    spawner = PagedGlab([])
+    assert _gitlab(tmp_path, spawner).unresolved_threads(339) == []
+    assert spawner.endpoints == ["projects/:id/merge_requests/339/discussions?per_page=100&page=1"]
