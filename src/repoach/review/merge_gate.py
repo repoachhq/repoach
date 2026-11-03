@@ -35,7 +35,7 @@ from .findings import (
     fetch_review_integrity,
     init_findings_schema,
 )
-from .open_threads import OpenThreads, unreadable_reason, unresolved_reason
+from .open_threads import OpenThreads
 from .reviewer import ReviewVerdict
 from .spec_gate import (
     RESOLUTION_OWNERSHIP,
@@ -307,10 +307,9 @@ def compute_merge_decision(facts: MergeFacts) -> MergeDecision:
             f"{len(facts.blocking_unverified)} unverified blocking finding(s): "
             f"{'; '.join(facts.blocking_unverified)}"
         )
-    if not facts.threads_read:
-        reasons.append(unreadable_reason(facts.threads_error))
-    elif facts.unresolved_threads > 0:
-        reasons.append(unresolved_reason(facts.unresolved_threads))
+    threads_refusal = facts.open_threads.refusal()
+    if threads_refusal is not None:
+        reasons.append(threads_refusal)
     if reasons:
         reasons.extend(facts.reverify_reasons)
     return MergeDecision(merge=not reasons, reasons=reasons)
