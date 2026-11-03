@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from repoach.cli import review_cmds
 from repoach.forge import ForgeError, PullRequest, ReviewThread
+from repoach.forge.github import GhResult
 from repoach.forge.runner import CommandResult
 from repoach.review.auto_merge import (
     OUTCOME_MERGED,
@@ -37,6 +38,7 @@ from repoach.review.open_threads import (
     hold_open_threads,
     read_open_threads,
 )
+from repoach.review.orchestrator import ReviewTeamOrchestrator
 from repoach.review.release_gate import (
     ProvenanceSource,
     ReleaseFacts,
@@ -44,7 +46,8 @@ from repoach.review.release_gate import (
     gather_release_facts,
 )
 from repoach.review.report import render_ledger_report
-from tests.forge_fakes import thread_node
+from repoach.review.reviewer import BotRole, ReviewVerdict
+from tests.forge_fakes import NO_OPEN_THREADS, thread_node, threads_page
 from tests.github_concurrency_sim import Context, job_condition
 from tests.merge_wait_fakes import (
     HEAD_256,
@@ -56,6 +59,7 @@ from tests.merge_wait_fakes import (
     measured_check_runs,
     seed_review,
 )
+from tests.unit.test_review_team import _outcome, _StubGitHubForge, _StubReviewer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MERGE_ON_CI = REPO_ROOT / ".github" / "workflows" / "merge-on-ci.yml"
@@ -476,3 +480,60 @@ def test_release_gate_reads_the_release_pr_threads_only_when_a_pr_is_given(
     assert compute_release_decision(facts).reasons == [
         "review threads unreadable: gh: Something went wrong (HTTP 502)"
     ]
+
+
+class _ThreadReadsForge(_StubGitHubForge):
+    """The review suite's posting forge whose thread reads answer ``answers`` in turn."""
+
+    def __init__(self, answers: list[GhResult]) -> None:
+        super().__init__()
+        self.answers = answers
+        self.thread_reads = 0
+
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["api", "graphql"] and "isResolved path line" in args[-1]:
+            self.thread_reads += 1
+            return self.answers.pop(0)
+        return super()._run(args, input_data=input_data)
+
+
+def _approving_bench(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, role in (
+        ("Architect", BotRole.ARCHITECT),
+        ("Sentinel", BotRole.SENTINEL),
+        ("Tester", BotRole.TESTER),
+        ("Scribe", BotRole.SCRIBE),
+    ):
+        outcome = _outcome(role, ReviewVerdict.APPROVE)
+        monkeypatch.setattr(
+            f"repoach.review.orchestrator.{name}", lambda _o=outcome, **_kw: _StubReviewer(_o)
+        )
+
+
+def test_review_pr_reads_the_threads_once_and_rereads_once_after_a_failed_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A posting run reads once before its archive; a failed read is read once more at the end."""
+    _approving_bench(monkeypatch)
+    one_open = json.dumps([threads_page([thread_node(5, resolved=False, path="a.py", line=1)])])
+    healthy = _ThreadReadsForge([GhResult(0, one_open, "", argv=["gh"])])
+    team = ReviewTeamOrchestrator(
+        forge=healthy, db_path=tmp_path / "a.db", post_to_github=True
+    ).review_pr(pr_number=42)
+    assert healthy.thread_reads == 1
+    assert team.open_threads.count == 1
+    assert "| Unresolved review threads | 1 |" in healthy.archive_calls[0]["body"]
+
+    flaky = _ThreadReadsForge(
+        [
+            GhResult(1, "", "gh: Something went wrong (HTTP 502)", argv=["gh"]),
+            GhResult(0, NO_OPEN_THREADS, "", argv=["gh"]),
+        ]
+    )
+    team = ReviewTeamOrchestrator(
+        forge=flaky, db_path=tmp_path / "b.db", post_to_github=True
+    ).review_pr(pr_number=42)
+    assert flaky.thread_reads == 2
+    assert "| Unresolved review threads | unreadable |" in flaky.archive_calls[0]["body"]
+    assert team.open_threads.read is True
+    assert team.open_threads.summary_line() == "review threads: 0 unresolved"

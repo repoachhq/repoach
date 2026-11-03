@@ -5,7 +5,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 ## Step 1 — Declare the read and read every open GitHub thread
 
 - **Files**: `src/repoach/forge/protocol.py`, `src/repoach/forge/github.py`, `tests/unit/test_forge_unresolved_threads.py`
-- **Action**: ReviewThread gains path ('') and line (None); Forge gains unresolved_threads(number) -> list[ReviewThread], every open thread over every page, ForgeError when the listing cannot be read whole. GitHubForge runs one gh api graphql --paginate --slurp query of reviewThreads(first:100,after:$endCursor) with pageInfo, isResolved, path, line, originalLine and the first comment's databaseId; unresolved_threads_from_github keeps each node not resolved (root id 0 without a databaseId, originalLine when line is null) and raises on no page, a page without data, thread connection, nodes list or boolean hasNextPage, and a last page saying hasNextPage true. The tests build pages with the step 3 shapes.
+- **Action**: ReviewThread gains path ('') and line (None); Forge gains unresolved_threads(number) -> list[ReviewThread], every open thread over every page, ForgeError when the listing cannot be read whole. GitHubForge runs one gh api graphql --paginate --slurp query of reviewThreads(first:100,after:$endCursor) with pageInfo, isResolved, path, line, originalLine and the first comment's databaseId; unresolved_threads_from_github keeps each node not resolved (root id 0 without a databaseId, originalLine when line is null) and raises on no page, a page without data, thread connection, nodes list or boolean hasNextPage, a page carrying errors, a thread that is not an object, and a last page saying hasNextPage true. The tests build pages with the step 3 shapes.
 - **Commit**: `feat(forge): read every open github review thread`
 - **Done when**: pytest -q tests/unit/test_forge_unresolved_threads.py -k github passes
 - **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_github_counts_an_open_thread_without_a_root_id_and_falls_back_to_the_original_line`, `tests/unit/test_forge_unresolved_threads.py::test_github_refuses_a_listing_it_cannot_count`, `tests/unit/test_forge_unresolved_threads.py::test_github_failed_call_raises`
@@ -13,10 +13,10 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 ## Step 2 — Read every open GitLab discussion, page by page
 
 - **Files**: `src/repoach/forge/gitlab.py`, `src/repoach/bench/local_forge.py`, `tests/unit/test_forge_unresolved_threads.py`
-- **Action**: GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position. LocalDiffForge returns no thread.
+- **Action**: GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position, and raises on a discussion without a first note object. LocalDiffForge returns no thread.
 - **Commit**: `feat(forge): read every open gitlab discussion`
 - **Done when**: pytest -q tests/unit/test_forge_unresolved_threads.py -k gitlab passes
-- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_gitlab_reads_pages_until_an_empty_one_and_finds_the_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_counts_a_general_resolvable_discussion`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_listing_past_the_page_cap`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_page_that_is_not_an_array_or_fails`
+- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_gitlab_reads_pages_until_an_empty_one_and_finds_the_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_counts_a_general_resolvable_discussion`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_listing_past_the_page_cap`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_page_that_is_not_an_array_or_fails`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_discussion_it_cannot_read`
 
 ## Step 3 — Shape the thread answers and the recorded results
 
@@ -64,7 +64,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: TeamOutcome gains open_threads; _refresh_open_threads reads them once per run: after posting and before the archive, else at the end of the run. The archive facts table gains 'Unresolved review threads' (unreadable when not read), its headline refuses as the gate does, and team_outcome_to_dict carries review_threads.
 - **Commit**: `feat(review): report the open review threads`
 - **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k report passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_report_shows_the_thread_count_and_its_refusal`
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_report_shows_the_thread_count_and_its_refusal`, `tests/unit/test_open_threads_block_the_merge.py::test_review_pr_reads_the_threads_once_and_rereads_once_after_a_failed_read`
 
 ## Step 9 — Print the threads from review pr and review gate
 
@@ -117,7 +117,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
         "src/repoach/forge/github.py",
         "tests/unit/test_forge_unresolved_threads.py"
       ],
-      "action": "ReviewThread gains path ('') and line (None); Forge gains unresolved_threads(number) -> list[ReviewThread], every open thread over every page, ForgeError when the listing cannot be read whole. GitHubForge runs one gh api graphql --paginate --slurp query of reviewThreads(first:100,after:$endCursor) with pageInfo, isResolved, path, line, originalLine and the first comment's databaseId; unresolved_threads_from_github keeps each node not resolved (root id 0 without a databaseId, originalLine when line is null) and raises on no page, a page without data, thread connection, nodes list or boolean hasNextPage, and a last page saying hasNextPage true. The tests build pages with the step 3 shapes.",
+      "action": "ReviewThread gains path ('') and line (None); Forge gains unresolved_threads(number) -> list[ReviewThread], every open thread over every page, ForgeError when the listing cannot be read whole. GitHubForge runs one gh api graphql --paginate --slurp query of reviewThreads(first:100,after:$endCursor) with pageInfo, isResolved, path, line, originalLine and the first comment's databaseId; unresolved_threads_from_github keeps each node not resolved (root id 0 without a databaseId, originalLine when line is null) and raises on no page, a page without data, thread connection, nodes list or boolean hasNextPage, a page carrying errors, a thread that is not an object, and a last page saying hasNextPage true. The tests build pages with the step 3 shapes.",
       "commit_message": "feat(forge): read every open github review thread",
       "done_when": "pytest -q tests/unit/test_forge_unresolved_threads.py -k github passes",
       "unit_tests": [
@@ -135,14 +135,15 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
         "src/repoach/bench/local_forge.py",
         "tests/unit/test_forge_unresolved_threads.py"
       ],
-      "action": "GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position. LocalDiffForge returns no thread.",
+      "action": "GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position, and raises on a discussion without a first note object. LocalDiffForge returns no thread.",
       "commit_message": "feat(forge): read every open gitlab discussion",
       "done_when": "pytest -q tests/unit/test_forge_unresolved_threads.py -k gitlab passes",
       "unit_tests": [
         "tests/unit/test_forge_unresolved_threads.py::test_gitlab_reads_pages_until_an_empty_one_and_finds_the_open_thread_on_page_three",
         "tests/unit/test_forge_unresolved_threads.py::test_gitlab_counts_a_general_resolvable_discussion",
         "tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_listing_past_the_page_cap",
-        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_page_that_is_not_an_array_or_fails"
+        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_page_that_is_not_an_array_or_fails",
+        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_discussion_it_cannot_read"
       ]
     },
     {
@@ -237,7 +238,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "commit_message": "feat(review): report the open review threads",
       "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k report passes",
       "unit_tests": [
-        "tests/unit/test_open_threads_block_the_merge.py::test_report_shows_the_thread_count_and_its_refusal"
+        "tests/unit/test_open_threads_block_the_merge.py::test_report_shows_the_thread_count_and_its_refusal",
+        "tests/unit/test_open_threads_block_the_merge.py::test_review_pr_reads_the_threads_once_and_rereads_once_after_a_failed_read"
       ]
     },
     {

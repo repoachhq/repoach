@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/open_threads.py, tests/unit/test_open_threads_block_the_merge.py, tests/unit/test_forge_unresolved_threads.py, tests/integration/test_open_threads_block_the_merge_end_to_end.py, docs/merge_gate.md, .github/workflows/thread-rearm.yml]
   resources: []
 
-depends_on: [SP-FINDING-THREAD-IDS, SP-UNIVERSAL-FORGE, SP-PURE-MERGE-GATE, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-RELEASE-GATE, SP-CLI-STDOUT-ONE-JSON, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING]
+depends_on: [SP-FINDING-THREAD-IDS, SP-UNIVERSAL-FORGE, SP-PURE-MERGE-GATE, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-RELEASE-GATE, SP-CLI-STDOUT-ONE-JSON, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:
@@ -163,7 +163,7 @@ open_threads: OpenThreads | None = None
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF (the stranded sweep holds its rows, the fixture forge serves threads); `open_threads.py` imports nothing of `merge_wait.py`: `hold_open_threads` takes any row with `pr_number` and `head_sha`
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-FINDING-THREAD-IDS (`ReviewThread` comes from it)
 - Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-PURE-MERGE-GATE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-RELEASE-GATE (the tests decide through `merge_gate.py`, `auto_merge.py` and `release_gate.py`)
-- Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-CLI-STDOUT-ONE-JSON (the tests create the ledger, run `review pr` through the orchestrator and read its one JSON object)
+- Adds dependency: SP-OPEN-THREADS-BLOCK-THE-MERGE -> SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-CLI-STDOUT-ONE-JSON, SP-RETRY-BACKOFF-DEDUP (the tests create the ledger, run `review pr` through the orchestrator with reviewer outcomes, and read its one JSON object)
 - `merge_gate.py`, `auto_merge.py`, `release_gate.py`, `orchestrator.py`, `review_cmds.py` and `release_cmds.py` import `open_threads.py`; it imports none of them.
 - New workflow `.github/workflows/thread-rearm.yml` (GitHub-hosted, `actions: write` only); `tests/unit/test_ci_portability.py` lists its job among the GitHub-hosted ones on purpose.
 
