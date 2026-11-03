@@ -1611,8 +1611,9 @@ class ReviewTeamOrchestrator:
     def _refresh_open_threads(self, pr_number: int, team: TeamOutcome) -> None:
         """Read the review threads open on the forge into ``team`` (SP-OPEN-THREADS-BLOCK-THE-MERGE).
 
-        The one place a run reads them, once per run in the normal case: a
-        posting run reads them after its inline comments and before the
+        The one place a run reads them, once when the read succeeds and at
+        most twice per run: a posting run reads them after its inline
+        comments and before the
         archive, so the report counts the threads it opened; a run that
         posted nothing (a dry run, a refused write) reads them at its end.
         A read that already succeeded is kept, so the end-of-run call reads
