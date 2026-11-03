@@ -1159,8 +1159,7 @@ class ReviewTeamOrchestrator:
                 posted_reviews=team.posted_reviews,
                 posted_comments=team.posted_comments,
             )
-        if not team.open_threads.read:
-            self._refresh_open_threads(pr_number, team)
+        self._refresh_open_threads(pr_number, team)
 
         _log.info(
             "review_team.done",
@@ -1329,8 +1328,7 @@ class ReviewTeamOrchestrator:
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
         if self._post:
             self._publish_replayed(pr_number, team)
-        if not team.open_threads.read:
-            self._refresh_open_threads(pr_number, team)
+        self._refresh_open_threads(pr_number, team)
         _log.info(
             "review_team.replayed",
             pr_number=pr_number,
@@ -1617,10 +1615,12 @@ class ReviewTeamOrchestrator:
         posting run reads them after its inline comments and before the
         archive, so the report counts the threads it opened; a run that
         posted nothing (a dry run, a refused write) reads them at its end.
-        A failed read is carried as unread and retried once at the end of the
-        run: :meth:`review_pr` and :meth:`_replay` call this again only while
-        ``team.open_threads.read`` is False.
+        A read that already succeeded is kept, so the end-of-run call reads
+        only when the threads are still unread: a failed read is retried
+        once, at the end of the run.
         """
+        if team.open_threads.read:
+            return
         team.record_open_threads(read_open_threads(self._forge, pr_number))
 
     def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
