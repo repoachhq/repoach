@@ -76,10 +76,14 @@ Measured on `develop` `6fd4662` (2026-11-02).
   token starts a run whose actor (`github-actions[bot]`) it admits.
   `thread-rearm.yml` admits an allowlisted actor on a same-repo,
   non-draft PR into `develop` and runs GitHub-hosted.
+- D7. The read is stored once: `MergeFacts.open_threads` holds it and
+  the three thread facts are its properties, so the gate, `review gate`'s
+  naming and the archive report read one value and no caller passes it
+  around.
 
 ## Goals
 
-- G1: `MergeFacts` gains `unresolved_threads: int`, `threads_read: bool` and `threads_error: str`; `compute_merge_decision` adds `<n> unresolved review thread(s)` while n > 0 and `review threads unreadable: <why>` when not read.
+- G1: `MergeFacts` gains `unresolved_threads: int`, `threads_read: bool` and `threads_error: str`, read-only properties of its one `open_threads: OpenThreads` field (unread by default), as the `spec_*` properties derive from `spec_rows`; `compute_merge_decision` adds `<n> unresolved review thread(s)` while n > 0 and `review threads unreadable: <why>` when not read.
 - G2: `Forge.unresolved_threads(number)` on GitHub (GraphQL `reviewThreads`, 100 per page, `--paginate --slurp`, the last page must say `hasNextPage: false`) and GitLab (discussions, 100 per page until an empty page); the bench `LocalDiffForge` has none.
 - G3: every merge path honours it: `decide_at_head` reads the threads, so `review gate`, `review merge` and the auto-merge refuse, the latter recording `pure gate refused: … unresolved review thread(s)` in its attempts comment; `review stranded --dispatch` holds a stranded PR whose threads are open or unreadable instead of dispatching it; `release gate --pr N` refuses on the release PR's open threads (`ReleaseFacts.open_threads`, refused through `OpenThreads.refusal()`).
 - G4: `review pr` prints `review threads: <n> unresolved` on stderr and carries `review_threads` in its JSON and archive; the archive's facts table gains `Unresolved review threads`; `review gate` prints the same line plus `open thread <id> at <file>:<line>` per thread and carries `review_threads` in its JSON.
@@ -131,10 +135,11 @@ class PullRequestRow(Protocol):  # pr_number: int, head_sha: str
 def hold_open_threads(rows: Sequence[RowT], read) -> tuple[list[RowT], list[HeldPR]]: ...
 
 # repoach.review.merge_gate.MergeFacts (added)
+open_threads: OpenThreads = OpenThreads(read=False)
 def with_threads(self, threads: OpenThreads) -> MergeFacts: ...
-unresolved_threads: int = 0
-threads_read: bool = False
-threads_error: str = ""
+unresolved_threads: int   # property: open_threads.count
+threads_read: bool        # property: open_threads.read
+threads_error: str        # property: open_threads.error
 
 # repoach.review.release_gate.ReleaseFacts (added)
 open_threads: OpenThreads | None = None
