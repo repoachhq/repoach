@@ -14,8 +14,13 @@ decision refuses, one reason per line, when:
 | `CI not green at head` | a required check is not green |
 | `<n> open blocking finding(s) at head` | blocking findings survive re-verification at head |
 | `spec coverage …` | the declared spec's acceptance selectors are missing at head |
+| `spec coverage recompute failed at <sha7>: …` | a coverage row graded by a retired rule could not be recomputed |
+| `<n> unverified blocking finding(s): …` | a blocking finding has no verifier, or is still proposed |
 | `<n> unresolved review thread(s)` | review threads are open on the pull request |
 | `review threads unreadable: <why>` | the forge could not say how many threads are open |
+
+When any of these refuses, the lines naming the findings of older heads
+still blocking after their re-check at head follow them.
 
 ## An open review thread blocks the merge
 
