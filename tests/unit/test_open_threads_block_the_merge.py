@@ -349,6 +349,10 @@ def test_a_resolved_thread_dispatches_merge_on_ci_on_main_without_a_merge_token(
     workflow = yaml.safe_load(THREAD_REARM.read_text(encoding="utf-8"))
     assert workflow[True] == {"pull_request_review_thread": {"types": ["resolved", "unresolved"]}}
     assert workflow["permissions"] == {}
+    assert workflow["concurrency"] == {
+        "group": "thread-rearm-${{ github.event.pull_request.number }}",
+        "cancel-in-progress": True,
+    }
     job = workflow["jobs"]["rearm"]
     assert job["permissions"] == {"actions": "write"}
     assert job["runs-on"] == "ubuntu-latest"

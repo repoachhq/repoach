@@ -31,6 +31,16 @@ on:
 
 permissions: {}
 
+# One run per PR at a time: a new thread event cancels the run of that PR
+# still pending or in progress, so a burst of resolve / unresolve toggles
+# dispatches far fewer runs than toggles, and merge-on-ci.yml's own
+# per-PR concurrency group keeps at most one of those pending.  Every
+# dispatched gate re-reads the threads at head, so a dropped event loses
+# nothing.
+concurrency:
+  group: thread-rearm-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   rearm:
     name: Dispatch the merge gate
