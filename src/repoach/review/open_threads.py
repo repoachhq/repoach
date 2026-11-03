@@ -114,6 +114,19 @@ class OpenThreads(BaseModel):
         }
 
 
+def printable(text: str) -> str:
+    """``text`` with every non-printable character written as its Python escape.
+
+    A newline becomes backslash and ``n``, the ANSI escape character
+    backslash and ``x1b``: the text stays readable on one line.
+
+    A file name and a forge error come from outside: a newline or an ANSI
+    code in one must not split or forge a line ``review gate`` prints, nor
+    start a ``::`` workflow command when the gate runs in CI.
+    """
+    return "".join(ch if ch.isprintable() else ascii(ch)[1:-1] for ch in text)
+
+
 def thread_label(thread: ReviewThread) -> str:
     """Name a thread by its root comment id, and its GitLab discussion id when it has one."""
     root = str(thread.root_id) if thread.root_id else "?"
@@ -124,7 +137,8 @@ def thread_location(thread: ReviewThread) -> str:
     """``<file>:<line>`` of a thread's root comment; ``(no file)`` outside the diff."""
     if not thread.path:
         return "(no file)"
-    return f"{thread.path}:{thread.line}" if thread.line is not None else thread.path
+    path = printable(thread.path)
+    return f"{path}:{thread.line}" if thread.line is not None else path
 
 
 def read_open_threads(forge: Forge, pr_number: int) -> OpenThreads:
@@ -145,7 +159,7 @@ def read_open_threads(forge: Forge, pr_number: int) -> OpenThreads:
     try:
         threads = forge.unresolved_threads(pr_number)
     except ForgeError as exc:
-        error = redact_error(exc.message)[:200] or type(exc).__name__
+        error = printable(redact_error(exc.message)[:200]) or type(exc).__name__
         _log.warning("open_threads.unreadable", pr_number=pr_number, error=error)
         return OpenThreads(read=False, error=error)
     return OpenThreads(read=True, threads=list(threads))
@@ -200,6 +214,7 @@ __all__ = [
     "OpenThreads",
     "PullRequestRow",
     "hold_open_threads",
+    "printable",
     "read_open_threads",
     "thread_label",
     "thread_location",

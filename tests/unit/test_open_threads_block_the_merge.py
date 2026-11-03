@@ -38,6 +38,7 @@ from repoach.review.merge_wait import StrandedPR
 from repoach.review.open_threads import (
     OpenThreads,
     hold_open_threads,
+    printable,
     read_open_threads,
 )
 from repoach.review.orchestrator import ReviewTeamOrchestrator
@@ -627,3 +628,15 @@ def test_the_gate_reads_the_threads_last_and_hands_them_to_review_gate(
     assert evaluation.decision.reasons == ["1 unresolved review thread(s)"]
     assert evaluation.open_threads is not None
     assert evaluation.open_threads.thread_lines() == ["open thread 31 at src/x.py:4"]
+
+
+def test_a_file_name_or_error_from_the_forge_cannot_forge_a_line() -> None:
+    """Control characters in a path or a forge error are escaped before ``review gate`` prints them."""
+    spoof = ReviewThread(root_id=3, path="a.py\n::error::merged\x1b[2K", line=1)
+    assert OpenThreads(read=True, threads=[spoof]).thread_lines() == [
+        "open thread 3 at a.py\\n::error::merged\\x1b[2K:1"
+    ]
+    failed = read_open_threads(_Forge(ForgeError("HTTP 502\n::warning::spoofed")), 286)
+    assert failed.error == "HTTP 502\\n::warning::spoofed"
+    assert "\n" not in failed.summary_line()
+    assert printable("tab\there") == "tab\\there"
