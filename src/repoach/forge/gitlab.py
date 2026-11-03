@@ -361,14 +361,19 @@ def unresolved_threads_from_discussions(discussions: list[object]) -> list[Revie
     Returns:
         One open thread per such discussion, with the path and line of its
         first note when it has a position.
+
+    Raises:
+        ForgeError: A discussion is not an object or has no first note
+            object: the listing cannot be counted, so it is never read as
+            fewer open threads.
     """
     threads: list[ReviewThread] = []
     for discussion in discussions:
-        if not isinstance(discussion, dict):
-            continue
-        notes = discussion.get("notes")
+        notes = discussion.get("notes") if isinstance(discussion, dict) else None
         first = notes[0] if isinstance(notes, list) and notes else None
-        if not isinstance(first, dict) or first.get("resolvable") is not True:
+        if not isinstance(first, dict):
+            raise ForgeError("a discussion without a first note object; not counted")
+        if first.get("resolvable") is not True:
             continue
         if first.get("resolved") is True:
             continue

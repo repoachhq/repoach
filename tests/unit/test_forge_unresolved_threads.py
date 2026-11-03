@@ -112,6 +112,29 @@ def test_github_counts_an_open_thread_without_a_root_id_and_falls_back_to_the_or
             ),
             "without nodes or pageInfo",
         ),
+        (
+            json.dumps([{**threads_page([]), "errors": [{"message": "Something went wrong"}]}]),
+            "errors next to its data",
+        ),
+        (
+            json.dumps(
+                [
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequest": {
+                                    "reviewThreads": {
+                                        "pageInfo": {"hasNextPage": False},
+                                        "nodes": [None],
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            ),
+            "not an object",
+        ),
         ("", "returned no page"),
         ("[]", "returned no page"),
         ("not json", "JSON decode failed"),
@@ -207,11 +230,20 @@ def test_gitlab_counts_a_general_resolvable_discussion() -> None:
             {"id": "a" * 40, "notes": [{"id": 1, "type": "DiscussionNote", "resolvable": True}]},
             _discussion(2, resolvable=True, resolved=True),
             _discussion(3, resolvable=False, resolved=False, position=False),
-            {"id": "b" * 40, "notes": []},
-            "not a discussion",
         ]
     )
     assert [(t.root_id, t.thread_id, t.path, t.line) for t in threads] == [(1, "a" * 40, "", None)]
+
+
+@pytest.mark.parametrize(
+    "malformed", [{"id": "b" * 40, "notes": []}, {"id": "c" * 40}, "not a discussion"]
+)
+def test_gitlab_refuses_a_discussion_it_cannot_read(malformed: object) -> None:
+    """A discussion without a first note, or not an object, raises instead of counting fewer."""
+    with pytest.raises(ForgeError, match="without a first note object"):
+        unresolved_threads_from_discussions(
+            [_discussion(1, resolvable=True, resolved=True), malformed]
+        )
 
 
 def test_gitlab_refuses_a_listing_past_the_page_cap(

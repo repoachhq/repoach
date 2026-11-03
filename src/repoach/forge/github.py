@@ -373,9 +373,11 @@ def unresolved_threads_from_github(pages: object) -> list[ReviewThread]:
         line of its root comment.
 
     Raises:
-        ForgeError: A page is not a GraphQL ``data`` object, lacks its
-            ``nodes`` list or a boolean ``pageInfo.hasNextPage``, or the
-            listing ends on a page announcing a next one.
+        ForgeError: A page is not a GraphQL ``data`` object, carries
+            ``errors`` next to its data (a partial answer), lacks its
+            ``nodes`` list or a boolean ``pageInfo.hasNextPage``, holds a
+            thread that is not an object, or the listing ends on a page
+            announcing a next one.
     """
     listed = pages if isinstance(pages, list) else [pages]
     if not listed:
@@ -386,6 +388,8 @@ def unresolved_threads_from_github(pages: object) -> list[ReviewThread]:
         data = page.get("data") if isinstance(page, dict) else None
         if not isinstance(data, dict):
             raise ForgeError("reviewThreads returned no data object")
+        if isinstance(page, dict) and page.get("errors"):
+            raise ForgeError("reviewThreads answered with errors next to its data")
         repository = data.get("repository")
         pull = repository.get("pullRequest") if isinstance(repository, dict) else None
         connection = pull.get("reviewThreads") if isinstance(pull, dict) else None
@@ -397,7 +401,9 @@ def unresolved_threads_from_github(pages: object) -> list[ReviewThread]:
         if not isinstance(more, bool) or not isinstance(nodes, list):
             raise ForgeError("reviewThreads page without nodes or pageInfo.hasNextPage")
         for node in nodes:
-            if not isinstance(node, dict) or node.get("isResolved") is True:
+            if not isinstance(node, dict):
+                raise ForgeError("reviewThreads returned a thread that is not an object")
+            if node.get("isResolved") is True:
                 continue
             comments = node.get("comments")
             first = comments.get("nodes") if isinstance(comments, dict) else None
