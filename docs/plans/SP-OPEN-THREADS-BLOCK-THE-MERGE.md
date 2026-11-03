@@ -1,6 +1,6 @@
 # SP-OPEN-THREADS-BLOCK-THE-MERGE — An open review thread blocks the merge on every merge path
 
-Both forges list every open review thread over every page (GitHub reviewThreads 100 per page, GitLab discussions page by page until an empty one); MergeFacts carries the count and whether it was read; decide_at_head reads it for every merge path, the stranded sweep holds a PR with open threads, the release gate reads the release PR's threads, review pr and review gate report them, a resolved thread dispatches merge-on-ci on main, and the merge gate page names the forge settings as the second line of defence.
+Both forges list every open review thread over every page (GitHub reviewThreads 100 per page, GitLab discussions page by page until an empty one); MergeFacts carries the count and whether it was read; decide_at_head reads it for every merge path, the stranded sweep holds a PR with open threads, the release gate reads the release PR's threads, review pr and review gate report them, a reply in a thread re-arms merge-on-ci, and the merge gate page names the forge settings as the second line of defence.
 
 ## Step 1 — Declare the read and read every open GitHub thread
 
@@ -82,13 +82,13 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Done when**: pytest -q tests/unit/test_merge_gate.py tests/unit/test_review_team.py passes
 - **Unit tests**: `tests/unit/test_merge_gate.py::test_decision_merges_when_all_green`, `tests/unit/test_review_team.py::test_review_pr_runs_team_and_publishes`
 
-## Step 11 — Re-arm the merge when a review thread is resolved
+## Step 11 — Re-arm the merge when a thread is answered
 
-- **Files**: `.github/workflows/thread-rearm.yml`, `.github/workflows/merge-on-ci.yml`, `tests/unit/test_ci_portability.py`
-- **Action**: thread-rearm.yml runs on pull_request_review_thread (resolved, unresolved) for an allowlisted actor on a same-repo, non-draft PR into develop, GitHub-hosted, with permissions {} at the top and actions: write on its one job, whose one step runs gh workflow run merge-on-ci.yml --ref main -f pr=<n>. merge-on-ci.yml keeps its triggers: the event runs the workflow file of the PR's merge ref, so the merge-capable workflow is only dispatched, from main. test_ci_portability lists rearm as GitHub-hosted on purpose.
-- **Commit**: `ci(merge): re-judge the merge when a review thread is resolved`
-- **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k merge_on_ci passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_a_resolved_thread_dispatches_merge_on_ci_on_main_without_a_merge_token`, `tests/unit/test_open_threads_block_the_merge.py::test_merge_on_ci_admits_the_dispatch_and_never_listens_to_thread_events`, `tests/unit/test_ci_portability.py::test_every_runs_on_is_the_configurable_runner`
+- **Files**: `.github/workflows/merge-on-ci.yml`, `tests/unit/test_open_threads_block_the_merge.py`
+- **Action**: GitHub Actions has no pull_request_review_thread trigger, so no workflow listens to it. A reply in a thread is a submitted pull_request_review, which re-runs auto-review.yml, and merge-on-ci.yml admits that run's completion; its header names this path, and that a thread resolved without a reply waits for the next CI or review completion or for review stranded --dispatch. A test holds every workflow to the events Actions offers.
+- **Commit**: `ci(merge): re-arm the merge through a reply's review`
+- **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k 'workflow or rearms' passes
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_every_workflow_listens_only_to_events_actions_offers`, `tests/unit/test_open_threads_block_the_merge.py::test_a_reply_in_a_thread_rearms_the_merge_through_the_review_workflow`
 
 ## Step 12 — Document the rule and the forge settings
 
@@ -107,7 +107,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 {
   "spec_id": "SP-OPEN-THREADS-BLOCK-THE-MERGE",
   "title": "An open review thread blocks the merge on every merge path",
-  "summary": "Both forges list every open review thread over every page (GitHub reviewThreads 100 per page, GitLab discussions page by page until an empty one); MergeFacts carries the count and whether it was read; decide_at_head reads it for every merge path, the stranded sweep holds a PR with open threads, the release gate reads the release PR's threads, review pr and review gate report them, a resolved thread dispatches merge-on-ci on main, and the merge gate page names the forge settings as the second line of defence.",
+  "summary": "Both forges list every open review thread over every page (GitHub reviewThreads 100 per page, GitLab discussions page by page until an empty one); MergeFacts carries the count and whether it was read; decide_at_head reads it for every merge path, the stranded sweep holds a PR with open threads, the release gate reads the release PR's threads, review pr and review gate report them, a reply in a thread re-arms merge-on-ci, and the merge gate page names the forge settings as the second line of defence.",
   "steps": [
     {
       "index": 1,
@@ -279,19 +279,17 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
     },
     {
       "index": 11,
-      "title": "Re-arm the merge when a review thread is resolved",
+      "title": "Re-arm the merge when a thread is answered",
       "files": [
-        ".github/workflows/thread-rearm.yml",
         ".github/workflows/merge-on-ci.yml",
-        "tests/unit/test_ci_portability.py"
+        "tests/unit/test_open_threads_block_the_merge.py"
       ],
-      "action": "thread-rearm.yml runs on pull_request_review_thread (resolved, unresolved) for an allowlisted actor on a same-repo, non-draft PR into develop, GitHub-hosted, with permissions {} at the top and actions: write on its one job, whose one step runs gh workflow run merge-on-ci.yml --ref main -f pr=<n>. merge-on-ci.yml keeps its triggers: the event runs the workflow file of the PR's merge ref, so the merge-capable workflow is only dispatched, from main. test_ci_portability lists rearm as GitHub-hosted on purpose.",
-      "commit_message": "ci(merge): re-judge the merge when a review thread is resolved",
-      "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k merge_on_ci passes",
+      "action": "GitHub Actions has no pull_request_review_thread trigger, so no workflow listens to it. A reply in a thread is a submitted pull_request_review, which re-runs auto-review.yml, and merge-on-ci.yml admits that run's completion; its header names this path, and that a thread resolved without a reply waits for the next CI or review completion or for review stranded --dispatch. A test holds every workflow to the events Actions offers.",
+      "commit_message": "ci(merge): re-arm the merge through a reply's review",
+      "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k 'workflow or rearms' passes",
       "unit_tests": [
-        "tests/unit/test_open_threads_block_the_merge.py::test_a_resolved_thread_dispatches_merge_on_ci_on_main_without_a_merge_token",
-        "tests/unit/test_open_threads_block_the_merge.py::test_merge_on_ci_admits_the_dispatch_and_never_listens_to_thread_events",
-        "tests/unit/test_ci_portability.py::test_every_runs_on_is_the_configurable_runner"
+        "tests/unit/test_open_threads_block_the_merge.py::test_every_workflow_listens_only_to_events_actions_offers",
+        "tests/unit/test_open_threads_block_the_merge.py::test_a_reply_in_a_thread_rearms_the_merge_through_the_review_workflow"
       ]
     },
     {

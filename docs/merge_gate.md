@@ -54,16 +54,15 @@ Where it shows:
 - `repoach release gate --pr <N>` refuses while the release pull request
   has an open thread.
 
-Resolving a thread re-arms the merge: `thread-rearm.yml` runs on
-`pull_request_review_thread` (`resolved`, `unresolved`) for an allowed
-actor on a same-repo, non-draft pull request into `develop`, and
-dispatches `merge-on-ci.yml` on `main` for it, so a green pull request
-whose last thread is closed merges without a push. That event runs the
-workflow file of the pull request's merge ref, so `thread-rearm.yml`
-holds only `actions: write` and dispatches; a branch with push access
-could edit it in its own pull request, which is why the merge itself runs
-from `main`'s `merge-on-ci.yml` and `main`'s code, whose filters and
-gate decide. The rule reaches that lane with the next release.
+Resolving a thread starts no workflow: GitHub Actions has no
+`pull_request_review_thread` trigger. A reply in the thread does: it is a
+submitted pull request review, so it re-runs the review workflow, and
+`merge-on-ci.yml` re-judges when that run completes. Answer a thread,
+then resolve it, and a green pull request whose last thread is closed
+merges without a push. A thread resolved without a reply waits for the
+next CI or review completion, or for `repoach review stranded
+--dispatch`. `merge-on-ci.yml` runs `main`'s code, so the rule reaches
+that lane with the next release.
 
 ### The forge settings are the second line of defence
 
