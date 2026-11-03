@@ -125,6 +125,11 @@ class LocalDiffForge:
         self._check(number)
         return []
 
+    def unresolved_threads(self, number: int) -> list[ReviewThread]:
+        """Return no open thread: a local diff has no forge discussion."""
+        self._check(number)
+        return []
+
     def post_comment(
         self,
         number: int,

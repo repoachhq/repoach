@@ -30,6 +30,7 @@ from repoach.review.spec_gate import (
     spec_acceptance_criteria,
     spec_acceptance_selectors,
 )
+from tests.forge_fakes import no_open_threads
 
 _SPEC_PATH = "docs/specs/2026-10-25_SP-DRAFTY_drafty.md"
 _OWNED = "src/repoach/review/drafty.py"
@@ -107,7 +108,7 @@ def _gate(repo: Path, tmp_path: Path, changed: list[str]) -> tuple[object, objec
     init_findings_schema(db)
     record_review_integrity(db, pr_number=7, head_sha=_HEAD, n_reviewers=4, n_unparsed=0)
     record_spec_coverage(db, pr_number=7, head_sha=_HEAD, coverage=coverage)
-    facts = summarise_ledger_facts(db, pr_number=7, head_sha=_HEAD)
+    facts = no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=_HEAD))
     return facts, compute_merge_decision(facts)
 
 

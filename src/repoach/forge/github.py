@@ -356,6 +356,73 @@ def review_threads_from_github(pages: object) -> list[ReviewThread]:
     return threads
 
 
+def unresolved_threads_from_github(pages: object) -> list[ReviewThread]:
+    """Read the open threads of every ``--paginate --slurp`` page of ``reviewThreads``.
+
+    Every node whose ``isResolved`` is not ``true`` counts, a thread whose
+    first comment carries no ``databaseId`` included (its ``root_id`` is
+    ``0``): the merge gate counts open threads, it does not reply to them.
+    The last page must say ``hasNextPage: false``; a listing that stops
+    on a page announcing another is a truncated read, never a count.
+
+    Args:
+        pages: The decoded outer array of GraphQL responses.
+
+    Returns:
+        One open thread per node, in the forge's order, with the path and
+        line of its root comment.
+
+    Raises:
+        ForgeError: A page is not a GraphQL ``data`` object, carries
+            ``errors`` next to its data (a partial answer), lacks its
+            ``nodes`` list or a boolean ``pageInfo.hasNextPage``, holds a
+            thread that is not an object, or the listing ends on a page
+            announcing a next one.
+    """
+    listed = pages if isinstance(pages, list) else [pages]
+    if not listed:
+        raise ForgeError("reviewThreads returned no page")
+    threads: list[ReviewThread] = []
+    more = False
+    for page in listed:
+        data = page.get("data") if isinstance(page, dict) else None
+        if not isinstance(data, dict):
+            raise ForgeError("reviewThreads returned no data object")
+        if isinstance(page, dict) and page.get("errors"):
+            raise ForgeError("reviewThreads answered with errors next to its data")
+        repository = data.get("repository")
+        pull = repository.get("pullRequest") if isinstance(repository, dict) else None
+        connection = pull.get("reviewThreads") if isinstance(pull, dict) else None
+        if not isinstance(connection, dict):
+            raise ForgeError("reviewThreads returned no thread connection")
+        info = connection.get("pageInfo")
+        more = info.get("hasNextPage") if isinstance(info, dict) else None
+        nodes = connection.get("nodes")
+        if not isinstance(more, bool) or not isinstance(nodes, list):
+            raise ForgeError("reviewThreads page without nodes or pageInfo.hasNextPage")
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise ForgeError("reviewThreads returned a thread that is not an object")
+            if node.get("isResolved") is True:
+                continue
+            comments = node.get("comments")
+            first = comments.get("nodes") if isinstance(comments, dict) else None
+            head = first[0] if isinstance(first, list) and first else None
+            root_id = _int_or_none(head.get("databaseId")) if isinstance(head, dict) else None
+            path = node.get("path")
+            line = _int_or_none(node.get("line"))
+            threads.append(
+                ReviewThread(
+                    root_id=root_id or 0,
+                    path=path if isinstance(path, str) else "",
+                    line=line if line is not None else _int_or_none(node.get("originalLine")),
+                )
+            )
+    if more:
+        raise ForgeError("reviewThreads listing truncated: the last page announces another")
+    return threads
+
+
 def comment_from_github(payload: dict[str, object]) -> Comment:
     """Normalise a GitHub issue / review comment payload into a :class:`Comment`."""
     return Comment(
@@ -1373,6 +1440,40 @@ class GitHubForge:
         except json.JSONDecodeError as exc:
             raise ForgeError(f"JSON decode failed: {str(exc)[:160]}") from exc
         return review_threads_from_github(pages)
+
+    def unresolved_threads(self, number: int) -> list[ReviewThread]:
+        """Read every open review thread, 100 per page (SP-OPEN-THREADS-BLOCK-THE-MERGE).
+
+        Raises:
+            ForgeError: The call failed, did not decode, or ended on a page
+                announcing another.
+        """
+        res = self._run(
+            [
+                "api",
+                "graphql",
+                "--paginate",
+                "--slurp",
+                "-F",
+                "owner={owner}",
+                "-F",
+                "name={repo}",
+                "-F",
+                f"number={number}",
+                "-f",
+                "query=query($owner:String!,$name:String!,$number:Int!,$endCursor:String){"
+                "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+                "reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor}"
+                "nodes{isResolved path line originalLine comments(first:1){nodes{databaseId}}}}}}}",
+            ]
+        )
+        if not res.ok:
+            raise_for_gh(res, number=number)
+        try:
+            pages = json.loads(res.stdout) if res.stdout.strip() else []
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"JSON decode failed: {str(exc)[:160]}") from exc
+        return unresolved_threads_from_github(pages)
 
     @write_barrier
     def post_comment(

@@ -38,6 +38,7 @@ from repoach.review.spec_gate import (
     init_spec_coverage_schema,
     record_spec_coverage,
 )
+from tests.forge_fakes import no_open_threads
 
 _SPEC_PATH = "docs/specs/2026-10-25_SP-DRAFTY_drafty.md"
 _SELECTORS = [
@@ -149,6 +150,10 @@ class _Forge:
     def git(self, args: list[str]) -> str:
         raise AssertionError(f"the base ref resolves locally, no fetch expected: {args}")
 
+    def unresolved_threads(self, pr_number: int) -> list[object]:
+        """No open review thread."""
+        return []
+
     def comments(self, pr_number: int) -> list[object]:
         """No inline comment: the replay reads the comments for owner commands."""
         return []
@@ -231,7 +236,9 @@ def test_replay_recomputes_a_stale_row_of_a_draft_spec_and_the_gate_merges(
     repo, head = _repo(tmp_path, "draft")
     db = tmp_path / "state" / "review.db"
     _cached_run_with_stale_row(db, head, covered=False)
-    assert compute_merge_decision(summarise_ledger_facts(db, pr_number=7, head_sha=head)).reasons
+    assert compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    ).reasons
 
     team = _replay(repo, db, head, _Forge())
 
@@ -245,7 +252,9 @@ def test_replay_recomputes_a_stale_row_of_a_draft_spec_and_the_gate_merges(
     assert latest.planned == _SELECTORS
     assert latest.missing == []
     assert latest.rule_version == SPEC_COVERAGE_RULE_VERSION
-    decision = compute_merge_decision(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    decision = compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    )
     assert decision.merge is True
 
 
@@ -263,7 +272,7 @@ def test_replay_of_an_approved_spec_with_missing_selectors_stays_refused(
     assert team.spec_coverage_line == (
         f"review: spec coverage recomputed at {head[:7]}: planned 0, missing 1"
     )
-    facts = summarise_ledger_facts(db, pr_number=7, head_sha=head)
+    facts = no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=head))
     assert facts.spec_missing == [_SELECTORS[1]]
     assert compute_merge_decision(facts).reasons == [f"{_REASON}: {_SELECTORS[1]} (plan step 1)"]
 

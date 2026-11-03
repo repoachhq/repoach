@@ -136,6 +136,7 @@ from .merge_gate import (
     verdict_from_facts,
 )
 from .notifier import fire_review_routine
+from .open_threads import OpenThreads, read_open_threads
 from .owner_commands import OwnerCommandsRun, apply_owner_commands
 from .persistence import (
     DialogueEntry,
@@ -435,7 +436,12 @@ class TeamOutcome:
     ``threads_closed`` lists the recorded threads seen resolved on the
     forge (``finding_id``, ``login``, ``head_sha``, ``comment_id``,
     ``counted``) and ``thread_lines`` the lines naming them
-    (SP-FINDING-THREAD-IDS).
+    (SP-FINDING-THREAD-IDS). ``open_threads`` is the read of the review
+    threads still open on the forge, taken after posting and before the
+    archive report is written, else at the end of the run: the report
+    and ``review pr`` print ``review threads: <n> unresolved`` from it,
+    and the report's headline refuses on it as the merge gate does
+    (SP-OPEN-THREADS-BLOCK-THE-MERGE).
     ``refused_writes`` lists every write the forge's
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
@@ -486,6 +492,11 @@ class TeamOutcome:
     finding_posts: int = 0
     threads_closed: list[dict[str, object]] = field(default_factory=list)
     thread_lines: list[str] = field(default_factory=list)
+    open_threads: OpenThreads = field(default_factory=lambda: OpenThreads(read=False))
+
+    def record_open_threads(self, threads: OpenThreads) -> None:
+        """Carry the open review threads read at the end of the run (SP-OPEN-THREADS-BLOCK-THE-MERGE)."""
+        self.open_threads = threads
 
     def record_thread_closures(self, run: ClosureRun) -> None:
         """Carry what :func:`~repoach.review.finding_post_threads.detect_closed_threads` saw."""
@@ -1148,6 +1159,7 @@ class ReviewTeamOrchestrator:
                 posted_reviews=team.posted_reviews,
                 posted_comments=team.posted_comments,
             )
+        self._refresh_open_threads(pr_number, team)
 
         _log.info(
             "review_team.done",
@@ -1316,6 +1328,7 @@ class ReviewTeamOrchestrator:
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
         if self._post:
             self._publish_replayed(pr_number, team)
+        self._refresh_open_threads(pr_number, team)
         _log.info(
             "review_team.replayed",
             pr_number=pr_number,
@@ -1595,6 +1608,22 @@ class ReviewTeamOrchestrator:
                 message=redact_error(str(exc))[:200],
             )
 
+    def _refresh_open_threads(self, pr_number: int, team: TeamOutcome) -> None:
+        """Read the review threads open on the forge into ``team`` (SP-OPEN-THREADS-BLOCK-THE-MERGE).
+
+        The one place a run reads them, once when the read succeeds and at
+        most twice per run: a posting run reads them after its inline
+        comments and before the
+        archive, so the report counts the threads it opened; a run that
+        posted nothing (a dry run, a refused write) reads them at its end.
+        A read that already succeeded is kept, so the end-of-run call reads
+        only when the threads are still unread: a failed read is retried
+        once, at the end of the run.
+        """
+        if team.open_threads.read:
+            return
+        team.record_open_threads(read_open_threads(self._forge, pr_number))
+
     def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
         """Record the recorded finding threads resolved on the forge (SP-FINDING-THREAD-IDS G6).
 
@@ -1735,6 +1764,7 @@ class ReviewTeamOrchestrator:
             posted_ids=posted_ids,
             team=team,
         )
+        self._refresh_open_threads(pr_number, team)
         self._upsert_archive_comment(team)
         self._fire_routine(team)
         remember_verified_findings(self._db_path, pr_number=pr_number)
@@ -2393,15 +2423,19 @@ class ReviewTeamOrchestrator:
         found still blocking are named in the headline's reasons, as the
         gate names them (SP-GATE-REVERIFIES-AT-HEAD G8).
         """
-        facts = summarise_ledger_facts(
-            self._db_path,
-            pr_number=team.pr_number,
-            head_sha=team.head_sha or "",
-        ).model_copy(
-            update={
-                "reverified": dict(team.reverified),
-                "reverify_reasons": list(team.reverify_reasons),
-            }
+        facts = (
+            summarise_ledger_facts(
+                self._db_path,
+                pr_number=team.pr_number,
+                head_sha=team.head_sha or "",
+            )
+            .model_copy(
+                update={
+                    "reverified": dict(team.reverified),
+                    "reverify_reasons": list(team.reverify_reasons),
+                }
+            )
+            .with_threads(team.open_threads)
         )
         decision = compute_merge_decision(facts)
         return render_ledger_report(
@@ -2506,6 +2540,7 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "findings": [entry.as_json() for entry in team.findings],
         "verdict_basis": list(team.verdict_basis),
         "owner_resolved": list(team.owner_resolved),
+        "review_threads": team.open_threads.as_json(),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [
