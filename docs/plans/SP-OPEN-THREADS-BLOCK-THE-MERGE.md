@@ -24,7 +24,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: tests/forge_fakes.py gains threads_page(nodes, more=False) and thread_node(root_id, resolved, path, line), the GraphQL reviewThreads shapes. The two recorded review_threads fixtures keep their exchanges; their expected results gain path and line at the defaults.
 - **Commit**: `test(forge): shape the review thread answers`
 - **Done when**: pytest -q tests/unit/test_forge_unresolved_threads.py passes
-- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`
+- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_mr_without_discussions_reads_one_empty_page`
 
 ## Step 4 — Refuse on open or unreadable threads in the pure gate
 
@@ -37,10 +37,10 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 ## Step 5 — Read the threads on every merge path
 
 - **Files**: `src/repoach/review/auto_merge.py`, `tests/merge_wait_fakes.py`, `tests/unit/test_open_threads_block_the_merge.py`
-- **Action**: decide_at_head reads the threads unless given open_threads and folds them in with MergeFacts.with_threads; evaluate_merge_gate reads them once and keeps them on GateEvaluation.open_threads. run_auto_merge records SKIP_GATE with 'pure gate refused: <n> unresolved review thread(s)' in its attempts comment. The fixture forge serves per-PR threads to gh api graphql.
+- **Action**: decide_at_head reads the threads last, after the re-check and the ledger read and right before the decision, folds them in with MergeFacts.with_threads and hands them to threads_seen; evaluate_merge_gate keeps that read on GateEvaluation.open_threads. run_auto_merge records SKIP_GATE with 'pure gate refused: <n> unresolved review thread(s)' in its attempts comment. The fixture forge serves per-PR threads to gh api graphql.
 - **Commit**: `feat(review): read the open threads on every merge path`
 - **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k auto_merge passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_a_green_pr_with_an_open_thread_then_merges_once_it_is_resolved`, `tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_when_the_threads_cannot_be_read`
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_a_green_pr_with_an_open_thread_then_merges_once_it_is_resolved`, `tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_when_the_threads_cannot_be_read`, `tests/unit/test_open_threads_block_the_merge.py::test_the_gate_reads_the_threads_last_and_hands_them_to_review_gate`
 
 ## Step 6 — Hold stranded PRs whose threads refuse
 
@@ -158,7 +158,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "commit_message": "test(forge): shape the review thread answers",
       "done_when": "pytest -q tests/unit/test_forge_unresolved_threads.py passes",
       "unit_tests": [
-        "tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three"
+        "tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three",
+        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_mr_without_discussions_reads_one_empty_page"
       ]
     },
     {
@@ -186,12 +187,13 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
         "tests/merge_wait_fakes.py",
         "tests/unit/test_open_threads_block_the_merge.py"
       ],
-      "action": "decide_at_head reads the threads unless given open_threads and folds them in with MergeFacts.with_threads; evaluate_merge_gate reads them once and keeps them on GateEvaluation.open_threads. run_auto_merge records SKIP_GATE with 'pure gate refused: <n> unresolved review thread(s)' in its attempts comment. The fixture forge serves per-PR threads to gh api graphql.",
+      "action": "decide_at_head reads the threads last, after the re-check and the ledger read and right before the decision, folds them in with MergeFacts.with_threads and hands them to threads_seen; evaluate_merge_gate keeps that read on GateEvaluation.open_threads. run_auto_merge records SKIP_GATE with 'pure gate refused: <n> unresolved review thread(s)' in its attempts comment. The fixture forge serves per-PR threads to gh api graphql.",
       "commit_message": "feat(review): read the open threads on every merge path",
       "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k auto_merge passes",
       "unit_tests": [
         "tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_a_green_pr_with_an_open_thread_then_merges_once_it_is_resolved",
-        "tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_when_the_threads_cannot_be_read"
+        "tests/unit/test_open_threads_block_the_merge.py::test_auto_merge_refuses_when_the_threads_cannot_be_read",
+        "tests/unit/test_open_threads_block_the_merge.py::test_the_gate_reads_the_threads_last_and_hands_them_to_review_gate"
       ]
     },
     {
