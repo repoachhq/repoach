@@ -279,3 +279,16 @@ def test_gitlab_mr_without_discussions_reads_one_empty_page(tmp_path: Path) -> N
     spawner = PagedGlab([])
     assert _gitlab(tmp_path, spawner).unresolved_threads(339) == []
     assert spawner.endpoints == ["projects/:id/merge_requests/339/discussions?per_page=100&page=1"]
+
+
+def test_github_open_thread_with_null_path_or_comments_keeps_empty_defaults() -> None:
+    """A file-level or outdated thread with null path, line and comments is still counted."""
+    node = {
+        "isResolved": False,
+        "path": None,
+        "line": None,
+        "originalLine": None,
+        "comments": {"nodes": None},
+    }
+    threads = unresolved_threads_from_github([threads_page([node])])
+    assert [(t.root_id, t.path, t.line) for t in threads] == [(0, "", None)]

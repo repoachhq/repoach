@@ -8,7 +8,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: ReviewThread gains path ('') and line (None); Forge gains unresolved_threads(number) -> list[ReviewThread], every open thread over every page, ForgeError when the listing cannot be read whole. GitHubForge runs one gh api graphql --paginate --slurp query of reviewThreads(first:100,after:$endCursor) with pageInfo, isResolved, path, line, originalLine and the first comment's databaseId; unresolved_threads_from_github keeps each node not resolved (root id 0 without a databaseId, originalLine when line is null) and raises on no page, a page without data, thread connection, nodes list or boolean hasNextPage, a page carrying errors, a thread that is not an object, and a last page saying hasNextPage true. The tests build pages with the step 3 shapes.
 - **Commit**: `feat(forge): read every open github review thread`
 - **Done when**: pytest -q tests/unit/test_forge_unresolved_threads.py -k github passes
-- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_github_counts_an_open_thread_without_a_root_id_and_falls_back_to_the_original_line`, `tests/unit/test_forge_unresolved_threads.py::test_github_refuses_a_listing_it_cannot_count`, `tests/unit/test_forge_unresolved_threads.py::test_github_failed_call_raises`
+- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_github_counts_an_open_thread_without_a_root_id_and_falls_back_to_the_original_line`, `tests/unit/test_forge_unresolved_threads.py::test_github_refuses_a_listing_it_cannot_count`, `tests/unit/test_forge_unresolved_threads.py::test_github_failed_call_raises`, `tests/unit/test_forge_unresolved_threads.py::test_github_open_thread_with_null_path_or_comments_keeps_empty_defaults`
 
 ## Step 2 — Read every open GitLab discussion, page by page
 
@@ -124,7 +124,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
         "tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three",
         "tests/unit/test_forge_unresolved_threads.py::test_github_counts_an_open_thread_without_a_root_id_and_falls_back_to_the_original_line",
         "tests/unit/test_forge_unresolved_threads.py::test_github_refuses_a_listing_it_cannot_count",
-        "tests/unit/test_forge_unresolved_threads.py::test_github_failed_call_raises"
+        "tests/unit/test_forge_unresolved_threads.py::test_github_failed_call_raises",
+        "tests/unit/test_forge_unresolved_threads.py::test_github_open_thread_with_null_path_or_comments_keeps_empty_defaults"
       ]
     },
     {
