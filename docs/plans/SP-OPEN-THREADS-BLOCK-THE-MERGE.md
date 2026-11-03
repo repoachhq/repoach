@@ -48,7 +48,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: hold_open_threads(rows, read) splits any rows with pr_number and head_sha into those to dispatch and HeldPR(pr_number, head_sha, reason) for each one its threads refuse. review stranded prints 'held #<n> (<reason>)' on stderr under --dispatch, lists held in its JSON and its table, and dispatches only the others.
 - **Commit**: `feat(review): hold stranded prs with open review threads`
 - **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k 'hold or stranded' passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_hold_open_threads_keeps_back_every_pr_its_threads_refuse`, `tests/unit/test_open_threads_block_the_merge.py::test_stranded_dispatch_holds_a_green_pr_with_an_open_thread`
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_hold_open_threads_keeps_back_every_pr_its_threads_refuse`, `tests/unit/test_open_threads_block_the_merge.py::test_stranded_dispatch_holds_a_green_pr_with_an_open_thread`, `tests/unit/test_open_threads_block_the_merge.py::test_an_unexpected_error_propagates_instead_of_holding_or_counting`
 
 ## Step 7 — Refuse a release whose PR has open threads
 
@@ -207,7 +207,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k 'hold or stranded' passes",
       "unit_tests": [
         "tests/unit/test_open_threads_block_the_merge.py::test_hold_open_threads_keeps_back_every_pr_its_threads_refuse",
-        "tests/unit/test_open_threads_block_the_merge.py::test_stranded_dispatch_holds_a_green_pr_with_an_open_thread"
+        "tests/unit/test_open_threads_block_the_merge.py::test_stranded_dispatch_holds_a_green_pr_with_an_open_thread",
+        "tests/unit/test_open_threads_block_the_merge.py::test_an_unexpected_error_propagates_instead_of_holding_or_counting"
       ]
     },
     {

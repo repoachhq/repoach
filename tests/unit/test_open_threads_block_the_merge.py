@@ -540,3 +540,17 @@ def test_review_pr_reads_the_threads_once_and_rereads_once_after_a_failed_read(
     assert "| Unresolved review threads | unreadable |" in flaky.archive_calls[0]["body"]
     assert team.open_threads.read is True
     assert team.open_threads.summary_line() == "review threads: 0 unresolved"
+
+
+def test_an_unexpected_error_propagates_instead_of_holding_or_counting() -> None:
+    """Only a ForgeError becomes an unread result; any other error fails loud through the sweep."""
+
+    class _Broken:
+        def unresolved_threads(self, number: int) -> list[ReviewThread]:
+            raise RuntimeError("forge client bug")
+
+    with pytest.raises(RuntimeError, match="forge client bug"):
+        read_open_threads(_Broken(), 286)
+    rows = [StrandedPR(pr_number=286, head_sha="a" * 40, green_since=NOW, reason="stranded")]
+    with pytest.raises(RuntimeError, match="forge client bug"):
+        hold_open_threads(rows, lambda number: read_open_threads(_Broken(), number))
