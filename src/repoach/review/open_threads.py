@@ -97,7 +97,7 @@ class OpenThreads(BaseModel):
         return [f"open thread {thread_label(t)} at {thread_location(t)}" for t in self.threads]
 
     def as_json(self) -> dict[str, object]:
-        """The JSON ``review pr`` and ``review gate`` carry under ``review_threads``."""
+        """The JSON ``review pr``, ``review gate`` and ``release gate`` carry under ``review_threads``."""
         return {
             "read": self.read,
             "unresolved": self.count if self.read else None,
@@ -128,13 +128,30 @@ def printable(text: str) -> str:
 
 
 def thread_label(thread: ReviewThread) -> str:
-    """Name a thread by its root comment id, and its GitLab discussion id when it has one."""
+    """Name a thread by its root comment id, and its GitLab discussion id when it has one.
+
+    Args:
+        thread: An open thread as the forge listed it.
+
+    Returns:
+        ``<root id>`` (``?`` when the forge gave none), followed by
+        ``(<discussion id>)`` on GitLab, escaped with :func:`printable`.
+    """
     root = str(thread.root_id) if thread.root_id else "?"
-    return f"{root} ({thread.thread_id})" if thread.thread_id else root
+    return f"{root} ({printable(thread.thread_id)})" if thread.thread_id else root
 
 
 def thread_location(thread: ReviewThread) -> str:
-    """``<file>:<line>`` of a thread's root comment; ``(no file)`` outside the diff."""
+    """Locate a thread by the file and line of its root comment.
+
+    Args:
+        thread: An open thread as the forge listed it.
+
+    Returns:
+        ``<file>:<line>``, ``<file>`` without a line, or ``(no file)`` for
+        a thread outside the diff; the file name escaped with
+        :func:`printable`.
+    """
     if not thread.path:
         return "(no file)"
     path = printable(thread.path)

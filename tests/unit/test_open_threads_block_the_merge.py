@@ -640,3 +640,7 @@ def test_a_file_name_or_error_from_the_forge_cannot_forge_a_line() -> None:
     assert failed.error == "HTTP 502\\n::warning::spoofed"
     assert "\n" not in failed.summary_line()
     assert printable("tab\there") == "tab\\there"
+    forged_id = ReviewThread(root_id=4, thread_id="ab\n::error::x")
+    assert OpenThreads(read=True, threads=[forged_id]).thread_lines() == [
+        "open thread 4 (ab\\n::error::x) at (no file)"
+    ]
