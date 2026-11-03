@@ -23,11 +23,13 @@ from repoach.cli import review_cmds
 from repoach.forge import ForgeError, PullRequest, ReviewThread
 from repoach.forge.github import GhResult
 from repoach.forge.runner import CommandResult
+from repoach.review import auto_merge
 from repoach.review.auto_merge import (
     OUTCOME_MERGED,
     OUTCOME_SKIP_GATE,
     CIGateOutcome,
     GateEvaluation,
+    evaluate_merge_gate,
     run_auto_merge,
 )
 from repoach.review.findings import init_findings_schema
@@ -569,3 +571,35 @@ def test_an_unexpected_error_propagates_instead_of_holding_or_counting() -> None
 def test_thread_lines_cover_missing_root_path_and_line(thread: ReviewThread, line: str) -> None:
     """A thread without a root id, a file or a line is still named, never dropped."""
     assert OpenThreads(read=True, threads=[thread]).thread_lines() == [line]
+
+
+def test_the_gate_reads_the_threads_last_and_hands_them_to_review_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The thread read follows the ledger read, and ``review gate`` gets the threads it counted."""
+    db = tmp_path / "review.db"
+    seed_review(db, 259, HEAD_259)
+    fx = _green([thread_node(31, resolved=False, path="src/x.py", line=4)])
+    order: list[str] = []
+    gather = auto_merge.gather_merge_facts
+
+    def gather_logged(*args: object, **kwargs: object) -> MergeFacts:
+        order.append("ledger")
+        return gather(*args, **kwargs)
+
+    answer = fx.forge._run
+
+    def run_logged(args: list[str], *, input_data: str | None = None):
+        if args[:2] == ["api", "graphql"]:
+            order.append("threads")
+        return answer(args, input_data=input_data)
+
+    monkeypatch.setattr(auto_merge, "gather_merge_facts", gather_logged)
+    fx.forge._run = run_logged
+    evaluation = evaluate_merge_gate(
+        259, forge=fx.forge, db_path=db, repo_root=REPO_ROOT, wait_seconds=0
+    )
+    assert order == ["ledger", "threads"]
+    assert evaluation.decision.reasons == ["1 unresolved review thread(s)"]
+    assert evaluation.open_threads is not None
+    assert evaluation.open_threads.thread_lines() == ["open thread 31 at src/x.py:4"]

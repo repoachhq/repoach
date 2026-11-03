@@ -700,14 +700,15 @@ def decide_at_head(
     head_tree: bool = False,
     base_ref: str | None = None,
     budget: RefuterBudget | None = None,
-    open_threads: OpenThreads | None = None,
+    threads_seen: Callable[[OpenThreads], None] | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
-    The pull request's open review threads are read from the forge at
-    decision time (:func:`~repoach.review.open_threads.read_open_threads`,
-    SP-OPEN-THREADS-BLOCK-THE-MERGE) unless ``open_threads`` carries a
-    read the caller already made: one open thread refuses with
+    The pull request's open review threads are read from the forge last,
+    after the re-check and the ledger read and right before the decision
+    (:func:`~repoach.review.open_threads.read_open_threads`,
+    SP-OPEN-THREADS-BLOCK-THE-MERGE), so a thread opened while the
+    refuter ran is still counted: one open thread refuses with
     ``<n> unresolved review thread(s)``, a failed read with
     ``review threads unreadable: <why>``. Every merge path reaches this
     function, so none merges with an open thread.
@@ -772,8 +773,8 @@ def decide_at_head(
             Required when ``head_tree`` is True: ``repo_root`` is then the
             PR's head tree, and a pull request never sizes its own
             refuter. Unused otherwise.
-        open_threads: The open review threads the caller already read
-            (``review gate`` names them); ``None`` reads them here.
+        threads_seen: Receives the threads read, so a caller can name
+            them (``review gate``); the read itself always happens here.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -816,27 +817,25 @@ def decide_at_head(
             root=root,
             base_ref=base_ref,
         )
-    facts = (
-        gather_merge_facts(
-            db,
-            pr_number=pr_number,
-            repo_root=root,
-            head_sha=resolved_head,
-            ci_green=ci_green,
-            gates_config=config,
-        )
-        .model_copy(
-            update={
-                "reverified": reverified.counts(),
-                "reverify_reasons": reverified.reasons(),
-                "reverify_line": reverified.summary_line(),
-                "spec_recompute_failure": recompute_failure,
-            }
-        )
-        .with_threads(
-            open_threads if open_threads is not None else read_open_threads(forge, pr_number)
-        )
+    facts = gather_merge_facts(
+        db,
+        pr_number=pr_number,
+        repo_root=root,
+        head_sha=resolved_head,
+        ci_green=ci_green,
+        gates_config=config,
+    ).model_copy(
+        update={
+            "reverified": reverified.counts(),
+            "reverify_reasons": reverified.reasons(),
+            "reverify_line": reverified.summary_line(),
+            "spec_recompute_failure": recompute_failure,
+        }
     )
+    threads = read_open_threads(forge, pr_number)
+    if threads_seen is not None:
+        threads_seen(threads)
+    facts = facts.with_threads(threads)
     return resolved_head, facts, compute_merge_decision(facts)
 
 
@@ -986,7 +985,7 @@ def evaluate_merge_gate(
         producers=producers,
     )
     tree_kind: str | None = None
-    threads = read_open_threads(forge, pr_number)
+    seen: list[OpenThreads] = []
     if pin_tree:
         checkout = repo_root or Path.cwd()
         with materialise_head(
@@ -1013,7 +1012,7 @@ def evaluate_merge_gate(
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
                 budget=budget,
-                open_threads=threads,
+                threads_seen=seen.append,
             )
         tree_kind = tree.tree
     else:
@@ -1025,7 +1024,7 @@ def evaluate_merge_gate(
             repo_root=repo_root,
             head_sha=verified_head,
             judge_factory=judge_factory,
-            open_threads=threads,
+            threads_seen=seen.append,
         )
     _log.info(
         "auto_merge.gate_evaluated",
@@ -1044,7 +1043,7 @@ def evaluate_merge_gate(
         pull_request=pr,
         tree=tree_kind,
         read_changed_files=lambda: diff_files(forge.diff(pr_number).text),
-        open_threads=threads,
+        open_threads=seen[-1] if seen else None,
     )
 
 
