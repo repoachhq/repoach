@@ -13,7 +13,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 ## Step 2 — Read every open GitLab discussion, page by page
 
 - **Files**: `src/repoach/forge/gitlab.py`, `src/repoach/bench/local_forge.py`, `tests/unit/test_forge_unresolved_threads.py`
-- **Action**: GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position, and raises on a discussion without a first note object. LocalDiffForge returns no thread.
+- **Action**: GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position, and raises on a discussion without a first note object or without boolean resolvable/resolved. LocalDiffForge returns no thread.
 - **Commit**: `feat(forge): read every open gitlab discussion`
 - **Done when**: pytest -q tests/unit/test_forge_unresolved_threads.py -k gitlab passes
 - **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_gitlab_reads_pages_until_an_empty_one_and_finds_the_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_counts_a_general_resolvable_discussion`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_listing_past_the_page_cap`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_page_that_is_not_an_array_or_fails`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_discussion_it_cannot_read`
@@ -24,7 +24,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: tests/forge_fakes.py gains threads_page(nodes, more=False) and thread_node(root_id, resolved, path, line), the GraphQL reviewThreads shapes. The two recorded review_threads fixtures keep their exchanges; their expected results gain path and line at the defaults.
 - **Commit**: `test(forge): shape the review thread answers`
 - **Done when**: pytest -q tests/unit/test_forge_unresolved_threads.py passes
-- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_mr_without_discussions_reads_one_empty_page`
+- **Unit tests**: `tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_mr_without_discussions_reads_one_empty_page`, `tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_note_that_does_not_say_whether_it_is_open`
 
 ## Step 4 — Refuse on open or unreadable threads in the pure gate
 
@@ -136,7 +136,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
         "src/repoach/bench/local_forge.py",
         "tests/unit/test_forge_unresolved_threads.py"
       ],
-      "action": "GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position, and raises on a discussion without a first note object. LocalDiffForge returns no thread.",
+      "action": "GitLabForge.unresolved_threads asks merge_requests/<n>/discussions?per_page=100&page=<p> from page 1 until an empty array, without glab --paginate, at most DISCUSSION_PAGES_MAX (50) pages, else ForgeError; a page that is not an array raises. unresolved_threads_from_discussions keeps each discussion whose first note is resolvable and not resolved, diff or general, path and line from its position, and raises on a discussion without a first note object or without boolean resolvable/resolved. LocalDiffForge returns no thread.",
       "commit_message": "feat(forge): read every open gitlab discussion",
       "done_when": "pytest -q tests/unit/test_forge_unresolved_threads.py -k gitlab passes",
       "unit_tests": [
@@ -160,7 +160,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "done_when": "pytest -q tests/unit/test_forge_unresolved_threads.py passes",
       "unit_tests": [
         "tests/unit/test_forge_unresolved_threads.py::test_github_reads_the_only_open_thread_on_page_three",
-        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_mr_without_discussions_reads_one_empty_page"
+        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_mr_without_discussions_reads_one_empty_page",
+        "tests/unit/test_forge_unresolved_threads.py::test_gitlab_refuses_a_note_that_does_not_say_whether_it_is_open"
       ]
     },
     {
