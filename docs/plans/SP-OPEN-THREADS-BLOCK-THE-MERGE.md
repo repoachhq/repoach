@@ -61,7 +61,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 ## Step 8 — Report the open threads in the review and its archive
 
 - **Files**: `src/repoach/review/report.py`, `src/repoach/review/orchestrator.py`, `tests/unit/test_open_threads_block_the_merge.py`
-- **Action**: TeamOutcome gains open_threads; _refresh_open_threads reads them once per run: after posting and before the archive, else at the end of the run. The archive facts table gains 'Unresolved review threads' (unreadable when not read), its headline refuses as the gate does, and team_outcome_to_dict carries review_threads.
+- **Action**: TeamOutcome gains open_threads; _refresh_open_threads reads them unless already read, once per run: after posting and before the archive, else at the end of the run. The archive facts table gains 'Unresolved review threads' (unreadable when not read), its headline refuses as the gate does, and team_outcome_to_dict carries review_threads.
 - **Commit**: `feat(review): report the open review threads`
 - **Done when**: pytest -q tests/unit/test_open_threads_block_the_merge.py -k report passes
 - **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_report_shows_the_thread_count_and_its_refusal`, `tests/unit/test_open_threads_block_the_merge.py::test_review_pr_reads_the_threads_once_and_rereads_once_after_a_failed_read`
@@ -72,7 +72,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: review pr prints 'review threads: <n> unresolved' on stderr and carries review_threads in its JSON. review gate prints the same line, then one 'open thread <id> at <file>:<line>' per thread, and carries facts.unresolved_threads, facts.threads_read and review_threads. The harness forge serves a threads list to gh api graphql.
 - **Commit**: `feat(review): print the open review threads`
 - **Done when**: pytest -q tests/integration/test_open_threads_block_the_merge_end_to_end.py passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted`, `tests/unit/test_open_threads_block_the_merge.py::test_thread_lines_cover_missing_root_path_and_line`
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted`, `tests/unit/test_open_threads_block_the_merge.py::test_thread_lines_cover_missing_root_path_and_line`, `tests/unit/test_open_threads_block_the_merge.py::test_a_file_name_or_error_from_the_forge_cannot_forge_a_line`
 
 ## Step 10 — Answer thread reads in the test forges
 
@@ -237,7 +237,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
         "src/repoach/review/orchestrator.py",
         "tests/unit/test_open_threads_block_the_merge.py"
       ],
-      "action": "TeamOutcome gains open_threads; _refresh_open_threads reads them once per run: after posting and before the archive, else at the end of the run. The archive facts table gains 'Unresolved review threads' (unreadable when not read), its headline refuses as the gate does, and team_outcome_to_dict carries review_threads.",
+      "action": "TeamOutcome gains open_threads; _refresh_open_threads reads them unless already read, once per run: after posting and before the archive, else at the end of the run. The archive facts table gains 'Unresolved review threads' (unreadable when not read), its headline refuses as the gate does, and team_outcome_to_dict carries review_threads.",
       "commit_message": "feat(review): report the open review threads",
       "done_when": "pytest -q tests/unit/test_open_threads_block_the_merge.py -k report passes",
       "unit_tests": [
@@ -258,7 +258,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "done_when": "pytest -q tests/integration/test_open_threads_block_the_merge_end_to_end.py passes",
       "unit_tests": [
         "tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted",
-        "tests/unit/test_open_threads_block_the_merge.py::test_thread_lines_cover_missing_root_path_and_line"
+        "tests/unit/test_open_threads_block_the_merge.py::test_thread_lines_cover_missing_root_path_and_line",
+        "tests/unit/test_open_threads_block_the_merge.py::test_a_file_name_or_error_from_the_forge_cannot_forge_a_line"
       ]
     },
     {
