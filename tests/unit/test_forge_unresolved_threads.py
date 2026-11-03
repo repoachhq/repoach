@@ -149,9 +149,17 @@ def test_github_refuses_a_listing_it_cannot_count(
         forge.unresolved_threads(7)
 
 
-def test_github_failed_call_raises(tmp_path: Path) -> None:
-    """A failed ``gh`` call is a ``ForgeError``, not an empty listing."""
-    forge = ScriptedGh(tmp_path, GhResult(1, "", "HTTP 502: bad gateway", argv=["gh"]))
+@pytest.mark.parametrize(
+    ("returncode", "stderr"),
+    [
+        (1, "HTTP 502: bad gateway"),
+        (124, "gh: request timed out"),
+        (1, "unexpected end of input, not JSON either"),
+    ],
+)
+def test_github_failed_call_raises(tmp_path: Path, returncode: int, stderr: str) -> None:
+    """A failed ``gh`` call, a timeout or a garbled error is a ``ForgeError``, not an empty listing."""
+    forge = ScriptedGh(tmp_path, GhResult(returncode, "", stderr, argv=["gh"]))
     with pytest.raises(ForgeError):
         forge.unresolved_threads(7)
 
@@ -227,7 +235,12 @@ def test_gitlab_counts_a_general_resolvable_discussion() -> None:
     """A resolvable discussion outside the diff counts, with no file; resolved and plain ones do not."""
     threads = unresolved_threads_from_discussions(
         [
-            {"id": "a" * 40, "notes": [{"id": 1, "type": "DiscussionNote", "resolvable": True}]},
+            {
+                "id": "a" * 40,
+                "notes": [
+                    {"id": 1, "type": "DiscussionNote", "resolvable": True, "resolved": False}
+                ],
+            },
             _discussion(2, resolvable=True, resolved=True),
             _discussion(3, resolvable=False, resolved=False, position=False),
         ]
@@ -292,3 +305,19 @@ def test_github_open_thread_with_null_path_or_comments_keeps_empty_defaults() ->
     }
     threads = unresolved_threads_from_github([threads_page([node])])
     assert [(t.root_id, t.path, t.line) for t in threads] == [(0, "", None)]
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        {"id": 5, "type": "DiffNote", "resolvable": "true", "resolved": False},
+        {"id": 5, "type": "DiffNote", "resolvable": None},
+        {"id": 5, "type": "DiffNote"},
+        {"id": 5, "type": "DiffNote", "resolvable": True, "resolved": None},
+        {"id": 5, "type": "DiffNote", "resolvable": True},
+    ],
+)
+def test_gitlab_refuses_a_note_that_does_not_say_whether_it_is_open(note: dict) -> None:
+    """A non-boolean resolvable or resolved is refused: it could be an open thread."""
+    with pytest.raises(ForgeError, match="boolean"):
+        unresolved_threads_from_discussions([{"id": "d" * 40, "notes": [note]}])
