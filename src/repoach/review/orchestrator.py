@@ -1617,7 +1617,7 @@ class ReviewTeamOrchestrator:
         posting run reads them after its inline comments and before the
         archive, so the report counts the threads it opened; a run that
         posted nothing (a dry run, a refused write) reads them at its end.
-        A failed read is carried as unread and read once more at the end.
+        A failed read is carried as unread and retried once at the end of the run.
         """
         team.record_open_threads(read_open_threads(self._forge, pr_number))
 
