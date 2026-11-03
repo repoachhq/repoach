@@ -222,21 +222,24 @@ def test_auto_merge_refuses_when_the_threads_cannot_be_read(tmp_path: Path) -> N
 
 
 def test_hold_open_threads_keeps_back_every_pr_its_threads_refuse() -> None:
-    """Open and unreadable threads hold a row; a PR with none is dispatched."""
+    """Open and unreadable threads hold a row, the rest are dispatched; both keep row order."""
     rows = [
         StrandedPR(pr_number=n, head_sha=str(n) * 40, green_since=NOW, reason="stranded")
-        for n in (1, 2, 3)
+        for n in (4, 2, 3, 1, 5)
     ]
     reads = {
-        1: OpenThreads(read=True),
+        4: OpenThreads(read=True),
         2: OpenThreads(read=True, threads=[ReviewThread(root_id=5)]),
         3: OpenThreads(read=False, error="HTTP 403"),
+        1: OpenThreads(read=True),
+        5: OpenThreads(read=False, error="HTTP 502"),
     }
     dispatchable, held = hold_open_threads(rows, reads.__getitem__)
-    assert [row.pr_number for row in dispatchable] == [1]
-    assert [(h.pr_number, h.reason) for h in held] == [
-        (2, "1 unresolved review thread(s)"),
-        (3, "review threads unreadable: HTTP 403"),
+    assert dispatchable == [rows[0], rows[3]]
+    assert [(h.pr_number, h.head_sha, h.reason) for h in held] == [
+        (2, "2" * 40, "1 unresolved review thread(s)"),
+        (3, "3" * 40, "review threads unreadable: HTTP 403"),
+        (5, "5" * 40, "review threads unreadable: HTTP 502"),
     ]
 
 
