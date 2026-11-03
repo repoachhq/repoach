@@ -65,7 +65,7 @@ from tests.unit.test_review_team import _outcome, _StubGitHubForge, _StubReviewe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MERGE_ON_CI = REPO_ROOT / ".github" / "workflows" / "merge-on-ci.yml"
-THREAD_REARM = REPO_ROOT / ".github" / "workflows" / "thread-rearm.yml"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 NOW = datetime.fromisoformat("2026-10-26T10:00:00+00:00")
 
 
@@ -323,64 +323,80 @@ def test_report_shows_the_thread_count_and_its_refusal(tmp_path: Path) -> None:
     assert "| Unresolved review threads | unreadable |" in body
 
 
-def _thread_event(
-    *, actor: str = "jwfaye", draft: bool = False, base: str = "develop", repo: str = REPOSITORY
-) -> Context:
-    return Context(
+ACTIONS_EVENTS = frozenset(
+    {
+        "branch_protection_rule",
+        "check_run",
+        "check_suite",
+        "create",
+        "delete",
+        "deployment",
+        "deployment_status",
+        "discussion",
+        "discussion_comment",
+        "fork",
+        "gollum",
+        "issue_comment",
+        "issues",
+        "label",
+        "merge_group",
+        "milestone",
+        "page_build",
+        "public",
+        "pull_request",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "pull_request_target",
+        "push",
+        "registry_package",
+        "release",
+        "repository_dispatch",
+        "schedule",
+        "status",
+        "watch",
+        "workflow_call",
+        "workflow_dispatch",
+        "workflow_run",
+    }
+)
+"""The events a GitHub Actions workflow can listen to (docs: "Events that trigger workflows").
+
+``pull_request_review_thread`` is a webhook event, not one of them: a
+workflow listening to it failed as "a workflow file issue" on every push
+(2026-11-03, runs 41550850883 to 41559980463).
+"""
+
+
+def test_every_workflow_listens_only_to_events_actions_offers() -> None:
+    """No workflow waits on an event that can never start it."""
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        triggers = yaml.safe_load(path.read_text(encoding="utf-8"))[True]
+        events = set(triggers) if isinstance(triggers, dict) else set(triggers or [])
+        assert events <= ACTIONS_EVENTS, (path.name, sorted(events - ACTIONS_EVENTS))
+
+
+def test_a_reply_in_a_thread_rearms_the_merge_through_the_review_workflow() -> None:
+    """A reply is a submitted review: it re-runs auto-review, whose completion merge-on-ci admits."""
+    review = yaml.safe_load((WORKFLOWS / "auto-review.yml").read_text(encoding="utf-8"))
+    assert "submitted" in review[True]["pull_request_review"]["types"]
+    merge = yaml.safe_load(MERGE_ON_CI.read_text(encoding="utf-8"))
+    assert "Auto Review (review bots)" in merge[True]["workflow_run"]["workflows"]
+    completed = Context(
         github={
-            "event_name": "pull_request_review_thread",
-            "actor": actor,
+            "event_name": "workflow_run",
+            "actor": "jwfaye",
             "repository": REPOSITORY,
             "event": {
-                "action": "resolved",
-                "pull_request": {
-                    "number": 259,
-                    "draft": draft,
-                    "base": {"ref": base},
-                    "head": {"ref": "feat/x", "repo": {"full_name": repo}},
-                },
+                "workflow_run": {
+                    "conclusion": "success",
+                    "event": "pull_request_review",
+                    "head_repository": {"full_name": REPOSITORY},
+                    "actor": {"login": "jwfaye"},
+                }
             },
         }
     )
-
-
-def test_a_resolved_thread_dispatches_merge_on_ci_on_main_without_a_merge_token() -> None:
-    """thread-rearm.yml dispatches main's merge-on-ci.yml; it holds no token that could merge."""
-    workflow = yaml.safe_load(THREAD_REARM.read_text(encoding="utf-8"))
-    assert workflow[True] == {"pull_request_review_thread": {"types": ["resolved", "unresolved"]}}
-    assert workflow["permissions"] == {}
-    assert workflow["concurrency"] == {
-        "group": "thread-rearm-${{ github.event.pull_request.number }}",
-        "cancel-in-progress": True,
-    }
-    job = workflow["jobs"]["rearm"]
-    assert job["permissions"] == {"actions": "write"}
-    assert job["runs-on"] == "ubuntu-latest"
-    assert [step["run"] for step in job["steps"]] == [
-        'gh workflow run merge-on-ci.yml --repo "$REPOSITORY" --ref main -f pr="$PR_NUMBER"'
-    ]
-    assert job["steps"][0]["env"]["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
-    condition = job["if"]
-    assert job_condition(condition, _thread_event())
-    assert not job_condition(condition, _thread_event(draft=True))
-    assert not job_condition(condition, _thread_event(base="main"))
-    assert not job_condition(condition, _thread_event(repo="fork/repoach"))
-    assert not job_condition(condition, _thread_event(actor="someone-else"))
-
-
-def test_merge_on_ci_admits_the_dispatch_and_never_listens_to_thread_events() -> None:
-    """The merge-capable workflow is only dispatched; a thread event never runs it from a PR ref."""
-    workflow = yaml.safe_load(MERGE_ON_CI.read_text(encoding="utf-8"))
-    assert "pull_request_review_thread" not in workflow[True]
-    dispatch = Context(
-        github={
-            "event_name": "workflow_dispatch",
-            "actor": "github-actions[bot]",
-            "repository": REPOSITORY,
-            "event": {"inputs": {"pr": "259"}},
-        }
-    )
-    assert job_condition(workflow["jobs"]["merge"]["if"], dispatch)
+    assert job_condition(merge["jobs"]["merge"]["if"], completed)
 
 
 def test_review_gate_names_every_thread_it_counted(monkeypatch: pytest.MonkeyPatch) -> None:
