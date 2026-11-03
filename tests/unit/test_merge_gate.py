@@ -33,6 +33,7 @@ from repoach.review.merge_gate import (
     summarise_ledger_facts,
     verdict_from_facts,
 )
+from repoach.review.open_threads import OpenThreads
 from repoach.review.refuter import JUDGED_CLAIM_TYPES
 from repoach.review.reviewer import ReviewVerdict
 from repoach.review.spec_gate import SpecCoverage, record_spec_coverage
@@ -48,7 +49,7 @@ def _facts(**over: object) -> MergeFacts:
         "spec_coverage_known": True,
         "review_complete": True,
         "review_integrity_known": True,
-        "threads_read": True,
+        "open_threads": OpenThreads(read=True),
     }
     base.update(over)
     return MergeFacts(**base)

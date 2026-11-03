@@ -700,7 +700,6 @@ def decide_at_head(
     head_tree: bool = False,
     base_ref: str | None = None,
     budget: RefuterBudget | None = None,
-    threads_seen: Callable[[OpenThreads], None] | None = None,
 ) -> tuple[str, MergeFacts, MergeDecision]:
     """Resolve the head, re-verify the ledger there, and decide.
 
@@ -773,8 +772,6 @@ def decide_at_head(
             Required when ``head_tree`` is True: ``repo_root`` is then the
             PR's head tree, and a pull request never sizes its own
             refuter. Unused otherwise.
-        threads_seen: Receives the threads read, so a caller can name
-            them (``review gate``); the read itself always happens here.
 
     Returns:
         ``(head_sha, facts, decision)``.
@@ -832,10 +829,7 @@ def decide_at_head(
             "spec_recompute_failure": recompute_failure,
         }
     )
-    threads = read_open_threads(forge, pr_number)
-    if threads_seen is not None:
-        threads_seen(threads)
-    facts = facts.with_threads(threads)
+    facts = facts.with_threads(read_open_threads(forge, pr_number))
     return resolved_head, facts, compute_merge_decision(facts)
 
 
@@ -985,7 +979,6 @@ def evaluate_merge_gate(
         producers=producers,
     )
     tree_kind: str | None = None
-    seen: list[OpenThreads] = []
     if pin_tree:
         checkout = repo_root or Path.cwd()
         with materialise_head(
@@ -1012,7 +1005,6 @@ def evaluate_merge_gate(
                 head_tree=True,
                 base_ref=pr.base_ref if pr is not None else None,
                 budget=budget,
-                threads_seen=seen.append,
             )
         tree_kind = tree.tree
     else:
@@ -1024,7 +1016,6 @@ def evaluate_merge_gate(
             repo_root=repo_root,
             head_sha=verified_head,
             judge_factory=judge_factory,
-            threads_seen=seen.append,
         )
     _log.info(
         "auto_merge.gate_evaluated",
@@ -1043,7 +1034,7 @@ def evaluate_merge_gate(
         pull_request=pr,
         tree=tree_kind,
         read_changed_files=lambda: diff_files(forge.diff(pr_number).text),
-        open_threads=seen[-1] if seen else None,
+        open_threads=facts.open_threads,
     )
 
 

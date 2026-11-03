@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..gates.config import GatesConfig, load_gates_config
 from .finding_verifiers import verify_finding
@@ -144,15 +144,12 @@ class MergeFacts(BaseModel):
             per graded spec; the decision names each not-covered row's
             causes, prefixed with the spec id for a spec resolved by
             ownership (G7).
-        unresolved_threads: The review threads the forge reports open
-            on the pull request at decision time
-            (SP-OPEN-THREADS-BLOCK-THE-MERGE); any one refuses the merge.
-        threads_read: Whether the forge answered that read. False by
+        open_threads: The read of the review threads open on the pull
+            request at decision time (SP-OPEN-THREADS-BLOCK-THE-MERGE), the
+            one source of the three thread properties below. Unread by
             default: facts nobody read the threads for refuse the merge
             (fail closed), and :func:`decide_at_head
             <repoach.review.auto_merge.decide_at_head>` always reads them.
-        threads_error: Why the threads are unknown when ``threads_read``
-            is False (redacted forge error); empty otherwise.
 
     Read-only properties derived from ``spec_rows`` (the one source; the
     gate JSON prints them, its documented ``spec_acceptance`` shape, and
@@ -170,6 +167,12 @@ class MergeFacts(BaseModel):
       of a contract with nothing to grade (G3).
     - ``spec_report``: lines reported and never refusing
       (``plan-absent: …``).
+
+    Read-only properties derived from ``open_threads`` the same way:
+
+    - ``unresolved_threads``: the open threads counted; any one refuses.
+    - ``threads_read``: whether the forge answered the read.
+    - ``threads_error``: why it did not (redacted), empty when it did.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -189,24 +192,26 @@ class MergeFacts(BaseModel):
     reverify_line: str = ""
     spec_recompute_failure: str = ""
     spec_rows: list[SpecCoverage] = []
-    unresolved_threads: int = 0
-    threads_read: bool = False
-    threads_error: str = ""
+    open_threads: OpenThreads = Field(default_factory=lambda: OpenThreads(read=False))
 
     def with_threads(self, threads: OpenThreads) -> MergeFacts:
-        """Return these facts with the open review threads read from the forge.
+        """Return these facts with the open review threads read from the forge."""
+        return self.model_copy(update={"open_threads": threads})
 
-        The one place the read becomes facts (SP-OPEN-THREADS-BLOCK-THE-MERGE):
-        ``unresolved_threads`` is its count, ``threads_read`` whether the
-        forge answered, ``threads_error`` why not.
-        """
-        return self.model_copy(
-            update={
-                "unresolved_threads": threads.count,
-                "threads_read": threads.read,
-                "threads_error": threads.error,
-            }
-        )
+    @property
+    def unresolved_threads(self) -> int:
+        """The open review threads counted at decision time."""
+        return self.open_threads.count
+
+    @property
+    def threads_read(self) -> bool:
+        """Whether the forge answered the thread read."""
+        return self.open_threads.read
+
+    @property
+    def threads_error(self) -> str:
+        """Why the threads are unknown, redacted; empty when they were read."""
+        return self.open_threads.error
 
     @property
     def spec_missing(self) -> list[str]:

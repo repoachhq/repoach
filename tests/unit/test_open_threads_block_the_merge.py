@@ -78,18 +78,22 @@ def _facts(**update: object) -> MergeFacts:
         "spec_coverage_known": False,
         "review_complete": True,
         "review_integrity_known": True,
-        "threads_read": True,
+        "open_threads": OpenThreads(read=True),
     }
     return MergeFacts(**{**base, **update})
+
+
+def _open(count: int) -> OpenThreads:
+    return OpenThreads(read=True, threads=[ReviewThread(root_id=n + 1) for n in range(count)])
 
 
 def test_one_open_thread_refuses_and_zero_permits() -> None:
     """The gate names the count; with zero open threads the same facts merge."""
     assert compute_merge_decision(_facts()).merge is True
-    refused = compute_merge_decision(_facts(unresolved_threads=1))
+    refused = compute_merge_decision(_facts(open_threads=_open(1)))
     assert refused.merge is False
     assert refused.reasons == ["1 unresolved review thread(s)"]
-    assert compute_merge_decision(_facts(unresolved_threads=4)).reasons == [
+    assert compute_merge_decision(_facts(open_threads=_open(4))).reasons == [
         "4 unresolved review thread(s)"
     ]
 
@@ -106,11 +110,11 @@ def test_unread_threads_fail_closed() -> None:
         review_integrity_known=True,
     )
     assert compute_merge_decision(unread).reasons == ["review threads unreadable: not read"]
-    failed = compute_merge_decision(_facts(threads_read=False, threads_error="HTTP 502"))
+    failed = compute_merge_decision(_facts(open_threads=OpenThreads(read=False, error="HTTP 502")))
     assert failed.merge is False
     assert failed.reasons == ["review threads unreadable: HTTP 502"]
     with pytest.raises(ValueError):
-        MergeFacts(**{**_facts().model_dump(), "open_threads": 1})
+        MergeFacts(**{**_facts().model_dump(), "unresolved_threads": 1})
 
 
 class _Forge:
@@ -133,7 +137,7 @@ def test_read_open_threads_names_each_thread_or_the_failure() -> None:
     ]
     read = read_open_threads(_Forge(threads), 281)
     assert read.read is True and read.count == 2
-    facts = _facts(threads_read=False).with_threads(read)
+    facts = _facts(open_threads=OpenThreads(read=False)).with_threads(read)
     assert (facts.threads_read, facts.unresolved_threads, facts.threads_error) == (True, 2, "")
     assert read.summary_line() == "review threads: 2 unresolved"
     assert read.thread_lines() == [
@@ -303,7 +307,7 @@ def test_release_gate_refuses_open_or_unreadable_threads_on_the_release_pr() -> 
 def test_report_shows_the_thread_count_and_its_refusal(tmp_path: Path) -> None:
     """The archive report's facts table and headline carry the open threads."""
     init_findings_schema(tmp_path / "review.db")
-    facts = _facts(unresolved_threads=3)
+    facts = _facts(open_threads=_open(3))
     body = render_ledger_report(
         tmp_path / "review.db",
         pr_number=7,
@@ -312,7 +316,7 @@ def test_report_shows_the_thread_count_and_its_refusal(tmp_path: Path) -> None:
     )
     assert "| Unresolved review threads | 3 |" in body
     assert "3 unresolved review thread(s)" in body
-    unread = _facts(threads_read=False, threads_error="HTTP 502")
+    unread = _facts(open_threads=OpenThreads(read=False, error="HTTP 502"))
     body = render_ledger_report(
         tmp_path / "review.db", pr_number=7, decision=compute_merge_decision(unread), facts=unread
     )
