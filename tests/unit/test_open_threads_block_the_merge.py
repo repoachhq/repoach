@@ -554,3 +554,18 @@ def test_an_unexpected_error_propagates_instead_of_holding_or_counting() -> None
     rows = [StrandedPR(pr_number=286, head_sha="a" * 40, green_since=NOW, reason="stranded")]
     with pytest.raises(RuntimeError, match="forge client bug"):
         hold_open_threads(rows, lambda number: read_open_threads(_Broken(), number))
+
+
+@pytest.mark.parametrize(
+    ("thread", "line"),
+    [
+        (ReviewThread(root_id=77, path="src/a.py", line=3), "open thread 77 at src/a.py:3"),
+        (ReviewThread(root_id=77, path="src/a.py"), "open thread 77 at src/a.py"),
+        (ReviewThread(root_id=0, path="src/a.py", line=3), "open thread ? at src/a.py:3"),
+        (ReviewThread(root_id=9, thread_id="f" * 40), f"open thread 9 ({'f' * 40}) at (no file)"),
+        (ReviewThread(root_id=0), "open thread ? at (no file)"),
+    ],
+)
+def test_thread_lines_cover_missing_root_path_and_line(thread: ReviewThread, line: str) -> None:
+    """A thread without a root id, a file or a line is still named, never dropped."""
+    assert OpenThreads(read=True, threads=[thread]).thread_lines() == [line]

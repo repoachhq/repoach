@@ -72,7 +72,7 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
 - **Action**: review pr prints 'review threads: <n> unresolved' on stderr and carries review_threads in its JSON. review gate prints the same line, then one 'open thread <id> at <file>:<line>' per thread, and carries facts.unresolved_threads, facts.threads_read and review_threads. The harness forge serves a threads list to gh api graphql.
 - **Commit**: `feat(review): print the open review threads`
 - **Done when**: pytest -q tests/integration/test_open_threads_block_the_merge_end_to_end.py passes
-- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted`
+- **Unit tests**: `tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted`, `tests/unit/test_open_threads_block_the_merge.py::test_thread_lines_cover_missing_root_path_and_line`
 
 ## Step 10 — Answer thread reads in the test forges
 
@@ -255,7 +255,8 @@ Both forges list every open review thread over every page (GitHub reviewThreads 
       "commit_message": "feat(review): print the open review threads",
       "done_when": "pytest -q tests/integration/test_open_threads_block_the_merge_end_to_end.py passes",
       "unit_tests": [
-        "tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted"
+        "tests/unit/test_open_threads_block_the_merge.py::test_review_gate_names_every_thread_it_counted",
+        "tests/unit/test_open_threads_block_the_merge.py::test_thread_lines_cover_missing_root_path_and_line"
       ]
     },
     {
