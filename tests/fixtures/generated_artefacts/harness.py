@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 import typer
+from tests.forge_fakes import threads_page
 
 from repoach.cli import review_cmds
 from repoach.forge.github import GhResult, GitHubForge
@@ -100,18 +101,25 @@ class Repo:
 
 
 class Forge(GitHubForge):
-    """A :class:`GitHubForge` with a stubbed ``gh`` and a real ``git``."""
+    """A :class:`GitHubForge` with a stubbed ``gh`` and a real ``git``.
+
+    ``threads`` holds the ``reviewThreads`` nodes the GraphQL reads answer
+    with (none by default).
+    """
 
     def __init__(self, repo: Repo, pr: int, head: str) -> None:
         super().__init__(cwd=repo.checkout, gh_path="/nonexistent/gh", bot_login="bot")
         self._repo = repo
         self._pr = pr
         self._head = head
+        self.threads: list[dict[str, object]] = []
 
     def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
         if args[:2] == ["pr", "view"]:
             payload = {"headRefName": "feat/x", "baseRefName": "main", "state": "OPEN"}
             return GhResult(0, json.dumps(payload), "", argv=args)
+        if args[:2] == ["api", "graphql"]:
+            return GhResult(0, json.dumps([threads_page(self.threads)]), "", argv=args)
         if args[:3] == ["api", "--paginate", "--slurp"]:
             return GhResult(0, "[[]]", "", argv=args)
         raise AssertionError(f"unexpected gh call: {args}")

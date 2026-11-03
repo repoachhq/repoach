@@ -25,6 +25,7 @@ the origin remote. A forge that cannot be selected exits ``2``.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -78,6 +79,7 @@ from ..review.merge_wait import (
     required_checks,
     stranded,
 )
+from ..review.open_threads import hold_open_threads, read_open_threads
 from ..review.orchestrator import run_review
 from ..review.refuter import Refutation
 from ..review.report import findings_table_lines
@@ -498,6 +500,7 @@ def review_pr(
         "owner_commands": team.owner_commands,
         "finding_posts": team.finding_posts,
         "threads_closed": team.threads_closed,
+        "review_threads": team.open_threads.as_json(),
         "usage": usage,
         "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
@@ -522,6 +525,7 @@ def review_pr(
         typer.echo(line, err=True)
     for line in team.thread_lines:
         typer.echo(line, err=True)
+    typer.echo(team.open_threads.summary_line(), err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:
         typer.echo(
@@ -868,8 +872,11 @@ def review_stranded(
     stranded PR through the write barrier and prints ``dispatched #<n>
     (<reason>)`` on stderr (D3, the release sweep). ``--dry-run`` writes
     nothing. PRs whose required checks are cancelled-only or missing are
-    listed under ``unjudged``. Exits 0, or 2 when the forge cannot be
-    selected or read.
+    listed under ``unjudged``. A stranded PR with an open or unreadable
+    review thread is listed under ``held`` with the gate's reason and never
+    dispatched: the merge would refuse it, and resolving its last thread
+    re-arms ``merge-on-ci.yml`` (SP-OPEN-THREADS-BLOCK-THE-MERGE). Exits
+    0, or 2 when the forge cannot be selected or read.
     """
     root = project_root_or_exit()
     forge = _forge_kwargs(forge_name).get("forge")
@@ -884,9 +891,14 @@ def review_stranded(
         raise _forge_failure(exc) from exc
     db = Path(get_settings().db_path)
     attempts = {pr.number: load_attempts(forge, db, pr.number) for pr in prs}
-    rows = stranded(prs, verdicts, attempts, datetime.now(UTC))
+    rows, held = hold_open_threads(
+        stranded(prs, verdicts, attempts, datetime.now(UTC)),
+        functools.partial(read_open_threads, forge),
+    )
     dispatched: list[int] = []
     if dispatch:
+        for entry in held:
+            typer.echo(f"held #{entry.pr_number} ({entry.reason})", err=True)
         dispatched = dispatch_stranded(
             forge, rows, dry_run=dry_run, echo=lambda line: typer.echo(line, err=True)
         )
@@ -909,6 +921,7 @@ def review_stranded(
                         }
                         for row in rows
                     ],
+                    "held": [entry.model_dump() for entry in held],
                     "unjudged": unjudged,
                     "dispatched": dispatched,
                 },
@@ -919,6 +932,8 @@ def review_stranded(
         return
     for row in rows:
         typer.echo(f"#{row.pr_number}\t{row.head_sha[:7]}\tstranded\t{row.reason}")
+    for entry in held:
+        typer.echo(f"#{entry.pr_number}\t{entry.head_sha[:7]}\theld\t{entry.reason}")
     for entry in unjudged:
         typer.echo(f"#{entry['pr']}\t\t{entry['state']}\t{', '.join(entry['checks'])}")
 
@@ -1101,6 +1116,15 @@ def review_gate(
     on stderr says it, and ``reverified`` in the JSON counts it. A
     judged finding is re-judged by the refuter, so the gate may make
     model calls through ``--provider`` (up to the refuter cap).
+
+    The pull request's open review threads are read once and counted
+    (SP-OPEN-THREADS-BLOCK-THE-MERGE): any open thread refuses with
+    ``<n> unresolved review thread(s)``, an unreadable listing with
+    ``review threads unreadable: <why>``. Being read-only, the gate names
+    every thread it counted on each run: ``review threads: <n> unresolved``
+    then one ``open thread <id> at <file>:<line>`` line per thread on
+    stderr, and ``review_threads`` in the JSON (root id, GitLab discussion
+    id, path, line).
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -1124,6 +1148,7 @@ def review_gate(
         )
         raise typer.Exit(code=1) from exc
     facts = evaluation.facts
+    threads = evaluation.open_threads
     pr = evaluation.pull_request
     declared = resolve_spec(
         flag=spec_flag,
@@ -1175,7 +1200,10 @@ def review_gate(
                     "spec_coverage_known": facts.spec_coverage_known,
                     "review_complete": facts.review_complete,
                     "review_integrity_known": facts.review_integrity_known,
+                    "unresolved_threads": facts.unresolved_threads,
+                    "threads_read": facts.threads_read,
                 },
+                "review_threads": threads.as_json() if threads is not None else None,
             },
             indent=2,
             ensure_ascii=False,
@@ -1183,6 +1211,10 @@ def review_gate(
     )
     if facts.reverify_line:
         typer.echo(facts.reverify_line, err=True)
+    if threads is not None:
+        typer.echo(threads.summary_line(), err=True)
+        for line in threads.thread_lines():
+            typer.echo(line, err=True)
     for line in (*resolution_lines, *facts.spec_report):
         typer.echo(line, err=True)
     if keep_tree and evaluation.tree is None:

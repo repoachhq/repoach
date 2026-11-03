@@ -20,6 +20,17 @@ name: Merge on CI (event-driven gate)
 # finishes last triggers the merge that succeeds.  workflow_dispatch
 # (input ``pr``) is the operator's lever and the release sweep's
 # (``repoach review stranded --dispatch``).
+#
+# SP-OPEN-THREADS-BLOCK-THE-MERGE: an open review thread refuses the
+# merge, and resolving one starts no workflow: GitHub Actions offers no
+# ``pull_request_review_thread`` trigger (a workflow listening to it
+# failed as "a workflow file issue" on every push, 2026-11-03).  A reply
+# in the thread is a submitted ``pull_request_review`` (measured: the
+# reply and its COMMENTED review share one timestamp), so it re-runs the
+# review workflow and, on its completion, this one: a thread answered and
+# resolved re-arms the merge without a push.  A thread resolved without a
+# reply waits for the next CI or review completion, or for
+# ``repoach review stranded --dispatch``.
 
 on:
   workflow_run:

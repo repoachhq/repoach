@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
+from .open_threads import OpenThreads, read_open_threads
 from .persistence import fetch_merged_pr_shas
 
 _log = get_logger(__name__)
@@ -221,6 +222,11 @@ class ReleaseFacts(BaseModel):
             nothing in the verdict: it is informational, never a
             refusal reason and never folded into
             ``out_of_band_commits``.
+        open_threads: The read of the release PR's open review threads
+            (SP-OPEN-THREADS-BLOCK-THE-MERGE); its
+            :meth:`~repoach.review.open_threads.OpenThreads.refusal` is the
+            reason, as for every other merge. ``None`` when the gate ran
+            without a PR number.
     """
 
     develop_sha: str
@@ -231,6 +237,7 @@ class ReleaseFacts(BaseModel):
     ci_checked: bool = True
     provenance_error: str | None = None
     branch_freshness: list[BranchFreshness] = []
+    open_threads: OpenThreads | None = None
 
 
 class ReleaseDecision(BaseModel):
@@ -258,8 +265,9 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
         release range is free of out-of-band commits, the local
         ``develop`` head matches the remote tip (the receipt records
         that head and the CI mirror runs on the local checkout), the
-        release PR's head (when known) matches ``develop_sha``, and the local CI mirror
-        is green.
+        release PR's head (when known) matches ``develop_sha``, the local CI mirror
+        is green, and (when a PR is given) its review threads were read
+        and none is open.
     """
     reasons: list[str] = []
     if facts.provenance_error is not None:
@@ -277,6 +285,9 @@ def compute_release_decision(facts: ReleaseFacts) -> ReleaseDecision:
         )
     if not facts.ci_green:
         reasons.append("CI not green at develop head")
+    threads_refusal = facts.open_threads.refusal() if facts.open_threads is not None else None
+    if threads_refusal is not None:
+        reasons.append(threads_refusal)
     return ReleaseDecision(merge=not reasons, reasons=reasons)
 
 
@@ -425,6 +436,7 @@ def gather_release_facts(
         _branch_freshness(forge, branch) for branch in (release_branch, integration_branch)
     ]
     pr_head_sha = _pr_head_sha_or_none(forge, pr_number)
+    open_threads = read_open_threads(forge, pr_number) if pr_number is not None else None
     result = (ci_runner or _default_ci_runner)(repo_root)
     ci_green = result.returncode == 0
     return ReleaseFacts(
@@ -435,6 +447,7 @@ def gather_release_facts(
         ci_green=ci_green,
         provenance_error=provenance_error,
         branch_freshness=branch_freshness,
+        open_threads=open_threads,
     )
 
 

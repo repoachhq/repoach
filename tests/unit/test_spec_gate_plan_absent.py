@@ -39,6 +39,7 @@ from repoach.review.spec_gate import (
     spec_acceptance_criteria,
 )
 from repoach.review.spec_grading import coverage_rows_at_head
+from tests.forge_fakes import no_open_threads
 
 _ID = "SP-PLANLESS"
 _SPEC_PATH = f"docs/specs/2026-10-26_{_ID}_planless.md"
@@ -164,6 +165,10 @@ class _Forge:
     def git(self, args: list[str]) -> str:
         raise AssertionError(f"the base ref resolves locally, no fetch expected: {args}")
 
+    def unresolved_threads(self, pr_number: int) -> list[object]:
+        """No open review thread."""
+        return []
+
 
 def _ledger(tmp_path: Path, head: str) -> Path:
     db = tmp_path / "state" / "review.db"
@@ -259,7 +264,9 @@ def test_plan_wins_over_the_ac_section(tmp_path: Path) -> None:
     assert coverage.contract == "plan"
     db2 = _ledger(tmp_path / "second", head)
     record_spec_coverage(db2, pr_number=7, head_sha=head, coverage=coverage)
-    reasons = compute_merge_decision(summarise_ledger_facts(db2, pr_number=7, head_sha=head))
+    reasons = compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db2, pr_number=7, head_sha=head))
+    )
     assert reasons.reasons == [f"{_HEADER}: {_PLAN_SELECTOR} (plan step 1)"]
 
 
@@ -414,7 +421,9 @@ def test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences(
     )
     db = _ledger(tmp_path, head)
     record_spec_coverage(db, pr_number=7, head_sha=head, coverage=unavailable)
-    reasons = compute_merge_decision(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    reasons = compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    )
     assert unavailable.contract == "unavailable"
     assert reasons.reasons == [
         "spec coverage not graded: base ref no-such-branch unavailable, "
@@ -426,7 +435,9 @@ def test_base_ref_unavailable_and_unparseable_plan_have_their_own_sentences(
     record_spec_coverage(db2, pr_number=7, head_sha=head, coverage=unparseable)
     row = fetch_spec_coverage(db2, 7, head_sha=head)[-1]
     assert row.covered is False
-    reasons = compute_merge_decision(summarise_ledger_facts(db2, pr_number=7, head_sha=head))
+    reasons = compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db2, pr_number=7, head_sha=head))
+    )
     assert len(reasons.reasons) == 1
     assert reasons.reasons[0].startswith("spec plan unparseable at develop: ")
     assert _ABSENT not in reasons.reasons[0]
@@ -453,7 +464,9 @@ def test_plan_file_without_the_marker_is_not_an_action_plan(tmp_path: Path) -> N
     ]
     db = _ledger(tmp_path, head)
     record_spec_coverage(db, pr_number=7, head_sha=head, coverage=coverage)
-    reasons = compute_merge_decision(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    reasons = compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    )
     assert reasons.reasons == [f"{_HEADER}: {_ABSENT} (AC3)"]
     assert not any("unparseable" in reason for reason in reasons.reasons)
 
@@ -474,7 +487,9 @@ def test_stored_plan_absent_row_is_regraded_by_the_new_rule(tmp_path: Path) -> N
         rule_version=1,
     )
     record_spec_coverage(db, pr_number=7, head_sha=head, coverage=stale)
-    assert compute_merge_decision(summarise_ledger_facts(db, pr_number=7, head_sha=head)).reasons
+    assert compute_merge_decision(
+        no_open_threads(summarise_ledger_facts(db, pr_number=7, head_sha=head))
+    ).reasons
 
     _, decision = _decide(repo, db, head, changed)
 

@@ -15,6 +15,7 @@ from repoach.review.findings import init_findings_schema, record_review_integrit
 from repoach.review.merge_gate import compute_merge_decision, gather_merge_facts
 from repoach.review.plan import ActionPlan, PlanStep
 from repoach.review.spec_gate import compute_spec_coverage, record_spec_coverage
+from tests.forge_fakes import no_open_threads
 
 
 def _plan_with_async_selectors(unit_tests: list[str], integration_tests: list[str]) -> ActionPlan:
@@ -79,7 +80,9 @@ def test_async_promises_yield_covered_and_gate_reason_free(tmp_path: Path) -> No
     )
     record_review_integrity(db, pr_number=1, head_sha="abc123", n_reviewers=4, n_unparsed=0)
 
-    facts = gather_merge_facts(db, pr_number=1, repo_root=repo, head_sha="abc123", ci_green=True)
+    facts = no_open_threads(
+        gather_merge_facts(db, pr_number=1, repo_root=repo, head_sha="abc123", ci_green=True)
+    )
     decision = compute_merge_decision(facts)
     assert decision.merge is True
     assert not any("spec acceptance selectors not all present" in r for r in decision.reasons)

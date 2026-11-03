@@ -30,6 +30,7 @@ from repoach.review.reviewer import (
     ReviewerOutcome,
     ReviewVerdict,
 )
+from tests.forge_fakes import NO_OPEN_THREADS
 
 _BOT = "github-actions[bot]"
 
@@ -363,6 +364,8 @@ class _StubGitHubForge(GitHubForge):
             )
         if args[:3] == ["api", "--paginate", "--slurp"]:
             return GhResult(0, "[[]]", "", argv=args)
+        if args[:2] == ["api", "graphql"]:
+            return GhResult(0, NO_OPEN_THREADS, "", argv=args)
         raise AssertionError(f"unexpected gh call: {args}")
 
     def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:

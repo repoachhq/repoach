@@ -29,6 +29,7 @@ from repoach.forge.github import GitHubForge
 from repoach.forge.protocol import is_write_argv
 from repoach.forge.runner import CommandResult
 from repoach.review.findings import record_review_integrity
+from tests.forge_fakes import threads_page
 
 HEAD_259 = "ba9585eb07227b45168e907bd37b727cbafa1d1b"
 HEAD_256 = "c19344e43bb3b2ec5cf091eae287877a121ed2a7"
@@ -139,6 +140,7 @@ class FixturePR:
     draft: bool = False
     check_runs: list[dict[str, object]] = field(default_factory=list)
     comments: list[dict[str, object]] = field(default_factory=list)
+    threads: list[dict[str, object]] = field(default_factory=list)
 
 
 class MergeWaitFixtureForge:
@@ -294,6 +296,9 @@ class MergeWaitFixtureForge:
             fields = " ".join(a for a in args[3:] if a != "-f")
             self.dispatches.append(f"workflow_run {args[2]} {fields}")
             return self._ok(args, "")
+        if args[:2] == ["api", "graphql"]:
+            number = int(next(a for a in args if a.startswith("number=")).split("=", 1)[1])
+            return self._ok(args, json.dumps([threads_page(self.prs[number].threads)]))
         if args[0] == "api":
             return self._api(args, input_data)
         raise AssertionError(f"unexpected gh call: {args}")

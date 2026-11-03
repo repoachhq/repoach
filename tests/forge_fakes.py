@@ -13,11 +13,13 @@ Two shapes, both faking only what crosses the process boundary:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from unittest.mock import MagicMock
 
 from repoach.forge.github import GitHubForge
 from repoach.forge.runner import CommandResult
+from repoach.review.merge_gate import MergeFacts
+from repoach.review.open_threads import OpenThreads
 
 RunSide = Callable[[list[str]], CommandResult]
 
@@ -65,6 +67,7 @@ def scripted_github(
     git: RunSide | None = None,
     *,
     bot_login: str = "github-actions[bot]",
+    threads: Sequence[Mapping[str, object]] = (),
 ) -> GitHubForge:
     """A real :class:`GitHubForge` whose subprocess seams are scripted mocks.
 
@@ -72,14 +75,49 @@ def scripted_github(
         run: Answers each ``gh`` argv (without the binary); default: empty success.
         git: Answers each ``git`` argv; default: empty success.
         bot_login: The trusted bot identity.
+        threads: The ``reviewThreads`` nodes a GraphQL thread read is
+            answered with, before ``run`` is asked; default: none, the
+            pull request has no review thread.
 
     Returns:
         The forge; ``forge._run`` / ``forge._run_git`` are the mocks, so
         ``call_args_list`` lists every argv the code under test sent.
     """
     forge = GitHubForge(gh_path="/nonexistent/gh", bot_login=bot_login)
-    forge._run = MagicMock(
-        side_effect=lambda args, input_data=None: (run or (lambda a: gh_ok(argv=a)))(args)
-    )
+    answer = run or (lambda a: gh_ok(argv=a))
+
+    def side_effect(args: list[str], input_data: str | None = None) -> CommandResult:
+        if args[:2] == ["api", "graphql"] and "reviewThreads" in args[-1]:
+            return gh_ok(json.dumps([threads_page(threads)]), argv=args)
+        return answer(args)
+
+    forge._run = MagicMock(side_effect=side_effect)
     forge._run_git = MagicMock(side_effect=git or (lambda a: gh_ok(argv=a)))
     return forge
+
+
+def threads_page(nodes: Sequence[Mapping[str, object]], *, more: bool = False) -> dict[str, object]:
+    """One page of the GraphQL ``reviewThreads`` answer carrying ``nodes``."""
+    connection = {"pageInfo": {"hasNextPage": more, "endCursor": None}, "nodes": list(nodes)}
+    return {"data": {"repository": {"pullRequest": {"reviewThreads": connection}}}}
+
+
+def thread_node(root_id: int, *, resolved: bool, path: str = "", line: int | None = None) -> dict:
+    """One ``reviewThreads`` node as GitHub answers it."""
+    return {
+        "isResolved": resolved,
+        "resolvedBy": {"login": "jwfaye"} if resolved else None,
+        "path": path,
+        "line": line,
+        "originalLine": line,
+        "comments": {"nodes": [{"databaseId": root_id}]},
+    }
+
+
+NO_OPEN_THREADS = json.dumps([threads_page([])])
+"""The ``gh api graphql`` answer of a pull request with no review thread."""
+
+
+def no_open_threads(facts: MergeFacts) -> MergeFacts:
+    """``facts`` as read from a forge that reports no open review thread."""
+    return facts.with_threads(OpenThreads(read=True))

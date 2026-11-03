@@ -15,6 +15,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from repoach.cli.review_cmds import review_app
+from repoach.review.open_threads import OpenThreads
 
 
 @dataclass
@@ -66,6 +67,7 @@ class _FakeTeam:
     findings_line: str = ""
     cached: bool = False
     cache_line: str = ""
+    open_threads: OpenThreads = field(default_factory=lambda: OpenThreads(read=True))
     spec_report: list[str] = field(default_factory=list)
     spec_resolution: dict[str, object] = field(default_factory=dict)
     spec_coverage_line: str = ""
