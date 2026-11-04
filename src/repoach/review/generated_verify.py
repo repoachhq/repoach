@@ -157,7 +157,7 @@ def verify_generated(
         ``(evidence payload, runs, timing)``.
 
     Raises:
-        GeneratedRefusalError: The head does not resolve.
+        GeneratedRefusalError: The head starts with ``-`` or does not resolve.
         BaseRefUnresolvableError: The base does not resolve or has no merge base with the head.
         ConfigError: The base declarations are invalid.
     """
@@ -226,7 +226,7 @@ def run_verification(
         saying no declared artefact is touched.
 
     Raises:
-        GeneratedRefusalError: The head does not resolve.
+        GeneratedRefusalError: The head starts with ``-`` or does not resolve.
         BaseRefUnresolvableError: The base does not resolve or has no merge base with the head.
         ConfigError: The base declarations are invalid.
     """
@@ -274,7 +274,7 @@ def review_generated_command(
         echo: Prints one line on stderr.
 
     Raises:
-        GeneratedRefusalError: The head does not resolve.
+        GeneratedRefusalError: The head starts with ``-`` or does not resolve.
         BaseRefUnresolvableError: The base does not resolve or has no merge base with the head.
         ConfigError: The base declarations are invalid.
     """
