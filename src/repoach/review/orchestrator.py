@@ -1428,6 +1428,11 @@ class ReviewTeamOrchestrator:
         The declarations are read at the base ref, never the head. A base
         that cannot be read or declares nothing leaves the diff as it is,
         so an oversized artefact keeps its blocking finding (fail closed).
+
+        :class:`~repoach.review.base_ref.BaseRefUnresolvableError` is the one
+        exception the broad catch must not swallow: a base with no merge
+        base stops the review (Yoob B-221), so it is re-raised by name
+        before the fail-closed ``except Exception``.
         """
         try:
             base = readable_base(self._repo_root, base_ref, self._fetch_base)
@@ -1454,7 +1459,7 @@ class ReviewTeamOrchestrator:
         """Return the merge base of the PR's base and the reviewed head, before any review work.
 
         ``base_ref`` is read as it is, then as ``origin/<base_ref>`` after
-        one fetch (:func:`~repoach.review.generated_git.require_pr_base`); a
+        one fetch (:func:`~repoach.review.base_ref.require_pr_base`); a
         base that still does not resolve, or has no merge base with the
         head, refuses the review by name (Yoob B-221).
 

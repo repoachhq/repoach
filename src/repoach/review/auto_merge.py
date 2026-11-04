@@ -920,7 +920,7 @@ def evaluate_merge_gate(
 
     With ``pin_tree``, the PR's base must have a merge base with the head
     tree before any finding is re-verified
-    (:func:`~repoach.review.generated_git.require_pr_base`, Yoob B-221).
+    (:func:`~repoach.review.base_ref.require_pr_base`, Yoob B-221).
 
     Raises:
         BaseRefUnresolvableError: With ``pin_tree``, the base is absent,
