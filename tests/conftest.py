@@ -9,6 +9,8 @@ from __future__ import annotations
 import pytest
 import structlog
 
+from repoach.review.base_ref import ResolvedBase
+
 
 @pytest.fixture(autouse=True)
 def _disable_structlog_logger_cache_for_tests() -> None:
@@ -83,5 +85,6 @@ def base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
     The resolution itself is tested in ``tests/unit/test_base_ref_must_resolve.py``
     and ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
     """
+    resolved = ResolvedBase(ref="develop", tip="0" * 40, merge_base="0" * 40)
     for target in BASE_RESOLVERS:
-        monkeypatch.setattr(target, lambda *_a, **_k: "0" * 40)
+        monkeypatch.setattr(target, lambda *_a, **_k: resolved)

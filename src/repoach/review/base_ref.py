@@ -19,8 +19,9 @@ import re
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import NamedTuple
 
+from ..forge import Forge
 from .generated_git import run_git
 
 GitReader = Callable[[Sequence[str]], tuple[int, str, str]]
@@ -250,23 +251,7 @@ def require_merge_base(root: Path, ref: str, head: str, *, git: GitReader | None
     )
 
 
-class _GitRun(Protocol):
-    """What a forge's ``git`` returns: the fields :func:`reader_of` reads."""
-
-    returncode: int
-    stdout: str
-    stderr: str
-
-
-class _HasGit(Protocol):
-    """What :func:`reader_of` needs of a forge: its ``git``."""
-
-    def git(self, args: list[str]) -> _GitRun:
-        """Run one git command in the forge's clone."""
-        ...
-
-
-def reader_of(forge: _HasGit) -> GitReader:
+def reader_of(forge: Forge) -> GitReader:
     """Return the :data:`GitReader` over a forge's ``git`` (``Forge.git``), the one forge adapter.
 
     ``forge.git`` is looked up when a command runs, not before: a base
@@ -313,6 +298,20 @@ def origin_fetcher(git: GitReader) -> Callable[[str], None]:
     return fetch_base
 
 
+class ResolvedBase(NamedTuple):
+    """A pull request's base that resolves, as :func:`require_pr_base` found it.
+
+    Attributes:
+        ref: The ref that resolved (``develop``, or ``origin/develop`` after the fetch).
+        tip: The full SHA of the base tip, where the base declarations are read.
+        merge_base: The full SHA of the merge base, where the diff starts.
+    """
+
+    ref: str
+    tip: str
+    merge_base: str
+
+
 def require_pr_base(
     root: Path,
     base_ref: str,
@@ -320,7 +319,7 @@ def require_pr_base(
     *,
     fetch_base: Callable[[str], None] | None = None,
     git: GitReader | None = None,
-) -> str:
+) -> ResolvedBase:
     """Return the merge base of a pull request's base branch and ``head``, fetching it once.
 
     ``base_ref`` is tried as it is; when it is absent from the clone and
@@ -336,16 +335,16 @@ def require_pr_base(
         git: The git seam; :func:`local_git` of ``root`` by default.
 
     Returns:
-        The full merge-base SHA.
+        The ref that resolved, its tip and the merge base (:class:`ResolvedBase`).
 
     Raises:
         BaseRefUnresolvableError: Neither ref resolves to a commit with a merge base.
     """
     read = git or local_git(root)
+    ref = base_ref
     try:
-        return require_merge_base(root, base_ref, head, git=read)
+        found = require_merge_base(root, ref, head, git=read)
     except BaseRefUnresolvableError as exc:
-        remote = f"{_REMOTE_PREFIX}{base_ref}"
         if (
             exc.kind is not BaseRefKind.ABSENT
             or fetch_base is None
@@ -353,7 +352,9 @@ def require_pr_base(
         ):
             raise
         fetch_base(base_ref)
-        return require_merge_base(root, remote, head, git=read)
+        ref = f"{_REMOTE_PREFIX}{base_ref}"
+        found = require_merge_base(root, ref, head, git=read)
+    return ResolvedBase(ref=ref, tip=resolve_base_ref(root, ref, git=read), merge_base=found)
 
 
 __all__ = [
@@ -363,6 +364,7 @@ __all__ = [
     "BaseRefKind",
     "BaseRefUnresolvableError",
     "GitReader",
+    "ResolvedBase",
     "fetch_hint",
     "local_git",
     "origin_fetcher",
