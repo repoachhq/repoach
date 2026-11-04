@@ -303,12 +303,13 @@ Nothing is reviewed, recorded or posted. Two hints cover a CI job:
   with `GIT_DEPTH: "0"` (GitLab) or `fetch-depth: 0` (GitHub Actions), or
   run `git fetch --unshallow`.
 
-The base branch a forge reports is read as a branch only:
-`refs/remotes/origin/<branch>` first, then `refs/heads/<branch>`, never
-git's short name, so a tag of the same name never becomes the base whose
-`[[review.generated]]` declarations are read. A base given as a short
-name (`review generated --base develop`) that is both a branch and a tag
-is refused as ambiguous: name it in full (`refs/remotes/origin/<branch>`).
+The base branch is read as a branch only, never through git's short
+names: a forge's `develop` is `refs/remotes/origin/develop`, then
+`refs/heads/develop`, and `review generated --base origin/develop` is
+`refs/remotes/origin/develop`. A tag of the same name therefore never
+becomes the base whose `[[review.generated]]` declarations are read and
+run. The release gate's `origin/<release>` is refused as ambiguous when a
+tag shares its name: delete the tag or name the ref in full.
 
 To run the **CI-side automation on your own fork** (auto-review on PR
 open, event-driven merge), you additionally need:
