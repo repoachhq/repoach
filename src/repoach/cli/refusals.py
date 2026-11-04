@@ -1,9 +1,11 @@
 """The CLI's report of a base ref that does not resolve (Yoob B-221).
 
-``review pr``, ``review gate``, ``review generated``, ``review fix`` and
-``release gate`` all refuse a base that does not resolve through
-:func:`base_ref_refusal`, so the message, the JSON and the exit code
-cannot drift between the two command modules.
+The five commands that resolve a base (``review pr``, ``review gate``,
+``review generated`` and ``review fix`` in ``review_cmds``, ``release
+gate`` in ``release_cmds``) all refuse through :func:`base_ref_refusal`,
+so the message, the JSON and the exit code cannot drift between them.
+The exit code is a CLI contract, so it lives here, not with the error in
+:mod:`repoach.review.base_ref`.
 """
 
 from __future__ import annotations
