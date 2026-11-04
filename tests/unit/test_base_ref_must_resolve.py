@@ -24,7 +24,7 @@ import pytest
 import typer
 
 from repoach.cli import release_cmds, review_cmds
-from repoach.cli.refusals import EXIT_BASE_UNRESOLVABLE
+from repoach.cli.refusals import EXIT_BASE_UNRESOLVABLE, base_ref_refusal
 from repoach.forge.github import GhResult
 from repoach.forge.protocol import PullRequest
 from repoach.review import auto_merge, coder_findings, generated_verify, orchestrator
@@ -671,3 +671,55 @@ def test_base_resolves_replaces_every_importer_of_the_resolution() -> None:
     unlisted = {name for name in importers - listed if name.rsplit(".", 1)[0] not in REAL_GIT_ONLY}
     assert unlisted == set()
     assert listed <= importers
+
+
+def test_release_gate_refuses_a_release_branch_absent_from_the_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-branch clone fetches the release branch into FETCH_HEAD only: origin/<release> is absent."""
+    hist = history(tmp_path)
+    clone = tmp_path / "single"
+    git(
+        tmp_path, "clone", "-q", "--single-branch", "--branch", "feat", str(hist.origin), str(clone)
+    )
+    monkeypatch.setenv("REPOACH_INTEGRATION_BRANCH", "feat")
+    monkeypatch.setenv("REPOACH_RELEASE_BRANCH", "develop")
+    monkeypatch.setattr("repoach.core.config._settings", None)
+    forge = _GitOnlyForge(clone)
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        gather_release_facts(
+            repo_root=clone, forge=forge, ci_runner=lambda _root: pytest.fail("CI ran")
+        )
+
+    assert refused.value.kind is BaseRefKind.ABSENT
+    assert refused.value.ref == "origin/develop"
+    assert not any(call[0] == "log" for call in forge.calls)
+
+
+@pytest.mark.parametrize(
+    ("prints_json", "pr_number", "expected"),
+    [
+        (False, None, None),
+        (True, None, {"error": "base_ref_unresolvable", "ref": "develop", "hint": "h"}),
+        (
+            True,
+            7,
+            {"pr_number": 7, "error": "base_ref_unresolvable", "ref": "develop", "hint": "h"},
+        ),
+    ],
+)
+def test_base_ref_refusal_prints_json_only_when_the_command_does(
+    capsys: pytest.CaptureFixture[str],
+    prints_json: bool,
+    pr_number: int | None,
+    expected: dict[str, object] | None,
+) -> None:
+    refusal = BaseRefUnresolvableError("develop", "h", kind=BaseRefKind.ABSENT, cause="absent")
+
+    exit_ = base_ref_refusal(refusal, prints_json=prints_json, pr_number=pr_number)
+
+    out, err = capsys.readouterr()
+    assert exit_.exit_code == EXIT_BASE_UNRESOLVABLE
+    assert err.strip() == f"repoach: {refusal}"
+    assert (json.loads(out) if out else None) == expected
