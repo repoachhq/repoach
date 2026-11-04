@@ -9,8 +9,6 @@ from __future__ import annotations
 import pytest
 import structlog
 
-from repoach.review.base_ref import ResolvedBase
-
 
 @pytest.fixture(autouse=True)
 def _disable_structlog_logger_cache_for_tests() -> None:
@@ -87,7 +85,14 @@ def base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
     ``git``), declared with ``pytestmark = pytest.mark.usefixtures("base_resolves")``.
     The resolution itself is tested in ``tests/unit/test_base_ref_must_resolve.py``
     and ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+
+    The import of :mod:`repoach.review.base_ref` stays inside the fixture:
+    this conftest loads in every pytest process, including the subprocess
+    runs of ``test_slow_settings_isolation_end_to_end.py`` under a 60 s
+    timeout, and must not pull the review package into each of them.
     """
+    from repoach.review.base_ref import ResolvedBase
+
     resolved = ResolvedBase(ref="develop", tip=FAKE_SHA, merge_base=FAKE_SHA)
     for target in BASE_RESOLVERS:
         monkeypatch.setattr(target, lambda *_a, **_k: resolved)
