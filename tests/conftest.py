@@ -62,3 +62,37 @@ def _no_legacy_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr("repoach.core.paths.legacy_env_file", lambda _root: None)
     monkeypatch.setattr("repoach.core.paths.legacy_db_path", lambda _root: None)
+
+
+FAKE_SHA = "0" * 40
+"""The tip and merge base ``base_resolves`` reports: no commit of any clone, never a real value."""
+
+BASE_RESOLVERS = (
+    "repoach.review.orchestrator.require_forge_pr_base",
+    "repoach.review.auto_merge.require_forge_pr_base",
+    "repoach.review.coder_findings.require_forge_pr_base",
+    "repoach.review.release_gate.require_merge_base",
+)
+"""Every call site of the base resolution (Yoob B-221) that ``base_resolves`` replaces."""
+
+
+@pytest.fixture
+def base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve at every call site of :data:`BASE_RESOLVERS`.
+
+    For a module that drives the review, the gate, the Coder loop or the
+    release gate on a fake clone (no git repository, or a scripted forge
+    ``git``), declared with ``pytestmark = pytest.mark.usefixtures("base_resolves")``.
+    The resolution itself is tested in ``tests/unit/test_base_ref_must_resolve.py``
+    and ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+
+    The import of :mod:`repoach.review.base_ref` stays inside the fixture:
+    this conftest loads in every pytest process, including the subprocess
+    runs of ``test_slow_settings_isolation_end_to_end.py`` under a 60 s
+    timeout, and must not pull the review package into each of them.
+    """
+    from repoach.review.base_ref import ResolvedBase
+
+    resolved = ResolvedBase(ref="develop", tip=FAKE_SHA, merge_base=FAKE_SHA)
+    for target in BASE_RESOLVERS:
+        monkeypatch.setattr(target, lambda *_a, **_k: resolved)

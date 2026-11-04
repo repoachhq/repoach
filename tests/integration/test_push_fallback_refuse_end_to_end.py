@@ -15,6 +15,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from repoach.forge import Diff, PullRequest
 from repoach.review import coder_loop
 from repoach.review.coder_findings import run_coder_fix_from_findings
@@ -26,6 +28,9 @@ from repoach.review.findings import (
     init_findings_schema,
     record_finding,
 )
+
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
 
 _PR_NUMBER = 901
 

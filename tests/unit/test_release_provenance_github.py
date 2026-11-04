@@ -29,6 +29,9 @@ from repoach.review.release_gate import (
     gather_release_facts,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 
 def _gh_stub_with_commits(
     *,

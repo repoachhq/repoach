@@ -37,6 +37,7 @@ from ..gates.config import load_gates_config
 from ..gates.verifiers import run_verifiers
 from ..project.config import load_project_config
 from ..project.spec_source import resolve_spec
+from .base_ref import require_forge_pr_base
 from .finding_verifiers import verify_finding
 from .findings import (
     MECHANICAL_CLAIM_TYPES,
@@ -470,6 +471,11 @@ def run_coder_fix_from_findings(
 
     Returns:
         A :class:`CoderFindingsResult` describing what happened.
+
+    Raises:
+        BaseRefUnresolvableError: The base branch has no merge base with the
+            checkout's head; raised before any finding is recorded or
+            fixed (Yoob B-221).
     """
     from .coder_loop import (
         CI_GREEN,
@@ -508,6 +514,7 @@ def run_coder_fix_from_findings(
             no_op_reason=f"base={base!r}, refusing (only {integration_branch} is allowed)",
         )
 
+    require_forge_pr_base(repo, base, "HEAD", forge=forge)
     head_sha = pr.head_sha if pr is not None else ""
     ci_state, failed_rows = fetch_ci_status(forge, pr_number)
     if ci_state == CI_RED and failed_rows:

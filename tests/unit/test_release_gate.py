@@ -31,6 +31,9 @@ from repoach.review.release_gate import (
     write_gate_receipt,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 
 def _git(repo: Path, *args: str) -> str:
     """Run ``git`` in *repo* and return combined stdout+stderr stripped.

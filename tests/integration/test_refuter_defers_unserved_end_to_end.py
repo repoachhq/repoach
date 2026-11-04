@@ -48,6 +48,9 @@ from repoach.review.reviewer import (
 )
 from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 PR = 41
 CITED = "src/table.py"
 OTHER = "src/other.py"
