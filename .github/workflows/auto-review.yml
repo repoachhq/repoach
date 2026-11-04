@@ -16,14 +16,29 @@ on:
   # any conversational signal re-evaluate the gate.
   issue_comment:
     types: [created, edited]
+  # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G3: a submitted review (a reply
+  # in a thread is one) never starts a bot review: it moves no head, and
+  # on #288 every reply cancelled the review in progress.  It runs the
+  # ``rearm`` job only, whose success is the workflow_run merge-on-ci.yml
+  # admits; a run whose every job is skipped concludes ``skipped``
+  # (22 such pull_request_review runs measured 2026-11-04), which
+  # merge-on-ci refuses.  An owner command (/resolve, /reopen) in a
+  # thread reply arrives as pull_request_review_comment and is reviewed.
   pull_request_review:
     types: [submitted, edited]
+  pull_request_review_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       pr_number:
         description: "PR number to review"
         required: true
         type: number
+      retry_of:
+        description: "Set by the retry job only: the run this one retries"
+        required: false
+        type: string
+        default: ""
 
 # SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G4: no workflow-level
 # concurrency.  A workflow-level group is entered by every run, even one
@@ -33,33 +48,37 @@ on:
 # reviews).  Concurrency now lives on the jobs, so a job skipped by its
 # ``if`` takes no slot:
 #   coalesce      coalesce-<pr>, cancel-in-progress: only the last owner
-#                 event of a burst survives its 60 s sleep;
+#                 comment or command of a burst survives its 60 s sleep;
+#   rearm         rearm-<pr>, cancel-in-progress: only the last review of
+#                 a burst of replies re-arms the merge;
 #   review        review-<pr>, cancels stale owner runs as before;
 #   auto_fix,     merge-<head branch>, never cancelled, shared with
 #   auto_merge    merge-on-ci.yml so the two merge paths serialize per PR.
 # The PR number resolves across every supported event type:
-#   pull_request / pull_request_review → github.event.pull_request.number
-#   issue_comment                      → github.event.issue.number
-#   workflow_dispatch                  → github.event.inputs.pr_number
+#   pull_request / pull_request_review(_comment) → github.event.pull_request.number
+#   issue_comment                                → github.event.issue.number
+#   workflow_dispatch                            → github.event.inputs.pr_number
 
 jobs:
   coalesce:
     name: Coalesce owner events
-    # Owner review / comment events only, with the same author filters
-    # as ``review``: a Bot-authored comment never reaches this job, so it
-    # can cancel nothing.  A pull_request event skips it and is not
-    # delayed.  GitHub-hosted (free on this public repository) so the
-    # wait never holds the single self-hosted runner it protects.
+    # Owner comments and owner commands in a thread reply only, with the
+    # same author filters as ``review``: a Bot-authored comment never
+    # reaches this job, so it can cancel nothing.  A pull_request event
+    # skips it and is not delayed; a submitted review skips it too
+    # (``rearm`` coalesces those, in its own group, so a reply's review
+    # never cancels the command it carries).  GitHub-hosted (free on this
+    # public repository) so the wait never holds the single self-hosted
+    # runner it protects.
     if: >-
-      (github.event_name == 'pull_request_review'
-       || github.event_name == 'issue_comment')
+      (github.event_name == 'issue_comment'
+       || (github.event_name == 'pull_request_review_comment'
+           && (startsWith(github.event.comment.body, '/resolve')
+               || startsWith(github.event.comment.body, '/reopen'))))
       && github.event.pull_request.draft != true
       && (github.event_name != 'issue_comment'
           || github.event.issue.pull_request != null)
-      && (github.event_name != 'issue_comment'
-          || github.event.comment.user.type != 'Bot')
-      && (github.event_name != 'pull_request_review'
-          || github.event.review.user.type != 'Bot')
+      && github.event.comment.user.type != 'Bot'
       && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -73,9 +92,34 @@ jobs:
       - name: Wait for the burst to end (coalesce_window_s)
         run: sleep 60
 
+  rearm:
+    name: Re-arm the merge gate
+    # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G3: an owner's submitted
+    # review (a thread reply) reviews nothing; this job's success makes
+    # the run conclude ``success``, which merge-on-ci.yml admits as the
+    # workflow_run that re-judges the merge (SP-OPEN-THREADS-BLOCK-THE-MERGE
+    # D6).  Only the last review of a burst survives its 60 s sleep, so a
+    # burst of replies re-arms the merge once.
+    if: >-
+      github.event_name == 'pull_request_review'
+      && github.event.pull_request.draft != true
+      && github.event.review.user.type != 'Bot'
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    concurrency:
+      group: rearm-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Wait for the burst of replies to end (coalesce_window_s)
+        run: sleep 60
+
   review:
     name: Architect / Sentinel / Tester / Scribe
     # Skip when:
+    #   * the event is a submitted review (a thread reply): ``rearm``
+    #     re-arms the merge instead (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G3)
     #   * the PR is still a draft
     #   * the event is an issue_comment on a regular issue (not a PR
     #     — issue_comment fires on both; ``issue.pull_request`` is
@@ -86,7 +130,10 @@ jobs:
     #     (SP-CI-SECRETS-ISOLATION layer 1: this job mounts all six
     #     provider keys, so only owner-triggered events may run it;
     #     untrusted actors still get the secret-free ci.yml. Extend the
-    #     fromJSON list as collaborators are added.)
+    #     fromJSON list as collaborators are added.)  The one exception
+    #     is the automatic retry: a workflow_dispatch by
+    #     github-actions[bot] carrying ``retry_of``, which only the
+    #     ``retry`` job of an owner-triggered run sends
     #   * the coalesce job was cancelled by a newer event of the burst
     #     (it ran and succeeded for the last one; it is skipped for a
     #     pull_request event, which is not delayed)
@@ -95,14 +142,18 @@ jobs:
       !cancelled()
       && (needs.coalesce.result == 'success'
           || needs.coalesce.result == 'skipped')
+      && github.event_name != 'pull_request_review'
+      && (github.event_name != 'pull_request_review_comment'
+          || needs.coalesce.result == 'success')
       && github.event.pull_request.draft != true
       && (github.event_name != 'issue_comment'
           || github.event.issue.pull_request != null)
       && (github.event_name != 'issue_comment'
           || github.event.comment.user.type != 'Bot')
-      && (github.event_name != 'pull_request_review'
-          || github.event.review.user.type != 'Bot')
-      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && (contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+          || (github.event_name == 'workflow_dispatch'
+              && github.actor == 'github-actions[bot]'
+              && github.event.inputs.retry_of))
     # SP-CI-FIX-LOOP-CLOSURE follow-up, kept at job level: a Coder push
     # fires a synchronize run whose review must not kill the parent's
     # in-progress review, so bot-triggered runs queue; owner events keep
@@ -130,6 +181,8 @@ jobs:
       verdict: ${{ steps.run_review.outputs.verdict }}
       pr_number: ${{ steps.pr.outputs.number }}
       head_ref: ${{ steps.pr.outputs.head_ref }}
+      head_sha: ${{ steps.run_review.outputs.head_sha }}
+      incomplete_cause: ${{ steps.run_review.outputs.incomplete_cause }}
     steps:
       # SP-CI-SECRETS-ISOLATION layer 2: this job holds all six
       # provider keys, so it must never install or import PR-authored
@@ -449,6 +502,13 @@ jobs:
           # Proxy auth — random per-run token shared between the
           # sidecar and the agent process.
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D8: the breaker lives
+          # and dies with this job.  Unset, it was the runner host's
+          # shared ledger (~/.local/share/repoach/github.com/repoachhq/
+          # repoach/repoach.db), so one job's trips, quarantines (6 h) and
+          # 410s (7 days) were rehydrated by every later job ("Breaker
+          # rehydrated from persisted state: 11 row(s) restored", #288).
+          REPOACH_BREAKER_PROBE_SEED_DB: ${{ runner.temp }}/job_proxy_breaker.db
           # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: no fixed port.  Two
           # self-hosted runners share this host; a hardcoded port let a
           # second job's /health poll be answered by the first job's
@@ -502,6 +562,11 @@ jobs:
           cd pr_head
           python -m repoach.cli.main review pr "${{ steps.pr.outputs.number }}" | tee "$artifact"
           rc=${PIPESTATUS[0]}
+          # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G2: the retry job reads
+          # why an incomplete review is incomplete, and at which head,
+          # from the one JSON object review pr printed.  No object, no
+          # cause: nothing is retried.
+          python -c 'import json, sys; payload = json.load(open(sys.argv[1])); print("incomplete_cause=" + (payload.get("incomplete_cause") or "")); print("head_sha=" + (payload.get("head_sha") or ""))' "$artifact" >> "$GITHUB_OUTPUT" 2>/dev/null || true
           # Exit code 2 == REQUEST_CHANGES (gate the merge); 0 == APPROVE/COMMENT.
           # Anything else is an actual failure of the bot pipeline.
           if [ "$rc" -eq 0 ]; then
@@ -562,6 +627,79 @@ jobs:
       - name: Stop LLM proxy sidecar
         if: always()
         run: bash "$RUNNER_TEMP/job_proxy.sh" stop
+
+  retry:
+    name: Retry a review incomplete on transport errors
+    # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G2.  First run: the review
+    # job failed (exit 3) with incomplete_cause ``transport`` (every
+    # errored reviewer and every deferred judge failed on a transport
+    # error, the per-call window already spent), so this job waits
+    # review_retry_delay_s, records the retry in the merge attempts
+    # comment and dispatches this workflow once at the same head, with
+    # ``retry_of`` naming the failed run.  ``review retry`` refuses a
+    # second retry at a head, a moved head and a closed PR.  Retry run
+    # (``retry_of`` set, dispatched by github-actions[bot]): it never
+    # retries again; it records its own id and its review result, so the
+    # comment names both runs.  GitHub-hosted: the wait never holds the
+    # self-hosted runner; the base ref is installed, never the PR's code,
+    # and the job holds no provider key.
+    needs: review
+    if: >-
+      always()
+      && ((needs.review.result == 'failure'
+           && needs.review.outputs.incomplete_cause == 'transport'
+           && !github.event.inputs.retry_of
+           && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor))
+          || (github.event_name == 'workflow_dispatch'
+              && github.actor == 'github-actions[bot]'
+              && github.event.inputs.retry_of
+              && (needs.review.result == 'success'
+                  || needs.review.result == 'failure')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout base ref (trusted tooling)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.base.ref || 'develop' }}
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install package from base ref
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Wait before the retry (review_retry_delay_s)
+        if: ${{ !github.event.inputs.retry_of }}
+        run: sleep 300
+
+      - name: Dispatch the retry, or record the retry run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ needs.review.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.review.outputs.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RETRY_OF: ${{ github.event.inputs.retry_of }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          REPOACH_LLM_PROXY_BASE_URL: "http://127.0.0.1:8083"
+        run: |
+          if [ -n "$RETRY_OF" ]; then
+            python -m repoach.cli.main review retry "$PR_NUMBER" --head "$HEAD_SHA" \
+              --run "$RUN_ID" --retry-of "$RETRY_OF" --result "$REVIEW_RESULT"
+          else
+            python -m repoach.cli.main review retry "$PR_NUMBER" --head "$HEAD_SHA" \
+              --run "$RUN_ID"
+          fi
 
   auto_fix:
     name: Coder auto-fix loop
@@ -933,6 +1071,8 @@ jobs:
           # The startup step below sources it so the same definition
           # flows into both local and CI.
           REPOACH_ANTHROPIC_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D8: see review job above.
+          REPOACH_BREAKER_PROBE_SEED_DB: ${{ runner.temp }}/job_proxy_breaker.db
           # SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB: port picked at start,
           # see the review job above.
           # SP-PROXY-CHAIN-FAILOVER (2026-05-09): see review job above.
@@ -1141,10 +1281,18 @@ jobs:
     # deliberately NOT part of this design.
     needs: [review, auto_fix]
     # SP-CI-SECRETS-ISOLATION layer 1: contents-write token — owner
-    # only, same defence-in-depth rationale as auto_fix.
+    # only, same defence-in-depth rationale as auto_fix, plus the
+    # automatic review retry (a workflow_dispatch by github-actions[bot]
+    # carrying ``retry_of``, SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G2):
+    # its merge decision is re-verified by the pure gate at head, as
+    # merge-on-ci.yml admits the same actor.  auto_fix stays owner-only,
+    # so a retry run never pushes.
     if: >-
       !failure() && !cancelled()
-      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && (contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+          || (github.event_name == 'workflow_dispatch'
+              && github.actor == 'github-actions[bot]'
+              && github.event.inputs.retry_of))
       && ((needs.auto_fix.outputs.pushed == 'true'
            && needs.auto_fix.outputs.re_verdict == 'APPROVE_OR_COMMENT')
           || (needs.auto_fix.outputs.pushed != 'true'
