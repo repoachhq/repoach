@@ -89,7 +89,7 @@ from .base_ref import (
     ResolvedBase,
     origin_fetcher,
     reader_of,
-    require_pr_base,
+    require_forge_pr_base,
 )
 from .diff_scoper import scope_diff
 from .finding_post_record import pair_posted, record_posted_comments
@@ -1434,8 +1434,9 @@ class ReviewTeamOrchestrator:
         The declarations are read at the base tip :meth:`_require_base`
         resolved once, up front, never at the head; ``None`` (no base
         known) declares nothing. A base that declares nothing, or a read
-        that fails, leaves the diff as it is, so an oversized artefact
-        keeps its blocking finding (fail closed).
+        that fails for any reason other than a base refusal, leaves the
+        diff as it is, so an oversized artefact keeps its blocking
+        finding (fail closed).
 
         :class:`~repoach.review.base_ref.BaseRefUnresolvableError` is the one
         exception the broad catch must not swallow: a base with no merge
@@ -1466,14 +1467,14 @@ class ReviewTeamOrchestrator:
         """Resolve the PR's base once, with its merge base with the head, before any review work.
 
         ``base_ref`` is read as it is, then as ``origin/<base_ref>`` after
-        one fetch (:func:`~repoach.review.base_ref.require_pr_base`); a
+        one fetch (:func:`~repoach.review.base_ref.require_forge_pr_base`); a
         base that still does not resolve, or has no merge base with the
         head, refuses the review by name (Yoob B-221).
 
         Raises:
             BaseRefUnresolvableError: The base is absent, ambiguous, or beyond a shallow clone.
         """
-        return require_pr_base(self._repo_root, base_ref, "HEAD", fetch_base=self._fetch_base)
+        return require_forge_pr_base(self._repo_root, base_ref, "HEAD", forge=self._forge)
 
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""

@@ -66,10 +66,13 @@ def _no_legacy_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("repoach.core.paths.legacy_db_path", lambda _root: None)
 
 
+FAKE_SHA = "0" * 40
+"""The tip and merge base ``base_resolves`` reports: no commit of any clone, never a real value."""
+
 BASE_RESOLVERS = (
-    "repoach.review.orchestrator.require_pr_base",
-    "repoach.review.auto_merge.require_pr_base",
-    "repoach.review.coder_findings.require_pr_base",
+    "repoach.review.orchestrator.require_forge_pr_base",
+    "repoach.review.auto_merge.require_forge_pr_base",
+    "repoach.review.coder_findings.require_forge_pr_base",
     "repoach.review.release_gate.require_merge_base",
 )
 """Every call site of the base resolution (Yoob B-221) that ``base_resolves`` replaces."""
@@ -85,6 +88,6 @@ def base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
     The resolution itself is tested in ``tests/unit/test_base_ref_must_resolve.py``
     and ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
     """
-    resolved = ResolvedBase(ref="develop", tip="0" * 40, merge_base="0" * 40)
+    resolved = ResolvedBase(ref="develop", tip=FAKE_SHA, merge_base=FAKE_SHA)
     for target in BASE_RESOLVERS:
         monkeypatch.setattr(target, lambda *_a, **_k: resolved)
