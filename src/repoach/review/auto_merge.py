@@ -88,7 +88,7 @@ from ..gates.config import (
     resolve_refuter_budget,
     resolve_refuter_max_judged,
 )
-from .base_ref import origin_fetcher, require_pr_base
+from .base_ref import origin_fetcher, reader_of, require_pr_base
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
 from .merge_gate import (
     MergeDecision,
@@ -1001,7 +1001,9 @@ def evaluate_merge_gate(
             if announce is not None:
                 announce(tree.announcement(pr_number))
             if pr is not None and pr.base_ref:
-                require_pr_base(tree.root, pr.base_ref, "HEAD", fetch_base=origin_fetcher(forge))
+                require_pr_base(
+                    tree.root, pr.base_ref, "HEAD", fetch_base=origin_fetcher(reader_of(forge))
+                )
             budget = resolve_refuter_budget(checkout)
             head_sha, facts, decision = decide_at_head(
                 pr_number,

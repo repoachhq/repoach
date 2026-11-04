@@ -386,7 +386,7 @@ def gather_release_facts(
         )
     release_ref = f"{_REMOTE}/{release_branch}"
     integration_ref = f"{_REMOTE}/{integration_branch}"
-    require_merge_base(repo_root, release_ref, integration_ref, git=reader_of(forge.git))
+    require_merge_base(repo_root, release_ref, integration_ref, git=reader_of(forge))
     develop_sha = forge.git(["rev-parse", integration_branch]).stdout.strip()
     log_result = forge.git(["log", f"{release_ref}..{integration_ref}", "--format=%H%x09%s"])
     commits: list[tuple[str, str]] = []

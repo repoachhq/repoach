@@ -84,7 +84,7 @@ from ..project.spec_source import (
 )
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
-from .base_ref import BaseRefUnresolvableError, origin_fetcher, require_pr_base
+from .base_ref import BaseRefUnresolvableError, origin_fetcher, reader_of, require_pr_base
 from .diff_scoper import scope_diff
 from .finding_post_record import pair_posted, record_posted_comments
 from .finding_post_threads import ClosureRun, detect_closed_threads
@@ -1470,7 +1470,7 @@ class ReviewTeamOrchestrator:
 
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""
-        origin_fetcher(self._forge)(base_ref)
+        origin_fetcher(reader_of(self._forge))(base_ref)
 
     def _record_spec_coverage(
         self,

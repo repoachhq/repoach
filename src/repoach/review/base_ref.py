@@ -257,40 +257,42 @@ class _GitRun(Protocol):
     stderr: str
 
 
-def reader_of(git: Callable[[list[str]], _GitRun]) -> GitReader:
-    """Return the :data:`GitReader` over a forge's ``git`` (``Forge.git``).
+class _HasGit(Protocol):
+    """What :func:`reader_of` needs of a forge: its ``git``."""
+
+    def git(self, args: list[str]) -> _GitRun:
+        """Run one git command in the forge's clone."""
+        ...
+
+
+def reader_of(forge: _HasGit) -> GitReader:
+    """Return the :data:`GitReader` over a forge's ``git`` (``Forge.git``), the one forge adapter.
+
+    ``forge.git`` is looked up when a command runs, not before: a base
+    that resolves locally never touches the forge.
 
     Args:
-        git: Runs one git command in the forge's clone.
+        forge: The forge whose clone runs the commands.
 
     Returns:
-        The reader, so the release gate resolves its base through its forge.
+        The reader, for :func:`require_merge_base` (the release gate) and
+        :func:`origin_fetcher` (the review, the gate, the Coder loop).
     """
 
     def read(args: Sequence[str]) -> tuple[int, str, str]:
-        """Run one git command through ``git``."""
-        done = git(list(args))
+        """Run one git command through ``forge.git``."""
+        done = forge.git(list(args))
         return done.returncode, done.stdout, done.stderr
 
     return read
 
 
-class _HasGit(Protocol):
-    """What :func:`origin_fetcher` needs of a forge: its ``git``."""
-
-    def git(self, args: list[str]) -> object:
-        """Run one git command in the forge's clone."""
-        ...
-
-
-def origin_fetcher(forge: _HasGit) -> Callable[[str], None]:
-    """Return the fetch of ``origin/<branch>`` through ``forge.git``.
-
-    ``forge.git`` is looked up when the fetch runs, not before: a base
-    that resolves never touches the forge.
+def origin_fetcher(git: GitReader) -> Callable[[str], None]:
+    """Return the fetch of ``origin/<branch>`` through ``git``.
 
     Args:
-        forge: The forge whose clone receives the fetch; its result is not read.
+        git: The reader of the clone that receives the fetch (:func:`reader_of`
+            of a forge); its result is not read.
 
     Returns:
         A callable fetching ``refs/heads/<branch>`` into ``refs/remotes/origin/<branch>``.
@@ -298,7 +300,7 @@ def origin_fetcher(forge: _HasGit) -> Callable[[str], None]:
 
     def fetch_base(branch: str) -> None:
         """Fetch ``branch`` from origin into its remote-tracking ref."""
-        forge.git(
+        git(
             [
                 "fetch",
                 "--quiet",
