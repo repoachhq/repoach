@@ -90,9 +90,9 @@ def release_gate(
       * ``1`` -- could not evaluate (transport error or missing CI
         script gathering facts).
       * ``10`` -- ``origin/<release>`` does not resolve or has no merge
-        base with ``origin/<integration>`` (a shallow clone);
-        the keys ``error`` (``base_ref_unresolvable``), ``ref`` and
-        ``hint`` on stdout.
+        base with ``origin/<integration>`` (a shallow clone); stdout
+        carries the keys ``error`` (``base_ref_unresolvable``), ``ref``
+        and ``hint``.
     """
     root = _repo_root()
     try:

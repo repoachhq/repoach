@@ -735,8 +735,6 @@ def review_fix(
       * ``4`` — nothing to fix (no open blocking findings, or pytest red
         and reverted).
       * ``5`` — base branch is not ``develop`` (refused by safety gate).
-      * ``10`` — the base branch does not resolve, or has no merge base
-        with the head; nothing was recorded or fixed (Yoob B-221).
       * ``9`` — SP-CODER-PLACEHOLDER-DETECT: every proposed fix was
         rejected as an LLM placeholder string ("# ... rest of file
         ...", single-comment-line file, massive shrinkage, test file
@@ -749,6 +747,10 @@ def review_fix(
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
       * ``2`` — ``--spec`` names no spec document, or the forge is unusable.
+      * ``10`` — the base branch does not resolve, or has no merge base
+        with the head; nothing was recorded or fixed, and stdout carries
+        the keys ``error`` (``base_ref_unresolvable``), ``ref`` and
+        ``hint`` (Yoob B-221).
 
     The Coder reads the spec resolved like ``review pr`` (``--spec`` >
     ``Spec:`` description line > branch name); without one it fixes the
@@ -1095,8 +1097,9 @@ def review_gate(
       * ``1`` — could not evaluate (transport error gathering facts).
       * ``10`` — the base does not resolve (absent from the clone,
         ambiguous, or beyond the depth of a shallow clone): nothing was
-        evaluated; the keys ``error``
-        (``base_ref_unresolvable``), ``ref`` and ``hint`` on stdout and the hint on stderr (Yoob B-221).
+        evaluated, stdout carries the keys ``error``
+        (``base_ref_unresolvable``), ``ref`` and ``hint``, and stderr the
+        hint (Yoob B-221).
 
     ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
     (``--spec`` > ``Spec:`` description line > branch name).
