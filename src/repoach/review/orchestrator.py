@@ -84,6 +84,7 @@ from ..project.spec_source import (
 )
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
+from .base_ref import BaseRefUnresolvableError, origin_fetcher, require_pr_base
 from .diff_scoper import scope_diff
 from .finding_post_record import pair_posted, record_posted_comments
 from .finding_post_threads import ClosureRun, detect_closed_threads
@@ -108,7 +109,6 @@ from .findings_bridge import (
 )
 from .generated_artefacts import ReviewScope, review_scope
 from .generated_evidence import load_review_evidence
-from .generated_git import BaseRefUnresolvableError, origin_fetcher, require_pr_base
 from .generated_report import report_json, report_lines
 from .generated_store import (
     fetch_generated_checks,

@@ -23,7 +23,7 @@ import typer
 
 from ..core.config import get_settings
 from ..forge import select_forge
-from ..review.generated_git import EXIT_BASE_UNRESOLVABLE, BaseRefUnresolvableError
+from ..review.base_ref import BaseRefUnresolvableError
 from ..review.release_gate import (
     ProvenanceSource,
     compute_release_decision,
@@ -34,6 +34,7 @@ from ..review.release_gate import (
     write_gate_receipt,
 )
 from .doctor_cmds import project_root_or_exit
+from .refusals import base_ref_refusal
 
 release_app = typer.Typer(
     help="Operator-only develop -> main release gate (read-only, never merges).",
@@ -90,7 +91,8 @@ def release_gate(
         script gathering facts).
       * ``10`` -- ``origin/<release>`` does not resolve or has no merge
         base with ``origin/<integration>`` (a shallow clone);
-        ``{"error": "base_ref_unresolvable", "ref", "hint"}`` on stdout.
+        the keys ``error`` (``base_ref_unresolvable``), ``ref`` and
+        ``hint`` on stdout.
     """
     root = _repo_root()
     try:
@@ -102,9 +104,7 @@ def release_gate(
             provenance=provenance,
         )
     except BaseRefUnresolvableError as exc:
-        typer.echo(f"repoach: {exc}", err=True)
-        typer.echo(json.dumps(exc.as_json(), indent=2, ensure_ascii=False))
-        raise typer.Exit(code=EXIT_BASE_UNRESOLVABLE) from exc
+        raise base_ref_refusal(exc, payload={}) from exc
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc

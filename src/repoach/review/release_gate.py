@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
-from .generated_git import reader_of, require_merge_base
+from .base_ref import reader_of, require_merge_base
 from .open_threads import OpenThreads, read_open_threads
 from .persistence import fetch_merged_pr_shas
 

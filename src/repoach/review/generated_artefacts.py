@@ -39,13 +39,14 @@ from pathlib import Path
 
 from ..core.logging import get_logger
 from ..project.config import GENERATED_CHECK_TIMEOUT_S
+from .base_ref import require_merge_base
 from .diff_scoper import split_diff
 from .generated_config import (
     declared_at_base,
     present_at_base,
     touched_artefacts,
 )
-from .generated_git import blob_at, require_merge_base
+from .generated_git import blob_at
 from .generated_process import Budget, Runner, run_once
 from .generated_types import (
     GENERATED_CHECKS_TOTAL_BUDGET_S,

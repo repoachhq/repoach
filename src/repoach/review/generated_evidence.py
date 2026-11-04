@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.logging import get_logger
-from .generated_git import FULL_SHA, BaseRefUnresolvableError
+from .base_ref import FULL_SHA, BaseRefKind, BaseRefUnresolvableError
 from .generated_types import (
     GeneratedCheck,
     GeneratedEntry,
@@ -159,6 +159,7 @@ def _require_base_sha(base_sha: str) -> None:
         raise BaseRefUnresolvableError(
             base_sha,
             "resolve the base before the evidence is read (resolve_base_ref)",
+            kind=BaseRefKind.NOT_A_COMMIT,
             cause="the review reached the evidence check without a merge-base SHA",
         )
 

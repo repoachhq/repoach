@@ -88,7 +88,7 @@ from ..gates.config import (
     resolve_refuter_budget,
     resolve_refuter_max_judged,
 )
-from .generated_git import origin_fetcher, require_pr_base
+from .base_ref import origin_fetcher, require_pr_base
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
 from .merge_gate import (
     MergeDecision,

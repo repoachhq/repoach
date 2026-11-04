@@ -36,6 +36,7 @@ from repoach.core.logging import get_logger
 from repoach.project.always_reviewed import always_reviewed
 from repoach.project.config import ConfigError
 from repoach.review import generated_evidence, generated_process, generated_verify
+from repoach.review.base_ref import BaseRefUnresolvableError
 from repoach.review.finding_verifiers import verify_finding
 from repoach.review.findings import (
     ClaimType,
@@ -51,7 +52,6 @@ from repoach.review.generated_artefacts import run_checks
 from repoach.review.generated_config import declared_at_base
 from repoach.review.generated_evidence import evidence_payload, load_review_evidence
 from repoach.review.generated_git import (
-    BaseRefUnresolvableError,
     blob_at,
     changed_paths,
     merge_base,

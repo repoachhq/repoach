@@ -37,6 +37,7 @@ from ..gates.config import load_gates_config
 from ..gates.verifiers import run_verifiers
 from ..project.config import load_project_config
 from ..project.spec_source import resolve_spec
+from .base_ref import origin_fetcher, require_pr_base
 from .finding_verifiers import verify_finding
 from .findings import (
     MECHANICAL_CLAIM_TYPES,
@@ -49,7 +50,6 @@ from .findings import (
     record_finding,
     update_finding_status,
 )
-from .generated_git import origin_fetcher, require_pr_base
 from .notifier import RoutineFireResult, fire_review_routine
 from .refuter import JUDGED_CLAIM_TYPES, Judge, make_refuter_judge, refute_finding
 from .reviewer import Coder
