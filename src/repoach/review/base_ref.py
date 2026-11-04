@@ -119,6 +119,28 @@ def fetch_hint(ref: str) -> str:
     return f"fetch it first: git fetch origin {_branch_of(ref) or '<branch>'}"
 
 
+def _names_more_than_one_ref(read: GitReader, ref: str) -> bool:
+    """Whether ``ref`` is the short name of more than one ref, as git disambiguates it.
+
+    The candidates are git's own (gitrevisions: ``refs/<ref>``,
+    ``refs/tags/<ref>``, ``refs/heads/<ref>``, ``refs/remotes/<ref>``,
+    ``refs/remotes/<ref>/HEAD``), listed with ``for-each-ref``: the answer
+    never depends on the text of a warning, which a localised git
+    translates.
+    """
+    if ref.startswith("refs/") or FULL_SHA.fullmatch(ref):
+        return False
+    candidates = (
+        f"refs/{ref}",
+        f"refs/tags/{ref}",
+        f"refs/heads/{ref}",
+        f"refs/remotes/{ref}",
+        f"refs/remotes/{ref}/HEAD",
+    )
+    _code, out, _err = read(["for-each-ref", "--format=%(refname)", *candidates])
+    return len({line.strip() for line in out.splitlines()} & set(candidates)) > 1
+
+
 def resolve_base_ref(root: Path, ref: str, *, git: GitReader | None = None) -> str:
     """Return the full SHA of the commit ``ref`` names, or raise :class:`BaseRefUnresolvableError`.
 
@@ -155,12 +177,12 @@ def resolve_base_ref(root: Path, ref: str, *, git: GitReader | None = None) -> s
             cause="it starts with '-', read by git as an option",
         )
     read = git or local_git(root)
-    code, out, err = read(["rev-parse", "--verify", f"{ref}^{{commit}}"])
+    code, out, _err = read(["rev-parse", "--verify", f"{ref}^{{commit}}"])
     if code != 0:
         raise BaseRefUnresolvableError(
             ref, fetch_hint(ref), kind=BaseRefKind.ABSENT, cause="absent from the clone"
         )
-    if "ambiguous" in err:
+    if _names_more_than_one_ref(read, ref):
         branch = _branch_of(ref)
         raise BaseRefUnresolvableError(
             ref,
