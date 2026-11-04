@@ -755,13 +755,5 @@ def test_release_range_on_origin_refs_still_refuses_true_out_of_band_commit(
     ]
 
 
-@pytest.fixture(autouse=True)
-def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let the base resolve: these tests drive the release gate on a fake clone.
-
-    The base resolution itself (Yoob B-221) is tested in
-    ``tests/unit/test_base_ref_must_resolve.py``.
-    """
-    monkeypatch.setattr(
-        "repoach.review.release_gate.require_merge_base", lambda *_a, **_k: "0" * 40
-    )
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

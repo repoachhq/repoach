@@ -62,3 +62,26 @@ def _no_legacy_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr("repoach.core.paths.legacy_env_file", lambda _root: None)
     monkeypatch.setattr("repoach.core.paths.legacy_db_path", lambda _root: None)
+
+
+BASE_RESOLVERS = (
+    "repoach.review.orchestrator.require_pr_base",
+    "repoach.review.auto_merge.require_pr_base",
+    "repoach.review.coder_findings.require_pr_base",
+    "repoach.review.release_gate.require_merge_base",
+)
+"""Every call site of the base resolution (Yoob B-221) that ``base_resolves`` replaces."""
+
+
+@pytest.fixture
+def base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve at every call site of :data:`BASE_RESOLVERS`.
+
+    For a module that drives the review, the gate, the Coder loop or the
+    release gate on a fake clone (no git repository, or a scripted forge
+    ``git``), declared with ``pytestmark = pytest.mark.usefixtures("base_resolves")``.
+    The resolution itself is tested in ``tests/unit/test_base_ref_must_resolve.py``
+    and ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+    """
+    for target in BASE_RESOLVERS:
+        monkeypatch.setattr(target, lambda *_a, **_k: "0" * 40)
