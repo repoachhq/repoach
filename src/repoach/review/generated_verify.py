@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .base_ref import require_merge_base
+from .base_ref import require_pr_base
 from .generated_artefacts import run_checks
 from .generated_config import declared_at_base, present_at_base, touched_artefacts
 from .generated_evidence import evidence_payload
@@ -169,10 +169,11 @@ def verify_generated(
     head_sha = resolve_commit(root, head)
     if head_sha is None:
         raise GeneratedRefusalError(f"head {head!r} does not resolve to a commit")
-    base_sha = require_merge_base(root, base_ref, head_sha)
+    base = require_pr_base(root, base_ref, head_sha)
+    base_sha = base.merge_base
     changed = changed_paths(root, base_sha, head_sha)
     touched = present_at_base(
-        root, base_sha, touched_artefacts(declared_at_base(root, base_ref), changed)
+        root, base_sha, touched_artefacts(declared_at_base(root, base.tip), changed)
     )
     checks: list[GeneratedCheck] = []
     if touched:

@@ -19,10 +19,12 @@ import re
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
-from ..forge import Forge
 from .git_run import run_git
+
+if TYPE_CHECKING:
+    from ..forge import Forge
 
 GitReader = Callable[[Sequence[str]], tuple[int, str, str]]
 """Runs one git command and returns ``(exit code, stdout, stderr)``, never raising on its exit."""
@@ -320,11 +322,19 @@ class ResolvedBase(NamedTuple):
     merge_base: str
 
 
-def _is_branch_name(ref: str) -> bool:
-    """Whether ``ref`` is a bare branch name (``develop``), as a forge reports a PR's base."""
-    return bool(ref.strip()) and not (
-        ref.startswith(("-", "refs/", _REMOTE_PREFIX)) or FULL_SHA.fullmatch(ref)
-    )
+def _branch_refs(ref: str) -> tuple[str, ...] | None:
+    """Return the full refnames a branch-like base is read as, ``None`` for any other ref.
+
+    ``develop`` (a forge's base) is ``refs/remotes/origin/develop`` then
+    ``refs/heads/develop``; ``origin/develop`` (``review generated
+    --base``) is ``refs/remotes/origin/develop`` only. A full refname or a
+    full SHA is no branch name: it is resolved as it is.
+    """
+    if not ref.strip() or ref.startswith(("-", "refs/")) or FULL_SHA.fullmatch(ref):
+        return None
+    if ref.startswith(_REMOTE_PREFIX):
+        return (f"refs/remotes/{ref}",)
+    return (f"refs/remotes/{_REMOTE_PREFIX}{ref}", f"refs/heads/{ref}")
 
 
 def _names_a_commit(read: GitReader, ref: str) -> bool:
@@ -343,14 +353,16 @@ def require_pr_base(
 ) -> ResolvedBase:
     """Resolve a pull request's base branch as a branch, fetching it once, with its merge base.
 
-    A forge names a PR's base by its bare branch name (``develop``). That
-    name is read as a branch only, never as git's short name: a tag a PR
-    author pushed under the same name would otherwise become the base
-    tip, where the ``[[review.generated]]`` declarations are read.
-    ``refs/remotes/origin/<base_ref>`` is tried first; when it is absent and
-    ``fetch_base`` is given, it is fetched once; ``refs/heads/<base_ref>``
-    is the last resort. Any other ref (``origin/develop``, a full refname,
-    a SHA) is resolved as it is (:func:`require_merge_base`).
+    A forge names a PR's base by its bare branch name (``develop``), and
+    ``review generated`` receives ``origin/<branch>``. Either is read as a
+    branch only, never as git's short name: a tag a PR author pushed
+    under the same name would otherwise become the base tip, where the
+    ``[[review.generated]]`` declarations are read and whose ``check``
+    the verification job runs. ``refs/remotes/origin/<branch>`` is tried
+    first; when it is absent and ``fetch_base`` is given, it is fetched
+    once; ``refs/heads/<branch>`` is the last resort for a bare name. A
+    full refname or a full SHA is resolved as it is
+    (:func:`require_merge_base`).
 
     Args:
         root: Any checkout of the repository.
@@ -367,22 +379,46 @@ def require_pr_base(
             a merge base with ``head`` (kind ``absent`` when none exists).
     """
     read = git or local_git(root)
-    if not _is_branch_name(base_ref):
+    candidates = _branch_refs(base_ref)
+    if candidates is None:
         found = require_merge_base(root, base_ref, head, git=read)
         return ResolvedBase(base_ref, resolve_base_ref(root, base_ref, git=read), found)
-    remote = f"refs/remotes/{_REMOTE_PREFIX}{base_ref}"
-    if not _names_a_commit(read, remote) and fetch_base is not None:
-        fetch_base(base_ref)
-    for ref in (remote, f"refs/heads/{base_ref}"):
+    branch = _branch_of(base_ref)
+    if not _names_a_commit(read, candidates[0]) and fetch_base is not None:
+        fetch_base(branch)
+    for ref in candidates:
         if _names_a_commit(read, ref):
             found = require_merge_base(root, ref, head, git=read)
             return ResolvedBase(ref, resolve_base_ref(root, ref, git=read), found)
     raise BaseRefUnresolvableError(
-        f"{_REMOTE_PREFIX}{base_ref}",
-        fetch_hint(base_ref),
+        f"{_REMOTE_PREFIX}{branch}",
+        fetch_hint(branch),
         kind=BaseRefKind.ABSENT,
         cause="absent from the clone",
     )
+
+
+def require_forge_pr_base(root: Path, base_ref: str, head: str, *, forge: Forge) -> ResolvedBase:
+    """Resolve a pull request's base in ``root``, fetching it through ``forge`` once if absent.
+
+    The one wiring of :func:`require_pr_base`, :func:`origin_fetcher` and
+    :func:`reader_of` that ``review pr``, ``review gate`` and the Coder
+    loop share.
+
+    Args:
+        root: The checkout at the head.
+        base_ref: The pull request's base branch.
+        head: The head revision.
+        forge: The forge whose clone receives the fetch.
+
+    Returns:
+        The resolved base (:class:`ResolvedBase`).
+
+    Raises:
+        BaseRefUnresolvableError: No branch of that name names a commit with
+            a merge base with ``head``.
+    """
+    return require_pr_base(root, base_ref, head, fetch_base=origin_fetcher(reader_of(forge)))
 
 
 __all__ = [
@@ -397,6 +433,7 @@ __all__ = [
     "local_git",
     "origin_fetcher",
     "reader_of",
+    "require_forge_pr_base",
     "require_merge_base",
     "require_pr_base",
     "resolve_base_ref",
