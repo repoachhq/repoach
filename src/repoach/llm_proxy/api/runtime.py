@@ -36,6 +36,55 @@ def warn_if_process_auth_token(settings: Settings) -> None:
         )
 
 
+def report_configured_models_gone(settings: Settings) -> list[str]:
+    """Log, as one error each, every configured chain entry the breaker holds as gone.
+
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D9. ``nvidia_nim/z-ai/glm-5.2``
+    heads ``MODEL_OPUS`` and has answered 410 since 2026-11-02; its
+    terminal trip (7 days) was rehydrated by every later job, silently.
+    A model the provider retired is a configuration fault: it is named
+    at start, with the chain naming it and the time left on its trip,
+    so the operator removes it from ``chains.env``. The proxy still
+    starts, because the rest of the chain can serve.
+
+    Returns:
+        The lines logged, one per gone entry.
+    """
+    import time
+
+    from repoach.llm_proxy.routing import TERMINAL_REASONS, get_breaker
+    from repoach.llm_proxy.routing.chain import Chain
+
+    configured: dict[str, list[str]] = {}
+    for tier, spec in (
+        ("MODEL_OPUS", settings.model_opus),
+        ("MODEL_SONNET", settings.model_sonnet),
+        ("MODEL_HAIKU", settings.model_haiku),
+    ):
+        if not spec or not spec.strip():
+            continue
+        try:
+            refs = Chain.parse(spec).refs
+        except ValueError as exc:
+            logger.warning("proxy_configured_chain_unparseable: {} ({})", tier, exc)
+            continue
+        for ref in refs:
+            configured.setdefault(str(ref), []).append(tier)
+    lines: list[str] = []
+    for entry in get_breaker().snapshot(time.monotonic()):
+        tiers = configured.get(str(entry.ref))
+        if entry.reason not in TERMINAL_REASONS or not tiers:
+            continue
+        line = (
+            f"proxy_configured_model_gone: {entry.ref} ({entry.reason}) in "
+            f"{', '.join(tiers)}, tripped for {entry.ttl_remaining_s / 3600:.0f} h more; "
+            "remove it from chains.env"
+        )
+        logger.error(line)
+        lines.append(line)
+    return lines
+
+
 @dataclass(slots=True)
 class AppRuntime:
     """Own the provider registry and its lifecycle."""
@@ -60,6 +109,7 @@ class AppRuntime:
         self._seed_breaker_from_persisted_state()
         self._seed_breaker_from_probes()
         self._seed_effort_map()
+        report_configured_models_gone(self.settings)
 
     def _seed_effort_map(self) -> None:
         """Seed the resolved-effort map from recent probe history (best-effort).

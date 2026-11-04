@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 import traceback
 import uuid
@@ -26,6 +27,7 @@ from repoach.llm_proxy.providers.exceptions import (
     APIError,
     AuthenticationError,
     InvalidRequestError,
+    OutputCapExceededError,
     OverloadedError,
     ProviderError,
     RateLimitError,
@@ -42,6 +44,17 @@ from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
 
 __all__ = ["ClaudeProxyService", "compute_credits_gate_skip_models"]
+
+OUTPUT_CAP_REASON = "output_cap_exceeded"
+"""The failover reason of a reply that outgrew its output cap (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6)."""
+
+NO_TRIP_REASONS: frozenset[str] = frozenset({OUTPUT_CAP_REASON})
+"""Failover reasons that never trip the breaker: the request's shape failed, not the candidate.
+
+On 2026-11-04 the Sentinel's ``max_output_tokens`` failure on #288 tripped
+``claude_code/opus``; with every other opus candidate already tripped, the
+refuter's judge calls that followed found no candidate and each deferred
+its finding (``All 1 provider candidate(s) are currently breaker-tripped``)."""
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
 
@@ -70,6 +83,8 @@ def _classify_failover_reason(exc: BaseException) -> str:
     """
     if isinstance(exc, FirstByteTimeoutError):
         return "first_byte_timeout"
+    if isinstance(exc, OutputCapExceededError):
+        return OUTPUT_CAP_REASON
     if isinstance(exc, UpstreamStatusError):
         status = exc.status_code
         if status in (401, 403):
@@ -271,6 +286,7 @@ class ClaudeProxyService:
                         "the chain is exhausted before dispatch. See proxy logs "
                         "(proxy_chain_exhausted) for the per-attempt outcome."
                     ),
+                    headers=self._retry_after_header(chain),
                 )
             return StreamingResponse(
                 self._stream_with_failover(request_data, chain, input_tokens=input_tokens),
@@ -292,6 +308,25 @@ class ClaudeProxyService:
                 status_code=getattr(e, "status_code", 500),
                 detail=get_user_facing_error_message(e),
             ) from e
+
+    def _retry_after_header(self, chain: list[ResolvedModel]) -> dict[str, str] | None:
+        """Name, as ``Retry-After``, the seconds until the first candidate of ``chain`` re-opens.
+
+        SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D7: a caller retrying inside a
+        transport window waits out a short trip (``breaker_ttl_s``, 120 s)
+        and gives up at once on a long one (a 410 is tripped for 7 days)
+        instead of retrying a candidate that cannot re-open in time. None
+        for an empty chain.
+        """
+        refs = {ModelRef.parse(candidate.provider_model_ref) for candidate in chain}
+        remaining = [
+            entry.ttl_remaining_s
+            for entry in get_breaker().snapshot(time.monotonic())
+            if entry.ref in refs
+        ]
+        if not remaining:
+            return None
+        return {"Retry-After": str(max(1, math.ceil(min(remaining))))}
 
     def _chain_preflight_exhausted(self, chain: list[ResolvedModel]) -> bool:
         """Return whether ``chain`` is already known-exhausted before dispatch.
@@ -797,7 +832,8 @@ class ClaudeProxyService:
                     primary_error=str(exc)[:200],
                     latency_s=attempt_latency_s,
                 )
-                self._trip_breaker(candidate, primary_reason, chain=chain)
+                if primary_reason not in NO_TRIP_REASONS:
+                    self._trip_breaker(candidate, primary_reason, chain=chain)
                 continue
 
             attempt_latency_s = round(time.monotonic() - attempt_started, 3)
@@ -905,6 +941,12 @@ class ClaudeProxyService:
             exhaustion_message = (
                 f"All {len(chain)} provider candidate(s) returned empty completions."
             )
+        if isinstance(last_error, OutputCapExceededError):
+            yield format_error_event(
+                OUTPUT_CAP_REASON,
+                f"{str(last_error)[:2000]} (dispatch_id={dispatch_id})",
+            )
+            return
         yield format_error_event(
             "chain_exhausted",
             f"{exhaustion_message} (dispatch_id={dispatch_id}, "
