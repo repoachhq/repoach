@@ -108,7 +108,7 @@ from .findings_bridge import (
 )
 from .generated_artefacts import ReviewScope, review_scope
 from .generated_evidence import load_review_evidence
-from .generated_git import BaseRefUnresolvableError, require_pr_base
+from .generated_git import BaseRefUnresolvableError, origin_fetcher, require_pr_base
 from .generated_report import report_json, report_lines
 from .generated_store import (
     fetch_generated_checks,
@@ -1465,14 +1465,7 @@ class ReviewTeamOrchestrator:
 
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""
-        self._forge.git(
-            [
-                "fetch",
-                "--quiet",
-                "origin",
-                f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
-            ]
-        )
+        origin_fetcher(self._forge)(base_ref)
 
     def _record_spec_coverage(
         self,
