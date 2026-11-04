@@ -39,13 +39,14 @@ from pathlib import Path
 
 from ..core.logging import get_logger
 from ..project.config import GENERATED_CHECK_TIMEOUT_S
+from .base_ref import require_merge_base
 from .diff_scoper import split_diff
 from .generated_config import (
     declared_at_base,
     present_at_base,
     touched_artefacts,
 )
-from .generated_git import blob_at, merge_base
+from .generated_git import blob_at
 from .generated_process import Budget, Runner, run_once
 from .generated_types import (
     GENERATED_CHECKS_TOTAL_BUDGET_S,
@@ -185,6 +186,8 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
         The scope; ``review_diff`` is ``diff`` when nothing declared is touched.
 
     Raises:
+        BaseRefUnresolvableError: An artefact is touched and ``base_ref`` has
+            no merge base with the head (never replaced by its own name).
         ConfigError: The base declarations are invalid, or two entries
             match one changed path.
     """
@@ -192,7 +195,7 @@ def review_scope(head_dir: Path, diff: str, base_ref: str | None) -> ReviewScope
     touched = touched_artefacts(declared_at_base(head_dir, base_ref), changed)
     if not touched or base_ref is None:
         return ReviewScope(review_diff=diff, changed=changed)
-    before = merge_base(head_dir, base_ref, "HEAD") or base_ref
+    before = require_merge_base(head_dir, base_ref, "HEAD")
     touched = present_at_base(head_dir, before, touched)
     if not touched:
         return ReviewScope(review_diff=diff, changed=changed, base_sha=before)

@@ -84,6 +84,13 @@ from ..project.spec_source import (
 )
 from ..providers.select import require_provider_ready
 from ..providers.usage import bind_reviewer, current_run_id, reviewer_scope
+from .base_ref import (
+    BaseRefUnresolvableError,
+    ResolvedBase,
+    origin_fetcher,
+    reader_of,
+    require_forge_pr_base,
+)
 from .diff_scoper import scope_diff
 from .finding_post_record import pair_posted, record_posted_comments
 from .finding_post_threads import ClosureRun, detect_closed_threads
@@ -193,7 +200,6 @@ from .spec_grading import (
     CoverageGrading,
     coverage_rows_at_head,
     failed_grading_row,
-    readable_base,
     resolution_payload,
 )
 from .thread_context import ResolvedDisagreement
@@ -782,7 +788,15 @@ class ReviewTeamOrchestrator:
                     error=str(exc),
                 )
 
-        generated_scope = self._generated_scope(diff, base_ref)
+        base_tip: str | None = None
+        if base_ref is not None:
+            try:
+                base_tip = self._require_base(base_ref).tip
+            except BaseRefUnresolvableError:
+                if head_guard_pool is not None:
+                    head_guard_pool.shutdown(wait=False, cancel_futures=True)
+                raise
+        generated_scope = self._generated_scope(diff, base_tip)
         reviewed_diff = generated_scope.review_diff
 
         reviewers: list[Reviewer] = [
@@ -1414,16 +1428,25 @@ class ReviewTeamOrchestrator:
             self._repo_root, spec_id, base_ref=base_ref, changed_files=changed_files
         )
 
-    def _generated_scope(self, diff: str, base_ref: str | None) -> ReviewScope:
+    def _generated_scope(self, diff: str, base_tip: str | None) -> ReviewScope:
         """Summarise the declared generated artefacts the diff touches (G1, G2).
 
-        The declarations are read at the base ref, never the head. A base
-        that cannot be read or declares nothing leaves the diff as it is,
-        so an oversized artefact keeps its blocking finding (fail closed).
+        The declarations are read at the base tip :meth:`_require_base`
+        resolved once, up front, never at the head; ``None`` (no base
+        known) declares nothing. A base that declares nothing, or a read
+        that fails for any reason other than a base refusal, leaves the
+        diff as it is, so an oversized artefact keeps its blocking
+        finding (fail closed).
+
+        :class:`~repoach.review.base_ref.BaseRefUnresolvableError` is the one
+        exception the broad catch must not swallow: a base with no merge
+        base stops the review (Yoob B-221), so it is re-raised by name
+        before the fail-closed ``except Exception``.
         """
         try:
-            base = readable_base(self._repo_root, base_ref, self._fetch_base)
-            scope = review_scope(self._repo_root, diff, base)
+            scope = review_scope(self._repo_root, diff, base_tip)
+        except BaseRefUnresolvableError:
+            raise
         except Exception as exc:
             _log.warning(
                 "review_team.generated_scope_failed",
@@ -1435,21 +1458,27 @@ class ReviewTeamOrchestrator:
         if scope.touched:
             _log.info(
                 "review_team.generated_summarised",
-                base=base,
+                base=base_tip,
                 touched=list(scope.touched),
             )
         return scope
 
+    def _require_base(self, base_ref: str) -> ResolvedBase:
+        """Resolve the PR's base once, with its merge base with the head, before any review work.
+
+        ``base_ref`` is read as it is, then as ``origin/<base_ref>`` after
+        one fetch (:func:`~repoach.review.base_ref.require_forge_pr_base`); a
+        base that still does not resolve, or has no merge base with the
+        head, refuses the review by name (Yoob B-221).
+
+        Raises:
+            BaseRefUnresolvableError: The base is absent, ambiguous, or beyond a shallow clone.
+        """
+        return require_forge_pr_base(self._repo_root, base_ref, "HEAD", forge=self._forge)
+
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""
-        self._forge.git(
-            [
-                "fetch",
-                "--quiet",
-                "origin",
-                f"+refs/heads/{base_ref}:refs/remotes/origin/{base_ref}",
-            ]
-        )
+        origin_fetcher(reader_of(self._forge))(base_ref)
 
     def _record_spec_coverage(
         self,

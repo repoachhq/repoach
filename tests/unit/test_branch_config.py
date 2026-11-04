@@ -26,6 +26,9 @@ from repoach.review.dev_runner import ensure_branch
 from repoach.review.release_gate import gather_release_facts, verify_release_live
 from tests.forge_fakes import gh_fail, gh_ok, pr_view_stdout, scripted_github
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 
 @pytest.fixture(autouse=True)
 def _reset_settings_cache():
