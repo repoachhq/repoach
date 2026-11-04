@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ..forge import Forge
-from .generated_git import run_git
+from .git_run import run_git
 
 GitReader = Callable[[Sequence[str]], tuple[int, str, str]]
 """Runs one git command and returns ``(exit code, stdout, stderr)``, never raising on its exit."""
@@ -160,7 +160,8 @@ def resolve_base_ref(root: Path, ref: str, *, git: GitReader | None = None) -> s
     in for a commit.
 
     Args:
-        root: Any checkout of the repository.
+        root: The checkout :func:`local_git` runs in; unused when ``git`` is
+            given (the release gate reads through its forge, :func:`reader_of`).
         ref: The base revision (``develop``, ``origin/develop``, a SHA).
         git: The git seam; :func:`local_git` of ``root`` by default.
 
@@ -217,7 +218,8 @@ def require_merge_base(root: Path, ref: str, head: str, *, git: GitReader | None
     excludes it, or two histories without a common ancestor.
 
     Args:
-        root: Any checkout of the repository.
+        root: The checkout :func:`local_git` runs in; unused when ``git`` is
+            given (the release gate reads through its forge, :func:`reader_of`).
         ref: The base revision.
         head: The head revision.
         git: The git seam; :func:`local_git` of ``root`` by default.
