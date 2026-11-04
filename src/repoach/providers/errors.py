@@ -17,7 +17,22 @@ class GatewayError(Exception):
 
 
 class GatewayTransportError(GatewayError):
-    """5xx, 429, connect-refused, read-timeout — retryable transport-level."""
+    """5xx, 429, connect-refused, read-timeout — retryable transport-level.
+
+    ``status`` is the HTTP status that raised it, ``None`` when no answer
+    came (a timeout, a refused connection). A 408 or 429 is a transport
+    error for the existing retry loops, but the transport window of
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES never retries a 4xx.
+    ``retry_after_s`` is the answer's ``Retry-After``, in seconds, when it
+    gave one: the proxy names the time until a tripped chain re-opens.
+    """
+
+    def __init__(
+        self, message: str = "", *, status: int | None = None, retry_after_s: float | None = None
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.retry_after_s = retry_after_s
 
 
 class GatewayChainExhausted(GatewayError):
@@ -28,6 +43,18 @@ class GatewayChainExhausted(GatewayError):
     on every entry in ``MODEL_<CAPABILITY>``.  Retrying from the
     agent side won't help.
     """
+
+
+class GatewayOutputCapError(GatewayError):
+    """The model's reply outgrew the output cap of the request (``output_cap_exceeded``).
+
+    The same request fails the same way, so ``retryable = False`` stops
+    every retry loop at the first attempt, and it is never a transport
+    error: a review it leaves incomplete is not retried automatically
+    (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6).
+    """
+
+    retryable = False
 
 
 class ProviderAuthError(GatewayError):
@@ -85,6 +112,7 @@ __all__ = [
     "NO_PROVIDER_MESSAGE",
     "GatewayChainExhausted",
     "GatewayError",
+    "GatewayOutputCapError",
     "GatewayTransportError",
     "NoProviderConfiguredError",
     "ProviderAuthError",
