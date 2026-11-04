@@ -1,12 +1,16 @@
 """Yoob B-221 replayed: a depth-limited clone whose base is not fetched refuses ``review pr``.
 
+``324`` in the file name is the Yoob merge request the defect was measured on;
+B-221 is its row in Yoob's ``docs/BACKLOG.md``.
+
 On Yoob !324 (head 48be8b8a, review:gate job 17681184626) the job clone
 had depth 20 and ``develop`` was not fetched. ``review pr`` could not
 find the merge base, went on with the base's own name, and the log read
 ``evidence of base b9146e8, reviewing base origin/``. Here the harness
 origin's ``main`` advances past the fork point, the review runs from a
-depth-1 clone of the PR head that holds no ``main``: the review fetches
-``origin/main``, finds no merge base within the clone's depth, and exits
+depth-1 clone of the PR head from which every ref of ``main`` is
+removed: the review fetches ``origin/main`` itself (the test asserts the
+ref is back), finds no merge base within the clone's depth, and exits
 10 naming the shallow clone, before any reviewer runs, any finding is
 recorded or any forge write is attempted.
 """
@@ -21,8 +25,9 @@ import pytest
 import typer
 
 from repoach.cli import review_cmds
+from repoach.cli.refusals import EXIT_BASE_UNRESOLVABLE
+from repoach.review.base_ref import SHALLOW_HINT
 from repoach.review.findings import fetch_findings_if_recorded
-from repoach.review.generated_git import EXIT_BASE_UNRESOLVABLE, SHALLOW_HINT
 from repoach.review.orchestrator import run_review
 from tests.fixtures.generated_artefacts.harness import Forge, Repo, git, install
 

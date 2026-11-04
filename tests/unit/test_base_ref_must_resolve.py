@@ -23,45 +23,23 @@ import pytest
 import typer
 
 from repoach.cli import release_cmds, review_cmds
+from repoach.cli.refusals import EXIT_BASE_UNRESOLVABLE
 from repoach.forge.github import GhResult
 from repoach.forge.protocol import PullRequest
 from repoach.review import auto_merge, coder_findings, generated_verify, orchestrator
 from repoach.review.auto_merge import CIGateOutcome, evaluate_merge_gate
-from repoach.review.generated_evidence import load_review_evidence
-from repoach.review.generated_git import (
-    EXIT_BASE_UNRESOLVABLE,
+from repoach.review.base_ref import (
     SHALLOW_HINT,
+    BaseRefKind,
     BaseRefUnresolvableError,
     require_merge_base,
     require_pr_base,
     resolve_base_ref,
 )
+from repoach.review.generated_evidence import load_review_evidence
 from repoach.review.generated_types import GeneratedEntry
 from repoach.review.release_gate import gather_release_facts
-from tests.fixtures.generated_artefacts.harness import Forge, Repo, install, review
-
-GIT_ENV = {
-    "GIT_AUTHOR_NAME": "t",
-    "GIT_AUTHOR_EMAIL": "t@example.invalid",
-    "GIT_COMMITTER_NAME": "t",
-    "GIT_COMMITTER_EMAIL": "t@example.invalid",
-    "GIT_CONFIG_GLOBAL": "/dev/null",
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "PATH": "/usr/bin:/bin:/usr/local/bin",
-}
-
-
-def git(cwd: Path, *args: str) -> str:
-    """Run git in ``cwd`` with a fixed identity and return its stdout."""
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=cwd,
-        env={**GIT_ENV, "HOME": str(cwd)},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return proc.stdout.strip()
+from tests.fixtures.generated_artefacts.harness import GIT_ENV, Forge, Repo, git, install, review
 
 
 @dataclass
@@ -523,3 +501,56 @@ def test_review_pr_shuts_the_head_guard_down_when_the_base_is_refused(
 
     assert shutdowns == [{"wait": False, "cancel_futures": True}]
     assert bench.prompts.diffs == []
+
+
+def test_require_merge_base_refuses_unrelated_histories_in_a_full_clone(tmp_path: Path) -> None:
+    hist = history(tmp_path)
+    clone = full_clone(tmp_path, hist)
+    git(clone, "checkout", "-q", "--orphan", "island")
+    git(clone, "commit", "-q", "--allow-empty", "-m", "unrelated")
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        require_merge_base(clone, "origin/develop", "HEAD")
+
+    assert refused.value.kind is BaseRefKind.UNRELATED
+    assert str(refused.value) == (
+        "base ref 'origin/develop' does not resolve: no common ancestor with HEAD; "
+        "fetch it first: git fetch origin develop, and check that the head descends from it"
+    )
+
+
+def test_require_merge_base_refuses_an_option_like_head(tmp_path: Path) -> None:
+    hist = history(tmp_path)
+    clone = full_clone(tmp_path, hist)
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        require_merge_base(clone, "origin/develop", "-x")
+
+    assert refused.value.kind is BaseRefKind.HEAD_OPTION_LIKE
+    assert refused.value.ref == "origin/develop"
+
+
+def test_review_fix_exits_10_with_the_json_when_the_base_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    refusal = BaseRefUnresolvableError(
+        "origin/develop",
+        SHALLOW_HINT,
+        kind=BaseRefKind.SHALLOW,
+        cause="no merge base with HEAD",
+    )
+
+    def raise_refusal(*_a: object, **_k: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(review_cmds, "run_coder_fix_from_findings", raise_refusal)
+    monkeypatch.setattr(review_cmds, "project_root_or_exit", lambda: tmp_path)
+    capsys.readouterr()
+
+    with pytest.raises(typer.Exit) as exited:
+        review_cmds.review_fix(7, forge_name=None, spec=None)
+
+    assert exited.value.exit_code == EXIT_BASE_UNRESOLVABLE
+    out, err = capsys.readouterr()
+    assert json.loads(out) == {"pr_number": 7, **refusal.as_json()}
+    assert err.strip() == f"repoach: {refusal}"
