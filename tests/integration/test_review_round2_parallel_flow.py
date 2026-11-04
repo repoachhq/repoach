@@ -42,6 +42,9 @@ from repoach.review.reviewer import (
 )
 from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
     BotRole.SENTINEL: Sentinel,
@@ -241,7 +244,3 @@ def test_round2_barrier_gated_reviewers_complete_through_full_review_pr(
     assert outcomes_by_role[BotRole.SENTINEL].verdict is ReviewVerdict.APPROVE
     assert outcomes_by_role[BotRole.TESTER].verdict is ReviewVerdict.APPROVE
     assert outcomes_by_role[BotRole.SCRIBE].verdict is ReviewVerdict.APPROVE
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

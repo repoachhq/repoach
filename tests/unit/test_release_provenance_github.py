@@ -29,6 +29,9 @@ from repoach.review.release_gate import (
     gather_release_facts,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 
 def _gh_stub_with_commits(
     *,
@@ -241,7 +244,3 @@ def test_merged_pr_merge_shas_requests_the_list_compatible_json_field() -> None:
     json_value = issued[issued.index("--json") + 1]
     assert json_value == "mergeCommit"
     assert "mergeCommitOid" not in issued
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

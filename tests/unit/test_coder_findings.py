@@ -41,6 +41,9 @@ from repoach.review.findings import (
 )
 from repoach.review.stuck import MAX_CODER_ROUNDS, fetch_coder_rounds, record_coder_round
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 
 def _finding(
     claim_type: ClaimType,
@@ -699,7 +702,3 @@ def test_run_from_findings_still_calls_ci_materialiser_and_resolver() -> None:
     source = inspect.getsource(run_coder_fix_from_findings)
     assert "record_ci_failures_as_findings" in source
     assert "resolve_broken_behavior_findings" in source
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

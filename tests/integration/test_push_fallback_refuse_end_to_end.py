@@ -29,6 +29,9 @@ from repoach.review.findings import (
     record_finding,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 _PR_NUMBER = 901
 
 
@@ -206,7 +209,3 @@ def test_push_targets_real_head_branch_end_to_end(tmp_path: Path, monkeypatch) -
         text=True,
     ).stdout.strip()
     assert develop_after == develop_before
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

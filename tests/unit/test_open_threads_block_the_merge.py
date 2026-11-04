@@ -64,6 +64,9 @@ from tests.merge_wait_fakes import (
 )
 from tests.unit.test_review_team import _outcome, _StubGitHubForge, _StubReviewer
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MERGE_ON_CI = REPO_ROOT / ".github" / "workflows" / "merge-on-ci.yml"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -644,7 +647,3 @@ def test_a_file_name_or_error_from_the_forge_cannot_forge_a_line() -> None:
     assert OpenThreads(read=True, threads=[forged_id]).thread_lines() == [
         "open thread 4 (ab\\n::error::x) at (no file)"
     ]
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

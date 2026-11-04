@@ -11,6 +11,7 @@ with exit 10 before any review work.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import json
 import subprocess
@@ -39,6 +40,7 @@ from repoach.review.base_ref import (
 from repoach.review.generated_evidence import load_review_evidence
 from repoach.review.generated_types import GeneratedEntry
 from repoach.review.release_gate import ProvenanceSource, gather_release_facts
+from tests.conftest import BASE_RESOLVERS
 from tests.fixtures.generated_artefacts.harness import GIT_ENV, Forge, Repo, git, install, review
 
 
@@ -183,7 +185,11 @@ def test_require_pr_base_fetches_origin_once_for_an_absent_branch(tmp_path: Path
         fetched.append(branch)
         git(clone, "fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
 
-    assert require_pr_base(clone, "develop", "HEAD", fetch_base=fetch) == hist.fork_point
+    assert require_pr_base(clone, "develop", "HEAD", fetch_base=fetch) == (
+        "origin/develop",
+        hist.develop,
+        hist.fork_point,
+    )
     assert fetched == ["develop"]
 
 
@@ -583,7 +589,6 @@ def test_the_generated_scope_never_swallows_a_base_refusal(
     def refuse(*_a: object, **_k: object) -> None:
         raise refusal
 
-    monkeypatch.setattr(orchestrator, "readable_base", lambda *_a, **_k: "origin/develop")
     monkeypatch.setattr(orchestrator, "review_scope", refuse)
     repo = Repo(tmp_path / "repo", {"src/app.py": "def f() -> int:\n    return 1\n"})
     head = repo.push_head({"src/app.py": "def f() -> int:\n    return 2\n"})
@@ -599,3 +604,70 @@ def test_the_generated_scope_never_swallows_a_base_refusal(
         team._generated_scope("", "develop")
 
     assert raised.value is refusal
+
+
+def test_require_merge_base_reports_the_base_before_an_option_like_head(tmp_path: Path) -> None:
+    hist = history(tmp_path)
+    clone = shallow_clone(tmp_path, hist, fetch_develop=False)
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        require_merge_base(clone, "origin/develop", "-x")
+
+    assert refused.value.kind is BaseRefKind.ABSENT
+
+
+class _DecisionReachedError(Exception):
+    """Raised by a stand-in for ``decide_at_head``: the gate went past the base check."""
+
+
+def test_review_gate_without_a_pr_base_goes_to_the_decision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PR the forge reports without a base branch is not refused for it: there is no base to read."""
+    hist = history(tmp_path)
+    clone = shallow_clone(tmp_path, hist, fetch_develop=False)
+    pr = PullRequest(number=7, head_sha=hist.feat, head_ref="feat", base_ref="")
+    monkeypatch.setattr(auto_merge, "_pull_request_or_none", lambda *_a: pr)
+    monkeypatch.setattr(auto_merge, "resolve_verified_head", lambda *_a, **_k: (hist.feat, ""))
+    monkeypatch.setattr(auto_merge, "resolve_required_checks", lambda *_a, **_k: ([], {}))
+    monkeypatch.setattr(
+        auto_merge,
+        "evaluate_ci_gate",
+        lambda *_a, **_k: CIGateOutcome(green=True, outcome_tag="GREEN", reason=""),
+    )
+    monkeypatch.setattr(auto_merge, "materialise_head", lambda *_a, **_k: _tree_at(clone))
+
+    def reached(*_a: object, **_k: object) -> None:
+        raise _DecisionReachedError
+
+    monkeypatch.setattr(auto_merge, "decide_at_head", reached)
+    forge = _GitOnlyForge(clone)
+
+    with pytest.raises(_DecisionReachedError):
+        evaluate_merge_gate(
+            7, forge=forge, db_path=tmp_path / "state" / "review.db", repo_root=clone, pin_tree=True
+        )
+
+    assert forge.calls == []
+
+
+REAL_GIT_ONLY = frozenset({"repoach.review.generated_artefacts", "repoach.review.generated_verify"})
+"""Importers of the resolution reached only on a real clone, so never replaced by ``base_resolves``."""
+
+
+def test_base_resolves_replaces_every_importer_of_the_resolution() -> None:
+    """A new call site of require_pr_base or require_merge_base fails here until it is listed."""
+    src = Path(__file__).resolve().parents[2] / "src"
+    importers: set[str] = set()
+    for path in (src / "repoach").rglob("*.py"):
+        module = ".".join(path.relative_to(src).with_suffix("").parts)
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("base_ref"):
+                for alias in node.names:
+                    if alias.name in {"require_pr_base", "require_merge_base"}:
+                        importers.add(f"{module}.{alias.name}")
+
+    listed = set(BASE_RESOLVERS)
+    unlisted = {name for name in importers - listed if name.rsplit(".", 1)[0] not in REAL_GIT_ONLY}
+    assert unlisted == set()
+    assert listed <= importers

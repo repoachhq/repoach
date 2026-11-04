@@ -48,6 +48,9 @@ from repoach.review.reviewer import (
 )
 from tests.forge_fakes import gh_ok, pr_view_stdout, scripted_github
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 PR = 41
 CITED = "src/table.py"
 OTHER = "src/other.py"
@@ -214,7 +217,3 @@ def test_unserved_identifier_is_deferred_through_the_review_without_a_judge_call
     assert "deferred 1 (evidence exceeds the ceiling (" in (team.refuter_summary or "")
     assert fetch_findings(db, PR, status=FindingStatus.REFUTED) == []
     assert [f.file for f in fetch_findings(db, PR, status=FindingStatus.PROPOSED)] == [CITED]
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

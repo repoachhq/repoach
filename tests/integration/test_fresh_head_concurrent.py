@@ -46,6 +46,9 @@ from tests.overlap_fakes import (
     make_tracked_review_diff,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
     BotRole.SENTINEL: Sentinel,
@@ -238,7 +241,3 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
     assert team.head_sha == "stale" * 8, f"Expected stale head, got {team.head_sha!r}"
 
     assert_guard_overlapped_fanout(tracker, n_reviewers=4, wall_s=wall)
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

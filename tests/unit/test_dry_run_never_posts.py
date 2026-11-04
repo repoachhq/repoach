@@ -46,6 +46,9 @@ from repoach.review.refuter import JudgingReport
 from repoach.review.reviewer import BotRole, ReviewerOutcome, ReviewVerdict
 from repoach.review.thread_context import post_refuted_finding_sentinels
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 _BOT = "github-actions[bot]"
 _HEAD = "a" * 40
 _DIFF = "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n@@ -1 +1,3 @@\n+x = 1\n"
@@ -496,7 +499,3 @@ def test_the_proposed_escalation_routine_fire_is_refused_in_a_dry_run(
     assert refused.value.head == "routine fire proposed_escalation"
     assert routine == []
     assert forge.refused_writes == ["routine fire proposed_escalation"]
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

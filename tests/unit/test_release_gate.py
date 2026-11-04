@@ -31,6 +31,9 @@ from repoach.review.release_gate import (
     write_gate_receipt,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 
 def _git(repo: Path, *args: str) -> str:
     """Run ``git`` in *repo* and return combined stdout+stderr stripped.
@@ -753,7 +756,3 @@ def test_release_range_on_origin_refs_still_refuses_true_out_of_band_commit(
     assert decision.reasons == [
         "out-of-band commit not a gated-PR squash: hotfix pushed straight to develop"
     ]
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""

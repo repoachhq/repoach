@@ -32,6 +32,9 @@ from repoach.review.reviewer import (
     Tester,
 )
 
+pytestmark = pytest.mark.usefixtures("base_resolves")
+"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
+
 _ROLE_TO_CLASS: dict[BotRole, type[Reviewer]] = {
     BotRole.ARCHITECT: Architect,
     BotRole.SENTINEL: Sentinel,
@@ -304,7 +307,3 @@ def test_review_pr_posts_batched_reviews_via_real_gh_subprocess(
     assert archive_index > last_batch_index, (
         "archive-comment upsert must be recorded strictly after every batched review call"
     )
-
-
-pytestmark = pytest.mark.usefixtures("base_resolves")
-"""These tests run on a fake clone; ``base_resolves`` (``tests/conftest.py``) lets the base resolve."""
