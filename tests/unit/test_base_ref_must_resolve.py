@@ -268,7 +268,7 @@ def test_review_generated_exits_10_on_a_shallow_clone(
     assert exited.value.exit_code == EXIT_BASE_UNRESOLVABLE
     _, err = capsys.readouterr()
     assert err.strip() == (
-        "repoach: base ref 'origin/develop' does not resolve: no merge base with "
+        "repoach: base ref 'refs/remotes/origin/develop' does not resolve: no merge base with "
         f"{hist.feat[:12]}; {SHALLOW_HINT}"
     )
     assert not out.exists()
@@ -703,7 +703,7 @@ REAL_GIT_ONLY = frozenset({"repoach.review.generated_artefacts", "repoach.review
 
 
 def test_base_resolves_replaces_every_importer_of_the_resolution() -> None:
-    """A new call site of require_pr_base or require_merge_base fails here until it is listed."""
+    """A new call site of the base resolution fails here until it is listed."""
     src = Path(__file__).resolve().parents[2] / "src"
     importers: set[str] = set()
     for path in (src / "repoach").rglob("*.py"):
@@ -711,7 +711,11 @@ def test_base_resolves_replaces_every_importer_of_the_resolution() -> None:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("base_ref"):
                 for alias in node.names:
-                    if alias.name in {"require_pr_base", "require_merge_base"}:
+                    if alias.name in {
+                        "require_forge_pr_base",
+                        "require_pr_base",
+                        "require_merge_base",
+                    }:
                         importers.add(f"{module}.{alias.name}")
 
     listed = set(BASE_RESOLVERS)
@@ -770,3 +774,45 @@ def test_base_ref_refusal_prints_json_only_when_the_command_does(
     assert exit_.exit_code == EXIT_BASE_UNRESOLVABLE
     assert err.strip() == f"repoach: {refusal}"
     assert (json.loads(out) if out else None) == expected
+
+
+def test_review_generated_never_reads_the_declarations_at_a_same_named_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--base origin/develop with no remote branch and a tag of that name is refused, not run."""
+    hist = history(tmp_path)
+    clone = shallow_clone(tmp_path, hist, fetch_develop=False)
+    git(clone, "tag", "origin/develop", "HEAD")
+    monkeypatch.setattr(generated_verify, "head_tree", lambda *_a, **_k: pytest.fail("ran"))
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        generated_verify.verify_generated(
+            clone, pr_number=7, head=hist.feat, base_ref="origin/develop", state_dir=tmp_path
+        )
+
+    assert refused.value.kind is BaseRefKind.ABSENT
+    assert refused.value.ref == "origin/develop"
+
+
+def test_review_generated_reads_the_declarations_at_the_remote_branch_tip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the remote branch present, a same-named tag is ignored: the declarations come from its tip."""
+    hist = history(tmp_path)
+    clone = full_clone(tmp_path, hist)
+    git(clone, "tag", "origin/develop", "HEAD")
+    read_at: list[str | None] = []
+
+    def declared(_root: Path, ref: str | None) -> list[object]:
+        read_at.append(ref)
+        return []
+
+    monkeypatch.setattr(generated_verify, "declared_at_base", declared)
+
+    payload, checks, _timing = generated_verify.verify_generated(
+        clone, pr_number=7, head=hist.feat, base_ref="origin/develop", state_dir=tmp_path
+    )
+
+    assert read_at == [hist.develop]
+    assert payload["base_sha"] == hist.fork_point
+    assert checks == []
