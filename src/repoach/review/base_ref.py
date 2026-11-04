@@ -34,7 +34,8 @@ FULL_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 SHALLOW_HINT = (
     "the clone is shallow and its depth excludes the merge base: "
-    "clone with GIT_DEPTH 0 (or git fetch --unshallow)"
+    "clone with GIT_DEPTH 0 (GitLab) or fetch-depth: 0 (GitHub Actions), "
+    "or run git fetch --unshallow"
 )
 """The hint for a shallow clone whose depth stops before the merge base."""
 
