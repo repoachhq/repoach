@@ -338,10 +338,10 @@ def test_review_gate_refuses_a_shallow_base_before_any_finding_is_reverified(
     assert refused.value.hint == SHALLOW_HINT
     assert forge.calls == []
 
-    def raise_refusal(*_a: object, **_k: object) -> None:
-        raise refused.value
-
-    monkeypatch.setattr(review_cmds, "evaluate_merge_gate", raise_refusal)
+    monkeypatch.setattr(auto_merge, "select_forge", lambda **_k: forge)
+    monkeypatch.setattr(review_cmds, "project_root_or_exit", lambda: clone)
+    monkeypatch.setenv("REPOACH_DB_PATH", str(tmp_path / "state" / "review.db"))
+    monkeypatch.setattr("repoach.core.config._settings", None)
     monkeypatch.chdir(clone)
     capsys.readouterr()
     with pytest.raises(typer.Exit) as exited:
@@ -355,7 +355,7 @@ def test_review_gate_refuses_a_shallow_base_before_any_finding_is_reverified(
         "ref": "refs/remotes/origin/develop",
         "hint": SHALLOW_HINT,
     }
-    assert err.strip() == f"repoach: {refused.value}"
+    assert f"repoach: {refused.value}" in err.splitlines()
 
 
 def test_release_gate_refuses_a_release_branch_beyond_the_shallow_depth(
