@@ -14,7 +14,7 @@ from __future__ import annotations
 import contextlib
 import json
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -552,3 +552,50 @@ def test_review_fix_exits_10_with_the_json_when_the_base_is_refused(
     out, err = capsys.readouterr()
     assert json.loads(out) == {"pr_number": 7, **refusal.as_json()}
     assert err.strip() == f"repoach: {refusal}"
+
+
+def test_an_ambiguous_ref_is_refused_whatever_the_language_of_git(tmp_path: Path) -> None:
+    """A localised warning carries no English word; the ambiguity is read from the refs."""
+    calls: list[list[str]] = []
+
+    def french_git(args: Sequence[str]) -> tuple[int, str, str]:
+        argv = list(args)
+        calls.append(argv)
+        if argv[0] == "for-each-ref":
+            return 0, "refs/heads/develop\nrefs/tags/develop\n", ""
+        return 0, "a" * 40 + "\n", "avertissement : le nom de référence 'develop' est ambigu.\n"
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        resolve_base_ref(tmp_path, "develop", git=french_git)
+
+    assert refused.value.kind is BaseRefKind.AMBIGUOUS
+    assert calls[1][:2] == ["for-each-ref", "--format=%(refname)"]
+
+
+def test_the_generated_scope_never_swallows_a_base_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The broad fail-closed catch of _generated_scope re-raises the base refusal by name."""
+    refusal = BaseRefUnresolvableError(
+        "origin/develop", SHALLOW_HINT, kind=BaseRefKind.SHALLOW, cause="no merge base with HEAD"
+    )
+
+    def refuse(*_a: object, **_k: object) -> None:
+        raise refusal
+
+    monkeypatch.setattr(orchestrator, "readable_base", lambda *_a, **_k: "origin/develop")
+    monkeypatch.setattr(orchestrator, "review_scope", refuse)
+    repo = Repo(tmp_path / "repo", {"src/app.py": "def f() -> int:\n    return 1\n"})
+    head = repo.push_head({"src/app.py": "def f() -> int:\n    return 2\n"})
+    team = orchestrator.ReviewTeamOrchestrator(
+        forge=Forge(repo, 7, head),
+        db_path=tmp_path / "review.db",
+        post_to_github=False,
+        repo_root=repo.checkout,
+        config_root=repo.checkout,
+    )
+
+    with pytest.raises(BaseRefUnresolvableError) as raised:
+        team._generated_scope("", "develop")
+
+    assert raised.value is refusal
