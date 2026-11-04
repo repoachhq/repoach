@@ -27,7 +27,6 @@ from .generated_git import (
     blob_at,
     changed_paths,
     require_merge_base,
-    resolve_base_ref,
     resolve_commit,
     run_git,
 )
@@ -172,7 +171,6 @@ def verify_generated(
         raise GeneratedRefusalError(
             f"head {head!r} starts with '-', which git would read as an option"
         )
-    resolve_base_ref(root, base_ref)
     head_sha = resolve_commit(root, head)
     if head_sha is None:
         raise GeneratedRefusalError(f"head {head!r} does not resolve to a commit")

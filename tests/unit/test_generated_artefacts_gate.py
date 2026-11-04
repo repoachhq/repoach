@@ -1374,6 +1374,8 @@ def test_review_generated_refuses_a_ref_git_would_read_as_an_option(
     """A --head or --base beginning with '-' is refused before git sees it."""
     with pytest.raises(GeneratedRefusalError, match="starts with '-'"):
         verify_generated(tmp_path, pr_number=1, head=ref, base_ref="main", state_dir=tmp_path)
+    git(tmp_path, "init", "-q", "-b", "main")
+    git(tmp_path, "commit", "-q", "--allow-empty", "-m", "head")
     with pytest.raises(BaseRefUnresolvableError, match="starts with '-'"):
         verify_generated(tmp_path, pr_number=1, head="HEAD", base_ref=ref, state_dir=tmp_path)
 
