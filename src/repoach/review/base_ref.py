@@ -104,9 +104,15 @@ def local_git(root: Path) -> GitReader:
     return read
 
 
+_BRANCH_PREFIXES = ("refs/remotes/origin/", "refs/heads/", _REMOTE_PREFIX)
+
+
 def _branch_of(ref: str) -> str:
-    """Return the branch a remote-tracking ref names (``origin/develop`` gives ``develop``)."""
-    return ref[len(_REMOTE_PREFIX) :] if ref.startswith(_REMOTE_PREFIX) else ref
+    """Return the branch a ref names (``origin/develop`` or ``refs/remotes/origin/develop`` give ``develop``)."""
+    for prefix in _BRANCH_PREFIXES:
+        if ref.startswith(prefix):
+            return ref[len(prefix) :]
+    return ref
 
 
 def fetch_hint(ref: str) -> str:
@@ -312,6 +318,19 @@ class ResolvedBase(NamedTuple):
     merge_base: str
 
 
+def _is_branch_name(ref: str) -> bool:
+    """Whether ``ref`` is a bare branch name (``develop``), as a forge reports a PR's base."""
+    return bool(ref.strip()) and not (
+        ref.startswith(("-", "refs/", _REMOTE_PREFIX)) or FULL_SHA.fullmatch(ref)
+    )
+
+
+def _names_a_commit(read: GitReader, ref: str) -> bool:
+    """Whether the full refname ``ref`` exists and names a commit."""
+    code, _out, _err = read(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
+    return code == 0
+
+
 def require_pr_base(
     root: Path,
     base_ref: str,
@@ -320,12 +339,16 @@ def require_pr_base(
     fetch_base: Callable[[str], None] | None = None,
     git: GitReader | None = None,
 ) -> ResolvedBase:
-    """Return the merge base of a pull request's base branch and ``head``, fetching it once.
+    """Resolve a pull request's base branch as a branch, fetching it once, with its merge base.
 
-    ``base_ref`` is tried as it is; when it is absent from the clone and
-    ``fetch_base`` is given, ``origin/<base_ref>`` is fetched and tried. A
-    base that is ambiguous, or present with no merge base, is not fetched
-    again: the fetch cannot cure it.
+    A forge names a PR's base by its bare branch name (``develop``). That
+    name is read as a branch only, never as git's short name: a tag a PR
+    author pushed under the same name would otherwise become the base
+    tip, where the ``[[review.generated]]`` declarations are read.
+    ``refs/remotes/origin/<base_ref>`` is tried first; when it is absent and
+    ``fetch_base`` is given, it is fetched once; ``refs/heads/<base_ref>``
+    is the last resort. Any other ref (``origin/develop``, a full refname,
+    a SHA) is resolved as it is (:func:`require_merge_base`).
 
     Args:
         root: Any checkout of the repository.
@@ -338,23 +361,26 @@ def require_pr_base(
         The ref that resolved, its tip and the merge base (:class:`ResolvedBase`).
 
     Raises:
-        BaseRefUnresolvableError: Neither ref resolves to a commit with a merge base.
+        BaseRefUnresolvableError: No branch of that name names a commit with
+            a merge base with ``head`` (kind ``absent`` when none exists).
     """
     read = git or local_git(root)
-    ref = base_ref
-    try:
-        found = require_merge_base(root, ref, head, git=read)
-    except BaseRefUnresolvableError as exc:
-        if (
-            exc.kind is not BaseRefKind.ABSENT
-            or fetch_base is None
-            or base_ref.startswith(_REMOTE_PREFIX)
-        ):
-            raise
+    if not _is_branch_name(base_ref):
+        found = require_merge_base(root, base_ref, head, git=read)
+        return ResolvedBase(base_ref, resolve_base_ref(root, base_ref, git=read), found)
+    remote = f"refs/remotes/{_REMOTE_PREFIX}{base_ref}"
+    if not _names_a_commit(read, remote) and fetch_base is not None:
         fetch_base(base_ref)
-        ref = f"{_REMOTE_PREFIX}{base_ref}"
-        found = require_merge_base(root, ref, head, git=read)
-    return ResolvedBase(ref=ref, tip=resolve_base_ref(root, ref, git=read), merge_base=found)
+    for ref in (remote, f"refs/heads/{base_ref}"):
+        if _names_a_commit(read, ref):
+            found = require_merge_base(root, ref, head, git=read)
+            return ResolvedBase(ref, resolve_base_ref(root, ref, git=read), found)
+    raise BaseRefUnresolvableError(
+        f"{_REMOTE_PREFIX}{base_ref}",
+        fetch_hint(base_ref),
+        kind=BaseRefKind.ABSENT,
+        cause="absent from the clone",
+    )
 
 
 __all__ = [

@@ -80,11 +80,12 @@ def test_a_shallow_clone_without_the_base_is_refused_before_any_review_work(
     assert json.loads(out) == {
         "pr_number": PR,
         "error": "base_ref_unresolvable",
-        "ref": "origin/main",
+        "ref": "refs/remotes/origin/main",
         "hint": SHALLOW_HINT,
     }
     assert (
-        f"repoach: base ref 'origin/main' does not resolve: no merge base with HEAD; {SHALLOW_HINT}"
+        "repoach: base ref 'refs/remotes/origin/main' does not resolve: no merge base with HEAD; "
+        + SHALLOW_HINT
         in err.splitlines()
     )
     assert "reviewing base origin/" not in err

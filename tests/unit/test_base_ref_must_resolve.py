@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import functools
 import json
 import subprocess
 from collections.abc import Iterator, Sequence
@@ -39,9 +40,10 @@ from repoach.review.base_ref import (
 )
 from repoach.review.generated_evidence import load_review_evidence
 from repoach.review.generated_types import GeneratedEntry
+from repoach.review.orchestrator import run_review
 from repoach.review.release_gate import ProvenanceSource, gather_release_facts
 from tests.conftest import BASE_RESOLVERS
-from tests.fixtures.generated_artefacts.harness import GIT_ENV, Forge, Repo, git, install, review
+from tests.fixtures.generated_artefacts.harness import GIT_ENV, Forge, Repo, git, install
 
 
 @dataclass
@@ -179,6 +181,7 @@ def test_resolve_base_ref_refuses_an_empty_or_option_like_ref(tmp_path: Path, re
 def test_require_pr_base_fetches_origin_once_for_an_absent_branch(tmp_path: Path) -> None:
     hist = history(tmp_path)
     clone = full_clone(tmp_path, hist)
+    git(clone, "update-ref", "-d", "refs/remotes/origin/develop")
     fetched: list[str] = []
 
     def fetch(branch: str) -> None:
@@ -186,21 +189,40 @@ def test_require_pr_base_fetches_origin_once_for_an_absent_branch(tmp_path: Path
         git(clone, "fetch", "-q", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
 
     assert require_pr_base(clone, "develop", "HEAD", fetch_base=fetch) == (
-        "origin/develop",
+        "refs/remotes/origin/develop",
         hist.develop,
         hist.fork_point,
     )
     assert fetched == ["develop"]
 
 
-def test_require_pr_base_does_not_fetch_an_ambiguous_ref(tmp_path: Path) -> None:
+def test_require_pr_base_reads_the_branch_never_a_tag_of_its_name(tmp_path: Path) -> None:
+    """A tag named like the base (pushed by a PR author, say) never becomes the base tip."""
     hist = history(tmp_path)
     clone = full_clone(tmp_path, hist)
-    git(clone, "branch", "develop", "origin/develop")
-    git(clone, "tag", "develop", hist.fork_point)
+    git(clone, "tag", "develop", "HEAD")
 
-    with pytest.raises(BaseRefUnresolvableError, match="ambiguous"):
-        require_pr_base(clone, "develop", "HEAD", fetch_base=lambda _b: pytest.fail("fetched"))
+    resolved = require_pr_base(
+        clone, "develop", "HEAD", fetch_base=lambda _b: pytest.fail("fetched")
+    )
+
+    assert resolved.ref == "refs/remotes/origin/develop"
+    assert resolved.tip == hist.develop
+
+
+def test_require_pr_base_refuses_when_only_a_tag_has_the_base_name(tmp_path: Path) -> None:
+    """With no branch of that name in the clone, a same-named tag is not a base."""
+    hist = history(tmp_path)
+    clone = shallow_clone(tmp_path, hist, fetch_develop=False)
+    git(clone, "tag", "develop", "HEAD")
+    fetched: list[str] = []
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        require_pr_base(clone, "develop", "HEAD", fetch_base=fetched.append)
+
+    assert fetched == ["develop"]
+    assert refused.value.kind is BaseRefKind.ABSENT
+    assert refused.value.ref == "origin/develop"
 
 
 @pytest.mark.parametrize("base_sha", ["", "origin/develop", "b9146e8"])
@@ -312,11 +334,9 @@ def test_review_gate_refuses_a_shallow_base_before_any_finding_is_reverified(
             7, forge=forge, db_path=tmp_path / "state" / "review.db", repo_root=clone, pin_tree=True
         )
 
-    assert refused.value.ref == "origin/develop"
+    assert refused.value.ref == "refs/remotes/origin/develop"
     assert refused.value.hint == SHALLOW_HINT
-    assert forge.calls == [
-        ["fetch", "--quiet", "origin", "+refs/heads/develop:refs/remotes/origin/develop"]
-    ]
+    assert forge.calls == []
 
     def raise_refusal(*_a: object, **_k: object) -> None:
         raise refused.value
@@ -332,7 +352,7 @@ def test_review_gate_refuses_a_shallow_base_before_any_finding_is_reverified(
     assert json.loads(out) == {
         "pr_number": 7,
         "error": "base_ref_unresolvable",
-        "ref": "origin/develop",
+        "ref": "refs/remotes/origin/develop",
         "hint": SHALLOW_HINT,
     }
     assert err.strip() == f"repoach: {refused.value}"
@@ -420,27 +440,55 @@ def test_the_coder_loop_refuses_an_absent_base_before_any_finding_is_recorded(
     assert [call[0] for call in forge.calls] == ["fetch"]
 
 
-def test_review_pr_refuses_an_ambiguous_base_before_any_reviewer_runs(
+class _GoneBaseForge(Forge):
+    """The harness forge, reporting a base branch the origin does not have."""
+
+    def _run(self, args: list[str], *, input_data: str | None = None) -> GhResult:
+        if args[:2] == ["pr", "view"]:
+            payload = {"headRefName": "feat/x", "baseRefName": "gone", "state": "OPEN"}
+            return GhResult(0, json.dumps(payload), "", argv=args)
+        return super()._run(args, input_data=input_data)
+
+
+def test_review_pr_refuses_an_absent_base_before_any_reviewer_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     bench = install(monkeypatch, tmp_path)
     repo = Repo(tmp_path / "repo", {"src/app.py": "def f() -> int:\n    return 1\n"})
     head = repo.push_head({"src/app.py": "def f() -> int:\n    return 2\n"})
-    git(repo.checkout, "tag", "main", "HEAD")
+    monkeypatch.chdir(repo.checkout)
+    monkeypatch.setattr(
+        review_cmds,
+        "run_review",
+        functools.partial(run_review, forge=_GoneBaseForge(repo, 7, head)),
+    )
+    capsys.readouterr()
 
-    result = review(repo, monkeypatch, capsys, head=head)
+    with pytest.raises(typer.Exit) as exited:
+        review_cmds.review_pr(
+            7,
+            dry_run=True,
+            forge_name=None,
+            spec=None,
+            provider=None,
+            keep_tree=False,
+            force=False,
+            dry_run_reason="dry run",
+            generated_evidence=None,
+        )
 
-    assert result.exit_code == EXIT_BASE_UNRESOLVABLE
-    assert result.payload == {
+    out, err = capsys.readouterr()
+    assert exited.value.exit_code == EXIT_BASE_UNRESOLVABLE
+    assert json.loads(out) == {
         "pr_number": 7,
         "error": "base_ref_unresolvable",
-        "ref": "main",
-        "hint": "name it in full: refs/remotes/origin/main or refs/heads/main",
+        "ref": "origin/gone",
+        "hint": "fetch it first: git fetch origin gone",
     }
     assert (
-        "repoach: base ref 'main' does not resolve: ambiguous, more than one ref has that name; "
-        "name it in full: refs/remotes/origin/main or refs/heads/main"
-    ) in result.stderr
+        "repoach: base ref 'origin/gone' does not resolve: absent from the clone; "
+        "fetch it first: git fetch origin gone"
+    ) in err.splitlines()
     assert bench.prompts.diffs == []
 
 
@@ -482,7 +530,6 @@ def test_review_pr_shuts_the_head_guard_down_when_the_base_is_refused(
     bench = install(monkeypatch, tmp_path)
     repo = Repo(tmp_path / "repo", {"src/app.py": "def f() -> int:\n    return 1\n"})
     head = repo.push_head({"src/app.py": "def f() -> int:\n    return 2\n"})
-    git(repo.checkout, "tag", "main", "HEAD")
     shutdowns: list[dict[str, bool]] = []
 
     class RecordingPool(ThreadPoolExecutor):
@@ -493,14 +540,14 @@ def test_review_pr_shuts_the_head_guard_down_when_the_base_is_refused(
     monkeypatch.setattr(orchestrator, "ThreadPoolExecutor", RecordingPool)
     monkeypatch.setattr(orchestrator, "resolve_fresh_head", lambda *_a, **_k: head)
     team = orchestrator.ReviewTeamOrchestrator(
-        forge=Forge(repo, 7, head),
+        forge=_GoneBaseForge(repo, 7, head),
         db_path=bench.db_path,
         post_to_github=True,
         repo_root=repo.checkout,
         config_root=repo.checkout,
     )
 
-    with pytest.raises(BaseRefUnresolvableError, match="ambiguous"):
+    with pytest.raises(BaseRefUnresolvableError, match="absent from the clone"):
         team.review_pr(7)
 
     assert shutdowns == [{"wait": False, "cancel_futures": True}]
