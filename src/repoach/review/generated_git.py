@@ -1,8 +1,17 @@
-"""The git reads of the generated-artefact flow (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ).
+"""The git reads of the review: the generated-artefact flow and the base resolution.
 
 Shared by the review job (:mod:`repoach.review.generated_artefacts`:
 base declarations and blobs) and the verification job
-(:mod:`repoach.review.generated_verify`: refs, changed paths, the clone).
+(:mod:`repoach.review.generated_verify`: refs, changed paths, the clone)
+(SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ).
+
+It also owns the one base resolution every command runs before any
+review work (Yoob B-221), next to :func:`merge_base`, which it extends:
+:func:`resolve_base_ref`, :func:`require_merge_base` and
+:func:`require_pr_base`, used by ``review pr`` (the orchestrator),
+``review gate`` (:mod:`repoach.review.auto_merge`), ``review generated``,
+``review fix`` (:mod:`repoach.review.coder_findings`) and ``release gate``
+(:mod:`repoach.review.release_gate`).
 """
 
 from __future__ import annotations
@@ -182,12 +191,23 @@ class BaseRefUnresolvableError(Exception):
         super().__init__(f"base ref {ref!r} does not resolve: {cause}; {hint}")
 
     def as_json(self) -> dict[str, str]:
-        """Return the JSON a command prints for this refusal."""
+        """Return the JSON a command prints for this refusal.
+
+        Returns:
+            ``{"error": "base_ref_unresolvable", "ref": ..., "hint": ...}``.
+        """
         return {"error": BASE_REF_UNRESOLVABLE, "ref": self.ref, "hint": self.hint}
 
 
 def local_git(root: Path) -> GitReader:
-    """Return the :data:`GitReader` that runs git in ``root`` through :func:`run_git`."""
+    """Return the :data:`GitReader` that runs git in ``root`` through :func:`run_git`.
+
+    Args:
+        root: The working directory.
+
+    Returns:
+        The reader, decoding stdout and stderr.
+    """
 
     def read(args: Sequence[str]) -> tuple[int, str, str]:
         """Run one git command in ``root``."""
@@ -203,7 +223,14 @@ def _branch_of(ref: str) -> str:
 
 
 def fetch_hint(ref: str) -> str:
-    """Return the hint for a ref absent from the clone: the fetch that brings it."""
+    """Return the hint for a ref absent from the clone: the fetch that brings it.
+
+    Args:
+        ref: The ref, a branch or ``origin/<branch>``.
+
+    Returns:
+        ``fetch it first: git fetch origin <branch>``.
+    """
     return f"fetch it first: git fetch origin {_branch_of(ref) or '<branch>'}"
 
 
