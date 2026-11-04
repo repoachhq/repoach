@@ -104,7 +104,7 @@ def release_gate(
             provenance=provenance,
         )
     except BaseRefUnresolvableError as exc:
-        raise base_ref_refusal(exc, payload={}) from exc
+        raise base_ref_refusal(exc, prints_json=True) from exc
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc

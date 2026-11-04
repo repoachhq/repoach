@@ -444,7 +444,7 @@ def review_pr(
                 **_forge_kwargs(forge_name),
             )
     except BaseRefUnresolvableError as exc:
-        raise base_ref_refusal(exc, payload={"pr_number": pr_number}) from exc
+        raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -613,7 +613,7 @@ def review_generated(
             echo=lambda line: typer.echo(line, err=True),
         )
     except BaseRefUnresolvableError as exc:
-        raise base_ref_refusal(exc, payload=None) from exc
+        raise base_ref_refusal(exc, prints_json=False) from exc
     except (GeneratedRefusalError, ConfigError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -762,7 +762,7 @@ def review_fix(
     try:
         fr = run_coder_fix_from_findings(pr_number, spec=spec_flag, **_forge_kwargs(forge_name))
     except BaseRefUnresolvableError as exc:
-        raise base_ref_refusal(exc, payload={"pr_number": pr_number}) from exc
+        raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     typer.echo(
@@ -1163,7 +1163,7 @@ def review_gate(
             **_forge_kwargs(forge_name),
         )
     except BaseRefUnresolvableError as exc:
-        raise base_ref_refusal(exc, payload={"pr_number": pr_number}) from exc
+        raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except Exception as exc:
         typer.echo(
             json.dumps(

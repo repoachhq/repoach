@@ -9,7 +9,6 @@ cannot drift between the two command modules.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 
 import typer
 
@@ -20,25 +19,26 @@ EXIT_BASE_UNRESOLVABLE = 10
 
 
 def base_ref_refusal(
-    exc: BaseRefUnresolvableError, *, payload: Mapping[str, object] | None
+    exc: BaseRefUnresolvableError, *, prints_json: bool, pr_number: int | None = None
 ) -> typer.Exit:
     """Report a base that does not resolve and return the exit that refuses the command.
 
-    The message goes to stderr. A command that prints JSON (``payload``
-    given) prints ``payload`` merged with the keys ``error``
-    (``base_ref_unresolvable``), ``ref`` and ``hint`` on stdout.
+    The message goes to stderr. A command that prints JSON prints the keys
+    ``error`` (``base_ref_unresolvable``), ``ref`` and ``hint`` on stdout,
+    after ``pr_number`` when it has one.
 
     Args:
         exc: The refusal.
-        payload: The keys the command's JSON leads with (``pr_number``),
-            ``None`` for a command printing no JSON.
+        prints_json: Whether the command prints JSON (``review generated`` does not).
+        pr_number: The pull request the JSON leads with, ``None`` for none.
 
     Returns:
         The :class:`typer.Exit` with :data:`EXIT_BASE_UNRESOLVABLE` to raise.
     """
     typer.echo(f"repoach: {exc}", err=True)
-    if payload is not None:
-        typer.echo(json.dumps({**payload, **exc.as_json()}, indent=2, ensure_ascii=False))
+    if prints_json:
+        lead = {} if pr_number is None else {"pr_number": pr_number}
+        typer.echo(json.dumps({**lead, **exc.as_json()}, indent=2, ensure_ascii=False))
     return typer.Exit(code=EXIT_BASE_UNRESOLVABLE)
 
 
