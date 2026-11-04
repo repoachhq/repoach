@@ -238,3 +238,14 @@ def test_concurrent_head_guard_integration(tmp_path: Path, monkeypatch: pytest.M
     assert team.head_sha == "stale" * 8, f"Expected stale head, got {team.head_sha!r}"
 
     assert_guard_overlapped_fanout(tracker, n_reviewers=4, wall_s=wall)
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the review on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py`` and
+    ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+    """
+    monkeypatch.setattr("repoach.review.orchestrator.require_pr_base", lambda *_a, **_k: "0" * 40)

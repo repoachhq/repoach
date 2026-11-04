@@ -108,6 +108,7 @@ from .findings_bridge import (
 )
 from .generated_artefacts import ReviewScope, review_scope
 from .generated_evidence import load_review_evidence
+from .generated_git import BaseRefUnresolvableError, require_pr_base
 from .generated_report import report_json, report_lines
 from .generated_store import (
     fetch_generated_checks,
@@ -782,6 +783,13 @@ class ReviewTeamOrchestrator:
                     error=str(exc),
                 )
 
+        if base_ref is not None:
+            try:
+                self._require_base(base_ref)
+            except BaseRefUnresolvableError:
+                if head_guard_pool is not None:
+                    head_guard_pool.shutdown(wait=False, cancel_futures=True)
+                raise
         generated_scope = self._generated_scope(diff, base_ref)
         reviewed_diff = generated_scope.review_diff
 
@@ -1424,6 +1432,8 @@ class ReviewTeamOrchestrator:
         try:
             base = readable_base(self._repo_root, base_ref, self._fetch_base)
             scope = review_scope(self._repo_root, diff, base)
+        except BaseRefUnresolvableError:
+            raise
         except Exception as exc:
             _log.warning(
                 "review_team.generated_scope_failed",
@@ -1439,6 +1449,19 @@ class ReviewTeamOrchestrator:
                 touched=list(scope.touched),
             )
         return scope
+
+    def _require_base(self, base_ref: str) -> str:
+        """Return the merge base of the PR's base and the reviewed head, before any review work.
+
+        ``base_ref`` is read as it is, then as ``origin/<base_ref>`` after
+        one fetch (:func:`~repoach.review.generated_git.require_pr_base`); a
+        base that still does not resolve, or has no merge base with the
+        head, refuses the review by name (Yoob B-221).
+
+        Raises:
+            BaseRefUnresolvableError: The base is absent, ambiguous, or beyond a shallow clone.
+        """
+        return require_pr_base(self._repo_root, base_ref, "HEAD", fetch_base=self._fetch_base)
 
     def _fetch_base(self, base_ref: str) -> None:
         """Fetch ``origin/<base_ref>`` so the base contract can be read from it."""

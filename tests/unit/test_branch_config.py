@@ -277,3 +277,16 @@ def test_ensure_branch_default_uses_configured_integration_branch(
         ["git", "branch", "--show-current"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
     assert current == "feat/new-work"
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the Coder loop and the release gate on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py``.
+    """
+    monkeypatch.setattr("repoach.review.coder_findings.require_pr_base", lambda *_a, **_k: "0" * 40)
+    monkeypatch.setattr(
+        "repoach.review.release_gate.require_merge_base", lambda *_a, **_k: "0" * 40
+    )

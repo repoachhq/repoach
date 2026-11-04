@@ -699,3 +699,13 @@ def test_run_from_findings_still_calls_ci_materialiser_and_resolver() -> None:
     source = inspect.getsource(run_coder_fix_from_findings)
     assert "record_ci_failures_as_findings" in source
     assert "resolve_broken_behavior_findings" in source
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the Coder loop on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py``.
+    """
+    monkeypatch.setattr("repoach.review.coder_findings.require_pr_base", lambda *_a, **_k: "0" * 40)

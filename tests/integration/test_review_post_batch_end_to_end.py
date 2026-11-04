@@ -304,3 +304,14 @@ def test_review_pr_posts_batched_reviews_via_real_gh_subprocess(
     assert archive_index > last_batch_index, (
         "archive-comment upsert must be recorded strictly after every batched review call"
     )
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the review on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py`` and
+    ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+    """
+    monkeypatch.setattr("repoach.review.orchestrator.require_pr_base", lambda *_a, **_k: "0" * 40)

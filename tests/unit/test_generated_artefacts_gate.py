@@ -50,7 +50,14 @@ from repoach.review.findings_bridge import oversized_finding
 from repoach.review.generated_artefacts import run_checks
 from repoach.review.generated_config import declared_at_base
 from repoach.review.generated_evidence import evidence_payload, load_review_evidence
-from repoach.review.generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
+from repoach.review.generated_git import (
+    BaseRefUnresolvableError,
+    blob_at,
+    changed_paths,
+    merge_base,
+    resolve_commit,
+    run_git,
+)
 from repoach.review.generated_process import RunResult, subprocess_runner
 from repoach.review.generated_settle import settle_at_head, settlements_at_head
 from repoach.review.generated_store import (
@@ -1367,7 +1374,7 @@ def test_review_generated_refuses_a_ref_git_would_read_as_an_option(
     """A --head or --base beginning with '-' is refused before git sees it."""
     with pytest.raises(GeneratedRefusalError, match="starts with '-'"):
         verify_generated(tmp_path, pr_number=1, head=ref, base_ref="main", state_dir=tmp_path)
-    with pytest.raises(GeneratedRefusalError, match="starts with '-'"):
+    with pytest.raises(BaseRefUnresolvableError, match="starts with '-'"):
         verify_generated(tmp_path, pr_number=1, head="HEAD", base_ref=ref, state_dir=tmp_path)
 
 
@@ -1424,6 +1431,7 @@ def test_malformed_evidence_is_reported_not_run(tmp_path: Path, forged: str) -> 
         head_sha="f" * 40,
         head_dir=head_dir,
         changed_files=[ARTEFACT, "data/corpus.json"],
+        base_sha="b" * 40,
     )
 
     assert timing is None
@@ -1486,7 +1494,12 @@ def test_evidence_behind_a_link_is_reported_not_run(tmp_path: Path) -> None:
     entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
 
     checks, _ = load_review_evidence(
-        evidence, {ARTEFACT: entry}, head_sha="f" * 40, head_dir=head_dir, changed_files=[ARTEFACT]
+        evidence,
+        {ARTEFACT: entry},
+        head_sha="f" * 40,
+        head_dir=head_dir,
+        changed_files=[ARTEFACT],
+        base_sha="b" * 40,
     )
 
     assert [c.state for c in checks] == [GeneratedState.NOT_RUN]
@@ -1505,7 +1518,12 @@ def test_evidence_over_the_cap_is_reported_not_run(
     entry = GeneratedEntry(path=ARTEFACT, check=(CHECK, "--check"), sources=("data/corpus.json",))
 
     checks, _ = load_review_evidence(
-        evidence, {ARTEFACT: entry}, head_sha="f" * 40, head_dir=head_dir, changed_files=[ARTEFACT]
+        evidence,
+        {ARTEFACT: entry},
+        head_sha="f" * 40,
+        head_dir=head_dir,
+        changed_files=[ARTEFACT],
+        base_sha="b" * 40,
     )
 
     assert [c.state for c in checks] == [GeneratedState.NOT_RUN]

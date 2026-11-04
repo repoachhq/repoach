@@ -23,7 +23,14 @@ from typing import Any
 from .generated_artefacts import run_checks
 from .generated_config import declared_at_base, present_at_base, touched_artefacts
 from .generated_evidence import evidence_payload
-from .generated_git import blob_at, changed_paths, merge_base, resolve_commit, run_git
+from .generated_git import (
+    blob_at,
+    changed_paths,
+    require_merge_base,
+    resolve_base_ref,
+    resolve_commit,
+    run_git,
+)
 from .generated_process import Runner, subprocess_runner
 from .generated_report import report_lines
 from .generated_types import GeneratedCheck, GeneratedTiming
@@ -156,21 +163,20 @@ def verify_generated(
         ``(evidence payload, runs, timing)``.
 
     Raises:
-        GeneratedRefusalError: The head or the base does not resolve.
+        GeneratedRefusalError: The head does not resolve.
+        BaseRefUnresolvableError: The base does not resolve or has no merge base with the head.
         ConfigError: The base declarations are invalid.
     """
     started = clock()
-    for name, ref in (("head", head), ("base", base_ref)):
-        if ref.startswith("-"):
-            raise GeneratedRefusalError(
-                f"{name} {ref!r} starts with '-', which git would read as an option"
-            )
+    if head.startswith("-"):
+        raise GeneratedRefusalError(
+            f"head {head!r} starts with '-', which git would read as an option"
+        )
+    resolve_base_ref(root, base_ref)
     head_sha = resolve_commit(root, head)
     if head_sha is None:
         raise GeneratedRefusalError(f"head {head!r} does not resolve to a commit")
-    if resolve_commit(root, base_ref) is None:
-        raise GeneratedRefusalError(f"base {base_ref!r} does not resolve to a commit")
-    base_sha = merge_base(root, base_ref, head_sha) or base_ref
+    base_sha = require_merge_base(root, base_ref, head_sha)
     changed = changed_paths(root, base_sha, head_sha)
     touched = present_at_base(
         root, base_sha, touched_artefacts(declared_at_base(root, base_ref), changed)
@@ -227,7 +233,8 @@ def run_verification(
         saying no declared artefact is touched.
 
     Raises:
-        GeneratedRefusalError: The head or the base does not resolve.
+        GeneratedRefusalError: The head does not resolve.
+        BaseRefUnresolvableError: The base does not resolve or has no merge base with the head.
         ConfigError: The base declarations are invalid.
     """
     payload, checks, timing = verify_generated(
@@ -274,7 +281,8 @@ def review_generated_command(
         echo: Prints one line on stderr.
 
     Raises:
-        GeneratedRefusalError: The head or the base does not resolve.
+        GeneratedRefusalError: The head does not resolve.
+        BaseRefUnresolvableError: The base does not resolve or has no merge base with the head.
         ConfigError: The base declarations are invalid.
     """
     held = held_secrets()

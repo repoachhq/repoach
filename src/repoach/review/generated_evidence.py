@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.logging import get_logger
+from .generated_git import FULL_SHA, BaseRefUnresolvableError
 from .generated_types import (
     GeneratedCheck,
     GeneratedEntry,
@@ -148,6 +149,20 @@ def evidence_payload(
     }
 
 
+def _require_base_sha(base_sha: str) -> None:
+    """Refuse a base that is not a full SHA: the review never checks evidence against a name.
+
+    Raises:
+        BaseRefUnresolvableError: ``base_sha`` is empty or not a full object name.
+    """
+    if not FULL_SHA.fullmatch(base_sha):
+        raise BaseRefUnresolvableError(
+            base_sha,
+            "resolve the base before the evidence is read (resolve_base_ref)",
+            cause="the review reached the evidence check without a merge-base SHA",
+        )
+
+
 def checks_from_evidence(
     payload: Mapping[str, Any],
     touched: Mapping[str, GeneratedEntry],
@@ -155,7 +170,7 @@ def checks_from_evidence(
     head_sha: str,
     head_dir: Path,
     changed_files: Sequence[str],
-    base_sha: str = "",
+    base_sha: str,
 ) -> tuple[list[GeneratedCheck], GeneratedTiming]:
     """Read the runs of the touched artefacts out of an evidence document.
 
@@ -168,24 +183,26 @@ def checks_from_evidence(
         head_sha: The reviewed head.
         head_dir: The reviewed head tree (the artefacts' blobs).
         changed_files: The paths the diff changes.
-        base_sha: The merge base the review read the diff from; empty
-            when unknown, and the evidence's base is then not compared.
+        base_sha: The merge base the review read the diff from, a full SHA.
 
     Returns:
         The runs, in declaration order, and the evidence's timing; an
         artefact the evidence does not name gets a ``not_run`` row.
 
     Raises:
+        BaseRefUnresolvableError: ``base_sha`` is not a full SHA (empty, or a
+            ref name standing in for the commit it failed to resolve to).
         GeneratedEvidenceMismatchError: The evidence is of another format,
             another head, another base, or another blob of a touched artefact.
     """
+    _require_base_sha(base_sha)
     if payload.get("format") != EVIDENCE_FORMAT:
         raise GeneratedEvidenceMismatchError(f"not a {EVIDENCE_FORMAT} file")
     if payload.get("head_sha") != head_sha:
         raise GeneratedEvidenceMismatchError(
             f"evidence of head {str(payload.get('head_sha'))[:7]}, reviewing {head_sha[:7]}"
         )
-    if base_sha and payload.get("base_sha") != base_sha:
+    if payload.get("base_sha") != base_sha:
         raise GeneratedEvidenceMismatchError(
             f"evidence of base {str(payload.get('base_sha'))[:7]}, reviewing base {base_sha[:7]}"
         )
@@ -217,7 +234,7 @@ def checks_from_evidence(
                 entry,
                 path=path,
                 head_sha=head_sha,
-                base_sha=base_sha or str(payload.get("base_sha") or ""),
+                base_sha=base_sha,
                 changed_files=changed_files,
             )
         )
@@ -296,7 +313,7 @@ def load_review_evidence(
     head_sha: str,
     head_dir: Path,
     changed_files: Sequence[str],
-    base_sha: str = "",
+    base_sha: str,
 ) -> tuple[list[GeneratedCheck], GeneratedTiming | None]:
     """Return the runs the review job records for the touched artefacts.
 
@@ -316,9 +333,13 @@ def load_review_evidence(
 
     Returns:
         The runs to record and the evidence's timing (``None`` without usable evidence).
+
+    Raises:
+        BaseRefUnresolvableError: An artefact is touched and ``base_sha`` is not a full SHA.
     """
     if not touched:
         return [], None
+    _require_base_sha(base_sha)
     if evidence is not None and os.path.lexists(evidence):
         try:
             payload = json.loads(_read_evidence(evidence))

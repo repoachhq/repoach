@@ -644,3 +644,15 @@ def test_a_file_name_or_error_from_the_forge_cannot_forge_a_line() -> None:
     assert OpenThreads(read=True, threads=[forged_id]).thread_lines() == [
         "open thread 4 (ab\\n::error::x) at (no file)"
     ]
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the release gate on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py``.
+    """
+    monkeypatch.setattr(
+        "repoach.review.release_gate.require_merge_base", lambda *_a, **_k: "0" * 40
+    )

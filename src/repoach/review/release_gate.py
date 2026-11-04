@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
+from .generated_git import reader_of, require_merge_base
 from .open_threads import OpenThreads, read_open_threads
 from .persistence import fetch_merged_pr_shas
 
@@ -365,6 +366,9 @@ def gather_release_facts(
         RuntimeError: When ``git fetch origin <release> <integration>``
             fails -- fail-closed, since the range is only trustworthy
             against freshly-fetched remote-tracking refs.
+        BaseRefUnresolvableError: ``origin/<release>`` does not resolve, or
+            has no merge base with ``origin/<integration>`` (a shallow
+            clone): the range would be the whole history (Yoob B-221).
         Exception: Any exception raised while running CI (notably a
             :class:`FileNotFoundError` from the default runner when
             the script is missing or non-executable) propagates
@@ -380,9 +384,10 @@ def gather_release_facts(
             f"git fetch {_REMOTE} {release_branch} {integration_branch} failed: "
             f"{fetch_result.stderr.strip()}"
         )
-    develop_sha = forge.git(["rev-parse", integration_branch]).stdout.strip()
     release_ref = f"{_REMOTE}/{release_branch}"
     integration_ref = f"{_REMOTE}/{integration_branch}"
+    require_merge_base(repo_root, release_ref, integration_ref, git=reader_of(forge.git))
+    develop_sha = forge.git(["rev-parse", integration_branch]).stdout.strip()
     log_result = forge.git(["log", f"{release_ref}..{integration_ref}", "--format=%H%x09%s"])
     commits: list[tuple[str, str]] = []
     for line in log_result.stdout.splitlines():

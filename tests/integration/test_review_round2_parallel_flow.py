@@ -241,3 +241,14 @@ def test_round2_barrier_gated_reviewers_complete_through_full_review_pr(
     assert outcomes_by_role[BotRole.SENTINEL].verdict is ReviewVerdict.APPROVE
     assert outcomes_by_role[BotRole.TESTER].verdict is ReviewVerdict.APPROVE
     assert outcomes_by_role[BotRole.SCRIBE].verdict is ReviewVerdict.APPROVE
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the review on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py`` and
+    ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+    """
+    monkeypatch.setattr("repoach.review.orchestrator.require_pr_base", lambda *_a, **_k: "0" * 40)

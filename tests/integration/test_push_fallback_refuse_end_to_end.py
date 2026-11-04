@@ -15,6 +15,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from repoach.forge import Diff, PullRequest
 from repoach.review import coder_loop
 from repoach.review.coder_findings import run_coder_fix_from_findings
@@ -204,3 +206,14 @@ def test_push_targets_real_head_branch_end_to_end(tmp_path: Path, monkeypatch) -
         text=True,
     ).stdout.strip()
     assert develop_after == develop_before
+
+
+@pytest.fixture(autouse=True)
+def _base_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the base resolve: these tests drive the Coder loop on a fake clone.
+
+    The base resolution itself (Yoob B-221) is tested in
+    ``tests/unit/test_base_ref_must_resolve.py`` and
+    ``tests/integration/test_base_ref_must_resolve_yoob_324.py``.
+    """
+    monkeypatch.setattr("repoach.review.coder_findings.require_pr_base", lambda *_a, **_k: "0" * 40)
