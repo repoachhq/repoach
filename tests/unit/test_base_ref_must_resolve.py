@@ -3,8 +3,8 @@
 On Yoob !324 the review job's clone had depth 20 and the target branch
 was not fetched: the merge base could not be found, the base became
 its own name (``origin/develop``, printed ``origin/``) and the review
-ran against it. :func:`~repoach.review.generated_git.resolve_base_ref`
-and :func:`~repoach.review.generated_git.require_merge_base` now name the
+ran against it. :func:`~repoach.review.base_ref.resolve_base_ref`
+and :func:`~repoach.review.base_ref.require_merge_base` now name the
 cause (absent, ambiguous, shallow) and every command path stops on it
 with exit 10 before any review work.
 """
@@ -38,7 +38,7 @@ from repoach.review.base_ref import (
 )
 from repoach.review.generated_evidence import load_review_evidence
 from repoach.review.generated_types import GeneratedEntry
-from repoach.review.release_gate import gather_release_facts
+from repoach.review.release_gate import ProvenanceSource, gather_release_facts
 from tests.fixtures.generated_artefacts.harness import GIT_ENV, Forge, Repo, git, install, review
 
 
@@ -363,15 +363,13 @@ def test_release_gate_refuses_a_release_branch_beyond_the_shallow_depth(
     assert refused.value.hint == SHALLOW_HINT
     assert not any(call[0] == "log" for call in forge.calls)
 
-    def raise_refusal(**_k: object) -> None:
-        raise refused.value
-
-    monkeypatch.setattr(release_cmds, "gather_release_facts", raise_refusal)
+    monkeypatch.setenv("REPOACH_DB_PATH", str(tmp_path / "state" / "review.db"))
+    monkeypatch.setattr("repoach.core.config._settings", None)
     monkeypatch.setattr(release_cmds, "select_forge", lambda **_k: forge)
     monkeypatch.setattr(release_cmds, "_repo_root", lambda: clone)
     capsys.readouterr()
     with pytest.raises(typer.Exit) as exited:
-        release_cmds.release_gate(pr_number=None)
+        release_cmds.release_gate(pr_number=None, provenance=ProvenanceSource.GITHUB)
 
     assert exited.value.exit_code == EXIT_BASE_UNRESOLVABLE
     out, err = capsys.readouterr()

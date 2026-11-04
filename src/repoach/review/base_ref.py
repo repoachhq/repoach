@@ -277,7 +277,12 @@ def origin_fetcher(forge: _HasGit) -> Callable[[str], None]:
     def fetch_base(branch: str) -> None:
         """Fetch ``branch`` from origin into its remote-tracking ref."""
         forge.git(
-            ["fetch", "--quiet", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"]
+            [
+                "fetch",
+                "--quiet",
+                "origin",
+                f"+refs/heads/{branch}:refs/remotes/{_REMOTE_PREFIX}{branch}",
+            ]
         )
 
     return fetch_base
