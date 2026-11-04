@@ -15,6 +15,7 @@ import contextlib
 import json
 import subprocess
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,7 +25,7 @@ import typer
 from repoach.cli import release_cmds, review_cmds
 from repoach.forge.github import GhResult
 from repoach.forge.protocol import PullRequest
-from repoach.review import auto_merge, coder_findings, generated_verify
+from repoach.review import auto_merge, coder_findings, generated_verify, orchestrator
 from repoach.review.auto_merge import CIGateOutcome, evaluate_merge_gate
 from repoach.review.generated_evidence import load_review_evidence
 from repoach.review.generated_git import (
@@ -37,7 +38,7 @@ from repoach.review.generated_git import (
 )
 from repoach.review.generated_types import GeneratedEntry
 from repoach.review.release_gate import gather_release_facts
-from tests.fixtures.generated_artefacts.harness import Repo, install, review
+from tests.fixtures.generated_artefacts.harness import Forge, Repo, install, review
 
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "t",
@@ -458,4 +459,67 @@ def test_review_pr_refuses_an_ambiguous_base_before_any_reviewer_runs(
         "repoach: base ref 'main' does not resolve: ambiguous, more than one ref has that name; "
         "name it in full: refs/remotes/origin/main or refs/heads/main"
     ) in result.stderr
+    assert bench.prompts.diffs == []
+
+
+def test_require_pr_base_refuses_when_the_fetch_does_not_bring_the_branch(tmp_path: Path) -> None:
+    hist = history(tmp_path)
+    clone = shallow_clone(tmp_path, hist, fetch_develop=False)
+    fetched: list[str] = []
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        require_pr_base(clone, "develop", "HEAD", fetch_base=fetched.append)
+
+    assert fetched == ["develop"]
+    assert str(refused.value) == (
+        "base ref 'origin/develop' does not resolve: absent from the clone; "
+        "fetch it first: git fetch origin develop"
+    )
+
+
+@pytest.mark.parametrize("stdout", ["", "develop\n", "b9146e8\n"])
+def test_resolve_base_ref_refuses_output_that_is_not_a_full_sha(
+    tmp_path: Path, stdout: str
+) -> None:
+    """A git that exits 0 without a full object name never yields a base."""
+
+    def reader(_args: object) -> tuple[int, str, str]:
+        return 0, stdout, ""
+
+    with pytest.raises(BaseRefUnresolvableError) as refused:
+        resolve_base_ref(tmp_path, "develop", git=reader)
+
+    assert refused.value.cause == f"git named no commit ({stdout.strip()!r})"
+    assert refused.value.hint == "fetch it first: git fetch origin develop"
+
+
+def test_review_pr_shuts_the_head_guard_down_when_the_base_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unpinned posting run submits the head guard first; the refusal shuts its pool down."""
+    bench = install(monkeypatch, tmp_path)
+    repo = Repo(tmp_path / "repo", {"src/app.py": "def f() -> int:\n    return 1\n"})
+    head = repo.push_head({"src/app.py": "def f() -> int:\n    return 2\n"})
+    git(repo.checkout, "tag", "main", "HEAD")
+    shutdowns: list[dict[str, bool]] = []
+
+    class RecordingPool(ThreadPoolExecutor):
+        def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+            shutdowns.append({"wait": wait, "cancel_futures": cancel_futures})
+            super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr(orchestrator, "ThreadPoolExecutor", RecordingPool)
+    monkeypatch.setattr(orchestrator, "resolve_fresh_head", lambda *_a, **_k: head)
+    team = orchestrator.ReviewTeamOrchestrator(
+        forge=Forge(repo, 7, head),
+        db_path=bench.db_path,
+        post_to_github=True,
+        repo_root=repo.checkout,
+        config_root=repo.checkout,
+    )
+
+    with pytest.raises(BaseRefUnresolvableError, match="ambiguous"):
+        team.review_pr(7)
+
+    assert shutdowns == [{"wait": False, "cancel_futures": True}]
     assert bench.prompts.diffs == []
