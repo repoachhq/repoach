@@ -286,6 +286,31 @@ repoach develop <SP-ID>     # Planner -> Developer -> branch -> PR
 `repoach develop --no-push` runs the whole build without touching
 GitHub — useful for a first try.
 
+### The base must resolve, with its merge base
+
+`review pr`, `review gate`, `review generated`, `review fix` and
+`release gate` resolve the pull request's base branch before any review
+work, and refuse with exit code `10` when it does not name one commit
+with a merge base with the head (Yoob B-221). The reason and its hint go
+to stderr; a command that prints JSON prints
+`{"error": "base_ref_unresolvable", "ref": "<ref>", "hint": "<hint>"}`.
+Nothing is reviewed, recorded or posted. Two hints cover a CI job:
+
+- **the base is absent from the clone** — `fetch it first: git fetch
+  origin <branch>` (`review pr`, `review gate` and `review fix` try that
+  fetch once themselves);
+- **the clone is shallow and its depth excludes the merge base** — clone
+  with `GIT_DEPTH: "0"` (GitLab) or `fetch-depth: 0` (GitHub Actions), or
+  run `git fetch --unshallow`.
+
+The base branch is read as a branch only, never through git's short
+names: a forge's `develop` is `refs/remotes/origin/develop`, then
+`refs/heads/develop`, and `review generated --base origin/develop` is
+`refs/remotes/origin/develop`. A tag of the same name therefore never
+becomes the base whose `[[review.generated]]` declarations are read and
+run. The release gate's `origin/<release>` is refused as ambiguous when a
+tag shares its name: delete the tag or name the ref in full.
+
 To run the **CI-side automation on your own fork** (auto-review on PR
 open, event-driven merge), you additionally need:
 

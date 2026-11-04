@@ -175,10 +175,17 @@ review:generated:
 review:gate:
   needs: [review:generated]
   environment: review-gate
-  # unchanged otherwise; ci/review-gate.sh adds
+  variables:
+    GIT_DEPTH: "0"
+  # ci/review-gate.sh also fetches "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" and adds
   #   --generated-evidence review-generated.json
   # to its `repoach review pr` call.
 ```
+
+Both jobs need the merge base of the target branch and the head: in a clone
+whose depth excludes it, or without the target branch, `review pr` and
+`review generated` exit 10 with `base_ref_unresolvable` before any work
+(Yoob B-221; the two hints are in `docs/getting_started.md`, section 9).
 
 `needs: [review:generated]` adds the check's own time plus the job's start-up
 to the gate; both are printed on the `generated checks:` line, so the delay is

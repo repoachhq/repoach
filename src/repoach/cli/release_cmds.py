@@ -23,6 +23,7 @@ import typer
 
 from ..core.config import get_settings
 from ..forge import select_forge
+from ..review.base_ref import BaseRefUnresolvableError
 from ..review.release_gate import (
     ProvenanceSource,
     compute_release_decision,
@@ -33,6 +34,7 @@ from ..review.release_gate import (
     write_gate_receipt,
 )
 from .doctor_cmds import project_root_or_exit
+from .refusals import base_ref_refusal
 
 release_app = typer.Typer(
     help="Operator-only develop -> main release gate (read-only, never merges).",
@@ -87,6 +89,10 @@ def release_gate(
       * ``5`` -- gate refused (``merge`` is False): see ``reasons``.
       * ``1`` -- could not evaluate (transport error or missing CI
         script gathering facts).
+      * ``10`` -- ``origin/<release>`` does not resolve or has no merge
+        base with ``origin/<integration>`` (a shallow clone); stdout
+        carries the keys ``error`` (``base_ref_unresolvable``), ``ref``
+        and ``hint``.
     """
     root = _repo_root()
     try:
@@ -97,6 +103,8 @@ def release_gate(
             db_path=Path(get_settings().db_path),
             provenance=provenance,
         )
+    except BaseRefUnresolvableError as exc:
+        raise base_ref_refusal(exc, prints_json=True) from exc
     except Exception as exc:
         typer.echo(json.dumps({"error": str(exc)}, indent=2, ensure_ascii=False))
         raise typer.Exit(code=1) from exc

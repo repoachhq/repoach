@@ -66,6 +66,7 @@ from ..review.auto_merge import (
     merge_exit_code,
     run_auto_merge,
 )
+from ..review.base_ref import BaseRefUnresolvableError
 from ..review.coder_findings import ReasonCode, run_coder_fix_from_findings
 from ..review.dev_runner import open_pr, run_developer_session
 from ..review.finding_post_threads import backfill_finding_posts
@@ -94,6 +95,7 @@ from ..review.spec_grading import (
     resolution_report,
 )
 from .doctor_cmds import project_root_or_exit
+from .refusals import base_ref_refusal
 
 _FORGE_HELP = (
     "Forge the PR / MR lives on: github or gitlab (default: REPOACH_FORGE, repoach.toml, origin)."
@@ -372,6 +374,12 @@ def review_pr(
     null). A head the forge does not serve, or one that cannot be
     fetched, exits 2 before any reviewer runs.
 
+    A base branch that does not resolve, or has no merge base with the
+    head (a shallow clone), exits 10 before any reviewer runs, any
+    finding is recorded or any comment is posted: the hint is on stderr
+    and the keys ``error`` (``base_ref_unresolvable``), ``ref`` and ``hint``
+    on stdout.
+
     ``findings`` lists every finding that can move ``final_verdict``,
     each once, with ``judge`` (``mechanical`` / ``refuter`` /
     ``reverify`` / ``ledger``), ``state``, ``verification_method``
@@ -438,6 +446,8 @@ def review_pr(
                 generated_evidence=_evidence_path(generated_evidence),
                 **_forge_kwargs(forge_name),
             )
+    except BaseRefUnresolvableError as exc:
+        raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except (GatewayConfigError, HeadUnresolvedError, HeadUnavailableError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -592,8 +602,9 @@ def review_generated(
     directory (the pull request's checkout) is never on its import path.
 
     Exits 0 once the evidence is written, whatever the checks said (the
-    review decides); 2 when ``--base`` is missing, the head or the base
-    does not resolve, or the base declarations are invalid.
+    review decides); 2 when ``--base`` is missing, the head does not
+    resolve, or the base declarations are invalid; 10 when the base does
+    not resolve or has no merge base with the head (Yoob B-221).
     """
     root = project_root_or_exit()
     try:
@@ -606,6 +617,8 @@ def review_generated(
             state_dir=Path(get_settings().db_path).parent,
             echo=lambda line: typer.echo(line, err=True),
         )
+    except BaseRefUnresolvableError as exc:
+        raise base_ref_refusal(exc, prints_json=False) from exc
     except (GeneratedRefusalError, ConfigError) as exc:
         typer.echo(f"repoach: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -739,6 +752,10 @@ def review_fix(
         ``stuck``, a routine dossier was fired, and no fix was attempted.
         The push/CI loop stops here for human intervention.
       * ``2`` — ``--spec`` names no spec document, or the forge is unusable.
+      * ``10`` — the base branch does not resolve, or has no merge base
+        with the head; nothing was recorded or fixed, and stdout carries
+        the keys ``error`` (``base_ref_unresolvable``), ``ref`` and
+        ``hint`` (Yoob B-221).
 
     The Coder reads the spec resolved like ``review pr`` (``--spec`` >
     ``Spec:`` description line > branch name); without one it fixes the
@@ -749,6 +766,8 @@ def review_fix(
     _require_spec(spec_flag, root)
     try:
         fr = run_coder_fix_from_findings(pr_number, spec=spec_flag, **_forge_kwargs(forge_name))
+    except BaseRefUnresolvableError as exc:
+        raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
     typer.echo(
@@ -1136,6 +1155,11 @@ def review_gate(
         ``merge`` False, nothing left to gate).
       * ``5`` — gate refused (``merge`` is False): see ``reasons``.
       * ``1`` — could not evaluate (transport error gathering facts).
+      * ``10`` — the base does not resolve (absent from the clone,
+        ambiguous, or beyond the depth of a shallow clone): nothing was
+        evaluated, stdout carries the keys ``error``
+        (``base_ref_unresolvable``), ``ref`` and ``hint``, and stderr the
+        hint (Yoob B-221).
 
     ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
     (``--spec`` > ``Spec:`` description line > branch name).
@@ -1198,6 +1222,8 @@ def review_gate(
             announce=lambda line: typer.echo(line, err=True),
             **_forge_kwargs(forge_name),
         )
+    except BaseRefUnresolvableError as exc:
+        raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except Exception as exc:
         typer.echo(
             json.dumps(
