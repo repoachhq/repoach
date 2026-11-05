@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,7 @@ from loguru import logger
 
 from repoach.llm_proxy.config.settings import Settings, get_settings
 from repoach.llm_proxy.providers.registry import ProviderRegistry
+from repoach.llm_proxy.routing import TERMINAL_REASONS, RoutingTable, Tier, get_breaker
 
 _SHUTDOWN_TIMEOUT_S = 5.0
 
@@ -50,26 +52,11 @@ def report_configured_models_gone(settings: Settings) -> list[str]:
     Returns:
         The lines logged, one per gone entry.
     """
-    import time
-
-    from repoach.llm_proxy.routing import TERMINAL_REASONS, get_breaker
-    from repoach.llm_proxy.routing.chain import Chain
-
     configured: dict[str, list[str]] = {}
-    for tier, spec in (
-        ("MODEL_OPUS", settings.model_opus),
-        ("MODEL_SONNET", settings.model_sonnet),
-        ("MODEL_HAIKU", settings.model_haiku),
-    ):
-        if not spec or not spec.strip():
-            continue
-        try:
-            refs = Chain.parse(spec).refs
-        except ValueError as exc:
-            logger.warning("proxy_configured_chain_unparseable: {} ({})", tier, exc)
-            continue
-        for ref in refs:
-            configured.setdefault(str(ref), []).append(tier)
+    for tier, chain in RoutingTable.from_settings(settings).chains.items():
+        slot = "MODEL" if tier is Tier.DEFAULT else f"MODEL_{tier.value.upper()}"
+        for ref in chain.refs:
+            configured.setdefault(str(ref), []).append(slot)
     lines: list[str] = []
     for entry in get_breaker().snapshot(time.monotonic()):
         tiers = configured.get(str(entry.ref))
