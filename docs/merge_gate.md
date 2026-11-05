@@ -59,9 +59,9 @@ Resolving a thread starts no workflow: GitHub Actions has no
 submitted pull request review, so it runs the review workflow's `rearm`
 job (it reviews nothing, see below), and `merge-on-ci.yml` re-judges
 when that run completes. Answer a thread, then resolve it, and a green
-pull request whose last thread is closed merges without a push. A thread resolved without a reply waits for the
-next CI or review completion, or for `repoach review stranded
---dispatch`. `merge-on-ci.yml` runs `main`'s code, so the rule reaches
+pull request whose last thread is closed merges without a push. A
+thread resolved without a reply waits for the next CI or review
+completion, or for `repoach review stranded --dispatch`. `merge-on-ci.yml` runs `main`'s code, so the rule reaches
 that lane with the next release.
 
 ### The forge settings are the second line of defence
