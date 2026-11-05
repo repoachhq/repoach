@@ -17,6 +17,8 @@ from typing import Any
 
 import yaml
 
+from repoach.review.merge_wait import COALESCE_WINDOW_S
+from repoach.review.review_retry import REVIEW_RETRY_DELAY_S
 from tests.github_concurrency_sim import (
     Context,
     JobRecord,
@@ -181,7 +183,7 @@ def test_the_retry_job_runs_once_per_failed_head_and_never_retries_a_retry() -> 
     assert job_condition(retry["if"], second)
     steps = {step["name"]: step for step in retry["steps"]}
     wait = steps["Wait before the retry (review_retry_delay_s)"]
-    assert wait["run"] == "sleep 300"
+    assert wait["run"] == f"sleep {REVIEW_RETRY_DELAY_S}"
     assert not job_condition(wait["if"], second)
     assert "--retry-of" in steps["Dispatch the retry, or record the retry run"]["run"]
     assert retry["runs-on"] == "ubuntu-latest"
@@ -196,6 +198,17 @@ def test_the_retry_run_reviews_and_merges_but_never_pushes() -> None:
     assert by_job["auto_merge"] == "success"
     assert by_job["auto_fix"] == "skipped"
     assert by_job["retry"] == "success"
+
+
+def test_every_wait_of_the_workflow_is_its_named_constant() -> None:
+    """The workflow's sleeps cannot drift from ``coalesce_window_s`` and ``review_retry_delay_s``."""
+    jobs = _workflow()["jobs"]
+    for name in ("coalesce", "rearm"):
+        assert jobs[name]["steps"][0]["run"] == f"sleep {COALESCE_WINDOW_S}", name
+    steps = {step["name"]: step for step in jobs["retry"]["steps"]}
+    assert steps["Wait before the retry (review_retry_delay_s)"]["run"] == (
+        f"sleep {REVIEW_RETRY_DELAY_S}"
+    )
 
 
 def test_a_bot_dispatch_without_retry_of_reviews_nothing() -> None:
