@@ -45,7 +45,16 @@ OUTPUT_CAP_ERROR_CODE = "output_cap_exceeded"
 
 
 def _retry_after_s(resp: Any) -> float | None:
-    """Return the answer's ``Retry-After`` in seconds, None when absent or not a number."""
+    """Return the answer's ``Retry-After`` in whole seconds, None for any other form.
+
+    The proxy names a tripped chain's re-opening in whole seconds
+    (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D7). An absent header, an
+    HTTP date, a fraction or a non-number is None, so the transport
+    window falls back to its own backoff; 0 is 0.
+
+    Args:
+        resp: The HTTP response (any object with ``headers``).
+    """
     headers = getattr(resp, "headers", None)
     value = headers.get("retry-after") if headers is not None else None
     if not isinstance(value, str) or not value.strip().isdigit():

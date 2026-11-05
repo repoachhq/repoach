@@ -266,6 +266,31 @@ def test_a_tripped_chain_names_when_it_reopens_and_the_window_waits_only_that_lo
             assert wait == pytest.approx(expected_wait, abs=15.0)
 
 
+@pytest.mark.parametrize(
+    ("headers", "seconds"),
+    [
+        ({"Retry-After": "120"}, 120.0),
+        ({"Retry-After": "0"}, 0.0),
+        ({}, None),
+        ({"Retry-After": "Wed, 05 Nov 2026 01:00:00 GMT"}, None),
+        ({"Retry-After": "1.5"}, None),
+        ({"Retry-After": "soon"}, None),
+    ],
+    ids=["seconds", "zero", "absent", "http-date", "fraction", "word"],
+)
+def test_retry_after_non_numeric_is_ignored_and_the_window_backs_off(
+    headers: dict[str, str], seconds: float | None
+) -> None:
+    import httpx
+
+    from repoach.agent_engine.adapters import _retry_after_s
+
+    assert _retry_after_s(SimpleNamespace(headers=httpx.Headers(headers))) == seconds
+    error = GatewayTransportError("proxy returned 502", status=502, retry_after_s=seconds)
+    wait = TransportWindow(300.0, clock=lambda: 0.0).next_wait(error, 1)
+    assert wait == (seconds if seconds else 5.0)
+
+
 def test_a_configured_model_the_provider_retired_is_named_at_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
