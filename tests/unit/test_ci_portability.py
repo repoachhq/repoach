@@ -16,11 +16,16 @@ import yaml
 
 _WORKFLOW_DIR = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 _RUNNER_EXPR = "${{ vars.REPOACH_RUNNER || 'self-hosted' }}"
-_GITHUB_HOSTED = {("auto-review.yml", "coalesce")}
+_GITHUB_HOSTED = {
+    ("auto-review.yml", "coalesce"),
+    ("auto-review.yml", "rearm"),
+    ("auto-review.yml", "retry"),
+}
 """Jobs that run GitHub-hosted on purpose (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D1).
 
-``coalesce`` only sleeps; it must never queue behind the self-hosted
-runner it protects, and on the public repository it costs no minutes.
+``coalesce`` and ``rearm`` only sleep, and ``retry`` waits 300 s before it
+dispatches (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES): none may queue behind
+the self-hosted runner, and on the public repository they cost no minutes.
 """
 
 

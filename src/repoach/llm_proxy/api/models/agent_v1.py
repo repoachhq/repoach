@@ -138,11 +138,19 @@ class TraceEntry(BaseModel):
 
 
 class AgentError(BaseModel):
+    """Why a ``stop_reason="error"`` response has no answer.
+
+    ``output_cap_exceeded``: the reply outgrew the request's output cap,
+    so the same request would fail the same way
+    (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6).
+    """
+
     code: Literal[
         "chain_exhausted",
         "provider_filter",
         "invalid_capability",
         "invalid_request",
+        "output_cap_exceeded",
     ]
     message: str
     trace_summary: str | None = None

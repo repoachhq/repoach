@@ -61,6 +61,10 @@ schema = 1
 # cli_path = ""
 # openai_compatible only; a preset or gemini fixes its host and refuses it.
 # base_url = ""
+# Seconds one model call keeps retrying a transport error (a timeout, a refused
+# connection, a 5xx) before it fails as it did before; 0 retries nothing, at
+# most 1800. REPOACH_TRANSPORT_RETRY_WINDOW_S overrides it.
+# transport_retry_window_s = 300
 
 [review]
 # Forge login the review bot posts as; markers are trusted from it only.

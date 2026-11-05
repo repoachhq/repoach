@@ -505,6 +505,34 @@ def run_summary_line(run: UsageRun) -> str:
     return line
 
 
+def served_by_line(run: UsageRun) -> str:
+    """Name which model served each role of the run, and what failed: ``providers: …``.
+
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G10: on #288 the report said
+    only that the Sentinel and the judge failed on a transport error;
+    which upstream answered, or did not, was in the proxy's log alone.
+    One entry per role in the order it first called, ``<role> <model>[,
+    <model>…]`` for the models that answered, then ``<n> failed (<error
+    classes>)`` when calls failed; ``none served`` when nothing answered.
+    """
+    rows = run.snapshot()
+    if not rows:
+        return "providers: no model call"
+    roles: dict[str, list[UsageRow]] = {}
+    for row in rows:
+        roles.setdefault(row.reviewer or "unattributed", []).append(row)
+    parts: list[str] = []
+    for role, role_rows in roles.items():
+        served = sorted({row.model for row in role_rows if not row.error})
+        failed = [row for row in role_rows if row.error]
+        text = f"{role} {', '.join(served) if served else 'none served'}"
+        if failed:
+            classes = sorted({(row.error or "").split(":", 1)[0] for row in failed})
+            text += f", {len(failed)} failed ({', '.join(classes)})"
+        parts.append(text)
+    return "providers: " + "; ".join(parts)
+
+
 def _group(rows: list[UsageRow], key: Callable[[UsageRow], str]) -> list[tuple[str, UsageTotals]]:
     groups: dict[str, list[UsageRow]] = {}
     for row in rows:
