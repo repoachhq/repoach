@@ -211,6 +211,15 @@ def test_every_wait_of_the_workflow_is_its_named_constant() -> None:
     )
 
 
+def test_the_review_step_never_imports_from_the_pr_checkout() -> None:
+    """The step runs with the PR head as cwd; neither interpreter may put that cwd on sys.path."""
+    steps = {step.get("name"): step for step in _workflow()["jobs"]["review"]["steps"]}
+    script = steps["Run review-bot team"]["run"]
+    after_cd = script.split("cd pr_head", 1)[1]
+    calls = [line.strip() for line in after_cd.splitlines() if line.strip().startswith("python")]
+    assert [call.split()[1] for call in calls] == ["-P", "-I"]
+
+
 def test_a_bot_dispatch_without_retry_of_reviews_nothing() -> None:
     records = _simulate([dispatch_event(0.0, 288, retry_of="")])
 

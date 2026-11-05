@@ -558,9 +558,12 @@ jobs:
           artifact="$GITHUB_WORKSPACE/logs/review_ci/review_pr_${{ steps.pr.outputs.number }}.json"
           # cwd = the data-only PR head checkout: guard/excerpt/spec
           # reads see the PR's files while the interpreter runs the
-          # base-ref install (SP-CI-SECRETS-ISOLATION layer 2).
+          # base-ref install (SP-CI-SECRETS-ISOLATION layer 2).  ``-P``
+          # keeps that cwd off sys.path: ``python -m`` puts it first, so
+          # a PR-authored top-level ``repoach/`` or stdlib-named module
+          # would run in this job, which holds the provider keys.
           cd pr_head
-          python -m repoach.cli.main review pr "${{ steps.pr.outputs.number }}" | tee "$artifact"
+          python -P -m repoach.cli.main review pr "${{ steps.pr.outputs.number }}" | tee "$artifact"
           rc=${PIPESTATUS[0]}
           # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G2: the retry job reads
           # why an incomplete review is incomplete, and at which head,
