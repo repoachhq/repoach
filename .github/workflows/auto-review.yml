@@ -565,8 +565,9 @@ jobs:
           # SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G2: the retry job reads
           # why an incomplete review is incomplete, and at which head,
           # from the one JSON object review pr printed.  No object, no
-          # cause: nothing is retried.
-          python -c 'import json, sys; payload = json.load(open(sys.argv[1])); print("incomplete_cause=" + (payload.get("incomplete_cause") or "")); print("head_sha=" + (payload.get("head_sha") or ""))' "$artifact" >> "$GITHUB_OUTPUT" 2>/dev/null || true
+          # cause: nothing is retried.  ``-I`` keeps the PR checkout (the
+          # cwd) off sys.path, so no PR-authored module shadows ``json``.
+          python -I -c 'import json, sys; payload = json.load(open(sys.argv[1])); print("incomplete_cause=" + (payload.get("incomplete_cause") or "")); print("head_sha=" + (payload.get("head_sha") or ""))' "$artifact" >> "$GITHUB_OUTPUT" 2>/dev/null || true
           # Exit code 2 == REQUEST_CHANGES (gate the merge); 0 == APPROVE/COMMENT.
           # Anything else is an actual failure of the bot pipeline.
           if [ "$rc" -eq 0 ]; then
