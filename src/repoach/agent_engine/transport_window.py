@@ -21,9 +21,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING
 
 from ..providers.errors import GatewayTransportError
+
+if TYPE_CHECKING:
+    from ..providers.select import ProviderRoute
 
 FIRST_BACKOFF_S = 5.0
 """Seconds before the second attempt (``transport_backoff_first_s``)."""
@@ -55,7 +58,7 @@ def mark_window_spent(exc: BaseException) -> None:
     setattr(exc, _SPENT_ATTRIBUTE, True)
 
 
-def configured_transport_window_s(route: Any) -> float:
+def configured_transport_window_s(route: ProviderRoute) -> float:
     """Return the window of a provider route: ``[provider].transport_retry_window_s``."""
     return float(route.section.transport_retry_window_s)
 
