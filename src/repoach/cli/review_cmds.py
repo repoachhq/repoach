@@ -988,6 +988,10 @@ def review_retry(
     itself and its result instead, so the comment names both runs.
     Exits 0 whether or not it retried, 2 when the forge cannot be
     selected or refuses the dispatch.
+
+    Raises:
+        typer.Exit: With code 2 when the forge cannot be selected or
+            refuses the dispatch.
     """
     root = project_root_or_exit()
     forge = _forge_kwargs(forge_name).get("forge")
