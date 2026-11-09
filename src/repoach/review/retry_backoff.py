@@ -19,6 +19,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
+from ..agent_engine.transport_window import window_spent
 from ..core.logging import get_logger
 
 T = TypeVar("T")
@@ -83,6 +84,11 @@ def retry_with_backoff(
     unless the exception carries ``retryable = False``
     (:class:`~repoach.providers.errors.ProviderAuthError`): that stops
     the loop at once, logged in full as ``f"{log_scope}.attempt_fatal"``.
+    An exception whose transport window was used up inside the call
+    (:func:`~repoach.agent_engine.transport_window.window_spent`) also
+    stops it, as an exhausted (not fatal) result logged
+    ``f"{log_scope}.window_spent"``: the window is counted once per call
+    (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES).
     An attempt that returns an :class:`AttemptOutcome` with
     ``accept=False`` is also retried, but its value is remembered as
     the fallback if the schedule exhausts without an accepted outcome.
@@ -127,6 +133,15 @@ def retry_with_backoff(
             outcome = attempt(attempt_no)
         except Exception as exc:
             last_error = exc
+            if window_spent(exc):
+                _log.error(
+                    f"{log_scope}.window_spent",
+                    attempt=attempt_no,
+                    error=type(exc).__name__,
+                    message=str(exc)[:200],
+                    **context,
+                )
+                return RetryResult(value=None, error=exc, attempts=attempt_no, accepted=False)
             if getattr(exc, "retryable", True) is False:
                 _log.error(
                     f"{log_scope}.attempt_fatal",

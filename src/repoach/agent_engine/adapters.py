@@ -30,10 +30,36 @@ from ..llm_proxy.api.models.agent_v1 import (
     ToolSpec,
 )
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
-from ..providers.errors import GatewayChainExhausted, GatewayError, GatewayTransportError
+from ..providers.errors import (
+    GatewayChainExhausted,
+    GatewayError,
+    GatewayOutputCapError,
+    GatewayTransportError,
+)
 from ..providers.protocol import agent_request
 
 _log = get_logger(__name__)
+
+OUTPUT_CAP_ERROR_CODE = "output_cap_exceeded"
+"""The gateway's ``AgentError.code`` for a reply past its output cap (``agent_dispatcher``)."""
+
+
+def _retry_after_s(resp: Any) -> float | None:
+    """Return the answer's ``Retry-After`` in whole seconds, None for any other form.
+
+    The proxy names a tripped chain's re-opening in whole seconds
+    (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D7). An absent header, an
+    HTTP date, a fraction or a non-number is None, so the transport
+    window falls back to its own backoff; 0 is 0.
+
+    Args:
+        resp: The HTTP response (any object with ``headers``).
+    """
+    headers = getattr(resp, "headers", None)
+    value = headers.get("retry-after") if headers is not None else None
+    if not isinstance(value, str) or not value.strip().isdigit():
+        return None
+    return float(value.strip())
 
 
 class ProxyGatewayClient:
@@ -121,6 +147,9 @@ class ProxyGatewayClient:
             GatewayChainExhausted: HTTP 200 with
                 ``stop_reason="error"`` — the proxy walked its own
                 chain and every upstream failed.
+            GatewayOutputCapError: HTTP 200 with ``stop_reason="error"``
+                and code ``output_cap_exceeded`` — the reply outgrew its
+                cap; the same request would fail the same way.
             GatewayError: 4xx other than the retryable subset,
                 non-JSON body, or response that fails AgentResponse
                 validation.
@@ -165,7 +194,11 @@ class ProxyGatewayClient:
                 status=resp.status_code,
                 body_preview=resp.text[:200],
             )
-            raise GatewayTransportError(f"proxy returned {resp.status_code}: {resp.text[:200]}")
+            raise GatewayTransportError(
+                f"proxy returned {resp.status_code}: {resp.text[:200]}",
+                status=resp.status_code,
+                retry_after_s=_retry_after_s(resp),
+            )
 
         if resp.status_code >= 400:
             _log.warning(
@@ -189,6 +222,9 @@ class ProxyGatewayClient:
             err = response.error
             code = err.code if err else "unknown"
             message = err.message if err else ""
+            if code == OUTPUT_CAP_ERROR_CODE:
+                _log.warning("proxy_gateway.output_cap_exceeded", error_message=message[:400])
+                raise GatewayOutputCapError(f"gateway error {code!r}: {message!r}")
             _log.warning(
                 "proxy_gateway.chain_exhausted",
                 error_code=code,
@@ -209,6 +245,7 @@ class ProxyGatewayClient:
 __all__ = [
     "GatewayChainExhausted",
     "GatewayError",
+    "GatewayOutputCapError",
     "GatewayTransportError",
     "ProxyGatewayClient",
 ]

@@ -64,11 +64,13 @@ def _burst(start: float, reviews: int, spacing: float) -> list[SimEvent]:
 
 
 def test_fourteen_review_events_coalesce() -> None:
+    """Fourteen replies re-arm the merge once and review nothing (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G3)."""
     events = _burst(0.0, 14, 8.5)
     assert events[-1].at <= 125 and events[-2].at < 120
 
     after = _simulate(WORKFLOWS / "auto-review.yml", events)
-    assert len(_completed(after, "review")) == 1
+    assert len(_completed(after, "rearm")) == 1
+    assert [r for r in after if r.job == "review" and r.result != "skipped"] == []
     comment_run = max(r.run for r in after)
     assert all(r.result == "skipped" for r in after if r.run == comment_run)
     assert not [r for r in after if r.job in {"auto_fix", "auto_merge"} and r.cancelled_running]
@@ -79,6 +81,7 @@ def test_fourteen_review_events_coalesce() -> None:
 
 
 def test_246_bursts_each_review_once() -> None:
+    """Each of #246's four owner bursts re-arms the merge once; none starts a bot review."""
     origin = ts("2026-10-25T15:53:57Z")
     starts = [
         "2026-10-25T15:53:57Z",
@@ -93,7 +96,8 @@ def test_246_bursts_each_review_once() -> None:
     after = _simulate(WORKFLOWS / "auto-review.yml", events)
     before = _simulate(BEFORE, events)
 
-    assert len(_completed(after, "review")) == 4
+    assert len(_completed(after, "rearm")) == 4
+    assert [r for r in after if r.job == "review" and r.result != "skipped"] == []
     assert not [r for r in after if r.job in {"auto_fix", "auto_merge"} and r.cancelled_running]
     assert len(_completed(before, "review")) == 0
     assert not [r for r in before if r.job in {"auto_fix", "auto_merge"} and r.started is not None]
@@ -109,8 +113,12 @@ def test_workflow_shape() -> None:
     assert coalesce["concurrency"]["group"].startswith("coalesce-")
     assert coalesce["concurrency"]["cancel-in-progress"] is True
     assert "github.event.comment.user.type != 'Bot'" in coalesce["if"]
-    assert "github.event.review.user.type != 'Bot'" in coalesce["if"]
+    assert "github.event.comment.user.type != 'Bot'" in coalesce["if"]
     assert "sleep 60" in coalesce["steps"][0]["run"]
+    rearm = jobs["rearm"]
+    assert rearm["runs-on"] == "ubuntu-latest"
+    assert rearm["concurrency"]["group"].startswith("rearm-")
+    assert "github.event.review.user.type != 'Bot'" in rearm["if"]
 
     assert jobs["review"]["needs"] == "coalesce"
     assert jobs["review"]["concurrency"]["group"].startswith("review-")

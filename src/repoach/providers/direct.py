@@ -43,9 +43,15 @@ from ..llm_proxy.api.models.agent_v1 import (
 )
 from ..llm_proxy.api.models.anthropic import ThinkingConfig
 from ..llm_proxy.providers.base import BaseProvider
-from ..llm_proxy.providers.exceptions import ProviderError
+from ..llm_proxy.providers.exceptions import OutputCapExceededError, ProviderError
 from ..llm_proxy.providers.openai_generic import GenericOpenAIProvider
-from .errors import GatewayError, GatewayTransportError, ProviderAuthError, ProviderRequestError
+from .errors import (
+    GatewayError,
+    GatewayOutputCapError,
+    GatewayTransportError,
+    ProviderAuthError,
+    ProviderRequestError,
+)
 from .protocol import agent_request
 
 _log = get_logger(__name__)
@@ -292,15 +298,17 @@ class DirectProvider:
         if status in REQUEST_STATUSES:
             return ProviderRequestError(f"{detail} -- check the model id and the endpoint")
         if status is None or status >= 500 or status in RETRYABLE_STATUSES:
-            return GatewayTransportError(detail)
+            return GatewayTransportError(detail, status=status)
         return GatewayError(detail)
 
     def _cli_error(self, exc: ProviderError) -> GatewayError:
-        """Map a raised transport error; a login problem is never retried."""
+        """Map a raised transport error; a login problem or a reply past its cap is never retried."""
         text = str(exc)
+        if isinstance(exc, OutputCapExceededError):
+            return GatewayOutputCapError(f"{self.name}: {text[:2000]}")
         if exc.status_code in AUTH_STATUSES or any(m in text.lower() for m in CLI_AUTH_MARKERS):
             return ProviderAuthError(f"{self.name}: {text[:300]} -- {self._auth_hint}")
-        return GatewayTransportError(f"{self.name}: {text[:300]}")
+        return GatewayTransportError(f"{self.name}: {text[:300]}", status=exc.status_code)
 
 
 __all__ = ["DirectProvider", "MeteredChatTransport"]

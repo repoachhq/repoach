@@ -51,6 +51,7 @@ ENV_NAMES: dict[str, tuple[str, ...]] = {
     "provider.haiku": ("REPOACH_MODEL_HAIKU",),
     "provider.cli_path": ("REPOACH_CLAUDE_CODE_CLI_PATH",),
     "provider.base_url": ("REPOACH_OPENAI_BASE_URL",),
+    "provider.transport_retry_window_s": ("REPOACH_TRANSPORT_RETRY_WINDOW_S",),
     "gates.refuter_max_judged": ("REPOACH_REFUTER_MAX_JUDGED",),
     "gates.refuter_context_tokens": ("REPOACH_REFUTER_CONTEXT_TOKENS",),
     "gates.refuter_context_ceiling": ("REPOACH_REFUTER_CONTEXT_CEILING",),

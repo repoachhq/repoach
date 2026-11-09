@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,7 @@ from loguru import logger
 
 from repoach.llm_proxy.config.settings import Settings, get_settings
 from repoach.llm_proxy.providers.registry import ProviderRegistry
+from repoach.llm_proxy.routing import TERMINAL_REASONS, RoutingTable, Tier, get_breaker
 
 _SHUTDOWN_TIMEOUT_S = 5.0
 
@@ -34,6 +36,40 @@ def warn_if_process_auth_token(settings: Settings) -> None:
             "ANTHROPIC_AUTH_TOKEN= to .env to disable proxy auth, or set the "
             "same token in .env to make server auth explicit."
         )
+
+
+def report_configured_models_gone(settings: Settings) -> list[str]:
+    """Log, as one error each, every configured chain entry the breaker holds as gone.
+
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D9. ``nvidia_nim/z-ai/glm-5.2``
+    heads ``MODEL_OPUS`` and has answered 410 since 2026-11-02; its
+    terminal trip (7 days) was rehydrated by every later job, silently.
+    A model the provider retired is a configuration fault: it is named
+    at start, with the chain naming it and the time left on its trip,
+    so the operator removes it from ``chains.env``. The proxy still
+    starts, because the rest of the chain can serve.
+
+    Returns:
+        The lines logged, one per gone entry.
+    """
+    configured: dict[str, list[str]] = {}
+    for tier, chain in RoutingTable.from_settings(settings).chains.items():
+        slot = "MODEL" if tier is Tier.DEFAULT else f"MODEL_{tier.value.upper()}"
+        for ref in chain.refs:
+            configured.setdefault(str(ref), []).append(slot)
+    lines: list[str] = []
+    for entry in get_breaker().snapshot(time.monotonic()):
+        tiers = configured.get(str(entry.ref))
+        if entry.reason not in TERMINAL_REASONS or not tiers:
+            continue
+        line = (
+            f"proxy_configured_model_gone: {entry.ref} ({entry.reason}) in "
+            f"{', '.join(tiers)}, tripped for {entry.ttl_remaining_s / 3600:.0f} h more; "
+            "remove it from chains.env"
+        )
+        logger.error(line)
+        lines.append(line)
+    return lines
 
 
 @dataclass(slots=True)
@@ -60,6 +96,7 @@ class AppRuntime:
         self._seed_breaker_from_persisted_state()
         self._seed_breaker_from_probes()
         self._seed_effort_map()
+        report_configured_models_gone(self.settings)
 
     def _seed_effort_map(self) -> None:
         """Seed the resolved-effort map from recent probe history (best-effort).

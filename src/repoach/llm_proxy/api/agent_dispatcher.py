@@ -59,6 +59,13 @@ _CAPABILITY_TO_ANTHROPIC_MODEL: dict[str, str] = {
 }
 
 
+OUTPUT_CAP_ERROR_CODE = "output_cap_exceeded"
+"""The ``AgentError.code`` of a reply that outgrew its output cap (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6).
+
+The gateway returned an empty ``end_turn`` for it on #288 (``AGENT_DISPATCH
+stop_reason=end_turn tokens=0 n_text_blocks=0``); the reviewer then asked
+again, at $2.16 a try. An ``error`` response with this code tells it not to."""
+
 ANTHROPIC_TO_AGENT_STOP: dict[str, StopReason] = {
     "end_turn": "end_turn",
     "tool_use": "tool_use",
@@ -101,6 +108,20 @@ async def dispatch_agent_request(
     )
     aggregated = await aggregate_sse_stream(response_obj.body_iterator)
     elapsed_ms = _now_ms() - started_ms
+    failure = aggregated.get("error")
+    if failure is not None and failure.get("type") == OUTPUT_CAP_ERROR_CODE:
+        logger.warning(
+            "AGENT_DISPATCH_OUTPUT_CAP model={} elapsed_ms={} message={!r}",
+            capability_model,
+            elapsed_ms,
+            str(failure.get("message") or "")[:400],
+        )
+        return _error_response(
+            request=request,
+            code=OUTPUT_CAP_ERROR_CODE,
+            message=str(failure.get("message") or ""),
+            started_ms=started_ms,
+        )
     model_used = aggregated.get("model") or capability_model
     stop_reason = ANTHROPIC_TO_AGENT_STOP.get(aggregated.get("stop_reason") or "", "end_turn")
     usage = aggregated["usage"]
@@ -218,13 +239,15 @@ async def aggregate_sse_stream(
           and a transport that learns the real count only at the end
           reports it there; summing the two counted the placeholder
           output token twice)
-        * ``error``: ``{"message", "status_code"}`` of the last in-band
+        * ``error``: ``{"message", "status_code", "type"}`` of the last in-band
           ``error`` event; else, for a stream that ended with
           ``stop_reason`` ``error`` (an OpenAI-style transport degrades a
           caught upstream failure to error text plus
           ``message_delta.error_status_code``), its text and that status;
           else None.  The gateway's own dispatch ignores it (its failover
-          already judged the stream); the in-process direct providers
+          already judged the stream), except an ``output_cap_exceeded``
+          error, which it returns as an ``error`` response so the caller
+          does not repeat the request; the in-process direct providers
           (SP-UNIVERSAL-PROVIDERS) have no failover and read it to raise
           a typed error instead of returning an empty answer.
     """
@@ -302,6 +325,7 @@ async def aggregate_sse_stream(
                 error = {
                     "message": str(payload.get("message") or ""),
                     "status_code": status if isinstance(status, int) else None,
+                    "type": str(payload.get("type") or ""),
                 }
 
     ordered_blocks = [blocks_by_index[i] for i in sorted(blocks_by_index)]
@@ -309,6 +333,7 @@ async def aggregate_sse_stream(
         error = {
             "message": "".join(str(b.get("text") or "") for b in ordered_blocks).strip(),
             "status_code": delta_error_status,
+            "type": "",
         }
     return {
         "content_blocks": ordered_blocks,
@@ -388,7 +413,7 @@ def _error_response(
     message: str,
     started_ms: int,
 ) -> AgentResponse:
-    """Build an `error`-typed AgentResponse for invalid_request paths."""
+    """Build an `error`-typed AgentResponse (an invalid request, a reply past its output cap)."""
     elapsed_ms = _now_ms() - started_ms
     return AgentResponse(
         schema_version="1",

@@ -82,6 +82,13 @@ def _contains(search: object, item: object) -> bool:
     return False
 
 
+def _starts_with(search: object, item: object) -> bool:
+    """GitHub's ``startsWith``: case-insensitive, false when either side is not a string."""
+    if not isinstance(search, str) or not isinstance(item, str):
+        return False
+    return search.lower().startswith(item.lower())
+
+
 @dataclass
 class Context:
     """What an expression can read.
@@ -203,6 +210,8 @@ class _Parser:
         lowered = name.lower()
         if lowered == "contains":
             return _contains(args[0], args[1])
+        if lowered == "startswith":
+            return _starts_with(args[0], args[1])
         if lowered == "fromjson":
             return json.loads(str(args[0]))
         if lowered == "always":
@@ -554,6 +563,55 @@ def comment_event(
     )
 
 
+def review_comment_event(
+    at: float,
+    pr: int,
+    body: str,
+    *,
+    actor: str = "jwfaye",
+    author_type: str = "User",
+) -> SimEvent:
+    """A ``pull_request_review_comment`` event on ``pr``: a thread reply whose text is ``body``."""
+    return SimEvent(
+        at=at,
+        event_name="pull_request_review_comment",
+        actor=actor,
+        payload={
+            "action": "created",
+            "pull_request": {"number": pr, "draft": False, "head": {"ref": f"feat/pr-{pr}"}},
+            "comment": {"body": body, "user": {"login": actor, "type": author_type}},
+        },
+    )
+
+
+def pull_request_event(
+    at: float, pr: int, *, action: str = "synchronize", actor: str = "jwfaye"
+) -> SimEvent:
+    """A ``pull_request`` event on ``pr`` (a push is ``synchronize``)."""
+    return SimEvent(
+        at=at,
+        event_name="pull_request",
+        actor=actor,
+        payload={
+            "action": action,
+            "pull_request": {"number": pr, "draft": False, "head": {"ref": f"feat/pr-{pr}"}},
+        },
+    )
+
+
+def dispatch_event(
+    at: float, pr: int, *, retry_of: str = "", actor: str = "github-actions[bot]"
+) -> SimEvent:
+    """A ``workflow_dispatch`` of ``auto-review.yml`` for ``pr``, ``retry_of`` set by the retry job."""
+    inputs = {"pr_number": str(pr), "retry_of": retry_of}
+    return SimEvent(
+        at=at,
+        event_name="workflow_dispatch",
+        actor=actor,
+        payload={"inputs": inputs},
+    )
+
+
 __all__ = [
     "Context",
     "ExpressionError",
@@ -561,9 +619,12 @@ __all__ = [
     "SimEvent",
     "Simulator",
     "comment_event",
+    "dispatch_event",
     "evaluate",
     "job_condition",
+    "pull_request_event",
     "render",
+    "review_comment_event",
     "review_event",
     "truthy",
 ]

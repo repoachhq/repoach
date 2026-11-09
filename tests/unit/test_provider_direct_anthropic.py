@@ -90,8 +90,9 @@ def test_server_error_is_a_transport_error(clone: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("REPOACH_ANTHROPIC_API_KEY", "some-key-value")
     with FakeAnthropicServer(status=500) as server:
         monkeypatch.setenv("REPOACH_ANTHROPIC_BASE_URL", server.base_url)
-        with pytest.raises(GatewayTransportError, match="500"):
+        with pytest.raises(GatewayTransportError, match="500") as info:
             AgentLoop(capability=CapabilityTier.SONNET).run_oneshot("x")
+    assert info.value.status == 500
 
 
 def test_unreachable_api_is_a_transport_error(clone: Path, monkeypatch: pytest.MonkeyPatch) -> None:

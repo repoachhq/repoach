@@ -113,6 +113,26 @@ class UpstreamStatusError(ProviderError):
         )
 
 
+class OutputCapExceededError(ProviderError):
+    """The model's reply outgrew the output cap it was given: the request's shape, not the network.
+
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6. On 2026-11-04 the Sentinel's
+    ``claude -p`` call on #288 (a 118 857-character prompt) spent four
+    replies of 4 096 thinking tokens each and exited 1 with ``"error":
+    "max_output_tokens"``: ``Claude's response exceeded the 4096 output
+    token maximum``. The same request fails the same way, so the
+    candidate is not tripped and the caller is told not to repeat it.
+    """
+
+    def __init__(self, message: str, raw_error: Any = None):
+        super().__init__(
+            message,
+            status_code=422,
+            error_type="output_cap_exceeded",
+            raw_error=raw_error,
+        )
+
+
 class UnknownProviderTypeError(ValueError):
     """Raised when ``provider_id`` is not registered in the provider map."""
 
