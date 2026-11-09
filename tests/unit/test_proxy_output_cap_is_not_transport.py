@@ -316,6 +316,51 @@ def test_retry_after_non_numeric_is_ignored_and_the_window_backs_off(
     assert wait == (seconds if seconds else 5.0)
 
 
+def test_retry_after_is_absent_when_no_candidate_is_tripped() -> None:
+    chain: Any = [
+        SimpleNamespace(provider_model_ref=ref)
+        for ref in ("claude_code/opus", "nvidia_nim/z-ai/glm-5.2")
+    ]
+    service: Any = SimpleNamespace()
+    assert ClaudeProxyService._retry_after_header(service, chain) is None
+
+
+def test_retry_after_uses_the_soonest_reopening_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain: Any = [
+        SimpleNamespace(provider_model_ref=ref)
+        for ref in (
+            "nvidia_nim/z-ai/glm-5.2",
+            "open_router/z-ai/glm-5.2",
+            "claude_code/opus",
+        )
+    ]
+    now = 1000.0
+    monkeypatch.setattr("repoach.llm_proxy.api.services.time.monotonic", lambda: now)
+    service: Any = SimpleNamespace()
+    get_breaker().trip(
+        ModelRef.parse("nvidia_nim/z-ai/glm-5.2"),
+        now=now,
+        ttl_s=600.0,
+        reason="provider_error",
+    )
+    get_breaker().trip(
+        ModelRef.parse("open_router/z-ai/glm-5.2"),
+        now=now,
+        ttl_s=45.0,
+        reason="provider_error",
+    )
+    assert ClaudeProxyService._retry_after_header(service, chain) == {"Retry-After": "45"}
+    get_breaker().trip(
+        ModelRef.parse("claude_code/opus"),
+        now=now,
+        ttl_s=0.2,
+        reason="provider_error",
+    )
+    assert ClaudeProxyService._retry_after_header(service, chain) == {"Retry-After": "1"}
+
+
 def test_a_configured_model_the_provider_retired_is_named_at_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -333,6 +378,9 @@ def test_a_configured_model_the_provider_retired_is_named_at_start(
         now=now,
         ttl_s=21_600.0,
         reason="provider_402_propagated",
+    )
+    get_breaker().trip(
+        ModelRef.parse("nvidia_nim/other/retired"), now=now, ttl_s=604_800.0, reason="provider_410"
     )
     errors: list[str] = []
     sink = logger.add(lambda message: errors.append(str(message)), level="ERROR")
