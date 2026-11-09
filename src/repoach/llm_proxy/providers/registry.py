@@ -52,6 +52,17 @@ def _create_claude_code(config: ProviderConfig, settings: Settings) -> BaseProvi
     )
 
 
+def _create_antigravity(config: ProviderConfig, settings: Settings) -> BaseProvider:
+    from .antigravity import AntigravityProvider
+
+    return AntigravityProvider(
+        config,
+        cli_path=settings.antigravity_cli_path,
+        default_model=settings.antigravity_default_model,
+        subprocess_timeout=settings.antigravity_subprocess_timeout,
+    )
+
+
 def _build_generic_openai(config: ProviderConfig, descriptor: ProviderDescriptor) -> BaseProvider:
     from repoach.llm_proxy.providers.openai_generic import GenericOpenAIProvider
 
@@ -74,6 +85,7 @@ _BESPOKE_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
     "claude_code": _create_claude_code,
+    "antigravity": _create_antigravity,
 }
 
 _GENERIC_TRANSPORT_BUILDERS: dict[TransportType, TransportBuilder] = {

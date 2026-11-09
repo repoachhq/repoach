@@ -137,6 +137,9 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "CLAUDE_CODE_CLI_PATH": "REPOACH_CLAUDE_CODE_CLI_PATH",
     "CLAUDE_CODE_DEFAULT_MODEL": "REPOACH_CLAUDE_CODE_DEFAULT_MODEL",
     "CLAUDE_CODE_SUBPROCESS_TIMEOUT": "REPOACH_CLAUDE_CODE_SUBPROCESS_TIMEOUT",
+    "ANTIGRAVITY_CLI_PATH": "REPOACH_ANTIGRAVITY_CLI_PATH",
+    "ANTIGRAVITY_DEFAULT_MODEL": "REPOACH_ANTIGRAVITY_DEFAULT_MODEL",
+    "ANTIGRAVITY_SUBPROCESS_TIMEOUT": "REPOACH_ANTIGRAVITY_SUBPROCESS_TIMEOUT",
     "MODEL": "REPOACH_PROXY_DEFAULT_MODEL",
     "NVIDIA_NIM_PROXY": "REPOACH_NVIDIA_NIM_PROXY",
     "OPENROUTER_PROXY": "REPOACH_OPENROUTER_PROXY",
@@ -297,6 +300,19 @@ class Settings(BaseSettings):
     claude_code_subprocess_timeout: float = Field(
         default=600.0,
         validation_alias=_aliases("CLAUDE_CODE_SUBPROCESS_TIMEOUT"),
+    )
+
+    antigravity_cli_path: str = Field(
+        default="agy",
+        validation_alias=_aliases("ANTIGRAVITY_CLI_PATH"),
+    )
+    antigravity_default_model: str = Field(
+        default="gemini-3.8-flash-medium",
+        validation_alias=_aliases("ANTIGRAVITY_DEFAULT_MODEL"),
+    )
+    antigravity_subprocess_timeout: float = Field(
+        default=600.0,
+        validation_alias=_aliases("ANTIGRAVITY_SUBPROCESS_TIMEOUT"),
     )
 
     model: str = Field(default="nvidia_nim/z-ai/glm4.7", validation_alias=_aliases("MODEL"))

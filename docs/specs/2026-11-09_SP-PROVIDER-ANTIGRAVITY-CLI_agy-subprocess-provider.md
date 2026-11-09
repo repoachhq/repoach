@@ -2,7 +2,7 @@
 id: SP-PROVIDER-ANTIGRAVITY-CLI
 title: Antigravity CLI (agy) subprocess transport for the LLM proxy
 version: 0.1
-status: draft
+status: approved
 author: agent
 created: 2026-11-09
 updated: 2026-11-09
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/llm_proxy/providers/antigravity/__init__.py, src/repoach/llm_proxy/providers/antigravity/client.py, tests/unit/test_antigravity_cli_provider.py]
   resources: [format:antigravity-cli-json]
 
-depends_on: [SP-CHAINS-THINKING-CLASS, SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROVIDER-INIT-DEDUP, SP-REVIEW-SURVIVES-TRANSPORT-FAILURES]
+depends_on: [SP-CHAINS-THINKING-CLASS, SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROVIDER-INIT-DEDUP, SP-PROVIDER-TRANSPORT-SPI, SP-REVIEW-SURVIVES-TRANSPORT-FAILURES]
 provides_to: []
 
 constraints:
@@ -109,13 +109,14 @@ Errors:
 - Adds dependency: `SP-PROVIDER-ANTIGRAVITY-CLI` -> `SP-CHAINS-THINKING-CLASS` (registers `antigravity` in `catalog.py`).
 - Adds dependency: `SP-PROVIDER-ANTIGRAVITY-CLI` -> `SP-PROXY-FIRST-BYTE-DEADLINE` (adds `antigravity_*` settings in `llm_proxy/config/settings.py`).
 - Adds dependency: `SP-PROVIDER-ANTIGRAVITY-CLI` -> `SP-PROVIDER-INIT-DEDUP` (inherits `BaseProvider` / `ProviderConfig`).
+- Adds dependency: `SP-PROVIDER-ANTIGRAVITY-CLI` -> `SP-PROVIDER-TRANSPORT-SPI` (wires `_create_antigravity` in `registry.py`).
 - Adds dependency: `SP-PROVIDER-ANTIGRAVITY-CLI` -> `SP-REVIEW-SURVIVES-TRANSPORT-FAILURES` (uses `OutputCapExceededError` and 2 000-char CLI error truncation).
 - New / changed coupling, cycles, or shared state: Scoped `GlobalRateLimiter` instance `"antigravity"`.
 
 ## Diagram
 ```mermaid
 flowchart TD
-    A[MessagesRequest] --> B[AntigravityProvider._build_prompt]
+    A[MessagesRequest] --> B[AntigravityProvider._build_full_prompt]
     B --> C["agy --input-format stream-json --output-format stream-json"]
     C --> D[Parse NDJSON result event]
     D --> E[HeuristicToolParser + SSEBuilder]
@@ -123,11 +124,11 @@ flowchart TD
 
 ## Acceptance Criteria
 
-- [ ] AC1: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_descriptor_and_registry_build` — `"antigravity"` is in `SUPPORTED_PROVIDER_IDS` and `create_provider("antigravity", settings)` returns an `AntigravityProvider`.
-- [ ] AC2: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_stream_response_parses_stream_json_result_and_usage` — given a fake `agy` script emitting `init`, `step_update`, and `result` NDJSON lines, `stream_response` yields valid Anthropic SSE events with text and accurate `input_tokens` / `cache_read_tokens` / `output_tokens`.
-- [ ] AC3: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_emulates_tool_use_blocks` — `<tool_use>{"name": "read_file", "args": {"path": "a.py"}}</tool_use>` in `result.response` is emitted as an Anthropic `tool_use` SSE content block with `stop_reason == "tool_use"`.
-- [ ] AC4: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_error_status_and_nonzero_exit_surface_error_text` — a non-zero exit or `status: "ERROR"` raises `ProviderError` containing `result["error"]` (up to 2 000 chars).
-- [ ] AC5: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_model_mapping_aliases_and_explicit_slugs` — `opus`, `sonnet`, `haiku` map to `gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-3.8-flash-medium`, while explicit slugs (`gemini-3.8-flash-low`, `claude-sonnet-5-5-high`) pass through unchanged.
+- [x] AC1: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_descriptor_and_registry_build` — `"antigravity"` is in `SUPPORTED_PROVIDER_IDS` and `create_provider("antigravity", settings)` returns an `AntigravityProvider`.
+- [x] AC2: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_stream_response_parses_stream_json_result_and_usage` — given a fake `agy` script emitting `init`, `step_update`, and `result` NDJSON lines, `stream_response` yields valid Anthropic SSE events with text and accurate `input_tokens` / `cache_read_tokens` / `output_tokens`.
+- [x] AC3: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_emulates_tool_use_blocks` — `<tool_use>{"name": "read_file", "args": {"path": "a.py"}}</tool_use>` in `result.response` is emitted as an Anthropic `tool_use` SSE content block with `stop_reason == "tool_use"`.
+- [x] AC4: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_error_status_and_nonzero_exit_surface_error_text` — a non-zero exit or `status: "ERROR"` raises `ProviderError` containing `result["error"]` (up to 2 000 chars).
+- [x] AC5: `pytest -q tests/unit/test_antigravity_cli_provider.py::test_antigravity_model_mapping_aliases_and_explicit_slugs` — `opus`, `sonnet`, `haiku` map to `gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-3.8-flash-medium`, while explicit slugs (`gemini-3.8-flash-low`, `claude-sonnet-5-5-high`) pass through unchanged.
 
 ## Open Questions
 

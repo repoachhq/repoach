@@ -44,6 +44,7 @@ THINKING_CLASSIFICATION: dict[str, ThinkingClass] = {
     "gemini-2.5": "hybrid",
     "gemini-3.": "hybrid",
     "gemini-4-": "hybrid",
+    "antigravity/": "hybrid",
 }
 
 TransportType = Literal["openai_chat", "anthropic_messages"]
@@ -188,6 +189,12 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = {
         default_base_url=GEMINI_DEFAULT_BASE,
         base_url_attr="gemini_base_url",
         capabilities=("chat", "streaming", "tools"),
+    ),
+    "antigravity": ProviderDescriptor(
+        provider_id="antigravity",
+        transport_type="anthropic_messages",
+        static_credential="antigravity-cli",
+        capabilities=("chat", "tools", "native_anthropic", "subscription"),
     ),
 }
 
