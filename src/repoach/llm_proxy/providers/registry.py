@@ -53,13 +53,15 @@ def _create_claude_code(config: ProviderConfig, settings: Settings) -> BaseProvi
 
 
 def _create_antigravity(config: ProviderConfig, settings: Settings) -> BaseProvider:
-    from .antigravity import AntigravityProvider
+    from .antigravity import AntigravityProvider, scrub_antigravity_env
 
     return AntigravityProvider(
         config,
         cli_path=settings.antigravity_cli_path,
         default_model=settings.antigravity_default_model,
         subprocess_timeout=settings.antigravity_subprocess_timeout,
+        own_process_group=True,
+        child_env=scrub_antigravity_env,
     )
 
 

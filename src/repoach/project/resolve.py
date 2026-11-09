@@ -49,7 +49,7 @@ ENV_NAMES: dict[str, tuple[str, ...]] = {
     "provider.opus": ("REPOACH_MODEL_OPUS",),
     "provider.sonnet": ("REPOACH_MODEL_SONNET",),
     "provider.haiku": ("REPOACH_MODEL_HAIKU",),
-    "provider.cli_path": ("REPOACH_CLAUDE_CODE_CLI_PATH", "REPOACH_ANTIGRAVITY_CLI_PATH"),
+    "provider.cli_path": ("REPOACH_CLAUDE_CODE_CLI_PATH",),
     "provider.base_url": ("REPOACH_OPENAI_BASE_URL",),
     "provider.transport_retry_window_s": ("REPOACH_TRANSPORT_RETRY_WINDOW_S",),
     "gates.refuter_max_judged": ("REPOACH_REFUTER_MAX_JUDGED",),
@@ -146,6 +146,11 @@ def resolve_project_config(root: Path) -> ResolvedProjectConfig:
     env_origin: dict[str, str] = {}
     env_state: dict[str, str] = {}
     for dotted, names in ENV_NAMES.items():
+        if (
+            dotted == "provider.cli_path"
+            and str(data["provider"].get("kind") or "").strip().lower() == "antigravity"
+        ):
+            names = ("REPOACH_ANTIGRAVITY_CLI_PATH",)
         value = configured_env_value(names, root)
         if value is None:
             continue

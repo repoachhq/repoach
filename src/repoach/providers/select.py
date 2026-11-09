@@ -52,7 +52,12 @@ from ..core.logging import get_logger
 from ..core.paths import project_root
 from ..llm.capability import CapabilityTier
 from ..llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
-from ..llm_proxy.providers.antigravity import AntigravityProvider
+from ..llm_proxy.providers.antigravity import (
+    AGY_KEPT_SECRETS,
+    AGY_TIER_MODELS,
+    AntigravityProvider,
+    scrub_antigravity_env,
+)
 from ..llm_proxy.providers.base import BaseProvider, ProviderConfig
 from ..llm_proxy.providers.claude_code import ClaudeCodeProvider
 from ..llm_proxy.providers.defaults import (
@@ -255,11 +260,11 @@ CLAUDE_CODE_MODELS: dict[CapabilityTier, str] = {
 """The CLI's own model aliases per tier."""
 
 ANTIGRAVITY_MODELS: dict[CapabilityTier, str] = {
-    CapabilityTier.OPUS: "gemini-4-argon-high",
-    CapabilityTier.SONNET: "gemini-4-argon-medium",
-    CapabilityTier.HAIKU: "gemini-3.8-flash-medium",
+    CapabilityTier.OPUS: AGY_TIER_MODELS["opus"],
+    CapabilityTier.SONNET: AGY_TIER_MODELS["sonnet"],
+    CapabilityTier.HAIKU: AGY_TIER_MODELS["haiku"],
 }
-"""Default ``agy`` model slugs per tier."""
+"""Default ``agy`` model slugs per tier, derived from :data:`AGY_TIER_MODELS`."""
 
 ANTHROPIC_MODELS: dict[CapabilityTier, str] = {
     CapabilityTier.OPUS: "claude-opus-5",
@@ -292,7 +297,7 @@ CLI_SECRET_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_AUTH_TOKEN", "_TOKEN")
 CLI_KEPT_SECRETS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 """The one token the CLI keeps: it *is* the login on a headless runner."""
 
-ANTIGRAVITY_KEPT_SECRETS: frozenset[str] = frozenset({"GEMINI_API_KEY"})
+ANTIGRAVITY_KEPT_SECRETS: frozenset[str] = AGY_KEPT_SECRETS
 """The one key ``agy`` keeps for its ``modelProvider: "gemini"`` mode."""
 
 
@@ -317,15 +322,10 @@ def claude_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
 def antigravity_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
     """Return the environment the ``agy`` CLI runs with: ``environ`` minus unrelated keys and tokens.
 
-    Every variable ending in :data:`CLI_SECRET_SUFFIXES` is dropped except
-    :data:`ANTIGRAVITY_KEPT_SECRETS` (``GEMINI_API_KEY``, which ``agy``
-    reads when configured with ``modelProvider: "gemini"``).
+    Delegates to :func:`~repoach.llm_proxy.providers.antigravity.scrub_antigravity_env`
+    so the gateway and direct routes share one scrubbing rule.
     """
-    return {
-        name: value
-        for name, value in environ.items()
-        if name in ANTIGRAVITY_KEPT_SECRETS or not name.upper().endswith(CLI_SECRET_SUFFIXES)
-    }
+    return scrub_antigravity_env(environ)
 
 
 class ProviderRoute(BaseModel):
@@ -579,10 +579,16 @@ def claude_login(cli: str) -> ClaudeLogin:
 def antigravity_cli(route: ProviderRoute) -> str:
     """Return the absolute path of the ``agy`` executable the route runs.
 
+    Reads ``REPOACH_ANTIGRAVITY_CLI_PATH`` first, then ``[provider].cli_path``
+    from ``repoach.toml`` (never ``REPOACH_CLAUDE_CODE_CLI_PATH``), falling
+    back to :data:`DEFAULT_ANTIGRAVITY_CLI`.
+
     Raises:
         ProviderConfigError: Not found; the message names where it was looked for.
     """
-    wanted = route.section.cli_path.strip() or DEFAULT_ANTIGRAVITY_CLI
+    env_cli = configured_env_value(("REPOACH_ANTIGRAVITY_CLI_PATH",), route.root)
+    section_cli = route.section.cli_path.strip() if route.kind == "antigravity" else ""
+    wanted = (env_cli or "").strip() or section_cli or DEFAULT_ANTIGRAVITY_CLI
     found = shutil.which(wanted)
     if found is None:
         raise ProviderConfigError(

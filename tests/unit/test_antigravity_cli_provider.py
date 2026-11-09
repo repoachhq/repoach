@@ -98,6 +98,8 @@ def test_antigravity_descriptor_and_registry_build(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("REPOACH_ANTIGRAVITY_CLI_PATH", "/custom/agy")
     monkeypatch.setenv("REPOACH_ANTIGRAVITY_DEFAULT_MODEL", "gemini-4-argon-medium")
     monkeypatch.setenv("REPOACH_ANTIGRAVITY_SUBPROCESS_TIMEOUT", "300.0")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "foreign-secret")
+    monkeypatch.setenv("GEMINI_API_KEY", "kept-gemini-key")
     assert "antigravity" in SUPPORTED_PROVIDER_IDS
     assert classify_thinking("antigravity/gemini-4-argon-high") == "hybrid"
     settings = Settings(_env_file=None)
@@ -105,6 +107,11 @@ def test_antigravity_descriptor_and_registry_build(monkeypatch: pytest.MonkeyPat
     assert isinstance(provider, AntigravityProvider)
     assert provider._default_model == "gemini-4-argon-medium"
     assert provider._subprocess_timeout == 300.0
+    assert provider._own_process_group is True
+    spawn_env = provider._spawn_env()
+    assert spawn_env is not None
+    assert "ANTHROPIC_API_KEY" not in spawn_env
+    assert spawn_env.get("GEMINI_API_KEY") == "kept-gemini-key"
 
 
 @pytest.mark.asyncio

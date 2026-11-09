@@ -12,6 +12,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import tempfile
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -27,23 +28,121 @@ from repoach.llm_proxy.core.anthropic import (
     append_request_id,
 )
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from repoach.llm_proxy.providers.claude_code.client import (
-    CLI_ERROR_TEXT_MAX_CHARS,
-    CLI_OUTPUT_CAP_ERROR,
-    ClaudeCodeProvider,
-    _kill_subprocess_on_exit,
-    _resolve_output_tokens,
-    _thinking_disabled,
-)
 from repoach.llm_proxy.providers.exceptions import OutputCapExceededError, ProviderError
 from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
+
+_SUBPROCESS_KILL_GRACE_S: float = 2.0
+
+CLI_OUTPUT_CAP_ERROR = "max_output_tokens"
+"""The ``api_error`` token reported when a CLI reply exceeds its output token cap."""
+
+CLI_ERROR_TEXT_MAX_CHARS = 2000
+"""Maximum characters of CLI result/error text preserved in a :class:`ProviderError`."""
+
+AGY_DEFAULT_MODEL = "gemini-3.8-flash-medium"
+"""Default ``agy`` model slug when no explicit model or tier alias is supplied."""
 
 AGY_TIER_MODELS: dict[str, str] = {
     "opus": "gemini-4-argon-high",
     "sonnet": "gemini-4-argon-medium",
-    "haiku": "gemini-3.8-flash-medium",
+    "haiku": AGY_DEFAULT_MODEL,
 }
 """Default ``agy`` model slugs for the three capability tiers."""
+
+AGY_SECRET_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_AUTH_TOKEN", "_TOKEN")
+"""Variable-name endings stripped from the ``agy`` child environment."""
+
+AGY_KEPT_SECRETS: frozenset[str] = frozenset({"GEMINI_API_KEY"})
+"""The one key ``agy`` keeps for its ``modelProvider: "gemini"`` mode."""
+
+
+def scrub_antigravity_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """Return ``environ`` minus unrelated keys and tokens, preserving ``GEMINI_API_KEY``.
+
+    Every variable ending in :data:`AGY_SECRET_SUFFIXES` (such as
+    ``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, ``REPOACH_ANTHROPIC_AUTH_TOKEN``)
+    is removed except :data:`AGY_KEPT_SECRETS`, so a gateway or direct
+    ``agy`` subprocess never inherits foreign credentials.
+    """
+    return {
+        name: value
+        for name, value in environ.items()
+        if name in AGY_KEPT_SECRETS or not name.upper().endswith(AGY_SECRET_SUFFIXES)
+    }
+
+
+def _thinking_disabled(request: Any) -> bool:
+    """Return True when the request turns thinking off (``{"type": "disabled"}``)."""
+    thinking = getattr(request, "thinking", None)
+    kind = thinking.get("type") if isinstance(thinking, dict) else getattr(thinking, "type", None)
+    enabled = (
+        thinking.get("enabled")
+        if isinstance(thinking, dict)
+        else getattr(thinking, "enabled", None)
+    )
+    return kind == "disabled" or enabled is False
+
+
+def _send_signal(proc: asyncio.subprocess.Process, sig: int, *, group: bool) -> None:
+    """Send ``sig`` to ``proc`` or to its process group when ``group`` is True."""
+    if group:
+        os.killpg(proc.pid, sig)
+    elif sig == signal.SIGKILL:
+        proc.kill()
+    else:
+        proc.terminate()
+
+
+async def _kill_subprocess_on_exit(
+    proc: asyncio.subprocess.Process, req_tag: str, *, group: bool = False
+) -> None:
+    """Ensure ``proc`` is not left running past the end of a stream call."""
+    if proc.returncode is not None:
+        return
+    try:
+        _send_signal(proc, signal.SIGTERM, group=group)
+    except ProcessLookupError as exc:
+        logger.debug(
+            "ANTIGRAVITY_SUBPROCESS_KILL_RACE:{} pid={} terminate raced with exit ({})",
+            req_tag,
+            proc.pid,
+            exc,
+        )
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_SUBPROCESS_KILL_GRACE_S)
+        return
+    except asyncio.TimeoutError:
+        logger.warning(
+            "ANTIGRAVITY_SUBPROCESS_KILL_ESCALATE:{} pid={} still alive {}s after SIGTERM, "
+            "sending SIGKILL",
+            req_tag,
+            proc.pid,
+            _SUBPROCESS_KILL_GRACE_S,
+        )
+    try:
+        _send_signal(proc, signal.SIGKILL, group=group)
+    except ProcessLookupError as exc:
+        logger.debug(
+            "ANTIGRAVITY_SUBPROCESS_KILL_RACE:{} pid={} kill raced with exit ({})",
+            req_tag,
+            proc.pid,
+            exc,
+        )
+        return
+    await proc.wait()
+
+
+def _resolve_output_tokens(payload: Mapping[str, Any], text_chars: int) -> int:
+    """Pick the output-token count for the terminal ``message_delta``."""
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        candidate = usage.get("output_tokens")
+        if isinstance(candidate, int) and candidate > 0:
+            return candidate
+    if text_chars > 0:
+        return max(1, (text_chars + 3) // 4)
+    return 1
 
 
 def _extract_agy_result(stdout: str) -> dict[str, Any] | None:
@@ -148,10 +247,10 @@ class AntigravityProvider(BaseProvider):
         config: ProviderConfig,
         *,
         cli_path: str = "agy",
-        default_model: str = "gemini-3.8-flash-medium",
+        default_model: str = AGY_DEFAULT_MODEL,
         subprocess_timeout: float = 600.0,
-        own_process_group: bool = False,
-        child_env: Callable[[Mapping[str, str]], dict[str, str]] | None = None,
+        own_process_group: bool = True,
+        child_env: Callable[[Mapping[str, str]], dict[str, str]] | None = scrub_antigravity_env,
     ) -> None:
         """Initialise the Antigravity CLI subprocess provider.
 
@@ -164,8 +263,9 @@ class AntigravityProvider(BaseProvider):
                 invocation.
             own_process_group: Spawn each ``agy`` child in its own process
                 group and signal the group on cleanup.
-            child_env: Optional callable that builds the child environment
-                from ``os.environ`` at spawn time.
+            child_env: Callable that builds the scrubbed child environment
+                from ``os.environ`` at spawn time (defaults to
+                :func:`scrub_antigravity_env`).
         """
         super().__init__(config)
         if shutil.which(cli_path) is None:
@@ -199,7 +299,14 @@ class AntigravityProvider(BaseProvider):
         *,
         request_id: str | None = None,
     ) -> AsyncIterator[str]:
-        """Run ``agy`` in ``stream-json`` mode and yield Anthropic SSE events."""
+        """Run ``agy`` in ``stream-json`` mode and yield Anthropic SSE events.
+
+        The subprocess runs inside an empty isolated temporary directory
+        (``self._workdir``), with a scrubbed environment
+        (:func:`scrub_antigravity_env`) that strips all foreign
+        ``_API_KEY`` / ``_AUTH_TOKEN`` / ``_TOKEN`` secrets, and never
+        passes ``--dangerously-skip-permissions``.
+        """
         message_id = f"msg_{uuid.uuid4()}"
         sse = SSEBuilder(
             message_id,
@@ -360,7 +467,7 @@ class AntigravityProvider(BaseProvider):
         yield sse.message_stop()
 
     def _spawn_env(self) -> dict[str, str] | None:
-        """Return the child environment when ``child_env`` is configured."""
+        """Return the scrubbed child environment when ``child_env`` is configured."""
         if self._child_env is None:
             return None
         return self._child_env(os.environ)
@@ -383,11 +490,11 @@ class AntigravityProvider(BaseProvider):
             return AGY_TIER_MODELS["sonnet"]
         return slug
 
-    @staticmethod
-    def _build_full_prompt(request: Any) -> str:
+    @classmethod
+    def _build_full_prompt(cls, request: Any) -> str:
         """Flatten system prompt, tool contract appendix, and chat history into one prompt."""
-        system_text = ClaudeCodeProvider._extract_system_prompt(request)
-        tools_appendix = ClaudeCodeProvider._render_tools_appendix(getattr(request, "tools", None))
+        system_text = cls._extract_system_prompt(request)
+        tools_appendix = cls._render_tools_appendix(getattr(request, "tools", None))
         if tools_appendix:
             system_text = f"{system_text}\n\n{tools_appendix}" if system_text else tools_appendix
         messages = getattr(request, "messages", []) or []
@@ -396,8 +503,8 @@ class AntigravityProvider(BaseProvider):
         if system_text.strip():
             lines.append(f"[system]\n{system_text.strip()}")
         for idx, msg in enumerate(messages):
-            role = ClaudeCodeProvider._role_of(msg)
-            text = ClaudeCodeProvider._content_text(msg)
+            role = cls._role_of(msg)
+            text = cls._content_text(msg)
             if not text.strip():
                 continue
             if idx == len(messages) - 1 and role == "user" and not lines:
@@ -405,6 +512,161 @@ class AntigravityProvider(BaseProvider):
             else:
                 lines.append(f"[{role}]\n{text}")
         return "\n\n".join(lines).strip() or "(empty)"
+
+    @classmethod
+    def _render_tools_appendix(cls, tools: Any) -> str:
+        """Render the ``tools`` schema as a text contract appended to the system prompt."""
+        if not tools:
+            return ""
+        lines = [
+            "TOOL CALL PROTOCOL — READ CAREFULLY",
+            "",
+            "You do NOT have native (MCP) tool execution in this run. The",
+            "harness expects you to emit tool calls as plain TEXT blocks",
+            "in this exact format (one block per turn unless explicitly",
+            "asked to chain):",
+            "",
+            '    <tool_use>{"name": "<tool_name>", "args": {<json args>}}</tool_use>',
+            "",
+            "Each tool call must be a single self-closed XML-like tag",
+            "containing a JSON object with EXACTLY two keys: ``name`` and",
+            "``args``. The harness parses these tags out of your text",
+            "response, executes the tool, and re-injects the result on",
+            "the next turn as a ``<tool_result>...</tool_result>`` block.",
+            "",
+            "Available tools:",
+            "",
+        ]
+        for tool in tools:
+            name, description, schema = cls._extract_tool_meta(tool)
+            if not name:
+                continue
+            lines.append(f"- **{name}**: {description or '(no description)'}")
+            if schema:
+                params = schema.get("properties") if isinstance(schema, dict) else None
+                if isinstance(params, dict) and params:
+                    arg_keys = ", ".join(sorted(params))
+                    required = (
+                        ", ".join(schema.get("required", [])) if isinstance(schema, dict) else ""
+                    )
+                    lines.append(
+                        f"  args: {{{arg_keys}}}" + (f" required={required}" if required else "")
+                    )
+        lines += [
+            "",
+            "DO NOT call any other tool, search the file system, or write",
+            "to disk. The harness only listens for ``<tool_use>`` text",
+            "blocks. End your turn with the next required tool call,",
+            "until the mission's `finish` tool is the appropriate next step.",
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _extract_tool_meta(tool: Any) -> tuple[str, str, dict[str, Any] | None]:
+        """Pull ``(name, description, input_schema)`` from an Anthropic / OpenAI tool entry."""
+        if isinstance(tool, dict):
+            if isinstance(tool.get("function"), dict):
+                fn = tool["function"]
+                return (
+                    str(fn.get("name") or ""),
+                    str(fn.get("description") or ""),
+                    fn.get("parameters") if isinstance(fn.get("parameters"), dict) else None,
+                )
+            return (
+                str(tool.get("name") or ""),
+                str(tool.get("description") or ""),
+                tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else None,
+            )
+        name = getattr(tool, "name", None)
+        if name is None and hasattr(tool, "function"):
+            fn = tool.function
+            return (
+                str(getattr(fn, "name", "") or ""),
+                str(getattr(fn, "description", "") or ""),
+                getattr(fn, "parameters", None),
+            )
+        return (
+            str(name or ""),
+            str(getattr(tool, "description", "") or ""),
+            getattr(tool, "input_schema", None),
+        )
+
+    @staticmethod
+    def _extract_system_prompt(request: Any) -> str:
+        """Extract a flat system prompt string from the request."""
+        system = getattr(request, "system", None)
+        if system is None:
+            return ""
+        if isinstance(system, str):
+            return system
+        if isinstance(system, list):
+            chunks: list[str] = []
+            for entry in system:
+                if isinstance(entry, str):
+                    chunks.append(entry)
+                elif isinstance(entry, dict):
+                    text = entry.get("text") or entry.get("content") or ""
+                    if isinstance(text, str):
+                        chunks.append(text)
+                else:
+                    text = getattr(entry, "text", None)
+                    if isinstance(text, str):
+                        chunks.append(text)
+            return "\n\n".join(chunks)
+        return str(system)
+
+    @staticmethod
+    def _role_of(msg: Any) -> str:
+        if isinstance(msg, dict):
+            return str(msg.get("role") or "user")
+        return str(getattr(msg, "role", "user"))
+
+    @staticmethod
+    def _content_text(msg: Any) -> str:
+        """Extract the human-readable text from a message content payload."""
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for entry in content:
+                if isinstance(entry, str):
+                    chunks.append(entry)
+                    continue
+                if isinstance(entry, dict):
+                    etype = entry.get("type")
+                    if etype == "text":
+                        chunks.append(str(entry.get("text") or ""))
+                    elif etype == "tool_use":
+                        chunks.append(
+                            f"<tool_use>{json.dumps({'name': entry.get('name'), 'args': entry.get('input')})}</tool_use>"
+                        )
+                    elif etype == "tool_result":
+                        result = entry.get("content")
+                        if isinstance(result, list):
+                            inner = "".join(
+                                str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                                for item in result
+                            )
+                        else:
+                            inner = str(result or "")
+                        chunks.append(f"<tool_result>{inner}</tool_result>")
+                    elif "text" in entry:
+                        chunks.append(str(entry.get("text") or ""))
+                    continue
+                etype = getattr(entry, "type", None)
+                if etype == "text":
+                    chunks.append(str(getattr(entry, "text", "") or ""))
+                elif etype == "tool_use":
+                    chunks.append(
+                        f"<tool_use>{json.dumps({'name': getattr(entry, 'name', None), 'args': getattr(entry, 'input', None)})}</tool_use>"
+                    )
+                elif etype == "tool_result":
+                    chunks.append(f"<tool_result>{getattr(entry, 'content', '')}</tool_result>")
+            return "\n".join(c for c in chunks if c)
+        return str(content)
 
     @staticmethod
     def _parse_agy_stdout(stdout: str, request_id: str | None) -> dict[str, Any]:

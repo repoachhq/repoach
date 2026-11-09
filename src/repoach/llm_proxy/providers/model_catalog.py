@@ -28,7 +28,7 @@ from repoach.core.logging import get_logger
 
 _log = get_logger(__name__)
 
-UNSWEPT_PROVIDERS: frozenset[str] = frozenset({"claude_code"})
+UNSWEPT_PROVIDERS: frozenset[str] = frozenset({"claude_code", "antigravity"})
 
 __all__ = [
     "UNSWEPT_PROVIDERS",
@@ -74,7 +74,7 @@ def is_sweepable(provider_id: str) -> bool:
 
     Returns:
         ``False`` for the subprocess backstops in :data:`UNSWEPT_PROVIDERS`
-        (currently ``claude_code``), ``True`` otherwise.
+        (``claude_code`` and ``antigravity``), ``True`` otherwise.
     """
     return provider_id not in UNSWEPT_PROVIDERS
 

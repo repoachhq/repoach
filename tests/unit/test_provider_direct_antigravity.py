@@ -102,6 +102,7 @@ def test_direct_antigravity_provider_end_to_end_with_fake_agy(
     """AC3: DirectProvider.call runs fake agy and maps authentication failure to ProviderAuthError."""
     cli, log = write_fake_agy(tmp_path / "bin", result="pong from agy")
     monkeypatch.setenv("PATH", f"{cli.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("REPOACH_CLAUDE_CODE_CLI_PATH", str(tmp_path / "wrong-claude-binary"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-leak")
     monkeypatch.setenv("GEMINI_API_KEY", "allowed-gemini-key")
 
