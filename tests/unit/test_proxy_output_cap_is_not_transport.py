@@ -44,7 +44,12 @@ from repoach.llm_proxy.api.services import ClaudeProxyService
 from repoach.llm_proxy.config import settings as settings_module
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.base import ProviderConfig
-from repoach.llm_proxy.providers.claude_code.client import ClaudeCodeProvider
+from repoach.llm_proxy.providers.claude_code.client import (
+    CLI_ERROR_TEXT_MAX_CHARS,
+    ClaudeCodeProvider,
+    cli_exit_error,
+    cli_result_error,
+)
 from repoach.llm_proxy.providers.exceptions import OutputCapExceededError
 from repoach.llm_proxy.routing import get_breaker, reset_breaker
 from repoach.llm_proxy.routing.refs import ModelRef
@@ -182,6 +187,26 @@ def test_the_cli_error_keeps_its_result_text_and_names_the_cap() -> None:
     assert "duration_api_ms" not in message
     assert spawns.envs[0] is not None
     assert spawns.envs[0]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == str(4096 + 32_000)
+
+
+def test_cli_exit_error_falls_back_to_stderr_then_stdout_head() -> None:
+    assert (
+        str(cli_exit_error(2, "stdout ignored", "  fatal stderr  ", "req_9"))
+        == "claude CLI exited 2: fatal stderr (request_id=req_9)"
+    )
+    assert str(cli_exit_error(1, "x" * 250, "   ", None)) == "claude CLI exited 1: " + "x" * 200
+
+
+def test_cli_result_error_truncates_at_2000_chars() -> None:
+    err = cli_result_error(
+        {"is_error": True, "api_error": "max_output_tokens", "result": "é" * 2500},
+        "req_7",
+        prefix="claude CLI exited 1: ",
+    )
+    assert isinstance(err, OutputCapExceededError)
+    assert (
+        str(err) == "claude CLI exited 1: " + "é" * CLI_ERROR_TEXT_MAX_CHARS + " (request_id=req_7)"
+    )
 
 
 def test_an_output_cap_fault_trips_nothing_and_reaches_the_caller_as_not_retryable(

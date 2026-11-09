@@ -83,7 +83,9 @@ def _cli_payload(stdout: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def cli_result_error(payload: Mapping[str, Any], request_id: str | None) -> ProviderError:
+def cli_result_error(
+    payload: Mapping[str, Any], request_id: str | None, *, prefix: str = ""
+) -> ProviderError:
     """Turn the CLI's error result into the error the failover reads.
 
     The message is the CLI's own ``result`` text (``API Error: Claude's
@@ -96,9 +98,10 @@ def cli_result_error(payload: Mapping[str, Any], request_id: str | None) -> Prov
     Args:
         payload: The CLI's JSON object.
         request_id: The request id appended to the message.
+        prefix: Optional prefix prepended before the CLI's result text.
     """
     text = str(payload.get("result") or payload.get("error") or "claude CLI returned is_error")
-    message = append_request_id(text[:CLI_ERROR_TEXT_MAX_CHARS], request_id)
+    message = append_request_id(f"{prefix}{text[:CLI_ERROR_TEXT_MAX_CHARS]}", request_id)
     if (
         payload.get("api_error") == CLI_OUTPUT_CAP_ERROR
         or payload.get("error") == CLI_OUTPUT_CAP_ERROR
@@ -122,13 +125,11 @@ def cli_exit_error(
         stderr: What it printed on stderr.
         request_id: The request id appended to the message.
     """
+    prefix = f"claude CLI exited {returncode}: "
     payload = _cli_payload(stdout)
     if payload is not None and payload.get("is_error"):
-        error = cli_result_error(payload, request_id)
-        error.message = f"claude CLI exited {returncode}: {error.message}"
-        error.args = (error.message,)
-        return error
-    err = f"claude CLI exited {returncode}: {stderr.strip() or stdout.strip()[:200]}"
+        return cli_result_error(payload, request_id, prefix=prefix)
+    err = f"{prefix}{stderr.strip() or stdout.strip()[:200]}"
     return ProviderError(append_request_id(err, request_id))
 
 
