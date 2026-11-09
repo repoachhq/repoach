@@ -53,7 +53,6 @@ from ..core.paths import project_root
 from ..llm.capability import CapabilityTier
 from ..llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
 from ..llm_proxy.providers.antigravity import (
-    AGY_KEPT_SECRETS,
     AGY_TIER_MODELS,
     AntigravityProvider,
     scrub_antigravity_env,
@@ -296,9 +295,6 @@ CLI_SECRET_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_AUTH_TOKEN", "_TOKEN")
 
 CLI_KEPT_SECRETS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 """The one token the CLI keeps: it *is* the login on a headless runner."""
-
-ANTIGRAVITY_KEPT_SECRETS: frozenset[str] = AGY_KEPT_SECRETS
-"""The one key ``agy`` keeps for its ``modelProvider: "gemini"`` mode."""
 
 
 def claude_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
@@ -587,7 +583,12 @@ def antigravity_cli(route: ProviderRoute) -> str:
         ProviderConfigError: Not found; the message names where it was looked for.
     """
     env_cli = configured_env_value(("REPOACH_ANTIGRAVITY_CLI_PATH",), route.root)
-    section_cli = route.section.cli_path.strip() if route.kind == "antigravity" else ""
+    claude_env_cli = configured_env_value(("REPOACH_CLAUDE_CODE_CLI_PATH",), route.root)
+    section_cli = (
+        route.section.cli_path.strip()
+        if route.kind == "antigravity" and claude_env_cli is None
+        else ""
+    )
     wanted = (env_cli or "").strip() or section_cli or DEFAULT_ANTIGRAVITY_CLI
     found = shutil.which(wanted)
     if found is None:

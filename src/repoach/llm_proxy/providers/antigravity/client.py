@@ -289,8 +289,8 @@ class AntigravityProvider(BaseProvider):
         )
 
     async def cleanup(self) -> None:
-        """No persistent resources held."""
-        return None
+        """Remove the temporary working directory created for ``agy`` subprocesses."""
+        shutil.rmtree(self._workdir, ignore_errors=True)
 
     async def stream_response(
         self,
@@ -353,6 +353,7 @@ class AntigravityProvider(BaseProvider):
         async with self._global_rate_limiter.concurrency_slot():
             try:
                 await self._global_rate_limiter.wait_if_blocked()
+                self._workdir.mkdir(parents=True, exist_ok=True)
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=asyncio.subprocess.PIPE,
@@ -391,25 +392,7 @@ class AntigravityProvider(BaseProvider):
                     yield sse.emit_text_delta(filtered_text)
                     text_chars_emitted += len(filtered_text)
 
-                for tool_use in detected_tools:
-                    for event in sse.close_content_blocks():
-                        yield event
-                    block_idx = sse.blocks.allocate_index()
-                    yield sse.content_block_start(
-                        block_idx,
-                        "tool_use",
-                        id=tool_use["id"],
-                        name=tool_use["name"],
-                    )
-                    yield sse.content_block_delta(
-                        block_idx,
-                        "input_json_delta",
-                        json.dumps(tool_use["input"]),
-                    )
-                    yield sse.content_block_stop(block_idx)
-                    tool_use_emitted = True
-
-                for tool_use in heuristic.flush():
+                for tool_use in (*detected_tools, *heuristic.flush()):
                     for event in sse.close_content_blocks():
                         yield event
                     block_idx = sse.blocks.allocate_index()

@@ -274,3 +274,44 @@ def test_antigravity_model_mapping_aliases_and_explicit_slugs() -> None:
     assert provider._cli_model_for("gpt-oss-120b-medium") == "gpt-oss-120b-medium"
     assert provider._cli_model_for("claude-sonnet-4-5") == "gemini-4-argon-medium"
     assert provider._cli_model_for("") == "gemini-3.8-flash-medium"
+
+
+@pytest.mark.asyncio
+async def test_antigravity_subprocess_timeout_kills_child_and_raises(tmp_path: Path) -> None:
+    """stream_response kills the child process group on timeout, emits error SSE, and raises."""
+    cli = tmp_path / "agy-slow"
+    cli.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(30)\n", encoding="utf-8")
+    cli.chmod(0o755)
+    provider = AntigravityProvider(
+        ProviderConfig(api_key="antigravity-cli"),
+        cli_path=str(cli),
+        subprocess_timeout=0.1,
+    )
+    request = SimpleNamespace(
+        model="antigravity/haiku",
+        system="",
+        messages=[{"role": "user", "content": "Hi"}],
+        tools=None,
+        thinking=None,
+    )
+    emitted: list[str] = []
+    with pytest.raises(ProviderError, match=r"timed out after 0\.1s"):
+        async for chunk in provider.stream_response(request, request_id="req_timeout"):
+            emitted.append(chunk)
+    events = _parse_sse_events(emitted)
+    assert any("timed out" in str(data) for _, data in events)
+    await provider.cleanup()
+    assert not provider._workdir.exists()
+
+
+def test_antigravity_empty_stdout_raises_provider_error() -> None:
+    """_parse_agy_stdout raises ProviderError when agy returns empty stdout."""
+    with pytest.raises(ProviderError, match=r"empty stdout \(request_id=req_1\)"):
+        AntigravityProvider._parse_agy_stdout("   \n  ", "req_1")
+
+
+def test_antigravity_no_result_event_raises_provider_error() -> None:
+    """_parse_agy_stdout raises ProviderError when agy emits NDJSON without a result event."""
+    stdout = json.dumps({"event": "init", "init": {"conversation_id": "c1"}}) + "\n"
+    with pytest.raises(ProviderError, match="emitted no result event"):
+        AntigravityProvider._parse_agy_stdout(stdout, "req_2")

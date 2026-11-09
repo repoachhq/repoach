@@ -146,11 +146,6 @@ def resolve_project_config(root: Path) -> ResolvedProjectConfig:
     env_origin: dict[str, str] = {}
     env_state: dict[str, str] = {}
     for dotted, names in ENV_NAMES.items():
-        if (
-            dotted == "provider.cli_path"
-            and str(data["provider"].get("kind") or "").strip().lower() == "antigravity"
-        ):
-            names = ("REPOACH_ANTIGRAVITY_CLI_PATH",)
         value = configured_env_value(names, root)
         if value is None:
             continue

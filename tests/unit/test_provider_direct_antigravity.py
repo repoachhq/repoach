@@ -21,6 +21,7 @@ from repoach.providers.errors import (
 from repoach.providers.prices import SUBSCRIPTION_PROVIDERS
 from repoach.providers.select import (
     antigravity_cli_env,
+    antigravity_version,
     build_direct_provider,
     require_provider_ready,
     resolve_route,
@@ -181,3 +182,18 @@ def test_doctor_reports_antigravity_route_and_binary(
     assert bad_doctor.exit_code == 2
     assert "provider_credential=none (agy CLI unusable)" in bad_doctor.stdout
     assert "agy CLI not found" in bad_doctor.stderr
+
+
+def test_antigravity_version_nonzero_exit_raises_provider_config_error(tmp_path: Path) -> None:
+    """antigravity_version raises ProviderConfigError when agy --version exits non-zero or empty."""
+    failing_cli = tmp_path / "agy-fail"
+    failing_cli.write_text("#!/bin/sh\necho 'broken binary' >&2\nexit 2\n", encoding="utf-8")
+    failing_cli.chmod(0o755)
+    with pytest.raises(ProviderConfigError, match="--version' failed"):
+        antigravity_version(str(failing_cli))
+
+    empty_cli = tmp_path / "agy-empty"
+    empty_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    empty_cli.chmod(0o755)
+    with pytest.raises(ProviderConfigError, match="--version' failed"):
+        antigravity_version(str(empty_cli))
