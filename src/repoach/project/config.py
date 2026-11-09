@@ -64,6 +64,17 @@ DEFAULT_TIMEOUT_S = 900
 DEFAULT_REFUTER_MAX_JUDGED = 10
 """Findings the refuter judges per PR when ``[gates].refuter_max_judged`` is unset."""
 
+TRANSPORT_RETRY_WINDOW_S = 300
+"""Seconds one model call retries a transport error when ``[provider].transport_retry_window_s`` is unset.
+
+SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D1: on 2026-11-04 a network drop of
+about 100 s on the runner host (``Runner connect error: The HTTP request
+timed out after 00:01:40``) left the review of #288 incomplete. A window
+three times that outage absorbs it."""
+
+TRANSPORT_RETRY_WINDOW_MAX_S = 1800
+"""The largest ``[provider].transport_retry_window_s`` accepted: half an hour per call."""
+
 REFUTER_CONTEXT_TOKENS_FLOOR = 40_000
 """The refuter's context size when ``[gates].refuter_context_tokens`` is unset, and its floor.
 
@@ -300,6 +311,10 @@ class ProviderSection(_Section):
     runs; empty means ``claude`` on ``PATH`` (SP-UNIVERSAL-PROVIDERS).
     ``base_url`` is the endpoint root of a bare ``openai_compatible``
     (required there); a preset or ``gemini`` fixes its host and refuses it.
+    ``transport_retry_window_s`` is how long one model call keeps retrying
+    a transport error, 0 to :data:`TRANSPORT_RETRY_WINDOW_MAX_S` seconds;
+    ``REPOACH_TRANSPORT_RETRY_WINDOW_S`` outranks it and 0 retries nothing
+    (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES).
     """
 
     kind: ProviderKind = ""
@@ -308,6 +323,21 @@ class ProviderSection(_Section):
     haiku: str = ""
     cli_path: str = ""
     base_url: str = ""
+    transport_retry_window_s: int = Field(
+        default=TRANSPORT_RETRY_WINDOW_S, ge=0, le=TRANSPORT_RETRY_WINDOW_MAX_S
+    )
+
+    @field_validator("transport_retry_window_s", mode="before")
+    @classmethod
+    def _no_bool_window(cls, value: object) -> object:
+        """Refuse ``true`` / ``false`` for the retry window (seconds, not a switch).
+
+        Raises:
+            ValueError: The value is a boolean.
+        """
+        if isinstance(value, bool):
+            raise ValueError("transport_retry_window_s must be a number of seconds, not a boolean")
+        return value
 
 
 def _relative_glob(value: str) -> str:

@@ -183,3 +183,4 @@ def test_preflight_exhaustion_returns_502(monkeypatch: pytest.MonkeyPatch) -> No
         "a pre-flight-exhausted chain must return 502 without dispatching a single candidate"
     )
     assert "breaker-tripped" in json.dumps(response.json())
+    assert 105 <= int(response.headers["retry-after"]) <= 120

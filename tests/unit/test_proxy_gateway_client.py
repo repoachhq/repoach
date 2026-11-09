@@ -301,13 +301,13 @@ def test_call_returns_response_with_tool_call_blocks(monkeypatch) -> None:
 
 @pytest.mark.parametrize("status", [500, 502, 503, 504, 408, 429])
 def test_call_raises_transport_error_on_retryable_status(monkeypatch, status: int) -> None:
-    """5xx, 408, 429 raise ``GatewayTransportError`` (loop's retry path)."""
+    """5xx, 408, 429 raise ``GatewayTransportError`` carrying the status (loop's retry path)."""
     stub = _StubClient(_StubResponse(status_code=status, text="bad"))
     monkeypatch.setattr(
         "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: stub,
     )
-    with pytest.raises(GatewayTransportError):
+    with pytest.raises(GatewayTransportError) as info:
         _client().call(
             capability=CapabilityTier.SONNET,
             system=None,
@@ -316,6 +316,7 @@ def test_call_raises_transport_error_on_retryable_status(monkeypatch, status: in
             max_tokens=10,
             temperature=0.1,
         )
+    assert info.value.status == status
 
 
 def test_call_raises_transport_error_on_connect_error(monkeypatch) -> None:
@@ -325,7 +326,7 @@ def test_call_raises_transport_error_on_connect_error(monkeypatch) -> None:
         "repoach.agent_engine.adapters.httpx.Client",
         lambda **_kw: raising,
     )
-    with pytest.raises(GatewayTransportError, match="proxy unreachable"):
+    with pytest.raises(GatewayTransportError, match="proxy unreachable") as info:
         _client().call(
             capability=CapabilityTier.SONNET,
             system=None,
@@ -334,6 +335,7 @@ def test_call_raises_transport_error_on_connect_error(monkeypatch) -> None:
             max_tokens=10,
             temperature=0.1,
         )
+    assert info.value.status is None
 
 
 def test_call_raises_transport_error_on_read_timeout(monkeypatch) -> None:

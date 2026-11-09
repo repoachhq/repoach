@@ -77,6 +77,13 @@ from ..providers.select import (
 )
 from ..providers.usage import record_call
 from .adapters import GatewayChainExhausted, GatewayError, GatewayTransportError, ProxyGatewayClient
+from .transport_window import (
+    TransportWindow,
+    configured_transport_window_s,
+    mark_window_spent,
+    retryable_transport,
+    window_spent,
+)
 
 _log = get_logger(__name__)
 
@@ -461,28 +468,68 @@ class AgentLoop:
             self._client = build_direct_provider(route, timeout_s=per_call_timeout_s)
         else:
             self._client = _gateway_client(per_call_timeout_s, route)
+        self._transport_window_s = configured_transport_window_s(route)
+        self._sleep: Callable[[float], None] = time.sleep
+        self._clock: Callable[[], float] = time.monotonic
 
     def _provider_call(self, **kwargs: Any) -> AgentResponse:
-        """Call the provider once and record the call in the usage ledger (SP-USAGE-LEDGER).
+        """Call the provider, retrying transport errors inside the window, and record each attempt.
 
         Every provider call of the loop goes through here, so the ledger
-        has one write site; a failed call is recorded with its error and
-        re-raised unchanged.
+        has one write site (SP-USAGE-LEDGER): each attempt is one usage
+        row, a failed one with its error. A transport error that is not a
+        4xx is retried with exponential backoff until the call's window
+        (``[provider].transport_retry_window_s``) is used up
+        (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G1); every other error is
+        re-raised at once, unchanged. The error that ends a window is
+        re-raised unchanged too, marked :func:`window_spent` when the
+        window was open, so no outer retry loop opens a second one.
         """
-        started = time.monotonic()
-        try:
-            response = self._client.call(**kwargs)
-        except Exception as exc:
+        window = TransportWindow(self._transport_window_s, clock=self._clock)
+        attempt = 0
+        while True:
+            attempt += 1
+            started = time.monotonic()
+            try:
+                response = self._client.call(**kwargs)
+            except Exception as exc:
+                record_call(
+                    self._client,
+                    self._capability,
+                    None,
+                    duration_s=time.monotonic() - started,
+                    error=exc,
+                )
+                wait_s = window.next_wait(exc, attempt)
+                if wait_s is None:
+                    if window.window_s > 0 and retryable_transport(exc):
+                        mark_window_spent(exc)
+                        _log.warning(
+                            "agent_loop.transport_window_spent",
+                            capability=self._capability.value,
+                            attempts=attempt,
+                            elapsed_s=round(window.elapsed_s(), 1),
+                            window_s=window.window_s,
+                            error=type(exc).__name__,
+                            status=getattr(exc, "status", None),
+                        )
+                    raise
+                _log.warning(
+                    "agent_loop.transport_retry",
+                    capability=self._capability.value,
+                    attempt=attempt,
+                    wait_s=round(wait_s, 1),
+                    elapsed_s=round(window.elapsed_s(), 1),
+                    window_s=window.window_s,
+                    error=type(exc).__name__,
+                    message=str(exc)[:200],
+                )
+                self._sleep(wait_s)
+                continue
             record_call(
-                self._client,
-                self._capability,
-                None,
-                duration_s=time.monotonic() - started,
-                error=exc,
+                self._client, self._capability, response, duration_s=time.monotonic() - started
             )
-            raise
-        record_call(self._client, self._capability, response, duration_s=time.monotonic() - started)
-        return response
+            return response
 
     def run_oneshot(
         self,
@@ -642,7 +689,10 @@ class AgentLoop:
         502 ``proxy_chain_exhausted``. A multi-turn exploration dies
         on its first unlucky turn without this — three attempts with
         15/45 s backoffs turn a per-turn coin flip into a reliable
-        session, mirroring the Developer's runner-level retry.
+        session, mirroring the Developer's runner-level retry. A
+        transport error whose window was already used up inside
+        :meth:`_provider_call` is re-raised at once: the window is
+        counted once per call (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES).
 
         Args:
             system: System prompt for the call.
@@ -684,6 +734,8 @@ class AgentLoop:
                     thinking=self._thinking,
                 )
             except (GatewayTransportError, GatewayChainExhausted) as exc:
+                if window_spent(exc):
+                    raise
                 last_exc = exc
                 _log.warning(
                     "agent_loop.turn_attempt_failed",

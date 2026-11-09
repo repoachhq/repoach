@@ -19,6 +19,8 @@ the origin remote. A forge that cannot be selected exits ``2``.
   runner) — the comment lives on the PR itself.
 * ``repoach review merge-attempts <N>`` — every recorded merge attempt
   of PR ``<N>`` (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5).
+* ``repoach review retry <N>`` — one automatic second attempt of a review
+  that failed on transport errors only (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES).
 * ``repoach review stranded`` — the open PRs green at their head that no
   merge reached, ``--dispatch`` re-arms them (G3, D3).
 """
@@ -56,7 +58,7 @@ from ..project.spec_source import (
 )
 from ..providers.errors import ProviderConfigError
 from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
-from ..providers.usage import run_summary_line, run_usage_json, usage_run
+from ..providers.usage import run_summary_line, run_usage_json, served_by_line, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
     GateEvaluation,
@@ -85,6 +87,7 @@ from ..review.orchestrator import run_review
 from ..review.refuter import Refutation
 from ..review.report import findings_table_lines
 from ..review.review_head import HeadUnavailableError, HeadUnresolvedError
+from ..review.review_retry import dispatch_review_retry, incomplete_cause, record_retry_ran
 from ..review.reviewer import ReviewVerdict
 from ..review.spec import canonical_spec_id, spec_exists, specs_dir_for
 from ..review.spec_grading import (
@@ -477,6 +480,7 @@ def review_pr(
         ),
         "spec_resolution": spec_resolution,
         "final_verdict": team.final_verdict.value,
+        "incomplete_cause": incomplete_cause(team.final_verdict, team.reviews, team.refutations),
         "n_blockers": team.n_blockers,
         "n_majors": team.n_majors,
         "posted_comments": team.posted_comments,
@@ -537,6 +541,7 @@ def review_pr(
         typer.echo(line, err=True)
     typer.echo(team.open_threads.summary_line(), err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
+    typer.echo(f"repoach: {served_by_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:
         typer.echo(
             f"repoach: refused_writes: {len(team.refused_writes)} "
@@ -955,6 +960,65 @@ def review_stranded(
         typer.echo(f"#{entry.pr_number}\t{entry.head_sha[:7]}\theld\t{entry.reason}")
     for entry in unjudged:
         typer.echo(f"#{entry['pr']}\t\t{entry['state']}\t{', '.join(entry['checks'])}")
+
+
+@review_app.command("retry")
+def review_retry(
+    pr_number: int = typer.Argument(..., help="PR number (GitHub) or MR iid (GitLab)."),
+    head_sha: str = typer.Option(
+        "", "--head", help="The head the review run reviewed (default: the PR's head now)."
+    ),
+    run_id: str = typer.Option(..., "--run", help="The id of this workflow run."),
+    retry_of: str = typer.Option(
+        "", "--retry-of", help="In a retry run: the id of the run it retries; records it."
+    ),
+    result: str = typer.Option(
+        "", "--result", help="With --retry-of: this run's review job result."
+    ),
+    forge_name: str | None = typer.Option(None, "--forge", help=_FORGE_HELP),
+) -> None:
+    """Retry once, at the same head, a review that failed on transport errors only.
+
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES G2, run by ``auto-review.yml``
+    after a review job exited 3 with ``incomplete_cause: transport``:
+    records the retry in the merge attempts comment, then dispatches
+    ``auto-review.yml -f pr_number=<n> -f retry_of=<run>``. Refused, with
+    one stderr line, when the PR is not open, its head moved, or the head
+    was already retried. With ``--retry-of``, the retry run records
+    itself and its result instead, so the comment names both runs.
+    Exits 0 whether or not it retried, 2 when the forge cannot be
+    selected or refuses the dispatch.
+
+    Raises:
+        typer.Exit: With code 2 when the forge cannot be selected or
+            refuses the dispatch.
+    """
+    root = project_root_or_exit()
+    forge = _forge_kwargs(forge_name).get("forge")
+    now = datetime.now(UTC)
+    try:
+        forge = forge or select_forge(cwd=root)
+        head_sha = head_sha or forge.head_sha(pr_number)
+        if retry_of:
+            line = record_retry_ran(
+                forge,
+                pr_number,
+                head_sha=head_sha,
+                run_id=run_id,
+                retry_of=retry_of,
+                result=result or "unknown",
+                now=now,
+            )
+        else:
+            line = dispatch_review_retry(
+                forge, pr_number, head_sha=head_sha, failed_run=run_id, now=now
+            ).line
+    except ForgeWriteRefusedError as exc:
+        typer.echo(f"repoach: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except ForgeError as exc:
+        raise _forge_failure(exc) from exc
+    typer.echo(f"repoach: {line}", err=True)
 
 
 @review_app.command("insights")

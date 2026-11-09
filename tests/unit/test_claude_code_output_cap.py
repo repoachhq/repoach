@@ -1,8 +1,11 @@
-"""The claude_code provider passes the caller's ``max_tokens`` to the CLI.
+"""The claude_code provider passes the caller's ``max_tokens`` to the CLI, plus the thinking headroom.
 
 ``claude --print`` has no output-cap flag and reads
 ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``; before, the refuter's 800-token (now 2 048)
-reply cap was exceeded on 5 of 9 calls of Yoob !327 (2026-10-25).
+reply cap was exceeded on 5 of 9 calls of Yoob !327 (2026-10-25). The CLI
+counts thinking in that cap and does not bound the thinking, so the cap is
+``max_tokens + CLI_THINKING_HEADROOM_TOKENS`` (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES
+D6: the Sentinel's 4 096 on #288 was all thinking, four times over).
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from unittest.mock import patch
 
 from repoach.llm_proxy.providers.base import ProviderConfig
 from repoach.llm_proxy.providers.claude_code.client import (
+    CLI_THINKING_HEADROOM_TOKENS,
     OUTPUT_CAP_ENV,
     THINKING_BUDGET_ENV,
     ClaudeCodeProvider,
@@ -65,7 +69,8 @@ def _request(max_tokens: object, thinking: object = None) -> SimpleNamespace:
 def test_max_tokens_reaches_the_cli_as_its_output_cap() -> None:
     env = _spawned_env(_request(2048))
     assert env is not None
-    assert env[OUTPUT_CAP_ENV] == "2048"
+    assert env[OUTPUT_CAP_ENV] == str(2048 + CLI_THINKING_HEADROOM_TOKENS)
+    assert CLI_THINKING_HEADROOM_TOKENS == 32_000
     assert THINKING_BUDGET_ENV not in env
     assert OUTPUT_CAP_ENV == "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
 
@@ -77,14 +82,14 @@ def test_no_cap_keeps_the_parent_environment() -> None:
 
 def test_cap_rides_on_the_filtered_environment() -> None:
     env = _spawned_env(_request(1500), child_env=lambda _parent: {"PATH": "/usr/bin"})
-    assert env == {"PATH": "/usr/bin", OUTPUT_CAP_ENV: "1500"}
+    assert env == {"PATH": "/usr/bin", OUTPUT_CAP_ENV: str(1500 + CLI_THINKING_HEADROOM_TOKENS)}
 
 
 def test_disabled_thinking_reaches_the_cli_as_a_zero_budget() -> None:
     env = _spawned_env(_request(2048, {"type": "disabled"}))
     assert env is not None
     assert env[THINKING_BUDGET_ENV] == "0"
-    assert env[OUTPUT_CAP_ENV] == "2048"
+    assert env[OUTPUT_CAP_ENV] == str(2048 + CLI_THINKING_HEADROOM_TOKENS)
     env = _spawned_env(_request(None, SimpleNamespace(type=None, enabled=False)))
     assert env is not None
     assert env[THINKING_BUDGET_ENV] == "0"

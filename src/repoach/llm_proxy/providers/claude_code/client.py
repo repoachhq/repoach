@@ -40,7 +40,7 @@ from repoach.llm_proxy.core.anthropic import (
     append_request_id,
 )
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
-from repoach.llm_proxy.providers.exceptions import ProviderError
+from repoach.llm_proxy.providers.exceptions import OutputCapExceededError, ProviderError
 from repoach.llm_proxy.providers.rate_limit import GlobalRateLimiter
 
 _SUBPROCESS_KILL_GRACE_S: float = 2.0
@@ -50,7 +50,87 @@ OUTPUT_CAP_ENV = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
 """The variable ``claude`` reads its per-reply output-token cap from."""
 
 THINKING_BUDGET_ENV = "MAX_THINKING_TOKENS"
-"""The variable ``claude`` reads its thinking budget from; 0 turns thinking off."""
+"""The variable ``claude`` reads its thinking budget from; 0 turns thinking off.
+
+Measured 2026-11-04 with ``claude`` 2.1.317 on ``claude-opus-5-5``: the
+model ignores it. The same prompt thought 3 960 tokens with a budget of
+512 and 3 709 with 0 (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES F12)."""
+
+CLI_THINKING_HEADROOM_TOKENS = 32_000
+"""Tokens added to the caller's ``max_tokens`` for the CLI's output cap.
+
+The CLI applies :data:`OUTPUT_CAP_ENV` to each reply, thinking included,
+and :data:`THINKING_BUDGET_ENV` does not bound the thinking (above). On
+2026-11-04 the Sentinel asked for 4 096 tokens on #288: four replies of
+4 096 thinking tokens, then ``max_output_tokens``, $2.16 and no answer.
+The answer keeps the caller's cap; the thinking gets this headroom
+(SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6)."""
+
+CLI_OUTPUT_CAP_ERROR = "max_output_tokens"
+"""The ``api_error`` the CLI reports when a reply outgrew :data:`OUTPUT_CAP_ENV`."""
+
+CLI_ERROR_TEXT_MAX_CHARS = 2000
+"""The most of the CLI's ``result`` text an error message keeps."""
+
+
+def _cli_payload(stdout: str) -> dict[str, Any] | None:
+    """Return the CLI's JSON object from ``stdout``, None when it printed none."""
+    try:
+        payload = json.loads(stdout.strip())
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.debug("CLAUDE_CODE_STDOUT_NOT_JSON: {}", exc)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def cli_result_error(
+    payload: Mapping[str, Any], request_id: str | None, *, prefix: str = ""
+) -> ProviderError:
+    """Turn the CLI's error result into the error the failover reads.
+
+    The message is the CLI's own ``result`` text (``API Error: Claude's
+    response exceeded the 4096 output token maximum…``), not the head of
+    its JSON, which ends before ``is_error`` and ``result`` (#288, where
+    the logged error stopped after 200 characters of usage counts).
+    ``api_error == "max_output_tokens"`` is an
+    :class:`~repoach.llm_proxy.providers.exceptions.OutputCapExceededError`.
+
+    Args:
+        payload: The CLI's JSON object.
+        request_id: The request id appended to the message.
+        prefix: Optional prefix prepended before the CLI's result text.
+    """
+    text = str(payload.get("result") or payload.get("error") or "claude CLI returned is_error")
+    message = append_request_id(f"{prefix}{text[:CLI_ERROR_TEXT_MAX_CHARS]}", request_id)
+    if (
+        payload.get("api_error") == CLI_OUTPUT_CAP_ERROR
+        or payload.get("error") == CLI_OUTPUT_CAP_ERROR
+    ):
+        return OutputCapExceededError(message, raw_error=dict(payload))
+    return ProviderError(message)
+
+
+def cli_exit_error(
+    returncode: int | None, stdout: str, stderr: str, request_id: str | None
+) -> ProviderError:
+    """Turn a non-zero CLI exit into the error the failover reads.
+
+    A CLI that printed its JSON result says why in it
+    (:func:`cli_result_error`); otherwise stderr, else the head of
+    stdout, names the failure as before.
+
+    Args:
+        returncode: The CLI's exit status.
+        stdout: What it printed on stdout.
+        stderr: What it printed on stderr.
+        request_id: The request id appended to the message.
+    """
+    prefix = f"claude CLI exited {returncode}: "
+    payload = _cli_payload(stdout)
+    if payload is not None and payload.get("is_error"):
+        return cli_result_error(payload, request_id, prefix=prefix)
+    err = f"{prefix}{stderr.strip() or stdout.strip()[:200]}"
+    return ProviderError(append_request_id(err, request_id))
 
 
 def _thinking_disabled(request: Any) -> bool:
@@ -282,20 +362,11 @@ class ClaudeCodeProvider(BaseProvider):
                 stderr = stderr_b.decode("utf-8", errors="replace")
 
                 if proc.returncode != 0:
-                    err = (
-                        f"claude CLI exited {proc.returncode}: "
-                        f"{stderr.strip() or stdout.strip()[:200]}"
-                    )
-                    raise ProviderError(append_request_id(err, request_id))
+                    raise cli_exit_error(proc.returncode, stdout, stderr, request_id)
 
                 payload = self._parse_cli_json(stdout, request_id)
                 if payload.get("is_error"):
-                    err = (
-                        payload.get("result")
-                        or payload.get("error")
-                        or "claude CLI returned is_error"
-                    )
-                    raise ProviderError(append_request_id(str(err), request_id))
+                    raise cli_result_error(payload, request_id)
 
                 result_text = payload.get("result") or ""
 
@@ -402,8 +473,10 @@ class ClaudeCodeProvider(BaseProvider):
         ``claude --print`` has no output-cap flag; it reads
         :data:`OUTPUT_CAP_ENV` instead. Without it the CLI answered past
         the cap the caller asked for (the refuter's 800 tokens, exceeded
-        on 5 of 9 calls of Yoob !327, 2026-10-25). A request whose
-        ``thinking`` is ``{"type": "disabled"}`` sets
+        on 5 of 9 calls of Yoob !327, 2026-10-25). The cap is the
+        caller's ``max_tokens`` plus :data:`CLI_THINKING_HEADROOM_TOKENS`:
+        the CLI counts thinking in it and nothing bounds the thinking. A
+        request whose ``thinking`` is ``{"type": "disabled"}`` sets
         :data:`THINKING_BUDGET_ENV` to 0. ``None`` keeps the parent
         environment when there is neither a filter, a cap nor a thinking
         switch.
@@ -412,7 +485,7 @@ class ClaudeCodeProvider(BaseProvider):
         extra: dict[str, str] = {}
         cap = getattr(request, "max_tokens", None)
         if isinstance(cap, int) and not isinstance(cap, bool) and cap > 0:
-            extra[OUTPUT_CAP_ENV] = str(cap)
+            extra[OUTPUT_CAP_ENV] = str(cap + CLI_THINKING_HEADROOM_TOKENS)
         if _thinking_disabled(request):
             extra[THINKING_BUDGET_ENV] = "0"
         if not extra:

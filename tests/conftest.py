@@ -64,6 +64,24 @@ def _no_legacy_anchors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("repoach.core.paths.legacy_db_path", lambda _root: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_transport_retry_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Close the transport retry window of every model call the suite makes.
+
+    SP-REVIEW-SURVIVES-TRANSPORT-FAILURES gives each call a 300 s window
+    in which a transport error is retried with real sleeps. The suite's
+    fake providers raise transport errors on purpose to pin what happens
+    after the retries; with the window open, each would wait for minutes.
+    The seam is the loop's reading of the window, not the environment, so
+    ``repoach config show`` still reports what the files say; the tests of
+    the window itself restore
+    :func:`~repoach.agent_engine.transport_window.configured_transport_window_s`.
+    """
+    monkeypatch.setattr(
+        "repoach.agent_engine.agent_loop.configured_transport_window_s", lambda _route: 0.0
+    )
+
+
 FAKE_SHA = "0" * 40
 """The tip and merge base ``base_resolves`` reports: no commit of any clone, never a real value."""
 
