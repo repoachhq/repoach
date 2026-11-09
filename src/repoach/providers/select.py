@@ -57,6 +57,7 @@ from ..llm_proxy.providers.claude_code import ClaudeCodeProvider
 from ..llm_proxy.providers.defaults import (
     ANTHROPIC_DEFAULT_BASE,
     DEEPSEEK_DEFAULT_BASE,
+    GEMINI_DEFAULT_BASE,
     GROQ_DEFAULT_BASE,
     OPENAI_DEFAULT_BASE,
     OPENROUTER_DEFAULT_BASE,
@@ -92,9 +93,6 @@ GEMINI_CREDENTIAL_NAMES: tuple[str, ...] = (
     "GOOGLE_API_KEY",
 )
 """Environment names the ``gemini`` provider reads its key from, first set wins."""
-
-GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
-"""The Generative Language API's OpenAI-compatible root (ai.google.dev/gemini-api/docs/openai, read 2026-10-21)."""
 
 KEYLESS_API_KEY = "no-key"
 """Sent as the bearer token when no key is set: the OpenAI SDK refuses an empty

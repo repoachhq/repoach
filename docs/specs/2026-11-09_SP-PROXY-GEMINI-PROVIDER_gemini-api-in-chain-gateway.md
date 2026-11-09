@@ -2,7 +2,7 @@
 id: SP-PROXY-GEMINI-PROVIDER
 title: Gemini API as a first-class provider in the chain-failover gateway
 version: 0.1
-status: draft
+status: approved
 author: agent
 created: 2026-11-09
 updated: 2026-11-09
@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_proxy_gemini_provider.py]
   resources: []
 
-depends_on: [SP-CHAINS-THINKING-CLASS, SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROVIDER-INIT-DEDUP, SP-CHAINPILOT-REASONING-WIRE-GENERIC, SP-UNIVERSAL-PROVIDERS]
+depends_on: [SP-CHAINS-THINKING-CLASS, SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROVIDER-INIT-DEDUP, SP-PROVIDER-TRANSPORT-SPI, SP-CHAINPILOT-REASONING-WIRE-GENERIC, SP-UNIVERSAL-PROVIDERS]
 provides_to: []
 
 constraints:
@@ -97,6 +97,7 @@ Errors:
 - Adds dependency: `SP-PROXY-GEMINI-PROVIDER` -> `SP-CHAINS-THINKING-CLASS` (adds `gemini` descriptor and thinking classification in `catalog.py`).
 - Adds dependency: `SP-PROXY-GEMINI-PROVIDER` -> `SP-PROXY-FIRST-BYTE-DEADLINE` (adds `gemini_api_key` and `gemini_base_url` fields in `llm_proxy/config/settings.py`).
 - Adds dependency: `SP-PROXY-GEMINI-PROVIDER` -> `SP-PROVIDER-INIT-DEDUP` (uses `ProviderConfig` / `BaseProvider`).
+- Adds dependency: `SP-PROXY-GEMINI-PROVIDER` -> `SP-PROVIDER-TRANSPORT-SPI` (wires `create_provider("gemini", settings)`).
 - Adds dependency: `SP-PROXY-GEMINI-PROVIDER` -> `SP-CHAINPILOT-REASONING-WIRE-GENERIC` (instantiates `GenericOpenAIProvider`).
 - Adds dependency: `SP-PROXY-GEMINI-PROVIDER` -> `SP-UNIVERSAL-PROVIDERS` (shares `GEMINI_DEFAULT_BASE` with `src/repoach/providers/select.py`).
 - New / changed coupling, cycles, or shared state: none.
@@ -112,10 +113,10 @@ flowchart LR
 
 ## Acceptance Criteria
 
-- [ ] AC1: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_descriptor_registered_and_buildable` — `"gemini"` is in `SUPPORTED_PROVIDER_IDS`, `create_provider("gemini", settings)` returns a `GenericOpenAIProvider` with `base_url == "https://generativelanguage.googleapis.com/v1beta/openai"`.
-- [ ] AC2: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_api_key_precedence_repoach_then_gemini_then_google` — `Settings` resolves `REPOACH_GEMINI_API_KEY` > `GEMINI_API_KEY` > `GOOGLE_API_KEY`.
-- [ ] AC3: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_missing_key_raises_authentication_error_with_aistudio_url` — `create_provider("gemini", Settings(gemini_api_key=""))` raises `AuthenticationError` naming `GEMINI_API_KEY` and `https://aistudio.google.com/app/api-keys`.
-- [ ] AC4: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_chain_parses_and_classifies_thinking` — `Chain.parse("gemini/gemini-2.5-pro,gemini/gemini-3.8-flash")` succeeds and `classify_thinking` returns `"hybrid"`.
+- [x] AC1: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_descriptor_registered_and_buildable` — `"gemini"` is in `SUPPORTED_PROVIDER_IDS`, `create_provider("gemini", settings)` returns a `GenericOpenAIProvider` with `base_url == "https://generativelanguage.googleapis.com/v1beta/openai"`.
+- [x] AC2: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_api_key_precedence_repoach_then_gemini_then_google` — `Settings` resolves `REPOACH_GEMINI_API_KEY` > `GEMINI_API_KEY` > `GOOGLE_API_KEY`.
+- [x] AC3: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_missing_key_raises_authentication_error_with_aistudio_url` — `create_provider("gemini", Settings(gemini_api_key=""))` raises `AuthenticationError` naming `GEMINI_API_KEY` and `https://aistudio.google.com/app/api-keys`.
+- [x] AC4: `pytest -q tests/unit/test_proxy_gemini_provider.py::test_gemini_chain_parses_and_classifies_thinking` — `Chain.parse("gemini/gemini-2.5-pro,gemini/gemini-3.8-flash")` succeeds and `classify_thinking` returns `"hybrid"`.
 
 ## Open Questions
 

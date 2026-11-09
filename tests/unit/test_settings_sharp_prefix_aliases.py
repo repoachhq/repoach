@@ -41,6 +41,8 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "ANTHROPIC_API_KEY": "anthropic_api_key",
     "OPENAI_COMPATIBLE_API_KEY": "openai_compatible_api_key",
     "OPENAI_COMPATIBLE_BASE_URL": "openai_compatible_base_url",
+    "GEMINI_API_KEY": "gemini_api_key",
+    "GEMINI_BASE_URL": "gemini_base_url",
     "BREAKER_ENABLED": "breaker_enabled",
     "BREAKER_TTL_S": "breaker_ttl_s",
     "BREAKER_TTL_TERMINAL_S": "breaker_ttl_terminal_s",
@@ -108,6 +110,7 @@ def _clean_env_for_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     for legacy, repoach in _LEGACY_TO_REPOACH_ALIAS.items():
         monkeypatch.delenv(legacy, raising=False)
         monkeypatch.delenv(repoach, raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setattr(settings_module, "_env_files", lambda: ())
     monkeypatch.setattr(settings_module, "_configured_env_files", lambda _cfg: ())
 

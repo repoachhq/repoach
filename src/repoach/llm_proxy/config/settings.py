@@ -125,6 +125,8 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "OPENAI_API_KEY": "REPOACH_OPENAI_API_KEY",
     "OPENAI_COMPATIBLE_API_KEY": "REPOACH_OPENAI_COMPATIBLE_API_KEY",
     "OPENAI_COMPATIBLE_BASE_URL": "REPOACH_OPENAI_COMPATIBLE_BASE_URL",
+    "GEMINI_API_KEY": "REPOACH_GEMINI_API_KEY",
+    "GEMINI_BASE_URL": "REPOACH_GEMINI_BASE_URL",
     "BREAKER_ENABLED": "REPOACH_BREAKER_ENABLED",
     "BREAKER_TTL_S": "REPOACH_BREAKER_TTL_S",
     "BREAKER_TTL_TERMINAL_S": "REPOACH_BREAKER_TTL_TERMINAL_S",
@@ -270,6 +272,15 @@ class Settings(BaseSettings):
     openai_compatible_base_url: str = Field(
         default="", validation_alias=_aliases("OPENAI_COMPATIBLE_BASE_URL")
     )
+    gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "REPOACH_GEMINI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ),
+    )
+    gemini_base_url: str = Field(default="", validation_alias=_aliases("GEMINI_BASE_URL"))
 
     artificial_analysis_api_key: str = Field(
         default="", validation_alias=_aliases("ARTIFICIAL_ANALYSIS_API_KEY")
