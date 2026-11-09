@@ -118,10 +118,101 @@ def write_fake_claude(
 
 
 def read_calls(log: Path) -> list[dict[str, Any]]:
-    """Return the ``--print`` calls a fake ``claude`` logged."""
+    """Return the ``--print`` calls a fake ``claude`` or ``agy`` logged."""
     if not log.is_file():
         return []
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
+
+
+_AGY_SCRIPT = """#!{python}
+import json
+import os
+import sys
+import time
+
+LOG = {log!r}
+args = sys.argv[1:]
+if args == ["--version"]:
+    print({version!r})
+    sys.exit({version_exit_code!r})
+stdin_raw = sys.stdin.read()
+with open(LOG, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps({{
+        "argv": args,
+        "stdin": stdin_raw,
+        "cwd": os.getcwd(),
+        "session_leader": os.getsid(0) == os.getpid(),
+        "pid": os.getpid(),
+        "env": dict(os.environ),
+    }}) + "\\n")
+time.sleep({sleep_s!r})
+exit_code = {exit_code!r}
+if exit_code:
+    if {error_text!r}:
+        print(json.dumps({{
+            "event": "result",
+            "result": {{
+                "conversation_id": "fake_conv",
+                "status": "ERROR",
+                "response": "",
+                "error": {error_text!r},
+                "duration_seconds": 0.1,
+                "num_turns": 0,
+            }},
+        }}))
+    sys.stderr.write({stderr!r})
+    sys.exit(exit_code)
+print(json.dumps({{
+    "event": "result",
+    "result": {{
+        "conversation_id": "fake_conv",
+        "status": "SUCCESS",
+        "response": {result!r},
+        "duration_seconds": 0.1,
+        "num_turns": 1,
+        "usage": {{
+            "input_tokens": 111,
+            "output_tokens": 7,
+            "thinking_tokens": 0,
+            "cache_read_tokens": 100,
+            "total_tokens": 118,
+        }},
+    }},
+}}))
+"""
+
+
+def write_fake_agy(
+    directory: Path,
+    *,
+    version: str = "1.5.3",
+    version_exit_code: int = 0,
+    result: str = APPROVE_JSON,
+    exit_code: int = 0,
+    error_text: str = "",
+    stderr: str = "",
+    sleep_s: float = 0.0,
+) -> tuple[Path, Path]:
+    """Write a fake ``agy`` executable into ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    log = directory / "agy_calls.jsonl"
+    executable = directory / "agy"
+    executable.write_text(
+        _AGY_SCRIPT.format(
+            python=sys.executable,
+            log=str(log),
+            version=version,
+            version_exit_code=version_exit_code,
+            result=result,
+            exit_code=exit_code,
+            error_text=error_text,
+            stderr=stderr,
+            sleep_s=sleep_s,
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return executable, log
 
 
 def _sse(event: str, data: dict[str, Any]) -> bytes:

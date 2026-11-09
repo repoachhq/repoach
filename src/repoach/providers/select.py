@@ -52,6 +52,7 @@ from ..core.logging import get_logger
 from ..core.paths import project_root
 from ..llm.capability import CapabilityTier
 from ..llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
+from ..llm_proxy.providers.antigravity import AntigravityProvider
 from ..llm_proxy.providers.base import BaseProvider, ProviderConfig
 from ..llm_proxy.providers.claude_code import ClaudeCodeProvider
 from ..llm_proxy.providers.defaults import (
@@ -69,13 +70,28 @@ from .errors import NoProviderConfiguredError, ProviderConfigError
 
 _log = get_logger(__name__)
 
-RouteKind = Literal["gateway", "claude_code", "anthropic", "openai_compatible", "gemini"]
+RouteKind = Literal[
+    "gateway", "claude_code", "antigravity", "anthropic", "openai_compatible", "gemini"
+]
 RouteSource = ConfigSource | Literal["flag"]
 
-DIRECT_KINDS: tuple[RouteKind, ...] = ("claude_code", "anthropic", "openai_compatible", "gemini")
+DIRECT_KINDS: tuple[RouteKind, ...] = (
+    "claude_code",
+    "antigravity",
+    "anthropic",
+    "openai_compatible",
+    "gemini",
+)
 """Routes served in-process, without a gateway."""
 
-KINDS: tuple[str, ...] = ("claude_code", "anthropic", "openai_compatible", "gemini", "gateway")
+KINDS: tuple[str, ...] = (
+    "claude_code",
+    "antigravity",
+    "anthropic",
+    "openai_compatible",
+    "gemini",
+    "gateway",
+)
 """The provider kinds, in the order the no-provider message lists them."""
 
 ANTHROPIC_CREDENTIAL_NAMES: tuple[str, ...] = ("REPOACH_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
@@ -146,7 +162,7 @@ SELECTABLE: tuple[str, ...] = KINDS + tuple(PRESETS)
 
 PROVIDER_FLAG_HELP = (
     "Provider for this run, outranking REPOACH_PROVIDER and \\[provider].kind: "
-    "claude_code, anthropic, openai_compatible, gemini, gateway, or a preset "
+    "claude_code, antigravity, anthropic, openai_compatible, gemini, gateway, or a preset "
     "(openai, ollama, openrouter, groq, deepseek, mistral)."
 )
 """``--provider``'s help text, shared by every command that takes the flag.
@@ -229,6 +245,7 @@ def openai_compatible_base_url(raw: str) -> str:
 
 
 DEFAULT_CLI = "claude"
+DEFAULT_ANTIGRAVITY_CLI = "agy"
 
 CLAUDE_CODE_MODELS: dict[CapabilityTier, str] = {
     CapabilityTier.OPUS: "opus",
@@ -236,6 +253,13 @@ CLAUDE_CODE_MODELS: dict[CapabilityTier, str] = {
     CapabilityTier.HAIKU: "haiku",
 }
 """The CLI's own model aliases per tier."""
+
+ANTIGRAVITY_MODELS: dict[CapabilityTier, str] = {
+    CapabilityTier.OPUS: "gemini-4-argon-high",
+    CapabilityTier.SONNET: "gemini-4-argon-medium",
+    CapabilityTier.HAIKU: "gemini-3.8-flash-medium",
+}
+"""Default ``agy`` model slugs per tier."""
 
 ANTHROPIC_MODELS: dict[CapabilityTier, str] = {
     CapabilityTier.OPUS: "claude-opus-5",
@@ -246,6 +270,7 @@ ANTHROPIC_MODELS: dict[CapabilityTier, str] = {
 
 DEFAULT_MODELS: dict[str, dict[CapabilityTier, str]] = {
     "claude_code": CLAUDE_CODE_MODELS,
+    "antigravity": ANTIGRAVITY_MODELS,
     "anthropic": ANTHROPIC_MODELS,
 }
 """Built-in tier models per route; a route absent here has none (every tier must be set)."""
@@ -267,6 +292,9 @@ CLI_SECRET_SUFFIXES: tuple[str, ...] = ("_API_KEY", "_AUTH_TOKEN", "_TOKEN")
 CLI_KEPT_SECRETS: frozenset[str] = frozenset({"CLAUDE_CODE_OAUTH_TOKEN"})
 """The one token the CLI keeps: it *is* the login on a headless runner."""
 
+ANTIGRAVITY_KEPT_SECRETS: frozenset[str] = frozenset({"GEMINI_API_KEY"})
+"""The one key ``agy`` keeps for its ``modelProvider: "gemini"`` mode."""
+
 
 def claude_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
     """Return the environment the ``claude`` CLI runs with: ``environ`` minus every key and token.
@@ -286,11 +314,25 @@ def claude_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
     }
 
 
+def antigravity_cli_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """Return the environment the ``agy`` CLI runs with: ``environ`` minus unrelated keys and tokens.
+
+    Every variable ending in :data:`CLI_SECRET_SUFFIXES` is dropped except
+    :data:`ANTIGRAVITY_KEPT_SECRETS` (``GEMINI_API_KEY``, which ``agy``
+    reads when configured with ``modelProvider: "gemini"``).
+    """
+    return {
+        name: value
+        for name, value in environ.items()
+        if name in ANTIGRAVITY_KEPT_SECRETS or not name.upper().endswith(CLI_SECRET_SUFFIXES)
+    }
+
+
 class ProviderRoute(BaseModel):
     """The provider a run in ``root`` uses.
 
     Attributes:
-        kind: ``gateway``, ``claude_code``, ``anthropic``,
+        kind: ``gateway``, ``claude_code``, ``antigravity``, ``anthropic``,
             ``openai_compatible`` or ``gemini``.
         configured: The provider name as given (``""`` when none was).
         preset: The :data:`PRESETS` name when ``configured`` is one, else ``""``.
@@ -333,7 +375,7 @@ def _route_kind(name: str) -> tuple[RouteKind, str]:
     """Return ``(route kind, preset)`` for a provider name (unset or unknown: the gateway)."""
     if name in PRESETS:
         return "openai_compatible", name
-    if name in ("claude_code", "anthropic", "openai_compatible", "gemini"):
+    if name in ("claude_code", "antigravity", "anthropic", "openai_compatible", "gemini"):
         return name, ""
     return "gateway", ""
 
@@ -534,6 +576,50 @@ def claude_login(cli: str) -> ClaudeLogin:
     )
 
 
+def antigravity_cli(route: ProviderRoute) -> str:
+    """Return the absolute path of the ``agy`` executable the route runs.
+
+    Raises:
+        ProviderConfigError: Not found; the message names where it was looked for.
+    """
+    wanted = route.section.cli_path.strip() or DEFAULT_ANTIGRAVITY_CLI
+    found = shutil.which(wanted)
+    if found is None:
+        raise ProviderConfigError(
+            f"provider antigravity: agy CLI not found ({wanted!r}); install Antigravity CLI "
+            "and sign in, or set REPOACH_ANTIGRAVITY_CLI_PATH / [provider].cli_path"
+        )
+    return found
+
+
+def antigravity_version(cli: str) -> str:
+    """Return the ``agy --version`` string or raise :class:`ProviderConfigError`.
+
+    Raises:
+        ProviderConfigError: The command failed to run or exited non-zero.
+    """
+    try:
+        completed = subprocess.run(
+            [cli, "--version"],
+            env=antigravity_cli_env(os.environ),
+            capture_output=True,
+            text=True,
+            timeout=LOGIN_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProviderConfigError(
+            f"provider antigravity: '{cli} --version' did not run: {exc}"
+        ) from exc
+    version = (completed.stdout or completed.stderr).strip()
+    if completed.returncode != 0 or not version:
+        raise ProviderConfigError(
+            f"provider antigravity: '{cli} --version' failed (rc {completed.returncode}: "
+            f"{version[:200]!r}); reinstall Antigravity CLI"
+        )
+    return version.splitlines()[0].strip()
+
+
 def anthropic_credential(root: Path) -> tuple[str, str] | None:
     """Return ``(name, value)`` of the first Anthropic key set, else None.
 
@@ -631,6 +717,30 @@ def build_direct_provider(route: ProviderRoute, *, timeout_s: float) -> DirectPr
             timeout_s=timeout_s,
             auth_hint=f"run '{cli} auth login' (or set CLAUDE_CODE_OAUTH_TOKEN from 'claude setup-token')",
         )
+    if route.kind == "antigravity":
+        cli = antigravity_cli(route)
+
+        def antigravity_transport() -> BaseProvider:
+            return AntigravityProvider(
+                ProviderConfig(api_key="", max_concurrency=DIRECT_CONCURRENCY),
+                cli_path=cli,
+                default_model=ANTIGRAVITY_MODELS[CapabilityTier.SONNET],
+                subprocess_timeout=timeout_s,
+                own_process_group=True,
+                child_env=antigravity_cli_env,
+            )
+
+        return DirectProvider(
+            name="antigravity",
+            models=models,
+            transport_key=("antigravity", cli, str(timeout_s)),
+            transport_factory=antigravity_transport,
+            timeout_s=timeout_s,
+            auth_hint=(
+                f"run '{cli}' interactively to sign in "
+                "(or set modelProvider='gemini' and GEMINI_API_KEY)"
+            ),
+        )
     if route.kind == "anthropic":
         credential = anthropic_credential(route.root)
         if credential is None:
@@ -685,6 +795,7 @@ def require_provider_ready(root: Path | None = None) -> ProviderRoute:
     * gateway: the URL and its shared secret
       (:func:`~repoach.core.config.require_gateway_credentials`, unchanged);
     * ``claude_code``: the CLI exists and ``auth status`` says logged in;
+    * ``antigravity``: the ``agy`` CLI exists and ``--version`` runs;
     * ``anthropic``, ``openai_compatible``, ``gemini``: the key (when the
       route needs one), every tier model and the base URL are set.
 
@@ -712,6 +823,11 @@ def require_provider_ready(root: Path | None = None) -> ProviderRoute:
             )
         _log.info("provider_ready", provider="claude_code", auth_method=login.method)
         return route
+    if route.kind == "antigravity":
+        cli = antigravity_cli(route)
+        version = antigravity_version(cli)
+        _log.info("provider_ready", provider="antigravity", cli_version=version)
+        return route
     build_direct_provider(route, timeout_s=LOGIN_PROBE_TIMEOUT_S)
     _log.info("provider_ready", provider=route.label)
     return route
@@ -720,7 +836,9 @@ def require_provider_ready(root: Path | None = None) -> ProviderRoute:
 __all__ = [
     "ANTHROPIC_CREDENTIAL_NAMES",
     "ANTHROPIC_MODELS",
+    "ANTIGRAVITY_MODELS",
     "CLAUDE_CODE_MODELS",
+    "DEFAULT_ANTIGRAVITY_CLI",
     "DIRECT_KINDS",
     "GEMINI_CREDENTIAL_NAMES",
     "GEMINI_DEFAULT_BASE",
@@ -735,6 +853,9 @@ __all__ = [
     "ProviderRoute",
     "anthropic_base_url",
     "anthropic_credential",
+    "antigravity_cli",
+    "antigravity_cli_env",
+    "antigravity_version",
     "build_direct_provider",
     "claude_cli",
     "claude_cli_env",

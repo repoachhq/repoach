@@ -2,7 +2,7 @@
 id: SP-DIRECT-ANTIGRAVITY-ROUTE
 title: Direct in-process antigravity provider route and doctor preflight
 version: 0.1
-status: draft
+status: approved
 author: agent
 created: 2026-11-09
 updated: 2026-11-09
@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_provider_direct_antigravity.py]
   resources: []
 
-depends_on: [SP-PROVIDER-ANTIGRAVITY-CLI, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-PROJECT-CONFIG, SP-USAGE-LEDGER]
+depends_on: [SP-PROVIDER-ANTIGRAVITY-CLI, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-PROJECT-CONFIG, SP-USAGE-LEDGER, SP-DB-PATH-XDG]
 provides_to: []
 
 constraints:
@@ -97,6 +97,7 @@ Errors:
 - Adds dependency: `SP-DIRECT-ANTIGRAVITY-ROUTE` -> `SP-UNIVERSAL-PROVIDERS` (extends `select.py`, `direct.py`, `errors.py`, and `doctor_cmds.py`).
 - Adds dependency: `SP-DIRECT-ANTIGRAVITY-ROUTE` -> `SP-UNIVERSAL-PROJECT-CONFIG` (reads `[provider]` config section and `REPOACH_ANTIGRAVITY_CLI_PATH`).
 - Adds dependency: `SP-DIRECT-ANTIGRAVITY-ROUTE` -> `SP-USAGE-LEDGER` (records `antigravity` calls in `usage_ledger`).
+- Adds dependency: `SP-DIRECT-ANTIGRAVITY-ROUTE` -> `SP-DB-PATH-XDG` (test fixture resets `core.config` settings).
 - New / changed coupling, cycles, or shared state: none.
 
 ## Diagram
@@ -110,10 +111,10 @@ flowchart TD
 
 ## Acceptance Criteria
 
-- [ ] AC1: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_resolve_route_and_default_tier_models_for_antigravity` — `REPOACH_PROVIDER=antigravity` resolves `route.kind == "antigravity"` and `tier_models(route)` returns `gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-3.8-flash-medium` unless overridden.
-- [ ] AC2: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_antigravity_cli_env_strips_foreign_keys_and_keeps_gemini_api_key` — `antigravity_cli_env` drops `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `REPOACH_ANTHROPIC_AUTH_TOKEN` and preserves `GEMINI_API_KEY` and `PATH`.
-- [ ] AC3: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_direct_antigravity_provider_end_to_end_with_fake_agy` — `DirectProvider.call` against a fake `agy` script returns an `AgentResponse` with `model_used == "antigravity/gemini-4-argon-medium"` and accurate token usage, and maps `"authentication required"` to `ProviderAuthError`.
-- [ ] AC4: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_doctor_reports_antigravity_route_and_binary` — `repoach doctor` with `REPOACH_PROVIDER=antigravity` prints `provider_route=direct (antigravity)`, `binary_agy=`, and `provider_option=antigravity (...)`.
+- [x] AC1: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_resolve_route_and_default_tier_models_for_antigravity` — `REPOACH_PROVIDER=antigravity` resolves `route.kind == "antigravity"` and `tier_models(route)` returns `gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-3.8-flash-medium` unless overridden.
+- [x] AC2: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_antigravity_cli_env_strips_foreign_keys_and_keeps_gemini_api_key` — `antigravity_cli_env` drops `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `REPOACH_ANTHROPIC_AUTH_TOKEN` and preserves `GEMINI_API_KEY` and `PATH`.
+- [x] AC3: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_direct_antigravity_provider_end_to_end_with_fake_agy` — `DirectProvider.call` against a fake `agy` script returns an `AgentResponse` with `model_used == "antigravity/gemini-4-argon-medium"` and accurate token usage, and maps `"authentication required"` to `ProviderAuthError`.
+- [x] AC4: `pytest -q tests/unit/test_provider_direct_antigravity.py::test_doctor_reports_antigravity_route_and_binary` — `repoach doctor` with `REPOACH_PROVIDER=antigravity` prints `provider_route=direct (antigravity)`, `binary_agy=`, and `provider_option=antigravity (...)`.
 
 ## Open Questions
 
