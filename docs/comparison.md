@@ -17,6 +17,7 @@ repoach's own row is sourced from this repository at a fixed commit, not from ma
 | [GitLab Duo Code Review](https://docs.gitlab.com/user/project/merge_requests/duo_in_merge_requests/) | review comments[^19] | GitLab[^19] | no: feedback only[^19] | n/m | n/m | GitLab's models or self-hosted models[^19] | $0.25 per review, flat (Code Review Flow)[^20] | GitLab Self-Managed, Dedicated[^20] |
 | [Claude Code Review](https://code.claude.com/docs/en/code-review) | review comments after a verification step[^21] | GitHub[^21] | no: never approves or blocks[^21] | no: verifies before posting, not at merge[^21] | n/m | no: the service chooses the models[^21] | token usage, no flat per-review price[^22] | no: vendor infrastructure[^21] |
 | [OpenAI Codex code review](https://learn.chatgpt.com/docs/third-party/github) | review comments (P0 and P1 only)[^23] | GitHub[^23] | no: posts a standard review[^23] | n/m | n/m | n/m | n/m | n/m |
+| [open-code-review (Alibaba)](https://github.com/alibaba/open-code-review) | review comments from one tool-loop agent per file group, one fact-check filter call[^24] | GitHub (Action); GitLab, Gerrit, Codeup, GitFlic, Bitbucket as example scripts[^25] | no: inline comments and a sticky summary[^26] | n/m | n/m | yes: 30 provider presets, your key; one model for every phase[^27] | free (Apache-2.0); you pay your model[^28] | yes: a CLI in your CI or on your machine[^29] |
 
 ## PR sources, not competitors
 
@@ -58,3 +59,9 @@ Open an issue at [https://github.com/repoachhq/repoach/issues](https://github.co
 [^21]: [https://code.claude.com/docs/en/code-review](https://code.claude.com/docs/en/code-review), checked on 2026-10-21.
 [^22]: [https://code.claude.com/docs/en/code-review-costs](https://code.claude.com/docs/en/code-review-costs), checked on 2026-10-21.
 [^23]: [https://learn.chatgpt.com/docs/third-party/github](https://learn.chatgpt.com/docs/third-party/github), checked on 2026-10-21.
+[^24]: [https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/internal/agent/agent.go](https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/internal/agent/agent.go), checked on 2026-11-12.
+[^25]: [https://github.com/alibaba/open-code-review/tree/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/examples](https://github.com/alibaba/open-code-review/tree/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/examples), checked on 2026-11-12.
+[^26]: [https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/action.yml](https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/action.yml), checked on 2026-11-12.
+[^27]: [https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/internal/llm/providers.go](https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/internal/llm/providers.go), checked on 2026-11-12.
+[^28]: [https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/LICENSE](https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/LICENSE), checked on 2026-11-12.
+[^29]: [https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/README.md](https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/README.md), checked on 2026-11-12.
