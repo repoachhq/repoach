@@ -329,6 +329,37 @@ products:
     self_host:
       value: n/m
 
+  - name: open-code-review (Alibaba)
+    vendor_url: https://github.com/alibaba/open-code-review
+    loop:
+      value: review comments from one tool-loop agent per file group, one fact-check filter call
+      source_url: https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/internal/agent/agent.go
+      checked_on: 2026-11-12
+    forges:
+      value: GitHub (Action); GitLab, Gerrit, Codeup, GitFlic, Bitbucket as example scripts
+      source_url: https://github.com/alibaba/open-code-review/tree/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/examples
+      checked_on: 2026-11-12
+    blocks_merge_on_evidence:
+      value: "no: inline comments and a sticky summary"
+      source_url: https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/action.yml
+      checked_on: 2026-11-12
+    reverifies_at_merge_head:
+      value: n/m
+    spec_gates_plan:
+      value: n/m
+    model_choice:
+      value: "yes: 30 provider presets, your key; one model for every phase"
+      source_url: https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/internal/llm/providers.go
+      checked_on: 2026-11-12
+    price:
+      value: free (Apache-2.0); you pay your model
+      source_url: https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/LICENSE
+      checked_on: 2026-11-12
+    self_host:
+      value: "yes: a CLI in your CI or on your machine"
+      source_url: https://github.com/alibaba/open-code-review/blob/6386895e7cfac419bd7a9cf4795e8b824a6e3ced/README.md
+      checked_on: 2026-11-12
+
 pr_sources:
   - name: OpenHands
     line: an autonomous developer that opens PRs; repoach reviews and gates them.

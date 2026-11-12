@@ -88,7 +88,7 @@ flowchart TD
 - [ ] AC1: `python scripts/gen_comparison.py && git diff --exit-code docs/comparison.md` → exit 0 (the committed page is the rendered page).
 - [ ] AC2: `python scripts/gen_comparison.py --offline` with one `source_url` replaced by `https://example.invalid/x` → still renders; without `--offline` → exit 1 and the line `dead: https://example.invalid/x (comparison.yaml: CodeRabbit.price)`.
 - [ ] AC3: a fixture YAML with `checked_on: 2020-01-01` → exit 3, `stale: 1 cell older than 90 days`.
-- [ ] AC4: `grep -c '^| ' docs/comparison.md` → 13 (header, separator, eleven rows), and `grep -ci 'openhands' docs/comparison.md` → ≥ 1 only under the "PR sources" heading.
+- [ ] AC4: `grep -c '^| ' docs/comparison.md` → 14 (header, separator, twelve rows since open-code-review was added on 2026-11-12), and `grep -ci 'openhands' docs/comparison.md` → ≥ 1 only under the "PR sources" heading.
 - [ ] AC5: `pytest -q tests/unit/test_gen_comparison.py` → green, network mocked.
 
 ## Owner decisions needed
