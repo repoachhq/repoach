@@ -147,6 +147,11 @@ Signature change, deliberate: `root` is required and keyword-only on `recall_rev
 | `src/repoach/cli/main.py:490` | `recall_review_lessons(query)` in `memory recall-review` | moves to `cli/memory_cmds.py`, passes `root=require_project_root()` or the scope of `--scope` |
 | `tests/unit/conftest.py:93`, `tests/unit/test_review_memory.py:126,143,184`, `tests/integration/test_findings_schema_race_end_to_end.py:138` | one-argument stubs (`lambda _query: []`) | stubs take `(query, *, root)` |
 | `tests/unit/test_review_memory.py:75,92`, `tests/unit/test_review_lessons.py:110,127` | direct calls without `root` | pass `root=tmp_path` |
+| `src/repoach/cli/main.py:479` | `seed_review_memory()` in `memory seed-review` | moves to `cli/memory_cmds.py`, passes the repository's scope or `--scope` (G6) |
+| `tests/unit/test_review_memory.py:182` | zero-argument stub `lambda: 6` for `seed_review_memory` | `lambda scope=None: 6` |
+| `tests/unit/test_review_memory.py:105`, `tests/integration/test_review_memory_integration.py:74` | `seed_review_memory()` | unchanged: `scope` stays optional, `None` seeds the review scope of today |
+
+`distill_lessons` is new and has no caller today. Audit of the whole package at `8fabb19`: `grep -rln "recall_review_lessons\|remember_verified_findings\|seed_review_memory\|distill_lessons" src/repoach` lists `review/review_lessons.py`, `review/review_memory.py`, `review/orchestrator.py` and `cli/main.py` only; no other module (the threads server included) calls them.
 
 The stubs written `lambda *a, **kw: None` (`tests/integration/test_review_round2_parallel_flow.py:126`, `tests/integration/test_review_post_batch_end_to_end.py:176`, `tests/integration/test_fresh_head_concurrent.py:141`, `tests/unit/test_review_head_guard.py:298`) keep working unchanged.
 
