@@ -187,6 +187,8 @@ unchanged; the backup stays.
 | `::test_planted_secret_never_reaches_a_row_or_the_report` | a 40-character `ghp_`-prefixed token and an email built at run time in two old entries: absent from every row and from the report JSON | skip redaction for legacy rows |
 | `::test_second_run_refused_and_purge_target_rewrites` | same export → rc 2; `--purge-target` → the same rows, once | drop the export hash check |
 | `::test_summariser_failure_keeps_written_batches_and_names_the_batch` | a fake failing on batch 2 → batch 1's rows present, rc 3, the report names batch 2 | roll back everything |
+| `::test_missing_timestamps_use_migration_day` | an export without timestamps → every summary has `first_seen = last_seen =` the migration day and the report says `dates: migration_day` | take the epoch |
+| `::test_slug_map_routes_entries_and_creates_the_store` | `--slug-map src/vendor=github.com/acme/vendor` → the `src/vendor/` entries land in that slug's store, created if absent; a map naming no store path is refused, rc 2 | ignore the map |
 | `::test_token_estimate_is_chars_over_four_plus_prompt` | on the sample, `tokens_in_est == sum(len(text))//4 + 300*batches` | — |
 
 ## Success conditions
