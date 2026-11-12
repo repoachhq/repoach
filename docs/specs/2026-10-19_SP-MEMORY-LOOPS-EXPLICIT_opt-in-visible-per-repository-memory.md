@@ -8,7 +8,7 @@ created: 2026-10-19
 updated: 2026-11-12
 
 owns:
-  code: [src/repoach/review/memory_scope.py, tests/unit/test_memory_scope.py, tests/unit/test_memory_explain.py]
+  code: [tests/unit/test_memory_explain.py]
   resources: []
 
 depends_on: [SP-BRANCH-CONFIG, SP-REVIEW-MEMORY, SP-REVIEW-LESSONS, SP-BUILDER-MEMORY]
@@ -34,8 +34,11 @@ three goals of this draft and this draft keeps the rest:
 - G4 (one scope per repository) is delivered by
   SP-REVIEW-LESSONS-REACH-REVIEWERS with the existing
   `core/paths.py` `project_slug` instead of a new `repo_key`; the
-  module `memory_scope.py` named in `owns.code` is not written, the
-  functions live in `src/repoach/memory/scopes.py`.
+  module `memory_scope.py` is not written, the functions live in
+  `src/repoach/memory/scopes.py`, tested by `tests/unit/test_memory_scopes.py`;
+  `owns.code` drops `memory_scope.py` and `test_memory_scope.py`, and
+  the Interface, Architecture Impact and AC4 below that name them are
+  superseded by SP-REVIEW-LESSONS-REACH-REVIEWERS.
 - G5 (the `memory` commands print and seed the repository's scope) is
   delivered by the same spec.
 - The `[learning].memory` key of G1 is added to `ProjectConfig` by
