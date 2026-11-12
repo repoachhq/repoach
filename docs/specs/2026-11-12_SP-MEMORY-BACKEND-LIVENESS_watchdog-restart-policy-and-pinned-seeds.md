@@ -20,6 +20,7 @@ constraints:
   watchdog_failures_to_restart: 2
   unit_timeout_stop_s: 20
   unit_restart_sec: 5
+  watchdog_restart_stamp_s: 60
   unit_memory_high_mb: 1536
   unit_memory_max_mb: 2048
 ---
@@ -71,8 +72,10 @@ Measured 2026-11-12 on the owner's host, read-only, and at the restart of 17:02.
   (`timeout`, `refused`, `http <code>`), the count of `CLOSE-WAIT`
   sockets on `:3111` and the unit's `ActiveEnterTimestamp`, then runs
   `systemctl --user restart agentmemory.service`. A healthy probe
-  writes nothing. The script never restarts twice inside one
-  `RestartSec` window of its own (a stamp file under `$XDG_RUNTIME_DIR`).
+  writes nothing. The script never restarts twice within 60 s
+  (`watchdog_restart_stamp_s`, a stamp file under `$XDG_RUNTIME_DIR`
+  written at each restart); this window is the script's own, distinct
+  from the unit's `RestartSec=5`.
 - D3. Pinned seeds: recall returns the scope's pinned seeds first, then
   the backend's hits with exact-text duplicates of a seed removed,
   capped as today. The seeds come from the code constants (F6), so the
@@ -93,7 +96,7 @@ Measured 2026-11-12 on the owner's host, read-only, and at the restart of 17:02.
 
 - G1: `deploy/systemd/agentmemory.service`, `agentmemory-watchdog.service`, `agentmemory-watchdog.timer` and `agentmemory-watchdog.sh` exist with D1 and D2's knobs; `deploy/systemd/README.md` gains their install lines.
 - G2: `tests/unit/test_agentmemory_units.py` parses the three units and asserts every knob of D1 and D2.
-- G3: `tests/unit/test_agentmemory_watchdog_script.py` runs the script with a fake `curl` and a fake `systemctl` on `PATH`: one failure then success restarts nothing; two failures restart once and log the reason and the socket count; a third run inside the stamp window restarts nothing.
+- G3: `tests/unit/test_agentmemory_watchdog_script.py` runs the script with a fake `curl` and a fake `systemctl` on `PATH`: one failure then success restarts nothing; two failures restart once and log the reason and the socket count; a third run inside the 60 s stamp window restarts nothing.
 - G4: `recall_review_lessons` and `recall_builder_lessons` return the pinned seeds first and the hits after, deduplicated, with the kill-switch still returning `[]`; `MemoryReport.recalled` (SP-MEMORY-FAIL-FAST) shows the seeds with a `(pinned)` suffix and `recalled_total` counts both.
 - G5: the stderr line and the archive line add the restart hint of D4 on a loopback URL only.
 - G6: the live test of D5 exists, is skipped without `REPOACH_LIVE_MEMORY=1`, and prints per query form the number of seeds found.
@@ -143,7 +146,7 @@ Every minute the script gets `livez` in under 2 s and exits 0 silently. A review
 
 ### Edge cases
 - the first probe fails, the second (5 s later) answers → nothing logged, no restart.
-- the backend restarted less than 60 s ago (stamp present) and fails again → logged as `restart suppressed`, no second restart; the next timer tick may restart.
+- the backend restarted less than 60 s ago (stamp present, `watchdog_restart_stamp_s`) and fails again → logged as `restart suppressed`, no second restart; the next timer tick may restart.
 - a hit equal to a seed → listed once, in the seeds' position.
 - limit smaller than the seed count → the seeds are cut first-to-last; hits are dropped.
 
@@ -160,7 +163,7 @@ Every minute the script gets `livez` in under 2 s and exits 0 silently. A review
 | `::test_timer_and_watchdog_units` | `OnUnitActiveSec=60s`, `Type=oneshot`, the script path | drop `OnUnitActiveSec` |
 | `tests/unit/test_agentmemory_watchdog_script.py::test_one_failure_then_success_restarts_nothing` | fake `curl` fails once then succeeds: the fake `systemctl` records no call, the log is absent | restart on the first failure |
 | `::test_two_failures_restart_once_and_log_reason_and_sockets` | fake `curl` fails twice (exit 28): one `restart agentmemory.service` call, one log line with `timeout`, the socket count from a fake `ss` | log without the reason |
-| `::test_stamp_suppresses_a_second_restart` | two script runs inside the window: one restart | remove the stamp |
+| `::test_stamp_suppresses_a_second_restart` | two script runs inside the 60 s stamp window: one restart | remove the stamp |
 | `tests/unit/test_pinned_seeds_recalled.py::test_review_seeds_recalled_when_backend_returns_nothing` | fake `recall` returns `[]`: the section lists the six seeds in order | return the hits alone |
 | `::test_builder_seeds_recalled_when_backend_returns_nothing` | the seven builder seeds, same rule | — |
 | `::test_hit_equal_to_a_seed_is_not_duplicated` | hits `[seed[2], "other"]` → seeds then `other` | compare by prefix instead of equality |
