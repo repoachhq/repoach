@@ -127,28 +127,28 @@ flowchart LR
 
 ## Open Questions
 
-Owner decisions, gathered from the six specs, each with the recommendation (O9 is decided):
+Owner decisions, gathered from the six specs, each with the option the owner accepted on 2026-11-12 (« j'accepte les recommandations »; O9 was decided earlier):
 
 | # | Decision | Spec | Recommendation |
 |---|---|---|---|
-| O1 | Where the anonymised signal is stored: owner receiver on hel1 (`https://gap.repoach.dev/v1/gap`, JSONL per month), a public PR-based repository, or preview-only for now | SP-ANONYMISED-GAP-SIGNAL Q1 | the owner receiver, preview-only until it is up; the PR repository is refused (it attaches a login) |
-| O2 | The opt-in wording in `repoach.toml` and `preview` | SP-ANONYMISED-GAP-SIGNAL Q2 | the proposed English sentence |
-| O3 | No identifier (k-anonymity by payload count, one send per period) versus a rotatable install id | SP-ANONYMISED-GAP-SIGNAL Q3 | none |
-| O4 | Retention on the receiver | SP-ANONYMISED-GAP-SIGNAL Q4 | raw 24 months, aggregates kept, k = 3, stated in `docs/privacy.md` |
-| O5 | Minimum reviews in a month before a payload exists | SP-ANONYMISED-GAP-SIGNAL Q5 | 10 |
-| O6 | Local store on by default and announced, or opt-in | SP-REVIEW-MEMORY-STORE Q1 | on and announced |
-| O7 | Default `store_path`: user data dir or `.repoach/memory.db` with a cache key | SP-REVIEW-MEMORY-STORE Q2 | user data dir; `repoach init` writes the relative form on a hosted runner |
-| O8 | Retire the agentmemory review scope after the store | SP-REVIEW-MEMORY-STORE Q3 | retire, in a follow-up, once C2 is measured on Yoob |
+| O1 | Where the anonymised signal is stored: owner receiver on hel1 (`https://gap.repoach.dev/v1/gap`, JSONL per month), a public PR-based repository, or preview-only for now | SP-ANONYMISED-GAP-SIGNAL Q1 | decided by owner 2026-11-12: the owner receiver, preview-only until it is up; the PR repository is refused (it attaches a login) |
+| O2 | The opt-in wording in `repoach.toml` and `preview` | SP-ANONYMISED-GAP-SIGNAL Q2 | decided by owner 2026-11-12: the proposed English sentence |
+| O3 | No identifier (k-anonymity by payload count, one send per period) versus a rotatable install id | SP-ANONYMISED-GAP-SIGNAL Q3 | decided by owner 2026-11-12: none |
+| O4 | Retention on the receiver | SP-ANONYMISED-GAP-SIGNAL Q4 | decided by owner 2026-11-12: raw 24 months, aggregates kept, k = 3, stated in `docs/privacy.md` |
+| O5 | Minimum reviews in a month before a payload exists | SP-ANONYMISED-GAP-SIGNAL Q5 | decided by owner 2026-11-12: 10 |
+| O6 | Local store on by default and announced, or opt-in | SP-REVIEW-MEMORY-STORE Q1 | decided by owner 2026-11-12: on and announced |
+| O7 | Default `store_path`: user data dir or `.repoach/memory.db` with a cache key | SP-REVIEW-MEMORY-STORE Q2 | decided by owner 2026-11-12: user data dir; `repoach init` writes the relative form on a hosted runner |
+| O8 | Retire the agentmemory review scope after the store | SP-REVIEW-MEMORY-STORE Q3 | decided by owner 2026-11-12: retire, in a follow-up, once C2 is measured on Yoob |
 | O9 | The 12 871 legacy builder entries | SP-REVIEW-LESSONS-REACH-REVIEWERS Q1, SP-MEMORY-LEGACY-MIGRATION | decided by the owner (F7): summarised, once, by SP-MEMORY-LEGACY-MIGRATION; the backup is the undo |
-| O10 | Trap lessons from refuted findings for the reviewers | SP-REVIEW-LESSONS-REACH-REVIEWERS Q2 | yes, review scope only |
-| O11 | Seed a new per-repository scope on first recall | SP-REVIEW-LESSONS-REACH-REVIEWERS Q3 | yes |
-| O12 | `review pr` turns memory off in a CI job by default, as `ci review` does | SP-MEMORY-FAIL-FAST Q1 | no; the 1 s probe decides |
-| O13 | Recalled lesson texts in the archive comment | SP-MEMORY-FAIL-FAST Q2 | counts only |
-| O14 | Install the versioned `agentmemory.service` over the hand-written one | SP-MEMORY-BACKEND-LIVENESS Q1 | yes |
-| O15 | `MemoryMax=2048M` on the backend | SP-MEMORY-BACKEND-LIVENESS Q2 | yes |
-| O16 | Watchdog on `livez` alone, or also on a zero-hit seed search | SP-MEMORY-BACKEND-LIVENESS Q3 | `livez` alone |
-| O17 | Compaction age `[learning].compact_after_days` | SP-REVIEW-MEMORY-STORE Q4 | 90 days |
-| O18 | Store size cap `[learning].store_max_mb` | SP-REVIEW-MEMORY-STORE Q5 | 10 MB (about 25 000 rows; age is the policy, the cap the guard) |
-| O19 | Summariser model for compaction and for the one-shot migration | SP-REVIEW-MEMORY-STORE Q6, SP-MEMORY-LEGACY-MIGRATION Q1 | `sonnet` tier through the configured provider, texts redacted before and the answer scanned after; `none` (mechanical form) is an explicit setting, never a silent fallback; migration bound ≈ 515 k input + 21 k output tokens before the dry run's count |
-| O20 | Legacy entries no rule attributes to a repository | SP-MEMORY-LEGACY-MIGRATION Q2 | the repoach store |
-| O21 | `forget` the legacy scopes on the backend after a verified migration | SP-MEMORY-LEGACY-MIGRATION Q3 | not yet; one decision with O8 |
+| O10 | Trap lessons from refuted findings for the reviewers | SP-REVIEW-LESSONS-REACH-REVIEWERS Q2 | decided by owner 2026-11-12: yes, review scope only |
+| O11 | Seed a new per-repository scope on first recall | SP-REVIEW-LESSONS-REACH-REVIEWERS Q3 | decided by owner 2026-11-12: yes |
+| O12 | `review pr` turns memory off in a CI job by default, as `ci review` does | SP-MEMORY-FAIL-FAST Q1 | decided by owner 2026-11-12: no; the 1 s probe decides |
+| O13 | Recalled lesson texts in the archive comment | SP-MEMORY-FAIL-FAST Q2 | decided by owner 2026-11-12: counts only |
+| O14 | Install the versioned `agentmemory.service` over the hand-written one | SP-MEMORY-BACKEND-LIVENESS Q1 | decided by owner 2026-11-12: yes |
+| O15 | `MemoryMax=2048M` on the backend | SP-MEMORY-BACKEND-LIVENESS Q2 | decided by owner 2026-11-12: yes |
+| O16 | Watchdog on `livez` alone, or also on a zero-hit seed search | SP-MEMORY-BACKEND-LIVENESS Q3 | decided by owner 2026-11-12: `livez` alone |
+| O17 | Compaction age `[learning].compact_after_days` | SP-REVIEW-MEMORY-STORE Q4 | decided by owner 2026-11-12: 90 days |
+| O18 | Store size cap `[learning].store_max_mb` | SP-REVIEW-MEMORY-STORE Q5 | decided by owner 2026-11-12: 10 MB (about 25 000 rows; age is the policy, the cap the guard) |
+| O19 | Summariser model for compaction and for the one-shot migration | SP-REVIEW-MEMORY-STORE Q6, SP-MEMORY-LEGACY-MIGRATION Q1 | decided by owner 2026-11-12: `sonnet` tier through the configured provider, texts redacted before and the answer scanned after; `none` (mechanical form) is an explicit setting, never a silent fallback; migration bound ≈ 515 k input + 21 k output tokens before the dry run's count |
+| O20 | Legacy entries no rule attributes to a repository | SP-MEMORY-LEGACY-MIGRATION Q2 | decided by owner 2026-11-12: the repoach store |
+| O21 | `forget` the legacy scopes on the backend after a verified migration | SP-MEMORY-LEGACY-MIGRATION Q3 | decided by owner 2026-11-12: not yet; one decision with O8 |
