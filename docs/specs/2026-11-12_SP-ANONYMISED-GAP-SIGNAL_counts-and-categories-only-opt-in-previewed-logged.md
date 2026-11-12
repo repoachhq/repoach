@@ -146,6 +146,7 @@ class Lens(StrEnum): ARCHITECT="architect"; SENTINEL="sentinel"; TESTER="tester"
 class ForgeKind(StrEnum): GITHUB="github"; GITLAB="gitlab"; OTHER="other"
 class ProviderKind(StrEnum): ANTHROPIC="anthropic"; CLAUDE_CODE="claude_code"; OPENAI="openai"; OPENAI_COMPATIBLE="openai_compatible"; GATEWAY="gateway"; OTHER="other"
 class Language(StrEnum): ...   # the census list + OTHER
+from repoach.review.findings import ClaimType   # the eight claim types of F2 (findings.py:51), reused, never copied
 class RepoSize(StrEnum): LT1K="<1k"; K1="1k-10k"; K10="10k+"
 class MemoryStateLabel(StrEnum): ON="on"; OFF="off"; UNREACHABLE="unreachable"
 class IncompleteCause(StrEnum): NONE="none"; TRANSPORT="transport"; OTHER="other"
@@ -229,6 +230,8 @@ verbatim and the status 202. A second `send` for the same period says
 |---|---|---|
 | `tests/unit/test_gap_signal_payload.py::test_planted_markers_never_reach_the_payload` | `tests/fixtures/gap/planted_ledger.sql` plants an `AKIA`-prefixed key of 20 characters, a `ghp_`-prefixed token of 40 characters, a `glpat-`-prefixed token of 26 characters (each built by the test at run time, never written in the repository), `hunter2`, `src/secret/vault_keys.py`, `https://gitlab.example.com/acme/widget`, `alice@example.com`, a 40-hex sha, `!283`, `#288`, `feat/leaky-branch`, `claude-opus-5-20261101`, the slug `github.com/acme/widget`, the reason `because the vault path is fine` in every free-text column, the remote and the store; none appears as a substring of the serialised payload | add `"repo": project_slug(root)` to the model |
 | `::test_every_string_leaf_is_in_the_vocabulary` | walk the JSON: each `str` ∈ `VOCABULARY` | emit a raw count as a string |
+| `::test_languages_capped_at_five_sorted` | a ledger whose repository counts seven census languages → the five most frequent, sorted, no `other` padding | keep all seven |
+| `::test_no_usage_rows_omits_tokens_per_review` | a ledger with no `usage_ledger` rows → the payload has no `tokens_per_review` key, never a null | emit `null` |
 | `::test_every_count_is_a_bucket_and_small_cells_are_absent` | 3 security findings → no `security` key; 7 → `5-9` | render `"<5"` for the 3 |
 | `::test_month_under_ten_reviews_builds_nothing` | 9 reviews → `None` with `fewer than 10 reviews in <period>`; 10 reviews → a payload | use the bucket floor 5 as the minimum |
 | `::test_schema_key_is_serialised_by_alias` | `model_dump(mode="json", by_alias=True)` has the key `schema` and no `schema_`; `GapSignalV1.model_validate({"schema": "repoach-gap/1", ...})` validates | dump without `by_alias` |
@@ -261,7 +264,7 @@ verbatim and the status 202. A second `send` for the same period says
 - Adds dependency: SP-ANONYMISED-GAP-SIGNAL -> SP-CLI-STDOUT-ONE-JSON (`preview --json` is one object on stdout)
 - Adds dependency: SP-ANONYMISED-GAP-SIGNAL -> SP-UNIVERSAL-LEDGER (its G7 and Privacy table are superseded by this format; amended)
 - Adds dependency: SP-ANONYMISED-GAP-SIGNAL -> SP-PRECISION-MEASUREMENT (the digest gains the field table from the receiver's aggregates)
-- New shared contract: `format:gap-signal-v1`, owned here. `gap/` imports `findings.py`, `owner_store.py`, `providers/usage.py`, `memory_store.py`, `project/config.py`, `core/paths.py`; nothing in the review pipeline imports `gap/`. No table, no cycle.
+- New shared contract: `format:gap-signal-v1`, owned here. `gap/` imports `findings.py`, `owner_store.py`, `providers/usage.py`, `memory_store.py`, `project/config.py`, `core/paths.py`, and reads each table through its owner's read-only functions (`findings.fetch_all_findings`, `owner_store.fetch_owner_commands`, and their siblings in the other modules), never with SQL of its own on another module's table; a read the owner lacks is added in the owning module; nothing in the review pipeline imports `gap/`. No table, no cycle.
 
 ## Diagram
 ```mermaid
