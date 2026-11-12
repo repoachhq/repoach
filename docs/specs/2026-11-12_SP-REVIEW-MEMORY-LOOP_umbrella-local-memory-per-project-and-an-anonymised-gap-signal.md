@@ -106,7 +106,7 @@ refusal has a corrective spec and the gate is green.
 - the backend wedges again before 3 lands → 1 bounds the cost to one probe and the report says `unreachable`; the owner restarts by hand, as on 11-12.
 
 ## Architecture Impact
-- Adds dependency: SP-REVIEW-MEMORY-LOOP -> SP-MEMORY-FAIL-FAST, SP-MEMORY-BACKEND-LIVENESS, SP-REVIEW-LESSONS-REACH-REVIEWERS, SP-REVIEW-MEMORY-STORE, SP-ANONYMISED-GAP-SIGNAL (the umbrella orders them; it owns nothing and imports nothing)
+- Adds dependency: SP-REVIEW-MEMORY-LOOP -> SP-MEMORY-FAIL-FAST, SP-MEMORY-BACKEND-LIVENESS, SP-REVIEW-LESSONS-REACH-REVIEWERS, SP-REVIEW-MEMORY-STORE, SP-MEMORY-LEGACY-MIGRATION, SP-ANONYMISED-GAP-SIGNAL (the umbrella orders them; it owns nothing and imports nothing)
 - No code, no table, no cycle.
 
 ## Diagram
