@@ -138,6 +138,18 @@ repoach memory recall-review QUERY [--scope NAME]     # prints `scope: …` firs
 repoach memory seed-review [--scope NAME]
 ```
 
+Signature change, deliberate: `root` is required and keyword-only on `recall_review_lessons` and `remember_verified_findings`, and the old signatures are removed. A default would silently recall and write the global scope again, the defect of F2. The same pull request updates every caller, measured at `8fabb19`:
+
+| Caller | Today | After |
+|---|---|---|
+| `src/repoach/review/orchestrator.py:1799` | `remember_verified_findings(self._db_path, pr_number=pr_number)` | passes `root=` the review's repository root |
+| `src/repoach/review/orchestrator.py:2752` | `recall_review_lessons(query)` | passes `root=` |
+| `src/repoach/cli/main.py:490` | `recall_review_lessons(query)` in `memory recall-review` | moves to `cli/memory_cmds.py`, passes `root=require_project_root()` or the scope of `--scope` |
+| `tests/unit/conftest.py:93`, `tests/unit/test_review_memory.py:126,143,184`, `tests/integration/test_findings_schema_race_end_to_end.py:138` | one-argument stubs (`lambda _query: []`) | stubs take `(query, *, root)` |
+| `tests/unit/test_review_memory.py:75,92`, `tests/unit/test_review_lessons.py:110,127` | direct calls without `root` | pass `root=tmp_path` |
+
+The stubs written `lambda *a, **kw: None` (`tests/integration/test_review_round2_parallel_flow.py:126`, `tests/integration/test_review_post_batch_end_to_end.py:176`, `tests/integration/test_fresh_head_concurrent.py:141`, `tests/unit/test_review_head_guard.py:298`) keep working unchanged.
+
 Outputs: `MemoryReport.scope`, `MemoryReport.remembered_by_scope: {review: int, builder: int}`.
 
 Errors: none new.
