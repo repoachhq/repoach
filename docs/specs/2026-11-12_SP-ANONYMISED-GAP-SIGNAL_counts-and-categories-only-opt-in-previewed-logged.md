@@ -16,6 +16,7 @@ provides_to: []
 
 constraints:
   count_bucket_floor: 5
+  min_reviews_per_period: 10
   k_anonymity_senders: 3
   period_granularity: month
   one_send_per_period: true
@@ -70,6 +71,8 @@ Measured 2026-11-12, `origin/develop` `8fabb19`.
   (`<50k`, `50k-150k`, `150k-400k`, `400k+`). A cell is sent only when
   its denominator bucket is at least `5-9`; below that the cell is
   absent, not `"<5"`, so a lone finding never shows its category.
+  A month with fewer than 10 reviews (`min_reviews_per_period`, owner
+  decision Q5) builds no payload at all, whatever its buckets.
 - D4. The period is the calendar month of the reviews counted; a
   payload covers one closed month (never the current one), so a send
   cannot be matched to a merge request by its time.
@@ -110,7 +113,7 @@ Measured 2026-11-12, `origin/develop` `8fabb19`.
 ## Goals
 
 - G1: `GapSignalV1` (schema `repoach-gap/1`) with these fields and only these: `schema`, `repoach` (major.minor), `period`, `forge`, `provider`, `languages` (≤ 5 from the census vocabulary, sorted), `repo_size`, `reviews`, `merge_requests`, `findings_by_claim_type` (claim type → outcome → bucket), `findings_by_lens` (lens → outcome → bucket), `owner_commands` (command → outcome → bucket), `threads_closed`, `incomplete_cause` (cause → bucket), `memory_state` (state → bucket of runs), `lessons_recalled_p50`, `lessons_written`, `tokens_per_review` (`p50`, `p90` bands), `diff_size` (band → bucket).
-- G2: `build_gap_signal(ledger, store, *, period, config) -> GapSignalV1 | None` reads `pr_findings`, `owner_commands`, `usage_ledger`, `pr_review_runs` and the store's `lens_record`; `None` with a named reason when the month has fewer than `5` reviews.
+- G2: `build_gap_signal(ledger, store, *, period, config) -> GapSignalV1 | None` reads `pr_findings`, `owner_commands`, `usage_ledger`, `pr_review_runs` and the store's `lens_record`; `None` with a named reason when the month has fewer than `min_reviews_per_period` (10, Q5) reviews.
 - G3: `repoach gap preview`, `send`, `log` as D5; `send` exits 0 on `2xx`, 2 on refusal (reason named), 3 on a transport error; the log line is written before the request and completed after it.
 - G4: `tests/unit/test_gap_signal_payload.py` seeds a ledger and a store with planted markers in every free-text column (F1) and in the repository's remote and slug, builds the payload for a month with 12 reviews, serialises it, and asserts: every string leaf is in `VOCABULARY`; no leaf matches `/`, `\.(py|ts|js|md)`, `[0-9a-f]{7,}`, `[#!][0-9]`, `@`, `https?:`, `ghp_`, `glpat-`, `AKIA`; none of the planted markers appears as a substring; every count leaf is a bucket label; cells with a denominator under 5 are absent.
 - G5: `tests/unit/test_gap_signal_consent.py`: `send` refused without `gap_signal = true`, without an endpoint, in CI, for the current month, and for an already-sent period without `--again`; `preview` never writes the log; `send --yes` writes the log before the request.
@@ -149,8 +152,8 @@ class IncompleteCause(StrEnum): NONE="none"; TRANSPORT="transport"; OTHER="other
 class OwnerCommandKind(StrEnum): RESOLVE="resolve"; REOPEN="reopen"
 class OwnerOutcomeLabel(StrEnum): APPLIED="applied"; NO_REASON="no_reason"; UNKNOWN_FINDING="unknown_finding"; AMBIGUOUS="ambiguous"; NOT_OWNER="not_owner"; NOOP="noop"
 
-class GapSignalV1(BaseModel, extra="forbid"):
-    schema: Literal["repoach-gap/1"]
+class GapSignalV1(BaseModel, extra="forbid", populate_by_name=True):
+    schema_: Literal["repoach-gap/1"] = Field(alias="schema")
     repoach: str = Field(pattern=r"^\d+\.\d+$")
     period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     forge: ForgeKind; provider: ProviderKind
@@ -180,6 +183,8 @@ def send_gap_signal(payload, *, endpoint: str, log_path: Path, transport=httpx.C
 def already_sent(log_path: Path, period: str) -> bool: ...
 ```
 
+The wire key is `schema`; the field is `schema_` with `alias="schema"`, because a `schema` field would shadow `BaseModel.schema` in Pydantic v2, the same way `src/repoach/project/config.py:229` names its `schema` key. The payload is always serialised with `model_dump(mode="json", by_alias=True)`, so `preview --json`, the send body and the log carry `schema`, never `schema_`.
+
 `repoach.toml`:
 
 ```toml
@@ -193,7 +198,7 @@ def already_sent(log_path: Path, period: str) -> bool: ...
 
 CLI: `repoach gap preview [--period YYYY-MM] [--json]`, `repoach gap send [--period YYYY-MM] [--yes] [--again]`, `repoach gap log [--json]`.
 
-Errors: `GapRefusedError` (rc 2, reason: `consent off`, `no endpoint`, `CI job`, `current month`, `already sent <period>`, `fewer than 5 reviews in <period>`, `payload failed the vocabulary check: <key>`), `GapTransportError` (rc 3).
+Errors: `GapRefusedError` (rc 2, reason: `consent off`, `no endpoint`, `CI job`, `current month`, `already sent <period>`, `fewer than 10 reviews in <period>`, `payload failed the vocabulary check: <key>`), `GapTransportError` (rc 3).
 
 ## Behavior
 
@@ -206,6 +211,7 @@ verbatim and the status 202. A second `send` for the same period says
 `already sent 2026-11 on <date>`, rc 2.
 
 ### Edge cases
+- a month with 9 reviews → no payload, `preview` and `send` say `fewer than 10 reviews in <period>`, rc 2 (D3, Q5).
 - a month with 12 reviews but 3 `security` findings → the `security` row is absent from `findings_by_claim_type` (D3).
 - `languages` of a polyglot repository → the five most frequent of the census, sorted; the rest dropped, never `other` padded.
 - `provider = gateway` → `gateway`, whatever the gateway's upstream.
@@ -224,6 +230,8 @@ verbatim and the status 202. A second `send` for the same period says
 | `tests/unit/test_gap_signal_payload.py::test_planted_markers_never_reach_the_payload` | `tests/fixtures/gap/planted_ledger.sql` plants an `AKIA`-prefixed key of 20 characters, a `ghp_`-prefixed token of 40 characters, a `glpat-`-prefixed token of 26 characters (each built by the test at run time, never written in the repository), `hunter2`, `src/secret/vault_keys.py`, `https://gitlab.example.com/acme/widget`, `alice@example.com`, a 40-hex sha, `!283`, `#288`, `feat/leaky-branch`, `claude-opus-5-20261101`, the slug `github.com/acme/widget`, the reason `because the vault path is fine` in every free-text column, the remote and the store; none appears as a substring of the serialised payload | add `"repo": project_slug(root)` to the model |
 | `::test_every_string_leaf_is_in_the_vocabulary` | walk the JSON: each `str` ∈ `VOCABULARY` | emit a raw count as a string |
 | `::test_every_count_is_a_bucket_and_small_cells_are_absent` | 3 security findings → no `security` key; 7 → `5-9` | render `"<5"` for the 3 |
+| `::test_month_under_ten_reviews_builds_nothing` | 9 reviews → `None` with `fewer than 10 reviews in <period>`; 10 reviews → a payload | use the bucket floor 5 as the minimum |
+| `::test_schema_key_is_serialised_by_alias` | `model_dump(mode="json", by_alias=True)` has the key `schema` and no `schema_`; `GapSignalV1.model_validate({"schema": "repoach-gap/1", ...})` validates | dump without `by_alias` |
 | `::test_regex_net` | the G4 regexes find nothing | — |
 | `::test_period_is_a_closed_month_and_nothing_finer` | no leaf matches `\d{4}-\d{2}-\d{2}` or `T\d{2}:` | add `generated_at` |
 | `::test_model_forbids_extra_fields` | `GapSignalV1(**payload, note="x")` raises | drop `extra="forbid"` |
@@ -266,7 +274,7 @@ flowchart TD
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: `pytest -q tests/unit/test_gap_signal_payload.py` → green: the planted markers never reach the payload, every string leaf is in the vocabulary, counts are buckets, small cells absent, no identifier, no hash, extra fields forbidden. Today (`8fabb19`): nothing of it exists.
+- [ ] AC1: `pytest -q tests/unit/test_gap_signal_payload.py` → green: the planted markers never reach the payload, every string leaf is in the vocabulary, counts are buckets, small cells absent, a month under 10 reviews builds nothing, the wire key is `schema`, no identifier, no hash, extra fields forbidden. Today (`8fabb19`): nothing of it exists.
 - [ ] AC2: `pytest -q tests/unit/test_gap_signal_consent.py` → green: the five refusals, preview writes nothing, the log precedes the request, `--again`.
 - [ ] AC3: `pytest -q tests/unit/test_gap_signal_transport.py` → green: one request, two headers, no redirect, no retry, body equals the preview.
 - [ ] AC4: `repoach gap send --yes` in a clone with no `[telemetry]` → `not sent: consent off ([telemetry].gap_signal = false)`, rc 2, no request, no log row; `CI=true repoach gap send --yes` with consent on → `not sent: CI job`, rc 2.
@@ -277,4 +285,4 @@ flowchart TD
 - Q2 (decided by owner 2026-11-12: the proposed English wording): the opt-in wording written by `repoach init` and printed by `preview`. Proposed: "Anonymised gap signal: counts and categories only (findings by claim type and outcome, lens precision, owner decisions, token bands). Never a path, a name, a text, an identifier or a date finer than the month. Off by default; `repoach gap preview` shows exactly what one send carries; every send is logged in `gap_sends.jsonl`." Recommendation: this wording, in English only, since it is a configuration file comment.
 - Q3 (decided by owner 2026-11-12: no identifier): no identifier at all (D2) or a rotatable random install id as SP-UNIVERSAL-LEDGER drafted? Recommendation: none; the owner's principle says anonymised, and k-anonymity by payload count with one send per period per repository gives the receiver what trends need.
 - Q4 (decided by owner 2026-11-12: as proposed: raw 24 months, aggregates kept, k = 3, stated in docs/privacy.md): retention. Proposed: raw payloads 24 months then deleted; aggregates kept; the retention and the k threshold stated in `docs/privacy.md` and on the receiver's root page. Recommendation: as proposed.
-- Q5 (decided by owner 2026-11-12: 10): the minimum reviews per month to build a payload (D3 and G2 use 5, the bucket floor) — raise it to 10 so a small project's month cannot be read as one or two merge requests? Recommendation: 10; a project under that sends nothing and `preview` says why.
+- Q5 (decided by owner 2026-11-12: 10): the minimum reviews per month to build a payload (the first draft reused the bucket floor, 5; D3, G2, the refusal text and `min_reviews_per_period` now carry 10) — raise it to 10 so a small project's month cannot be read as one or two merge requests? Recommendation: 10; a project under that sends nothing and `preview` says why.
