@@ -137,6 +137,8 @@ Units (`deploy/systemd/`):
 | `agentmemory-watchdog.service` | `Type=oneshot`, `ExecStart=%h/Documents/work/repoach/deploy/systemd/agentmemory-watchdog.sh` |
 | `agentmemory-watchdog.timer` | `OnBootSec=2min`, `OnUnitActiveSec=60s`, `AccuracySec=5s`, `WantedBy=timers.target` |
 
+The `%h/Documents/work/repoach` and `%h/services/agentmemory` paths follow the convention every unit of `deploy/systemd/` already uses, documented in `deploy/systemd/README.md:4-8` (adjust `WorkingDirectory` / `ExecStart` when the checkout lives elsewhere); the three new units add their install lines to that README (G1, AC5) and introduce no other layout.
+
 Script `agentmemory-watchdog.sh`: env `AGENTMEMORY_URL` (default `http://127.0.0.1:3111`), `AGENTMEMORY_UNIT` (default `agentmemory.service`), `WATCHDOG_LOG` (default `%h/services/agentmemory/logs/agentmemory-watchdog.log`); exit 0 healthy or restarted, 3 a tool missing.
 
 ## Behavior
@@ -169,6 +171,7 @@ Every minute the script gets `livez` in under 2 s and exits 0 silently. A review
 | `::test_hit_equal_to_a_seed_is_not_duplicated` | hits `[seed[2], "other"]` → seeds then `other` | compare by prefix instead of equality |
 | `::test_kill_switch_still_returns_nothing` | switch false → `[]`, no seeds | pin the seeds above the switch |
 | `::test_report_marks_pinned_entries` | `MemoryReport.recalled` ends seeds with ` (pinned)` | — |
+| `::test_with_pinned_never_duplicates_or_exceeds_limit` | hypothesis property (C4): random seed lists, hit lists and limits; the result has no duplicate, never more entries than the limit, and starts with the seeds that fit | drop the dedup or the cap |
 | `tests/integration/test_agentmemory_live_seeds.py` | with `REPOACH_LIVE_MEMORY=1`: seeds a throwaway scope, queries with the full seed text, its first six words, and the review query form; prints hits per form | n/a, evidence |
 
 ## Success conditions
