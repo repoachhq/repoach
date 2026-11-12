@@ -95,8 +95,10 @@ Measured 2026-11-12, `origin/develop` `8fabb19`, backend read-only.
 - D7. `--dry-run` runs stages 1 and 2 and prints counts only: entries
   read per scope, dropped per noise pattern, kept, groups per slug and
   claim type, entries `unattributed`, the token estimate (input: kept
-  characters ÷ 4 plus prompt tokens per batch; output: 300 per group)
-  and the number of model calls. It opens no store and calls no model.
+  characters ÷ 4 plus prompt tokens per batch; output: 300 per summarised
+  group) and the number of model calls: one per batch of each summarised
+  group plus one merge call per split group; a group of one or two
+  entries is written as rows and costs no call (D4). It opens no store and calls no model.
 - D8. The summariser is the `sonnet` tier through the configured
   provider unless `--summariser` names `haiku`, `opus` or `none` (owner
   decision Q1 of this spec records the choice; SP-REVIEW-MEMORY-STORE
@@ -109,8 +111,8 @@ Measured 2026-11-12, `origin/develop` `8fabb19`, backend read-only.
 ## Goals
 
 - G1: `repoach memory migrate-legacy [--dry-run] [--from FILE] [--scope NAME]... [--slug-map a=b]... [--summariser TIER] [--purge-target] [--json]` runs D1–D8 and prints the report; exit 0, 2 on a refused input (no export, a slug map that names no store), 3 when the summariser is unavailable (stages 1 and 2 done, nothing written).
-- G2: `tests/fixtures/memory/legacy_export_sample.jsonl` holds 60 synthetic entries in F2's shapes, with noise, duplicates, both repositories' paths, two build outcomes per spec and a planted secret; the unit test drives every stage from it with a fake summariser.
-- G3: the dry run on the sample prints `read 60, dropped 23 (test_never_written 8, SP-MULTI 6, duplicate 7, seed 2), kept 37, groups 9, unattributed 1, tokens in ≈ …, out ≈ 2700, model calls 9` and writes no file but the report.
+- G2: `tests/fixtures/memory/legacy_export_sample.jsonl` holds 60 synthetic entries in F2's shapes, with noise, duplicates, both repositories' paths, two build outcomes per spec and a planted secret, and its 37 kept entries fall into 9 groups of which 2 hold one or two entries; the unit test drives every stage from it with a fake summariser.
+- G3: the dry run on the sample prints `read 60, dropped 23 (test_never_written 8, SP-MULTI 6, duplicate 7, seed 2), kept 37, groups 9 (summarised 7, rows 2), unattributed 1, tokens in ≈ …, out ≈ 2100, model calls 7` and writes no file but the report.
 - G4: after a real run, `repoach memory list --kind summary` in the repoach checkout lists rows whose `source_finding_key` starts with `legacy:repoach-builder:` and whose `source_count` sums to the kept count of the report.
 
 ## Non-Goals
@@ -180,7 +182,7 @@ unchanged; the backup stays.
 | `::test_entries_are_attributed_by_path_and_spec_id` | `src/repoach/…` and `SP-…` → repoach's slug; `src/yoob/…` → Yoob's; an unknown path → the default slug and `unattributed 1` | attribute everything to the default |
 | `::test_groups_by_slug_kind_claim_type_and_path_family` | 9 groups on the sample, keys as D3 | group by full path |
 | `::test_summary_rows_carry_provenance_counts_and_dates` | each written summary: `source_finding_key` `legacy:<scope>:<sha12>`, `source_count` the group size, `first_seen`/`last_seen` from the entries, ratio as D4 | drop the provenance key |
-| `::test_small_groups_are_written_as_rows_not_summaries` | one- and two-entry groups → `confirmed` rows | summarise them |
+| `::test_small_groups_are_written_as_rows_not_summaries` | the sample's two one- and two-entry groups → `confirmed` rows, and the fake summariser is called 7 times, not 9 | summarise them |
 | `::test_dry_run_prints_counts_and_writes_nothing` | no store file created, the fake summariser never called, the report has every count and the token estimate | open the store in dry run |
 | `::test_planted_secret_never_reaches_a_row_or_the_report` | a 40-character `ghp_`-prefixed token and an email built at run time in two old entries: absent from every row and from the report JSON | skip redaction for legacy rows |
 | `::test_second_run_refused_and_purge_target_rewrites` | same export → rc 2; `--purge-target` → the same rows, once | drop the export hash check |
