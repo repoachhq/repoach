@@ -74,13 +74,17 @@ Measured 2026-11-12, `origin/develop` `8fabb19`.
   path meets a closed port, which SP-MEMORY-FAIL-FAST's probe turns
   into `unreachable` in milliseconds. A test that exercises the client
   itself uses its own fake transport.
-- D4. The existing noise is quarantined by rotation, not deleted: the
-  per-repository scopes of D1 are new and empty, the global
+- D4. The per-repository scopes of D1 are new and empty; the global
   `repoach-builder` and `repoach-review` are no longer read or written
   by any run. `repoach memory audit` measures what the legacy scopes
   hold: for each known noise phrase it searches the scope and prints
-  the hit count; it writes nothing. Deletion is the owner's call (Q1):
-  `forget`'s body shape is unverified (F9) and the backup exists.
+  the hit count; it writes nothing. Its `NOISE_PATTERNS` are the one
+  list SP-MEMORY-LEGACY-MIGRATION drops. What the legacy scopes hold
+  is not orphaned: the owner decided on 2026-11-12 (« Les entrées trop
+  anciennes peuvent être résumées pour libérer de la place ») that old
+  entries are summarised; SP-MEMORY-LEGACY-MIGRATION does it once for
+  the legacy scopes, into the store of SP-REVIEW-MEMORY-STORE, with
+  `data.bak-20261112-1702` as the undo (F9).
 - D5. The new scopes are seeded on first use: a recall against an
   empty per-repository review scope writes the pinned seeds once
   (`seed_review_memory(scope)`), so `repoach memory seed-review` need
@@ -100,7 +104,7 @@ Measured 2026-11-12, `origin/develop` `8fabb19`.
 
 - NG1: no local store and no cross-MR precision (SP-REVIEW-MEMORY-STORE).
 - NG2: no change to the three switches' defaults or to the pinned seeds' text.
-- NG3: no migration of the 12 871 legacy entries into the new scopes; no automatic deletion.
+- NG3: no migration of the 12 871 legacy entries in this spec (SP-MEMORY-LEGACY-MIGRATION does it once, after SP-REVIEW-MEMORY-STORE); no deletion here.
 - NG4: no change to the prompt sections' shape; a `trap` lesson renders as one bullet like any other.
 
 ## Assumptions
@@ -208,6 +212,6 @@ flowchart TD
 - [ ] AC5: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `docs/specs/2026-10-19_SP-MEMORY-LOOPS-EXPLICIT_*.md` carries the amendment for G4 and G5.
 
 ## Open Questions
-- Q1 (owner decision): the 12 871 legacy builder entries: leave them orphaned in the global scope (D4), delete the noise through `/agentmemory/forget` once its body shape is read from the backend's source, or restore `data.bak-20261112-1702` and re-seed? Recommendation: leave them orphaned and re-seed the per-repository scopes; no run reads the global scope after this spec, and a delete gains nothing a reader can see.
+- Q1 (decided by the owner, 2026-11-12): the 12 871 legacy builder entries are not orphaned; entries too old are summarised to free space. Delivered by SP-MEMORY-LEGACY-MIGRATION (noise dropped, the rest grouped by repository and claim type, summarised into the per-repository store with provenance, the backup as the undo, a dry run that prints counts only). Closed.
 - Q2 (owner decision): write `trap` lessons for the reviewers (D2), against SP-REVIEW-LESSONS's rule that refuted findings are never learned from? Recommendation: yes for the review scope only; a trap tells a lens what it was wrong about, which is what the per-MR track record already does, and the builder scope keeps the original rule.
 - Q3 (owner decision): seed a new per-repository scope automatically on first recall (D5), or only through `repoach memory seed-review`? Recommendation: automatically; the pinned seeds are injected anyway, and the write only lets the backend rank them.
