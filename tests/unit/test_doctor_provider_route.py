@@ -148,6 +148,7 @@ def test_preset_names_its_key_and_lists_every_route(
         f"provider_option={name}"
         for name in (
             "claude_code",
+            "antigravity",
             "anthropic",
             "openai_compatible",
             "gemini",

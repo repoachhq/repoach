@@ -32,6 +32,8 @@ def test_current_registry_is_the_ten_providers() -> None:
         "openai",
         "anthropic",
         "openai_compatible",
+        "gemini",
+        "antigravity",
     )
 
 

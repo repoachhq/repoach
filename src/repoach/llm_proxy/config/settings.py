@@ -125,6 +125,8 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "OPENAI_API_KEY": "REPOACH_OPENAI_API_KEY",
     "OPENAI_COMPATIBLE_API_KEY": "REPOACH_OPENAI_COMPATIBLE_API_KEY",
     "OPENAI_COMPATIBLE_BASE_URL": "REPOACH_OPENAI_COMPATIBLE_BASE_URL",
+    "GEMINI_API_KEY": "REPOACH_GEMINI_API_KEY",
+    "GEMINI_BASE_URL": "REPOACH_GEMINI_BASE_URL",
     "BREAKER_ENABLED": "REPOACH_BREAKER_ENABLED",
     "BREAKER_TTL_S": "REPOACH_BREAKER_TTL_S",
     "BREAKER_TTL_TERMINAL_S": "REPOACH_BREAKER_TTL_TERMINAL_S",
@@ -135,6 +137,9 @@ _LEGACY_TO_REPOACH_ALIAS: dict[str, str] = {
     "CLAUDE_CODE_CLI_PATH": "REPOACH_CLAUDE_CODE_CLI_PATH",
     "CLAUDE_CODE_DEFAULT_MODEL": "REPOACH_CLAUDE_CODE_DEFAULT_MODEL",
     "CLAUDE_CODE_SUBPROCESS_TIMEOUT": "REPOACH_CLAUDE_CODE_SUBPROCESS_TIMEOUT",
+    "ANTIGRAVITY_CLI_PATH": "REPOACH_ANTIGRAVITY_CLI_PATH",
+    "ANTIGRAVITY_DEFAULT_MODEL": "REPOACH_ANTIGRAVITY_DEFAULT_MODEL",
+    "ANTIGRAVITY_SUBPROCESS_TIMEOUT": "REPOACH_ANTIGRAVITY_SUBPROCESS_TIMEOUT",
     "MODEL": "REPOACH_PROXY_DEFAULT_MODEL",
     "NVIDIA_NIM_PROXY": "REPOACH_NVIDIA_NIM_PROXY",
     "OPENROUTER_PROXY": "REPOACH_OPENROUTER_PROXY",
@@ -270,6 +275,15 @@ class Settings(BaseSettings):
     openai_compatible_base_url: str = Field(
         default="", validation_alias=_aliases("OPENAI_COMPATIBLE_BASE_URL")
     )
+    gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "REPOACH_GEMINI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ),
+    )
+    gemini_base_url: str = Field(default="", validation_alias=_aliases("GEMINI_BASE_URL"))
 
     artificial_analysis_api_key: str = Field(
         default="", validation_alias=_aliases("ARTIFICIAL_ANALYSIS_API_KEY")
@@ -286,6 +300,19 @@ class Settings(BaseSettings):
     claude_code_subprocess_timeout: float = Field(
         default=600.0,
         validation_alias=_aliases("CLAUDE_CODE_SUBPROCESS_TIMEOUT"),
+    )
+
+    antigravity_cli_path: str = Field(
+        default="agy",
+        validation_alias=_aliases("ANTIGRAVITY_CLI_PATH"),
+    )
+    antigravity_default_model: str = Field(
+        default="gemini-3.8-flash-medium",
+        validation_alias=_aliases("ANTIGRAVITY_DEFAULT_MODEL"),
+    )
+    antigravity_subprocess_timeout: float = Field(
+        default=600.0,
+        validation_alias=_aliases("ANTIGRAVITY_SUBPROCESS_TIMEOUT"),
     )
 
     model: str = Field(default="nvidia_nim/z-ai/glm4.7", validation_alias=_aliases("MODEL"))

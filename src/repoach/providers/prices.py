@@ -45,7 +45,7 @@ ANTHROPIC_PRICING_URL = "https://platform.claude.com/docs/en/about-claude/pricin
 OPENAI_PRICING_URL = "https://developers.openai.com/api/docs/pricing"
 GEMINI_PRICING_URL = "https://ai.google.dev/gemini-api/docs/pricing"
 
-SUBSCRIPTION_PROVIDERS: frozenset[str] = frozenset({"claude_code"})
+SUBSCRIPTION_PROVIDERS: frozenset[str] = frozenset({"claude_code", "antigravity"})
 """Providers billed by a subscription: tokens are recorded, a cost never is."""
 
 SELF_HOSTED_PROVIDERS: frozenset[str] = frozenset({"ollama"})
