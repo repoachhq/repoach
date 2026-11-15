@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-NITS-ONE-COMMENT
 title: Nits are consolidated into one non-blocking comment per merge request; only minor and worse open a resolvable, blocking thread
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -180,4 +180,4 @@ flowchart LR
 - [ ] AC3: `docs/merge_gate.md` carries the D5 section.
 
 ## Open Questions
-- Q1: should `minor` also go to the digest? Recommendation: no, as the owner decided; a minor is a defect the author should answer, and the digest is for what needs no answer.
+- None. Decided by the owner on 2026-11-15: Q1 (`minor` in the digest) — no; `minor` opens a thread, only `nit` goes to the digest.

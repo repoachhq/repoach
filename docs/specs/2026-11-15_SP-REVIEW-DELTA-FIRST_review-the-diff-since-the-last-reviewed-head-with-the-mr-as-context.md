@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-DELTA-FIRST
 title: From the second round on, the lenses review the diff since the last reviewed head, with the full merge request as cached context
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -216,5 +216,4 @@ flowchart TD
 - [ ] AC4: `docs/review_redesign_architecture.md` describes full and delta rounds and the two blocks.
 
 ## Open Questions
-- Q1: should a delta round also run when the merge request's target branch moved (develop advanced), reviewing the merge-base shift? Recommendation: no; the target is the author's changes, and the gate's CI covers the integration.
-- Q2: 1 h cache TTL (5 minutes is the default, cheaper to write) — recommendation: 1 h, since the four lenses run within minutes but the refuter and a round-2 confirm can run later in the same job; the write premium is 2× the base price on a 57 k block, about 0.11 USD on Sonnet.
+- None. Decided by the owner on 2026-11-15: Q1 (a delta round when the target branch moved) — no; the target is the author's changes; Q2 (context cache TTL) — 1 h, the `context_cache_ttl` constraint.

@@ -1,8 +1,8 @@
 ---
 id: SP-ANTHROPIC-BUDGET-GUARD
 title: Every metered Anthropic call is priced, summed against a configured budget, and refused by name when the budget is reached
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -93,17 +93,23 @@ configured in USD.
   every `anthropic/*` candidate for that reason (F9's mechanism), and
   the direct provider raises `BudgetExhaustedError` (not retryable).
 - D3. Never a silent fallback. A chain whose `anthropic/*` hop is
-  skipped for `budget_exhausted` continues to its next hop only when
-  `[budget].on_exhausted = "next_hop"`; the default `"refuse"` makes the
-  chain exhausted at that point, the review ends `ERROR` with
-  `budget exhausted: 103.21 of 108.00 USD since 2026-11-15; next hop
-  not taken ([budget].on_exhausted = refuse)`, and the archive comment
-  carries the same line. With `"next_hop"` the hop taken is named in
-  the same places (`served by claude_code/opus after budget_exhausted`).
+  skipped for `budget_exhausted` continues to its `claude_code` tail,
+  the owner's Max plan (owner decision 2026-11-15: « de toute façon on a
+  le plan en fallback »), and says so everywhere the review can be read:
+  one log line `budget_exhausted_fallback` with the figures, the review
+  JSON (`provider.refusal = budget_exhausted`, `provider.served_by =
+  claude_code/opus`), the stderr line and the archive comment, all
+  carrying `budget exhausted: 103.21 of 108.00 USD since 2026-11-15;
+  reviewed on the subscription (claude_code/opus)`. The budget total
+  keeps counting the metered calls that did run. `[budget].on_exhausted
+  = "refuse"` is the explicit alternative: the chain is exhausted at that
+  point and the review ends `ERROR` with the same figures and `next hop
+  not taken`.
 - D4. The budget is configuration, read once per process: `[budget]`
   in `repoach.toml` or `REPOACH_BUDGET_USD`, `REPOACH_BUDGET_SINCE`
   (a date; default the day the key was first seen), `REPOACH_BUDGET_WARN_RATIO`
-  (0.8), `REPOACH_BUDGET_ON_EXHAUSTED` (`refuse` | `next_hop`). A
+  (0.8), `REPOACH_BUDGET_ON_EXHAUSTED` (`next_hop`, the default |
+  `refuse`). A
   budget of 0 (the default) means every metered call is refused: the
   owner states a budget before the key spends. `repoach doctor` says
   which it is.
@@ -136,10 +142,10 @@ configured in USD.
 
 The owner's key is behind the reviews; `repoach budget` answers what
 it has spent since the date he chose and what is left; a review that
-would cross the line ends `ERROR` with the figures in the comment on
-the merge request and in `review-gate.json`; no review ever ran on a
-provider the report does not name; and the gateway's `/health` shows
-the ratio before anyone has to ask.
+would cross the line finishes on the subscription and says so, with the
+figures, in the comment on the merge request and in `review-gate.json`;
+no review ever ran on a provider the report does not name; and the
+gateway's `/health` shows the ratio before anyone has to ask.
 
 ## Easy solution rejected
 
@@ -168,7 +174,7 @@ call too when both read the same database file.
 
 - G1: `anthropic_spend` exists in the gateway state database and beside the direct provider's ledger; every metered call writes one row with `host`, `model`, `input`, `output`, `cache_read`, `cache_write`, `cost_usd`, `price_source`, `day`, `run_id`.
 - G2: a call whose estimate would cross the budget is refused before dispatch with `budget_exhausted`, the total and the budget in the message; a metered model with no price row is refused with `unpriced_model`.
-- G3: `[budget].on_exhausted` decides whether the chain continues; both outcomes are named in the review JSON (`provider.served_by`, `provider.refusal`), the stderr line and the archive comment.
+- G3: on `budget_exhausted` the chain continues to its `claude_code` tail by default and the fallback is named in the log, the review JSON (`provider.served_by`, `provider.refusal`), the stderr line and the archive comment with the sentence of D3; `[budget].on_exhausted = refuse` ends the review `ERROR` with the same figures instead. Neither outcome is ever silent.
 - G4: the four current Anthropic ids are priced at the vendor's list price, each row citing its page and day; `PRICES_READ_ON` is that day; the stale rule is unchanged.
 - G5: `repoach budget`, `/health` and `chain-status` print the budget line of D7; the review report prints the review's cost and the running total.
 - G6: a user-level key is refused by name unless `REPOACH_ANTHROPIC_WORKSPACE_ID` is set, in which case the header travels on every call; no log or error carries a key character.
@@ -195,7 +201,7 @@ class BudgetConfig(BaseModel):
     budget_usd: Decimal            # default 0
     since: date
     warn_ratio: float = 0.8
-    on_exhausted: Literal["refuse", "next_hop"] = "refuse"
+    on_exhausted: Literal["next_hop", "refuse"] = "next_hop"
     db_path: Path
 
 class SpendRow(BaseModel):
@@ -243,7 +249,8 @@ estimated call by call, each admitted, each recorded from the real
 - the estimate admits and the real usage crosses the budget → the call is recorded in full, the next call is refused; the total may overshoot by at most one call's real cost, which the report states.
 - `warn_ratio` crossed during a review → one `WARN` line, the review continues.
 - a model with no row at the day of the call (F5, or a `valid_until` passed) → `unpriced_model`, refused before dispatch, named.
-- `on_exhausted = next_hop` and the next hop is `claude_code/opus` → served, `served_by` names it, the archive comment says so.
+- budget reached mid-review (default `next_hop`) → the remaining calls run on `claude_code/<tier>`, `served_by` names it per lens, the archive comment carries `budget exhausted: … reviewed on the subscription`, the metered calls already made stay counted.
+- `on_exhausted = refuse` → chain exhausted, review `ERROR` with the figures and `next hop not taken`.
 - the key is `sk-ant-usr…` and the workspace id is set → header sent, no refusal; unset → `GatewayConfigError` at boot and from `doctor`.
 
 ### Failure scenarios
@@ -259,21 +266,23 @@ estimated call by call, each admitted, each recorded from the real
 | `::test_real_usage_is_recorded_not_the_estimate` | the row carries the response `usage` | record the estimate |
 | `::test_budget_zero_refuses_every_metered_call` | D4 | default 1 |
 | `::test_warn_once_at_ratio` | one `budget_warn` event per process | warn per call |
-| `tests/unit/test_budget_gate_dispatch.py::test_gateway_skips_anthropic_candidate_for_budget_exhausted_and_refuses_the_chain` | reason recorded, `on_exhausted=refuse` → chain exhausted, `claude_code` not dispatched | fall through to the next hop |
-| `::test_next_hop_is_named_in_served_by` | `on_exhausted=next_hop` | serve without naming |
+| `tests/unit/test_budget_gate_dispatch.py::test_gateway_skips_anthropic_candidate_for_budget_exhausted_and_falls_to_the_subscription_named` | default: reason recorded, `claude_code/<tier>` dispatched, log line `budget_exhausted_fallback`, `served_by` names it | serve without naming |
+| `::test_refuse_setting_exhausts_the_chain_with_the_figures` | `on_exhausted=refuse` → chain exhausted, `claude_code` not dispatched | fall through |
+| `::test_metered_total_keeps_counting_after_the_fallback` | the next metered call after a fallback is still judged against the same total | reset the total |
 | `tests/unit/test_prices_current_models.py::test_four_current_anthropic_ids_are_priced_and_dated` | the rows of F6 exist, `read_on == PRICES_READ_ON`, `price_row` answers | drop the `claude-fable-5-1` row |
 | `::test_unpriced_model_is_refused_not_dispatched` | D5 | dispatch and record cost None |
 | `tests/unit/test_anthropic_key_kind.py::test_user_level_key_without_workspace_id_is_refused_by_name_without_the_key` | the message holds `user-level` and no key character | print the prefix |
 | `::test_workspace_header_travels_when_the_id_is_set` | the fake transport sees `anthropic-workspace-id` | send it only on the first call |
-| `tests/integration/test_budget_exhausted_names_the_refusal.py::test_review_pr_ends_error_with_the_budget_line_in_json_and_comment` | end to end on fakes: `final_verdict == ERROR`, `provider.refusal == budget_exhausted`, archive comment matches `^budget exhausted: \d+\.\d\d of \d+\.\d\d USD since \d{4}-\d{2}-\d{2}` | approve on exhaustion |
+| `tests/integration/test_budget_exhausted_names_the_refusal.py::test_review_pr_completes_on_the_subscription_and_names_it_in_json_and_comment` | end to end on fakes, default setting: the review completes, `provider.refusal == budget_exhausted`, `provider.served_by == claude_code/…`, archive comment matches `^budget exhausted: \d+\.\d\d of \d+\.\d\d USD since \d{4}-\d{2}-\d{2}; reviewed on the subscription` | complete without the line |
+| `::test_review_pr_ends_error_under_refuse` | `on_exhausted=refuse` → `final_verdict == ERROR`, same figures, `next hop not taken` | approve |
 
 ## Success conditions
 
-- C1: with `REPOACH_BUDGET_USD=1` and a fake Anthropic transport, `repoach review pr <n> --dry-run` makes exactly the calls whose cumulative estimate fits in 1 USD, then prints the refusal line; oracle: the fake transport's request count equals the number of admitted calls in `anthropic_spend`.
+- C1: with `REPOACH_BUDGET_USD=1`, a fake Anthropic transport and a fake `claude_code` tail, `repoach review pr <n> --dry-run` makes on the metered transport exactly the calls whose cumulative estimate fits in 1 USD, finishes the rest on the tail, and prints the fallback line; oracle: the metered fake's request count equals the number of rows in `anthropic_spend`, and the tail's count equals the remaining lens and judge calls.
 - C2: on the owner's gateway after SP-REVIEW-CHAINS-ANTHROPIC-FIRST, `repoach budget` after one Yoob review shows `spent` grown by the review's `cost.review_usd` ± one cent; oracle: the Anthropic console's usage for the same day agrees within 5 %.
 - C3: a `sk-ant-usr…` key in `.env` without a workspace id makes `repoach doctor` print the D6 sentence and the gateway refuse to boot the provider; the printed text contains none of the key's characters past `sk-ant-usr`; oracle: `grep -c <the key's 8th to 20th characters> <log>` → 0.
 - C4: `pytest -q tests/unit/test_prices_current_models.py` is green on the day the rows are written and `python -c "from repoach.providers.prices import prices_stale; from datetime import date; print(prices_stale(date.today()))"` prints `False`.
-- C5: no review on fakes ends `APPROVE` with `provider.refusal` set; oracle: the integration test and `pytest -q tests/unit/test_review_transport_error_verdict.py` stay green.
+- C5: no review on fakes carries `provider.refusal` without the fallback (or refusal) sentence in its archive comment and JSON; oracle: the integration test, and `pytest -q tests/unit/test_review_transport_error_verdict.py` stays green under `refuse`.
 
 ## Architecture Impact
 - Adds dependency: SP-ANTHROPIC-BUDGET-GUARD -> SP-USAGE-LEDGER (prices and the per-call row shape are reused; the ledger stays the after-the-fact record)
@@ -304,6 +313,7 @@ flowchart TD
 - [ ] AC5: `docs/merge_gate.md` gains a `budget exhausted` row in its refusal table and `README.md:51` names the budget variables next to the key.
 
 ## Open Questions
-- Q1: accept user-level keys with `REPOACH_ANTHROPIC_WORKSPACE_ID`, or refuse them outright and require a workspace key? Recommendation: accept with the header (D6); the owner holds both kinds and the header is one line per call, tested once.
-- Q2: `on_exhausted` default `refuse` (the review stops, named) or `next_hop` (the subscription takes over, named)? Recommendation: `refuse`; the owner's reason for the key is to stop draining the subscription, and a named `ERROR` is one re-run after a top-up, while `next_hop` recreates the quota drain the moment the credits end.
-- Q3: budget figure: 108 USD once (the 100 €), or a monthly budget? Recommendation: `REPOACH_BUDGET_USD=108`, `REPOACH_BUDGET_SINCE=` the top-up day, reset by hand at the next top-up; a monthly reset would spend credits that are not there.
+- None. Decided by the owner on 2026-11-15:
+  - Q1 (user-level keys): accepted with `REPOACH_ANTHROPIC_WORKSPACE_ID`, the header sent on every call; refused by name without it (D6).
+  - Q2 (`on_exhausted` default): `next_hop` — « de toute façon on a le plan en fallback »; the fallback to the `claude_code` tail is named in the log and in the review output, never silent, and the total keeps counting (D3). The recommendation (`refuse`) was not taken; `refuse` stays as the explicit setting.
+  - Q3 (budget figure): `REPOACH_BUDGET_USD=108` once, `REPOACH_BUDGET_SINCE=` the top-up day, reset by hand at the next top-up.

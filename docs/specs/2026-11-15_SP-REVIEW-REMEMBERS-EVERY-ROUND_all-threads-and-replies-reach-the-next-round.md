@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-REMEMBERS-EVERY-ROUND
 title: The reviewer remembers every round — all prior threads, every reply whoever wrote it, and their resolution state reach the next round's prompt
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -219,5 +219,4 @@ flowchart LR
 - [ ] AC4: `docs/review_redesign_architecture.md` names the block where it names `{PRIOR_REVIEW}` today.
 
 ## Open Questions
-- Q1: who is an `agent`? Recommendation: logins listed in `[review].agent_logins` of `repoach.toml` (on Yoob, the owner's own login used by his agents is also the maintainer's, so the class is `maintainer` there; the setting matters for repositories where agents post under their own account).
-- Q2: cap at 12 000 tokens, or scale with the model's context? Recommendation: a fixed cap named in the block; a 1 M-context model does not read 200 k tokens of history better, it reads it slower and for money.
+- None. Decided by the owner on 2026-11-15: Q1 (who is an `agent`) — the logins of `[review].agent_logins` in `repoach.toml`; on Yoob the agents post as the maintainer and are classed so; Q2 (history cap) — fixed at 12 000 tokens, named in the block.

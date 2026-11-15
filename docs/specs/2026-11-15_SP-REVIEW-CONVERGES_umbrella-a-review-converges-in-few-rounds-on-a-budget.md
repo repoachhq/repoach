@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-CONVERGES
 title: Umbrella — a review converges in a few rounds, remembers every round, re-raises nothing settled, reviews the delta, blocks only on minor and worse, and runs on a metered budget
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -69,8 +69,10 @@ A Yoob merge request is reviewed in about three rounds: the first on
 Fable and Opus over the whole diff, the next over what the fix changed,
 each remembering the threads and the owner's replies, posting no thread
 on a settled point and no thread for a nit; `repoach budget` says what
-the month's reviews cost against the 100 €, and a red gate names a
-budget or a subscription window, never a `provider_error`.
+the month's reviews cost against the 100 €; a review that outruns the
+budget finishes on the Max plan and says `reviewed on the subscription`
+with the figures; and a red gate caused by the subscription names its
+window, never a `provider_error`.
 
 ## Easy solution rejected
 
@@ -107,7 +109,7 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 
 - G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request; on live Yoob merge requests, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three.
 - G3 (cost): after 1–3, every metered call is priced before dispatch; `repoach budget` matches the Anthropic console within 5 %; a full round costs about 4.20 USD and a delta round under 1.5 USD at F11's size; 100 € (≈ 108 USD) buys about 25 full rounds, or about 15 three-round merge requests once delta rounds exist — against 2 twelve-round merge requests at today's full-diff behaviour.
-- G4 (named reds): after 1 and 2, a red gate caused by money says `budget exhausted: <spent> of <budget> USD since <date>` or `subscription exhausted on claude_code until <time>`; `provider_error` never names either.
+- G4 (named fallbacks and reds): after 1 and 2, a review that reaches the budget finishes on the `claude_code` tail and says `budget exhausted: <spent> of <budget> USD since <date>; reviewed on the subscription` in the log, the JSON and the merge request (owner decision 2026-11-15, O2), the total still counting; a red gate caused by the subscription says `subscription exhausted on claude_code until <time>`; `provider_error` never names either.
 
 ## Non-Goals
 
@@ -178,23 +180,23 @@ flowchart LR
 
 ## Open Questions
 
-Owner decisions gathered from the eight children, each with its recommendation:
+- None. The owner approved the family on 2026-11-15, taking every recommendation except O2 (« de toute façon on a le plan en fallback »). The decisions, as taken:
 
-| # | Decision | Spec | Recommendation |
+| # | Decision | Spec | Decided by owner 2026-11-15 |
 |---|---|---|---|
 | O1 | User-level Anthropic keys: accept with `REPOACH_ANTHROPIC_WORKSPACE_ID` (header sent on every call) or refuse by name | SP-ANTHROPIC-BUDGET-GUARD Q1 | accept with the header |
-| O2 | `[budget].on_exhausted` default: `refuse` (named `ERROR`) or `next_hop` (named switch to the subscription) | SP-ANTHROPIC-BUDGET-GUARD Q2 | `refuse` |
-| O3 | Budget figure and period: 108 USD once from the top-up day, reset by hand, or monthly | SP-ANTHROPIC-BUDGET-GUARD Q3 | once, from the top-up day |
-| O4 | Default hold when the CLI names no reset time: 1800 s or the full window | SP-SUBSCRIPTION-LIMIT-IS-NAMED Q1 | 1800 s |
-| O5 | Who records the usage-limit fixture: the owner at the next limit via `chain-status --capture-last-error`, or an invented string | SP-SUBSCRIPTION-LIMIT-IS-NAMED Q2 | the owner, real answer |
-| O6 | Keep one NIM hop at the end of each reviewer chain as a free last resort | SP-REVIEW-CHAINS-ANTHROPIC-FIRST Q1 | no |
-| O7 | Send `minor` to the nit digest too | SP-REVIEW-NITS-ONE-COMMENT Q1 | no, as decided |
-| O8 | Who is an `agent` in the history block: `[review].agent_logins` | SP-REVIEW-REMEMBERS-EVERY-ROUND Q1 | the setting; on Yoob the agents post as the maintainer |
-| O9 | History block cap: fixed 12 000 tokens or scaled with the model's context | SP-REVIEW-REMEMBERS-EVERY-ROUND Q2 | fixed, named |
-| O10 | Region margin: 3 lines or the hunk's own context | SP-REVIEW-SETTLED-STAYS-SETTLED Q1 | 3, named |
-| O11 | An `owner_resolved` finding re-raisable when its region changed | SP-REVIEW-SETTLED-STAYS-SETTLED Q2 | no; `/reopen` exists |
-| O12 | Delta round also when the target branch moved | SP-REVIEW-DELTA-FIRST Q1 | no |
-| O13 | Context cache TTL 1 h or 5 min | SP-REVIEW-DELTA-FIRST Q2 | 1 h |
-| O14 | Fable placement: Architect + Sentinel in full rounds (4.20 USD, ≈ 25 full rounds per 100 €), Sentinel alone (3.57 USD, ≈ 30), every lens (7.33 USD, ≈ 14) | SP-REVIEW-FABLE-TIER Q1 | Architect + Sentinel |
-| O15 | Fable effort `high` or `xhigh` | SP-REVIEW-FABLE-TIER Q2 | `high`, measured by the (lens, model) record |
-| O16 | `claude_code/opus` as the named tail of `MODEL_FABLE`, or no tail | SP-REVIEW-FABLE-TIER Q3 | the named tail |
+| O2 | `[budget].on_exhausted` default: `refuse` (named `ERROR`) or `next_hop` (named switch to the subscription) | SP-ANTHROPIC-BUDGET-GUARD Q2 | `next_hop`: the chain falls to the `claude_code` tail, named by a log line and a visible note in the review output (`budget exhausted: … reviewed on the subscription`), never silent, the total still counting; the recommendation (`refuse`) was not taken |
+| O3 | Budget figure and period: 108 USD once from the top-up day, reset by hand, or monthly | SP-ANTHROPIC-BUDGET-GUARD Q3 | as recommended: once, from the top-up day |
+| O4 | Default hold when the CLI names no reset time: 1800 s or the full window | SP-SUBSCRIPTION-LIMIT-IS-NAMED Q1 | as recommended: 1800 s |
+| O5 | Who records the usage-limit fixture: the owner at the next limit via `chain-status --capture-last-error`, or an invented string | SP-SUBSCRIPTION-LIMIT-IS-NAMED Q2 | as recommended: the owner, real answer |
+| O6 | Keep one NIM hop at the end of each reviewer chain as a free last resort | SP-REVIEW-CHAINS-ANTHROPIC-FIRST Q1 | as recommended: no |
+| O7 | Send `minor` to the nit digest too | SP-REVIEW-NITS-ONE-COMMENT Q1 | as recommended: no, as decided |
+| O8 | Who is an `agent` in the history block: `[review].agent_logins` | SP-REVIEW-REMEMBERS-EVERY-ROUND Q1 | as recommended: the setting; on Yoob the agents post as the maintainer |
+| O9 | History block cap: fixed 12 000 tokens or scaled with the model's context | SP-REVIEW-REMEMBERS-EVERY-ROUND Q2 | as recommended: fixed, named |
+| O10 | Region margin: 3 lines or the hunk's own context | SP-REVIEW-SETTLED-STAYS-SETTLED Q1 | as recommended: 3, named |
+| O11 | An `owner_resolved` finding re-raisable when its region changed | SP-REVIEW-SETTLED-STAYS-SETTLED Q2 | as recommended: no; `/reopen` exists |
+| O12 | Delta round also when the target branch moved | SP-REVIEW-DELTA-FIRST Q1 | as recommended: no |
+| O13 | Context cache TTL 1 h or 5 min | SP-REVIEW-DELTA-FIRST Q2 | as recommended: 1 h |
+| O14 | Fable placement: Architect + Sentinel in full rounds (4.20 USD, ≈ 25 full rounds per 100 €), Sentinel alone (3.57 USD, ≈ 30), every lens (7.33 USD, ≈ 14) | SP-REVIEW-FABLE-TIER Q1 | as recommended: Architect + Sentinel |
+| O15 | Fable effort `high` or `xhigh` | SP-REVIEW-FABLE-TIER Q2 | as recommended: `high`, measured by the (lens, model) record |
+| O16 | `claude_code/opus` as the named tail of `MODEL_FABLE`, or no tail | SP-REVIEW-FABLE-TIER Q3 | as recommended: the named tail |

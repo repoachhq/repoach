@@ -1,8 +1,8 @@
 ---
 id: SP-SUBSCRIPTION-LIMIT-IS-NAMED
 title: A Claude Code usage limit is classified as subscription_exhausted, scoped to the provider, held until the window resets, and named in the review
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -190,5 +190,4 @@ flowchart LR
 - [ ] AC3: `docs/merge_gate.md` names the reason and its TTL rule next to the transport-failure section.
 
 ## Open Questions
-- Q1: default TTL when the CLI names no time: 1800 s (recommended: the window is rolling, and a re-probe every 30 minutes costs one CLI call) or the full five hours?
-- Q2: who records the fixture: the owner, at the next limit, with `repoach chain-status --capture-last-error` (recommended: adds one flag, keeps the fixture real), or the agent from an invented sentence (refused: a classifier pinned to an invented string is the #288 lesson again).
+- None. Decided by the owner on 2026-11-15: Q1 (default hold when the CLI names no time) — 1800 s, capped at 18 000 s; Q2 (the fixture) — recorded by the owner at the next limit with `repoach chain-status --capture-last-error`, never invented.

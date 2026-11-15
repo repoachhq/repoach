@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-FABLE-TIER
 title: A fourth capability tier, FABLE, runs the Architect and the Sentinel on the first round; Opus 5.5 runs the other lenses and the refuter; Sonnet 5.5 runs the replies
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -176,7 +176,7 @@ effort high; Tester, Scribe, refuter → `anthropic/claude-opus-5-5`; the
 report lists five models served; `repoach budget` grows by about 4.20 USD.
 
 ### Edge cases
-- the Fable hop is skipped for `budget_exhausted` under `next_hop` → `claude_code/opus` serves, `served_by` and the lens output say so.
+- the Fable hop is skipped for `budget_exhausted` (default `next_hop`, SP-ANTHROPIC-BUDGET-GUARD D3) → `claude_code/opus` serves; `served_by`, the lens output and the archive comment say `reviewed on the subscription`.
 - a Fable answer is a `refusal` → that lens is `ERROR: refusal (<category>)`, the three others complete, the team verdict is `ERROR` (an incomplete review), never `APPROVE`.
 - before SP-REVIEW-DELTA-FIRST → every round is full; the first column applies.
 
@@ -227,6 +227,4 @@ flowchart LR
 - [ ] AC3: `README.md:51`, `docs/tech_debt.md` row 47 and `docs/review_redesign_architecture.md` name the four tiers and their models.
 
 ## Open Questions
-- Q1: Architect and Sentinel on Fable in full rounds (recommended, 4.20 USD a full review, 25 reviews per 100 € before delta savings), or Sentinel alone (3.57 USD, 30 reviews), or every lens (7.33 USD, 14 reviews)? Recommendation: the first; the Architect's couplings are what cost rounds on !366 and the Tester's and Scribe's misses were one-line gaps.
-- Q2: effort `high` or `xhigh` for the Fable lenses? Recommendation: `high` first, measured by the (lens, model) record of D5 over twenty reviews; `xhigh` is a one-constant change once the record says the misses are depth, not scope.
-- Q3: keep the `claude_code/opus` tail on `MODEL_FABLE` (a named downgrade keeps a review running when the API is down), or no tail (a Fable lens that cannot run is an `ERROR`)? Recommendation: keep the named tail, since SP-REVIEW-SURVIVES-TRANSPORT-FAILURES already retries a short outage once and the owner's rule forbids silent, not named, fallbacks.
+- None. Decided by the owner on 2026-11-15: Q1 (placement) — Architect and Sentinel on Fable in full rounds, the table of D1 (4.20 USD a full review, about 25 per 100 € before delta savings); Q2 (effort) — `high`, re-judged from the (lens, model) record after twenty reviews; Q3 (`MODEL_FABLE` tail) — the named `claude_code/opus` tail is kept.

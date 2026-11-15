@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-SETTLED-STAYS-SETTLED
 title: A finding that is resolved or refuted is not re-raised at a later head unless the code it cites changed; "changed" is the cited hunk or the enclosing symbol's body
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -222,5 +222,4 @@ flowchart TD
 - [ ] AC4: `docs/finding_threads.md` and `docs/merge_gate.md` describe the suppression and the archive line; SP-REFUTER-INJECTION-HARDEN carries the D6 amendment.
 
 ## Open Questions
-- Q1: margin of 3 lines, or the hunk's own context (also 3 by default)? Recommendation: 3, named as a constraint; a larger margin suppresses less, a smaller one re-raises on whitespace fixes next to the cited line.
-- Q2: should an `owner_resolved` finding be re-raisable when its region changed (treat the owner's settlement as about the lines, not the point)? Recommendation: no; the owner settled the point, and `/reopen` exists.
+- None. Decided by the owner on 2026-11-15: Q1 (region margin) — 3 lines, the `cited_region_margin_lines` constraint; Q2 (`owner_resolved` on a changed region) — stays suppressed; only `/reopen` reopens it.

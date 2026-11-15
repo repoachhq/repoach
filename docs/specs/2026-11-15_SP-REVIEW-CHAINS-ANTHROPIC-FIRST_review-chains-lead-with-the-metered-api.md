@@ -1,8 +1,8 @@
 ---
 id: SP-REVIEW-CHAINS-ANTHROPIC-FIRST
 title: The reviewer chains lead with the metered Anthropic API and keep the subscription as the one named fallback
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-15
@@ -54,11 +54,13 @@ Measured 2026-11-15 on `origin/develop` `5354767` and the owner's gateway.
   `MODEL_FABLE` is added by SP-REVIEW-FABLE-TIER. The NIM and OpenRouter
   hops leave the reviewer chains; their chain comments are replaced by a
   dated paragraph that names this spec and the measured reasons (F2).
-- D2. The second hop is the subscription, taken only when the first is
-  skipped or fails for a reason the budget guard allows to continue
-  (`[budget].on_exhausted = next_hop`) or for a transport reason; every
-  hop served is named in the report (SP-ANTHROPIC-BUDGET-GUARD G3). A
-  `budget_exhausted` under `refuse` exhausts the chain by design.
+- D2. The second hop is the subscription, the owner's Max plan, taken
+  when the first is skipped for `budget_exhausted` (the default,
+  SP-ANTHROPIC-BUDGET-GUARD D3) or fails for a transport reason; every
+  hop served is named in the report (SP-ANTHROPIC-BUDGET-GUARD G3), and a
+  budget fallback carries `budget exhausted: … reviewed on the
+  subscription`. Only `[budget].on_exhausted = refuse` exhausts the
+  chain instead.
 - D3. `ANTHROPIC_MODELS` and the README table move to the current ids;
   `CAPABILITY_TO_ALIAS` moves to the same ids so the gateway's tier
   classifier (`opus` / `sonnet` / `haiku` substrings) still routes them.
@@ -118,7 +120,7 @@ budget guard, served, recorded.
 
 ### Edge cases
 - the API hop is tripped for a transport reason → `claude_code/sonnet` serves, `served_by` names it.
-- `budget_exhausted` under `refuse` → chain exhausted, review `ERROR` with the budget line.
+- `budget_exhausted` → `claude_code/sonnet` serves, the report says `reviewed on the subscription` with the figures; under `refuse`, chain exhausted and review `ERROR` with the budget line.
 
 ### Failure scenarios
 - the gateway boots without a key → the `anthropic` provider is absent, the chain's first hop is skipped at boot with `provider_unconfigured`, named in `/health`; the subscription serves and is named.
@@ -148,8 +150,8 @@ budget guard, served, recorded.
 flowchart LR
     T[tier request] --> A[anthropic/claude-x-5-5]
     A -->|admitted| S[served, recorded]
-    A -->|budget_exhausted + refuse| X[chain exhausted, ERROR]
-    A -->|transport or next_hop| C[claude_code/x, named]
+    A -->|budget_exhausted or transport| C[claude_code/x, named: reviewed on the subscription]
+    A -->|budget_exhausted + refuse setting| X[chain exhausted, ERROR]
 ```
 
 ## Acceptance Criteria
@@ -158,4 +160,4 @@ flowchart LR
 - [ ] AC3: `README.md:51` and `docs/tech_debt.md` rows 47 and 48 updated as G2 says.
 
 ## Open Questions
-- Q1: keep one NIM hop at the very end of each chain as a free last resort? Recommendation: no; a review served by `glm-5.2` after two Anthropic refusals is a different product, and SP-REVIEW-TRANSPORT-ERROR-VERDICT already makes "no model" a named `ERROR`.
+- None. Decided by the owner on 2026-11-15: Q1 (a NIM hop as a free last resort) — no; the chains are the two hops of D1.
