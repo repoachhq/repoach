@@ -109,6 +109,7 @@ from .findings import (
 )
 from .findings_bridge import (
     RecordedFindings,
+    opens_thread,
     record_findings_for_outcomes,
     record_oversized_findings,
     recount_findings_at_head,
@@ -142,6 +143,7 @@ from .merge_gate import (
     summarise_ledger_facts,
     verdict_from_facts,
 )
+from .nit_digest import NitDigest, digest_for_pr, post_or_edit_digest
 from .notifier import fire_review_routine
 from .open_threads import OpenThreads, read_open_threads
 from .owner_commands import OwnerCommandsRun, apply_owner_commands
@@ -452,6 +454,10 @@ class TeamOutcome:
     barrier refused during the run (SP-DRY-RUN-NEVER-POSTS: empty on a
     healthy dry run, any entry is a defect) and ``write_refusal`` names
     why the barrier was closed, None when writes went through.
+    ``nit_digest`` is the pull request's nit digest at the head, read
+    from the ledger (SP-REVIEW-NITS-ONE-COMMENT): rendered on a dry run,
+    posted or edited by a posting run, which then sets its URL or the
+    forge's refusal; None when the ledger could not be read.
     """
 
     pr_number: int
@@ -499,6 +505,24 @@ class TeamOutcome:
     threads_closed: list[dict[str, object]] = field(default_factory=list)
     thread_lines: list[str] = field(default_factory=list)
     open_threads: OpenThreads = field(default_factory=lambda: OpenThreads(read=False))
+    nit_digest: NitDigest | None = None
+
+    def nits_json(self, *, with_body: bool) -> dict[str, object]:
+        """Return the ``nits`` block the review JSON and the archive carry (SP-REVIEW-NITS-ONE-COMMENT D4).
+
+        Args:
+            with_body: As :meth:`~repoach.review.nit_digest.NitDigest.as_json`;
+                False for the archive comment.
+
+        Returns:
+            :meth:`~repoach.review.nit_digest.NitDigest.as_json`, or the
+            block of an empty digest at the run's head when the digest
+            was not read.
+        """
+        digest = self.nit_digest or NitDigest(
+            pr_number=self.pr_number, head_sha=self.head_sha or "", items=[]
+        )
+        return digest.as_json(with_body=with_body)
 
     def record_open_threads(self, threads: OpenThreads) -> None:
         """Carry the open review threads read at the end of the run (SP-OPEN-THREADS-BLOCK-THE-MERGE)."""
@@ -925,7 +949,7 @@ class ReviewTeamOrchestrator:
                 outcomes[i] = replace(
                     o,
                     verdict=ReviewVerdict.APPROVE,
-                    summary=o.summary + " [auto-promoted: nit-only]",
+                    summary=o.summary + " [auto-promoted: no blocking comment]",
                 )
                 _log.info(
                     "review_team.nit_only_auto_promote",
@@ -1136,6 +1160,7 @@ class ReviewTeamOrchestrator:
         )
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
+        team.nit_digest = self._read_nit_digest(pr_number, head_sha=head_sha or "")
 
         if not errored_roles and recorded is not None and self._pinned_head:
             self._store_completed_run(
@@ -1340,6 +1365,7 @@ class ReviewTeamOrchestrator:
         team.generated_lines = report_lines(generated_checks, generated_timing)
         team.record_owner_commands(owner_run)
         team.record_thread_closures(self._detect_thread_closures(pr_number, head_sha=head_sha))
+        team.nit_digest = self._read_nit_digest(pr_number, head_sha=head_sha)
         if self._post:
             self._publish_replayed(pr_number, team)
         self._refresh_open_threads(pr_number, team)
@@ -1653,6 +1679,44 @@ class ReviewTeamOrchestrator:
             return
         team.record_open_threads(read_open_threads(self._forge, pr_number))
 
+    def _read_nit_digest(self, pr_number: int, *, head_sha: str) -> NitDigest | None:
+        """Read the pull request's nit digest at ``head_sha`` from the ledger (SP-REVIEW-NITS-ONE-COMMENT).
+
+        A ledger read failure is logged and yields None: the review then
+        reports no nit and posts no digest.
+        """
+        try:
+            return digest_for_pr(self._db_path, pr_number, head_sha=head_sha)
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "review_team.nit_digest_unreadable",
+                pr_number=pr_number,
+                exc=type(exc).__name__,
+                message=redact_error(str(exc))[:200],
+            )
+            return None
+
+    def _publish_nit_digest(self, team: TeamOutcome) -> None:
+        """Post or edit the nit digest of ``team`` and keep what the forge answered.
+
+        A refused edit leaves the comment on the forge as it was; the
+        digest then carries the reason, which ``review pr`` prints as
+        ``nit digest not updated: <why>``. A ledger write failure after
+        the post is logged; the comment stays posted.
+        """
+        if team.nit_digest is None:
+            return
+        try:
+            team.nit_digest = post_or_edit_digest(
+                self._forge, team.nit_digest, db_path=self._db_path
+            )
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "finding_posts.write_failed",
+                pr_number=team.pr_number,
+                error=redact_error(str(exc))[:200],
+            )
+
     def _detect_thread_closures(self, pr_number: int, *, head_sha: str | None) -> ClosureRun:
         """Record the recorded finding threads resolved on the forge (SP-FINDING-THREAD-IDS G6).
 
@@ -1770,15 +1834,24 @@ class ReviewTeamOrchestrator:
         team: TeamOutcome,
         resolved_per_role: dict[BotRole, tuple[ResolvedDisagreement, ...]],
     ) -> None:
-        """Publish every reviewer, the auto-challenges and the archive, then notify.
+        """Publish every reviewer, the auto-challenges, the nit digest and the archive, then notify.
+
+        Only the comments that open a thread
+        (:func:`~repoach.review.findings_bridge.opens_thread`) are posted
+        inline and auto-challenged; the nits go to the one digest comment
+        instead (SP-REVIEW-NITS-ONE-COMMENT).
 
         A :class:`~repoach.forge.ForgeStateRefusedError` from any write
         propagates out of every nested fallback, so a PR / MR that is no
         longer open stops the whole sequence at its first write — one
         state read, no COMMENT retry, no per-comment or verdict fallback.
         """
+        threaded = [
+            replace(outcome, comments=[c for c in outcome.comments if opens_thread(c)])
+            for outcome in outcomes
+        ]
         posted_ids: dict[tuple[str, int], int] = {}
-        for outcome in outcomes:
+        for outcome in threaded:
             self._publish_outcome(
                 pr_number=pr_number,
                 outcome=outcome,
@@ -1788,11 +1861,12 @@ class ReviewTeamOrchestrator:
             )
         self._run_auto_challenge_pass(
             pr_number=pr_number,
-            outcomes=outcomes,
+            outcomes=threaded,
             resolved_per_role=resolved_per_role,
             posted_ids=posted_ids,
             team=team,
         )
+        self._publish_nit_digest(team)
         self._refresh_open_threads(pr_number, team)
         self._upsert_archive_comment(team)
         self._fire_routine(team)
@@ -2570,6 +2644,7 @@ def team_outcome_to_dict(team: TeamOutcome) -> dict:
         "verdict_basis": list(team.verdict_basis),
         "owner_resolved": list(team.owner_resolved),
         "review_threads": team.open_threads.as_json(),
+        "nits": team.nits_json(with_body=False),
         "n_auto_challenges": len(team.auto_challenges),
         "auto_challenges": list(team.auto_challenges),
         "hallucinations": [

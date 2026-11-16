@@ -182,12 +182,12 @@ def test_nit_only_auto_promote_fires() -> None:
         promoted = replace(
             outcome,
             verdict=ReviewVerdict.APPROVE,
-            summary=outcome.summary + " [auto-promoted: nit-only]",
+            summary=outcome.summary + " [auto-promoted: no blocking comment]",
         )
     else:
         promoted = outcome
     assert promoted.verdict == ReviewVerdict.APPROVE
-    assert "[auto-promoted: nit-only]" in promoted.summary
+    assert "[auto-promoted: no blocking comment]" in promoted.summary
 
 
 def test_nit_only_auto_promote_blocked_by_major() -> None:
@@ -205,7 +205,7 @@ def test_nit_only_auto_promote_blocked_by_major() -> None:
         promoted = replace(
             outcome,
             verdict=ReviewVerdict.APPROVE,
-            summary=outcome.summary + " [auto-promoted: nit-only]",
+            summary=outcome.summary + " [auto-promoted: no blocking comment]",
         )
     else:
         promoted = outcome
