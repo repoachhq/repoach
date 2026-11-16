@@ -205,7 +205,7 @@ unified order the owner fixed on 2026-11-16; that edge is in
 ### Edge cases
 - 1 and 2 change no workflow: a pull request keeps running every job until 3 lands, and `repoach ci affected select` is a probe anyone can run.
 - 3 touches `.github/workflows/ci.yml`, so its own pull request is in the full class and runs everything; the first narrowed run is the next pull request's.
-- SP-REVIEW-NITS-ONE-COMMENT reached `develop` with PR #296 (`06202c2`, 2026-11-16) while this spec was written; the edge resolves, and the merge queue orders this family's pull requests after that spec's implementation, which is the order the owner asked for.
+- The `depends_on` edge to SP-REVIEW-NITS-ONE-COMMENT is an ordering edge: that spec is on `develop` since #296 (`06202c2`), its implementation is not, and this family's pull requests open after that implementation merges, the order the owner asked for.
 - the owner answers a decision against the recommendation → the child is amended before its pull request opens.
 
 ### Failure scenarios

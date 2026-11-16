@@ -80,7 +80,7 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   its own pull request, with `replay` red before and green after,
   merged before any code fix; (4) the code fix on its own branch.
 - D5. The harvest runs by hand and from `repoach release gate` as a
-  report line (`affected-jobs misses: <new>/<failed>` over the last 30
+  report line (`affected-jobs misses: <new>/<failed jobs>` over the last 30
   merged pull requests), never as a refusal of the release.
 
 ## End state
@@ -159,7 +159,7 @@ def replay(corpus: Sequence[HeadRun], misses: Sequence[MissRow], table: Affected
 ```
 
 Stdout: one JSON object per command (`SP-CLI-STDOUT-ONE-JSON`); the
-`MISS` lines and `misses: n/m` on stderr. Exit codes: 0; 1 a miss
+`MISS` lines and `misses: <new>/<failed jobs>` on stderr. Exit codes: 0; 1 a miss
 (harvest, replay) or a duplicate (record); 2 the forge or a file refused,
 nothing written.
 
