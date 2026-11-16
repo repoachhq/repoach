@@ -80,11 +80,11 @@ def test_committed_page_is_the_rendered_page() -> None:
     assert gc.render(comparison) == _REPO_PAGE.read_text(encoding="utf-8")
 
 
-def test_committed_page_has_eleven_rows_and_pr_sources_apart() -> None:
+def test_committed_page_has_twelve_rows_and_pr_sources_apart() -> None:
     page = _REPO_PAGE.read_text(encoding="utf-8")
     table = [line for line in page.splitlines() if line.startswith("| ")]
 
-    assert len(table) == 13
+    assert len(table) == 14
     before, _, after = page.partition("## PR sources, not competitors")
     assert "openhands" not in before.lower()
     assert "openhands" in after.lower()
