@@ -1,11 +1,11 @@
 ---
 id: SP-ANTHROPIC-BUDGET-GUARD
 title: Every metered Anthropic call is priced, summed against a configured budget, and refused by name when the budget is reached
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/providers/budget.py, src/repoach/llm_proxy/routing/budget_gate.py, src/repoach/cli/budget_cmds.py, tests/unit/test_budget_guard.py, tests/unit/test_budget_gate_dispatch.py, tests/unit/test_prices_current_models.py, tests/unit/test_anthropic_key_kind.py, tests/integration/test_budget_exhausted_names_the_refusal.py]
@@ -21,6 +21,14 @@ constraints:
 ---
 
 # Every metered Anthropic call is priced, summed against a budget, and refused by name when the budget is reached
+
+## Amendment (0.3, 2026-11-16): the one prompt-token estimator
+
+D2 now names `estimate_prompt_tokens` and `ESTIMATOR_NAME` in
+`src/repoach/providers/budget.py` as repoach's only prompt-token
+estimator: SP-REVIEW-TOKEN-ESTIMATE (its amendment 0.2) aggregates it per
+role and the refuter's evidence sizing re-exports its name. G8 and the
+Interface carry the rule; nothing else of 0.2 changes.
 
 ## Intent
 
