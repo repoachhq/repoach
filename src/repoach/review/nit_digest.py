@@ -140,6 +140,8 @@ def collect_nits(findings: Sequence[Finding], *, head_sha: str) -> list[NitItem]
     A nit raised again at a later head (same
     :func:`~repoach.review.findings_bridge.finding_fingerprint`) is
     listed once, at the latest head that raised it, ``head_sha`` first.
+    A nit the same head also recorded with a higher severity (same
+    fingerprint) is not a nit there: it is left out.
     Order: the items of ``head_sha``, then those of each earlier head,
     the most recently recorded head first; by path, then line, within a
     head.
@@ -156,7 +158,17 @@ def collect_nits(findings: Sequence[Finding], *, head_sha: str) -> list[NitItem]
         ValueError: A note finding has no id (it was never stored), so
             no ledger row can join it to the digest.
     """
-    notes = [finding for finding in findings if finding.severity is Severity.NOTE]
+    outranked = {
+        (finding.head_sha, finding_fingerprint(finding))
+        for finding in findings
+        if finding.severity is not Severity.NOTE
+    }
+    notes = [
+        finding
+        for finding in findings
+        if finding.severity is Severity.NOTE
+        and (finding.head_sha, finding_fingerprint(finding)) not in outranked
+    ]
     for note in notes:
         if note.id is None:
             raise ValueError(f"note finding at {note.file}:{note.line_start} has no ledger id")

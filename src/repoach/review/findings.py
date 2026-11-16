@@ -102,6 +102,18 @@ class Severity(StrEnum):
     NOTE = "note"
 
 
+SEVERITY_RANK: dict[Severity, int] = {
+    Severity.NOTE: 0,
+    Severity.ADVISORY: 1,
+    Severity.BLOCKING: 2,
+}
+"""How much each severity holds the merge: a note nothing, an advisory a thread, a blocking finding the gate.
+
+When the same finding is raised at one head with two severities, the
+higher one is the one that counts (SP-REVIEW-NITS-ONE-COMMENT).
+"""
+
+
 class FindingStatus(StrEnum):
     """Lifecycle state of a finding.
 

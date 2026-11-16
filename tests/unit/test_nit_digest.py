@@ -496,3 +496,26 @@ def test_backfill_never_links_a_note_to_a_thread(tmp_path: Path) -> None:
     minor = next(f for f in fetch_findings(db, PR) if f.severity is Severity.ADVISORY)
     assert (report.findings, report.linked) == (1, 1)
     assert [p.finding_id for p in fetch_finding_posts(db, PR)] == [minor.id]
+
+
+@pytest.mark.parametrize("order", [("nit", "major"), ("major", "nit")])
+def test_the_higher_severity_wins_when_a_head_raises_one_finding_twice(
+    tmp_path: Path, order: tuple[str, str]
+) -> None:
+    """The same remark as a nit and a major at one head: a blocking row, and no digest item."""
+    db = tmp_path / "review.db"
+    for severity in order:
+        _record(
+            db,
+            HEAD_A,
+            _outcome(
+                BotRole.ARCHITECT, ("src/a.py", 4, severity, "the parser drops the last byte")
+            ),
+        )
+
+    rows = fetch_findings(db, PR)
+
+    [blocking] = [r for r in rows if r.severity is Severity.BLOCKING]
+    assert blocking.status is FindingStatus.PROPOSED
+    assert len(rows) == (2 if order[0] == "nit" else 1)
+    assert digest_for_pr(db, PR, head_sha=HEAD_A).items == []
