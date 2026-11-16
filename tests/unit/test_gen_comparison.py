@@ -153,6 +153,17 @@ def test_a_sourced_cell_without_a_date_is_invalid(tmp_path: Path) -> None:
     assert _run(tmp_path, yaml_path, "--offline") == 2
 
 
+def test_a_contact_sales_price_is_refused_for_n_m(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    document = {"products": [_product("Quiet", price=_cell("Contact sales"))]}
+    yaml_path = _write_yaml(tmp_path, document)
+
+    assert _run(tmp_path, yaml_path, "--offline") == 2
+    assert "contact-sales price is not a listed price" in capsys.readouterr().err
+    assert not (tmp_path / "comparison.md").exists()
+
+
 def test_no_network_is_cannot_say_and_leaves_the_page(tmp_path: Path) -> None:
     yaml_path = _write_yaml(tmp_path, {"products": [_product("Only", loop=_cell("x"))]})
     out = tmp_path / "comparison.md"
