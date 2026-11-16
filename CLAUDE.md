@@ -164,9 +164,11 @@ scripts/ci_local.sh --affected [<base>] # only what the diff from <base> affects
 ```
 
 `--affected` prints `repoach ci affected select --base <base>` (default
-`origin/develop`), then runs the gate (arch check, the CONTRIBUTING and
-attribution lints, `[gate].pytest`), the lint, pytest and smoke blocks
-when `test` is selected, and the `--wheel` block when a wheel job is.
+`repoach ci affected base`, `origin/<[repoach].integration_branch>`), then
+runs the gate (arch check, the CONTRIBUTING and attribution lints,
+`[gate].pytest`), the lint, pytest and smoke blocks when `test` is
+selected, and the `--wheel` block when a wheel job is; that block refuses
+by name when `build`, `twine` or `pipx` is missing.
 The path-to-job table is `.github/affected-jobs.toml`
 (SP-AFFECTED-JOBS-TABLE).
 
