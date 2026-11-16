@@ -205,7 +205,7 @@ def matches(row: Row, path: str) -> bool: ...              # D1, the only matchi
 class Selection(BaseModel):
     mode: Literal["narrowed", "full"]; reason: str; paths: int
     jobs: frozenset[str]; rows_hit: dict[str, list[str]]  # row name -> first three paths
-def workflow_jobs(ci_yml: Path) -> tuple[dict[str, frozenset[str]], ...]: ...   # job id -> non-optional needs, via merge_wait's loader
+def workflow_jobs(ci_yml: Path) -> dict[str, frozenset[str]]: ...   # job id -> non-optional needs, via merge_wait's loader
 def select(paths: Sequence[str], table: AffectedTable, needs: Mapping[str, frozenset[str]], *, mode: str, reason: str) -> Selection: ...
 def changed_paths(repo_root: Path, *, base: str, head: str = "HEAD") -> list[str]: ...  # git diff --name-only --no-renames <merge-base> <head>
 def github_output_lines(selection: Selection, job_ids: Sequence[str]) -> list[str]: ...  # job_<id>=true|false, hyphens to underscores, then mode=
@@ -271,7 +271,7 @@ A pull request to `develop` changes `docs/specs/x.md` and
 ## Success conditions
 
 - C1 (external oracle: the forge): `repoach ci affected select` replayed over the fixture of the 30 pull requests prints `misses: 0/15`; the verifier picks two failed runs from the fixture (one `Test suite`, the `wheel-smoke` of #275 at `7a7a048`), opens them on github.com and finds the failed job and a head whose paths the table selects it for.
-- C2 (external oracle: the tree): `python -c "import ast"`-free check by hand — the verifier lists `grep -l 'parents\[2\]' tests/unit/*.py`, picks three modules that read `docs/`, and finds each in `[gate].pytest`; picks one that reads `prompts/` and finds `prompts/` in the python row.
+- C2 (external oracle: the tree): a check by hand, without running the guard of D5 — the verifier lists `grep -l 'parents\[2\]' tests/unit/*.py`, picks three modules that read `docs/`, and finds each in `[gate].pytest`; picks one that reads `prompts/` and finds `prompts/` in the python row.
 - C3: `pytest -q tests/unit/test_affected_table.py tests/unit/test_affected_select.py tests/unit/test_affected_cli.py tests/unit/test_affected_tree_judges.py` green with T1–T11 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `ruff check src tests scripts` and the two lint scripts green.
 
 ## Architecture Impact
