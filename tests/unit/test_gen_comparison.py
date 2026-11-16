@@ -153,15 +153,25 @@ def test_a_sourced_cell_without_a_date_is_invalid(tmp_path: Path) -> None:
     assert _run(tmp_path, yaml_path, "--offline") == 2
 
 
-def test_a_contact_sales_price_is_refused_for_n_m(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    document = {"products": [_product("Quiet", price=_cell("Contact sales"))]}
+def test_a_contact_sales_price_renders_as_n_m_without_a_footnote(tmp_path: Path) -> None:
+    document = {
+        "products": [
+            _product(
+                "Quiet",
+                loop=_cell("review comments"),
+                price=_cell("Contact sales", url="https://quiet.example/pricing"),
+            )
+        ]
+    }
     yaml_path = _write_yaml(tmp_path, document)
 
-    assert _run(tmp_path, yaml_path, "--offline") == 2
-    assert "contact-sales price is not a listed price" in capsys.readouterr().err
-    assert not (tmp_path / "comparison.md").exists()
+    assert _run(tmp_path, yaml_path) == 0
+    page = (tmp_path / "comparison.md").read_text(encoding="utf-8")
+    row = next(line for line in page.splitlines() if line.startswith("| [Quiet]"))
+    assert row.count("| n/m") == len(gc.COLUMNS) - 1
+    assert row.count("[^") == 1
+    assert "contact sales" not in page.lower()
+    assert "quiet.example/pricing" not in page
 
 
 def test_no_network_is_cannot_say_and_leaves_the_page(tmp_path: Path) -> None:
