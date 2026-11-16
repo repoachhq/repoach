@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-NITS-ONE-COMMENT
 title: Nits are consolidated into one non-blocking comment per merge request; only minor and worse open a resolvable, blocking thread
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/nit_digest.py, tests/unit/test_nit_digest.py, tests/integration/test_nits_never_block_the_merge.py]
   resources: [format:nit-digest-comment]
 
-depends_on: [SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-THREAD-IDS, SP-OPEN-THREADS-BLOCK-THE-MERGE, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE, SP-POSTING-REPLAY-DEDUPES]
+depends_on: [SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-THREAD-IDS, SP-OPEN-THREADS-BLOCK-THE-MERGE, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE, SP-POSTING-REPLAY-DEDUPES, SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:
@@ -92,7 +92,7 @@ must leave the previous digest intact and say so in the report.
 
 - G1: a `nit` comment becomes a `NOTE` finding, recorded, never posted alone, never blocking.
 - G2: one digest comment per merge request, edited in place per head, with the layout of D2 and the 40-item cap.
-- G3: `minor`, `major`, `blocker` behaviour unchanged; `pytest -q tests/unit/test_gate_open_threads.py tests/unit/test_findings_bridge*.py` green with the new value.
+- G3: `minor`, `major`, `blocker` behaviour unchanged; `pytest -q tests/unit/test_open_threads_block_the_merge.py tests/unit/test_findings_bridge*.py` green with the new value.
 - G4: the review JSON and the archive comment carry the nit count and the digest's URL.
 
 ## Non-Goals
@@ -155,13 +155,14 @@ is posted. Round 2 at a new head has 1 nit: the digest is edited to
 
 - C1: replaying !366's twelve rounds through the new bridge on the recorded comment bodies (the Yoob `REVIEW-SPEC.md` corpus) yields exactly one digest comment and N threads where N equals the count of comments with severity ≥ minor; oracle: the fake forge's comment list.
 - C2: on Yoob, the first merge request reviewed after this lands shows one `repoach:nit-digest` comment and the gate's refusal lines never cite it; oracle: `repoach review gate <n>` output and the MR page.
-- C3: `pytest -q tests/unit/test_gate_open_threads.py tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py` → green.
+- C3: `pytest -q tests/unit/test_open_threads_block_the_merge.py tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py` → green.
 
 ## Architecture Impact
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX (a new severity value and status; the map changes)
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE (the digest's comment id is a `finding_posts` row with its own provenance; nits open no thread)
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-OPEN-THREADS-BLOCK-THE-MERGE (unchanged for minor and above; documented)
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE, SP-POSTING-REPLAY-DEDUPES (one more post in the batch, an edit on both forges, idempotent on replay)
+- Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP (the tests read the ledger, drive the orchestrator and build reviewer outcomes)
 - No new table; `finding_posts` gains a provenance value.
 
 ## Diagram
