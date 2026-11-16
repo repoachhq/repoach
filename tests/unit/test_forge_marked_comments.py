@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from repoach.cli.review_cmds import _ARCHIVE_FENCE
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
 from repoach.forge.protocol import (
@@ -28,6 +29,7 @@ from repoach.forge.protocol import (
 )
 from repoach.forge.runner import CommandResult
 from repoach.review.nit_digest import NIT_DIGEST_MARKER
+from repoach.review.report import archive_json
 
 BOT = "repoach-bot"
 PR = 7
@@ -232,3 +234,23 @@ def test_a_post_racing_another_run_converges_on_one(kind: str, tmp_path: Path) -
     assert [(c["id"], c["body"]) for c in store.comments] == [
         (racer[0], f"{NIT_DIGEST_MARKER}\nthis run")
     ]
+
+
+@pytest.mark.parametrize("kind", FORGES)
+def test_the_archive_json_round_trips_through_a_marked_comment(kind: str, tmp_path: Path) -> None:
+    """A finding with ``<!--``, ``-->`` and ``&lt;`` reads back byte-identical from the archive."""
+    claim = f"quotes {NIT_DIGEST_MARKER} then a <!-- b --> c &lt; d `e` <tag>"
+    payload = {"findings": [{"claim": claim}], "reviews": [{"summary": claim}]}
+    store = Store()
+    forge = _forge(kind, tmp_path, store)
+    forge.upsert_marked_comment(
+        PR, ARCHIVE_MARKER, f"report\n\n```json\n{archive_json(payload)}\n```\n"
+    )
+
+    found = forge.find_marked_comment(PR, ARCHIVE_MARKER)
+
+    assert found is not None
+    match = _ARCHIVE_FENCE.search(found.body)
+    assert match is not None
+    assert json.loads(match.group(1)) == payload
+    assert store.bodies(ARCHIVE_MARKER)[0].count("<!--") == 1
