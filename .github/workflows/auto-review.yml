@@ -164,7 +164,7 @@ jobs:
                 || github.event.issue.number
                 || github.event.inputs.pr_number }}
       cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
-    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    runs-on: ${{ vars.REPOACH_REVIEW_RUNNER || vars.REPOACH_RUNNER || 'self-hosted' }}
     # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
     # ONLY in the ``bots`` Environment (no repo-level copies), so this
     # job binds to it too — it boots the proxy sidecar and needs them.
@@ -1304,7 +1304,7 @@ jobs:
     concurrency:
       group: merge-${{ needs.review.outputs.head_ref }}
       cancel-in-progress: false
-    runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
+    runs-on: ${{ vars.REPOACH_REVIEW_RUNNER || vars.REPOACH_RUNNER || 'self-hosted' }}
     permissions:
       contents: write
       pull-requests: write
