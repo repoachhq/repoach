@@ -65,6 +65,7 @@ repo needs no configuration:
 | Variable | Default when unset | Purpose |
 | --- | --- | --- |
 | `REPOACH_RUNNER` | `self-hosted` | Runner label every job targets. A fork on GitHub-hosted runners sets `ubuntu-latest`. |
+| `REPOACH_REVIEW_RUNNER` | `REPOACH_RUNNER` | Runner label for the `review` and `auto_merge` jobs of `auto-review.yml` only, so reviews do not queue behind CI. `auto_fix` stays on `REPOACH_RUNNER`: it executes PR code. |
 | `REPOACH_ALLOWED_ACTORS` | `["jwfaye"]` | JSON array of logins allowed to run PR code on the runner. A fork sets its own maintainers, e.g. `["alice","bob"]`. |
 
 A forker's entire trust setup is therefore two variables in the GitHub UI — no
