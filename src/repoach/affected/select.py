@@ -190,6 +190,34 @@ def check_name_jobs(ci_yml: Path) -> dict[str, str]:
     }
 
 
+def matrix_values(ci_yml: Path, job_id: str, axis: str) -> list[str]:
+    """Return the values of one matrix axis of one job.
+
+    Args:
+        ci_yml: The workflow file.
+        job_id: The job's key (``wheel-smoke``).
+        axis: The matrix key (``python-version``).
+
+    Returns:
+        The axis values as strings, in file order.
+
+    Raises:
+        WorkflowError: The workflow is unreadable, has no such job, or
+            the job's ``strategy.matrix.<axis>`` is not a non-empty list.
+    """
+    jobs = _jobs(ci_yml)
+    if job_id not in jobs:
+        raise WorkflowError(ci_yml, "is not a job", key=f"jobs.{job_id}")
+    strategy = jobs[job_id].get("strategy")
+    matrix = strategy.get("matrix") if isinstance(strategy, Mapping) else None
+    values = matrix.get(axis) if isinstance(matrix, Mapping) else None
+    if not isinstance(values, list) or not values:
+        raise WorkflowError(
+            ci_yml, "must be a non-empty list", key=f"jobs.{job_id}.strategy.matrix.{axis}"
+        )
+    return [str(value) for value in values]
+
+
 def default_base(integration_branch: str) -> str:
     """Return the default base revision of a diff.
 

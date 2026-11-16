@@ -10,7 +10,7 @@
 #   scripts/ci_local.sh --integration  # pytest integration tests only
 #   scripts/ci_local.sh --wheel        # mirror the wheel-build + wheel-smoke jobs:
 #                                      # build once, pipx-install the wheel on
-#                                      # Python 3.11 and 3.13 (SP-PYPI-RELEASE)
+#                                      # every python-version of the ci.yml wheel-smoke matrix (SP-PYPI-RELEASE)
 #   scripts/ci_local.sh --affected [<base>]  # run only what the diff from <base>
 #                                      # (default: `repoach ci affected base`) affects: prints
 #                                      # `repoach ci affected select`, then always
@@ -190,7 +190,9 @@ elif [[ "$run_wheel" == true ]] ; then
     cleanup+=("$wheel_dir")
     run_step "build sdist + wheel" python -m build --sdist --wheel --outdir "$wheel_dir" .
     run_step "twine check" bash -c "python -m twine check '$wheel_dir'/*"
-    for py in 3.11 3.13 ; do
+    smoke_listing="$(repoach ci affected matrix wheel-smoke python-version)"
+    mapfile -t smoke_versions <<< "$smoke_listing"
+    for py in "${smoke_versions[@]}" ; do
         py_bin="$(command -v "python$py" || uv python find "$py" 2>/dev/null || true)"
         if [[ -z "$py_bin" ]] ; then
             fail "wheel-smoke ($py): no python$py on PATH nor through uv"

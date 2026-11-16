@@ -21,6 +21,7 @@ from repoach.affected.select import (
     decide_mode,
     default_base,
     github_output_lines,
+    matrix_values,
     select,
     summary_markdown,
     workflow_jobs,
@@ -353,3 +354,13 @@ def test_changed_paths_names_the_failing_command(two_commit_repo: Path) -> None:
 
 def test_default_base_is_the_remote_tracking_integration_branch() -> None:
     assert default_base("develop") == f"{BASE_REMOTE}/develop"
+
+
+def test_matrix_values_reads_one_axis(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    path.write_text(_MATRIX_WORKFLOW, encoding="utf-8")
+    assert matrix_values(path, "test", "python-version") == ["3.11", "3.13"]
+    with pytest.raises(WorkflowError, match=r"jobs\.build\.strategy\.matrix\.python-version"):
+        matrix_values(path, "build", "python-version")
+    with pytest.raises(WorkflowError, match=r"jobs\.absent is not a job"):
+        matrix_values(path, "absent", "python-version")

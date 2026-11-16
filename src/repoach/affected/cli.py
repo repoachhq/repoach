@@ -11,7 +11,8 @@ its one-line account on stderr, and exits:
 An exit other than 0 prints no selection, so a caller goes red rather
 than guessing a narrow or a full set. ``gate-pytest`` prints the
 ``[gate].pytest`` selectors, one per line; ``base`` prints the default
-base revision, the one place a shell caller reads the integration branch from.
+base revision, the one place a shell caller reads the integration branch from;
+``matrix <job> <axis>`` prints one matrix axis of a ``ci.yml`` job.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from .select import (
     decide_mode,
     default_base,
     github_output_lines,
+    matrix_values,
     select,
     summary_markdown,
     workflow_jobs,
@@ -205,3 +207,23 @@ def base_cmd() -> None:
             working tree.
     """
     typer.echo(default_base(_integration_branch(_root())))
+
+
+@affected_app.command("matrix")
+def matrix_cmd(
+    job: str = typer.Argument(..., help="The job id (wheel-smoke)."),
+    axis: str = typer.Argument(..., help="The matrix key (python-version)."),
+    workflow: str = typer.Option(DEFAULT_WORKFLOW_PATH, "--workflow", help="The CI workflow."),
+) -> None:
+    """Print the values of one matrix axis of one workflow job, one per line.
+
+    Raises:
+        typer.Exit: 2 when the workflow, the job or the axis cannot be
+            read; 3 outside a git working tree.
+    """
+    try:
+        values = matrix_values(_root() / workflow, job, axis)
+    except WorkflowError as exc:
+        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+    for value in values:
+        typer.echo(value)

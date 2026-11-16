@@ -7,13 +7,14 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from repoach.affected.cli import EXIT_GIT, EXIT_UNREADABLE, affected_app
-from repoach.affected.select import DEFAULT_WORKFLOW_PATH, workflow_jobs
+from repoach.affected.select import DEFAULT_WORKFLOW_PATH, matrix_values, workflow_jobs
 from repoach.affected.table import DEFAULT_TABLE_PATH
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -186,6 +187,7 @@ case "$1 $2 $3" in
         ;;
     "ci affected gate-pytest") echo tests/unit/test_gate_judge.py ;;
     "ci affected base") echo main ;;
+    "ci affected matrix") PYTHONPATH="$REAL_PYTHONPATH" exec "$REAL_PYTHON" -m repoach.cli.main "$@" ;;
 esac
 """
 
@@ -201,8 +203,11 @@ def checkout(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "checkout"
     (root / "scripts").mkdir(parents=True)
     shutil.copy2(_SCRIPT, root / "scripts" / "ci_local.sh")
-    for name in ("job_proxy.sh", "wheel_smoke.sh"):
-        _write(root / "scripts" / name, "exit 0\n")
+    _write(root / "scripts" / "job_proxy.sh", "exit 0\n")
+    _write(root / "scripts" / "wheel_smoke.sh", 'echo "wheel_smoke $*" >> "$STUB_LOG"\n')
+    _write(
+        root / DEFAULT_WORKFLOW_PATH, (_ROOT / DEFAULT_WORKFLOW_PATH).read_text(encoding="utf-8")
+    )
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "t@example.invalid")
     _git(root, "config", "user.name", "t")
@@ -216,6 +221,7 @@ def checkout(tmp_path: Path) -> tuple[Path, Path]:
         ("ruff", _STUB_LOGGER),
         ("python3.11", _STUB_LOGGER),
         ("python3.13", _STUB_LOGGER),
+        ("python3.12", _STUB_LOGGER),
         ("pipx", _STUB_LOGGER),
     ):
         stub = stubs / name
@@ -242,6 +248,8 @@ def _run_affected(
         "STUB_SELECTION": selection,
         "STUB_SELECT_EXIT": str(select_exit),
         "STUB_MISSING": missing,
+        "REAL_PYTHON": sys.executable,
+        "REAL_PYTHONPATH": str(_ROOT / "src"),
     }
     completed = subprocess.run(
         ["bash", str(root / "scripts" / "ci_local.sh"), "--affected", *base],
@@ -339,3 +347,62 @@ def test_base_refuses_an_invalid_repoach_toml(repo: Path) -> None:
     result = CliRunner().invoke(affected_app, ["base"])
     assert result.exit_code == EXIT_UNREADABLE
     assert result.stdout == ""
+
+
+_WHEEL_SELECTION = "job_test=false\\njob_wheel_build=true\\njob_wheel_smoke=true\\nmode=narrowed\\n"
+
+
+def _smoke_pythons(calls: list[str]) -> list[str]:
+    return [
+        Path(call.split("--python ")[1].split()[0]).name
+        for call in calls
+        if call.startswith("wheel_smoke ")
+    ]
+
+
+def test_ci_local_smokes_every_python_of_the_ci_wheel_smoke_matrix(
+    checkout: tuple[Path, Path],
+) -> None:
+    rc, stdout, calls = _run_affected(checkout, _WHEEL_SELECTION)
+    assert rc == 0, stdout
+    expected = [
+        f"python{version}"
+        for version in matrix_values(_ROOT / DEFAULT_WORKFLOW_PATH, "wheel-smoke", "python-version")
+    ]
+    assert _smoke_pythons(calls) == expected
+
+
+def test_changing_the_matrix_changes_the_pythons_ci_local_smokes(
+    checkout: tuple[Path, Path],
+) -> None:
+    root, _ = checkout
+    workflow = root / DEFAULT_WORKFLOW_PATH
+    text = workflow.read_text(encoding="utf-8")
+    smoke = text.index("wheel-smoke:")
+    edited = text[:smoke] + text[smoke:].replace(
+        'python-version: ["3.11", "3.13"]', 'python-version: ["3.12"]', 1
+    )
+    assert edited != text
+    workflow.write_text(edited, encoding="utf-8")
+    rc, stdout, calls = _run_affected(checkout, _WHEEL_SELECTION)
+    assert rc == 0, stdout
+    assert _smoke_pythons(calls) == ["python3.12"]
+
+
+def test_matrix_prints_one_axis_of_one_job(repo: Path) -> None:
+    result = CliRunner().invoke(affected_app, ["matrix", "wheel-smoke", "python-version"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines() == matrix_values(
+        repo / DEFAULT_WORKFLOW_PATH, "wheel-smoke", "python-version"
+    )
+
+
+def test_matrix_refuses_an_unknown_job_or_axis(repo: Path) -> None:
+    for args, key in (
+        (["nope", "python-version"], "jobs.nope"),
+        (["wheel-smoke", "os"], "jobs.wheel-smoke.strategy.matrix.os"),
+    ):
+        result = CliRunner().invoke(affected_app, ["matrix", *args])
+        assert result.exit_code == EXIT_UNREADABLE
+        assert result.stdout == ""
+        assert key in result.stderr
