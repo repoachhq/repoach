@@ -515,6 +515,7 @@ def review_pr(
         "finding_posts": team.finding_posts,
         "threads_closed": team.threads_closed,
         "review_threads": team.open_threads.as_json(),
+        "nits": team.nits_json(with_body=True),
         "usage": usage,
         "refuter_tokens": refuter_tokens_json(team.refutations, usage),
     }
@@ -540,6 +541,9 @@ def review_pr(
     for line in team.thread_lines:
         typer.echo(line, err=True)
     typer.echo(team.open_threads.summary_line(), err=True)
+    nit_line = team.nit_digest.report_line() if team.nit_digest is not None else ""
+    if nit_line:
+        typer.echo(nit_line, err=True)
     typer.echo(f"repoach: {run_summary_line(run)}", err=True)
     typer.echo(f"repoach: {served_by_line(run)}", err=True)
     if team.write_refusal is not None or team.refused_writes:

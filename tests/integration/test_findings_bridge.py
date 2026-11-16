@@ -53,8 +53,8 @@ def test_smoke_bridge_records_valid_skips_garbage(tmp_path: Path) -> None:
     for f in findings:
         assert f.finder == "architect"
         assert f.claim_type == ClaimType.DESIGN
-        assert f.status == FindingStatus.PROPOSED
 
-    severities = {f.severity for f in findings}
-    assert Severity.BLOCKING in severities
-    assert Severity.ADVISORY in severities
+    assert {(f.severity, f.status) for f in findings} == {
+        (Severity.BLOCKING, FindingStatus.PROPOSED),
+        (Severity.NOTE, FindingStatus.NOTED),
+    }

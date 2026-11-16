@@ -99,7 +99,7 @@ def test_severity_mapping() -> None:
     assert SEVERITY_MAP["blocker"] == Severity.BLOCKING
     assert SEVERITY_MAP["major"] == Severity.BLOCKING
     assert SEVERITY_MAP["minor"] == Severity.ADVISORY
-    assert SEVERITY_MAP["nit"] == Severity.ADVISORY
+    assert SEVERITY_MAP["nit"] == Severity.NOTE
     comment = ReviewComment(file="f.py", line=1, severity="unknown", body="x")
     finding = comment_to_finding(
         comment, role=BotRole.ARCHITECT, pr_number=1, head_sha="sha", round_n=1
@@ -123,9 +123,9 @@ def test_record_findings_round_trip(tmp_path: Path) -> None:
     assert findings[0].finder == "architect"
     assert findings[0].claim_type == ClaimType.DESIGN
     assert findings[0].severity == Severity.BLOCKING
-    assert findings[1].severity == Severity.ADVISORY
+    assert findings[1].severity == Severity.NOTE
     assert findings[0].status == FindingStatus.PROPOSED
-    assert findings[1].status == FindingStatus.PROPOSED
+    assert findings[1].status == FindingStatus.NOTED
 
 
 def test_unparsed_outcomes_skipped(tmp_path: Path) -> None:

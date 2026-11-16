@@ -23,7 +23,8 @@ surfaces four recurring hallucination modes — observed live on PR
 
 This module post-processes a :class:`ReviewerOutcome` against the
 working tree, downgrades blocker/major comments whose claim is
-disproved by reading the actual file, and softens the verdict when
+disproved by reading the actual file to :data:`GUARD_DOWNGRADE_SEVERITY`
+(advisory, still a thread), and softens the verdict when
 the supporting evidence collapses.
 
 The guard is conservative: it only downgrades when the disproof is
@@ -89,6 +90,16 @@ class GuardEvent:
 _log = get_logger(__name__)
 
 _DOWNGRADE_PREFIX = "[guard:downgraded] "
+
+GUARD_DOWNGRADE_SEVERITY = "minor"
+"""The severity word a disproved blocker / major is rewritten to.
+
+``minor`` is advisory: the comment still opens a review thread, which
+holds the merge until it is resolved. The guard never rewrites to
+``nit``, which is a note that opens no thread and blocks nothing
+(SP-REVIEW-NITS-ONE-COMMENT): a guard heuristic may weaken a finding,
+never take it out of the merge's sight.
+"""
 _FILE_READ_CAP_BYTES = 200_000
 
 _TRIGGER = re.compile(
@@ -319,13 +330,13 @@ def _comment_falsely_claims_missing_test(
 
 
 def _downgrade(comment: ReviewComment, reason: str) -> ReviewComment:
-    """Return a copy of ``comment`` with severity ``nit`` and a guard tag."""
+    """Return a copy of ``comment`` with severity :data:`GUARD_DOWNGRADE_SEVERITY` and a guard tag."""
     new_body = (
         comment.body
         if comment.body.startswith(_DOWNGRADE_PREFIX)
         else (f"{_DOWNGRADE_PREFIX}({reason}) {comment.body}")
     )
-    return replace(comment, severity="nit", body=new_body)
+    return replace(comment, severity=GUARD_DOWNGRADE_SEVERITY, body=new_body)
 
 
 def apply_hallucination_guard(

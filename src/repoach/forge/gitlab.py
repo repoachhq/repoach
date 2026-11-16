@@ -60,9 +60,11 @@ from .protocol import (
     ReviewDraft,
     ReviewThread,
     WriteRefusal,
+    carries_marker,
     diff_files,
     edited_since,
     maintainer_candidate,
+    marked_body,
     trusted,
     unnumbered_write,
     write_barrier,
@@ -900,29 +902,59 @@ class GitLabForge:
             )
         raise ForgeNotFoundError(f"no discussion holds note {comment_id}", number=number)
 
-    def find_marked_comment(self, number: int, marker: str) -> Comment | None:
-        """Return the oldest trusted conversation note carrying ``marker``."""
-        for comment in self.conversation_comments(number):
-            if marker in comment.body and self.is_trusted_author(comment):
-                return comment
-        return None
+    def _marked_notes(self, number: int, marker: str) -> list[Comment]:
+        """Every trusted conversation note ``marker`` opens, oldest (lowest id) first."""
+        return sorted(
+            (
+                comment
+                for comment in self.conversation_comments(number)
+                if carries_marker(comment.body, marker) and self.is_trusted_author(comment)
+            ),
+            key=lambda comment: comment.id,
+        )
 
-    @write_barrier
-    def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        """Update the trusted marker note in place, or post it."""
-        final_body = body if marker in body else f"{marker}\n{body}"
-        existing = self.find_marked_comment(number, marker)
-        if existing is None:
-            return self._post_note(number, final_body)
+    def find_marked_comment(self, number: int, marker: str) -> Comment | None:
+        """Return the oldest trusted conversation note ``marker`` opens."""
+        found = self._marked_notes(number, marker)
+        return found[0] if found else None
+
+    def _put_note(self, number: int, note_id: int, body: str) -> Comment:
+        """PUT ``body`` into the MR note ``note_id``."""
         data = self._api(
-            f"{self._project}/merge_requests/{number}/notes/{existing.id}",
+            f"{self._project}/merge_requests/{number}/notes/{note_id}",
             method="PUT",
-            payload={"body": final_body},
+            payload={"body": body},
             number=number,
         )
         if not isinstance(data, dict):
             raise ForgeError("note update returned a non-object payload")
         return note_to_comment(data)
+
+    @write_barrier
+    def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
+        """Write the one trusted note ``marker`` opens; delete any other (protocol contract).
+
+        After a post the notes are read again: when a concurrent run
+        posted one too, the oldest is kept, given this body, and the
+        rest are deleted.
+        """
+        final_body = marked_body(marker, body)
+        found = self._marked_notes(number, marker)
+        if found:
+            kept = self._put_note(number, found[0].id, final_body)
+        else:
+            kept = self._post_note(number, final_body)
+            found = self._marked_notes(number, marker)
+            if found and found[0].id != kept.id:
+                kept = self._put_note(number, found[0].id, final_body)
+        for extra in found:
+            if extra.id != kept.id:
+                self._api_text(
+                    f"{self._project}/merge_requests/{number}/notes/{extra.id}",
+                    method="DELETE",
+                    number=number,
+                )
+        return kept
 
     def ci_status(
         self,

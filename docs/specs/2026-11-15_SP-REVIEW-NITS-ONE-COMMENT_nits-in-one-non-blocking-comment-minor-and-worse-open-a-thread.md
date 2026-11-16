@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-NITS-ONE-COMMENT
 title: Nits are consolidated into one non-blocking comment per merge request; only minor and worse open a resolvable, blocking thread
-version: 0.2
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/nit_digest.py, tests/unit/test_nit_digest.py, tests/integration/test_nits_never_block_the_merge.py]
   resources: [format:nit-digest-comment]
 
-depends_on: [SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-THREAD-IDS, SP-OPEN-THREADS-BLOCK-THE-MERGE, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE, SP-POSTING-REPLAY-DEDUPES]
+depends_on: [SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-THREAD-IDS, SP-OPEN-THREADS-BLOCK-THE-MERGE, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE, SP-POSTING-REPLAY-DEDUPES, SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
 provides_to: []
 
 constraints:
@@ -46,8 +46,8 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
 
 - D1. `Severity` gains `NOTE`; `SEVERITY_MAP["nit"] = NOTE`. A `NOTE`
   finding is recorded in the ledger like any other (fingerprint, head,
-  lens, status `proposed` → `noted`, a terminal non-blocking status
-  that no gate counts), never posted as its own comment, never judged
+  lens, inserted with status `noted`, a terminal non-blocking status
+  that no gate counts and no transition enters or leaves), never posted as its own comment, never judged
   by the refuter, never re-verified at head.
 - D2. One digest comment per merge request, `format:nit-digest-comment`:
   a general (non-positioned) note on GitLab, an issue comment on
@@ -56,9 +56,17 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
   a nit and edited in place at every later head: items of the current
   head under `## At <sha7>`, items of earlier heads under `## Earlier`
   with their head, each item `path:line — lens — text`, at most 40
-  items (the rest counted). A nit whose cited lines changed since
+  items (the rest counted). A nit raised again at a later head is
+  listed once, at its latest head; an edit whose rendering is unchanged
+  writes nothing. A nit whose cited lines changed since
   (SP-REVIEW-SETTLED-STAYS-SETTLED's `cited_region_changed`) is dropped
-  from the digest at the next edit.
+  from the digest at the next edit: that drop is delivered by
+  SP-REVIEW-SETTLED-STAYS-SETTLED (its AC5), which owns
+  `cited_region_changed`.
+- temporary: until SP-REVIEW-SETTLED-STAYS-SETTLED lands, the digest
+  drops no nit whose cited lines changed; it keeps listing it under
+  `## Earlier` with its head. The vehicle is SP-REVIEW-SETTLED-STAYS-SETTLED
+  AC5 (`depends_on` SP-REVIEW-NITS-ONE-COMMENT there).
 - D3. `minor` stays `ADVISORY`: it opens a thread, the thread blocks
   until resolved (SP-OPEN-THREADS-BLOCK-THE-MERGE unchanged), and the
   gate's advisory handling is unchanged.
@@ -92,7 +100,7 @@ must leave the previous digest intact and say so in the report.
 
 - G1: a `nit` comment becomes a `NOTE` finding, recorded, never posted alone, never blocking.
 - G2: one digest comment per merge request, edited in place per head, with the layout of D2 and the 40-item cap.
-- G3: `minor`, `major`, `blocker` behaviour unchanged; `pytest -q tests/unit/test_gate_open_threads.py tests/unit/test_findings_bridge*.py` green with the new value.
+- G3: `minor`, `major`, `blocker` behaviour unchanged; `pytest -q tests/unit/test_open_threads_block_the_merge.py tests/unit/test_findings_bridge*.py` green with the new value.
 - G4: the review JSON and the archive comment carry the nit count and the digest's URL.
 
 ## Non-Goals
@@ -108,21 +116,34 @@ must leave the previous digest intact and say so in the report.
 
 ```python
 # src/repoach/review/nit_digest.py
+NIT_DIGEST_MARKER = "<!-- repoach:nit-digest -->"; NIT_DIGEST_MAX_ITEMS = 40
+
 class NitItem(BaseModel):
-    head_sha: str; path: str; line: int; lens: str; text: str
+    finding_id: int; head_sha: str; path: str; line: int; lens: str; text: str
 
 class NitDigest(BaseModel):
-    pr_number: int; items: list[NitItem]; truncated: int; comment_id: str | None
+    pr_number: int; head_sha: str; items: list[NitItem]; truncated: int = 0
+    comment_id: str | None = None; url: str | None = None; error: str | None = None
+    count: int                                   # property: len(items) + truncated
+    def as_json(self, *, with_body: bool) -> dict[str, object]: ...   # the `nits` block
+    def report_line(self) -> str: ...            # "nit digest: …" / "nit digest not updated: <why>"
 
 def collect_nits(findings: Sequence[Finding], *, head_sha: str) -> list[NitItem]: ...
-def render_digest(digest: NitDigest, *, head_sha: str) -> str: ...        # format:nit-digest-comment
+def digest_for_pr(db_path: Path, pr_number: int, *, head_sha: str, max_items: int = 40) -> NitDigest: ...
+def render_digest(digest: NitDigest) -> str: ...        # format:nit-digest-comment; At = digest.head_sha
 def post_or_edit_digest(forge: Forge, digest: NitDigest, *, db_path: Path) -> NitDigest: ...
 
+# findings_bridge.py (changed): SEVERITY_MAP["nit"] = Severity.NOTE; severity_of(comment); opens_thread(comment)
+# finding_posts.py (changed): PROVENANCE_DIGEST = "digest"; FindingPost.root_id is None for a digest row
+# orchestrator.py (changed): TeamOutcome.nit_digest, TeamOutcome.nits_json(*, with_body)
+
 # findings.py (changed): Severity.NOTE; FindingStatus.NOTED
-# findings_bridge.py (changed): SEVERITY_MAP["nit"] = Severity.NOTE
 ```
 
-Outputs: one forge comment with the marker; review JSON key `nits`; log events `nit_digest_posted`, `nit_digest_edited`, `nit_digest_edit_failed`.
+Outputs: one forge comment with the marker; review JSON key `nits`
+(`count`, `digest_url`, `error`, and `body`, the rendered digest; the
+archive comment carries the same block without `body`, since the body
+holds the marker); log events `nit_digest_posted`, `nit_digest_edited`, `nit_digest_edit_failed`.
 
 ## Behavior
 
@@ -155,13 +176,14 @@ is posted. Round 2 at a new head has 1 nit: the digest is edited to
 
 - C1: replaying !366's twelve rounds through the new bridge on the recorded comment bodies (the Yoob `REVIEW-SPEC.md` corpus) yields exactly one digest comment and N threads where N equals the count of comments with severity ≥ minor; oracle: the fake forge's comment list.
 - C2: on Yoob, the first merge request reviewed after this lands shows one `repoach:nit-digest` comment and the gate's refusal lines never cite it; oracle: `repoach review gate <n>` output and the MR page.
-- C3: `pytest -q tests/unit/test_gate_open_threads.py tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py` → green.
+- C3: `pytest -q tests/unit/test_open_threads_block_the_merge.py tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py` → green.
 
 ## Architecture Impact
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX (a new severity value and status; the map changes)
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE (the digest's comment id is a `finding_posts` row with its own provenance; nits open no thread)
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-OPEN-THREADS-BLOCK-THE-MERGE (unchanged for minor and above; documented)
 - Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-REVIEW-POST-BATCH, SP-UNIVERSAL-FORGE, SP-POSTING-REPLAY-DEDUPES (one more post in the batch, an edit on both forges, idempotent on replay)
+- Adds dependency: SP-REVIEW-NITS-ONE-COMMENT -> SP-FINDINGS-INIT-RACE, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP (the tests read the ledger, drive the orchestrator and build reviewer outcomes)
 - No new table; `finding_posts` gains a provenance value.
 
 ## Diagram
