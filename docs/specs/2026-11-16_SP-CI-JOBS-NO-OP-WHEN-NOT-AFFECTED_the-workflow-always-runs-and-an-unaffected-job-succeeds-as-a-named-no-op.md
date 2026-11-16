@@ -89,7 +89,8 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   step of those jobs but `Selection` has an `if` containing
   `needs.gate.outputs.job_<id> == 'true'` with its own id; `Selection`
   is first and unconditional; `gate` has no `needs`; the `select` step
-  passes `--event`, `--base-ref`, `--github-output`, `--summary` and
+  passes the five flags of D1 (`--base`, `--event`, `--base-ref`,
+  `--github-output`, `--summary`) and
   `--table "$REPOACH_AFFECTED_JOBS_TABLE"`; the three tree lints exist
   in `gate` and in no leg; the trigger block and `concurrency` equal
   today's except `push: branches: [main, develop]` (D7); no workflow under
@@ -240,7 +241,7 @@ five names of `main`'s list green.
 | T1 | `tests/unit/test_affected_workflow_wiring.py` | every job but `gate` has `needs` holding `gate`; `gate` has none | drop `needs` on `wheel-build` |
 | T2 | same | every step of `test`, `wheel-build`, `wheel-smoke` but the first (`Selection`) has an `if` containing `needs.gate.outputs.job_<own id> == 'true'` | leave `Install package + dev deps` unconditional |
 | T3 | same | `Selection` is first, unconditional, and its `run` names the job and `gate job summary` | reorder |
-| T4 | same | the `select` step passes the six flags of D5 and `--table "$REPOACH_AFFECTED_JOBS_TABLE"`; `env.REPOACH_AFFECTED_JOBS_TABLE` is `.github/affected-jobs.toml` | hard-code the path in the step |
+| T4 | same | the `select` step passes the five flags of D1 (`--base`, `--event`, `--base-ref`, `--github-output`, `--summary`) and `--table "$REPOACH_AFFECTED_JOBS_TABLE"`; `env.REPOACH_AFFECTED_JOBS_TABLE` is `.github/affected-jobs.toml` | hard-code the path in the step |
 | T5 | same | the three tree lints are steps of `gate` and of no leg; ruff and the two Python lints are steps of `test` | leave the edge-honesty step in `test` |
 | T6 | same | the job ids of `ci.yml` equal `{gate} ∪ ids named by the table`; no workflow under `.github/workflows/` has `on.pull_request.paths` or `paths-ignore` | add a `paths:` to `shellcheck.yml` |
 | T7 | same | the trigger block equals today's with `push: branches: [main, develop]` (D7), `concurrency` unchanged | drop `develop` from `push` |

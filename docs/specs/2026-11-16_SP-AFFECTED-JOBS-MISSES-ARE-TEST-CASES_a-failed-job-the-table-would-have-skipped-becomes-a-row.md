@@ -12,7 +12,7 @@ owns:
   resources: [format:affected-jobs-misses]
 
 depends_on: [SP-AFFECTED-JOBS-TABLE, SP-CLI-STDOUT-ONE-JSON]
-provides_to: []
+provides_to: [SP-RELEASE-GATE]
 
 constraints:
   harvest_window_pull_requests: 30
@@ -141,8 +141,10 @@ its reason in the report.
 ```python
 # src/repoach/affected/harvest.py
 class HeadRun(BaseModel):
-    pr: int; run: int; head_sha: str; paths: list[str]; jobs: list[JobOutcome]   # JobOutcome: name, conclusion, failed_steps
-def harvest(repo: str, *, merged: int, base: str, gh: Callable[..., str]) -> list[HeadRun]: ...   # F2 per head; raises HarvestError naming the gh command on failure
+    pr: int; run: int; head_sha: str; paths: list[str]; paths_truncated: bool = False; jobs: list[JobOutcome]   # JobOutcome: name, conclusion, failed_steps
+class Harvest(BaseModel):
+    runs: list[HeadRun]; not_admitted: int   # runs whose every job was skipped by the actor allowlist: counted, never recorded
+def harvest(repo: str, *, merged: int, base: str, gh: Callable[..., str]) -> Harvest: ...   # F2 per head; raises HarvestError naming the gh command on failure
 def write_corpus(runs: Sequence[HeadRun], path: Path) -> None: ...   # atomic: temp file then replace, never a truncated corpus
 
 # src/repoach/affected/misses.py
@@ -199,7 +201,8 @@ and the empty misses table exits 0.
 - C3: `docs/merge_gate.md` has the four-step section of D4; `pytest -q tests/unit/test_affected_misses.py` green with T1–T7 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
 ## Architecture Impact
-- Adds dependency: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES -> SP-AFFECTED-JOBS-TABLE (`select`, `load_table`, the corpus format)
+- Adds dependency: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES -> SP-AFFECTED-JOBS-TABLE (`select`, `load_table`, `workflow_jobs`, the corpus format)
+- Adds dependency: SP-RELEASE-GATE -> SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES (D5: `repoach release gate` calls `harvest` and `replay` for its report line; `replay` itself imports no `gh` caller)
 - Adds dependency: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES -> SP-CLI-STDOUT-ONE-JSON
 - New resource: `format:affected-jobs-misses`. `gh` is called through `subprocess`, as the lint scripts do; no import from `forge`. No cycle.
 
