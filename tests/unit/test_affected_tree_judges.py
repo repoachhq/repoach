@@ -60,12 +60,15 @@ class _Module:
         parts: Its path split into segments (``__file__``).
         top_entries: The first segments of every tracked path.
         constants: Module-level names bound to a string literal.
+        resource_names: Names the module imports from ``importlib.resources``
+            (or ``resources`` itself, from ``importlib``).
     """
 
     name: str
     parts: Parts
     top_entries: frozenset[str]
     constants: Mapping[str, str] = field(default_factory=dict)
+    resource_names: frozenset[str] = frozenset()
 
 
 def _join(module: _Module, node: ast.AST, base: Parts, text: str) -> Parts:
@@ -154,6 +157,10 @@ def _evaluate(node: ast.AST, env: Mapping[str, Parts], module: _Module) -> Parts
     Raises:
         WalkerError: The path climbs above the root.
     """
+    if isinstance(node, ast.Call | ast.Attribute | ast.BinOp | ast.Subscript) and _from_resources(
+        node, module
+    ):
+        return ()
     if isinstance(node, ast.Name):
         return module.parts if node.id == "__file__" else env.get(node.id)
     if isinstance(node, ast.Attribute) and node.attr == "parent":
@@ -180,22 +187,82 @@ def _evaluate(node: ast.AST, env: Mapping[str, Parts], module: _Module) -> Parts
     return None
 
 
+def _is_cwd(func: ast.AST) -> bool:
+    """Return whether a call target is ``Path.cwd`` or ``os.getcwd``: the root, where pytest runs."""
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr == "cwd":
+        return (isinstance(func.value, ast.Name) and func.value.id in _PATH_CONSTRUCTORS) or (
+            isinstance(func.value, ast.Attribute) and func.value.attr in _PATH_CONSTRUCTORS
+        )
+    return func.attr == "getcwd" and isinstance(func.value, ast.Name) and func.value.id == "os"
+
+
+def _is_resources(func: ast.AST, module: _Module) -> bool:
+    """Return whether a call goes through ``importlib.resources``, read as the whole tree."""
+    if isinstance(func, ast.Name):
+        return func.id in module.resource_names
+    while isinstance(func, ast.Attribute):
+        if func.attr == "resources" or (
+            isinstance(func.value, ast.Name) and func.value.id in module.resource_names
+        ):
+            return True
+        func = func.value
+    return False
+
+
+def _from_resources(node: ast.AST, module: _Module) -> bool:
+    """Return whether ``node`` is, or is built on, an ``importlib.resources`` call.
+
+    A resource path is relative to a package, not to the root, so
+    everything built on it stays the whole tree.
+    """
+    while True:
+        if isinstance(node, ast.Call):
+            if _is_resources(node.func, module):
+                return True
+            node = node.func
+        elif isinstance(node, ast.Attribute | ast.Subscript):
+            node = node.value
+        elif isinstance(node, ast.BinOp):
+            node = node.left
+        else:
+            return False
+
+
+def _builds_a_string(node: ast.AST) -> bool:
+    """Return whether ``node`` computes a string the walk cannot read (f-string, ``+``, ``%``, ``format``, ``join``)."""
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Mod):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"format", "join"}
+        and _os_path(node.func) is None
+    )
+
+
 def _evaluate_call(node: ast.Call, env: Mapping[str, Parts], module: _Module) -> Parts | None:
     """Return the repository path a call denotes, or None (see :func:`_evaluate`)."""
     func = node.func
-    if (
-        isinstance(func, ast.Name)
-        and func.id in _PATH_CONSTRUCTORS | {"str"}
-        and len(node.args) == 1
-    ):
+    if _is_cwd(func):
+        return ()
+    opener = isinstance(func, ast.Name) and func.id in _PATH_CONSTRUCTORS | {"open"}
+    if opener and node.args:
         arg = node.args[0]
-        text = arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
-        if text is None:
-            return _evaluate(arg, env, module)
-        first = text.split("/")[0]
-        if func.id != "str" and not text.startswith("/") and first in module.top_entries:
-            return _join(module, node, (), text)
-        return None
+        text = _literal(arg, module)
+        if text is not None:
+            first = text.split("/")[0]
+            if not text.startswith("/") and first in module.top_entries:
+                return _join(module, node, (), text)
+            return None
+        if _builds_a_string(arg):
+            return ()
+        return _evaluate(arg, env, module)
+    if isinstance(func, ast.Name) and func.id == "str" and len(node.args) == 1:
+        return _evaluate(node.args[0], env, module)
     os_function = _os_path(func)
     if os_function is not None and node.args:
         base = _evaluate(node.args[0], env, module)
@@ -339,7 +406,17 @@ def tree_reads(source: str, module_path: str, top_entries: frozenset[str]) -> se
         for target in node.targets
         if isinstance(target, ast.Name)
     }
-    module = _Module(module_path, tuple(module_path.split("/")), top_entries, constants)
+    resource_names = frozenset(
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and (node.module == "importlib.resources" or node.module == "importlib")
+        for alias in node.names
+        if node.module == "importlib.resources" or alias.name == "resources"
+    )
+    module = _Module(
+        module_path, tuple(module_path.split("/")), top_entries, constants, resource_names
+    )
     return _scope_reads(tree.body, {}, module) - {module_path}
 
 
@@ -560,3 +637,56 @@ def test_every_path_a_tree_judge_reads_is_classified() -> None:
                 if UNKNOWN_ROW in selection.rows_hit:
                     unclassified.append(f"{judge}: {path}")
     assert unclassified == []
+
+
+def test_walk_reads_a_literal_passed_to_open() -> None:
+    assert _synthetic(["def t():", "    return open('docs/x.md').read()"]) == {"docs/x.md"}
+
+
+def test_walk_resolves_a_module_constant_passed_to_path() -> None:
+    assert _synthetic(
+        [
+            "from pathlib import Path",
+            "SPEC = 'docs/specs/a.md'",
+            "def t():",
+            "    return Path(SPEC).read_text()",
+        ]
+    ) == {"docs/specs/a.md"}
+
+
+def test_walk_takes_the_working_directory_as_the_root() -> None:
+    assert _synthetic(
+        [
+            "import os",
+            "from pathlib import Path",
+            "def t():",
+            "    return Path.cwd() / 'docs', os.getcwd()",
+        ]
+    ) == {"docs", ""}
+
+
+def test_walk_takes_importlib_resources_as_the_whole_tree() -> None:
+    assert _synthetic(
+        [
+            "from importlib.resources import files",
+            "def t():",
+            "    return files('repoach').joinpath('x').read_text()",
+        ]
+    ) == {""}
+    assert _synthetic(
+        [
+            "import importlib.resources",
+            "def t():",
+            "    return importlib.resources.files('repoach')",
+        ]
+    ) == {""}
+
+
+def test_walk_takes_a_computed_string_path_as_the_whole_tree() -> None:
+    assert _synthetic(
+        [
+            "from pathlib import Path",
+            "def t(name):",
+            "    return Path(f'docs/{name}'), open('docs/' + name)",
+        ]
+    ) == {""}

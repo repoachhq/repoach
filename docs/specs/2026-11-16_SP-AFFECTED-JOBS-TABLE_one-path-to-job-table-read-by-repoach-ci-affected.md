@@ -1,7 +1,7 @@
 ---
 id: SP-AFFECTED-JOBS-TABLE
 title: One path-to-job table, read by `repoach ci affected`; the workflow carries no glob
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-16
@@ -65,6 +65,8 @@ version = 1
 pytest = [
   "tests/integration/test_credits_integration.py",
   "tests/integration/test_forge_live.py",
+  "tests/integration/test_job_proxy_collision.py",
+  "tests/integration/test_promise_fanout_reconcile.py",
   "tests/integration/test_selfverify_refutation_flow.py",
   "tests/integration/test_slow_settings_isolation_end_to_end.py",
   "tests/unit/test_affected_cli.py",
@@ -72,10 +74,12 @@ pytest = [
   "tests/unit/test_affected_table.py",
   "tests/unit/test_affected_tree_judges.py",
   "tests/unit/test_arch_graph.py",
+  "tests/unit/test_ci_review.py",
   "tests/unit/test_claude_hooks.py",
   "tests/unit/test_claude_md_integration_flag.py",
   "tests/unit/test_decompose.py",
   "tests/unit/test_devagent_selfverify.py",
+  "tests/unit/test_devagent_tools.py",
   "tests/unit/test_edge_honesty.py",
   "tests/unit/test_finding_posts_backfill.py",
   "tests/unit/test_gate_commands.py",
@@ -118,14 +122,16 @@ reason = "the workflows, this table, the build and test configuration: everythin
 ```
 
   The `[gate].pytest` list above is the list the guard of D5 computes
-  (0.4, measured on `791eb74`). 0.2 proposed nine entries and 0.3
+  (0.5, measured on `51126f0`). 0.2 proposed nine entries and 0.3
   measured six. 0.3 missed every reader whose path goes through
   `.parent`, and every module that uses the root without a literal; the
   independent verification of `791eb74` found
   `test_gen_comparison.py`, which reads `docs/comparison.{yaml,md}`
   through `_SCRIPTS.parent / "docs"`. The 0.4 walk (D5) evaluates
   every path idiom found under `tests/`, and treats the rest
-  conservatively. The 32 entries come in four classes:
+  conservatively; 0.5 adds `open()`, `Path(CONST)`, `Path.cwd()`,
+  `importlib.resources` and computed strings (D5). The 36 entries come
+  in four classes:
   - A literal read of the docs class:
     - `test_arch_graph.py` and `test_edge_honesty.py` (`docs/specs`)
     - `test_spec_template.py`
@@ -143,10 +149,13 @@ reason = "the workflows, this table, the build and test configuration: everythin
     - `test_selfverify_refutation.py` and its integration twin
   - A use of the root that the walk cannot follow, taken as reading the
     whole tree: a `cwd=`, `chdir`, a function argument such as
-    `load_project_config(root)`, or a join with an imported constant.
+    `load_project_config(root)`, a join with an imported constant,
+    `importlib.resources`, or a computed string path. 0.5 added
+    `test_ci_review.py`, `test_devagent_tools.py`,
+    `test_job_proxy_collision.py` and `test_promise_fanout_reconcile.py`.
     These are the remaining entries, including the four
     `test_affected_*` suites, the merge-wait suites, the lint-gate suites
-    and three integration modules.
+    and five integration modules.
   0.2's `test_arch_foreign_frontmatter.py`, `test_spec_presence.py` and
   `test_governed_spec.py` read only `tmp_path`, so they are not judges.
 - D3. The selection of a list of paths: a path matching `[full]`, or
@@ -171,8 +180,13 @@ reason = "the workflows, this table, the build and test configuration: everythin
     `.resolve()`, `.absolute()`, `.parent`, `.parents[n]`, `/`,
     `.joinpath`, `.with_name`, `os.path.dirname`, `os.path.join` and
     `os.path.abspath`, `realpath`, `normpath`, with `..` resolved;
-  - every `Path("<literal>")` whose first segment is a tracked
-    top-level entry.
+  - every `Path(…)` or `open(…)` of a string literal or module string
+    constant whose first segment is a tracked top-level entry;
+  - `Path.cwd()` and `os.getcwd()` as the root, where pytest runs.
+  It reads as the whole tree:
+  - a call through `importlib.resources`, and anything built on it;
+  - a `Path(…)` or `open(…)` of a computed string (an f-string, `+`,
+    `%`, `.format`, `.join`).
   How names and partial paths are handled:
   - A module-level string constant joins like a literal.
   - A name binding resolves in its own scope, and a local rebinding
