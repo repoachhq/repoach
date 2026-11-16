@@ -89,7 +89,8 @@ re-check at head judges it, and the gate counts it nowhere.
 
 Instead, every nit of the pull request goes into one comment carrying
 `<!-- repoach:nit-digest -->`: a GitHub issue comment or a GitLab general
-note, neither of them resolvable. It is posted at the first head that
+note, neither of them resolvable, which that marker opens (a marker
+quoted further down a comment names nothing). It is posted at the first head that
 has a nit and edited in place at each later head: the nits of the head
 reviewed under `## At <sha7>`, those of earlier heads under
 `## Earlier`, each line `path:line — lens — text`, at most 40 (the rest
@@ -108,7 +109,17 @@ SP-REVIEW-SETTLED-STAYS-SETTLED, which delivers it.
   `nit_digest_edit_failed` and prints `nit digest not updated: <why>`;
   the verdict is unaffected.
 - `minor`, `major` and `blocker` are unchanged: each opens a thread, and
-  the thread blocks until it is resolved.
+  the thread blocks until it is resolved. Nothing turns one of them into
+  a nit: the hallucination guard downgrades a disproved `blocker` or
+  `major` to `minor`, still a thread, and a remark raised at one head as
+  a `nit` and as something more severe counts at the more severe one and
+  is left out of the digest.
+- Lens text reaches the digest and the archive comment verbatim except
+  for HTML comments: every `<!--` and `-->` in it is written `&lt;!--`
+  and `--&gt;`, so neither comment can carry the other's marker. Each
+  marker names one comment: a write edits the oldest trusted comment it
+  opens and deletes any other, so two runs at the same head leave one
+  digest.
 - A nit thread opened before this rule is an ordinary open thread: the
   gate counts every unresolved thread whatever its severity, so it is
   answered and resolved like any other (`/resolve <reason>` included).
