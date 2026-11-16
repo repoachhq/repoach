@@ -32,6 +32,9 @@ GATE_JOB = "gate"
 NARROWED_EVENT = "pull_request"
 """The one event whose selection may be narrowed (D4)."""
 
+BASE_REMOTE = "origin"
+"""The remote whose tracking branch of the integration branch is the default base."""
+
 ROWS_HIT_SAMPLE = 3
 """Paths kept per row in :attr:`Selection.rows_hit`."""
 
@@ -185,6 +188,18 @@ def check_name_jobs(ci_yml: Path) -> dict[str, str]:
         for job_id, job in _jobs(ci_yml).items()
         for name in expand_job_names(job_id, job)
     }
+
+
+def default_base(integration_branch: str) -> str:
+    """Return the default base revision of a diff.
+
+    Args:
+        integration_branch: ``[repoach].integration_branch``.
+
+    Returns:
+        ``<BASE_REMOTE>/<integration_branch>`` (``origin/develop``).
+    """
+    return f"{BASE_REMOTE}/{integration_branch}"
 
 
 def decide_mode(

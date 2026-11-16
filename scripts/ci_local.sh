@@ -12,7 +12,7 @@
 #                                      # build once, pipx-install the wheel on
 #                                      # Python 3.11 and 3.13 (SP-PYPI-RELEASE)
 #   scripts/ci_local.sh --affected [<base>]  # run only what the diff from <base>
-#                                      # (default origin/develop) affects: prints
+#                                      # (default: `repoach ci affected base`) affects: prints
 #                                      # `repoach ci affected select`, then always
 #                                      # the gate (arch check, CONTRIBUTING and
 #                                      # attribution lints, [gate].pytest), the
@@ -38,10 +38,9 @@ cd "$(dirname "$0")/.."
 # shadow src/ and the gates would judge the wrong tree.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
-integration_ref="origin/develop"
 mode="full"
 review_pr=""
-affected_base="$integration_ref"
+affected_base=""
 case "${1:-}" in
     --fast)   mode="lint" ;;
     --tests)  mode="tests" ;;
@@ -49,7 +48,7 @@ case "${1:-}" in
     --wheel)  mode="wheel" ;;
     --affected)
         mode="affected"
-        affected_base="${2:-$integration_ref}"
+        affected_base="${2:-}"
         ;;
     --review)
         mode="review"
@@ -134,7 +133,7 @@ run_unit=false
 run_integration=false
 run_smoke=false
 run_gate=false
-attribution_base="$integration_ref"
+attribution_base=""
 case "$mode" in
     full)        run_code_lint=true ; run_tree_lint=true ; run_unit=true ; run_integration=true ; run_smoke=true ;;
     lint)        run_code_lint=true ; run_tree_lint=true ;;
@@ -142,6 +141,9 @@ case "$mode" in
     integration) run_integration=true ;;
     wheel)       run_wheel=true ;;
     affected)
+        if [[ -z "$affected_base" ]] ; then
+            affected_base="$(repoach ci affected base)"
+        fi
         selection_file="$(mktemp)"
         cleanup+=("$selection_file")
         bold "repoach ci affected select --base $affected_base"
@@ -171,7 +173,19 @@ if [[ "$run_gate" == true ]] ; then
     fi
 fi
 
+wheel_tools_missing=()
 if [[ "$run_wheel" == true ]] ; then
+    for module in build twine ; do
+        python -c "import $module" 2>/dev/null || wheel_tools_missing+=("python module $module")
+    done
+    command -v pipx >/dev/null || wheel_tools_missing+=("pipx on PATH")
+fi
+
+if [[ "$run_wheel" == true && ${#wheel_tools_missing[@]} -gt 0 ]] ; then
+    bold "wheel-build + wheel-smoke"
+    fail "refused: missing ${wheel_tools_missing[*]} (ci.yml installs them in the job: pip install build twine pipx)"
+    failures+=("wheel: missing ${wheel_tools_missing[*]}")
+elif [[ "$run_wheel" == true ]] ; then
     wheel_dir="$(mktemp -d)"
     cleanup+=("$wheel_dir")
     run_step "build sdist + wheel" python -m build --sdist --wheel --outdir "$wheel_dir" .
@@ -196,6 +210,9 @@ fi
 
 if [[ "$run_tree_lint" == true ]] ; then
     run_step "lint — CONTRIBUTING cites real paths" python scripts/check_contributing.py CONTRIBUTING.md
+    if [[ -z "$attribution_base" ]] ; then
+        attribution_base="$(repoach ci affected base)"
+    fi
     if git rev-parse --verify -q "$attribution_base" >/dev/null ; then
         run_step "lint — no AI attribution in branch commits" python scripts/lint_no_ai_attribution.py --range "$attribution_base..HEAD"
     fi

@@ -185,10 +185,12 @@ case "$1 $2 $3" in
         echo '{"mode": "narrowed"}'
         ;;
     "ci affected gate-pytest") echo tests/unit/test_gate_judge.py ;;
+    "ci affected base") echo main ;;
 esac
 """
 
 _STUB_LOGGER = """#!/usr/bin/env bash
+if [[ "$1" == -c ]] ; then [[ " $STUB_MISSING " != *" ${2#import } "* ]] ; exit ; fi
 echo "$(basename "$0") $*" >> "$STUB_LOG"
 """
 
@@ -214,6 +216,7 @@ def checkout(tmp_path: Path) -> tuple[Path, Path]:
         ("ruff", _STUB_LOGGER),
         ("python3.11", _STUB_LOGGER),
         ("python3.13", _STUB_LOGGER),
+        ("pipx", _STUB_LOGGER),
     ):
         stub = stubs / name
         stub.write_text(body, encoding="utf-8")
@@ -222,7 +225,12 @@ def checkout(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _run_affected(
-    checkout: tuple[Path, Path], selection: str, select_exit: int = 0
+    checkout: tuple[Path, Path],
+    selection: str,
+    select_exit: int = 0,
+    *,
+    base: tuple[str, ...] = ("main",),
+    missing: str = "",
 ) -> tuple[int, str, list[str]]:
     root, stubs = checkout
     log = stubs.parent / "calls.log"
@@ -233,9 +241,10 @@ def _run_affected(
         "STUB_LOG": str(log),
         "STUB_SELECTION": selection,
         "STUB_SELECT_EXIT": str(select_exit),
+        "STUB_MISSING": missing,
     }
     completed = subprocess.run(
-        ["bash", str(root / "scripts" / "ci_local.sh"), "--affected", "main"],
+        ["bash", str(root / "scripts" / "ci_local.sh"), "--affected", *base],
         cwd=root,
         capture_output=True,
         text=True,
@@ -289,3 +298,44 @@ def test_ci_local_affected_stops_when_select_fails(checkout: tuple[Path, Path]) 
     assert rc == 2
     assert len(calls) == 1
     assert calls[0].startswith("repoach ci affected select")
+
+
+def test_ci_local_affected_without_base_reads_it_from_repoach(checkout: tuple[Path, Path]) -> None:
+    rc, stdout, calls = _run_affected(
+        checkout,
+        "job_test=false\\njob_wheel_build=false\\njob_wheel_smoke=false\\nmode=narrowed\\n",
+        base=(),
+    )
+    assert rc == 0, stdout
+    assert calls[0] == "repoach ci affected base"
+    assert calls[1].startswith("repoach ci affected select --base main --github-output ")
+
+
+def test_ci_local_wheel_block_refuses_by_name_when_build_is_missing(
+    checkout: tuple[Path, Path],
+) -> None:
+    rc, stdout, calls = _run_affected(
+        checkout,
+        "job_test=false\\njob_wheel_build=true\\njob_wheel_smoke=true\\nmode=narrowed\\n",
+        missing="build twine",
+    )
+    assert rc == 1
+    assert "refused: missing python module build python module twine" in stdout
+    assert not any("-m build" in call for call in calls)
+
+
+def test_base_prints_the_integration_branch_remote(repo: Path) -> None:
+    result = CliRunner().invoke(affected_app, ["base"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "origin/develop\n"
+    (repo / "repoach.toml").write_text(
+        '[repoach]\nintegration_branch = "trunk"\n', encoding="utf-8"
+    )
+    assert CliRunner().invoke(affected_app, ["base"]).stdout == "origin/trunk\n"
+
+
+def test_base_refuses_an_invalid_repoach_toml(repo: Path) -> None:
+    (repo / "repoach.toml").write_text("[repoach]\nno_such_key = 1\n", encoding="utf-8")
+    result = CliRunner().invoke(affected_app, ["base"])
+    assert result.exit_code == EXIT_UNREADABLE
+    assert result.stdout == ""

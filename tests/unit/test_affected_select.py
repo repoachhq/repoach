@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from repoach.affected.select import (
+    BASE_REMOTE,
     DEFAULT_WORKFLOW_PATH,
     GATE_JOB,
     GitError,
@@ -18,6 +19,7 @@ from repoach.affected.select import (
     changed_paths,
     check_name_jobs,
     decide_mode,
+    default_base,
     github_output_lines,
     select,
     summary_markdown,
@@ -347,3 +349,7 @@ def test_changed_paths_names_the_failing_command(two_commit_repo: Path) -> None:
         changed_paths(two_commit_repo, base="no-such-ref")
     assert caught.value.command == "git merge-base no-such-ref HEAD"
     assert caught.value.detail
+
+
+def test_default_base_is_the_remote_tracking_integration_branch() -> None:
+    assert default_base("develop") == f"{BASE_REMOTE}/develop"

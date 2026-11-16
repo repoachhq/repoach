@@ -10,7 +10,8 @@ its one-line account on stderr, and exits:
 
 An exit other than 0 prints no selection, so a caller goes red rather
 than guessing a narrow or a full set. ``gate-pytest`` prints the
-``[gate].pytest`` selectors, one per line.
+``[gate].pytest`` selectors, one per line; ``base`` prints the default
+base revision, the one place a shell caller reads the integration branch from.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from .select import (
     WorkflowError,
     changed_paths,
     decide_mode,
+    default_base,
     github_output_lines,
     select,
     summary_markdown,
@@ -77,6 +79,24 @@ def _root() -> Path:
         return require_project_root()
     except NotARepositoryError as exc:
         raise _fail(EXIT_GIT, str(exc)) from exc
+
+
+def _integration_branch(root: Path) -> str:
+    """Return ``[repoach].integration_branch`` of the project.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        The branch name (``develop`` without a ``repoach.toml``).
+
+    Raises:
+        typer.Exit: :data:`EXIT_UNREADABLE` when ``repoach.toml`` is invalid.
+    """
+    try:
+        return load_project_config(root).repoach.integration_branch
+    except ConfigError as exc:
+        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
 
 
 def _load(root: Path, table: str, workflow: str) -> tuple[AffectedTable, dict[str, frozenset[str]]]:
@@ -132,15 +152,12 @@ def select_cmd(
             3 when ``git`` fails.
     """
     root = _root()
-    try:
-        branches = load_project_config(root).repoach
-    except ConfigError as exc:
-        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+    integration_branch = _integration_branch(root)
     loaded, needs = _load(root, table, workflow)
-    base_rev = base if base is not None else f"origin/{branches.integration_branch}"
-    pr_base = base_ref if base_ref is not None else branches.integration_branch
+    base_rev = base if base is not None else default_base(integration_branch)
+    pr_base = base_ref if base_ref is not None else integration_branch
     mode, reason = decide_mode(
-        event=event, base_ref=pr_base, ref=base_rev, integration_branch=branches.integration_branch
+        event=event, base_ref=pr_base, ref=base_rev, integration_branch=integration_branch
     )
     try:
         paths = changed_paths(root, base=base_rev, head=head)
@@ -177,3 +194,14 @@ def gate_pytest_cmd(
     loaded, _ = _load(_root(), table, workflow)
     for selector in loaded.gate_pytest:
         typer.echo(selector)
+
+
+@affected_app.command("base")
+def base_cmd() -> None:
+    """Print the default base revision, ``origin/<[repoach].integration_branch>``.
+
+    Raises:
+        typer.Exit: 2 on an invalid ``repoach.toml``; 3 outside a git
+            working tree.
+    """
+    typer.echo(default_base(_integration_branch(_root())))
