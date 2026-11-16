@@ -128,12 +128,9 @@ class Product(BaseModel):
 
     @model_validator(mode="after")
     def _contact_sales_is_not_measured(self) -> Product:
-        """Refuse a ``contact sales`` price: it renders as ``n/m`` (SP-COMPARISON-PAGE D3)."""
+        """Render a ``contact sales`` price as ``n/m``, unsourced (SP-COMPARISON-PAGE D3)."""
         if CONTACT_SALES in self.price.value.lower():
-            raise ValueError(
-                f"{self.name}.price {self.price.value!r}: a contact-sales price is not a"
-                f" listed price, write {{value: {NOT_MEASURED}}} (SP-COMPARISON-PAGE D3)"
-            )
+            self.price = Cell(value=NOT_MEASURED)
         return self
 
     def cell(self, key: str) -> Cell:
