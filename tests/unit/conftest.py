@@ -118,3 +118,19 @@ def _no_leaked_provider_flag() -> Iterator[None]:
     """
     yield
     set_provider_override(None)
+
+
+@pytest.fixture(autouse=True)
+def _uncached_core_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test with no cached ``repoach.core.config`` settings.
+
+    ``get_settings`` caches one :class:`~repoach.core.config.Settings` per
+    process, and building it runs ``git`` (``core.paths.project_root``).
+    A test that fakes the process-wide ``subprocess.run`` and then builds
+    an object reading settings passed or failed with the order
+    ``--dist worksteal`` gave it: green after a test that primed the
+    cache, red alone (``test_pr_review_submit_batch_posts_single_call_
+    with_comments_array``, 2026-11-16). Clearing the cache before each test
+    makes that dependence fail every time, alone or in the suite.
+    """
+    monkeypatch.setattr("repoach.core.config._settings", None)
