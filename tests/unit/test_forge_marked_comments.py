@@ -194,3 +194,41 @@ def test_a_digest_quoting_the_archive_marker_never_replaces_the_archive(
     [digest] = store.bodies(NIT_DIGEST_MARKER)
     assert archive == f"{ARCHIVE_MARKER}\nthe report"
     assert "prefer a name for &lt;!-- repoach-review-archive --&gt;" in digest
+
+
+@pytest.mark.parametrize("kind", FORGES)
+def test_two_marked_comments_converge_on_the_oldest(kind: str, tmp_path: Path) -> None:
+    """Two digests already there: the oldest gets the body, the other is deleted."""
+    store = Store()
+    oldest = store.add(f"{NIT_DIGEST_MARKER}\nfirst run")
+    store.add(f"{NIT_DIGEST_MARKER}\nsecond run")
+    store.add(f"{NIT_DIGEST_MARKER}\nby someone else", author="mallory")
+    forge = _forge(kind, tmp_path, store)
+
+    kept = forge.upsert_marked_comment(PR, NIT_DIGEST_MARKER, "third run")
+
+    assert kept.id == oldest
+    mine = [c for c in store.comments if c["author"] == BOT]
+    assert [(c["id"], c["body"]) for c in mine] == [(oldest, f"{NIT_DIGEST_MARKER}\nthird run")]
+    assert len(store.comments) == 2
+
+
+@pytest.mark.parametrize("kind", FORGES)
+def test_a_post_racing_another_run_converges_on_one(kind: str, tmp_path: Path) -> None:
+    """Another run posts just before this one: one comment remains, the older, with this body."""
+    store = Store()
+    forge = _forge(kind, tmp_path, store)
+    racer: list[int] = []
+
+    def concurrent_post() -> None:
+        if not racer:
+            racer.append(store.add(f"{NIT_DIGEST_MARKER}\nthe other run"))
+
+    store.on_post = concurrent_post
+
+    kept = forge.upsert_marked_comment(PR, NIT_DIGEST_MARKER, "this run")
+
+    assert kept.id == racer[0]
+    assert [(c["id"], c["body"]) for c in store.comments] == [
+        (racer[0], f"{NIT_DIGEST_MARKER}\nthis run")
+    ]

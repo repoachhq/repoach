@@ -1586,17 +1586,32 @@ class GitHubForge:
 
     @write_barrier
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        """Edit the oldest trusted issue comment ``marker`` opens, or post it.
+        """Write the one trusted issue comment ``marker`` opens; delete any other (protocol contract).
 
         Unlike the historical archive upsert, a failed lookup raises
-        instead of posting a second marker comment.
+        instead of posting a second marker comment. After a post the
+        comments are listed again: when a concurrent run posted one too,
+        the oldest is kept, given this body, and the rest are deleted.
 
         Raises:
             ForgeError: The lookup or the write failed.
         """
         final_body = marked_body(marker, body)
         ids = self._marked_ids(number, marker)
-        kept = self._write_marked(number, final_body, ids[0] if ids else None)
+        if ids:
+            kept = self._write_marked(number, final_body, ids[0])
+        else:
+            kept = self._write_marked(number, final_body, None)
+            ids = self._marked_ids(number, marker)
+            if ids and ids[0] != kept:
+                kept = self._write_marked(number, final_body, ids[0])
+        for extra in ids:
+            if extra != kept:
+                res = self._write(
+                    ["api", "--method", "DELETE", f"repos/:owner/:repo/issues/comments/{extra}"]
+                )
+                if not res.ok:
+                    raise_for_gh(res, number=number)
         return Comment(id=kept, author=self._bot_login, body=final_body)
 
     def _marked_ids(self, number: int, marker: str) -> list[int]:

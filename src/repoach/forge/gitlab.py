@@ -932,12 +932,29 @@ class GitLabForge:
 
     @write_barrier
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        """Edit the oldest trusted note ``marker`` opens in place, or post it."""
+        """Write the one trusted note ``marker`` opens; delete any other (protocol contract).
+
+        After a post the notes are read again: when a concurrent run
+        posted one too, the oldest is kept, given this body, and the
+        rest are deleted.
+        """
         final_body = marked_body(marker, body)
         found = self._marked_notes(number, marker)
         if found:
-            return self._put_note(number, found[0].id, final_body)
-        return self._post_note(number, final_body)
+            kept = self._put_note(number, found[0].id, final_body)
+        else:
+            kept = self._post_note(number, final_body)
+            found = self._marked_notes(number, marker)
+            if found and found[0].id != kept.id:
+                kept = self._put_note(number, found[0].id, final_body)
+        for extra in found:
+            if extra.id != kept.id:
+                self._api_text(
+                    f"{self._project}/merge_requests/{number}/notes/{extra.id}",
+                    method="DELETE",
+                    number=number,
+                )
+        return kept
 
     def ci_status(
         self,

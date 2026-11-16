@@ -786,13 +786,15 @@ class Forge(Protocol):
         ...
 
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        """Write the trusted comment ``marker`` opens, with :func:`marked_body`.
+        """Write the one trusted comment ``marker`` opens, with :func:`marked_body`.
 
         The oldest such comment is edited in place, or one is posted when
-        there is none.
+        there is none; every other trusted comment ``marker`` opens is
+        deleted, so two runs racing on an empty pull request converge on
+        one comment.
 
         Raises:
-            ForgeError: The lookup or the write failed.
+            ForgeError: The lookup, the write or a deletion failed.
         """
         ...
 
