@@ -132,14 +132,21 @@ def test_selection_is_closed_under_the_real_needs() -> None:
     assert {"wheel-smoke", "wheel-build"} <= selection.jobs
 
 
-def test_replay_selects_every_failed_job_of_the_corpus(capsys: pytest.CaptureFixture[str]) -> None:
+def _replay(
+    table: AffectedTable, needs: dict[str, frozenset[str]]
+) -> tuple[list[tuple[str, str]], int]:
+    """Replay the corpus: each failed job against the selection of its head's paths.
+
+    Returns:
+        The misses as ``(label, job id)`` and the number of failed jobs.
+    """
     corpus = json.loads(_CORPUS.read_text(encoding="utf-8"))
     names = check_name_jobs(_WORKFLOW)
     failed = 0
-    misses: list[str] = []
+    misses: list[tuple[str, str]] = []
     for pr in corpus["pull_requests"]:
-        selection = _narrowed(pr["paths"])
         for head in pr["heads"]:
+            selection = select(head["paths"], table, needs, mode="narrowed", reason="replay")
             for run in head["runs"]:
                 for job in run["jobs"]:
                     if job["conclusion"] != "failure":
@@ -149,7 +156,13 @@ def test_replay_selects_every_failed_job_of_the_corpus(capsys: pytest.CaptureFix
                         f"#{pr['number']}: {job['name']!r} is no check of ci.yml"
                     )
                     if names[job["name"]] not in selection.jobs:
-                        misses.append(f"#{pr['number']} {head['sha'][:7]} {job['name']}")
+                        label = f"#{pr['number']} {head['sha'][:7]} run {run['run']} {job['name']}"
+                        misses.append((label, names[job["name"]]))
+    return misses, failed
+
+
+def test_replay_selects_every_failed_job_of_the_corpus(capsys: pytest.CaptureFixture[str]) -> None:
+    misses, failed = _replay(*_committed())
     with capsys.disabled():
         print(f"\nmisses: {len(misses)}/{failed}")
     assert failed > 0
@@ -162,7 +175,12 @@ def test_corpus_is_scrubbed_to_numbers_shas_paths_and_job_names() -> None:
     assert corpus["repo"] == "repoachhq/repoach"
     assert "http" not in text
     assert "ghp_" not in text and "github_pat_" not in text
-    assert {key for pr in corpus["pull_requests"] for key in pr} == {"number", "paths", "heads"}
+    assert {key for pr in corpus["pull_requests"] for key in pr} == {"number", "heads"}
+    assert {key for pr in corpus["pull_requests"] for head in pr["heads"] for key in head} == {
+        "sha",
+        "paths",
+        "runs",
+    }
 
 
 def test_github_output_lines_one_per_job_then_mode() -> None:
