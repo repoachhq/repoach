@@ -45,6 +45,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_YAML = REPO_ROOT / "docs" / "comparison.yaml"
 DEFAULT_OUT = REPO_ROOT / "docs" / "comparison.md"
 NOT_MEASURED = "n/m"
+CONTACT_SALES = "contact sales"
 ISSUES_URL = "https://github.com/repoachhq/repoach/issues"
 
 EXIT_OK = 0
@@ -124,6 +125,16 @@ class Product(BaseModel):
     model_choice: Cell
     price: Cell
     self_host: Cell
+
+    @model_validator(mode="after")
+    def _contact_sales_is_not_measured(self) -> Product:
+        """Refuse a ``contact sales`` price: it renders as ``n/m`` (SP-COMPARISON-PAGE D3)."""
+        if CONTACT_SALES in self.price.value.lower():
+            raise ValueError(
+                f"{self.name}.price {self.price.value!r}: a contact-sales price is not a"
+                f" listed price, write {{value: {NOT_MEASURED}}} (SP-COMPARISON-PAGE D3)"
+            )
+        return self
 
     def cell(self, key: str) -> Cell:
         """Return the cell of column *key*."""
