@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-RESUMES-FAILED-ROLES
 title: A review at a head keeps the roles that answered, and a retry calls only the roles that did not
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/role_resume.py, tests/unit/test_role_resume.py, tests/integration/test_role_resume_end_to_end.py]
   resources: [db:table:pr_reviewer_outcomes]
 
-depends_on: [SP-REVIEW-SURVIVES-TRANSPORT-FAILURES, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-REVIEW-PINS-HEAD, SP-CI-LEDGER-PERSISTS, SP-USAGE-LEDGER, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING]
+depends_on: [SP-REVIEW-SURVIVES-TRANSPORT-FAILURES, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-REVIEW-PINS-HEAD, SP-CI-LEDGER-PERSISTS, SP-USAGE-LEDGER, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING, SP-SUBSCRIPTION-LIMIT-IS-NAMED]
 provides_to: []
 
 constraints:
@@ -123,6 +123,7 @@ def split_roles(stored: Mapping[str, ReviewerOutcome], roles: Sequence[str], *, 
 - Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL (idempotent recording at a head; the ledger file)
 - Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-CI-LEDGER-PERSISTS (the generated jobs' persistence this reuses), SP-REVIEW-PINS-HEAD (`diff_hash` of the pinned head)
 - Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-USAGE-LEDGER, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING
+- Adds dependency (0.2, 2026-11-16, the owner's unified order): SP-REVIEW-RESUMES-FAILED-ROLES -> SP-SUBSCRIPTION-LIMIT-IS-NAMED (a role that failed on `subscription_exhausted` is recorded with that named cause and its reset time; the retry at or after that time calls that role alone, instead of four roles against a held provider; the resume therefore lands after the reason exists)
 - `role_resume.py` imports `findings` (engine helpers) and `reviewer` (the outcome dataclass); the orchestrator imports it.
 
 ## Diagram

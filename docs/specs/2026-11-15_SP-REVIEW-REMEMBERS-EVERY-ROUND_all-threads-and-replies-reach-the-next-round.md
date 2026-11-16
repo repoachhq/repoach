@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/review_history.py, prompts/review/_review_history_0.1.0.md, tests/unit/test_review_history.py, tests/unit/test_review_history_in_prompt.py]
   resources: [format:review-history-block]
 
-depends_on: [SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-OWNER-SETTLES-A-FINDING, SP-EVIDENCE-SENTINEL-AUTHOR, SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE]
+depends_on: [SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-OWNER-SETTLES-A-FINDING, SP-EVIDENCE-SENTINEL-AUTHOR, SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-RESUMES-FAILED-ROLES]
 provides_to: []
 
 constraints:
@@ -195,6 +195,9 @@ def render_review_history(history: ReviewHistory) -> str: ...     # format:revie
 
 # reviewer.py (changed): placeholder {REVIEW_HISTORY}; {PRIOR_REVIEW} and {RESOLVED_DISAGREEMENTS} refused
 # prompts/review/{architect,sentinel,tester,scribe}: the two placeholders replaced by {REVIEW_HISTORY}; versions bumped
+# to architect 0.7.0, sentinel 0.6.0, tester 0.6.0, scribe 0.7.0 — the second bump of the owner's unified order
+# (2026-11-16), after SP-FINDING-CITES-ITS-CODE's (0.6.0 / 0.5.0 / 0.5.0 / 0.6.0) and after SP-REVIEW-RESUMES-FAILED-ROLES,
+# whose reuse key carries persona_version and therefore must exist before either bump
 ```
 
 Outputs: the block; review JSON key `history: {findings, replies, register, tokens}`; log event `review_history_built`.
@@ -241,6 +244,7 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-EVIDENCE-SENTINEL-AUTHOR (the bot's sentinel keeps its settling meaning inside the block; the bot-only filter is retired)
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN (untrusted text position and escaping)
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE (the orchestrator's step list changes; threads are read through the protocol)
+- Adds dependency (0.3, order): SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-FINDING-CITES-ITS-CODE (the persona files this spec bumps are the ones that spec created at 0.6.0 / 0.5.0 / 0.5.0 / 0.6.0; the history block's `path:line` are anchored lines), SP-REVIEW-RESUMES-FAILED-ROLES (its reuse key names `persona_version`; a bump before it exists would be a key it never saw)
 - Removes: `thread_context.fetch_resolved_disagreements`, `orchestrator._build_prior_review_context`. No table, no cycle.
 
 ## Diagram

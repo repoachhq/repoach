@@ -99,11 +99,11 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 | # | Spec | Closes | Size (code + tests, estimate) | depends_on (family) |
 |---|---|---|---|---|
 | 1 | SP-ANTHROPIC-BUDGET-GUARD | no guard on the key; unpriced current models; the user-level key; silent fallback | ~320 + 300 lines | — |
-| 2 | SP-SUBSCRIPTION-LIMIT-IS-NAMED | the CLI usage limit as `provider_error` and six hours of quarantine | ~90 + 140 lines, one fixture | — |
+| 2 | SP-SUBSCRIPTION-LIMIT-IS-NAMED | the CLI usage limit as `provider_error` and six hours of quarantine | ~90 + 140 lines, one fixture | — (OCR 7, RESUMES-FAILED-ROLES, lands after it and records the named cause) |
 | 3 | SP-REVIEW-CHAINS-ANTHROPIC-FIRST | no metered hop; dead NIM/OpenRouter hops; stale ids in README and code | 3 lines of `chains.env`, README, ~60 test lines | 1, 2 |
 | 4 | SP-REVIEW-NITS-ONE-COMMENT | eight nits = a round | ~140 + 180 lines | — |
-| 5 | SP-REVIEW-REMEMBERS-EVERY-ROUND | the 200-character memory; owner replies never fed back | ~260 + 260 lines | — |
-| 6 | SP-REVIEW-SETTLED-STAYS-SETTLED | re-raises across heads; the 5-line bucket | ~240 + 280 lines, the !366 fixture | 5 |
+| 5 | SP-REVIEW-REMEMBERS-EVERY-ROUND (0.3: settled register at the cap) | the 200-character memory; owner replies never fed back | ~300 + 300 lines | OCR 7 (RESUMES-FAILED-ROLES) then OCR 2 (FINDING-CITES-ITS-CODE): the persona bumps run RESUMES → CITES (0.6.0 / 0.5.0 / 0.5.0 / 0.6.0) → this spec (0.7.0 / 0.6.0 / 0.6.0 / 0.7.0) |
+| 6 | SP-REVIEW-SETTLED-STAYS-SETTLED | re-raises across heads; the 5-line bucket | ~240 + 280 lines, the !366 fixture | 5; OCR 2 (FINDING-CITES-ITS-CODE: the ranges it maps are anchored ones) |
 | 7 | SP-REVIEW-DELTA-FIRST (0.3 folds SP-REVIEW-INCREMENTAL-HEAD of the OCR programme, superseded 2026-11-16) | the whole diff every round; nothing cached; two specs for one decision | ~320 + 300 lines | 5, 6, 1; OCR 7 (RESUMES-FAILED-ROLES) and 8 (GROUPS-LARGE-DIFFS) |
 | 8 | SP-REVIEW-FABLE-TIER | shallow first rounds; three tiers | ~180 + 200 lines | 1, 3, 7 |
 

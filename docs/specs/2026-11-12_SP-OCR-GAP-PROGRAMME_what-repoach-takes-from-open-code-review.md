@@ -61,7 +61,13 @@ delivered. The comparison itself, with a path for every cell, is
 - D2. 2 and 6 bump the four personas to the same versions (architect
   0.6.0, sentinel 0.5.0, tester 0.5.0, scribe 0.6.0): 2 adds the `code`
   field, 6 removes the house text; 6 edits the files 2 created, so the
-  version is bumped once and the fixtures re-recorded once.
+  version is bumped once and the fixtures re-recorded once. Unified
+  order with SP-REVIEW-CONVERGES (owner, 2026-11-16): 7 (resume, whose
+  reuse key carries `persona_version`) lands before 2, after
+  SP-SUBSCRIPTION-LIMIT-IS-NAMED; SP-REVIEW-REMEMBERS-EVERY-ROUND bumps
+  the same four files once more after 2 and 6, to 0.7.0 / 0.6.0 / 0.6.0 /
+  0.7.0; SP-REVIEW-SETTLED-STAYS-SETTLED lands after 2. The edges are in
+  those specs' `depends_on`.
 - D3. Not taken, and why, in the gap analysis "What repoach does not
   take": excluding tests by default, one model for every phase,
   resolving outdated threads, an LLM relocation call, prompt-only dedup.

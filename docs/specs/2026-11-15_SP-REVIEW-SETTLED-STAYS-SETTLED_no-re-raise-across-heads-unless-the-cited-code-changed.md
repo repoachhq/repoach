@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-SETTLED-STAYS-SETTLED
 title: A finding that is resolved or refuted is not re-raised at a later head unless the code it cites changed; "changed" is the cited hunk or the enclosing symbol's body
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/settled.py, src/repoach/review/cited_region.py, tests/unit/test_settled_not_reraised.py, tests/unit/test_cited_region_changed.py, tests/integration/test_366_reraises_are_suppressed.py, tests/fixtures/review/mr366_rounds.json]
   resources: []
 
-depends_on: [SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES]
+depends_on: [SP-FINDING-CITES-ITS-CODE, SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES]
 provides_to: []
 
 constraints:
@@ -54,7 +54,11 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
 - D2. Cross-head identity. At head H2 a new comment matches a settled
   finding when claim type, file (after following renames in
   `git diff H1..H2`) and `normalised_claim` are equal and the comment's
-  `line` lies within the settled finding's cited range **mapped**
+  `line` — the line SP-FINDING-CITES-ITS-CODE derived from the comment's
+  `code` snippet, never the model's own number (0.3, 2026-11-16: that
+  spec lands first in the owner's unified order, so every range this
+  spec maps is an anchored one) — lies within the settled finding's
+  cited range **mapped**
   through the hunks of `git diff H1..H2 -- <file>` (each hunk shifts the
   lines below it by `new_len − old_len`), with a margin of
   `cited_region_margin_lines` on each side. The 5-line bucket of F1 is
@@ -198,6 +202,7 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 - C4: `pytest -q tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py tests/unit/test_refuter_injection_harden.py` → green after D6.
 
 ## Architecture Impact
+- Adds dependency (0.3): SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-FINDING-CITES-ITS-CODE (the cited range of D2 and D3 is the anchored one, derived from the `code` snippet; a region mapped from a line the model invented would suppress or re-raise the wrong thing, so the anchor lands first)
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS (the bridge's insert path and the dedup taxonomy gain `suppressed`)
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING (the settled statuses and their owners)
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REFUTER-INJECTION-HARDEN (its re-open rule is narrowed here, amended)
