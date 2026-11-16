@@ -1,17 +1,17 @@
 ---
 id: SP-OCR-GAP-PROGRAMME
 title: What repoach takes from open-code-review, in dependency order, with the owner decisions in one place
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-16
 
 owns:
   code: []
   resources: []
 
-depends_on: [SP-REVIEW-FILE-SELECTION, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-TOKEN-ESTIMATE, SP-REVIEW-REPORT-FORMATS, SP-REVIEW-LOCAL-DIFF, SP-REVIEW-RULES-BY-PATH, SP-REVIEW-RESUMES-FAILED-ROLES, SP-REVIEW-GROUPS-LARGE-DIFFS, SP-REVIEW-INCREMENTAL-HEAD, SP-BENCH-PUBLIC-CORPUS]
+depends_on: [SP-REVIEW-FILE-SELECTION, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-TOKEN-ESTIMATE, SP-REVIEW-REPORT-FORMATS, SP-REVIEW-LOCAL-DIFF, SP-REVIEW-RULES-BY-PATH, SP-REVIEW-RESUMES-FAILED-ROLES, SP-REVIEW-GROUPS-LARGE-DIFFS, SP-REVIEW-DELTA-FIRST, SP-BENCH-PUBLIC-CORPUS]
 provides_to: []
 
 constraints:
@@ -55,7 +55,7 @@ delivered. The comparison itself, with a path for every cell, is
 | 6 | SP-REVIEW-RULES-BY-PATH | M | 1 | de-houses the personas in the same re-versioning as 2 (land 2 first, bump once) |
 | 7 | SP-REVIEW-RESUMES-FAILED-ROLES | M | — | the cheapest cut of the retry cost; needed by 9 |
 | 8 | SP-REVIEW-GROUPS-LARGE-DIFFS | L | 1, 2, 3 | lifts the silent cap; the largest change to the orchestrator |
-| 9 | SP-REVIEW-INCREMENTAL-HEAD | M | 7, 8 | opt-in; soundness rests on the re-verification and on complete runs |
+| 9 | SP-REVIEW-DELTA-FIRST (SP-REVIEW-CONVERGES; folds SP-REVIEW-INCREMENTAL-HEAD, superseded 2026-11-16) | M | 7, 8, and SP-ANTHROPIC-BUDGET-GUARD, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-SETTLED-STAYS-SETTLED of its own family | default-on by owner decision 2026-11-15 (c), named on every run and `[review].delta = false` to opt out; soundness rests on the re-verification and on complete runs |
 | 10 | SP-BENCH-PUBLIC-CORPUS | M | 2, 5 | the public number, last, so it measures the pipeline after 1–9 |
 
 - D2. 2 and 6 bump the four personas to the same versions (architect
@@ -77,7 +77,7 @@ delivered. The comparison itself, with a path for every cell, is
 | 6 | O1 write nine checklists or carry OCR's under Apache notice; O2 rules for languages without a verifier; O3 `init` scaffolds a rule file |
 | 7 | O1 reuse age at the same head; O2 artifact retention |
 | 8 | O1 `max_groups` default 8 and refuse vs named partial; O2 round 2 per group |
-| 9 | O1 default on after measurement; O2 re-read files named by older findings |
+| 9 | decided with the fold (2026-11-16): default on by owner decision (c) of 2026-11-15; untouched files named by older findings are not re-read, the re-verification at head and the history block cover them (SP-REVIEW-DELTA-FIRST Open Questions) |
 | 10 | O1 commit the imported cases; O2 sample size to pay; O3 where a matched-range number may be quoted |
 
 ## Goals
@@ -128,7 +128,7 @@ flowchart LR
     S3 --> S8
     S4[4 formats] --> S5
     S5 --> S10
-    S7[7 resume] --> S9[9 incremental]
+    S7[7 resume] --> S9[9 delta-first, SP-REVIEW-CONVERGES]
     S8 --> S9
 ```
 
@@ -146,7 +146,7 @@ flowchart LR
 
 ## Owner decisions needed
 - O1: the order of D1, in particular whether 5 (local review) moves before 3 and 4 for the agents' sake.
-- O2: whether 9 is wanted at all given the opt-in and the measurement it needs, or parked as a backlog row.
+- O2 (decided 2026-11-16): 9 is SP-REVIEW-DELTA-FIRST, default-on by the owner's decision (c) of 2026-11-15; SP-REVIEW-INCREMENTAL-HEAD is superseded and owns nothing.
 
 ## Open Questions
-- Q1: O1 and O2, and the children's decisions in D4.
+- Q1: O1, and the children's decisions in D4 (row 9 decided).

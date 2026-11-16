@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-CONVERGES
 title: Umbrella — a review converges in a few rounds, remembers every round, re-raises nothing settled, reviews the delta, blocks only on minor and worse, and runs on a metered budget
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
   code: []
@@ -104,7 +104,7 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 | 4 | SP-REVIEW-NITS-ONE-COMMENT | eight nits = a round | ~140 + 180 lines | — |
 | 5 | SP-REVIEW-REMEMBERS-EVERY-ROUND | the 200-character memory; owner replies never fed back | ~260 + 260 lines | — |
 | 6 | SP-REVIEW-SETTLED-STAYS-SETTLED | re-raises across heads; the 5-line bucket | ~240 + 280 lines, the !366 fixture | 5 |
-| 7 | SP-REVIEW-DELTA-FIRST | the whole diff every round; nothing cached | ~280 + 260 lines | 5, 6, 1 |
+| 7 | SP-REVIEW-DELTA-FIRST (0.3 folds SP-REVIEW-INCREMENTAL-HEAD of the OCR programme, superseded 2026-11-16) | the whole diff every round; nothing cached; two specs for one decision | ~320 + 300 lines | 5, 6, 1; OCR 7 (RESUMES-FAILED-ROLES) and 8 (GROUPS-LARGE-DIFFS) |
 | 8 | SP-REVIEW-FABLE-TIER | shallow first rounds; three tiers | ~180 + 200 lines | 1, 3, 7 |
 
 - G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request; on live Yoob merge requests, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three.
