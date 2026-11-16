@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-SETTLED-STAYS-SETTLED
 title: A finding that is resolved or refuted is not re-raised at a later head unless the code it cites changed; "changed" is the cited hunk or the enclosing symbol's body
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-15
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/settled.py, src/repoach/review/cited_region.py, tests/unit/test_settled_not_reraised.py, tests/unit/test_cited_region_changed.py, tests/integration/test_366_reraises_are_suppressed.py, tests/fixtures/review/mr366_rounds.json]
   resources: []
 
-depends_on: [SP-FINDING-CITES-ITS-CODE, SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES]
+depends_on: [SP-FINDING-CITES-ITS-CODE, SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES, SP-REVIEW-NITS-ONE-COMMENT]
 provides_to: []
 
 constraints:
@@ -208,6 +208,7 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REFUTER-INJECTION-HARDEN (its re-open rule is narrowed here, amended)
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REVIEW-REMEMBERS-EVERY-ROUND (the lens is told the rule; the lineage shows in the history block)
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES (heads are exact; a suppressed comment is never posted on replay either)
+- Adds dependency (0.4): SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REVIEW-NITS-ONE-COMMENT (the nit digest drops a nit whose cited region changed, NITS D2, carried here as AC5 because `cited_region_changed` is built here)
 - New forge method `compare`; new event kind; no new table.
 
 ## Diagram
@@ -225,6 +226,7 @@ flowchart TD
 - [ ] AC2: `pytest -q tests/integration/test_366_reraises_are_suppressed.py` → green on the recorded fixture.
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC4: `docs/finding_threads.md` and `docs/merge_gate.md` describe the suppression and the archive line; SP-REFUTER-INJECTION-HARDEN carries the D6 amendment.
+- [ ] AC5: `pytest -q tests/unit/test_cited_region_changed.py::test_a_nit_whose_cited_region_changed_leaves_the_digest` → green: a `noted` finding whose `cited_region_changed` is true between its head and the reviewed head is left out of `digest_for_pr` (SP-REVIEW-NITS-ONE-COMMENT D2), and `docs/merge_gate.md` § "A nit never blocks" says so. Today (SP-REVIEW-NITS-ONE-COMMENT 0.4): the digest keeps every nit, the `temporary:` line of its D2.
 
 ## Open Questions
 - None. Decided by the owner on 2026-11-15: Q1 (region margin) — 3 lines, the `cited_region_margin_lines` constraint; Q2 (`owner_resolved` on a changed region) — stays suppressed; only `/reopen` reopens it.

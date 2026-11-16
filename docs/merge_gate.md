@@ -95,7 +95,9 @@ reviewed under `## At <sha7>`, those of earlier heads under
 `## Earlier`, each line `path:line — lens — text`, at most 40 (the rest
 counted, `… and <n> more`). A nit raised again at a later head is
 listed once, at its latest head. A replay whose rendering is unchanged
-writes nothing.
+writes nothing. A nit whose cited lines changed at a later head is still
+listed under `## Earlier`: dropping it needs the cited-region rule of
+SP-REVIEW-SETTLED-STAYS-SETTLED, which delivers it.
 
 - `repoach review pr <N>` prints `nit digest: <n> nit(s), <url>`; its
   JSON and the archive comment carry `nits` (`count`, `digest_url`,
