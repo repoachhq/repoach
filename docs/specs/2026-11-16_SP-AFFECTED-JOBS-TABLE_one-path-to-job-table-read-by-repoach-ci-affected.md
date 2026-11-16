@@ -215,8 +215,11 @@ reason = "the workflows, this table, the build and test configuration: everythin
   - The wheel block refuses by name, as a failed gate, when `build` or
     `twine` is not importable or `pipx` is not on `PATH`. `ci.yml`
     installs those three in its own jobs. The Python versions it smokes
-    are `repoach ci affected matrix wheel-smoke python-version`, read from
-    `ci.yml`. Every other flag is unchanged.
+    are `repoach ci affected matrix <smoke job> python-version`, read from
+    `ci.yml`. The script names no job id: it declares the command each
+    block mirrors once (`pytest -q tests/unit`, `python -m build`,
+    `scripts/wheel_smoke.sh`) and reads the job that runs it with
+    `repoach ci affected job-running`. Every other flag is unchanged.
 
 ## End state
 
@@ -303,6 +306,7 @@ class Selection(BaseModel):
 def workflow_jobs(ci_yml: Path) -> dict[str, frozenset[str]]: ...   # job id -> every needs edge, via merge_wait.load_workflow
 def check_name_jobs(ci_yml: Path) -> dict[str, str]: ...            # check name (merge_wait.expand_job_names) -> job id; the replay's mapping
 def matrix_values(ci_yml: Path, job_id: str, axis: str) -> list[str]: ...  # one matrix axis of one job, via merge_wait.load_workflow
+def job_running(ci_yml: Path, command: str) -> str: ...             # the one job with a step whose run holds command; WorkflowError for none or several
 def default_base(integration_branch: str) -> str: ...               # f"{BASE_REMOTE}/{integration_branch}"
 def decide_mode(*, event: str, base_ref: str, ref: str, integration_branch: str) -> tuple[Mode, str]: ...  # D4
 def select(paths: Sequence[str], table: AffectedTable, needs: Mapping[str, frozenset[str]], *, mode: Mode, reason: str) -> Selection: ...
@@ -321,7 +325,8 @@ def expand_job_names(job_id: str, job: Mapping[str, Any]) -> list[str]: ...  # f
 #     --base defaults to default_base([repoach].integration_branch); --base-ref to [repoach].integration_branch
 # repoach ci affected gate-pytest              # the [gate].pytest selectors, one per line
 # repoach ci affected base                     # default_base([repoach].integration_branch): the one place a shell reads the branch
-# repoach ci affected matrix <job> <axis>      # matrix_values, one per line: ci_local.sh smokes wheel-smoke's python-version from it
+# repoach ci affected matrix <job> <axis>      # matrix_values, one per line: ci_local.sh smokes the smoke job's python-version from it
+# repoach ci affected job-running <command>    # job_running: ci_local.sh names the job behind each of its blocks with it
 ```
 
 Outputs: one JSON object on stdout (`SP-CLI-STDOUT-ONE-JSON`), logs on

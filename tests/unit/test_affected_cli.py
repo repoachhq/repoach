@@ -187,7 +187,7 @@ case "$1 $2 $3" in
         ;;
     "ci affected gate-pytest") echo tests/unit/test_gate_judge.py ;;
     "ci affected base") echo main ;;
-    "ci affected matrix") PYTHONPATH="$REAL_PYTHONPATH" exec "$REAL_PYTHON" -m repoach.cli.main "$@" ;;
+    "ci affected matrix" | "ci affected job-running") PYTHONPATH="$REAL_PYTHONPATH" exec "$REAL_PYTHON" -m repoach.cli.main "$@" ;;
 esac
 """
 
@@ -271,6 +271,9 @@ def test_ci_local_affected_docs_selection_runs_the_gate_only(checkout: tuple[Pat
     assert '{"mode": "narrowed"}' in stdout
     assert calls[0].startswith("repoach ci affected select --base main --github-output ")
     assert calls[1:] == [
+        "repoach ci affected job-running pytest -q tests/unit",
+        "repoach ci affected job-running python -m build",
+        "repoach ci affected job-running scripts/wheel_smoke.sh",
         "repoach arch check --base main",
         "repoach ci affected gate-pytest",
         "python -m pytest -q tests/unit/test_gate_judge.py",
@@ -286,7 +289,7 @@ def test_ci_local_affected_test_selection_adds_lint_and_suite(checkout: tuple[Pa
     assert rc == 0, stdout
     assert "ruff check src tests" in calls
     assert "python -m pytest -q tests/unit -n auto --dist worksteal" in calls
-    assert not any("-m build" in call for call in calls)
+    assert not any(call.startswith("python -m build") for call in calls)
 
 
 def test_ci_local_affected_wheel_selection_adds_the_wheel_block(
@@ -329,7 +332,7 @@ def test_ci_local_wheel_block_refuses_by_name_when_build_is_missing(
     )
     assert rc == 1
     assert "refused: missing python module build python module twine" in stdout
-    assert not any("-m build" in call for call in calls)
+    assert not any(call.startswith("python -m build") for call in calls)
 
 
 def test_base_prints_the_integration_branch_remote(repo: Path) -> None:
@@ -406,3 +409,42 @@ def test_matrix_refuses_an_unknown_job_or_axis(repo: Path) -> None:
         assert result.exit_code == EXIT_UNREADABLE
         assert result.stdout == ""
         assert key in result.stderr
+
+
+def _rename_jobs(root: Path, renames: dict[str, str]) -> None:
+    workflow = root / DEFAULT_WORKFLOW_PATH
+    text = workflow.read_text(encoding="utf-8")
+    for old, new in renames.items():
+        assert f"\n  {old}:\n" in text
+        text = text.replace(f"\n  {old}:\n", f"\n  {new}:\n").replace(
+            f"needs: {old}\n", f"needs: {new}\n"
+        )
+    workflow.write_text(text, encoding="utf-8")
+
+
+def test_ci_local_reads_the_job_ids_from_ci_yml(checkout: tuple[Path, Path]) -> None:
+    root, _ = checkout
+    _rename_jobs(root, {"test": "suite", "wheel-build": "pkg", "wheel-smoke": "pkg-smoke"})
+    rc, stdout, calls = _run_affected(
+        checkout, "job_suite=true\\njob_pkg=false\\njob_pkg_smoke=false\\nmode=narrowed\\n"
+    )
+    assert rc == 0, stdout
+    assert "python -m pytest -q tests/unit -n auto --dist worksteal" in calls
+    assert not any(call.startswith("python -m build") for call in calls)
+    rc, stdout, calls = _run_affected(
+        checkout, "job_test=true\\njob_pkg=true\\njob_pkg_smoke=false\\nmode=narrowed\\n"
+    )
+    assert rc == 0, stdout
+    assert "python -m pytest -q tests/unit -n auto --dist worksteal" not in calls
+    assert any(call.startswith("python -m build --sdist --wheel") for call in calls)
+
+
+def test_job_running_names_the_one_job_and_refuses_otherwise(repo: Path) -> None:
+    assert (
+        CliRunner().invoke(affected_app, ["job-running", "pytest -q tests/unit"]).stdout == "test\n"
+    )
+    for command in ("no-such-command", "actions/checkout"):
+        result = CliRunner().invoke(affected_app, ["job-running", command])
+        assert result.exit_code == EXIT_UNREADABLE
+        assert result.stdout == ""
+        assert f"one job must run {command!r}" in result.stderr

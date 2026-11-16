@@ -12,7 +12,8 @@ An exit other than 0 prints no selection, so a caller goes red rather
 than guessing a narrow or a full set. ``gate-pytest`` prints the
 ``[gate].pytest`` selectors, one per line; ``base`` prints the default
 base revision, the one place a shell caller reads the integration branch from;
-``matrix <job> <axis>`` prints one matrix axis of a ``ci.yml`` job.
+``matrix <job> <axis>`` prints one matrix axis of a ``ci.yml`` job;
+``job-running <command>`` prints the one job whose step runs a command.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from .select import (
     decide_mode,
     default_base,
     github_output_lines,
+    job_running,
     matrix_values,
     select,
     summary_markdown,
@@ -227,3 +229,21 @@ def matrix_cmd(
         raise _fail(EXIT_UNREADABLE, str(exc)) from exc
     for value in values:
         typer.echo(value)
+
+
+@affected_app.command("job-running")
+def job_running_cmd(
+    command: str = typer.Argument(..., help="A command line as a ci.yml step runs it."),
+    workflow: str = typer.Option(DEFAULT_WORKFLOW_PATH, "--workflow", help="The CI workflow."),
+) -> None:
+    """Print the id of the one workflow job with a step that runs COMMAND.
+
+    Raises:
+        typer.Exit: 2 when the workflow cannot be read or not exactly one
+            job runs the command; 3 outside a git working tree.
+    """
+    try:
+        job_id = job_running(_root() / workflow, command)
+    except WorkflowError as exc:
+        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+    typer.echo(job_id)

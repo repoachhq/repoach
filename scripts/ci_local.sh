@@ -126,6 +126,10 @@ fi
 cleanup=()
 trap 'if (( ${#cleanup[@]} )) ; then rm -rf "${cleanup[@]}" ; fi' EXIT
 
+test_step="pytest -q tests/unit"
+build_step="python -m build"
+smoke_step="scripts/wheel_smoke.sh"
+smoke_job=""
 run_wheel=false
 run_code_lint=false
 run_tree_lint=false
@@ -148,14 +152,17 @@ case "$mode" in
         cleanup+=("$selection_file")
         bold "repoach ci affected select --base $affected_base"
         repoach ci affected select --base "$affected_base" --github-output "$selection_file"
-        selected() { grep -qx "job_$1=true" "$selection_file" ; }
+        selected() { grep -qx "job_${1//-/_}=true" "$selection_file" ; }
         run_gate=true
         run_tree_lint=true
         attribution_base="$affected_base"
-        if selected test ; then
+        test_job="$(repoach ci affected job-running "$test_step")"
+        build_job="$(repoach ci affected job-running "$build_step")"
+        smoke_job="$(repoach ci affected job-running "$smoke_step")"
+        if selected "$test_job" ; then
             run_code_lint=true ; run_unit=true ; run_integration=true ; run_smoke=true
         fi
-        if selected wheel_build || selected wheel_smoke ; then
+        if selected "$build_job" || selected "$smoke_job" ; then
             run_wheel=true
         fi
         ;;
@@ -190,7 +197,10 @@ elif [[ "$run_wheel" == true ]] ; then
     cleanup+=("$wheel_dir")
     run_step "build sdist + wheel" python -m build --sdist --wheel --outdir "$wheel_dir" .
     run_step "twine check" bash -c "python -m twine check '$wheel_dir'/*"
-    smoke_listing="$(repoach ci affected matrix wheel-smoke python-version)"
+    if [[ -z "$smoke_job" ]] ; then
+        smoke_job="$(repoach ci affected job-running "$smoke_step")"
+    fi
+    smoke_listing="$(repoach ci affected matrix "$smoke_job" python-version)"
     mapfile -t smoke_versions <<< "$smoke_listing"
     for py in "${smoke_versions[@]}" ; do
         py_bin="$(command -v "python$py" || uv python find "$py" 2>/dev/null || true)"
@@ -199,7 +209,7 @@ elif [[ "$run_wheel" == true ]] ; then
             failures+=("wheel-smoke ($py)")
             continue
         fi
-        run_step "wheel-smoke ($py)" bash scripts/wheel_smoke.sh --python "$py_bin" "$wheel_dir"/repoach-*.whl
+        run_step "wheel-smoke ($py)" bash "$smoke_step" --python "$py_bin" "$wheel_dir"/repoach-*.whl
     done
 fi
 

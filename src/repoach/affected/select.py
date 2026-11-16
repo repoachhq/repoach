@@ -218,6 +218,39 @@ def matrix_values(ci_yml: Path, job_id: str, axis: str) -> list[str]:
     return [str(value) for value in values]
 
 
+def job_running(ci_yml: Path, command: str) -> str:
+    """Return the one job of the workflow with a step whose ``run`` holds ``command``.
+
+    This is how a local mirror names the job a block of its own stands
+    for, without repeating the job's id.
+
+    Args:
+        ci_yml: The workflow file.
+        command: A command line as the step runs it (``pytest -q tests/unit``).
+
+    Returns:
+        The job id.
+
+    Raises:
+        WorkflowError: The workflow is unreadable, or no job or more than
+            one job runs ``command``.
+    """
+    found = sorted(
+        job_id
+        for job_id, job in _jobs(ci_yml).items()
+        if any(
+            isinstance(step, Mapping) and command in str(step.get("run", ""))
+            for step in job.get("steps", []) or []
+        )
+    )
+    if len(found) != 1:
+        held = ", ".join(found) if found else "none"
+        raise WorkflowError(
+            ci_yml, f"one job must run {command!r}; jobs that do: {held}", key="jobs"
+        )
+    return found[0]
+
+
 def default_base(integration_branch: str) -> str:
     """Return the default base revision of a diff.
 
