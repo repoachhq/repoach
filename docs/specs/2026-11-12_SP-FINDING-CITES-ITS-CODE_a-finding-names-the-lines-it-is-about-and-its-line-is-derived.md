@@ -1,17 +1,17 @@
 ---
 id: SP-FINDING-CITES-ITS-CODE
 title: A finding names the code it is about, and its line is derived from that code, never taken on trust
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/finding_anchor.py, tests/unit/test_finding_anchor.py, tests/integration/test_finding_anchor_end_to_end.py]
   resources: []
 
-depends_on: [SP-FINDER-OUTPUT, SP-FINDINGS-OFFDIFF-FILTER, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-THREAD-IDS, SP-VERIFIER-LIB, SP-OWNER-SETTLES-A-FINDING, SP-ORCH-DOCSTRING]
+depends_on: [SP-FINDER-OUTPUT, SP-FINDINGS-OFFDIFF-FILTER, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-THREAD-IDS, SP-VERIFIER-LIB, SP-OWNER-SETTLES-A-FINDING, SP-ORCH-DOCSTRING, SP-REVIEW-RESUMES-FAILED-ROLES]
 provides_to: []
 
 constraints:
@@ -162,6 +162,7 @@ gains `anchors: {placed, moved, relocated, line_only, removed_code}` and
 - Adds dependency: SP-FINDING-CITES-ITS-CODE -> SP-DIFF-SCOPER (hunks come from `FileDiff`), SP-REVIEW-PINS-HEAD (the diff is the pinned head's)
 - Adds dependency: SP-FINDING-CITES-ITS-CODE -> SP-VERIFIER-LIB, SP-FINDING-THREAD-IDS, SP-OWNER-SETTLES-A-FINDING (the derived line is what the verifiers, the posted thread and the command fallback read)
 - Adds dependency: SP-FINDING-CITES-ITS-CODE -> SP-ORCH-DOCSTRING (the JSON fields on `TeamOutcome`)
+- Adds dependency (0.2, 2026-11-16, the owner's unified order): SP-FINDING-CITES-ITS-CODE -> SP-REVIEW-RESUMES-FAILED-ROLES (its reuse key carries `persona_version`; this spec's bump to architect 0.6.0, sentinel 0.5.0, tester 0.5.0, scribe 0.6.0 is the first key change that resume sees, and SP-REVIEW-REMEMBERS-EVERY-ROUND bumps the same files once more after this spec, to 0.7.0 / 0.6.0 / 0.6.0 / 0.7.0; SP-REVIEW-SETTLED-STAYS-SETTLED maps the anchored ranges this spec derives and lands after it)
 - `finding_anchor.py` imports `diff_scoper` and `reviewer` (the dataclasses) and nothing else of `review/`; `findings_bridge.py` imports it.
 
 ## Diagram
