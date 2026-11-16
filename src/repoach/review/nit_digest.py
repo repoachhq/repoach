@@ -23,7 +23,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..core.logging import get_logger
-from ..forge.protocol import Forge, ForgeError, ForgeStateRefusedError
+from ..forge.protocol import Forge, ForgeError, ForgeStateRefusedError, marked_body
 from .finding_posts import (
     PROVENANCE_DIGEST,
     FindingPost,
@@ -261,8 +261,9 @@ def post_or_edit_digest(forge: Forge, digest: NitDigest, *, db_path: Path) -> Ni
     """Post the digest comment, or edit the one already there, and record what it lists.
 
     Nothing is written when the digest has no item, or when the comment
-    on the forge already reads exactly the rendered body (a replay at
-    the same head). Otherwise the trusted comment carrying
+    on the forge already reads exactly the body the forge writes for it
+    (:func:`~repoach.forge.protocol.marked_body`; a replay at
+    the same head). Otherwise the trusted comment opened by
     :data:`NIT_DIGEST_MARKER` is edited in place, or posted when there
     is none, and each listed note finding gets a ``digest``
     ``finding_posts`` row naming the comment. A forge refusal leaves the
@@ -296,7 +297,10 @@ def post_or_edit_digest(forge: Forge, digest: NitDigest, *, db_path: Path) -> Ni
     try:
         page = forge.pull_request(digest.pr_number).url
         existing = forge.find_marked_comment(digest.pr_number, NIT_DIGEST_MARKER)
-        if existing is not None and existing.body.strip() == body.strip():
+        if (
+            existing is not None
+            and existing.body.strip() == marked_body(NIT_DIGEST_MARKER, body).strip()
+        ):
             comment = existing
         else:
             comment = forge.upsert_marked_comment(digest.pr_number, NIT_DIGEST_MARKER, body)

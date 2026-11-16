@@ -56,9 +56,11 @@ from .protocol import (
     ReviewDraft,
     ReviewThread,
     WriteRefusal,
+    carries_marker,
     diff_files,
     edited_since,
     maintainer_candidate,
+    marked_body,
     trusted,
     unnumbered_write,
     write_barrier,
@@ -1147,7 +1149,7 @@ class GitHubForge:
             )
             return None
         for c in comments:
-            if not isinstance(c, dict) or ARCHIVE_MARKER not in (c.get("body") or ""):
+            if not isinstance(c, dict) or not carries_marker(c.get("body") or "", ARCHIVE_MARKER):
                 continue
             if not self._is_trusted_author(c):
                 continue
@@ -1156,14 +1158,15 @@ class GitHubForge:
                 return cid
         return None
 
-    def _find_marked_raw(
+    def _marked_raw(
         self, pr_number: int, marker: str
-    ) -> tuple[dict[str, object] | None, str | None]:
-        """Return ``(trusted comment payload carrying marker, api_error)`` for a PR.
+    ) -> tuple[list[dict[str, object]], str | None]:
+        """Return ``(trusted comment payloads marker opens, api_error)`` for a PR.
 
-        The first issue comment that carries ``marker``, was authored by
-        :attr:`bot_username` and has an integer id wins; ``api_error`` is set
-        when the listing itself failed or did not decode.
+        Each issue comment that :func:`~repoach.forge.protocol.carries_marker`,
+        was authored by :attr:`bot_username` and has an integer id, oldest
+        (lowest id) first; ``api_error`` is set when the listing itself
+        failed or did not decode.
         """
         res = self._run(
             [
@@ -1174,17 +1177,27 @@ class GitHubForge:
             ]
         )
         if not res.ok:
-            return None, res.stderr.strip()[:200] or f"gh exited {res.returncode}"
+            return [], res.stderr.strip()[:200] or f"gh exited {res.returncode}"
         try:
             comments = flatten_paginated_pages(json.loads(res.stdout))
         except (json.JSONDecodeError, ValueError) as exc:
-            return None, f"JSON decode failed: {str(exc)[:160]}"
-        for c in comments:
-            if not isinstance(c, dict) or marker not in str(c.get("body") or ""):
-                continue
-            if self._is_trusted_author(c) and _int_or_none(c.get("id")) is not None:
-                return c, None
-        return None, None
+            return [], f"JSON decode failed: {str(exc)[:160]}"
+        found = [
+            c
+            for c in comments
+            if isinstance(c, dict)
+            and carries_marker(str(c.get("body") or ""), marker)
+            and self._is_trusted_author(c)
+            and _int_or_none(c.get("id")) is not None
+        ]
+        return sorted(found, key=lambda c: _int_or_none(c.get("id")) or 0), None
+
+    def _find_marked_raw(
+        self, pr_number: int, marker: str
+    ) -> tuple[dict[str, object] | None, str | None]:
+        """Return ``(oldest trusted comment payload marker opens, api_error)`` (:meth:`_marked_raw`)."""
+        found, error = self._marked_raw(pr_number, marker)
+        return (found[0] if found else None), error
 
     def _upsert_archive_comment(self, pr_number: int, *, body: str) -> GhResult:
         """Create or update the sticky archive comment on a PR.
@@ -1199,9 +1212,9 @@ class GitHubForge:
         Returns:
             :class:`GhResult`.
         """
-        if ARCHIVE_MARKER not in body:
-            body = f"{ARCHIVE_MARKER}\n{body}"
-        return self._post_or_patch(pr_number, body, self._find_archive_comment(pr_number))
+        return self._post_or_patch(
+            pr_number, marked_body(ARCHIVE_MARKER, body), self._find_archive_comment(pr_number)
+        )
 
     def _post_or_patch(self, pr_number: int, body: str, existing: int | None) -> GhResult:
         """POST a new issue comment, or PATCH ``existing`` when given.
@@ -1274,7 +1287,7 @@ class GitHubForge:
         for c in comments:
             comment = c if isinstance(c, dict) else {}
             body = comment.get("body") or ""
-            if ARCHIVE_MARKER in body and self._is_trusted_author(comment):
+            if carries_marker(body, ARCHIVE_MARKER) and self._is_trusted_author(comment):
                 return ArchiveFetch(body=body, api_error=None)
         return ArchiveFetch(body=None, api_error=None)
 
@@ -1573,7 +1586,7 @@ class GitHubForge:
 
     @write_barrier
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        """Create or update the trusted issue comment carrying ``marker``.
+        """Edit the oldest trusted issue comment ``marker`` opens, or post it.
 
         Unlike the historical archive upsert, a failed lookup raises
         instead of posting a second marker comment.
@@ -1581,17 +1594,32 @@ class GitHubForge:
         Raises:
             ForgeError: The lookup or the write failed.
         """
-        final_body = body if marker in body else f"{marker}\n{body}"
-        found, error = self._find_marked_raw(number, marker)
+        final_body = marked_body(marker, body)
+        ids = self._marked_ids(number, marker)
+        kept = self._write_marked(number, final_body, ids[0] if ids else None)
+        return Comment(id=kept, author=self._bot_login, body=final_body)
+
+    def _marked_ids(self, number: int, marker: str) -> list[int]:
+        """The ids of the trusted comments ``marker`` opens, oldest first.
+
+        Raises:
+            ForgeError: The listing failed.
+        """
+        found, error = self._marked_raw(number, marker)
         if error is not None:
             raise ForgeError(error)
-        existing = _int_or_none(found.get("id")) if found is not None else None
-        res = self._post_or_patch(number, final_body, existing)
+        return [_int_or_none(c.get("id")) or 0 for c in found]
+
+    def _write_marked(self, number: int, body: str, existing: int | None) -> int:
+        """POST ``body`` as a new issue comment, or PATCH ``existing``; return the comment id.
+
+        Raises:
+            ForgeError: The write failed.
+        """
+        res = self._post_or_patch(number, body, existing)
         if not res.ok:
             raise_for_gh(res, number=number)
-        return Comment(
-            id=_json_id(res.stdout) or existing or 0, author=self._bot_login, body=final_body
-        )
+        return _json_id(res.stdout) or existing or 0
 
     def _fetch_status_rollup(self, pr_number: int) -> tuple[list[dict], str]:
         """Return ``(rollup_entries, error_message)`` from ``gh pr view``.

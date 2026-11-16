@@ -100,6 +100,10 @@ class GitHub(Forge):
             [comment] = [c for c in self.issue if c["id"] == comment_id]
             comment["body"] = json.loads(input_data or "{}")["body"]
             return GhResult(0, json.dumps(comment), "", argv=args)
+        if "DELETE" in args and "/issues/comments/" in endpoint:
+            comment_id = int(endpoint.rsplit("/", 1)[-1])
+            self.issue = [c for c in self.issue if c["id"] != comment_id]
+            return GhResult(0, "", "", argv=args)
         if args[:2] == ["api", "graphql"]:
             nodes = [
                 thread_node(int(str(c["id"])), resolved=False, path=str(c["path"]), line=None)
@@ -109,8 +113,8 @@ class GitHub(Forge):
         return super()._run(args, input_data=input_data)
 
     def digests(self) -> list[dict[str, object]]:
-        """The issue comments carrying the nit digest marker."""
-        return [c for c in self.issue if NIT_DIGEST_MARKER in str(c["body"])]
+        """The issue comments the nit digest marker opens."""
+        return [c for c in self.issue if str(c["body"]).startswith(NIT_DIGEST_MARKER)]
 
 
 @dataclass

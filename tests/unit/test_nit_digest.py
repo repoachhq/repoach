@@ -22,6 +22,8 @@ from repoach.forge.protocol import (
     Review,
     ReviewDraft,
     ReviewThread,
+    carries_marker,
+    marked_body,
 )
 from repoach.review import orchestrator
 from repoach.review.finding_post_threads import backfill_finding_posts
@@ -113,12 +115,12 @@ class MemoryForge:
 
     def find_marked_comment(self, number: int, marker: str) -> Comment | None:
         for comment in self.conversation.values():
-            if marker in comment.body and comment.author == self.bot_username:
+            if carries_marker(comment.body, marker) and comment.author == self.bot_username:
                 return comment
         return None
 
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        final_body = body if marker in body else f"{marker}\n{body}"
+        final_body = marked_body(marker, body)
         existing = self.find_marked_comment(number, marker)
         if existing is not None and self.refuse_edits:
             raise ForgeError("HTTP 403: note is locked")
@@ -137,8 +139,8 @@ class MemoryForge:
         return [ReviewThread(root_id=c.id, path=c.path or "", line=c.line) for c in self.inline]
 
     def marked(self, marker: str = NIT_DIGEST_MARKER) -> list[Comment]:
-        """The conversation comments carrying ``marker``."""
-        return [c for c in self.conversation.values() if marker in c.body]
+        """The conversation comments ``marker`` opens."""
+        return [c for c in self.conversation.values() if carries_marker(c.body, marker)]
 
 
 def _outcome(role: BotRole, *comments: tuple[str, int, str, str]) -> ReviewerOutcome:
