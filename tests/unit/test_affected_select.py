@@ -318,6 +318,24 @@ def test_changed_paths_names_the_failing_command(two_commit_repo: Path) -> None:
     assert caught.value.detail
 
 
+def test_changed_paths_never_passes_an_option_like_revision(
+    two_commit_repo: Path, tmp_path: Path
+) -> None:
+    written = tmp_path / "written"
+    for base, head in ((f"--output={written}", "HEAD"), ("main", f"--output={written}")):
+        with pytest.raises(GitError) as caught:
+            changed_paths(two_commit_repo, base=base, head=head)
+        assert "starts with '-'" in caught.value.detail
+    assert not written.exists()
+
+
+def test_summary_markdown_keeps_a_hostile_path_inside_its_cell() -> None:
+    text = summary_markdown(_narrowed(["docs/a`|[x](http://e)`.md"]))
+    row = next(line for line in text.splitlines() if line.startswith("| `docs`"))
+    assert row == "| `docs` | `` docs/a`\\|[x](http://e)`.md `` |"
+    assert row.count(" | ") == 1
+
+
 def test_default_base_is_the_remote_tracking_integration_branch() -> None:
     assert default_base("develop") == f"{BASE_REMOTE}/develop"
 

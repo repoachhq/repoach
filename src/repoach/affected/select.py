@@ -12,6 +12,7 @@ derivation.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -404,8 +405,15 @@ def changed_paths(repo_root: Path, *, base: str, head: str = "HEAD") -> list[str
         names of a rename, deletions included, in ``git``'s order.
 
     Raises:
-        GitError: ``git merge-base`` or ``git diff`` fails.
+        GitError: A revision starts with ``-`` (it would reach ``git`` as an
+            option), or ``git merge-base`` or ``git diff`` fails.
     """
+    for revision in (base, head):
+        if revision.startswith("-"):
+            raise GitError(
+                ["git", "merge-base", base, head],
+                f"revision {revision!r} starts with '-' and would read as an option",
+            )
     merge_base = _git(repo_root, "merge-base", base, head).strip()
     listing = _git(repo_root, "diff", "--name-only", "--no-renames", "-z", merge_base, head)
     return [path for path in listing.split("\0") if path]
@@ -430,6 +438,30 @@ def github_output_lines(selection: Selection, job_ids: Sequence[str]) -> list[st
     return lines
 
 
+_BACKTICK_RUN = re.compile(r"`+")
+
+
+def _code_span(text: str) -> str:
+    """Return *text* as one markdown code span that a table cell cannot escape.
+
+    A path is chosen by the pull request's author: its backticks are fenced
+    by a longer backtick run, its pipes are escaped for the table, and a
+    line break is written as a literal backslash-n so the row stays one line.
+
+    Args:
+        text: The path or name to render.
+
+    Returns:
+        The code span.
+    """
+    body = text.replace("\r", "\\r").replace("\n", "\\n").replace("|", "\\|")
+    longest = max((len(run) for run in _BACKTICK_RUN.findall(body)), default=0)
+    fence = "`" * (longest + 1)
+    if longest:
+        return f"{fence} {body} {fence}"
+    return f"{fence}{body}{fence}"
+
+
 def summary_markdown(selection: Selection) -> str:
     """Return the step-summary table of a selection.
 
@@ -449,10 +481,10 @@ def summary_markdown(selection: Selection) -> str:
         "|---|---|",
     ]
     lines.extend(
-        f"| `{name}` | {', '.join(f'`{path}`' for path in paths)} |"
+        f"| {_code_span(name)} | {', '.join(_code_span(path) for path in paths)} |"
         for name, paths in selection.rows_hit.items()
     )
     lines.extend(
-        ["", f"Jobs selected: {', '.join(f'`{job}`' for job in sorted(selection.jobs))}", ""]
+        ["", f"Jobs selected: {', '.join(_code_span(job) for job in sorted(selection.jobs))}", ""]
     )
     return "\n".join(lines)
