@@ -88,10 +88,18 @@ is settled by the declared check's ``generated_checks`` row at the head
 
 
 class Severity(StrEnum):
-    """Severity level of a finding."""
+    """Severity level of a finding.
+
+    ``blocking`` findings hold the merge until settled; ``advisory``
+    findings open a review thread, which holds the merge until it is
+    resolved; ``note`` findings (a lens's ``nit``) open no thread and
+    hold nothing: they are listed in the merge request's one nit digest
+    comment (SP-REVIEW-NITS-ONE-COMMENT).
+    """
 
     BLOCKING = "blocking"
     ADVISORY = "advisory"
+    NOTE = "note"
 
 
 class FindingStatus(StrEnum):
@@ -115,6 +123,10 @@ class FindingStatus(StrEnum):
     agent can do. Only a maintainer's ``/reopen`` leaves it, back to the
     status it held before, so it is not terminal; it is not in
     :data:`CONFIRMED_REAL_STATUSES` either.
+
+    ``noted`` is terminal and non-blocking: the status a ``note``
+    finding is recorded with (SP-REVIEW-NITS-ONE-COMMENT D1). No verifier,
+    refuter or re-check at head selects it, and no gate counts it.
     """
 
     PROPOSED = "proposed"
@@ -126,6 +138,7 @@ class FindingStatus(StrEnum):
     NOT_APPLICABLE = "not_applicable"
     RESOLVED_AT_HEAD = "resolved_at_head"
     OWNER_RESOLVED = "owner_resolved"
+    NOTED = "noted"
 
 
 CONFIRMED_REAL_STATUSES: frozenset[FindingStatus] = frozenset(
@@ -172,6 +185,7 @@ ALLOWED_TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
     FindingStatus.NOT_APPLICABLE: frozenset(),
     FindingStatus.RESOLVED_AT_HEAD: frozenset(),
     FindingStatus.OWNER_RESOLVED: OWNER_SETTLEABLE_STATUSES,
+    FindingStatus.NOTED: frozenset(),
 }
 
 

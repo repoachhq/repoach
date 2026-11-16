@@ -60,8 +60,44 @@ SEVERITY_MAP: dict[str, Severity] = {
     "blocker": Severity.BLOCKING,
     "major": Severity.BLOCKING,
     "minor": Severity.ADVISORY,
-    "nit": Severity.ADVISORY,
+    "nit": Severity.NOTE,
 }
+"""A lens comment's severity word to the ledger's severity.
+
+``nit`` is a :attr:`~repoach.review.findings.Severity.NOTE`: recorded,
+listed in the nit digest, never posted as a thread
+(SP-REVIEW-NITS-ONE-COMMENT D1). A word outside the map is advisory.
+"""
+
+
+def severity_of(comment: ReviewComment) -> Severity:
+    """Return the ledger severity of a lens comment, through :data:`SEVERITY_MAP`.
+
+    Args:
+        comment: The lens comment.
+
+    Returns:
+        Its mapped severity; :attr:`Severity.ADVISORY` for a word the
+        map does not name.
+    """
+    return SEVERITY_MAP.get(comment.severity, Severity.ADVISORY)
+
+
+def opens_thread(comment: ReviewComment) -> bool:
+    """Whether posting ``comment`` opens a review thread: every severity but a note.
+
+    The posting path posts only these as inline comments; a note goes to
+    the nit digest instead (SP-REVIEW-NITS-ONE-COMMENT D1, D3).
+
+    Args:
+        comment: The lens comment.
+
+    Returns:
+        False for a comment :func:`severity_of` maps to
+        :attr:`Severity.NOTE`, True otherwise.
+    """
+    return severity_of(comment) is not Severity.NOTE
+
 
 _MISSING_TEST_CUE = re.compile(r"(?i)no test for|missing test")
 _MISSING_DOCSTRING_CUE = re.compile(r"(?i)missing docstring|no docstring")
@@ -285,15 +321,19 @@ def comment_to_finding(
         round_n: Review round index.
 
     Returns:
-        A Finding with status=PROPOSED and claim_type from classify_claim_type.
+        A Finding with claim_type from classify_claim_type, severity from
+        :func:`severity_of`, and status ``proposed``, or ``noted`` for a
+        note (SP-REVIEW-NITS-ONE-COMMENT D1).
     """
+    severity = severity_of(comment)
     return Finding(
         pr_number=pr_number,
         head_sha=head_sha,
         round=round_n,
         finder=role.value,
         claim_type=classify_claim_type(comment.body, role),
-        severity=SEVERITY_MAP.get(comment.severity, Severity.ADVISORY),
+        severity=severity,
+        status=FindingStatus.NOTED if severity is Severity.NOTE else FindingStatus.PROPOSED,
         file=comment.file,
         line_start=comment.line,
         line_end=comment.line,
@@ -539,7 +579,8 @@ def record_findings_for_outcomes(
     file, same claim type, similar claim) re-opens that finding to
     PROPOSED via :func:`_reopen_refuted_matches`
     (SP-REFUTER-INJECTION-HARDEN G3); a finding refuted at the reviewed
-    head stays refuted.
+    head stays refuted. A note re-opens nothing: it is recorded
+    ``noted`` and never judged (SP-REVIEW-NITS-ONE-COMMENT D1).
 
     Args:
         db_path: Path to the SQLite database file.
@@ -598,7 +639,8 @@ def record_findings_for_outcomes(
             result.new += 1
             if effective_sha:
                 at_head[fingerprint] = [finding.model_copy(update={"id": finding_id})]
-            result.reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
+            if finding.severity is not Severity.NOTE:
+                result.reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
     if skipped:
         _log.info("findings_bridge.off_diff_skipped", pr_number=pr_number, n_skipped=skipped)
     if result.reopened:
