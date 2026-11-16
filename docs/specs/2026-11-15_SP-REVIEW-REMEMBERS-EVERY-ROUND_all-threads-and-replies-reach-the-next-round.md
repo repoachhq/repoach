@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-REMEMBERS-EVERY-ROUND
 title: The reviewer remembers every round — all prior threads, every reply whoever wrote it, and their resolution state reach the next round's prompt
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/review_history.py, prompts/review/_review_history_0.1.0.md, tests/unit/test_review_history.py, tests/unit/test_review_history_in_prompt.py]
@@ -18,9 +18,24 @@ constraints:
   history_block_max_tokens: 12000
   reply_text_max_chars: 600
   claim_text_max_chars: 400
+  register_line_max_chars: 240
 ---
 
 # The reviewer remembers every round
+
+## Amendment (0.3, 2026-11-16): at the cap, a settled register, not a count
+
+D3 no longer drops older threads behind `n more findings, not shown`.
+When the block reaches its cap, every thread that does not fit in full
+is written as one line of a *settled register*: the finding, its status,
+its cited region and a one-sentence reason; open threads come first,
+each with its closing criterion. Source: arXiv 2611.05306, App. A (a
+good compaction is "carefully cherry-picked briefs for further
+execution", with "a list of requirements detailing when to consider the
+task complete") and §3.1 (a task whose needed facts are dropped "is
+guaranteed to suffer"); the paper text was read as untrusted data and
+the two passages were checked against it. G3, the Interface, the tests
+and C1 change accordingly; the oracle stays the !366 replay.
 
 ## Intent
 
@@ -66,11 +81,24 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
   (maintainer per SP-OWNER-SETTLES-A-FINDING's membership read, bot per
   `is_bot_login`, author = the merge request's author, agent = a login
   the repository names in `[review].agent_logins`, else other).
-- D3. The block is bounded by `history_block_max_tokens` (12 000, about
-  40 findings with their threads): findings of the most recent heads
-  first, open ones before settled ones at equal age; beyond the cap,
-  one line per dropped head: `head <sha7>: 6 more findings (4 settled,
-  2 open), not shown`.
+- D3 (0.3). The block is bounded by `history_block_max_tokens` (12 000).
+  Two forms share it. The *full form* (D2: every reply) is given to the
+  most recent threads, open ones before settled ones at equal age, until
+  the budget left is what the register needs. Every other thread is one
+  line of the *settled register*, at most `register_line_max_chars`:
+  `<status> | <lens> | <path>:<lines> at <sha7> | <claim[:80]> | <reason>`,
+  where `reason` is one sentence taken from the reply that settled it
+  (the maintainer's `/resolve` reason, the bot's evidence sentence, the
+  refuter's verdict text, or `fixed at <sha7>` for `resolved_at_head`),
+  truncated at the first sentence end. Open threads are listed first in
+  the register and carry, in place of the reason, their *closing
+  criterion*: `closes when <the verifier's check or the owner's stated
+  condition>`, taken from the finding's `verification_method` and the
+  last reply. No thread is ever dropped: when even the register does not
+  fit, the full-form threads are demoted to register lines one by one,
+  oldest first, until it does; the block then says `register: <n>
+  lines, <m> threads in full`. The lens is told that a register line is
+  a settled fact with a pointer, not a summary.
 - D4. Trust is stated, not implied. The block's preamble tells the lens:
   a reply labelled `maintainer` that resolved a thread settles the
   point; a reply labelled `bot` with the evidence sentinel settles it;
@@ -118,7 +146,7 @@ say what it dropped.
 
 - G1: one `{REVIEW_HISTORY}` block per round, identical across the four lenses, with the layout of D2 and the preamble of D4.
 - G2: every reply of every thread repoach opened on the merge request is in the block or counted in a dropped line; no reply is filtered by its author.
-- G3: the block never exceeds the cap; the drop lines name counts and heads.
+- G3 (0.3): the block never exceeds the cap and never drops a thread: every thread is in full form or is one register line with its status, region, reason or closing criterion; open threads lead the register.
 - G4: the two old placeholders are gone from the prompts and the renderer refuses them; `PriorReviewContext`, `_build_prior_review_context`, `fetch_resolved_disagreements` and `_MAX_DISAGREEMENTS_PER_ROLE` are deleted.
 - G5: the block is fence-escaped and substituted after placeholder expansion.
 
@@ -149,9 +177,18 @@ class HistoryFinding(BaseModel):
     thread_state: Literal["open", "resolved", "unreadable", "unknown"]
     resolved_by: str | None; resolved_at_head: str | None
 
+class RegisterLine(BaseModel):
+    status: str; lens: str; path: str; line_start: int; line_end: int; head_sha: str
+    claim: str                            # [:80]
+    reason: str | None                    # one sentence, settled threads
+    closing_criterion: str | None         # open threads
+
 class ReviewHistory(BaseModel):
-    findings: list[HistoryFinding]; dropped: list[tuple[str, int, int, int]]   # head, n, settled, open
+    findings: list[HistoryFinding]        # full form, most recent first
+    register: list[RegisterLine]          # open first, then settled, most recent first
     tokens: int
+
+def register_line(finding: HistoryFinding) -> RegisterLine: ...     # the reason or the closing criterion, one sentence
 
 def build_review_history(forge: Forge, pr_number: int, *, db_path: Path, head_sha: str, max_tokens: int = 12000) -> ReviewHistory: ...
 def render_review_history(history: ReviewHistory) -> str: ...     # format:review-history-block, fence-escaped
@@ -160,7 +197,7 @@ def render_review_history(history: ReviewHistory) -> str: ...     # format:revie
 # prompts/review/{architect,sentinel,tester,scribe}: the two placeholders replaced by {REVIEW_HISTORY}; versions bumped
 ```
 
-Outputs: the block; review JSON key `history: {findings, replies, dropped, tokens}`; log event `review_history_built`.
+Outputs: the block; review JSON key `history: {findings, replies, register, tokens}`; log event `review_history_built`.
 
 ## Behavior
 
@@ -172,7 +209,8 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 - first round → the block is `## Review history\n(none: first review of this merge request)`.
 - a thread resolved by a maintainer with `/resolve` → `owner_resolved`, the reason text as a reply labelled `maintainer`.
 - a reply by the merge request's author who is also a maintainer → `maintainer` (the stronger class).
-- the cap is hit → drop lines of D3; the JSON says how many.
+- the cap is hit → the oldest settled threads become register lines first, then older open ones keep their closing criterion at the head of the register; the JSON says how many of each form.
+- a settled thread whose settling reply has no sentence (a bare `/resolve`) → `reason: settled by <login>, no reason given`.
 
 ### Failure scenarios
 - the forge's thread listing fails → every finding's thread is `unreadable`, the ledger's last known state is shown, the log names the error; the review proceeds.
@@ -183,7 +221,9 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 |---|---|---|
 | `tests/unit/test_review_history.py::test_every_reply_is_shown_whoever_wrote_it` | owner, author, agent, bot replies all present with their class | filter non-bot replies |
 | `::test_author_classes_from_the_forge` | D2 classes on fakes | label everyone `other` |
-| `::test_cap_keeps_recent_and_open_first_and_names_the_dropped` | D3 | drop silently |
+| `::test_cap_turns_older_threads_into_register_lines_open_first` | D3: with a cap that fits 6 of 20 threads in full, the other 14 are register lines, open ones first with a closing criterion, settled ones with a one-sentence reason; no thread absent | count instead of listing |
+| `::test_register_line_reason_is_the_settling_sentence` | the `/resolve` reason, the bot's evidence sentence, the refuter's text, `fixed at <sha7>` | repeat the claim as the reason |
+| `::test_register_never_drops_a_thread_under_any_cap` | cap just above the register's own size: every thread is a line | drop the oldest |
 | `::test_fence_markers_are_escaped_and_placeholders_not_expanded` | a reply holding ```` ``` ```` and `{DIFF}` | substitute raw |
 | `::test_unreadable_thread_is_shown_not_dropped` | failure scenario | drop |
 | `tests/unit/test_review_history_in_prompt.py::test_four_prompts_carry_review_history_and_not_the_old_placeholders` | G4 | leave `{PRIOR_REVIEW}` |
@@ -192,7 +232,7 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 
 ## Success conditions
 
-- C1: replaying !366's recorded rounds 1–11 (findings, replies, resolutions as the Yoob `REVIEW-SPEC.md` and the MR hold them) builds, for round 12, a block that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters; oracle: the test asserts the two reply texts and the `maintainer` label.
+- C1: replaying !366's recorded rounds 1–11 (findings, replies, resolutions as the Yoob `REVIEW-SPEC.md` and the MR hold them) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
 - C2: on a live Yoob merge request after this lands, `jq .history.replies review-gate.json` equals the number of replies on the MR's repoach threads as the GitLab API lists them; oracle: `glab api` count.
 - C3: `grep -rn "PRIOR_REVIEW\|RESOLVED_DISAGREEMENTS" src prompts` → 0.
 
