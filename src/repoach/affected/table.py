@@ -33,6 +33,8 @@ _ROW_KEYS = frozenset({"prefixes", "suffixes", "jobs", "reason"})
 _FULL_KEYS = frozenset({"prefixes", "suffixes", "reason"})
 _TOP_KEYS = frozenset({"version", "gate", "rows", "full"})
 _GATE_KEYS = frozenset({"pytest"})
+_GLOB_CHARACTERS = frozenset("*?[]{}!")
+"""Characters of the glob dialects the format refuses rather than reads as literals."""
 
 
 class TableError(ValueError):
@@ -149,6 +151,53 @@ def _strings(path: Path, key: str, value: Any) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _entries(path: Path, key: str, value: Any, *, suffix: bool) -> tuple[str, ...]:
+    """Return the prefixes or suffixes of a row, refusing what D1 does not define.
+
+    A path as ``git`` prints it is relative, POSIX, normalized, so an
+    entry that ``git`` could never match is a defect, never a literal.
+
+    Args:
+        path: The table file, for the error.
+        key: The dotted key ``value`` was read from.
+        value: The parsed TOML value.
+        suffix: Whether the entries are suffixes, which may start with ``/``
+            (``/conftest.py`` ends a path at a segment boundary).
+
+    Returns:
+        The entries, in file order.
+
+    Raises:
+        TableError: An entry is not a non-empty string, holds a glob
+            character (``*?[]{}!``), a backslash or whitespace at an end,
+            starts with ``/`` (a prefix) or ``./``, or has an empty, ``.``
+            or ``..`` segment.
+    """
+    entries = _strings(path, key, value)
+    for entry in entries:
+        glob = sorted(set(entry) & _GLOB_CHARACTERS)
+        if glob:
+            raise TableError(
+                path,
+                f"holds {entry!r}: {glob[0]!r} is glob syntax; D1 matches prefixes and suffixes only",
+                key=key,
+            )
+        body = entry[1:] if suffix and entry.startswith("/") else entry
+        segments = body.rstrip("/").split("/")
+        if (
+            "\\" in entry
+            or entry != entry.strip()
+            or body.startswith("/")
+            or any(segment in {"", ".", ".."} for segment in segments)
+        ):
+            raise TableError(
+                path,
+                f"holds {entry!r}: not a relative, normalized POSIX path as git prints it",
+                key=key,
+            )
+    return entries
+
+
 def _row(
     path: Path,
     key: str,
@@ -182,8 +231,8 @@ def _row(
     unknown = sorted(set(body) - allowed)
     if unknown:
         raise TableError(path, f"unknown key {unknown[0]!r}", key=key)
-    prefixes = _strings(path, f"{key}.prefixes", body.get("prefixes", []))
-    suffixes = _strings(path, f"{key}.suffixes", body.get("suffixes", []))
+    prefixes = _entries(path, f"{key}.prefixes", body.get("prefixes", []), suffix=False)
+    suffixes = _entries(path, f"{key}.suffixes", body.get("suffixes", []), suffix=True)
     if not prefixes and not suffixes:
         raise TableError(path, "has neither prefixes nor suffixes", key=key)
     reason = body.get("reason")

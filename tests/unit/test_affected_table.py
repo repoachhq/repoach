@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -157,3 +158,42 @@ def test_load_table_unreadable_and_not_toml(tmp_path: Path) -> None:
     path.write_text("version = = 1\n", encoding="utf-8")
     with pytest.raises(TableError, match="is not TOML"):
         load_table(path, _JOBS, workflow="ci.yml")
+
+
+@pytest.mark.parametrize(
+    ("entry", "where", "reason"),
+    [
+        ("docs/**", "prefixes", "'*' is glob syntax"),
+        ("*.sh", "suffixes", "'*' is glob syntax"),
+        ("doc[s]/", "prefixes", "'[' is glob syntax"),
+        ("src/{a,b}/", "prefixes", "'{' is glob syntax"),
+        ("doc?/", "prefixes", "'?' is glob syntax"),
+        ("./docs/", "prefixes", "not a relative, normalized POSIX path"),
+        ("/docs/", "prefixes", "not a relative, normalized POSIX path"),
+        ("docs//specs/", "prefixes", "not a relative, normalized POSIX path"),
+        ("docs/../src/", "prefixes", "not a relative, normalized POSIX path"),
+        ("docs\\a.md", "prefixes", "not a relative, normalized POSIX path"),
+        (" docs/", "prefixes", "not a relative, normalized POSIX path"),
+        ("/", "suffixes", "not a relative, normalized POSIX path"),
+    ],
+)
+def test_load_table_refuses_what_d1_does_not_define(
+    tmp_path: Path, entry: str, where: str, reason: str
+) -> None:
+    body = f"{where} = [{json.dumps(entry)}]"
+    path = tmp_path / "affected-jobs.toml"
+    path.write_text(_VALID.replace('prefixes = ["docs/"]', body, 1), encoding="utf-8")
+    with pytest.raises(TableError) as caught:
+        load_table(path, _JOBS, workflow="ci.yml")
+    message = str(caught.value)
+    assert message.startswith(f"affected-jobs.toml: rows.docs.{where} holds {entry!r}")
+    assert reason in message
+
+
+def test_load_table_accepts_a_suffix_at_a_segment_boundary(tmp_path: Path) -> None:
+    path = tmp_path / "affected-jobs.toml"
+    path.write_text(
+        _VALID.replace('suffixes = [".sh"]', 'suffixes = ["/conftest.py", ".sh"]'), encoding="utf-8"
+    )
+    table = load_table(path, _JOBS, workflow="ci.yml")
+    assert table.rows[1].suffixes == ("/conftest.py", ".sh")
