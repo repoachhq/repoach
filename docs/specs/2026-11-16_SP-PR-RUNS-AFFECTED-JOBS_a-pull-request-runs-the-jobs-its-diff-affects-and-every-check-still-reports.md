@@ -1,8 +1,8 @@
 ---
 id: SP-PR-RUNS-AFFECTED-JOBS
 title: Umbrella — a pull request runs the jobs its diff affects, every required check still reports, develop and main keep the full set
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-16
 updated: 2026-11-16
@@ -90,6 +90,13 @@ fact is re-cited with its lines in the child that acts on it.
   (selection, `repoach arch check`, the AI-attribution and CONTRIBUTING
   lints, the tree-judging suites of the docs class) and `ShellCheck`
   (its own workflow, unchanged, 0.1 min).
+- (g) Owner, 2026-11-16, taking the four recommendations of the Open
+  Questions below: the table is a file of its own,
+  `.github/affected-jobs.toml` (O1); `ci.yml` regains
+  `push: branches: [main, develop]` and a push to `develop` runs the
+  full set, so a red after a narrowed green is seen at the merge, not
+  at the release (O2); `ShellCheck` stays its own always-on workflow
+  (O3); an unknown path selects every job (O4).
 
 ## End state
 
@@ -99,8 +106,8 @@ two minutes of the push instead of eleven, and the merge follows the
 review, not the test suite. A pull request on `src/` runs what it runs
 today, once, with the lints run once instead of twice. The six check
 names repoach requires are present and green at every head, under
-`main`'s list as under `develop`'s. A push to `main` and the release
-pull request run every step. A failed job that the table would have
+`main`'s list as under `develop`'s. A push to `develop` or `main` and
+the release pull request run every step. A failed job that the table would have
 skipped is a row of a committed table and a red test until the table
 selects it.
 
@@ -156,8 +163,8 @@ held by a guard over the test sources.
 
 - G2 (duration): the first ten docs-only pull requests after 3 land have a `CI` run (`createdAt` → `updatedAt`) under 5 min at the median, each `Test suite` leg under 0.3 min, and a review job started under 2 min after its run was created; today 22.9, 17.1 and 10.9.
 - G3 (every check reports): at each of those heads, `gh api repos/repoachhq/repoach/commits/<sha>/check-runs` lists `gate`, `Test suite (Python 3.11)`, `Test suite (Python 3.13)`, `wheel-build`, `wheel-smoke (3.11)`, `wheel-smoke (3.13)` with conclusion `success`, and no merge attempt records `required_check_missing`.
-- G4 (no wrong green): the replay of the last 30 pull requests (167 heads, 15 failed jobs) selects every failed job for its head's paths; over the first twenty narrowed pull requests, every run of the full set on `main` or on the release pull request is green, or its red is a row of the misses table with a verdict, recorded before any other merge.
-- G5 (full set where it must be): a `push` to `main`, a `workflow_dispatch` and the release pull request run every step of every job (`gh run view --json jobs`: no `Pytest` step `skipped`).
+- G4 (no wrong green): the replay of the last 30 pull requests (167 heads, 15 failed jobs) selects every failed job for its head's paths; over the first twenty narrowed pull requests, every run of the full set on `develop`, on `main` or on the release pull request is green, or its red is a row of the misses table with a verdict, recorded before any other merge.
+- G5 (full set where it must be): a `push` to `develop` or `main`, a `workflow_dispatch` and the release pull request run every step of every job (`gh run view --json jobs`: no `Pytest` step `skipped`).
 
 ## Non-Goals
 
@@ -202,7 +209,7 @@ unified order the owner fixed on 2026-11-16; that edge is in
 - the owner answers a decision against the recommendation → the child is amended before its pull request opens.
 
 ### Failure scenarios
-- a red on `main` or on the release pull request after a narrowed green → the procedure of SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES: the line stops, the pair is recorded, the table is widened and merged before the code fix.
+- a red on `develop` (the full set runs on every push to it, decision g), on `main` or on the release pull request after a narrowed green → the procedure of SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES: the line stops, the pair is recorded, the table is widened and merged before the code fix.
 
 ## Architecture Impact
 - Adds dependency: SP-PR-RUNS-AFFECTED-JOBS -> SP-AFFECTED-JOBS-TABLE, SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES, SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED (the umbrella orders them; it owns nothing and imports nothing)
@@ -229,11 +236,20 @@ flowchart LR
 - C1 (replay, external oracle: the forge's own history): `repoach ci affected replay` over `tests/fixtures/affected_jobs/pr_runs.json`, the 30 pull requests #260–#296 harvested with `gh` (167 `CI` heads, 15 failed jobs), prints `misses: 0/15`; the verifier opens two failed runs named in the fixture on github.com and finds the failed job under a head whose paths the table selects it for.
 - C2 (docs-only duration, external oracle: `gh run list --json createdAt,updatedAt`): the first ten docs-only pull requests after 3 land have a `CI` run under 5 min at the median; the number is written beside 22.9 in this spec, whatever it is.
 - C3 (every check reports, external oracle: `gh api .../check-runs`): the six names, conclusion `success`, at each of those ten heads.
-- C4 (the full set holds, external oracle: `gh run view --json jobs`): the first `push` to `main` after 3 and the first release pull request show no `Pytest` step skipped.
+- C4 (the full set holds, external oracle: `gh run view --json jobs`): the first merge to `develop` after 3, the first `push` to `main` and the first release pull request show no `Pytest` step skipped.
 
 ## Open Questions
 
-Each needs the owner; a recommendation follows each.
+- None. The owner approved the family on 2026-11-16, taking every recommendation (decision g). The questions, as asked and decided:
+
+| # | Decision | Decided by owner 2026-11-16 |
+|---|---|---|
+| O1 | Table in `.github/affected-jobs.toml` or a `[ci.affected]` section of `repoach.toml` | as recommended: the dedicated file |
+| O2 | Re-enable `push: branches: [develop]` for the full set, or keep the release pull request as the one oracle | as recommended: `[main, develop]`, full set on every push to `develop` |
+| O3 | `ShellCheck` unchanged, or folded into `ci.yml` behind a `shell` row | as recommended: unchanged |
+| O4 | An unknown path selects every job, or the python class only | as recommended: every job |
+
+The questions as they were asked, kept for the record:
 
 - Q1: Where the table lives. `.github/affected-jobs.toml`, a file of its own (recommended: `repoach.toml` is read by every installed repoach and an older one refuses an unknown key, F14; `.github/` is already the full class, so a table edit runs everything), or a `[ci.affected]` section of `repoach.toml` once the loader learns it.
 - Q2: Judging `develop` itself. Re-enable `push: branches: [develop]` on `ci.yml` for the full set (recommended: a narrowed green can land a red on `develop` that nothing runs until the release pull request, and attributing it then, after several merges, is the hard part SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES names; one full run per merge costs two seventeen-minute legs on runners the narrowing frees, and `concurrency: ci-refs/heads/develop` keeps only the latest head), or keep the release pull request as the one oracle.

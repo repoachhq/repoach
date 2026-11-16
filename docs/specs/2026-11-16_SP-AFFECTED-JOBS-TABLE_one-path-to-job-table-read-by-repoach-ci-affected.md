@@ -1,8 +1,8 @@
 ---
 id: SP-AFFECTED-JOBS-TABLE
 title: One path-to-job table, read by `repoach ci affected`; the workflow carries no glob
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-16
 updated: 2026-11-16
@@ -298,4 +298,4 @@ flowchart LR
 - [ ] AC4: `bash scripts/ci_local.sh --affected origin/develop` prints the selection, then runs the blocks it names, exit 0.
 
 ## Open Questions
-- Q1: the table's location and the unknown-path rule are decided in the umbrella (SP-PR-RUNS-AFFECTED-JOBS Q1, Q4); this spec follows them.
+- None. The table's location (`.github/affected-jobs.toml`) and the unknown-path rule (every job) were decided by the owner on 2026-11-16 (SP-PR-RUNS-AFFECTED-JOBS O1, O4); D2 and D3 are written to them.

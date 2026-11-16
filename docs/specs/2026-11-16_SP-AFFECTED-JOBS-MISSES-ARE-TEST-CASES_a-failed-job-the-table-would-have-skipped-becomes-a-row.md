@@ -1,8 +1,8 @@
 ---
 id: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES
 title: A failed job the table would have skipped becomes a row of a committed table, replayed by a test
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-16
 updated: 2026-11-16
@@ -28,7 +28,7 @@ with. This spec gives the table a harvest: `repoach ci affected harvest`
 reads the merged pull requests from GitHub, pairs each `CI` head's
 changed paths with the jobs that failed at it, rewrites the corpus the
 replay test reads, and names every pair the table would not have
-selected. A miss found later, on `main` or on the release pull request,
+selected. A miss found later, on `develop`, on `main` or on the release pull request,
 enters a committed table with a verdict before anything else is fixed,
 and the replay is red until the table selects it.
 
@@ -41,7 +41,7 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
 | F1 | The corpus of SP-AFFECTED-JOBS-TABLE F7 was harvested by a session script: `gh pr list --state all --base develop --limit 30 --json number,files`, then per head branch `gh run list --event pull_request --json databaseId,conclusion,headSha` and `gh run view <id> --json jobs`; the paths were the pull request's files at harvest time, not per head | this spec's ancestor; `tests/fixtures/affected_jobs/pr_runs.json` (SP-AFFECTED-JOBS-TABLE) |
 | F2 | Per-head paths exist on the forge: `gh api repos/{owner}/{repo}/compare/{base}...{head}` lists `files[].filename` (and `previous_filename` on a rename) against the merge base of `base` and `head`, so a head's diff is read even after the base moved | GitHub REST, `compare two commits` |
 | F3 | 15 failed `CI` jobs on 167 heads; `jobs[].conclusion == "failure"` with `steps[].conclusion` naming `Pytest`, `Pytest — integration` or the smoke's `pipx install`; a cancelled job (`cancelled`, 7 runs) is a cancelled run, never a judgement | `gh run view --json jobs` over the corpus |
-| F4 | `ci.yml` runs on `push` to `main` and on the release pull request with the full set; `develop` runs no `CI` on push (SP-PR-RUNS-AFFECTED-JOBS Q2 decides whether it will) | `.github/workflows/ci.yml:4-11` |
+| F4 | `ci.yml` runs on `push` to `main` and on the release pull request with the full set; `develop` runs no `CI` on push today. Owner decision 2026-11-16 (SP-PR-RUNS-AFFECTED-JOBS O2): SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED re-enables `push: develop` with the full set, so a miss is seen at the merge | `.github/workflows/ci.yml:4-11` |
 | F5 | SP-RED-STOPS-THE-LINE: a red gate stops every other worksite until a corrective spec exists; `repoach release gate` is the release pull request's gate | `docs/specs/2026-10-25_SP-RED-STOPS-THE-LINE_*.md`; `src/repoach/cli/release_cmds.py` |
 
 ## Decisions (2026-11-16)
@@ -220,4 +220,4 @@ flowchart LR
 - [ ] AC4: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- Q1: the harvest window is 30 pull requests and the release gate reports, never refuses (D5). Decided here from the Yoob precedent (SP-MATRIX-MISSES-ARE-TEST-CASES Q1); the owner may overrule it in the umbrella.
+- None. The harvest window is 30 pull requests and the release gate reports, never refuses (D5), from the Yoob precedent (SP-MATRIX-MISSES-ARE-TEST-CASES Q1); the owner approved the family on 2026-11-16 with the umbrella's four decisions and raised nothing against it.

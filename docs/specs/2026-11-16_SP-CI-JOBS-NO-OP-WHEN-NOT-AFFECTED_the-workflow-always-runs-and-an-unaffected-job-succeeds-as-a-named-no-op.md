@@ -1,8 +1,8 @@
 ---
 id: SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED
 title: The CI workflow always runs; a gate job selects once; a job the diff does not affect succeeds as a named no-op
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-16
 updated: 2026-11-16
@@ -92,8 +92,7 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   passes `--event`, `--base-ref`, `--github-output`, `--summary` and
   `--table "$REPOACH_AFFECTED_JOBS_TABLE"`; the three tree lints exist
   in `gate` and in no leg; the trigger block and `concurrency` equal
-  today's, with `push: branches: [main]` or `[main, develop]` as
-  SP-PR-RUNS-AFFECTED-JOBS Q2 decides; no workflow under
+  today's except `push: branches: [main, develop]` (D7); no workflow under
   `.github/workflows/` carries `on.pull_request.paths` or
   `paths-ignore`; the job ids of `ci.yml` equal the ids the table names
   plus `gate`.
@@ -103,6 +102,14 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   the gate's `CI not green at head` reads the same six names as before,
   and the procedure of SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4.
   `CLAUDE.md` "Local CI mirror" names `--affected`.
+- D7. Owner decision 2026-11-16 (SP-PR-RUNS-AFFECTED-JOBS O2):
+  `on.push.branches` becomes `[main, develop]`. A push to `develop` is
+  `mode: full` (`full: push on develop`) and runs every step; the
+  existing `concurrency: ci-${{ github.ref }}` keeps only the latest
+  `develop` head when merges follow one another; `merge-on-ci.yml`
+  admits `pull_request` and `pull_request_review` completions only, so
+  a `develop` run never re-judges a merge. The comment of `ci.yml:5-8`
+  that excluded `develop` is replaced by the sentence of this decision.
 
 ## End state
 
@@ -149,7 +156,7 @@ an error, so the red is named and never a silently full or narrow run.
 - G1: `gate` exists, runs once per run, publishes `job_<id>` and `mode`, runs the tree lints and the docs-class suites; the legs read it.
 - G2: every step of the three jobs but `Selection` is gated; a no-op leg takes under 0.3 min.
 - G3: the six names are green at every head of a narrowed pull request; `merge-on-ci.yml` on `main`'s list admits the same heads.
-- G4: `push`, `workflow_dispatch` and the release pull request run every step (`mode: full`).
+- G4: a `push` to `develop` or `main`, a `workflow_dispatch` and the release pull request run every step (`mode: full`).
 - G5: the file is guarded (D5) and documented (D6).
 
 ## Non-Goals
@@ -215,6 +222,7 @@ five names of `main`'s list green.
 - a pull request changing `src/` → every leg runs every step; the tree lints run once, in `gate`.
 - a pull request changing `.github/workflows/ci.yml` → full class, every step; this spec's own pull request is one.
 - `push` to `main` → `gate` says `full: push on main`; every step runs.
+- a merge to `develop` → a `push` run, `full: push on develop`; every step runs; a red there is the procedure of SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4.
 - the release pull request `develop` → `main` → `full: pull_request on main`; every step runs.
 - `workflow_dispatch` → `full: workflow_dispatch`.
 - a fork's pull request → the allowlist skips `gate` and every leg as today; nothing changes for it.
@@ -235,14 +243,14 @@ five names of `main`'s list green.
 | T4 | same | the `select` step passes the six flags of D5 and `--table "$REPOACH_AFFECTED_JOBS_TABLE"`; `env.REPOACH_AFFECTED_JOBS_TABLE` is `.github/affected-jobs.toml` | hard-code the path in the step |
 | T5 | same | the three tree lints are steps of `gate` and of no leg; ruff and the two Python lints are steps of `test` | leave the edge-honesty step in `test` |
 | T6 | same | the job ids of `ci.yml` equal `{gate} ∪ ids named by the table`; no workflow under `.github/workflows/` has `on.pull_request.paths` or `paths-ignore` | add a `paths:` to `shellcheck.yml` |
-| T7 | same | the trigger block and `concurrency` equal the pinned copy of today (`push: branches` as Q2 decides) | add a branch |
+| T7 | same | the trigger block equals today's with `push: branches: [main, develop]` (D7), `concurrency` unchanged | drop `develop` from `push` |
 | T8 | `tests/unit/test_ci_checkname_sync.py` | the derived names equal the constant and `len == 6` | leave the constant at five |
 
 ## Success conditions
 
 - C1 (external oracle: `gh api .../check-runs`): at the head of the first docs-only pull request after this lands, the six names are listed with conclusion `success`; `gh run view <id> --json jobs` shows each leg with every step but `Selection` `skipped` and a `completedAt - startedAt` under 0.3 min; the `CI` run's `createdAt → updatedAt` is written beside 22.9 min in SP-PR-RUNS-AFFECTED-JOBS C2.
 - C2 (external oracle: the pull request's merge-attempts comment and `repoach review gate <n>`): no attempt records `required_check_missing` or `SKIP_CI_MISSING`; the gate prints `CI green at head`; the pull request merges by `auto_merge` or `merge-on-ci.yml`.
-- C3 (external oracle: `gh run view --json jobs`): the first `push` to `main` after this lands and the first release pull request show the `Pytest` step `success` in both legs and the `gate` summary line `full: …`.
+- C3 (external oracle: `gh run view --json jobs`): the first merge to `develop` after this lands, the first `push` to `main` and the first release pull request show the `Pytest` step `success` in both legs and the `gate` summary line `full: …`.
 - C4: `pytest -q tests/unit/test_affected_workflow_wiring.py tests/unit/test_ci_checkname_sync.py tests/unit/test_wheel_smoke_ci.py tests/unit/test_job_proxy_workflow_wiring.py` green with T1–T8 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `bash scripts/ci_local.sh --affected origin/develop` green on the branch.
 
 ## Architecture Impact
@@ -272,4 +280,4 @@ flowchart LR
 - [ ] AC4: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- Q1: whether `push: branches` gains `develop` (SP-PR-RUNS-AFFECTED-JOBS Q2) is the one line of this file that waits for the owner; the guard T7 pins whichever is decided.
+- None. `push: branches` gains `develop` by owner decision 2026-11-16 (SP-PR-RUNS-AFFECTED-JOBS O2), written in D7 and pinned by T7.
