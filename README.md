@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img src="assets/logo-light.svg" alt="Repoach — anvil and spark" width="110">
+  <img src="assets/logo-light.svg" alt="Repoach — an orange checkmark spark set in the notch of a flat anvil" width="110">
 </picture>
 
 # Repoach
