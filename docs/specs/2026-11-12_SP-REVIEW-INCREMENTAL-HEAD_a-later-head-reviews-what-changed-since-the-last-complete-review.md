@@ -1,24 +1,44 @@
 ---
 id: SP-REVIEW-INCREMENTAL-HEAD
 title: A later head reviews what changed since the last complete review, and falls back to the full range by name
-version: 0.1
-status: draft
+version: 0.2
+status: superseded
+superseded_by: SP-REVIEW-DELTA-FIRST
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-16
 
 owns:
-  code: [src/repoach/review/incremental_range.py, tests/unit/test_incremental_range.py, tests/integration/test_incremental_review_end_to_end.py]
+  code: []
   resources: []
 
-depends_on: [SP-GATE-REVERIFIES-AT-HEAD, SP-REVIEW-RESUMES-FAILED-ROLES, SP-REVIEW-GROUPS-LARGE-DIFFS, SP-REVIEW-PINS-HEAD, SP-FINDINGS-BRIDGE-DOCFIX, SP-POSTING-REPLAY-DEDUPES, SP-UNIVERSAL-LEDGER, SP-UNIVERSAL-PROJECT-CONFIG, SP-MEMORY-LOOPS-EXPLICIT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING]
+depends_on: [SP-REVIEW-DELTA-FIRST]
 provides_to: []
 
-constraints:
-  incremental_default: false
+constraints: {}
 ---
 
 # A later head reviews what changed since the last complete review
+
+## Superseded (0.2, 2026-11-16) by SP-REVIEW-DELTA-FIRST
+
+This spec and SP-REVIEW-DELTA-FIRST (SP-REVIEW-CONVERGES, 2026-11-15)
+decide the same thing — what a later head's reviewers read — and
+disagreed on two points: this one was opt-in and anchored on the last
+*complete* run; that one is default-on (owner decision 2026-11-15, c) and
+anchored on `last_reviewed_head`. The owner's unified order keeps
+DELTA-FIRST as the one spec. Its 0.3 amendment takes over, marked (IH),
+what this spec had and it lacked: the checkpoint validity conditions
+(same base, same persona versions, tiers and rules hash), the enumerated
+fall-back reasons, `--full`, the file listing of the whole change, the
+chain of runs the gate reads for completeness, the `review_runs` columns
+`base_sha` and `extends_run`, and the two success conditions (≥ 50 %
+prompt-token drop on a ten-push merge request; 10/10 on the planted
+corpus split in two heads). The opt-in is replaced by `[review].delta =
+false` and by the range named on every run; O1 and O2 below are decided
+there. This file owns nothing from 0.2 on, so no artefact is co-owned,
+and it keeps its text below as the record of what was folded. Do not
+implement from it.
 
 ## Intent
 
