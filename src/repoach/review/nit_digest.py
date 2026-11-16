@@ -23,6 +23,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from ..core.logging import get_logger
+from ..core.redaction import redact_error
 from ..forge.protocol import Forge, ForgeError, ForgeStateRefusedError, marked_body
 from .finding_posts import (
     PROVENANCE_DIGEST,
@@ -326,14 +327,15 @@ def post_or_edit_digest(forge: Forge, digest: NitDigest, *, db_path: Path) -> Ni
     except ForgeStateRefusedError:
         raise
     except ForgeError as exc:
+        error = redact_error(exc.message)[:200]
         _log.warning(
             "nit_digest_edit_failed",
             pr_number=digest.pr_number,
             head_sha=digest.head_sha[:12],
             comment_id=digest.comment_id,
-            error=exc.message[:200],
+            error=error,
         )
-        return digest.model_copy(update={"error": exc.message[:200]})
+        return digest.model_copy(update={"error": error})
     comment_id = str(comment.id)
     for item in digest.items:
         record_finding_post(

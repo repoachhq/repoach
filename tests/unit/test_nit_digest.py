@@ -73,6 +73,7 @@ class MemoryForge:
         conversation: Every conversation comment, by id.
         upserts: How many times the nit digest comment was written.
         refuse_edits: When set, editing an existing marked comment raises.
+        refusal: The error text a refused edit raises.
     """
 
     bot_username = "bot"
@@ -84,6 +85,7 @@ class MemoryForge:
         self.conversation: dict[int, Comment] = {}
         self.upserts = 0
         self.refuse_edits = False
+        self.refusal = "HTTP 403: note is locked"
         self._ids = itertools.count(5000)
 
     def pull_request(self, number: int) -> PullRequest:
@@ -123,7 +125,7 @@ class MemoryForge:
         final_body = marked_body(marker, body)
         existing = self.find_marked_comment(number, marker)
         if existing is not None and self.refuse_edits:
-            raise ForgeError("HTTP 403: note is locked")
+            raise ForgeError(self.refusal)
         if marker == NIT_DIGEST_MARKER:
             self.upserts += 1
         if existing is None:
@@ -310,6 +312,25 @@ def test_digest_edit_failure_keeps_the_old_comment_and_names_it(tmp_path: Path) 
     assert team.nit_digest.report_line() == "nit digest not updated: HTTP 403: note is locked"
     assert team.nits_json(with_body=False)["error"] == "HTTP 403: note is locked"
     assert {p.head_sha for p in fetch_finding_posts(db, PR)} == {HEAD_A}
+
+
+def test_digest_edit_failure_redacts_credentials_before_naming_them(tmp_path: Path) -> None:
+    """A refusal echoing a credentialed URL is named with the secret masked."""
+    db = tmp_path / "review.db"
+    forge = MemoryForge()
+    first = _nits(2)
+    _record(db, HEAD_A, first)
+    _publish(forge, db, HEAD_A, [first])
+
+    forge.refuse_edits = True
+    forge.refusal = "HTTP 403 at https://oauth2:hunter2secret@gitlab.com/x/y"
+    second = _outcome(BotRole.TESTER, ("src/z.py", 1, "nit", "one more nit at the new head"))
+    _record(db, HEAD_B, second)
+    team = _publish(forge, db, HEAD_B, [second])
+
+    assert team.nit_digest is not None
+    assert team.nit_digest.error == "HTTP 403 at https://***@gitlab.com/x/y"
+    assert "hunter2secret" not in team.nit_digest.report_line()
 
 
 def test_severity_of_and_opens_thread_follow_the_map() -> None:
