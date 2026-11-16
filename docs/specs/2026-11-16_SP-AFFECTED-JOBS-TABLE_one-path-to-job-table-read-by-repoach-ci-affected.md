@@ -1,7 +1,7 @@
 ---
 id: SP-AFFECTED-JOBS-TABLE
 title: One path-to-job table, read by `repoach ci affected`; the workflow carries no glob
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-16
@@ -63,12 +63,38 @@ version = 1
 
 [gate]
 pytest = [
+  "tests/integration/test_credits_integration.py",
+  "tests/integration/test_forge_live.py",
+  "tests/integration/test_selfverify_refutation_flow.py",
+  "tests/integration/test_slow_settings_isolation_end_to_end.py",
+  "tests/unit/test_affected_cli.py",
+  "tests/unit/test_affected_select.py",
+  "tests/unit/test_affected_table.py",
+  "tests/unit/test_affected_tree_judges.py",
   "tests/unit/test_arch_graph.py",
+  "tests/unit/test_claude_hooks.py",
   "tests/unit/test_claude_md_integration_flag.py",
+  "tests/unit/test_decompose.py",
+  "tests/unit/test_devagent_selfverify.py",
   "tests/unit/test_edge_honesty.py",
+  "tests/unit/test_finding_posts_backfill.py",
+  "tests/unit/test_gate_commands.py",
+  "tests/unit/test_gen_comparison.py",
+  "tests/unit/test_merge_wait_rearm.py",
+  "tests/unit/test_merge_wait_required_checks.py",
+  "tests/unit/test_merge_wait_stranded.py",
+  "tests/unit/test_merge_wait_workflows.py",
+  "tests/unit/test_no_duplicate_test_basenames_gate.py",
+  "tests/unit/test_no_inline_comments_gate.py",
+  "tests/unit/test_no_silent_except_gate.py",
+  "tests/unit/test_open_threads_block_the_merge.py",
+  "tests/unit/test_packaging_metadata.py",
+  "tests/unit/test_project_config.py",
   "tests/unit/test_pr_template_measured.py",
+  "tests/unit/test_selfverify_refutation.py",
   "tests/unit/test_spec_supersede.py",
   "tests/unit/test_spec_template.py",
+  "tests/unit/test_test_tree_packaging.py",
 ]
 
 [rows.docs]
@@ -91,25 +117,38 @@ prefixes = [".github/", "pyproject.toml", ".gitignore"]
 reason = "the workflows, this table, the build and test configuration: everything runs"
 ```
 
-  The `[gate].pytest` list above is the one the guard of D5 computes
-  (0.3, measured on `c9f61dd`). Version 0.2 proposed nine entries. Five of
-  them are not tree judges, and two judges were missing:
-  - `test_arch_foreign_frontmatter.py`, `test_spec_presence.py`,
-    `test_governed_spec.py`: removed. They build their specs under
-    `tmp_path` and read no repository path from the root.
-  - `test_affected_table.py`, `test_affected_tree_judges.py`: removed.
-    They read `.github/affected-jobs.toml` (`[full]`) and `tests/`
-    (python row). Both select `test`, so the guard refuses them as
-    `[gate].pytest` entries.
-  - `test_edge_honesty.py`: added. It reads `docs/specs` from the root
-    (`load_registry(_REPO_ROOT / "docs" / "specs")`).
-  - `test_spec_supersede.py`: added. It has `Path("README.md")`, a
-    root-file literal under D5. It joins that literal onto a temporary
-    repository, so this is a conservative inclusion of a cheap module.
-  - Kept: `test_arch_graph.py` (`docs/specs`), `test_spec_template.py`
-    (`docs/specs/_TEMPLATE.md`), `test_pr_template_measured.py`
-    (`docs/PR_TEMPLATE.md`), `test_claude_md_integration_flag.py`
-    (`Path("CLAUDE.md")`).
+  The `[gate].pytest` list above is the list the guard of D5 computes
+  (0.4, measured on `791eb74`). 0.2 proposed nine entries and 0.3
+  measured six. 0.3 missed every reader whose path goes through
+  `.parent`, and every module that uses the root without a literal; the
+  independent verification of `791eb74` found
+  `test_gen_comparison.py`, which reads `docs/comparison.{yaml,md}`
+  through `_SCRIPTS.parent / "docs"`. The 0.4 walk (D5) evaluates
+  every path idiom found under `tests/`, and treats the rest
+  conservatively. The 32 entries come in four classes:
+  - A literal read of the docs class:
+    - `test_arch_graph.py` and `test_edge_honesty.py` (`docs/specs`)
+    - `test_spec_template.py`
+    - `test_pr_template_measured.py`
+    - `test_gen_comparison.py` (`docs/comparison.*`)
+    - `test_claude_md_integration_flag.py` (`Path("CLAUDE.md")`)
+  - A read that selects the wheel jobs and not `test`:
+    `test_packaging_metadata.py` (`LICENSE`).
+  - A `Path("<literal>")` under a tracked top-level entry, read
+    conservatively as the repository path even where the test joins it
+    onto a temporary repository:
+    - `test_spec_supersede.py`
+    - `test_decompose.py`
+    - `test_devagent_selfverify.py`
+    - `test_selfverify_refutation.py` and its integration twin
+  - A use of the root that the walk cannot follow, taken as reading the
+    whole tree: a `cwd=`, `chdir`, a function argument such as
+    `load_project_config(root)`, or a join with an imported constant.
+    These are the remaining entries, including the four
+    `test_affected_*` suites, the merge-wait suites, the lint-gate suites
+    and three integration modules.
+  0.2's `test_arch_foreign_frontmatter.py`, `test_spec_presence.py` and
+  `test_governed_spec.py` read only `tmp_path`, so they are not judges.
 - D3. The selection of a list of paths: a path matching `[full]`, or
   matching no row, selects every job of `ci.yml`; otherwise the union
   of its rows' jobs; then the closure under every `needs`
@@ -124,26 +163,41 @@ reason = "the workflows, this table, the build and test configuration: everythin
   read inside the module. The paths are
   `git diff --name-only --no-renames <merge-base of base and head> <head>`:
   both names of a rename, deletions included.
-- D5. Tree judges. A test module under `tests/` that reads a repository
-  path from the root (an expression chain `Path(__file__).resolve().parents[2] / "…"`
-  or a name bound to it, found with `ast`, or `Path("<root file>")`)
-  is a tree judge for the paths it reads. A name binding is resolved
-  in its own scope, and a local rebinding shadows it.
+- D5. Tree judges. A module under `tests/` (a `test_*` module or a
+  helper) that reads a repository path is a tree judge for the paths it
+  reads. The walk uses `ast`, never a regular expression over Python.
+  It evaluates to a root-relative path:
+  - every expression built from `__file__`: `Path(…)`, `str(…)`,
+    `.resolve()`, `.absolute()`, `.parent`, `.parents[n]`, `/`,
+    `.joinpath`, `.with_name`, `os.path.dirname`, `os.path.join` and
+    `os.path.abspath`, `realpath`, `normpath`, with `..` resolved;
+  - every `Path("<literal>")` whose first segment is a tracked
+    top-level entry.
+  How names and partial paths are handled:
+  - A module-level string constant joins like a literal.
+  - A name binding resolves in its own scope, and a local rebinding
+    shadows it.
+  - A part the walk cannot evaluate (a variable, a call, an imported
+    constant) ends the path where it stands, and the module is taken to
+    read the whole tree under it. A root used that way, as `cwd=`,
+    `chdir`, or an argument, reads the whole repository.
+  - A path above the root is refused by name: `<module>:<line>: a path
+    climbs above the repository root`.
   The guard `test_affected_tree_judges.py` works as follows:
-  - For every judge, it takes each tracked file under each path the
-    judge reads and runs `select([file])` on it.
-  - It checks that selection against the jobs whose `pytest` step in
-    `ci.yml` names the judge's test directory. A file whose selection
-    holds none of those jobs is seen only by `gate`. That file's
-    readers form the gate class. The docs row is in it, and so is
-    `README.md`, which selects only the wheel jobs.
-  - It refuses three things:
-    - a judge of the gate class that `[gate].pytest` does not name;
-    - a judge path with no tracked file under it, or with a tracked
-      file that matches no row (an unclassified tree);
-    - a `[gate].pytest` entry that is not a judge of the gate class.
-  - It reads test sources with `ast`, never with a regular expression
-    over Python.
+  - For every judge, it takes each path under each read: the tracked
+    files under it, or the read itself when none is tracked. It runs
+    `select([path])` on each one.
+  - It checks that selection against the jobs that run the judge. For a
+    `test_*` module, that is the job whose `pytest` step in `ci.yml`
+    names its directory. For a helper, it is every job that runs a test
+    directory.
+  - A path whose selection holds none of those jobs is seen only by
+    `gate`, and its readers form the gate class.
+  - It refuses four things:
+    - a gate-class `test_*` module that `[gate].pytest` does not name;
+    - a gate-class helper, which `[gate].pytest` cannot name;
+    - a `[gate].pytest` entry outside the gate class;
+    - a read whose paths match no row (an unclassified tree).
 - D6. Every tracked path (`git ls-files`) matches a row or `[full]`;
   `test_every_tracked_path_is_classified` names the first that does
   not. A new top-level tree is therefore a red test, not a silent
