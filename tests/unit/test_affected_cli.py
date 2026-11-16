@@ -81,6 +81,7 @@ def test_select_writes_github_output_and_summary(repo: Path, tmp_path: Path) -> 
     output = tmp_path / "out"
     summary = tmp_path / "summary.md"
     output.write_text("earlier=1\n", encoding="utf-8")
+    summary.write_text("### An earlier step\n", encoding="utf-8")
     result = CliRunner().invoke(
         affected_app,
         ["select", "--base", "develop", "--github-output", str(output), "--summary", str(summary)],
@@ -94,6 +95,7 @@ def test_select_writes_github_output_and_summary(repo: Path, tmp_path: Path) -> 
         "mode=narrowed",
     ]
     text = summary.read_text(encoding="utf-8")
+    assert text.startswith("### An earlier step\n### Affected jobs\n")
     assert "| `docs` | `docs/specs/x.md` |" in text
     assert "Jobs selected: `gate`, `test`, `wheel-build`, `wheel-smoke`" in text
 
@@ -185,7 +187,7 @@ case "$1 $2 $3" in
         done
         echo '{"mode": "narrowed"}'
         ;;
-    "ci affected gate-pytest") echo tests/unit/test_gate_judge.py ;;
+    "ci affected gate-pytest") [[ -n "$STUB_GATE_EMPTY" ]] || echo tests/unit/test_gate_judge.py ;;
     "ci affected base") echo main ;;
     "ci affected matrix" | "ci affected job-running") PYTHONPATH="$REAL_PYTHONPATH" exec "$REAL_PYTHON" -m repoach.cli.main "$@" ;;
 esac
@@ -237,6 +239,7 @@ def _run_affected(
     *,
     base: tuple[str, ...] = ("main",),
     missing: str = "",
+    gate_empty: bool = False,
 ) -> tuple[int, str, list[str]]:
     root, stubs = checkout
     log = stubs.parent / "calls.log"
@@ -248,6 +251,7 @@ def _run_affected(
         "STUB_SELECTION": selection,
         "STUB_SELECT_EXIT": str(select_exit),
         "STUB_MISSING": missing,
+        "STUB_GATE_EMPTY": "1" if gate_empty else "",
         "REAL_PYTHON": sys.executable,
         "REAL_PYTHONPATH": str(_ROOT / "src"),
     }
@@ -280,6 +284,20 @@ def test_ci_local_affected_docs_selection_runs_the_gate_only(checkout: tuple[Pat
         "python scripts/check_contributing.py CONTRIBUTING.md",
         "python scripts/lint_no_ai_attribution.py --range main..HEAD",
     ]
+
+
+def test_ci_local_affected_skips_gate_pytest_when_table_names_none(
+    checkout: tuple[Path, Path],
+) -> None:
+    rc, stdout, calls = _run_affected(
+        checkout,
+        "job_test=false\\njob_wheel_build=false\\njob_wheel_smoke=false\\nmode=narrowed\\n",
+        gate_empty=True,
+    )
+    assert rc == 0, stdout
+    assert "[gate].pytest names no selector — stage skipped" in stdout
+    assert "repoach ci affected gate-pytest" in calls
+    assert not any(call.startswith("python -m pytest") for call in calls)
 
 
 def test_ci_local_affected_test_selection_adds_lint_and_suite(checkout: tuple[Path, Path]) -> None:
