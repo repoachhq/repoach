@@ -164,7 +164,7 @@ def test_corpus_is_scrubbed_to_numbers_shas_paths_and_job_names() -> None:
 
 def test_github_output_lines_one_per_job_then_mode() -> None:
     selection = _narrowed(["src/a.py"])
-    assert github_output_lines(selection, list(workflow_jobs(_WORKFLOW))) == [
+    assert github_output_lines(selection, ["test", "wheel-build", "wheel-smoke"]) == [
         "job_test=true",
         "job_wheel_build=true",
         "job_wheel_smoke=true",
@@ -202,22 +202,69 @@ def test_decide_mode(event: str, base_ref: str, expected: tuple[str, str]) -> No
     )
 
 
-def test_workflow_jobs_reads_the_needs_of_the_real_workflow() -> None:
-    assert workflow_jobs(_WORKFLOW) == {
+_MATRIX_WORKFLOW = """\
+jobs:
+  test:
+    name: Test suite (Python ${{ matrix.python-version }})
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+  build:
+    name: build
+  smoke:
+    needs: build
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+  report:
+    needs: [test, smoke]
+"""
+
+
+def test_workflow_jobs_reads_string_and_list_needs(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    path.write_text(_MATRIX_WORKFLOW, encoding="utf-8")
+    assert workflow_jobs(path) == {
         "test": frozenset(),
-        "wheel-build": frozenset(),
-        "wheel-smoke": frozenset({"wheel-build"}),
+        "build": frozenset(),
+        "smoke": frozenset({"build"}),
+        "report": frozenset({"test", "smoke"}),
     }
 
 
-def test_check_name_jobs_expands_the_matrix() -> None:
-    assert check_name_jobs(_WORKFLOW) == {
+def test_the_real_wheel_smoke_needs_wheel_build() -> None:
+    assert "wheel-build" in workflow_jobs(_WORKFLOW)["wheel-smoke"]
+
+
+def test_check_name_jobs_expands_the_matrix(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    path.write_text(_MATRIX_WORKFLOW, encoding="utf-8")
+    assert check_name_jobs(path) == {
         "Test suite (Python 3.11)": "test",
         "Test suite (Python 3.13)": "test",
-        "wheel-build": "wheel-build",
-        "wheel-smoke (3.11)": "wheel-smoke",
-        "wheel-smoke (3.13)": "wheel-smoke",
+        "build": "build",
+        "smoke (3.11)": "smoke",
+        "report": "report",
     }
+
+
+def test_closure_is_transitive(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    path.write_text(_MATRIX_WORKFLOW, encoding="utf-8")
+    needs = workflow_jobs(path)
+    table, _ = _committed()
+    report_only = table.model_copy(
+        update={
+            "rows": tuple(
+                row.model_copy(update={"jobs": frozenset({"report"})})
+                if row.name == "python"
+                else row
+                for row in table.rows
+            )
+        }
+    )
+    selection = select(["tests/x.py"], report_only, needs, mode="narrowed", reason="r")
+    assert selection.jobs == {GATE_JOB, "report", "test", "smoke", "build"}
 
 
 @pytest.mark.parametrize(

@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from repoach.affected.cli import EXIT_GIT, EXIT_UNREADABLE, affected_app
-from repoach.affected.select import DEFAULT_WORKFLOW_PATH
+from repoach.affected.select import DEFAULT_WORKFLOW_PATH, workflow_jobs
 from repoach.affected.table import DEFAULT_TABLE_PATH
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -85,11 +85,11 @@ def test_select_writes_github_output_and_summary(repo: Path, tmp_path: Path) -> 
         ["select", "--base", "develop", "--github-output", str(output), "--summary", str(summary)],
     )
     assert result.exit_code == 0, result.stderr
+    job_ids = list(workflow_jobs(repo / DEFAULT_WORKFLOW_PATH))
+    assert job_ids
     assert output.read_text(encoding="utf-8").splitlines() == [
         "earlier=1",
-        "job_test=true",
-        "job_wheel_build=true",
-        "job_wheel_smoke=true",
+        *(f"job_{job_id.replace('-', '_')}=true" for job_id in job_ids),
         "mode=narrowed",
     ]
     text = summary.read_text(encoding="utf-8")
