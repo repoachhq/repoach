@@ -124,6 +124,7 @@ from .generated_store import (
 )
 from .generated_types import GeneratedCheck, GeneratedTiming
 from .hallucination_guard import (
+    GUARD_DOWNGRADE_SEVERITY,
     GuardEvent,
     apply_hallucination_guard,
     make_repo_file_reader,
@@ -2929,7 +2930,7 @@ def _render_guard_section(team: TeamOutcome) -> str:
         tokens = ", ".join(ev.tokens_found) if ev.tokens_found else "—"
         rows.append(
             f"| {ev.role.value} | `{ev.file}:{ev.line}` | "
-            f"{ev.original_severity} → nit | {ev.reason} | {tokens} |"
+            f"{ev.original_severity} → {GUARD_DOWNGRADE_SEVERITY} | {ev.reason} | {tokens} |"
         )
     breakdown = ", ".join(f"{role}: {n}" for role, n in sorted(by_role.items()))
     table = "\n".join(rows)

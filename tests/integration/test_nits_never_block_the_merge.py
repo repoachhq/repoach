@@ -286,3 +286,35 @@ def test_replaying_mr_366_posts_one_digest_and_a_thread_per_minor_or_worse(
     [digest] = forge.digests()
     assert review.payload["nits"]["count"] == expected_nits
     assert NIT_DIGEST_MARKER in str(digest["body"])
+
+
+def test_the_guard_never_moves_a_major_into_the_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A major the guard disproves ("no test for `_parse`", `_parse` on disk) still opens a thread."""
+    bench = install(monkeypatch, tmp_path)
+    script = _install_script(monkeypatch)
+    major = ReviewComment(
+        file="src/app.py",
+        line=1,
+        severity="major",
+        body="No test for `_parse`: the zero-length branch raises and nothing covers it.",
+    )
+    script.comments = {BotRole.TESTER: [major]}
+    repo = Repo(tmp_path / "repo", {"README.md": "base\n"})
+    head = repo.push_head({"src/app.py": "def _parse(x):\n    return 1 / len(x)\n\n"})
+    forge = GitHub(repo, head)
+
+    review = _review(repo, forge, monkeypatch, capsys)
+
+    assert [c["path"] for c in forge.inline] == ["src/app.py"]
+    assert str(forge.inline[0]["body"]).startswith("**[tester/minor]**")
+    assert forge.digests() == []
+    assert review.payload["nits"]["count"] == 0
+    _, _, decision = decide_at_head(
+        PR, forge=forge, db=bench.db_path, ci_green=True, repo_root=repo.checkout, head_sha=head
+    )
+    assert "1 unresolved review thread(s)" in decision.reasons
+    assert decision.merge is False
