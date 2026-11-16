@@ -89,8 +89,8 @@ re-check at head judges it, and the gate counts it nowhere.
 
 Instead, every nit of the pull request goes into one comment carrying
 `<!-- repoach:nit-digest -->`: a GitHub issue comment or a GitLab general
-note, neither of them resolvable, which that marker opens (a marker
-quoted further down a comment names nothing). It is posted at the first head that
+note, neither of them resolvable. A comment is the digest only when the
+marker opens it; a marker quoted further down names nothing. It is posted at the first head that
 has a nit and edited in place at each later head: the nits of the head
 reviewed under `## At <sha7>`, those of earlier heads under
 `## Earlier`, each line `path:line — lens — text`, at most 40 (the rest
