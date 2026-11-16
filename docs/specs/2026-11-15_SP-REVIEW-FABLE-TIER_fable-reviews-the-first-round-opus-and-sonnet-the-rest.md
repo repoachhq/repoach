@@ -1,14 +1,14 @@
 ---
 id: SP-REVIEW-FABLE-TIER
 title: A fourth capability tier, FABLE, runs the Architect and the Sentinel on the first round; Opus 5.5 runs the other lenses and the refuter; Sonnet 5.5 runs the replies
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-15
+updated: 2026-11-16
 
 owns:
-  code: [tests/unit/test_fable_tier.py, tests/unit/test_lens_tier_by_round.py, tests/unit/test_fable_request_shape.py]
+  code: [src/repoach/review/lens_tiers.py, tests/unit/test_fable_tier.py, tests/unit/test_lens_tier_by_round.py, tests/unit/test_fable_request_shape.py]
   resources: []
 
 depends_on: [SP-ANTHROPIC-BUDGET-GUARD, SP-REVIEW-CHAINS-ANTHROPIC-FIRST, SP-REVIEW-DELTA-FIRST, SP-CODER-TIER-RETIRE-AGENT, SP-CODER-TIER-RETIRE-PROXY, SP-UNIVERSAL-PROVIDERS, SP-PROVIDER-DIRECT-ANTHROPIC, SP-REVIEWER-CHAIN-RENAME, SP-CLAUDE-CODE-FIRST-CLASS, SP-REFUTED-FEEDBACK]
@@ -22,6 +22,16 @@ constraints:
 ---
 
 # A FABLE tier: deeper first rounds so fewer rounds follow
+
+## Amendment (0.3, 2026-11-16): ownership and the round kind
+
+`src/repoach/review/lens_tiers.py`, the placement table of D1, is new and
+owned by this spec (`owns.code`). The round kind D1 reads is
+SP-REVIEW-DELTA-FIRST 0.3's `range.kind` (`full | delta`), which folded
+SP-REVIEW-INCREMENTAL-HEAD on 2026-11-16: every fall-back it names (no
+previous run, base moved, a rewritten history, a tier or persona change,
+`--full`) and the opt-out `[review].delta = false` make a round full, so
+the full-round placement, Fable included, applies to it.
 
 ## Intent
 
@@ -153,7 +163,7 @@ never one that looks like Fable.
 class CapabilityTier(StrEnum):
     FABLE = "fable"; OPUS = "opus"; SONNET = "sonnet"; HAIKU = "haiku"
 
-# review/lens_tiers.py (new, owned by this spec's tests through reviewer.py)
+# review/lens_tiers.py (new, owned by this spec; reviewer.py calls it)
 def tier_for(role: BotRole, *, round_kind: Literal["full", "delta"]) -> CapabilityTier: ...
 JUDGE_TIER = CapabilityTier.OPUS
 REPLY_TIER = CapabilityTier.SONNET
