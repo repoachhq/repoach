@@ -169,6 +169,22 @@ def test_replay_selects_every_failed_job_of_the_corpus(capsys: pytest.CaptureFix
     assert misses == []
 
 
+def test_replay_goes_red_when_the_python_row_selects_nothing() -> None:
+    table, needs = _committed()
+    mutated = table.model_copy(
+        update={
+            "rows": tuple(
+                row.model_copy(update={"jobs": frozenset()}) if row.name == "python" else row
+                for row in table.rows
+            )
+        }
+    )
+    misses, failed = _replay(mutated, needs)
+    assert misses
+    assert {job for _, job in misses} == {"test"}
+    assert len(misses) < failed
+
+
 def test_corpus_is_scrubbed_to_numbers_shas_paths_and_job_names() -> None:
     text = _CORPUS.read_text(encoding="utf-8")
     corpus = json.loads(text)
