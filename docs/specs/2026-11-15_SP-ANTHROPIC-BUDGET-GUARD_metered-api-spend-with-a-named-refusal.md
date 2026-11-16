@@ -87,7 +87,14 @@ configured in USD.
   prompt's token count times the model's input price plus
   `max_tokens` times its output price, an upper bound; the prompt count
   is the request's own `count_tokens` answer when the route offers it,
-  else `len(prompt) / 3.2` rounded up. When
+  else `estimate_prompt_tokens(text)`: the `tiktoken` `cl100k_base`
+  count the gateway already uses for a request
+  (`src/repoach/llm_proxy/core/anthropic/tokens.py`), else
+  `ceil(len / 3.2)`, the rule named by `ESTIMATOR_NAME`. This function is
+  **the one prompt-token estimator of repoach** (amendment 2026-11-16):
+  SP-REVIEW-TOKEN-ESTIMATE aggregates it per role and the refuter's
+  evidence sizing re-exports its name; no other module defines a rule.
+  When
   `spent_usd + estimate_usd > budget_usd` the call is refused with
   reason `budget_exhausted`; the gateway's pre-dispatch check skips
   every `anthropic/*` candidate for that reason (F9's mechanism), and
@@ -179,6 +186,7 @@ call too when both read the same database file.
 - G5: `repoach budget`, `/health` and `chain-status` print the budget line of D7; the review report prints the review's cost and the running total.
 - G6: a user-level key is refused by name unless `REPOACH_ANTHROPIC_WORKSPACE_ID` is set, in which case the header travels on every call; no log or error carries a key character.
 - G7: a budget of 0 refuses every metered call; `repoach doctor` names the setting.
+- G8 (2026-11-16): `estimate_prompt_tokens` and `ESTIMATOR_NAME` are the one estimator and its name; `grep -rn "utf8_bytes / 3\|/ 3.2\|cl100k" src/repoach` finds the rule in `providers/budget.py` (and the gateway's `tokens.py` it wraps) only; SP-REVIEW-TOKEN-ESTIMATE and `refuter_evidence` import them.
 
 ## Non-Goals
 
@@ -218,6 +226,8 @@ class BudgetExhaustedError(GatewayError):
 class UnpricedModelError(GatewayError):
     retryable = False
 
+ESTIMATOR_NAME: str              # "cl100k_base" or "ceil(chars / 3.2)", whichever rule is live
+def estimate_prompt_tokens(text: str) -> int: ...     # the one estimator; imported by review/token_estimate.py and review/refuter_evidence.py
 def estimate_call_usd(*, host, model, prompt_tokens: int, max_tokens: int, on: date) -> Decimal: ...
 def admit(config: BudgetConfig, *, host, model, prompt_tokens, max_tokens, on) -> BudgetState: ...   # raises the two errors
 def record_spend(config: BudgetConfig, row: SpendRow) -> BudgetState: ...

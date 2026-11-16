@@ -49,7 +49,7 @@ delivered. The comparison itself, with a path for every cell, is
 |---|---|---|---|---|
 | 1 | SP-REVIEW-FILE-SELECTION | S–M | — | names every omission; everything after it reasons over selected files |
 | 2 | SP-FINDING-CITES-ITS-CODE | S–M | — | the one mechanical check repoach lacked; changes the persona versions once |
-| 3 | SP-REVIEW-TOKEN-ESTIMATE | S | 1 | a number before the first call; the gauge of 8 and 9 reads it |
+| 3 | SP-REVIEW-TOKEN-ESTIMATE | S | 1, and SP-ANTHROPIC-BUDGET-GUARD (SP-REVIEW-CONVERGES), which owns the one estimator (0.2, 2026-11-16) | a number before the first call; the gauge of 8 and 9 reads it |
 | 4 | SP-REVIEW-REPORT-FORMATS | S | — | GitLab widget and code scanning; no interaction with the pipeline |
 | 5 | SP-REVIEW-LOCAL-DIFF | M | 3, 4 | the entry point agents and contributors lack; the bench already has the forge |
 | 6 | SP-REVIEW-RULES-BY-PATH | M | 1 | de-houses the personas in the same re-versioning as 2 (land 2 first, bump once) |
