@@ -53,11 +53,13 @@ Measured on `origin/develop` `8fabb19` (2026-11-12).
 - D1. Selection runs once per review, after the diff is fetched and
   before any role's prompt is built, in `file_selection.select_files`.
   Each `FileDiff` receives one decision: `reviewed`, or excluded with a
-  reason from the closed set `binary`, `secret_path`, `lockfile`,
-  `minified`, `vendored`, `generated_declared`, `excluded_by_config`,
-  `too_large`, `deleted`. The first rule that applies, in that order,
-  names the reason; `include` in `repoach.toml` overrides every rule
-  but `binary` and `secret_path`.
+  reason from the closed set `EXCLUDE_REASONS`: `binary`,
+  `secret_path`, `lockfile`, `minified`, `vendored`,
+  `generated_declared`, `excluded_by_config`, `too_large`, `cap`,
+  `deleted`. The first rule that applies, in that order, names the
+  reason; `cap` is not a per-file rule but the run-wide cap's omission
+  (D4), given only to a file every per-file rule admitted; `include` in
+  `repoach.toml` overrides every rule but `binary` and `secret_path`.
 - D2. The built-in patterns live in `default_excludes.py` as a data
   table, each row with its reason and a one-line why, readable through
   `repoach config show review.excludes`. Written for repoach, not

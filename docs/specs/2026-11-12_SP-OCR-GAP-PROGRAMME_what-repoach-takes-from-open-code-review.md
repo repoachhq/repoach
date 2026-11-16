@@ -115,15 +115,21 @@ N/A: an umbrella owns no code. The gauge is a command: `repoach bench run bench/
 - No new coupling: the children's edges are declared in their own frontmatter.
 
 ## Diagram
+A solid arrow is a `depends_on` edge of D1's table, one per entry; the dotted one is D2's landing order, not a dependency.
 ```mermaid
 flowchart LR
-    S1[1 selection] --> S3[3 estimate] --> S8[8 groups] --> S9[9 incremental]
+    S1[1 selection] --> S3[3 estimate]
+    S1 --> S6[6 rules]
+    S1 --> S8[8 groups]
     S2[2 cites its code] --> S8
-    S2 --> S6[6 rules]
-    S1 --> S6
-    S7[7 resume] --> S9
-    S4[4 formats] --> S5[5 local] --> S10[10 public corpus]
-    S2 --> S10
+    S2 --> S10[10 public corpus]
+    S2 -. D2 lands first .-> S6
+    S3 --> S5[5 local]
+    S3 --> S8
+    S4[4 formats] --> S5
+    S5 --> S10
+    S7[7 resume] --> S9[9 incremental]
+    S8 --> S9
 ```
 
 ## Acceptance Criteria
