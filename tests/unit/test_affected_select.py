@@ -21,6 +21,7 @@ from repoach.affected.select import (
     decide_mode,
     default_base,
     github_output_lines,
+    job_running,
     matrix_values,
     select,
     summary_markdown,
@@ -398,3 +399,19 @@ def test_matrix_values_reads_one_axis(tmp_path: Path) -> None:
         matrix_values(path, "build", "python-version")
     with pytest.raises(WorkflowError, match=r"jobs\.absent is not a job"):
         matrix_values(path, "absent", "python-version")
+
+
+def test_job_running_names_the_one_job_running_a_command(tmp_path: Path) -> None:
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        "jobs:\n"
+        "  a:\n    steps:\n      - run: pytest -q tests/unit -n auto\n"
+        "  b:\n    steps:\n      - uses: actions/checkout\n      - run: python -m build\n"
+        "  c:\n    steps:\n      - run: python -m build --sdist\n",
+        encoding="utf-8",
+    )
+    assert job_running(path, "pytest -q tests/unit") == "a"
+    with pytest.raises(WorkflowError, match=r"jobs that do: b, c"):
+        job_running(path, "python -m build")
+    with pytest.raises(WorkflowError, match=r"jobs that do: none"):
+        job_running(path, "ruff")
