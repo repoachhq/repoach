@@ -782,11 +782,20 @@ class Forge(Protocol):
         ...
 
     def find_marked_comment(self, number: int, marker: str) -> Comment | None:
-        """Return the trusted conversation comment carrying ``marker``."""
+        """Return the oldest trusted conversation comment that ``marker`` opens (:func:`carries_marker`)."""
         ...
 
     def upsert_marked_comment(self, number: int, marker: str, body: str) -> Comment:
-        """Create or update the trusted comment carrying ``marker``."""
+        """Write the one trusted comment ``marker`` opens, with :func:`marked_body`.
+
+        The oldest such comment is edited in place, or one is posted when
+        there is none; every other trusted comment ``marker`` opens is
+        deleted, so two runs racing on an empty pull request converge on
+        one comment.
+
+        Raises:
+            ForgeError: The lookup, the write or a deletion failed.
+        """
         ...
 
     def ci_status(
@@ -885,6 +894,58 @@ def diff_files(text: str) -> list[str]:
         if new:
             files.append(new)
     return files
+
+
+def neutralise_html_comments(text: str) -> str:
+    """Return ``text`` with every HTML comment opener and closer made inert.
+
+    ``<!--`` becomes ``&lt;!--`` and ``-->`` becomes ``--&gt;``: they still
+    read as typed on the rendered page, and no text a lens wrote can
+    carry a marker into a bot-marked comment.
+
+    Args:
+        text: Any text written into a marked comment.
+
+    Returns:
+        The text with no HTML comment opener or closer left.
+    """
+    return text.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+
+
+def marked_body(marker: str, body: str) -> str:
+    """Return the body a marked comment is written with: ``marker``, then ``body`` made inert.
+
+    A leading ``marker`` already in ``body`` is taken off first, so a
+    body rendered with its own marker is written once with it. Every
+    other HTML comment in ``body`` goes through
+    :func:`neutralise_html_comments`, so the marker on the first line is
+    the only one the comment carries.
+
+    Args:
+        marker: The HTML marker naming the comment.
+        body: The rendered body, with or without ``marker`` in front.
+
+    Returns:
+        ``marker``, a newline, then the inert rest of ``body``.
+    """
+    rest = body[len(marker) :].removeprefix("\n") if body.startswith(marker) else body
+    return f"{marker}\n{neutralise_html_comments(rest)}"
+
+
+def carries_marker(body: str, marker: str) -> bool:
+    """Whether a comment body is the comment ``marker`` names: the marker opens it.
+
+    Matching at the start only means a marker quoted anywhere else in a
+    comment never makes it the marked one.
+
+    Args:
+        body: The comment body as the forge returns it.
+        marker: The HTML marker.
+
+    Returns:
+        True when ``body`` starts with ``marker``.
+    """
+    return bool(marker) and body.startswith(marker)
 
 
 def trusted(bot_username: str, author: str) -> bool:

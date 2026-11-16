@@ -59,6 +59,18 @@ PROVENANCE_POSTED: Literal["posted"] = "posted"
 PROVENANCE_BACKFILL: Literal["backfill"] = "backfill"
 """A row linking a finding posted before this table to its thread."""
 
+PROVENANCE_DIGEST: Literal["digest"] = "digest"
+"""A row linking a note finding to the nit digest comment that lists it.
+
+The digest is a conversation comment, not a thread
+(SP-REVIEW-NITS-ONE-COMMENT D2): such a row has no ``thread_id`` and
+:attr:`FindingPost.root_id` is ``None`` for it, so no thread reader
+matches a review thread to it.
+"""
+
+Provenance = Literal["posted", "backfill", "digest"]
+"""Every value the ``provenance`` column holds."""
+
 finding_posts = Table(
     "finding_posts",
     _metadata,
@@ -98,7 +110,7 @@ class FindingPost(BaseModel):
             for a GitLab note the forge refused to position.
         review_id: The GitHub batched review id; ``None`` on GitLab.
         in_reply_to: The root comment id when the post is itself a reply.
-        provenance: ``posted`` or ``backfill``.
+        provenance: ``posted``, ``backfill`` or ``digest``.
         posted_at: UTC ISO-8601 time the row was written.
         thread_closed_at_head: The head at which the thread was first
             seen resolved by the bot or a maintainer, else ``None``.
@@ -114,7 +126,7 @@ class FindingPost(BaseModel):
     thread_id: str | None = None
     review_id: str | None = None
     in_reply_to: str | None = None
-    provenance: Literal["posted", "backfill"] = PROVENANCE_POSTED
+    provenance: Provenance = PROVENANCE_POSTED
     posted_at: str = ""
     thread_closed_at_head: str | None = None
     thread_closed_by: str | None = None
@@ -126,7 +138,12 @@ class FindingPost(BaseModel):
 
     @property
     def root_id(self) -> int | None:
-        """The thread root a reply takes: the comment itself, or the one it answers."""
+        """The thread root a reply takes: the comment itself, or the one it answers.
+
+        ``None`` for a digest row: the nit digest opens no thread.
+        """
+        if self.provenance == PROVENANCE_DIGEST:
+            return None
         raw = self.in_reply_to or self.comment_id
         return int(raw) if raw.isdigit() else None
 

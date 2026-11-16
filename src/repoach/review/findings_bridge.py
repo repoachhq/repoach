@@ -23,6 +23,7 @@ from ..core.logging import get_logger
 from .diff_scoper import ScopedDiff
 from .findings import (
     JUDGED_CLAIM_TYPES,
+    SEVERITY_RANK,
     ClaimType,
     Finding,
     FindingStatus,
@@ -60,8 +61,44 @@ SEVERITY_MAP: dict[str, Severity] = {
     "blocker": Severity.BLOCKING,
     "major": Severity.BLOCKING,
     "minor": Severity.ADVISORY,
-    "nit": Severity.ADVISORY,
+    "nit": Severity.NOTE,
 }
+"""A lens comment's severity word to the ledger's severity.
+
+``nit`` is a :attr:`~repoach.review.findings.Severity.NOTE`: recorded,
+listed in the nit digest, never posted as a thread
+(SP-REVIEW-NITS-ONE-COMMENT D1). A word outside the map is advisory.
+"""
+
+
+def severity_of(comment: ReviewComment) -> Severity:
+    """Return the ledger severity of a lens comment, through :data:`SEVERITY_MAP`.
+
+    Args:
+        comment: The lens comment.
+
+    Returns:
+        Its mapped severity; :attr:`Severity.ADVISORY` for a word the
+        map does not name.
+    """
+    return SEVERITY_MAP.get(comment.severity, Severity.ADVISORY)
+
+
+def opens_thread(comment: ReviewComment) -> bool:
+    """Whether posting ``comment`` opens a review thread: every severity but a note.
+
+    The posting path posts only these as inline comments; a note goes to
+    the nit digest instead (SP-REVIEW-NITS-ONE-COMMENT D1, D3).
+
+    Args:
+        comment: The lens comment.
+
+    Returns:
+        False for a comment :func:`severity_of` maps to
+        :attr:`Severity.NOTE`, True otherwise.
+    """
+    return severity_of(comment) is not Severity.NOTE
+
 
 _MISSING_TEST_CUE = re.compile(r"(?i)no test for|missing test")
 _MISSING_DOCSTRING_CUE = re.compile(r"(?i)missing docstring|no docstring")
@@ -285,15 +322,19 @@ def comment_to_finding(
         round_n: Review round index.
 
     Returns:
-        A Finding with status=PROPOSED and claim_type from classify_claim_type.
+        A Finding with claim_type from classify_claim_type, severity from
+        :func:`severity_of`, and status ``proposed``, or ``noted`` for a
+        note (SP-REVIEW-NITS-ONE-COMMENT D1).
     """
+    severity = severity_of(comment)
     return Finding(
         pr_number=pr_number,
         head_sha=head_sha,
         round=round_n,
         finder=role.value,
         claim_type=classify_claim_type(comment.body, role),
-        severity=SEVERITY_MAP.get(comment.severity, Severity.ADVISORY),
+        severity=severity,
+        status=FindingStatus.NOTED if severity is Severity.NOTE else FindingStatus.PROPOSED,
         file=comment.file,
         line_start=comment.line,
         line_end=comment.line,
@@ -530,16 +571,21 @@ def record_findings_for_outcomes(
     At a known head each kept comment is matched by
     :func:`finding_fingerprint` against the rows of that head
     (SP-FINDINGS-BRIDGE-DOCFIX 0.2): no match inserts a row; a match on
-    a row that is not refuted stamps it (``last_seen_at``,
-    ``last_run_id``) and inserts nothing; a match only on refuted rows
-    inserts nothing and re-opens nothing. With no head (``head_sha``
+    a row that is not refuted and is at least as severe
+    (:data:`~repoach.review.findings.SEVERITY_RANK`) stamps it
+    (``last_seen_at``, ``last_run_id``) and inserts nothing; a match
+    only on refuted rows inserts nothing and re-opens nothing. A comment
+    more severe than every live match is inserted beside them, so a
+    major raised where a nit was recorded still blocks
+    (SP-REVIEW-NITS-ONE-COMMENT). With no head (``head_sha``
     empty) every kept comment is inserted.
 
     A comment that re-raises a finding REFUTED at another head (same
     file, same claim type, similar claim) re-opens that finding to
     PROPOSED via :func:`_reopen_refuted_matches`
     (SP-REFUTER-INJECTION-HARDEN G3); a finding refuted at the reviewed
-    head stays refuted.
+    head stays refuted. A note re-opens nothing: it is recorded
+    ``noted`` and never judged (SP-REVIEW-NITS-ONE-COMMENT D1).
 
     Args:
         db_path: Path to the SQLite database file.
@@ -584,21 +630,27 @@ def record_findings_for_outcomes(
             ).model_copy(update={"last_seen_at": seen_at, "last_run_id": result.run_id})
             fingerprint = finding_fingerprint(finding)
             matches = at_head.get(fingerprint, [])
-            live = [row for row in matches if row.status is not FindingStatus.REFUTED]
+            rank = SEVERITY_RANK[finding.severity]
+            live = [
+                row
+                for row in matches
+                if row.status is not FindingStatus.REFUTED and SEVERITY_RANK[row.severity] >= rank
+            ]
             if live:
                 result.already_recorded += 1
                 for row in live:
                     if row.id is not None and row.last_run_id != result.run_id:
                         mark_finding_seen(db_path, row.id, run_id=result.run_id, seen_at=seen_at)
                 continue
-            if matches:
+            if any(row.status is FindingStatus.REFUTED for row in matches):
                 result.refuted_earlier += 1
                 continue
             finding_id = record_finding(db_path, finding)
             result.new += 1
             if effective_sha:
-                at_head[fingerprint] = [finding.model_copy(update={"id": finding_id})]
-            result.reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
+                at_head[fingerprint] = [*matches, finding.model_copy(update={"id": finding_id})]
+            if finding.severity is not Severity.NOTE:
+                result.reopened += _reopen_refuted_matches(db_path, refuted_rows, finding)
     if skipped:
         _log.info("findings_bridge.off_diff_skipped", pr_number=pr_number, n_skipped=skipped)
     if result.reopened:

@@ -1,0 +1,545 @@
+{
+ "source": "Yoob MR !366, every bot thread root read from GET /merge_requests/366/discussions on 2026-11-16; paths renamed, bodies replaced by the note id, severities, roles and lines kept",
+ "rounds": [
+  {
+   "round": 1,
+   "comments": [
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_01.sh",
+     "line": 44,
+     "body": "recorded remark 4237686646"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_04.ts",
+     "line": 22,
+     "body": "recorded remark 4237686922"
+    },
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_01.sh",
+     "line": 70,
+     "body": "recorded remark 4237687211"
+    },
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_05.ts",
+     "line": 22,
+     "body": "recorded remark 4237687299"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_06.sh",
+     "line": 93,
+     "body": "recorded remark 4237687341"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_04.ts",
+     "line": 54,
+     "body": "recorded remark 4237687519"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 20,
+     "body": "recorded remark 4237687550"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_07.md",
+     "line": 228,
+     "body": "recorded remark 4237687589"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "comments": [
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_02.ts",
+     "line": 89,
+     "body": "recorded remark 4237686693"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_02.ts",
+     "line": 43,
+     "body": "recorded remark 4237686747"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_03.conf",
+     "line": 115,
+     "body": "recorded remark 4237686839"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_08.tsx",
+     "line": 68,
+     "body": "recorded remark 4237777434"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_04.ts",
+     "line": 24,
+     "body": "recorded remark 4237777620"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_09.tsx",
+     "line": 15,
+     "body": "recorded remark 4237777696"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_04.ts",
+     "line": 21,
+     "body": "recorded remark 4237966767"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_09.tsx",
+     "line": 17,
+     "body": "recorded remark 4237967061"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 3,
+     "body": "recorded remark 4237967109"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_12.ts",
+     "line": 22,
+     "body": "recorded remark 4238054094"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 28,
+     "body": "recorded remark 4238054131"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_10.tsx",
+     "line": 13,
+     "body": "recorded remark 4238054291"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_04.ts",
+     "line": 57,
+     "body": "recorded remark 4238054334"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_13.ts",
+     "line": 19,
+     "body": "recorded remark 4238128914"
+    },
+    {
+     "role": "sentinel",
+     "severity": "minor",
+     "path": "src/file_02.ts",
+     "line": 116,
+     "body": "recorded remark 4238129134"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_09.tsx",
+     "line": 44,
+     "body": "recorded remark 4238129307"
+    },
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_13.ts",
+     "line": 25,
+     "body": "recorded remark 4238483402"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_13.ts",
+     "line": 21,
+     "body": "recorded remark 4238483448"
+    },
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_01.sh",
+     "line": 74,
+     "body": "recorded remark 4238535050"
+    },
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_11.sh",
+     "line": 327,
+     "body": "recorded remark 4238535072"
+    },
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_15.ts",
+     "line": 27,
+     "body": "recorded remark 4238608802"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_15.ts",
+     "line": 97,
+     "body": "recorded remark 4238693222"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 118,
+     "body": "recorded remark 4238693253"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_15.ts",
+     "line": 24,
+     "body": "recorded remark 4238693400"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_12.ts",
+     "line": 21,
+     "body": "recorded remark 4238822265"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 27,
+     "body": "recorded remark 4238822330"
+    },
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_17.js",
+     "line": 101,
+     "body": "recorded remark 4238893893"
+    },
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_11.sh",
+     "line": 1032,
+     "body": "recorded remark 4238893967"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_02.ts",
+     "line": 242,
+     "body": "recorded remark 4238894000"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_14.ts",
+     "line": 38,
+     "body": "recorded remark 4238894229"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_15.ts",
+     "line": 19,
+     "body": "recorded remark 4238894474"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_12.ts",
+     "line": 41,
+     "body": "recorded remark 4238894547"
+    },
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_11.sh",
+     "line": 1015,
+     "body": "recorded remark 4239210190"
+    },
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_02.ts",
+     "line": 119,
+     "body": "recorded remark 4239210228"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_12.ts",
+     "line": 29,
+     "body": "recorded remark 4239210263"
+    },
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_11.sh",
+     "line": 334,
+     "body": "recorded remark 4239210512"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_10.tsx",
+     "line": 13,
+     "body": "recorded remark 4239210548"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_09.tsx",
+     "line": 13,
+     "body": "recorded remark 4239210577"
+    },
+    {
+     "role": "architect",
+     "severity": "minor",
+     "path": "src/file_17.js",
+     "line": 82,
+     "body": "recorded remark 4239267982"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_15.ts",
+     "line": 57,
+     "body": "recorded remark 4239268010"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_12.ts",
+     "line": 38,
+     "body": "recorded remark 4239268297"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_15.ts",
+     "line": 28,
+     "body": "recorded remark 4239268329"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 150,
+     "body": "recorded remark 4239268362"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 11,
+     "body": "recorded remark 4239268491"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_11.sh",
+     "line": 1027,
+     "body": "recorded remark 4239268515"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "comments": [
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_10.tsx",
+     "line": 3,
+     "body": "recorded remark 4237777790"
+    }
+   ]
+  },
+  {
+   "round": 4,
+   "comments": [
+    {
+     "role": "sentinel",
+     "severity": "nit",
+     "path": "src/file_11.sh",
+     "line": 989,
+     "body": "recorded remark 4237966917"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_11.sh",
+     "line": 989,
+     "body": "recorded remark 4238822301"
+    },
+    {
+     "role": "sentinel",
+     "severity": "nit",
+     "path": "src/file_02.ts",
+     "line": 73,
+     "body": "recorded remark 4238822495"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 4,
+     "body": "recorded remark 4238822698"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_07.md",
+     "line": 232,
+     "body": "recorded remark 4238822721"
+    }
+   ]
+  },
+  {
+   "round": 5,
+   "comments": [
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_10.tsx",
+     "line": 24,
+     "body": "recorded remark 4237967083"
+    }
+   ]
+  },
+  {
+   "round": 6,
+   "comments": [
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_13.ts",
+     "line": 22,
+     "body": "recorded remark 4238054112"
+    },
+    {
+     "role": "architect",
+     "severity": "nit",
+     "path": "src/file_02.ts",
+     "line": 101,
+     "body": "recorded remark 4238483480"
+    }
+   ]
+  },
+  {
+   "round": 7,
+   "comments": [
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_09.tsx",
+     "line": 35,
+     "body": "recorded remark 4238054529"
+    }
+   ]
+  },
+  {
+   "round": 8,
+   "comments": [
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_14.ts",
+     "line": 144,
+     "body": "recorded remark 4238535103"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_14.ts",
+     "line": 63,
+     "body": "recorded remark 4238608825"
+    },
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_16.tsx",
+     "line": 113,
+     "body": "recorded remark 4238608857"
+    }
+   ]
+  },
+  {
+   "round": 9,
+   "comments": [
+    {
+     "role": "tester",
+     "severity": "minor",
+     "path": "src/file_14.ts",
+     "line": 117,
+     "body": "recorded remark 4238693187"
+    },
+    {
+     "role": "scribe",
+     "severity": "major",
+     "path": "src/file_11.sh",
+     "line": 28,
+     "body": "recorded remark 4239210799"
+    }
+   ]
+  },
+  {
+   "round": 10,
+   "comments": [
+    {
+     "role": "tester",
+     "severity": "nit",
+     "path": "src/file_15.ts",
+     "line": 22,
+     "body": "recorded remark 4238894276"
+    },
+    {
+     "role": "scribe",
+     "severity": "nit",
+     "path": "src/file_01.sh",
+     "line": 136,
+     "body": "recorded remark 4238894603"
+    }
+   ]
+  }
+ ]
+}

@@ -332,7 +332,7 @@ $ repoach review gate 42
 }
 ```
 
-`merge: true` → `repoach review merge 42` squash-merges the PR into `develop`. `merge: false` prints its reasons and blocks; an open review thread is one of them ([docs/merge_gate.md](docs/merge_gate.md)). The read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
+`merge: true` → `repoach review merge 42` squash-merges the PR into `develop`. `merge: false` prints its reasons and blocks; an open review thread is one of them ([docs/merge_gate.md](docs/merge_gate.md)). A nit opens no thread: every nit goes into one comment per pull request, edited at each head, that blocks nothing. The read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
 
 ## Contributing
 

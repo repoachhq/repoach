@@ -16,7 +16,7 @@ decision refuses, one reason per line, when:
 | `spec coverage …` | the declared spec's acceptance selectors are missing at head |
 | `spec coverage recompute failed at <sha7>: …` | a coverage row graded by a retired rule could not be recomputed |
 | `<n> unverified blocking finding(s): …` | a blocking finding has no verifier, or is still proposed |
-| `<n> unresolved review thread(s)` | review threads are open on the pull request |
+| `<n> unresolved review thread(s)` | review threads are open on the pull request (a nit opens none, see below) |
 | `review threads unreadable: <why>` | the forge could not say how many threads are open |
 
 When any of these refuses, the lines naming the findings of older heads
@@ -77,6 +77,52 @@ Turn them on, but do not rely on them alone: they are off by default, a
 token with bypass rights merges past them, and the merge path of a forge
 without them would merge. repoach's own gate is the first line and holds
 on every forge; the setting catches a merge made outside repoach.
+
+## A nit never blocks
+
+Rule (owner decision 2026-11-15, SP-REVIEW-NITS-ONE-COMMENT; it amends
+the 2026-10-25 rule "everything validated before merge" for the `nit`
+severity alone): a lens comment of severity `nit` is recorded in the
+ledger as a `note` finding with status `noted`, and is never posted as
+an inline comment. It opens no review thread, no verifier, refuter or
+re-check at head judges it, and the gate counts it nowhere.
+
+Instead, every nit of the pull request goes into one comment carrying
+`<!-- repoach:nit-digest -->`: a GitHub issue comment or a GitLab general
+note, neither of them resolvable. A comment is the digest only when the
+marker opens it; a marker quoted further down names nothing. It is posted at the first head that
+has a nit and edited in place at each later head: the nits of the head
+reviewed under `## At <sha7>`, those of earlier heads under
+`## Earlier`, each line `path:line — lens — text`, at most 40 (the rest
+counted, `… and <n> more`). A nit raised again at a later head is
+listed once, at its latest head. A replay whose rendering is unchanged
+writes nothing. A nit whose cited lines changed at a later head is still
+listed under `## Earlier`: dropping it needs the cited-region rule of
+SP-REVIEW-SETTLED-STAYS-SETTLED, which delivers it.
+
+- `repoach review pr <N>` prints `nit digest: <n> nit(s), <url>`; its
+  JSON and the archive comment carry `nits` (`count`, `digest_url`,
+  `error`); the JSON also carries `body`, the rendered digest, which a
+  dry run shows without posting. A reviewer whose comments are all `nit` or `minor` is
+  promoted to `APPROVE` with `[auto-promoted: no blocking comment]`.
+- A refused edit leaves the previous digest as it was, logs
+  `nit_digest_edit_failed` and prints `nit digest not updated: <why>`;
+  the verdict is unaffected.
+- `minor`, `major` and `blocker` are unchanged: each opens a thread, and
+  the thread blocks until it is resolved. Nothing turns one of them into
+  a nit: the hallucination guard downgrades a disproved `blocker` or
+  `major` to `minor`, still a thread, and a remark raised at one head as
+  a `nit` and as something more severe counts at the more severe one and
+  is left out of the digest.
+- Lens text reaches the digest and the archive comment verbatim except
+  for HTML comments: every `<!--` and `-->` in it is written `&lt;!--`
+  and `--&gt;`, so neither comment can carry the other's marker. Each
+  marker names one comment: a write edits the oldest trusted comment it
+  opens and deletes any other, so two runs at the same head leave one
+  digest.
+- A nit thread opened before this rule is an ordinary open thread: the
+  gate counts every unresolved thread whatever its severity, so it is
+  answered and resolved like any other (`/resolve <reason>` included).
 
 ## What starts a review and what re-arms a merge
 
