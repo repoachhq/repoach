@@ -1,0 +1,302 @@
+"""The selection of the jobs a diff affects (SP-AFFECTED-JOBS-TABLE T3-T7, D3, D4, D6)."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+from repoach.affected.select import (
+    DEFAULT_WORKFLOW_PATH,
+    GATE_JOB,
+    GitError,
+    Selection,
+    WorkflowError,
+    changed_paths,
+    check_name_jobs,
+    decide_mode,
+    github_output_lines,
+    select,
+    summary_markdown,
+    workflow_jobs,
+)
+from repoach.affected.table import DEFAULT_TABLE_PATH, AffectedTable, load_table, matches
+from repoach.review.merge_wait import expand_job_names, load_workflow
+
+_ROOT = Path(__file__).resolve().parents[2]
+_WORKFLOW = _ROOT / DEFAULT_WORKFLOW_PATH
+_CORPUS = _ROOT / "tests" / "fixtures" / "affected_jobs" / "pr_runs.json"
+
+
+def _committed() -> tuple[AffectedTable, dict[str, frozenset[str]]]:
+    needs = workflow_jobs(_WORKFLOW)
+    return load_table(_ROOT / DEFAULT_TABLE_PATH, needs, workflow=_WORKFLOW.name), needs
+
+
+def _narrowed(paths: list[str]) -> Selection:
+    table, needs = _committed()
+    return select(paths, table, needs, mode="narrowed", reason="narrowed: pull_request on develop")
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def test_every_tracked_path_is_classified() -> None:
+    tracked = [path for path in _git(_ROOT, "ls-files", "-z").split("\0") if path]
+    table, _ = _committed()
+    first = next(
+        (
+            path
+            for path in tracked
+            if not matches(table.full, path) and not any(matches(row, path) for row in table.rows)
+        ),
+        None,
+    )
+    assert first is None, f"{first} matches no row of {DEFAULT_TABLE_PATH} and is not in [full]"
+
+
+def test_unknown_path_selects_every_job() -> None:
+    selection = _narrowed(["Makefile"])
+    assert selection.jobs == {GATE_JOB, *workflow_jobs(_WORKFLOW)}
+    assert selection.reason == "unknown path: Makefile"
+    assert selection.rows_hit == {"unknown": ["Makefile"]}
+    assert selection.mode == "narrowed"
+
+
+def test_full_class_path_selects_every_job() -> None:
+    selection = _narrowed(["docs/a.md", ".github/workflows/ci.yml"])
+    assert selection.jobs == {GATE_JOB, *workflow_jobs(_WORKFLOW)}
+    assert selection.reason == "full class: .github/"
+
+
+def test_empty_diff_selects_gate_alone() -> None:
+    selection = _narrowed([])
+    assert selection.jobs == {GATE_JOB}
+    assert selection.paths == 0
+
+
+def test_docs_and_src_select_test_and_the_wheel() -> None:
+    selection = _narrowed(["docs/specs/x.md", "src/repoach/review/a.py"])
+    assert selection.jobs == {GATE_JOB, "test", "wheel-build", "wheel-smoke"}
+    assert selection.rows_hit == {
+        "docs": ["docs/specs/x.md"],
+        "python": ["src/repoach/review/a.py"],
+        "wheel": ["src/repoach/review/a.py"],
+    }
+    assert selection.reason == "narrowed: pull_request on develop"
+
+
+def test_docs_only_selects_gate_alone() -> None:
+    selection = _narrowed(["docs/getting_started.md"])
+    assert selection.jobs == {GATE_JOB}
+    assert selection.rows_hit == {"docs": ["docs/getting_started.md"]}
+
+
+def test_full_mode_selects_every_job_and_keeps_its_reason() -> None:
+    table, needs = _committed()
+    selection = select(["docs/a.md"], table, needs, mode="full", reason="full: push on main")
+    assert selection.jobs == {GATE_JOB, *needs}
+    assert selection.reason == "full: push on main"
+    assert selection.rows_hit == {"docs": ["docs/a.md"]}
+
+
+def test_rows_hit_keeps_three_paths_per_row() -> None:
+    selection = _narrowed([f"docs/{n}.md" for n in range(5)])
+    assert selection.rows_hit == {"docs": ["docs/0.md", "docs/1.md", "docs/2.md"]}
+    assert selection.paths == 5
+
+
+def test_selection_is_closed_under_the_real_needs() -> None:
+    table, needs = _committed()
+    assert "wheel-build" in needs["wheel-smoke"]
+    narrow = table.model_copy(
+        update={
+            "rows": tuple(
+                row.model_copy(update={"jobs": frozenset({"wheel-smoke"})})
+                if row.name == "wheel"
+                else row
+                for row in table.rows
+            )
+        }
+    )
+    selection = select(["prompts/review/x.md"], narrow, needs, mode="narrowed", reason="r")
+    assert {"wheel-smoke", "wheel-build"} <= selection.jobs
+
+
+def test_replay_selects_every_failed_job_of_the_corpus(capsys: pytest.CaptureFixture[str]) -> None:
+    corpus = json.loads(_CORPUS.read_text(encoding="utf-8"))
+    names = check_name_jobs(_WORKFLOW)
+    failed = 0
+    misses: list[str] = []
+    for pr in corpus["pull_requests"]:
+        selection = _narrowed(pr["paths"])
+        for head in pr["heads"]:
+            for run in head["runs"]:
+                for job in run["jobs"]:
+                    if job["conclusion"] != "failure":
+                        continue
+                    failed += 1
+                    assert job["name"] in names, (
+                        f"#{pr['number']}: {job['name']!r} is no check of ci.yml"
+                    )
+                    if names[job["name"]] not in selection.jobs:
+                        misses.append(f"#{pr['number']} {head['sha'][:7]} {job['name']}")
+    with capsys.disabled():
+        print(f"\nmisses: {len(misses)}/{failed}")
+    assert failed > 0
+    assert misses == []
+
+
+def test_corpus_is_scrubbed_to_numbers_shas_paths_and_job_names() -> None:
+    text = _CORPUS.read_text(encoding="utf-8")
+    corpus = json.loads(text)
+    assert corpus["repo"] == "repoachhq/repoach"
+    assert "http" not in text
+    assert "ghp_" not in text and "github_pat_" not in text
+    assert {key for pr in corpus["pull_requests"] for key in pr} == {"number", "paths", "heads"}
+
+
+def test_github_output_lines_one_per_job_then_mode() -> None:
+    selection = _narrowed(["src/a.py"])
+    assert github_output_lines(selection, list(workflow_jobs(_WORKFLOW))) == [
+        "job_test=true",
+        "job_wheel_build=true",
+        "job_wheel_smoke=true",
+        "mode=narrowed",
+    ]
+    docs = _narrowed(["docs/a.md"])
+    assert github_output_lines(docs, ["test", "wheel-build"]) == [
+        "job_test=false",
+        "job_wheel_build=false",
+        "mode=narrowed",
+    ]
+
+
+def test_summary_markdown_names_mode_rows_and_jobs() -> None:
+    text = summary_markdown(_narrowed(["docs/a.md", "src/b.py"]))
+    assert "Mode `narrowed`: narrowed: pull_request on develop. Paths judged: 2." in text
+    assert "| `docs` | `docs/a.md` |" in text
+    assert "| `python` | `src/b.py` |" in text
+    assert "Jobs selected: `gate`, `test`, `wheel-build`, `wheel-smoke`" in text
+
+
+@pytest.mark.parametrize(
+    ("event", "base_ref", "expected"),
+    [
+        ("pull_request", "develop", ("narrowed", "narrowed: pull_request on develop")),
+        ("pull_request", "main", ("full", "full: pull_request on main")),
+        ("push", "", ("full", "full: push on main")),
+        ("workflow_dispatch", "", ("full", "full: workflow_dispatch on main")),
+    ],
+)
+def test_decide_mode(event: str, base_ref: str, expected: tuple[str, str]) -> None:
+    assert (
+        decide_mode(event=event, base_ref=base_ref, ref="main", integration_branch="develop")
+        == expected
+    )
+
+
+def test_workflow_jobs_reads_the_needs_of_the_real_workflow() -> None:
+    assert workflow_jobs(_WORKFLOW) == {
+        "test": frozenset(),
+        "wheel-build": frozenset(),
+        "wheel-smoke": frozenset({"wheel-build"}),
+    }
+
+
+def test_check_name_jobs_expands_the_matrix() -> None:
+    assert check_name_jobs(_WORKFLOW) == {
+        "Test suite (Python 3.11)": "test",
+        "Test suite (Python 3.13)": "test",
+        "wheel-build": "wheel-build",
+        "wheel-smoke (3.11)": "wheel-smoke",
+        "wheel-smoke (3.13)": "wheel-smoke",
+    }
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        ("name: CI\n", "ci.yml: jobs has no jobs mapping"),
+        ("jobs:\n  a: 1\n", "ci.yml: jobs.a must be a mapping"),
+        (
+            "jobs:\n  a:\n    needs: {x: 1}\n",
+            "ci.yml: jobs.a.needs must be a job id or a list of job ids",
+        ),
+        ("jobs:\n  a:\n    needs: [b]\n", "ci.yml: jobs.a.needs names 'b', not a job"),
+        ("jobs: [\n", "ci.yml: is not YAML"),
+    ],
+)
+def test_workflow_jobs_names_the_defect(tmp_path: Path, document: str, message: str) -> None:
+    path = tmp_path / "ci.yml"
+    path.write_text(document, encoding="utf-8")
+    with pytest.raises(WorkflowError) as caught:
+        workflow_jobs(path)
+    assert str(caught.value).startswith(message)
+
+
+def test_workflow_jobs_unreadable(tmp_path: Path) -> None:
+    with pytest.raises(WorkflowError, match=r"ci\.yml: cannot be read"):
+        workflow_jobs(tmp_path / "ci.yml")
+
+
+def test_load_workflow_is_safe_load_and_raises(tmp_path: Path) -> None:
+    path = tmp_path / "w.yml"
+    path.write_text("jobs:\n  a: {needs: b}\n", encoding="utf-8")
+    assert load_workflow(path) == {"jobs": {"a": {"needs": "b"}}}
+    path.write_text("jobs: [\n", encoding="utf-8")
+    with pytest.raises(yaml.YAMLError):
+        load_workflow(path)
+    with pytest.raises(OSError):
+        load_workflow(tmp_path / "absent.yml")
+
+
+def test_expand_job_names() -> None:
+    matrix = {"strategy": {"matrix": {"python-version": ["3.11", "3.13"]}}}
+    assert expand_job_names("t", {"name": "T (${{ matrix.python-version }})", **matrix}) == [
+        "T (3.11)",
+        "T (3.13)",
+    ]
+    assert expand_job_names("w", {"name": "w", **matrix}) == ["w (3.11)", "w (3.13)"]
+    assert expand_job_names("b", {}) == ["b"]
+
+
+@pytest.fixture
+def two_commit_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.invalid")
+    _git(repo, "config", "user.name", "t")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "a.md").write_text("a\n", encoding="utf-8")
+    (repo / "gone.txt").write_text("g\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "checkout", "-q", "-b", "topic")
+    _git(repo, "mv", "docs/a.md", "docs/b.md")
+    _git(repo, "rm", "-q", "gone.txt")
+    _git(repo, "commit", "-q", "-m", "rename and delete")
+    return repo
+
+
+def test_changed_paths_lists_both_names_of_a_rename_and_deletions(two_commit_repo: Path) -> None:
+    assert sorted(changed_paths(two_commit_repo, base="main")) == [
+        "docs/a.md",
+        "docs/b.md",
+        "gone.txt",
+    ]
+    assert changed_paths(two_commit_repo, base="topic") == []
+
+
+def test_changed_paths_names_the_failing_command(two_commit_repo: Path) -> None:
+    with pytest.raises(GitError) as caught:
+        changed_paths(two_commit_repo, base="no-such-ref")
+    assert caught.value.command == "git merge-base no-such-ref HEAD"
+    assert caught.value.detail

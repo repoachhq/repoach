@@ -1,0 +1,30 @@
+version = 1
+
+[gate]
+pytest = [
+  "tests/unit/test_arch_graph.py",
+  "tests/unit/test_claude_md_integration_flag.py",
+  "tests/unit/test_edge_honesty.py",
+  "tests/unit/test_pr_template_measured.py",
+  "tests/unit/test_spec_supersede.py",
+  "tests/unit/test_spec_template.py",
+]
+
+[rows.docs]
+prefixes = ["docs/", "assets/", "licenses/", "LICENSE", "README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "CLAUDE.md", "tmp/"]
+jobs = []
+reason = "pages, specs and licences are judged by the gate: arch check, the CONTRIBUTING and attribution lints, and the tree suites above"
+
+[rows.python]
+prefixes = ["src/", "tests/", "scripts/", "prompts/", "bench/", "deploy/", ".claude/", ".githooks/", "chains.env", ".env.example", "repoach.toml"]
+jobs = ["test"]
+reason = "the suite imports src, runs the scripts, reads the prompts, chains.env, .env.example, repoach.toml and the .claude hooks"
+
+[rows.wheel]
+prefixes = ["src/", "prompts/", "docs/specs/_TEMPLATE.md", "pyproject.toml", "README.md", "LICENSE", "scripts/wheel_smoke.sh"]
+jobs = ["wheel-build", "wheel-smoke"]
+reason = "what the wheel packages and its metadata, and the smoke script"
+
+[full]
+prefixes = [".github/", "pyproject.toml", ".gitignore"]
+reason = "the workflows, this table, the build and test configuration: everything runs"

@@ -11,6 +11,14 @@
 #   scripts/ci_local.sh --wheel        # mirror the wheel-build + wheel-smoke jobs:
 #                                      # build once, pipx-install the wheel on
 #                                      # Python 3.11 and 3.13 (SP-PYPI-RELEASE)
+#   scripts/ci_local.sh --affected [<base>]  # run only what the diff from <base>
+#                                      # (default origin/develop) affects: prints
+#                                      # `repoach ci affected select`, then always
+#                                      # the gate (arch check, CONTRIBUTING and
+#                                      # attribution lints, [gate].pytest), the
+#                                      # lint + pytest + smoke blocks when `test`
+#                                      # is selected, the --wheel block when a
+#                                      # wheel job is (SP-AFFECTED-JOBS-TABLE D7)
 #   scripts/ci_local.sh --review <PR>  # mirror the .github/workflows/auto-review.yml
 #                                      # review job locally — runs the four
 #                                      # bots against the PR via the V2
@@ -30,13 +38,19 @@ cd "$(dirname "$0")/.."
 # shadow src/ and the gates would judge the wrong tree.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 
+integration_ref="origin/develop"
 mode="full"
 review_pr=""
+affected_base="$integration_ref"
 case "${1:-}" in
     --fast)   mode="lint" ;;
     --tests)  mode="tests" ;;
     --integration) mode="integration" ;;
     --wheel)  mode="wheel" ;;
+    --affected)
+        mode="affected"
+        affected_base="${2:-$integration_ref}"
+        ;;
     --review)
         mode="review"
         review_pr="${2:-}"
@@ -46,7 +60,7 @@ case "${1:-}" in
         fi
         ;;
     "")       mode="full" ;;
-    *)        echo "usage: $0 [--fast | --tests | --integration | --wheel | --review <PR>]" >&2 ; exit 2 ;;
+    *)        echo "usage: $0 [--fast | --tests | --integration | --wheel | --affected [<base>] | --review <PR>]" >&2 ; exit 2 ;;
 esac
 
 bold() { printf "\n\033[1m== %s ==\033[0m\n" "$1" ; }
@@ -110,9 +124,56 @@ if [[ "$mode" == "review" ]] ; then
     exit 1
 fi
 
-if [[ "$mode" == "wheel" ]] ; then
+cleanup=()
+trap 'if (( ${#cleanup[@]} )) ; then rm -rf "${cleanup[@]}" ; fi' EXIT
+
+run_wheel=false
+run_code_lint=false
+run_tree_lint=false
+run_unit=false
+run_integration=false
+run_smoke=false
+run_gate=false
+attribution_base="$integration_ref"
+case "$mode" in
+    full)        run_code_lint=true ; run_tree_lint=true ; run_unit=true ; run_integration=true ; run_smoke=true ;;
+    lint)        run_code_lint=true ; run_tree_lint=true ;;
+    tests)       run_unit=true ;;
+    integration) run_integration=true ;;
+    wheel)       run_wheel=true ;;
+    affected)
+        selection_file="$(mktemp)"
+        cleanup+=("$selection_file")
+        bold "repoach ci affected select --base $affected_base"
+        repoach ci affected select --base "$affected_base" --github-output "$selection_file"
+        selected() { grep -qx "job_$1=true" "$selection_file" ; }
+        run_gate=true
+        run_tree_lint=true
+        attribution_base="$affected_base"
+        if selected test ; then
+            run_code_lint=true ; run_unit=true ; run_integration=true ; run_smoke=true
+        fi
+        if selected wheel_build || selected wheel_smoke ; then
+            run_wheel=true
+        fi
+        ;;
+esac
+
+if [[ "$run_gate" == true ]] ; then
+    run_step "lint — edge honesty" repoach arch check --base "$affected_base"
+    gate_listing="$(repoach ci affected gate-pytest)"
+    if [[ -n "$gate_listing" ]] ; then
+        mapfile -t gate_selectors <<< "$gate_listing"
+        run_step "pytest [gate].pytest" python -m pytest -q "${gate_selectors[@]}"
+    else
+        bold "pytest [gate].pytest"
+        ok "[gate].pytest names no selector — stage skipped"
+    fi
+fi
+
+if [[ "$run_wheel" == true ]] ; then
     wheel_dir="$(mktemp -d)"
-    trap 'rm -rf "$wheel_dir"' EXIT
+    cleanup+=("$wheel_dir")
     run_step "build sdist + wheel" python -m build --sdist --wheel --outdir "$wheel_dir" .
     run_step "twine check" bash -c "python -m twine check '$wheel_dir'/*"
     for py in 3.11 3.13 ; do
@@ -126,22 +187,25 @@ if [[ "$mode" == "wheel" ]] ; then
     done
 fi
 
-if [[ "$mode" != "tests" && "$mode" != "integration" && "$mode" != "wheel" ]] ; then
+if [[ "$run_code_lint" == true ]] ; then
     run_step "ruff check"        ruff check src tests
     run_step "ruff format --check" ruff format --check src tests
     run_step "lint — no inline comments / no noqa" python scripts/lint_no_inline_comments.py --summary
     run_step "lint — no silent except" python scripts/lint_no_silent_except.py --summary
+fi
+
+if [[ "$run_tree_lint" == true ]] ; then
     run_step "lint — CONTRIBUTING cites real paths" python scripts/check_contributing.py CONTRIBUTING.md
-    if git rev-parse --verify -q origin/develop >/dev/null ; then
-        run_step "lint — no AI attribution in branch commits" python scripts/lint_no_ai_attribution.py --range origin/develop..HEAD
+    if git rev-parse --verify -q "$attribution_base" >/dev/null ; then
+        run_step "lint — no AI attribution in branch commits" python scripts/lint_no_ai_attribution.py --range "$attribution_base..HEAD"
     fi
 fi
 
-if [[ "$mode" == "full" || "$mode" == "tests" ]] ; then
+if [[ "$run_unit" == true ]] ; then
     run_step "pytest tests/unit" python -m pytest -q tests/unit -n auto --dist worksteal
 fi
 
-if [[ "$mode" == "full" || "$mode" == "integration" ]] ; then
+if [[ "$run_integration" == true ]] ; then
     if [[ -n "$(find tests/integration -name 'test_*.py' 2>/dev/null)" ]] ; then
         run_step "pytest tests/integration" python -m pytest -q tests/integration -n auto --dist worksteal
     else
@@ -150,7 +214,7 @@ if [[ "$mode" == "full" || "$mode" == "integration" ]] ; then
     fi
 fi
 
-if [[ "$mode" == "full" ]] ; then
+if [[ "$run_smoke" == true ]] ; then
     bold "smoke — llm_proxy boots"
     if proxy_smoke ; then
         ok "smoke — llm_proxy boots"
