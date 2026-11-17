@@ -1,0 +1,98 @@
+{
+  "enums": {
+    "pr_findings.claim_type": [
+      "missing_test",
+      "missing_docstring",
+      "lint_convention",
+      "broken_behavior",
+      "spec_gap",
+      "design",
+      "security",
+      "generated_artefact"
+    ],
+    "pr_findings.severity": [
+      "blocking",
+      "advisory",
+      "note"
+    ],
+    "pr_findings.status": [
+      "proposed",
+      "verified",
+      "refuted",
+      "open",
+      "resolved",
+      "stuck",
+      "not_applicable",
+      "resolved_at_head",
+      "owner_resolved",
+      "noted"
+    ]
+  },
+  "tables": {
+    "ledger_meta": [
+      "key VARCHAR",
+      "value VARCHAR"
+    ],
+    "pr_findings": [
+      "id INTEGER",
+      "pr_number INTEGER",
+      "head_sha VARCHAR",
+      "round INTEGER",
+      "finder VARCHAR",
+      "claim_type VARCHAR",
+      "severity VARCHAR",
+      "file VARCHAR",
+      "line_start INTEGER",
+      "line_end INTEGER",
+      "claim VARCHAR",
+      "evidence_pointer VARCHAR",
+      "status VARCHAR",
+      "verification_method VARCHAR",
+      "verification_result VARCHAR",
+      "checked_at_sha VARCHAR",
+      "verify_attempts INTEGER",
+      "last_seen_at VARCHAR",
+      "last_run_id VARCHAR",
+      "budget_used INTEGER"
+    ],
+    "pr_merges": [
+      "id INTEGER",
+      "pr_number INTEGER",
+      "outcome VARCHAR",
+      "base_ref VARCHAR",
+      "head_ref VARCHAR",
+      "merged_sha VARCHAR",
+      "notes VARCHAR",
+      "created_at DATETIME",
+      "head_sha VARCHAR",
+      "pending_checks VARCHAR",
+      "trigger VARCHAR",
+      "rule_version VARCHAR"
+    ],
+    "pr_review_integrity": [
+      "id INTEGER",
+      "pr_number INTEGER",
+      "head_sha VARCHAR",
+      "n_reviewers INTEGER",
+      "n_unparsed INTEGER"
+    ],
+    "pr_spec_coverage": [
+      "id INTEGER",
+      "pr_number INTEGER",
+      "head_sha VARCHAR",
+      "spec_id VARCHAR",
+      "n_promised INTEGER",
+      "n_present INTEGER",
+      "missing VARCHAR",
+      "covered INTEGER",
+      "planned VARCHAR",
+      "draft_refusals VARCHAR",
+      "rule_version INTEGER",
+      "contract VARCHAR",
+      "origins VARCHAR",
+      "report VARCHAR",
+      "resolution VARCHAR",
+      "batch VARCHAR"
+    ]
+  }
+}
