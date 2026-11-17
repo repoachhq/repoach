@@ -13,6 +13,7 @@ pytest = [
   "tests/unit/test_affected_select.py",
   "tests/unit/test_affected_table.py",
   "tests/unit/test_affected_tree_judges.py",
+  "tests/unit/test_affected_workflow_wiring.py",
   "tests/unit/test_arch_graph.py",
   "tests/unit/test_ci_review.py",
   "tests/unit/test_claude_hooks.py",
