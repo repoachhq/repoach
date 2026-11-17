@@ -32,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
 from ..gates.commands import run_lint_gate, run_test_gate
 from ..gates.config import GatesConfig, current_gates_config, load_gates_config
+from .auto_merge import OUTCOME_SKIP_CI_PENDING, evaluate_ci_gate
 from .patch_apply import apply_search_replace_edits
 from .secret_env import scrubbed_env
 
@@ -806,18 +808,34 @@ CI_PENDING: str = "PENDING"
 CI_UNKNOWN: str = "UNKNOWN"
 
 
-def fetch_ci_status(forge: Forge, pr_number: int) -> tuple[str, list[dict[str, str]]]:
+def fetch_ci_status(
+    forge: Forge,
+    pr_number: int,
+    *,
+    required: Sequence[str] | None = None,
+    head_sha: str | None = None,
+) -> tuple[str, list[dict[str, str]]]:
     """Return the aggregated check state on a PR.
 
-    Classifies every check the forge reports (:meth:`Forge.checks` —
-    ``gh pr checks`` on GitHub, the head pipeline's jobs on GitLab), not
-    only checks marked as required by branch protection — this repo has
-    none configured, so a required-only filter always returns an empty
-    row set (SP-CI-STATUS-CLIENT-CLASSIFY).
+    A red is read from every check the forge reports (:meth:`Forge.checks`
+    — ``gh pr checks`` on GitHub, the head pipeline's jobs on GitLab), not
+    only the required ones, so each failed check's log reaches the Coder
+    (SP-CI-STATUS-CLIENT-CLASSIFY). Green is never read from those rows:
+    it is the merge gate's verdict on the required checks,
+    :func:`~repoach.review.auto_merge.evaluate_ci_gate` with no wait, so a
+    ``SKIPPED`` or missing required check, or one only cancelled, is not
+    green, ``NEUTRAL`` is, and the latest run per name decides
+    (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN). Such a head is
+    :data:`CI_UNKNOWN`: nothing ran to say whether the code is green,
+    so no CI finding is opened or closed on it.
 
     Args:
         forge: The forge the PR lives on.
         pr_number: PR / MR number.
+        required: The required check names; ``None`` lets the forge
+            resolve them (branch protection, else
+            :data:`~repoach.forge.github.DEFAULT_REQUIRED_CHECK_NAMES`).
+        head_sha: The head the state is judged at; ``None`` resolves it.
 
     Returns:
         ``(state, failed_rows)`` where ``state`` is one of
@@ -831,16 +849,6 @@ def fetch_ci_status(forge: Forge, pr_number: int) -> tuple[str, list[dict[str, s
     except ForgeError as exc:
         _log.info("coder.ci_status_unknown", pr_number=pr_number, error=exc.message[:200])
         return CI_UNKNOWN, []
-    if not rows:
-        return CI_GREEN, []
-
-    for row in rows:
-        if row.bucket in {"skipping", "cancel"}:
-            _log.info(
-                "coder.ci_check_non_blocking",
-                name=row.name,
-                bucket=row.bucket,
-            )
 
     failed_rows = [
         {"name": r.name, "link": r.link, "workflow": r.workflow} for r in rows if r.bucket == "fail"
@@ -848,9 +856,24 @@ def fetch_ci_status(forge: Forge, pr_number: int) -> tuple[str, list[dict[str, s
     if failed_rows:
         return CI_RED, failed_rows
 
-    if any(r.bucket in {"pending", ""} for r in rows):
+    gate = evaluate_ci_gate(
+        forge,
+        pr_number,
+        required_names=required,
+        wait_seconds=0,
+        head_sha=head_sha,
+    )
+    if gate.green:
+        return CI_GREEN, []
+    if gate.outcome_tag == OUTCOME_SKIP_CI_PENDING:
         return CI_PENDING, []
-    return CI_GREEN, []
+    _log.info(
+        "coder.ci_required_not_green",
+        pr_number=pr_number,
+        outcome=gate.outcome_tag,
+        reason=gate.reason[:300],
+    )
+    return CI_UNKNOWN, []
 
 
 def fetch_failed_check_logs(forge: Forge, failed_rows: list[dict[str, str]]) -> list[str]:

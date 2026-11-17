@@ -265,78 +265,86 @@ def test_apply_fixes_skips_bad_dict_shapes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _ci_only_gh(state: str) -> GitHubForge:
-    """Build a scripted GitHub forge that only answers ``pr checks`` calls."""
+HEAD = "h" * 40
+REQUIRED = ["Test suite (Python 3.13)"]
+
+
+def _row(name: str, state: str, bucket: str, link: str = "") -> dict[str, str]:
+    return {"name": name, "state": state, "bucket": bucket, "link": link, "workflow": "CI"}
+
+
+def _run(name: str, conclusion: str | None, status: str = "completed") -> dict[str, object]:
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        "startedAt": "2026-11-17T12:00:00Z",
+        "completedAt": "2026-11-17T12:10:00Z" if conclusion else None,
+        "headSha": HEAD,
+    }
+
+
+def _ci_gh(
+    pr_checks: list[dict[str, str]],
+    check_runs: list[dict[str, object]],
+    *,
+    pr_checks_rc: int = 0,
+    seen: list[list[str]] | None = None,
+) -> GitHubForge:
+    """A GitHub forge answering ``gh pr checks`` and the head's check-runs.
+
+    ``pr checks`` carries the rows a red is read from; the commit's
+    check-runs (the ``--jq`` shape, one JSON object per line) carry the
+    required checks the merge gate judges green on.
+    """
 
     def _run_side(args: list[str]) -> GhResult:
-        if args[:2] != ["pr", "checks"]:
-            return GhResult(returncode=0, stdout="", stderr="", argv=args)
-        if state == CI_GREEN:
-            return GhResult(returncode=0, stdout="[]", stderr="", argv=args)
-        if state == CI_PENDING:
+        if seen is not None:
+            seen.append(args)
+        if args[:2] == ["pr", "checks"]:
             return GhResult(
-                returncode=0,
-                stdout=json.dumps(
-                    [
-                        {
-                            "name": "x",
-                            "state": "IN_PROGRESS",
-                            "bucket": "pending",
-                            "link": "",
-                            "workflow": "CI",
-                        }
-                    ]
-                ),
-                stderr="",
-                argv=args,
+                returncode=pr_checks_rc, stdout=json.dumps(pr_checks), stderr="", argv=args
             )
-        if state == CI_RED:
-            return GhResult(
-                returncode=8,
-                stdout=json.dumps(
-                    [
-                        {
-                            "name": "Test suite (Python 3.13)",
-                            "state": "FAILURE",
-                            "bucket": "fail",
-                            "link": "https://github.com/o/r/actions/runs/42/job/100",
-                            "workflow": "CI",
-                        }
-                    ]
-                ),
-                stderr="",
-                argv=args,
-            )
-        if state == CI_UNKNOWN:
-            return GhResult(returncode=2, stdout="", stderr="boom", argv=args)
-        raise ValueError(f"unknown ci state: {state}")
+        if args[:1] == ["api"] and "/check-runs" in args[1]:
+            lines = "\n".join(json.dumps(run) for run in check_runs)
+            return GhResult(returncode=0, stdout=lines, stderr="", argv=args)
+        return GhResult(returncode=0, stdout="", stderr="", argv=args)
 
     return scripted_github(run=_run_side)
 
 
-def test_fetch_ci_status_green_when_no_required_checks() -> None:
-    state, failed = fetch_ci_status(_ci_only_gh(CI_GREEN), 1)
-    assert state == CI_GREEN
-    assert failed == []
+def test_fetch_ci_status_green_when_the_required_checks_succeed() -> None:
+    gh = _ci_gh([_row(REQUIRED[0], "SUCCESS", "pass")], [_run(REQUIRED[0], "success")])
+    assert fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD) == (CI_GREEN, [])
 
 
-def test_fetch_ci_status_pending_when_any_check_pending() -> None:
-    state, failed = fetch_ci_status(_ci_only_gh(CI_PENDING), 1)
-    assert state == CI_PENDING
-    assert failed == []
+def test_fetch_ci_status_unknown_when_no_check_ran() -> None:
+    gh = _ci_gh([], [])
+    assert fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD) == (CI_UNKNOWN, [])
+
+
+def test_fetch_ci_status_pending_when_a_required_check_runs() -> None:
+    gh = _ci_gh(
+        [_row(REQUIRED[0], "IN_PROGRESS", "pending")],
+        [_run(REQUIRED[0], None, status="in_progress")],
+    )
+    assert fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD) == (CI_PENDING, [])
 
 
 def test_fetch_ci_status_red_when_a_check_failed() -> None:
-    state, failed = fetch_ci_status(_ci_only_gh(CI_RED), 1)
+    link = "https://github.com/o/r/actions/runs/42/job/100"
+    gh = _ci_gh([_row(REQUIRED[0], "FAILURE", "fail", link)], [], pr_checks_rc=8)
+    state, failed = fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD)
     assert state == CI_RED
-    assert len(failed) == 1
-    assert failed[0]["name"] == "Test suite (Python 3.13)"
+    assert failed == [{"name": REQUIRED[0], "link": link, "workflow": "CI"}]
 
 
 def test_fetch_ci_status_unknown_when_gh_errored() -> None:
-    state, failed = fetch_ci_status(_ci_only_gh(CI_UNKNOWN), 1)
-    assert state == CI_UNKNOWN
-    assert failed == []
+    def _run_side(args: list[str]) -> GhResult:
+        return GhResult(returncode=2, stdout="", stderr="boom", argv=args)
+
+    gh = scripted_github(run=_run_side)
+    assert fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD) == (CI_UNKNOWN, [])
 
 
 @pytest.fixture(autouse=True)
@@ -353,25 +361,20 @@ def _fresh_coder_loop_logger(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fetch_ci_status_drops_required_flag() -> None:
-    captured_argv: list[list[str]] = []
+    seen: list[list[str]] = []
+    fetch_ci_status(_ci_gh([], [], seen=seen), 1, required=REQUIRED, head_sha=HEAD)
 
-    def _run_side(args: list[str]) -> GhResult:
-        captured_argv.append(args)
-        return GhResult(returncode=0, stdout="[]", stderr="", argv=args)
-
-    fetch_ci_status(scripted_github(run=_run_side), 1)
-
-    assert captured_argv
-    assert "--required" not in captured_argv[0]
+    assert seen[0][:2] == ["pr", "checks"]
+    assert "--required" not in seen[0]
 
 
 def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
     """``--required`` on this repo's real unprotected branch errors out
     (no required checks configured to filter on); the full ``gh pr
-    checks`` row set carries the actual RED/GREEN/PENDING signal.  A
-    fake command runner distinguishes the two invocations exactly as
-    the real ``gh`` binary would on this repo, rather than
-    monkeypatching the classifier directly.
+    checks`` row set carries the actual RED signal.  A fake command
+    runner distinguishes the two invocations exactly as the real ``gh``
+    binary would on this repo, rather than monkeypatching the classifier
+    directly.
     """
 
     def _run_side(args: list[str]) -> GhResult:
@@ -386,29 +389,25 @@ def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
             returncode=8,
             stdout=json.dumps(
                 [
-                    {
-                        "name": "Test suite (Python 3.12)",
-                        "state": "SUCCESS",
-                        "bucket": "pass",
-                        "link": "https://github.com/o/r/actions/runs/42/job/101",
-                        "workflow": "CI",
-                    },
-                    {
-                        "name": "Test suite (Python 3.13)",
-                        "state": "FAILURE",
-                        "bucket": "fail",
-                        "link": "https://github.com/o/r/actions/runs/42/job/100",
-                        "workflow": "CI",
-                    },
+                    _row(
+                        "Test suite (Python 3.12)",
+                        "SUCCESS",
+                        "pass",
+                        "https://github.com/o/r/actions/runs/42/job/101",
+                    ),
+                    _row(
+                        "Test suite (Python 3.13)",
+                        "FAILURE",
+                        "fail",
+                        "https://github.com/o/r/actions/runs/42/job/100",
+                    ),
                 ]
             ),
             stderr="",
             argv=args,
         )
 
-    gh = scripted_github(run=_run_side)
-
-    state, failed = fetch_ci_status(gh, 1)
+    state, failed = fetch_ci_status(scripted_github(run=_run_side), 1)
 
     assert state == CI_RED
     assert failed == [
@@ -420,73 +419,35 @@ def test_fetch_ci_status_red_on_unprotected_repo_shape() -> None:
     ]
 
 
-def test_fetch_ci_status_green_with_skipped_check_logs_it() -> None:
-    canned = GhResult(
-        returncode=0,
-        stdout=json.dumps(
-            [
-                {
-                    "name": "Test suite (Python 3.13)",
-                    "state": "SUCCESS",
-                    "bucket": "pass",
-                    "link": "",
-                    "workflow": "CI",
-                },
-                {
-                    "name": "Docs build",
-                    "state": "SKIPPED",
-                    "bucket": "skipping",
-                    "link": "",
-                    "workflow": "CI",
-                },
-            ]
-        ),
-        stderr="",
-        argv=[],
+def test_fetch_ci_status_green_when_only_an_unrequired_check_skipped() -> None:
+    gh = _ci_gh(
+        [_row(REQUIRED[0], "SUCCESS", "pass"), _row("Docs build", "SKIPPED", "skipping")],
+        [_run(REQUIRED[0], "success"), _run("Docs build", "skipped")],
     )
-    gh = scripted_github(run=lambda _args: canned)
+    assert fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD) == (CI_GREEN, [])
 
+
+def test_fetch_ci_status_unknown_when_a_required_check_skipped() -> None:
+    gh = _ci_gh(
+        [_row(REQUIRED[0], "SKIPPED", "skipping")],
+        [_run(REQUIRED[0], "skipped")],
+    )
     with capture_logs() as logs:
-        state, failed = fetch_ci_status(gh, 1)
+        state = fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD)
 
-    assert state == CI_GREEN
-    assert failed == []
-    skip_events = [e for e in logs if e.get("event") == "coder.ci_check_non_blocking"]
-    assert len(skip_events) == 1
-    assert skip_events[0]["name"] == "Docs build"
-    assert skip_events[0]["bucket"] == "skipping"
+    assert state == (CI_UNKNOWN, [])
+    events = [e for e in logs if e.get("event") == "coder.ci_required_not_green"]
+    assert len(events) == 1
+    assert events[0]["outcome"] == "SKIP_CI_FAILED"
+    assert f"{REQUIRED[0]}=SKIPPED" in events[0]["reason"]
 
 
 def test_fetch_ci_status_green_with_cancelled_check() -> None:
-    canned = GhResult(
-        returncode=0,
-        stdout=json.dumps(
-            [
-                {
-                    "name": "Test suite (Python 3.13)",
-                    "state": "SUCCESS",
-                    "bucket": "pass",
-                    "link": "",
-                    "workflow": "CI",
-                },
-                {
-                    "name": "Deploy preview",
-                    "state": "CANCELLED",
-                    "bucket": "cancel",
-                    "link": "",
-                    "workflow": "CI",
-                },
-            ]
-        ),
-        stderr="",
-        argv=[],
+    gh = _ci_gh(
+        [_row(REQUIRED[0], "SUCCESS", "pass"), _row("Deploy preview", "CANCELLED", "cancel")],
+        [_run(REQUIRED[0], "success"), _run("Deploy preview", "cancelled")],
     )
-    gh = scripted_github(run=lambda _args: canned)
-
-    state, failed = fetch_ci_status(gh, 1)
-
-    assert state == CI_GREEN
-    assert failed == []
+    assert fetch_ci_status(gh, 1, required=REQUIRED, head_sha=HEAD) == (CI_GREEN, [])
 
 
 def test_fetch_failed_check_logs_pulls_run_view_log() -> None:
