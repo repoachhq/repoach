@@ -1,11 +1,11 @@
 ---
 id: SP-AFFECTED-JOBS-TABLE
 title: One path-to-job table, read by `repoach ci affected`; the workflow carries no glob
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-16
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
   code: [src/repoach/affected/__init__.py, src/repoach/affected/table.py, src/repoach/affected/select.py, src/repoach/affected/cli.py, .github/affected-jobs.toml, scripts/ci_local.sh, tests/unit/test_affected_table.py, tests/unit/test_affected_select.py, tests/unit/test_affected_cli.py, tests/unit/test_affected_tree_judges.py, tests/fixtures/affected_jobs/pr_runs.json]
@@ -387,7 +387,7 @@ A pull request to `develop` changes `docs/specs/x.md` and
 | T3 | `tests/unit/test_affected_select.py` | every tracked path (`git ls-files`) matches a row or `[full]` (D6) | add an unclassified root file to the fixture tree |
 | T4 | same | unknown path → every job; `[full]` path → every job; empty → `gate` only | return the rows' union for an unknown path |
 | T5 | same | closure: a selection holding `wheel-smoke` holds `wheel-build`; `needs` read from the real `ci.yml` | drop the closure |
-| T6 | same | replay: for every head of `tests/fixtures/affected_jobs/pr_runs.json`, every failed job is in `select(paths)`; prints `misses: 0/<failed jobs>` (0/45 on the committed corpus) | set the python row's `jobs = []` (42 of the 45 failures become misses, every one a `test` job; `test_replay_goes_red_when_the_python_row_selects_nothing`). Removing `tests/` from the row is not a mutation that goes red: those paths fall to "unknown → every job" (0/45) |
+| T6 | same | replay: for every head of `tests/fixtures/affected_jobs/pr_runs.json`, every failed job is in `select(paths)`; prints `misses: 0/<failed jobs>` (0/47 on the corpus harvested 2026-11-17, with the two `external` rows of `misses.tsv`) | set the python row's `jobs = []` (44 of the 47 failures become misses, every one a `test` job; `test_t1_replay_goes_red_when_the_python_row_selects_nothing`). Removing `tests/` from the row is not a mutation that goes red: those paths fall to "unknown → every job" (0/47). Since SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES 0.3 the replay, this mutation and the scrub check are in `tests/unit/test_affected_misses.py` (T1), the one replay that also reads `misses.tsv`. The TABLE test files keep no copy, so TABLE imports nothing of that spec |
 | T7 | same | `github_output_lines` for the three ids: `job_test`, `job_wheel_build`, `job_wheel_smoke`, then `mode` | keep the hyphen |
 | T8 | `tests/unit/test_affected_tree_judges.py` | D5: every tree judge of the docs class is in `[gate].pytest`, every `[gate].pytest` entry is one, every tree judge's paths are classified; the `ast` walk finds `test_pr_template_measured.py` (two paths) and `test_claude_md_integration_flag.py` (`Path("CLAUDE.md")`) | remove `test_arch_graph.py` from `[gate].pytest` |
 | T9 | `tests/unit/test_affected_cli.py` | `select` on a temporary repository with two commits prints one JSON object, exit 0; `--github-output` writes the four lines; `--summary` appends a table; an unknown `--base` exits 3 with the command named; a table with a bad key exits 2 | print the JSON on exit 2 |
@@ -396,7 +396,7 @@ A pull request to `develop` changes `docs/specs/x.md` and
 
 ## Success conditions
 
-- C1 (external oracle: the forge): `repoach ci affected select` replayed over the fixture of the 30 pull requests prints `misses: 0/<failed jobs>` (0/45 on the committed corpus); the verifier picks two failed runs from the fixture (one `Test suite`, the `wheel-smoke` of #275 at `7a7a048`), opens them on github.com and finds the failed job and a head whose paths the table selects it for.
+- C1 (external oracle: the forge): `repoach ci affected select` replayed over the fixture of the 30 pull requests prints `misses: 0/<failed jobs>` (0/47 on the corpus harvested 2026-11-17); the verifier picks two failed runs from the fixture (one `Test suite`, the `wheel-smoke` of #275 at `7a7a048`), opens them on github.com and finds the failed job and a head whose paths the table selects it for.
 - C2 (external oracle: the tree): a check by hand, without running the guard of D5 — the verifier lists `grep -l 'parents\[2\]' tests/unit/*.py`, picks three modules that read `docs/`, and finds each in `[gate].pytest`; picks one that reads `prompts/` and finds `prompts/` in the python row.
 - C3: `pytest -q tests/unit/test_affected_table.py tests/unit/test_affected_select.py tests/unit/test_affected_cli.py tests/unit/test_affected_tree_judges.py` green with T1–T11 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `ruff check src tests scripts` and the two lint scripts green.
 

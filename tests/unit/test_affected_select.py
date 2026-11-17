@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
@@ -33,7 +32,6 @@ from repoach.review.merge_wait import expand_job_names, load_workflow
 
 _ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW = _ROOT / DEFAULT_WORKFLOW_PATH
-_CORPUS = _ROOT / "tests" / "fixtures" / "affected_jobs" / "pr_runs.json"
 
 
 def _committed() -> tuple[AffectedTable, dict[str, frozenset[str]]]:
@@ -132,73 +130,6 @@ def test_selection_is_closed_under_the_real_needs() -> None:
     )
     selection = select(["prompts/review/x.md"], narrow, needs, mode="narrowed", reason="r")
     assert {"wheel-smoke", "wheel-build"} <= selection.jobs
-
-
-def _replay(
-    table: AffectedTable, needs: dict[str, frozenset[str]]
-) -> tuple[list[tuple[str, str]], int]:
-    """Replay the corpus: each failed job against the selection of its head's paths.
-
-    Returns:
-        The misses as ``(label, job id)`` and the number of failed jobs.
-    """
-    corpus = json.loads(_CORPUS.read_text(encoding="utf-8"))
-    names = check_name_jobs(_WORKFLOW)
-    failed = 0
-    misses: list[tuple[str, str]] = []
-    for pr in corpus["pull_requests"]:
-        for head in pr["heads"]:
-            selection = select(head["paths"], table, needs, mode="narrowed", reason="replay")
-            for run in head["runs"]:
-                for job in run["jobs"]:
-                    if job["conclusion"] != "failure":
-                        continue
-                    failed += 1
-                    assert job["name"] in names, (
-                        f"#{pr['number']}: {job['name']!r} is no check of ci.yml"
-                    )
-                    if names[job["name"]] not in selection.jobs:
-                        label = f"#{pr['number']} {head['sha'][:7]} run {run['run']} {job['name']}"
-                        misses.append((label, names[job["name"]]))
-    return misses, failed
-
-
-def test_replay_selects_every_failed_job_of_the_corpus(capsys: pytest.CaptureFixture[str]) -> None:
-    misses, failed = _replay(*_committed())
-    with capsys.disabled():
-        print(f"\nmisses: {len(misses)}/{failed}")
-    assert failed > 0
-    assert misses == []
-
-
-def test_replay_goes_red_when_the_python_row_selects_nothing() -> None:
-    table, needs = _committed()
-    mutated = table.model_copy(
-        update={
-            "rows": tuple(
-                row.model_copy(update={"jobs": frozenset()}) if row.name == "python" else row
-                for row in table.rows
-            )
-        }
-    )
-    misses, failed = _replay(mutated, needs)
-    assert misses
-    assert {job for _, job in misses} == {"test"}
-    assert len(misses) < failed
-
-
-def test_corpus_is_scrubbed_to_numbers_shas_paths_and_job_names() -> None:
-    text = _CORPUS.read_text(encoding="utf-8")
-    corpus = json.loads(text)
-    assert corpus["repo"] == "repoachhq/repoach"
-    assert "http" not in text
-    assert "ghp_" not in text and "github_pat_" not in text
-    assert {key for pr in corpus["pull_requests"] for key in pr} == {"number", "heads"}
-    assert {key for pr in corpus["pull_requests"] for head in pr["heads"] for key in head} == {
-        "sha",
-        "paths",
-        "runs",
-    }
 
 
 def test_github_output_lines_one_per_job_then_mode() -> None:
