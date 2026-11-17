@@ -11,7 +11,7 @@ owns:
   code: [tests/conftest.py, tests/unit/test_logging_cache_disabled_for_tests.py, tests/unit/test_selfverify_refutation.py, tests/integration/test_selfverify_refutation_flow.py, tests/unit/test_review_round2_parallel.py]
   resources: N/A
 
-depends_on: [SP-DEVAGENT-SELFVERIFY, SP-PLAN-CONTRACT-LINTS, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP]
+depends_on: [SP-DEVAGENT-SELFVERIFY, SP-PLAN-CONTRACT-LINTS, SP-ORCH-DOCSTRING, SP-RETRY-BACKOFF-DEDUP, SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES]
 provides_to: []
 
 constraints: {}
