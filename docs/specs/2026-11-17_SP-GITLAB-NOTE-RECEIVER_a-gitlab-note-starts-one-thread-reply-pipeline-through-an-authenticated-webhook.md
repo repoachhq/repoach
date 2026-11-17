@@ -1,11 +1,11 @@
 ---
 id: SP-GITLAB-NOTE-RECEIVER
 title: A GitLab note starts one thread-reply pipeline through an authenticated webhook receiver, with a scheduled fallback
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/thread_webhook.py, deploy/systemd/repoach-threads-receiver.service, deploy/systemd/repoach-threads-receiver.socket, deploy/systemd/threads-receiver.env.example, tests/unit/test_thread_webhook.py, tests/unit/test_threads_receiver_unit.py, tests/unit/test_threads_triggers.py]
@@ -17,13 +17,41 @@ provides_to: []
 constraints:
   scheduled_fallback_minutes: 15
   coalesce_window_seconds: 20
+  coalesce_poll_seconds: 1
   coalesce_max_mrs: 256
+  proxy_hops_default: 1
   body_max_bytes: 1048576
   replay_cache_entries: 4096
   default_bind: 127.0.0.1:8787
 ---
 
 # A GitLab note starts one thread-reply pipeline
+
+## Amendment (0.4, 2026-11-18): the deadline has a clock, the fallback is bounded, the proxy hop is configured, the socket is checked, a fork is named
+
+After the verifier's second read. (1) 0.3 never said how a
+single-threaded `http.server` wakes at a coalescing deadline when no
+further request arrives; D9 names the mechanism, `serve_forever`'s
+`service_actions()` hook called every `coalesce_poll_seconds` (Python's
+`socketserver.BaseServer.serve_forever(poll_interval)` calls it on every
+loop, measured on 3.14.0: `Lib/socketserver.py`, `serve_forever`,
+`self.service_actions()`), and a test with no second request pins it.
+(2) The schedule of D7 would have re-triggered an MR every
+`scheduled_fallback_minutes` for ever on a thread 8b never answers (an
+escalated one, a deferral past its cap, a classification that keeps
+failing); D7 now excludes a thread whose last bot reply ends `state:
+escalated to owner` (8b D4 and step 7 make every never-answered thread
+end so) and, for the rest, counts a comment as handled once a threads
+pipeline newer than it exists on the MR's source branch, which bounds
+the schedule to one pipeline per comment per MR, with the test of G5.
+(3) D1 logged the first `X-Forwarded-For` address, which the client
+writes; it logs the address `proxy_hops` from the right, the one the
+operator's proxy appended, default `proxy_hops_default`. (4) The
+non-loopback refusal of D9 applied to `--bind` only; it applies to the
+`--listen-fd` socket's own address as well. (5) A note on a merge request
+from a fork names a source project that is not the configured one and a
+ref the trigger token cannot start; D5 refuses it with a named reason,
+and D7 skips it the same way.
 
 ## Amendment (0.3, 2026-11-17): the receiver is for everyone; the owner's host is an example
 
@@ -100,7 +128,8 @@ credentials directory, never from argv, the environment or a log line.
 | # | Fact | Where |
 |---|---|---|
 | G1 | A pipeline started through `POST /projects/:id/trigger/pipeline` with a trigger token has `CI_PIPELINE_SOURCE = trigger`; one started with `POST /projects/:id/pipeline` (a token with `api` scope) has `api`; `variables[KEY]=value` passed either way are pipeline variables of the highest precedence; a trigger pipeline carries no `CI_MERGE_REQUEST_IID` | `docs.gitlab.com/ci/triggers/`; `docs.gitlab.com/api/pipelines/` |
-| G2 | A `Note Hook` payload carries `user.username` (the note's author), `object_attributes.system` (true for a system note), `object_attributes.noteable_type`, and `merge_request.iid` / `merge_request.source_branch` when the note is on a merge request; `X-Gitlab-Event-UUID` names the delivery, `X-Gitlab-Token` carries the secret verbatim; GitLab emits no hook when a discussion is resolved | `docs.gitlab.com/user/project/integrations/webhook_events/` |
+| G2 | A `Note Hook` payload carries `user.username` (the note's author), `object_attributes.system` (true for a system note), `object_attributes.noteable_type`, and `merge_request.iid` / `merge_request.source_branch` / `merge_request.source_project_id` / `merge_request.target_project_id` when the note is on a merge request; `X-Gitlab-Event-UUID` names the delivery, `X-Gitlab-Token` carries the secret verbatim; GitLab emits no hook when a discussion is resolved | `docs.gitlab.com/user/project/integrations/webhook_events/` |
+| G4 (0.4) | `GET /projects/:id/pipelines` takes `ref`, `source`, `updated_after` and returns `id`, `source`, `created_at`, `status` per pipeline | `docs.gitlab.com/api/pipelines/` |
 | G3 | `workflow:rules` decides whether a pipeline exists; each job's `rules` decide whether it runs in it; a job with no `rules` runs in every pipeline the workflow admits; `resource_group` serialises the jobs that share its value and takes CI/CD variables | `docs.gitlab.com/ci/yaml/` |
 
 ### systemd, measured on `255.4-1ubuntu8.18` (2026-11-17)
@@ -110,6 +139,12 @@ credentials directory, never from argv, the environment or a log line.
 | S1 | `systemd-analyze verify` prints `Invalid address prefix is specified in [Service] IPAddressAllow=, ignoring assignment: <hostname>` on a hostname, and `Command <path> is not executable: No such file or directory` when `ExecStart`'s binary is absent on the verifying host; the unit pair of D10 with its binary present prints nothing, exit 0 | the directive takes addresses and prefixes only; the oracle of C3 runs where the binary exists, or with it stubbed |
 | S2 | `LoadCredentialEncrypted=` / `LoadCredential=` hand a service files under `$CREDENTIALS_DIRECTORY`, readable by the service user only; `systemd-creds encrypt --with-key=host` binds a credential to the host without a TPM | the credentials directory of D2 is what systemd gives, and the same layout is what Docker secrets give under `/run/secrets` |
 | S3 | A `.socket` unit with `FreeBind=yes` binds an address before the interface that carries it exists (Linux `IP_FREEBIND`) | a receiver bound to a bridge or VPN address needs no ordering on the service that creates the interface |
+
+### Python, measured on 3.14.0 (2026-11-18)
+
+| # | Fact | Consequence |
+|---|---|---|
+| P1 | `socketserver.BaseServer.serve_forever(poll_interval=0.5)` loops on a selector with that timeout and calls `self.service_actions()` on every iteration, request or none; `service_actions` is documented as the hook "called by the serve_forever() loop" | the coalescing deadline needs no thread and no timer: an override of `service_actions` runs `Coalescer.due(now)` once per poll (D9) |
 
 ## Decisions (2026-11-17; composite D10, D14, D15 applied; 0.2 and 0.3 items marked)
 
@@ -125,8 +160,13 @@ credentials directory, never from argv, the environment or a log line.
   `Content-Length: 0` and `Connection: close` (the unread body is
   discarded with the connection), one log line `rejected: bad token
   from <address>` that never echoes the token, and no other work; the
-  address is the peer's, or the first `X-Forwarded-For` address when
-  `--behind-proxy` is set (0.3). `compare_digest` on two byte strings of
+  address is the peer's, or, with `--behind-proxy` (0.4), the address
+  `proxy_hops` places from the right of the concatenated
+  `X-Forwarded-For` values (default `proxy_hops_default`, 1: the address
+  the operator's own proxy appended; a client can prepend values, never
+  append after the trusting proxy), and when the header holds fewer
+  values than `proxy_hops` the peer address is logged with ` (xff
+  short)`. `compare_digest` on two byte strings of
   different lengths may reveal the lengths, never the bytes; a GitLab
   secret is one line, so the length is not a secret here.
 - D2. **Where the secrets live** (0.3). Two files, `webhook_secret` and
@@ -150,7 +190,11 @@ credentials directory, never from argv, the environment or a log line.
   a deadline `now + coalesce_window_seconds`; notes accepted while armed
   change nothing (the run that starts at the deadline reads the forge
   after them, so none is lost); at the deadline one trigger is sent and
-  the MR is idle again; a note after the deadline arms anew. The armed
+  the MR is idle again; a note after the deadline arms anew. The
+  deadline is observed by the server's clock, not by the next request:
+  D9's `service_actions()` runs `Coalescer.due(now)` every
+  `coalesce_poll_seconds`, so a trigger fires at most one poll after its
+  deadline whether or not another request ever arrives (0.4). The armed
   set holds at most `coalesce_max_mrs` MRs; arming a further one fires
   the oldest armed MR at once. So a burst of notes, a redelivered hook
   and a flood each cost at most one pipeline per MR per window, the
@@ -174,8 +218,16 @@ credentials directory, never from argv, the environment or a log line.
   system notes a push or a resolve leaves, and every other event kind
   (`Merge Request Hook` included: a push already starts the MR
   pipeline, which runs `review pr` and 8b's handler) are `202`,
-  `ignore`, one log line naming the reason. An accepted note arms its
-  merge request (D3).
+  `ignore`, one log line naming the reason. (0.4) A note on a merge
+  request from a fork, `merge_request.source_project_id !=
+  merge_request.target_project_id` (G2), is `202`, `ignore`, logged
+  `fork merge request !<iid>: source project <id> is not the project;
+  the reply agent runs in the merge request pipeline`: the trigger token
+  starts pipelines on the configured project's refs (G1), and a fork's
+  branch is not one; `ref=<source branch>` would start a pipeline on a
+  same-named branch of the project, or fail. The fork's threads are
+  handled by `review pr` in its merge request pipeline at the next push,
+  as today. An accepted note arms its merge request (D3).
 - D6. **The run executes in CI, not in-process** (F3): at the deadline
   the receiver `POST`s `<gitlab url>/api/v4/projects/<id>/trigger/pipeline`
   with `token=<trigger_token>`, `ref=<source branch of the last accepted
@@ -191,18 +243,37 @@ credentials directory, never from argv, the environment or a log line.
 - D7. **Fallback from the forge, not from the caches** (0.2). A pipeline
   schedule every `scheduled_fallback_minutes` with the variable
   `REPOACH_THREADS_SCHEDULE=1` runs one job, `threads:schedule`, which
-  runs `repoach threads pending --json`: for every open merge request,
-  through the forge alone (F5, no ledger), the MR is *pending* when a
-  thread whose `opened_by` is the bot has as its last comment one by
-  someone else, or when a comment anywhere on the MR whose body starts
-  with `/resolve` or `/reopen` is newer than the bot's newest comment on
-  the MR. For each pending MR the job `POST`s `/projects/<id>/pipeline`
-  with `ref=<source branch>` and `variables[][key]=REPOACH_THREADS_REPLY_MR`
-  using `REPOACH_GITLAB_TOKEN`, the token the generated review job
-  already requires (F2; `CI_PIPELINE_SOURCE = api`, G1). No second
-  secret exists for it. The generated job writes no `tags:`; an
-  operator who wants it on a given runner adds them in the project's
-  CI file (0.3).
+  runs `repoach threads pending --json`: for every open merge request
+  whose source project is the project (a fork is skipped and listed
+  with `skipped: fork`, 0.4), through the forge alone (F5, no ledger),
+  a comment is *unanswered* when it is on a thread whose `opened_by` is
+  the bot and is that thread's last comment by someone other than the
+  bot, or when its body starts with `/resolve` or `/reopen` and it is
+  newer than the bot's newest comment on the MR. (0.4) Two exclusions
+  bound the fallback. A thread whose last bot reply ends `state:
+  escalated to owner` (8b `STATE_LINE_RE`) is never pending: 8b replies
+  in it no more, by its step 7, and makes every thread it will never
+  answer end so (a classification that fails three times, 8b D4). And
+  an unanswered comment counts only while no *threads pipeline* is
+  newer than it: `GET /projects/<id>/pipelines?ref=<source
+  branch>&updated_after=<comment created_at>&per_page=20` filtered to
+  `source` in `trigger`, `api` and to `created_at` later than the
+  comment's (`updated_after` is a pre-filter on `updated_at`, the
+  creation time is compared client-side), read with
+  `REPOACH_GITLAB_TOKEN`; a
+  pipeline created after the comment ran a `threads reply` that read it
+  (8b reads the forge at run time), whatever that run decided, a
+  deferral past its cap included. A failed threads pipeline is the
+  operator's to read in GitLab; the schedule does not re-run it, since
+  that would loop. The MR is *pending* when one unanswered comment
+  remains after both exclusions, so the schedule costs at most one
+  pipeline per comment per MR, ever. For each pending MR the job
+  `POST`s `/projects/<id>/pipeline` with `ref=<source branch>` and
+  `variables[][key]=REPOACH_THREADS_REPLY_MR` using
+  `REPOACH_GITLAB_TOKEN`, the token the generated review job already
+  requires (F2; `CI_PIPELINE_SOURCE = api`, G1). No second secret
+  exists for it. The generated job writes no `tags:`; an operator who
+  wants it on a given runner adds them in the project's CI file (0.3).
 - D8. **Generated jobs and the pipeline kind** (0.2, 0.3). `repoach init
   --ci gitlab` writes two jobs into `.repoach/ci/gitlab-review.yml`
   (F2): `threads:reply`, rule `if: $REPOACH_THREADS_REPLY_MR` (the
@@ -236,15 +307,25 @@ credentials directory, never from argv, the environment or a log line.
   `default_bind`, the loopback), `GET /healthz` → `200 ok`; no TLS (a
   reverse proxy, a tunnel or a TLS terminator in front of a non-loopback
   bind is the operator's; a plain-HTTP public bind would carry the token
-  in clear and the receiver refuses to start with `--bind` on a
-  non-loopback address unless `--behind-proxy` or `--allow-plain-http`
-  is given, each named in the log); no other route. One log line per
+  in clear and the receiver refuses to start on a non-loopback address
+  unless `--behind-proxy` or `--allow-plain-http` is given, each named
+  in the log; (0.4) the address judged is the one the server will
+  answer on, `--bind`'s or the `--listen-fd` socket's own
+  `getsockname()`, so a systemd socket on a public address is refused by
+  the same rule with the same line); no other route. (0.4) The
+  coalescing clock: the server is `Receiver(http.server.HTTPServer)`
+  running `serve_forever(poll_interval=coalesce_poll_seconds)`, whose
+  loop calls `service_actions()` once per poll whether or not a request
+  arrived; the override calls `Coalescer.due(now)` and sends one trigger
+  per MR returned, so a deadline is met within one poll of the server's
+  own clock (`time.monotonic`, injectable for the tests). No thread, no
+  timer: one thread owns the coalescer and the socket. One log line per
   request on stderr: method, path, event, MR, outcome, address; stdout
   prints nothing (SP-CLI-STDOUT-ONE-JSON). Non-secret settings
   (`--gitlab-url`, `--project-id`, `--bot-username`, `--bind`,
-  `--behind-proxy`) are options, or the same names upper-cased with
-  `REPOACH_THREADS_` in the environment, which an `EnvironmentFile=`
-  may hold since none is a secret.
+  `--behind-proxy`, `--proxy-hops`) are options, or the same names
+  upper-cased with `REPOACH_THREADS_` in the environment, which an
+  `EnvironmentFile=` may hold since none is a secret.
 - D10. **The sample unit pair** (0.2, 0.3; `format:threads-receiver-unit`),
   shipped as `deploy/systemd/repoach-threads-receiver.socket`,
   `deploy/systemd/repoach-threads-receiver.service` and
@@ -358,8 +439,8 @@ as a note and is logged `ignored: note by the bot`. A `POST` with a
 wrong token gets `401` with no body read; `ps -o args= -C repoach` and
 the process environment show no secret; `systemd-analyze verify`
 prints nothing for the sample unit pair on a host where repoach is
-installed at the path the unit names. One recorded run of this on the
-owner's deployment is in the example section, as an example.
+installed at the path the unit names. Reference measurement (owner's
+dogfood): one recorded run on the owner's deployment is in the example section, additional evidence and a condition of nothing.
 
 ## Easy solution rejected
 
@@ -400,7 +481,8 @@ without a rule, so `doctor --ci` must say which, from the file as it is.
 - G2: the two secrets come from a credentials directory with the four documented fillings; none reaches argv, environment, a log or a world-readable file (D2).
 - G3: the `threads:reply` and `threads:schedule` jobs are generated with the ledger cache, the variable rule and the resource group, no runner tag (D8); the schedule reads the forge (D7).
 - G4: the sample unit pair verifies clean on any systemd ≥ 250 host where the binary exists, is pinned by a test, and carries no operator-specific value (D10).
-- G5: `repoach threads pending --json` names the pending merge requests from the forge alone (D7); `doctor --ci` names the jobs a threads pipeline would also run (D8).
+- G5: `repoach threads pending --json` names the pending merge requests from the forge alone, bounded to one pipeline per comment per MR, never a fork and never an escalated thread (D7); `doctor --ci` names the jobs a threads pipeline would also run (D8).
+- G6 (0.4): a coalescing deadline fires within `coalesce_poll_seconds` of the server's clock with no further request (D3, D9); the non-loopback refusal judges the socket the server answers on, `--bind` or `--listen-fd` alike (D9); the logged client address is the configured proxy hop (D1); a fork merge request is refused by name (D5).
 
 ## Non-Goals
 
@@ -416,7 +498,8 @@ without a rule, so `doctor --ci` must say which, from the file as it is.
 - A1: GitLab sends `X-Gitlab-Token`, `X-Gitlab-Event` and `X-Gitlab-Event-UUID` on every delivery and `user.username`, `object_attributes.system`, `merge_request.iid` and `merge_request.source_branch` in a merge-request note payload (G2; GitLab 15.x and later, gitlab.com and self-managed).
 - A2: The trigger token may start a pipeline on any branch of the project (a project trigger token); `REPOACH_GITLAB_TOKEN` has `api` scope (it posts reviews today, F2).
 - A3: The host runs systemd ≥ 250 when the sample unit pair is used; another supervisor fills the credentials directory its own way (D2).
-- A4: When a reverse proxy sits in front, it forwards `X-Gitlab-Token`, `X-Gitlab-Event`, `X-Gitlab-Event-UUID` and sets `X-Forwarded-For`; the operator sets `--behind-proxy` only then.
+- A4: When a reverse proxy sits in front, it forwards `X-Gitlab-Token`, `X-Gitlab-Event`, `X-Gitlab-Event-UUID` and appends the peer it saw to `X-Forwarded-For`; the operator sets `--behind-proxy` only then, and `--proxy-hops` to the number of proxies they trust in the chain (0.4; one by default). The address is for the log line only; nothing authenticates by it.
+- A5 (0.4): `GET /projects/:id/pipelines` accepts `ref`, `updated_after` and returns `source` and `created_at` per pipeline (GitLab 14.3 and later, `docs.gitlab.com/api/pipelines/`); `merge_request.source_project_id` and `target_project_id` are in every merge-request note payload and in `GET /projects/:id/merge_requests`.
 
 ## Interface
 
@@ -432,21 +515,26 @@ class HookDecision(BaseModel):
 class ReceiverConfig(BaseModel):      # D9: options or REPOACH_THREADS_* environment, no secret
     gitlab_url: str = "https://gitlab.com"; project_id: int; bot_username: str
     bind: str = "127.0.0.1:8787"; listen_fd: bool = False; behind_proxy: bool = False; allow_plain_http: bool = False
+    proxy_hops: int = 1               # D1 (0.4): which X-Forwarded-For value is the client, counted from the right
     secret_dir: Path                  # $CREDENTIALS_DIRECTORY when set
 
+def client_address(peer: str, headers: Mapping[str, list[str]], *, behind_proxy: bool, proxy_hops: int) -> str: ...   # D1 (0.4), pure
+def refuse_plain_public(address: tuple[str, int], *, behind_proxy: bool, allow_plain_http: bool) -> str | None: ...   # D9 (0.4): the refusal line, or None; applied to --bind and to the --listen-fd socket's getsockname()
 def authenticate(headers: Mapping[str, list[str]], *, secret: bytes) -> HookDecision | None: ...   # D1, pure, headers only; None when accepted
 def body_bound(headers: Mapping[str, list[str]], *, max_bytes: int) -> int | HookDecision: ...   # D4: the length to read, or 400 / 413
 def classify(headers: Mapping[str, list[str]], body: bytes, *, project_id: int, bot_username: str, seen: ReplayCache) -> HookDecision: ...   # D3–D5, pure
 class ReplayCache:                   # bounded LRU of X-Gitlab-Event-UUID, replay_cache_entries
 class Coalescer:                     # D3: arm(iid, branch, now) -> None; due(now) -> list[tuple[int, str]]; at most coalesce_max_mrs armed
+class Receiver(http.server.HTTPServer):   # D9 (0.4): service_actions() -> runs Coalescer.due(clock()) and trigger_pipeline per MR; serve_forever(poll_interval=coalesce_poll_seconds); clock injectable
 def trigger_pipeline(*, gitlab_url: str, project_id: int, token: bytes, ref: str, mr_iid: int, post: Callable) -> int | None: ...   # D6
 def load_credentials(secret_dir: Path) -> tuple[bytes, bytes]: ...   # D2; raises CredentialMissing(name) on absent, empty or world-readable
 def serve(config: ReceiverConfig) -> None: ...   # D9
-def pending_merge_requests(forge: Forge, *, bot_username: str) -> list[PendingMR]: ...   # D7, forge reads only
+class PendingMR(BaseModel): iid: int; source_branch: str; unanswered: list[int]; skipped: Literal["", "fork", "escalated", "pipeline newer"]   # D7 (0.4)
+def pending_merge_requests(forge: Forge, *, bot_username: str, project_id: int, pipelines_after: Callable[[str, str], list[dict]]) -> list[PendingMR]: ...   # D7, forge reads plus one pipelines listing per candidate comment; no ledger
 
 # src/repoach/cli/threads_cmds.py (8b's file, edited under the edge):
-#   repoach threads serve [--listen-fd | --bind H:P] [--gitlab-url U] --project-id N --bot-username L [--behind-proxy] [--allow-plain-http] [--secret-dir D]
-#       exit 2 on CredentialMissing (naming it) and on a non-loopback --bind without --behind-proxy / --allow-plain-http (naming the rule)
+#   repoach threads serve [--listen-fd | --bind H:P] [--gitlab-url U] --project-id N --bot-username L [--behind-proxy [--proxy-hops N]] [--allow-plain-http] [--secret-dir D]
+#       exit 2 on CredentialMissing (naming it) and on a non-loopback address, --bind's or the --listen-fd socket's, without --behind-proxy / --allow-plain-http (naming the rule)
 #   repoach threads pending [--forge F] [--json]       (one JSON list, SP-CLI-STDOUT-ONE-JSON)
 # src/repoach/ci_entry/snippets.py (SP-UNIVERSAL-CI-ENTRY's file): render_gitlab_threads_jobs(target, ledger: LedgerPlan) -> str, appended by render_gitlab_job (D7, D8); LedgerPlan is SP-CI-LEDGER-PERSISTS's
 # src/repoach/ci_entry/cli.py (same owner): ci_doctor_lines gains the threads_pipeline= lines (D8); init --ci gitlab prints them
@@ -476,8 +564,9 @@ reason, never a 5xx that would make GitLab retry a malformed body.
    371`, `project.id` the configured one (D5) → `arm`; `202`.
 3. The coalescer arms !371 for `coalesce_window_seconds`; two more
    notes in the window are `202`, `arm`, and change nothing.
-4. At the deadline, `trigger_pipeline` with `ref=<source branch>`,
-   `REPOACH_THREADS_REPLY_MR=371`; the MR is idle.
+4. At the deadline, observed by `service_actions()` on the next poll
+   with no request needed (D9), `trigger_pipeline` with `ref=<source
+   branch>`, `REPOACH_THREADS_REPLY_MR=371`; the MR is idle.
 5. The pipeline runs `threads:reply` (D8), which restores the MR's
    ledger cache and runs 8b, which reads the three notes.
 
@@ -486,6 +575,10 @@ reason, never a 5xx that would make GitLab retry a malformed body.
 - the bot's own reply → `202`, `ignore` (`note by the bot`); a system note (`added 1 commit`, `resolved all threads`) → `202`, `ignore`.
 - a `Merge Request Hook` of any action → `202`, `ignore`; the push already runs the MR pipeline.
 - a note on an issue (`merge_request` absent) → `202`, `ignore`.
+- a note on a merge request from a fork (`source_project_id != target_project_id`) → `202`, `ignore`, `fork merge request !<iid>: …` (D5); the schedule lists it `skipped: fork` and triggers nothing (D7).
+- a note arrives and the connection is the last one for an hour → the trigger still fires at the deadline, on the poll after it (D9); no request is needed.
+- an escalated thread gets a third author comment → the receiver arms and triggers once (it reads no thread); 8b posts nothing; the schedule never lists it (`skipped: escalated`), and the comment's threads pipeline makes it `pipeline newer` for ever after (D7).
+- `X-Forwarded-For: 203.0.113.9, 10.0.0.2` behind one trusted proxy → the log names `10.0.0.2`; `--proxy-hops 2` → `203.0.113.9`; a header with one value and `--proxy-hops 2` → the peer address with ` (xff short)`.
 - `coalesce_max_mrs` MRs armed and a new one arrives → the oldest armed MR is triggered now, the new one armed.
 - the receiver restarts while MRs are armed → the armed set is lost; the schedule (D7) finds the pending MRs within `scheduled_fallback_minutes`; a double trigger meets `resource_group` and the markers.
 - `GET /hooks/gitlab` → `405` from the server (a proxy may refuse earlier).
@@ -497,7 +590,7 @@ reason, never a 5xx that would make GitLab retry a malformed body.
 - `Content-Length: 5000000` → `413`, no read; no `Content-Length` → `400`.
 - the trigger call fails (network, `403` token revoked) → logged `trigger failed for !371: <status>`, the MR idle; the schedule starts the run within `scheduled_fallback_minutes`.
 - a credential absent, empty or world-readable at startup → `repoach threads serve` exits 2 with `credential webhook_secret missing in <dir>` (or `… readable by others`); systemd `Restart=on-failure` retries every `RestartSec` and the operator reads the journal.
-- `--bind 0.0.0.0:8787` without `--behind-proxy` or `--allow-plain-http` → exit 2, `plain HTTP on a non-loopback address carries the token in clear; put a TLS terminator in front and pass --behind-proxy, or pass --allow-plain-http on a private network`.
+- `--bind 0.0.0.0:8787` without `--behind-proxy` or `--allow-plain-http`, or `--listen-fd` on a systemd socket whose `getsockname()` is not a loopback address, without either → exit 2, `plain HTTP on a non-loopback address <addr> carries the token in clear; put a TLS terminator in front and pass --behind-proxy, or pass --allow-plain-http on a private network` (0.4: the same rule and line for both).
 - the interface of the configured bind address does not exist yet at boot → the socket is bound anyway (`FreeBind`); the first connection arrives when it exists.
 
 ### Operator steps (any project; the project's files are the operator's, NG4)
@@ -533,6 +626,10 @@ reason, never a 5xx that would make GitLab retry a malformed body.
 | `tests/unit/test_thread_webhook.py::test_bad_missing_or_duplicated_token_is_401_before_the_body_is_read` | D1: a wrong value, no header and two headers each give `401` with `Connection: close`; a body-reading spy sees no read; the log line holds no token | compare with `==`, read the body first, or accept the first of two headers |
 | `::test_token_is_compared_as_bytes` | D1: a secret with a non-ASCII byte and the matching `latin-1` header value are accepted; the comparison is `hmac.compare_digest` on two `bytes` | compare `str` with `bytes` (a `TypeError`, a 5xx) |
 | `::test_valid_note_arms_the_mr_and_one_trigger_fires_at_the_deadline_with_the_variable` | D3, D5, D6: three notes in the window → one trigger after the window, to the configured GitLab URL, with `REPOACH_THREADS_REPLY_MR` and the source branch; a note after the deadline arms again | trigger on the first note, drop the variable, or hard-code gitlab.com |
+| `::test_deadline_fires_with_no_further_request` | D3, D9 (0.4): a `Receiver` on the loopback with `coalesce_window_seconds` 0.2 and a fake `post`, started on its own thread with `serve_forever(poll_interval=0.05)`; one valid note is sent, then nothing; within 1 s the fake `post` has been called once with the MR's iid, and `shutdown()` ends the thread; a second variant with an injected clock advances it past the deadline and calls `service_actions()` once directly → one trigger, a second call → none | fire only from the request handler, or drop the `service_actions` override |
+| `::test_client_address_is_the_configured_proxy_hop` | D1 (0.4): peer `10.0.0.2`, `X-Forwarded-For: 203.0.113.9, 198.51.100.4`, `--behind-proxy` → `198.51.100.4`; `--proxy-hops 2` → `203.0.113.9`; `--proxy-hops 3` → `10.0.0.2 (xff short)`; without `--behind-proxy` the header is ignored and the peer logged | take the first value, or trust the header without the flag |
+| `::test_fork_merge_request_note_is_ignored_by_name` | D5 (0.4): a note whose `merge_request.source_project_id` differs from `target_project_id` → `202`, `ignore`, reason starts `fork merge request !`; nothing armed | arm it, or trigger on the fork's branch name |
+| `::test_listen_fd_on_a_non_loopback_socket_is_refused_like_bind` | D9 (0.4): a socket bound to `0.0.0.0:0` handed as fd 3 with `LISTEN_FDS=1` and neither flag → exit 2 with the rule naming the address; the same socket with `--behind-proxy` → starts; a socket on `127.0.0.1:0` → starts with neither flag | check `--bind` only |
 | `::test_bot_system_and_merge_request_hook_are_ignored` | D5: a note by the bot, a system note, a `Merge Request Hook` `update` → `202`, `ignore`, nothing armed | arm on any of the three |
 | `::test_same_uuid_twice_is_a_replay_and_the_armed_set_is_bounded` | D3: a seen UUID changes nothing; `coalesce_max_mrs + 1` MRs → the oldest fires at once, the set never exceeds the bound | drop the cache, or let the set grow |
 | `::test_oversized_or_unsized_body_and_foreign_project` | D4: `413` and `400` before any read; a foreign `project.id` → `202`, `ignore` | read past the bound |
@@ -540,6 +637,7 @@ reason, never a 5xx that would make GitLab retry a malformed body.
 | `::test_credentials_dir_is_the_only_source_and_refuses_bad_files` | D2: `webhook_secret` / `trigger_token` read from a temp directory; an absent, an empty and a `0644` file each exit 2 naming the credential; `$CREDENTIALS_DIRECTORY` is the default; nothing is read from the environment or argv | read `REPOACH_WEBHOOK_SECRET` from the environment, or accept a `0644` file |
 | `::test_non_loopback_plain_bind_is_refused_unless_named` | D9: `--bind 0.0.0.0:8787` alone → exit 2 with the rule; with `--behind-proxy` or `--allow-plain-http` → starts | bind silently |
 | `::test_pending_merge_requests_from_the_forge_alone` | D7: on a fake forge, an MR whose bot thread's last comment is the author's is pending; one whose last comment is the bot's is not; a `/resolve` comment newer than the bot's newest makes it pending; no ledger path is opened | read the ledger, or key on any comment |
+| `::test_never_answerable_thread_stops_triggering` | D7 (0.4), G5: a bot thread whose last bot reply ends `state: escalated to owner` followed by two author comments → `skipped: escalated`, not pending, with an empty pipelines listing; a bot thread with an author comment and a `pipelines_after(branch, created_at)` answer holding one `source: api` pipeline created after it → `skipped: pipeline newer`, not pending; the same with the listing empty → pending; run twice with the listing recording the first run's trigger → the second run triggers nothing; a fork MR → `skipped: fork` | list an escalated thread, ignore the pipelines, or trigger a fork |
 | `tests/unit/test_threads_receiver_unit.py::test_unit_pair_is_socket_activated_hardened_and_passes_no_secret` | D10: the socket has `ListenStream=` and `FreeBind=yes`; the service has `Requires=` the socket, two `LoadCredentialEncrypted=` lines, an `EnvironmentFile=` and no `Environment=` holding a token, `ProtectSystem=strict`, `CapabilityBoundingSet=` empty, no `IPAddressAllow`/`IPAddressDeny`, `RestrictAddressFamilies` naming `AF_INET AF_INET6 AF_UNIX`; no file under `deploy/systemd/` holds a hostname, an IP other than `127.0.0.1`, a login or a project id | add `IPAddressAllow=…`, or write a project id in the unit |
 | `::test_systemd_analyze_verify_is_silent_on_the_sample_pair` | D10, S1: the two files copied to a temp directory with `ExecStart=`'s binary rewritten to `/bin/true` (the unit names an install path CI does not have), `systemd-analyze verify <socket> <service>` → empty output, exit 0; the test fails naming `systemd-analyze` when the binary is absent (CI runs on a systemd host) | add `IPAddressAllow=172.18.0.0/16 gitlab.com` |
 | `tests/unit/test_threads_triggers.py::test_generated_gitlab_jobs_hold_threads_reply_with_cache_resource_group_and_the_schedule_without_tags` | D7, D8: the snippet carries both jobs, `rules` on `$REPOACH_THREADS_REPLY_MR`, `resource_group: threads-reply-$REPOACH_THREADS_REPLY_MR`, `cache.key: repoach-ledger-mr-$REPOACH_THREADS_REPLY_MR` on the `LedgerPlan` path, no `tags:`, the schedule rule on `$REPOACH_THREADS_SCHEDULE` | key the cache on `$CI_MERGE_REQUEST_IID`, drop the resource group, or write a runner tag |
