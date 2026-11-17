@@ -964,3 +964,49 @@ def test_t9_skew_replay_keep_leaves_the_worktrees(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     assert (clone / "tmp" / "skew" / "reader" / "src").is_dir()
     assert (clone / "tmp" / "skew" / "writer" / "src").is_dir()
+
+
+def test_t3_an_untrusted_value_is_clipped_and_inert_in_the_refusal(tmp_path: Path) -> None:
+    db = _demo(tmp_path)
+    hostile = "@owner ```" + "x" * 500
+    _sql(
+        db,
+        f"UPDATE pr_findings SET severity = '{hostile}' "
+        "WHERE id = (SELECT max(id) FROM pr_findings)",
+        f"UPDATE ledger_meta SET value = '{hostile}' WHERE key = 'written_by'",
+    )
+    with pytest.raises(LedgerSkewError) as raised:
+        check(db, 259)
+    reason = str(raised.value)
+    assert "@" not in reason
+    assert "`" not in reason
+    assert "x" * 100 not in reason
+    assert len(reason) < 400
+
+
+def test_t3_a_hostile_format_stamp_is_clipped_and_inert(tmp_path: Path) -> None:
+    db = _demo(tmp_path)
+    _sql(db, "UPDATE ledger_meta SET value = '@a ```" + "y" * 500 + "' WHERE key = 'format'")
+    with pytest.raises(LedgerSkewError) as raised:
+        check(db, 259)
+    reason = str(raised.value)
+    assert "@" not in reason and "`" not in reason
+    assert "y" * 100 not in reason
+
+
+def test_review_gate_cli_prints_ledger_summary_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fx = MergeWaitFixtureForge(
+        [FixturePR(259, HEAD_259, "docs/sp-approved-spec-without-plan", check_runs=ci_runs())]
+    )
+    db = tmp_path / "review.db"
+    seed_review(db, 259, HEAD_259)
+    stamp(db, written_by="0.1.0")
+    _cli_settings(monkeypatch, fx, db)
+    result = CliRunner().invoke(review_cmds.review_app, ["gate", "259"])
+    assert "Traceback" not in result.output
+    payload = json.loads(result.stdout)
+    assert payload["ledger"]["format"] == 1
+    assert payload["ledger"]["written_by"] == "0.1.0"
+    assert "ledger: format 1, written by repoach 0.1.0" in result.stderr.splitlines()

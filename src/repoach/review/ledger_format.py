@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -294,6 +295,24 @@ def _healed_columns() -> set[tuple[str, str]]:
     return pairs
 
 
+def _clean(text: str) -> str:
+    """Return ``text`` short and inert for a refusal reason.
+
+    The ledger is an uploaded artifact: a value or a stamp in it can be
+    arbitrarily long or carry markdown and mentions, and a refusal reason
+    reaches a bot-authored comment. Backticks, ``@``, ``<``, ``>``, ``#`` and control
+    characters become ``?`` and the text is clipped at ``_SHOWN_CHARS``.
+    """
+    clean = re.sub(r"[`@<>#\x00-\x1f\x7f]", "?", text)
+    clipped = clean[:_SHOWN_CHARS] + ("..." if len(clean) > _SHOWN_CHARS else "")
+    return clipped
+
+
+def _quote(text: str) -> str:
+    """Return ``_clean(text)`` quoted."""
+    return repr(_clean(text))
+
+
 def _read_stamp(conn: Connection, tables: set[str], reader: str) -> tuple[int, str, str]:
     """Return ``(format, written_by, written_at)``; ``(0, "", "")`` without ``ledger_meta``."""
     if ledger_meta.name not in tables:
@@ -310,7 +329,7 @@ def _read_stamp(conn: Connection, tables: set[str], reader: str) -> tuple[int, s
         str(key): str(value)
         for key, value in conn.execute(select(ledger_meta.c.key, ledger_meta.c.value))
     }
-    written_by = meta.get("written_by", "")
+    written_by = _clean(meta.get("written_by", ""))
     versions = f"written by repoach {written_by or _UNSTAMPED}; this gate is repoach {reader}"
     raw = meta.get("format")
     if raw is None:
@@ -318,7 +337,8 @@ def _read_stamp(conn: Connection, tables: set[str], reader: str) -> tuple[int, s
     stamped = int(raw) if raw.isascii() and raw.isdecimal() else 0
     if stamped < 1:
         raise LedgerSkewError(
-            f"ledger_meta.format={raw!r} is not a positive integer ({versions})", writer_format=0
+            f"ledger_meta.format={_quote(raw)} is not a positive integer ({versions})",
+            writer_format=0,
         )
     return stamped, written_by, meta.get("written_at", "")
 
@@ -419,7 +439,7 @@ def _check_enum_values(
         )
         if unknown:
             raise LedgerSkewError(
-                f"{table.name}.{entry.column}={unknown[0]!r} is not a {entry.vocabulary} "
+                f"{table.name}.{entry.column}={_quote(unknown[0])} is not a {entry.vocabulary} "
                 f"this reader knows ({versions})",
                 writer_format=stamped,
             )
@@ -455,9 +475,9 @@ def _check_json_values(
         for value in conn.execute(query).scalars():
             if entry.empty_allowed and value in (None, ""):
                 continue
-            shown = value if not isinstance(value, str) else value[:_SHOWN_CHARS]
+            shown = value
             refusal = LedgerSkewError(
-                f"{table.name}.{entry.column}={shown!r} is not JSON {entry.declared()} "
+                f"{table.name}.{entry.column}={_quote(shown) if isinstance(shown, str) else repr(shown)} is not JSON {entry.declared()} "
                 f"this reader knows ({versions})",
                 writer_format=stamped,
             )
