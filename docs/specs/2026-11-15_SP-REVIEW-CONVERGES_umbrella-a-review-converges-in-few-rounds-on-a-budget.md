@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-CONVERGES
 title: Umbrella — a review converges in a few rounds, remembers every round, re-raises nothing settled, reviews the delta, blocks only on minor and worse, and runs on a metered budget
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-15
@@ -107,20 +107,30 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 | 7 | SP-REVIEW-DELTA-FIRST (0.3 folds SP-REVIEW-INCREMENTAL-HEAD of the OCR programme, superseded 2026-11-16) | the whole diff every round; nothing cached; two specs for one decision | ~320 + 300 lines | 5, 6, 1; OCR 7 (RESUMES-FAILED-ROLES) and 8 (GROUPS-LARGE-DIFFS) |
 | 8 | SP-REVIEW-FABLE-TIER | shallow first rounds; three tiers | ~180 + 200 lines | 1, 3, 7 |
 
-Ledger format (0.4, 2026-11-17, SP-LEDGER-FORMAT-IS-VERSIONED): a child
-that adds a column to a gate table, an enum value or a gate table bumps
-`LEDGER_FORMAT` with its `tests/fixtures/ledger_format/N.json` in the
-same pull request and names `scripts/skew_replay.sh` in the release
-notes; `main`'s gate refuses its ledgers by name until the release. In
-this family: 4 landed `note` before the format existed, the crash that
-spec closes; 7 adds `FindingStatus.OUT_OF_DELTA` and
-`pr_review_integrity.extends_run` and bumps; 5, 6 and 8 add no gate
-column, value or table (6 derives `finding_key` and writes `supersedes`
-as an event, its D13). Of the two OCR children it orders, FINDING-CITES-
-ITS-CODE bumps (`pr_findings.cited_code`, its D7) and RESUMES-FAILED-
-ROLES does not (`pr_reviewer_outcomes` is read by `review pr` alone, its
-D6). A bump is one release gate held per bump, so 7 lands in the release
-after CITES or with it, never between a release and its skew replay.
+Ledger format (0.4–0.5, 2026-11-17, SP-LEDGER-FORMAT-IS-VERSIONED): a
+child that adds a column to a gate table, an enum value or a gate table
+bumps `LEDGER_FORMAT` with its `tests/fixtures/ledger_format/N.json` in
+the same pull request and names `scripts/skew_replay.sh` in the release
+notes; `main`'s gate refuses its ledgers by name until the release. The
+numbers, in landing order: 1 is `origin/develop` as the format spec
+found it; **2** is FINDING-CITES-ITS-CODE (`pr_findings.cited_code`, its
+D7); **3** is 7, SP-REVIEW-DELTA-FIRST (`pr_review_integrity.base_sha`,
+`extends_run`, `config_key` and `FindingStatus.OUT_OF_DELTA`, its D10).
+4 landed `note` before the format existed, the crash that spec closes;
+5, 6, 8 and RESUMES-FAILED-ROLES add no gate column, value or table (6
+derives `finding_key` and owns `finding_events`, a table no gate reads,
+its D13–D14; RESUMES's `pr_reviewer_outcomes` is read by `review pr`
+alone, its D6). A bump is one release gate held per bump, so 7 lands in
+the release after CITES or with it, never between a release and its
+skew replay.
+
+Tables (0.5): every table a child of this order reads or writes exists
+on `92cd241` or is built by a spec of the order — `finding_events` by 6,
+`pr_reviewer_outcomes` by RESUMES. `finding_threads`,
+`finding_thread_events` (SP-PR-THREADS-REMEMBER-AND-CLOSE, draft) and
+`review_runs` (SP-UNIVERSAL-LEDGER, draft) exist nowhere and are cited
+by no child since 5 (0.4), 6 (0.6) and 7 (0.4); both drafts stay
+outside this order.
 
 - G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request; on live Yoob merge requests, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three.
 - G3 (cost): after 1–3, every metered call is priced before dispatch; `repoach budget` matches the Anthropic console within 5 %; a full round costs about 4.20 USD and a delta round under 1.5 USD at F11's size; 100 € (≈ 108 USD) buys about 25 full rounds, or about 15 three-round merge requests once delta rounds exist — against 2 twelve-round merge requests at today's full-diff behaviour.

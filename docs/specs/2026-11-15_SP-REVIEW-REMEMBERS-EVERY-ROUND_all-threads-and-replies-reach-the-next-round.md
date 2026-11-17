@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-REMEMBERS-EVERY-ROUND
 title: The reviewer remembers every round — all prior threads, every reply whoever wrote it, and their resolution state reach the next round's prompt
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
   code: [src/repoach/review/review_history.py, prompts/review/_review_history_0.1.0.md, tests/unit/test_review_history.py, tests/unit/test_review_history_in_prompt.py]
   resources: [format:review-history-block]
 
-depends_on: [SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-OWNER-SETTLES-A-FINDING, SP-EVIDENCE-SENTINEL-AUTHOR, SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-RESUMES-FAILED-ROLES]
+depends_on: [SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-OWNER-SETTLES-A-FINDING, SP-EVIDENCE-SENTINEL-AUTHOR, SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-RESUMES-FAILED-ROLES]
 provides_to: []
 
 constraints:
@@ -22,6 +22,30 @@ constraints:
 ---
 
 # The reviewer remembers every round
+
+## Amendment (0.4, 2026-11-17): the memory is built from tables that exist
+
+Re-measured on `origin/develop` `92cd241`. F3 of 0.3 named
+`finding_threads` and `finding_thread_events` as tables the ledger
+"already holds": `grep -rn "finding_threads\|finding_thread_events" src`
+→ 0. They are the design of SP-PR-THREADS-REMEMBER-AND-CLOSE (draft 0.5,
+no code, outside the owner's lane D order), and no spec in that order
+builds them. The block is therefore built from what exists and from
+what the order builds: `pr_findings`; `finding_posts`, which holds the
+thread id of every posted finding and the head and login that closed
+its thread (`thread_closed_at_head`, `thread_closed_by`,
+`src/repoach/review/finding_posts.py:74-91`, `mark_thread_closed`
+`:372`); the forge's `review_threads(number)` for replies and resolved
+state (`src/repoach/forge/protocol.py:567`, `:736`); `owner_commands`;
+and `owner_commands`. The edge to SP-PR-THREADS-REMEMBER-AND-CLOSE is
+withdrawn. The `finding_key` field and the `supersedes` lineage
+(`finding_events`) are not read here: SP-REVIEW-SETTLED-STAYS-SETTLED,
+which lands after this spec and depends on it, adds both to the block
+in `review_history.py` (its D5, D11, D14), so the edge runs one way, 6
+→ 5, and the family's order and cycle count are unchanged. NG3 and AC2
+are corrected to what exists: there is no thread-reply role on
+`92cd241`, and the placeholder-order pins live in
+`tests/unit/test_reviewer_prompts.py`.
 
 ## Amendment (0.3, 2026-11-16): at the cap, a settled register, not a count
 
@@ -57,7 +81,7 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
 |---|---|---|
 | F1 | Prior rounds reach the prompt only through `{PRIOR_REVIEW}`: the latest dialogue row of the same role, reduced to its verdict, `summary[:200]`, `n_comments` and `diff_changed`; the rows themselves hold `summary[:400]` and each comment's `body[:400]` | `src/repoach/review/orchestrator.py:825`, `:2611-2643`, `:2762-2780`; `src/repoach/review/persistence.py:100-110` |
 | F2 | `{RESOLVED_DISAGREEMENTS}` carries at most eight threads per role whose root the role tagged and whose reply, by the trusted bot login, holds the evidence sentinel; a reply by anyone else, the owner included, is ignored | `src/repoach/review/thread_context.py:96`, `:182-215`; SP-EVIDENCE-SENTINEL-AUTHOR |
-| F3 | The ledger already holds what a memory needs: `pr_findings` (head, round, finder, claim type, severity, file, lines, claim, status, verification), `finding_posts` (the thread each finding opened), `finding_threads` and `finding_thread_events` (replies, by login, and closures), `owner_commands` (who settled what, with the reason) | `src/repoach/review/findings.py:246-265`; SP-FINDING-THREAD-IDS; SP-PR-THREADS-REMEMBER-AND-CLOSE; SP-OWNER-SETTLES-A-FINDING |
+| F3 (0.4) | The ledger holds what a memory needs except the replies: `pr_findings` (head, round, finder, claim type, severity, file, lines, claim, status, verification), `finding_posts` (the thread each finding opened, and the head and login that closed it), `owner_commands` (who settled what, with the reason); the replies themselves, with author login and date, and a thread's resolved state are read from the forge (`review_threads`). `finding_threads` and `finding_thread_events` do not exist on `92cd241` (`grep -rn … src` → 0) and no spec of the order builds them | `src/repoach/review/findings.py:269-291`; `src/repoach/review/finding_posts.py:74-91`, `:372`; `src/repoach/forge/protocol.py:567`, `:736`; SP-FINDING-THREAD-IDS; SP-OWNER-SETTLES-A-FINDING |
 | F4 | On !366, round 12: of 8 threads, 2 re-raised points settled in round 11 with a measurement, 3 asked to confirm tests whose `file:line` a reply had already given; 5 of 8 were the reviewer's window, not the branch | Yoob `tmp/REVIEW-SPEC.md` §4–§6 |
 | F5 | Owner decision 2026-11-15 (a): the reviewer remembers every round — all prior threads, plus every reply and refutation whoever wrote it (owner, agents, bot), with their resolution state | brief, 2026-11-15 |
 | F6 | Untrusted text must not be able to expand a placeholder or break a fence: placeholders are expanded before the diff is substituted, and the refuter's evidence window is fence-hardened | SP-PROMPT-PLACEHOLDER-ORDER; SP-REFUTER-INJECTION-HARDEN |
@@ -154,7 +178,7 @@ say what it dropped.
 
 - NG1: no decision here on what is posted (SP-REVIEW-SETTLED-STAYS-SETTLED).
 - NG2: no cross-merge-request memory (SP-REVIEW-MEMORY-STORE).
-- NG3: no change to the thread-reply role (SP-PR-THREADS-REMEMBER-AND-CLOSE); it already reads the thread it answers.
+- NG3 (0.4): no thread-reply agent; none exists on `92cd241`, and SP-PR-THREADS-REMEMBER-AND-CLOSE (draft, unscheduled) would add one. The block is read by the four lenses only.
 
 ## Assumptions
 
@@ -240,7 +264,8 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 - C3: `grep -rn "PRIOR_REVIEW\|RESOLVED_DISAGREEMENTS" src prompts` → 0.
 
 ## Architecture Impact
-- Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-OWNER-SETTLES-A-FINDING (reads `pr_findings`, `finding_posts`, `finding_threads`, `finding_thread_events`, `owner_commands`)
+- Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-OWNER-SETTLES-A-FINDING (reads `pr_findings`, `finding_posts` with its closure columns, `owner_commands`; 0.4: the edge to SP-PR-THREADS-REMEMBER-AND-CLOSE is withdrawn, its tables do not exist and are not built by the order)
+- No edge to SP-REVIEW-SETTLED-STAYS-SETTLED (0.4): that spec depends on this one and adds `finding_key` and the `supersedes` lineage to the block when it lands; an edge the other way would be a cycle.
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-EVIDENCE-SENTINEL-AUTHOR (the bot's sentinel keeps its settling meaning inside the block; the bot-only filter is retired)
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN (untrusted text position and escaping)
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE (the orchestrator's step list changes; threads are read through the protocol)
@@ -258,7 +283,7 @@ flowchart LR
 
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_review_history.py tests/unit/test_review_history_in_prompt.py` → green. Today (`5354767`): the files do not exist; `fetch_resolved_disagreements` ignores every non-bot reply (`thread_context.py:187-195`).
-- [ ] AC2: `pytest -q tests/unit/test_thread_context*.py tests/unit/test_prompt_placeholder_order.py` → green after the removal of G4 (their resolved-disagreement cases deleted with the function).
+- [ ] AC2: `pytest -q tests/unit/test_thread_context*.py tests/unit/test_reviewer_prompts.py` → green after the removal of G4 (their resolved-disagreement cases deleted with the function; 0.4: `test_reviewer_prompts.py` carries the SP-PROMPT-PLACEHOLDER-ORDER pins, `test_untrusted_diff_tokens_not_expanded` and `test_coder_and_developer_render_inject_untrusted_last`; no `test_prompt_placeholder_order.py` exists).
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC4: `docs/review_redesign_architecture.md` names the block where it names `{PRIOR_REVIEW}` today.
 

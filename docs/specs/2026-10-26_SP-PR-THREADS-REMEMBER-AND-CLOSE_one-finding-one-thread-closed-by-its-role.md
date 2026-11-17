@@ -1,11 +1,11 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
-version: 0.5
+version: 0.6
 status: draft
 author: agent
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-11-17
 
 owns:
   code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_context_window.py, src/repoach/review/thread_commands.py, src/repoach/cli/threads_cmds.py, src/repoach/review/thread_webhook.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_commands.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_threads_cli.py, tests/unit/test_gate_open_threads.py, tests/unit/test_forge_review_threads.py, tests/unit/test_thread_webhook.py, tests/unit/test_threads_owners.py, tests/unit/test_threads_triggers.py, tests/unit/test_threads_serve_unit.py, deploy/systemd/repoach-threads-serve.service, tests/integration/test_pr_threads_lifecycle.py]
@@ -24,6 +24,42 @@ constraints:
 ---
 
 # One finding, one forge thread that remembers its exchanges and is closed only by its role or the owner
+
+## Status note (0.6, 2026-11-17): what later specs took over, what remains, and who may cite this spec's tables
+
+Re-measured on `origin/develop` `92cd241`. This spec stays a draft and
+is outside the owner's lane D order (SP-REVIEW-CONVERGES 0.5). Since
+0.5 was written, approved specs have taken over parts of it, each
+naming this spec as its design source, and the facts of "What is
+missing" moved:
+
+| Of this spec | Taken over by | State on `92cd241` |
+|---|---|---|
+| D3, D8: an open thread blocks the merge | SP-OPEN-THREADS-BLOCK-THE-MERGE (approved) | `src/repoach/review/open_threads.py`; protocol `review_threads`, `unresolved_threads` (`forge/protocol.py:736`, `:749`), M1/M2's reads exist; the resolve/unresolve writes do not |
+| D5: owner commands | SP-OWNER-SETTLES-A-FINDING (approved, D1: `/resolve`, `/reopen`; no `/wontfix`, no `waived`) | `owner_commands.py`, `owner_store.py`, `db:table:owner_commands` |
+| M3: the finding → thread link | SP-FINDING-THREAD-IDS (approved) | `finding_posts` with `thread_id`, `thread_closed_at_head`, `thread_closed_by` (`finding_posts.py:74-91`) |
+| D1's memory for the lenses | SP-REVIEW-REMEMBERS-EVERY-ROUND (approved, 0.4) | builds the history block from `pr_findings`, `finding_posts`, `owner_commands`, `finding_events` and the forge's `review_threads`; cites no table of this spec |
+| the re-raise rule across heads; per-finding events | SP-REVIEW-SETTLED-STAYS-SETTLED (approved, 0.6, D14) | `db:table:finding_events` (`reraise_suppressed`, `supersedes`), owned there |
+| D12: no severity exempt, nits included | superseded by the owner's decision (d) of 2026-11-15, SP-REVIEW-NITS-ONE-COMMENT: a nit never opens a thread and never blocks | `nit_digest.py` |
+
+What remains this spec's alone and is built by no other: the
+thread-reply agent (D1, D2, D4, D6), the coder dispatched per thread
+(D7, D11, D13), the GitLab receiver and the GitHub trigger (D10, D14,
+D15), the forge resolve/unresolve writes (M1), `[threads].owners` (D9;
+SP-OWNER-SETTLES-A-FINDING D2 reads owners from the forge instead, so
+D9 is to be reconciled when this spec is scheduled), and the two tables
+`finding_threads` and `finding_thread_events`. **No approved spec may
+cite those two tables until this spec is approved and ordered**: on
+`92cd241` `grep -rn "finding_threads\|finding_thread_events" src` → 0.
+When it is scheduled, the Ledger section is to be re-measured against
+`finding_posts`, `owner_commands` and `finding_events`, which now hold
+part of what the two tables were designed for; `finding_thread_events`
+is expected to become the exchange log beside `finding_events`, not a
+copy of it. M6 and M7 of 0.5 still hold on `92cd241`: `grep -rn
+"repoach-finding" src` → 0 (SP-POSTING-REPLAY-DEDUPES draft 0.2) and
+`src/repoach/review/agent_context.py` is absent (SP-AGENT-CONTEXT-LOOP
+draft 0.6). Whether the remainder is scheduled or dropped is the
+owner's call; this note changes no decision of 0.5.
 
 ## Intent
 
