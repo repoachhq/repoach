@@ -90,6 +90,8 @@ from ..gates.config import (
 )
 from .base_ref import require_forge_pr_base
 from .head_reverify import NO_HEAD_TREE, reverify_older_findings, skipped_reverification
+from .ledger_format import LedgerCheck, LedgerSkewError
+from .ledger_format import check as check_ledger
 from .merge_gate import (
     MergeDecision,
     MergeFacts,
@@ -150,6 +152,7 @@ OUTCOME_SKIP_BLOCKED: str = "SKIP_BLOCKED"
 OUTCOME_SKIP_BEHIND: str = "SKIP_BEHIND"
 OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED: str = "SKIP_MERGE_STATUS_UNRECOGNIZED"
 OUTCOME_SKIP_STALE_HEAD: str = "SKIP_STALE_HEAD"
+OUTCOME_SKIP_LEDGER_SKEW: str = "SKIP_LEDGER_SKEW"
 OUTCOME_FAILED: str = "FAILED"
 
 SUCCESS_OUTCOMES: frozenset[str] = frozenset({OUTCOME_MERGED, OUTCOME_ALREADY_MERGED})
@@ -173,6 +176,7 @@ NON_FATAL_SKIP_OUTCOMES: frozenset[str] = frozenset(
         OUTCOME_SKIP_BEHIND,
         OUTCOME_SKIP_MERGE_STATUS_UNRECOGNIZED,
         OUTCOME_SKIP_STALE_HEAD,
+        OUTCOME_SKIP_LEDGER_SKEW,
     }
 )
 
@@ -559,6 +563,9 @@ class GateEvaluation:
         open_threads: The open review threads the decision counted
             (SP-OPEN-THREADS-BLOCK-THE-MERGE); ``None`` when the gate
             stopped before deciding.
+        ledger: The ledger's stamp as :func:`~repoach.review.ledger_format.check`
+            read it (SP-LEDGER-FORMAT-IS-VERSIONED); ``None`` when the gate
+            stopped before the check or the check refused.
     """
 
     head_sha: str
@@ -570,6 +577,7 @@ class GateEvaluation:
     changed_files: list[str] | None = None
     read_changed_files: Callable[[], list[str]] | None = None
     open_threads: OpenThreads | None = None
+    ledger: LedgerCheck | None = None
 
 
 def _unknown_facts() -> MergeFacts:
@@ -910,6 +918,12 @@ def evaluate_merge_gate(
     and that reason (SP-GATE-MERGED-MR-NAMED-REASON): its source branch
     may be gone, and there is nothing left to gate.
 
+    Next, before any ledger row is read, the ledger's format is checked
+    (:func:`~repoach.review.ledger_format.check`,
+    SP-LEDGER-FORMAT-IS-VERSIONED): a skew short-circuits with
+    ``outcome_tag = SKIP_LEDGER_SKEW``, ``merge`` False and its reason;
+    otherwise ``ledger`` carries the stamp read.
+
     With ``pin_tree`` (``repoach review gate``), the verifiers re-check
     the ledger on the tree of the verified head
     (:func:`~repoach.review.review_head.materialise_head`), not on the
@@ -945,6 +959,20 @@ def evaluate_merge_gate(
             ci_gate=CIGateOutcome(green=False, outcome_tag=OUTCOME_ALREADY_MERGED, reason=reason),
             facts=_unknown_facts(),
             decision=MergeDecision(merge=False, reasons=[reason]),
+            pull_request=pr,
+        )
+
+    try:
+        ledger = check_ledger(db, pr_number)
+    except LedgerSkewError as exc:
+        _log.warning("auto_merge.gate_ledger_skew", pr_number=pr_number, reason=exc.reason)
+        return GateEvaluation(
+            head_sha=pr.head_sha if pr is not None else "",
+            ci_gate=CIGateOutcome(
+                green=False, outcome_tag=OUTCOME_SKIP_LEDGER_SKEW, reason=exc.reason
+            ),
+            facts=_unknown_facts(),
+            decision=MergeDecision(merge=False, reasons=[exc.reason]),
             pull_request=pr,
         )
 
@@ -1048,6 +1076,7 @@ def evaluate_merge_gate(
         tree=tree_kind,
         read_changed_files=lambda: diff_files(forge.diff(pr_number).text),
         open_threads=facts.open_threads,
+        ledger=ledger,
     )
 
 
@@ -1103,6 +1132,13 @@ def run_auto_merge(
     green PR with an open review thread is not merged and its attempts
     comment says ``<n> unresolved review thread(s)``
     (SP-OPEN-THREADS-BLOCK-THE-MERGE).
+
+    After the base and state checks and before any ledger row is read,
+    the ledger's format is checked (:func:`~repoach.review.ledger_format.check`,
+    SP-LEDGER-FORMAT-IS-VERSIONED): a format, column or enum value this
+    release does not define is ``OUTCOME_SKIP_LEDGER_SKEW`` (exit 5),
+    recorded with a reason naming the value, the writer version and this
+    reader's version, never a traceback.
 
     The function never raises on a "we should not merge" outcome —
     the caller (CLI) maps the outcome to an exit code.  An
@@ -1212,6 +1248,13 @@ def run_auto_merge(
                 outcome=OUTCOME_SKIP_STATE,
                 notes=f"state={state}, refusing to write",
             )
+        )
+
+    try:
+        check_ledger(db, pr_number)
+    except LedgerSkewError as exc:
+        return _persist(
+            AutoMergeResult(pr_number=pr_number, outcome=OUTCOME_SKIP_LEDGER_SKEW, notes=exc.reason)
         )
 
     verified_head, stale_reason = resolve_verified_head(

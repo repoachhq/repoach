@@ -61,6 +61,7 @@ from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
 from ..providers.usage import run_summary_line, run_usage_json, served_by_line, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
+    OUTCOME_SKIP_LEDGER_SKEW,
     GateEvaluation,
     evaluate_merge_gate,
     merge_exit_code,
@@ -822,10 +823,17 @@ def review_merge(
         ``ALREADY_MERGED``).
       * ``5`` — a non-merge gate prevented action (``SKIP_BASE``,
         ``SKIP_GATE``, ``SKIP_CI_RED``, ``SKIP_CI_FAILED``,
-        ``SKIP_CI_TIMEOUT``, ``SKIP_CI_MISSING``, ``SKIP_STALE_HEAD``).
-        Non-fatal — the next review round can pick it up.
+        ``SKIP_CI_TIMEOUT``, ``SKIP_CI_MISSING``, ``SKIP_STALE_HEAD``,
+        ``SKIP_LEDGER_SKEW``). Non-fatal — the next review round can pick
+        it up.
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
+
+    ``SKIP_LEDGER_SKEW`` (SP-LEDGER-FORMAT-IS-VERSIONED): the ledger
+    carries a format, column or enum value this release does not define;
+    the reason names it with the writer's and this reader's versions and
+    says which format a release must carry before this lane can judge
+    the head.
 
     Like ``review gate``, the ledger is re-verified on the tree of the
     verified head, never on the checkout's branch; the findings of older
@@ -1169,6 +1177,13 @@ def review_gate(
         (``base_ref_unresolvable``), ``ref`` and ``hint``, and stderr the
         hint (Yoob B-221).
 
+    The ledger's format is checked before any of its rows is read
+    (SP-LEDGER-FORMAT-IS-VERSIONED): one ``ledger: format <n>, written by
+    repoach <v>`` (or ``ledger: unstamped (pre-format), values known``)
+    line on stderr and ``ledger`` in the JSON say what was read; a skew
+    prints ``SKIP_LEDGER_SKEW — ledger skew: …`` on stderr, is
+    ``outcome`` ``SKIP_LEDGER_SKEW`` with that reason, and exits 5.
+
     ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
     (``--spec`` > ``Spec:`` description line > branch name).
     ``facts.spec_coverage`` is ``not_applicable`` when no spec is
@@ -1298,11 +1313,16 @@ def review_gate(
                     "threads_read": facts.threads_read,
                 },
                 "review_threads": threads.as_json() if threads is not None else None,
+                "ledger": evaluation.ledger.model_dump() if evaluation.ledger else None,
             },
             indent=2,
             ensure_ascii=False,
         )
     )
+    if evaluation.ledger is not None:
+        typer.echo(evaluation.ledger.summary_line(), err=True)
+    elif evaluation.ci_gate.outcome_tag == OUTCOME_SKIP_LEDGER_SKEW:
+        typer.echo(f"{OUTCOME_SKIP_LEDGER_SKEW} — {evaluation.ci_gate.reason}", err=True)
     if facts.reverify_line:
         typer.echo(facts.reverify_line, err=True)
     if threads is not None:
