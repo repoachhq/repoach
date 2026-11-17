@@ -178,6 +178,7 @@ def test_t1_replay_goes_red_when_the_python_row_selects_nothing() -> None:
     report = replay(corpus, [], _python_row_selects_nothing(table), needs, names)
     assert report.misses
     assert {names[line.job] for line in report.misses} == {"test"}
+    assert len(report.misses) < report.failed_jobs
     assert report.new_misses == report.misses
 
 
