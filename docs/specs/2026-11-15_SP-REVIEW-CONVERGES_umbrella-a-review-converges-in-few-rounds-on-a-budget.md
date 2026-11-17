@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-CONVERGES
 title: Umbrella — a review converges in a few rounds, remembers every round, re-raises nothing settled, reviews the delta, blocks only on minor and worse, and runs on a metered budget
-version: 0.7
+version: 0.8
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: []
@@ -19,6 +19,21 @@ constraints:
 ---
 
 # Umbrella — a review converges
+
+## Amendment (0.8, 2026-11-18): the family is for everyone; the owner's projects are a reference measurement
+
+Owner principle 2026-11-17, repoach is for every user, forge and
+gateway. 0.7's End state, G2, A2 and AC3 named one project and one
+gateway, the owner's. They now describe a merge request of any project
+whose CI runs repoach review and a gateway configured per
+`docs/getting_started.md`; the owner's merge requests appear only as
+items labelled "Reference measurement (owner's dogfood)", additional
+evidence beside an oracle that runs on a fresh machine or in CI (the
+recorded, anonymised fixture of A1; the suites; the provider fakes), and
+a condition of nothing. The Intent keeps the measurement that started
+the family, labelled so. A1 already states the redaction rule of the
+recorded fixture: every login replaced by its class, every host and
+path by a placeholder.
 
 ## Amendment (0.7, 2026-11-17): every row of the order is a row of this table
 
@@ -41,7 +56,8 @@ are those of this version; F10 says what `pull_request_review` runs.
 
 ## Intent
 
-Yoob MR !366 took twelve review rounds. Measured, the rounds did not
+Reference measurement (owner's dogfood): one merge request of the
+owner's, !366, took twelve review rounds. Measured, the rounds did not
 converge because the reviewer forgets: it reads the whole diff every
 time, learns of the previous round through two hundred characters,
 honours only its own bot's refutations, treats each head as a new
@@ -56,7 +72,9 @@ and the owner decisions.
 
 ## Context
 
-Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366;
+Measured 2026-11-15 on `origin/develop` `5354767`; F7, F8, F9 and F11
+are reference measurements (owner's dogfood) on the owner's merge
+request !366, gateway and key;
 each fact is re-cited with its lines in the child that acts on it.
 
 | # | Fact | Where |
@@ -85,11 +103,12 @@ each fact is re-cited with its lines in the child that acts on it.
 
 ## End state
 
-A Yoob merge request is reviewed in about three rounds: the first on
-Fable and Opus over the whole diff, the next over what the fix changed,
-each remembering the threads and the owner's replies, posting no thread
-on a settled point and no thread for a nit; `repoach budget` says what
-the month's reviews cost against the 100 €; a review that outruns the
+A merge request on a project whose CI runs repoach review is reviewed
+in about three rounds: the first on Fable and Opus over the whole diff,
+the next over what the fix changed, each remembering the threads and
+the maintainers' replies, posting no thread on a settled point and no
+thread for a nit; `repoach budget` says what the reviews cost against
+the configured budget; a review that outruns the
 budget finishes on the Max plan and says `reviewed on the subscription`
 with the figures; and a red gate caused by the subscription names its
 window, never a `provider_error`.
@@ -168,7 +187,7 @@ and is cited by no child; that draft stays outside this order, as do
 SP-JUDGE-FAILURE-IS-RETRIED, SP-REVIEW-GROUPS-LARGE-DIFFS and
 SP-REVIEW-TOKEN-ESTIMATE (0.7: cited by no row).
 
-- G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request; on live Yoob merge requests, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three.
+- G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request (oracle: the replay test on the recorded, anonymised fixture, A1, in CI); on the live merge requests of any project running the family, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three. Reference measurement (owner's dogfood): the owner's next twenty merge requests are the first such sample, additional evidence.
 - G3 (cost): after 1–3, every metered call is priced before dispatch; `repoach budget` matches the Anthropic console within 5 %; a full round costs about 4.20 USD and a delta round under 1.5 USD at F11's size; 100 € (≈ 108 USD) buys about 25 full rounds, or about 15 three-round merge requests once delta rounds exist — against 2 twelve-round merge requests at today's full-diff behaviour.
 - G4 (named fallbacks and reds): after 1 and 2, a review that reaches the budget finishes on the `claude_code` tail and says `budget exhausted: <spent> of <budget> USD since <date>; reviewed on the subscription` in the log, the JSON and the merge request (owner decision 2026-11-15, O2), the total still counting; a red gate caused by the subscription says `subscription exhausted on claude_code until <time>`; `provider_error` never names either.
 
@@ -181,8 +200,8 @@ SP-REVIEW-TOKEN-ESTIMATE (0.7: cited by no row).
 
 ## Assumptions
 
-- A1: the owner records the two fixtures the family needs: the CLI usage-limit answer (spec 2, by 2026-11-30) and !366's rounds 9–12 (spec 6: findings, statuses, replies, per-head diffs of the cited files, redacted of tokens, every login replaced by its class, `maintainer` / `author` / `bot`, and every host and absolute path by a placeholder, so the committed fixture names no person and no machine — owner principle 2026-11-17); the second can be assembled by an agent from the MR's API and the Yoob `REVIEW-SPEC.md`.
-- A2: Yoob's `review:gate` keeps reaching the owner's shared gateway, so the gateway's budget table is the one that counts.
+- A1: the owner records the two fixtures the family needs: the CLI usage-limit answer (spec 2, by 2026-11-30) and !366's rounds 9–12 (spec 6: findings, statuses, replies, per-head diffs of the cited files, redacted of tokens, every login replaced by its class, `maintainer` / `author` / `bot`, and every host and absolute path by a placeholder, so the committed fixture names no person and no machine — owner principle 2026-11-17); the second can be assembled by an agent from the MR's API and the owner's working notes on it (`REVIEW-SPEC.md`), then anonymised by that rule before it is committed; the same rule applies to every recorded fixture of the family (SP-REVIEW-DELTA-FIRST's ten-push fixture, SP-FORGE-RESOLVES-THREADS's conformance fixtures, SP-CI-LEDGER-PERSISTS's hand-written job).
+- A2: a project's review job reaches one gateway, configured per `docs/getting_started.md` (`REPOACH_LLM_PROXY_BASE_URL`), whose budget table is the one that counts for that project; the owner's projects share one gateway, as an instance.
 
 ## Interface
 
@@ -248,7 +267,7 @@ flowchart LR
 - [ ] AC1 (0.7): every id of G1 has a file under `docs/specs/`: `2026-11-15_SP-*.md` for rows 1–7 and 9, `2026-11-12_SP-REVIEW-RESUMES-FAILED-ROLES_*.md` and `2026-11-12_SP-FINDING-CITES-ITS-CODE_*.md` for 4a and 4b, `2026-10-25_SP-CI-LEDGER-PERSISTS_*.md` for 7b, the composite and its children per AC5; each `approved`, with facts cited `file:line`, decisions, end state, easy solution rejected, hard part, tests with their red mutation, success conditions with an external oracle, and owner questions with a recommendation; no row depends on a draft: `grep -l '^depends_on:.*\(SP-JUDGE-FAILURE-IS-RETRIED\|SP-REVIEW-GROUPS-LARGE-DIFFS\|SP-REVIEW-TOKEN-ESTIMATE\|SP-UNIVERSAL-LEDGER\|SP-AGENT-CONTEXT-LOOP\)' docs/specs/2026-11-15_SP-*.md docs/specs/2026-11-17_SP-{FORGE-RESOLVES-THREADS,THREAD-REPLY-AGENT,GITLAB-NOTE-RECEIVER}_*.md docs/specs/2026-10-25_SP-CI-LEDGER-PERSISTS_*.md docs/specs/2026-10-26_SP-PR-THREADS-REMEMBER-AND-CLOSE_*.md docs/specs/2026-11-12_SP-REVIEW-RESUMES-FAILED-ROLES_*.md docs/specs/2026-11-12_SP-FINDING-CITES-ITS-CODE_*.md` → no output (measured so on this branch, 2026-11-17); `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC2: `pytest -q tests/unit/test_spec_presence.py tests/unit/test_arch_graph.py tests/unit/test_governed_spec.py tests/unit/test_spec_template.py` → green with the files of AC1.
 - [ ] AC5 (0.6): row 8's composite and its three children exist under `docs/specs/2026-10-26_SP-PR-THREADS-REMEMBER-AND-CLOSE_*.md` and `docs/specs/2026-11-17_SP-{FORGE-RESOLVES-THREADS,THREAD-REPLY-AGENT,GITLAB-NOTE-RECEIVER}_*.md`, all `approved`, declared in this spec's `depends_on`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`.
-- [ ] AC3: after spec 3 lands: `repoach chain-status` on the owner's gateway shows `anthropic/…` first in three chains and `repoach budget` prints a line; after 6 and 7: the !366 replay test is green; after 9: a Yoob full round's `review-gate.json` names `claude-fable-5-1` for two lenses.
+- [ ] AC3: after spec 3 lands: `repoach chain-status` on a gateway configured per `docs/getting_started.md` (a fresh one started from the documented settings suffices) shows `anthropic/…` first in three chains and `repoach budget` prints a line; after 6 and 7: the !366 replay test on the anonymised fixture is green in CI; after 9: on any project, a full round's review JSON names `claude-fable-5-1` for two lenses (the fakes of SP-REVIEW-FABLE-TIER's suites prove the placement before any live round). Reference measurement (owner's dogfood): the same three reads on the owner's gateway and the owner's first full round, written beside this line as a second instance.
 - [ ] AC4: SP-REFUTER-INJECTION-HARDEN and `docs/merge_gate.md` carry the amendments the children name (re-open rule narrowed; nits never block; budget and subscription rows), dated 2026-11-15 or the day the child lands.
 
 ## Open Questions
@@ -264,7 +283,7 @@ flowchart LR
 | O5 | Who records the usage-limit fixture: the owner at the next limit via `chain-status --capture-last-error`, or an invented string | SP-SUBSCRIPTION-LIMIT-IS-NAMED Q2 | as recommended: the owner, real answer |
 | O6 | Keep one NIM hop at the end of each reviewer chain as a free last resort | SP-REVIEW-CHAINS-ANTHROPIC-FIRST Q1 | as recommended: no |
 | O7 | Send `minor` to the nit digest too | SP-REVIEW-NITS-ONE-COMMENT Q1 | as recommended: no, as decided |
-| O8 | Who is an `agent` in the history block: `[review].agent_logins` | SP-REVIEW-REMEMBERS-EVERY-ROUND Q1 | as recommended: the setting; on Yoob the agents post as the maintainer |
+| O8 | Who is an `agent` in the history block: `[review].agent_logins` | SP-REVIEW-REMEMBERS-EVERY-ROUND Q1 | as recommended: the setting; in the owner's own projects the agents post as the maintainer, an instance |
 | O9 | History block cap: fixed 12 000 tokens or scaled with the model's context | SP-REVIEW-REMEMBERS-EVERY-ROUND Q2 | as recommended: fixed, named |
 | O10 | Region margin: 3 lines or the hunk's own context | SP-REVIEW-SETTLED-STAYS-SETTLED Q1 | as recommended: 3, named |
 | O11 | An `owner_resolved` finding re-raisable when its region changed | SP-REVIEW-SETTLED-STAYS-SETTLED Q2 | as recommended: no; `/reopen` exists |
