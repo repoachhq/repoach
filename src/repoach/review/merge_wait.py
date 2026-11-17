@@ -239,8 +239,35 @@ def judge_required_checks(
     )
 
 
-def _expand_job_names(job_id: str, job: Mapping[str, Any]) -> list[str]:
-    """The check names one workflow job produces, its matrix expanded."""
+def load_workflow(path: Path) -> Any:
+    """Parse one workflow file with the loader every reader of the workflows shares.
+
+    Args:
+        path: A ``.github/workflows/*.yml`` file.
+
+    Returns:
+        The document as PyYAML's ``safe_load`` returns it; the caller
+        judges its shape.
+
+    Raises:
+        OSError: The file cannot be read.
+        yaml.YAMLError: The file is not valid YAML.
+    """
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def expand_job_names(job_id: str, job: Mapping[str, Any]) -> list[str]:
+    """The check names one workflow job produces, its matrix expanded.
+
+    Args:
+        job_id: The job's key under ``jobs``.
+        job: The job's mapping as :func:`load_workflow` returns it.
+
+    Returns:
+        One name per matrix combination: ``name`` with every
+        ``${{ matrix.<key> }}`` bound, or ``name (<values>)`` when the
+        template names no matrix key; ``[name or job_id]`` without a matrix.
+    """
     template = str(job.get("name") or job_id)
     strategy = job.get("strategy")
     matrix = strategy.get("matrix") if isinstance(strategy, Mapping) else None
@@ -279,7 +306,7 @@ def workflow_checks(root: Path) -> dict[str, list[str]]:
         return found
     for path in sorted([*directory.glob("*.yml"), *directory.glob("*.yaml")]):
         try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            data = load_workflow(path)
         except (OSError, yaml.YAMLError) as exc:
             _log.warning("merge_wait.workflow_unreadable", path=str(path), error=str(exc)[:200])
             continue
@@ -291,7 +318,7 @@ def workflow_checks(root: Path) -> dict[str, list[str]]:
         names: list[str] = []
         for job_id, job in jobs.items():
             if isinstance(job, Mapping):
-                names.extend(_expand_job_names(str(job_id), job))
+                names.extend(expand_job_names(str(job_id), job))
         found[str(data.get("name") or path.stem)] = names
     return found
 
