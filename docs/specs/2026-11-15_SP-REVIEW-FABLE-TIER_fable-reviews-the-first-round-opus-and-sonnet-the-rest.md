@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-FABLE-TIER
 title: A fourth capability tier, FABLE, runs the Architect and the Sentinel on the first round; Opus 5.5 runs the other lenses and the refuter; Sonnet 5.5 runs the replies
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
   code: [src/repoach/review/lens_tiers.py, tests/unit/test_fable_tier.py, tests/unit/test_lens_tier_by_round.py, tests/unit/test_fable_request_shape.py]
   resources: []
 
-depends_on: [SP-ANTHROPIC-BUDGET-GUARD, SP-REVIEW-CHAINS-ANTHROPIC-FIRST, SP-REVIEW-DELTA-FIRST, SP-CODER-TIER-RETIRE-AGENT, SP-CODER-TIER-RETIRE-PROXY, SP-UNIVERSAL-PROVIDERS, SP-PROVIDER-DIRECT-ANTHROPIC, SP-REVIEWER-CHAIN-RENAME, SP-CLAUDE-CODE-FIRST-CLASS, SP-REFUTED-FEEDBACK]
+depends_on: [SP-ANTHROPIC-BUDGET-GUARD, SP-REVIEW-CHAINS-ANTHROPIC-FIRST, SP-REVIEW-DELTA-FIRST, SP-THREAD-REPLY-AGENT, SP-CODER-TIER-RETIRE-AGENT, SP-CODER-TIER-RETIRE-PROXY, SP-UNIVERSAL-PROVIDERS, SP-PROVIDER-DIRECT-ANTHROPIC, SP-REVIEWER-CHAIN-RENAME, SP-CLAUDE-CODE-FIRST-CLASS, SP-REFUTED-FEEDBACK]
 provides_to: []
 
 constraints:
@@ -22,6 +22,15 @@ constraints:
 ---
 
 # A FABLE tier: deeper first rounds so fewer rounds follow
+
+## Amendment (0.4, 2026-11-17): the reply tier has a consumer
+
+D1's row "Thread reply, nit digest, summaries → SONNET" places the
+replies of SP-THREAD-REPLY-AGENT (SP-REVIEW-CONVERGES row 8b), whose
+D4 uses the refuter's tier until this spec lands. This spec therefore
+edits `thread_reply.py` under a new edge so its classification and
+fold calls read `REPLY_TIER`; row 8 lands before this one (row 9), and
+the umbrella's diagram edge `8 → 9` is this one.
 
 ## Amendment (0.3, 2026-11-16): ownership and the round kind
 
@@ -155,6 +164,7 @@ never one that looks like Fable.
 
 - A1: `claude-fable-5-1` is available to the owner's workspace key (the key's `GET /v1/models` lists it; checked in C1).
 - A2: SP-REVIEW-DELTA-FIRST has landed, so the round kind exists; before it, every round is a full round and D1's first column applies.
+- A3 (0.4): SP-THREAD-REPLY-AGENT has landed, so `thread_reply.py` exists to take `REPLY_TIER`; `tests/unit/test_lens_tier_by_round.py::test_placement_table` pins that its classification call asks `CapabilityTier.SONNET`.
 
 ## Interface
 
@@ -216,6 +226,7 @@ report lists five models served; `repoach budget` grows by about 4.20 USD.
 ## Architecture Impact
 - Adds dependency: SP-REVIEW-FABLE-TIER -> SP-ANTHROPIC-BUDGET-GUARD, SP-REVIEW-CHAINS-ANTHROPIC-FIRST (a fourth metered chain, priced and guarded before it exists)
 - Adds dependency: SP-REVIEW-FABLE-TIER -> SP-REVIEW-DELTA-FIRST (placement by round kind)
+- Adds dependency (0.4): SP-REVIEW-FABLE-TIER -> SP-THREAD-REPLY-AGENT (`thread_reply.py` is its; its calls take `REPLY_TIER`, an edit to that file)
 - Adds dependency: SP-REVIEW-FABLE-TIER -> SP-CODER-TIER-RETIRE-AGENT, SP-CODER-TIER-RETIRE-PROXY (the tier enums and classifier they own gain a value)
 - Adds dependency: SP-REVIEW-FABLE-TIER -> SP-UNIVERSAL-PROVIDERS, SP-PROVIDER-DIRECT-ANTHROPIC, SP-CLAUDE-CODE-FIRST-CLASS (model tables, request shape, the CLI tail)
 - Adds dependency: SP-REVIEW-FABLE-TIER -> SP-REVIEWER-CHAIN-RENAME (a fourth proxy chain constant), SP-REFUTED-FEEDBACK (record keyed by model)

@@ -1,7 +1,7 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: Composite — one finding, one forge thread that remembers its exchanges and is closed only by its role or a maintainer
-version: 0.7
+version: 0.8
 status: approved
 author: agent
 created: 2026-10-26
@@ -15,17 +15,30 @@ depends_on: []
 provides_to: []
 
 constraints:
-  agent_rounds_max_per_thread: 2
-  disputed_rounds_before_escalation: 1
-  coder_rounds_max_per_thread: 2
-  coder_dispatches_per_thread_and_head: 1
-  deferral_replies_per_thread_and_head: 1
-  scheduled_fallback_minutes: 15
-  thread_history_tokens_max: 12000
   ledger_format_after: none
 ---
 
 # Composite — one finding, one thread, closed by its role or a maintainer
+
+## Amendment (0.8, 2026-11-17): the children's constraints live in the children; the facts the verifier corrected
+
+The numeric constraints 0.7 repeated (`agent_rounds_max_per_thread`,
+`disputed_rounds_before_escalation`, `coder_rounds_max_per_thread`,
+`coder_dispatches_per_thread_and_head`,
+`deferral_replies_per_thread_and_head`, `thread_history_tokens_max`,
+`scheduled_fallback_minutes`) are 8b's and 8c's and are read there;
+this composite keeps the one it states for the three, `ledger_format_after:
+none`. F10 and the D15 row said `review pr` runs on
+`pull_request_review`; it runs the `rearm` job only
+(`auto-review.yml:141-156`). B-174 sits at Yoob `docs/BACKLOG.md:212`.
+8a's writes are `resolve_review_thread` / `unresolve_review_thread`
+(8a 0.2, apart from the ledger's `finding_posts.resolve_thread`); the
+closer rule reads the root comment's author from the forge
+(`ReviewThread.opened_by`, 8a D4), never from a table; `threads reply`
+applies the owner commands before handling (8b D3), so on GitLab a
+`/resolve` note settles in the run it starts; 8c accepts a `Note Hook`
+by someone other than the bot and starts at most one pipeline per
+merge request per window, and its fallback reads the forge.
 
 ## Amendment (0.7, 2026-11-17): scheduled, split in three, reconciled with what is in force
 
@@ -47,9 +60,9 @@ cycles to the 27 of `repoach arch graph --check`):
 
 | Order | Child | Capability |
 |---|---|---|
-| 8a | SP-FORGE-RESOLVES-THREADS | `Forge.resolve_thread` / `unresolve_thread` on both forges, behind the write barrier |
+| 8a | SP-FORGE-RESOLVES-THREADS | `Forge.resolve_review_thread` / `unresolve_review_thread` on both forges, behind the write barrier; `ReviewThread.node_id`, `opened_by` |
 | 8b | SP-THREAD-REPLY-AGENT | the opening role answers in its thread from the ledger, dispatches a coder per thread, mirrors owner settlements, closes; `finding_threads`, `finding_thread_events`; `repoach threads` |
-| 8c | SP-GITLAB-NOTE-RECEIVER | a GitLab note starts one thread-reply pipeline through an authenticated webhook on hel1, with a scheduled fallback |
+| 8c | SP-GITLAB-NOTE-RECEIVER | a GitLab note by someone other than the bot starts at most one thread-reply pipeline per merge request per window, through an authenticated webhook on hel1, with a scheduled fallback read from the forge; its job caches the ledger through SP-CI-LEDGER-PERSISTS (umbrella row 7b) |
 
 ### Reconciliation (owner decision 2026-11-17: the draft follows the approved rule)
 
@@ -63,14 +76,15 @@ cycles to the 27 of `repoach arch graph --check`):
 | M3, A1, Interface: `finding_threads.thread_id` holds the GraphQL node id and `root_comment_id` the REST id; `finding_posts` does not exist | `finding_posts` exists with `thread_id` (GitHub root comment id, GitLab discussion id), `thread_closed_at_head`, `thread_closed_by`; `ReviewThread` carries `root_id`, `thread_id`, `resolved`, `resolved_by`; GitHub's GraphQL `reviewThreads` read fills `resolved_by` from `resolvedBy` | SP-FINDING-THREAD-IDS 0.7; `finding_posts.py:74-91`, `:372`; `protocol.py:567`; `github.py:389-395` |
 | D1, G2: a fingerprint that already has a thread is never posted again, "superseding SP-POSTING-REPLAY-DEDUPES NG1"; Edge: re-anchoring by `match_key` | a settled finding is not re-raised on an unchanged region (`reraise_suppressed`), a changed region gives a new finding that `supersedes` the settled one, both as `finding_events` rows; the cross-head name of a finding is `finding_key = F-<7 hex>` of claim type, file and normalised claim — exactly what 0.6 called `match_key`. 8b keys its row by it and joins an *unsettled* finding raised again to its open thread | SP-REVIEW-SETTLED-STAYS-SETTLED D4, D5, D11, D13–D14; `findings_bridge.py:170` (`normalised_claim`) |
 | D6: the three-voice context and the summarizer come from SP-AGENT-CONTEXT-LOOP (#246); A2, R4: AC17 waits for it | `src/repoach/review/agent_context.py` is absent on `92cd241` and the spec is a draft; 8b specifies its own bounded window: a fixed cap, `thread_history_tokens_max` (12 000, the figure the owner took for the history block, SP-REVIEW-CONVERGES O9), and a fold the reply role itself writes and the row stores. No dependency on a draft, no planned criterion | SP-REVIEW-CONVERGES O9; `git cat-file -e origin/develop:src/repoach/review/agent_context.py` → absent |
-| D15, AC25: `auto-review.yml` gains `pull_request_review_comment` (`created`, `edited`) and runs `threads reply` | the trigger exists with type `created`, and that run executes `review pr`, which 8b makes the handler; `edited` is not added: an edited command is refused by SP-OWNER-SETTLES-A-FINDING G2 and an edited author reply is handled once, at its creation | `.github/workflows/auto-review.yml:29-30`, `:75`, `:566` |
-| F19: Yoob B-174 at `docs/BACKLOG.md:193`, "decision needed" | the row sits at `docs/BACKLOG.md:205` and already names this spec as the decision; the setting it proposed is on | Yoob `docs/BACKLOG.md:205` |
+| D15, AC25: `auto-review.yml` gains `pull_request_review_comment` (`created`, `edited`) and runs `threads reply` | the trigger exists with type `created`, and that run executes `review pr`, which 8b makes the handler; `pull_request_review` (a submitted review) runs the `rearm` job only and starts no review (0.8); `edited` is not added: an edited command is refused by SP-OWNER-SETTLES-A-FINDING G2 and an edited author reply is handled once, at its creation | `.github/workflows/auto-review.yml:19-30`, `:75`, `:141-156`, `:566` |
+| F19: Yoob B-174 at `docs/BACKLOG.md:193`, "decision needed" | the row sits at `docs/BACKLOG.md:212` (Yoob `origin/develop` `6ee04ab`, 0.8) and already names this spec as the decision; the setting it proposed is on | Yoob `docs/BACKLOG.md:212` |
 | Interface: `finding_thread_events` holds every event, re-raises included (0.4 of SETTLED wrote `reraise_suppressed` there) | `reraise_suppressed` and `supersedes` live in `finding_events` (SETTLED D14); `finding_thread_events` is the exchange log of a thread, one table per responsibility, and copies nothing from `finding_events`: the replay reads both | SP-REVIEW-SETTLED-STAYS-SETTLED D14 ("builds on this table or declares its own beside it") |
-| Deployment H1–H7 measured 2026-10-26; secrets in `/etc/repoach/threads-serve.env` | re-measured 2026-11-17 (8c Context): unchanged except systemd 255.4 with `systemd-creds`, and a tailscale interface; the secrets are systemd encrypted credentials, never a plain file, never argv, never the environment (owner rule "never in files") | `ssh hel1`, 2026-11-17 |
+| Deployment H1–H7 measured 2026-10-26 on the owner's host; secrets in `/etc/repoach/threads-serve.env` | the host's facts are 8c's "Example deployment" section (re-measured 2026-11-17), not its design: the receiver is specified for any host and proxy, its bind and GitLab URL are configuration, and the secrets come from a credentials directory (systemd encrypted credentials, systemd `LoadCredential`, Docker secrets or an owner-only directory), never a plain file in clear, never argv, never the environment | 8c D2, D9, D10, Example deployment |
 
 Facts of 0.6 that still hold on `92cd241` and are the children's ground: no
-`resolve_thread` / `unresolve_thread` on any forge (`git grep -n
-"def resolve_thread\|def unresolve_thread" origin/develop -- src` → 0);
+thread write on any forge (`git grep -n "def resolve_review_thread\|def
+unresolve_review_thread" origin/develop -- src` → 0; the one
+`def resolve_thread` is the ledger read `finding_posts.py:266`, 8a F1);
 `grep -rn "finding_threads\|finding_thread_events" src` → 0; the
 `thread_context.py` docstring still names `coder_loop._format_evidence_reply`,
 a writer that no longer exists (`thread_context.py:37`; the only sentinel
@@ -110,7 +124,7 @@ children re-cite the lines they act on.
 | F7 | `reverify_older_findings` ends an older unsettled finding `resolved` / `still_open` / `needs_judgement` at the head; `_UNSETTLED` is `proposed`, `verified`, `open`, `stuck` | `head_reverify.py:66`, `:135` |
 | F8 | `build_evidence` fills a token budget from the cited file, grep hits, diff hunks and the spec section, naming what it left out (`PARTIAL EVIDENCE`); floor `REFUTER_CONTEXT_TOKENS_FLOOR = 40_000` | `refuter_evidence.py:1025`, `:1100`; `project/config.py:78` |
 | F9 | The coder is dispatched for the PR's open blocking findings, commits and pushes to the PR head branch (`git_commit_and_push`), capped at `MAX_CODER_ROUNDS = 3` with the stall detector | `coder_findings.py:78`, `:430`, `:723`; `stuck.py:48`, `:183` |
-| F10 | `review pr` runs on GitHub on `pull_request`, `issue_comment`, `pull_request_review` and `pull_request_review_comment` (`created`); on Yoob it runs in the MR pipeline, which a note does not start | `.github/workflows/auto-review.yml:17-30`, `:566`; Yoob `.gitlab-ci.yml:12-16` |
+| F10 | `review pr` runs on GitHub on `pull_request`, `issue_comment` and `pull_request_review_comment` (`created`); `pull_request_review` runs the `rearm` job only (0.8); on Yoob it runs in the MR pipeline, which a note does not start | `.github/workflows/auto-review.yml:17-30`, `:141-156`, `:566`; Yoob `.gitlab-ci.yml:12-16` |
 | F11 | Both forges require resolved threads before a merge (2026-11-17): GitLab `only_allow_merge_if_all_discussions_are_resolved: true`; GitHub rulesets 25641051, 25641050 `required_review_thread_resolution: true` | `glab api projects/67827362`; `gh api repos/repoachhq/repoach/rulesets/<id>` |
 | F12 | The ledger format is 1 on `fix/ledger-format-is-versioned` (`LEDGER_FORMAT = 1`, `GATE_TABLES` five tables, `tests/fixtures/ledger_format/1.json` only); 2 is SP-FINDING-CITES-ITS-CODE, 3 SP-REVIEW-DELTA-FIRST | `src/repoach/review/ledger_format.py:71`, `:84`, `:246` on that branch; SP-REVIEW-CONVERGES G1 |
 | F13 | `finding_events` (SETTLED D14, to be built by order row 6) holds `reraise_suppressed` and `supersedes` per finding, unique on `(finding_id, kind, related_finding_id, head_sha)`; it is read by no gate | SP-REVIEW-SETTLED-STAYS-SETTLED D13–D14 |
@@ -136,13 +150,15 @@ children re-cite the lines they act on.
   bot-opened thread resolved by a login that is neither the bot nor a
   maintainer. The forge settings are on (F11) and are the second line
   of defence.
-- **D4 Bounded.** At most `agent_rounds_max_per_thread` agent rounds,
-  then `escalated to owner`. Agents reply only on an event; replaying
-  an event never duplicates a reply.
+- **D4 Bounded.** At most `agent_rounds_max_per_thread` agent rounds
+  (8b's constraint, 2), then `escalated to owner`. Agents reply only on
+  an event; replaying an event never duplicates a reply.
 - **D5 Owner commands** are those of SP-OWNER-SETTLES-A-FINDING:
   `/resolve <reason>` and `/reopen`, by a maintainer the forge
-  reports, applied by `review pr`. 8b mirrors them on the forge thread
-  and in the thread memory; it applies none itself.
+  reports, applied by `apply_owner_commands`, which both `review pr`
+  and `threads reply` run before the handler (8b D3, 0.8). 8b mirrors
+  them on the forge thread and in the thread memory; it applies none
+  itself.
 - **D6 Context in three voices.** `system` = the role's prompt plus
   the closure protocol; the thread history replayed from
   `finding_thread_events` as alternating turns, each prefixed `[head
@@ -164,8 +180,10 @@ children re-cite the lines they act on.
 - **D9 Owners** are the maintainers the forge reports (Reconciliation).
 - **D10 Events reach the handler.** GitHub: `review pr`, already run
   on every comment event (F10), handles the thread events. GitLab: the
-  receiver of 8c starts one `threads reply` pipeline per note, with a
-  `scheduled_fallback_minutes` schedule as the fallback.
+  receiver of 8c starts at most one `threads reply` pipeline per merge
+  request per window on a note by someone other than the bot, with a
+  schedule (8c's `scheduled_fallback_minutes`, 15) that reads the forge
+  for unanswered threads as the fallback.
 - **D11 Where the coder commits.** On the PR branch; a fix of several
   commits on `fix/<pr>-<key7>` merged into the PR branch with
   `--no-ff`. Never squashed, never force-pushed.
@@ -173,9 +191,12 @@ children re-cite the lines they act on.
   reaches it (Reconciliation).
 - **D13 A coder that cannot push escalates at once** with `coder
   cannot push to <fork>`; no coder round is spent.
-- **D14 The GitLab receiver runs on hel1** beside the runners, as a
-  systemd unit reached through the existing nginx at
-  `https://yoob.dev/hooks/repoach` (8c).
+- **D14 The GitLab receiver is the operator's to host** (0.8, owner
+  principle 2026-11-17: repoach is for everyone): any host, behind any
+  reverse proxy or TLS terminator or none on a private network, with a
+  sample hardened systemd unit pair; the owner runs it on hel1 behind
+  Yoob's nginx, which is 8c's example deployment and not its design
+  (8c D9–D10, "Example deployment").
 - **D15 GitHub has no receiver** (F10; Reconciliation).
 
 ## End state
@@ -217,9 +238,9 @@ twice, converge on the same forge state and post nothing twice.
 ## Goals
 
 - G1 (order): the three children land as three pull requests, 8a, 8b, 8c, each green on its tests and on `repoach arch check --base origin/develop` before the next, after SP-REVIEW-DELTA-FIRST and before SP-REVIEW-FABLE-TIER (SP-REVIEW-CONVERGES G1).
-- G2 (thread writes): `Forge.resolve_thread` / `unresolve_thread` on both forges, behind the write barrier (8a).
+- G2 (thread writes): `Forge.resolve_review_thread` / `unresolve_review_thread` on both forges, behind the write barrier; `ReviewThread.opened_by` for the closer rule (8a).
 - G3 (the agent): every event in a finding's thread is handled exactly once, classified, acted on, answered with one state line, and mirrored on the forge; a confirmed thread goes to the coder once per head; two tables remember it; `repoach threads` shows it (8b).
-- G4 (GitLab events): a note on a Yoob MR starts one `threads reply` pipeline within seconds through an authenticated webhook, or within `scheduled_fallback_minutes` through the schedule (8c).
+- G4 (GitLab events): a non-bot note on a Yoob MR starts one `threads reply` pipeline within 8c's `coalesce_window_seconds` through an authenticated webhook, or within its `scheduled_fallback_minutes` through the schedule (8c).
 - G5 (format): no child adds a gate table, a gate column or an enum value: `LEDGER_FORMAT` stays what SP-REVIEW-DELTA-FIRST leaves it (3), and `python -m repoach.review.ledger_format snapshot | jq -r '.tables|keys[]'` names neither `finding_threads` nor `finding_thread_events` after 8b.
 
 ## Non-Goals
@@ -251,8 +272,8 @@ Shared vocabulary of the three children, defined once:
 | state line | the last visible line of every agent reply, `^state: (open\|resolved \((?P<reason>[^)]+)\)\|escalated to owner)$` | 8b `format:thread-state-line` |
 | reply marker | `<!-- repoach-thread:<finding_key> event:<event_key> round:<n> -->`, the hidden last line of every agent reply | 8b `format:thread-reply-marker` |
 | `event_key` | `comment:<forge id>`, `head:<sha12>`, `forge-resolved:<sha12>:<login>`, `coder:<sha12>:<n>`, `owner:<comment id>` | 8b Interface |
-| closer rule | a bot-opened thread may be resolved by the bot or a maintainer (`is_maintainer`); any other resolver is undone and named | D3; 8b G5 |
-| note hook | a GitLab `Note Hook` or `Merge Request Hook` delivery, authenticated by `X-Gitlab-Token` | 8c `format:gitlab-note-webhook` |
+| closer rule | a thread whose `opened_by` is the bot may be resolved by the bot or a maintainer (`is_maintainer`); any other resolver is undone and named; an unreadable `is_maintainer` fails the gate's read closed | D3; 8a D4; 8b D8, G5 |
+| note hook | a GitLab `Note Hook` delivery on a merge request by someone other than the bot, authenticated by `X-Gitlab-Token` on the headers; a `Merge Request Hook` starts nothing | 8c `format:gitlab-note-webhook`, D5 |
 
 ## Behavior
 
@@ -267,9 +288,11 @@ Shared vocabulary of the three children, defined once:
 3. The handler classifies (D2), acts (re-verify, refuter, coder,
    answer), posts one reply with the state line and the marker,
    resolves or unresolves the thread to match (8a), records the event.
-4. A maintainer's `/resolve` is applied by `review pr`
-   (SP-OWNER-SETTLES-A-FINDING); 8b then resolves the forge thread in
-   the role's name with `state: resolved (owner: <reason>)`.
+4. A maintainer's `/resolve` is applied by `apply_owner_commands`
+   (SP-OWNER-SETTLES-A-FINDING) in `review pr` on GitHub and in the
+   `threads reply` run the note starts on GitLab (8b D3); 8b then
+   resolves the forge thread in the role's name with `state: resolved
+   (owner: <reason>)`.
 5. The gate refuses while any thread is unresolved (F5) or a bot
    thread was resolved by a non-maintainer (8b G5); it merges when
    every thread is resolved by its role or a maintainer.
@@ -283,7 +306,7 @@ Shared vocabulary of the three children, defined once:
 
 - The forge read fails → nothing is written; `threads reply` exits 2; the gate already refuses (`review threads unreadable`).
 - The model call fails → no reply, no state change, the event stays unhandled for the next run.
-- A webhook is lost → the scheduled fallback starts the run within `scheduled_fallback_minutes`.
+- A webhook is lost → the scheduled fallback starts the run within 8c's `scheduled_fallback_minutes`.
 
 ## Tables and the ledger format
 
@@ -325,7 +348,7 @@ flowchart LR
     H --> R[reply + state line + marker]
     H --> W[8a resolve / unresolve]
     H --> L[(finding_threads, finding_thread_events)]
-    N[GitLab note] --> C[8c receiver on hel1] --> P[threads:reply pipeline] --> H
+    N[GitLab note] --> C[8c receiver on the operator's host] --> P[threads:reply pipeline] --> H
 ```
 
 ## Acceptance Criteria
@@ -333,8 +356,8 @@ flowchart LR
 - [ ] AC1 (composite): the three child specs exist under `docs/specs/2026-11-17_SP-{FORGE-RESOLVES-THREADS,THREAD-REPLY-AGENT,GITLAB-NOTE-RECEIVER}_*.md`, each `approved` with its own End state, Easy solution rejected, Hard part, Tests with their red mutation, Success conditions with an external oracle; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`; `pytest -q tests/unit/test_spec_presence.py tests/unit/test_arch_graph.py tests/unit/test_governed_spec.py tests/unit/test_spec_template.py` → green.
 - [ ] AC2 (order): SP-REVIEW-CONVERGES G1 lists this spec as row 8 between SP-REVIEW-DELTA-FIRST and SP-REVIEW-FABLE-TIER, and its "Tables" paragraph names `finding_threads` and `finding_thread_events` as built by 8b and read by no gate.
 - [ ] AC3 (format, after 8b): `python -m repoach.review.ledger_format snapshot | jq -r '.tables|keys[]'` → the same lines as on `origin/develop`; `ls tests/fixtures/ledger_format/` gains no file.
-- [ ] AC4 (forge settings, live): `glab api projects/67827362 | jq .only_allow_merge_if_all_discussions_are_resolved` → `true`; `gh api repos/repoachhq/repoach/rulesets/25641051 --jq '.rules[]|select(.type=="pull_request")|.parameters.required_review_thread_resolution'` → `true`, and the same for `25641050`. Measured so on 2026-11-17.
-- [ ] AC5 (end state, live, after 8c): on the first Yoob MR reviewed after 8c, one author reply in a finding's thread is answered by the opening role within `scheduled_fallback_minutes` with a reply ending in a state line, and `repoach threads <mr> --json` lists that thread with `rounds: 1`.
+- [ ] AC4 (forge settings, live, on the project where the composite is deployed): GitLab `glab api projects/<id> | jq .only_allow_merge_if_all_discussions_are_resolved` → `true`; GitHub `gh api repos/<owner>/<repo>/rulesets/<id> --jq '.rules[]|select(.type=="pull_request")|.parameters.required_review_thread_resolution'` → `true` for each ruleset that protects the target branch. Measured `true` on 2026-11-17 for the owner's two projects (GitLab `67827362`; GitHub rulesets `25641051`, `25641050`), as an example.
+- [ ] AC5 (end state, live, after 8c): on the first Yoob MR reviewed after 8c, one author reply in a finding's thread is answered by the opening role within 8c's `scheduled_fallback_minutes` with a reply ending in a state line, and `repoach threads <mr> --json` lists that thread with `rounds: 1`.
 
 ## Open Questions
 
