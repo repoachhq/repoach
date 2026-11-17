@@ -232,19 +232,22 @@ Rule (SP-LEDGER-FORMAT-IS-VERSIONED, 2026-11-17). `merge-on-ci.yml` runs
 so the reader can be older than the writer. A value the reader does not
 define is a named refusal, never a traceback.
 
-- The review run stamps the ledger after its last write (`review pr`):
-  table `ledger_meta`, rows `format` (`LEDGER_FORMAT`, 1 today),
+- The review run stamps the ledger after its last write (`review pr`,
+  and `review fix` before the coder job re-uploads it): table
+  `ledger_meta`, rows `format` (`LEDGER_FORMAT`, 1 today),
   `written_by` (`repoach.__version__`) and `written_at`. A ledger
   without `ledger_meta` is format 0, unstamped, read as before.
 - Both gate entry points, `review merge` (`run_auto_merge`) and
   `review gate`, check the ledger before any row is read, right after
   the base and state checks. The first of these refuses: a format newer
   than the reader's; a declared column of `pr_findings`,
-  `pr_review_integrity`, `pr_spec_coverage` or `pr_merges` the file
-  lacks (on an unstamped or older ledger, the columns the reader's own
-  migrations add on open are exempt: it heals them, as it always did);
-  a value of `pr_findings.claim_type`, `severity` or `status`, among
-  the pull request's rows, outside the reader's enum.
+  `pr_review_integrity`, `pr_spec_coverage`, `pr_merges` or
+  `generated_checks` the file lacks (on an unstamped or older ledger,
+  the columns the reader's own migrations add on open are exempt: it
+  heals them, as it always did); a value, among the pull request's
+  rows, of `pr_findings.claim_type`, `severity` or `status`,
+  `pr_spec_coverage.contract`, `generated_checks.state` or
+  `script_ref` outside the vocabulary the reader decodes it into.
 - The outcome is `SKIP_LEDGER_SKEW`, exit 5, recorded in `pr_merges`
   and in the merge attempts comment:
   `SKIP_LEDGER_SKEW — ledger skew: pr_findings.severity='later' is not a Severity this reader knows (written by repoach 0.2.0.dev14+gabc1234; this gate is repoach 0.1.0); a release carrying format 2 is needed before this lane can judge this head`.

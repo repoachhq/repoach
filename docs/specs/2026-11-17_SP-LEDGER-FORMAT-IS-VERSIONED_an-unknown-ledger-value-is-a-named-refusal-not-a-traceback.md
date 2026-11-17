@@ -1,7 +1,7 @@
 ---
 id: SP-LEDGER-FORMAT-IS-VERSIONED
 title: The findings ledger carries its format and writer version; a value, column or format the reader does not know is a named refusal on the pull request, never a traceback
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-17
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/ledger_format.py, tests/unit/test_ledger_format_skew.py, tests/fixtures/ledger_format/, tests/fixtures/ledger_skew/, scripts/skew_replay.sh]
   resources: [db:table:ledger_meta, format:ledger-format]
 
-depends_on: [SP-FINDINGS-INIT-RACE, SP-MERGE-EXIT-CONTRACT, SP-REVIEW-PERSIST-RECORDED-AT, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-ORCH-DOCSTRING, SP-DB-PATH-XDG]
+depends_on: [SP-FINDINGS-INIT-RACE, SP-MERGE-EXIT-CONTRACT, SP-REVIEW-PERSIST-RECORDED-AT, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-ORCH-DOCSTRING, SP-DB-PATH-XDG, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ, SP-DEDUP-CLASSIFICATION-CONSTANTS]
 provides_to: []
 
 constraints:
@@ -49,7 +49,7 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
 | F3 | Run 43995248874 (2026-11-17 01:24Z, `main` at `74cf2be`): traceback at `findings.py:765` (that release's line), `ValueError: 'note' is not a valid Severity`, `Process completed with exit code 1`; the writer was PR #302's code (`3c0ba97`, merged 2026-11-16), the reader release 11's predecessor; release #304 (`b963130`) cleared it | `gh run view 43995248874 --log-failed` |
 | F4 | The enums the ledger stores: `Severity` 3 values, `FindingStatus` 10 values, `ClaimType` 8 values; `pr_findings` has 20 columns (the id and 19 data columns; 0.2 said 19, measured 20 on `5cea5a7` in 0.3); four columns were added after creation by `ALTER TABLE` migrations named with their spec; `init_findings_schema` runs them on every open | `src/repoach/review/findings.py:51-61,90-102,143-153,269-291,450-493` |
 | F5 | One table is already versioned: `pr_spec_coverage.rule_version` (`SPEC_COVERAGE_RULE_VERSION = 2`), a stale row is re-graded (`refresh_stale_coverage`) and a row that cannot be re-graded is `StaleCoverageRecomputeError`, caught by the gate | `src/repoach/review/spec_gate.py:63,92,103,263`; `src/repoach/review/auto_merge.py:118,860` |
-| F6 | The gate reads, from the ledger, `pr_findings`, `pr_review_integrity`, `pr_spec_coverage` and `pr_merges`; SQLAlchemy `select(table)` names the declared columns, so an extra column written by a newer writer is never read, and a declared column the file lacks is an `OperationalError` at query time | `src/repoach/review/merge_gate.py:33-34,402,469`; `src/repoach/review/findings.py:269-316`; `src/repoach/review/persistence.py:112`; `src/repoach/review/spec_gate.py:79` |
+| F6 | The gate reads, from the ledger, `pr_findings`, `pr_review_integrity`, `pr_spec_coverage`, `pr_merges` and `generated_checks` (0.3 said four tables: `reverify_older_findings` → `settlements_at_head` → `fetch_generated_checks` reads the fifth at every later head, and builds `GeneratedState(row.state)`, which raises on an unknown value; measured in 0.4); SQLAlchemy `select(table)` names the declared columns, so an extra column written by a newer writer is never read, and a declared column the file lacks is an `OperationalError` at query time | `src/repoach/review/merge_gate.py:33-34,402,469`; `src/repoach/review/findings.py:269-316`; `src/repoach/review/persistence.py:112`; `src/repoach/review/spec_gate.py:79`; `src/repoach/review/head_reverify.py:625`; `src/repoach/review/generated_store.py:152-196` |
 | F7 | `repoach.__version__` is the installed metadata (`hatch-vcs`, `release-branch-semver`): `0.1.0` on the tag, `0.2.0.devN+g<sha>` after it | `src/repoach/__init__.py:6-8`; `pyproject.toml:3,78,85`; `docs/releasing.md` |
 | F8 | The attempts comment records every outcome through `upsert_attempt`, inside a `try` that logs and never changes the outcome; `merge_exit_code` maps `SKIP_*` to 5 and anything unrecognised to 1 | `src/repoach/review/auto_merge.py:204-214,1155-1176`; `src/repoach/review/merge_wait.py:496-520` |
 
@@ -147,6 +147,39 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
     read the attempts comment (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF),
     run the orchestrator under `review pr` (SP-ORCH-DOCSTRING) and copy
     the settings (SP-DB-PATH-XDG). The dependency cycles stay 27.
+- D9 (amendment 0.4, verifier findings, 2026-11-17). No owner decision
+  changes; the shape is the one `develop` already writes.
+  - `generated_checks` is a gate table (F6 corrected): it joins
+    `GATE_TABLES`, and its columns join `1.json`. Bootstrap (Hard
+    part): `generated_store.py`, `generated_types.py` and
+    `spec_gate.py` are byte-identical to `origin/develop` `92cd241` on
+    this branch (`git diff --stat origin/develop` lists none of them),
+    so format 1 still is "what the ledger already was"; T7 pins it.
+  - D3's value check covers every gate-table column a reader decodes
+    into a closed vocabulary, not the three of `pr_findings` alone:
+    `pr_findings.{claim_type,severity,status}`,
+    `pr_spec_coverage.contract` (`ContractKind`),
+    `generated_checks.state` (`GeneratedState`) and
+    `generated_checks.script_ref` (`ScriptRef`), each scoped to the
+    pull request's rows, `<table>.<column>='<v>' is not a <Vocabulary>
+    this reader knows`. `contract` and `script_ref` were decoded by a
+    fallback (unknown → `""`, unknown → `head`): a silent re-judgement
+    of a value the writer meant otherwise, the class Easy solution
+    rejected. The decoders keep their fallback, owned by their specs;
+    on the gate path the check now runs first, so no unknown value
+    reaches them. A healed column a file lacks (`contract` on an older
+    ledger) holds no value to check and is skipped.
+  - One wording for a stamp that is not a format: `ledger_meta.format=
+    '<raw>' is not a positive integer`, for `x`, `0` and `-1` alike.
+  - `review fix` stamps an existing ledger once the Coder returns: the
+    coder job re-uploads the ledger (`auto-review.yml`, "Upload
+    findings ledger (post-fix)") with rows its own code wrote, whatever
+    the in-run re-review does next.
+  - Edge: `ledger_format.py` imports `generated_checks`,
+    `record_generated_checks`, `GeneratedCheck`, `GeneratedState` and
+    `ScriptRef` from SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ's files;
+    the `review fix` stamp test builds a `CoderFindingsResult`
+    (SP-DEDUP-CLASSIFICATION-CONSTANTS). The dependency cycles stay 27.
 
 ## End state
 
@@ -271,7 +304,7 @@ A stamped ledger of format `LEDGER_FORMAT` with known values →
 - a pull request with no rows → `rows_checked 0`, proceeds.
 
 ### Failure scenarios
-- `ledger_meta` present with a non-integer `format` → `LedgerSkewError: ledger_meta.format='x' is not an integer`.
+- `ledger_meta` present with a `format` that is not a positive integer (`x`, `0`, `-1`) → `LedgerSkewError: ledger_meta.format='x' is not a positive integer` (one wording, D8 and D9).
 - the SQLite file is unreadable → the existing `OperationalError` path, unchanged (not a skew).
 - `scripts/skew_replay.sh` cannot resolve a ref → exit 2 naming it, no worktree left behind.
 
@@ -281,13 +314,13 @@ A stamped ledger of format `LEDGER_FORMAT` with known values →
 |---|---|---|---|
 | T1 | `tests/unit/test_ledger_format_skew.py` | `test_live_snapshot_matches_the_committed_format`: `snapshot()` equals `tests/fixtures/ledger_format/1.json` | add `Severity.LATER = "later"` without bumping |
 | T2 | same | the newer-shaped payload: `tests/fixtures/ledger_skew/format_2_with_later_severity.sql` (a text dump: `ledger_meta` format 2, writer `repoach 9.9.9`, a `pr_findings` row with `severity='later'`) loaded into a temp SQLite → `check` raises naming `format 2 is newer than this reader's 1` and both versions | skip the format comparison |
-| T3 | same | same format, one row `severity='later'` → raises naming `pr_findings.severity='later'`; same for `status` and `claim_type` | drop one of the three queries |
-| T4 | same | a declared column dropped from the fixture (`ALTER TABLE … DROP COLUMN budget_used`) → raises naming the column before any row is read | let `select` raise `OperationalError` |
+| T3 | same | same format, one row `severity='later'` → raises naming `pr_findings.severity='later'`; same for `status` and `claim_type`, and (0.4) for `pr_spec_coverage.contract`, `generated_checks.state` and `generated_checks.script_ref`, scoped to the pull request's rows; `fetch_generated_checks` raises `ValueError` on the same ledger | drop one of the six entries of `ENUM_COLUMNS` |
+| T4 | same | a declared column dropped from the fixture (`ALTER TABLE … DROP COLUMN budget_used`) → raises naming the column before any row is read, for each of the five gate tables; an unstamped ledger lacking the healed `contract` column proceeds | let `select` raise `OperationalError`; query an absent healed column |
 | T5 | same | `run_auto_merge` with a forge fake and a skewed ledger → outcome `SKIP_LEDGER_SKEW`, `merge_exit_code` 5, one attempt recorded with the reason; `review gate` prints the line and exits 5; no traceback (`capsys`) | let `LedgerSkewError` propagate |
 | T6 | same | an unstamped ledger with known values proceeds; a stamped lower format proceeds; `rows_checked` counts the pull request's rows only | refuse format 0 |
-| T7 | same | format 1 is what the ledger already was: `1.json` lists exactly 3 severities, 10 statuses, 8 claim types and the 20 `pr_findings` columns of F4, plus the columns of `pr_review_integrity`, `pr_spec_coverage` and `pr_merges` as they are on `origin/develop` `5cea5a7` | add an enum value or a column in this pull request |
-| T8 | same | `demo_ledger` writes one finding per value of every enum, stamped; `check` on it passes with `rows_checked == 8 + 3 + 10 == 21` (one row per value of each enum) | leave an enum out |
-| T9 | same | `scripts/skew_replay.sh HEAD HEAD` exits 0 with `ledger: ok`; the test runs it in a temp clone of the working tree, `--keep` absent, and asserts `tmp/skew/` is removed | leave the worktrees behind |
+| T7 | same | format 1 is what the ledger already was: `1.json` lists exactly 3 severities, 10 statuses, 8 claim types and the 20 `pr_findings` columns of F4, plus the columns of `pr_review_integrity`, `pr_spec_coverage` and `pr_merges` as they are on `origin/develop` `5cea5a7`, and (0.4) `generated_checks`'s 17 columns, the 6 `GeneratedState` values, the 2 `ScriptRef` values and the 5 `ContractKind` values as they are on `origin/develop` `92cd241` | add an enum value or a column in this pull request |
+| T8 | same | `demo_ledger` writes one finding per value of every enum, one coverage row per contract kind and one generated check per state (both script refs among them), stamped; `check` on it passes with `rows_checked == 8 + 3 + 10 == 21` (the `pr_findings` rows) | leave an enum out |
+| T9 | same | `scripts/skew_replay.sh HEAD HEAD` exits 0 with `ledger: ok`; the test runs the working tree's script (0.4: not the clone's committed copy, so an uncommitted edit is the one judged) inside a temp clone whose refs it replays, `--keep` absent, and asserts `tmp/skew/` is removed | leave the worktrees behind; check with the writer's code (both uncommitted) |
 
 ## Success conditions
 
@@ -320,6 +353,8 @@ A stamped ledger of format `LEDGER_FORMAT` with known values →
 - Adds dependency: SP-LEDGER-FORMAT-IS-VERSIONED -> SP-FINDINGS-INIT-RACE (`ledger_format.py` imports the `Table` objects, the enums and `init_findings_schema` from `findings.py`, that spec's file)
 - Adds dependency: SP-LEDGER-FORMAT-IS-VERSIONED -> SP-MERGE-EXIT-CONTRACT (the new outcome is one of its exit-5 skips; the tag joins the table in the `review merge` docstring)
 - Adds dependency (0.3): SP-LEDGER-FORMAT-IS-VERSIONED -> SP-REVIEW-PERSIST-RECORDED-AT (`ledger_format.py` imports `_pr_merges`, `_ADDED_REVIEW_COLUMNS` and `init_schema` from `persistence.py`, that spec's file)
+- Adds dependency (0.4): SP-LEDGER-FORMAT-IS-VERSIONED -> SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ (`ledger_format.py` imports the `generated_checks` table, its writer and its vocabularies from `generated_store.py` and `generated_types.py`, D9)
+- Adds dependency (0.4): SP-LEDGER-FORMAT-IS-VERSIONED -> SP-DEDUP-CLASSIFICATION-CONSTANTS (the `review fix` stamp test builds a real `CoderFindingsResult` from `coder_findings.py`, D9)
 - Adds dependency (0.3): SP-LEDGER-FORMAT-IS-VERSIONED -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-ORCH-DOCSTRING, SP-DB-PATH-XDG (the tests import `merge_wait`, `orchestrator` and `core.config`)
 - New resource: `db:table:ledger_meta` (created and read only by `ledger_format.py`); `format:ledger-format` (the snapshot files). The gate (`auto_merge.py`, `review_cmds.py`, frontier) imports `ledger_format`; `review pr` (`review_cmds.py`, frontier) calls `stamp` (D8). No cycle: `findings.py` and `persistence.py` import nothing from the new module.
 
