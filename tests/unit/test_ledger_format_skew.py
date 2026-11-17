@@ -739,7 +739,17 @@ def _clone(tmp_path: Path) -> Path:
     return clone
 
 
+REPLAY_SCRIPT = REPO_ROOT / "scripts" / "skew_replay.sh"
+"""The working-tree script, so an edit not yet committed is the one under test."""
+
+
 def _replay(clone: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run this tree's ``skew_replay.sh`` inside ``clone``, whose refs it replays.
+
+    The script finds its repository with ``git rev-parse --show-toplevel``
+    from its working directory, so the refs and ``tmp/skew/`` are the
+    clone's while the script is the working tree's.
+    """
     env = {
         **os.environ,
         "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -747,7 +757,7 @@ def _replay(clone: Path, *args: str) -> subprocess.CompletedProcess[str]:
     }
     env.pop("PYTHONPATH", None)
     return subprocess.run(
-        ["bash", str(clone / "scripts" / "skew_replay.sh"), *args],
+        ["bash", str(REPLAY_SCRIPT), *args],
         capture_output=True,
         text=True,
         cwd=clone,
