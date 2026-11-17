@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-REMEMBERS-EVERY-ROUND
 title: The reviewer remembers every round — all prior threads, every reply whoever wrote it, and their resolution state reach the next round's prompt
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-15
@@ -93,7 +93,7 @@ execution", with "a list of requirements detailing when to consider the
 task complete") and §3.1 (a task whose needed facts are dropped "is
 guaranteed to suffer"); the paper text was read as untrusted data and
 the two passages were checked against it. G3, the Interface, the tests
-and C1 change accordingly; the oracle stays the !366 replay.
+and C1 change accordingly; the oracle stays the recorded replay.
 
 ## Intent
 
@@ -111,7 +111,8 @@ whoever wrote it, labelled by what the forge knows of the author.
 
 Measured 2026-11-15 on `origin/develop` `5354767`; F4 is a reference
 measurement (owner's dogfood) on one of the owner's merge requests,
-!366, the source of the anonymised fixture.
+!366, from which `tests/fixtures/review/recorded_long_review.json`
+was recorded and anonymised.
 
 | # | Fact | Where |
 |---|---|---|
@@ -309,7 +310,7 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 
 ## Success conditions
 
-- C1: replaying !366's recorded rounds 1–11 (findings, replies, resolutions as SP-REVIEW-SETTLED-STAYS-SETTLED's anonymised fixture `tests/fixtures/review/mr366_rounds.json` holds them; 0.6) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
+- C1: replaying the recorded rounds 1–11 (findings, replies, resolutions as SP-REVIEW-SETTLED-STAYS-SETTLED's anonymised fixture `tests/fixtures/review/recorded_long_review.json` holds them; 0.7) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
 - C2: on a live merge or pull request of any project running this, `jq .history.replies <the review JSON>` equals the number of replies on the request's repoach threads as the forge's API lists them; oracle: `glab api` or `gh api` count; `test_block_lists_every_reply_whoever_wrote_it` proves the same on the fixture forge before any live round. Reference measurement (owner's dogfood): the owner's first merge request after this lands, written beside this line as an instance.
 - C3: `grep -rn "PRIOR_REVIEW\|RESOLVED_DISAGREEMENTS" src prompts` → 0.
 

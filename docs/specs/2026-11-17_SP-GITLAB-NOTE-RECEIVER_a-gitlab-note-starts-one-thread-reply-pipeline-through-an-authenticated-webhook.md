@@ -1,7 +1,7 @@
 ---
 id: SP-GITLAB-NOTE-RECEIVER
 title: A GitLab note starts one thread-reply pipeline through an authenticated webhook receiver, with a scheduled fallback
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-17
@@ -67,7 +67,7 @@ configuration; the secrets come from a credentials directory with four
 documented ways to fill it; the unit pair is a sample that verifies on
 any systemd ≥ 250 host; the generated jobs carry no runner tag; `doctor
 --ci` names the jobs of a project's own CI file that a threads pipeline
-would also run. The owner's deployment (hel1, nginx, Yoob) is one
+would also run. The owner's deployment is one
 labelled section at the end, with its measured facts, and is a
 condition of nothing above it.
 

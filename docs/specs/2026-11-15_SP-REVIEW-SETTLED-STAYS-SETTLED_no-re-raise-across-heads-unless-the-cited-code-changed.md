@@ -1,14 +1,14 @@
 ---
 id: SP-REVIEW-SETTLED-STAYS-SETTLED
 title: A finding that is resolved or refuted is not re-raised at a later head unless the code it cites changed; "changed" is the cited hunk or the enclosing symbol's body
-version: 0.7
+version: 0.8
 status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-18
 
 owns:
-  code: [src/repoach/review/settled.py, src/repoach/review/cited_region.py, tests/unit/test_settled_not_reraised.py, tests/unit/test_cited_region_changed.py, tests/integration/test_366_reraises_are_suppressed.py, tests/fixtures/review/mr366_rounds.json]
+  code: [src/repoach/review/settled.py, src/repoach/review/cited_region.py, tests/unit/test_settled_not_reraised.py, tests/unit/test_cited_region_changed.py, tests/integration/test_recorded_reraises_are_suppressed.py, tests/fixtures/review/recorded_long_review.json]
   resources: [db:table:finding_events]
 
 depends_on: [SP-FINDING-CITES-ITS-CODE, SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDINGS-INIT-RACE, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES, SP-REVIEW-NITS-ONE-COMMENT, SP-ORCH-DOCSTRING]
@@ -24,8 +24,9 @@ constraints:
 ## Amendment (0.7, 2026-11-18): the recorded fixture is anonymised, the live condition is any project's
 
 Owner principle 2026-11-17, repoach is for everyone. The owner decided
-to keep the recorded fixture of !366 (`tests/fixtures/review/
-mr366_rounds.json`, owned here) and to anonymise it: every login is
+to keep the recorded fixture (`tests/fixtures/review/
+recorded_long_review.json`, owned here; its source is named in
+Context) and to anonymise it: every login is
 replaced by its role class (`maintainer`, `author`, `bot`, `agent`),
 every host, project path and absolute path by a placeholder, every
 token redacted as before; the integration test asserts on the classes,
@@ -88,7 +89,8 @@ whole merge request.
 
 Measured 2026-11-15 on `origin/develop` `5354767`; F4 is a reference
 measurement (owner's dogfood) on one of the owner's merge requests,
-!366, the source of the anonymised fixture.
+!366, from which `tests/fixtures/review/recorded_long_review.json`
+was recorded and anonymised.
 
 | # | Fact | Where |
 |---|---|---|
@@ -202,7 +204,7 @@ measurement (owner's dogfood) on one of the owner's merge requests,
 
 ## End state
 
-Round 12 of !366 would have posted 6 threads, not 8: the two re-raises
+Round 12 of the recorded long review would have posted 6 threads, not 8: the two re-raises
 appear in the archive comment as suppressed, with the head where they
 were settled and nothing for the owner to answer.
 
@@ -314,7 +316,7 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 | `::test_owner_resolved_is_suppressed_even_when_changed` | edge case | re-open |
 | `::test_bucket_is_not_used_across_heads` | F5 | use the fingerprint |
 | `::test_matching_unavailable_fails_open_and_names_it` | failure scenario | suppress silently |
-| `tests/integration/test_366_reraises_are_suppressed.py::test_round_12_posts_six_threads_and_names_two_suppressed` | the recorded rounds 9–12 of !366 (`tests/fixtures/review/mr366_rounds.json`: findings, statuses, replies, per-head diffs of the cited files; anonymised, 0.7: tokens redacted, every login replaced by its class `maintainer` / `author` / `bot` / `agent`, every host and path by a placeholder; the test asserts the classes and `grep -c -i "yoob\|hel1\|jofaye\|@[a-z]" tests/fixtures/review/mr366_rounds.json` → `0`) | a login or a host in the fixture, or the count 8 |
+| `tests/integration/test_recorded_reraises_are_suppressed.py::test_round_12_posts_six_threads_and_names_two_suppressed` | the recorded rounds 9–12 (`tests/fixtures/review/recorded_long_review.json`: findings, statuses, replies, per-head diffs of the cited files; anonymised, 0.7: tokens redacted, every login replaced by its class `maintainer` / `author` / `bot` / `agent`, every host and path by a placeholder; the test asserts the classes and `grep -c -i "yoob\|hel1\|jofaye\|@[a-z]" tests/fixtures/review/recorded_long_review.json` → `0`) | a login or a host in the fixture, or the count 8 |
 | `tests/unit/test_settled_not_reraised.py::test_finding_key_is_stable_across_heads_and_lines` | D11: the same claim at H1 line 118 and H2 line 120 → one key; a changed claim or file → another; a ledger row written before this spec has one | hash the line or the head |
 | `::test_finding_key_is_printed_beside_the_row_id` | archive comment, report, JSON, thread root carry `F-<7 hex>`; `posted_finding_id` still joins the posted body | print the id alone |
 | `::test_resolve_by_key_settles_every_row_and_names_each` | D12: `/resolve #F-… reason` on two rows of one key at two heads → both `owner_resolved`, two `owner_commands` rows, one reply naming both; `/reopen #F-…` restores both | settle the first row only |
@@ -325,7 +327,7 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 
 ## Success conditions
 
-- C1: replaying !366's rounds 9–12 through the new bridge posts, at round 12, 6 threads and names 2 suppressed re-raises whose `settled_head` is round 11's head for `9a68bfc6` and round 10's for `e3555287`; oracle: the integration test on the recorded, anonymised fixture, in CI, no account needed.
+- C1: replaying the recorded fixture's rounds 9–12 through the new bridge posts, at round 12, 6 threads and names 2 suppressed re-raises whose `settled_head` is round 11's head for `9a68bfc6` and round 10's for `e3555287`; oracle: the integration test on the recorded, anonymised fixture, in CI, no account needed.
 - C2: on the same replay, every finding of rounds 9–11 that cites code the previous fix added is **not** suppressed (15 of 18 remain findings), since the region changed; oracle: the same test's `suppressed` count equals 2 and `new` equals the recorded count.
 - C3: on a live merge request of any project running this, the first round that follows a maintainer's `/resolve` with a measured reply posts no thread with the same normalised claim on an unchanged region; oracle: `jq .findings.suppressed <the review JSON>` lists it; the same path is proven on the provider fakes by `test_reraise_on_unchanged_region_is_suppressed_recorded_and_not_posted` before any live round. Reference measurement (owner's dogfood): the owner's first such merge request, written beside this line as an instance.
 - C4: `pytest -q tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py tests/unit/test_review_findings.py` → green after D6 (0.6: `test_review_findings.py` is where the re-open cases of SP-REFUTER-INJECTION-HARDEN live on `92cd241`; that spec owns no code and `tests/unit/test_refuter_injection_harden.py` does not exist).
@@ -356,7 +358,7 @@ flowchart TD
 
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_cited_region_changed.py tests/unit/test_settled_not_reraised.py` → green. Today (`5354767`): `RecordedFindings` has `reopened` and no `suppressed`; `findings_bridge.py:6-9` re-opens a fingerprint refuted at another head.
-- [ ] AC2: `pytest -q tests/integration/test_366_reraises_are_suppressed.py` → green on the recorded fixture.
+- [ ] AC2: `pytest -q tests/integration/test_recorded_reraises_are_suppressed.py` → green on the recorded fixture.
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC4: `docs/finding_threads.md` and `docs/merge_gate.md` describe the suppression and the archive line; SP-REFUTER-INJECTION-HARDEN carries the D6 amendment.
 - [ ] AC5: `pytest -q tests/unit/test_cited_region_changed.py::test_a_nit_whose_cited_region_changed_leaves_the_digest` → green: a `noted` finding whose `cited_region_changed` is true between its head and the reviewed head is left out of `digest_for_pr` (SP-REVIEW-NITS-ONE-COMMENT D2), and `docs/merge_gate.md` § "A nit never blocks" says so. Today (SP-REVIEW-NITS-ONE-COMMENT 0.4): the digest keeps every nit, the `temporary:` line of its D2.

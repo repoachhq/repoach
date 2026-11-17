@@ -207,7 +207,7 @@ Measured 2026-11-15 on `origin/develop` `5354767`; F3 is a reference measurement
 
 ## End state
 
-Round 12 of !366 reads the 200 lines round 11's fix changed, with the
+Round 12 of the recorded long review reads the 200 lines round 11's fix changed, with the
 merge request beside it, and its remarks are about those lines or
 explain why an old line became wrong; the three "not visible, confirm"
 threads of F3's round 12 cannot occur, since the test file the fix
@@ -336,7 +336,7 @@ writes the context cache (57 k tokens), three read it; the report says
 
 ## Success conditions
 
-- C1: replaying !366's rounds 9–12 with their recorded heads and diffs, the target of each delta round contains every line the round's fix added and the report's `target_lines` equals the recorded compare size; oracle: the integration test on the fixture of SP-REVIEW-SETTLED-STAYS-SETTLED.
+- C1: replaying the recorded fixture's rounds 9–12 with their recorded heads and diffs, the target of each delta round contains every line the round's fix added and the report's `target_lines` equals the recorded compare size; oracle: the integration test on the fixture of SP-REVIEW-SETTLED-STAYS-SETTLED.
 - C2: on the same replay, the 15 remarks of rounds 9–11 on fix-added code are in delta; the 3 on pre-existing code are `out_of_delta` unless their comment names a target line; oracle: `findings.out_of_delta` count.
 - C3: on a live delta round of any project running this, through a gateway configured per `docs/getting_started.md`, the usage ledger shows `cache_read_tokens ≥ 0.9 × cache_write_tokens` of the first lens for lenses two to four, and the review's `cost.review_usd` is below the previous full round's by at least 40 %; oracle: `repoach usage --run <id>`; `test_gateway_forwards_cache_control` proves the forwarding on the fakes before any live round. Reference measurement (owner's dogfood): the owner's first delta round through the owner's gateway, written beside this line as an instance.
 - C4 (IH; 0.5, 0.6): on the recorded, anonymised ten-push merge request `tests/fixtures/review/ten_push_mr.json` replayed twice on the provider fakes, once with `[review].delta = false` and once with the default, the sum of `prompt_tokens` over the ten runs' `usage_ledger` rows drops by at least 50 % with the delta on, with the same set of findings open at the final head; oracle: `repoach usage --run <id>` for each of the twenty runs (F12), the twenty figures and the two sums written beside this line by the verifier; `grep -c -i "yoob\|hel1\|jofaye\|@[a-z]" tests/fixtures/review/ten_push_mr.json` → `0`.
