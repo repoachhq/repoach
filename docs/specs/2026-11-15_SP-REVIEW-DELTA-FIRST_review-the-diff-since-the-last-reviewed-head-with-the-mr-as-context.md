@@ -1,14 +1,14 @@
 ---
 id: SP-REVIEW-DELTA-FIRST
 title: From the second round on, the lenses review the diff since the last reviewed head, with the full merge request as cached context, and every fall-back to the full range is named
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-18
 
 owns:
-  code: [src/repoach/review/delta_scope.py, tests/unit/test_delta_scope.py, tests/unit/test_delta_prompt_blocks.py, tests/integration/test_delta_review_end_to_end.py, tests/fixtures/ledger_format/3.json, tests/fixtures/review/ten_push_mr.json]
+  code: [src/repoach/review/delta_scope.py, tests/unit/test_delta_scope.py, tests/unit/test_delta_prompt_blocks.py, tests/integration/test_delta_review_end_to_end.py, tests/fixtures/review/ten_push_mr.json]
   resources: []
 
 depends_on: [SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-PROMPT-PLACEHOLDER-ORDER, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-ANTHROPIC-BUDGET-GUARD, SP-GATE-REVERIFIES-AT-HEAD, SP-REVIEW-RESUMES-FAILED-ROLES, SP-POSTING-REPLAY-DEDUPES, SP-UNIVERSAL-PROJECT-CONFIG, SP-MEMORY-LOOPS-EXPLICIT, SP-CLI-STDOUT-ONE-JSON, SP-USAGE-LEDGER, SP-LEDGER-FORMAT-IS-VERSIONED]
@@ -49,8 +49,11 @@ change. (2) C4 named SP-REVIEW-TOKEN-ESTIMATE's estimate as its oracle;
 the usage ledger's measured prompt tokens, which exist (`repoach usage
 --run <id>`, `usage_ledger` rows, SP-USAGE-LEDGER), summed over the ten
 runs; the edge moves from the draft to SP-USAGE-LEDGER. (3)
-`tests/fixtures/ledger_format/3.json` is this spec's file (D10) and is
-now in `owns.code`, as `2.json` is SP-FINDING-CITES-ITS-CODE's. (4) F2
+`tests/fixtures/ledger_format/3.json` is written by this spec (D10)
+under SP-LEDGER-FORMAT-IS-VERSIONED's `tests/fixtures/ledger_format/`,
+an edit declared in Architecture Impact and not in `owns.code` (0.7: a
+file under another spec's directory is an edit, not a second owner), as
+`2.json` is SP-FINDING-CITES-ITS-CODE's edit. (4) F2
 cited `findings.py:270-278` for `pr_review_integrity`; that range is
 `pr_findings`, the table is at `:295-303`; F1's orchestrator line is
 `:725` on `92cd241`.
@@ -289,7 +292,7 @@ def in_delta(comment, scope: ReviewRange) -> bool: ...   # D4
 
 # reviewer.py (changed): two blocks, cache_control on the context block
 # findings.py (changed): FindingStatus.OUT_OF_DELTA; pr_review_integrity gains base_sha, extends_run, config_key (three _ADDED_FINDINGS_COLUMNS entries)
-# ledger_format.py (changed): LEDGER_FORMAT = 3; tests/fixtures/ledger_format/3.json committed and owned here (D10)
+# ledger_format.py (changed): LEDGER_FORMAT = 3; tests/fixtures/ledger_format/3.json committed under SP-LEDGER-FORMAT-IS-VERSIONED's directory (D10)
 # repoach.project.config.ReviewSection (added): delta: bool = True
 # CLI: review pr --full
 ```

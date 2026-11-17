@@ -1,14 +1,14 @@
 ---
 id: SP-FINDING-CITES-ITS-CODE
 title: A finding names the code it is about, and its line is derived from that code, never taken on trust
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-12
 updated: 2026-11-18
 
 owns:
-  code: [src/repoach/review/finding_anchor.py, tests/unit/test_finding_anchor.py, tests/integration/test_finding_anchor_end_to_end.py, tests/fixtures/ledger_format/2.json]
+  code: [src/repoach/review/finding_anchor.py, tests/unit/test_finding_anchor.py, tests/integration/test_finding_anchor_end_to_end.py]
   resources: []
 
 depends_on: [SP-FINDER-OUTPUT, SP-FINDINGS-OFFDIFF-FILTER, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-THREAD-IDS, SP-VERIFIER-LIB, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-OWNER-SETTLES-A-FINDING, SP-ORCH-DOCSTRING, SP-LEDGER-FORMAT-IS-VERSIONED, SP-REVIEW-RESUMES-FAILED-ROLES]

@@ -1,14 +1,14 @@
 ---
 id: SP-FORGE-RESOLVES-THREADS
 title: The forge protocol resolves and unresolves a review thread on GitHub and GitLab, behind the write barrier
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-18
 
 owns:
-  code: [tests/unit/test_forge_review_threads.py, tests/fixtures/forge/github/review_threads_resolve.json, tests/fixtures/forge/github/review_threads_unresolve.json, tests/fixtures/forge/gitlab/review_threads_resolve.json, tests/fixtures/forge/gitlab/review_threads_unresolve.json]
+  code: [tests/unit/test_forge_review_threads.py]
   resources: []
 
 depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-UNIVERSAL-FORGE, SP-FINDING-THREAD-IDS, SP-DRY-RUN-NEVER-POSTS]
@@ -234,7 +234,7 @@ mutation; GitLab: one `PUT`. The method returns; the next
 
 ## Architecture Impact
 - Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-PR-THREADS-REMEMBER-AND-CLOSE (design source: D3 of the composite names the write this spec adds)
-- Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-UNIVERSAL-FORGE (`protocol.py`, `github.py`, `gitlab.py`, `recording.py` and `tests/fixtures/forge/` are its; the methods, the model keys, the `coerce_call` rule of D7 and the fixtures' new keys are edits to them)
+- Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-UNIVERSAL-FORGE (`protocol.py`, `github.py`, `gitlab.py`, `recording.py` and `tests/fixtures/forge/` are its; the methods, the model keys, the `coerce_call` rule of D7, the fixtures' new keys and the four new fixtures of C1, `tests/fixtures/forge/{github,gitlab}/review_threads_{resolve,unresolve}.json`, are edits to them; 0.4: the four files left `owns.code`, since a file under another spec's directory is an edit, not a second owner)
 - Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-FINDING-THREAD-IDS (`ReviewThread` is its; the two existing `review_threads.json` fixtures are re-recorded and gain two keys)
 - Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-DRY-RUN-NEVER-POSTS (both writes go through its barrier; its test suite proves the refusal)
 - No new table, no new resource, no cycle: `forge/` imports nothing of `review/`.
