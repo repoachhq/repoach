@@ -1,11 +1,11 @@
 ---
 id: SP-FORGE-RESOLVES-THREADS
 title: The forge protocol resolves and unresolves a review thread on GitHub and GitLab, behind the write barrier
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [tests/unit/test_forge_review_threads.py, tests/fixtures/forge/github/review_threads_resolve.json, tests/fixtures/forge/github/review_threads_unresolve.json, tests/fixtures/forge/gitlab/review_threads_resolve.json, tests/fixtures/forge/gitlab/review_threads_unresolve.json]
@@ -20,6 +20,19 @@ constraints:
 ---
 
 # The forge resolves and unresolves a review thread
+
+## Amendment (0.3, 2026-11-18): the recorder types the thread argument; the live oracle is any project's
+
+After the verifier's second read. (1) C1 passed the thread to
+`scripts/record_forge_fixture.py --args` as JSON, and the recorder's
+`coerce_call` types only two methods' arguments, `post_review`
+(`ReviewDraft`) and `merge` (`MergeMethod`); every other argument is
+passed as the JSON scalar it is (`src/repoach/forge/recording.py:312-
+328`), so a `dict` would have reached `resolve_review_thread` where a
+`ReviewThread` is typed. D7 adds the rule to `coerce_call` and a test
+pins it. (2) Owner principle 2026-11-17: C1 is recorded on a pull or
+merge request of any project the implementer may write to; the owner's
+two repositories are one instance, labelled so.
 
 ## Amendment (0.2, 2026-11-17): the names, the opener, the recorder
 
@@ -61,7 +74,8 @@ Measured on `origin/develop` `92cd241` (2026-11-17).
 | F4 | GitLab: `_discussions` pages `GET …/merge_requests/<n>/discussions?per_page=100`; `review_threads_from_discussions` reads `resolved` and `resolved_by` from the first note (`notes[0]`), whose `author.username` is in the same object and not read; `reply` finds the discussion holding a note and posts to it | `gitlab.py:315-346`, `:662-676`, `:877` |
 | F5 | Every forge write is a method decorated `@write_barrier`; a closed barrier raises `ForgeWriteRefusedError(head, refusal)`; a dry run closes it | `protocol.py:164`, `:366-373`, `:399`; SP-DRY-RUN-NEVER-POSTS |
 | F6 | `finding_posts.thread_id` is the GitHub root comment id or the GitLab discussion id; `finding_post_threads._match` pairs a post with a `ReviewThread` by `root_id` / `thread_id` | `finding_posts.py:83`, `:306-318`; `finding_post_threads.py:243` |
-| F7 | Both forges require resolved threads before a merge (parent F11, 2026-11-17), so a thread the bot cannot resolve holds the merge until a human clicks | `glab api projects/67827362`; `gh api repos/repoachhq/repoach/rulesets/<id>` |
+| F7 | A forge that requires resolved threads before a merge (GitLab `only_allow_merge_if_all_discussions_are_resolved`, a GitHub ruleset with `required_review_thread_resolution`) holds the merge on a thread the bot cannot resolve until a human clicks. Reference measurement (owner's dogfood): both of the owner's projects have the setting on (parent F11, 2026-11-17) | `glab api projects/<id> \| jq .only_allow_merge_if_all_discussions_are_resolved`; `gh api repos/<owner>/<repo>/rulesets/<id>` |
+| F8 (0.3) | The fixture recorder parses `--args` as JSON and `coerce_call` types two methods' arguments only: `post_review` (`ReviewDraft`, `InlineCommentDraft`) and `merge` (`MergeMethod`); every other argument reaches the method as its JSON value | `scripts/record_forge_fixture.py:178`, `:188`; `src/repoach/forge/recording.py:312-328` |
 
 ## Decisions (2026-11-17)
 
@@ -99,6 +113,14 @@ Measured on `origin/develop` `92cd241` (2026-11-17).
   not re-read.
 - D6. The bench `LocalDiffForge` raises `NotImplementedError` naming
   the method, as it does for every write it does not model.
+- D7 (0.3). `coerce_call` (F8, `recording.py`, SP-UNIVERSAL-FORGE's
+  file, edited under the edge) gains one rule: for `resolve_review_thread`
+  and `unresolve_review_thread`, a `dict` second argument becomes
+  `ReviewThread(**args[1])`, so a fixture recorded with `--args '[<pr>,
+  {"root_id": …, "thread_id": …, "node_id": …}]'` calls the method with
+  the type the protocol declares, and a replay reads the same JSON back
+  through the same rule. The fixture file keeps the JSON form
+  (`"args"`), as `post_review` fixtures do.
 
 ## End state
 
@@ -162,6 +184,7 @@ class Forge(Protocol):
 def thread_node_id(pages: object, root_id: int) -> str: ...   # pure: the PRRT_ id whose first comment has databaseId == root_id; raises ForgeError when absent or the listing is truncated
 
 # src/repoach/forge/gitlab.py: PUT …/discussions/<thread_id> resolved=true|false
+# src/repoach/forge/recording.py (SP-UNIVERSAL-FORGE's file): coerce_call types args[1] as ReviewThread for the two methods (D7)
 ```
 
 Inputs: `number`, the pull / merge request; `thread`, a `ReviewThread`
@@ -202,15 +225,16 @@ mutation; GitLab: one `PUT`. The method returns; the next
 | `::test_thread_writes_refused_in_dry_run` | D3: both methods raise `ForgeWriteRefusedError` on both forges and the recorder sees no call | drop the decorator |
 | `::test_missing_thread_is_a_named_forge_error` | D2 last sentence; a `404` | swallow the error |
 | `::test_review_threads_fixtures_carry_node_id_and_opened_by` | D4: the two re-recorded `review_threads.json` fixtures replay with `node_id` and `opened_by` in every expected thread; GitHub's recorded query text contains `author { login }`; GitLab's `opened_by` equals `notes[0].author.username` of the recorded page | drop a key, or fill `opened_by` from `resolved_by` |
+| `::test_recorder_coerces_the_thread_argument` | D7 (0.3): `coerce_call("resolve_review_thread", [12, {"root_id": 5, "thread_id": "ab…", "node_id": "PRRT_x"}], {})` → `args[1]` is a `ReviewThread` with those fields; the same for `unresolve_review_thread`; `coerce_call("review_threads", [12], {})` is unchanged; the four recorded fixtures' `"args"` replay through it | pass the dict through, or coerce every method's second argument |
 
 ## Success conditions
 
-- C1 (external oracle: the live forges, once each, by the implementer with the bot's token on a thread of a closed pull request): the four fixtures are recorded from the live exchange with the existing recorder, `scripts/record_forge_fixture.py --forge github --cwd <repoach clone> --case review_threads_resolve --method resolve_review_thread --args '[<pr>, <thread json>]'` and the same with `--method unresolve_review_thread` and `--case review_threads_unresolve`, then `--forge gitlab --cwd <Yoob clone>` for the two GitLab files (the recorder writes under `tests/fixtures/forge/<forge>/<case>.json`, its `--out` default); the two `review_threads.json` fixtures are re-recorded the same way with `--method review_threads`. Then, read back outside repoach, `gh api graphql -f query='{ node(id:"<PRRT_>") { ... on PullRequestReviewThread { isResolved resolvedBy { login } } } }'` → `"isResolved": true` with the bot's login after the resolve and `false` after the unresolve; on GitLab `glab api projects/<id>/merge_requests/<n>/discussions/<did> | jq '.notes[0].resolved'` → `true` then `false`. The command lines and outputs are written beside this line by the implementer and re-run by the verifier.
+- C1 (external oracle: the live forges, once each, by the implementer with a bot token on a thread of a closed pull or merge request of any GitHub project and any GitLab project they may write to): the four fixtures are recorded from the live exchange with the existing recorder, `scripts/record_forge_fixture.py --forge github --cwd <a GitHub clone> --case review_threads_resolve --method resolve_review_thread --args '[<pr>, {"root_id": <id>, "node_id": ""}]'` (D7 types the second argument as a `ReviewThread`) and the same with `--method unresolve_review_thread` and `--case review_threads_unresolve`, then `--forge gitlab --cwd <a GitLab clone>` with `{"root_id": <note id>, "thread_id": "<discussion id>"}` for the two GitLab files (the recorder writes under `tests/fixtures/forge/<forge>/<case>.json`, its `--out` default); the two `review_threads.json` fixtures are re-recorded the same way with `--method review_threads`. Every recorded file is redacted before commit as the recorder already redacts tokens, and its logins are replaced by their class (`bot`, `maintainer`, `author`) and its hosts and paths by placeholders (owner principle 2026-11-17). Then, read back outside repoach, `gh api graphql -f query='{ node(id:"<PRRT_>") { ... on PullRequestReviewThread { isResolved resolvedBy { login } } } }'` → `"isResolved": true` with the bot's login after the resolve and `false` after the unresolve; on GitLab `glab api projects/<id>/merge_requests/<n>/discussions/<did> | jq '.notes[0].resolved'` → `true` then `false`. The command lines and outputs are written beside this line by the implementer and re-run by the verifier. Reference measurement (owner's dogfood): the owner's GitHub and GitLab repositories are the two projects the implementer is expected to use first; they are an instance of "any project", not the oracle.
 - C2 (oracle: the conformance suite): `pytest -q tests/unit/test_forge_conformance.py tests/unit/test_forge_unresolved_threads.py tests/unit/test_forge_review_threads.py` → green; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`.
 
 ## Architecture Impact
 - Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-PR-THREADS-REMEMBER-AND-CLOSE (design source: D3 of the composite names the write this spec adds)
-- Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-UNIVERSAL-FORGE (`protocol.py`, `github.py`, `gitlab.py` and `tests/fixtures/forge/` are its; the methods, the model key and the fixtures' new keys are edits to them)
+- Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-UNIVERSAL-FORGE (`protocol.py`, `github.py`, `gitlab.py`, `recording.py` and `tests/fixtures/forge/` are its; the methods, the model keys, the `coerce_call` rule of D7 and the fixtures' new keys are edits to them)
 - Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-FINDING-THREAD-IDS (`ReviewThread` is its; the two existing `review_threads.json` fixtures are re-recorded and gain two keys)
 - Adds dependency: SP-FORGE-RESOLVES-THREADS -> SP-DRY-RUN-NEVER-POSTS (both writes go through its barrier; its test suite proves the refusal)
 - No new table, no new resource, no cycle: `forge/` imports nothing of `review/`.
@@ -225,7 +249,7 @@ flowchart LR
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: `pytest -q tests/unit/test_forge_review_threads.py` → green (the seven tests of Tests). Today (`92cd241`): the file does not exist and `git grep -n "def resolve_review_thread\|def unresolve_review_thread\|opened_by" origin/develop -- src` → 0 (the only `resolve_thread` is the ledger read of F1).
+- [ ] AC1: `pytest -q tests/unit/test_forge_review_threads.py` → green (the eight tests of Tests). Today (`92cd241`): the file does not exist and `git grep -n "def resolve_review_thread\|def unresolve_review_thread\|opened_by" origin/develop -- src` → 0 (the only `resolve_thread` is the ledger read of F1).
 - [ ] AC2: `pytest -q tests/unit/test_forge_conformance.py tests/unit/test_forge_unresolved_threads.py tests/unit/test_dry_run_never_posts.py tests/unit/test_forge_write_barrier.py` → green with the two new methods in the barrier's inventory.
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
