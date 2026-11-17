@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -14,6 +13,7 @@ from repoach.review.wrapup_attribution import (
     StepCommit,
     attribute_failure_to_step,
 )
+from tests.child_pytest import child_pytest_argv
 
 _PASSING_TEST = '"""Demo test module."""\n\n\ndef test_ok() -> None:\n    assert 1 == 1\n'
 _FAILING_TEST = '"""Demo test module."""\n\n\ndef test_ok() -> None:\n    assert 1 == 2\n'
@@ -64,7 +64,9 @@ def _real_run_selector(repo: Path) -> Callable[[str, str], bool]:
             )
         try:
             pytest_proc = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", selector],
+                child_pytest_argv(
+                    "-q", selector, basetemp=repo.parent / f"basetemp-{uuid.uuid4().hex[:8]}"
+                ),
                 cwd=worktree_dir,
                 capture_output=True,
                 text=True,

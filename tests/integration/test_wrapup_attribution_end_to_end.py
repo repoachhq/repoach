@@ -12,7 +12,6 @@ the repo's own pytest.
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -20,6 +19,7 @@ from repoach.review.dev_runner import DevSessionResult, repair_wrapup_failures
 from repoach.review.devagent_loop import DevLoopResult
 from repoach.review.persistence import init_schema
 from repoach.review.plan import ActionPlan, PlanStep
+from tests.child_pytest import child_pytest_argv
 
 _WRAP_E2E_GREEN = (
     '"""Wrap-up end-to-end demo module — both tests pass."""\n\n\n'
@@ -174,7 +174,7 @@ def test_cross_cutting_breakage_attributed_and_repaired(tmp_path: Path) -> None:
     assert outcome is None
 
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "tests/unit/test_wrap_e2e.py"],
+        child_pytest_argv("-q", "tests/unit/test_wrap_e2e.py", basetemp=tmp_path / "basetemp"),
         cwd=repo,
         capture_output=True,
         text=True,
