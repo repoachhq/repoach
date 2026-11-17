@@ -1,7 +1,7 @@
 ---
 id: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN
 title: A required check whose job never ran (SKIPPED, or reported under its unexpanded template name) is a named failure, never green
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-17
@@ -205,6 +205,7 @@ A head with the six expanded names `success` → `green`, as today.
 | T7 | same | `fetch_ci_status` on the skipped fixture → `CI_UNKNOWN`; on the green fixture and on both → `CI_GREEN`; `NEUTRAL` → `CI_GREEN` | read green from the `gh pr checks` buckets again (`skipping` non-blocking) |
 | T8 | same | `run_coder_fix_from_findings` on the skipped fixture leaves an open CI-failure finding `OPEN`; on both fixtures it is `RESOLVED` | same |
 | T9 | `tests/unit/test_review_coder_loop.py` | no check ran → `CI_UNKNOWN`; a required check `SKIPPED` → `CI_UNKNOWN`, logged `coder.ci_required_not_green` with `SKIP_CI_FAILED`; an unrequired skipped or cancelled check → `CI_GREEN` | same |
+| T10 | `tests/unit/test_skipped_required_check.py` | `fetch_ci_status` on a real `GitLabForge` over a faked MR (`_mr`, `_api_list`), the ten rows of the verifier's table: success → `CI_GREEN`; an allow_failure job failed → `CI_RED`; failed → `CI_RED`; running → `CI_PENDING`; success with a manual job left → `CI_GREEN`; pipeline skipped → `CI_UNKNOWN`; canceled → `CI_UNKNOWN`; no head pipeline → `CI_UNKNOWN`; pipeline status manual → `CI_PENDING`; a pipeline built for another commit → `CI_PENDING`. The last five changed with D6 (all five read `CI_GREEN` before) | read green from the job buckets again: the five changed rows turn red |
 
 ## Success conditions
 
