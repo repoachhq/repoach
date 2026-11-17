@@ -55,6 +55,7 @@ from ..project.toml_write import toml_value
 from ..providers.errors import NO_PROVIDER_MESSAGE, ProviderConfigError
 from ..providers.select import (
     ANTHROPIC_CREDENTIAL_NAMES,
+    DEFAULT_ANTIGRAVITY_CLI,
     DEFAULT_CLI,
     DIRECT_KINDS,
     GEMINI_DEFAULT_BASE,
@@ -62,6 +63,8 @@ from ..providers.select import (
     SELECTABLE,
     ProviderRoute,
     anthropic_credential,
+    antigravity_cli,
+    antigravity_version,
     build_direct_provider,
     claude_cli,
     claude_login,
@@ -79,7 +82,7 @@ from ..review.merge_wait import (
     workflow_checks,
 )
 
-DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude")
+DOCTOR_BINARIES: tuple[str, ...] = ("git", "gh", "glab", "claude", "agy")
 
 _NONE_NOTES: dict[str, str] = {
     "auto_merge.required_checks": "not declared: the CI workflow's job names",
@@ -141,6 +144,22 @@ def _claude_code_credential(route: ProviderRoute) -> tuple[str, str | None]:
     return f"claude login ({login.method}; {cli})", None
 
 
+def _antigravity_credential(route: ProviderRoute) -> tuple[str, str | None]:
+    """Say whether the ``agy`` CLI is installed and runnable, never any secret.
+
+    Runs ``agy --version`` without contacting a model or forge.
+
+    Returns:
+        ``(credential line value, problem or None)``.
+    """
+    try:
+        cli = antigravity_cli(route)
+        version = antigravity_version(cli)
+    except ProviderConfigError as exc:
+        return "none (agy CLI unusable)", str(exc)
+    return f"agy CLI ({version}; {cli})", None
+
+
 def _presence(names: tuple[str, ...], root: Path) -> str:
     """``NAME=present|absent`` for each of ``names``, never a value."""
     return ", ".join(
@@ -164,9 +183,12 @@ def provider_option_lines(root: Path, settings: Settings) -> list[str]:
     """
     lines: list[str] = []
     claude = shutil.which(DEFAULT_CLI)
+    agy = shutil.which(DEFAULT_ANTIGRAVITY_CLI)
     for name in SELECTABLE:
         if name == "claude_code":
             detail = f"claude CLI {'at ' + claude if claude else 'not on PATH'}; login, no key"
+        elif name == "antigravity":
+            detail = f"agy CLI {'at ' + agy if agy else 'not on PATH'}; login or GEMINI_API_KEY"
         elif name == "gateway":
             url_state = "present" if settings.llm_proxy_base_url else "absent"
             secret = settings.llm_proxy_auth_token
@@ -219,6 +241,11 @@ def _provider_report(
         lines.append(f"provider_route=direct ({route.label})")
         if route.kind == "claude_code":
             credential, problem = _claude_code_credential(route)
+            lines.append(f"provider_credential={credential}")
+            if problem is not None:
+                problems.append(problem)
+        elif route.kind == "antigravity":
+            credential, problem = _antigravity_credential(route)
             lines.append(f"provider_credential={credential}")
             if problem is not None:
                 problems.append(problem)

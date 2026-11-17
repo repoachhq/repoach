@@ -111,6 +111,8 @@ async def test_empty_data_is_a_clean_zero_listing() -> None:
 
 def test_sweepability_excludes_claude_code() -> None:
     assert is_sweepable("claude_code") is False
+    assert is_sweepable("antigravity") is False
     assert is_sweepable("nvidia_nim") is True
     assert "claude_code" in UNSWEPT_PROVIDERS
-    assert len(UNSWEPT_PROVIDERS) == 1
+    assert "antigravity" in UNSWEPT_PROVIDERS
+    assert len(UNSWEPT_PROVIDERS) == 2

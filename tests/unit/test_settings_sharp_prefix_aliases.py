@@ -41,6 +41,8 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "ANTHROPIC_API_KEY": "anthropic_api_key",
     "OPENAI_COMPATIBLE_API_KEY": "openai_compatible_api_key",
     "OPENAI_COMPATIBLE_BASE_URL": "openai_compatible_base_url",
+    "GEMINI_API_KEY": "gemini_api_key",
+    "GEMINI_BASE_URL": "gemini_base_url",
     "BREAKER_ENABLED": "breaker_enabled",
     "BREAKER_TTL_S": "breaker_ttl_s",
     "BREAKER_TTL_TERMINAL_S": "breaker_ttl_terminal_s",
@@ -59,6 +61,9 @@ _LEGACY_TO_FIELD: dict[str, str] = {
     "CLAUDE_CODE_CLI_PATH": "claude_code_cli_path",
     "CLAUDE_CODE_DEFAULT_MODEL": "claude_code_default_model",
     "CLAUDE_CODE_SUBPROCESS_TIMEOUT": "claude_code_subprocess_timeout",
+    "ANTIGRAVITY_CLI_PATH": "antigravity_cli_path",
+    "ANTIGRAVITY_DEFAULT_MODEL": "antigravity_default_model",
+    "ANTIGRAVITY_SUBPROCESS_TIMEOUT": "antigravity_subprocess_timeout",
     "MODEL": "model",
     "NVIDIA_NIM_PROXY": "nvidia_nim_proxy",
     "OPENROUTER_PROXY": "open_router_proxy",
@@ -108,6 +113,7 @@ def _clean_env_for_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     for legacy, repoach in _LEGACY_TO_REPOACH_ALIAS.items():
         monkeypatch.delenv(legacy, raising=False)
         monkeypatch.delenv(repoach, raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setattr(settings_module, "_env_files", lambda: ())
     monkeypatch.setattr(settings_module, "_configured_env_files", lambda _cfg: ())
 
