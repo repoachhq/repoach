@@ -1,7 +1,7 @@
 ---
 id: SP-FINDING-CITES-ITS-CODE
 title: A finding names the code it is about, and its line is derived from that code, never taken on trust
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-12

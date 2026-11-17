@@ -1,7 +1,7 @@
 ---
 id: SP-PR-THREADS-REMEMBER-AND-CLOSE
 title: Composite — one finding, one forge thread that remembers its exchanges and is closed only by its role or a maintainer
-version: 0.9
+version: 1.0
 status: approved
 author: agent
 created: 2026-10-26
