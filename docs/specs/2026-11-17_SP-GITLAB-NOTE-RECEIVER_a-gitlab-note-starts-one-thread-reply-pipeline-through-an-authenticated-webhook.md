@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/thread_webhook.py, deploy/systemd/repoach-threads-receiver.service, deploy/systemd/repoach-threads-receiver.socket, deploy/systemd/threads-receiver.env.example, tests/unit/test_thread_webhook.py, tests/unit/test_threads_receiver_unit.py, tests/unit/test_threads_triggers.py]
   resources: [format:gitlab-note-webhook, format:threads-receiver-unit]
 
-depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-THREAD-REPLY-AGENT, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-CI-ENTRY, SP-CI-LEDGER-PERSISTS, SP-CLI-STDOUT-ONE-JSON]
+depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-THREAD-REPLY-AGENT, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-CI-ENTRY, SP-CI-LEDGER-PERSISTS, SP-CLI-STDOUT-ONE-JSON, SP-DRY-RUN-NEVER-POSTS]
 provides_to: []
 
 constraints:
@@ -26,6 +26,22 @@ constraints:
 ---
 
 # A GitLab note starts one thread-reply pipeline
+
+## Amendment (0.5, 2026-11-18): one GitLab client, the pipeline write behind the barrier
+
+After the verifier's third read. (1) D7 opened a second GitLab
+client for its pipelines listing and its `POST /pipeline`; both now
+go through the one `GitLabForge` the run holds. The write is the
+protocol's `dispatch_workflow`, implemented on GitLab as a pipeline
+creation on a ref with variables behind the write barrier (today it
+is always refused, `gitlab.py:1169`); the two reads are `GitLabForge`
+methods, not protocol ones, since GitHub has no equivalent and a
+GitHub project's fallback is `review pr`. (2) The fork filter has a
+data source, `merge_request_projects(iid)`, since `PullRequest`
+carries no project ids (`protocol.py:462-471`). (3) The pipelines
+listing pages by number until a short page. (4) D6's trigger call
+stays outside the forge, and says why. (5) The 0.3 amendment named
+the owner's host outside the example section; it no longer does.
 
 ## Amendment (0.4, 2026-11-18): the deadline has a clock, the fallback is bounded, the proxy hop is configured, the socket is checked, a fork is named
 
@@ -239,13 +255,16 @@ credentials directory, never from argv, the environment or a log line.
   retries nothing on a non-2xx except by hand; the schedule is the
   fallback, D7). The call leaves the host over HTTPS to the configured
   GitLab through the host's resolver; D10 says why no IP allow-list
-  bounds it.
+  bounds it. (0.5) This trigger call stays outside the forge on
+  purpose: it authenticates with the trigger token, a separate
+  credential the forge never holds (D2).
 - D7. **Fallback from the forge, not from the caches** (0.2). A pipeline
   schedule every `scheduled_fallback_minutes` with the variable
   `REPOACH_THREADS_SCHEDULE=1` runs one job, `threads:schedule`, which
   runs `repoach threads pending --json`: for every open merge request
-  whose source project is the project (a fork is skipped and listed
-  with `skipped: fork`, 0.4), through the forge alone (F5, no ledger),
+  whose source project is the project (a fork, one whose
+  `GitLabForge.merge_request_projects(iid)` names another source
+  project, is skipped and listed with `skipped: fork`, 0.4, 0.5), through the forge alone (F5, no ledger),
   a comment is *unanswered* when it is on a thread whose `opened_by` is
   the bot and is that thread's last comment by someone other than the
   bot, or when its body starts with `/resolve` or `/reopen` and it is
@@ -255,12 +274,16 @@ credentials directory, never from argv, the environment or a log line.
   in it no more, by its step 7, and makes every thread it will never
   answer end so (a classification that fails three times, 8b D4). And
   an unanswered comment counts only while no *threads pipeline* is
-  newer than it: `GET /projects/<id>/pipelines?ref=<source
-  branch>&updated_after=<comment created_at>&per_page=20` filtered to
-  `source` in `trigger`, `api` and to `created_at` later than the
-  comment's (`updated_after` is a pre-filter on `updated_at`, the
-  creation time is compared client-side), read with
-  `REPOACH_GITLAB_TOKEN`; a
+  newer than it: `GitLabForge.pipelines_after(ref, since)` (0.5: `GET
+  /projects/<id>/pipelines?ref=<source branch>&updated_after=<comment
+  created_at>&per_page=100&page=<n>`, paged by number until a short
+  page, as `unresolved_threads` pages its discussions,
+  `gitlab.py:676-693`, since a long-lived merge request can hold more
+  than one page of pipelines) filtered to `source` in `trigger`, `api`
+  and to `created_at` later than the comment's (`updated_after` is a
+  pre-filter on `updated_at`, the creation time is compared
+  client-side), read with `REPOACH_GITLAB_TOKEN` through the one
+  client the run already holds; a
   pipeline created after the comment ran a `threads reply` that read it
   (8b reads the forge at run time), whatever that run decided, a
   deferral past its cap included. A failed threads pipeline is the
@@ -268,11 +291,22 @@ credentials directory, never from argv, the environment or a log line.
   that would loop. The MR is *pending* when one unanswered comment
   remains after both exclusions, so the schedule costs at most one
   pipeline per comment per MR, ever. For each pending MR the job
-  `POST`s `/projects/<id>/pipeline` with `ref=<source branch>` and
-  `variables[][key]=REPOACH_THREADS_REPLY_MR` using
-  `REPOACH_GITLAB_TOKEN`, the token the generated review job already
-  requires (F2; `CI_PIPELINE_SOURCE = api`, G1). No second secret
-  exists for it. The generated job writes no `tags:`; an operator who
+  calls the protocol's `dispatch_workflow(<source branch>,
+  {"REPOACH_THREADS_REPLY_MR": "<iid>"})` (0.5). On `GitLabForge` it
+  is implemented as "create a pipeline on a ref with variables":
+  `POST /projects/<id>/pipeline` with `ref` and
+  `variables[][key]` / `variables[][value]` through `_api`, behind the
+  `@write_barrier`, so a read-only run refuses it like every write
+  (today the method is always refused, `gitlab.py:1169`). On GitHub the
+  protocol method already dispatches a workflow and a GitHub project's
+  fallback is `review pr`. The token is `REPOACH_GITLAB_TOKEN`, the
+  one the generated review job already requires (F2;
+  `CI_PIPELINE_SOURCE = api`, G1). No second secret exists for it, and
+  no second client: the two reads this needs, `pipelines_after` and
+  `merge_request_projects(iid) -> (source_project_id,
+  target_project_id)` (the fork filter's data, absent from
+  `PullRequest`, `protocol.py:462-471`), live on `GitLabForge` only,
+  not on the protocol. The generated job writes no `tags:`; an operator who
   wants it on a given runner adds them in the project's CI file (0.3).
 - D8. **Generated jobs and the pipeline kind** (0.2, 0.3). `repoach init
   --ci gitlab` writes two jobs into `.repoach/ci/gitlab-review.yml`
@@ -530,7 +564,12 @@ def trigger_pipeline(*, gitlab_url: str, project_id: int, token: bytes, ref: str
 def load_credentials(secret_dir: Path) -> tuple[bytes, bytes]: ...   # D2; raises CredentialMissing(name) on absent, empty or world-readable
 def serve(config: ReceiverConfig) -> None: ...   # D9
 class PendingMR(BaseModel): iid: int; source_branch: str; unanswered: list[int]; skipped: Literal["", "fork", "escalated", "pipeline newer"]   # D7 (0.4)
-def pending_merge_requests(forge: Forge, *, bot_username: str, project_id: int, pipelines_after: Callable[[str, str], list[dict]]) -> list[PendingMR]: ...   # D7, forge reads plus one pipelines listing per candidate comment; no ledger
+def pending_merge_requests(forge: GitLabForge, *, bot_username: str) -> list[PendingMR]: ...   # D7 (0.5): forge reads (comments, review_threads, merge_request_projects) plus one paged pipelines_after listing per candidate comment; no ledger, no second client
+
+# src/repoach/forge/gitlab.py (SP-UNIVERSAL-FORGE's file, edited under the edge, 0.5):
+#   GitLabForge.dispatch_workflow(workflow: str, inputs: dict[str, str]) -> None   # the protocol method, implemented: POST /projects/<id>/pipeline, ref=workflow, one variables[][key]/[value] pair per input, through _api behind @write_barrier; today always ForgeError (gitlab.py:1169); tests/unit/test_forge_surface.py keeps listing it
+#   GitLabForge.pipelines_after(ref: str, since: str) -> list[dict]   # GET /projects/<id>/pipelines?ref&updated_after&per_page=100&page=<n>, paged until a short page; GitLabForge only, not the protocol
+#   GitLabForge.merge_request_projects(iid: int) -> tuple[int, int]   # (source_project_id, target_project_id) from GET /projects/<id>/merge_requests/<iid>; GitLabForge only
 
 # src/repoach/cli/threads_cmds.py (8b's file, edited under the edge):
 #   repoach threads serve [--listen-fd | --bind H:P] [--gitlab-url U] --project-id N --bot-username L [--behind-proxy [--proxy-hops N]] [--allow-plain-http] [--secret-dir D]
@@ -636,8 +675,9 @@ reason, never a 5xx that would make GitLab retry a malformed body.
 | `::test_trigger_failure_is_logged_and_the_mr_goes_idle` | failure scenario | return 500, or keep the MR armed forever |
 | `::test_credentials_dir_is_the_only_source_and_refuses_bad_files` | D2: `webhook_secret` / `trigger_token` read from a temp directory; an absent, an empty and a `0644` file each exit 2 naming the credential; `$CREDENTIALS_DIRECTORY` is the default; nothing is read from the environment or argv | read `REPOACH_WEBHOOK_SECRET` from the environment, or accept a `0644` file |
 | `::test_non_loopback_plain_bind_is_refused_unless_named` | D9: `--bind 0.0.0.0:8787` alone → exit 2 with the rule; with `--behind-proxy` or `--allow-plain-http` → starts | bind silently |
-| `::test_pending_merge_requests_from_the_forge_alone` | D7: on a fake forge, an MR whose bot thread's last comment is the author's is pending; one whose last comment is the bot's is not; a `/resolve` comment newer than the bot's newest makes it pending; no ledger path is opened | read the ledger, or key on any comment |
+| `::test_pending_merge_requests_from_the_forge_alone` | D7: on a fake `GitLabForge`, an MR whose bot thread's last comment is the author's is pending; one whose last comment is the bot's is not; a `/resolve` comment newer than the bot's newest makes it pending; no ledger path is opened | read the ledger, or key on any comment |
 | `::test_never_answerable_thread_stops_triggering` | D7 (0.4), G5: a bot thread whose last bot reply ends `state: escalated to owner` followed by two author comments → `skipped: escalated`, not pending, with an empty pipelines listing; a bot thread with an author comment and a `pipelines_after(branch, created_at)` answer holding one `source: api` pipeline created after it → `skipped: pipeline newer`, not pending; the same with the listing empty → pending; run twice with the listing recording the first run's trigger → the second run triggers nothing; a fork MR → `skipped: fork` | list an escalated thread, ignore the pipelines, or trigger a fork |
+| `::test_gitlab_pipeline_dispatch_pages_and_obeys_the_barrier` | D7 (0.5): on a `GitLabForge` whose `_api` is faked, `dispatch_workflow("feat/x", {"REPOACH_THREADS_REPLY_MR": "371"})` POSTs `/projects/<id>/pipeline` once with `ref=feat/x` and that one variable; the same forge built read-only raises `ForgeWriteRefusedError` and POSTs nothing; `pipelines_after("feat/x", t)` with a first page of 100 entries asks `page=2`, stops at the short page and returns all 130; `merge_request_projects(371)` returns the two ids of the recorded merge request | POST in read-only mode, read only the first page, or guess the project ids |
 | `tests/unit/test_threads_receiver_unit.py::test_unit_pair_is_socket_activated_hardened_and_passes_no_secret` | D10: the socket has `ListenStream=` and `FreeBind=yes`; the service has `Requires=` the socket, two `LoadCredentialEncrypted=` lines, an `EnvironmentFile=` and no `Environment=` holding a token, `ProtectSystem=strict`, `CapabilityBoundingSet=` empty, no `IPAddressAllow`/`IPAddressDeny`, `RestrictAddressFamilies` naming `AF_INET AF_INET6 AF_UNIX`; no file under `deploy/systemd/` holds a hostname, an IP other than `127.0.0.1`, a login or a project id | add `IPAddressAllow=…`, or write a project id in the unit |
 | `::test_systemd_analyze_verify_is_silent_on_the_sample_pair` | D10, S1: the two files copied to a temp directory with `ExecStart=`'s binary rewritten to `/bin/true` (the unit names an install path CI does not have), `systemd-analyze verify <socket> <service>` → empty output, exit 0; the test fails naming `systemd-analyze` when the binary is absent (CI runs on a systemd host) | add `IPAddressAllow=172.18.0.0/16 gitlab.com` |
 | `tests/unit/test_threads_triggers.py::test_generated_gitlab_jobs_hold_threads_reply_with_cache_resource_group_and_the_schedule_without_tags` | D7, D8: the snippet carries both jobs, `rules` on `$REPOACH_THREADS_REPLY_MR`, `resource_group: threads-reply-$REPOACH_THREADS_REPLY_MR`, `cache.key: repoach-ledger-mr-$REPOACH_THREADS_REPLY_MR` on the `LedgerPlan` path, no `tags:`, the schedule rule on `$REPOACH_THREADS_SCHEDULE` | key the cache on `$CI_MERGE_REQUEST_IID`, drop the resource group, or write a runner tag |
@@ -653,11 +693,12 @@ reason, never a 5xx that would make GitLab retry a malformed body.
 ## Architecture Impact
 - Adds dependency: SP-GITLAB-NOTE-RECEIVER -> SP-PR-THREADS-REMEMBER-AND-CLOSE (design source: D10, D14)
 - Adds dependency: -> SP-THREAD-REPLY-AGENT (the command the pipeline runs; `threads serve` and `threads pending` register in its `threads_cmds.py`)
-- Adds dependency (0.2): -> SP-UNIVERSAL-FORGE (`pending_merge_requests` reads `comments` and `review_threads` through the protocol, D7)
+- Adds dependency (0.2, 0.5): -> SP-UNIVERSAL-FORGE (`pending_merge_requests` reads `comments` and `review_threads` through the protocol, D7; `forge/gitlab.py` is its, and the implemented `dispatch_workflow`, `pipelines_after` and `merge_request_projects` of D7 are edits to that file, designed here and owned by no new spec; no cycle, since SP-UNIVERSAL-FORGE depends on nothing of this family)
+- Adds dependency (0.5): -> SP-DRY-RUN-NEVER-POSTS (the pipeline creation passes its write barrier; a read-only run refuses it)
 - Adds dependency: -> SP-UNIVERSAL-CI-ENTRY (`ci_entry/snippets.py` and `cli.py` are its; the two jobs and the `threads_pipeline=` lines are edits to them)
 - Adds dependency: -> SP-CI-LEDGER-PERSISTS (`LedgerPlan`, the per-merge-request ledger cache the `threads:reply` job restores and saves, and the `.gitlab-ci.yml` reader of its D3 that the `threads_pipeline=` lines reuse, D8; it lands before this spec in the umbrella's order)
 - Adds dependency: -> SP-CLI-STDOUT-ONE-JSON (the server logs on stderr, prints nothing on stdout; `threads pending --json` prints one document)
-- New resources: `format:gitlab-note-webhook` (the headers and body shape `authenticate` and `classify` accept), `format:threads-receiver-unit` (the sample unit pair and the environment example). No table. No cycle: `thread_webhook.py` imports `repoach.forge` (the protocol, for `pending_merge_requests`), the standard library and `pydantic`, nothing of `review/` beyond its own module.
+- New resources: `format:gitlab-note-webhook` (the headers and body shape `authenticate` and `classify` accept), `format:threads-receiver-unit` (the sample unit pair and the environment example). No table. No cycle: `thread_webhook.py` imports `repoach.forge` (the protocol and `GitLabForge`, for `pending_merge_requests`), the standard library and `pydantic`, nothing of `review/` beyond its own module.
 
 ## Diagram
 ```mermaid
