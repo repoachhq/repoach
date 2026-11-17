@@ -30,3 +30,11 @@ def test_check_script_is_tracked_executable_and_replays() -> None:
     script = _ROOT / "scripts" / "check_affected_corpus.sh"
     assert os.access(script, os.X_OK)
     assert script.read_text(encoding="utf-8").splitlines()[-1] == "exec repoach ci affected replay"
+
+
+def test_declared_sources_exist_in_repo() -> None:
+    """Every declared source is a tracked file, so a rename cannot blind the staleness check."""
+    (entry,) = _entries()
+    assert entry.sources
+    for source in entry.sources:
+        assert (_ROOT / source).is_file(), source
