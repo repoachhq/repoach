@@ -213,6 +213,12 @@ check whose job never ran is not a verdict, so it is never green.
   skipped run is judged on the run that ran.
 - A job whose every step is skipped concludes `success` (the no-op legs
   above), not `skipped`, and stays green.
+- The Coder reads green the same way: `fetch_ci_status` takes a red
+  from any failed `gh pr checks` row, and takes green only from the
+  merge gate's verdict on the required checks. A head whose required
+  checks were skipped, are missing or were only cancelled is
+  `CI_UNKNOWN` (`coder.ci_required_not_green` in the log), so the Coder
+  neither opens nor closes a CI-failure finding on it.
 - Replayed on release PR #307's head `79b9321`: the skipped run
   44071742332 reads `required_check_failed` with `wheel-build=SKIPPED`
   and four annotated `missing` names; with the later run 44081266335 the
