@@ -20,6 +20,7 @@ started but not completed is ``in_progress``.
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -40,13 +41,14 @@ REPOSITORY = "repoachhq/repoach"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "merge_wait"
 
 CI_CHECKS: tuple[str, ...] = (
+    "gate",
     "Test suite (Python 3.11)",
     "Test suite (Python 3.13)",
     "wheel-build",
     "wheel-smoke (3.11)",
     "wheel-smoke (3.13)",
 )
-"""The five ``CI`` job names (F11, D4)."""
+"""The six ``CI`` job names: F11, D4, and ``gate`` (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED D4)."""
 
 PRODUCERS: dict[str, str] = {
     **{name: "CI" for name in CI_CHECKS},
@@ -55,6 +57,40 @@ PRODUCERS: dict[str, str] = {
     "Auto-merge to develop": "Auto Review (review bots)",
     "ShellCheck (warning-level)": "ShellCheck",
 }
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CI_BEFORE_GATE = FIXTURES / "ci.before-gate.yml"
+"""``ci.yml`` as the measured runs ran it: five jobs, before ``gate`` existed."""
+
+
+def measured_era_root(tmp_path: Path) -> Path:
+    """Return a project root whose ``CI`` workflow is the one the measured runs ran.
+
+    The check runs of :func:`measured_check_runs` were recorded on
+    2026-10-26, under a ``ci.yml`` of five jobs. SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED
+    adds a ``gate`` job, so today's required list names a check no
+    measured run produced; a replay is judged against the workflow of
+    its time, never against a check run added to the recording.
+
+    Args:
+        tmp_path: The test's own directory; the root is created under it.
+
+    Returns:
+        A git working tree holding today's ``repoach.toml`` and
+        ``.github/workflows/*.yml``, with ``ci.yml`` replaced by
+        :data:`CI_BEFORE_GATE`; the same root on a second call.
+    """
+    root = tmp_path / "measured_era_root"
+    if root.is_dir():
+        return root
+    workflows = root / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    for source in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+        (workflows / source.name).write_bytes(source.read_bytes())
+    (workflows / "ci.yml").write_bytes(CI_BEFORE_GATE.read_bytes())
+    (root / "repoach.toml").write_bytes((REPO_ROOT / "repoach.toml").read_bytes())
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+    return root
 
 
 def ts(value: str) -> datetime:
@@ -358,7 +394,7 @@ def ci_runs(
     in_progress: Iterable[str] = (),
     finished: str = "2026-10-26T07:53:19Z",
 ) -> list[dict[str, object]]:
-    """The five CI checks at ``head``: ``SUCCESS``, except those still ``in_progress``."""
+    """The six CI checks at ``head``: ``SUCCESS``, except those still ``in_progress``."""
     running = set(in_progress)
     rows: list[dict[str, object]] = []
     for name in CI_CHECKS:

@@ -60,6 +60,7 @@ from tests.merge_wait_fakes import (
     MergeWaitFixtureForge,
     ci_runs,
     measured_check_runs,
+    measured_era_root,
     seed_review,
 )
 from tests.unit.test_review_team import _outcome, _StubGitHubForge, _StubReviewer
@@ -281,6 +282,7 @@ def test_stranded_dispatch_holds_a_green_pr_with_an_open_thread(
         "get_settings",
         lambda: SimpleNamespace(db_path=str(tmp_path / "review.db"), integration_branch="develop"),
     )
+    monkeypatch.chdir(measured_era_root(tmp_path))
     result = CliRunner().invoke(review_cmds.review_app, ["stranded", "--dispatch", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)

@@ -43,6 +43,7 @@ from tests.merge_wait_fakes import (
     MergeWaitFixtureForge,
     ci_runs,
     measured_check_runs,
+    measured_era_root,
     seed_review,
     ts,
 )
@@ -269,7 +270,7 @@ def replay(case: Replay, db: Path, monkeypatch: pytest.MonkeyPatch) -> AutoMerge
         case.pr,
         forge=fx.forge,
         db_path=db,
-        repo_root=REPO_ROOT,
+        repo_root=measured_era_root(db.parent),
         wait_seconds=0,
         trigger=f"replay:{case.run_id}",
         clock=fx.clock,
@@ -284,8 +285,8 @@ def test_measured_run_replay(case: Replay, tmp_path: Path, monkeypatch: pytest.M
     assert note in result.notes
 
 
-def test_249_is_listed_stranded_with_its_gate_reason() -> None:
-    names = required_checks(REPO_ROOT)
+def test_249_is_listed_stranded_with_its_gate_reason(tmp_path: Path) -> None:
+    names = required_checks(measured_era_root(tmp_path))
     fx = MergeWaitFixtureForge(
         [
             FixturePR(

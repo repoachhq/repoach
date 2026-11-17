@@ -168,7 +168,10 @@ scripts/ci_local.sh --affected [<base>] # only what the diff from <base> affects
 runs the gate (arch check, the CONTRIBUTING and attribution lints,
 `[gate].pytest`), the lint, pytest and smoke blocks when `test` is
 selected, and the `--wheel` block when a wheel job is; that block refuses
-by name when `build`, `twine` or `pipx` is missing.
+by name when `build`, `twine` or `pipx` is missing. In GitHub Actions the
+`gate` job of `ci.yml` runs the same selection, and a job it does not
+select concludes `success` as a named no-op
+(SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED, `docs/merge_gate.md`).
 The path-to-job table is `.github/affected-jobs.toml`
 (SP-AFFECTED-JOBS-TABLE). `repoach ci affected harvest --merged 30`
 rewrites its corpus (`tests/fixtures/affected_jobs/pr_runs.json`) from

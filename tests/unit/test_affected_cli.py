@@ -93,6 +93,7 @@ def test_select_writes_github_output_and_summary(repo: Path, tmp_path: Path) -> 
         "earlier=1",
         *(f"job_{job_id.replace('-', '_')}=true" for job_id in job_ids),
         "mode=narrowed",
+        "reason=narrowed: pull_request on develop",
     ]
     text = summary.read_text(encoding="utf-8")
     assert text.startswith("### An earlier step\n### Affected jobs\n")

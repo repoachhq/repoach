@@ -32,10 +32,10 @@ from tests.merge_wait_fakes import (
     MergeWaitFixtureForge,
     ci_runs,
     measured_check_runs,
+    measured_era_root,
     ts,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime.fromisoformat("2026-10-26T10:00:00+00:00")
 SELECTORS = "spec acceptance selectors not all present"
 GREEN_256 = "stranded: green since 2026-10-26T07:11:43Z, no merge attempt"
@@ -103,6 +103,7 @@ def _invoke(monkeypatch: pytest.MonkeyPatch, fx: MergeWaitFixtureForge, tmp_path
         "get_settings",
         lambda: SimpleNamespace(db_path=str(tmp_path / "review.db"), integration_branch="develop"),
     )
+    monkeypatch.chdir(measured_era_root(tmp_path))
     result = CliRunner().invoke(review_cmds.review_app, ["stranded", *args])
     assert result.exit_code == 0, result.output
     return result
@@ -110,7 +111,7 @@ def _invoke(monkeypatch: pytest.MonkeyPatch, fx: MergeWaitFixtureForge, tmp_path
 
 def test_stranded_listed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fx = _fixture()
-    names = required_checks(REPO_ROOT)
+    names = required_checks(measured_era_root(tmp_path))
     prs = fx.forge.open_pull_requests("develop")
     verdicts = {
         pr.number: judge_required_checks(
