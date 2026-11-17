@@ -1,14 +1,14 @@
 ---
 id: SP-CI-LEDGER-PERSISTS
 title: The generated CI jobs keep the findings ledger between jobs of one PR / MR
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-10-25
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
-  code: [tests/unit/test_ci_ledger_persists.py]
+  code: [tests/unit/test_ci_ledger_persists.py, tests/fixtures/ci/hand_written_review_job.yml]
   resources: []
 
 depends_on: [SP-FINDINGS-BRIDGE-DOCFIX, SP-UNIVERSAL-CI-ENTRY, SP-UNIVERSAL-PROJECT-CONFIG]
@@ -20,6 +20,22 @@ constraints:
 ---
 
 # The generated CI jobs keep the findings ledger between jobs of one PR / MR
+
+## Amendment (0.4, 2026-11-18): the hand-written job is an anonymised fixture; the spec is for every project
+
+Owner principle 2026-11-17, repoach is for everyone. 0.3 named one
+project's hand-written job as D3's "first client and reference fixture"
+and copied it into a test named after that project. The fixture is now
+`tests/fixtures/ci/hand_written_review_job.yml`, owned here: a
+hand-written GitLab job that names `repoach` in `variables:` and
+`cache:` and not in `script:` (the shape F7 measured), with every
+project value replaced by a placeholder (runner tag `<runner tag>`,
+environment `<environment>`, script `bash ci/<review script>.sh`, no
+project id, no host, no login), and the test is
+`test_doctor_reads_a_hand_written_job`. The End state, the edge cases,
+NG1, NG6 and the Open Questions describe any project; the project
+measured in F3, F5 and F7 appears as "Reference measurement (owner's
+dogfood)" and C2 names it as one instance.
 
 ## Amendment (0.3, 2026-11-17): approved and ordered; the facts re-measured on `92cd241`
 
@@ -33,9 +49,9 @@ changes; this version re-measures every fact on `origin/develop`
 spec carries (End state, Easy solution rejected, Hard part, Tests with
 their red mutation, Success conditions with an external oracle), names
 the `LedgerPlan` 8c consumes, and closes the two live measurements of
-0.2 on the one project that runs the pattern today, Yoob, whose
+0.2 on the one project known to run the pattern today, whose
 hand-written `review:gate` job already caches the ledger with the key
-this spec generates (F5).
+this spec generates (F5, a reference measurement).
 
 ## Intent
 
@@ -61,8 +77,10 @@ job starts with an empty ledger, the replay never fires there and
 also does not pass `REPOACH_REVIEW_FORCE` through `env:`, so even a
 warmed cache could not be forced. (verified 2026-10-22)"
 
-Measured on `origin/develop` `92cd241` (2026-11-17; Yoob on its
-`origin/develop` `6ee04ab`):
+Measured on `origin/develop` `92cd241` (2026-11-17). F3's last
+sentence, F5 and F7 are a reference measurement (owner's dogfood) on
+the owner's GitLab project, Yoob, at its `origin/develop` `6ee04ab`;
+they show the pattern in use, they are a condition of nothing:
 
 | # | Fact | Where |
 |---|---|---|
@@ -92,8 +110,12 @@ Measured on `origin/develop` `92cd241` (2026-11-17; Yoob on its
   effect is). Information only.
 - D3 (Q3): `doctor --ci` also reads hand-written jobs: any job of the
   checkout's `.gitlab-ci.yml` that names `repoach` in its `script`,
-  `variables` or `cache` counts as a repoach job (F7). Yoob's
-  `review:gate` is the first client and the reference fixture.
+  `variables` or `cache` counts as a repoach job (F7). The fixture is
+  `tests/fixtures/ci/hand_written_review_job.yml` (0.4), an anonymised
+  hand-written job of that shape: runner tag, environment, script name
+  and every project value replaced by placeholders; the redaction rule
+  of the family applies (logins → role class, hosts, ids and paths →
+  placeholders).
 - D4 (0.3, SP-LEDGER-FORMAT-IS-VERSIONED): this spec adds no table, no
   column and no enum value to the ledger; it moves the file and caches
   it. `LEDGER_FORMAT` is untouched (`ledger_format_after: none`);
@@ -110,12 +132,13 @@ push restores it and the older-head re-check runs on the first head's
 findings. The GitHub workflow does the same through `actions/cache`
 restore and save, the save under `if: always()`. `repoach doctor --ci`
 prints the ledger path, whether it is cacheable and present, and which
-jobs declare the cache. On Yoob, `threads:reply` (8c) restores the
-ledger `review:gate` wrote, under one key.
+jobs declare the cache. On a project whose hand-written review job
+carries the key, `threads:reply` (8c) restores the ledger that job
+wrote, under one key.
 
 ## Easy solution rejected
 
-Cache `.repoach/` whole, as Yoob does: the generated job file lives
+Cache `.repoach/` whole, as a hand-written job may (F5): the generated job file lives
 there (F4) and an older copy of a tracked file would be restored over
 the checkout; the path is narrowed to the ledger file. Also rejected:
 always setting `REPOACH_DB_PATH=.repoach/repoach.db` in the snippet,
@@ -151,12 +174,12 @@ entry of the same PR.
 
 ## Non-Goals
 
-- NG1: no ledger shared across PRs / MRs (Yoob B-132's remaining part): the key is per PR / MR.
+- NG1: no ledger shared across PRs / MRs: the key is per PR / MR.
 - NG2: no change to the replay itself (SP-FINDINGS-BRIDGE-DOCFIX G9-G13) or to the older-head re-check.
 - NG3: no rewrite of a project's own CI file: `.gitlab-ci.yml` and existing workflows stay untouched (SP-UNIVERSAL-CI-ENTRY); a job file already present and different stays `differs` without `--force`.
 - NG4: no distributed GitLab cache setup; a runner without a shared cache keeps the ledger only on that runner (D2 makes it visible).
 - NG5: `doctor --ci` does not follow `include:` entries of `.gitlab-ci.yml` other than the generated job file it already reads.
-- NG6 (0.3): no change to repoach's own `auto-review.yml`, which is hand-written and persists its ledger as an artifact (SP-REVIEW-RESUMES-FAILED-ROLES D4), nor to Yoob's hand-written `review:gate`.
+- NG6 (0.3): no change to repoach's own `auto-review.yml`, which is hand-written and persists its ledger as an artifact (SP-REVIEW-RESUMES-FAILED-ROLES D4), nor to any project's hand-written job (NG3).
 
 ## Assumptions
 
@@ -212,11 +235,11 @@ reviewers again. Job 3 at a new head `H'`: the restored ledger holds
 
 ### Edge cases
 
-- `[state].db_path = ".repoach/repoach.db"` (Yoob) → no `REPOACH_DB_PATH` in the snippet, cache path `.repoach/repoach.db`.
+- `[state].db_path = ".repoach/repoach.db"` (a project that sets it) → no `REPOACH_DB_PATH` in the snippet, cache path `.repoach/repoach.db`.
 - `[state].db_path` absolute, or relative but resolving outside the root → no ledger cache, no `REPOACH_DB_PATH`; `doctor --ci` prints `ledger not cacheable (outside workspace)`.
 - A CI/CD variable `REPOACH_DB_PATH` set by the project outranks both; `doctor --ci` prints the path actually in force and whether it is cacheable.
 - `[state].db_path` changed after `init --ci` → the rendered file differs; `init --ci` reports `differs` until `--force` (F9).
-- GitLab runner without a distributed cache: a job landing on another runner starts from an empty ledger and reviews from scratch, as Yoob documents (Yoob `docs/developer_guide/workflows.md`, "A fix push"); `doctor --ci` warns (D2).
+- GitLab runner without a distributed cache: a job landing on another runner starts from an empty ledger and reviews from scratch; `doctor --ci` warns (D2).
 - The first pipeline of an MR: the ledger is legitimately absent; the D2 warning says "declared but not restored" without claiming a fault.
 - GitHub `cancel-in-progress` cancels job 1 before the save: job 2 restores the newest earlier entry by `restore-keys`, or none.
 - A PR from a fork: the cache is scoped to that PR's ref by GitHub; the key never crosses PRs.
@@ -238,7 +261,7 @@ reviewers again. Job 3 at a new head `H'`: the restored ledger holds
 | `::test_second_job_at_the_same_head_replays_from_the_cached_paths_only` | AC5, G4: two simulated jobs in fresh workspaces, only the cached paths copied; job 2 `cached: true`, 0 reviewer and 0 judge calls, same verdict | copy nothing, or copy the whole workspace |
 | `::test_force_in_job_two_reviews_again` | AC6 | ignore `REPOACH_REVIEW_FORCE` |
 | `::test_doctor_prints_the_ledger_lines` | AC7, G6 | print the path without the cacheable verdict |
-| `::test_doctor_reads_yoobs_hand_written_job` | AC8, D3 (fixture copied from Yoob `.gitlab-ci.yml:1645-1669`) | match `script:` only |
+| `::test_doctor_reads_a_hand_written_job` | AC8, D3: the anonymised fixture `tests/fixtures/ci/hand_written_review_job.yml` (0.4) | match `script:` only |
 | `::test_doctor_warns_once_when_declared_but_absent` | AC9, D2 | change the exit code, or warn when present |
 | `::test_init_reports_differs_for_the_previous_rendering` | AC10 | overwrite without `--force` |
 | `::test_snapshot_is_unchanged` | D4: `ledger_format.snapshot()` equals `tests/fixtures/ledger_format/<LEDGER_FORMAT>.json` and `ls tests/fixtures/ledger_format/` gains no file | add a column |
@@ -246,7 +269,7 @@ reviewers again. Job 3 at a new head `H'`: the restored ledger holds
 ## Success conditions
 
 - C1 (oracle: AC5's fixture test): `pytest -q tests/unit/test_ci_ledger_persists.py::test_second_job_at_the_same_head_replays_from_the_cached_paths_only -s` prints `calls: job1=<n≥1> job2=0`.
-- C2 (external oracle: the live pipelines of any GitLab project whose review job carries the key, generated or hand-written): on the first merge request with two pipelines at one head after this lands, `glab api projects/<id>/jobs/<second review job id>/trace | grep -c 'Successfully extracted cache'` → `1` and the same trace holds `review: cached at <sha7>`; written beside this line with both job ids by the verifier. After SP-GITLAB-NOTE-RECEIVER lands, the same grep on a `threads:reply` job of that merge request → `1`, which proves the shared key (F10). Yoob, whose hand-written job carries the key today (F5), is the first project this runs on; its ids are an instance, not the oracle.
+- C2 (external oracle: the live pipelines of any GitLab project whose review job carries the key, generated or hand-written): on the first merge request with two pipelines at one head after this lands, `glab api projects/<id>/jobs/<second review job id>/trace | grep -c 'Successfully extracted cache'` → `1` and the same trace holds `review: cached at <sha7>`; written beside this line with both job ids by the verifier. After SP-GITLAB-NOTE-RECEIVER lands, the same grep on a `threads:reply` job of that merge request → `1`, which proves the shared key (F10). Before any live project, C1's fixture test proves the replay on a fresh machine. Reference measurement (owner's dogfood): the owner's project, whose hand-written job carries the key today (F5), is the first this runs on; its ids are an instance, not the oracle.
 - C3 (oracle: the suites): `pytest -q tests/unit/test_ci_ledger_persists.py tests/unit/test_ci_entry.py` → green; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`; `python -m repoach.review.ledger_format snapshot` byte-equal to `origin/develop`'s (D4).
 
 ## Architecture Impact
@@ -276,11 +299,11 @@ flowchart TD
 - [ ] AC5 (fixture): two simulated jobs of PR 7 at one head, each in a fresh workspace, with only the paths the rendered snippet caches copied from job 1's workspace into job 2's, and fake reviewers and judge that count their calls: job 1 makes ≥1 reviewer call and reports `cached: false`; job 2 reports `cached: true`, 0 reviewer calls, 0 judge calls, the same verdict.
 - [ ] AC6 (fixture): the same as AC5 with `REPOACH_REVIEW_FORCE=1` in job 2's environment: job 2 reports `cached: false` and calls the reviewers.
 - [ ] AC7: `doctor --ci` with `REPOACH_DB_PATH=.repoach/repoach.db`, the ledger file present and the generated GitLab job file in the checkout prints `ledger=<root>/.repoach/repoach.db (cacheable)`, `ledger_present=yes`, `ledger_cache=review:advisory declared`; with an absolute path outside the root it prints `ledger not cacheable (outside workspace)`; with a job file lacking the cache stanza it prints `ledger_cache=review:advisory not declared`.
-- [ ] AC8 (D3): a `.gitlab-ci.yml` fixture copied from Yoob's `review:gate` (script `bash ci/review-gate.sh`, `REPOACH_*` variables, `cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`) yields `ledger_cache=review:gate declared`; a job not naming `repoach` is not listed.
+- [ ] AC8 (D3): the anonymised fixture `tests/fixtures/ci/hand_written_review_job.yml` (0.4: a `review:gate` job with script `bash ci/<review script>.sh`, `REPOACH_*` variables, `tags: [<runner tag>]`, `environment: <environment>`, `cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`, and no project id, host or login: `grep -c -i "yoob\|hel1\|[0-9]\{8\}" tests/fixtures/ci/hand_written_review_job.yml` → `0`) yields `ledger_cache=review:gate declared`; a job not naming `repoach` is not listed.
 - [ ] AC9 (D2): `CI_PIPELINE_SOURCE=merge_request_event`, a repoach job declaring the ledger cache, the ledger absent → the warning line on stderr and exit 0; the ledger present → no warning.
 - [ ] AC10: `repoach init --ci gitlab` on a checkout holding the previous rendering reports `differs` (and `--force` rewrites it): the existing `plan_ci_init` contract holds for the new content (F9).
 - [ ] AC11 (0.3): `repoach arch check --base origin/develop` → `edge-honesty: ok`; `pytest -q tests/unit/test_ci_entry.py tests/unit/test_ledger_format_skew.py` → green with no new `tests/fixtures/ledger_format/N.json` (D4).
 
 ## Open Questions
 
-- None. 0.2's Q1–Q3 are D1–D3; the live measurement 0.2 asked for is C2 on Yoob, the one project that runs the key today.
+- None. 0.2's Q1–Q3 are D1–D3; the live measurement 0.2 asked for is C2, on any project whose review job carries the key.

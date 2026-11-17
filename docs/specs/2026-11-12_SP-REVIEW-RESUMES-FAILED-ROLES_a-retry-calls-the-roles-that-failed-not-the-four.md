@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-RESUMES-FAILED-ROLES
 title: A review at a head keeps the roles that answered, and a retry calls only the roles that did not
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-12
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/role_resume.py, tests/unit/test_role_resume.py, tests/integration/test_role_resume_end_to_end.py]
@@ -21,14 +21,23 @@ constraints:
 
 # A retry calls only the roles that did not answer
 
+## Amendment (0.5, 2026-11-18): one project's hand-written job is a reference measurement
+
+Owner principle 2026-11-17, repoach is for everyone. F9 and D4 named
+one project, the owner's, whose hand-written job caches the ledger per
+merge request; D4 now says what holds for any project whose hand-written
+job does so, and F9 is labelled a reference measurement (owner's
+dogfood). Nothing of the design changes: D4 is repoach's own workflow,
+and the generated jobs are SP-CI-LEDGER-PERSISTS's.
+
 ## Amendment (0.4, 2026-11-17): the generated jobs persist nothing today; the edges say what is read
 
 Re-measured on `origin/develop` `92cd241` after the verifier's read. F9
 of 0.3 said the generated CI jobs keep the ledger per pull request "by
 design": `src/repoach/ci_entry/snippets.py` has no `cache:` and no
 ledger path (`render_gitlab_job`, `:93-119`), and SP-CI-LEDGER-PERSISTS,
-which adds them, was a draft. What persists on Yoob is the hand-written
-`review:gate` job's cache. This spec needs neither: D4 is repoach's own
+which adds them, was a draft. What persists on a project with a
+hand-written caching job is that job's cache (F9). This spec needs neither: D4 is repoach's own
 `auto-review.yml`, and the edge to SP-CI-LEDGER-PERSISTS is withdrawn
 (that spec now sits in the umbrella's order before 8c, which is its
 first dependant). AC1's `test_table_is_not_a_gate_table` and AC5 import
@@ -79,7 +88,7 @@ Measured on `origin/develop` `92cd241` (2026-11-17).
 | F6 | `merge-on-ci.yml` fetches the ledger across runs: `gh api …/actions/artifacts?name=findings-ledger-<pr>`, the newest non-expired artifact of the head branch, refused unless its run's `path` is `.github/workflows/auto-review.yml` in this repository, unzipped to `runner.temp` | `.github/workflows/merge-on-ci.yml:173-212` |
 | F7 | Every usage row names `reviewer`, `provider`, `model` and `error` | `src/repoach/providers/usage.py:73-91` |
 | F8 | `pr_findings.id` is an autoincrement; the report names findings by it (`Verdict basis: #12, #14`; `#<id>` per judged finding) and `/resolve #<id>` parses an integer and looks it up among every finding of the pull request. In repoach's own CI (F5) the ids restart at 1 on every run, so the id an owner read on one run names another finding, or none, on the run their comment triggers (`issue_comment` → the `review` job) | `src/repoach/review/findings.py:272`; `src/repoach/review/report.py:193`, `:501-505`; `src/repoach/review/owner_commands.py:73`, `:471`; `.github/workflows/auto-review.yml:17-18`, `:149-152` |
-| F9 (0.4) | On Yoob the ledger under `.repoach/` is a GitLab cache per merge request on the hand-written `review:gate` job (`cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`), so ids persist there between pipelines when the cache is hit; the jobs `repoach init --ci` generates declare no cache and no ledger path on `92cd241`, and the draft that adds them, SP-CI-LEDGER-PERSISTS, is ordered by SP-REVIEW-CONVERGES before its first dependant, 8c | Yoob `.gitlab-ci.yml:1645-1669` (`origin/develop` `6ee04ab`); `src/repoach/ci_entry/snippets.py:93-119` |
+| F9 (0.4, 0.5) | Reference measurement (owner's dogfood): on the owner's GitLab project the ledger under `.repoach/` is a GitLab cache per merge request on a hand-written `review:gate` job (`cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`), so ids persist there between pipelines when the cache is hit; the jobs `repoach init --ci` generates declare no cache and no ledger path on `92cd241`, and the spec that adds them, SP-CI-LEDGER-PERSISTS, is ordered by SP-REVIEW-CONVERGES before its first dependant, 8c | that project's `.gitlab-ci.yml:1645-1669` (its `origin/develop` `6ee04ab`); `src/repoach/ci_entry/snippets.py:93-119` |
 | F10 | The chain has three tiers, `opus`, `sonnet`, `haiku`, each a `chains.env` key (`MODEL_OPUS`, …); each lens names its persona file with its version in the name (`architect_0.5.1.md`, `sentinel_0.4.3.md`, `tester_0.4.1.md`, `scribe_0.5.1.md`) and its chain (`model_chain`); SP-REVIEW-FABLE-TIER adds a fourth tier later | `src/repoach/review/chain_health.py:34`; `src/repoach/review/chain_rewrite.py:111`; `src/repoach/review/reviewer.py:447-448`, `:920`, `:939`, `:947`, `:955` |
 | F11 | `review pr` prints `incomplete_cause` (`transport` or `other`) in its JSON; the workflow reads it into a job output | `src/repoach/review/review_retry.py:92-120`; `src/repoach/cli/review_cmds.py:483`; `.github/workflows/auto-review.yml:185`, `:573` |
 | F12 | The gate reads five ledger tables, `pr_findings`, `pr_review_integrity`, `pr_spec_coverage`, `pr_merges`, `generated_checks`, listed in `GATE_TABLES` and snapshotted in `tests/fixtures/ledger_format/1.json`; a table outside the list is never read by the gate | SP-LEDGER-FORMAT-IS-VERSIONED D1, D9, F6; `src/repoach/review/ledger_format.py:72` (`LEDGER_FORMAT`), `:85` (`GATE_TABLES`) on `fix/ledger-format-is-versioned` |
@@ -124,11 +133,11 @@ Measured on `origin/develop` `92cd241` (2026-11-17).
   in this repository, else refused); the upload of F5 is unchanged and
   already unconditional. A missing, expired or refused artifact starts
   an empty ledger and logs `role_resume.ledger_unavailable: <why>`. The
-  artifact carries findings, outcomes and causes, no secret. On Yoob
-  the hand-written `review:gate` job already persists the ledger per
-  merge request (F9) and needs nothing from this spec; the generated
-  jobs persist nothing until SP-CI-LEDGER-PERSISTS lands, which is that
-  spec's object, not this one's.
+  artifact carries findings, outcomes and causes, no secret. A project
+  whose hand-written job already persists the ledger per merge request
+  (F9 is one) needs nothing from this spec; the generated jobs persist
+  nothing until SP-CI-LEDGER-PERSISTS lands, which is that spec's
+  object, not this one's.
 - D5. The round-2 dialogue and the refuter run as today over the merged
   set; a reused role's round-2 outcome, when it existed, is stored and
   reused under the same key with `round = 2`.

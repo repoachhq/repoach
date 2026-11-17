@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-REMEMBERS-EVERY-ROUND
 title: The reviewer remembers every round — all prior threads, every reply whoever wrote it, and their resolution state reach the next round's prompt
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/review_history.py, prompts/review/_review_history_0.1.0.md, tests/unit/test_review_history.py, tests/unit/test_review_history_in_prompt.py]
@@ -22,6 +22,18 @@ constraints:
 ---
 
 # The reviewer remembers every round
+
+## Amendment (0.6, 2026-11-18): the replay reads the anonymised fixture, the live condition is any project's
+
+Owner principle 2026-11-17, repoach is for everyone. C1 replayed
+rounds "as the Yoob `REVIEW-SPEC.md` and the MR hold them"; it replays
+SP-REVIEW-SETTLED-STAYS-SETTLED's recorded fixture, anonymised by the
+family's rule (logins replaced by their class, hosts and paths by
+placeholders), and asserts the `maintainer` class, not a login. C2 names
+a merge request of any project running this, with the owner's as a
+labelled reference measurement. The Context header labels the
+measurement of F4; the Open Questions name the owner's projects as an
+instance of Q1's setting.
 
 ## Amendment (0.5, 2026-11-17): the replies come from `comments()`, the statuses are the enum's, the reply agent is scheduled
 
@@ -97,7 +109,9 @@ whoever wrote it, labelled by what the forge knows of the author.
 
 ## Context
 
-Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
+Measured 2026-11-15 on `origin/develop` `5354767`; F4 is a reference
+measurement (owner's dogfood) on one of the owner's merge requests,
+!366, the source of the anonymised fixture.
 
 | # | Fact | Where |
 |---|---|---|
@@ -295,8 +309,8 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 
 ## Success conditions
 
-- C1: replaying !366's recorded rounds 1–11 (findings, replies, resolutions as the Yoob `REVIEW-SPEC.md` and the MR hold them) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
-- C2: on a live Yoob merge request after this lands, `jq .history.replies review-gate.json` equals the number of replies on the MR's repoach threads as the GitLab API lists them; oracle: `glab api` count.
+- C1: replaying !366's recorded rounds 1–11 (findings, replies, resolutions as SP-REVIEW-SETTLED-STAYS-SETTLED's anonymised fixture `tests/fixtures/review/mr366_rounds.json` holds them; 0.6) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
+- C2: on a live merge or pull request of any project running this, `jq .history.replies <the review JSON>` equals the number of replies on the request's repoach threads as the forge's API lists them; oracle: `glab api` or `gh api` count; `test_block_lists_every_reply_whoever_wrote_it` proves the same on the fixture forge before any live round. Reference measurement (owner's dogfood): the owner's first merge request after this lands, written beside this line as an instance.
 - C3: `grep -rn "PRIOR_REVIEW\|RESOLVED_DISAGREEMENTS" src prompts` → 0.
 
 ## Architecture Impact
@@ -325,4 +339,4 @@ flowchart LR
 - [ ] AC4: `docs/review_redesign_architecture.md` names the block where it names `{PRIOR_REVIEW}` today.
 
 ## Open Questions
-- None. Decided by the owner on 2026-11-15: Q1 (who is an `agent`) — the logins of `[review].agent_logins` in `repoach.toml`; on Yoob the agents post as the maintainer and are classed so; Q2 (history cap) — fixed at 12 000 tokens, named in the block.
+- None. Decided by the owner on 2026-11-15: Q1 (who is an `agent`) — the logins of `[review].agent_logins` in `repoach.toml` (in the owner's own projects the agents post as the maintainer and are classed so, an instance); Q2 (history cap) — fixed at 12 000 tokens, named in the block.

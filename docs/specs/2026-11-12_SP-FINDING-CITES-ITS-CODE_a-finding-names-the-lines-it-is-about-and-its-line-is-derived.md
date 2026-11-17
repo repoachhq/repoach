@@ -1,11 +1,11 @@
 ---
 id: SP-FINDING-CITES-ITS-CODE
 title: A finding names the code it is about, and its line is derived from that code, never taken on trust
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-12
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/finding_anchor.py, tests/unit/test_finding_anchor.py, tests/integration/test_finding_anchor_end_to_end.py, tests/fixtures/ledger_format/2.json]
@@ -22,6 +22,13 @@ constraints:
 ---
 
 # A finding names the code it is about, and its line is derived from that code
+
+## Amendment (0.4, 2026-11-18): the measurement trigger is any gateway's
+
+Owner principle 2026-11-17, repoach is for everyone. NG5's recommended
+trigger for making `code` mandatory read twenty reviews "on the owner's
+gateway"; it reads twenty reviews on any gateway running this, the
+owner's being the first sample. Nothing else changes.
 
 ## Amendment (0.3, 2026-11-17): approved; the column bumps the ledger format, the refusals reach the archive comment
 
@@ -196,7 +203,7 @@ written beside C5 by the verifier.
 - NG2: no LLM relocation call; no fuzzy or token-similarity match. The marker strip and whitespace normalisation are the only tolerances.
 - NG3: no anchoring of the Coder's fixes or the Developer's edits.
 - NG4: no change to the owner-command fallback (F6): it still reads the finding's file and line range, which are now derived.
-- NG5: `code` stays optional. Making it mandatory (a comment without it a parse failure, retried as today's malformed JSON) is a one-line amendment once `anchors.line_only` has been measured over a release; the recommended trigger is zero `line_only` over twenty consecutive reviews on the owner's gateway, read from the review JSON artifacts.
+- NG5: `code` stays optional. Making it mandatory (a comment without it a parse failure, retried as today's malformed JSON) is a one-line amendment once `anchors.line_only` has been measured over a release; the recommended trigger is zero `line_only` over twenty consecutive reviews on any gateway running this, read from the review JSON artifacts (the owner's gateway is the first such sample, an instance).
 - NG6: no finding identifier. SP-REVIEW-SETTLED-STAYS-SETTLED D11 derives `finding_key` from the claim type, the file and the normalised claim, not from the cited code: the code moves with the fix, and a key that moved with it would name a new finding at every head.
 
 ## Assumptions

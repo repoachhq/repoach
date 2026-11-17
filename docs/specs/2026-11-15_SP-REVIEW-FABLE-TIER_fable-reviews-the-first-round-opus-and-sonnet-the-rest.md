@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-FABLE-TIER
 title: A fourth capability tier, FABLE, runs the Architect and the Sentinel on the first round; Opus 5.5 runs the other lenses and the refuter; Sonnet 5.5 runs the replies
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/lens_tiers.py, tests/unit/test_fable_tier.py, tests/unit/test_lens_tier_by_round.py, tests/unit/test_fable_request_shape.py]
@@ -22,6 +22,16 @@ constraints:
 ---
 
 # A FABLE tier: deeper first rounds so fewer rounds follow
+
+## Amendment (0.5, 2026-11-18): the placement is proven on fakes, the live conditions are any project's
+
+Owner principle 2026-11-17, repoach is for everyone. The End state, A1
+and C1–C3 named one project and the owner's key; they describe a
+project whose CI runs repoach review and a workspace key configured per
+`docs/getting_started.md`. The CI oracle of the placement is the suites
+of Tests on the provider fakes (C4); C1–C3 are live confirmations on
+any project, with the owner's as a labelled reference measurement. The
+Intent labels the measurement that motivated the tier.
 
 ## Amendment (0.4, 2026-11-17): the reply tier has a consumer
 
@@ -44,8 +54,9 @@ the full-round placement, Fable included, applies to it.
 
 ## Intent
 
-Twelve rounds on !366 came from first rounds that found what the fix
-of the previous round had added, round after round. The owner decided
+Reference measurement (owner's dogfood): twelve rounds on one of the
+owner's merge requests, !366, came from first rounds that found what
+the fix of the previous round had added, round after round. The owner decided
 on 2026-11-15 to add Anthropic's most capable model as a reviewer tier
 so the first round reads deeper and later rounds are fewer. After this
 spec repoach has a fourth tier, `FABLE`, bound to `claude-fable-5-1`;
@@ -116,8 +127,9 @@ Measured 2026-11-15 on `origin/develop` `5354767`.
 
 ## End state
 
-A first review on Yoob runs the Architect and the Sentinel on
-`claude-fable-5-1` and costs about 4.20 USD; the second round runs on
+A first review on a project whose CI runs repoach review runs the
+Architect and the Sentinel on `claude-fable-5-1` and costs about 4.20
+USD at F11's size; the second round runs on
 Opus 5.5 over the delta for under 1.5 USD; the README and the code agree
 on four model ids; `repoach usage` shows, per lens, the model that
 served it.
@@ -162,7 +174,7 @@ never one that looks like Fable.
 
 ## Assumptions
 
-- A1: `claude-fable-5-1` is available to the owner's workspace key (the key's `GET /v1/models` lists it; checked in C1).
+- A1: `claude-fable-5-1` is available to the configured workspace key (`REPOACH_ANTHROPIC_API_KEY`, `docs/getting_started.md`; the key's `GET /v1/models` lists it; checked in C1). A key without it makes the FABLE hop a named refusal (SP-ANTHROPIC-BUDGET-GUARD `unpriced_model` / the provider's 404), never a silent fallback.
 - A2: SP-REVIEW-DELTA-FIRST has landed, so the round kind exists; before it, every round is a full round and D1's first column applies.
 - A3 (0.4): SP-THREAD-REPLY-AGENT has landed, so `thread_reply.py` exists to take `REPLY_TIER`; `tests/unit/test_lens_tier_by_round.py::test_placement_table` pins that its classification call asks `CapabilityTier.SONNET`.
 
@@ -218,9 +230,9 @@ report lists five models served; `repoach budget` grows by about 4.20 USD.
 
 ## Success conditions
 
-- C1: `REPOACH_PROVIDER=anthropic repoach review pr <n> --dry-run` on the repoach repository with the owner's key completes with `lenses[].served_by` = `anthropic/claude-fable-5-1` for Architect and Sentinel and `anthropic/claude-opus-5-5` for the rest, no 400 in the log; oracle: the JSON and `repoach budget`'s growth within 20 % of 4.20 USD.
-- C2: on Yoob, the first full round after this lands posts, for the Architect and the Sentinel, comments whose `lenses[].model` is `claude-fable-5-1`; oracle: `review-gate.json`.
-- C3: after twenty Yoob reviews, `repoach memory record` (SP-REVIEW-MEMORY-STORE) prints the refuted ratio per (lens, model), so the owner can compare Fable's Architect with the Opus delta rounds; oracle: the command's rows exist with both models.
+- C1 (live, any project): `REPOACH_PROVIDER=anthropic repoach review pr <n> --dry-run` on a checkout of any project with a workspace key configured per `docs/getting_started.md` completes with `lenses[].served_by` = `anthropic/claude-fable-5-1` for Architect and Sentinel and `anthropic/claude-opus-5-5` for the rest, no 400 in the log; oracle: the JSON and `repoach budget`'s growth within 20 % of 4.20 USD at F11's size; the placement itself is the fakes' oracle, `test_placement_table` (C4), which runs in CI with no key. Reference measurement (owner's dogfood): the same command on the repoach repository with the owner's key, written beside this line as an instance.
+- C2 (live, any project): the first full round after this lands posts, for the Architect and the Sentinel, comments whose `lenses[].model` is `claude-fable-5-1`; oracle: the project's review JSON. Reference measurement (owner's dogfood): the owner's first full round, an instance.
+- C3 (live, any project): after twenty reviews, `repoach memory record` (SP-REVIEW-MEMORY-STORE) prints the refuted ratio per (lens, model), so a maintainer can compare Fable's Architect with the Opus delta rounds; oracle: the command's rows exist with both models. Reference measurement (owner's dogfood): the owner's first twenty, an instance.
 - C4: `pytest -q tests/unit/test_review_chains_anthropic_first.py tests/unit/test_chains_single_source.py tests/unit/test_models_endpoint_truthful.py` → green with four chains.
 
 ## Architecture Impact

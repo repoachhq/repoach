@@ -1,14 +1,14 @@
 ---
 id: SP-REVIEW-DELTA-FIRST
 title: From the second round on, the lenses review the diff since the last reviewed head, with the full merge request as cached context, and every fall-back to the full range is named
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
-  code: [src/repoach/review/delta_scope.py, tests/unit/test_delta_scope.py, tests/unit/test_delta_prompt_blocks.py, tests/integration/test_delta_review_end_to_end.py, tests/fixtures/ledger_format/3.json]
+  code: [src/repoach/review/delta_scope.py, tests/unit/test_delta_scope.py, tests/unit/test_delta_prompt_blocks.py, tests/integration/test_delta_review_end_to_end.py, tests/fixtures/ledger_format/3.json, tests/fixtures/review/ten_push_mr.json]
   resources: []
 
 depends_on: [SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-PROMPT-PLACEHOLDER-ORDER, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-ANTHROPIC-BUDGET-GUARD, SP-GATE-REVERIFIES-AT-HEAD, SP-REVIEW-RESUMES-FAILED-ROLES, SP-POSTING-REPLAY-DEDUPES, SP-UNIVERSAL-PROJECT-CONFIG, SP-MEMORY-LOOPS-EXPLICIT, SP-CLI-STDOUT-ONE-JSON, SP-USAGE-LEDGER, SP-LEDGER-FORMAT-IS-VERSIONED]
@@ -21,6 +21,19 @@ constraints:
 ---
 
 # Delta-first review: the diff since the last reviewed head, the merge request as context
+
+## Amendment (0.6, 2026-11-18): the live conditions are any project's, the ten-push fixture is named and anonymised
+
+Owner principle 2026-11-17, repoach is for everyone. C3 named one
+project and one gateway, the owner's; it names a delta round of any
+project through a gateway configured per `docs/getting_started.md`, with
+the owner's as a labelled reference measurement. C4 replayed "a recorded
+ten-push Yoob merge request" that no spec owned; the fixture is
+`tests/fixtures/review/ten_push_mr.json`, owned here, recorded from one
+of the owner's merge requests and anonymised by the family's rule
+(tokens redacted, logins replaced by their class, hosts and paths by
+placeholders), so C4 runs on the provider fakes on a fresh machine. The
+Context header labels the measurement of F3.
 
 ## Amendment (0.5, 2026-11-17): no draft in the path, the snapshot is owned, the oracle is the usage ledger
 
@@ -97,7 +110,7 @@ reviewed and the reason is named.
 
 ## Context
 
-Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366;
+Measured 2026-11-15 on `origin/develop` `5354767`; F3 is a reference measurement (owner's dogfood) on one of the owner's merge requests, !366;
 (IH) facts re-measured by SP-REVIEW-INCREMENTAL-HEAD on `8fabb19`.
 
 | # | Fact | Where |
@@ -209,8 +222,8 @@ block is the whole merge request for that reason, and D4 is what keeps
 remarks anchored to the change. Also rejected: filtering comments by
 line after a full review, which pays the full prompt and throws away
 what the lens read. (IH) Also rejected: an opt-in default, which would
-have left Yoob's twelve-round pattern in place until someone turned it
-on; the owner decided default-on and the range is named on every run.
+have left the twelve-round pattern of F3 in place until someone turned
+it on; the owner decided default-on and the range is named on every run.
 
 ## Hard part
 
@@ -325,8 +338,8 @@ writes the context cache (57 k tokens), three read it; the report says
 
 - C1: replaying !366's rounds 9–12 with their recorded heads and diffs, the target of each delta round contains every line the round's fix added and the report's `target_lines` equals the recorded compare size; oracle: the integration test on the fixture of SP-REVIEW-SETTLED-STAYS-SETTLED.
 - C2: on the same replay, the 15 remarks of rounds 9–11 on fix-added code are in delta; the 3 on pre-existing code are `out_of_delta` unless their comment names a target line; oracle: `findings.out_of_delta` count.
-- C3: on a live Yoob delta round through the owner's gateway, the usage ledger shows `cache_read_tokens ≥ 0.9 × cache_write_tokens` of the first lens for lenses two to four, and the review's `cost.review_usd` is below the previous full round's by at least 40 %; oracle: `repoach usage --run <id>`.
-- C4 (IH; 0.5): on a recorded ten-push Yoob merge request replayed twice on the provider fakes, once with `[review].delta = false` and once with the default, the sum of `prompt_tokens` over the ten runs' `usage_ledger` rows drops by at least 50 % with the delta on, with the same set of findings open at the final head; oracle: `repoach usage --run <id>` for each of the twenty runs (F12), the twenty figures and the two sums written beside this line by the verifier.
+- C3: on a live delta round of any project running this, through a gateway configured per `docs/getting_started.md`, the usage ledger shows `cache_read_tokens ≥ 0.9 × cache_write_tokens` of the first lens for lenses two to four, and the review's `cost.review_usd` is below the previous full round's by at least 40 %; oracle: `repoach usage --run <id>`; `test_gateway_forwards_cache_control` proves the forwarding on the fakes before any live round. Reference measurement (owner's dogfood): the owner's first delta round through the owner's gateway, written beside this line as an instance.
+- C4 (IH; 0.5, 0.6): on the recorded, anonymised ten-push merge request `tests/fixtures/review/ten_push_mr.json` replayed twice on the provider fakes, once with `[review].delta = false` and once with the default, the sum of `prompt_tokens` over the ten runs' `usage_ledger` rows drops by at least 50 % with the delta on, with the same set of findings open at the final head; oracle: `repoach usage --run <id>` for each of the twenty runs (F12), the twenty figures and the two sums written beside this line by the verifier; `grep -c -i "yoob\|hel1\|jofaye\|@[a-z]" tests/fixtures/review/ten_push_mr.json` → `0`.
 - C5: (IH) on the planted corpus with each case split into two heads (the fixture's patch halved), the located-defect count is 10/10 with the second head reviewed as a delta round; oracle: `repoach bench report`.
 - C6: `pytest -q tests/unit/test_diff_scoper*.py tests/unit/test_review_pins_head.py tests/unit/test_gate_reverifies_at_head.py` → green.
 - C7 (0.4; oracle: `scripts/skew_replay.sh`): on this spec's branch, `scripts/skew_replay.sh origin/develop HEAD` → `ledger: format 3 is newer than this reader's 2 …`, exit 5; `scripts/skew_replay.sh HEAD HEAD` → `ledger: ok (format 3, …)`, exit 0; after the release that ships it, `scripts/skew_replay.sh origin/main origin/develop` → `ledger: ok`. The three command lines and outputs are written beside this line by the verifier.
