@@ -185,6 +185,40 @@ publishes `job_test`, `job_wheel_build`, `job_wheel_smoke`, `mode` and
 - A red on a full run after a narrowed green follows the procedure
   below.
 
+## A skipped required check is a failed check
+
+Rule (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN, 2026-11-17). A required
+check whose job never ran is not a verdict, so it is never green.
+
+- GitHub concludes a job `skipped` when its `if` is false (an actor
+  outside the allowlist, a fork) or one of its `needs` failed. Both
+  GitHub readers of the required checks (`judge_required_checks`, used
+  by `review gate` and `review merge`, and the forge's
+  `classify_required_checks`) read it as a failure:
+  `required_check_failed: wheel-build=SKIPPED (the job never ran: a false job condition or a failed need)`.
+  The outcome is `SKIP_CI_FAILED`, exit 5, recorded in the merge
+  attempts comment; a new run at the head re-arms it like any failed
+  check. The GitLab forge already read `skipped` this way.
+- `NEUTRAL` stays green: it is a check's verdict that it has nothing to
+  say about the head. `CANCELLED` is unchanged: ignored when another run
+  of the same name exists, `cancelled with no other run` otherwise.
+- A matrix job that never expanded reports one check under its template
+  name, so its expanded names are `missing`. The refusal names the
+  template it saw:
+  `wheel-smoke (3.11): missing; the job reported unexpanded as "wheel-smoke (${{ matrix.python-version }})"=SKIPPED`.
+  When a check also failed, these lines follow the failed ones in the
+  `required_check_failed` line.
+- A later run at the same head that did expand wins on each expanded
+  name (the latest `startedAt` per name), so a head re-run after a
+  skipped run is judged on the run that ran.
+- A job whose every step is skipped concludes `success` (the no-op legs
+  above), not `skipped`, and stays green.
+- Replayed on release PR #307's head `79b9321`: the skipped run
+  44071742332 reads `required_check_failed` with `wheel-build=SKIPPED`
+  and four annotated `missing` names; with the later run 44081266335 the
+  head reads green (`tests/unit/test_skipped_required_check.py`, over
+  `tests/fixtures/check_runs/head_79b9321_*.json`).
+
 ## A red after a narrowed green
 
 Rule (SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4, 2026-11-17). A pull
