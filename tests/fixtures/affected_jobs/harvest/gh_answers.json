@@ -1,0 +1,75 @@
+{
+ "about": "gh answers for repoach ci affected harvest --merged 2 --repo repoachhq/repoach on develop, in the shapes gh 2.62 prints them: two pull requests, three heads. #11 head aaaa fails Test suite (Python 3.11) on a docs-only diff (a miss); #11 head bbbb is cancelled; #12 head cccc ran with every job skipped by the actor allowlist (not admitted). Run 103 is still in progress and run 104 was created after #11 merged: neither is read.",
+ "answers": [
+  {
+   "args": ["pr", "list", "--repo", "repoachhq/repoach", "--state", "merged", "--base", "develop", "--limit", "2", "--json", "number,headRefName,createdAt,mergedAt"],
+   "json": [
+    {"number": 12, "headRefName": "feat/b", "createdAt": "2026-11-02T00:00:00Z", "mergedAt": "2026-11-03T00:00:00Z"},
+    {"number": 11, "headRefName": "feat/a", "createdAt": "2026-11-01T00:00:00Z", "mergedAt": "2026-11-01T12:00:00Z"}
+   ]
+  },
+  {
+   "args": ["api", "repos/repoachhq/repoach/pulls/12", "--jq", ".base.sha"],
+   "text": "2222222222222222222222222222222222222222\n"
+  },
+  {
+   "args": ["api", "repos/repoachhq/repoach/pulls/11", "--jq", ".base.sha"],
+   "text": "1111111111111111111111111111111111111111\n"
+  },
+  {
+   "args": ["run", "list", "--repo", "repoachhq/repoach", "--branch", "feat/b", "--event", "pull_request", "--workflow", "CI", "--limit", "200", "--json", "databaseId,status,conclusion,headSha,createdAt,attempt"],
+   "json": [
+    {"databaseId": 201, "status": "completed", "conclusion": "skipped", "headSha": "cccccccccccccccccccccccccccccccccccccccc", "createdAt": "2026-11-02T01:00:00Z", "attempt": 1}
+   ]
+  },
+  {
+   "args": ["run", "list", "--repo", "repoachhq/repoach", "--branch", "feat/a", "--event", "pull_request", "--workflow", "CI", "--limit", "200", "--json", "databaseId,status,conclusion,headSha,createdAt,attempt"],
+   "json": [
+    {"databaseId": 104, "status": "completed", "conclusion": "failure", "headSha": "dddddddddddddddddddddddddddddddddddddddd", "createdAt": "2026-11-02T05:00:00Z", "attempt": 1},
+    {"databaseId": 103, "status": "in_progress", "conclusion": "", "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "createdAt": "2026-11-01T03:00:00Z", "attempt": 1},
+    {"databaseId": 102, "status": "completed", "conclusion": "cancelled", "headSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "createdAt": "2026-11-01T02:00:00Z", "attempt": 1},
+    {"databaseId": 101, "status": "completed", "conclusion": "failure", "headSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "createdAt": "2026-11-01T01:00:00Z", "attempt": 1}
+   ]
+  },
+  {
+   "args": ["run", "view", "201", "--repo", "repoachhq/repoach", "--attempt", "1", "--json", "jobs"],
+   "json": {"jobs": [
+    {"name": "Test suite (Python 3.11)", "conclusion": "skipped", "status": "completed", "steps": []},
+    {"name": "Test suite (Python 3.13)", "conclusion": "skipped", "status": "completed", "steps": []},
+    {"name": "wheel-build", "conclusion": "skipped", "status": "completed", "steps": []}
+   ]}
+  },
+  {
+   "args": ["run", "view", "101", "--repo", "repoachhq/repoach", "--attempt", "1", "--json", "jobs"],
+   "json": {"jobs": [
+    {"name": "Test suite (Python 3.11)", "conclusion": "failure", "status": "completed", "steps": [
+     {"name": "Ruff check", "conclusion": "success", "number": 4},
+     {"name": "Pytest", "conclusion": "failure", "number": 6}
+    ]},
+    {"name": "Test suite (Python 3.13)", "conclusion": "success", "status": "completed", "steps": []},
+    {"name": "wheel-build", "conclusion": "success", "status": "completed", "steps": []}
+   ]}
+  },
+  {
+   "args": ["run", "view", "102", "--repo", "repoachhq/repoach", "--attempt", "1", "--json", "jobs"],
+   "json": {"jobs": [
+    {"name": "Test suite (Python 3.11)", "conclusion": "cancelled", "status": "completed", "steps": [
+     {"name": "Pytest", "conclusion": "cancelled", "number": 6}
+    ]},
+    {"name": "Test suite (Python 3.13)", "conclusion": "cancelled", "status": "completed", "steps": []},
+    {"name": "wheel-build", "conclusion": "cancelled", "status": "completed", "steps": []}
+   ]}
+  },
+  {
+   "args": ["api", "repos/repoachhq/repoach/compare/1111111111111111111111111111111111111111...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--jq", "{status: .status, files: [(.files // [])[] | {filename, previous_filename}]}"],
+   "json": {"status": "diverged", "files": [{"filename": "docs/a.md", "previous_filename": null}]}
+  },
+  {
+   "args": ["api", "repos/repoachhq/repoach/compare/1111111111111111111111111111111111111111...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--jq", "{status: .status, files: [(.files // [])[] | {filename, previous_filename}]}"],
+   "json": {"status": "ahead", "files": [
+    {"filename": "docs/a.md", "previous_filename": null},
+    {"filename": "src/repoach/new.py", "previous_filename": "src/repoach/old.py"}
+   ]}
+  }
+ ]
+}
