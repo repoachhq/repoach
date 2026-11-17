@@ -1,11 +1,11 @@
 ---
 id: SP-AGENT-CONTEXT-LOOP
 title: Three-role context, a fixed context size with a summarizer, and one inner loop consolidated with the outer loop
-version: 0.5
+version: 0.6
 status: draft
 author: agent
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-11-16
 
 owns:
   code: [src/repoach/review/agent_context.py, src/repoach/review/review_tools.py, src/repoach/review/context_summarizer.py, src/repoach/review/evidence_reads.py, prompts/review/summarizer_0.1.0.md, tests/unit/test_agent_context.py, tests/unit/test_review_tools_jail.py, tests/unit/test_inner_loop_contract.py, tests/unit/test_context_compaction.py, tests/unit/test_provider_tool_mapping.py, tests/unit/test_outer_inner_consolidation.py, src/repoach/bench/agent_overrides.py, tests/unit/test_bench_agent_overrides.py]
@@ -21,6 +21,8 @@ constraints:
   summarizer_max_output_tokens: 1500
   summarizer_tier_reviewer: HAIKU
   summarizer_tier_refuter: OPUS
+  summarizer_output: handoff brief, six sections (0.3)
+  context_tokens_bench_sizes: [32000, 60000]
   seed_share: 0.60
   release_gate_max_cost_ratio: 2.0
   contract_reserve_tokens: 4096
@@ -44,6 +46,51 @@ decides that. The 0.1 G7, the paragraph "Why not the MCP route", AC10,
 AC11, AC12, A3 and Q4 are withdrawn. The later ACs and Qs are renumbered.
 The facts about the current text emulation (F11, F17, F18) stay so the
 sibling spec can cite them.
+
+## Amendment (0.3, 2026-11-16): the summarizer writes a handoff brief, never a summary
+
+Source: arXiv 2611.05306, App. A ("the best compactions are not those
+that faithfully capture the gist of the agentic trace, but those that
+best select facts relevant to the work yet to be performed") and its G.1
+compaction prompt (six numbered sections); the paper text was read as
+untrusted data and both passages were checked against it. G4's
+summarizer no longer "rewrites the assistant history into a structured
+summary". It writes a *handoff brief* in six fixed sections, in this
+order, each present even when empty (`none`):
+
+1. **Task** — the seed's task statement, verbatim (the review scope,
+   the spec id, the role's contract line); never paraphrased.
+2. **Established facts** — exact paths, symbols, `file:line` windows
+   read, observed values and errors; **separated from unverified
+   ideas**, which are listed under their own sub-heading with what
+   would verify each.
+3. **Changes and their verification status** — for a reviewer, the
+   findings so far with `file:line`, each marked `verified by read` or
+   `not yet read`; for the refuter, each judgement so far with the
+   evidence window it rests on and `confirmed` / `refuted` / `deferred`.
+4. **Dead ends** — windows read that bore nothing, hypotheses refuted,
+   so they are not repeated.
+5. **Remaining plan** — the sub-goals left, in order, and the immediate
+   next tool call.
+6. **Completion criteria** — when the role may emit its contract: the
+   findings to still confirm, the counts the contract needs.
+
+The summarizer persona becomes `prompts/review/summarizer_0.2.0.md`
+with this structure as its output contract. A compaction whose answer
+lacks any of the six headings, or whose section 1 is not byte-equal to
+the seed's task statement, is `summarizer_failed:structure` (named,
+never a silent truncation, like `summarizer_failed:<type>` today). The
+word "summary" leaves the prompt and the JSON (`compactions[].kept`
+names the sections and their line counts).
+
+Measurement (D7, new): M2 is run at `--context-tokens 32000` and
+`60000` (and `150000` as the no-compaction control) **before** the
+default size is fixed: the paper measures 24–48 k as the best points
+for Opus-class models on its benchmarks, this spec's 60 000 was set on
+2026-10-25 without a measurement. D2's gate (precision not below one-shot,
+cost at most 2×) is judged at both sizes; the delivery PR quotes both and
+sets `context_tokens_reviewer_default` to the smallest size that passes
+the gate, 60 000 staying the value until then. AC24 pins the structure.
 
 ## Decisions (owner 2026-10-25)
 
@@ -161,10 +208,12 @@ Measured on `develop` `53bb844` (2026-10-25).
     (`prompts/review/summarizer_0.1.0.md`), runs on HAIKU for the
     reviewers and on OPUS for the refuter (D5), and has its own budget
     (`summarizer_max_output_tokens`).
-    It rewrites the assistant history into a structured summary:
-    findings so far with `file:line`, files read with their line
-    ranges, open questions, and decisions taken.
-  - The summary replaces the history as a single assistant turn. The
+    It rewrites the assistant history into the six-section handoff
+    brief of the 0.3 amendment (task verbatim; established facts apart
+    from unverified ideas; changes with their verification status; dead
+    ends; remaining plan; completion criteria), never a plain summary;
+    a brief missing a section is `summarizer_failed:structure`.
+  - The brief replaces the history as a single assistant turn. The
     seed is never summarized.
   - If seed + summary + contract reserve still exceed the size, the
     agent ends `ERROR` with `context_overflow: seed <a> + summary <b> +
@@ -498,9 +547,11 @@ window 1-200, so the refuter sees `citation_read: full`.
   `repoach bench report` gives, per run: precision, recall over the 10
   planted defects, total tokens, total `cost_usd`, and wall time. The
   baseline is F15.
-- M2: the same corpus with `--max-turns 6 --context-tokens 60000` vs
-  `--context-tokens 150000`. It gives the precision with compaction vs
-  without, and the number of compactions per run.
+- M2 (0.3): the same corpus with `--max-turns 6` at `--context-tokens
+  32000`, `60000` and `150000` (the control without compaction). It
+  gives the precision and cost at each size and the number of
+  compactions per run; D2's gate is judged at 32 000 and at 60 000 before
+  `context_tokens_reviewer_default` is fixed (D7 in the amendment).
 - M3: Yoob !306 re-run with `--max-turns 0` and `6`: cost and tokens
   read from `usage_ledger` by `run_id`, and findings verified by the
   refuter.
@@ -567,6 +618,9 @@ flowchart TD
 - [ ] AC22 (new bench flags; none exists today, measured in `src/repoach/cli/bench_cmds.py` `run`): `repoach bench run --help` lists `--max-turns`, `--context-tokens` and `--no-round-two`. `pytest -q tests/unit/test_bench_agent_overrides.py` → green: each flag is parsed by `src/repoach/bench/agent_overrides.py` into a per-run override of every role's `[agents.*]` value (or into skipping round 2). The bench runner reads the override and passes it to each case's review. The result file records the overrides under `agents_override` and the run's `budget_hash`. A run without the flags records `agents_override: null`.
 - [ ] AC23 (G9b): `pytest -q tests/unit/test_review_tools_jail.py::test_ci_log_namespace_is_never_served_by_tools` → green. A row `role='ci'`, `turn=0`, `path='ci-log:unit@123'` written through the evidence ledger API is read back unchanged. `read_file('ci-log:unit@123', 1, 10)` and `grep('x', 'ci-log:*')` both return `path outside the head tree` and write no row. A tool-side write with `role='ci'` or a `ci-log:` path is refused. A finding citing `ci-log:unit@123` gets its `citation_read` from the non-`ci` rows only.
 
+- [ ] AC24 (0.3, the handoff brief): `pytest -q tests/unit/test_context_compaction.py::test_brief_has_six_sections_and_the_task_verbatim` → green: the compaction answer carries the six headings in order, section 1 is byte-equal to the seed's task statement, section 2 holds an `unverified` sub-heading, `compactions[].kept` names the sections with their line counts, and the word `summary` appears in neither the persona `summarizer_0.2.0.md` nor the JSON. `::test_brief_missing_a_section_is_summarizer_failed_structure` → green: a scripted answer without section 6 ends the agent `ERROR summarizer_failed:structure`. Mutation: accept five headings.
+- [ ] AC25 (0.3, M2 at two sizes): the delivery PR quotes `bench/results/` files for `--context-tokens 32000` and `60000` with precision, cost and compaction count each, and names the size set as default with the gate's two numbers at that size; a PR that sets the default from one size is refused by the reviewer with this AC named.
+
 ## Open Questions
 
-None. All of them were decided by the owner on 2026-10-25 (D1–D6).
+None. All of them were decided by the owner on 2026-10-25 (D1–D6); D7 (0.3) is the measurement order the owner asked for on 2026-11-16.

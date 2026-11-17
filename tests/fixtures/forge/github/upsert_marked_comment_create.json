@@ -47,6 +47,19 @@
       "stderr": "",
       "stdin": "{\"body\": \"<!-- repoach-review-archive -->\\narchive v1\"}",
       "stdout": "{\"id\": 13, \"body\": \"<!-- repoach-review-archive -->\\narchive v1\", \"user\": {\"login\": \"repoach-bot\"}, \"created_at\": \"2026-10-19T10:00:00Z\"}"
+    },
+    {
+      "args": [
+        "api",
+        "--paginate",
+        "--slurp",
+        "repos/:owner/:repo/issues/42/comments"
+      ],
+      "program": "gh",
+      "returncode": 0,
+      "stderr": "",
+      "stdin": null,
+      "stdout": "[[{\"id\": 13, \"body\": \"<!-- repoach-review-archive -->\\narchive v1\", \"user\": {\"login\": \"repoach-bot\"}, \"created_at\": \"2026-10-19T10:00:00Z\"}]]"
     }
   ],
   "case": "upsert_marked_comment_create",
@@ -65,6 +78,6 @@
     "path": null,
     "thread_id": null
   },
-  "source": "synthetic: write call: never executed against a live forge; the write barrier reads the state first",
+  "source": "synthetic: write call: never executed against a live forge; the write barrier reads the state first; the listing after the post is the convergence re-read (SP-REVIEW-NITS-ONE-COMMENT)",
   "trimmed": null
 }

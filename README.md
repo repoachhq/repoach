@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-  <img src="assets/logo-light.svg" alt="Repoach — anvil and spark" width="110">
+  <img src="assets/logo-light.svg" alt="Repoach — an orange checkmark spark set in the notch of a flat anvil" width="110">
 </picture>
 
 # Repoach
@@ -332,7 +332,7 @@ $ repoach review gate 42
 }
 ```
 
-`merge: true` → `repoach review merge 42` squash-merges the PR into `develop`. `merge: false` prints its reasons and blocks; an open review thread is one of them ([docs/merge_gate.md](docs/merge_gate.md)). The read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
+`merge: true` → `repoach review merge 42` squash-merges the PR into `develop`. `merge: false` prints its reasons and blocks; an open review thread is one of them ([docs/merge_gate.md](docs/merge_gate.md)). A nit opens no thread: every nit goes into one comment per pull request, edited at each head, that blocks nothing. The read-only gate and the merge share a single code path, so what you inspect is exactly what ships.
 
 ## Contributing
 

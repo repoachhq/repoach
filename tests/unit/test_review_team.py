@@ -271,11 +271,12 @@ def test_pr_review_submit_batch_posts_single_call_with_comments_array(monkeypatc
     calls: list[dict[str, object]] = []
 
     def _fake_run(argv, **kwargs):
+        assert argv[0] == str(gh_path), f"unexpected subprocess under the gh fake: {argv}"
         calls.append({"argv": argv, "input": kwargs.get("input")})
         return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"id": 777}), stderr="")
 
+    cli = GitHubForge(cwd=tmp_path, gh_path=str(gh_path), bot_login="repoach-bot")
     monkeypatch.setattr("repoach.forge.runner.subprocess.run", _fake_run)
-    cli = GitHubForge(cwd=tmp_path, gh_path=str(gh_path))
 
     res = cli._pr_review_submit_batch(
         42,

@@ -15,7 +15,9 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from repoach.cli.review_cmds import review_app
+from repoach.review.nit_digest import NitDigest
 from repoach.review.open_threads import OpenThreads
+from repoach.review.orchestrator import TeamOutcome
 
 
 @dataclass
@@ -79,9 +81,12 @@ class _FakeTeam:
     finding_posts: int = 0
     threads_closed: list[dict[str, object]] = field(default_factory=list)
     thread_lines: list[str] = field(default_factory=list)
+    nit_digest: NitDigest | None = None
+    nits_json = TeamOutcome.nits_json
 
 
 _REQUIRED_TOP_LEVEL = {
+    "nits",
     "pr_number",
     "final_verdict",
     "n_blockers",

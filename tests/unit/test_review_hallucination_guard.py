@@ -15,7 +15,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from repoach.review.findings import Severity
+from repoach.review.findings_bridge import opens_thread, severity_of
 from repoach.review.hallucination_guard import (
+    GUARD_DOWNGRADE_SEVERITY,
+    _downgrade,
     apply_hallucination_guard,
     make_repo_file_reader,
     make_repo_symbol_searcher,
@@ -72,7 +78,7 @@ def test_missing_x_claim_downgraded_when_token_in_file():
 
     guarded, events = apply_hallucination_guard(out, file_reader=reader)
 
-    assert guarded.comments[0].severity == "nit"
+    assert guarded.comments[0].severity == "minor"
     assert guarded.comments[0].body.startswith("[guard:downgraded]")
     assert guarded.verdict == ReviewVerdict.COMMENT
     assert len(events) == 1
@@ -117,7 +123,7 @@ def test_self_referential_prompt_template_downgraded():
 
     guarded, events = apply_hallucination_guard(out, file_reader=lambda _p: None)
 
-    assert guarded.comments[0].severity == "nit"
+    assert guarded.comments[0].severity == "minor"
     assert "self_referential" in guarded.comments[0].body
     assert guarded.verdict == ReviewVerdict.COMMENT
     assert len(events) == 1
@@ -139,7 +145,7 @@ def test_domain_vocab_french_rename_downgraded():
 
     guarded, events = apply_hallucination_guard(out, file_reader=lambda _p: None)
 
-    assert guarded.comments[0].severity == "nit"
+    assert guarded.comments[0].severity == "minor"
     assert guarded.verdict == ReviewVerdict.COMMENT
     assert len(events) == 1
 
@@ -188,7 +194,7 @@ def test_partial_downgrade_keeps_request_changes():
     guarded, events = apply_hallucination_guard(out, file_reader=reader)
 
     severities = sorted(c.severity for c in guarded.comments)
-    assert severities == ["blocker", "nit"]
+    assert severities == ["blocker", "minor"]
     assert guarded.verdict == ReviewVerdict.REQUEST_CHANGES
     assert len(events) == 1
     assert events[0].reason == "missing_token_found_in_file"
@@ -241,7 +247,7 @@ def test_pr20_spec_embed_claim_downgraded_when_file_has_no_markers():
 
     guarded, events = apply_hallucination_guard(out, file_reader=reader)
 
-    assert guarded.comments[0].severity == "nit"
+    assert guarded.comments[0].severity == "minor"
     assert guarded.verdict == ReviewVerdict.COMMENT
     assert len(events) == 1
     assert events[0].reason == "spec_embed_claim_unproven"
@@ -320,7 +326,7 @@ def test_missing_test_claim_downgraded_when_test_exists_on_disk():
         symbol_searcher=_searcher({"test_performance_7d_won_lost_calculates_roi"}),
     )
 
-    assert guarded.comments[0].severity == "nit"
+    assert guarded.comments[0].severity == "minor"
     assert "missing_test_found" in guarded.comments[0].body
     assert guarded.verdict == ReviewVerdict.COMMENT
     assert len(events) == 1
@@ -408,3 +414,18 @@ def test_make_tests_symbol_searcher_ignores_src_scoped_symbols(tmp_path: Path):
 
     assert searcher("_parse_verdict") is False
     assert searcher("test_parse_verdict") is True
+
+
+@pytest.mark.parametrize("severity", ["blocker", "major"])
+def test_a_guard_downgrade_never_crosses_into_the_note_class(severity: str) -> None:
+    """Every disproved blocker / major stays a comment that opens a thread (SP-REVIEW-NITS-ONE-COMMENT)."""
+    comment = ReviewComment(
+        file="prompts/review/x.md",
+        line=1,
+        severity=severity,
+        body="Self-referential: {SPEC_PLAN} is the placeholder.",
+    )
+    downgraded = _downgrade(comment, "self_referential")
+    assert downgraded.severity == GUARD_DOWNGRADE_SEVERITY
+    assert opens_thread(downgraded)
+    assert severity_of(downgraded) is Severity.ADVISORY

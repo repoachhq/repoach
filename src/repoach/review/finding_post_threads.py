@@ -31,7 +31,7 @@ from .finding_posts import (
     record_finding_post,
     thread_id_of,
 )
-from .findings import Finding, fetch_findings, init_findings_schema
+from .findings import Finding, Severity, fetch_findings, init_findings_schema
 
 _log = get_logger(__name__)
 
@@ -118,7 +118,9 @@ def backfill_finding_posts(
     that root (:func:`match_backfill_roots`). Anything else (a shifted
     line, two roots, two findings on one root, a conversation comment,
     no file) is ``unmatched`` and gets no row: it stays unknown, never an
-    approximated link.
+    approximated link. A note finding is never a candidate: a nit opens
+    no thread (SP-REVIEW-NITS-ONE-COMMENT), so a root at its line states
+    another finding.
 
     Args:
         db_path: The ledger database.
@@ -143,7 +145,11 @@ def backfill_finding_posts(
         raise ForgeError(f"forge {forge.name!r} keeps no review threads to link")
     comments = forge.comments(pr_number)
     init_findings_schema(db_path)
-    findings = fetch_findings(db_path, pr_number)
+    findings = [
+        finding
+        for finding in fetch_findings(db_path, pr_number)
+        if finding.severity is not Severity.NOTE
+    ]
     linked_already = {post.finding_id for post in fetch_finding_posts(db_path, pr_number)}
     roots = [
         comment

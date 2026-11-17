@@ -1,14 +1,14 @@
 ---
 id: SP-MEMORY-LOOPS-EXPLICIT
 title: The three agentmemory loops are opt-in, visible in every review output, and scoped to one repository
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-11-12
 
 owns:
-  code: [src/repoach/review/memory_scope.py, tests/unit/test_memory_scope.py, tests/unit/test_memory_explain.py]
+  code: [tests/unit/test_memory_explain.py]
   resources: []
 
 depends_on: [SP-BRANCH-CONFIG, SP-REVIEW-MEMORY, SP-REVIEW-LESSONS, SP-BUILDER-MEMORY]
@@ -19,6 +19,31 @@ constraints:
 ---
 
 # The three agentmemory loops are opt-in, visible, and scoped to one repository
+
+## Amendment (0.2, 2026-11-12): three goals moved to the SP-REVIEW-MEMORY-LOOP family
+
+Measured on 2026-11-12 (SP-MEMORY-FAIL-FAST F1–F6): the backend was
+unreachable for four days, every review paid about 40 s of timeouts and
+no output said so. The family under SP-REVIEW-MEMORY-LOOP delivers
+three goals of this draft and this draft keeps the rest:
+
+- G2 (the `memory` object in the `review pr` payload) is delivered by
+  SP-MEMORY-FAIL-FAST with `state` (`on`, `off`, `unreachable`) in
+  place of `enabled`, the `loops` sub-object kept, plus `probe`,
+  `skipped` and `off_reason`.
+- G4 (one scope per repository) is delivered by
+  SP-REVIEW-LESSONS-REACH-REVIEWERS with the existing
+  `core/paths.py` `project_slug` instead of a new `repo_key`; the
+  module `memory_scope.py` is not written, the functions live in
+  `src/repoach/memory/scopes.py`, tested by `tests/unit/test_memory_scopes.py`;
+  `owns.code` drops `memory_scope.py` and `test_memory_scope.py`, and
+  the Interface, Architecture Impact and AC4 below that name them are
+  superseded by SP-REVIEW-LESSONS-REACH-REVIEWERS.
+- G5 (the `memory` commands print and seed the repository's scope) is
+  delivered by the same spec.
+- The `[learning].memory` key of G1 is added to `ProjectConfig` by
+  SP-REVIEW-MEMORY-STORE G4; the defaults of the three flags (G1) and
+  `--explain-memory` (G3) stay here.
 
 ## Intent
 

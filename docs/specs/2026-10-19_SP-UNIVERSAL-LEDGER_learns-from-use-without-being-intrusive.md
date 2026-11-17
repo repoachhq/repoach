@@ -1,11 +1,11 @@
 ---
 id: SP-UNIVERSAL-LEDGER
 title: Repoach learns from use without being intrusive — finding fate, refuter calibration, cost per review, readable self-adaptation
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-20
+updated: 2026-11-12
 
 owns:
   code: [src/repoach/ledger/, tests/unit/test_finding_fate.py, tests/unit/test_stats.py, tests/unit/test_share_payload.py, tests/unit/test_adapt_propose.py, tests/fixtures/ledger/]
@@ -21,6 +21,29 @@ constraints:
 ---
 
 # Repoach learns from use without being intrusive
+
+## Amendment (0.2, 2026-11-12): the sharing goal moved to SP-ANONYMISED-GAP-SIGNAL
+
+The owner's principle of 2026-11-12 (local memory per project;
+anonymised gap signal for repoach's development) is specified by the
+SP-REVIEW-MEMORY-LOOP family. Two parts of this draft move there:
+
+- G7 (`stats --share`) and the Privacy table are superseded by
+  SP-ANONYMISED-GAP-SIGNAL: an allow-list model with no string field,
+  no `install_id` and no hash of anything, closed-month periods, cells
+  absent under the bucket floor, consent and a local send log, and the
+  receiver with its retention. `tests/unit/test_share_payload.py`
+  named in `owns.code` is replaced by its planted-marker test. Q4 (the
+  endpoint) is answered there as owner decision Q1.
+- G9 (foreign-repository defaults of the three memory flags) is
+  SP-MEMORY-LOOPS-EXPLICIT G1; the `[learning]` section of
+  `repoach.toml` is added by SP-REVIEW-MEMORY-STORE G4 with `store`,
+  `store_path`, `memory` and `recalled_lessons_max`; `demote_after_ignored`,
+  `false_refutation_bound` and `collect_in_ci` stay here.
+
+Fate collection (G1), calibration (G2), cost per review (G3), `stats`
+and `adapt` (G5, G6) stay in this draft; when `finding_fate` exists,
+SP-ANONYMISED-GAP-SIGNAL gains a `fix_fate` cell with a schema bump.
 
 ## Intent
 

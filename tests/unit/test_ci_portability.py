@@ -16,6 +16,16 @@ import yaml
 
 _WORKFLOW_DIR = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 _RUNNER_EXPR = "${{ vars.REPOACH_RUNNER || 'self-hosted' }}"
+_REVIEW_RUNNER_EXPR = "${{ vars.REPOACH_REVIEW_RUNNER || vars.REPOACH_RUNNER || 'self-hosted' }}"
+_REVIEW_RUNNER_JOBS = {
+    ("auto-review.yml", "review"),
+    ("auto-review.yml", "auto_merge"),
+}
+"""Jobs that prefer a dedicated review runner when one is configured.
+
+``review`` and ``auto_merge`` execute no PR-authored code (unlike ``auto_fix``), so
+they may leave the CI runners free; unset, they fall back to ``REPOACH_RUNNER``.
+"""
 _GITHUB_HOSTED = {
     ("auto-review.yml", "coalesce"),
     ("auto-review.yml", "rearm"),
@@ -40,7 +50,15 @@ def test_every_runs_on_is_the_configurable_runner(path: Path) -> None:
         if (path.name, job_id) in _GITHUB_HOSTED:
             assert job["runs-on"] == "ubuntu-latest"
             continue
+        if (path.name, job_id) in _REVIEW_RUNNER_JOBS:
+            assert job["runs-on"] == _REVIEW_RUNNER_EXPR
+            continue
         assert job["runs-on"] == _RUNNER_EXPR
+
+
+def test_auto_fix_stays_on_the_ci_runner() -> None:
+    workflow = yaml.safe_load((_WORKFLOW_DIR / "auto-review.yml").read_text(encoding="utf-8"))
+    assert workflow["jobs"]["auto_fix"]["runs-on"] == _RUNNER_EXPR
 
 
 def test_no_hardcoded_self_hosted_or_actor_literal_remains() -> None:
