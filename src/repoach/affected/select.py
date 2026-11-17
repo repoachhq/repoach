@@ -441,6 +441,23 @@ def github_output_lines(selection: Selection, job_ids: Sequence[str]) -> list[st
 _BACKTICK_RUN = re.compile(r"`+")
 
 
+def one_line(text: str) -> str:
+    """Return *text* with its carriage returns and line feeds written out.
+
+    A changed path is chosen by the pull request's author and reaches a log
+    line and the step summary; a raw line break there would start a new
+    line the Actions runner reads as a workflow command.
+
+    Args:
+        text: A path, or a reason naming one.
+
+    Returns:
+        The text on one line, each CR as a literal backslash-r and each LF
+        as a literal backslash-n.
+    """
+    return text.replace("\r", "\\r").replace("\n", "\\n")
+
+
 def _code_span(text: str) -> str:
     """Return *text* as one markdown code span that a table cell cannot escape.
 
@@ -454,7 +471,7 @@ def _code_span(text: str) -> str:
     Returns:
         The code span.
     """
-    body = text.replace("\r", "\\r").replace("\n", "\\n").replace("|", "\\|")
+    body = one_line(text).replace("|", "\\|")
     longest = max((len(run) for run in _BACKTICK_RUN.findall(body)), default=0)
     fence = "`" * (longest + 1)
     if longest:
@@ -475,7 +492,8 @@ def summary_markdown(selection: Selection) -> str:
     lines = [
         "### Affected jobs",
         "",
-        f"Mode `{selection.mode}`: {selection.reason}. Paths judged: {selection.paths}.",
+        f"Mode {_code_span(selection.mode)}: {_code_span(selection.reason)}. "
+        f"Paths judged: {selection.paths}.",
         "",
         "| row | paths (first three) |",
         "|---|---|",

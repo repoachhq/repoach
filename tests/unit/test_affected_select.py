@@ -23,6 +23,7 @@ from repoach.affected.select import (
     github_output_lines,
     job_running,
     matrix_values,
+    one_line,
     select,
     summary_markdown,
     workflow_jobs,
@@ -218,7 +219,7 @@ def test_github_output_lines_one_per_job_then_mode() -> None:
 
 def test_summary_markdown_names_mode_rows_and_jobs() -> None:
     text = summary_markdown(_narrowed(["docs/a.md", "src/b.py"]))
-    assert "Mode `narrowed`: narrowed: pull_request on develop. Paths judged: 2." in text
+    assert "Mode `narrowed`: `narrowed: pull_request on develop`. Paths judged: 2." in text
     assert "| `docs` | `docs/a.md` |" in text
     assert "| `python` | `src/b.py` |" in text
     assert "Jobs selected: `gate`, `test`, `wheel-build`, `wheel-smoke`" in text
@@ -403,6 +404,22 @@ def test_summary_markdown_keeps_a_hostile_path_inside_its_cell() -> None:
     row = next(line for line in text.splitlines() if line.startswith("| `docs`"))
     assert row == "| `docs` | `` docs/a`\\|[x](http://e)`.md `` |"
     assert row.count(" | ") == 1
+
+
+def test_summary_markdown_keeps_a_hostile_reason_on_its_line() -> None:
+    selection = _narrowed(["docs/a.md"]).model_copy(
+        update={"reason": "unknown path: x\n::stop-commands::t|[l](http://e)"}
+    )
+    text = summary_markdown(selection)
+    mode_line = next(line for line in text.splitlines() if line.startswith("Mode "))
+    assert mode_line == (
+        "Mode `narrowed`: `unknown path: x\\n::stop-commands::t\\|[l](http://e)`. Paths judged: 1."
+    )
+    assert not any(line.startswith("::") for line in text.splitlines())
+
+
+def test_one_line_writes_out_line_breaks() -> None:
+    assert one_line("a\r\nb") == "a\\r\\nb"
 
 
 def test_default_base_is_the_remote_tracking_integration_branch() -> None:

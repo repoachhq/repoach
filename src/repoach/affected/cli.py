@@ -35,6 +35,7 @@ from .select import (
     github_output_lines,
     job_running,
     matrix_values,
+    one_line,
     select,
     summary_markdown,
     workflow_jobs,
@@ -177,7 +178,7 @@ def select_cmd(
         with Path(summary).open("a", encoding="utf-8") as handle:
             handle.write(summary_markdown(selection))
     typer.echo(
-        f"repoach ci affected: {selection.mode} ({selection.reason}): "
+        f"repoach ci affected: {selection.mode} ({one_line(selection.reason)}): "
         f"{', '.join(sorted(selection.jobs))} for {selection.paths} path(s)",
         err=True,
     )
