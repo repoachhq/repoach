@@ -14,19 +14,33 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
-from repoach.forge import CheckRun
+from repoach.forge import CheckRun, Diff, PullRequest
 from repoach.forge import github as forge_github
 from repoach.forge.github import (
     REQUIRED_CHECK_FAIL_CONCLUSIONS,
     REQUIRED_CHECK_SUCCESS_CONCLUSIONS,
     SKIPPED_NOTE,
+    GhResult,
+    GitHubForge,
     classify_required_checks,
 )
 from repoach.review import merge_wait
 from repoach.review.auto_merge import OUTCOME_SKIP_CI_FAILED, merge_exit_code, run_auto_merge
+from repoach.review.coder_findings import run_coder_fix_from_findings
+from repoach.review.coder_loop import CI_GREEN, CI_UNKNOWN, fetch_ci_status
+from repoach.review.findings import (
+    ClaimType,
+    Finding,
+    FindingStatus,
+    Severity,
+    fetch_findings,
+    init_findings_schema,
+    record_finding,
+)
 from repoach.review.merge_wait import (
     MERGE_ATTEMPTS_MARKER,
     MergeAttemptsComment,
@@ -34,6 +48,7 @@ from repoach.review.merge_wait import (
     required_checks,
     template_of,
 )
+from tests.forge_fakes import scripted_github
 from tests.merge_wait_fakes import FixturePR, MergeWaitFixtureForge, measured_era_root, seed_review
 
 HEAD_79B = "79b9321150c9bb88aa79f6d96aeef238d9c45395"
@@ -276,3 +291,112 @@ def test_every_fail_conclusion_fails_both_readers(conclusion: str) -> None:
         [{"name": name[0], "status": "COMPLETED", "conclusion": conclusion}], name
     )
     assert failed == verdict.failed
+
+
+_PR_CHECKS_BUCKET = {"success": "pass", "skipped": "skipping", "neutral": "pass"}
+
+
+def _coder_forge(rows: list[dict[str, str]]) -> GitHubForge:
+    """A real GitHub forge answering ``gh pr checks`` and the head's check-runs from ``rows``."""
+    pr_checks = [
+        {
+            "name": row["name"],
+            "state": row["conclusion"].upper(),
+            "bucket": _PR_CHECKS_BUCKET[row["conclusion"]],
+            "link": "",
+            "workflow": row["workflow_name"],
+        }
+        for row in rows
+    ]
+
+    def _run_side(args: list[str]) -> GhResult:
+        if args[:2] == ["pr", "checks"]:
+            return GhResult(returncode=0, stdout=json.dumps(pr_checks), stderr="", argv=args)
+        if args[:1] == ["api"] and "/check-runs" in args[1]:
+            lines = "\n".join(json.dumps(entry) for entry in _rollup(rows))
+            return GhResult(returncode=0, stdout=lines, stderr="", argv=args)
+        return GhResult(returncode=0, stdout="", stderr="", argv=args)
+
+    return scripted_github(run=_run_side)
+
+
+def test_the_coder_reader_never_reads_the_all_skipped_head_green() -> None:
+    forge = _coder_forge(_load("skipped"))
+
+    state, failed = fetch_ci_status(forge, 307, required=FIVE_NAMES, head_sha=HEAD_79B)
+
+    assert (state, failed) == (CI_UNKNOWN, [])
+
+
+def test_the_coder_reader_reads_the_later_green_run_green() -> None:
+    green = fetch_ci_status(
+        _coder_forge(_load("green")), 307, required=FIVE_NAMES, head_sha=HEAD_79B
+    )
+    both = fetch_ci_status(
+        _coder_forge(_load("skipped") + _load("green")),
+        307,
+        required=FIVE_NAMES,
+        head_sha=HEAD_79B,
+    )
+
+    assert green == (CI_GREEN, [])
+    assert both == (CI_GREEN, [])
+
+
+def test_the_coder_reader_reads_neutral_green() -> None:
+    rows = [{**row, "conclusion": "neutral"} for row in _load("green")]
+    state, _ = fetch_ci_status(_coder_forge(rows), 307, required=FIVE_NAMES, head_sha=HEAD_79B)
+    assert state == CI_GREEN
+
+
+def _ci_finding() -> Finding:
+    return Finding(
+        pr_number=307,
+        head_sha=HEAD_79B,
+        round=1,
+        finder="ci",
+        claim_type=ClaimType.BROKEN_BEHAVIOR,
+        severity=Severity.BLOCKING,
+        file="(ci):wheel-build",
+        line_start=1,
+        line_end=1,
+        claim="CI check failed: wheel-build",
+        evidence_pointer="(ci):wheel-build:1",
+        status=FindingStatus.OPEN,
+    )
+
+
+def _coder_round(kind: str, tmp_path: Path) -> FindingStatus:
+    db = tmp_path / f"{kind}.db"
+    init_findings_schema(db)
+    record_finding(db, _ci_finding())
+    real = _coder_forge(_load(kind) if kind != "both" else _load("skipped") + _load("green"))
+    forge = MagicMock()
+    forge.name = "github"
+    forge.pull_request.return_value = PullRequest(
+        number=307, base_ref="develop", head_ref="fix/x", state="open", head_sha=HEAD_79B
+    )
+    forge.diff.return_value = Diff(text="diff")
+    forge.checks.side_effect = real.checks
+    forge.ci_status.side_effect = real.ci_status
+
+    class _NoFixCoder:
+        def respond_to_findings(self, **_kwargs: object) -> dict[str, object]:
+            return {}
+
+    run_coder_fix_from_findings(
+        307, forge=forge, repo_root=measured_era_root(tmp_path), coder=_NoFixCoder(), db_path=db
+    )
+    return next(
+        f.status for f in fetch_findings(db, 307) if f.claim_type is ClaimType.BROKEN_BEHAVIOR
+    )
+
+
+@pytest.mark.usefixtures("base_resolves")
+def test_a_ci_finding_stays_open_on_the_all_skipped_head(tmp_path: Path) -> None:
+    assert _coder_round("skipped", tmp_path) is FindingStatus.OPEN
+
+
+@pytest.mark.usefixtures("base_resolves")
+def test_a_ci_finding_resolves_once_the_head_ran_green(tmp_path: Path) -> None:
+    assert _coder_round("both", tmp_path) is FindingStatus.RESOLVED
