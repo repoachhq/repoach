@@ -31,7 +31,9 @@ from repoach.affected.harvest import (
 from repoach.affected.misses import (
     DEFAULT_CORPUS_PATH,
     DEFAULT_MISSES_PATH,
+    FAILED_CONCLUSIONS,
     MISSES_COLUMNS,
+    NOT_JUDGED_CONCLUSIONS,
     VERDICTS,
     CorpusError,
     DuplicateRowError,
@@ -39,9 +41,11 @@ from repoach.affected.misses import (
     JobOutcome,
     MissesError,
     MissRow,
+    UnknownConclusionError,
     UnknownJobError,
     atomic_write_text,
     describe,
+    job_failed,
     load_corpus,
     load_misses,
     record_row,
@@ -724,3 +728,63 @@ def test_the_corpus_is_scrubbed_to_numbers_shas_paths_and_job_names() -> None:
     assert "http" not in text
     assert "ghp_" not in text and "github_pat_" not in text
     assert load_corpus(path)
+
+
+@pytest.mark.parametrize("conclusion", ["timed_out", "startup_failure"])
+def test_a_timed_out_or_startup_failure_job_counts_as_failed(conclusion: str) -> None:
+    table, needs, names = _committed()
+    head = _head(paths=("docs/a.md",), jobs=(JobOutcome(name=_TEST_311, conclusion=conclusion),))
+    report = replay([head], [], table, needs, names)
+    assert report.failed_jobs == 1
+    assert [(line.run, line.job) for line in report.misses] == [(10, _TEST_311)]
+
+
+@pytest.mark.parametrize("conclusion", ["timed_out", "startup_failure"])
+def test_harvest_keeps_a_timed_out_or_startup_failure_attempt(conclusion: str) -> None:
+    gh = RecordedGh()
+    view = ("run", "view", "101", "--repo", "repoachhq/repoach", "--attempt", "1", "--json", "jobs")
+    answer = json.loads(json.dumps(gh.answers[view]["json"]))
+    answer["jobs"][0]["conclusion"] = conclusion
+    answer["jobs"][0]["steps"][1]["conclusion"] = conclusion
+    gh.answers[view] = {"json": answer}
+    run = next(item for item in _harvest(gh).runs if item.run == 101)
+    assert run.jobs[0] == JobOutcome(
+        name=_TEST_311, conclusion=conclusion, failed_steps=("Pytest",)
+    )
+
+
+@pytest.mark.parametrize("conclusion", ["action_required", "stale", "neutral", "skipped"])
+def test_a_job_that_ran_nothing_or_was_superseded_is_no_failure(conclusion: str) -> None:
+    assert job_failed(conclusion) is False
+    table, needs, names = _committed()
+    head = _head(paths=("docs/a.md",), jobs=(JobOutcome(name=_TEST_311, conclusion=conclusion),))
+    assert replay([head], [], table, needs, names).failed_jobs == 0
+
+
+def test_every_conclusion_is_either_failed_or_not_judged() -> None:
+    assert FAILED_CONCLUSIONS.isdisjoint(NOT_JUDGED_CONCLUSIONS)
+    assert all(job_failed(item) for item in FAILED_CONCLUSIONS)
+    assert not any(job_failed(item) for item in NOT_JUDGED_CONCLUSIONS)
+
+
+def test_an_unknown_conclusion_is_refused_by_name(tmp_path: Path) -> None:
+    with pytest.raises(UnknownConclusionError, match="'exploded' is not one of"):
+        job_failed("exploded")
+    table, needs, names = _committed()
+    head = _head(jobs=(JobOutcome(name=_TEST_311, conclusion="exploded"),))
+    with pytest.raises(UnknownConclusionError, match="'exploded'"):
+        replay([head], [], table, needs, names)
+    document = corpus_document([head], repo="o/r", harvested=date(2026, 11, 17), source="s")
+    path = tmp_path / "pr_runs.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(CorpusError, match="#1 head aaaaaaa run 10: job conclusion 'exploded'"):
+        load_corpus(path)
+    gh = RecordedGh()
+    view = ("run", "view", "102", "--repo", "repoachhq/repoach", "--attempt", "1", "--json", "jobs")
+    answer = json.loads(json.dumps(gh.answers[view]["json"]))
+    answer["jobs"][1]["conclusion"] = "exploded"
+    gh.answers[view] = {"json": answer}
+    with pytest.raises(
+        HarvestError, match=r"Test suite \(Python 3\.13\): job conclusion 'exploded'"
+    ):
+        _harvest(gh)

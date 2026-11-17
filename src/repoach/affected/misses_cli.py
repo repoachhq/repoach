@@ -40,6 +40,7 @@ from .misses import (
     DuplicateRowError,
     MissesError,
     MissRow,
+    UnknownConclusionError,
     UnknownJobError,
     load_corpus,
     load_misses,
@@ -142,7 +143,7 @@ def replay_cmd(
 
     Raises:
         typer.Exit: 1 when a failed job or a ``miss`` row is unselected;
-            2 when an input cannot be read or names an unknown job; 3
+            2 when an input cannot be read or names an unknown job or job conclusion; 3
             outside a git working tree.
     """
     root = project_root()
@@ -152,7 +153,13 @@ def replay_cmd(
         report = replay(
             load_corpus(root / corpus), load_misses(root / misses), loaded, needs, names
         )
-    except (WorkflowError, CorpusError, MissesError, UnknownJobError) as exc:
+    except (
+        WorkflowError,
+        CorpusError,
+        MissesError,
+        UnknownJobError,
+        UnknownConclusionError,
+    ) as exc:
         raise fail_with(EXIT_UNREADABLE, str(exc)) from exc
     _echo_report(
         report_lines(report, count=report.misses),

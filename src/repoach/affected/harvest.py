@@ -26,13 +26,15 @@ from pydantic import BaseModel, ConfigDict
 from ..review.merge_wait import load_workflow
 from .gh import GhRunner, HarvestError
 from .misses import (
-    FAILURE,
+    FAILED_CONCLUSIONS,
     HeadRun,
     JobOutcome,
     MissesError,
     ReplayReport,
+    UnknownConclusionError,
     UnknownJobError,
     atomic_write_text,
+    job_failed,
     load_misses,
     replay,
 )
@@ -234,7 +236,8 @@ def _jobs(gh: GhRunner, repo: str, run_id: int, attempts: int) -> tuple[JobOutco
         One outcome per job name, sorted by name.
 
     Raises:
-        HarvestError: ``gh`` fails or a job is not named or concluded.
+        HarvestError: ``gh`` fails, a job is not named or concluded, or
+            its conclusion is outside :data:`~.misses.JOB_CONCLUSIONS`.
     """
     outcomes: dict[str, JobOutcome] = {}
     for attempt in range(1, attempts + 1):
@@ -254,13 +257,17 @@ def _jobs(gh: GhRunner, repo: str, run_id: int, attempts: int) -> tuple[JobOutco
         for job in _list(command, _field(command, body, "jobs", list)):
             name = _field(command, job, "name", str)
             conclusion = _field(command, job, "conclusion", str)
+            try:
+                job_failed(conclusion)
+            except UnknownConclusionError as exc:
+                raise HarvestError(command, f"{name}: {exc}") from exc
             failed_steps = tuple(
                 _field(command, step, "name", str)
                 for step in _list(command, job.get("steps", []))
-                if isinstance(step, Mapping) and step.get("conclusion") == FAILURE
+                if isinstance(step, Mapping) and step.get("conclusion") in FAILED_CONCLUSIONS
             )
             previous = outcomes.get(name)
-            if previous is not None and previous.conclusion == FAILURE:
+            if previous is not None and job_failed(previous.conclusion):
                 continue
             outcomes[name] = JobOutcome(name=name, conclusion=conclusion, failed_steps=failed_steps)
     return tuple(outcomes[name] for name in sorted(outcomes))
@@ -482,6 +489,7 @@ HARVEST_REFUSALS: tuple[type[Exception], ...] = (
     WorkflowError,
     MissesError,
     UnknownJobError,
+    UnknownConclusionError,
 )
 """What :func:`harvest_and_replay` raises when it cannot say; each names its cause."""
 
@@ -521,6 +529,8 @@ def harvest_and_replay(
         MissesError: The misses table cannot be read.
         HarvestError: A forge read fails.
         UnknownJobError: A failed job or a row names no check of the workflow.
+        UnknownConclusionError: A job of the harvest has a conclusion outside
+            :data:`~.misses.JOB_CONCLUSIONS`.
     """
     ci_yml = root / workflow
     needs = workflow_jobs(ci_yml)

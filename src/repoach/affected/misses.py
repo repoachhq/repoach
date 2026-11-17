@@ -34,7 +34,20 @@ DEFAULT_MISSES_PATH = "tests/fixtures/affected_jobs/misses.tsv"
 """The misses table, relative to the project root."""
 
 FAILURE = "failure"
-"""The job conclusion that is a judgement; ``cancelled`` and ``skipped`` never are (D1)."""
+"""The plain failed conclusion of a job or a step."""
+
+FAILED_CONCLUSIONS = frozenset({FAILURE, "timed_out", "startup_failure"})
+"""Job conclusions that are a judgement against the head: the job ran, or tried to, and went red (D1)."""
+
+NOT_JUDGED_CONCLUSIONS = frozenset(
+    {"success", "cancelled", "skipped", "neutral", "action_required", "stale"}
+)
+"""Job conclusions that are no failure. ``cancelled`` is a cancelled run and ``skipped`` a job
+that never ran (D1); ``action_required`` waits for an approval and ran nothing; ``stale`` is
+a check run the forge superseded; ``neutral`` is green by definition."""
+
+JOB_CONCLUSIONS = FAILED_CONCLUSIONS | NOT_JUDGED_CONCLUSIONS
+"""Every job conclusion the corpus admits; any other is refused by name."""
 
 Verdict = Literal["miss", "conflict", "external"]
 VERDICTS: tuple[str, ...] = get_args(Verdict)
@@ -111,12 +124,45 @@ class UnknownJobError(ValueError):
         super().__init__(f"{where}: {job!r} is no check of the workflow")
 
 
+class UnknownConclusionError(ValueError):
+    """A job conclusion is neither in :data:`FAILED_CONCLUSIONS` nor in :data:`NOT_JUDGED_CONCLUSIONS`.
+
+    Attributes:
+        conclusion: The conclusion that was not recognised.
+    """
+
+    def __init__(self, conclusion: object) -> None:
+        self.conclusion = conclusion
+        super().__init__(
+            f"job conclusion {conclusion!r} is not one of {', '.join(sorted(JOB_CONCLUSIONS))}"
+        )
+
+
+def job_failed(conclusion: str) -> bool:
+    """Return whether a job conclusion is a failure (D1).
+
+    Args:
+        conclusion: The job's conclusion as the forge names it.
+
+    Returns:
+        True for :data:`FAILED_CONCLUSIONS`, False for :data:`NOT_JUDGED_CONCLUSIONS`.
+
+    Raises:
+        UnknownConclusionError: ``conclusion`` is in neither set.
+    """
+    if conclusion in FAILED_CONCLUSIONS:
+        return True
+    if conclusion in NOT_JUDGED_CONCLUSIONS:
+        return False
+    raise UnknownConclusionError(conclusion)
+
+
 class JobOutcome(BaseModel):
     """How one job of one run ended.
 
     Attributes:
         name: The check name, as the forge shows it (``Test suite (Python 3.11)``).
-        conclusion: ``success``, ``failure``, ``cancelled``, ``skipped``, ...
+        conclusion: One of :data:`JOB_CONCLUSIONS`.
         failed_steps: The names of the steps that concluded ``failure``.
     """
 
@@ -301,7 +347,8 @@ def load_corpus(path: Path) -> list[HeadRun]:
     Raises:
         CorpusError: The file cannot be read, is not JSON, or a level
             carries a key the format does not define, lacks one, or holds
-            a value of the wrong type. The message names where.
+            a value of the wrong type, or a job conclusion outside
+            :data:`JOB_CONCLUSIONS`. The message names where.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -334,6 +381,10 @@ def load_corpus(path: Path) -> list[HeadRun]:
                 jobs = []
                 for job_body in run["jobs"]:
                     job = _require(path, job_body, _CORPUS_JOB_KEYS, f"{where} run {run_id} a job")
+                    try:
+                        job_failed(job["conclusion"])
+                    except UnknownConclusionError as exc:
+                        raise CorpusError(path, f"{where} run {run_id}: {exc}") from exc
                     jobs.append(
                         JobOutcome(
                             name=_typed(path, job["name"], str, f"run {run_id} a job name"),
@@ -573,7 +624,7 @@ def replay(
 ) -> ReplayReport:
     """Judge every failed job of the corpus and every ``miss`` row against the table (D1, D3).
 
-    A failed job (conclusion :data:`FAILURE`) is a miss when the
+    A failed job (a conclusion of :data:`FAILED_CONCLUSIONS`) is a miss when the
     narrowed selection of its head's paths does not hold its job id,
     unless a ``conflict`` or ``external`` row has its ``(run, job)``;
     a ``miss`` row is a miss while the selection of its paths does not
@@ -594,6 +645,8 @@ def replay(
     Raises:
         UnknownJobError: A failed job of the corpus or a row of any
             verdict names a check the workflow does not produce.
+        UnknownConclusionError: A job of the corpus has a conclusion
+            outside :data:`JOB_CONCLUSIONS`.
     """
     rows_by_key = {row.key: row for row in misses}
     for row in misses:
@@ -619,7 +672,7 @@ def replay(
                 )
             )
         for job in head.jobs:
-            if job.conclusion != FAILURE:
+            if not job_failed(job.conclusion):
                 continue
             failed += 1
             job_id = _job_id(check_names, job.name, f"corpus #{head.pr} run {head.run}")

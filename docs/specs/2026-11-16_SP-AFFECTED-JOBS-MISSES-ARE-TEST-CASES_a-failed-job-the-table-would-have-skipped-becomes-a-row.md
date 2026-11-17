@@ -92,6 +92,13 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
     listing that reaches its limit (200) is refused, never cut.
   - Every attempt is read: a job that failed on any attempt counts as
     failed.
+  - A job conclusion is a failure when it is `failure`, `timed_out` or
+    `startup_failure`. It is no failure when it is `success`, `neutral`,
+    `cancelled`, `skipped`, `action_required` (waiting for an approval,
+    nothing ran) or `stale` (a check run the forge superseded). Any other
+    conclusion is refused by name: exit 2 from harvest and replay, and a
+    `CorpusError` from `load_corpus`. Failed steps are the steps with a
+    failed conclusion.
   - A head's paths come from `compare/<the pull request's .base.sha>...<head>`,
     not `compare/develop...<head>`: a head merged by a merge commit is an
     ancestor of `develop`, and its compare would list no file. A
