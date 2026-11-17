@@ -6,7 +6,8 @@ the real ``test_slow_settings_defaults`` selector -- reproducing exactly
 the invocation shape ``ci_local.sh`` and the merge gate run from the
 repo root.
 
-The child gets its own ``--basetemp`` under ``tmp_path``. Without it, the
+The child gets its own ``--basetemp`` under ``tmp_path``
+(:func:`tests.child_pytest.child_pytest_argv`). Without it, the
 child's autouse ``tmp_path_factory`` fixtures open a numbered directory in
 the shared ``<tmp>/pytest-of-<user>`` root, and at exit pytest deletes
 every older numbered directory there that no live session locks: the
@@ -20,8 +21,9 @@ from __future__ import annotations
 import getpass
 import os
 import subprocess
-import sys
 from pathlib import Path
+
+from tests.child_pytest import child_pytest_argv
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -56,16 +58,9 @@ def test_slow_settings_defaults_subprocess_survives_deployed_shadow_arm(
         (session / "popen-gw0" / "test_left_behind0").mkdir(parents=True)
     target = f"{_REPO}/tests/unit/test_slow_completion_policy.py::test_slow_settings_defaults"
     result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            target,
-            "-q",
-            "-p",
-            "no:cacheprovider",
-            f"--basetemp={tmp_path / 'child-basetemp'}",
-        ],
+        child_pytest_argv(
+            target, "-q", "-p", "no:cacheprovider", basetemp=tmp_path / "child-basetemp"
+        ),
         capture_output=True,
         text=True,
         cwd=str(workdir),

@@ -17,13 +17,14 @@ the ratcheting count on that separate axis).
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
+
+from tests.child_pytest import child_pytest_argv
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_collecting_colliding_basenames_together_succeeds() -> None:
+def test_collecting_colliding_basenames_together_succeeds(tmp_path: Path) -> None:
     """The known-colliding pair collects together with zero import file mismatch.
 
     Fails on pre-change code (no ``__init__.py`` under any of the
@@ -31,15 +32,13 @@ def test_collecting_colliding_basenames_together_succeeds() -> None:
     with ``import file mismatch`` in its output.
     """
     result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
+        child_pytest_argv(
             "--collect-only",
             "-q",
             "tests/unit/test_review_dev_runner.py",
             "tests/integration/test_review_dev_runner.py",
-        ],
+            basetemp=tmp_path / "basetemp",
+        ),
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
@@ -50,7 +49,7 @@ def test_collecting_colliding_basenames_together_succeeds() -> None:
     assert result.returncode == 0, combined_output
 
 
-def test_bare_tree_collection_succeeds() -> None:
+def test_bare_tree_collection_succeeds(tmp_path: Path) -> None:
     """``pytest --collect-only tests/`` (the bare ``testpaths`` default) errors zero.
 
     Fails on pre-change code, where collecting the whole tree in one
@@ -58,7 +57,7 @@ def test_bare_tree_collection_succeeds() -> None:
     6 colliding basenames.
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests"],
+        child_pytest_argv("--collect-only", "-q", "tests", basetemp=tmp_path / "basetemp"),
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
