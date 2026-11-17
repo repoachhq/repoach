@@ -58,7 +58,7 @@ adapted from open-code-review (Apache-2.0, `6386895`), read, not copied.
 | # | Fact | Where |
 |---|---|---|
 | F1 | A reviewer comment is `file, line, severity, body`; `line` is "1-based line number in the diff" and comes from the model's JSON | `src/repoach/review/reviewer.py:142-155`, class `ReviewComment` |
-| F2 | `record_findings_for_outcomes` drops a comment whose `file` is not among the diff's files and logs `findings_bridge.off_diff_skipped`; the line is not compared with the hunks | `src/repoach/review/findings_bridge.py:550-660`, the drop at `:626-628`, the log at `:655` |
+| F2 | `record_findings_for_outcomes` drops a comment whose `file` is not among the diff's files and logs `findings_bridge.off_diff_skipped`; the line is not compared with the hunks | `src/repoach/review/findings_bridge.py:550-660`, the drop at `:621-623` (`if diff_filter_enabled and comment.file not in files_in_diff`), the log at `:655` |
 | F3 | Each persona carries the rule as text, "**Never** comment on lines outside the diff", and a self-check, "The `file` is touched by the diff (point to a `+` / `-` line)" | `prompts/review/sentinel_0.4.3.md:69-71`, `:91-94`; the four personas are `architect_0.5.1`, `sentinel_0.4.3`, `tester_0.4.1`, `scribe_0.5.1` (`src/repoach/review/reviewer.py:920`, `:939`, `:947`, `:955`) |
 | F4 | `make_file_excerpts` reads a `window = 15` lines each side of `comment.line` for the round-2 dialogue; a wrong line yields a window about other code | `src/repoach/review/reviewer.py:362-412` |
 | F5 | The refuter's evidence is "the whole cited file, numbered, the cited lines marked `N:>`"; a wrong line marks the wrong code and the judge answers on it | `src/repoach/review/refuter_evidence.py:18` |

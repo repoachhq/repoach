@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-RESUMES-FAILED-ROLES
 title: A review at a head keeps the roles that answered, and a retry calls only the roles that did not
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-12
@@ -11,7 +11,7 @@ owns:
   code: [src/repoach/review/role_resume.py, tests/unit/test_role_resume.py, tests/integration/test_role_resume_end_to_end.py]
   resources: [db:table:pr_reviewer_outcomes]
 
-depends_on: [SP-REVIEW-SURVIVES-TRANSPORT-FAILURES, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-CI-LEDGER-PERSISTS, SP-AUTOFIX-LEDGER-HYDRATE, SP-USAGE-LEDGER, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING, SP-SUBSCRIPTION-LIMIT-IS-NAMED]
+depends_on: [SP-REVIEW-SURVIVES-TRANSPORT-FAILURES, SP-FINDINGS-BRIDGE-DOCFIX, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-REVIEW-PINS-HEAD, SP-AUTOFIX-LEDGER-HYDRATE, SP-USAGE-LEDGER, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING, SP-SUBSCRIPTION-LIMIT-IS-NAMED, SP-LEDGER-FORMAT-IS-VERSIONED]
 provides_to: []
 
 constraints:
@@ -20,6 +20,20 @@ constraints:
 ---
 
 # A retry calls only the roles that did not answer
+
+## Amendment (0.4, 2026-11-17): the generated jobs persist nothing today; the edges say what is read
+
+Re-measured on `origin/develop` `92cd241` after the verifier's read. F9
+of 0.3 said the generated CI jobs keep the ledger per pull request "by
+design": `src/repoach/ci_entry/snippets.py` has no `cache:` and no
+ledger path (`render_gitlab_job`, `:93-119`), and SP-CI-LEDGER-PERSISTS,
+which adds them, was a draft. What persists on Yoob is the hand-written
+`review:gate` job's cache. This spec needs neither: D4 is repoach's own
+`auto-review.yml`, and the edge to SP-CI-LEDGER-PERSISTS is withdrawn
+(that spec now sits in the umbrella's order before 8c, which is its
+first dependant). AC1's `test_table_is_not_a_gate_table` and AC5 import
+`ledger_format`, so SP-LEDGER-FORMAT-IS-VERSIONED is declared; F12's
+lines are those of its branch today.
 
 ## Amendment (0.3, 2026-11-17): approved; every role is recorded, the ledger comes back on every run, the format is not bumped
 
@@ -65,10 +79,10 @@ Measured on `origin/develop` `92cd241` (2026-11-17).
 | F6 | `merge-on-ci.yml` fetches the ledger across runs: `gh api …/actions/artifacts?name=findings-ledger-<pr>`, the newest non-expired artifact of the head branch, refused unless its run's `path` is `.github/workflows/auto-review.yml` in this repository, unzipped to `runner.temp` | `.github/workflows/merge-on-ci.yml:173-212` |
 | F7 | Every usage row names `reviewer`, `provider`, `model` and `error` | `src/repoach/providers/usage.py:73-91` |
 | F8 | `pr_findings.id` is an autoincrement; the report names findings by it (`Verdict basis: #12, #14`; `#<id>` per judged finding) and `/resolve #<id>` parses an integer and looks it up among every finding of the pull request. In repoach's own CI (F5) the ids restart at 1 on every run, so the id an owner read on one run names another finding, or none, on the run their comment triggers (`issue_comment` → the `review` job) | `src/repoach/review/findings.py:272`; `src/repoach/review/report.py:193`, `:501-505`; `src/repoach/review/owner_commands.py:73`, `:471`; `.github/workflows/auto-review.yml:17-18`, `:149-152` |
-| F9 | On Yoob the ledger under `.repoach/` is a GitLab cache per merge request, so ids persist there between pipelines when the cache is hit; the generated CI jobs keep the ledger per pull request by design | Yoob `.gitlab-ci.yml:1582`, `:1614-1617`; SP-CI-LEDGER-PERSISTS |
+| F9 (0.4) | On Yoob the ledger under `.repoach/` is a GitLab cache per merge request on the hand-written `review:gate` job (`cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`), so ids persist there between pipelines when the cache is hit; the jobs `repoach init --ci` generates declare no cache and no ledger path on `92cd241`, and the draft that adds them, SP-CI-LEDGER-PERSISTS, is ordered by SP-REVIEW-CONVERGES before its first dependant, 8c | Yoob `.gitlab-ci.yml:1645-1669` (`origin/develop` `6ee04ab`); `src/repoach/ci_entry/snippets.py:93-119` |
 | F10 | The chain has three tiers, `opus`, `sonnet`, `haiku`, each a `chains.env` key (`MODEL_OPUS`, …); each lens names its persona file with its version in the name (`architect_0.5.1.md`, `sentinel_0.4.3.md`, `tester_0.4.1.md`, `scribe_0.5.1.md`) and its chain (`model_chain`); SP-REVIEW-FABLE-TIER adds a fourth tier later | `src/repoach/review/chain_health.py:34`; `src/repoach/review/chain_rewrite.py:111`; `src/repoach/review/reviewer.py:447-448`, `:920`, `:939`, `:947`, `:955` |
 | F11 | `review pr` prints `incomplete_cause` (`transport` or `other`) in its JSON; the workflow reads it into a job output | `src/repoach/review/review_retry.py:92-120`; `src/repoach/cli/review_cmds.py:483`; `.github/workflows/auto-review.yml:185`, `:573` |
-| F12 | The gate reads five ledger tables, `pr_findings`, `pr_review_integrity`, `pr_spec_coverage`, `pr_merges`, `generated_checks`, listed in `GATE_TABLES` and snapshotted in `tests/fixtures/ledger_format/1.json`; a table outside the list is never read by the gate | SP-LEDGER-FORMAT-IS-VERSIONED D1, D9, F6; `src/repoach/review/ledger_format.py:84-90` on `fix/ledger-format-is-versioned` |
+| F12 | The gate reads five ledger tables, `pr_findings`, `pr_review_integrity`, `pr_spec_coverage`, `pr_merges`, `generated_checks`, listed in `GATE_TABLES` and snapshotted in `tests/fixtures/ledger_format/1.json`; a table outside the list is never read by the gate | SP-LEDGER-FORMAT-IS-VERSIONED D1, D9, F6; `src/repoach/review/ledger_format.py:72` (`LEDGER_FORMAT`), `:85` (`GATE_TABLES`) on `fix/ledger-format-is-versioned` |
 | F13 | open-code-review's `--resume <id>` replays a session and reuses every file whose diff fingerprint completed; the manifest is sealed before the review starts | `R/internal/session/resume.go:50-111`, `R/internal/session/manifest.go` |
 
 ## Decisions (author, within the owner's brief; 0.3 items 2026-11-17)
@@ -110,9 +124,11 @@ Measured on `origin/develop` `92cd241` (2026-11-17).
   in this repository, else refused); the upload of F5 is unchanged and
   already unconditional. A missing, expired or refused artifact starts
   an empty ledger and logs `role_resume.ledger_unavailable: <why>`. The
-  artifact carries findings, outcomes and causes, no secret. The
-  generated CI jobs already persist the ledger (F9, SP-CI-LEDGER-
-  PERSISTS) and need nothing.
+  artifact carries findings, outcomes and causes, no secret. On Yoob
+  the hand-written `review:gate` job already persists the ledger per
+  merge request (F9) and needs nothing from this spec; the generated
+  jobs persist nothing until SP-CI-LEDGER-PERSISTS lands, which is that
+  spec's object, not this one's.
 - D5. The round-2 dialogue and the refuter run as today over the merged
   set; a reused role's round-2 outcome, when it existed, is stored and
   reused under the same key with `round = 2`.
@@ -239,7 +255,9 @@ def split_roles(stored: Mapping[str, StoredRole], roles: Sequence[str], *, force
 ## Architecture Impact
 - Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-REVIEW-SURVIVES-TRANSPORT-FAILURES (the retry run that benefits; `incomplete_cause` and the transport classification behind `error_cause`)
 - Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-FINDINGS-BRIDGE-DOCFIX (idempotent recording at a head; `outcome_to_json` in `review_cache.py`), SP-FINDING-MODEL (the ledger file), SP-FINDINGS-INIT-RACE (`role_resume.py` imports the engine helpers of `findings.py` and creates its table in that ledger)
-- Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-CI-LEDGER-PERSISTS (the generated jobs' persistence this leaves alone), SP-AUTOFIX-LEDGER-HYDRATE (the download step D4 generalises to the `review` job), SP-REVIEW-PINS-HEAD (`diff_hash` of the pinned head)
+- Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-AUTOFIX-LEDGER-HYDRATE (the download step D4 generalises to the `review` job), SP-REVIEW-PINS-HEAD (`diff_hash` of the pinned head)
+- Adds dependency (0.4): SP-REVIEW-RESUMES-FAILED-ROLES -> SP-LEDGER-FORMAT-IS-VERSIONED (`ledger_format.snapshot()` and `LEDGER_FORMAT` are imported by AC1's `test_table_is_not_a_gate_table` and read by AC5; this spec changes neither, D6)
+- Removes dependency (0.4): SP-REVIEW-RESUMES-FAILED-ROLES -> SP-CI-LEDGER-PERSISTS (nothing of it is read or edited; F9 corrected)
 - Adds dependency: SP-REVIEW-RESUMES-FAILED-ROLES -> SP-USAGE-LEDGER, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING
 - Adds dependency (0.2, the owner's unified order): SP-REVIEW-RESUMES-FAILED-ROLES -> SP-SUBSCRIPTION-LIMIT-IS-NAMED (`subscription_exhausted` is one of the causes D1 records; the resume lands after the reason exists)
 - `role_resume.py` imports `findings` (engine helpers), `review_cache` (the serialiser) and `reviewer` (the outcome dataclass, frontier); the orchestrator imports it. No gate table (D6), no cycle: `findings.py` and `review_cache.py` import nothing from the new module.

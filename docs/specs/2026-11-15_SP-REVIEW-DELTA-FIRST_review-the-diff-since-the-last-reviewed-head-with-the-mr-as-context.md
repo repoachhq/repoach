@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-DELTA-FIRST
 title: From the second round on, the lenses review the diff since the last reviewed head, with the full merge request as cached context, and every fall-back to the full range is named
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-15
 updated: 2026-11-17
 
 owns:
-  code: [src/repoach/review/delta_scope.py, tests/unit/test_delta_scope.py, tests/unit/test_delta_prompt_blocks.py, tests/integration/test_delta_review_end_to_end.py]
+  code: [src/repoach/review/delta_scope.py, tests/unit/test_delta_scope.py, tests/unit/test_delta_prompt_blocks.py, tests/integration/test_delta_review_end_to_end.py, tests/fixtures/ledger_format/3.json]
   resources: []
 
-depends_on: [SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-PROMPT-PLACEHOLDER-ORDER, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-ANTHROPIC-BUDGET-GUARD, SP-GATE-REVERIFIES-AT-HEAD, SP-REVIEW-RESUMES-FAILED-ROLES, SP-REVIEW-GROUPS-LARGE-DIFFS, SP-POSTING-REPLAY-DEDUPES, SP-UNIVERSAL-PROJECT-CONFIG, SP-MEMORY-LOOPS-EXPLICIT, SP-CLI-STDOUT-ONE-JSON, SP-REVIEW-TOKEN-ESTIMATE, SP-LEDGER-FORMAT-IS-VERSIONED]
+depends_on: [SP-DIFF-SCOPER, SP-REVIEW-PINS-HEAD, SP-FINDING-MODEL, SP-FINDINGS-INIT-RACE, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-PROMPT-PLACEHOLDER-ORDER, SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING, SP-ANTHROPIC-BUDGET-GUARD, SP-GATE-REVERIFIES-AT-HEAD, SP-REVIEW-RESUMES-FAILED-ROLES, SP-POSTING-REPLAY-DEDUPES, SP-UNIVERSAL-PROJECT-CONFIG, SP-MEMORY-LOOPS-EXPLICIT, SP-CLI-STDOUT-ONE-JSON, SP-USAGE-LEDGER, SP-LEDGER-FORMAT-IS-VERSIONED]
 provides_to: []
 
 constraints:
@@ -21,6 +21,26 @@ constraints:
 ---
 
 # Delta-first review: the diff since the last reviewed head, the merge request as context
+
+## Amendment (0.5, 2026-11-17): no draft in the path, the snapshot is owned, the oracle is the usage ledger
+
+Re-measured on `origin/develop` `92cd241` after the verifier's read.
+(1) D1 made completeness depend on `(role, group)` from
+SP-REVIEW-GROUPS-LARGE-DIFFS, a draft whose `diff_groups.py` is absent
+and which no row of the order builds; completeness is now "every role
+parsed" (`n_unparsed == 0 and n_reviewers == 4`), what
+`pr_review_integrity` records today, and the edge is withdrawn. When
+that draft is scheduled, it amends D1 to per `(role, group)` as its own
+change. (2) C4 named SP-REVIEW-TOKEN-ESTIMATE's estimate as its oracle;
+`token_estimate.py` and `providers/budget.py` are absent. The oracle is
+the usage ledger's measured prompt tokens, which exist (`repoach usage
+--run <id>`, `usage_ledger` rows, SP-USAGE-LEDGER), summed over the ten
+runs; the edge moves from the draft to SP-USAGE-LEDGER. (3)
+`tests/fixtures/ledger_format/3.json` is this spec's file (D10) and is
+now in `owns.code`, as `2.json` is SP-FINDING-CITES-ITS-CODE's. (4) F2
+cited `findings.py:270-278` for `pr_review_integrity`; that range is
+`pr_findings`, the table is at `:295-303`; F1's orchestrator line is
+`:725` on `92cd241`.
 
 ## Amendment (0.4, 2026-11-17): the checkpoint lives on a table that exists, and the shape change is a format bump
 
@@ -82,8 +102,9 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366;
 
 | # | Fact | Where |
 |---|---|---|
-| F1 | Each round fetches the whole merge request diff (`raw_diffs`, else rebuilt) and hashes it; the scoper then cuts complete file units for the prompt | `src/repoach/review/orchestrator.py:699-712`; `src/repoach/forge/gitlab.py:645-658`; SP-DIFF-SCOPER |
-| F2 | The head reviewed is pinned per run and recorded with the four lenses' parse state in `pr_review_integrity` (`head_sha`, `n_reviewers`, `n_unparsed`) | SP-REVIEW-PINS-HEAD; `src/repoach/review/findings.py:270-278` |
+| F1 | Each round fetches the whole merge request diff (`raw_diffs`, else rebuilt) and hashes it; the scoper then cuts complete file units for the prompt | `src/repoach/review/orchestrator.py:725` (`diff = self._forge.diff(pr_number).text` on `92cd241`; `:699-712` on `5354767`); `src/repoach/forge/gitlab.py:645-658`; SP-DIFF-SCOPER |
+| F2 | The head reviewed is pinned per run and recorded with the four lenses' parse state in `pr_review_integrity` (`id, pr_number, head_sha, n_reviewers, n_unparsed`) | SP-REVIEW-PINS-HEAD; `src/repoach/review/findings.py:295-303` (0.5; `:269-291` is `pr_findings`) |
+| F12 (0.5) | Every provider call writes one `usage_ledger` row with its prompt and completion tokens; `repoach usage --run <id>` sums them per run | `src/repoach/providers/usage.py:73-91`; `src/repoach/cli/usage_cmds.py`; SP-USAGE-LEDGER |
 | F3 | On !366, rounds 9–11: 15 of 18 remarks were on code the previous fix added — the delta — and the other 3 on pre-existing code; threads a round: 11, 4, 6, 6, 5, 3, 5, 5, 4, 6, 8, 8 | Yoob `tmp/REVIEW-SPEC.md` §6 |
 | F4 | A review costs about 699 k prompt tokens, every one uncached on the API: the direct provider sets no `cache_control` | SP-ANTHROPIC-BUDGET-GUARD F7, F8 |
 | F5 | Owner decision 2026-11-15 (c): delta-first review — the diff since the last reviewed head, with the full MR as context | brief, 2026-11-15 |
@@ -98,9 +119,11 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366;
 
 - D1. The *checkpoint* is the ledger, not a comment: `last_reviewed_head(pr)`
   is the `head_sha` of the latest `pr_review_integrity` row of the merge
-  request with `n_unparsed == 0` and every `(role, group)` present
-  (SP-REVIEW-GROUPS-LARGE-DIFFS; `n_reviewers == 4` while there is one
-  group), together with (IH, 0.4) its `base_sha` (the merge-base) and
+  request with `n_unparsed == 0` and `n_reviewers == 4` (0.5: every
+  role parsed, what the row records today; a per-`(role, group)`
+  completeness is SP-REVIEW-GROUPS-LARGE-DIFFS's amendment to this
+  sentence when that draft is scheduled), together with (IH, 0.4) its
+  `base_sha` (the merge-base) and
   its `config_key` (persona versions, tiers key and rules hash), both
   new columns of that same `pr_review_integrity` row. When none exists,
   the round is a *full round*: target = the merge request diff, as today.
@@ -253,7 +276,7 @@ def in_delta(comment, scope: ReviewRange) -> bool: ...   # D4
 
 # reviewer.py (changed): two blocks, cache_control on the context block
 # findings.py (changed): FindingStatus.OUT_OF_DELTA; pr_review_integrity gains base_sha, extends_run, config_key (three _ADDED_FINDINGS_COLUMNS entries)
-# ledger_format.py (changed): LEDGER_FORMAT = 3; tests/fixtures/ledger_format/3.json committed (D10)
+# ledger_format.py (changed): LEDGER_FORMAT = 3; tests/fixtures/ledger_format/3.json committed and owned here (D10)
 # repoach.project.config.ReviewSection (added): delta: bool = True
 # CLI: review pr --full
 ```
@@ -271,7 +294,7 @@ writes the context cache (57 k tokens), three read it; the report says
 
 ### Edge cases
 - first round → `range: full (no_previous_run)`; the context block is the target too (one block, labelled as both).
-- `n_unparsed > 0` or a missing `(role, group)` on the latest integrity row → `previous_incomplete`, unless SP-REVIEW-RESUMES-FAILED-ROLES completed that run first.
+- `n_unparsed > 0` or `n_reviewers < 4` on the latest integrity row → `previous_incomplete`, unless SP-REVIEW-RESUMES-FAILED-ROLES completed that run first.
 - a rebase onto a moved `develop` → `base_moved`, full; a force-push → `not_ancestor`, full; the Sentinel persona bumped → `config_changed`, full.
 - three delta rounds in a row → the chain H1 ← H2 ← H3 ← H4; the gate at H4 reads it complete; a missing H3 row → `review incomplete: run at H3 missing from the chain`.
 - a lens cites a context line and names the target line → in delta; cites a context line alone → `out_of_delta`, named.
@@ -283,7 +306,7 @@ writes the context cache (57 k tokens), three read it; the report says
 
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
-| `tests/unit/test_delta_scope.py::test_checkpoint_requires_every_role_and_group_parsed` | D1 | ignore `n_unparsed` |
+| `tests/unit/test_delta_scope.py::test_checkpoint_requires_every_role_parsed` | D1: `n_unparsed == 0 and n_reviewers == 4` | ignore `n_unparsed`, or accept three reviewers |
 | `::test_valid_checkpoint_is_a_delta_round_over_the_compare_restricted_to_mr_files` | D2 | use the full diff |
 | `::test_each_invalid_condition_names_its_reason` | the eight reasons of `FULL_REASONS`, one case each | one reason reused for two cases |
 | `::test_force_push_is_not_ancestor` | `is_ancestor` false → full | ancestry not asked |
@@ -303,7 +326,7 @@ writes the context cache (57 k tokens), three read it; the report says
 - C1: replaying !366's rounds 9–12 with their recorded heads and diffs, the target of each delta round contains every line the round's fix added and the report's `target_lines` equals the recorded compare size; oracle: the integration test on the fixture of SP-REVIEW-SETTLED-STAYS-SETTLED.
 - C2: on the same replay, the 15 remarks of rounds 9–11 on fix-added code are in delta; the 3 on pre-existing code are `out_of_delta` unless their comment names a target line; oracle: `findings.out_of_delta` count.
 - C3: on a live Yoob delta round through the owner's gateway, the usage ledger shows `cache_read_tokens ≥ 0.9 × cache_write_tokens` of the first lens for lenses two to four, and the review's `cost.review_usd` is below the previous full round's by at least 40 %; oracle: `repoach usage --run <id>`.
-- C4: (IH) on a recorded ten-push Yoob merge request, the sum of prompt tokens over the ten runs drops by at least 50 % against ten full runs, with the same set of findings open at the final head; oracle: SP-REVIEW-TOKEN-ESTIMATE's per-run estimate and the ledger's measured tokens, both quoted.
+- C4 (IH; 0.5): on a recorded ten-push Yoob merge request replayed twice on the provider fakes, once with `[review].delta = false` and once with the default, the sum of `prompt_tokens` over the ten runs' `usage_ledger` rows drops by at least 50 % with the delta on, with the same set of findings open at the final head; oracle: `repoach usage --run <id>` for each of the twenty runs (F12), the twenty figures and the two sums written beside this line by the verifier.
 - C5: (IH) on the planted corpus with each case split into two heads (the fixture's patch halved), the located-defect count is 10/10 with the second head reviewed as a delta round; oracle: `repoach bench report`.
 - C6: `pytest -q tests/unit/test_diff_scoper*.py tests/unit/test_review_pins_head.py tests/unit/test_gate_reverifies_at_head.py` → green.
 - C7 (0.4; oracle: `scripts/skew_replay.sh`): on this spec's branch, `scripts/skew_replay.sh origin/develop HEAD` → `ledger: format 3 is newer than this reader's 2 …`, exit 5; `scripts/skew_replay.sh HEAD HEAD` → `ledger: ok (format 3, …)`, exit 0; after the release that ships it, `scripts/skew_replay.sh origin/main origin/develop` → `ledger: ok`. The three command lines and outputs are written beside this line by the verifier.
@@ -315,8 +338,10 @@ writes the context cache (57 k tokens), three read it; the report says
 - Adds dependency: SP-REVIEW-DELTA-FIRST -> SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-PROMPT-PLACEHOLDER-ORDER (block order; the checkpoint's findings reach the lens through the history block)
 - Adds dependency: SP-REVIEW-DELTA-FIRST -> SP-UNIVERSAL-FORGE, SP-ORCH-DOCSTRING (compare through the protocol; the orchestrator's steps)
 - Adds dependency: SP-REVIEW-DELTA-FIRST -> SP-ANTHROPIC-BUDGET-GUARD (the estimate of a delta round uses the cached context at the cache-read price once the first lens wrote it)
-- Adds dependency (IH): SP-REVIEW-DELTA-FIRST -> SP-GATE-REVERIFIES-AT-HEAD (the soundness of keeping the checkpoint's findings), SP-REVIEW-RESUMES-FAILED-ROLES (a complete run is the checkpoint; the resume makes more runs complete), SP-REVIEW-GROUPS-LARGE-DIFFS (completeness is per `(role, group)`)
-- Adds dependency (IH): SP-REVIEW-DELTA-FIRST -> SP-POSTING-REPLAY-DEDUPES (posting unchanged on replay), SP-UNIVERSAL-PROJECT-CONFIG (`[review].delta`), SP-MEMORY-LOOPS-EXPLICIT (F9, kept by D8 and D9), SP-CLI-STDOUT-ONE-JSON (`range` in the one JSON), SP-REVIEW-TOKEN-ESTIMATE (C4's figures); 0.4: the edge to SP-UNIVERSAL-LEDGER is withdrawn, `review_runs` is not touched because it does not exist
+- Adds dependency (IH): SP-REVIEW-DELTA-FIRST -> SP-GATE-REVERIFIES-AT-HEAD (the soundness of keeping the checkpoint's findings), SP-REVIEW-RESUMES-FAILED-ROLES (a complete run is the checkpoint; the resume makes more runs complete)
+- Adds dependency (IH): SP-REVIEW-DELTA-FIRST -> SP-POSTING-REPLAY-DEDUPES (posting unchanged on replay), SP-UNIVERSAL-PROJECT-CONFIG (`[review].delta`), SP-MEMORY-LOOPS-EXPLICIT (F9, kept by D8 and D9), SP-CLI-STDOUT-ONE-JSON (`range` in the one JSON); 0.4: the edge to SP-UNIVERSAL-LEDGER is withdrawn, `review_runs` is not touched because it does not exist
+- Adds dependency (0.5): SP-REVIEW-DELTA-FIRST -> SP-USAGE-LEDGER (C4 and G6 read `usage_ledger` rows: `prompt_tokens`, `cache_read_tokens`)
+- Removes dependency (0.5): SP-REVIEW-DELTA-FIRST -> SP-REVIEW-GROUPS-LARGE-DIFFS and SP-REVIEW-TOKEN-ESTIMATE (drafts with no code; D1 and C4 no longer read anything of them)
 - Supersedes SP-REVIEW-INCREMENTAL-HEAD, which owns nothing from 0.2 on. No new table; three gate-table columns and one enum value, format bumped (D10); no cycle.
 
 ## Diagram
@@ -332,10 +357,10 @@ flowchart TD
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: `pytest -q tests/unit/test_delta_scope.py tests/unit/test_delta_prompt_blocks.py` → green. Today (`5354767`): every round reviews `self._forge.diff(pr_number).text` (`orchestrator.py:699`) and no `cache_control` exists in `src/repoach/providers`.
+- [ ] AC1: `pytest -q tests/unit/test_delta_scope.py tests/unit/test_delta_prompt_blocks.py` → green. Today (`92cd241`): every round reviews `self._forge.diff(pr_number).text` (`orchestrator.py:725`) and no `cache_control` exists in `src/repoach/providers`.
 - [ ] AC2: `pytest -q tests/integration/test_delta_review_end_to_end.py` → green, the force-push case included.
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check` lists 27 cycles, as `92cd241` does (0.4; 0.3 said six, measured on an older tree).
-- [ ] AC5 (0.4): `pytest -q tests/unit/test_ledger_format_skew.py` → green with `LEDGER_FORMAT = 3` and `tests/fixtures/ledger_format/3.json`; `python -m repoach.review.ledger_format snapshot` equals that file and lists the three new `pr_review_integrity` columns and `out_of_delta` under `pr_findings.status`; `1.json` and `2.json` unchanged. Mutation: add the status without the bump → `test_live_snapshot_matches_the_committed_format` red.
+- [ ] AC5 (0.4): `pytest -q tests/unit/test_ledger_format_skew.py` → green with `LEDGER_FORMAT = 3` and `tests/fixtures/ledger_format/3.json` (owned by this spec, 0.5); `python -m repoach.review.ledger_format snapshot` equals that file and lists the three new `pr_review_integrity` columns and `out_of_delta` under `pr_findings.status`; `1.json` and `2.json` unchanged. Mutation: add the status without the bump → `test_live_snapshot_matches_the_committed_format` red.
 - [ ] AC4: `docs/review_redesign_architecture.md` describes full and delta rounds, the two blocks, the eight reasons and the chain of runs; SP-REVIEW-INCREMENTAL-HEAD carries `status: superseded` and points here.
 
 ## Open Questions
