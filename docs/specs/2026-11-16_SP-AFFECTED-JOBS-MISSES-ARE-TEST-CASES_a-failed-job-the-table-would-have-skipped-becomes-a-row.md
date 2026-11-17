@@ -248,7 +248,7 @@ and the committed misses table exits 0.
 
 ### Failure scenarios
 - `gh` unauthenticated or rate-limited → exit 2 with the first line of its stderr, corpus untouched.
-- `misses.tsv` names a job `ci.yml` no longer defines → `test_the_misses_table_is_well_formed` red with the name; the row is kept and its `note` says what the job became.
+- `misses.tsv` names a job `ci.yml` no longer defines → `test_t4_the_misses_table_is_well_formed` red with the name; the row is kept and its `note` says what the job became.
 - a `compare` answer truncated (`files` at the 300-file cap) → that head is recorded with `paths_truncated: true` and the replay treats it as full class (every job selected), printed as such, so a truncated head can never be a false miss nor a false pass.
 
 ## Tests
