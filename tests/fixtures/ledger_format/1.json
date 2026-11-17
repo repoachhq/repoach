@@ -1,5 +1,17 @@
 {
   "enums": {
+    "generated_checks.script_ref": [
+      "head",
+      "base"
+    ],
+    "generated_checks.state": [
+      "generated_artefact_verified",
+      "generated_artefact_stale",
+      "generated_artefact_no_source_changed",
+      "generated_check_absent",
+      "skipped (cost)",
+      "generated_check_not_run"
+    ],
     "pr_findings.claim_type": [
       "missing_test",
       "missing_docstring",
@@ -26,9 +38,35 @@
       "resolved_at_head",
       "owner_resolved",
       "noted"
+    ],
+    "pr_spec_coverage.contract": [
+      "plan",
+      "acceptance-criteria",
+      "none",
+      "unavailable",
+      ""
     ]
   },
   "tables": {
+    "generated_checks": [
+      "id INTEGER",
+      "pr_number INTEGER",
+      "head_sha VARCHAR",
+      "path VARCHAR",
+      "argv TEXT",
+      "exit_code INTEGER",
+      "duration_ms INTEGER",
+      "output_tail TEXT",
+      "state VARCHAR",
+      "script_ref VARCHAR",
+      "runs_for_path INTEGER",
+      "sources_changed TEXT",
+      "producer_inputs_changed TEXT",
+      "artefact_sha256 VARCHAR",
+      "checks_ms INTEGER",
+      "overhead_ms INTEGER",
+      "recorded_at VARCHAR"
+    ],
     "ledger_meta": [
       "key VARCHAR",
       "value VARCHAR"

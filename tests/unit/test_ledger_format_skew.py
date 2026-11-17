@@ -19,6 +19,7 @@ import subprocess
 import sys
 from enum import StrEnum
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from typer.testing import CliRunner
@@ -41,9 +42,12 @@ from repoach.review.findings import (
     fetch_findings,
     record_finding,
 )
+from repoach.review.generated_store import fetch_generated_checks
+from repoach.review.generated_types import GeneratedState, ScriptRef
 from repoach.review.ledger_format import (
     LEDGER_FORMAT,
     LedgerSkewError,
+    _of_enum,
     check,
     demo_ledger,
     snapshot,
@@ -131,8 +135,46 @@ OTHER_TABLES_AT_5CEA5A7 = {
         "trigger VARCHAR",
         "rule_version VARCHAR",
     ],
+    "generated_checks": [
+        "id INTEGER",
+        "pr_number INTEGER",
+        "head_sha VARCHAR",
+        "path VARCHAR",
+        "argv TEXT",
+        "exit_code INTEGER",
+        "duration_ms INTEGER",
+        "output_tail TEXT",
+        "state VARCHAR",
+        "script_ref VARCHAR",
+        "runs_for_path INTEGER",
+        "sources_changed TEXT",
+        "producer_inputs_changed TEXT",
+        "artefact_sha256 VARCHAR",
+        "checks_ms INTEGER",
+        "overhead_ms INTEGER",
+        "recorded_at VARCHAR",
+    ],
 }
-"""The three other tables the gate reads, as ``5cea5a7`` declared them."""
+"""The four other tables the gate reads, as ``origin/develop`` declares them.
+
+``generated_checks`` joined in 0.4: ``generated_store.py`` is unchanged by
+this branch against ``origin/develop`` ``92cd241``, so these are the
+columns ``develop`` already writes.
+"""
+
+OTHER_ENUMS_AT_DEVELOP = {
+    "pr_spec_coverage.contract": ["plan", "acceptance-criteria", "none", "unavailable", ""],
+    "generated_checks.state": [
+        "generated_artefact_verified",
+        "generated_artefact_stale",
+        "generated_artefact_no_source_changed",
+        "generated_check_absent",
+        "skipped (cost)",
+        "generated_check_not_run",
+    ],
+    "generated_checks.script_ref": ["head", "base"],
+}
+"""The vocabularies outside ``pr_findings`` the gate decodes, as ``origin/develop`` defines them."""
 
 
 def _sql(db: Path, *statements: str) -> None:
@@ -185,8 +227,8 @@ class _SeverityWithLater(StrEnum):
 
 
 def test_t1_an_unbumped_enum_value_turns_the_snapshot_red(monkeypatch: pytest.MonkeyPatch) -> None:
-    claim_type, _severity, status = ledger_format.ENUM_COLUMNS
-    widened = (claim_type, ("severity", _SeverityWithLater), status)
+    claim_type, _severity, *others = ledger_format.ENUM_COLUMNS
+    widened = (claim_type, _of_enum(claim_type.table, "severity", _SeverityWithLater), *others)
     monkeypatch.setattr(ledger_format, "ENUM_COLUMNS", widened)
     committed = json.loads((FORMATS / f"{LEDGER_FORMAT}.json").read_text(encoding="utf-8"))
     assert snapshot() != committed
@@ -249,6 +291,42 @@ def test_t3_an_unknown_enum_value_at_the_same_format_is_named(
     assert raised.value.needed_format == LEDGER_FORMAT + 1
 
 
+@pytest.mark.parametrize(
+    ("table", "column", "vocabulary"),
+    [
+        ("pr_spec_coverage", "contract", "ContractKind"),
+        ("generated_checks", "state", "GeneratedState"),
+        ("generated_checks", "script_ref", "ScriptRef"),
+    ],
+)
+def test_t3_an_unknown_value_of_another_gate_table_is_named(
+    tmp_path: Path, table: str, column: str, vocabulary: str
+) -> None:
+    db = _demo(tmp_path)
+    _sql(db, f"UPDATE {table} SET {column} = 'later' WHERE id = (SELECT max(id) FROM {table})")
+    with pytest.raises(LedgerSkewError) as raised:
+        check(db, 259)
+    assert str(raised.value) == (
+        f"{table}.{column}='later' is not a {vocabulary} this reader knows "
+        f"(written by repoach 0.2.0.dev14+gabc1234; this gate is repoach {READER})"
+    )
+    _sql(db, f"UPDATE {table} SET pr_number = 7")
+    assert check(db, 259).rows_checked == N_DEMO
+
+
+def test_t3_an_unknown_generated_state_is_named_where_its_decoder_raises(tmp_path: Path) -> None:
+    db = _demo(tmp_path)
+    _sql(db, "UPDATE generated_checks SET state = 'generated_artefact_later' WHERE id = 1")
+    with pytest.raises(
+        ValueError, match="'generated_artefact_later' is not a valid GeneratedState"
+    ):
+        fetch_generated_checks(db, 259, "0" * 40)
+    with pytest.raises(
+        LedgerSkewError, match=r"^generated_checks\.state='generated_artefact_later' "
+    ):
+        check(db, 259)
+
+
 def test_t3_an_unknown_value_of_another_pr_is_not_this_pr_s(tmp_path: Path) -> None:
     db = _demo(tmp_path)
     _sql(
@@ -278,7 +356,12 @@ def test_t4_a_declared_column_the_file_lacks_is_named_before_any_row_is_read(
 
 @pytest.mark.parametrize(
     ("table", "column"),
-    [("pr_review_integrity", "n_unparsed"), ("pr_spec_coverage", "batch"), ("pr_merges", "notes")],
+    [
+        ("pr_review_integrity", "n_unparsed"),
+        ("pr_spec_coverage", "batch"),
+        ("pr_merges", "notes"),
+        ("generated_checks", "checks_ms"),
+    ],
 )
 def test_t4_every_gate_table_is_checked(tmp_path: Path, table: str, column: str) -> None:
     db = _demo(tmp_path)
@@ -301,6 +384,15 @@ def test_t4_an_unstamped_ledger_lacking_a_column_this_reader_heals_proceeds(
     assert str(raised.value) == (
         f"pr_findings.claim missing (written by repoach (unstamped); this gate is repoach {READER})"
     )
+
+
+def test_t4_an_unstamped_ledger_lacking_the_healed_contract_column_proceeds(
+    tmp_path: Path,
+) -> None:
+    db = _demo(tmp_path)
+    _unstamped(db)
+    _sql(db, "ALTER TABLE pr_spec_coverage DROP COLUMN contract")
+    assert check(db, 259).rows_checked == N_DEMO
 
 
 def _skewed_gate_fixture(tmp_path: Path) -> tuple[MergeWaitFixtureForge, Path]:
@@ -366,6 +458,43 @@ def test_t5_run_auto_merge_records_a_named_skip(tmp_path: Path) -> None:
     assert block is not None
     attempts = MergeAttemptsComment.model_validate_json(block.group(1)).attempts
     assert [(a.outcome, a.reason) for a in attempts] == [(OUTCOME_SKIP_LEDGER_SKEW, SKEW_REASON)]
+
+
+def test_t5_an_unknown_generated_state_is_a_named_skip_of_run_auto_merge(tmp_path: Path) -> None:
+    fx = MergeWaitFixtureForge(
+        [FixturePR(259, HEAD_259, "docs/sp-approved-spec-without-plan", check_runs=ci_runs())]
+    )
+    db = tmp_path / "review.db"
+    seed_review(db, 259, HEAD_259)
+    shutil.copyfile(_DEMO_CACHE["db"], tmp_path / "demo.db")
+    _sql(
+        tmp_path / "demo.db",
+        "UPDATE generated_checks SET state = 'generated_artefact_later' WHERE id = 1",
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute("ATTACH DATABASE ? AS demo", (str(tmp_path / "demo.db"),))
+        conn.execute("CREATE TABLE generated_checks AS SELECT * FROM demo.generated_checks")
+        conn.execute("UPDATE generated_checks SET pr_number = 259, head_sha = ?", (HEAD_259,))
+    stamp(db, written_by="0.2.0.dev14+gabc1234")
+    with pytest.raises(ValueError, match="is not a valid GeneratedState"):
+        fetch_generated_checks(db, 259, HEAD_259)
+
+    result = run_auto_merge(
+        259,
+        forge=fx.forge,
+        db_path=db,
+        repo_root=REPO_ROOT,
+        wait_seconds=0,
+        trigger="merge-on-ci:1",
+        clock=fx.clock,
+    )
+
+    assert result.outcome == OUTCOME_SKIP_LEDGER_SKEW
+    assert result.notes.startswith(
+        "ledger skew: generated_checks.state='generated_artefact_later' is not a GeneratedState "
+    )
+    assert merge_exit_code(result.outcome) == 5
+    assert fx.merges == []
 
 
 def _cli_settings(monkeypatch: pytest.MonkeyPatch, fx: MergeWaitFixtureForge, db: Path) -> None:
@@ -476,6 +605,7 @@ def test_a_stamp_that_is_not_a_format_is_named(tmp_path: Path, value: str, messa
 def test_t7_format_1_is_what_the_ledger_already_was() -> None:
     committed = json.loads((FORMATS / "1.json").read_text(encoding="utf-8"))
     assert committed["enums"] == {
+        **OTHER_ENUMS_AT_DEVELOP,
         "pr_findings.claim_type": [m.value for m in ClaimType],
         "pr_findings.severity": ["blocking", "advisory", "note"],
         "pr_findings.status": [
@@ -503,15 +633,25 @@ def test_t8_demo_ledger_carries_every_enum_value_and_passes(tmp_path: Path) -> N
     db = _demo(tmp_path)
     with sqlite3.connect(db) as conn:
         values = {
-            column: {row[0] for row in conn.execute(f"SELECT DISTINCT {column} FROM pr_findings")}
-            for column, _enum in ledger_format.ENUM_COLUMNS
+            (entry.table.name, entry.column): {
+                row[0]
+                for row in conn.execute(f"SELECT DISTINCT {entry.column} FROM {entry.table.name}")
+            }
+            for entry in ledger_format.ENUM_COLUMNS
         }
         meta = dict(conn.execute("SELECT key, value FROM ledger_meta"))
         coverage = conn.execute("SELECT count(*) FROM pr_spec_coverage").fetchone()[0]
         integrity = conn.execute("SELECT count(*) FROM pr_review_integrity").fetchone()[0]
-    for column, enum in ledger_format.ENUM_COLUMNS:
-        assert values[column] == {m.value for m in enum}
-    assert (coverage, integrity) == (1, 1)
+        generated = conn.execute("SELECT count(*) FROM generated_checks").fetchone()[0]
+    assert len(ledger_format.ENUM_COLUMNS) == 6
+    for entry in ledger_format.ENUM_COLUMNS:
+        assert values[(entry.table.name, entry.column)] == set(entry.values)
+    assert (coverage, integrity, generated) == (
+        len(OTHER_ENUMS_AT_DEVELOP["pr_spec_coverage.contract"]),
+        1,
+        len(GeneratedState),
+    )
+    assert len(get_args(ScriptRef)) == 2
     assert meta["format"] == str(LEDGER_FORMAT)
     assert meta["written_by"] == "0.2.0.dev14+gabc1234"
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00", meta["written_at"])

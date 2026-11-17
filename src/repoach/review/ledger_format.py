@@ -32,6 +32,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, NamedTuple, get_args
 
 from pydantic import BaseModel
 from sqlalchemy import (
@@ -61,9 +62,11 @@ from .findings import (
     record_finding,
     record_review_integrity,
 )
+from .generated_store import generated_checks, record_generated_checks
+from .generated_types import GeneratedCheck, GeneratedState, ScriptRef
 from .persistence import _ADDED_REVIEW_COLUMNS, _pr_merges, init_schema
 from .spec_gate import _ADDED_COLUMNS as _ADDED_COVERAGE_COLUMNS
-from .spec_gate import SpecCoverage, _pr_spec_coverage, record_spec_coverage
+from .spec_gate import ContractKind, SpecCoverage, _pr_spec_coverage, record_spec_coverages
 
 LEDGER_FORMAT: int = 1
 """The ledger shape this code writes and reads; bump it with a new snapshot file."""
@@ -78,15 +81,63 @@ ledger_meta = Table(
 )
 """One row per stamp key: ``format``, ``written_by``, ``written_at``."""
 
-GATE_TABLES: tuple[Table, ...] = (pr_findings, pr_review_integrity, _pr_spec_coverage, _pr_merges)
-"""The ledger tables the merge gate reads, in the order the check inspects them."""
-
-ENUM_COLUMNS: tuple[tuple[str, type[StrEnum]], ...] = (
-    ("claim_type", ClaimType),
-    ("severity", Severity),
-    ("status", FindingStatus),
+GATE_TABLES: tuple[Table, ...] = (
+    pr_findings,
+    pr_review_integrity,
+    _pr_spec_coverage,
+    _pr_merges,
+    generated_checks,
 )
-"""The ``pr_findings`` columns whose values a reader materialises as enums."""
+"""The ledger tables the merge gate reads, in the order the check inspects them.
+
+``generated_checks`` is read at a later head by
+:func:`~repoach.review.generated_settle.settlements_at_head` (through
+``reverify_older_findings``), so it is a gate table like the four others.
+"""
+
+
+class EnumColumn(NamedTuple):
+    """A ledger column whose stored value a reader decodes into a closed vocabulary.
+
+    Attributes:
+        table: The ledger table.
+        column: The column name.
+        vocabulary: The type the reader decodes it into, named in a refusal.
+        values: Every value the reader defines, in declaration order.
+    """
+
+    table: Table
+    column: str
+    vocabulary: str
+    values: tuple[str, ...]
+
+
+def _of_enum(table: Table, column: str, enum: type[StrEnum]) -> EnumColumn:
+    """The :class:`EnumColumn` of a ``StrEnum``-decoded column."""
+    return EnumColumn(table, column, enum.__name__, tuple(member.value for member in enum))
+
+
+def _of_literal(table: Table, column: str, name: str, literal: Any) -> EnumColumn:
+    """The :class:`EnumColumn` of a column decoded into a ``Literal`` alias."""
+    return EnumColumn(table, column, name, tuple(str(value) for value in get_args(literal)))
+
+
+ENUM_COLUMNS: tuple[EnumColumn, ...] = (
+    _of_enum(pr_findings, "claim_type", ClaimType),
+    _of_enum(pr_findings, "severity", Severity),
+    _of_enum(pr_findings, "status", FindingStatus),
+    _of_literal(_pr_spec_coverage, "contract", "ContractKind", ContractKind),
+    _of_enum(generated_checks, "state", GeneratedState),
+    _of_literal(generated_checks, "script_ref", "ScriptRef", ScriptRef),
+)
+"""The gate-table columns whose values a reader decodes into a closed vocabulary.
+
+``GeneratedState(row.state)`` raises on an unknown value; ``contract`` and
+``script_ref`` are decoded by a fallback (an unknown contract reads as
+``""``, an unknown script ref as ``head``) that would silently re-judge a
+value the writer meant otherwise. All six are checked, so none of them
+reaches its decoder unknown.
+"""
 
 _UNSTAMPED = "(unstamped)"
 
@@ -149,17 +200,14 @@ def snapshot() -> dict[str, object]:
     """Return the live ledger shape: every table's columns and every enum column's values.
 
     Returns:
-        ``{"tables": {name: ["<column> <TYPE>", ...]}, "enums": {"pr_findings.<column>": [values]}}``,
+        ``{"tables": {name: ["<column> <TYPE>", ...]}, "enums": {"<table>.<column>": [values]}}``,
         columns and values in declaration order.
     """
     tables = {
         table.name: [f"{column.name} {column.type}" for column in table.columns]
         for table in (*GATE_TABLES, ledger_meta)
     }
-    enums = {
-        f"{pr_findings.name}.{column}": [member.value for member in enum]
-        for column, enum in ENUM_COLUMNS
-    }
+    enums = {f"{entry.table.name}.{entry.column}": list(entry.values) for entry in ENUM_COLUMNS}
     return {"tables": tables, "enums": enums}
 
 
@@ -239,8 +287,8 @@ def check(db_path: Path, pr_number: int, *, reader: str | None = None) -> Ledger
     :data:`LEDGER_FORMAT`; a declared column of a gate table the file
     lacks (on a ledger older than this reader, the columns this reader's
     own migrations add on open are exempt: it heals them, as it always
-    did); a distinct value of an enum column among the pull request's
-    ``pr_findings`` rows that the enum does not define.
+    did); a distinct value of an :data:`ENUM_COLUMNS` column among the
+    pull request's rows that its vocabulary does not define.
 
     Args:
         db_path: The ledger database; an absent file is an empty,
@@ -306,30 +354,49 @@ def _check_columns(conn: Connection, tables: set[str], stamped: int, versions: s
 def _check_enum_values(
     conn: Connection, tables: set[str], pr_number: int, stamped: int, versions: str
 ) -> int:
-    """Raise on the first enum value of the PR's rows outside its enum; return the row count."""
-    if pr_findings.name not in tables:
-        return 0
-    of_pr = pr_findings.c.pr_number == pr_number
-    for column, enum in ENUM_COLUMNS:
-        known = {member.value for member in enum}
-        values = conn.execute(select(distinct(pr_findings.c[column])).where(of_pr)).scalars()
-        unknown = sorted(str(value) for value in values if value not in known)
+    """Raise on the first value of the PR's rows outside its vocabulary; return the row count.
+
+    A table the file lacks holds no row; a column it lacks is one this
+    reader heals on open with a known default (:func:`_check_columns`
+    refused every other absent column).
+    """
+    for entry in ENUM_COLUMNS:
+        table = entry.table
+        if table.name not in tables:
+            continue
+        present = {column["name"] for column in inspect(conn).get_columns(table.name)}
+        if entry.column not in present:
+            continue
+        query = select(distinct(table.c[entry.column])).where(table.c.pr_number == pr_number)
+        unknown = sorted(
+            str(value) for value in conn.execute(query).scalars() if value not in entry.values
+        )
         if unknown:
             raise LedgerSkewError(
-                f"{pr_findings.name}.{column}={unknown[0]!r} is not a {enum.__name__} "
+                f"{table.name}.{entry.column}={unknown[0]!r} is not a {entry.vocabulary} "
                 f"this reader knows ({versions})",
                 writer_format=stamped,
             )
+    if pr_findings.name not in tables:
+        return 0
+    of_pr = pr_findings.c.pr_number == pr_number
     return int(
         conn.execute(select(func.count()).select_from(pr_findings).where(of_pr)).scalar_one()
     )
 
 
+def _demo_generated_pairs() -> list[tuple[GeneratedState, ScriptRef]]:
+    """One ``(state, script_ref)`` per state, cycling the script refs so each appears."""
+    refs: tuple[ScriptRef, ...] = get_args(ScriptRef)
+    return [(state, refs[index % len(refs)]) for index, state in enumerate(GeneratedState)]
+
+
 def demo_ledger(db_path: Path, pr_number: int = 0, *, written_by: str | None = None) -> None:
     """Write a ledger that carries every value this code defines, then stamp it.
 
-    One finding per value of each enum of :data:`ENUM_COLUMNS`, one
-    coverage row and one integrity row, every gate table created.
+    One finding per value of each ``pr_findings`` enum, one coverage row
+    per contract kind, one generated check per state (the script refs
+    cycling), and one integrity row, every gate table created.
 
     Args:
         db_path: The ledger to write.
@@ -369,13 +436,41 @@ def demo_ledger(db_path: Path, pr_number: int = 0, *, written_by: str | None = N
     ]
     for finding in findings:
         record_finding(db_path, finding)
-    record_spec_coverage(
+    record_spec_coverages(
         db_path,
         pr_number=pr_number,
         head_sha=head,
-        coverage=SpecCoverage(
-            spec_id="SP-DEMO", n_promised=0, n_present=0, missing=[], covered=True
-        ),
+        coverages=[
+            SpecCoverage(
+                spec_id=f"SP-DEMO-{index}",
+                n_promised=0,
+                n_present=0,
+                missing=[],
+                covered=True,
+                contract=contract,
+            )
+            for index, contract in enumerate(get_args(ContractKind))
+        ],
+    )
+    record_generated_checks(
+        db_path,
+        pr_number=pr_number,
+        head_sha=head,
+        checks=[
+            GeneratedCheck(
+                path=f"demo/{index}.txt",
+                argv=("true",),
+                head_sha=head,
+                artefact_sha256="",
+                sources_changed=(),
+                state=state,
+                exit_code=0,
+                duration_ms=0,
+                output_tail="",
+                script_ref=script_ref,
+            )
+            for index, (state, script_ref) in enumerate(_demo_generated_pairs())
+        ],
     )
     record_review_integrity(
         db_path, pr_number=pr_number, head_sha=head, n_reviewers=4, n_unparsed=0
