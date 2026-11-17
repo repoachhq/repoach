@@ -462,3 +462,11 @@ def test_the_coder_reader_on_gitlab(
 
     assert state == expected
     assert bool(failed) is (expected == CI_RED)
+
+
+def test_missing_entry_names_an_in_progress_template_by_its_status() -> None:
+    """A template run with no conclusion yet is named by its status, not left blank."""
+    template = "Test suite (Python ${{ matrix.python-version }})"
+    runs = [CheckRun(name=template, status="IN_PROGRESS", conclusion="", head_sha=HEAD_79B)]
+    verdict = judge_required_checks(runs, ["Test suite (Python 3.11)"], HEAD_79B)
+    assert f'the job reported unexpanded as "{template}"=IN_PROGRESS' in " ".join(verdict.missing)
