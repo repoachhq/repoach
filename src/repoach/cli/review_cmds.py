@@ -61,6 +61,7 @@ from ..providers.select import PROVIDER_FLAG_HELP, set_provider_override
 from ..providers.usage import run_summary_line, run_usage_json, served_by_line, usage_run
 from ..review.auto_merge import (
     OUTCOME_ALREADY_MERGED,
+    OUTCOME_SKIP_LEDGER_SKEW,
     GateEvaluation,
     evaluate_merge_gate,
     merge_exit_code,
@@ -72,6 +73,7 @@ from ..review.dev_runner import open_pr, run_developer_session
 from ..review.finding_post_threads import backfill_finding_posts
 from ..review.generated_verify import GeneratedRefusalError, review_generated_command
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
+from ..review.ledger_format import stamp as stamp_ledger
 from ..review.merge_wait import (
     attempts_line,
     attempts_report,
@@ -427,6 +429,10 @@ def review_pr(
     recorded threads seen resolved on the forge, and one ``thread closed
     by <login> for #<id>`` line per thread resolved by the bot or a
     maintainer is printed on stderr. A closed thread settles no finding.
+
+    Once the review returns, the ledger is stamped with this code's format,
+    version and time (SP-LEDGER-FORMAT-IS-VERSIONED), the last write of
+    the run before the workflow uploads it for the merge gate.
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -456,6 +462,7 @@ def review_pr(
         raise typer.Exit(code=EXIT_WRITE_REFUSED) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
+    stamp_ledger(Path(get_settings().db_path))
     spec_id = team.spec_id
     if team.spec_missing:
         where = specs_dir_for(root).relative_to(root)
@@ -739,6 +746,10 @@ def review_fix(
     guard, runs ``ruff`` + ``pytest``, commits + pushes if green, then
     re-verifies each finding's resolution at head.
 
+    Once the Coder returns, an existing ledger is stamped with this code's
+    format (SP-LEDGER-FORMAT-IS-VERSIONED): the coder job re-uploads the
+    rows this code wrote, whatever the in-run re-review does next.
+
     Exit codes:
       * ``0`` — fixes applied & pushed (the in-run re-review takes over).
       * ``4`` — nothing to fix (no open blocking findings, or pytest red
@@ -774,6 +785,9 @@ def review_fix(
         raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
+    ledger = Path(get_settings().db_path)
+    if ledger.is_file():
+        stamp_ledger(ledger)
     typer.echo(
         json.dumps(
             {
@@ -822,10 +836,17 @@ def review_merge(
         ``ALREADY_MERGED``).
       * ``5`` — a non-merge gate prevented action (``SKIP_BASE``,
         ``SKIP_GATE``, ``SKIP_CI_RED``, ``SKIP_CI_FAILED``,
-        ``SKIP_CI_TIMEOUT``, ``SKIP_CI_MISSING``, ``SKIP_STALE_HEAD``).
-        Non-fatal — the next review round can pick it up.
+        ``SKIP_CI_TIMEOUT``, ``SKIP_CI_MISSING``, ``SKIP_STALE_HEAD``,
+        ``SKIP_LEDGER_SKEW``). Non-fatal — the next review round can pick
+        it up.
       * ``1`` — merge attempted but failed (``FAILED``) or any
         unrecognised outcome.
+
+    ``SKIP_LEDGER_SKEW`` (SP-LEDGER-FORMAT-IS-VERSIONED): the ledger
+    carries a format, column or enum value this release does not define;
+    the reason names it with the writer's and this reader's versions and
+    says which format a release must carry before this lane can judge
+    the head.
 
     Like ``review gate``, the ledger is re-verified on the tree of the
     verified head, never on the checkout's branch; the findings of older
@@ -1169,6 +1190,13 @@ def review_gate(
         (``base_ref_unresolvable``), ``ref`` and ``hint``, and stderr the
         hint (Yoob B-221).
 
+    The ledger's format is checked before any of its rows is read
+    (SP-LEDGER-FORMAT-IS-VERSIONED): one ``ledger: format <n>, written by
+    repoach <v>`` (or ``ledger: unstamped (pre-format), values known``)
+    line on stderr and ``ledger`` in the JSON say what was read; a skew
+    prints ``SKIP_LEDGER_SKEW — ledger skew: …`` on stderr, is
+    ``outcome`` ``SKIP_LEDGER_SKEW`` with that reason, and exits 5.
+
     ``spec`` / ``spec_source`` follow the same resolution as ``review pr``
     (``--spec`` > ``Spec:`` description line > branch name).
     ``facts.spec_coverage`` is ``not_applicable`` when no spec is
@@ -1298,11 +1326,16 @@ def review_gate(
                     "threads_read": facts.threads_read,
                 },
                 "review_threads": threads.as_json() if threads is not None else None,
+                "ledger": evaluation.ledger.model_dump() if evaluation.ledger else None,
             },
             indent=2,
             ensure_ascii=False,
         )
     )
+    if evaluation.ledger is not None:
+        typer.echo(evaluation.ledger.summary_line(), err=True)
+    elif evaluation.ci_gate.outcome_tag == OUTCOME_SKIP_LEDGER_SKEW:
+        typer.echo(f"{OUTCOME_SKIP_LEDGER_SKEW} — {evaluation.ci_gate.reason}", err=True)
     if facts.reverify_line:
         typer.echo(facts.reverify_line, err=True)
     if threads is not None:

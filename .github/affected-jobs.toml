@@ -26,6 +26,7 @@ pytest = [
   "tests/unit/test_finding_posts_backfill.py",
   "tests/unit/test_gate_commands.py",
   "tests/unit/test_gen_comparison.py",
+  "tests/unit/test_ledger_format_skew.py",
   "tests/unit/test_merge_wait_rearm.py",
   "tests/unit/test_merge_wait_required_checks.py",
   "tests/unit/test_merge_wait_workflows.py",

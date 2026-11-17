@@ -225,6 +225,55 @@ check whose job never ran is not a verdict, so it is never green.
   head reads green (`tests/unit/test_skipped_required_check.py`, over
   `tests/fixtures/check_runs/head_79b9321_*.json`).
 
+## The ledger names its format
+
+Rule (SP-LEDGER-FORMAT-IS-VERSIONED, 2026-11-17). `merge-on-ci.yml` runs
+`main`'s code on a ledger written by the review run of `develop`'s code,
+so the reader can be older than the writer. A value the reader does not
+define is a named refusal, never a traceback.
+
+- The review run stamps the ledger after its last write (`review pr`,
+  and `review fix` before the coder job re-uploads it): table
+  `ledger_meta`, rows `format` (`LEDGER_FORMAT`, 1 today),
+  `written_by` (`repoach.__version__`) and `written_at`. A ledger
+  without `ledger_meta` is format 0, unstamped, read as before.
+- Both gate entry points, `review merge` (`run_auto_merge`) and
+  `review gate`, check the ledger before any row is read, right after
+  the base and state checks. The first of these refuses: a format newer
+  than the reader's; a declared column of `pr_findings`,
+  `pr_review_integrity`, `pr_spec_coverage`, `pr_merges` or
+  `generated_checks` the file lacks (on an unstamped or older ledger,
+  the columns the reader's own migrations add on open are exempt: it
+  heals them, as it always did); a value, among the pull request's
+  rows, of `pr_findings.claim_type`, `severity` or `status`,
+  `pr_spec_coverage.contract`, `generated_checks.state` or
+  `script_ref` outside the vocabulary the reader decodes it into; a
+  value of a JSON column (`generated_checks.argv`, `sources_changed`,
+  `producer_inputs_changed`, `pr_merges.pending_checks`,
+  `pr_spec_coverage.origins`) that does not decode as its declared
+  shape (`list[str]`, `dict[str, str]`).
+- The outcome is `SKIP_LEDGER_SKEW`, exit 5, recorded in `pr_merges`
+  and in the merge attempts comment:
+  `SKIP_LEDGER_SKEW — ledger skew: pr_findings.severity='later' is not a Severity this reader knows (written by repoach 0.2.0.dev14+gabc1234; this gate is repoach 0.1.0); a release carrying format 2 is needed before this lane can judge this head`.
+  The pull request merges after the release, on the next re-arm; no
+  admin merge. `review gate` prints the same line on stderr and exits 5;
+  on a readable ledger it prints `ledger: format 1, written by repoach
+  <v>` or `ledger: unstamped (pre-format), values known`.
+- `LEDGER_FORMAT` is held to the shape by
+  `tests/fixtures/ledger_format/<N>.json`: an enum value, a column or a
+  table changed without a bump and a new snapshot file is red
+  (`test_live_snapshot_matches_the_committed_format`). Bump the format
+  in the same pull request as the shape change.
+- `pr_spec_coverage.rule_version` stays its own number: it versions a
+  grading rule the gate re-computes at head, the format versions a
+  shape an older reader cannot re-compute.
+- Bootstrap: the pull request that introduced the format added no enum
+  value and no column, so format 1 is the shape the ledger already had.
+  Until the release that carries it, `main`'s gate has no check;
+  `ledger_meta` is a table it never selects, so the stamp cannot crash
+  it. `scripts/skew_replay.sh origin/main origin/develop` measures the
+  skew at release time (`docs/releasing.md`).
+
 ## A red after a narrowed green
 
 Rule (SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4, 2026-11-17). A pull

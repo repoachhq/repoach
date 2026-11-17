@@ -161,28 +161,36 @@ def init_schema(db_path: Path) -> None:
     _drop_retired_columns(engine)
 
 
+_ADDED_REVIEW_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
+    ("pr_reviews", "decision_pivot", "TEXT", "SP-WA-DECISION-TRACE 2c"),
+    ("pr_merges", "head_sha", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+    ("pr_merges", "pending_checks", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+    ("pr_merges", "trigger", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+    ("pr_merges", "rule_version", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
+)
+"""Columns added after the review tables first shipped: ``(table, column, ddl, spec)``.
+
+:func:`init_schema` adds the absent ones to an older database; the
+ledger format check (:mod:`repoach.review.ledger_format`) reads the same
+list to know which absent columns this reader heals on open.
+"""
+
+
 def _migrate_missing_columns(engine) -> None:
     """Add columns introduced post-creation to older review databases.
 
-    Each entry is a single ``ALTER TABLE`` documented with the spec that
-    introduced it.  Idempotent — checks ``has_column`` first.
+    Each entry of :data:`_ADDED_REVIEW_COLUMNS` is a single ``ALTER
+    TABLE`` documented with the spec that introduced it.  Idempotent —
+    checks ``has_column`` first.
 
     Args:
         engine: SQLAlchemy engine bound to the review database.
     """
     from sqlalchemy import inspect, text
 
-    migrations = (
-        ("pr_reviews", "decision_pivot", "TEXT", "SP-WA-DECISION-TRACE 2c"),
-        ("pr_merges", "head_sha", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
-        ("pr_merges", "pending_checks", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
-        ("pr_merges", "trigger", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
-        ("pr_merges", "rule_version", "TEXT", "SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G5"),
-    )
-
     inspector = inspect(engine)
     with engine.begin() as conn:
-        for table, column, ddl, _release in migrations:
+        for table, column, ddl, _release in _ADDED_REVIEW_COLUMNS:
             if not inspector.has_table(table):
                 continue
             existing = {col["name"] for col in inspector.get_columns(table)}
