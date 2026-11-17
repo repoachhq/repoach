@@ -1,7 +1,7 @@
 ---
 id: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN
 title: A required check whose job never ran (SKIPPED, or reported under its unexpanded template name) is a named failure, never green
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-17
@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_skipped_required_check.py, tests/fixtures/check_runs/]
   resources: []
 
-depends_on: [SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF]
+depends_on: [SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-UNIVERSAL-FORGE]
 provides_to: []
 
 constraints: {}
@@ -195,7 +195,7 @@ A head with the six expanded names `success` → `green`, as today.
 
 ## Architecture Impact
 - Adds dependency: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF (the test imports `judge_required_checks` and `RequiredChecksVerdict` from `merge_wait.py`, that spec's file)
-- `forge/github.py` is frontier (owned by no spec); the constants move there and `merge_wait.py` imports them as it already imports `DEFAULT_REQUIRED_CHECK_NAMES`. No new table, no cycle.
+- Adds dependency: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN -> SP-UNIVERSAL-FORGE (the test imports `CheckRun` from `repoach.forge` and `classify_required_checks` and the constants from `repoach.forge.github`; `src/repoach/forge/` is owned by SP-UNIVERSAL-FORGE, not frontier as version 0.2 said, measured by `repoach arch check --staged`). The constants move to `forge/github.py` and `merge_wait.py` imports them as it already imports `DEFAULT_REQUIRED_CHECK_NAMES`. No new table, no cycle.
 
 ## Diagram
 ```mermaid
