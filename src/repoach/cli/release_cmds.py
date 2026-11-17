@@ -21,8 +21,14 @@ from typing import Annotated
 
 import typer
 
+from ..affected import gh as affected_gh
+from ..affected import harvest as affected_harvest
+from ..affected.misses import DEFAULT_MISSES_PATH
+from ..affected.select import DEFAULT_WORKFLOW_PATH
+from ..affected.table import DEFAULT_TABLE_PATH
 from ..core.config import get_settings
 from ..forge import select_forge
+from ..project.config import ConfigError, load_project_config
 from ..review.base_ref import BaseRefUnresolvableError
 from ..review.release_gate import (
     ProvenanceSource,
@@ -66,6 +72,49 @@ def _repo_root() -> Path:
     return project_root_or_exit()
 
 
+def affected_misses_report(root: Path) -> dict[str, object]:
+    """Harvest the last merged pull requests and replay them, for a report line (D5).
+
+    SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D5: the release gate reports
+    the misses of the path-to-job table, never refuses on them. Nothing
+    is written: the committed corpus is rewritten only by ``repoach ci
+    affected harvest``.
+
+    Args:
+        root: The project root.
+
+    Returns:
+        ``line`` (``affected-jobs misses: <new>/<failed jobs> over the
+        last <n> merged pull requests``, or ``affected-jobs misses:
+        cannot say: <why>``) and the counts, or ``error``.
+    """
+    window = affected_harvest.HARVEST_WINDOW
+    try:
+        base = load_project_config(root).repoach.integration_branch
+        result = affected_harvest.harvest_and_replay(
+            root,
+            repo=None,
+            merged=window,
+            base=base,
+            table=DEFAULT_TABLE_PATH,
+            workflow=DEFAULT_WORKFLOW_PATH,
+            misses=DEFAULT_MISSES_PATH,
+            gh=affected_gh.run_gh,
+        )
+    except (ConfigError, *affected_harvest.HARVEST_REFUSALS) as exc:
+        return {"line": f"affected-jobs misses: cannot say: {exc}", "error": str(exc)}
+    report = result.report
+    return {
+        "line": (
+            f"affected-jobs misses: {len(report.new_misses)}/{report.failed_jobs} "
+            f"over the last {window} merged pull requests"
+        ),
+        "new_misses": len(report.new_misses),
+        "failed_jobs": report.failed_jobs,
+        "merged": window,
+    }
+
+
 @release_app.command("gate")
 def release_gate(
     pr_number: int | None = typer.Option(
@@ -81,7 +130,10 @@ def release_gate(
     the pure decision and writes a local receipt consumed by
     ``repoach release verify``. The gate only ever prints facts and a
     decision -- it never shells out to ``gh pr merge``; the operator
-    keeps sole authority over the actual merge.
+    keeps sole authority over the actual merge. It also prints, on
+    stderr and under ``affected_jobs_misses``, the misses of the
+    path-to-job table over the last merged pull requests
+    (:func:`affected_misses_report`); they never change the verdict.
 
     Exit codes:
       * ``0`` -- gate satisfied (``merge`` is True): the release may
@@ -113,6 +165,8 @@ def release_gate(
         note = describe_branch_freshness(freshness)
         if note is not None:
             typer.echo(f"release gate: {note} (verdict unaffected)", err=True)
+    misses = affected_misses_report(root)
+    typer.echo(f"release gate: {misses['line']} (verdict unaffected)", err=True)
     write_gate_receipt(_RECEIPT_PATH, develop_sha=facts.develop_sha, decision=decision)
     payload = {
         "develop_sha": facts.develop_sha,
@@ -124,6 +178,7 @@ def release_gate(
         "review_threads": facts.open_threads.as_json() if facts.open_threads else None,
         "merge": decision.merge,
         "reasons": decision.reasons,
+        "affected_jobs_misses": misses,
     }
     if decision.merge:
         payload["required_merge_method"] = "Create a merge commit — never squash a release."
