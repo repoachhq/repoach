@@ -9,6 +9,7 @@ pytest = [
   "tests/integration/test_selfverify_refutation_flow.py",
   "tests/integration/test_slow_settings_isolation_end_to_end.py",
   "tests/unit/test_affected_cli.py",
+  "tests/unit/test_affected_misses.py",
   "tests/unit/test_affected_select.py",
   "tests/unit/test_affected_table.py",
   "tests/unit/test_affected_tree_judges.py",

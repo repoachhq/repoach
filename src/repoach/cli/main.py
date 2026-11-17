@@ -14,6 +14,7 @@ import httpx
 import typer
 
 from ..affected.cli import affected_app
+from ..affected.misses_cli import register as register_misses_commands
 from ..arch.cli import arch_app
 from ..ci_entry.cli import ci_app
 from ..core.config import get_settings
@@ -39,6 +40,7 @@ app = typer.Typer(
 )
 app.add_typer(review_app, name="review")
 app.add_typer(release_app, name="release")
+register_misses_commands(affected_app)
 ci_app.add_typer(affected_app, name="affected")
 app.add_typer(ci_app, name="ci")
 app.add_typer(spec_app, name="spec")
