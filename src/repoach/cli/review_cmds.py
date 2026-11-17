@@ -73,6 +73,7 @@ from ..review.dev_runner import open_pr, run_developer_session
 from ..review.finding_post_threads import backfill_finding_posts
 from ..review.generated_verify import GeneratedRefusalError, review_generated_command
 from ..review.governed_spec import SpecRefUnavailableError, branch_spec_id_at_ref
+from ..review.ledger_format import stamp as stamp_ledger
 from ..review.merge_wait import (
     attempts_line,
     attempts_report,
@@ -428,6 +429,10 @@ def review_pr(
     recorded threads seen resolved on the forge, and one ``thread closed
     by <login> for #<id>`` line per thread resolved by the bot or a
     maintainer is printed on stderr. A closed thread settles no finding.
+
+    Once the review returns, the ledger is stamped with this code's format,
+    version and time (SP-LEDGER-FORMAT-IS-VERSIONED), the last write of
+    the run before the workflow uploads it for the merge gate.
     """
     root = project_root_or_exit()
     apply_provider_flag(provider)
@@ -457,6 +462,7 @@ def review_pr(
         raise typer.Exit(code=EXIT_WRITE_REFUSED) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
+    stamp_ledger(Path(get_settings().db_path))
     spec_id = team.spec_id
     if team.spec_missing:
         where = specs_dir_for(root).relative_to(root)
