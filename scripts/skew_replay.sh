@@ -70,6 +70,7 @@ fi
 
 cleanup_on_exit() {
     local exit_code=$?
+    set +e
     if [[ "$keep" -eq 1 ]] ; then
         echo "skew_replay: kept $skew" >&2
         return "$exit_code"
