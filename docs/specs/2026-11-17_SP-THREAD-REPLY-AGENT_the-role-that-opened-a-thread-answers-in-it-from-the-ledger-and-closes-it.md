@@ -1,11 +1,11 @@
 ---
 id: SP-THREAD-REPLY-AGENT
 title: The role that opened a thread answers in it from the ledger, dispatches a coder per thread, mirrors a maintainer's settlement and closes it
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/pr_threads.py, src/repoach/review/thread_reply.py, src/repoach/review/thread_coder.py, src/repoach/cli/threads_cmds.py, prompts/review/thread_reply_0.1.0.md, tests/thread_fakes.py, tests/unit/test_pr_threads.py, tests/unit/test_thread_reply.py, tests/unit/test_thread_context_window.py, tests/unit/test_thread_coder_dispatch.py, tests/unit/test_thread_closers.py, tests/unit/test_threads_cli.py, tests/integration/test_pr_threads_lifecycle.py]
@@ -20,12 +20,38 @@ constraints:
   coder_rounds_max_per_thread: 2
   coder_dispatches_per_thread_and_head: 1
   deferral_replies_per_thread_and_head: 1
+  classification_failures_before_escalation: 3
   thread_history_tokens_max: 12000
   summary_keeps_last_turns: 3
   ledger_format_after: none
 ---
 
 # The role that opened a thread answers in it and closes it
+
+## Amendment (0.3, 2026-11-18): the gate keeps its count, the closer rule is a second read; a thread the agent will never answer says so; the spec is for everyone
+
+After the verifier's second read. (1) 0.2's D8 replaced the gate's
+`unresolved_threads` read with `review_threads`, and the two count
+different things: on GitHub `review_threads_from_github` skips a thread
+whose first comment has no `databaseId` (`github.py:359`, `:387`) while
+`unresolved_threads_from_github` counts it (`:404-406`); on GitLab
+`review_threads_from_discussions` keeps only discussions whose first
+note is a `DiffNote` and drops a malformed one silently (`gitlab.py:326-
+338`) while `unresolved_threads_from_discussions` counts every
+resolvable discussion, a general one included, and refuses a malformed
+listing (`:356-371`). A general MR discussion would have stopped
+blocking, against SP-OPEN-THREADS-BLOCK-THE-MERGE D2. D8 now keeps the
+count on `unresolved_threads`, exactly as that spec has it, and reads
+`review_threads` as a second read for the closer rule alone. (2) 8c's
+scheduled fallback reads the forge and would re-trigger an MR for ever
+on a thread this spec never answers; D4 and step 7 now make every such
+thread visible on the forge: a classification that fails
+`classification_failures_before_escalation` times escalates the thread
+with one reply, and an escalated thread's last bot reply always ends
+`state: escalated to owner`, which 8c D7 reads. (3) Owner principle
+2026-11-17, repoach is for everyone: the End state, F9 and step 6
+describe any project on either forge; the owner's own run is a labelled
+reference measurement under C1, never the oracle.
 
 ## Amendment (0.2, 2026-11-17): the closer rule reads the forge, no draft is depended on, the history block learns the state line
 
@@ -81,7 +107,8 @@ hold.
 | F6 | `opens_thread(comment)` is false for a `nit` (`NOTE`); `finding_posts` links a posted finding to its thread (`thread_id`, `root` by `in_reply_to is None`); `thread_index` joins forge roots to posts | `findings_bridge.py:87`; `finding_posts.py:74-91`, `:325-359` |
 | F7 | The gate reads the forge's unresolved threads only (`read_open_threads` calls `forge.unresolved_threads`, `OpenThreads`), fails closed when unread; `MergeFacts.open_threads` is the one stored read; `ReviewThread` names no author of the root comment, and `is_maintainer` raises `ForgeError` when the permission cannot be read, "the caller fails closed" | `open_threads.py:51-61`, `:161-182`; `protocol.py:583-588`, `:856-868`; SP-OPEN-THREADS-BLOCK-THE-MERGE D7 |
 | F8 | `finding_key(finding)` = `F-` + sha256(claim type, file, normalised claim)[:7], derived and stored nowhere; `finding_events` holds `reraise_suppressed` / `supersedes` per finding; both land with order row 6 (`settled.py` absent on `92cd241`) | SP-REVIEW-SETTLED-STAYS-SETTLED D11, D14; `git cat-file -e origin/develop:src/repoach/review/settled.py` → absent |
-| F9 | `review pr` is the per-event run on GitHub on `pull_request_review_comment` (`created`) and `issue_comment`; `pull_request_review` runs the `rearm` job only (`github.event_name != 'pull_request_review'` in the `review` job's `if`); on Yoob it runs in the MR pipeline, started by a push, which 8c completes with a note-started pipeline | `.github/workflows/auto-review.yml:17-30`, `:141-156`, `:566`; SP-GITLAB-NOTE-RECEIVER |
+| F9 | `review pr` is the per-event run on GitHub on `pull_request_review_comment` (`created`) and `issue_comment`; `pull_request_review` runs the `rearm` job only (`github.event_name != 'pull_request_review'` in the `review` job's `if`); on GitLab it runs in the MR pipeline, started by a push, which 8c completes with a note-started pipeline | `.github/workflows/auto-review.yml:17-30`, `:141-156`, `:566`; SP-GITLAB-NOTE-RECEIVER |
+| F14 (0.3) | `review_threads` and `unresolved_threads` count different threads: GitHub's `review_threads_from_github` skips a thread whose first comment has no `databaseId`, which `unresolved_threads_from_github` counts with `root_id` 0; GitLab's `review_threads_from_discussions` keeps only a discussion whose first note is a `DiffNote` and drops a malformed one, while `unresolved_threads_from_discussions` counts every resolvable discussion and raises `ForgeError` on a malformed one | `github.py:356-398` (`:359`, `:387`), `:401-406`; `gitlab.py:315-350` (`:334-338`), `:353-371` |
 | F12 (0.2) | The re-check stamps a failed judge call `NEEDS_JUDGEMENT_METHOD` at the head and `_cached` reuses it there (`_CACHED_METHODS = {REVERIFY_METHOD, NEEDS_JUDGEMENT_METHOD}`); SP-JUDGE-FAILURE-IS-RETRIED, which would re-judge it, is a draft with no code | `head_reverify.py:77`, `:504`; `refuter.py:170`, `:719`; `git cat-file -e origin/develop:tests/unit/test_judge_failure_is_retried.py` → absent |
 | F13 (0.2) | SP-REVIEW-REMEMBERS-EVERY-ROUND D3–D4 (order row 5, lands before this spec) settle a point in the history block on a `maintainer` reply that resolved the thread or a `bot` reply carrying the evidence sentinel; the sentinel's only writer is `_format_finding_evidence_reply`, which D9 retires | SP-REVIEW-REMEMBERS-EVERY-ROUND D3, D4; `thread_context.py:457` |
 | F10 | `thread_context.py` reads threads by the `[role/severity]` tag and posts the refutation sentinel reply (`post_refuted_finding_sentinels`, called by the orchestrator) through `_format_finding_evidence_reply`; its docstring names a writer that no longer exists | `thread_context.py:37`, `:90`, `:457`, `:582`; `orchestrator.py:1077` |
@@ -130,8 +157,17 @@ hold.
   state change, no `agent_reply` event; the event stays unhandled, is
   named in `ThreadsRun.errors` as `classification failed for
   comment:<id>: <ExceptionType or "unparsed">`, and the next run
-  handles it first. The handler retries nothing inside one run. This
-  rule is this spec's own and needs no change to the re-check (F12): a
+  handles it first. The handler retries nothing inside one run. (0.3)
+  The failures of one comment are counted across runs in
+  `finding_threads.classification_failures` (reset to 0 by a
+  classification that answers); at
+  `classification_failures_before_escalation` (3) the role posts one
+  reply `could not classify this comment after 3 attempts
+  (<ExceptionType or "unparsed">); a maintainer decides` ending `state:
+  escalated to owner`, the row is `escalated`, and the event is handled
+  (`agent_reply`, classification `unclassified`). So a comment the model
+  cannot read costs three runs, never a run every window (8c D7 reads the
+  state line). This rule is this spec's own and needs no change to the re-check (F12): a
   re-check verdict of `needs_judgement` (a failed judge call cached at
   the head) reaches the thread as step 2 names it, and is judged again
   at the next head as today.
@@ -163,26 +199,32 @@ hold.
   spec's and is counted in `finding_threads`, beside the PR-wide
   `MAX_CODER_ROUNDS` (F5), which stays. A push of several commits goes
   on `fix/<pr>-<key7>` merged `--no-ff`; never squash, never force.
-- D8. **Closer rule at the gate** (0.2). `read_open_threads` calls
-  `forge.review_threads(pr)` once, in place of `unresolved_threads`
-  (F7), and splits the listing locally: `OpenThreads.threads` keeps the
-  unresolved ones, as today, and `OpenThreads.closed_by_non_maintainer:
-  list[ReviewThread]` holds every thread whose `opened_by` is the bot
-  (`forge.bot_username`, 8a D4; the forge is the only source of the
-  root comment's author, no ledger table is read) and whose
-  `resolved_by` is neither the bot nor a maintainer (`is_maintainer`,
-  asked once per distinct login and cached for the run). `refusal()`
-  names them `thread <root_id> at <file>:<line> resolved by @<login>,
-  not a maintainer`, after the unresolved count. An `is_maintainer`
-  that raises `ForgeError` fails the read closed: `OpenThreads.read` is
-  false and `error` is `maintainer check unreadable for @<login>:
-  <why>`, which every gate already turns into `review threads
-  unreadable: …` (F7). A thread whose `opened_by` is `""` is counted as
-  the forge counts it (unresolved or not) and never as a bot thread.
-  `unresolved_threads` stays on the protocol for its other callers
-  (`hold_open_threads`). No gate table, column or enum value:
-  `LEDGER_FORMAT` is untouched (composite G5). The handler undoes the
-  same closures (Behavior 6) from the same read.
+- D8. **Closer rule at the gate** (0.3). `read_open_threads` keeps its
+  one read for the count: `forge.unresolved_threads(pr)` fills
+  `OpenThreads.threads` exactly as SP-OPEN-THREADS-BLOCK-THE-MERGE D1–D4
+  have it (every resolvable thread, general discussions and
+  `databaseId`-less roots included, a malformed listing refused, F14);
+  nothing of that spec's count, paging or fail-closed rule changes. It
+  then makes a *second* read, `forge.review_threads(pr)`, for the closer
+  rule alone: `OpenThreads.closed_by_non_maintainer: list[ReviewThread]`
+  holds every thread of that listing whose `resolved` is true, whose
+  `opened_by` is the bot (`forge.bot_username`, 8a D4; the forge is the
+  only source of the root comment's author, no ledger table is read) and
+  whose `resolved_by` is neither the bot nor a maintainer
+  (`is_maintainer`, asked once per distinct login and cached for the
+  run). `refusal()` names them `thread <root_id> at <file>:<line>
+  resolved by @<login>, not a maintainer`, after the unresolved count.
+  A `ForgeError` from either read, or an `is_maintainer` that raises
+  `ForgeError`, fails the read closed: `OpenThreads.read` is false and
+  `error` is the redacted message, or `maintainer check unreadable for
+  @<login>: <why>`, which every gate already turns into `review threads
+  unreadable: …` (F7). A thread `review_threads` does not list (a
+  general discussion, a root with no id) can be unresolved, which the
+  count sees, but never a closure, which only a `DiffNote` thread the
+  bot opened can be; a thread whose `opened_by` is `""` is never a bot
+  thread. No gate table, column or enum value: `LEDGER_FORMAT` is
+  untouched (composite G5). The handler undoes the same closures
+  (Behavior 6) from the same `review_threads` read.
 - D9. **Retire the sentinel path; the history block reads the state
   line.** A finding the refuter refutes at review time is resolved in
   its role's name, `state: resolved (refuted: <why>)`, through this
@@ -203,7 +245,8 @@ hold.
 
 ## End state
 
-On a Yoob MR, the author writes "the guard is on line 41, not 38" under
+On a pull or merge request of a project whose CI runs repoach review, on
+either forge, the author writes "the guard is on line 41, not 38" under
 a Sentinel finding. Within one run the Sentinel replies with the
 evidence lines of head `b2c3d4e`, ends `state: open`, and
 `disputed_rounds` is 1; the author pushes a fix; the next run replies
@@ -272,7 +315,7 @@ marker and indexes without re-posting.
 # src/repoach/review/pr_threads.py
 finding_threads: Table           # db:table:finding_threads; unique (pr_number, finding_key)
 finding_thread_events: Table     # db:table:finding_thread_events; unique (thread_row_id, event_key)
-class ThreadRow(BaseModel): id, pr_number, finding_key, finding_id, opening_role, co_roles: list[str], state, resolution, resolution_detail, rounds, disputed_rounds, coder_rounds, opened_head, last_head, summary, summary_upto_event, opened_at, updated_at
+class ThreadRow(BaseModel): id, pr_number, finding_key, finding_id, opening_role, co_roles: list[str], state, resolution, resolution_detail, rounds, disputed_rounds, coder_rounds, classification_failures, opened_head, last_head, summary, summary_upto_event, opened_at, updated_at
 class ThreadEvent(BaseModel): id, thread_row_id, event_key, kind, voice, author, classification, head_sha, body, forge_comment_id, state_after, created_at
 def init_threads_schema(db_path: Path) -> None: ...            # findings.py's race-proof idiom (SP-FINDINGS-INIT-RACE)
 def open_thread_row(db_path, *, pr_number, finding, head_sha, role) -> ThreadRow: ...   # G1; joins an existing open row of the key
@@ -292,7 +335,7 @@ class ThreadsRun(BaseModel): handled, replies, resolved: list[int], reopened: li
 # src/repoach/review/thread_coder.py
 def dispatch_thread_coder(row, finding, events, *, head_sha, forge, repo_root, coder, db_path) -> CoderDispatch: ...   # D7, wraps run_coder_fix_from_findings(finding_ids=[finding.id])
 
-# src/repoach/review/open_threads.py (SP-OPEN-THREADS-BLOCK-THE-MERGE's file, edited under the edge): read_open_threads(forge, pr) -> OpenThreads reads forge.review_threads once; OpenThreads.closed_by_non_maintainer; is_maintainer asked once per resolver login, a ForgeError → read=False, error="maintainer check unreadable for @<login>: <why>" (D8)
+# src/repoach/review/open_threads.py (SP-OPEN-THREADS-BLOCK-THE-MERGE's file, edited under the edge): read_open_threads(forge, pr) -> OpenThreads keeps forge.unresolved_threads for .threads (the count, unchanged) and adds one forge.review_threads read for OpenThreads.closed_by_non_maintainer; is_maintainer asked once per resolver login; a ForgeError from any of the three → read=False, error redacted or "maintainer check unreadable for @<login>: <why>" (D8)
 # src/repoach/review/review_history.py (SP-REVIEW-REMEMBERS-EVERY-ROUND's file, edited under the edge): a bot reply ending in STATE_LINE_RE "resolved (…)" settles the point and gives the register reason (D9)
 # src/repoach/review/coder_findings.py (frontier): run_coder_fix_from_findings(..., finding_ids: Sequence[int] | None = None)
 # src/repoach/review/orchestrator.py (SP-ORCH-DOCSTRING): calls handle_thread_events after apply_owner_commands and reverify_older_findings; TeamOutcome.threads_run; `threads reply` calls the same two before the handler (D3)
@@ -351,7 +394,7 @@ escaping the handler propagates (a defect).
    `unresolve_review_thread` and one line `reopened: only <role> or a
    maintainer closes this thread (resolved by @<login>)` + `state:
    open`; event `forge-resolved:<sha12>:<login>`. GitLab fires no hook
-   on a resolve, so on Yoob this step runs at the next note, push or
+   on a resolve, so on GitLab this step runs at the next note, push or
    scheduled run (8c D7). A resolve by a maintainer is a
    closure: `state: resolved (owner: closed on the forge by @<login>)`,
    resolution `owner_resolve`, the finding left to
@@ -361,6 +404,12 @@ escaping the handler propagates (a defect).
    `agent_rounds_max_per_thread` the next qualifying event yields
    `state: escalated to owner`; an escalated thread gets no agent reply
    and is never resolved by the bot; only owner commands act on it.
+   (0.3) The bot's last reply in an escalated thread therefore always
+   ends `state: escalated to owner`, whatever is written under it: that
+   line is what 8c's scheduled fallback reads to leave the thread alone.
+   The same holds for a deferral past `deferral_replies_per_thread_and_
+   head`: no reply, and 8c D7 bounds its re-triggering by the pipelines
+   the forge lists, not by this spec.
 8. **Refuted at review time** (D9): `state: resolved (refuted:
    <why>)`, resolution `refuted`, in the role's name.
 
@@ -396,6 +445,7 @@ escaping the handler propagates (a defect).
 | `::test_deferral_changes_nothing_and_replies_once_per_head` | step 3, `deferral_replies_per_thread_and_head` | count a round |
 | `::test_two_agent_rounds_then_escalated_and_silent` | step 7 | reply a third time |
 | `::test_judge_failure_leaves_the_event_unhandled` | D4: a classification that raises, and one that answers outside the contract → no reply, no event row, `errors` names `comment:<id>`, one call only in this run; the next run handles it first | post a reply, or retry in the same run |
+| `::test_three_failed_classifications_escalate_with_one_reply` | D4 (0.3), `classification_failures_before_escalation`: three runs whose classification raises → runs 1 and 2 post nothing and `classification_failures` is 1 then 2; run 3 posts one reply ending `state: escalated to owner`, the row is `escalated`, the event handled; a fourth run posts nothing; a classification that answers on run 2 resets the counter | escalate on the first failure, or never |
 | `::test_threads_reply_applies_owner_commands_and_reverifies_before_handling` | D3 (0.2): a `/resolve` note on the fixture forge, `threads reply` alone → the finding is `owner_resolved` and the thread mirrored in one run | call the handler first |
 | `tests/unit/test_thread_reply.py::test_state_line_settles_the_point_in_the_history_block` | D9 (0.2): a bot reply ending `state: resolved (fixed at a1b2c3d)` and no sentinel → `review_history` marks the thread settled with reason `fixed at a1b2c3d`; a reply ending `state: open` does not | key on the sentinel alone |
 | `tests/unit/test_thread_context_window.py::test_twelve_turns_fold_into_a_stored_summary_and_last_three` | D6: 12 turns over 3 heads with a budget that fits system, the event and 3 turns → `system` + one `assistant` summary turn `thread summary (9 turns, heads <a7>..<c7>)` + the last 3 turns with `[head · timestamp]` prefixes + the current `user` turn; the summary is stored and the next reply makes no fold call | fold on every call |
@@ -404,7 +454,8 @@ escaping the handler propagates (a defect).
 | `::test_two_failed_coder_rounds_escalate` | `coder_rounds_max_per_thread` | dispatch a third time |
 | `::test_several_commits_go_on_a_fix_branch_merged_no_ff` | composite D11 | squash |
 | `::test_fork_escalates_without_a_dispatch` | composite D13 | dispatch |
-| `tests/unit/test_thread_closers.py::test_gate_refuses_a_bot_thread_resolved_by_a_non_maintainer` | D8: on a fake forge whose `review_threads` returns one resolved thread with `opened_by` the bot and `resolved_by` `author`, `OpenThreads.refusal()` names `thread <id> at <file>:<line> resolved by @author, not a maintainer`; a resolve by a maintainer or the bot passes; a human-opened thread resolved by its author passes; `is_maintainer` asked once per login; `unresolved_threads` is never called | count only unresolved, or read `unresolved_threads` |
+| `tests/unit/test_thread_closers.py::test_gate_refuses_a_bot_thread_resolved_by_a_non_maintainer` | D8: on a fake forge whose `review_threads` returns one resolved thread with `opened_by` the bot and `resolved_by` `author`, `OpenThreads.refusal()` names `thread <id> at <file>:<line> resolved by @author, not a maintainer`; a resolve by a maintainer or the bot passes; a human-opened thread resolved by its author passes; `is_maintainer` asked once per login | count only unresolved, or treat every resolver as a maintainer |
+| `::test_count_still_comes_from_unresolved_threads` | D8 (0.3), F14: a fake forge whose `unresolved_threads` returns two open threads (one a general discussion with `root_id` 0, `path` empty) and whose `review_threads` returns one `DiffNote` thread, open → `OpenThreads.threads` has 2, `refusal()` starts `2 unresolved review thread(s)`; `unresolved_threads` called once, `review_threads` once; a `ForgeError` from `unresolved_threads` → `read=False` with the redacted message, `review_threads` not called | count from `review_threads`, or read `unresolved_threads` twice |
 | `::test_unreadable_maintainer_check_fails_the_read_closed` | D8: `is_maintainer` raising `ForgeError` → `read=False`, `error` starts `maintainer check unreadable for @author`, the gate refuses `review threads unreadable: …` | treat the resolver as a non-maintainer, or as a maintainer |
 | `::test_handler_unresolves_and_names_the_closer` | step 6 | leave it resolved |
 | `::test_owner_resolve_is_mirrored_on_the_forge_and_reopen_undoes_it` | D5 | resolve without the reply |
@@ -414,7 +465,7 @@ escaping the handler propagates (a defect).
 
 ## Success conditions
 
-- C1 (external oracle: the forge page of a pull or merge request of any project running this, after it lands): on the first such request with an author reply in a finding's thread, the thread shows one bot reply whose last visible line matches `STATE_LINE_RE`, whose raw body ends with `<!-- repoach-thread:F-… event:comment:… round:1 -->`, and on GitLab `glab api projects/<id>/merge_requests/<n>/discussions/<did> | jq '.notes[-1].author.username, .notes[0].resolved'` (on GitHub `gh api graphql` on the thread's `PRRT_` id: `comments.nodes[-1].author.login`, `isResolved`) → the bot's username and the state the line says. Written beside this line with the request number by the implementer; the owner's Yoob run is one instance.
+- C1 (external oracle: the forge page of a pull or merge request of any project running this, after it lands): on the first such request with an author reply in a finding's thread, the thread shows one bot reply whose last visible line matches `STATE_LINE_RE`, whose raw body ends with `<!-- repoach-thread:F-… event:comment:… round:1 -->`, and on GitLab `glab api projects/<id>/merge_requests/<n>/discussions/<did> | jq '.notes[-1].author.username, .notes[0].resolved'` (on GitHub `gh api graphql` on the thread's `PRRT_` id: `comments.nodes[-1].author.login`, `isResolved`) → the bot's username and the state the line says. Written beside this line with the request number by the implementer, on any project running this. Reference measurement (owner's dogfood): the owner's own merge request is one instance, written as a second line, additional evidence and never the only one.
 - C2 (external oracle: the gate output, any project): on a request where the author resolved a bot thread by hand, `repoach review gate <n>` prints `thread <id> at <file>:<line> resolved by @<login>, not a maintainer` and refuses; after the next `threads reply`, the thread is unresolved on the request's page and the line names `reopened: only <role> or a maintainer closes this thread`.
 - C3 (oracle: the format): `python -m repoach.review.ledger_format snapshot | jq -r '.tables|keys[]'` on this branch equals the same command on `origin/develop`; `ls tests/fixtures/ledger_format/` unchanged.
 - C4 (oracle: the suites): `pytest -q tests/unit/test_pr_threads.py tests/unit/test_thread_reply.py tests/unit/test_thread_context_window.py tests/unit/test_thread_coder_dispatch.py tests/unit/test_thread_closers.py tests/unit/test_threads_cli.py tests/integration/test_pr_threads_lifecycle.py tests/unit/test_open_threads_block_the_merge.py tests/unit/test_owner_commands.py tests/unit/test_ledger_format_skew.py` → green; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`.
@@ -425,7 +476,7 @@ escaping the handler propagates (a defect).
 - Adds dependency: -> SP-UNIVERSAL-FORGE (`Forge`, `Comment`, `ReviewThread`, `bot_username`, `is_maintainer`, `review_threads`, the barrier)
 - Adds dependency: -> SP-FINDING-THREAD-IDS (`finding_posts`, `thread_index`, `mark_thread_closed`; the posting path this spec hooks)
 - Adds dependency: -> SP-OWNER-SETTLES-A-FINDING (`owner_commands` rows are read for D5; `OWNER_RESOLVED`; `apply_owner_commands` runs before the handler on both paths, D3)
-- Adds dependency: -> SP-OPEN-THREADS-BLOCK-THE-MERGE (`open_threads.py` reads `review_threads` and gains the closer rule, D8, an edit to its file)
+- Adds dependency: -> SP-OPEN-THREADS-BLOCK-THE-MERGE (`open_threads.py` keeps its `unresolved_threads` count and gains a second read, `review_threads`, for the closer rule, D8, an edit to its file; its D1–D7 are untouched)
 - Adds dependency: -> SP-REVIEW-SETTLED-STAYS-SETTLED (`finding_key`, `fetch_finding_events`)
 - Adds dependency (0.2): -> SP-REVIEW-REMEMBERS-EVERY-ROUND (`review_history.py` is its; the state-line settling rule of D9 is an edit to that file, and its D3–D4 are amended by this pull request)
 - Removes dependency (0.2): -> SP-JUDGE-FAILURE-IS-RETRIED (a draft with no code; D4 states its own rule and touches nothing of the re-check, F12)
@@ -455,7 +506,7 @@ flowchart TD
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_pr_threads.py tests/unit/test_thread_reply.py tests/unit/test_thread_context_window.py tests/unit/test_thread_coder_dispatch.py tests/unit/test_thread_closers.py tests/unit/test_threads_cli.py` → green (the tests of Tests). Today (`92cd241`): none of the files exist; `grep -rn "finding_threads\|finding_thread_events" src` → 0.
 - [ ] AC2: `pytest -q tests/integration/test_pr_threads_lifecycle.py` → green.
-- [ ] AC3: `pytest -q tests/unit/test_open_threads_block_the_merge.py tests/unit/test_owner_commands.py tests/unit/test_ledger_format_skew.py tests/unit/test_review_history.py tests/unit/test_review_ci_mode.py::test_review_pr_json_payload_matches_documented_schema` → green with `threads` in the `review pr` JSON (0.2: `test_open_threads_block_the_merge.py`'s fakes answer `review_threads`, since `read_open_threads` no longer calls `unresolved_threads`).
+- [ ] AC3: `pytest -q tests/unit/test_open_threads_block_the_merge.py tests/unit/test_owner_commands.py tests/unit/test_ledger_format_skew.py tests/unit/test_review_history.py tests/unit/test_review_ci_mode.py::test_review_pr_json_payload_matches_documented_schema` → green with `threads` in the `review pr` JSON (0.3: `test_open_threads_block_the_merge.py` is unchanged in what it asserts of the count; its fakes gain a `review_threads` answer, empty by default, for the second read of D8).
 - [ ] AC4: `python -m repoach.review.ledger_format snapshot | jq -r '.tables|keys[]'` → unchanged from `origin/develop`; `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC5: `git grep -n "post_refuted_finding_sentinels\|coder_loop._format_evidence_reply" -- src` → 0 (D9).
 
