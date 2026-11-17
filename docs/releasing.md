@@ -60,13 +60,34 @@ These steps need the owner's accounts; no agent can do them.
 
 ## Each release
 
-1. Merge the release PR `develop` → `main` through the release gate
+1. Before opening the release PR, replay the ledger skew between the
+   released gate and the code about to be released
+   (SP-LEDGER-FORMAT-IS-VERSIONED D5), from a checkout whose
+   `origin/main` and `origin/develop` are fetched, with the
+   interpreter that runs repoach's tests:
+
+   ```bash
+   git fetch origin main develop
+   scripts/skew_replay.sh origin/main origin/develop
+   ```
+
+   It writes a ledger holding every value `develop`'s code defines and
+   checks it with `main`'s reader, in two worktrees under `tmp/skew/`
+   that it removes. `ledger: ok (format 1, writer …, reader …)`, exit 0:
+   `main`'s gate reads what `develop` writes. `ledger: <refusal>`, exit
+   5: `develop` writes a format, column or value `main` refuses with
+   `SKIP_LEDGER_SKEW`; this release is what clears it, so copy the line
+   into the release PR description under *Measured*. Exit 2 names a ref
+   that does not resolve, or a ref with no `ledger_format` module: until
+   the first release that carries SP-LEDGER-FORMAT-IS-VERSIONED, `main`
+   has no reader to replay against, and the line says so.
+2. Merge the release PR `develop` → `main` through the release gate
    (`repoach release gate --pr <N>`, then the owner merges;
    `release-verify.yml` checks the shape of `main` after the merge).
-2. Optional dry run: *Actions* → *Publish to PyPI* → *Run workflow* on
+3. Optional dry run: *Actions* → *Publish to PyPI* → *Run workflow* on
    `main`. It builds, prints `dry run: wheel <version>, no tag`, and runs the
    wheel smoke on 3.11 and 3.13; it never publishes nor creates a release.
-3. Tag `main` and push the tag:
+4. Tag `main` and push the tag:
 
    ```bash
    git fetch origin main
@@ -79,8 +100,8 @@ These steps need the owner's accounts; no agent can do them.
    pre-release, `pipx install repoach` skips it and
    `pipx install repoach==0.1.0rc1` installs it. Use the canonical spelling
    (`rc1`, not `-rc.1`): the version check compares strings.
-4. Approve the `pypi` deployment when the run asks for it.
-5. Check: `pip index versions repoach` lists the version, and the release
+5. Approve the `pypi` deployment when the run asks for it.
+6. Check: `pip index versions repoach` lists the version, and the release
    page carries the generated notes.
 
 A published version cannot be replaced. If anything after the upload is
