@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import subprocess
 from collections.abc import Callable
@@ -628,6 +629,21 @@ def test_harvest_refuses_a_base_that_is_not_a_sha() -> None:
     }
     with pytest.raises(HarvestError, match="'null', not a commit sha"):
         _harvest(gh)
+
+
+def test_harvest_refuses_a_head_that_is_not_a_sha() -> None:
+    gh = RecordedGh()
+    listing = json.loads(json.dumps(gh.answers[_RUN_LIST_A]["json"]))
+    listing[-1]["headSha"] = "../../pulls/1"
+    gh.answers[_RUN_LIST_A] = {"json": listing}
+    with pytest.raises(
+        HarvestError, match=re.escape("headSha '../../pulls/1' is not a commit sha")
+    ):
+        _harvest(gh)
+    assert not any(
+        call[1].startswith("repos/repoachhq/repoach/compare/") and "pulls" in call[1]
+        for call in gh.calls
+    )
 
 
 def test_harvest_refuses_an_answer_that_is_not_json() -> None:

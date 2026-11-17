@@ -355,6 +355,8 @@ def harvest(repo: str, *, merged: int, base: str, workflow: str, gh: GhRunner) -
                 continue
             run_id = _field(run_command, item, "databaseId", int)
             head_sha = _field(run_command, item, "headSha", str)
+            if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+                raise HarvestError(run_command, f"headSha {head_sha!r} is not a commit sha")
             jobs = _jobs(gh, repo, run_id, _field(run_command, item, "attempt", int))
             if jobs and all(job.conclusion == SKIPPED for job in jobs):
                 not_admitted += 1

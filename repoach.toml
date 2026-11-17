@@ -58,6 +58,11 @@ kind = "gateway"
 # Where a pull request's spec id comes from, in order.
 # spec_sources = ["flag", "description", "branch"]
 
+[[review.generated]]
+path = "tests/fixtures/affected_jobs/pr_runs.json"
+check = ["scripts/check_affected_corpus.sh"]
+sources = [".github/affected-jobs.toml", ".github/workflows/ci.yml", "tests/fixtures/affected_jobs/misses.tsv"]
+
 [gates]
 # Paths exempt from docstring rules. Default: the test roots
 # (repoach itself: tests/, scripts/, src/repoach/llm_proxy/).
