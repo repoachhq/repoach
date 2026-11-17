@@ -1,24 +1,49 @@
 ---
 id: SP-REVIEW-SETTLED-STAYS-SETTLED
 title: A finding that is resolved or refuted is not re-raised at a later head unless the code it cites changed; "changed" is the cited hunk or the enclosing symbol's body
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
   code: [src/repoach/review/settled.py, src/repoach/review/cited_region.py, tests/unit/test_settled_not_reraised.py, tests/unit/test_cited_region_changed.py, tests/integration/test_366_reraises_are_suppressed.py, tests/fixtures/review/mr366_rounds.json]
   resources: []
 
-depends_on: [SP-FINDING-CITES-ITS-CODE, SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES, SP-REVIEW-NITS-ONE-COMMENT]
+depends_on: [SP-FINDING-CITES-ITS-CODE, SP-FINDING-MODEL, SP-FINDINGS-BRIDGE-DOCFIX, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-GATE-REVERIFIES-AT-HEAD, SP-OWNER-SETTLES-A-FINDING, SP-REFUTER-INJECTION-HARDEN, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES, SP-REVIEW-NITS-ONE-COMMENT, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-ORCH-DOCSTRING]
 provides_to: []
 
 constraints:
   cited_region_margin_lines: 3
+  finding_key_hex_digits: 7
 ---
 
 # A settled finding stays settled across heads unless the cited code changed
+
+## Amendment (0.5, 2026-11-17): the cross-head identity has a name, `F-<7 hex>`, and the owner settles by it
+
+Measured on `origin/develop` `92cd241`. A finding is named to the owner
+by `pr_findings.id`, an autoincrement (`src/repoach/review/findings.py:272`)
+printed as `#<id>` in the archive comment (`src/repoach/review/report.py:193`,
+`:501-505`) and parsed by `/resolve #<id>` as an integer
+(`src/repoach/review/owner_commands.py:73`). The same claim on the same
+unchanged code is a new row, and a new number, at every head (F1, F5),
+and in repoach's own CI the numbers restarted at 1 on every run until
+SP-REVIEW-RESUMES-FAILED-ROLES D4 brought the ledger back. So the number
+an owner read on one round names another finding, or none, when their
+command is read. D11 gives the identity this spec already matches on
+(D2: claim type, file, normalised claim) a printable name, `finding_key`,
+computed from the row and stored nowhere; D12 lets `/resolve` and
+`/reopen` take it, settling every row of the finding at once; D13
+states the `LEDGER_FORMAT` impact under SP-LEDGER-FORMAT-IS-VERSIONED:
+none, because the key is derived and `supersedes` is an event row, not
+a column. The owner's unified order is unchanged: this spec still lands
+after SP-FINDING-CITES-ITS-CODE and SP-REVIEW-REMEMBERS-EVERY-ROUND.
+`finding_thread_events`, which D4 writes, is SP-PR-THREADS-REMEMBER-AND-
+CLOSE's table (its `resources`); the edge is declared, and when this
+spec lands first it creates the table with that spec's declared
+columns, as SP-OWNER-SETTLES-A-FINDING D1 did for the owner commands.
 
 ## Intent
 
@@ -89,6 +114,47 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
 - D7. The lens is told (SP-REVIEW-REMEMBERS-EVERY-ROUND D4) that a
   settled point may be re-raised only with a new fact; the suppression
   applies regardless, so a lens cannot talk its way past it.
+- D11 (0.5). `finding_key(finding)` = `F-` + the first
+  `finding_key_hex_digits` (7) hex digits of SHA-256 over
+  `claim_type | file | normalised_claim(claim)`, the three fields D2
+  matches on, with no line and no head: the key of a finding is the key
+  of its re-raise at the next head when the claim stands, and the fix
+  that shifts the lines does not change it. It is a pure function of
+  the row (`normalised_claim`, `src/repoach/review/findings_bridge.py:170`),
+  never stored, so an older ledger has it too. It is printed wherever
+  the row id is printed today: the archive comment's `Verdict basis`
+  and judged-findings lines (`#12 F-3a9c2d1`), the report's owner
+  lines, the review JSON (`finding_key` beside `finding_id`), the thread
+  root's last line (`finding F-3a9c2d1`, so `posted_finding_id`'s body
+  match keeps working on both sides), and the history block's finding
+  line (SP-REVIEW-REMEMBERS-EVERY-ROUND D2 takes it as the first field).
+  Two live findings may share a key at one head (the same claim at two
+  places, told apart by D2's range); nothing merges them.
+- D12 (0.5). The owner command grammar of SP-OWNER-SETTLES-A-FINDING G1
+  (`format:owner-settle-command`, `_FINDING_ID_RE`) accepts
+  `#F-<7 hex>` beside `#<int>`. `/resolve #F-… <reason>` settles every
+  settleable row of that key on the pull request, at any head (the
+  rows `fetch_findings(db_path, pr_number)` returns,
+  `owner_commands.py:471`), one `owner_commands` row and one status move
+  per finding row, and one reply naming each: `Finding F-3a9c2d1
+  owner-resolved by @login at <sha7>: rows #12 (a1b2c3d), #31 (e4f5a6b)`.
+  `/reopen #F-…` restores every `owner_resolved` row of the key the same
+  way. A key with no settleable row is a named no-op (`F-… has no open
+  blocking finding on this pull request (2 settled, 0 unknown)`), as G6
+  of that spec names its other no-ops. `#<int>` keeps its meaning, one
+  row. The owner names a claim, not a line; a reply in the thread stays
+  the per-place command.
+- D13 (0.5, SP-LEDGER-FORMAT-IS-VERSIONED). This spec adds no column
+  to a gate table, no enum value and no gate table, so `LEDGER_FORMAT`
+  is not bumped by it: `finding_key` is derived (D11); `supersedes` (D5)
+  is a `finding_thread_events` row of kind `supersedes` on the new
+  finding naming the settled id, not a `pr_findings` column, because
+  the lineage is read by the history block (SP-REVIEW-REMEMBERS-EVERY-
+  ROUND F3) and by nothing in the gate; `reraise_suppressed` (D4) is an
+  event kind in the same table; `SETTLED_STATUSES` is a subset of
+  today's `FindingStatus`. Oracle: `python -m repoach.review.ledger_format
+  snapshot` is unchanged by this spec's pull request and `ls
+  tests/fixtures/ledger_format/` gains no file.
 
 ## End state
 
@@ -149,17 +215,22 @@ def cited_region_changed(*, diff_text: str, blob_before: str | None, blob_after:
 
 # src/repoach/review/settled.py
 SETTLED_STATUSES: frozenset[FindingStatus]
+FINDING_KEY_HEX_DIGITS = 7
 class ReraiseVerdict(BaseModel):
     settled: Finding; changed: bool; rule: str; mapped_line: int | None
 
+def finding_key(finding: Finding) -> str: ...                    # D11: "F-" + sha256(claim_type|file|normalised_claim)[:7]
 def match_settled(comment, *, settled: Sequence[Finding], line_maps: Mapping[str, LineMap]) -> Finding | None: ...
 def judge_reraise(comment, settled: Finding, *, diff_text, blobs) -> ReraiseVerdict: ...
 
-# findings_bridge.py (changed): before inserting at H2, match_settled → suppressed or supersedes
+# findings_bridge.py (changed): before inserting at H2, match_settled → suppressed or supersedes (an event row, D13)
 # forge/protocol.py (changed): compare(base_sha, head_sha) -> Diff
+# owner_commands.py (changed, D12): _FINDING_ID_RE accepts #<int> | #F-[0-9a-f]{7}; OwnerCommand.finding_key: str | None
+# report.py, orchestrator.py thread body (changed, D11): the key printed beside the row id
+# python -m repoach.review.settled key --db P --pr N    # one line per row: <id> <head7> <F-key>; stdout only (SP-CLI-STDOUT-ONE-JSON style, one JSON list)
 ```
 
-Outputs: `finding_thread_events` rows of kind `reraise_suppressed`; `RecordedFindings.suppressed`; archive comment lines; JSON `findings.suppressed`.
+Outputs: `finding_thread_events` rows of kind `reraise_suppressed` and `supersedes`; `RecordedFindings.suppressed`; archive comment lines; JSON `findings.suppressed` and `finding_key` beside every `finding_id`.
 
 ## Behavior
 
@@ -193,6 +264,12 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 | `::test_bucket_is_not_used_across_heads` | F5 | use the fingerprint |
 | `::test_matching_unavailable_fails_open_and_names_it` | failure scenario | suppress silently |
 | `tests/integration/test_366_reraises_are_suppressed.py::test_round_12_posts_six_threads_and_names_two_suppressed` | the recorded rounds 9–12 of !366 (`tests/fixtures/review/mr366_rounds.json`: findings, statuses, per-head diffs of the cited files, redacted) | — |
+| `tests/unit/test_settled_not_reraised.py::test_finding_key_is_stable_across_heads_and_lines` | D11: the same claim at H1 line 118 and H2 line 120 → one key; a changed claim or file → another; a ledger row written before this spec has one | hash the line or the head |
+| `::test_finding_key_is_printed_beside_the_row_id` | archive comment, report, JSON, thread root carry `F-<7 hex>`; `posted_finding_id` still joins the posted body | print the id alone |
+| `::test_resolve_by_key_settles_every_row_and_names_each` | D12: `/resolve #F-… reason` on two rows of one key at two heads → both `owner_resolved`, two `owner_commands` rows, one reply naming both; `/reopen #F-…` restores both | settle the first row only |
+| `::test_key_with_no_settleable_row_is_a_named_noop` | D12's reply text | silence |
+| `::test_int_id_still_names_one_row` | `#12` unchanged | drop the int grammar |
+| `::test_supersedes_is_an_event_row_not_a_column` | D13: `finding_thread_events` kind `supersedes`; `pr_findings` columns unchanged; `ledger_format.snapshot()` equal to `tests/fixtures/ledger_format/<LEDGER_FORMAT>.json` | add a `supersedes` column |
 
 ## Success conditions
 
@@ -200,6 +277,8 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 - C2: on the same replay, every finding of rounds 9–11 that cites code the previous fix added is **not** suppressed (15 of 18 remain findings), since the region changed; oracle: the same test's `suppressed` count equals 2 and `new` equals the recorded count.
 - C3: on a live Yoob merge request, the first round that follows a maintainer's `/resolve` with a measured reply posts no thread with the same normalised claim on an unchanged region; oracle: `jq .findings.suppressed review-gate.json` lists it.
 - C4: `pytest -q tests/unit/test_findings_bridge.py tests/unit/test_findings_bridge_docfix.py tests/unit/test_refuter_injection_harden.py` → green after D6.
+- C5 (0.5; oracle: a live pull request and its ledger): on the first pull request reviewed over two heads after this lands, the archive comment of head H2 prints, for a claim re-raised from H1 on a changed region, the same `F-<7 hex>` as H1's comment did, and `sqlite3 <ledger> "SELECT id, head_sha FROM pr_findings WHERE pr_number=<n>"` piped through `python -m repoach.review.settled key --db <ledger> --pr <n>` lists both rows under that key; a maintainer's `/resolve #F-<key> <reason>` then moves both rows to `owner_resolved` in one run (`jq '.owner_resolved | length' review-gate.json` → 2) and the reply names both. Written beside this line by the verifier with the key and the two row ids.
+- C6 (0.5; oracle: the ledger format): `python -m repoach.review.ledger_format snapshot` before and after this spec's pull request is byte-equal, and `tests/fixtures/ledger_format/` gains no file (D13).
 
 ## Architecture Impact
 - Adds dependency (0.3): SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-FINDING-CITES-ITS-CODE (the cited range of D2 and D3 is the anchored one, derived from the `code` snippet; a region mapped from a line the model invented would suppress or re-raise the wrong thing, so the anchor lands first)
@@ -209,7 +288,9 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REVIEW-REMEMBERS-EVERY-ROUND (the lens is told the rule; the lineage shows in the history block)
 - Adds dependency: SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REVIEW-PINS-HEAD, SP-POSTING-REPLAY-DEDUPES (heads are exact; a suppressed comment is never posted on replay either)
 - Adds dependency (0.4): SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-REVIEW-NITS-ONE-COMMENT (the nit digest drops a nit whose cited region changed, NITS D2, carried here as AC5 because `cited_region_changed` is built here)
-- New forge method `compare`; new event kind; no new table.
+- Adds dependency (0.5): SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-PR-THREADS-REMEMBER-AND-CLOSE (`db:table:finding_thread_events` is its resource; D4 and D13 write rows to it)
+- New forge method `compare`; two new event kinds (`reraise_suppressed`, `supersedes`); no new table, no new column: `LEDGER_FORMAT` unchanged (D13). `owner_commands.py` (SP-OWNER-SETTLES-A-FINDING, already declared) gains the key grammar of D12; `report.py` (frontier) and the thread body template in `orchestrator.py` print the key.
+- Adds dependency (0.5): SP-REVIEW-SETTLED-STAYS-SETTLED -> SP-ORCH-DOCSTRING (`orchestrator.py` is its file; the thread body template at `orchestrator.py:219-222` gains the key line, D11)
 
 ## Diagram
 ```mermaid
@@ -229,4 +310,4 @@ flowchart TD
 - [ ] AC5: `pytest -q tests/unit/test_cited_region_changed.py::test_a_nit_whose_cited_region_changed_leaves_the_digest` → green: a `noted` finding whose `cited_region_changed` is true between its head and the reviewed head is left out of `digest_for_pr` (SP-REVIEW-NITS-ONE-COMMENT D2), and `docs/merge_gate.md` § "A nit never blocks" says so. Today (SP-REVIEW-NITS-ONE-COMMENT 0.4): the digest keeps every nit, the `temporary:` line of its D2.
 
 ## Open Questions
-- None. Decided by the owner on 2026-11-15: Q1 (region margin) — 3 lines, the `cited_region_margin_lines` constraint; Q2 (`owner_resolved` on a changed region) — stays suppressed; only `/reopen` reopens it.
+- None. Decided by the owner on 2026-11-15: Q1 (region margin) — 3 lines, the `cited_region_margin_lines` constraint; Q2 (`owner_resolved` on a changed region) — stays suppressed; only `/reopen` reopens it. Decided by the author on 2026-11-17 within the owner's brief ("stable finding ids, here or in SP-FINDING-CITES-ITS-CODE"): the key is this spec's identity triple and not the cited code (a key that followed the code would be a new name at every fix, NG6 of that spec); it is derived, not a column (D13); `/resolve` by key settles every row of the finding (D12), since the owner names a claim and the thread remains the per-place command.

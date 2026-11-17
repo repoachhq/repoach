@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-CONVERGES
 title: Umbrella — a review converges in a few rounds, remembers every round, re-raises nothing settled, reviews the delta, blocks only on minor and worse, and runs on a metered budget
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
   code: []
@@ -107,6 +107,21 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 | 7 | SP-REVIEW-DELTA-FIRST (0.3 folds SP-REVIEW-INCREMENTAL-HEAD of the OCR programme, superseded 2026-11-16) | the whole diff every round; nothing cached; two specs for one decision | ~320 + 300 lines | 5, 6, 1; OCR 7 (RESUMES-FAILED-ROLES) and 8 (GROUPS-LARGE-DIFFS) |
 | 8 | SP-REVIEW-FABLE-TIER | shallow first rounds; three tiers | ~180 + 200 lines | 1, 3, 7 |
 
+Ledger format (0.4, 2026-11-17, SP-LEDGER-FORMAT-IS-VERSIONED): a child
+that adds a column to a gate table, an enum value or a gate table bumps
+`LEDGER_FORMAT` with its `tests/fixtures/ledger_format/N.json` in the
+same pull request and names `scripts/skew_replay.sh` in the release
+notes; `main`'s gate refuses its ledgers by name until the release. In
+this family: 4 landed `note` before the format existed, the crash that
+spec closes; 7 adds `FindingStatus.OUT_OF_DELTA` and
+`pr_review_integrity.extends_run` and bumps; 5, 6 and 8 add no gate
+column, value or table (6 derives `finding_key` and writes `supersedes`
+as an event, its D13). Of the two OCR children it orders, FINDING-CITES-
+ITS-CODE bumps (`pr_findings.cited_code`, its D7) and RESUMES-FAILED-
+ROLES does not (`pr_reviewer_outcomes` is read by `review pr` alone, its
+D6). A bump is one release gate held per bump, so 7 lands in the release
+after CITES or with it, never between a release and its skew replay.
+
 - G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request; on live Yoob merge requests, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three.
 - G3 (cost): after 1–3, every metered call is priced before dispatch; `repoach budget` matches the Anthropic console within 5 %; a full round costs about 4.20 USD and a delta round under 1.5 USD at F11's size; 100 € (≈ 108 USD) buys about 25 full rounds, or about 15 three-round merge requests once delta rounds exist — against 2 twelve-round merge requests at today's full-diff behaviour.
 - G4 (named fallbacks and reds): after 1 and 2, a review that reaches the budget finishes on the `claude_code` tail and says `budget exhausted: <spent> of <budget> USD since <date>; reviewed on the subscription` in the log, the JSON and the merge request (owner decision 2026-11-15, O2), the total still counting; a red gate caused by the subscription says `subscription exhausted on claude_code until <time>`; `provider_error` never names either.
@@ -132,6 +147,7 @@ Shared vocabulary, defined once:
 | settled finding | status in `refuted`, `resolved`, `resolved_at_head`, `owner_resolved`, `not_applicable`, `noted` | SP-REVIEW-SETTLED-STAYS-SETTLED D1 |
 | `cited_region_changed` | a hunk within 3 lines of the cited range, or the enclosing Python symbol's body differs, or the file was deleted / is binary | SP-REVIEW-SETTLED-STAYS-SETTLED D3 |
 | suppressed re-raise | a comment matching a settled finding on an unchanged region: recorded, named, not posted | SP-REVIEW-SETTLED-STAYS-SETTLED D4 |
+| `finding_key`, `F-<7 hex>` | the cross-head name of a finding, SHA-256 of claim type, file and normalised claim, derived and never stored; printed beside the row id, accepted by `/resolve` and `/reopen` | SP-REVIEW-SETTLED-STAYS-SETTLED D11–D12 |
 | `{REVIEW_HISTORY}` | the one block with every prior finding, reply (labelled maintainer / author / bot / agent / other) and thread state | SP-REVIEW-REMEMBERS-EVERY-ROUND D1–D4 |
 | full round / delta round | no complete prior review at an ancestor head / the compare `last_reviewed_head..head` as target with the MR diff as cached context | SP-REVIEW-DELTA-FIRST D1–D3 |
 | `out_of_delta` | a finding on context lines that names no target line | SP-REVIEW-DELTA-FIRST D4 |
