@@ -1,7 +1,7 @@
 ---
 id: SP-AFFECTED-JOBS-TABLE
 title: One path-to-job table, read by `repoach ci affected`; the workflow carries no glob
-version: 0.2
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-16
@@ -38,12 +38,12 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
 | # | Fact | Where |
 |---|---|---|
 | F1 | `ci.yml` has three jobs, `test` (matrix `python-version: ["3.11", "3.13"]`, name `Test suite (Python ${{ matrix.python-version }})`), `wheel-build`, `wheel-smoke` (same matrix, `needs: wheel-build`); the only `needs` edge is the smoke's | `.github/workflows/ci.yml:27-40,118-123,151-158` |
-| F2 | The check names repoach requires are derived from that file, matrix expanded, by `_expand_job_names` and `workflow_checks`, which read the YAML with PyYAML | `src/repoach/review/merge_wait.py:240-296` |
+| F2 | The check names repoach requires are derived from that file, matrix expanded, by `_expand_job_names` and `workflow_checks`, which read the YAML with PyYAML. In 0.3 this spec extracts that read into `merge_wait.load_workflow(path)`, which `workflow_checks` now calls, and renames `_expand_job_names` to the public `expand_job_names`. `select.workflow_jobs` and `select.check_name_jobs` call both, so job ids, `needs` and check names come from one loader | `src/repoach/review/merge_wait.py:240-296` |
 | F3 | The wheel packages `src/repoach`, `prompts` (as `repoach/prompts`) and `docs/specs/_TEMPLATE.md` (as `repoach/project/spec_template.md`); its metadata reads `README.md` and `LICENSE`; `wheel-build` runs `twine check` | `pyproject.toml:6-9,88-93`; `.github/workflows/ci.yml:136-140` |
 | F4 | 59 test modules resolve the repository root; after it they read `.github/workflows` (15), `src` (8), `scripts/*` (10), `pyproject.toml` (4), `docs/specs` (4: `test_arch_graph.py` and the governance suites), `prompts/review` (2), `chains.env` (2), `.env.example`, `docs/PR_TEMPLATE.md`, `.github/pull_request_template.md`, `.claude/hooks/dream_check.py`, `.claude/commands/dream.md`; `tests/unit/test_claude_md_integration_flag.py:6` reads `Path("CLAUDE.md")` from the working directory | `grep -o 'parents\[2\] */ *"[^"]*"' tests/unit/*.py tests/integration/*.py` |
 | F5 | Tracked entries outside `src/`, `tests/`, `docs/`, `scripts/`, `prompts/`, `deploy/`, `bench/`, `licenses/`, `assets/`: `.claude/` (commands, hooks, scripts, skills, settings), `.githooks/` (three hooks), `.github/` (issue templates, the pull request template, seven workflows), `.env.example`, `.gitignore`, `CLAUDE.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `LICENSE`, `README.md`, `SECURITY.md`, `chains.env`, `pyproject.toml`, `repoach.toml`, `tmp/.gitkeep` | `git ls-files` |
 | F6 | Shell scripts live under `scripts/` (4) and `.claude/scripts/` (2); `ShellCheck` lints `git ls-files '*.sh'` in its own workflow | `git ls-files '*.sh'`; `.github/workflows/shellcheck.yml:49-61` |
-| F7 | The last 30 pull requests into `develop` (#260–#296): 8 docs-only, 2 one-test-file, 15 `src/` + `tests/`, 5 touching `.github/`; 167 `CI` heads; 15 failed `CI` jobs, all on pull requests touching `src/` or `tests/`: 13 `Test suite` legs (`Pytest` or `Pytest — integration`) and `wheel-smoke (3.11)` once (#275, head `7a7a048`). Against the table of D2 (paths read with `gh pr list --json files`): 0 misses | the fixture `tests/fixtures/affected_jobs/pr_runs.json` (planned), harvested this day |
+| F7 | The last 30 pull requests into `develop` (#260–#296): 8 docs-only, 2 one-test-file, 15 `src/` + `tests/`, 5 touching `.github/`; 167 `CI` heads; 15 failed `CI` jobs, all on pull requests touching `src/` or `tests/`: 13 `Test suite` legs (`Pytest` or `Pytest — integration`) and `wheel-smoke (3.11)` once (#275, head `7a7a048`). Against the table of D2 (paths read with `gh pr list --json files`): 0 misses. The 167/15 counts came from `gh run list` at its default limit of 20 runs per head branch. The committed corpus (0.3) was harvested with `gh run list --event pull_request --workflow CI --limit 200` per head branch, keeping every completed run: 190 heads, 45 failed `CI` jobs (42 `Test suite` legs, `wheel-smoke (3.13)` twice on #275, `wheel-smoke (3.11)` once on #275 at `7a7a048`). Since 0.4 each head carries its own paths, read with `gh api repos/repoachhq/repoach/compare/develop...<sha>` (`filename` and `previous_filename`; at most 55 per head, below the 300 the endpoint returns, so none is truncated). A failed job is therefore judged against the paths of the head it ran at, not the pull request's final files: 0 misses | `tests/fixtures/affected_jobs/pr_runs.json`, harvested 2026-11-16 |
 | F8 | `[repoach].integration_branch` and `release_branch` are project settings (`develop`, `main` by default); `load_project_config` refuses an unknown key | `src/repoach/project/config.py:190-192,231-232` |
 | F9 | `scripts/ci_local.sh` mirrors `ci.yml` with `--fast`, `--tests`, `--integration`, `--wheel`; it has no notion of a diff | `scripts/ci_local.sh:1-49` |
 | F10 | Yoob's matrix spec spent four review rounds on glob dialects (`gitlab_globs.py`, `GlobSyntaxError`) and on facts declared twice; its lessons: no hand-rolled parser for a foreign syntax, one declared value for every environment fact, every guard judges the invariant | Yoob `docs/specs/2026-11-15_SP-JOB-MATRIX-ONE-SOURCE-RENDERED-TO-CI_*.md`, "Interface" 0.2–0.5 |
@@ -63,15 +63,42 @@ version = 1
 
 [gate]
 pytest = [
-  "tests/unit/test_arch_graph.py",
-  "tests/unit/test_arch_foreign_frontmatter.py",
-  "tests/unit/test_spec_presence.py",
-  "tests/unit/test_spec_template.py",
-  "tests/unit/test_governed_spec.py",
-  "tests/unit/test_pr_template_measured.py",
-  "tests/unit/test_claude_md_integration_flag.py",
+  "tests/integration/test_credits_integration.py",
+  "tests/integration/test_forge_live.py",
+  "tests/integration/test_job_proxy_collision.py",
+  "tests/integration/test_promise_fanout_reconcile.py",
+  "tests/integration/test_selfverify_refutation_flow.py",
+  "tests/integration/test_slow_settings_isolation_end_to_end.py",
+  "tests/unit/test_affected_cli.py",
+  "tests/unit/test_affected_select.py",
   "tests/unit/test_affected_table.py",
   "tests/unit/test_affected_tree_judges.py",
+  "tests/unit/test_arch_graph.py",
+  "tests/unit/test_ci_review.py",
+  "tests/unit/test_claude_hooks.py",
+  "tests/unit/test_claude_md_integration_flag.py",
+  "tests/unit/test_decompose.py",
+  "tests/unit/test_devagent_selfverify.py",
+  "tests/unit/test_devagent_tools.py",
+  "tests/unit/test_edge_honesty.py",
+  "tests/unit/test_finding_posts_backfill.py",
+  "tests/unit/test_gate_commands.py",
+  "tests/unit/test_gen_comparison.py",
+  "tests/unit/test_merge_wait_rearm.py",
+  "tests/unit/test_merge_wait_required_checks.py",
+  "tests/unit/test_merge_wait_stranded.py",
+  "tests/unit/test_merge_wait_workflows.py",
+  "tests/unit/test_no_duplicate_test_basenames_gate.py",
+  "tests/unit/test_no_inline_comments_gate.py",
+  "tests/unit/test_no_silent_except_gate.py",
+  "tests/unit/test_open_threads_block_the_merge.py",
+  "tests/unit/test_packaging_metadata.py",
+  "tests/unit/test_project_config.py",
+  "tests/unit/test_pr_template_measured.py",
+  "tests/unit/test_selfverify_refutation.py",
+  "tests/unit/test_spec_supersede.py",
+  "tests/unit/test_spec_template.py",
+  "tests/unit/test_test_tree_packaging.py",
 ]
 
 [rows.docs]
@@ -82,24 +109,58 @@ reason = "pages, specs and licences are judged by the gate: arch check, the CONT
 [rows.python]
 prefixes = ["src/", "tests/", "scripts/", "prompts/", "bench/", "deploy/", ".claude/", ".githooks/", "chains.env", ".env.example", "repoach.toml"]
 jobs = ["test"]
-reason = "the suite imports src, runs the scripts, reads the prompts, chains.env, .env.example, repoach.toml and the .claude hooks (F4)"
+reason = "the suite imports src, runs the scripts, reads the prompts, chains.env, .env.example, repoach.toml and the .claude hooks"
 
 [rows.wheel]
 prefixes = ["src/", "prompts/", "docs/specs/_TEMPLATE.md", "pyproject.toml", "README.md", "LICENSE", "scripts/wheel_smoke.sh"]
 jobs = ["wheel-build", "wheel-smoke"]
-reason = "what the wheel packages and its metadata (F3), and the smoke script"
+reason = "what the wheel packages and its metadata, and the smoke script"
 
 [full]
 prefixes = [".github/", "pyproject.toml", ".gitignore"]
 reason = "the workflows, this table, the build and test configuration: everything runs"
 ```
 
-  The exact list of `[gate].pytest` is what the guard of D5 computes on
-  `f16702b`; the implementer writes the measured list, not this one, if
-  they differ, and says so.
+  The `[gate].pytest` list above is the list the guard of D5 computes
+  (0.5, measured on `51126f0`). 0.2 proposed nine entries and 0.3
+  measured six. 0.3 missed every reader whose path goes through
+  `.parent`, and every module that uses the root without a literal; the
+  independent verification of `791eb74` found
+  `test_gen_comparison.py`, which reads `docs/comparison.{yaml,md}`
+  through `_SCRIPTS.parent / "docs"`. The 0.4 walk (D5) evaluates
+  every path idiom found under `tests/`, and treats the rest
+  conservatively; 0.5 adds `open()`, `Path(CONST)`, `Path.cwd()`,
+  `importlib.resources` and computed strings (D5). The 36 entries come
+  in four classes:
+  - A literal read of the docs class:
+    - `test_arch_graph.py` and `test_edge_honesty.py` (`docs/specs`)
+    - `test_spec_template.py`
+    - `test_pr_template_measured.py`
+    - `test_gen_comparison.py` (`docs/comparison.*`)
+    - `test_claude_md_integration_flag.py` (`Path("CLAUDE.md")`)
+  - A read that selects the wheel jobs and not `test`:
+    `test_packaging_metadata.py` (`LICENSE`).
+  - A `Path("<literal>")` under a tracked top-level entry, read
+    conservatively as the repository path even where the test joins it
+    onto a temporary repository:
+    - `test_spec_supersede.py`
+    - `test_decompose.py`
+    - `test_devagent_selfverify.py`
+    - `test_selfverify_refutation.py` and its integration twin
+  - A use of the root that the walk cannot follow, taken as reading the
+    whole tree: a `cwd=`, `chdir`, a function argument such as
+    `load_project_config(root)`, a join with an imported constant,
+    `importlib.resources`, or a computed string path. 0.5 added
+    `test_ci_review.py`, `test_devagent_tools.py`,
+    `test_job_proxy_collision.py` and `test_promise_fanout_reconcile.py`.
+    These are the remaining entries, including the four
+    `test_affected_*` suites, the merge-wait suites, the lint-gate suites
+    and five integration modules.
+  0.2's `test_arch_foreign_frontmatter.py`, `test_spec_presence.py` and
+  `test_governed_spec.py` read only `tmp_path`, so they are not judges.
 - D3. The selection of a list of paths: a path matching `[full]`, or
   matching no row, selects every job of `ci.yml`; otherwise the union
-  of its rows' jobs; then the closure under the non-optional `needs`
+  of its rows' jobs; then the closure under every `needs`
   edges of `ci.yml`, read with PyYAML through the same loader as F2
   (a selected `wheel-smoke` selects `wheel-build`); `gate` is always
   selected. An empty list selects `gate` alone.
@@ -111,25 +172,68 @@ reason = "the workflows, this table, the build and test configuration: everythin
   read inside the module. The paths are
   `git diff --name-only --no-renames <merge-base of base and head> <head>`:
   both names of a rename, deletions included.
-- D5. Tree judges. A test module under `tests/` that reads a repository
-  path from the root (an expression chain `Path(__file__).resolve().parents[2] / "…"`
-  or a name bound to it, found with `ast`, or `Path("<root file>")`)
-  is a tree judge for the paths it reads. The guard
-  `test_affected_tree_judges.py` derives, for every tree judge, the
-  rows its paths belong to, and refuses: a tree judge of the docs class
-  that `[gate].pytest` does not name; a tree judge whose paths belong
-  to no row (an unclassified tree); a `[gate].pytest` entry that is not
-  a tree judge of the docs class. The guard reads test sources with
-  `ast`, never with a regular expression over Python.
+- D5. Tree judges. A module under `tests/` (a `test_*` module or a
+  helper) that reads a repository path is a tree judge for the paths it
+  reads. The walk uses `ast`, never a regular expression over Python.
+  It evaluates to a root-relative path:
+  - every expression built from `__file__`: `Path(…)`, `str(…)`,
+    `.resolve()`, `.absolute()`, `.parent`, `.parents[n]`, `/`,
+    `.joinpath`, `.with_name`, `os.path.dirname`, `os.path.join` and
+    `os.path.abspath`, `realpath`, `normpath`, with `..` resolved;
+  - every `Path(…)` or `open(…)` of a string literal or module string
+    constant whose first segment is a tracked top-level entry;
+  - `Path.cwd()` and `os.getcwd()` as the root, where pytest runs.
+  It reads as the whole tree:
+  - a call through `importlib.resources`, and anything built on it;
+  - a `Path(…)` or `open(…)` of a computed string (an f-string, `+`,
+    `%`, `.format`, `.join`).
+  How names and partial paths are handled:
+  - A module-level string constant joins like a literal.
+  - A name binding resolves in its own scope, and a local rebinding
+    shadows it.
+  - A part the walk cannot evaluate (a variable, a call, an imported
+    constant) ends the path where it stands, and the module is taken to
+    read the whole tree under it. A root used that way, as `cwd=`,
+    `chdir`, or an argument, reads the whole repository.
+  - A path above the root is refused by name: `<module>:<line>: a path
+    climbs above the repository root`.
+  The guard `test_affected_tree_judges.py` works as follows:
+  - For every judge, it takes each path under each read: the tracked
+    files under it, or the read itself when none is tracked. It runs
+    `select([path])` on each one.
+  - It checks that selection against the jobs that run the judge. For a
+    `test_*` module, that is the job whose `pytest` step in `ci.yml`
+    names its directory. For a helper, it is every job that runs a test
+    directory.
+  - A path whose selection holds none of those jobs is seen only by
+    `gate`, and its readers form the gate class.
+  - It refuses four things:
+    - a gate-class `test_*` module that `[gate].pytest` does not name;
+    - a gate-class helper, which `[gate].pytest` cannot name;
+    - a `[gate].pytest` entry outside the gate class;
+    - a read whose paths match no row (an unclassified tree).
 - D6. Every tracked path (`git ls-files`) matches a row or `[full]`;
   `test_every_tracked_path_is_classified` names the first that does
   not. A new top-level tree is therefore a red test, not a silent
   full-set run.
 - D7. `scripts/ci_local.sh --affected [<base>]` runs the mirror for the
-  selection `repoach ci affected select --base <base>` returns
-  (`test` → the lint and pytest blocks, `wheel-*` → `--wheel`, `gate`
-  alone → the arch check, the two lints and `[gate].pytest`), printing
-  the selection first. Every other flag is unchanged.
+  selection `repoach ci affected select --base <base>` returns, and
+  prints the selection first.
+  - `gate` always runs the arch check, the two lints and `[gate].pytest`.
+  - `test` adds the lint, pytest and smoke blocks.
+  - `wheel-*` adds the `--wheel` block.
+  - Without `<base>`, the script reads it from
+    `repoach ci affected base` (`origin/<[repoach].integration_branch>`).
+    The attribution lint of the other modes reads its range base from
+    there too, so the script carries no branch name.
+  - The wheel block refuses by name, as a failed gate, when `build` or
+    `twine` is not importable or `pipx` is not on `PATH`. `ci.yml`
+    installs those three in its own jobs. The Python versions it smokes
+    are `repoach ci affected matrix <smoke job> python-version`, read from
+    `ci.yml`. The script names no job id: it declares the command each
+    block mirrors once (`pytest -q tests/unit`, `python -m build`,
+    `scripts/wheel_smoke.sh`) and reads the job that runs it with
+    `repoach ci affected job-running`. Every other flag is unchanged.
 
 ## End state
 
@@ -175,7 +279,7 @@ names.
 
 - G1: one file, one reader, two primitives; the table of D2 committed and classified to the last tracked path (D6).
 - G2: the selection is closed under `needs` and never narrower than the rows say (D3); an unknown path is every job.
-- G3: the replay of F7 selects every failed job of every head; the fixture is committed, scrubbed of tokens and URLs beyond `repoachhq/repoach`.
+- G3: the replay of F7 selects every failed job of every head, against that head's own paths; the fixture is committed, scrubbed of tokens and URLs beyond `repoachhq/repoach`.
 - G4: the tree-judge guard holds (D5); `[gate].pytest` is derived, not written.
 - G5: the mirror has `--affected` (D7) and `repoach ci affected select` works from any checkout with `git` on `PATH`.
 
@@ -194,27 +298,49 @@ names.
 
 ```python
 # src/repoach/affected/table.py
+TABLE_VERSION = 1; DEFAULT_TABLE_PATH = ".github/affected-jobs.toml"; FULL_ROW = "full"; UNKNOWN_ROW = "unknown"
+class TableError(ValueError): path: Path; key: str; reason: str   # str(): "<file name>: <key> <reason>"
 class Row(BaseModel):
-    name: str; prefixes: tuple[str, ...] = (); suffixes: tuple[str, ...] = (); jobs: frozenset[str]; reason: str
+    name: str; prefixes: tuple[str, ...] = (); suffixes: tuple[str, ...] = (); jobs: frozenset[str] = frozenset(); reason: str
 class AffectedTable(BaseModel):
     version: int; gate_pytest: tuple[str, ...]; rows: tuple[Row, ...]; full: Row
-def load_table(path: Path) -> AffectedTable: ...          # tomllib; TableError names the key on any defect
-def matches(row: Row, path: str) -> bool: ...              # D1, the only matching rule
+def load_table(path: Path, job_ids: Collection[str], *, workflow: str) -> AffectedTable: ...
+    # tomllib; job_ids are the workflow's (a row naming another is refused, T2); workflow is its file name, named in the error;
+    # TableError names the key on any defect: unknown key, missing key, version != 1, a row named full/unknown, an unknown job
+def matching_entry(row: Row, path: str) -> str | None: ...  # D1, the only matching rule: the prefix or suffix that matched
+def matches(row: Row, path: str) -> bool: ...              # matching_entry(row, path) is not None
 
 # src/repoach/affected/select.py
+DEFAULT_WORKFLOW_PATH = ".github/workflows/ci.yml"; GATE_JOB = "gate"; NARROWED_EVENT = "pull_request"; BASE_REMOTE = "origin"
+class WorkflowError(ValueError): path: Path; key: str; reason: str
+class GitError(RuntimeError): command: str; detail: str      # detail: first stderr line
 class Selection(BaseModel):
     mode: Literal["narrowed", "full"]; reason: str; paths: int
-    jobs: frozenset[str]; rows_hit: dict[str, list[str]]  # row name -> first three paths
-def workflow_jobs(ci_yml: Path) -> dict[str, frozenset[str]]: ...   # job id -> non-optional needs, via merge_wait's loader
-def select(paths: Sequence[str], table: AffectedTable, needs: Mapping[str, frozenset[str]], *, mode: str, reason: str) -> Selection: ...
-def changed_paths(repo_root: Path, *, base: str, head: str = "HEAD") -> list[str]: ...  # git diff --name-only --no-renames <merge-base> <head>
+    jobs: frozenset[str]; rows_hit: dict[str, list[str]]  # row name (or full / unknown) -> first three paths; jobs serialize sorted
+def workflow_jobs(ci_yml: Path) -> dict[str, frozenset[str]]: ...   # job id -> every needs edge, via merge_wait.load_workflow
+def check_name_jobs(ci_yml: Path) -> dict[str, str]: ...            # check name (merge_wait.expand_job_names) -> job id; the replay's mapping
+def matrix_values(ci_yml: Path, job_id: str, axis: str) -> list[str]: ...  # one matrix axis of one job, via merge_wait.load_workflow
+def job_running(ci_yml: Path, command: str) -> str: ...             # the one job with a step whose run holds command; WorkflowError for none or several
+def default_base(integration_branch: str) -> str: ...               # f"{BASE_REMOTE}/{integration_branch}"
+def decide_mode(*, event: str, base_ref: str, ref: str, integration_branch: str) -> tuple[Mode, str]: ...  # D4
+def select(paths: Sequence[str], table: AffectedTable, needs: Mapping[str, frozenset[str]], *, mode: Mode, reason: str) -> Selection: ...
+def changed_paths(repo_root: Path, *, base: str, head: str = "HEAD") -> list[str]: ...  # git diff --name-only --no-renames -z <merge-base> <head>
 def github_output_lines(selection: Selection, job_ids: Sequence[str]) -> list[str]: ...  # job_<id>=true|false, hyphens to underscores, then mode=
+def summary_markdown(selection: Selection) -> str: ...              # the --summary section
+
+# src/repoach/review/merge_wait.py (extracted in 0.3, owner SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF)
+def load_workflow(path: Path) -> Any: ...                  # yaml.safe_load of the file; OSError / yaml.YAMLError propagate; workflow_checks calls it
+def expand_job_names(job_id: str, job: Mapping[str, Any]) -> list[str]: ...  # formerly _expand_job_names, made public
 
 # src/repoach/affected/cli.py, attached to the `ci` typer from src/repoach/cli/main.py
-# repoach ci affected select --base <ref> [--head HEAD] [--event pull_request|push|workflow_dispatch] [--base-ref <name>]
+# repoach ci affected select [--base <ref>] [--head HEAD] [--event pull_request|push|workflow_dispatch] [--base-ref <name>]
 #                            [--table .github/affected-jobs.toml] [--workflow .github/workflows/ci.yml]
 #                            [--github-output <file>] [--summary <file>]
+#     --base defaults to default_base([repoach].integration_branch); --base-ref to [repoach].integration_branch
 # repoach ci affected gate-pytest              # the [gate].pytest selectors, one per line
+# repoach ci affected base                     # default_base([repoach].integration_branch): the one place a shell reads the branch
+# repoach ci affected matrix <job> <axis>      # matrix_values, one per line: ci_local.sh smokes the smoke job's python-version from it
+# repoach ci affected job-running <command>    # job_running: ci_local.sh names the job behind each of its blocks with it
 ```
 
 Outputs: one JSON object on stdout (`SP-CLI-STDOUT-ONE-JSON`), logs on
@@ -261,7 +387,7 @@ A pull request to `develop` changes `docs/specs/x.md` and
 | T3 | `tests/unit/test_affected_select.py` | every tracked path (`git ls-files`) matches a row or `[full]` (D6) | add an unclassified root file to the fixture tree |
 | T4 | same | unknown path → every job; `[full]` path → every job; empty → `gate` only | return the rows' union for an unknown path |
 | T5 | same | closure: a selection holding `wheel-smoke` holds `wheel-build`; `needs` read from the real `ci.yml` | drop the closure |
-| T6 | same | replay: for every head of `tests/fixtures/affected_jobs/pr_runs.json`, every failed job is in `select(paths)`; prints `misses: 0/15` | remove `tests/` from the python row (#282, #295 become misses) |
+| T6 | same | replay: for every head of `tests/fixtures/affected_jobs/pr_runs.json`, every failed job is in `select(paths)`; prints `misses: 0/<failed jobs>` (0/45 on the committed corpus) | set the python row's `jobs = []` (42 of the 45 failures become misses, every one a `test` job; `test_replay_goes_red_when_the_python_row_selects_nothing`). Removing `tests/` from the row is not a mutation that goes red: those paths fall to "unknown → every job" (0/45) |
 | T7 | same | `github_output_lines` for the three ids: `job_test`, `job_wheel_build`, `job_wheel_smoke`, then `mode` | keep the hyphen |
 | T8 | `tests/unit/test_affected_tree_judges.py` | D5: every tree judge of the docs class is in `[gate].pytest`, every `[gate].pytest` entry is one, every tree judge's paths are classified; the `ast` walk finds `test_pr_template_measured.py` (two paths) and `test_claude_md_integration_flag.py` (`Path("CLAUDE.md")`) | remove `test_arch_graph.py` from `[gate].pytest` |
 | T9 | `tests/unit/test_affected_cli.py` | `select` on a temporary repository with two commits prints one JSON object, exit 0; `--github-output` writes the four lines; `--summary` appends a table; an unknown `--base` exits 3 with the command named; a table with a bad key exits 2 | print the JSON on exit 2 |
@@ -270,7 +396,7 @@ A pull request to `develop` changes `docs/specs/x.md` and
 
 ## Success conditions
 
-- C1 (external oracle: the forge): `repoach ci affected select` replayed over the fixture of the 30 pull requests prints `misses: 0/15`; the verifier picks two failed runs from the fixture (one `Test suite`, the `wheel-smoke` of #275 at `7a7a048`), opens them on github.com and finds the failed job and a head whose paths the table selects it for.
+- C1 (external oracle: the forge): `repoach ci affected select` replayed over the fixture of the 30 pull requests prints `misses: 0/<failed jobs>` (0/45 on the committed corpus); the verifier picks two failed runs from the fixture (one `Test suite`, the `wheel-smoke` of #275 at `7a7a048`), opens them on github.com and finds the failed job and a head whose paths the table selects it for.
 - C2 (external oracle: the tree): a check by hand, without running the guard of D5 — the verifier lists `grep -l 'parents\[2\]' tests/unit/*.py`, picks three modules that read `docs/`, and finds each in `[gate].pytest`; picks one that reads `prompts/` and finds `prompts/` in the python row.
 - C3: `pytest -q tests/unit/test_affected_table.py tests/unit/test_affected_select.py tests/unit/test_affected_cli.py tests/unit/test_affected_tree_judges.py` green with T1–T11 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `ruff check src tests scripts` and the two lint scripts green.
 
@@ -295,7 +421,7 @@ flowchart LR
 - [ ] AC1: `pytest -q tests/unit/test_affected_table.py tests/unit/test_affected_select.py tests/unit/test_affected_cli.py tests/unit/test_affected_tree_judges.py` → green. Today (`f16702b`): `ls src/repoach/affected` → no such directory.
 - [ ] AC2: `repoach ci affected select --base origin/develop` on the branch prints a JSON object whose `jobs` lists `gate` and `test` and `wheel-build` and `wheel-smoke` (the branch adds `src/`), mode `narrowed`.
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
-- [ ] AC4: `bash scripts/ci_local.sh --affected origin/develop` prints the selection, then runs the blocks it names, exit 0.
+- [ ] AC4: `bash scripts/ci_local.sh --affected origin/develop` prints the selection, then runs the blocks it names, exit 0. The oracle runs in the environment `ci.yml` builds: `pip install -e ".[dev]"` plus `build`, `twine` and `pipx`. Without those three, the wheel block refuses by name and the run exits 1 (D7).
 
 ## Open Questions
 - None. The table's location (`.github/affected-jobs.toml`) and the unknown-path rule (every job) were decided by the owner on 2026-11-16 (SP-PR-RUNS-AFFECTED-JOBS O1, O4); D2 and D3 are written to them.

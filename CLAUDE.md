@@ -160,7 +160,17 @@ scripts/ci_local.sh           # full parity with .github/workflows/ci.yml
 scripts/ci_local.sh --fast    # lint-only (ruff + format + no-inline-comments)
 scripts/ci_local.sh --tests   # pytest-only
 scripts/ci_local.sh --integration # run integration tests
+scripts/ci_local.sh --affected [<base>] # only what the diff from <base> affects
 ```
+
+`--affected` prints `repoach ci affected select --base <base>` (default
+`repoach ci affected base`, `origin/<[repoach].integration_branch>`), then
+runs the gate (arch check, the CONTRIBUTING and attribution lints,
+`[gate].pytest`), the lint, pytest and smoke blocks when `test` is
+selected, and the `--wheel` block when a wheel job is; that block refuses
+by name when `build`, `twine` or `pipx` is missing.
+The path-to-job table is `.github/affected-jobs.toml`
+(SP-AFFECTED-JOBS-TABLE).
 
 Pair with `repoach review pr <N>` to run the review-bot team
 locally too.

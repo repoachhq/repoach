@@ -1,0 +1,60 @@
+version = 1
+
+[gate]
+pytest = [
+  "tests/integration/test_credits_integration.py",
+  "tests/integration/test_forge_live.py",
+  "tests/integration/test_job_proxy_collision.py",
+  "tests/integration/test_promise_fanout_reconcile.py",
+  "tests/integration/test_selfverify_refutation_flow.py",
+  "tests/integration/test_slow_settings_isolation_end_to_end.py",
+  "tests/unit/test_affected_cli.py",
+  "tests/unit/test_affected_select.py",
+  "tests/unit/test_affected_table.py",
+  "tests/unit/test_affected_tree_judges.py",
+  "tests/unit/test_arch_graph.py",
+  "tests/unit/test_ci_review.py",
+  "tests/unit/test_claude_hooks.py",
+  "tests/unit/test_claude_md_integration_flag.py",
+  "tests/unit/test_decompose.py",
+  "tests/unit/test_devagent_selfverify.py",
+  "tests/unit/test_devagent_tools.py",
+  "tests/unit/test_edge_honesty.py",
+  "tests/unit/test_finding_posts_backfill.py",
+  "tests/unit/test_gate_commands.py",
+  "tests/unit/test_gen_comparison.py",
+  "tests/unit/test_merge_wait_rearm.py",
+  "tests/unit/test_merge_wait_required_checks.py",
+  "tests/unit/test_merge_wait_stranded.py",
+  "tests/unit/test_merge_wait_workflows.py",
+  "tests/unit/test_no_duplicate_test_basenames_gate.py",
+  "tests/unit/test_no_inline_comments_gate.py",
+  "tests/unit/test_no_silent_except_gate.py",
+  "tests/unit/test_open_threads_block_the_merge.py",
+  "tests/unit/test_packaging_metadata.py",
+  "tests/unit/test_project_config.py",
+  "tests/unit/test_pr_template_measured.py",
+  "tests/unit/test_selfverify_refutation.py",
+  "tests/unit/test_spec_supersede.py",
+  "tests/unit/test_spec_template.py",
+  "tests/unit/test_test_tree_packaging.py",
+]
+
+[rows.docs]
+prefixes = ["docs/", "assets/", "licenses/", "LICENSE", "README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "CLAUDE.md", "tmp/"]
+jobs = []
+reason = "pages, specs and licences are judged by the gate: arch check, the CONTRIBUTING and attribution lints, and the tree suites above"
+
+[rows.python]
+prefixes = ["src/", "tests/", "scripts/", "prompts/", "bench/", "deploy/", ".claude/", ".githooks/", "chains.env", ".env.example", "repoach.toml"]
+jobs = ["test"]
+reason = "the suite imports src, runs the scripts, reads the prompts, chains.env, .env.example, repoach.toml and the .claude hooks"
+
+[rows.wheel]
+prefixes = ["src/", "prompts/", "docs/specs/_TEMPLATE.md", "pyproject.toml", "README.md", "LICENSE", "scripts/wheel_smoke.sh"]
+jobs = ["wheel-build", "wheel-smoke"]
+reason = "what the wheel packages and its metadata, and the smoke script"
+
+[full]
+prefixes = [".github/", "pyproject.toml", ".gitignore"]
+reason = "the workflows, this table, the build and test configuration: everything runs"
