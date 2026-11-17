@@ -263,11 +263,19 @@ def test_t2_a_newer_format_is_refused_with_both_versions(tmp_path: Path) -> None
     )
 
 
-def test_t2_a_newer_format_is_refused_even_when_every_value_is_known(tmp_path: Path) -> None:
+@pytest.mark.parametrize("writer_format", [3, 4, 17])
+def test_t2_a_newer_format_is_refused_even_when_every_value_is_known(
+    tmp_path: Path, writer_format: int
+) -> None:
     db = _demo(tmp_path)
-    _sql(db, "UPDATE ledger_meta SET value = '3' WHERE key = 'format'")
-    with pytest.raises(LedgerSkewError, match=r"^format 3 is newer than this reader's 1 "):
+    _sql(db, f"UPDATE ledger_meta SET value = '{writer_format}' WHERE key = 'format'")
+    with pytest.raises(LedgerSkewError) as raised:
         check(db, 259)
+    assert str(raised.value).startswith(f"format {writer_format} is newer than this reader's 1 ")
+    assert raised.value.needed_format == writer_format
+    assert raised.value.reason.endswith(
+        f"; a release carrying format {writer_format} is needed before this lane can judge this head"
+    )
 
 
 @pytest.mark.parametrize(
