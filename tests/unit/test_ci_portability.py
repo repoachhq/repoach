@@ -30,12 +30,16 @@ _GITHUB_HOSTED = {
     ("auto-review.yml", "coalesce"),
     ("auto-review.yml", "rearm"),
     ("auto-review.yml", "retry"),
+    ("publish.yml", "build-and-publish"),
 }
 """Jobs that run GitHub-hosted on purpose (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D1).
 
 ``coalesce`` and ``rearm`` only sleep, and ``retry`` waits 300 s before it
 dispatches (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES): none may queue behind
 the self-hosted runner, and on the public repository they cost no minutes.
+``build-and-publish`` runs ``pypa/gh-action-pypi-publish``, a Docker action:
+the self-hosted runner has no Docker (publish run 44044713038 failed with
+``docker: command not found``), so the upload job alone is GitHub-hosted.
 """
 
 
