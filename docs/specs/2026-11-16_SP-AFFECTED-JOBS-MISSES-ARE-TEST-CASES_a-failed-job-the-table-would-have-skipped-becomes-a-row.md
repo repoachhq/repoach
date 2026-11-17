@@ -1,14 +1,14 @@
 ---
 id: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES
 title: A failed job the table would have skipped becomes a row of a committed table, replayed by a test
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-16
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
-  code: [src/repoach/affected/harvest.py, src/repoach/affected/misses.py, tests/unit/test_affected_misses.py, tests/fixtures/affected_jobs/misses.tsv, tests/fixtures/affected_jobs/harvest/]
+  code: [src/repoach/affected/gh.py, src/repoach/affected/harvest.py, src/repoach/affected/misses.py, src/repoach/affected/misses_cli.py, tests/unit/test_affected_misses.py, tests/fixtures/affected_jobs/misses.tsv, tests/fixtures/affected_jobs/harvest/]
   resources: [format:affected-jobs-misses]
 
 depends_on: [SP-AFFECTED-JOBS-TABLE, SP-CLI-STDOUT-ONE-JSON]
@@ -82,14 +82,60 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
 - D5. The harvest runs by hand and from `repoach release gate` as a
   report line (`affected-jobs misses: <new>/<failed jobs>` over the last 30
   merged pull requests), never as a refusal of the release.
+- D6 (0.3, how the harvest reads the forge). These are implementation
+  choices, each made so that nothing is read as narrower than it was.
+  - The window is `gh pr list --state merged --base <integration
+    branch> --limit N`, which lists newest first by creation.
+  - A pull request's runs are `gh run list --branch <head> --event
+    pull_request --workflow <ci.yml name>`, completed and created between
+    its opening and its merge, so a reused branch name lends no runs. A
+    listing that reaches its limit (200) is refused, never cut.
+  - Every attempt is read: a job that failed on any attempt counts as
+    failed.
+  - A job conclusion is a failure when it is `failure`, `timed_out` or
+    `startup_failure`. It is no failure when it is `success`, `neutral`,
+    `cancelled`, `skipped`, `action_required` (waiting for an approval,
+    nothing ran) or `stale` (a check run the forge superseded). Any other
+    conclusion is refused by name: exit 2 from harvest and replay, and a
+    `CorpusError` from `load_corpus`. Failed steps are the steps with a
+    failed conclusion.
+  - A head's paths come from `compare/<the pull request's .base.sha>...<head>`,
+    not `compare/develop...<head>`: a head merged by a merge commit is an
+    ancestor of `develop`, and its compare would list no file. A
+    `compare` status outside `ahead`, `diverged` and `identical` is
+    refused by name.
+  - In `replay`, a corpus failure that a `conflict` or `external` row
+    covers (same `run` and `job`) is not a miss. A `miss` row is judged
+    on its own paths. A job name that `ci.yml` does not produce is
+    refused by name (exit 2), never skipped.
+  - The release gate writes nothing. It prints the line on stderr and
+    puts it under `affected_jobs_misses` in its JSON. When the forge or
+    an input refuses, the line is `affected-jobs misses: cannot say:
+    <why>`.
 
 ## End state
 
 `repoach ci affected harvest --merged 30` regenerates the corpus from
-the forge in one command and says `misses: 0/15` today; `repoach ci
-affected replay` is what `tests/unit/test_affected_misses.py` calls;
-`misses.tsv` holds its header and no row, and the procedure that fills
-it is written where the merge gate's other rules are.
+the forge in one command; `repoach ci affected replay` is what
+`tests/unit/test_affected_misses.py` calls; the procedure that fills
+`misses.tsv` is written where the merge gate's other rules are.
+
+Measured 2026-11-17 (0.3), first harvest: #265-#302, 173 runs, 47
+failed jobs, `misses: 2/47`. The 2 were #293 run `43314128941`, a
+docs-only head: both `Test suite` legs failed on attempt 1, where
+`tests/integration/test_slow_settings_isolation_end_to_end.py` timed out
+after 60 s, and attempt 2 was cancelled. The TABLE corpus kept the
+latest attempt only, so it had shown them as `cancelled`. Through the
+procedure of D4 they became two `external` rows of `misses.tsv`. Since
+then, harvest and replay print `misses: 0/47`.
+
+Against the TABLE corpus (#260-#296), the paths of all 162 runs both
+corpora hold are identical, since TABLE 0.4 already read each head
+through `compare`. The differences are:
+- the window: #260-#264 and #292 (not merged) are out, #297-#302 are in;
+- earlier-attempt failures now counted: #281 run `41501648389` and #288
+  run `41910270088`, both selected;
+- the two keys of D6.
 
 ## Easy solution rejected
 
@@ -121,7 +167,7 @@ its reason in the report.
 
 ## Goals
 
-- G1: the corpus is regenerable from the forge in one command, per head, scrubbed; today's harvest prints `misses: 0/15`.
+- G1: the corpus is regenerable from the forge in one command, per head, scrubbed; a harvest of today's window prints `misses: 0/<failed jobs>` once each red has its row (0/47 on 2026-11-17).
 - G2: the replay is a test and a command, and a `miss` row is red until the table selects it.
 - G3: a red after a narrowed green has one written procedure, ending in a row.
 
@@ -138,25 +184,48 @@ its reason in the report.
 
 ## Interface
 
+Since 0.3 the interface is the one the code has. Three modules beyond
+0.2: `gh.py` holds the one `gh` runner, so the test suite can close it
+without importing the review package, and so `misses.py` imports no `gh`
+caller. `misses.py` holds the corpus models and `load_corpus`, since the
+replay reads them. `misses_cli.py` holds the three commands, registered
+on `repoach ci affected` from `cli/main.py`, because the TABLE module
+`affected/cli.py` importing them would be an edge TABLE -> MISSES and a
+cycle.
+
 ```python
-# src/repoach/affected/harvest.py
-class HeadRun(BaseModel):
-    pr: int; run: int; head_sha: str; paths: list[str]; paths_truncated: bool = False; jobs: list[JobOutcome]   # JobOutcome: name, conclusion, failed_steps
-class Harvest(BaseModel):
-    runs: list[HeadRun]; not_admitted: int   # runs whose every job was skipped by the actor allowlist: counted, never recorded
-def harvest(repo: str, *, merged: int, base: str, gh: Callable[..., str]) -> Harvest: ...   # F2 per head; raises HarvestError naming the gh command on failure
-def write_corpus(runs: Sequence[HeadRun], path: Path) -> None: ...   # atomic: temp file then replace, never a truncated corpus
+# src/repoach/affected/gh.py
+class HarvestError(RuntimeError): ...                      # names the gh command and the first line of its stderr
+def run_gh(*args: str) -> str: ...                         # the one forge reader; tests/conftest.py replaces it with a refusal
 
 # src/repoach/affected/misses.py
+class JobOutcome(BaseModel): name: str; conclusion: str; failed_steps: tuple[str, ...]
+class HeadRun(BaseModel):
+    pr: int; run: int; head_sha: str; paths: tuple[str, ...]; paths_truncated: bool; conclusion: str; jobs: tuple[JobOutcome, ...]
 class MissRow(BaseModel):
-    pr: int; run: int; head_sha: str; job: str; verdict: Literal["miss", "conflict", "external"]; paths: list[str]; note: str
-def load_misses(path: Path) -> list[MissRow]: ...        # refuses an unknown verdict, a duplicate key, an unsorted file
-def replay(corpus: Sequence[HeadRun], misses: Sequence[MissRow], table: AffectedTable, needs: Mapping[str, frozenset[str]]) -> ReplayReport: ...
+    pr: int; run: int; head_sha: str; job: str; verdict: Literal["miss", "conflict", "external"]; paths: tuple[str, ...]; note: str
+def load_corpus(path: Path) -> list[HeadRun]: ...          # CorpusError on any key the format does not define, or a missing one
+def load_misses(path: Path) -> list[MissRow]: ...          # MissesError: header, cell count, number, verdict, a miss without paths, duplicate key, unsorted
+def record_row(path: Path, row: MissRow) -> list[MissRow]: ...   # DuplicateRowError on (run, job); atomic, sorted, no other row changed
+def replay(corpus, misses, table, needs, check_names: Mapping[str, str]) -> ReplayReport: ...   # UnknownJobError on a name ci.yml does not produce
+class ReplayReport(BaseModel): failed_jobs: int; misses; new_misses; recorded; truncated
 
-# repoach ci affected harvest --merged 30 [--repo repoachhq/repoach] [--out tests/fixtures/affected_jobs/pr_runs.json]
-# repoach ci affected record --pr N --run ID --job NAME --verdict miss|conflict|external --note TEXT [--paths a;b]
-# repoach ci affected replay [--corpus …] [--misses …]
+# src/repoach/affected/harvest.py
+class Harvest(BaseModel): repo: str; runs: tuple[HeadRun, ...]; not_admitted: int
+def harvest(repo: str, *, merged: int, base: str, workflow: str, gh: GhRunner) -> Harvest: ...   # workflow = ci.yml's name
+def write_corpus(runs, path, *, repo: str, harvested: date, source: str) -> None: ...         # atomic: temp file then os.replace
+def harvest_and_replay(root, *, repo, merged, base, table, workflow, misses, gh) -> Harvested: ...   # inputs read before any forge call
+
+# repoach ci affected harvest [--merged 30] [--repo owner/name] [--out tests/fixtures/affected_jobs/pr_runs.json]
+#     --repo defaults to what `gh repo view` resolves for the working tree
+# repoach ci affected record --pr N --run ID --job NAME --verdict miss|conflict|external --note TEXT [--paths a;b] [--head-sha SHA]
+#     --paths and --head-sha default to the run's head in the corpus; a miss with no paths is refused (exit 2)
+# repoach ci affected replay [--corpus …] [--misses …] [--table …] [--workflow …]
 ```
+
+The corpus format is SP-AFFECTED-JOBS-TABLE's, extended: each head
+carries `paths_truncated`, each job `failed_steps`. The TABLE replay
+test reads the new key.
 
 Stdout: one JSON object per command (`SP-CLI-STDOUT-ONE-JSON`); the
 `MISS` lines and `misses: <new>/<failed jobs>` on stderr. Exit codes: 0; 1 a miss
@@ -168,8 +237,8 @@ nothing written.
 ### Nominal
 `harvest --merged 30` walks the merged pull requests newest first,
 reads each head's paths and jobs, writes the corpus, replays it against
-the table and prints `misses: 0/15`. `replay` on the committed corpus
-and the empty misses table exits 0.
+the table and prints `misses: 0/<failed jobs>`. `replay` on the committed corpus
+and the committed misses table exits 0.
 
 ### Edge cases
 - a job failed then passed on a re-run at the same head → the failure counts: a job the table would have skipped is still a job it would have skipped.
@@ -179,15 +248,15 @@ and the empty misses table exits 0.
 
 ### Failure scenarios
 - `gh` unauthenticated or rate-limited → exit 2 with the first line of its stderr, corpus untouched.
-- `misses.tsv` names a job `ci.yml` no longer defines → `test_the_misses_table_is_well_formed` red with the name; the row is kept and its `note` says what the job became.
+- `misses.tsv` names a job `ci.yml` no longer defines → `test_t4_the_misses_table_is_well_formed` red with the name; the row is kept and its `note` says what the job became.
 - a `compare` answer truncated (`files` at the 300-file cap) → that head is recorded with `paths_truncated: true` and the replay treats it as full class (every job selected), printed as such, so a truncated head can never be a false miss nor a false pass.
 
 ## Tests
 
 | # | File | Test | Mutation that turns it red |
 |---|---|---|---|
-| T1 | `tests/unit/test_affected_misses.py` | `replay` over the committed corpus and table → `misses: 0/15` | remove `tests/` from the python row |
-| T2 | same | `harvest` on a recorded `gh` fixture under `tests/fixtures/affected_jobs/harvest/` (two pull requests, three heads: one miss, one cancelled job, one not-admitted run) writes exactly the heads admitted, exit 1, one `MISS` line | count the cancelled job |
+| T1 | `tests/unit/test_affected_misses.py` | `replay` over the committed corpus and table → `misses: 0/<failed jobs>` | set the python row's `jobs = []` (`test_t1_replay_goes_red_when_the_python_row_selects_nothing`). Removing `tests/` from the row does not turn it red: those paths fall to "unknown → every job" (SP-AFFECTED-JOBS-TABLE T6) |
+| T2 | same | `harvest` on the `gh` answers of `tests/fixtures/affected_jobs/harvest/gh_answers.json` (two pull requests, three heads: one miss, one cancelled job, one not-admitted run; written in gh 2.62's shapes, not recorded live) writes exactly the heads admitted, exit 1, one `MISS` line | count the cancelled job |
 | T3 | same | `write_corpus` on a failing `gh` leaves the previous file byte-identical | write before the fetch completes |
 | T4 | same | the misses table is well formed: header, sort, unique keys, verdict vocabulary, jobs defined in `ci.yml` | shuffle two rows; invent a verdict |
 | T5 | same | a `conflict` or `external` row never fails the replay; a `miss` row whose job is unselected does | treat `external` as `miss` |
@@ -196,7 +265,7 @@ and the empty misses table exits 0.
 
 ## Success conditions
 
-- C1 (external oracle: the forge): `repoach ci affected harvest --merged 30` on the branch exits 0, prints `misses: 0/<n>`, and `git diff --stat tests/fixtures/affected_jobs/pr_runs.json` after it shows only per-head path differences against the session corpus (the verifier reads the diff and names two heads whose paths changed and why).
+- C1 (external oracle: the forge): `repoach ci affected harvest --merged 30` on the branch exits 0, prints `misses: 0/<n>`, and `git diff --stat tests/fixtures/affected_jobs/pr_runs.json` after it shows only per-head path differences against the session corpus (the verifier reads the diff and names two heads whose paths changed and why). Since 0.3: the TABLE corpus was already per head, so no common run's paths change; the verifier names instead two runs whose outcome changed (#281 run `41501648389`, #293 run `43314128941`: earlier-attempt failures) and the window shift (End state).
 - C2: `repoach ci affected replay` exits 0; after `repoach ci affected record --pr 0 --run 0 --job "Test suite (Python 3.11)" --verdict miss --paths docs/x.md --note probe` it exits 1 naming the row, and `git checkout tests/fixtures/affected_jobs/misses.tsv` restores it.
 - C3: `docs/merge_gate.md` has the four-step section of D4; `pytest -q tests/unit/test_affected_misses.py` green with T1–T7 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
@@ -204,6 +273,7 @@ and the empty misses table exits 0.
 - Adds dependency: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES -> SP-AFFECTED-JOBS-TABLE (`select`, `load_table`, `workflow_jobs`, the corpus format)
 - Adds dependency: SP-RELEASE-GATE -> SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES (D5: `repoach release gate` calls `harvest` and `replay` for its report line; `replay` itself imports no `gh` caller)
 - Adds dependency: SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES -> SP-CLI-STDOUT-ONE-JSON
+- Adds dependency (0.3): SP-STRUCTLOG-CACHE-TEST-FIXTURE -> SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES (`tests/conftest.py` replaces `repoach.affected.gh.run_gh` with a refusal, so no test reads the forge; declared in that spec's `depends_on`)
 - New resource: `format:affected-jobs-misses`. `gh` is called through `subprocess`, as the lint scripts do; no import from `forge`. No cycle.
 
 ## Diagram
@@ -218,7 +288,7 @@ flowchart LR
 
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_affected_misses.py` → green. Today (`f16702b`): no such file.
-- [ ] AC2: `repoach ci affected replay` → exit 0, `misses: 0/15` on stderr.
+- [ ] AC2: `repoach ci affected replay` → exit 0, `misses: 0/<failed jobs>` on stderr (0/47 on 2026-11-17).
 - [ ] AC3: `docs/merge_gate.md` carries the section of D4, dated.
 - [ ] AC4: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 

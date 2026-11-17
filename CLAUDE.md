@@ -170,7 +170,13 @@ runs the gate (arch check, the CONTRIBUTING and attribution lints,
 selected, and the `--wheel` block when a wheel job is; that block refuses
 by name when `build`, `twine` or `pipx` is missing.
 The path-to-job table is `.github/affected-jobs.toml`
-(SP-AFFECTED-JOBS-TABLE).
+(SP-AFFECTED-JOBS-TABLE). `repoach ci affected harvest --merged 30`
+rewrites its corpus (`tests/fixtures/affected_jobs/pr_runs.json`) from
+the forge and names each failed job the table would have skipped;
+`repoach ci affected replay` judges the corpus and
+`tests/fixtures/affected_jobs/misses.tsv`, and `record` adds a row to the
+latter (SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES, procedure in
+`docs/merge_gate.md`).
 
 Pair with `repoach review pr <N>` to run the review-bot team
 locally too.

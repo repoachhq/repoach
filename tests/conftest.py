@@ -82,6 +82,27 @@ def _no_transport_retry_window(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_harvest_forge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse every ``gh`` read of the affected-jobs harvest.
+
+    ``repoach release gate`` harvests the last merged pull requests for
+    its affected-jobs report line (SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES
+    D5). Un-patched, every test of the gate would make hundreds of live
+    ``gh`` calls on an authenticated box and none on CI. The seam is
+    :func:`repoach.affected.gh.run_gh`, read at call time; the
+    harvest tests pass their own runner, and the test of ``run_gh``
+    itself holds the function it imported before this patch.
+    """
+
+    def _refuse(*args: str) -> str:
+        from repoach.affected.gh import HarvestError
+
+        raise HarvestError(["gh", *args], "the test suite reads no forge")
+
+    monkeypatch.setattr("repoach.affected.gh.run_gh", _refuse)
+
+
 FAKE_SHA = "0" * 40
 """The tip and merge base ``base_resolves`` reports: no commit of any clone, never a real value."""
 
