@@ -444,47 +444,55 @@ def init_findings_schema(db_path: Path) -> None:
     _migrate_missing_findings_columns(engine)
 
 
+_ADDED_FINDINGS_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "pr_findings",
+        "verify_attempts",
+        "INTEGER NOT NULL DEFAULT 0",
+        "SP-PROPOSED-ESCALATION 1/5",
+    ),
+    (
+        "pr_findings",
+        "last_seen_at",
+        "TEXT NOT NULL DEFAULT ''",
+        "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
+    ),
+    (
+        "pr_findings",
+        "last_run_id",
+        "TEXT NOT NULL DEFAULT ''",
+        "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
+    ),
+    (
+        "pr_findings",
+        "budget_used",
+        "INTEGER NOT NULL DEFAULT 0",
+        "SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS 0.2",
+    ),
+)
+"""Columns added after ``pr_findings`` first shipped: ``(table, column, ddl, spec)``.
+
+:func:`init_findings_schema` adds the absent ones to an older database;
+the ledger format check (:mod:`repoach.review.ledger_format`) reads the
+same list to know which absent columns this reader heals on open.
+"""
+
+
 def _migrate_missing_findings_columns(engine: Engine) -> None:
     """Add columns introduced post-creation to older findings databases.
 
-    Each entry is a single ``ALTER TABLE`` documented with the spec that
-    introduced it.  Idempotent -- checks ``has_column`` first.
+    Each entry of :data:`_ADDED_FINDINGS_COLUMNS` is a single ``ALTER
+    TABLE`` documented with the spec that introduced it.  Idempotent --
+    checks ``has_column`` first.
 
     Args:
         engine: SQLAlchemy engine bound to the findings database.
     """
     from sqlalchemy import text
 
-    migrations = (
-        (
-            "pr_findings",
-            "verify_attempts",
-            "INTEGER NOT NULL DEFAULT 0",
-            "SP-PROPOSED-ESCALATION 1/5",
-        ),
-        (
-            "pr_findings",
-            "last_seen_at",
-            "TEXT NOT NULL DEFAULT ''",
-            "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
-        ),
-        (
-            "pr_findings",
-            "last_run_id",
-            "TEXT NOT NULL DEFAULT ''",
-            "SP-FINDINGS-BRIDGE-DOCFIX 0.2",
-        ),
-        (
-            "pr_findings",
-            "budget_used",
-            "INTEGER NOT NULL DEFAULT 0",
-            "SP-REFUTER-VETO-NAMES-REAL-IDENTIFIERS 0.2",
-        ),
-    )
-
     inspector = inspect(engine)
     with engine.begin() as conn:
-        for table, column, ddl, _release in migrations:
+        for table, column, ddl, _release in _ADDED_FINDINGS_COLUMNS:
             if not inspector.has_table(table):
                 continue
             existing = {col["name"] for col in inspector.get_columns(table)}
