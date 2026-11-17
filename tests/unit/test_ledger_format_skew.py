@@ -588,8 +588,10 @@ def test_t6_rows_checked_counts_this_pr_only_and_an_empty_pr_proceeds(tmp_path: 
 @pytest.mark.parametrize(
     ("value", "message"),
     [
-        ("x", "ledger_meta.format='x' is not an integer"),
+        ("x", "ledger_meta.format='x' is not a positive integer"),
         ("0", "ledger_meta.format='0' is not a positive integer"),
+        ("-1", "ledger_meta.format='-1' is not a positive integer"),
+        ("١", "ledger_meta.format='١' is not a positive integer"),
     ],
 )
 def test_a_stamp_that_is_not_a_format_is_named(tmp_path: Path, value: str, message: str) -> None:

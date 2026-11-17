@@ -267,12 +267,7 @@ def _read_stamp(conn: Connection, tables: set[str], reader: str) -> tuple[int, s
     raw = meta.get("format")
     if raw is None:
         raise LedgerSkewError(f"ledger_meta.format missing ({versions})", writer_format=0)
-    try:
-        stamped = int(raw)
-    except ValueError:
-        raise LedgerSkewError(
-            f"ledger_meta.format={raw!r} is not an integer ({versions})", writer_format=0
-        ) from None
+    stamped = int(raw) if raw.isascii() and raw.isdecimal() else 0
     if stamped < 1:
         raise LedgerSkewError(
             f"ledger_meta.format={raw!r} is not a positive integer ({versions})", writer_format=0
