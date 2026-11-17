@@ -746,6 +746,10 @@ def review_fix(
     guard, runs ``ruff`` + ``pytest``, commits + pushes if green, then
     re-verifies each finding's resolution at head.
 
+    Once the Coder returns, an existing ledger is stamped with this code's
+    format (SP-LEDGER-FORMAT-IS-VERSIONED): the coder job re-uploads the
+    rows this code wrote, whatever the in-run re-review does next.
+
     Exit codes:
       * ``0`` — fixes applied & pushed (the in-run re-review takes over).
       * ``4`` — nothing to fix (no open blocking findings, or pytest red
@@ -781,6 +785,9 @@ def review_fix(
         raise base_ref_refusal(exc, prints_json=True, pr_number=pr_number) from exc
     except ForgeError as exc:
         raise _forge_failure(exc) from exc
+    ledger = Path(get_settings().db_path)
+    if ledger.is_file():
+        stamp_ledger(ledger)
     typer.echo(
         json.dumps(
             {

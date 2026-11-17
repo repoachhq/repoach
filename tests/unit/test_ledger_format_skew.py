@@ -34,6 +34,7 @@ from repoach.review.auto_merge import (
     merge_exit_code,
     run_auto_merge,
 )
+from repoach.review.coder_findings import CoderFindingsResult
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -727,6 +728,44 @@ def test_review_pr_stamps_the_ledger_it_wrote(
     monkeypatch.setattr(review_cmds, "run_review", review)
     monkeypatch.chdir(REPO_ROOT)
     CliRunner().invoke(review_cmds.review_app, ["pr", "42", "--dry-run"])
+    with sqlite3.connect(db) as conn:
+        meta = dict(conn.execute("SELECT key, value FROM ledger_meta"))
+    assert meta["format"] == str(LEDGER_FORMAT)
+    assert meta["written_by"] == READER
+
+
+def test_review_fix_restamps_the_ledger_it_rewrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "review.db"
+    seed_review(db, 259, HEAD_259)
+    stamp(db, written_by="an older review job")
+    settings = get_settings().model_copy(update={"db_path": db})
+    monkeypatch.setattr(review_cmds, "get_settings", lambda: settings)
+
+    def fix(pr_number: int, **_kwargs: object) -> CoderFindingsResult:
+        record_finding(
+            db,
+            Finding(
+                pr_number=pr_number,
+                head_sha=HEAD_259,
+                round=2,
+                finder="coder",
+                claim_type=ClaimType.BROKEN_BEHAVIOR,
+                severity=Severity.BLOCKING,
+                file="README.md",
+                line_start=1,
+                line_end=1,
+                claim="a row the coder lane writes",
+                evidence_pointer="README.md:1",
+            ),
+        )
+        return CoderFindingsResult(pr_number=pr_number, pushed=True)
+
+    monkeypatch.setattr(review_cmds, "run_coder_fix_from_findings", fix)
+    monkeypatch.chdir(REPO_ROOT)
+    result = CliRunner().invoke(review_cmds.review_app, ["fix", "259"])
+    assert result.exit_code == 0, result.output
     with sqlite3.connect(db) as conn:
         meta = dict(conn.execute("SELECT key, value FROM ledger_meta"))
     assert meta["format"] == str(LEDGER_FORMAT)
