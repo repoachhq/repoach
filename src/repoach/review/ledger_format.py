@@ -64,7 +64,7 @@ from .findings import (
 )
 from .generated_store import generated_checks, record_generated_checks
 from .generated_types import GeneratedCheck, GeneratedState, ScriptRef
-from .persistence import _ADDED_REVIEW_COLUMNS, _pr_merges, init_schema
+from .persistence import _ADDED_REVIEW_COLUMNS, _pr_merges, init_schema, record_merge
 from .spec_gate import _ADDED_COLUMNS as _ADDED_COVERAGE_COLUMNS
 from .spec_gate import ContractKind, SpecCoverage, _pr_spec_coverage, record_spec_coverages
 
@@ -139,6 +139,53 @@ value the writer meant otherwise. All six are checked, so none of them
 reaches its decoder unknown.
 """
 
+
+class JsonColumn(NamedTuple):
+    """A ledger TEXT column whose stored value is JSON of a declared shape.
+
+    Attributes:
+        table: The ledger table.
+        column: The column name.
+        shape: ``list[str]`` or ``dict[str, str]``, the JSON the writer encodes.
+        empty_allowed: Whether ``NULL`` or ``""`` stand for "none recorded"
+            (a column added after its table first shipped, or written
+            empty on purpose).
+    """
+
+    table: Table
+    column: str
+    shape: str
+    empty_allowed: bool
+
+    def declared(self) -> str:
+        """The shape as the snapshot records it."""
+        return f"{self.shape} or empty" if self.empty_allowed else self.shape
+
+
+_LIST_OF_STR = "list[str]"
+_DICT_OF_STR = "dict[str, str]"
+
+JSON_COLUMNS: tuple[JsonColumn, ...] = (
+    JsonColumn(generated_checks, "argv", _LIST_OF_STR, empty_allowed=False),
+    JsonColumn(generated_checks, "sources_changed", _LIST_OF_STR, empty_allowed=False),
+    JsonColumn(generated_checks, "producer_inputs_changed", _LIST_OF_STR, empty_allowed=False),
+    JsonColumn(_pr_merges, "pending_checks", _LIST_OF_STR, empty_allowed=True),
+    JsonColumn(_pr_spec_coverage, "origins", _DICT_OF_STR, empty_allowed=True),
+)
+"""Every JSON-encoded column of the gate tables, with the shape its writer encodes.
+
+The three ``generated_checks`` lists are decoded by ``json.loads`` with no
+guard, so a value that is not JSON raised in the gate.
+``pending_checks`` and ``origins`` are decoded by a fallback that logs
+and reads an undecodable value as none, which silently drops what the
+writer recorded; they are checked for the same reason as ``contract``.
+``pr_spec_coverage``'s ``missing``, ``planned``, ``draft_refusals`` and
+``report`` are separator-joined text, not JSON: any string decodes.
+"""
+
+_SHOWN_CHARS = 60
+"""How much of an undecodable value a refusal quotes."""
+
 _UNSTAMPED = "(unstamped)"
 
 
@@ -197,18 +244,19 @@ class LedgerCheck(BaseModel):
 
 
 def snapshot() -> dict[str, object]:
-    """Return the live ledger shape: every table's columns and every enum column's values.
+    """Return the live ledger shape: columns, enum values and JSON encodings.
 
     Returns:
-        ``{"tables": {name: ["<column> <TYPE>", ...]}, "enums": {"<table>.<column>": [values]}}``,
-        columns and values in declaration order.
+        ``{"tables": {name: ["<column> <TYPE>", ...]}, "enums": {"<table>.<column>": [values]},
+        "json": {"<table>.<column>": "<shape>"}}``, in declaration order.
     """
     tables = {
         table.name: [f"{column.name} {column.type}" for column in table.columns]
         for table in (*GATE_TABLES, ledger_meta)
     }
     enums = {f"{entry.table.name}.{entry.column}": list(entry.values) for entry in ENUM_COLUMNS}
-    return {"tables": tables, "enums": enums}
+    encodings = {f"{entry.table.name}.{entry.column}": entry.declared() for entry in JSON_COLUMNS}
+    return {"tables": tables, "enums": enums, "json": encodings}
 
 
 def stamp(db_path: Path, *, written_by: str | None = None) -> None:
@@ -283,7 +331,9 @@ def check(db_path: Path, pr_number: int, *, reader: str | None = None) -> Ledger
     lacks (on a ledger older than this reader, the columns this reader's
     own migrations add on open are exempt: it heals them, as it always
     did); a distinct value of an :data:`ENUM_COLUMNS` column among the
-    pull request's rows that its vocabulary does not define.
+    pull request's rows that its vocabulary does not define; a distinct
+    value of a :data:`JSON_COLUMNS` column among those rows that is not
+    JSON of its declared shape.
 
     Args:
         db_path: The ledger database; an absent file is an empty,
@@ -320,6 +370,7 @@ def check(db_path: Path, pr_number: int, *, reader: str | None = None) -> Ledger
                 )
             _check_columns(conn, tables, stamped, versions)
             rows = _check_enum_values(conn, tables, pr_number, stamped, versions)
+            _check_json_values(conn, tables, pr_number, stamped, versions)
     finally:
         engine.dispose()
     return LedgerCheck(
@@ -380,6 +431,46 @@ def _check_enum_values(
     )
 
 
+def _has_shape(decoded: object, shape: str) -> bool:
+    """Whether a decoded JSON value is of ``shape``."""
+    if shape == _LIST_OF_STR:
+        return isinstance(decoded, list) and all(isinstance(item, str) for item in decoded)
+    return isinstance(decoded, dict) and all(
+        isinstance(key, str) and isinstance(value, str) for key, value in decoded.items()
+    )
+
+
+def _check_json_values(
+    conn: Connection, tables: set[str], pr_number: int, stamped: int, versions: str
+) -> None:
+    """Raise on the first value of the PR's rows that is not JSON of its column's shape."""
+    for entry in JSON_COLUMNS:
+        table = entry.table
+        if table.name not in tables:
+            continue
+        present = {column["name"] for column in inspect(conn).get_columns(table.name)}
+        if entry.column not in present:
+            continue
+        query = select(distinct(table.c[entry.column])).where(table.c.pr_number == pr_number)
+        for value in conn.execute(query).scalars():
+            if entry.empty_allowed and value in (None, ""):
+                continue
+            shown = value if not isinstance(value, str) else value[:_SHOWN_CHARS]
+            refusal = LedgerSkewError(
+                f"{table.name}.{entry.column}={shown!r} is not JSON {entry.declared()} "
+                f"this reader knows ({versions})",
+                writer_format=stamped,
+            )
+            if not isinstance(value, str):
+                raise refusal
+            try:
+                decoded = json.loads(value)
+            except ValueError as exc:
+                raise refusal from exc
+            if not _has_shape(decoded, entry.shape):
+                raise refusal
+
+
 def _demo_generated_pairs() -> list[tuple[GeneratedState, ScriptRef]]:
     """One ``(state, script_ref)`` per state, cycling the script refs so each appears."""
     refs: tuple[ScriptRef, ...] = get_args(ScriptRef)
@@ -390,8 +481,10 @@ def demo_ledger(db_path: Path, pr_number: int = 0, *, written_by: str | None = N
     """Write a ledger that carries every value this code defines, then stamp it.
 
     One finding per value of each ``pr_findings`` enum, one coverage row
-    per contract kind, one generated check per state (the script refs
-    cycling), and one integrity row, every gate table created.
+    per contract kind (the first with an origin), one generated check per
+    state (the script refs cycling, each list non-empty), one integrity
+    row and one merge attempt with a pending check, every gate table
+    created and every :data:`JSON_COLUMNS` column holding a value.
 
     Args:
         db_path: The ledger to write.
@@ -443,6 +536,7 @@ def demo_ledger(db_path: Path, pr_number: int = 0, *, written_by: str | None = N
                 missing=[],
                 covered=True,
                 contract=contract,
+                origins={"tests/test_demo.py::test_demo": "AC1"} if index == 0 else {},
             )
             for index, contract in enumerate(get_args(ContractKind))
         ],
@@ -457,18 +551,30 @@ def demo_ledger(db_path: Path, pr_number: int = 0, *, written_by: str | None = N
                 argv=("true",),
                 head_sha=head,
                 artefact_sha256="",
-                sources_changed=(),
+                sources_changed=("README.md",),
                 state=state,
                 exit_code=0,
                 duration_ms=0,
                 output_tail="",
                 script_ref=script_ref,
+                producer_inputs_changed=("pyproject.toml",),
             )
             for index, (state, script_ref) in enumerate(_demo_generated_pairs())
         ],
     )
     record_review_integrity(
         db_path, pr_number=pr_number, head_sha=head, n_reviewers=4, n_unparsed=0
+    )
+    record_merge(
+        db_path,
+        pr_number=pr_number,
+        outcome="SKIP_DEMO",
+        base_ref="develop",
+        head_ref="demo",
+        merged_sha=None,
+        notes="demo",
+        head_sha=head,
+        pending_checks=("ci",),
     )
     stamp(db_path, written_by=written_by)
 

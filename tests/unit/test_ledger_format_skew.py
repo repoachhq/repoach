@@ -177,6 +177,21 @@ OTHER_ENUMS_AT_DEVELOP = {
 }
 """The vocabularies outside ``pr_findings`` the gate decodes, as ``origin/develop`` defines them."""
 
+JSON_AT_DEVELOP = {
+    "generated_checks.argv": "list[str]",
+    "generated_checks.sources_changed": "list[str]",
+    "generated_checks.producer_inputs_changed": "list[str]",
+    "pr_merges.pending_checks": "list[str] or empty",
+    "pr_spec_coverage.origins": "dict[str, str] or empty",
+}
+"""The JSON encodings ``origin/develop``'s writers produce.
+
+``record_generated_checks`` writes ``json.dumps(list(...))`` of str tuples,
+``record_merge`` ``json.dumps(list(pending_checks))`` into a column added
+nullable, ``record_spec_coverages`` ``json.dumps(origins)`` of a
+``dict[str, str]`` or ``""``.
+"""
+
 
 def _sql(db: Path, *statements: str) -> None:
     with sqlite3.connect(db) as conn:
@@ -333,6 +348,66 @@ def test_t3_an_unknown_generated_state_is_named_where_its_decoder_raises(tmp_pat
     with pytest.raises(
         LedgerSkewError, match=r"^generated_checks\.state='generated_artefact_later' "
     ):
+        check(db, 259)
+
+
+@pytest.mark.parametrize(
+    ("table", "column", "stored", "shape"),
+    [
+        ("generated_checks", "argv", "make", "list[str]"),
+        ("generated_checks", "argv", '"make"', "list[str]"),
+        ("generated_checks", "argv", "[1]", "list[str]"),
+        ("generated_checks", "argv", "", "list[str]"),
+        ("generated_checks", "sources_changed", "{}", "list[str]"),
+        ("generated_checks", "producer_inputs_changed", "a,b", "list[str]"),
+        ("pr_merges", "pending_checks", "ci", "list[str] or empty"),
+        ("pr_merges", "pending_checks", '{"ci": 1}', "list[str] or empty"),
+        ("pr_spec_coverage", "origins", "[]", "dict[str, str] or empty"),
+        ("pr_spec_coverage", "origins", '{"t": 1}', "dict[str, str] or empty"),
+    ],
+)
+def test_t3_a_json_column_value_off_its_declared_shape_is_named(
+    tmp_path: Path, table: str, column: str, stored: str, shape: str
+) -> None:
+    db = _demo(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            f"UPDATE {table} SET {column} = ? WHERE id = (SELECT min(id) FROM {table})", (stored,)
+        )
+    with pytest.raises(LedgerSkewError) as raised:
+        check(db, 259)
+    assert str(raised.value) == (
+        f"{table}.{column}={stored!r} is not JSON {shape} this reader knows "
+        f"(written by repoach 0.2.0.dev14+gabc1234; this gate is repoach {READER})"
+    )
+    assert raised.value.needed_format == LEDGER_FORMAT + 1
+    _sql(db, f"UPDATE {table} SET pr_number = 7")
+    assert check(db, 259).rows_checked == N_DEMO
+
+
+@pytest.mark.parametrize(
+    ("table", "column", "stored"),
+    [
+        ("pr_merges", "pending_checks", None),
+        ("pr_merges", "pending_checks", ""),
+        ("pr_spec_coverage", "origins", ""),
+    ],
+)
+def test_t3_an_empty_value_where_the_column_allows_none_proceeds(
+    tmp_path: Path, table: str, column: str, stored: str | None
+) -> None:
+    db = _demo(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute(f"UPDATE {table} SET {column} = ?", (stored,))
+    assert check(db, 259).rows_checked == N_DEMO
+
+
+def test_t3_an_argv_that_is_not_json_is_named_where_its_decoder_raises(tmp_path: Path) -> None:
+    db = _demo(tmp_path)
+    _sql(db, "UPDATE generated_checks SET argv = 'make' WHERE id = 1")
+    with pytest.raises(json.JSONDecodeError):
+        fetch_generated_checks(db, 259, "0" * 40)
+    with pytest.raises(LedgerSkewError, match=r"^generated_checks\.argv='make' is not JSON "):
         check(db, 259)
 
 
@@ -638,6 +713,7 @@ def test_t7_format_1_is_what_the_ledger_already_was() -> None:
         assert committed["tables"][table] == columns
     assert committed["tables"]["ledger_meta"] == ["key VARCHAR", "value VARCHAR"]
     assert set(committed["tables"]) == {*OTHER_TABLES_AT_5CEA5A7, "pr_findings", "ledger_meta"}
+    assert committed["json"] == JSON_AT_DEVELOP
 
 
 def test_t8_demo_ledger_carries_every_enum_value_and_passes(tmp_path: Path) -> None:
@@ -663,6 +739,13 @@ def test_t8_demo_ledger_carries_every_enum_value_and_passes(tmp_path: Path) -> N
         len(GeneratedState),
     )
     assert len(get_args(ScriptRef)) == 2
+    with sqlite3.connect(db) as conn:
+        for entry in ledger_format.JSON_COLUMNS:
+            stored = {
+                row[0]
+                for row in conn.execute(f"SELECT DISTINCT {entry.column} FROM {entry.table.name}")
+            }
+            assert any(value not in (None, "", "[]", "{}") for value in stored), entry.column
     assert meta["format"] == str(LEDGER_FORMAT)
     assert meta["written_by"] == "0.2.0.dev14+gabc1234"
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00", meta["written_at"])

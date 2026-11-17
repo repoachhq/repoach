@@ -47,6 +47,13 @@
       ""
     ]
   },
+  "json": {
+    "generated_checks.argv": "list[str]",
+    "generated_checks.producer_inputs_changed": "list[str]",
+    "generated_checks.sources_changed": "list[str]",
+    "pr_merges.pending_checks": "list[str] or empty",
+    "pr_spec_coverage.origins": "dict[str, str] or empty"
+  },
   "tables": {
     "generated_checks": [
       "id INTEGER",
