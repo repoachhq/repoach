@@ -1,7 +1,7 @@
 ---
 id: SP-LEDGER-FORMAT-IS-VERSIONED
 title: The findings ledger carries its format and writer version; a value, column or format the reader does not know is a named refusal on the pull request, never a traceback
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-17
@@ -58,7 +58,8 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
 - D1. One integer, `LEDGER_FORMAT`, over every ledger table the gate
   reads (F6), starting at 1. Its definition is a committed snapshot,
   `tests/fixtures/ledger_format/<N>.json`: for each table its column
-  names and types, and for each enum column its values, derived from
+  names and types, for each enum column its values, and (0.5) for each
+  JSON-encoded column its declared shape, derived from
   the live `Table` objects and enums by `ledger_format.snapshot()`.
   Snapshots are append-only (one file per format ever defined). A test
   derives the live snapshot and compares it to `<LEDGER_FORMAT>.json`:
@@ -180,6 +181,29 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
     `ScriptRef` from SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ's files;
     the `review fix` stamp test builds a `CoderFindingsResult`
     (SP-DEDUP-CLASSIFICATION-CONSTANTS). The dependency cycles stay 27.
+- D10 (amendment 0.5, verifier residual, 2026-11-17). A shape includes
+  the encoding of a JSON TEXT column: D1's snapshot gains `json`,
+  `<table>.<column>` → `list[str]`, `dict[str, str]`, `… or empty`
+  where `NULL`/`""` stand for none. A `generated_checks` row with
+  `argv='make'` passed `check` and then raised `JSONDecodeError` in
+  `settlements_at_head`. `check` now decodes, for the pull request's
+  rows, every JSON column of the five gate tables:
+  `generated_checks.{argv,sources_changed,producer_inputs_changed}`
+  (`list[str]`, decoded with no guard), `pr_merges.pending_checks`
+  (`list[str] or empty`) and `pr_spec_coverage.origins`
+  (`dict[str, str] or empty`). A value that does not decode or has
+  another shape is `<table>.<column>='<value, 60 chars>' is not JSON
+  <shape> this reader knows`, `SKIP_LEDGER_SKEW`. `pending_checks` and
+  `origins` are decoded by a fallback that logs and reads a bad value
+  as none, dropping what the writer recorded: they are checked for the
+  reason D9 checks `contract`. `missing`, `planned`, `draft_refusals`
+  and `report` are separator-joined text, not JSON: any string decodes,
+  so they declare no shape. The decoders stay as their specs own them
+  (SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ for the three lists); the
+  check runs before them on both entry points. Bootstrap: the declared
+  shapes are what `origin/develop` `92cd241` writes
+  (`record_generated_checks`, `record_merge`, `record_spec_coverages`,
+  unchanged by this branch); T7 pins them. No column or value is added.
 
 ## End state
 
@@ -314,12 +338,12 @@ A stamped ledger of format `LEDGER_FORMAT` with known values →
 |---|---|---|---|
 | T1 | `tests/unit/test_ledger_format_skew.py` | `test_live_snapshot_matches_the_committed_format`: `snapshot()` equals `tests/fixtures/ledger_format/1.json` | add `Severity.LATER = "later"` without bumping |
 | T2 | same | the newer-shaped payload: `tests/fixtures/ledger_skew/format_2_with_later_severity.sql` (a text dump: `ledger_meta` format 2, writer `repoach 9.9.9`, a `pr_findings` row with `severity='later'`) loaded into a temp SQLite → `check` raises naming `format 2 is newer than this reader's 1` and both versions | skip the format comparison |
-| T3 | same | same format, one row `severity='later'` → raises naming `pr_findings.severity='later'`; same for `status` and `claim_type`, and (0.4) for `pr_spec_coverage.contract`, `generated_checks.state` and `generated_checks.script_ref`, scoped to the pull request's rows; `fetch_generated_checks` raises `ValueError` on the same ledger | drop one of the six entries of `ENUM_COLUMNS` |
+| T3 | same | same format, one row `severity='later'` → raises naming `pr_findings.severity='later'`; same for `status` and `claim_type`, and (0.4) for `pr_spec_coverage.contract`, `generated_checks.state` and `generated_checks.script_ref`, scoped to the pull request's rows; `fetch_generated_checks` raises `ValueError` on the same ledger (0.5) A JSON column value off its declared shape (`argv='make'`, `'[1]'`, `''`; `pending_checks='ci'`; `origins='[]'`) is named; `NULL`/`''` proceed where the column allows none. | drop one of the six entries of `ENUM_COLUMNS` or the five of `JSON_COLUMNS` |
 | T4 | same | a declared column dropped from the fixture (`ALTER TABLE … DROP COLUMN budget_used`) → raises naming the column before any row is read, for each of the five gate tables; an unstamped ledger lacking the healed `contract` column proceeds | let `select` raise `OperationalError`; query an absent healed column |
 | T5 | same | `run_auto_merge` with a forge fake and a skewed ledger → outcome `SKIP_LEDGER_SKEW`, `merge_exit_code` 5, one attempt recorded with the reason; `review gate` prints the line and exits 5; no traceback (`capsys`) | let `LedgerSkewError` propagate |
 | T6 | same | an unstamped ledger with known values proceeds; a stamped lower format proceeds; `rows_checked` counts the pull request's rows only | refuse format 0 |
-| T7 | same | format 1 is what the ledger already was: `1.json` lists exactly 3 severities, 10 statuses, 8 claim types and the 20 `pr_findings` columns of F4, plus the columns of `pr_review_integrity`, `pr_spec_coverage` and `pr_merges` as they are on `origin/develop` `5cea5a7`, and (0.4) `generated_checks`'s 17 columns, the 6 `GeneratedState` values, the 2 `ScriptRef` values and the 5 `ContractKind` values as they are on `origin/develop` `92cd241` | add an enum value or a column in this pull request |
-| T8 | same | `demo_ledger` writes one finding per value of every enum, one coverage row per contract kind and one generated check per state (both script refs among them), stamped; `check` on it passes with `rows_checked == 8 + 3 + 10 == 21` (the `pr_findings` rows) | leave an enum out |
+| T7 | same | format 1 is what the ledger already was: `1.json` lists exactly 3 severities, 10 statuses, 8 claim types and the 20 `pr_findings` columns of F4, plus the columns of `pr_review_integrity`, `pr_spec_coverage` and `pr_merges` as they are on `origin/develop` `5cea5a7`, and (0.4) `generated_checks`'s 17 columns, the 6 `GeneratedState` values, the 2 `ScriptRef` values and the 5 `ContractKind` values as they are on `origin/develop` `92cd241` (0.5) `json` equals what develop's three writers encode. | add an enum value or a column in this pull request |
+| T8 | same | `demo_ledger` writes one finding per value of every enum, one coverage row per contract kind and one generated check per state (both script refs among them), stamped; `check` on it passes with `rows_checked == 8 + 3 + 10 == 21` (the `pr_findings` rows) (0.5) Every JSON column holds a non-empty value. | leave an enum out |
 | T9 | same | `scripts/skew_replay.sh HEAD HEAD` exits 0 with `ledger: ok`; the test runs the working tree's script (0.4: not the clone's committed copy, so an uncommitted edit is the one judged) inside a temp clone whose refs it replays, `--keep` absent, and asserts `tmp/skew/` is removed | leave the worktrees behind; check with the writer's code (both uncommitted) |
 
 ## Success conditions

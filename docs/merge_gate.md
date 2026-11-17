@@ -247,7 +247,11 @@ define is a named refusal, never a traceback.
   heals them, as it always did); a value, among the pull request's
   rows, of `pr_findings.claim_type`, `severity` or `status`,
   `pr_spec_coverage.contract`, `generated_checks.state` or
-  `script_ref` outside the vocabulary the reader decodes it into.
+  `script_ref` outside the vocabulary the reader decodes it into; a
+  value of a JSON column (`generated_checks.argv`, `sources_changed`,
+  `producer_inputs_changed`, `pr_merges.pending_checks`,
+  `pr_spec_coverage.origins`) that does not decode as its declared
+  shape (`list[str]`, `dict[str, str]`).
 - The outcome is `SKIP_LEDGER_SKEW`, exit 5, recorded in `pr_merges`
   and in the merge attempts comment:
   `SKIP_LEDGER_SKEW — ledger skew: pr_findings.severity='later' is not a Severity this reader knows (written by repoach 0.2.0.dev14+gabc1234; this gate is repoach 0.1.0); a release carrying format 2 is needed before this lane can judge this head`.
