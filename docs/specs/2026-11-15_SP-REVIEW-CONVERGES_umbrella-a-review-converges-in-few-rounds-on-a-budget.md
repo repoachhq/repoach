@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-CONVERGES
 title: Umbrella — a review converges in a few rounds, remembers every round, re-raises nothing settled, reviews the delta, blocks only on minor and worse, and runs on a metered budget
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-15
@@ -11,7 +11,7 @@ owns:
   code: []
   resources: []
 
-depends_on: [SP-ANTHROPIC-BUDGET-GUARD, SP-SUBSCRIPTION-LIMIT-IS-NAMED, SP-REVIEW-CHAINS-ANTHROPIC-FIRST, SP-REVIEW-NITS-ONE-COMMENT, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-REVIEW-DELTA-FIRST, SP-REVIEW-FABLE-TIER]
+depends_on: [SP-ANTHROPIC-BUDGET-GUARD, SP-SUBSCRIPTION-LIMIT-IS-NAMED, SP-REVIEW-CHAINS-ANTHROPIC-FIRST, SP-REVIEW-NITS-ONE-COMMENT, SP-REVIEW-REMEMBERS-EVERY-ROUND, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-REVIEW-DELTA-FIRST, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-FORGE-RESOLVES-THREADS, SP-THREAD-REPLY-AGENT, SP-GITLAB-NOTE-RECEIVER, SP-REVIEW-FABLE-TIER]
 provides_to: []
 
 constraints:
@@ -94,7 +94,7 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 
 ## Goals
 
-- G1 (order): eight specs, each its own pull request, in this order, each green on its tests and on `repoach arch check` before the next:
+- G1 (order): nine rows (0.6: row 8 is a composite of three pull requests), each pull request green on its tests and on `repoach arch check` before the next, in this order:
 
 | # | Spec | Closes | Size (code + tests, estimate) | depends_on (family) |
 |---|---|---|---|---|
@@ -105,7 +105,8 @@ recorded fixture, so that "fewer rounds" is measured and not hoped.
 | 5 | SP-REVIEW-REMEMBERS-EVERY-ROUND (0.3: settled register at the cap) | the 200-character memory; owner replies never fed back | ~300 + 300 lines | OCR 7 (RESUMES-FAILED-ROLES) then OCR 2 (FINDING-CITES-ITS-CODE): the persona bumps run RESUMES → CITES (0.6.0 / 0.5.0 / 0.5.0 / 0.6.0) → this spec (0.7.0 / 0.6.0 / 0.6.0 / 0.7.0) |
 | 6 | SP-REVIEW-SETTLED-STAYS-SETTLED | re-raises across heads; the 5-line bucket | ~240 + 280 lines, the !366 fixture | 5; OCR 2 (FINDING-CITES-ITS-CODE: the ranges it maps are anchored ones) |
 | 7 | SP-REVIEW-DELTA-FIRST (0.3 folds SP-REVIEW-INCREMENTAL-HEAD of the OCR programme, superseded 2026-11-16) | the whole diff every round; nothing cached; two specs for one decision | ~320 + 300 lines | 5, 6, 1; OCR 7 (RESUMES-FAILED-ROLES) and 8 (GROUPS-LARGE-DIFFS) |
-| 8 | SP-REVIEW-FABLE-TIER | shallow first rounds; three tiers | ~180 + 200 lines | 1, 3, 7 |
+| 8 (0.6) | SP-PR-THREADS-REMEMBER-AND-CLOSE, a composite of three pull requests in this order: 8a SP-FORGE-RESOLVES-THREADS, 8b SP-THREAD-REPLY-AGENT, 8c SP-GITLAB-NOTE-RECEIVER (owner decision 2026-11-17: scheduled after 7, before 9) | a thread is answered by a human or by nobody; the bot cannot resolve a thread; a GitLab note starts nothing | 8a ~120 + 160; 8b ~700 + 700; 8c ~250 + 220 lines | 6 (`finding_key`, `finding_events`); 4 (a nit never threads); SP-OWNER-SETTLES-A-FINDING and SP-OPEN-THREADS-BLOCK-THE-MERGE (approved, landed); 8b after 8a, 8c after 8b |
+| 9 (was 8) | SP-REVIEW-FABLE-TIER | shallow first rounds; three tiers | ~180 + 200 lines | 1, 3, 7; places 8b's replies on Sonnet |
 
 Ledger format (0.4–0.5, 2026-11-17, SP-LEDGER-FORMAT-IS-VERSIONED): a
 child that adds a column to a gate table, an enum value or a gate table
@@ -122,15 +123,23 @@ derives `finding_key` and owns `finding_events`, a table no gate reads,
 its D13–D14; RESUMES's `pr_reviewer_outcomes` is read by `review pr`
 alone, its D6). A bump is one release gate held per bump, so 7 lands in
 the release after CITES or with it, never between a release and its
-skew replay.
+skew replay. 8 (0.6) bumps **none**: its two tables are read by no gate
+entry point (the closer rule reads the forge), and it adds no gate
+column and no enum value (`ledger_format_after: none` in the composite
+and in 8b; oracle `python -m repoach.review.ledger_format snapshot | jq
+-r '.tables|keys[]'` unchanged, `tests/fixtures/ledger_format/` gaining
+no file).
 
-Tables (0.5): every table a child of this order reads or writes exists
+Tables (0.6): every table a child of this order reads or writes exists
 on `92cd241` or is built by a spec of the order — `finding_events` by 6,
-`pr_reviewer_outcomes` by RESUMES. `finding_threads`,
-`finding_thread_events` (SP-PR-THREADS-REMEMBER-AND-CLOSE, draft) and
-`review_runs` (SP-UNIVERSAL-LEDGER, draft) exist nowhere and are cited
-by no child since 5 (0.4), 6 (0.6) and 7 (0.4); both drafts stay
-outside this order.
+`pr_reviewer_outcomes` by RESUMES, `finding_threads` and
+`finding_thread_events` by 8b (SP-THREAD-REPLY-AGENT, which owns them;
+one is the per-thread state across heads, the other the exchange log,
+beside `finding_events` and copying nothing from it). 8b reads
+`finding_posts`, `owner_commands` and `finding_events`; no spec of the
+order reads 8b's tables, and the gate reads none of the three.
+`review_runs` (SP-UNIVERSAL-LEDGER, draft) exists nowhere and is cited
+by no child; that draft stays outside this order.
 
 - G2 (convergence): after 4–8, replaying !366's recorded rounds yields, at round 12, six threads instead of eight (two re-raises suppressed, named), the three "confirm the test" threads impossible (the test file is in the delta target), and one nit digest for the merge request; on live Yoob merge requests, the median rounds to merge over the next twenty, measured by `repoach usage` and the ledger's heads, is at most three.
 - G3 (cost): after 1–3, every metered call is priced before dispatch; `repoach budget` matches the Anthropic console within 5 %; a full round costs about 4.20 USD and a delta round under 1.5 USD at F11's size; 100 € (≈ 108 USD) buys about 25 full rounds, or about 15 three-round merge requests once delta rounds exist — against 2 twelve-round merge requests at today's full-diff behaviour.
@@ -183,6 +192,7 @@ green again.
 
 ## Architecture Impact
 - Adds dependency: SP-REVIEW-CONVERGES -> the eight children (the umbrella orders them; it owns nothing and imports nothing)
+- Adds dependency (0.6): SP-REVIEW-CONVERGES -> SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-FORGE-RESOLVES-THREADS, SP-THREAD-REPLY-AGENT, SP-GITLAB-NOTE-RECEIVER (row 8; the composite declares no edge of its own because two approved specs already point at it, so its children declare it)
 - No code, no table, no cycle.
 
 ## Diagram
@@ -194,13 +204,15 @@ flowchart LR
     H[5 remembers every round] --> S[6 settled stays settled]
     S --> D[7 delta first]
     A --> D
-    C --> F[8 fable tier]
-    D --> F
+    D --> T[8 threads: 8a forge writes, 8b reply agent, 8c gitlab receiver]
+    C --> F[9 fable tier]
+    T --> F
 ```
 
 ## Acceptance Criteria
 - [ ] AC1: the nine specs exist under `docs/specs/2026-11-15_SP-*.md` with the ids of G1, each with facts cited `file:line`, decisions, end state, easy solution rejected, hard part, tests with their red mutation, success conditions with an external oracle, and owner questions with a recommendation; `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC2: `pytest -q tests/unit/test_spec_presence.py tests/unit/test_arch_graph.py tests/unit/test_governed_spec.py tests/unit/test_spec_template.py` → green with the nine files added.
+- [ ] AC5 (0.6): row 8's composite and its three children exist under `docs/specs/2026-10-26_SP-PR-THREADS-REMEMBER-AND-CLOSE_*.md` and `docs/specs/2026-11-17_SP-{FORGE-RESOLVES-THREADS,THREAD-REPLY-AGENT,GITLAB-NOTE-RECEIVER}_*.md`, all `approved`, declared in this spec's `depends_on`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`.
 - [ ] AC3: after spec 3 lands: `repoach chain-status` on the owner's gateway shows `anthropic/…` first in three chains and `repoach budget` prints a line; after 6 and 7: the !366 replay test is green; after 8: a Yoob full round's `review-gate.json` names `claude-fable-5-1` for two lenses.
 - [ ] AC4: SP-REFUTER-INJECTION-HARDEN and `docs/merge_gate.md` carry the amendments the children name (re-open rule narrowed; nits never block; budget and subscription rows), dated 2026-11-15 or the day the child lands.
 
