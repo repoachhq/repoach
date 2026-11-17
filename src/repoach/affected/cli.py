@@ -56,7 +56,7 @@ affected_app = typer.Typer(
 )
 
 
-def _fail(code: int, message: str) -> typer.Exit:
+def fail_with(code: int, message: str) -> typer.Exit:
     """Print ``message`` on stderr and return the exit to raise.
 
     Args:
@@ -70,7 +70,7 @@ def _fail(code: int, message: str) -> typer.Exit:
     return typer.Exit(code=code)
 
 
-def _root() -> Path:
+def project_root() -> Path:
     """Return the project root.
 
     Returns:
@@ -82,10 +82,10 @@ def _root() -> Path:
     try:
         return require_project_root()
     except NotARepositoryError as exc:
-        raise _fail(EXIT_GIT, str(exc)) from exc
+        raise fail_with(EXIT_GIT, str(exc)) from exc
 
 
-def _integration_branch(root: Path) -> str:
+def read_integration_branch(root: Path) -> str:
     """Return ``[repoach].integration_branch`` of the project.
 
     Args:
@@ -100,10 +100,12 @@ def _integration_branch(root: Path) -> str:
     try:
         return load_project_config(root).repoach.integration_branch
     except ConfigError as exc:
-        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+        raise fail_with(EXIT_UNREADABLE, str(exc)) from exc
 
 
-def _load(root: Path, table: str, workflow: str) -> tuple[AffectedTable, dict[str, frozenset[str]]]:
+def load_inputs(
+    root: Path, table: str, workflow: str
+) -> tuple[AffectedTable, dict[str, frozenset[str]]]:
     """Read the workflow's jobs and the table validated against them.
 
     Args:
@@ -122,7 +124,7 @@ def _load(root: Path, table: str, workflow: str) -> tuple[AffectedTable, dict[st
         needs = workflow_jobs(workflow_path)
         loaded = load_table(root / table, needs, workflow=workflow_path.name)
     except (WorkflowError, TableError) as exc:
-        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+        raise fail_with(EXIT_UNREADABLE, str(exc)) from exc
     return loaded, needs
 
 
@@ -155,9 +157,9 @@ def select_cmd(
         typer.Exit: 2 on an unreadable table, workflow or ``repoach.toml``;
             3 when ``git`` fails.
     """
-    root = _root()
-    integration_branch = _integration_branch(root)
-    loaded, needs = _load(root, table, workflow)
+    root = project_root()
+    integration_branch = read_integration_branch(root)
+    loaded, needs = load_inputs(root, table, workflow)
     base_rev = base if base is not None else default_base(integration_branch)
     pr_base = base_ref if base_ref is not None else integration_branch
     mode, reason = decide_mode(
@@ -166,7 +168,7 @@ def select_cmd(
     try:
         paths = changed_paths(root, base=base_rev, head=head)
     except GitError as exc:
-        raise _fail(EXIT_GIT, str(exc)) from exc
+        raise fail_with(EXIT_GIT, str(exc)) from exc
     selection = select(paths, loaded, needs, mode=mode, reason=reason)
     if github_output is not None:
         with Path(github_output).open("a", encoding="utf-8") as handle:
@@ -195,7 +197,7 @@ def gate_pytest_cmd(
         typer.Exit: 2 on an unreadable table or workflow; 3 outside a
             git working tree.
     """
-    loaded, _ = _load(_root(), table, workflow)
+    loaded, _ = load_inputs(project_root(), table, workflow)
     for selector in loaded.gate_pytest:
         typer.echo(selector)
 
@@ -208,7 +210,7 @@ def base_cmd() -> None:
         typer.Exit: 2 on an invalid ``repoach.toml``; 3 outside a git
             working tree.
     """
-    typer.echo(default_base(_integration_branch(_root())))
+    typer.echo(default_base(read_integration_branch(project_root())))
 
 
 @affected_app.command("matrix")
@@ -224,9 +226,9 @@ def matrix_cmd(
             read; 3 outside a git working tree.
     """
     try:
-        values = matrix_values(_root() / workflow, job, axis)
+        values = matrix_values(project_root() / workflow, job, axis)
     except WorkflowError as exc:
-        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+        raise fail_with(EXIT_UNREADABLE, str(exc)) from exc
     for value in values:
         typer.echo(value)
 
@@ -243,7 +245,7 @@ def job_running_cmd(
             job runs the command; 3 outside a git working tree.
     """
     try:
-        job_id = job_running(_root() / workflow, command)
+        job_id = job_running(project_root() / workflow, command)
     except WorkflowError as exc:
-        raise _fail(EXIT_UNREADABLE, str(exc)) from exc
+        raise fail_with(EXIT_UNREADABLE, str(exc)) from exc
     typer.echo(job_id)
