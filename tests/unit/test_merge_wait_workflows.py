@@ -29,7 +29,7 @@ from tests.github_concurrency_sim import (
     comment_event,
     review_event,
 )
-from tests.merge_wait_fakes import CI_CHECKS, ts
+from tests.merge_wait_fakes import CI_CHECKS, measured_era_root, ts
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -161,3 +161,15 @@ def test_every_required_check_is_rearmed(tmp_path: Path) -> None:
     with pytest.raises(MergeWaitConfigError) as info:
         assert_rearmed(tmp_path)
     assert "not re-armed by any of ['CI', 'Auto Review (review bots)']" in str(info.value)
+
+
+def test_the_measured_era_root_requires_today_s_names_but_gate(tmp_path: Path) -> None:
+    """The measured replays are judged under the five-job ci.yml they ran, nothing else differs."""
+    root = measured_era_root(tmp_path)
+    assert required_checks(root) == [name for name in CI_CHECKS if name != "gate"]
+    assert measured_era_root(tmp_path) == root
+    today = workflow_checks(REPO_ROOT)
+    then = workflow_checks(root)
+    assert {k: v for k, v in then.items() if k != "CI"} == {
+        k: v for k, v in today.items() if k != "CI"
+    }

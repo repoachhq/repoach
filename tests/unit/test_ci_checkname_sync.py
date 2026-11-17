@@ -4,7 +4,9 @@ The default list of required checks is hand-maintained to mirror
 `.github/workflows/ci.yml`. SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4
 widened it from the two test suites to every job of the ``CI`` workflow,
 matrix expanded: both test suites, the wheel build and both wheel smokes
-(a wheel that does not install is a red the merge must see). This module
+(a wheel that does not install is a red the merge must see);
+SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED D4 adds ``gate``, the job that selects
+the others, which makes six. This module
 parses the real workflow file, derives the expected names independently
 (each job's ``name`` template with every matrix value substituted), and
 asserts them against the constant, so a job or matrix edit without a
@@ -37,7 +39,7 @@ def test_default_required_check_names_matches_ci_matrix() -> None:
     workflow = yaml.safe_load(_CI_WORKFLOW_PATH.read_text())
 
     assert _derive_expected_check_names(workflow) == set(DEFAULT_REQUIRED_CHECK_NAMES)
-    assert len(DEFAULT_REQUIRED_CHECK_NAMES) == 5
+    assert len(DEFAULT_REQUIRED_CHECK_NAMES) == 6
 
 
 def test_matrix_desync_is_detected() -> None:

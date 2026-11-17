@@ -1,11 +1,11 @@
 ---
 id: SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED
 title: The CI workflow always runs; a gate job selects once; a job the diff does not affect succeeds as a named no-op
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-16
-updated: 2026-11-16
+updated: 2026-11-17
 
 owns:
   code: [.github/workflows/ci.yml, tests/unit/test_affected_workflow_wiring.py]
@@ -61,9 +61,17 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   `python scripts/lint_no_ai_attribution.py --range …` on a `pull_request`
   with the title and body, as today; `python scripts/check_contributing.py CONTRIBUTING.md`;
   `pytest -q $(repoach ci affected gate-pytest)`. Its outputs are the
-  `job_<id>` lines and `mode`, declared under `outputs:` from the
+  `job_<id>` lines, `mode` and `reason`, declared under `outputs:` from the
   `select` step. The table path is declared once, `env.REPOACH_AFFECTED_JOBS_TABLE: .github/affected-jobs.toml`,
-  and passed as `--table`.
+  and passed as `--table`. As built (0.3): the base branch is declared
+  once, as the job's `env.CI_BASE_BRANCH: ${{ github.base_ref || github.ref_name }}`,
+  and every `run` reads it, `$GITHUB_EVENT_NAME` and `$GITHUB_BASE_REF`
+  from the environment rather than from an expression; the gate suites
+  run as `pytest -q <selectors> -n auto --dist worksteal` and an empty
+  `[gate].pytest` prints a notice instead of running the whole suite.
+  `reason` is the one amendment of SP-AFFECTED-JOBS-TABLE's code:
+  `github_output_lines` appends `reason=<one_line(reason)>`, so a path
+  the author chose cannot start an output line of its own.
 - D2. `test`, `wheel-build`, `wheel-smoke` keep their ids, names,
   matrices, `runs-on`, allowlist and `needs` (`wheel-smoke` gains
   `gate` beside `wheel-build`; the other two gain `needs: gate`). Every
@@ -72,7 +80,11 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   smoke's `matrix.python-version == '3.13'`), except one new first
   step, `Selection`, unconditional, which prints
   `::notice::<job>: <affected|not affected> by this diff (<mode>, <reason>); selection in the gate job summary`
-  and appends the same line to its `$GITHUB_STEP_SUMMARY`. A job whose
+  and appends the same line to its `$GITHUB_STEP_SUMMARY`; `<job>` is
+  `$GITHUB_JOB`, so the three `Selection` steps are one text, and an
+  output that is neither `true` nor `false` is refused by name
+  (`::error::<job>: the gate output for this job is '<value>', neither
+  true nor false`, exit 1). A job whose
   every other step is skipped is a no-op job: it concludes `success`
   (F4) under its expanded name (it ran, so its matrix expanded; F3 is
   what a job-level `if` would have done).
@@ -105,7 +117,7 @@ Measured 2026-11-16 on `origin/develop` `f16702b`.
   `CLAUDE.md` "Local CI mirror" names `--affected`.
 - D7. Owner decision 2026-11-16 (SP-PR-RUNS-AFFECTED-JOBS O2):
   `on.push.branches` becomes `[main, develop]`. A push to `develop` is
-  `mode: full` (`full: push on develop`) and runs every step; the
+  `mode: full` (`full: push on origin/develop`) and runs every step; the
   existing `concurrency: ci-${{ github.ref }}` keeps only the latest
   `develop` head when merges follow one another; `merge-on-ci.yml`
   admits `pull_request` and `pull_request_review` completions only, so
@@ -189,6 +201,7 @@ jobs:
       job_wheel_build: ${{ steps.select.outputs.job_wheel_build }}
       job_wheel_smoke: ${{ steps.select.outputs.job_wheel_smoke }}
       mode: ${{ steps.select.outputs.mode }}
+      reason: ${{ steps.select.outputs.reason }}
     steps: [checkout fetch-depth 0, setup-python 3.13, install, fetch base, select (id: select), arch check, attribution lint, CONTRIBUTING lint, pytest gate-pytest]
   test:
     needs: gate
@@ -207,7 +220,18 @@ jobs:
 D4 (an amendment of SP-UNIVERSAL-FORGE's file, named here and in the
 pull request). `tests/unit/test_ci_checkname_sync.py`: `len == 6`
 (an amendment of SP-CI-CHECKNAME-SYNC's test). `docs/merge_gate.md`,
-`CLAUDE.md`: D6.
+`CLAUDE.md`: D6. Further amendments, as built (0.3):
+`src/repoach/affected/select.py` (`reason` output, D1) with
+`tests/unit/test_affected_select.py` and `tests/unit/test_affected_cli.py`;
+`tests/unit/test_lint_no_ai_attribution.py` and
+`tests/unit/test_wheel_smoke_ci.py`, which now find the attribution lint
+in `gate` and the checkout after `Selection`; `repoach.toml`'s commented
+`required_checks` (D4). The merge-gate fakes: `tests/merge_wait_fakes.py`'s
+synthetic `CI_CHECKS` gain `gate`, and the replays of check runs measured
+on 2026-10-26 are judged under the five-job `ci.yml` they ran
+(`tests/fixtures/merge_wait/ci.before-gate.yml`, `measured_era_root`),
+never with a `gate` run added to the recording; `tests/unit/test_merge_wait_stranded.py`
+then reads no tree path and leaves `[gate].pytest`.
 
 ## Behavior
 
@@ -222,10 +246,10 @@ five names of `main`'s list green.
 ### Edge cases
 - a pull request changing `src/` → every leg runs every step; the tree lints run once, in `gate`.
 - a pull request changing `.github/workflows/ci.yml` → full class, every step; this spec's own pull request is one.
-- `push` to `main` → `gate` says `full: push on main`; every step runs.
-- a merge to `develop` → a `push` run, `full: push on develop`; every step runs; a red there is the procedure of SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4.
+- `push` to `main` → `gate` says `full: push on origin/main`; every step runs.
+- a merge to `develop` → a `push` run, `full: push on origin/develop`; every step runs; a red there is the procedure of SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4.
 - the release pull request `develop` → `main` → `full: pull_request on main`; every step runs.
-- `workflow_dispatch` → `full: workflow_dispatch`.
+- `workflow_dispatch` → `full: workflow_dispatch on origin/<branch>`.
 - a fork's pull request → the allowlist skips `gate` and every leg as today; nothing changes for it.
 - a `gate` red for a reason of the module (exit 2 or 3) → the legs are skipped by `needs` and the run is `failure`; the pull request is red with the named reason, never merged on a guess.
 
@@ -246,6 +270,9 @@ five names of `main`'s list green.
 | T6 | same | the job ids of `ci.yml` equal `{gate} ∪ ids named by the table`; no workflow under `.github/workflows/` has `on.pull_request.paths` or `paths-ignore` | add a `paths:` to `shellcheck.yml` |
 | T7 | same | the trigger block equals today's with `push: branches: [main, develop]` (D7), `concurrency` unchanged | drop `develop` from `push` |
 | T8 | `tests/unit/test_ci_checkname_sync.py` | the derived names equal the constant and `len == 6` | leave the constant at five |
+| T9 | `tests/unit/test_affected_workflow_wiring.py` | the committed `Selection` text, run under bash, prints one notice and one summary line for `true` and `false`, refuses `''`, `True`, `yes` by name, and keeps a reason naming `::error::` or `$(id)` inside the notice | replace the `*)` case |
+| T10 | same | dry run: `select` on a docs-only diff writes `job_<id>=false` for every leg; every gated step's condition is false; each `Selection` exits 0 with `not affected`; the expanded names are `DEFAULT_REQUIRED_CHECK_NAMES` | give the `docs` row `jobs = ["test"]` |
+| T11 | `tests/unit/test_affected_select.py` | `reason=` is the last output line and an authored line break stays written out | drop `one_line` from it |
 
 ## Success conditions
 

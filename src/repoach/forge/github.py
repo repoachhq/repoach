@@ -76,6 +76,7 @@ _MAINTAINER_ROLES = frozenset({"admin", "maintain"})
 """GitHub collaborator roles that count as an owner (SP-OWNER-SETTLES-A-FINDING)."""
 
 DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
+    "gate",
     "Test suite (Python 3.11)",
     "Test suite (Python 3.13)",
     "wheel-build",
@@ -85,8 +86,9 @@ DEFAULT_REQUIRED_CHECK_NAMES: tuple[str, ...] = (
 """The configured fallback of required check names (SP-CI-CHECKNAME-SYNC).
 
 Every job of the ``CI`` workflow, matrix expanded
-(SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4): both test suites, the
-wheel build and both wheel smokes. Used whenever neither
+(SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4): the ``gate`` job that
+selects the affected jobs (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED D4), both
+test suites, the wheel build and both wheel smokes. Used whenever neither
 ``[auto_merge].required_checks`` nor ``.github/workflows/ci.yml`` names
 them, and by :meth:`GitHubForge.ci_status` when the branch protection
 cannot be read or names no required check.

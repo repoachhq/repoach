@@ -143,12 +143,54 @@ only re-arms. A run whose every job is skipped concludes `skipped`,
 which `merge-on-ci.yml` does not admit; the `rearm` job is what makes a
 reply's run conclude `success`.
 
+## A job the diff does not affect is a green no-op
+
+Rule (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED, 2026-11-17). `ci.yml` always
+runs, on every trigger it had, and on a `push` to `develop` too. Its
+first job, `gate`, selects once with `repoach ci affected select`
+against `.github/affected-jobs.toml` (named once, by
+`env.REPOACH_AFFECTED_JOBS_TABLE`), then runs the arch check, the
+attribution and CONTRIBUTING lints and the `[gate].pytest` suites. It
+publishes `job_test`, `job_wheel_build`, `job_wheel_smoke`, `mode` and
+`reason`.
+
+- Every other job needs `gate`, keeps its name and matrix, and starts
+  with an unconditional `Selection` step printing
+  `::notice::<job>: <affected|not affected> by this diff (<mode>, <reason>); selection in the gate job summary`.
+  Every later step runs only when the job's own output is `'true'`. An
+  unaffected job therefore runs, expands its matrix and concludes
+  `success` in seconds with every step but `Selection` `skipped`. A
+  job-level `if` would have reported a matrix job under its unexpanded
+  name, and the expanded names would then be `missing`.
+- `Selection` refuses an output that is neither `true` nor `false` by
+  name (`::error::<job>: the gate output for this job is '<value>',
+  neither true nor false`), so a renamed output is a red, not a run that
+  silently skips its tests.
+- Where to read the selection: the `gate` job summary (mode, reason,
+  rows hit, jobs selected) and each job's `Selection` notice.
+- `mode` is `narrowed` only for a pull request into the integration
+  branch. A `push` to `main` or `develop` (`full: push on origin/<branch>`),
+  the release pull request (`full: pull_request on main`) and a
+  `workflow_dispatch` run every step.
+- A red `gate` (the selection exits 2 or 3, a lint or a gate suite
+  fails) skips every other job through `needs`: the run is `failure` and
+  the pull request is red with the named reason, never merged on a
+  guess.
+- `CI not green at head` reads the same names as before plus `gate`:
+  `DEFAULT_REQUIRED_CHECK_NAMES` and the names derived from `ci.yml` are
+  `gate`, both test suites, `wheel-build` and both wheel smokes. Until
+  the next release `merge-on-ci.yml` runs `main`'s code, which requires
+  the other five; they keep their names and conclude `success`, so both
+  lists are satisfied.
+- A red on a full run after a narrowed green follows the procedure
+  below.
+
 ## A red after a narrowed green
 
 Rule (SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4, 2026-11-17). A pull
 request into `develop` runs only the `CI` jobs its diff selects in
-`.github/affected-jobs.toml`; `main`, the release pull request and, once
-SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED lands, `develop` run every job. When
+`.github/affected-jobs.toml`; `main`, the release pull request and
+`develop` run every job (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED, above). When
 one of those full runs goes red on something a narrowed pull request let
 through:
 
