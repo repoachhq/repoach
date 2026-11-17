@@ -84,7 +84,16 @@ def test_the_build_stops_when_the_tag_is_not_on_main() -> None:
 
 def test_every_job_runs_on_the_configurable_runner() -> None:
     for name, job in _workflow()["jobs"].items():
+        if name == "build-and-publish":
+            continue
         assert job["runs-on"] == _RUNNER, name
+
+
+def test_the_upload_runs_github_hosted_in_the_pypi_environment() -> None:
+    job = _workflow()["jobs"]["build-and-publish"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["environment"]["name"] == "pypi"
+    assert job["permissions"] == {"id-token": "write", "contents": "read"}
 
 
 @pytest.mark.parametrize("path", [_PUBLISH], ids=["publish"])

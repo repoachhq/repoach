@@ -143,6 +143,53 @@ only re-arms. A run whose every job is skipped concludes `skipped`,
 which `merge-on-ci.yml` does not admit; the `rearm` job is what makes a
 reply's run conclude `success`.
 
+## A red after a narrowed green
+
+Rule (SP-AFFECTED-JOBS-MISSES-ARE-TEST-CASES D4, 2026-11-17). A pull
+request into `develop` runs only the `CI` jobs its diff selects in
+`.github/affected-jobs.toml`; `main`, the release pull request and, once
+SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED lands, `develop` run every job. When
+one of those full runs goes red on something a narrowed pull request let
+through:
+
+1. The line stops (SP-RED-STOPS-THE-LINE): a red gate stops every
+   other worksite until a corrective spec exists.
+2. Record the red with its verdict:
+   `repoach ci affected record --pr <n> --run <id> --job "<check name>" --verdict <verdict> --note "<why>" [--paths "a;b"]`.
+   - `miss`: the job the table skipped would have failed on the pull
+     request's own diff;
+   - `conflict`: two green pull requests fail together on `main`;
+   - `external`: the input is outside the diff (a feed, a registry, a
+     flaky suite).
+
+   `--paths` defaults to the run's head in the corpus, and a `miss`
+   without paths is refused. The row lands in
+   `tests/fixtures/affected_jobs/misses.tsv`, sorted, never edited or
+   removed afterwards; a second row for the same `(run, job)` is refused
+   with exit 1.
+3. A `miss` widens a row of `.github/affected-jobs.toml` in its own pull
+   request: `repoach ci affected replay` is red with the row before the
+   change (`MISS #<n> run <id> <job> paths …`, exit 1) and green after
+   it. That pull request merges before any code fix.
+4. The code fix, on its own branch.
+
+`repoach ci affected harvest --merged 30` rewrites the corpus
+`tests/fixtures/affected_jobs/pr_runs.json` from the forge: for the last
+30 merged pull requests (as `gh pr list --state merged` lists them,
+newest first by creation), every completed `pull_request` run of `CI`,
+each job over every attempt (a failure on an earlier attempt counts),
+and the paths of the head it judged, read with
+`compare/<pull request base>...<head>`. A run whose every job was
+skipped by the actor allowlist is counted as `not admitted`, never
+recorded; a `cancelled` job is never a failure; a head whose listing
+reaches the forge's 300-file cap is replayed as the full class and
+printed `TRUNCATED`. It prints `misses: <new>/<failed jobs>` and exits 1
+when a failed job is unselected and no row covers it; when `gh` fails it
+exits 2 and leaves the corpus as it was. `repoach release gate` prints
+the same count as `affected-jobs misses: <new>/<failed jobs> over the
+last 30 merged pull requests`, or `cannot say: <why>`, and never refuses
+on it.
+
 ## A transport outage costs time, not the review
 
 Every model call of a review (the four reviewers, the refuter's judge,

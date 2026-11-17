@@ -52,6 +52,11 @@ These steps need the owner's accounts; no agent can do them.
    `vars.REPOACH_RUNNER`, `self-hosted` when unset: the owner's machine must
    be up for a release. Setting the repository variable to `ubuntu-latest`
    moves `ci.yml` too, so a release-only change belongs in `publish.yml`.
+   The one exception is `build-and-publish`, which always runs on
+   `ubuntu-latest`: `pypa/gh-action-pypi-publish` is a Docker action, and
+   the self-hosted runner has no Docker (run 44044713038 failed with
+   `docker: command not found`). It keeps the `pypi` environment and the
+   `id-token: write` permission, so trusted publishing is unchanged.
 
 ## Each release
 
