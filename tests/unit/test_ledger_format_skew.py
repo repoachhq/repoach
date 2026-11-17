@@ -448,7 +448,8 @@ def test_t6_a_stamped_older_format_proceeds(
 def test_t6_rows_checked_counts_this_pr_only_and_an_empty_pr_proceeds(tmp_path: Path) -> None:
     db = _demo(tmp_path)
     _sql(db, "UPDATE pr_findings SET pr_number = 7 WHERE id <= 5")
-    assert check(db, 259).rows_checked == N_DEMO
+    assert check(db, 259).rows_checked == N_DEMO - 5
+    assert check(db, 7).rows_checked == 5
     assert check(db, 8).rows_checked == 0
     absent = check(tmp_path / "absent.db", 259)
     assert (absent.format, absent.rows_checked) == (0, 0)
@@ -626,6 +627,45 @@ def test_t9_skew_replay_head_head_is_ok_and_leaves_nothing(tmp_path: Path) -> No
         check=True,
     ).stdout
     assert worktrees.count("worktree ") == 1
+
+
+def _git(clone: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(clone), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_t9_a_newer_writer_is_refused_and_leaves_nothing(tmp_path: Path) -> None:
+    clone = _clone(tmp_path)
+    findings = clone / "src" / "repoach" / "review" / "findings.py"
+    findings.write_text(
+        findings.read_text(encoding="utf-8").replace(
+            '    NOTE = "note"\n', '    NOTE = "note"\n    LATER = "later"\n', 1
+        ),
+        encoding="utf-8",
+    )
+    module = clone / "src" / "repoach" / "review" / "ledger_format.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "LEDGER_FORMAT: int = 1\n", "LEDGER_FORMAT: int = 2\n", 1
+        ),
+        encoding="utf-8",
+    )
+    _git(clone, "commit", "--quiet", "-am", "test: a writer at format 2")
+    writer = _git(clone, "rev-parse", "--short=7", "HEAD")
+    reader = _git(clone, "rev-parse", "--short=7", "HEAD~1")
+
+    completed = _replay(clone, "HEAD~1", "HEAD")
+
+    assert completed.returncode == 5, completed.stderr
+    assert completed.stdout == (
+        "ledger: format 2 is newer than this reader's 1 "
+        f"(written by repoach HEAD ({writer}); this gate is repoach HEAD~1 ({reader}))\n"
+    )
+    assert not (clone / "tmp" / "skew").exists()
 
 
 def test_t9_skew_replay_names_a_ref_that_does_not_resolve(tmp_path: Path) -> None:
