@@ -24,9 +24,24 @@ def _step(job: dict, name: str) -> dict:
     return matches[0]
 
 
+def _checkout(job: dict) -> dict:
+    """Return a job's one checkout step, the first after its ``Selection`` notice.
+
+    Args:
+        job: A ``ci.yml`` job gated by SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED.
+
+    Returns:
+        The step at index 1, asserted to use ``actions/checkout``.
+    """
+    assert job["steps"][0]["name"] == "Selection"
+    checkout = job["steps"][1]
+    assert str(checkout.get("uses", "")).startswith("actions/checkout@"), checkout.get("name")
+    return checkout
+
+
 def test_ci_builds_the_wheel_once_with_the_full_history() -> None:
     build = _jobs()["wheel-build"]
-    assert build["steps"][0]["with"]["fetch-depth"] == 0
+    assert _checkout(build)["with"]["fetch-depth"] == 0
     run = _step(build, "Build sdist + wheel")["run"]
     assert "python -m build --sdist --wheel" in run
     assert "twine check dist/*" in run
@@ -35,7 +50,7 @@ def test_ci_builds_the_wheel_once_with_the_full_history() -> None:
 def test_ci_smokes_the_built_wheel_on_both_pythons() -> None:
     job = _jobs()["wheel-smoke"]
     assert job["name"] == "wheel-smoke (${{ matrix.python-version }})"
-    assert job["needs"] == "wheel-build"
+    assert job["needs"] == ["gate", "wheel-build"]
     assert job["strategy"]["matrix"]["python-version"] == ["3.11", "3.13"]
     run = _step(job, "pipx install the wheel and run it outside the checkout")["run"]
     assert "scripts/wheel_smoke.sh" in run
@@ -101,6 +116,6 @@ def test_no_workflow_checks_out_a_sparse_tree() -> None:
 def test_wheel_jobs_check_out_a_clean_tree() -> None:
     jobs = _jobs()
     for name in ("wheel-build", "wheel-smoke"):
-        checkout = jobs[name]["steps"][0]
+        checkout = _checkout(jobs[name])
         assert str(checkout["uses"]).startswith("actions/checkout@"), name
         assert checkout["with"]["clean"] is True, name

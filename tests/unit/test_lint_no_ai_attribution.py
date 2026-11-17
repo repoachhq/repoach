@@ -115,9 +115,9 @@ def test_an_unknown_range_is_an_error_not_a_pass(repo: Path, git_env: dict[str, 
 
 
 def test_ci_runs_the_script_on_the_pr_range_title_and_body() -> None:
-    """The CI step judges base..head and both PR texts, on pull_request only."""
+    """The gate step judges base..head and both PR texts, on pull_request only."""
     workflow = yaml.safe_load((_REPO / ".github" / "workflows" / "ci.yml").read_text())
-    steps = workflow["jobs"]["test"]["steps"]
+    steps = workflow["jobs"]["gate"]["steps"]
     step = next(s for s in steps if "lint_no_ai_attribution.py" in str(s.get("run", "")))
     assert step["if"] == "github.event_name == 'pull_request'"
     assert "pull_request.base.sha" in step["run"] and "pull_request.head.sha" in step["run"]

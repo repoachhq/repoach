@@ -26,7 +26,6 @@ pytest = [
   "tests/unit/test_gen_comparison.py",
   "tests/unit/test_merge_wait_rearm.py",
   "tests/unit/test_merge_wait_required_checks.py",
-  "tests/unit/test_merge_wait_stranded.py",
   "tests/unit/test_merge_wait_workflows.py",
   "tests/unit/test_no_duplicate_test_basenames_gate.py",
   "tests/unit/test_no_inline_comments_gate.py",
