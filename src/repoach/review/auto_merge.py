@@ -323,6 +323,7 @@ def evaluate_ci_gate(
         failed, pending, missing = status.failed, status.pending, status.missing
         cancelled: list[str] = []
         pending_note = ""
+        failed_note = ""
         if getattr(forge, "name", "") == "github":
             verdict = judge_required_checks(
                 status.checks,
@@ -333,6 +334,7 @@ def evaluate_ci_gate(
             failed, pending, missing = verdict.failed, verdict.pending, verdict.missing
             cancelled = verdict.cancelled
             pending_note = verdict.note() if verdict.state == "pending" else ""
+            failed_note = verdict.note() if verdict.state == "failed" else ""
         _log.info(
             "auto_merge.ci_gate_poll",
             pr_number=pr_number,
@@ -347,7 +349,7 @@ def evaluate_ci_gate(
             return CIGateOutcome(
                 green=False,
                 outcome_tag=OUTCOME_SKIP_CI_FAILED,
-                reason=f"required_check_failed: {', '.join(failed)}",
+                reason=failed_note or f"required_check_failed: {', '.join(failed)}",
                 rollup_snapshot=last_snapshot,
             )
         if cancelled and not pending:

@@ -477,6 +477,7 @@ def run_coder_fix_from_findings(
             checkout's head; raised before any finding is recorded or
             fixed (Yoob B-221).
     """
+    from .auto_merge import resolve_required_checks
     from .coder_loop import (
         CI_GREEN,
         CI_RED,
@@ -516,7 +517,10 @@ def run_coder_fix_from_findings(
 
     require_forge_pr_base(repo, base, "HEAD", forge=forge)
     head_sha = pr.head_sha if pr is not None else ""
-    ci_state, failed_rows = fetch_ci_status(forge, pr_number)
+    required, _ = resolve_required_checks(forge, None, repo, read_forge=False)
+    ci_state, failed_rows = fetch_ci_status(
+        forge, pr_number, required=required, head_sha=head_sha or None
+    )
     if ci_state == CI_RED and failed_rows:
         record_ci_failures_as_findings(
             db,

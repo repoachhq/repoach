@@ -94,10 +94,28 @@ them, and by :meth:`GitHubForge.ci_status` when the branch protection
 cannot be read or names no required check.
 """
 
-_FAIL_CONCLUSIONS: frozenset[str] = frozenset(
-    {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
+SKIPPED_CONCLUSION = "SKIPPED"
+"""The conclusion GitHub gives a job that never ran (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN)."""
+
+REQUIRED_CHECK_FAIL_CONCLUSIONS: frozenset[str] = frozenset(
+    {"FAILURE", SKIPPED_CONCLUSION, "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
 )
-_SUCCESS_CONCLUSIONS: frozenset[str] = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
+"""Conclusions that fail a required check (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN D1).
+
+``SKIPPED`` is a non-judgement: the job never ran (a false job condition
+or a failed need), so it is a failure, as the GitLab forge reads
+``skipped``. ``CANCELLED`` is not here: :func:`classify_required_checks`
+adds it locally, and :func:`repoach.review.merge_wait.judge_required_checks`
+keeps its own ``cancelled`` bucket.
+"""
+
+REQUIRED_CHECK_SUCCESS_CONCLUSIONS: frozenset[str] = frozenset({"SUCCESS", "NEUTRAL"})
+"""Conclusions that make a required check green; ``NEUTRAL`` is a verdict (D1)."""
+
+SKIPPED_NOTE = "the job never ran: a false job condition or a failed need"
+"""What a ``SKIPPED`` required check means, written beside its name (D2)."""
+
+_CLASSIFY_FAIL_CONCLUSIONS: frozenset[str] = REQUIRED_CHECK_FAIL_CONCLUSIONS | {"CANCELLED"}
 _PENDING_STATUSES: frozenset[str] = frozenset(
     {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "EXPECTED", "REQUESTED"}
 )
@@ -222,6 +240,24 @@ def comment_author_login(comment: object) -> str | None:
     return login if isinstance(login, str) and login else None
 
 
+def failed_entry(name: str, conclusion: str) -> str:
+    """Render one failed required check, ``name=CONCLUSION``.
+
+    A ``SKIPPED`` check carries :data:`SKIPPED_NOTE`, so the line says the
+    job never ran rather than that it failed (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN D2).
+
+    Args:
+        name: The required check name.
+        conclusion: Its upper-cased conclusion.
+
+    Returns:
+        ``name=CONCLUSION``, with ``(<SKIPPED_NOTE>)`` appended when skipped.
+    """
+    if conclusion == SKIPPED_CONCLUSION:
+        return f"{name}={conclusion} ({SKIPPED_NOTE})"
+    return f"{name}={conclusion}"
+
+
 def classify_required_checks(
     rollup: Iterable[dict],
     required_names: Sequence[str] = DEFAULT_REQUIRED_CHECK_NAMES,
@@ -236,7 +272,9 @@ def classify_required_checks(
     stale-cancelled-over-fresh-green pinning (PR #3, 2026-07-03) means
     iteration order must never decide.  ISO-8601 timestamps compare
     lexicographically; an entry without one is treated as oldest.  An
-    unknown conclusion bucket is treated as a failure (fail-closed).
+    unknown conclusion bucket is treated as a failure (fail-closed).  A
+    ``SKIPPED`` check never ran, so it fails as
+    ``name=SKIPPED (<SKIPPED_NOTE>)`` (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN).
     """
     by_name: dict[str, dict] = {}
     for entry in rollup:
@@ -258,9 +296,9 @@ def classify_required_checks(
             continue
         conclusion = str(match.get("conclusion") or "").upper()
         status = str(match.get("status") or "").upper()
-        if conclusion in _FAIL_CONCLUSIONS:
-            failed.append(f"{required}={conclusion}")
-        elif conclusion in _SUCCESS_CONCLUSIONS:
+        if conclusion in _CLASSIFY_FAIL_CONCLUSIONS:
+            failed.append(failed_entry(required, conclusion))
+        elif conclusion in REQUIRED_CHECK_SUCCESS_CONCLUSIONS:
             continue
         elif status in _PENDING_STATUSES or not conclusion:
             pending.append(required)
@@ -2059,6 +2097,10 @@ GhCli = GitHubForge
 
 __all__ = [
     "DEFAULT_REQUIRED_CHECK_NAMES",
+    "REQUIRED_CHECK_FAIL_CONCLUSIONS",
+    "REQUIRED_CHECK_SUCCESS_CONCLUSIONS",
+    "SKIPPED_CONCLUSION",
+    "SKIPPED_NOTE",
     "ArchiveFetch",
     "GhCli",
     "GhResult",
@@ -2066,6 +2108,7 @@ __all__ = [
     "check_state",
     "classify_required_checks",
     "comment_author_login",
+    "failed_entry",
     "flatten_paginated_pages",
     "raise_for_gh",
 ]

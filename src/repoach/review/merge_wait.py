@@ -33,7 +33,7 @@ from __future__ import annotations
 import itertools
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -43,7 +43,11 @@ from pydantic import BaseModel, Field
 
 from ..core.logging import get_logger
 from ..forge import CheckRun, Forge, ForgeError, ForgeWriteRefusedError, PullRequest
-from ..forge.github import DEFAULT_REQUIRED_CHECK_NAMES
+from ..forge.github import (
+    DEFAULT_REQUIRED_CHECK_NAMES,
+    REQUIRED_CHECK_SUCCESS_CONCLUSIONS,
+    failed_entry,
+)
 from ..project.config import load_project_config
 from .persistence import fetch_merge_rows
 from .spec_gate import SPEC_COVERAGE_RULE_VERSION
@@ -79,11 +83,9 @@ MERGE_RULE_VERSION = f"merge-wait:1,spec-coverage:{SPEC_COVERAGE_RULE_VERSION}"
 MERGED_OUTCOMES: frozenset[str] = frozenset({"APPROVE", "ALREADY_MERGED"})
 """Attempt outcomes after which there is nothing left to merge."""
 
-_FAIL_CONCLUSIONS: frozenset[str] = frozenset(
-    {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
-)
-_SUCCESS_CONCLUSIONS: frozenset[str] = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
 _CANCELLED = "CANCELLED"
+_TEMPLATE_MARK = "${{"
+_MISSING = ": missing"
 _MATRIX_RE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}")
 _JSON_BLOCK_RE = re.compile(r"```json\n(.*?)\n```", re.S)
 
@@ -120,7 +122,10 @@ class RequiredChecksVerdict(BaseModel):
     def note(self) -> str:
         """The attempt note naming what decided this verdict."""
         if self.state == "failed":
-            return f"required_check_failed: {', '.join(self.failed)}"
+            missing = [
+                entry if _MISSING in entry else f"{entry}{_MISSING}" for entry in self.missing
+            ]
+            return f"required_check_failed: {', '.join([*self.failed, *missing])}"
         if self.state == "pending":
             workflows = list(dict.fromkeys(self.rearmed_by.get(n, "unknown") for n in self.pending))
             return (
@@ -159,6 +164,39 @@ def _decisive(runs: Sequence[CheckRun]) -> CheckRun:
     return chosen
 
 
+def template_of(name: str, rollup_names: Iterable[str]) -> str | None:
+    """The unexpanded template name a missing required check was reported under.
+
+    A matrix job that never expands (a false job condition, a failed
+    need) reports one check under its template name, e.g.
+    ``wheel-smoke (${{ matrix.python-version }})``, so the expanded name
+    the gate requires is absent (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN D3).
+
+    Args:
+        name: A required check name, e.g. ``wheel-smoke (3.11)``.
+        rollup_names: The check names reported at the head.
+
+    Returns:
+        The first rollup name containing ``${{`` whose prefix before
+        `` (`` equals ``name``'s, else ``None``.
+    """
+    prefix = name.partition(" (")[0]
+    for candidate in rollup_names:
+        if _TEMPLATE_MARK in candidate and candidate.partition(" (")[0] == prefix:
+            return candidate
+    return None
+
+
+def _missing_entry(name: str, at_head: Sequence[CheckRun]) -> str:
+    """A missing name, annotated with the template it was reported under (D3)."""
+    template = template_of(name, (run.name for run in at_head))
+    if template is None:
+        return name
+    run = _decisive([run for run in at_head if run.name == template])
+    conclusion = run.conclusion.upper() or run.status.upper() or "EMPTY"
+    return f'{name}{_MISSING}; the job reported unexpanded as "{template}"={conclusion}'
+
+
 def judge_required_checks(
     check_runs: Sequence[CheckRun],
     required: Sequence[str],
@@ -170,11 +208,15 @@ def judge_required_checks(
 
     Per name, the latest run at the head that is not ``CANCELLED``
     decides: a success conclusion is green, a failure conclusion is
-    ``failed``, no conclusion yet is ``pending``. A run whose
+    ``failed``, no conclusion yet is ``pending``. ``SKIPPED`` is a
+    failure named ``name=SKIPPED (<SKIPPED_NOTE>)``: the job never ran
+    (SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN D1, D2). A run whose
     ``head_sha`` names another commit is ignored; one with no
     ``head_sha`` is taken as at the head (the commit's own check-runs).
-    Checks not in ``required`` are never read, so the merge job's own run
-    or a review-bot job cannot make the merge wait.
+    Checks not in ``required`` are never judged, so the merge job's own
+    run or a review-bot job cannot make the merge wait; a missing name
+    whose unexpanded template is at the head is listed with it
+    (:func:`template_of`, D3), its verdict unchanged.
 
     Args:
         check_runs: Every check run reported for the head.
@@ -199,7 +241,7 @@ def judge_required_checks(
     for name in required:
         runs = [run for run in at_head if run.name == name]
         if not runs:
-            missing.append(name)
+            missing.append(_missing_entry(name, at_head))
             continue
         live = [run for run in runs if run.conclusion.upper() != _CANCELLED]
         if not live:
@@ -207,13 +249,13 @@ def judge_required_checks(
             continue
         run = _decisive(live)
         conclusion = run.conclusion.upper()
-        if conclusion in _SUCCESS_CONCLUSIONS:
+        if conclusion in REQUIRED_CHECK_SUCCESS_CONCLUSIONS:
             completions.append(parse_time(run.completed_at))
         elif not conclusion:
             pending.append(name)
             rearmed[name] = known.get(name) or run.workflow or "unknown"
         else:
-            failed.append(f"{name}={conclusion}")
+            failed.append(failed_entry(name, conclusion))
     state: CheckJudgement
     if failed:
         state = "failed"
@@ -710,6 +752,7 @@ __all__ = [
     "rearm_workflows",
     "required_checks",
     "stranded",
+    "template_of",
     "trigger_from_env",
     "unrearmed_checks",
     "upsert_attempt",

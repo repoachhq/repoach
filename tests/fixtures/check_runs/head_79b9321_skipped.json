@@ -1,0 +1,47 @@
+[
+  {
+    "completed_at": "2026-11-17T12:12:05Z",
+    "conclusion": "skipped",
+    "head_sha": "79b9321150c9bb88aa79f6d96aeef238d9c45395",
+    "name": "wheel-smoke (${{ matrix.python-version }})",
+    "started_at": "2026-11-17T12:12:12Z",
+    "status": "completed",
+    "workflow_name": "CI"
+  },
+  {
+    "completed_at": "2026-11-17T12:12:00Z",
+    "conclusion": "skipped",
+    "head_sha": "79b9321150c9bb88aa79f6d96aeef238d9c45395",
+    "name": "wheel-build",
+    "started_at": "2026-11-17T12:12:08Z",
+    "status": "completed",
+    "workflow_name": "CI"
+  },
+  {
+    "completed_at": "2026-11-17T12:12:00Z",
+    "conclusion": "skipped",
+    "head_sha": "79b9321150c9bb88aa79f6d96aeef238d9c45395",
+    "name": "wheel-smoke (${{ matrix.python-version }})",
+    "started_at": "2026-11-17T12:12:06Z",
+    "status": "completed",
+    "workflow_name": "CI"
+  },
+  {
+    "completed_at": "2026-11-17T12:12:05Z",
+    "conclusion": "skipped",
+    "head_sha": "79b9321150c9bb88aa79f6d96aeef238d9c45395",
+    "name": "wheel-build",
+    "started_at": "2026-11-17T12:12:05Z",
+    "status": "completed",
+    "workflow_name": "CI"
+  },
+  {
+    "completed_at": "2026-11-17T12:12:05Z",
+    "conclusion": "skipped",
+    "head_sha": "79b9321150c9bb88aa79f6d96aeef238d9c45395",
+    "name": "Test suite (Python ${{ matrix.python-version }})",
+    "started_at": "2026-11-17T12:12:05Z",
+    "status": "completed",
+    "workflow_name": "CI"
+  }
+]
