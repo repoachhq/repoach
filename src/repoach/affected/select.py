@@ -428,13 +428,18 @@ def github_output_lines(selection: Selection, job_ids: Sequence[str]) -> list[st
 
     Returns:
         ``job_<id>=true|false`` per job id, hyphens turned into
-        underscores, then ``mode=<mode>``.
+        underscores, then ``mode=<mode>``, then ``reason=<reason>`` on
+        one line (:func:`one_line`): the reason can name a path the pull
+        request's author chose, and a raw line break would start an
+        output line of its own. Each job's ``Selection`` notice prints
+        the mode and the reason (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED D2).
     """
     lines = [
         f"job_{job_id.replace('-', '_')}={'true' if job_id in selection.jobs else 'false'}"
         for job_id in job_ids
     ]
     lines.append(f"mode={selection.mode}")
+    lines.append(f"reason={one_line(selection.reason)}")
     return lines
 
 

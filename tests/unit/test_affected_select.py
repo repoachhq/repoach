@@ -139,13 +139,23 @@ def test_github_output_lines_one_per_job_then_mode() -> None:
         "job_wheel_build=true",
         "job_wheel_smoke=true",
         "mode=narrowed",
+        "reason=narrowed: pull_request on develop",
     ]
     docs = _narrowed(["docs/a.md"])
     assert github_output_lines(docs, ["test", "wheel-build"]) == [
         "job_test=false",
         "job_wheel_build=false",
         "mode=narrowed",
+        "reason=narrowed: pull_request on develop",
     ]
+
+
+def test_github_output_reason_keeps_an_authored_line_break_on_its_line() -> None:
+    selection = _narrowed(["odd\npath\r\njob_test=false"])
+    lines = github_output_lines(selection, ["test"])
+    assert lines[-1] == "reason=unknown path: odd\\npath\\r\\njob_test=false"
+    assert "\n".join(lines).count("\n") == len(lines) - 1
+    assert [line for line in lines if line.startswith("job_test=")] == ["job_test=true"]
 
 
 def test_summary_markdown_names_mode_rows_and_jobs() -> None:
