@@ -477,7 +477,7 @@ def _check_json_values(
                 continue
             shown = value
             refusal = LedgerSkewError(
-                f"{table.name}.{entry.column}={_quote(shown) if isinstance(shown, str) else repr(shown)} is not JSON {entry.declared()} "
+                f"{table.name}.{entry.column}={_quote(shown) if isinstance(shown, str) else _clean(repr(shown))} is not JSON {entry.declared()} "
                 f"this reader knows ({versions})",
                 writer_format=stamped,
             )

@@ -1010,3 +1010,18 @@ def test_review_gate_cli_prints_ledger_summary_line(
     assert payload["ledger"]["format"] == 1
     assert payload["ledger"]["written_by"] == "0.1.0"
     assert "ledger: format 1, written by repoach 0.1.0" in result.stderr.splitlines()
+
+
+def test_t3_a_blob_json_value_is_clipped_and_inert_in_the_refusal(tmp_path: Path) -> None:
+    db = _demo(tmp_path)
+    blob = b"@owner ```" + b"z" * 5000
+    con = sqlite3.connect(db)
+    con.execute("UPDATE generated_checks SET argv = ?", (blob,))
+    con.commit()
+    con.close()
+    with pytest.raises(LedgerSkewError) as raised:
+        check(db, 259)
+    reason = str(raised.value)
+    assert "@" not in reason and "`" not in reason
+    assert "z" * 100 not in reason
+    assert len(reason) < 400
