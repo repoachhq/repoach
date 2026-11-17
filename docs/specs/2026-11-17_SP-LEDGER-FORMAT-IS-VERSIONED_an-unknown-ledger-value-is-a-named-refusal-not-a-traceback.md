@@ -292,7 +292,28 @@ A stamped ledger of format `LEDGER_FORMAT` with known values →
 ## Success conditions
 
 - C1 (external oracle: the ledger that crashed the live gate): the verifier downloads the artifact of PR #303 (`gh api repos/repoachhq/repoach/actions/artifacts?name=findings-ledger-303`, the zip, `repoach_review.db`) and runs `python -m repoach.review.ledger_format check --db repoach_review.db --pr 303` under this branch's code → `ledger: unstamped (pre-format), values known`, exit 0, `rows_checked` equal to the 8 findings release 11 read (F3). Then, on a copy, `sqlite3 repoach_review.db "UPDATE pr_findings SET severity='later' WHERE id=(SELECT min(id) FROM pr_findings WHERE pr_number=303)"` → exit 5, the message naming `pr_findings.severity='later'`, the writer (`unstamped`) and the reader version. Both command lines and outputs are written beside this line.
+  - Measured 2026-11-17 by the implementer, on artifact 14289970435
+    (`findings-ledger-303`, run 43994326687, 01:20Z, the ledger gate run
+    43995248874 crashed on): `python -m repoach.review.ledger_format check
+    --db repoach_review.db --pr 303` → stderr `ledger: unstamped
+    (pre-format), values known`, stdout `{"format":0,"written_by":"",
+    "written_at":"","reader":"0.1.0","rows_checked":8}`, exit 0. After
+    `sqlite3 copy.db "UPDATE pr_findings SET severity='later' WHERE
+    id=(SELECT min(id) FROM pr_findings WHERE pr_number=303)"`: stderr
+    `ledger: pr_findings.severity='later' is not a Severity this reader
+    knows (written by repoach (unstamped); this gate is repoach 0.1.0)`,
+    exit 5. The verifier re-runs both.
 - C2 (external oracle: `scripts/skew_replay.sh`): `scripts/skew_replay.sh HEAD HEAD` → `ledger: ok (format 1, …)`, exit 0; `scripts/skew_replay.sh HEAD <throwaway commit adding Severity.LATER and bumping LEDGER_FORMAT to 2 with its 2.json>` → exit 5 naming `format 2 is newer than this reader's 1`; `scripts/skew_replay.sh origin/main HEAD` → exit 2 naming `reader origin/main has no ledger_format module`, the measured bootstrap of Hard part, written beside this line with the `origin/main` SHA.
+  - Measured 2026-11-17 by the implementer, `origin/main` `f329bf3`:
+    `scripts/skew_replay.sh HEAD HEAD` → `ledger: ok (format 1, writer
+    HEAD (<sha7>), reader HEAD (<sha7>))`, exit 0; against a local
+    throwaway commit adding `Severity.LATER` with `LEDGER_FORMAT = 2` and
+    its `2.json` (never pushed) → `ledger: format 2 is newer than this
+    reader's 1 (written by repoach <sha7> (<sha7>); this gate is repoach
+    HEAD (<sha7>))`, exit 5; `scripts/skew_replay.sh origin/main HEAD` →
+    `skew_replay: reader origin/main has no ledger_format module
+    (f329bf3)`, exit 2. `tmp/skew/` absent after each. T9 holds the
+    ok, the newer-writer and the unresolved-ref shapes in a clone.
 - C3: `pytest -q tests/unit/test_ledger_format_skew.py tests/unit/test_findings_schema_race.py tests/unit/test_review_auto_merge.py tests/unit/test_merge_attempts_ledger.py` green with T1–T9 in `-v`; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `docs/merge_gate.md` carries a dated section "The ledger names its format" and `docs/releasing.md` the `skew_replay.sh` step; `shellcheck scripts/skew_replay.sh` clean (the `ShellCheck` workflow judges it).
 
 ## Architecture Impact
