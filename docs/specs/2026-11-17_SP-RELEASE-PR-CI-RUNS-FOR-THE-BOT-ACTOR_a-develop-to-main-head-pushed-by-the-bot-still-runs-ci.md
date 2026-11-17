@@ -1,8 +1,8 @@
 ---
 id: SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR
 title: The release pull request's CI runs on a head the bot pushed; the actor allowlist admits the same-repo develop head into main without a close/reopen
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-17
@@ -73,6 +73,11 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
   tells the owner to close and reopen; it says the pull request's `CI`
   runs on its own and what to do when it does not (read the actor of
   the skipped run).
+- D4 (owner, 2026-11-17). O4: `github-actions[bot]` is admitted by the
+  `if` clause of D1 only, for the same-repo `develop` → `main` pull
+  request; the close/reopen procedure goes. Last of the four to be
+  implemented, after PR #310 has merged (SP-GATE-NAMES-FORMAT-SKEW
+  decision f; A2).
 
 ## End state
 
@@ -186,4 +191,4 @@ flowchart LR
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- None of its own. The umbrella's Q4 (admit the bot on the release pull request, or keep the close/reopen procedure) decides D1; this spec is written to the recommendation and is amended if the owner decides otherwise.
+- None. The owner decided O4 (the `if` clause) on 2026-11-17 as recommended, recorded in D4; approved with the family (SP-GATE-NAMES-FORMAT-SKEW decision g).

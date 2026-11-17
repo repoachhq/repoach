@@ -1,8 +1,8 @@
 ---
 id: SP-GATE-NAMES-FORMAT-SKEW
 title: Umbrella — the released merge gate names every value a newer develop wrote that it cannot read, and never reads a non-judgement as green
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-17
@@ -59,7 +59,7 @@ the child that acts on it.
 | F11 | The skew window is short and frequent: six releases between 2026-11-02 and 2026-11-17 (#285, #287, #289, #291, #304, #307); `main..develop` is one commit (#309) today. Every merge into `develop` that touches an enum, a column, a config key or a workflow shape opens a window until the next release | `git log --first-parent origin/main`; `git log origin/main..origin/develop` |
 | F12 | The release pull request `develop` → `main` is never judged by `merge-on-ci.yml` (it resolves `--base develop` only) and the release gate runs from a fresh clone with the operator's install; so a skew refusal on a `develop`-based pull request never blocks the release that clears it | `.github/workflows/merge-on-ci.yml:124-128`; `docs/releasing.md` |
 
-## Decisions (2026-11-17, proposed to the owner; the questions below)
+## Decisions (2026-11-17)
 
 - (a) `main`'s code keeps judging. The trusted-ref rationale of F1
   stands; the fix is a contract on what the older reader does with a
@@ -79,6 +79,20 @@ the child that acts on it.
 - (e) The skew is testable on one checkout: each child's test feeds a
   newer-shaped payload to the current reader; a release-time script
   feeds a payload written by `develop`'s code to `main`'s code.
+- (f) Implementation order (owner, 2026-11-17):
+  SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN first, a live defect (F7, F8);
+  then SP-LEDGER-FORMAT-IS-VERSIONED; then SP-HEAD-CONFIG-SKEW-IS-NAMED;
+  then SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR, after PR #310
+  (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED) has merged, since both edit the
+  job conditions of `ci.yml`. The table of G1 is in that order.
+- (g) Owner, 2026-11-17, taking the five recommendations of the
+  questions recorded below: `main`'s code keeps judging in
+  `merge-on-ci.yml` and the skew is a tested contract (O1); an unknown
+  key in the head's `repoach.toml` is a named refusal (O2); one
+  `LEDGER_FORMAT` integer over every ledger table the gate reads (O3);
+  `github-actions[bot]` is admitted by an `if` clause only for the
+  same-repo `develop` → `main` pull request (O4); `scripts/skew_replay.sh`
+  is a manual step of `docs/releasing.md` (O5).
 
 ## End state
 
@@ -222,8 +236,18 @@ flowchart LR
 
 ## Open Questions
 
-Each needs the owner's decision; the recommendation is the one the
-children are written to.
+- None. The owner approved the family on 2026-11-17, taking every
+  recommendation (decision g). The questions, as asked and decided:
+
+| # | Decision | Decided by owner 2026-11-17 |
+|---|---|---|
+| O1 | `main`'s code in `merge-on-ci.yml` with the skew as a tested contract, or `develop`'s code there | as recommended: `main`'s code, the contract |
+| O2 | An unknown head `repoach.toml` key refused by name, or ignored with a named line | as recommended: refused by name |
+| O3 | One `LEDGER_FORMAT` integer, or one per table | as recommended: one integer |
+| O4 | Admit `github-actions[bot]` by an `if` clause for the same-repo `develop` → `main` pull request only, or keep the close/reopen procedure | as recommended: the `if` clause |
+| O5 | `scripts/skew_replay.sh` as a manual step of `docs/releasing.md`, or a `repoach release gate` report line | as recommended: the manual step |
+
+The questions as they were asked, kept for the record:
 
 - Q1 (decision a): keep `main`'s code in `merge-on-ci.yml` and make the skew a contract (recommended: the lane holds the merge token, F1's rationale, and the release gate is where gate code is judged), or check out `develop` there and remove the window (no skew, but a gate defect merged into `develop` merges pull requests wrongly until noticed).
 - Q2 (decision c): an unknown `repoach.toml` key at the head is a named refusal (recommended: the key may be a gate rule such as `[auto_merge].required_checks`, and judging under rules the repository no longer declares is the silent-green class), or is ignored with a named line so merges continue under the older rules until the release.

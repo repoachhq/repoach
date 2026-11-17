@@ -1,8 +1,8 @@
 ---
 id: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN
 title: A required check whose job never ran (SKIPPED, or reported under its unexpanded template name) is a named failure, never green
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-17
@@ -75,6 +75,9 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
   `completed_at`, `head_sha` and the workflow name (no URLs, no ids,
   no tokens); `head_79b9321_green.json` holds the later run's. The
   test replays both.
+- D5 (owner, 2026-11-17). Approved with the family
+  (SP-GATE-NAMES-FORMAT-SKEW decision g); first of the four to be
+  implemented, as a live defect (decision f).
 
 ## End state
 
@@ -210,4 +213,4 @@ flowchart LR
 - [ ] AC4: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- None of its own. The umbrella SP-GATE-NAMES-FORMAT-SKEW carries the family's questions; none of them changes this spec.
+- None. Approved by the owner on 2026-11-17 with the family (SP-GATE-NAMES-FORMAT-SKEW decision g); none of its questions touched this spec. Implemented first (decision f).

@@ -1,8 +1,8 @@
 ---
 id: SP-LEDGER-FORMAT-IS-VERSIONED
 title: The findings ledger carries its format and writer version; a value, column or format the reader does not know is a named refusal on the pull request, never a traceback
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-17
@@ -106,6 +106,11 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
   re-grading (F5): it versions a **rule**, re-computed at the head; the
   ledger format versions a **shape**, which cannot be re-computed by an
   older reader. The snapshot includes the column, not the rule.
+- D7 (owner, 2026-11-17). O3: one `LEDGER_FORMAT` integer over every
+  ledger table the gate reads, as D1 is written. O5:
+  `scripts/skew_replay.sh` is a manual step of `docs/releasing.md`, as
+  D5 is written, not a release-gate report line. Second of the four to
+  be implemented (SP-GATE-NAMES-FORMAT-SKEW decision f).
 
 ## End state
 
@@ -276,4 +281,4 @@ flowchart LR
 - [ ] AC4: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `pytest -q tests/unit/test_review_auto_merge.py tests/unit/test_merge_attempts_ledger.py` green.
 
 ## Open Questions
-- None of its own. The umbrella's Q3 (one format integer or one per table) and Q5 (the replay as a hand step or a release-gate line) decide D1 and D5; this spec is written to the recommendations and is amended if the owner decides otherwise.
+- None. The owner decided O3 (one integer) and O5 (manual step) on 2026-11-17 as recommended, recorded in D7; approved with the family (SP-GATE-NAMES-FORMAT-SKEW decision g).

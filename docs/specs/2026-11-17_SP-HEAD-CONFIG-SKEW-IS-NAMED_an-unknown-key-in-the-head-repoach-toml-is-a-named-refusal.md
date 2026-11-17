@@ -1,8 +1,8 @@
 ---
 id: SP-HEAD-CONFIG-SKEW-IS-NAMED
 title: An unknown key in the head's repoach.toml, read by the released gate, is a named refusal on the pull request, never a traceback
-version: 0.1
-status: draft
+version: 0.2
+status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-17
@@ -69,6 +69,10 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
   `[auto_merge].later = true`; the test feeds it to the current model.
   No live key is used, so the fixture stays a skew whatever `develop`
   learns next.
+- D4 (owner, 2026-11-17). O2: an unknown key in the head's
+  `repoach.toml` is a named refusal, never ignored, as D1 is written.
+  Third of the four to be implemented (SP-GATE-NAMES-FORMAT-SKEW
+  decision f).
 
 ## End state
 
@@ -194,4 +198,4 @@ flowchart LR
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- None of its own. The umbrella's Q2 (refuse or ignore an unknown key) decides D1; this spec is written to the recommendation and is amended if the owner decides otherwise.
+- None. The owner decided O2 (refuse by name) on 2026-11-17 as recommended, recorded in D4; approved with the family (SP-GATE-NAMES-FORMAT-SKEW decision g).
