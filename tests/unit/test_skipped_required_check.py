@@ -28,10 +28,11 @@ from repoach.forge.github import (
     GitHubForge,
     classify_required_checks,
 )
+from repoach.forge.gitlab import GitLabForge
 from repoach.review import merge_wait
 from repoach.review.auto_merge import OUTCOME_SKIP_CI_FAILED, merge_exit_code, run_auto_merge
 from repoach.review.coder_findings import run_coder_fix_from_findings
-from repoach.review.coder_loop import CI_GREEN, CI_UNKNOWN, fetch_ci_status
+from repoach.review.coder_loop import CI_GREEN, CI_PENDING, CI_RED, CI_UNKNOWN, fetch_ci_status
 from repoach.review.findings import (
     ClaimType,
     Finding,
@@ -400,3 +401,64 @@ def test_a_ci_finding_stays_open_on_the_all_skipped_head(tmp_path: Path) -> None
 @pytest.mark.usefixtures("base_resolves")
 def test_a_ci_finding_resolves_once_the_head_ran_green(tmp_path: Path) -> None:
     assert _coder_round("both", tmp_path) is FindingStatus.RESOLVED
+
+
+GITLAB_HEAD = "a" * 40
+
+
+def _gitlab_mr(
+    pipeline_status: str | None, job_statuses: list[str], *, sha: str = GITLAB_HEAD
+) -> GitLabForge:
+    """A real :class:`GitLabForge` whose MR and pipeline-jobs reads answer a faked MR.
+
+    ``pipeline_status`` ``None`` is an MR with no head pipeline. Only the two
+    seams the reader goes through are faked (``_mr``, ``_api_list``); the
+    classification of the pipeline and its jobs is the forge's own.
+    """
+    forge = object.__new__(GitLabForge)
+    pipeline = (
+        None
+        if pipeline_status is None
+        else {"id": 7, "status": pipeline_status, "sha": sha, "web_url": ""}
+    )
+    jobs = [
+        {"name": f"j{i}", "status": status, "web_url": "", "stage": "test"}
+        for i, status in enumerate(job_statuses)
+    ]
+    forge._mr = lambda number: {"head_pipeline": pipeline}
+    forge._api_list = lambda path, number=None: jobs
+    forge._project = "projects/1"
+    return forge
+
+
+GITLAB_CASES = [
+    ("success, all jobs success", "success", ["success", "success"], GITLAB_HEAD, CI_GREEN),
+    ("success, an allow_failure job failed", "success", ["success", "failed"], GITLAB_HEAD, CI_RED),
+    ("failed, a job failed", "failed", ["success", "failed"], GITLAB_HEAD, CI_RED),
+    ("running, a job running", "running", ["success", "running"], GITLAB_HEAD, CI_PENDING),
+    ("success, a manual job left", "success", ["success", "manual"], GITLAB_HEAD, CI_GREEN),
+    ("skipped pipeline", "skipped", ["skipped", "skipped"], GITLAB_HEAD, CI_UNKNOWN),
+    ("canceled pipeline", "canceled", ["canceled", "success"], GITLAB_HEAD, CI_UNKNOWN),
+    ("no head pipeline", None, [], GITLAB_HEAD, CI_UNKNOWN),
+    ("manual pipeline", "manual", ["success", "manual"], GITLAB_HEAD, CI_PENDING),
+    ("pipeline of another commit", "success", ["success"], "b" * 40, CI_PENDING),
+]
+"""The ten GitLab rows of the verifier's table (D6): five read as before, and
+the five a head that never judged reads as not green (skipped, canceled, no
+head pipeline) or as still running (manual pipeline, another commit's pipeline)."""
+
+
+@pytest.mark.parametrize(
+    ("pipeline_status", "jobs", "sha", "expected"),
+    [case[1:] for case in GITLAB_CASES],
+    ids=[case[0] for case in GITLAB_CASES],
+)
+def test_the_coder_reader_on_gitlab(
+    pipeline_status: str | None, jobs: list[str], sha: str, expected: str
+) -> None:
+    forge = _gitlab_mr(pipeline_status, jobs, sha=sha)
+
+    state, failed = fetch_ci_status(forge, 1, head_sha=GITLAB_HEAD)
+
+    assert state == expected
+    assert bool(failed) is (expected == CI_RED)
