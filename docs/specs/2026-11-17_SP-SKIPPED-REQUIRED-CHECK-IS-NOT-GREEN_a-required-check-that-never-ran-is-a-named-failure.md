@@ -1,7 +1,7 @@
 ---
 id: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN
 title: A required check whose job never ran (SKIPPED, or reported under its unexpanded template name) is a named failure, never green
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-11-17
@@ -11,7 +11,7 @@ owns:
   code: [tests/unit/test_skipped_required_check.py, tests/fixtures/check_runs/]
   resources: []
 
-depends_on: [SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-UNIVERSAL-FORGE]
+depends_on: [SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-UNIVERSAL-FORGE, SP-CI-STATUS-CLIENT-CLASSIFY, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-FINDINGS-INIT-RACE]
 provides_to: []
 
 constraints: {}
@@ -32,7 +32,10 @@ expanded names are `missing`; a required job without a matrix
 lands) is already read green. This spec makes a `SKIPPED` required
 check a failure named `<name>=SKIPPED`, as the GitLab forge already
 does, in one constant both readers share, and makes the template-name
-fact readable in the refusal.
+fact readable in the refusal. A third reader, the Coder's
+`fetch_ci_status`, read green from `gh pr checks` buckets with
+`skipping` non-blocking (F7); it now takes green from the merge gate's
+own verdict (D6).
 
 ## Context
 
@@ -45,6 +48,7 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
 | F3 | Release PR #307, head `79b9321`: `CI` run 44071742332 (`pull_request`, actor `github-actions[bot]`, 2026-11-17 11:11Z) concluded `skipped`; its five jobs have `steps: 0` and conclusion `skipped`. The commit's check runs for that run: `Test suite (Python ${{ matrix.python-version }})` `skipped`, `wheel-build` `skipped` twice (two `wheel-build` check runs, the second a re-queue), `wheel-smoke (${{ matrix.python-version }})` `skipped` twice. The later run 44081266335 (actor `jwfaye`, 12:14Z) reports `Test suite (Python 3.11)`, `(3.13)`, `wheel-build`, `wheel-smoke (3.11)`, `(3.13)` `success` | `gh api repos/repoachhq/repoach/commits/79b9321150c9bb88aa79f6d96aeef238d9c45395/check-runs`; `gh api repos/repoachhq/repoach/actions/runs/44071742332/jobs` |
 | F4 | Replaying F3's skipped run alone against the five names with today's code: `wheel-build` green, the four matrix names `missing` → `required_check_missing`, exit 5 (SP-MERGE-EXIT-CONTRACT). With `gate` in the list (six names after #310), `gate` would read green too | `src/repoach/review/merge_wait.py:162-237`; `src/repoach/review/auto_merge.py:360-366` |
 | F5 | `classify_required_checks` keeps the latest `startedAt` per name; `judge_required_checks` ignores `CANCELLED` runs when a live one exists and names `cancelled` when none does. Neither reads a name that is not required, so a template name present in the rollup (`wheel-smoke (${{ matrix.python-version }})`) is invisible | `src/repoach/forge/github.py:236-245`; `src/repoach/review/merge_wait.py:196-210` |
+| F7 | Verifier finding, 2026-11-17, on this branch at `8e08c9a`: the Coder's `fetch_ci_status` classified `gh pr checks` rows by bucket, `skipping` and `cancel` non-blocking and an empty row set green, so a head whose every check was skipped returned `CI_GREEN`; `run_coder_fix_from_findings` then called `resolve_broken_behavior_findings` and closed the CI-failure findings on a head that never ran CI | `src/repoach/review/coder_loop.py:838-853`, `src/repoach/review/coder_findings.py:528` (at `8e08c9a`) |
 | F6 | SP-PR-RUNS-AFFECTED-JOBS A2 relies on a job whose **steps** are skipped concluding `success`; that is a different conclusion from a **job** skipped by `if` or `needs`, which is `skipped` | `docs/specs/2026-11-16_SP-PR-RUNS-AFFECTED-JOBS_*.md`, A2; F3 |
 
 ## Decisions (2026-11-17)
@@ -78,6 +82,16 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
 - D5 (owner, 2026-11-17). Approved with the family
   (SP-GATE-NAMES-FORMAT-SKEW decision g); first of the four to be
   implemented, as a live defect (decision f).
+- D6 (verifier finding F7, 2026-11-17; no deferral). The Coder's
+  `fetch_ci_status` keeps reading a red from every `gh pr checks` row
+  (each failed check's log reaches the Coder, SP-CI-STATUS-CLIENT-CLASSIFY),
+  but reads green only from `evaluate_ci_gate` with `wait_seconds=0`
+  over the required checks `resolve_required_checks` names, the merge
+  gate's own reader: `SKIPPED` or missing is not green, `NEUTRAL` is,
+  the latest run per name decides, and GitLab keeps its one pipeline
+  fact. A head that is neither red, green nor pending is `CI_UNKNOWN`,
+  logged `coder.ci_required_not_green` with the gate's reason: no CI
+  finding is opened or closed on it. No third copy of the semantics.
 
 ## End state
 
@@ -87,7 +101,9 @@ On a head whose `CI` run was skipped, `repoach review gate <n>` and
 and record `SKIP_CI_FAILED`; nothing on that head reads green. The
 fork pull request, the bot-actored head and a failed `needs` all land
 on the same named line. The GitHub and GitLab forges agree on what
-`skipped` means. `SKIPPED` appears in exactly one constant.
+`skipped` means. `SKIPPED` appears in exactly one constant. The
+Coder never closes a CI-failure finding on a head whose required
+checks did not run.
 
 ## Easy solution rejected
 
@@ -121,7 +137,7 @@ truth.
 
 ## Goals
 
-- G1: a `SKIPPED` required check is `failed`, named, in both readers (`judge_required_checks`, `classify_required_checks`), from one constant.
+- G1: a `SKIPPED` required check is `failed`, named, in both readers (`judge_required_checks`, `classify_required_checks`), from one constant; the third reader, the Coder's `fetch_ci_status`, reads green only through `evaluate_ci_gate` (D6).
 - G2: the F3 skipped-run fixture replays as `failed` with `wheel-build=SKIPPED` and four `missing` names annotated with their template; the F3 green-run fixture replays as `green`; the two fixtures together (one head, both runs) replay as `green`.
 - G3: `grep -rn '"SKIPPED"' src/repoach` finds exactly one definition.
 
@@ -186,6 +202,9 @@ A head with the six expanded names `success` → `green`, as today.
 | T4 | same | the two constants are imported by `merge_wait`, not redefined: `merge_wait._SUCCESS_CONCLUSIONS` does not exist and `grep` of `"SKIPPED"` over `src/repoach` is one line | re-add the private copy |
 | T5 | same | `NEUTRAL` → green; `CANCELLED` only → `cancelled` (unchanged) | treat `NEUTRAL` as failed |
 | T6 | same | `template_of("wheel-smoke (3.11)", [...])` → the template; `template_of("gate", [...])` → `None` | match on any `${{` |
+| T7 | same | `fetch_ci_status` on the skipped fixture → `CI_UNKNOWN`; on the green fixture and on both → `CI_GREEN`; `NEUTRAL` → `CI_GREEN` | read green from the `gh pr checks` buckets again (`skipping` non-blocking) |
+| T8 | same | `run_coder_fix_from_findings` on the skipped fixture leaves an open CI-failure finding `OPEN`; on both fixtures it is `RESOLVED` | same |
+| T9 | `tests/unit/test_review_coder_loop.py` | no check ran → `CI_UNKNOWN`; a required check `SKIPPED` → `CI_UNKNOWN`, logged `coder.ci_required_not_green` with `SKIP_CI_FAILED`; an unrequired skipped or cancelled check → `CI_GREEN` | same |
 
 ## Success conditions
 
@@ -197,6 +216,7 @@ A head with the six expanded names `success` → `green`, as today.
 ## Architecture Impact
 - Adds dependency: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF (the test imports `judge_required_checks` and `RequiredChecksVerdict` from `merge_wait.py`, that spec's file)
 - Adds dependency: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN -> SP-UNIVERSAL-FORGE (the test imports `CheckRun` from `repoach.forge` and `classify_required_checks` and the constants from `repoach.forge.github`; `src/repoach/forge/` is owned by SP-UNIVERSAL-FORGE, not frontier as version 0.2 said, measured by `repoach arch check --staged`). The constants move to `forge/github.py` and `merge_wait.py` imports them as it already imports `DEFAULT_REQUIRED_CHECK_NAMES`. No new table, no cycle.
+- Adds dependency: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN -> SP-CI-STATUS-CLIENT-CLASSIFY, SP-DEDUP-CLASSIFICATION-CONSTANTS, SP-FINDINGS-INIT-RACE (the T7–T8 tests import `repoach.review.coder_loop`, `repoach.review.coder_findings` and `repoach.review.findings`; D6). `coder_loop.py` imports `evaluate_ci_gate` from `auto_merge.py`. No new table, no cycle.
 
 ## Diagram
 ```mermaid
