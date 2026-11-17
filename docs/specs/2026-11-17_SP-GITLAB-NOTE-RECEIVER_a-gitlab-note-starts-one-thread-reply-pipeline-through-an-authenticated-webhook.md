@@ -1,42 +1,86 @@
 ---
 id: SP-GITLAB-NOTE-RECEIVER
-title: A GitLab note starts one thread-reply pipeline through an authenticated webhook receiver on hel1, with a scheduled fallback
-version: 0.1
+title: A GitLab note starts one thread-reply pipeline through an authenticated webhook receiver, with a scheduled fallback
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-17
 updated: 2026-11-17
 
 owns:
-  code: [src/repoach/review/thread_webhook.py, deploy/systemd/repoach-threads-serve.service, tests/unit/test_thread_webhook.py, tests/unit/test_threads_serve_unit.py, tests/unit/test_threads_triggers.py]
-  resources: [format:gitlab-note-webhook, format:threads-serve-unit]
+  code: [src/repoach/review/thread_webhook.py, deploy/systemd/repoach-threads-receiver.service, deploy/systemd/repoach-threads-receiver.socket, deploy/systemd/threads-receiver.env.example, tests/unit/test_thread_webhook.py, tests/unit/test_threads_receiver_unit.py, tests/unit/test_threads_triggers.py]
+  resources: [format:gitlab-note-webhook, format:threads-receiver-unit]
 
-depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-THREAD-REPLY-AGENT, SP-UNIVERSAL-CI-ENTRY, SP-CI-LEDGER-PERSISTS, SP-CLI-STDOUT-ONE-JSON]
+depends_on: [SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-THREAD-REPLY-AGENT, SP-UNIVERSAL-FORGE, SP-UNIVERSAL-CI-ENTRY, SP-CI-LEDGER-PERSISTS, SP-CLI-STDOUT-ONE-JSON]
 provides_to: []
 
 constraints:
   scheduled_fallback_minutes: 15
-  coalesce_window_seconds: 60
+  coalesce_window_seconds: 20
+  coalesce_max_mrs: 256
   body_max_bytes: 1048576
   replay_cache_entries: 4096
-  listen_address: 172.18.0.1
-  listen_port: 8787
+  default_bind: 127.0.0.1:8787
 ---
 
 # A GitLab note starts one thread-reply pipeline
+
+## Amendment (0.3, 2026-11-17): the receiver is for everyone; the owner's host is an example
+
+Owner principle, 2026-11-17: repoach is for every user, host, reverse
+proxy and GitLab, not for one machine. 0.2 made one host's facts (a
+Docker bridge address, an nginx container, a firewall, one project's
+CI file) the design, the defaults and the End state. This version keeps
+0.2's corrections (the verified unit pair, the byte comparison on the
+headers, the author filter, the bounded coalescer, the forge-read
+fallback, the shared cache key) and makes them generic: the bind
+address, the GitLab URL, the project and the bot login are
+configuration; the secrets come from a credentials directory with four
+documented ways to fill it; the unit pair is a sample that verifies on
+any systemd ≥ 250 host; the generated jobs carry no runner tag; `doctor
+--ci` names the jobs of a project's own CI file that a threads pipeline
+would also run. The owner's deployment (hel1, nginx, Yoob) is one
+labelled section at the end, with its measured facts, and is a
+condition of nothing above it.
+
+## Amendment (0.2, 2026-11-17): the unit verifies, the egress is honest, the flood is bounded, the fallback reads the forge
+
+Re-measured on `origin/develop` `92cd241` and systemd `255.4` after the
+verifier's read. (1) `IPAddressAllow=… <hostname>` is refused by
+`systemd-analyze verify` ("Invalid address prefix is specified in
+[Service] IPAddressAllow=, ignoring assignment", measured) and
+`IPAddressDeny=any` then cut the trigger call and the resolver; D10 is a
+socket-activated unit pair with no IP allow-list and a named reason.
+(2) The token is compared on the headers alone, as bytes against bytes,
+before any body is read; a missing or duplicated header is defined (D1).
+(3) Only a `Note Hook` by someone other than the bot starts anything:
+the bot's own replies, system notes and `Merge Request Hook` deliveries
+start nothing (D5), since the MR pipeline already runs `review pr` on
+every push. (4) One trigger per merge request per window, armed on the
+first note and fired at the end of the window so the run reads every
+note before it; bounded state; the job is single-flight per merge
+request through `resource_group` (D3, D8). (5) The scheduled fallback
+reads the forge, not N ledger caches (D7). (6) The generated
+`threads:reply` job carries the per-merge-request ledger cache of
+SP-CI-LEDGER-PERSISTS, which lands before this spec; the cache key of a
+trigger pipeline is spelled with the variable the trigger carries and
+resolves to the same key the review job writes (D8). (7) The trigger
+token is piped into the credential store, never printed; the 401 line
+never names the token (D1).
 
 ## Intent
 
 Child 8c of SP-PR-THREADS-REMEMBER-AND-CLOSE. On GitHub, a reply in a
 thread already starts `review pr` (`pull_request_review_comment`); on
-Yoob's GitLab, a note starts nothing, so the reply agent (8b) would run
-only at the next push. This spec adds `repoach threads serve`, a small
-HTTP receiver on hel1 behind the existing nginx, that authenticates a
-GitLab note hook in constant time, refuses replays and oversized
-bodies, and starts exactly one `threads:reply` pipeline for the merge
-request; a 15-minute schedule is the fallback for a lost delivery. Its
-secrets are systemd encrypted credentials: never a file in clear, never
-argv, never the environment.
+GitLab, a note starts nothing, so the reply agent (8b) would run only at
+the next push. This spec adds `repoach threads serve`, a small HTTP
+receiver any project operator can run on any host, that authenticates a
+GitLab note hook in constant time on its headers, refuses replays and
+oversized bodies, and starts at most one `threads:reply` pipeline per
+merge request per window on the project's GitLab, gitlab.com or
+self-managed; a 15-minute schedule in the project's own CI is the
+fallback for a lost delivery. Its two secrets are read from a
+credentials directory, never from argv, the environment or a log line.
 
 ## Context
 
@@ -44,294 +88,516 @@ argv, never the environment.
 
 | # | Fact | Where |
 |---|---|---|
-| F1 | GitHub runs `review pr` on `pull_request_review_comment` (`created`), `issue_comment` and `pull_request_review`; nothing to add there | `.github/workflows/auto-review.yml:17-30`, `:566` |
-| F2 | `repoach init --ci gitlab` writes the GitLab review job into `.repoach/ci/gitlab-review.yml`, pulled by `include:`; `.gitlab-ci.yml` itself is never edited | `src/repoach/ci_entry/snippets.py:1-7`, `:36` |
-| F3 | The findings ledger of a merge request lives in that merge request's CI cache, not on a host | SP-CI-LEDGER-PERSISTS; Yoob `ci/review-gate.sh:10-14` |
+| F1 | GitHub runs `review pr` on `pull_request_review_comment` (`created`) and `issue_comment`; `pull_request_review` runs the `rearm` job only (`github.event_name != 'pull_request_review'` in the `review` job's `if`); nothing to add there | `.github/workflows/auto-review.yml:17-30`, `:141-156`, `:566` |
+| F2 | `repoach init --ci gitlab` writes the GitLab review job into `.repoach/ci/gitlab-review.yml`, pulled by `include:`; `.gitlab-ci.yml` itself is never edited; the generated job has no `cache:` on `92cd241` (SP-CI-LEDGER-PERSISTS adds it and lands before this spec) and tells the operator to set `REPOACH_GITLAB_TOKEN` as a masked CI/CD variable | `src/repoach/ci_entry/snippets.py:36`, `:93-119` (`:99`) |
+| F3 | The findings ledger of a merge request lives in the merge request's CI cache when the project caches it (SP-CI-LEDGER-PERSISTS G1, key `repoach-ledger-mr-<iid>`), not on a host | SP-CI-LEDGER-PERSISTS D1, G1, F5 |
 | F4 | `git grep -n "X-Gitlab" origin/develop -- src` → 0: repoach receives no webhook today | `git grep` |
+| F5 | `Comment` carries `author`, `body`, `created_at`, `in_reply_to`, `thread_id`; `Forge.comments(number)` reads every inline comment and `review_threads(number)` every thread with `resolved`, `resolved_by` and, from 8a, `opened_by`; the forge's base URL is the project's (`[forge].url`, gitlab.com by default) | `src/repoach/forge/protocol.py:486-512`, `:724-747`; SP-FORGE-RESOLVES-THREADS D4 |
+| F6 | `ci_doctor_lines(env, root)` reads the project's `.gitlab-ci.yml` jobs from 7b on (SP-CI-LEDGER-PERSISTS D3, G6) | SP-CI-LEDGER-PERSISTS Interface |
 
-### Yoob, measured on `origin/develop` (2026-11-17)
+### GitLab (docs.gitlab.com, read 2026-11-17)
 
 | # | Fact | Where |
 |---|---|---|
-| Y1 | `workflow:rules`: `schedule` first, then `$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS → never`, then `merge_request_event`, `main`/`develop`, `tp/`, tags | Yoob `.gitlab-ci.yml:12-29` |
-| Y2 | nginx vhosts: `listen 443 ssl http2; server_name yoob.dev;` block; zones `api_limit` 10 r/s and `upload_limit` 1 r/s only | Yoob `nginx/conf.d/yoob.conf:92-93`; `nginx/nginx.conf:45-46` |
-| Y3 | `docker-compose.prod.yml` names `yoob_network` on four services and pins no subnet | Yoob `docker-compose.prod.yml:17`, `:68`, `:89`, `:149` |
-| Y4 | B-174 (threads block the merge) names the composite as its decision | Yoob `docs/BACKLOG.md:205` |
+| G1 | A pipeline started through `POST /projects/:id/trigger/pipeline` with a trigger token has `CI_PIPELINE_SOURCE = trigger`; one started with `POST /projects/:id/pipeline` (a token with `api` scope) has `api`; `variables[KEY]=value` passed either way are pipeline variables of the highest precedence; a trigger pipeline carries no `CI_MERGE_REQUEST_IID` | `docs.gitlab.com/ci/triggers/`; `docs.gitlab.com/api/pipelines/` |
+| G2 | A `Note Hook` payload carries `user.username` (the note's author), `object_attributes.system` (true for a system note), `object_attributes.noteable_type`, and `merge_request.iid` / `merge_request.source_branch` when the note is on a merge request; `X-Gitlab-Event-UUID` names the delivery, `X-Gitlab-Token` carries the secret verbatim; GitLab emits no hook when a discussion is resolved | `docs.gitlab.com/user/project/integrations/webhook_events/` |
+| G3 | `workflow:rules` decides whether a pipeline exists; each job's `rules` decide whether it runs in it; a job with no `rules` runs in every pipeline the workflow admits; `resource_group` serialises the jobs that share its value and takes CI/CD variables | `docs.gitlab.com/ci/yaml/` |
 
-### hel1, measured over `ssh hel1` (2026-11-17)
+### systemd, measured on `255.4-1ubuntu8.18` (2026-11-17)
 
 | # | Fact | Consequence |
 |---|---|---|
-| H1 | nginx is the container `yoob_nginx` (`nginx:1.25-alpine`) on `yoob_2_yoob_network`, subnet `172.18.0.0/16`, gateway `172.18.0.1`; `/etc/nginx` absent on the host | a unit bound to `127.0.0.1` is unreachable from the container; the receiver binds the bridge gateway `172.18.0.1:8787` (constraints), and Y3's compose file pins the subnet so the address cannot move |
-| H2 | `ufw` active, six rules, all `ALLOW IN` from `Anywhere`: 22, 80, 443 (v4 and v6); public listeners are 22, 80, 443 only; a `tailscale0` interface holds two more | 8787 is never published; one rule admits the bridge only: `ufw allow in on br-<id> from 172.18.0.0/16 to 172.18.0.1 port 8787 proto tcp` |
-| H3 | `yoob.dev` → `65.108.199.28` directly (no proxy in front); `hooks.yoob.dev` does not resolve; the certificate's SANs are `yoob.dev`, `www.yoob.dev`, `studio.yoob.dev` | the path `location = /hooks/repoach` in the existing `yoob.dev` 443 block (Y2): no DNS record, no certificate change |
-| H4 | `systemd 255 (255.4-1ubuntu8.18)`; `/usr/bin/systemd-creds` present; `systemd-creds has-tpm2` → `partial -firmware` | `LoadCredentialEncrypted=` is available; without a usable TPM the credentials are encrypted with the host key (`systemd-creds encrypt --with-key=host`), readable by this host only |
-| H5 | No repoach installed (`which repoach` empty, `/opt/repoach*` and `/etc/repoach*` absent); runners are `gitlab-runner-{light,heavy,deploy}.service` | the unit runs its own virtualenv `/opt/repoach-threads/venv` as the system user `repoach-threads` |
+| S1 | `systemd-analyze verify` prints `Invalid address prefix is specified in [Service] IPAddressAllow=, ignoring assignment: <hostname>` on a hostname, and `Command <path> is not executable: No such file or directory` when `ExecStart`'s binary is absent on the verifying host; the unit pair of D10 with its binary present prints nothing, exit 0 | the directive takes addresses and prefixes only; the oracle of C3 runs where the binary exists, or with it stubbed |
+| S2 | `LoadCredentialEncrypted=` / `LoadCredential=` hand a service files under `$CREDENTIALS_DIRECTORY`, readable by the service user only; `systemd-creds encrypt --with-key=host` binds a credential to the host without a TPM | the credentials directory of D2 is what systemd gives, and the same layout is what Docker secrets give under `/run/secrets` |
+| S3 | A `.socket` unit with `FreeBind=yes` binds an address before the interface that carries it exists (Linux `IP_FREEBIND`) | a receiver bound to a bridge or VPN address needs no ordering on the service that creates the interface |
 
-Not measured: the project's existing webhooks and trigger tokens (their
-read returns credentials; the owner reads them).
+## Decisions (2026-11-17; composite D10, D14, D15 applied; 0.2 and 0.3 items marked)
 
-## Decisions (2026-11-17; composite D10, D14, D15 applied)
-
-- D1. **Authentication.** A delivery is accepted only when
-  `hmac.compare_digest(request_token, secret)` is true for
-  `X-Gitlab-Token` (GitLab sends the secret verbatim, it does not sign
-  the body). A missing or wrong token is `401` with an empty body, one
-  log line `rejected: bad token from <peer>` that never echoes the
-  token, and no other work; the comparison runs before the body is
-  read.
-- D2. **Where the secrets live.** Two systemd encrypted credentials,
-  `webhook_secret` and `trigger_token`, created once by the owner with
-  `systemd-creds encrypt --name=<name> - /etc/credstore.encrypted/<name>.cred`
-  (read from the terminal, `--with-key=host` when H4 names no TPM), and
-  handed to the service by `LoadCredentialEncrypted=` in the unit.
-  The process reads them from `$CREDENTIALS_DIRECTORY/<name>` at
-  startup, keeps them in memory, and refuses to start (exit 2, the
-  credential named) when either is absent or empty. **No secret is in
-  argv, in the environment, in a plain file, or in a log line.** The
-  `.cred` files are ciphertext bound to this host.
-- D3. **Replay protection.** Each delivery carries
-  `X-Gitlab-Event-UUID`; the receiver keeps the last
-  `replay_cache_entries` UUIDs in memory and answers `202` without
-  acting on a seen one. Independently, note ids are coalesced per
-  merge request: one pending trigger per MR within
-  `coalesce_window_seconds`, so a burst of notes or a redelivered hook
-  costs one pipeline. The triggered run is itself idempotent (8b
-  markers), so a replay that slips through posts nothing twice. A
-  delivery with no UUID is accepted and coalesced only.
-- D4. **Size and shape limits.** `Content-Length` above
-  `body_max_bytes` is `413` before any read; a body is read up to that
-  bound and not past it; a non-JSON body or one whose `object_kind` is
-  not `note` or `merge_request` is `202` with no action and one log
-  line; a `project.id` that is not the configured project is `202`,
-  no action, logged as `foreign project <id>`. nginx adds
-  `client_max_body_size 1m`, `limit_except POST`, and a zone
-  `hooks_limit` (`5r/s`, `burst=10`).
-- D5. **What is accepted.** `X-Gitlab-Event: Note Hook` whose note is
-  on a merge request (`merge_request.iid` present), and `Merge Request
-  Hook` whose action is `open`, `reopen` or `update`. Anything else is
-  `202`, no action. An accepted event starts one pipeline (D6).
-- D6. **The run executes in CI, not in-process** (F3): the receiver
-  `POST`s `https://gitlab.com/api/v4/projects/<id>/trigger/pipeline`
-  with `token=<trigger_token>`, `ref=<source branch>`,
-  `variables[REPOACH_THREADS_REPLY_MR]=<iid>`. The `threads:reply` job
-  restores the MR's ledger cache, runs `repoach threads reply <iid>
-  --json` and saves the cache. A trigger call that fails is logged and
-  answered `202` all the same (GitLab retries nothing on a non-2xx
-  except by hand; the schedule is the fallback, D7).
-- D7. **Fallback.** A pipeline schedule every
-  `scheduled_fallback_minutes` runs one job that lists the open merge
-  requests and starts one triggered run per MR with a note newer than
-  the MR's last `threads reply` (the job reads the last reply marker's
-  timestamp from the ledger cache; with no cache, every open MR). On the
-  self-hosted light runner only (`tags: [yoob-light]` written
-  literally, not `$YOOB_LIGHT_RUNNER_TAG`, which may name the metered
-  shared runner), so the fallback costs no shared minutes.
-- D8. **Generated job.** `repoach init --ci gitlab` writes the
-  `threads:reply` job and the schedule job into
-  `.repoach/ci/gitlab-review.yml` (F2) with the rule
-  `$CI_PIPELINE_SOURCE == "trigger" && $REPOACH_THREADS_REPLY_MR`;
-  Yoob's `.gitlab-ci.yml` gains that rule in `workflow:rules` **before**
-  the `never` rule of Y1, as the schedule rule already sits, by a Yoob
-  MR. Every other job excludes trigger pipelines.
-- D9. **The server.** Python's `http.server` on one thread with a
-  request timeout of 10 s, `--host`/`--port` defaulting to the
-  constraints, `GET /healthz` → `200 ok` (nginx does not proxy it); no
-  TLS (nginx terminates); no other route. One log line per request on
-  stderr: method, path, event, MR, outcome; stdout prints nothing
-  (SP-CLI-STDOUT-ONE-JSON).
-- D10. **The unit** (`format:threads-serve-unit`), shipped as
-  `deploy/systemd/repoach-threads-serve.service`:
+- D1. **Authentication, on the headers, before the body.** The request
+  line and headers are read (`http.server` reads them before the
+  handler runs; the body is not touched until the handler reads
+  `rfile`). Exactly one `X-Gitlab-Token` header must be present
+  (`headers.get_all("X-Gitlab-Token")` of length 1); its value, encoded
+  back to the bytes the parser decoded (`latin-1`), is compared with the
+  secret bytes by `hmac.compare_digest(bytes, bytes)` (the credential
+  file's content with one trailing newline stripped). A missing header,
+  two headers, a non-`latin-1` value or a mismatch is `401` with
+  `Content-Length: 0` and `Connection: close` (the unread body is
+  discarded with the connection), one log line `rejected: bad token
+  from <address>` that never echoes the token, and no other work; the
+  address is the peer's, or the first `X-Forwarded-For` address when
+  `--behind-proxy` is set (0.3). `compare_digest` on two byte strings of
+  different lengths may reveal the lengths, never the bytes; a GitLab
+  secret is one line, so the length is not a secret here.
+- D2. **Where the secrets live** (0.3). Two files, `webhook_secret` and
+  `trigger_token`, in one *credentials directory*, read once at startup
+  into memory; the process refuses to start (exit 2, the credential
+  named) when either is absent, empty or world-readable. The directory
+  is `--secret-dir`, defaulting to `$CREDENTIALS_DIRECTORY` when set.
+  Four documented ways fill it, none of them argv, the environment or a
+  log: systemd `LoadCredentialEncrypted=` (ciphertext bound to the
+  host, S2; the sample unit), systemd `LoadCredential=` (a root-only
+  file systemd copies), Docker or Compose secrets (`/run/secrets/<name>`,
+  the same layout), or any directory the operator owns with two files
+  mode `0400`/`0600`. **No secret is in argv, in the environment, in a
+  log line, or in a world-readable file.**
+- D3. **Replay protection and coalescing** (0.2). Each delivery carries
+  `X-Gitlab-Event-UUID` (exactly one; two is `202`, `ignore`, logged);
+  the receiver keeps the last `replay_cache_entries` UUIDs in an LRU
+  and answers `202`, `replay`, without acting on a seen one. A delivery
+  with no UUID is coalesced only. Coalescing is per merge request with
+  a bounded state machine: an accepted note on an idle MR *arms* it with
+  a deadline `now + coalesce_window_seconds`; notes accepted while armed
+  change nothing (the run that starts at the deadline reads the forge
+  after them, so none is lost); at the deadline one trigger is sent and
+  the MR is idle again; a note after the deadline arms anew. The armed
+  set holds at most `coalesce_max_mrs` MRs; arming a further one fires
+  the oldest armed MR at once. So a burst of notes, a redelivered hook
+  and a flood each cost at most one pipeline per MR per window, the
+  state is bounded by two constants, and the latest note is never
+  dropped. The triggered run is itself idempotent (8b markers) and
+  single-flight per MR (D8), so a trigger that slips through (a
+  receiver restart loses its state) posts nothing twice.
+- D4. **Size and shape limits.** `Content-Length` absent or not an
+  integer is `400`, `Connection: close`; above `body_max_bytes` is
+  `413`, `Connection: close`, nothing read; otherwise exactly
+  `Content-Length` bytes are read and not one more; a non-JSON body or
+  one whose `object_kind` is not `note` is `202` with no action and one
+  log line; a `project.id` that is not the configured project is `202`,
+  no action, logged as `foreign project <id>`. A reverse proxy in front
+  may add its own body cap, method filter and rate limit; the receiver
+  does not rely on them.
+- D5. **What is accepted** (0.2). A `Note Hook` whose note is on a
+  merge request (`merge_request.iid` present), is not a system note
+  (`object_attributes.system` false) and whose author is not the bot
+  (`user.username != <bot username>`, G2): the bot's own replies, the
+  system notes a push or a resolve leaves, and every other event kind
+  (`Merge Request Hook` included: a push already starts the MR
+  pipeline, which runs `review pr` and 8b's handler) are `202`,
+  `ignore`, one log line naming the reason. An accepted note arms its
+  merge request (D3).
+- D6. **The run executes in CI, not in-process** (F3): at the deadline
+  the receiver `POST`s `<gitlab url>/api/v4/projects/<id>/trigger/pipeline`
+  with `token=<trigger_token>`, `ref=<source branch of the last accepted
+  note's payload>`, `variables[REPOACH_THREADS_REPLY_MR]=<iid>`
+  (`CI_PIPELINE_SOURCE = trigger`, G1). The `threads:reply` job restores
+  the MR's ledger cache, runs `repoach threads reply <iid> --json` and
+  saves the cache. A trigger call that fails is logged `trigger failed
+  for !<iid>: <status or exception type>` and the MR goes idle (GitLab
+  retries nothing on a non-2xx except by hand; the schedule is the
+  fallback, D7). The call leaves the host over HTTPS to the configured
+  GitLab through the host's resolver; D10 says why no IP allow-list
+  bounds it.
+- D7. **Fallback from the forge, not from the caches** (0.2). A pipeline
+  schedule every `scheduled_fallback_minutes` with the variable
+  `REPOACH_THREADS_SCHEDULE=1` runs one job, `threads:schedule`, which
+  runs `repoach threads pending --json`: for every open merge request,
+  through the forge alone (F5, no ledger), the MR is *pending* when a
+  thread whose `opened_by` is the bot has as its last comment one by
+  someone else, or when a comment anywhere on the MR whose body starts
+  with `/resolve` or `/reopen` is newer than the bot's newest comment on
+  the MR. For each pending MR the job `POST`s `/projects/<id>/pipeline`
+  with `ref=<source branch>` and `variables[][key]=REPOACH_THREADS_REPLY_MR`
+  using `REPOACH_GITLAB_TOKEN`, the token the generated review job
+  already requires (F2; `CI_PIPELINE_SOURCE = api`, G1). No second
+  secret exists for it. The generated job writes no `tags:`; an
+  operator who wants it on a given runner adds them in the project's
+  CI file (0.3).
+- D8. **Generated jobs and the pipeline kind** (0.2, 0.3). `repoach init
+  --ci gitlab` writes two jobs into `.repoach/ci/gitlab-review.yml`
+  (F2): `threads:reply`, rule `if: $REPOACH_THREADS_REPLY_MR` (the
+  variable, whatever the source: `trigger` from the receiver, `api` from
+  the schedule), `resource_group: threads-reply-$REPOACH_THREADS_REPLY_MR`
+  (one run per MR at a time, G3; a second trigger waits, then finds the
+  markers), and the ledger cache of SP-CI-LEDGER-PERSISTS with its key
+  spelled `repoach-ledger-mr-$REPOACH_THREADS_REPLY_MR`, which resolves
+  to the same string as the review job's `repoach-ledger-mr-
+  $CI_MERGE_REQUEST_IID` for that MR (G1), so the two jobs share one
+  cache; and `threads:schedule`, rule `if: $CI_PIPELINE_SOURCE ==
+  "schedule" && $REPOACH_THREADS_SCHEDULE`, no cache. Both are
+  `render_gitlab_threads_jobs(target, ledger: LedgerPlan)` in
+  `snippets.py`. The project's own CI must admit the pipeline and keep
+  its other jobs out of it (G3): `workflow:rules` gains `- if:
+  $REPOACH_THREADS_REPLY_MR` before any rule that would refuse a branch
+  pipeline, and every job without a rule that excludes it gains `- if:
+  $REPOACH_THREADS_REPLY_MR` / `when: never`. Because that edit is the
+  project's, `repoach doctor --ci` (F6) prints, from the checkout's
+  `.gitlab-ci.yml`, one line `threads_pipeline=<job> would also run` for
+  every job whose `rules` neither exclude `$REPOACH_THREADS_REPLY_MR`
+  nor restrict the job to `merge_request_event`, and
+  `threads_pipeline=ok` when there is none; `init --ci gitlab` prints the
+  same lines after writing the file. A project that includes the
+  generated file and whose jobs are all `merge_request_event` jobs
+  needs the workflow rule only.
+- D9. **The server.** Python's `http.server` on one thread, HTTP/1.1
+  with `Connection: close` on every refusal, a request timeout of 10 s,
+  the listening socket taken from systemd (`LISTEN_FDS=1`, fd 3,
+  `--listen-fd`) or bound by `--bind HOST:PORT` (default
+  `default_bind`, the loopback), `GET /healthz` → `200 ok`; no TLS (a
+  reverse proxy, a tunnel or a TLS terminator in front of a non-loopback
+  bind is the operator's; a plain-HTTP public bind would carry the token
+  in clear and the receiver refuses to start with `--bind` on a
+  non-loopback address unless `--behind-proxy` or `--allow-plain-http`
+  is given, each named in the log); no other route. One log line per
+  request on stderr: method, path, event, MR, outcome, address; stdout
+  prints nothing (SP-CLI-STDOUT-ONE-JSON). Non-secret settings
+  (`--gitlab-url`, `--project-id`, `--bot-username`, `--bind`,
+  `--behind-proxy`) are options, or the same names upper-cased with
+  `REPOACH_THREADS_` in the environment, which an `EnvironmentFile=`
+  may hold since none is a secret.
+- D10. **The sample unit pair** (0.2, 0.3; `format:threads-receiver-unit`),
+  shipped as `deploy/systemd/repoach-threads-receiver.socket`,
+  `deploy/systemd/repoach-threads-receiver.service` and
+  `deploy/systemd/threads-receiver.env.example`. Socket activation with
+  `FreeBind=yes` binds the configured address at boot even when the
+  interface that carries it (a bridge, a VPN) does not exist yet (S3),
+  so no ordering on another service is needed; the sample binds the
+  loopback and says where to change it. No `IPAddressAllow` /
+  `IPAddressDeny`: the directive takes addresses and prefixes only
+  (S1), the trigger call goes to a GitLab host whose addresses the
+  operator does not control (gitlab.com answers from anycast
+  addresses), and name resolution needs the host's resolver; an
+  allow-list would either cut the call or be wide enough to mean
+  nothing. The isolation is the bind address, an empty capability set, a
+  strict filesystem, no device, no namespace, a system-call filter and
+  the address families the server needs. The `ExecStart` path is the
+  install's; the sample names `/usr/local/bin/repoach` and the comment
+  says to edit it.
 
   ```ini
+  # deploy/systemd/repoach-threads-receiver.socket
+  # Edit ListenStream= to the address your reverse proxy or GitLab reaches.
+  [Unit]
+  Description=repoach GitLab note receiver socket (SP-GITLAB-NOTE-RECEIVER)
+
+  [Socket]
+  ListenStream=127.0.0.1:8787
+  FreeBind=yes
+  Backlog=64
+  NoDelay=yes
+
+  [Install]
+  WantedBy=sockets.target
+  ```
+
+  ```ini
+  # deploy/systemd/repoach-threads-receiver.service
+  # Edit ExecStart= to your install path; put the non-secret settings in
+  # /etc/repoach/threads-receiver.env (see threads-receiver.env.example);
+  # create the two credentials with systemd-creds (D2).
   [Unit]
   Description=repoach GitLab note receiver (SP-GITLAB-NOTE-RECEIVER)
-  After=network-online.target docker.service
+  Requires=repoach-threads-receiver.socket
+  After=network-online.target repoach-threads-receiver.socket
   Wants=network-online.target
 
   [Service]
+  Type=exec
   User=repoach-threads
+  Group=repoach-threads
+  EnvironmentFile=/etc/repoach/threads-receiver.env
   LoadCredentialEncrypted=webhook_secret:/etc/credstore.encrypted/webhook_secret.cred
   LoadCredentialEncrypted=trigger_token:/etc/credstore.encrypted/trigger_token.cred
-  Environment=REPOACH_GITLAB_PROJECT_ID=67827362
-  ExecStart=/opt/repoach-threads/venv/bin/repoach threads serve --host 172.18.0.1 --port 8787
+  ExecStart=/usr/local/bin/repoach threads serve --listen-fd
   Restart=on-failure
+  RestartSec=5s
+  TimeoutStopSec=15s
+  UMask=0077
   NoNewPrivileges=yes
+  CapabilityBoundingSet=
+  AmbientCapabilities=
   ProtectSystem=strict
   ProtectHome=yes
   PrivateTmp=yes
-  IPAddressAllow=172.18.0.0/16 gitlab.com
-  IPAddressDeny=any
+  PrivateDevices=yes
+  ProtectKernelTunables=yes
+  ProtectKernelModules=yes
+  ProtectKernelLogs=yes
+  ProtectControlGroups=yes
+  ProtectClock=yes
+  ProtectHostname=yes
+  ProtectProc=invisible
+  ProcSubset=pid
+  RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+  RestrictNamespaces=yes
+  RestrictRealtime=yes
+  RestrictSUIDSGID=yes
+  LockPersonality=yes
+  MemoryDenyWriteExecute=yes
+  SystemCallArchitectures=native
+  SystemCallFilter=@system-service
+  SystemCallFilter=~@privileged @resources
+  SystemCallErrorNumber=EPERM
 
   [Install]
   WantedBy=multi-user.target
   ```
 
+  ```ini
+  # deploy/systemd/threads-receiver.env.example (no secret belongs here)
+  REPOACH_THREADS_GITLAB_URL=https://gitlab.com
+  REPOACH_THREADS_PROJECT_ID=<project id>
+  REPOACH_THREADS_BOT_USERNAME=<the login the review token posts as>
+  REPOACH_THREADS_BEHIND_PROXY=1
+  ```
+
   `threads serve` takes no secret option; `--secret-dir` defaults to
-  `$CREDENTIALS_DIRECTORY` and is for tests.
+  `$CREDENTIALS_DIRECTORY` (D2).
 
 ## End state
 
-The owner replies in a thread on a Yoob MR; within a few seconds nginx
-logs one `POST /hooks/repoach 202`, `journalctl -u
-repoach-threads-serve` shows `accepted: note on !371 → pipeline
-<id>`, and the pipeline runs one job, `threads:reply`, whose log ends
-with 8b's JSON and whose reply appears in the thread. A `curl -X POST
-https://yoob.dev/hooks/repoach -H 'X-Gitlab-Token: wrong'` gets `401`;
-a `GET` gets `403` from nginx; `65.108.199.28:8787` does not connect;
-`ps -o args= -C repoach` and `/proc/<pid>/environ` show no secret.
+An operator of any GitLab project has run `repoach init --ci gitlab`,
+started `repoach threads serve` on a host their GitLab can reach (behind
+their reverse proxy, a tunnel or a TLS terminator), and created the
+webhook with `note_events` only. An author replies in a finding's
+thread; within `coalesce_window_seconds` the receiver logs `accepted:
+note on !<iid> by <login>` then `triggered: !<iid> → pipeline <id>`, and
+the pipeline runs one job, `threads:reply`, whose log ends with 8b's
+JSON and whose reply appears in the thread; the bot's own reply arrives
+as a note and is logged `ignored: note by the bot`. A `POST` with a
+wrong token gets `401` with no body read; `ps -o args= -C repoach` and
+the process environment show no secret; `systemd-analyze verify`
+prints nothing for the sample unit pair on a host where repoach is
+installed at the path the unit names. One recorded run of this on the
+owner's deployment is in the example section, as an example.
 
 ## Easy solution rejected
 
-Run `repoach threads reply` in-process on hel1 at each note. Rejected:
-the ledger of a merge request lives in its CI cache (F3), not on hel1,
-and running the agent on the host would need the model gateway's
-credentials and the repository checkout there, a second deployment
-of the review runner for one command. Also rejected: a subdomain
-`hooks.yoob.dev`, which needs a DNS record and a certificate re-issue
-under HSTS (H3); and an `EnvironmentFile` with the secrets in clear,
-`root:root 0600`, which is a file in clear on disk the owner ruled out.
+Run `repoach threads reply` in-process on the receiver's host at each
+note. Rejected: the ledger of a merge request lives in its CI cache
+(F3), and running the agent on the host would need the model
+gateway's credentials and the repository checkout there, a second
+deployment of the review runner for one command. Also rejected: an
+`EnvironmentFile` holding the secrets (a file in clear that every
+`systemctl show-environment` and child process sees); `IPAddressAllow`
+with the GitLab host's addresses, refused for a hostname and stale for
+an anycast address (S1); `After=<the service that creates the
+interface>` with a plain bind, which fails until the interface exists
+and exhausts the start limit (socket activation with `FreeBind` removes
+the ordering, S3); and a runner tag or a host address written into the
+generated job or the sample unit, which would make one operator's
+setup every operator's default.
 
 ## Hard part
 
 The receiver is the one piece of repoach that listens to the Internet,
 so every refusal must happen before any work and leak nothing: the
-token is compared before the body is read, the body is bounded before
-it is parsed, and a bad request is answered in constant shape. And the
-delivery is unreliable in both directions (a lost hook, a duplicate
-hook, a trigger call that fails), so correctness never rests on the
-receiver: the schedule re-runs what was lost, and the triggered run
-posts nothing twice.
+token is compared on the headers before the body is read, the body is
+bounded before it is parsed, and a bad request is answered in constant
+shape. And the delivery is unreliable in both directions (a lost hook,
+a duplicate hook, a trigger call that fails, a receiver restart that
+forgets what was armed), so correctness never rests on the receiver:
+the window makes the run read every note before it, the job is
+single-flight per merge request, the schedule re-runs what was lost
+from what the forge shows, and the triggered run posts nothing twice.
+The third hard part is the project's own CI file, which repoach never
+edits: a threads pipeline admitted by the workflow runs every job
+without a rule, so `doctor --ci` must say which, from the file as it is.
 
 ## Goals
 
-- G1: `repoach threads serve` authenticates in constant time, bounds the body, refuses replays, accepts note and MR hooks only, and starts one triggered pipeline per accepted event (D1–D6).
-- G2: the two secrets are systemd encrypted credentials; none reaches argv, environment, a plain file or a log (D2).
-- G3: the `threads:reply` job and the schedule job are generated (D8) and the schedule runs on the self-hosted runner (D7).
-- G4: the unit is shipped and pinned by a test; the live rollout is measured (AC4).
+- G1: `repoach threads serve` authenticates in constant time on the headers, bounds the body, refuses replays, accepts non-bot, non-system notes on merge requests only, and starts at most one triggered pipeline per merge request per window (D1–D6).
+- G2: the two secrets come from a credentials directory with the four documented fillings; none reaches argv, environment, a log or a world-readable file (D2).
+- G3: the `threads:reply` and `threads:schedule` jobs are generated with the ledger cache, the variable rule and the resource group, no runner tag (D8); the schedule reads the forge (D7).
+- G4: the sample unit pair verifies clean on any systemd ≥ 250 host where the binary exists, is pinned by a test, and carries no operator-specific value (D10).
+- G5: `repoach threads pending --json` names the pending merge requests from the forge alone (D7); `doctor --ci` names the jobs a threads pipeline would also run (D8).
 
 ## Non-Goals
 
 - NG1: no GitHub receiver (F1).
-- NG2: no in-process run of the reply agent on hel1 (Easy solution rejected).
-- NG3: no public port, no TLS in repoach, no other route.
-- NG4: the Yoob-side files (nginx, compose, `.gitlab-ci.yml`, the webhook, the trigger token, the ufw rule) are changed by a Yoob MR and by the owner, named in Behavior; this spec ships the unit, the generated job and the server.
+- NG2: no in-process run of the reply agent on the receiver's host (Easy solution rejected).
+- NG3: no TLS in repoach, no reverse-proxy configuration shipped, no other route, no reaction to a `Merge Request Hook` (D5).
+- NG4: the project's own files (its CI file, its proxy, its firewall, its webhook, its trigger token, its schedule) are the operator's; this spec ships the server, the generated jobs, the sample units and the `doctor --ci` lines that tell the operator what to change.
+- NG5: no egress allow-list by IP (D10).
+- NG6 (0.3): no default bound to one host, one project, one login or one runner.
 
 ## Assumptions
 
-- A1: GitLab sends `X-Gitlab-Token`, `X-Gitlab-Event` and `X-Gitlab-Event-UUID` on every delivery (GitLab 15.x and later; gitlab.com).
-- A2: The trigger token may start a pipeline on any branch of the project (a project trigger token).
-- A3: hel1 keeps systemd ≥ 250 (H4).
+- A1: GitLab sends `X-Gitlab-Token`, `X-Gitlab-Event` and `X-Gitlab-Event-UUID` on every delivery and `user.username`, `object_attributes.system`, `merge_request.iid` and `merge_request.source_branch` in a merge-request note payload (G2; GitLab 15.x and later, gitlab.com and self-managed).
+- A2: The trigger token may start a pipeline on any branch of the project (a project trigger token); `REPOACH_GITLAB_TOKEN` has `api` scope (it posts reviews today, F2).
+- A3: The host runs systemd ≥ 250 when the sample unit pair is used; another supervisor fills the credentials directory its own way (D2).
+- A4: When a reverse proxy sits in front, it forwards `X-Gitlab-Token`, `X-Gitlab-Event`, `X-Gitlab-Event-UUID` and sets `X-Forwarded-For`; the operator sets `--behind-proxy` only then.
 
 ## Interface
 
 ```python
 # src/repoach/review/thread_webhook.py (pure core + a thin server)
 class HookDecision(BaseModel):
-    status: int                       # 401 | 413 | 202
-    action: Literal["trigger", "ignore", "replay", "reject"]
+    status: int                       # 400 | 401 | 413 | 202
+    action: Literal["arm", "ignore", "replay", "reject"]
     mr_iid: int | None = None
     source_branch: str = ""
     reason: str = ""                  # never carries the token
 
-def decide(headers: Mapping[str, str], body: bytes, *, secret: bytes, project_id: int, seen: ReplayCache) -> HookDecision: ...   # D1, D3–D5, pure
-class ReplayCache:                   # bounded LRU of X-Gitlab-Event-UUID, replay_cache_entries
-class Coalescer:                     # one pending trigger per MR per coalesce_window_seconds
-def trigger_pipeline(*, project_id: int, token: bytes, ref: str, mr_iid: int, post: Callable) -> int | None: ...   # D6, returns the pipeline id or None (logged)
-def load_credentials(secret_dir: Path) -> tuple[bytes, bytes]: ...   # D2; raises CredentialMissing(name)
-def serve(host: str, port: int, *, secret_dir: Path, project_id: int) -> None: ...   # D9
+class ReceiverConfig(BaseModel):      # D9: options or REPOACH_THREADS_* environment, no secret
+    gitlab_url: str = "https://gitlab.com"; project_id: int; bot_username: str
+    bind: str = "127.0.0.1:8787"; listen_fd: bool = False; behind_proxy: bool = False; allow_plain_http: bool = False
+    secret_dir: Path                  # $CREDENTIALS_DIRECTORY when set
 
-# src/repoach/cli/threads_cmds.py (8b's file, edited under the edge): `repoach threads serve [--host H] [--port P] [--secret-dir D]`; exit 2 on CredentialMissing, naming the credential
-# src/repoach/ci_entry/snippets.py (SP-UNIVERSAL-CI-ENTRY's file): the `threads:reply` and `threads:schedule` jobs (D7, D8)
+def authenticate(headers: Mapping[str, list[str]], *, secret: bytes) -> HookDecision | None: ...   # D1, pure, headers only; None when accepted
+def body_bound(headers: Mapping[str, list[str]], *, max_bytes: int) -> int | HookDecision: ...   # D4: the length to read, or 400 / 413
+def classify(headers: Mapping[str, list[str]], body: bytes, *, project_id: int, bot_username: str, seen: ReplayCache) -> HookDecision: ...   # D3–D5, pure
+class ReplayCache:                   # bounded LRU of X-Gitlab-Event-UUID, replay_cache_entries
+class Coalescer:                     # D3: arm(iid, branch, now) -> None; due(now) -> list[tuple[int, str]]; at most coalesce_max_mrs armed
+def trigger_pipeline(*, gitlab_url: str, project_id: int, token: bytes, ref: str, mr_iid: int, post: Callable) -> int | None: ...   # D6
+def load_credentials(secret_dir: Path) -> tuple[bytes, bytes]: ...   # D2; raises CredentialMissing(name) on absent, empty or world-readable
+def serve(config: ReceiverConfig) -> None: ...   # D9
+def pending_merge_requests(forge: Forge, *, bot_username: str) -> list[PendingMR]: ...   # D7, forge reads only
+
+# src/repoach/cli/threads_cmds.py (8b's file, edited under the edge):
+#   repoach threads serve [--listen-fd | --bind H:P] [--gitlab-url U] --project-id N --bot-username L [--behind-proxy] [--allow-plain-http] [--secret-dir D]
+#       exit 2 on CredentialMissing (naming it) and on a non-loopback --bind without --behind-proxy / --allow-plain-http (naming the rule)
+#   repoach threads pending [--forge F] [--json]       (one JSON list, SP-CLI-STDOUT-ONE-JSON)
+# src/repoach/ci_entry/snippets.py (SP-UNIVERSAL-CI-ENTRY's file): render_gitlab_threads_jobs(target, ledger: LedgerPlan) -> str, appended by render_gitlab_job (D7, D8); LedgerPlan is SP-CI-LEDGER-PERSISTS's
+# src/repoach/ci_entry/cli.py (same owner): ci_doctor_lines gains the threads_pipeline= lines (D8); init --ci gitlab prints them
 ```
 
 Inputs: the HTTP request (headers, body ≤ `body_max_bytes`);
-`$CREDENTIALS_DIRECTORY/webhook_secret`, `.../trigger_token`;
-`REPOACH_GITLAB_PROJECT_ID`.
+`<secret dir>/webhook_secret`, `<secret dir>/trigger_token`; the
+`ReceiverConfig` values.
 
-Outputs: `401` / `413` / `202`; one trigger call per accepted event;
-one stderr line per request; `GET /healthz` → `200`.
+Outputs: `400` / `401` / `413` / `202`; at most one trigger call per
+armed merge request per window; one stderr line per request and per
+trigger; `GET /healthz` → `200`.
 
 Errors: `CredentialMissing` at startup → exit 2; a trigger failure →
-logged, `202`; everything else → `202` with a reason, never a 5xx that
-would make GitLab retry a malformed body.
+logged, the MR idle; everything else about a body → `202` with a
+reason, never a 5xx that would make GitLab retry a malformed body.
 
 ## Behavior
 
 ### Nominal
-1. GitLab `POST`s a `Note Hook` for a reply on !371. nginx matches
-   `location = /hooks/repoach`, applies the zone and the size cap,
-   proxies to `172.18.0.1:8787/hooks/gitlab` with the two headers.
-2. `decide`: token compared (D1) → UUID unseen (D3) → size and JSON
-   (D4) → `object_kind == "note"`, `merge_request.iid == 371`,
-   `project.id == 67827362` (D5) → `trigger`.
-3. The coalescer has no pending trigger for 371 → `trigger_pipeline`
-   with `ref=<source branch>`, `REPOACH_THREADS_REPLY_MR=371`; `202`.
-4. The pipeline runs `threads:reply` (D8), which runs 8b.
+1. GitLab `POST`s a `Note Hook` for an author's reply on !371 to the
+   URL the operator registered; the operator's proxy, if any, forwards
+   the three GitLab headers and `X-Forwarded-For`.
+2. `authenticate` on the headers (D1) → `body_bound` (D4) → the body
+   is read → `classify`: UUID unseen (D3), `object_kind == "note"`,
+   `system` false, `user.username` not the bot, `merge_request.iid ==
+   371`, `project.id` the configured one (D5) → `arm`; `202`.
+3. The coalescer arms !371 for `coalesce_window_seconds`; two more
+   notes in the window are `202`, `arm`, and change nothing.
+4. At the deadline, `trigger_pipeline` with `ref=<source branch>`,
+   `REPOACH_THREADS_REPLY_MR=371`; the MR is idle.
+5. The pipeline runs `threads:reply` (D8), which restores the MR's
+   ledger cache and runs 8b, which reads the three notes.
 
 ### Edge cases
-- the same delivery twice (same UUID) → `202`, `replay`, no call.
-- three notes in 20 s on !371 → one trigger call.
-- a `Merge Request Hook` with action `approved` → `202`, `ignore`.
+- the same delivery twice (same UUID) → `202`, `replay`, no state change.
+- the bot's own reply → `202`, `ignore` (`note by the bot`); a system note (`added 1 commit`, `resolved all threads`) → `202`, `ignore`.
+- a `Merge Request Hook` of any action → `202`, `ignore`; the push already runs the MR pipeline.
 - a note on an issue (`merge_request` absent) → `202`, `ignore`.
-- `GET /hooks/gitlab` → nginx `403` (`limit_except POST`); the server itself answers `405`.
+- `coalesce_max_mrs` MRs armed and a new one arrives → the oldest armed MR is triggered now, the new one armed.
+- the receiver restarts while MRs are armed → the armed set is lost; the schedule (D7) finds the pending MRs within `scheduled_fallback_minutes`; a double trigger meets `resource_group` and the markers.
+- `GET /hooks/gitlab` → `405` from the server (a proxy may refuse earlier).
+- a thread resolved by hand on GitLab → no hook (G2); 8b's closer rule runs at the next note, push or scheduled run.
+- the project's CI file has jobs without rules → `doctor --ci` names each as `threads_pipeline=<job> would also run`; the operator adds the exclusion; the generated jobs themselves never run outside their variable.
 
 ### Failure scenarios
-- wrong token → `401`, no read, one line without the token.
-- `Content-Length: 5000000` → `413`, no read.
-- the trigger call fails (network, `403` token revoked) → logged `trigger failed: <status>`, `202`; the schedule starts the run within `scheduled_fallback_minutes`.
-- a credential absent at startup → `repoach threads serve` exits 2 with `credential webhook_secret missing in <dir>`; systemd `Restart=on-failure` retries and the owner reads `journalctl`.
+- wrong, missing or duplicated token → `401`, `Connection: close`, no body read, one line without the token.
+- `Content-Length: 5000000` → `413`, no read; no `Content-Length` → `400`.
+- the trigger call fails (network, `403` token revoked) → logged `trigger failed for !371: <status>`, the MR idle; the schedule starts the run within `scheduled_fallback_minutes`.
+- a credential absent, empty or world-readable at startup → `repoach threads serve` exits 2 with `credential webhook_secret missing in <dir>` (or `… readable by others`); systemd `Restart=on-failure` retries every `RestartSec` and the operator reads the journal.
+- `--bind 0.0.0.0:8787` without `--behind-proxy` or `--allow-plain-http` → exit 2, `plain HTTP on a non-loopback address carries the token in clear; put a TLS terminator in front and pass --behind-proxy, or pass --allow-plain-http on a private network`.
+- the interface of the configured bind address does not exist yet at boot → the socket is bound anyway (`FreeBind`); the first connection arrives when it exists.
 
-### Rollout (owner and Yoob MR; the oracle is AC4)
-1. hel1: `useradd --system repoach-threads`; `/opt/repoach-threads/venv` with repoach installed; `systemd-creds encrypt --name=webhook_secret - /etc/credstore.encrypted/webhook_secret.cred` (secret typed in the terminal, `read -rs`), the same for `trigger_token` (created once with `glab api --method POST projects/67827362/triggers -f description=repoach-threads-serve`, its token pasted the same way and never stored elsewhere); install the unit; `ufw` rule of H2.
-2. Yoob MR: `nginx/conf.d/yoob.conf` gains `location = /hooks/repoach { limit_req zone=hooks_limit burst=10 nodelay; client_max_body_size 1m; limit_except POST { deny all; } proxy_pass http://172.18.0.1:8787/hooks/gitlab; proxy_set_header X-Gitlab-Token $http_x_gitlab_token; proxy_set_header X-Gitlab-Event $http_x_gitlab_event; proxy_set_header X-Gitlab-Event-UUID $http_x_gitlab_event_uuid; }` in the `yoob.dev` 443 block (Y2); `nginx/nginx.conf` the zone; `docker-compose.prod.yml` pins the subnet (Y3); `.gitlab-ci.yml` the trigger rule before the `never` rule (Y1), the `include:` of the generated job, and the schedule.
-3. The webhook, created by the owner with the secret read from the terminal: `read -rs S; printf '{"url":"https://yoob.dev/hooks/repoach","note_events":true,"merge_requests_events":true,"push_events":false,"enable_ssl_verification":true,"token":"%s"}' "$S" | glab api --method POST projects/67827362/hooks -H 'Content-Type: application/json' --input -; unset S`.
+### Operator steps (any project; the project's files are the operator's, NG4)
+1. Install repoach on the host; create the system user; fill the
+   credentials directory (D2): with systemd, `read -rs S; printf '%s'
+   "$S" | sudo systemd-creds encrypt --name=webhook_secret --with-key=host -
+   /etc/credstore.encrypted/webhook_secret.cred` (the same `S` is used
+   once more in step 3, then `unset S`), and the trigger token, created
+   and stored in one pipe so it is never printed: `glab api --method
+   POST projects/<id>/triggers -f description=repoach-threads-receiver |
+   jq -r .token | sudo systemd-creds encrypt --name=trigger_token
+   --with-key=host - /etc/credstore.encrypted/trigger_token.cred`; write
+   `/etc/repoach/threads-receiver.env` from the example; install the two
+   units, edit `ListenStream=` and `ExecStart=`, `systemctl enable --now
+   repoach-threads-receiver.socket`; `systemd-analyze verify
+   /etc/systemd/system/repoach-threads-receiver.{socket,service}` → no
+   output.
+2. Put the operator's TLS terminator or proxy in front when the bind is
+   not the loopback; forward the three GitLab headers and
+   `X-Forwarded-For`.
+3. In the project: `repoach init --ci gitlab` (writes the two jobs and
+   prints the `threads_pipeline=` lines); add the workflow rule and the
+   exclusions `doctor --ci` names; create the webhook with the secret of
+   step 1: `printf '{"url":"<public url>","note_events":true,"merge_requests_events":false,"push_events":false,"enable_ssl_verification":true,"token":"%s"}' "$S" | glab api --method POST projects/<id>/hooks -H 'Content-Type: application/json' --input - >/dev/null; unset S`;
+   create the schedule, `glab api --method POST projects/<id>/pipeline_schedules -f description=repoach-threads-fallback -f ref=<default branch> -f cron='*/15 * * * *'`,
+   and its variable `REPOACH_THREADS_SCHEDULE=1` through
+   `pipeline_schedules/<sid>/variables`.
 
 ## Tests
 
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
-| `tests/unit/test_thread_webhook.py::test_bad_or_missing_token_is_401_before_the_body_is_read` | D1: a body-reading spy sees no read; the log line holds no token | compare with `==` on a read body |
-| `::test_valid_note_triggers_one_pipeline_with_the_mr_variable` | D5, D6 | drop the variable |
-| `::test_same_uuid_twice_is_a_replay_and_three_notes_coalesce_to_one_trigger` | D3 | drop the cache |
-| `::test_oversized_body_is_413_and_foreign_project_is_ignored` | D4 | read past the bound |
-| `::test_non_note_events_are_202_without_action` | D5 | trigger on `approved` |
-| `::test_trigger_failure_is_logged_and_still_202` | failure scenario | return 500 |
-| `::test_missing_credential_exits_2_naming_it` | D2 | start anyway |
-| `tests/unit/test_threads_serve_unit.py::test_unit_binds_bridge_loads_encrypted_credentials_and_passes_no_secret` | D10: `ExecStart` binds `172.18.0.1:8787`, two `LoadCredentialEncrypted=` lines, no `EnvironmentFile=`, no `Environment=` holding a token, `ProtectSystem=strict`, `IPAddressDeny=any` | add `EnvironmentFile=` |
-| `tests/unit/test_threads_triggers.py::test_generated_gitlab_jobs_hold_threads_reply_and_the_schedule_on_the_self_hosted_runner` | D7, D8: the snippet carries both jobs, the trigger rule, `tags: [yoob-light]` literal, `*/15 * * * *` documented | use `$YOOB_LIGHT_RUNNER_TAG` |
-| `::test_github_workflow_already_runs_review_pr_on_review_comments` | F1 pinned: `auto-review.yml` lists `pull_request_review_comment` with `created` | remove the trigger |
+| `tests/unit/test_thread_webhook.py::test_bad_missing_or_duplicated_token_is_401_before_the_body_is_read` | D1: a wrong value, no header and two headers each give `401` with `Connection: close`; a body-reading spy sees no read; the log line holds no token | compare with `==`, read the body first, or accept the first of two headers |
+| `::test_token_is_compared_as_bytes` | D1: a secret with a non-ASCII byte and the matching `latin-1` header value are accepted; the comparison is `hmac.compare_digest` on two `bytes` | compare `str` with `bytes` (a `TypeError`, a 5xx) |
+| `::test_valid_note_arms_the_mr_and_one_trigger_fires_at_the_deadline_with_the_variable` | D3, D5, D6: three notes in the window → one trigger after the window, to the configured GitLab URL, with `REPOACH_THREADS_REPLY_MR` and the source branch; a note after the deadline arms again | trigger on the first note, drop the variable, or hard-code gitlab.com |
+| `::test_bot_system_and_merge_request_hook_are_ignored` | D5: a note by the bot, a system note, a `Merge Request Hook` `update` → `202`, `ignore`, nothing armed | arm on any of the three |
+| `::test_same_uuid_twice_is_a_replay_and_the_armed_set_is_bounded` | D3: a seen UUID changes nothing; `coalesce_max_mrs + 1` MRs → the oldest fires at once, the set never exceeds the bound | drop the cache, or let the set grow |
+| `::test_oversized_or_unsized_body_and_foreign_project` | D4: `413` and `400` before any read; a foreign `project.id` → `202`, `ignore` | read past the bound |
+| `::test_trigger_failure_is_logged_and_the_mr_goes_idle` | failure scenario | return 500, or keep the MR armed forever |
+| `::test_credentials_dir_is_the_only_source_and_refuses_bad_files` | D2: `webhook_secret` / `trigger_token` read from a temp directory; an absent, an empty and a `0644` file each exit 2 naming the credential; `$CREDENTIALS_DIRECTORY` is the default; nothing is read from the environment or argv | read `REPOACH_WEBHOOK_SECRET` from the environment, or accept a `0644` file |
+| `::test_non_loopback_plain_bind_is_refused_unless_named` | D9: `--bind 0.0.0.0:8787` alone → exit 2 with the rule; with `--behind-proxy` or `--allow-plain-http` → starts | bind silently |
+| `::test_pending_merge_requests_from_the_forge_alone` | D7: on a fake forge, an MR whose bot thread's last comment is the author's is pending; one whose last comment is the bot's is not; a `/resolve` comment newer than the bot's newest makes it pending; no ledger path is opened | read the ledger, or key on any comment |
+| `tests/unit/test_threads_receiver_unit.py::test_unit_pair_is_socket_activated_hardened_and_passes_no_secret` | D10: the socket has `ListenStream=` and `FreeBind=yes`; the service has `Requires=` the socket, two `LoadCredentialEncrypted=` lines, an `EnvironmentFile=` and no `Environment=` holding a token, `ProtectSystem=strict`, `CapabilityBoundingSet=` empty, no `IPAddressAllow`/`IPAddressDeny`, `RestrictAddressFamilies` naming `AF_INET AF_INET6 AF_UNIX`; no file under `deploy/systemd/` holds a hostname, an IP other than `127.0.0.1`, a login or a project id | add `IPAddressAllow=…`, or write a project id in the unit |
+| `::test_systemd_analyze_verify_is_silent_on_the_sample_pair` | D10, S1: the two files copied to a temp directory with `ExecStart=`'s binary rewritten to `/bin/true` (the unit names an install path CI does not have), `systemd-analyze verify <socket> <service>` → empty output, exit 0; the test fails naming `systemd-analyze` when the binary is absent (CI runs on a systemd host) | add `IPAddressAllow=172.18.0.0/16 gitlab.com` |
+| `tests/unit/test_threads_triggers.py::test_generated_gitlab_jobs_hold_threads_reply_with_cache_resource_group_and_the_schedule_without_tags` | D7, D8: the snippet carries both jobs, `rules` on `$REPOACH_THREADS_REPLY_MR`, `resource_group: threads-reply-$REPOACH_THREADS_REPLY_MR`, `cache.key: repoach-ledger-mr-$REPOACH_THREADS_REPLY_MR` on the `LedgerPlan` path, no `tags:`, the schedule rule on `$REPOACH_THREADS_SCHEDULE` | key the cache on `$CI_MERGE_REQUEST_IID`, drop the resource group, or write a runner tag |
+| `::test_doctor_names_the_jobs_a_threads_pipeline_would_also_run` | D8: a `.gitlab-ci.yml` fixture with one job without rules, one `merge_request_event` job and one job excluding the variable → one `threads_pipeline=<job> would also run` line; all excluded → `threads_pipeline=ok` | list every job, or none |
+| `::test_github_workflow_already_runs_review_pr_on_review_comments` | F1 pinned: `auto-review.yml` lists `pull_request_review_comment` with `created` and the `review` job excludes `pull_request_review` | remove the trigger |
 
 ## Success conditions
 
-- C1 (external oracle: the live receiver, after rollout): from outside hel1, `curl -s -o /dev/null -w '%{http_code}\n' -X POST https://yoob.dev/hooks/repoach -H 'X-Gitlab-Token: wrong' -d '{}'` → `401`; `curl -s -o /dev/null -w '%{http_code}\n' https://yoob.dev/hooks/repoach` → `403`; `nc -z -w 3 65.108.199.28 8787; echo $?` → `1`. On hel1: `systemctl is-active repoach-threads-serve` → `active`; `ss -ltn | grep 8787` → `172.18.0.1:8787` only; `sudo cat /proc/$(systemctl show -p MainPID --value repoach-threads-serve)/environ | tr '\0' '\n' | grep -ci token` → `0`; `ps -o args= -C repoach` shows no secret. Written beside this line by the implementer, re-run by the verifier.
-- C2 (external oracle: GitLab): the project's hook list (`glab api projects/67827362/hooks | jq '.[]|{url,note_events,merge_requests_events,push_events,enable_ssl_verification}'`) shows one hook on `https://yoob.dev/hooks/repoach` with `note_events: true`, `merge_requests_events: true`, `push_events: false`, `enable_ssl_verification: true`; its "Test → Note events" delivery is `202` in the hook's recent deliveries and `glab api 'projects/67827362/pipelines?source=trigger&per_page=1' | jq '.[0].status'` names a pipeline started within a minute.
-- C3 (oracle: the suites): `pytest -q tests/unit/test_thread_webhook.py tests/unit/test_threads_serve_unit.py tests/unit/test_threads_triggers.py tests/unit/test_ci_ledger_persists.py` → green; `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`; `shellcheck` is not involved (no shell shipped); `systemd-analyze verify deploy/systemd/repoach-threads-serve.service` → no output, on a host with systemd ≥ 250.
+- C1 (external oracle, any deployment, by the operator): `curl -s -o /dev/null -w '%{http_code}\n' -X POST <public url> -H 'X-Gitlab-Token: wrong' -d '{}'` → `401`; on the host, `systemctl is-active repoach-threads-receiver.socket repoach-threads-receiver.service` → `active` twice; `ss -ltn | grep <port>` → the configured address only; `sudo cat /proc/$(systemctl show -p MainPID --value repoach-threads-receiver)/environ | tr '\0' '\n' | grep -ci token` → `0`; `ps -o args= -C repoach` shows no secret; `journalctl -u repoach-threads-receiver --since -1h | grep -c 'bad token from'` ≥ 1 after the `curl` and the line carries no token.
+- C2 (external oracle, any project, by the operator): `glab api projects/<id>/hooks | jq '.[]|{url,note_events,merge_requests_events,push_events,enable_ssl_verification}'` shows one hook on the public URL with `note_events: true`, `merge_requests_events: false`, `push_events: false`, `enable_ssl_verification: true`; after one real author note on an open MR, `glab api 'projects/<id>/pipelines?source=trigger&per_page=1' | jq '.[0].status'` names a pipeline started within `coalesce_window_seconds + 60` s whose only job is `threads:reply` (`glab api projects/<id>/pipelines/<pid>/jobs | jq -r '.[].name'` → one line); `glab api 'projects/<id>/pipelines?source=api&per_page=1'` names the schedule's trigger after the hook is disabled for one window; `repoach doctor --ci` in the project's checkout prints `threads_pipeline=ok`.
+- C3 (oracle: the suites and systemd, on a fresh machine or in CI): `pytest -q tests/unit/test_thread_webhook.py tests/unit/test_threads_receiver_unit.py tests/unit/test_threads_triggers.py tests/unit/test_ci_ledger_persists.py tests/unit/test_ci_entry.py` → green (the `systemd-analyze verify` test included); `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c 'dependency cycle'` → `27`; on a host where repoach is installed at the unit's `ExecStart` path, `systemd-analyze verify deploy/systemd/repoach-threads-receiver.socket deploy/systemd/repoach-threads-receiver.service` → no output, exit 0.
 
 ## Architecture Impact
 - Adds dependency: SP-GITLAB-NOTE-RECEIVER -> SP-PR-THREADS-REMEMBER-AND-CLOSE (design source: D10, D14)
-- Adds dependency: -> SP-THREAD-REPLY-AGENT (the command the pipeline runs; `threads serve` registers in its `threads_cmds.py`)
-- Adds dependency: -> SP-UNIVERSAL-CI-ENTRY (`ci_entry/snippets.py` is its; the two jobs are an edit to it)
-- Adds dependency: -> SP-CI-LEDGER-PERSISTS (the ledger is in the MR's cache, the reason the run executes in CI, D6)
-- Adds dependency: -> SP-CLI-STDOUT-ONE-JSON (the server logs on stderr, prints nothing on stdout)
-- New resources: `format:gitlab-note-webhook` (the headers and body shape `decide` accepts), `format:threads-serve-unit` (the unit file). No table. No cycle: `thread_webhook.py` imports nothing of `review/` beyond its own module and the standard library plus `pydantic`.
+- Adds dependency: -> SP-THREAD-REPLY-AGENT (the command the pipeline runs; `threads serve` and `threads pending` register in its `threads_cmds.py`)
+- Adds dependency (0.2): -> SP-UNIVERSAL-FORGE (`pending_merge_requests` reads `comments` and `review_threads` through the protocol, D7)
+- Adds dependency: -> SP-UNIVERSAL-CI-ENTRY (`ci_entry/snippets.py` and `cli.py` are its; the two jobs and the `threads_pipeline=` lines are edits to them)
+- Adds dependency: -> SP-CI-LEDGER-PERSISTS (`LedgerPlan`, the per-merge-request ledger cache the `threads:reply` job restores and saves, and the `.gitlab-ci.yml` reader of its D3 that the `threads_pipeline=` lines reuse, D8; it lands before this spec in the umbrella's order)
+- Adds dependency: -> SP-CLI-STDOUT-ONE-JSON (the server logs on stderr, prints nothing on stdout; `threads pending --json` prints one document)
+- New resources: `format:gitlab-note-webhook` (the headers and body shape `authenticate` and `classify` accept), `format:threads-receiver-unit` (the sample unit pair and the environment example). No table. No cycle: `thread_webhook.py` imports `repoach.forge` (the protocol, for `pending_merge_requests`), the standard library and `pydantic`, nothing of `review/` beyond its own module.
 
 ## Diagram
 ```mermaid
 flowchart LR
-    G[GitLab note hook] --> N[nginx /hooks/repoach: zone, 1m, POST only]
-    N --> S[threads serve 172.18.0.1:8787]
-    S -->|token ok, new uuid, note on MR| T[trigger pipeline REPOACH_THREADS_REPLY_MR]
-    S -->|else| X[401 / 413 / 202 no action]
-    T --> J[threads:reply job → repoach threads reply]
-    C[schedule */15 on yoob-light] --> T
+    G[GitLab note hook] --> N[operator's TLS terminator or proxy, or none on a private network]
+    N --> S[threads serve on the configured bind]
+    S -->|token ok, new uuid, non-bot note on an MR| A[arm MR for the window]
+    A -->|deadline| T[trigger pipeline REPOACH_THREADS_REPLY_MR]
+    S -->|else| X[400 / 401 / 413 / 202 no action]
+    T --> J[threads:reply, resource_group per MR, ledger cache → repoach threads reply]
+    C[schedule */15: threads pending from the forge] --> T
 ```
 
 ## Acceptance Criteria
-- [ ] AC1: `pytest -q tests/unit/test_thread_webhook.py tests/unit/test_threads_serve_unit.py tests/unit/test_threads_triggers.py` → green. Today (`92cd241`): the files do not exist and `git grep -n "X-Gitlab" origin/develop -- src` → 0.
-- [ ] AC2: `pytest -q tests/unit/test_ci_ledger_persists.py tests/unit/test_ci_entry*.py` → green with the two generated jobs.
-- [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
-- [ ] AC4 (live, after rollout): the commands of C1 and C2 with their outputs, written beside them.
+- [ ] AC1: `pytest -q tests/unit/test_thread_webhook.py tests/unit/test_threads_receiver_unit.py tests/unit/test_threads_triggers.py` → green. Today (`92cd241`): the files do not exist and `git grep -n "X-Gitlab" origin/develop -- src` → 0.
+- [ ] AC2: `pytest -q tests/unit/test_ci_ledger_persists.py tests/unit/test_ci_entry.py` → green with the two generated jobs and the `threads_pipeline=` lines (`test_ci_ledger_persists.py` is SP-CI-LEDGER-PERSISTS's, landed before this spec).
+- [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `grep -rn "hel1\|yoob\|172\.18\.\|67827362\|/home/" deploy/systemd src/repoach/review/thread_webhook.py` → 0 (NG6).
+- [ ] AC4 (live, by the operator of a deployment): the commands of C1 and C2 with their outputs, written beside them; the owner's run is the example below.
 
 ## Open Questions
 - None.
+
+## Example deployment: the owner's host (hel1) and the Yoob project, measured 2026-11-17
+
+This section is an example of D1–D10 applied to one deployment. It is
+not the design, not a default, and not a condition of the End state;
+every value here is the owner's. Measured over `ssh hel1` and on Yoob
+`origin/develop` `6ee04ab`.
+
+| # | Fact | How the design applies |
+|---|---|---|
+| E1 | nginx is the container `yoob_nginx` (`nginx:1.25-alpine`) on `yoob_2_yoob_network`, subnet `172.18.0.0/16`, gateway `172.18.0.1`; `/etc/nginx` absent on the host; the bridge is `br-<12 hex>`, a name Docker assigns; `docker-compose.prod.yml` names `yoob_network` on nine services and pins no subnet (`:17`, `:68`, `:89`, `:149`, `:195`, `:228`, `:256`, `:281`, `:320`, `:325`) | the socket's `ListenStream=172.18.0.1:8787` (the bridge gateway, reachable from the container and the host only); `FreeBind` covers Docker starting after the socket; the Yoob MR pins `ipam: {config: [{subnet: 172.18.0.0/16, gateway: 172.18.0.1}]}` so the address cannot move; `REPOACH_THREADS_BEHIND_PROXY=1` |
+| E2 | `ufw` active, six rules, all `ALLOW IN` from `Anywhere`: 22, 80, 443 (v4 and v6); a `tailscale0` interface holds two more | one rule by address, not interface: `ufw allow in proto tcp from 172.18.0.0/16 to 172.18.0.1 port 8787`; 8787 is never public |
+| E3 | `yoob.dev` → `65.108.199.28` directly; the certificate's SANs are `yoob.dev`, `www.yoob.dev`, `studio.yoob.dev`; the `yoob.dev` block is `listen 443 ssl http2; server_name yoob.dev;` (`nginx/conf.d/yoob.conf:105-106`), its API locations already set `X-Real-IP` and `X-Forwarded-For` (`:131-132`); zones `api_limit`, `upload_limit` (`nginx/nginx.conf:45-46`) | public URL `https://yoob.dev/hooks/repoach`: `location = /hooks/repoach { limit_req zone=hooks_limit burst=10 nodelay; client_max_body_size 1m; limit_except POST { deny all; } proxy_pass http://172.18.0.1:8787/hooks/gitlab; proxy_set_header X-Gitlab-Token $http_x_gitlab_token; proxy_set_header X-Gitlab-Event $http_x_gitlab_event; proxy_set_header X-Gitlab-Event-UUID $http_x_gitlab_event_uuid; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; }` in that block, a `hooks_limit` zone (`5r/s`); no new DNS record or certificate |
+| E4 | `systemd 255 (255.4-1ubuntu8.18)`, `systemd-creds` present, `has-tpm2` → `partial -firmware`, resolver `systemd-resolved` at `127.0.0.53`; no repoach installed; runners `gitlab-runner-{light,heavy,deploy}.service` | D2's first filling, `--with-key=host`; a venv at `/opt/repoach-threads/venv`, `ExecStart=/opt/repoach-threads/venv/bin/repoach threads serve --listen-fd`; `systemd-analyze verify` on the desk (same build) printed nothing for the pair with the binary stubbed, and only `Command /opt/repoach-threads/venv/bin/repoach is not executable` with the real path, 2026-11-17 |
+| E5 | Yoob's `workflow:rules`: `schedule` first, then `$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS → never`, then `merge_request_event`, `main`/`develop`, `tp/`, tags (`.gitlab-ci.yml:12-29`); every job excludes pipeline kinds through the anchors `.never_on_schedule` (15 uses, `:312-314`) and `.never_on_a_tp_push` (`:326-328`); a schedule pipeline must hold `release:nightly` and nothing else, and the nightly needs its schedule variable; the shapes are pinned by `test_a_schedule_pipeline_contains_exactly_the_nightly_release_job`, `test_the_nightly_release_job_needs_the_schedule_variable`, `test_a_tp_push_pipeline_contains_exactly_the_tp_jobs` (`tests/scripts/test_gitlab_ci_invariants.py:3566`, `:3575`, `:3612`) | the Yoob MR adds `- if: $REPOACH_THREADS_REPLY_MR` before the `never` rule, a third anchor `.never_on_a_threads_run` on every job's rules, and two invariants tests recomputed from the YAML, `test_a_threads_run_pipeline_contains_exactly_the_threads_reply_job` and `test_a_threads_schedule_contains_exactly_the_threads_schedule_job`; `repoach doctor --ci` prints `threads_pipeline=ok` afterwards |
+| E6 | Yoob does not `include:` the generated file (`grep -n "^include" .gitlab-ci.yml` → 0); its hand-written `review:gate` (`:1645-1669`) runs in `environment: review-gate` with `REPOACH_GITLAB_TOKEN` (`ci/review-gate.sh:143`), on `tags: [$YOOB_REVIEW_RUNNER_TAG]` (`"yoob-light"`, `:259`), with `cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`; `repoach.toml` sets `[state] db_path = ".repoach/repoach.db"` (`:92-95`); B-174 sits at `docs/BACKLOG.md:212` | the Yoob MR writes the two jobs by hand, text equal to `render_gitlab_threads_jobs`, in `environment: review-gate`, with `tags: [yoob-light]` written literally (not `$YOOB_LIGHT_RUNNER_TAG`, which may name the metered shared runner) so the fallback costs no shared minutes; the cache key resolves to `review:gate`'s |
+| E7 | Project `67827362`; the review bot's login is Yoob's `REPOACH_REVIEW_BOT_LOGIN` | `REPOACH_THREADS_PROJECT_ID=67827362`, `REPOACH_THREADS_BOT_USERNAME=<that login>` in `/etc/repoach/threads-receiver.env`; the webhook and the schedule created with the commands of Operator steps 3 on that project |
+
+The owner's live run of C1 and C2 on this deployment is written here
+after the rollout, as the example AC4 names.
