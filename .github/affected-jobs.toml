@@ -36,6 +36,7 @@ pytest = [
   "tests/unit/test_packaging_metadata.py",
   "tests/unit/test_project_config.py",
   "tests/unit/test_pr_template_measured.py",
+  "tests/unit/test_repo_declares_pr_runs_corpus.py",
   "tests/unit/test_selfverify_refutation.py",
   "tests/unit/test_spec_supersede.py",
   "tests/unit/test_spec_template.py",
