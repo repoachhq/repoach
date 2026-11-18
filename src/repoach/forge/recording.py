@@ -210,17 +210,23 @@ def token_pattern(word: str) -> re.Pattern[str]:
 
 
 CLI_PLACEHOLDER_RE = re.compile(
-    rf"(?<![{TOKEN_CHARS}])(?::(?:owner|repo|id)|/dev/null)(?![{TOKEN_CHARS}])"
+    rf"(?<![{TOKEN_CHARS}])"
+    r"(?::(?:owner|repo|id)|/dev/null|SP-[A-Z0-9]+(?:-[A-Z0-9]+)*)"
+    rf"(?![{TOKEN_CHARS}-])"
 )
-"""The tools' own literals: the argv templates ``:owner``, ``:repo``, ``:id`` and git's ``/dev/null`` (0.10).
+"""The tools' and the project's own literals (0.10, 0.11): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``SP-<ID>``.
 
 ``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
 written by the forge code and expanded by the CLI; ``--- /dev/null`` is
-how git names the missing side of an added or deleted file. None carries
-a recorded value. The replacer leaves them alone and the closure oracle
-does not judge them, so a login ``owner`` cannot turn the forge's own
-argv into one the replay does not make, nor a login ``dev`` a diff
-header. Case-sensitive: the tools write the lowercase forms only.
+how git names the missing side of an added or deleted file; a spec
+identifier (``SP-OWNER-SETTLES-A-FINDING``) is this project's name for a
+specification, uppercase words joined by ``-``. None carries a recorded
+value. The replacer leaves them alone and the closure oracle does not
+judge them, so a login ``owner`` cannot turn the forge's own argv into
+one the replay does not make, a login ``dev`` a diff header, nor, with
+``-`` a delimiter since 0.11, a spec identifier's word a leak.
+Case-sensitive: the tools write the lowercase forms only, and a spec
+identifier is uppercase.
 """
 
 _MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|\()"

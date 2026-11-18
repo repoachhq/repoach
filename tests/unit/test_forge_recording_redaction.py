@@ -1898,6 +1898,14 @@ def test_the_tools_templates_are_not_judged() -> None:
     assert residual(fixture, found) is None
     fixture["calls"][0]["args"] = ["api", "repos/owner/x"]
     assert residual(fixture, found) == ("login", 1, "exchanges[0].args[1]")
+    cited = _placed("per SP-OWNER-SETTLES-A-FINDING, ask the owner", "prose")
+    assert classify_text("per SP-OWNER-SETTLES-A-FINDING, owner", {"owner": "author"}) == (
+        "per SP-OWNER-SETTLES-A-FINDING, author"
+    )
+    assert residual(cited, found) == ("login", 1, "exchanges[0].stdout.body")
+    cited = _placed("per SP-OWNER-SETTLES-A-FINDING", "prose")
+    assert residual(cited, found) is None
+    assert residual(_placed("per sp-owner-settles", "prose"), found) is not None
 
 
 def test_the_offline_needles_accept_a_short_hand_written_login() -> None:
