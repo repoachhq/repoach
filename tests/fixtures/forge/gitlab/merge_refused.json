@@ -53,6 +53,6 @@
   "method": "merge",
   "raises": "ForgeMergeRefusedError",
   "result": null,
-  "source": "synthetic: merge call: never executed against a live forge; the MR reads mergeable, then the accept endpoint answers the documented bare 405 body {\"message\":\"405 Method Not Allowed\"} (https://docs.gitlab.com/ee/api/merge_requests.html#merge-a-merge-request), rendered on stderr the way go-gitlab renders an ErrorResponse; glab's exact wrapping was not observed live; the write barrier reads the state first",
+  "source": "synthetic: merge call: never executed against a live forge; the MR reads mergeable, then the accept endpoint answers the documented bare 405 body {\"message\":\"405 Method Not Allowed\"} (GitLab REST API documentation, Merge requests: Merge a merge request), rendered on stderr the way go-gitlab renders an ErrorResponse; glab's exact wrapping was not observed live; the write barrier reads the state first",
   "trimmed": null
 }

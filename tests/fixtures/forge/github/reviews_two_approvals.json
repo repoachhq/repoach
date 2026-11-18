@@ -39,6 +39,6 @@
       "state": "APPROVED"
     }
   ],
-  "source": "synthetic: two approvals in GitHub's documented list-reviews shape (https://docs.github.com/en/rest/pulls/reviews#list-reviews-for-a-pull-request)",
+  "source": "synthetic: two approvals in GitHub's documented list-reviews shape (GitHub REST API documentation, Pull request reviews: List reviews for a pull request)",
   "trimmed": null
 }
