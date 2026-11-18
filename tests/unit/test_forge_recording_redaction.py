@@ -611,7 +611,7 @@ def test_an_unknown_mention_in_free_text_becomes_a_class_word(
     calls = [{"args": [], "stdout": json.dumps({"author": {"login": "y"}, "body": "cc @x-handle"})}]
     assert rec.build_roles(calls, bot="", maintainer=None, author="y") == {
         "y": "author",
-        "x-handle": "author-2",
+        "@x-handle": "author-2",
     }
 
     stdout = json.dumps(
@@ -830,3 +830,55 @@ def test_offline_transform_remaps_a_result_id_with_its_account() -> None:
     assert json.loads(out["calls"][0]["stdout"])["approved_by"][0]["user"]["id"] == 1001
     assert out["result"] == [{"author": "author-2", "id": 1001, "state": "APPROVED"}]
     assert out[SYNTHETIC_IDS_KEY] == [1001]
+
+
+def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_only_its_at_form(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Preference 1 (0.9): the verifier's example; a mention-only login never replaces the bare word."""
+    body = "use @pytest.fixture here, and see @dataclass; cc @someone-x. mail a@b.example"
+    diff = "+from dataclasses import dataclass\n+@dataclass\n+@pytest.fixture\n+x = someone-x\n"
+    prose = {
+        "body": body,
+        "title": "`@code-span` and @lru_cache(maxsize=1) and @property, @john.doe, @ok-x.",
+        "description": "```\n@fenced-x\n```",
+    }
+    assert mentions(prose) == ["someone-x", "ok-x"]
+    payload = {"body": body, "diff": diff, "user": {"login": "q", "id": 5}}
+    calls = [{"args": ["api", "x"], "stdout": json.dumps(payload), "stderr": "", "returncode": 0}]
+    roles = rec.build_roles(calls, bot="", maintainer=None, author="q")
+    assert roles == {"q": "author", "@someone-x": "author-2"}
+    out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
+    assert (
+        out["body"]
+        == "use @pytest.fixture here, and see @dataclass; cc @author-2. mail a@b.example"
+    )
+    assert out["diff"] == diff
+
+    later = [
+        {"args": [], "stdout": json.dumps({"body": "cc @z-handle"})},
+        {"args": [], "stdout": json.dumps({"user": {"login": "z-handle"}})},
+    ]
+    assert rec.build_roles(later, bot="", maintainer=None, author=None) == {"z-handle": "author"}
+
+    fixture = {
+        "forge": "github",
+        "args": ["repos/:owner/:repo/pulls/someone-x"],
+        "calls": [_exchange([{"user": {"login": "author"}, "body": body, "diff": diff}])],
+    }
+    redacted = redact_fixtures.redact_fixture(fixture, forge="github")
+    answer = json.loads(redacted["calls"][0]["stdout"])[0]
+    assert (
+        answer["body"]
+        == "use @pytest.fixture here, and see @dataclass; cc @author-2. mail a@b.example"
+    )
+    assert answer["diff"] == diff
+    assert redacted["args"] == ["repos/:owner/:repo/pulls/someone-x"]
+
+    stdout = json.dumps([[{"id": 9, "user": {"login": "q"}, "state": "APPROVED", "body": body}]])
+    monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
+    assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
+    written = json.loads(Path(capsys.readouterr().out.strip()).read_text())
+    assert written["result"][0]["body"] == (
+        "use @pytest.fixture here, and see @dataclass; cc @author-2. mail a@b.example"
+    )

@@ -177,8 +177,63 @@ PROSE_KEYS: frozenset[str] = frozenset(
 )
 """Recorded keys whose string value is free text a person wrote, where ``@<handle>`` mentions one."""
 
-MENTION_RE = re.compile(r"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)")
-"""An ``@<handle>`` mention in free text: GitHub and GitLab handle characters, not an email."""
+_MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|\()"
+"""What may not follow a handle: a handle character, a dotted name (``@pytest.fixture``) or a call."""
+
+MENTION_RE = re.compile(
+    rf"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?){_MENTION_END}"
+)
+"""An ``@<handle>`` mention in free text (SP-RECORDER-REDACTS-BY-CLASS D2, 0.9).
+
+Not an email (``a@b.example``), not a dotted name (``@pytest.fixture``,
+and so not a dotted GitLab username either), not a decorator call
+(``@lru_cache(…)``); a sentence-ending ``.`` is not part of the handle.
+"""
+
+PYTHON_DECORATORS: frozenset[str] = frozenset(
+    {
+        "abstractmethod",
+        "asynccontextmanager",
+        "cache",
+        "cached_property",
+        "classmethod",
+        "contextmanager",
+        "dataclass",
+        "deprecated",
+        "final",
+        "lru_cache",
+        "no_type_check",
+        "overload",
+        "override",
+        "property",
+        "runtime_checkable",
+        "singledispatch",
+        "singledispatchmethod",
+        "staticmethod",
+        "total_ordering",
+        "unique",
+        "wraps",
+    }
+)
+"""Bare decorator names of the standard library (builtins, ``abc``, ``contextlib``, ``dataclasses``,
+``enum``, ``functools``, ``typing``, ``warnings``): ``@<name>`` in prose is code, never a handle."""
+
+_CODE_SPAN_RE = re.compile(r"```.*?(?:```|\Z)|`[^`\n]*`", re.S)
+"""A fenced block or an inline code span of Markdown prose, where ``@<name>`` is code."""
+
+MENTION_ONLY_PREFIX = "@"
+"""A ``roles`` key starting with it is a login known only from a mention (D2, 0.9).
+
+Such a login is replaced in its ``@<handle>`` form only: the bare word
+(``dataclass`` in ``import dataclass``, a branch, a path) is left alone,
+since nothing says it stands for that person there. A login is never
+written with a leading ``@``, so the key cannot collide with one.
+"""
+
+
+def mention_pattern(login: str) -> re.Pattern[str]:
+    """The ``@<login>`` mention form of ``login`` in free text, case-insensitive."""
+    return re.compile(rf"(?<![A-Za-z0-9_.@/+-])@{re.escape(login)}{_MENTION_END}", re.I)
 
 
 RECORDED_SOURCE_RE = re.compile(r"^recorded ([0-9]{4}-[0-9]{2}-[0-9]{2}) from (?!a live )[^\s;]+")
@@ -200,7 +255,8 @@ def mentions(payload: object) -> list[str]:
 
     A diff, a log or any other text outside those keys is the repository's
     or the runner's content, not a person addressing another, and is not
-    searched.
+    searched. Inside them, a Markdown code span or fenced block is code,
+    and a :data:`PYTHON_DECORATORS` name is a decorator, not a handle.
     """
     found: list[str] = []
 
@@ -208,9 +264,12 @@ def mentions(payload: object) -> list[str]:
         if isinstance(node, dict):
             for key, item in node.items():
                 if key in PROSE_KEYS and isinstance(item, str):
-                    for m in MENTION_RE.finditer(item):
+                    prose = _CODE_SPAN_RE.sub(lambda m: " " * len(m.group(0)), item)
+                    for m in MENTION_RE.finditer(prose):
                         handle = m.group(1)
-                        if not is_classified_login(handle) and handle not in found:
+                        if handle in PYTHON_DECORATORS or is_classified_login(handle):
+                            continue
+                        if handle not in found:
                             found.append(handle)
                 else:
                     _walk(item)
@@ -382,9 +441,17 @@ def _login_pattern(login: str) -> re.Pattern[str]:
 
 
 def classify_text(text: str, roles: dict[str, str]) -> str:
-    """Replace every login of ``roles`` appearing as a token in ``text`` by its class word."""
+    """Replace every login of ``roles`` appearing as a token in ``text`` by its class word.
+
+    A :data:`MENTION_ONLY_PREFIX` key is replaced in its ``@<handle>``
+    form only (D2, 0.9).
+    """
     for login in sorted(roles, key=len, reverse=True):
-        text = _login_pattern(login).sub(roles[login], text)
+        if login.startswith(MENTION_ONLY_PREFIX):
+            handle = login.removeprefix(MENTION_ONLY_PREFIX)
+            text = mention_pattern(handle).sub(f"@{roles[login]}", text)
+        else:
+            text = _login_pattern(login).sub(roles[login], text)
     return text
 
 

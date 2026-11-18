@@ -48,6 +48,7 @@ from typing import cast
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
+    MENTION_ONLY_PREFIX,
     RECORDED_SOURCE_RE,
     SYNTHETIC_ID_START,
     SYNTHETIC_IDS_KEY,
@@ -56,6 +57,7 @@ from repoach.forge.recording import (
     decode_json_values,
     is_classified_login,
     login_values,
+    mention_pattern,
     mentions,
     recorded_source,
     redact_payload,
@@ -118,26 +120,34 @@ def _exchanges(node: object) -> object:
     return node
 
 
-def _unclassified_logins(data: dict[str, object]) -> list[str]:
-    """Every login of ``data`` that is not a class word nor a non-person login, in order of first appearance.
+def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
+    """Every login of ``data`` that is not a class word nor a non-person login → whether it is mention-only.
 
-    The bot login comes first, then the logins under login keys and the
-    ``@<handle>`` mentions in free text, JSON stdout walked inside.
+    In order of first appearance: the bot login first, then the logins
+    under login keys and the ``@<handle>`` mentions in free text, JSON
+    stdout walked inside. A login also seen under a login key or as the
+    bot is not mention-only.
     """
-    found: list[str] = []
+    found: dict[str, bool] = {}
+
+    def _add(login: str, *, mention: bool) -> None:
+        if not login or is_classified_login(login):
+            return
+        found[login] = found.get(login, True) and mention
+
     bot = data.get("bot_username")
-    if isinstance(bot, str) and bot and not is_classified_login(bot):
-        found.append(bot)
+    if isinstance(bot, str):
+        _add(bot, mention=False)
     stack: list[object] = [data]
     while stack:
         node = stack.pop(0)
         if isinstance(node, str) and node.lstrip()[:1] in ("{", "["):
             stack[:0] = decode_json_values(node) or []
             continue
-        hits = [login for _path, login in login_values(node)] + mentions(node)
-        for login in hits:
-            if login and not is_classified_login(login) and login not in found:
-                found.append(login)
+        for _path, login in login_values(node):
+            _add(login, mention=False)
+        for login in mentions(node):
+            _add(login, mention=True)
         if isinstance(node, dict):
             stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
         elif isinstance(node, list):
@@ -150,13 +160,15 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
 
     The bot login becomes ``bot``, another ``[bot]`` login ``bot-<n>``, a
     GitLab project bot ``service`` (then ``service-<n>``), any other login
-    ``author-<n>`` (from 2).
+    ``author-<n>`` (from 2). A mention-only login is keyed ``@<login>``
+    (:data:`repoach.forge.recording.MENTION_ONLY_PREFIX`): only its
+    ``@<handle>`` form is replaced.
     """
     text = json.dumps(data)
     roles: dict[str, str] = {}
     following = {"author": 2, "service": 1, "bot": 1}
     bot = data.get("bot_username")
-    for login in _unclassified_logins(data):
+    for login, mention_only in _unclassified_logins(data).items():
         if login == bot or login.endswith("[bot]"):
             kind = "bot"
         elif GITLAB_PROJECT_BOT_RE.match(login):
@@ -169,16 +181,15 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
             word = kind if n == 1 else f"{kind}-{n}"
             if not re.search(rf'"{re.escape(word)}\\*"', text):
                 break
-        roles[login] = word
+        roles[MENTION_ONLY_PREFIX + login if mention_only else login] = word
     return roles
 
 
 def _mention_text(text: str, roles: dict[str, str]) -> str:
     """Replace every ``@<login>`` of ``roles`` in free text by ``@<class word>``."""
     for login, word in roles.items():
-        text = re.sub(
-            rf"(?<![A-Za-z0-9_.@/+-])@{re.escape(login)}(?![A-Za-z0-9_-])", f"@{word}", text
-        )
+        handle = login.removeprefix(MENTION_ONLY_PREFIX)
+        text = mention_pattern(handle).sub(f"@{word}", text)
     return text
 
 
@@ -206,10 +217,11 @@ def _rename(node: object, roles: dict[str, str]) -> object:
 
 
 def _segment(arg: str, roles: dict[str, str]) -> str:
-    """Replace a login that is a whole argument, a path segment or a ``=`` value."""
-    if arg in roles:
-        return roles[arg]
-    for login, word in roles.items():
+    """Replace a login that is a whole argument, a path segment or a ``=`` value; never a mention-only one."""
+    actors = {k: v for k, v in roles.items() if not k.startswith(MENTION_ONLY_PREFIX)}
+    if arg in actors:
+        return actors[arg]
+    for login, word in actors.items():
         arg = re.sub(rf"(?<=[/=]){re.escape(login)}(?=[/&]|$)", word, arg)
     return arg
 

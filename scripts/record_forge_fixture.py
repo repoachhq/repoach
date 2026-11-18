@@ -61,6 +61,7 @@ from repoach.core.paths import user_config_dir
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
+    MENTION_ONLY_PREFIX,
     NON_PERSON_LOGINS,
     SYNTHETIC_IDS_KEY,
     Exchange,
@@ -354,7 +355,10 @@ def build_roles(
     ``service`` for a GitLab project bot and the next ``author-<n>``
     otherwise. A login of :data:`repoach.forge.recording.NON_PERSON_LOGINS`
     or already a class word is kept. A login is compared casefolded, as
-    forges compare logins.
+    forges compare logins. A login known only from a mention is keyed
+    ``@<login>`` (:data:`repoach.forge.recording.MENTION_ONLY_PREFIX`), so
+    only its ``@<handle>`` form is replaced; seen later as a login, it is
+    re-keyed with the same word.
     """
     roles: dict[str, str] = {}
     following = {"bot": 1, "author": 1, "service": 1}
@@ -364,25 +368,40 @@ def build_roles(
         following[kind] = n + 1
         return kind if n == 1 else f"{kind}-{n}"
 
-    def _known(login: str) -> bool:
-        return login.casefold() in {k.casefold() for k in roles}
+    def _key_of(login: str) -> str | None:
+        folded = login.casefold()
+        for key in roles:
+            if key.removeprefix(MENTION_ONLY_PREFIX).casefold() == folded:
+                return key
+        return None
+
+    def _add(login: str, *, mention: bool) -> None:
+        if not login or is_classified_login(login):
+            return
+        key = _key_of(login)
+        if key is not None:
+            if not mention and key.startswith(MENTION_ONLY_PREFIX):
+                roles[login] = roles.pop(key)
+            return
+        if GITLAB_PROJECT_BOT_RE.match(login):
+            word = _next("service")
+        else:
+            word = _next("bot" if login.endswith("[bot]") else "author")
+        roles[MENTION_ONLY_PREFIX + login if mention else login] = word
 
     if bot and bot not in NON_PERSON_LOGINS:
         roles[bot] = _next("bot")
-    if maintainer and not _known(maintainer) and not is_classified_login(maintainer):
+    if maintainer and _key_of(maintainer) is None and not is_classified_login(maintainer):
         roles[maintainer] = "maintainer"
     if author:
         word = _next("author")
-        if not _known(author) and not is_classified_login(author):
+        if _key_of(author) is None and not is_classified_login(author):
             roles[author] = word
     for _path, value in _decoded(calls):
-        found = [login for _key, login in login_values(value)] + mentions(value)
-        for login in found:
-            if login and not _known(login) and not is_classified_login(login):
-                if GITLAB_PROJECT_BOT_RE.match(login):
-                    roles[login] = _next("service")
-                else:
-                    roles[login] = _next("bot" if login.endswith("[bot]") else "author")
+        for _key, login in login_values(value):
+            _add(login, mention=False)
+        for login in mentions(value):
+            _add(login, mention=True)
     return roles
 
 
