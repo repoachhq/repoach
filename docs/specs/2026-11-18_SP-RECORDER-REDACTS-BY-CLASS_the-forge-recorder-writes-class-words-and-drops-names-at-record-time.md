@@ -1,7 +1,7 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word and drops names, avatars and user ids at record time, and refuses a fixture it cannot classify
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-18
@@ -112,7 +112,7 @@ into `tests/fixtures/forge/`.
   one of the generic classes of SP-NO-PERSONAL-DATA-GATE D1 (a home path,
   a public address, a mailbox outside the documentation domains): the
   three regexes are copied into the script with a comment naming their
-  source, since that module lands later and the script must not import
+  source and held equal by a test in SP-NO-PERSONAL-DATA-GATE, since that module lands later and the script must not import
   a module that may be absent.
 - D4. **The existing fixtures already have the target shape.**
   SP-SCRUB-PERSONAL-DATA-AT-HEAD D2 rewrote them by hand to class words
