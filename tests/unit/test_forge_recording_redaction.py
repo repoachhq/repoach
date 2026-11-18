@@ -290,8 +290,8 @@ def test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping() -> Non
 
 
 def _fake_forge(stdout: str, tmp_path: Path) -> Forge:
-    """A GitHub forge whose every call answers ``stdout``."""
-    forge = _build("github", tmp_path, "bot")
+    """A GitHub forge, bot ``review-agent-x``, whose every call answers ``stdout``."""
+    forge = _build("github", tmp_path, "review-agent-x")
 
     def _spawn(argv: list[str], *, input_data: str | None = None) -> CommandResult:
         return CommandResult(returncode=0, stdout=stdout, stderr="", argv=list(argv))
