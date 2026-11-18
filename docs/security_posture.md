@@ -166,8 +166,12 @@ repository object is a synthetic number in `2001..2999`, declared under
 `synthetic_project_ids`. Both tools then judge the fixture they are about to
 write with a closure oracle: the logins, hosts, namespace and repository
 names and raw ids the recording saw, and the deny-list, searched for as whole
-tokens in every string, casefolded and URL-decoded; one found is exit 2 and
-nothing is written. The one residual is a login the recording never learns,
+tokens (letters and digits; `-` and `_` delimit) in every string and every
+key a forge does not write, casefolded, decoded (percent, entities, `\u`),
+with full-width, invisible and lookalike letters folded and node ids read as
+their account number; one found is exit 2 and nothing is written. A third
+party's project linked on a public forge names no one of the recording and
+is not searched for. The one residual is a login the recording never learns,
 cited only as a bare word (SP-RECORDER-REDACTS-BY-CLASS NG4).
 
 Public attribution is not personal data: the copyright holder in `LICENSE`,
