@@ -174,17 +174,23 @@ jobs:
         if: needs.gate.outputs.job_test == 'true'
         run: python scripts/lint_no_silent_except.py --summary
 
-      # SP-RECORDER-REDACTS-BY-CLASS O2: the maintainer's deny-list
-      # (SP-NO-PERSONAL-DATA-GATE D3) lets the fixture deny-list test run.
-      # The value reaches the test process only, which prints counts and
-      # ordinals, never an entry; GitHub masks it in the log. A fork's
-      # pull request gets no secret, the variable is empty and that test
-      # skips naming the reason.
       - name: Pytest
+        if: needs.gate.outputs.job_test == 'true'
+        run: pytest -q tests/unit -n auto --dist worksteal
+
+      # SP-RECORDER-REDACTS-BY-CLASS O2, D6: the maintainer's deny-list
+      # (SP-NO-PERSONAL-DATA-GATE D3) reaches this one test only, which
+      # prints counts and ordinals, never an entry. The secret holds one
+      # entry per line, and the runner masks the whole value and each of
+      # its lines (actions/runner v2.338.2, Worker.cs,
+      # InitializeSecretMasker); a comma does not split a mask. A fork's
+      # pull request gets no secret, the variable is empty and the test
+      # skips naming the reason.
+      - name: Pytest — fixture deny-list
         if: needs.gate.outputs.job_test == 'true'
         env:
           REPOACH_PERSONAL_DENYLIST: ${{ secrets.REPOACH_PERSONAL_DENYLIST }}
-        run: pytest -q tests/unit -n auto --dist worksteal
+        run: pytest -q tests/unit/test_forge_recording_redaction.py -k denylisted
 
       - name: Pytest — integration
         if: needs.gate.outputs.job_test == 'true'
