@@ -11,6 +11,7 @@ redaction (``scripts/redact_forge_fixtures.py``).
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import re
@@ -28,8 +29,10 @@ from repoach.forge.recording import (
     PERSONAL_KEY_RE,
     Exchange,
     ReplaySpawn,
+    UserIdMap,
     classify_logins,
     decode_json_values,
+    is_synthetic_user_id,
     load_fixture,
     redact_payload,
     redact_stdout,
@@ -129,7 +132,7 @@ def _raw_calls(
         if i in edits:
             new["stdout"] = redact_stdout(json.dumps(edits[i]))
         calls.append(new)
-    return fixture, rec.classify_calls(calls, roles)
+    return fixture, rec.synthesize_user_ids(rec.classify_calls(calls, roles), UserIdMap())
 
 
 def _person(login_key: str, login: str, ident: object) -> dict[str, Any]:
@@ -208,8 +211,8 @@ def test_forge_readers_work_on_a_redacted_recording(tmp_path: Path) -> None:
     )
     reviews = _replayed(_build("gitlab", tmp_path, "repoach-bot"), calls, "reviews", 7)
     assert [(r.id, r.author, r.state) for r in reviews] == [
-        (11, "maintainer", "APPROVED"),
-        (12, "author-2", "APPROVED"),
+        (1001, "maintainer", "APPROVED"),
+        (1002, "author-2", "APPROVED"),
     ]
 
     gh_pr = decode_json_values(
@@ -375,6 +378,7 @@ def test_recorder_writes_class_words_and_a_replayed_result(
                 {
                     "id": 9,
                     "user": {
+                        "id": 70707,
                         "login": "q",
                         "name": "Some Person",
                         "html_url": "https://code.example.org/q",
@@ -392,6 +396,10 @@ def test_recorder_writes_class_words_and_a_replayed_result(
     text = json.dumps(fixture)
     assert '\\"q\\"' not in text and "Some Person" not in text and "code.example.org" not in text
     assert fixture["bot_username"] == "bot"
+    assert json.loads(fixture["calls"][0]["stdout"])[0][0]["user"] == {
+        "id": 1001,
+        "login": "author",
+    }
     assert fixture["result"] == [
         {"author": "author", "body": "lgtm", "comments": [], "id": 9, "state": "APPROVED"}
     ]
@@ -403,3 +411,57 @@ def test_existing_fixtures_are_a_fixed_point_of_the_redaction() -> None:
     real_host = re.compile(r"https?://([a-z0-9.-]+\.)?(github|gitlab)\.com/(?!en/|ee/)")
     hits = [p.name for p in sorted(FIXTURES.rglob("*.json")) if real_host.search(p.read_text())]
     assert hits == []
+
+
+def _user_ids(node: object) -> list[object]:
+    """The ``id`` of every user object of a decoded fixture."""
+    if isinstance(node, str) and node.lstrip()[:1] in ("{", "["):
+        return [i for v in decode_json_values(node) or [] for i in _user_ids(v)]
+    if isinstance(node, dict):
+        found = [i for v in node.values() for i in _user_ids(v)]
+        if ("login" in node or "username" in node) and "id" in node:
+            found.append(node["id"])
+        return found
+    if isinstance(node, list):
+        return [i for v in node for i in _user_ids(v)]
+    return []
+
+
+def test_fixtures_hold_no_real_user_id() -> None:
+    """D1 (0.7): every user id of every fixture is synthetic."""
+    loaded = [json.loads(p.read_text()) for p in sorted(FIXTURES.rglob("*.json"))]
+    ids = [i for data in loaded for i in _user_ids(data)]
+    assert len(ids) >= 50
+    assert [i for i in ids if not is_synthetic_user_id(i)] == []
+
+
+def test_user_ids_map_to_a_stable_sequence() -> None:
+    """D1 (0.7): first account 1001, next 1002; a legacy node id shares its account's number."""
+    node = base64.b64encode(b"04:User70707").decode()
+    ids = UserIdMap()
+    out = ids.apply(
+        [
+            {"user": {"id": 70707, "login": "author"}},
+            {"author": {"id": node, "login": "author"}},
+            {"user": {"username": "author-2", "id": 777}},
+            {"user": {"id": 70707, "login": "author"}},
+            {"id": 70707, "name": "check"},
+        ]
+    )
+    assert out == [
+        {"user": {"id": 1001, "login": "author"}},
+        {"author": {"id": "U_1001", "login": "author"}},
+        {"user": {"username": "author-2", "id": 1002}},
+        {"user": {"id": 1001, "login": "author"}},
+        {"id": 70707, "name": "check"},
+    ]
+    assert ids.apply_known([{"id": 777, "author": "author-2"}]) == [
+        {"id": 1002, "author": "author-2"}
+    ]
+    kept = UserIdMap(keep_synthetic=True)
+    assert kept.apply({"user": {"id": 11, "username": "a"}}) == {
+        "user": {"id": 11, "username": "a"}
+    }
+    assert kept.apply({"user": {"id": 4321987, "username": "a"}}) == {
+        "user": {"id": 1001, "username": "a"}
+    }
