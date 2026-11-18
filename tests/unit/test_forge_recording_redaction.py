@@ -23,6 +23,7 @@ from types import ModuleType
 from typing import Any, cast
 
 import pytest
+import yaml
 
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
@@ -1052,3 +1053,17 @@ def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
             "state": "APPROVED",
         }
     ]
+
+
+def test_ci_passes_the_denylist_secret_to_the_unit_tests_only_and_never_echoes_it() -> None:
+    """O2, preference 6 (0.9): the unit-test step of ``ci.yml`` gets the secret; no step can print it."""
+    workflow = ROOT / ".github" / "workflows" / "ci.yml"
+    text = workflow.read_text(encoding="utf-8")
+    secret = "${{ secrets.REPOACH_PERSONAL_DENYLIST }}"
+    assert text.count(secret) == 1
+    steps = yaml.safe_load(text)["jobs"]["test"]["steps"]
+    (step,) = [s for s in steps if secret in json.dumps(s)]
+    assert step["name"] == "Pytest"
+    assert step["env"] == {rec.DENYLIST_ENV: secret}
+    assert step["run"] == "pytest -q tests/unit -n auto --dist worksteal"
+    assert not re.search(r"set -[a-z]*x|\bxtrace\b|\becho\b|printenv|\benv\b", step["run"])
