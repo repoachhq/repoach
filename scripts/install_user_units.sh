@@ -13,7 +13,11 @@
 # `systemd-analyze --user verify`; any output refuses the install (exit 2,
 # output relayed, nothing written to --dest, nothing reloaded). Otherwise
 # they are written to --dest, <home>/logs is created and
-# `systemctl --user daemon-reload` runs. --dry-run prints the rendered
+# `systemctl --user daemon-reload` runs when --dest is the user unit
+# directory (the default); any other --dest prints
+# `daemon-reload: skipped (--dest is not the user unit dir)` and reloads
+# nothing, so a render into a scratch directory leaves the user manager
+# alone. --dry-run prints the rendered
 # files, each after a `# --- <name>` line, and writes nothing.
 # Exit 2 names its reason on stderr.
 
@@ -36,7 +40,8 @@ refuse() {
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 src_dir="$script_dir/../deploy/systemd"
 home=""
-dest="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+user_unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+dest="$user_unit_dir"
 dry_run=0
 
 while [[ $# -gt 0 ]] ; do
@@ -107,4 +112,9 @@ for unit in "${units[@]}" ; do
         echo "verified: $unit"
     fi
 done
-systemctl --user daemon-reload
+if [[ "$(cd "$dest" && pwd -P)" == "$(cd "$user_unit_dir" 2>/dev/null && pwd -P)" ]] ; then
+    systemctl --user daemon-reload
+    echo "daemon-reload: done"
+else
+    echo "daemon-reload: skipped (--dest is not the user unit dir)"
+fi

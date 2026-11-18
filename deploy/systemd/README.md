@@ -13,7 +13,7 @@ checkout's `.venv` runtime (`pip install -e ".[dev]"` inside
 scripts/install_user_units.sh                      # the checkout the script lives in
 scripts/install_user_units.sh --home /path/to/repoach
 scripts/install_user_units.sh --dry-run            # print the five rendered files, write nothing
-scripts/install_user_units.sh --dest "$(mktemp -d)"
+scripts/install_user_units.sh --dest "$(mktemp -d)"  # render and verify only, reload nothing
 ```
 
 The script renders the three services and the two timers, verifies them
@@ -21,9 +21,12 @@ with `systemd-analyze --user verify` (any output refuses the install with
 exit 2 and is relayed; nothing is written or reloaded), writes them to
 `--dest` (default `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`),
 creates the checkout's `logs/` directory (gitignored), where the units
-append their output, and runs `systemctl --user daemon-reload`. A
-relative `--home`, a missing `systemctl --user` and a failed
-verification are exit 2 with the reason. An operator who moves the
+append their output, and runs `systemctl --user daemon-reload` when
+`--dest` is that user unit directory. Any other `--dest` prints
+`daemon-reload: skipped (--dest is not the user unit dir)` and leaves the
+user manager alone. A relative `--home`, a missing `systemctl --user`, a
+missing `systemd-analyze` and a failed verification are exit 2 with the
+reason. An operator who moves the
 checkout re-runs it.
 
 An operator who prefers not to overwrite an installed unit writes a

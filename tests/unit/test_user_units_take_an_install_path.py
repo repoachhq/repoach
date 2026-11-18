@@ -34,24 +34,24 @@ def _checkout(tmp_path: Path) -> Path:
     return home
 
 
-def _stub_bin(tmp_path: Path, *, with_systemctl: bool) -> Path:
+VERIFY_LINE = "repoach-llm-proxy.service: Command /nowhere/repoach is not executable"
+
+
+def _stub_bin(tmp_path: Path, *, with_systemctl: bool, analyze: str = "real") -> Path:
+    """Link the tools the script needs; ``analyze`` is ``real``, ``missing`` or ``failing``."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for tool in (
-        "bash",
-        "sed",
-        "grep",
-        "mktemp",
-        "rm",
-        "mkdir",
-        "cp",
-        "dirname",
-        "git",
-        "systemd-analyze",
-    ):
+    for tool in ("bash", "sed", "grep", "mktemp", "rm", "mkdir", "cp", "dirname", "git"):
         found = shutil.which(tool)
         if found:
             (bin_dir / tool).symlink_to(found)
+    found = shutil.which("systemd-analyze")
+    if analyze == "real" and found:
+        (bin_dir / "systemd-analyze").symlink_to(found)
+    elif analyze == "failing":
+        stub = bin_dir / "systemd-analyze"
+        stub.write_text(f'#!/bin/sh\necho "{VERIFY_LINE}" >&2\nexit 1\n', encoding="utf-8")
+        stub.chmod(0o755)
     if with_systemctl:
         calls = tmp_path / "systemctl.calls"
         stub = bin_dir / "systemctl"
@@ -60,8 +60,19 @@ def _stub_bin(tmp_path: Path, *, with_systemctl: bool) -> Path:
     return bin_dir
 
 
+def _calls(tmp_path: Path) -> list[str]:
+    calls = tmp_path / "systemctl.calls"
+    return calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+
+
 def _run(args: list[str], bin_dir: Path) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "PATH": str(bin_dir)}
+    scratch = bin_dir.parent
+    env = {
+        **os.environ,
+        "PATH": str(bin_dir),
+        "HOME": str(scratch / "home"),
+        "XDG_CONFIG_HOME": str(scratch / "xdg"),
+    }
     return subprocess.run(
         [str(bin_dir / "bash"), str(SCRIPT), *args],
         capture_output=True,
@@ -115,10 +126,60 @@ def test_rendered_units_verify_on_this_systemd(tmp_path: Path) -> None:
     )
     assert verify.stdout + verify.stderr == ""
     assert (home / "logs").is_dir()
-    assert (tmp_path / "systemctl.calls").read_text(encoding="utf-8").splitlines() == [
-        "--user show-environment",
-        "--user daemon-reload",
-    ]
+    assert _calls(tmp_path) == ["--user show-environment"]
+    assert "daemon-reload: skipped (--dest is not the user unit dir)" in out
+
+
+def test_only_the_user_unit_dir_is_reloaded(tmp_path: Path) -> None:
+    """No --dest, or --dest naming the user unit dir, reloads; a scratch --dest does not."""
+    home = _checkout(tmp_path)
+    bin_dir = _stub_bin(tmp_path, with_systemctl=True, analyze="failing")
+    (bin_dir / "systemd-analyze").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    user_dir = tmp_path / "xdg" / "systemd" / "user"
+
+    default = _run(["--home", str(home)], bin_dir)
+    assert default.returncode == 0, default.stderr
+    assert sorted(p.name for p in user_dir.iterdir()) == sorted(SERVICES + TIMERS)
+    assert _calls(tmp_path) == ["--user show-environment", "--user daemon-reload"]
+    assert "daemon-reload: done" in default.stdout.splitlines()
+
+    named = _run(["--home", str(home), "--dest", f"{user_dir}/"], bin_dir)
+    assert named.returncode == 0, named.stderr
+    assert _calls(tmp_path)[-1] == "--user daemon-reload"
+    assert len(_calls(tmp_path)) == 4
+
+    scratch = _run(["--home", str(home), "--dest", str(tmp_path / "scratch")], bin_dir)
+    assert scratch.returncode == 0, scratch.stderr
+    assert "daemon-reload: skipped (--dest is not the user unit dir)" in scratch.stdout.splitlines()
+    assert _calls(tmp_path)[-1] == "--user show-environment"
+    assert len(_calls(tmp_path)) == 5
+
+
+def test_install_script_refuses_a_verification_that_prints(tmp_path: Path) -> None:
+    """Any verify output is relayed and refuses: exit 2, nothing in --dest, no reload."""
+    home = _checkout(tmp_path)
+    dest = tmp_path / "dest"
+    bin_dir = _stub_bin(tmp_path, with_systemctl=True, analyze="failing")
+    done = _run(["--home", str(home), "--dest", str(dest)], bin_dir)
+    assert done.returncode == 2
+    assert VERIFY_LINE in done.stderr
+    assert "systemd-analyze --user verify printed the lines above; nothing installed" in done.stderr
+    assert not dest.exists()
+    assert not (home / "logs").exists()
+    assert "--user daemon-reload" not in _calls(tmp_path)
+
+
+def test_install_script_refuses_without_systemd_analyze(tmp_path: Path) -> None:
+    """No systemd-analyze on PATH is exit 2 with its reason, nothing in --dest, no reload."""
+    home = _checkout(tmp_path)
+    dest = tmp_path / "dest"
+    bin_dir = _stub_bin(tmp_path, with_systemctl=True, analyze="missing")
+    assert not (bin_dir / "systemd-analyze").exists()
+    done = _run(["--home", str(home), "--dest", str(dest)], bin_dir)
+    assert done.returncode == 2
+    assert "systemd-analyze not found: the units cannot be verified" in done.stderr
+    assert not dest.exists()
+    assert "--user daemon-reload" not in _calls(tmp_path)
 
 
 def test_install_script_refuses_without_user_systemd_and_a_relative_home(tmp_path: Path) -> None:
