@@ -8,7 +8,7 @@ prints. The script runs ONE protocol method on the forge selected for
 ``--cwd`` and writes the subprocess exchanges it made plus its
 normalised result::
 
-    scripts/record_forge_fixture.py --forge gitlab --cwd ../yoob_2 \\
+    scripts/record_forge_fixture.py --forge gitlab --cwd ../some-checkout \\
         --case pull_request --method pull_request --args '[283]'
 
 Write methods are refused: a recording must never post, merge or open
@@ -25,12 +25,19 @@ and URLs are dropped, every URL gets the placeholder host and namespace
 its class word in stdout, argv and the method's arguments — the bot
 ``bot``, the account an ``is_maintainer`` call asks about
 ``maintainer``, the change request's author ``author``, any other
-``[bot]`` login ``bot-<n>`` and any other login ``author-<n>``. The
+``[bot]`` login ``bot-<n>``, a GitLab project bot ``service`` and any
+other login or ``@<handle>`` mentioned in free text ``author-<n>``; the
+:data:`repoach.forge.recording.NON_PERSON_LOGINS` are kept. Every user
+id becomes a synthetic one (:class:`repoach.forge.recording.UserIdMap`),
+declared under ``synthetic_user_ids``. The
 result is then recomputed by replaying the redacted exchanges, so the
-fixture is what the readers return from it. A login left unclassified,
-or a string of a generic personal class (a home path, a public IPv4
-address, a mailbox outside the documentation domains), exits 2 naming
-the key path, never the value, and writes nothing.
+fixture is what the readers return from it. The whole fixture, its
+``source`` included, is then judged: a login left unclassified, a string
+of a generic personal class (a home path, a public IPv4 address, a
+mailbox outside the documentation domains) or an entry of the
+maintainer's deny-list exits 2 naming the key path, never the value, and
+writes nothing. ``source`` names the forge and the date, never the
+checkout's folder.
 
 ``--trim N`` keeps only the first ``N`` items of every JSON array in
 recorded stdout (and of the recorded result), for listings too large to
@@ -42,6 +49,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 import re
 import sys
 from datetime import UTC, datetime
@@ -49,24 +57,31 @@ from pathlib import Path
 from typing import Any, cast
 
 from repoach.core.logging import get_logger
+from repoach.core.paths import user_config_dir
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
-    CLASS_WORD_RE,
     GITLAB_PROJECT_BOT_RE,
+    NON_PERSON_LOGINS,
+    SYNTHETIC_IDS_KEY,
     Exchange,
     RecordingSpawn,
     ReplaySpawn,
     UserIdMap,
     classify_logins,
     coerce_call,
+    declared_user_ids,
     decode_json_values,
     dump_fixture,
     find_secrets,
+    is_classified_login,
     login_values,
+    mentions,
+    recorded_source,
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
     serialize_result,
+    user_id_key,
 )
 from repoach.forge.select import select_forge
 
@@ -118,12 +133,82 @@ MAILBOX_DOC_DOMAIN_RE = re.compile(
 URL_USERINFO_RE = re.compile(r"(?<=://)(?:(?!://)\S)+@")
 """Copy of ``repoach.core.redaction._URL_USERINFO`` (SP-NO-PERSONAL-DATA-GATE F8)."""
 
+DENYLIST_ENV = "REPOACH_PERSONAL_DENYLIST"
+"""SP-NO-PERSONAL-DATA-GATE D3: the deny-list in CI, newline- or comma-separated."""
+
+DENYLIST_FILE_NAME = "personal-denylist"
+"""SP-NO-PERSONAL-DATA-GATE D3: the deny-list file under ``user_config_dir()``, one entry per line."""
+
+DENYLIST_MIN_LENGTH = 4
+"""SP-NO-PERSONAL-DATA-GATE D3: a shorter entry would match everywhere and is refused."""
+
+
+NODE_ID_SHAPE_RE = re.compile(r"[A-Za-z0-9+/=_-]{6,}")
+"""A string that may be a GitHub node id (base64 or ``U_`` + base64url), decoded before judging."""
+
 
 class UnclassifiedValueError(Exception):
     """A recorded value is a login with no class word, or matches a generic personal class.
 
     The message carries the key path, never the value.
     """
+
+
+class DenylistError(Exception):
+    """The deny-list holds an entry too short to judge with; the message names its ordinal only."""
+
+
+def read_denylist() -> list[str]:
+    """The maintainer's deny-list, from the file and the environment merged (SP-NO-PERSONAL-DATA-GATE D3).
+
+    A copy of that gate's reader (it lands later; not imported): the file
+    ``user_config_dir() / "personal-denylist"``, one entry per line with
+    ``#`` comments, and :data:`DENYLIST_ENV`, newline- or comma-separated.
+    Both live outside the tree; no entry is ever printed or written.
+
+    Returns:
+        The entries in order, duplicates removed; empty when neither source exists.
+
+    Raises:
+        DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by ordinal.
+    """
+    raw: list[str] = []
+    path = user_config_dir() / DENYLIST_FILE_NAME
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            raw.append(line.split("#", 1)[0])
+    raw += re.split(r"[\n,]", os.environ.get(DENYLIST_ENV, ""))
+    entries: list[str] = []
+    for item in (r.strip() for r in raw):
+        if item and item not in entries:
+            entries.append(item)
+    for n, entry in enumerate(entries, 1):
+        if len(entry) < DENYLIST_MIN_LENGTH:
+            raise DenylistError(f"deny-list entry {n}: too short")
+    return entries
+
+
+def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
+    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry whole-word, case-insensitive, ``-`` a word character."""
+    return [
+        re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(e)}(?![A-Za-z0-9_-])", re.I) for e in entries
+    ]
+
+
+def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
+    """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
+
+    A string that is a user id in a non-numeric form (a GitHub node id)
+    is also judged by the account number it encodes
+    (:func:`repoach.forge.recording.user_id_key`), so an entry holding a
+    numeric user id catches its node ids.
+    """
+    number = user_id_key(text) if NODE_ID_SHAPE_RE.fullmatch(text) else None
+    candidates = [text] if not isinstance(number, int) else [text, str(number)]
+    for n, pattern in enumerate(patterns, 1):
+        if any(pattern.search(c) for c in candidates):
+            return n
+    return None
 
 
 WRITE_METHODS = frozenset(
@@ -218,19 +303,19 @@ def generic_class(text: str) -> str | None:
     return None
 
 
-def _strings(value: object, path: str) -> list[tuple[str, str]]:
+def fixture_strings(value: object, path: str) -> list[tuple[str, str]]:
     """Every ``(key path, string)`` of a decoded value; a JSON stdout is walked inside."""
     if isinstance(value, dict):
-        return [hit for k, v in value.items() for hit in _strings(v, f"{path}.{k}")]
+        return [hit for k, v in value.items() for hit in fixture_strings(v, f"{path}.{k}")]
     if isinstance(value, list):
-        return [hit for i, v in enumerate(value) for hit in _strings(v, f"{path}[{i}]")]
+        return [hit for i, v in enumerate(value) for hit in fixture_strings(v, f"{path}[{i}]")]
     if isinstance(value, str):
         decoded = decode_json_values(value) if value.lstrip()[:1] in ("{", "[") else None
         if decoded is None:
             return [(path, value)]
         if len(decoded) == 1:
-            return _strings(decoded[0], path)
-        return [hit for i, v in enumerate(decoded) for hit in _strings(v, f"{path}[{i}]")]
+            return fixture_strings(decoded[0], path)
+        return [hit for i, v in enumerate(decoded) for hit in fixture_strings(v, f"{path}[{i}]")]
     return []
 
 
@@ -251,13 +336,17 @@ def build_roles(
 
     Precedence: the configured bot (``bot``), the ``is_maintainer``
     login (``maintainer``), the change request's author (``author``);
-    then every further login of the recorded answers in order of first
-    appearance, the next ``bot-<n>`` for a ``[bot]`` login or a GitLab project bot and the next
-    ``author-<n>`` otherwise. A login is compared casefolded, as forges
-    compare logins.
+    then every further login of the recorded answers, and every
+    ``@<handle>`` mentioned in their free text
+    (:func:`repoach.forge.recording.mentions`), in order of first
+    appearance: the next ``bot-<n>`` for a ``[bot]`` login, the next
+    ``service`` for a GitLab project bot and the next ``author-<n>``
+    otherwise. A login of :data:`repoach.forge.recording.NON_PERSON_LOGINS`
+    or already a class word is kept. A login is compared casefolded, as
+    forges compare logins.
     """
     roles: dict[str, str] = {}
-    following = {"bot": 1, "author": 1}
+    following = {"bot": 1, "author": 1, "service": 1}
 
     def _next(kind: str) -> str:
         n = following[kind]
@@ -267,42 +356,58 @@ def build_roles(
     def _known(login: str) -> bool:
         return login.casefold() in {k.casefold() for k in roles}
 
-    if bot:
+    if bot and bot not in NON_PERSON_LOGINS:
         roles[bot] = _next("bot")
-    if maintainer and not _known(maintainer):
+    if maintainer and not _known(maintainer) and not is_classified_login(maintainer):
         roles[maintainer] = "maintainer"
     if author:
         word = _next("author")
-        if not _known(author):
+        if not _known(author) and not is_classified_login(author):
             roles[author] = word
     for _path, value in _decoded(calls):
-        for _key, login in login_values(value):
-            if login and not _known(login) and not CLASS_WORD_RE.match(login):
-                bot_like = login.endswith("[bot]") or GITLAB_PROJECT_BOT_RE.match(login)
-                roles[login] = _next("bot" if bot_like else "author")
+        found = [login for _key, login in login_values(value)] + mentions(value)
+        for login in found:
+            if login and not _known(login) and not is_classified_login(login):
+                if GITLAB_PROJECT_BOT_RE.match(login):
+                    roles[login] = _next("service")
+                else:
+                    roles[login] = _next("bot" if login.endswith("[bot]") else "author")
     return roles
 
 
-def refuse_unclassified(calls: list[dict[str, Any]], result_args: object) -> None:
-    """Raise :class:`UnclassifiedValueError` on a login without a class word or a generic class.
+def refuse_unclassified(fixture: dict[str, Any], denylist: list[str] | None = None) -> None:
+    """Raise :class:`UnclassifiedValueError` on any value of the fixture that may name someone.
+
+    Every login under a login key must be a class word or a
+    :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry; no string of
+    the fixture — ``source``, ``case``, the arguments, every exchange and
+    the result alike — may match a generic personal class or a deny-list
+    entry.
 
     Args:
-        calls: The classified, redacted exchanges.
-        result_args: The classified method arguments.
+        fixture: The fixture about to be written; ``calls`` are reported
+            as ``exchanges[<i>]``.
+        denylist: The deny-list entries (:func:`read_denylist` when ``None``).
 
     Raises:
         UnclassifiedValueError: Naming the key path, never the value.
     """
+    calls: list[dict[str, Any]] = list(fixture.get("calls") or [])
     for path, value in _decoded(calls):
         for key_path, login in login_values(value):
-            if login and not CLASS_WORD_RE.match(login):
+            if login and not is_classified_login(login):
                 raise UnclassifiedValueError(f"unclassified: {path}.{key_path}")
-    scanned = [("args", result_args)] + [(f"exchanges[{i}]", c) for i, c in enumerate(calls)]
+    patterns = denylist_patterns(read_denylist() if denylist is None else denylist)
+    scanned: list[tuple[str, object]] = [(f"exchanges[{i}]", c) for i, c in enumerate(calls)]
+    scanned += [(k, v) for k, v in fixture.items() if k != "calls"]
     for root, value in scanned:
-        for path, text in _strings(value, root):
+        for path, text in fixture_strings(value, root):
             rule = generic_class(text)
             if rule is not None:
                 raise UnclassifiedValueError(f"generic class {rule} at {path}")
+            entry = denylist_hit(text, patterns)
+            if entry is not None:
+                raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
 
 
 def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
@@ -325,14 +430,18 @@ def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[d
     return out
 
 
-def synthesize_user_ids(calls: list[dict[str, Any]], ids: UserIdMap) -> list[dict[str, Any]]:
-    """Replace every user id of the recorded answers by its synthetic id (D1, 0.7)."""
+def synthesize_user_ids(
+    calls: list[dict[str, Any]], ids: UserIdMap, *, forge: str
+) -> list[dict[str, Any]]:
+    """Replace every user id of the recorded answers by its synthetic id (D1c)."""
     out: list[dict[str, Any]] = []
     for call in calls:
         new = dict(call)
         values = decode_json_values(call["stdout"])
         if values is not None:
-            new["stdout"] = "\n".join(json.dumps(ids.apply(v), ensure_ascii=False) for v in values)
+            new["stdout"] = "\n".join(
+                json.dumps(ids.apply(v, forge=forge), ensure_ascii=False) for v in values
+            )
         out.append(new)
     return out
 
@@ -415,11 +524,10 @@ def record(
     maintainer = str(args[0]) if method == "is_maintainer" and args else None
     roles = build_roles(calls, bot=forge.bot_username, maintainer=maintainer, author=author)
     calls = classify_calls(calls, roles)
-    calls = synthesize_user_ids(calls, UserIdMap())
+    calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name)
     args = list(cast(list[Any], redact_urls_in_value(classify_logins(args, roles))))
     kwargs = dict(cast(dict[str, Any], redact_urls_in_value(classify_logins(kwargs, roles))))
     bot = roles.get(forge.bot_username, forge.bot_username)
-    refuse_unclassified(calls, [args, kwargs])
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     result, raises = _replay(forge_name, cwd, method, typed_args, typed_kwargs, calls, bot)
     if raises != live_raises:
@@ -431,19 +539,23 @@ def record(
         raise SystemExit(
             f"refusing to write a fixture carrying {len(leaked)} secret-shaped value(s)"
         )
-    fixture = {
+    fixture: dict[str, Any] = {
         "forge": forge_name,
         "case": case,
         "method": method,
         "args": args,
         "kwargs": kwargs,
         "bot_username": bot,
-        "source": f"recorded {datetime.now(UTC).date().isoformat()} from {cwd.resolve().name}",
+        "source": recorded_source(datetime.now(UTC).date().isoformat(), forge_name),
         "trimmed": trim,
         "calls": calls,
         "result": result,
         "raises": raises,
     }
+    declared = declared_user_ids(calls)
+    if declared:
+        fixture[SYNTHETIC_IDS_KEY] = declared
+    refuse_unclassified(fixture)
     path = out_root / forge_name / f"{case}.json"
     dump_fixture(path, fixture)
     return path
@@ -472,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
             trim=ns.trim,
             out_root=ns.out,
         )
-    except UnclassifiedValueError as exc:
+    except (UnclassifiedValueError, DenylistError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(f"{path}\n")

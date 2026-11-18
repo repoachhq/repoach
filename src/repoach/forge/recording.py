@@ -162,6 +162,66 @@ CLASS_WORD_RE = re.compile(r"^(maintainer|author|bot|agent|service)(-[1-9][0-9]*
 GITLAB_PROJECT_BOT_RE = re.compile(r"^project_[0-9]+_bot_[0-9a-f]+$")
 """A GitLab project access token user: a service account named after a real project id."""
 
+NON_PERSON_LOGINS: frozenset[str] = frozenset({"github-actions[bot]", "repoach-bot"})
+"""Logins that name no person, kept as they are by the recorder and the offline transform.
+
+``github-actions[bot]`` is the platform's service account and the
+default trusted bot (``repoach.project.resolve.GITHUB_DEFAULT_BOT``);
+``repoach-bot`` is this project's own bot. Every other login, a
+placeholder such as ``alice`` or ``owner`` included, is a class word
+(the real-account rule, SP-RECORDER-REDACTS-BY-CLASS D2).
+"""
+
+PROSE_KEYS: frozenset[str] = frozenset(
+    {"body", "description", "message", "messageBody", "messageHeadline", "title"}
+)
+"""Recorded keys whose string value is free text a person wrote, where ``@<handle>`` mentions one."""
+
+MENTION_RE = re.compile(r"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)")
+"""An ``@<handle>`` mention in free text: GitHub and GitLab handle characters, not an email."""
+
+
+RECORDED_SOURCE_RE = re.compile(r"^recorded ([0-9]{4}-[0-9]{2}-[0-9]{2}) from (?!a live )[^\s;]+")
+"""A recorded fixture's ``source`` head naming where it was recorded from (a folder, a repository), not yet the forge."""
+
+
+def recorded_source(date: str, forge: str) -> str:
+    """A recorded fixture's ``source`` head: the date and the forge, never a checkout's folder name."""
+    return f"recorded {date} from a live {forge} change request"
+
+
+def is_classified_login(login: str) -> bool:
+    """Whether ``login`` may stand in a fixture: a class word or a :data:`NON_PERSON_LOGINS` entry."""
+    return bool(CLASS_WORD_RE.match(login)) or login in NON_PERSON_LOGINS
+
+
+def mentions(payload: object) -> list[str]:
+    """Every unclassified ``@<handle>`` of a :data:`PROSE_KEYS` value, in order of first appearance.
+
+    A diff, a log or any other text outside those keys is the repository's
+    or the runner's content, not a person addressing another, and is not
+    searched.
+    """
+    found: list[str] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, item in node.items():
+                if key in PROSE_KEYS and isinstance(item, str):
+                    for m in MENTION_RE.finditer(item):
+                        handle = m.group(1)
+                        if not is_classified_login(handle) and handle not in found:
+                            found.append(handle)
+                else:
+                    _walk(item)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(payload)
+    return found
+
+
 PLACEHOLDER_HOST = "forge.example.com"
 """The host every recorded URL is given (an RFC 2606 domain)."""
 
@@ -368,31 +428,66 @@ def _classify(payload: object, folded: dict[str, str], roles: dict[str, str]) ->
 SYNTHETIC_ID_START = 1001
 """The first synthetic user id a recording hands out."""
 
-SYNTHETIC_ID_LIMIT = 10000
-"""Numeric user ids below this are synthetic; a recorded one never is (D1, 0.7)."""
+SYNTHETIC_IDS_KEY = "synthetic_user_ids"
+"""The fixture key declaring the synthetic user ids the fixture holds (D1c, 0.8).
 
-_SYNTHETIC_NODE_RE = re.compile(r"^U_[0-9]+$")
+The recorder writes the numbers it handed out; a hand-written fixture
+declares its own. A user id is synthetic because its fixture declares
+it, never because of its magnitude.
+"""
+
+RESULT_USER_ID_METHODS: frozenset[tuple[str, str]] = frozenset({("gitlab", "reviews")})
+"""``(forge, method)`` pairs whose result items carry a user id as ``id``.
+
+GitLab builds ``Review(id=<the approver's user id>)`` (``gitlab.py:728``);
+GitHub's ``Review.id`` is the review's own id, and no other result holds
+a user id, so only these positions follow an account's synthetic id.
+"""
+
+_SYNTHETIC_NODE_RE = re.compile(r"^U_([0-9]+)$")
 """A synthetic GitHub user node id, ``U_<n>``."""
+
+_NEW_USER_NODE_RE = re.compile(r"^U_([A-Za-z0-9_-]+)$")
+"""A GitHub user node id of the current format: ``U_`` and base64url of MessagePack ``[0, <id>]``."""
 
 _LEGACY_USER_NODE_RE = re.compile(r"^04:User([0-9]+)$")
 """A decoded legacy GitHub user node id; its number is the account's numeric id."""
 
+_MSGPACK_UINT_WIDTH = {0xCC: 1, 0xCD: 2, 0xCE: 4, 0xCF: 8}
+"""MessagePack unsigned-integer markers and their byte widths."""
 
-def is_synthetic_user_id(value: object) -> bool:
-    """Whether ``value`` is a synthetic user id: an integer below the limit, or ``U_<n>``."""
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return 0 <= value < SYNTHETIC_ID_LIMIT
-    return isinstance(value, str) and bool(_SYNTHETIC_NODE_RE.match(value))
+
+_BASE64_RE = re.compile(r"(?:[A-Za-z0-9+/]{4})+(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?")
+"""A standard base64 string that decodes without error (a legacy node id's shape)."""
+
+
+def _new_node_number(suffix: str) -> int | None:
+    """The account number of a current-format node id's suffix, or ``None``.
+
+    ``suffix`` matched ``[A-Za-z0-9_-]+``; a length of ``1 mod 4`` is not
+    base64url, so the decode below cannot fail.
+    """
+    if len(suffix) % 4 == 1:
+        return None
+    raw = base64.urlsafe_b64decode(suffix + "=" * (-len(suffix) % 4))
+    if raw[:2] != b"\x92\x00" or len(raw) < 3:
+        return None
+    marker, body = raw[2], raw[3:]
+    if marker < 0x80 and not body:
+        return marker
+    width = _MSGPACK_UINT_WIDTH.get(marker)
+    if width is None or len(body) != width:
+        return None
+    return int.from_bytes(body, "big")
 
 
 def user_id_key(value: object) -> object:
-    """The account a user id names: a number for numeric and legacy node ids, else the string.
+    """The account a user id names: its number for every numeric form, else the string.
 
-    A legacy GitHub node id (base64 of ``04:User<n>``) and the REST id
-    ``<n>`` of the same account share one key, so both map to one
-    synthetic number.
+    The REST id ``<n>``, the digit string ``"<n>"``, a legacy GitHub node
+    id (base64 of ``04:User<n>``), a current-format node id (``U_`` and
+    base64url of MessagePack ``[0, <n>]``) and the synthetic ``U_<n>``
+    all name account ``<n>``, so they map to one synthetic number.
     """
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         return None
@@ -400,78 +495,113 @@ def user_id_key(value: object) -> object:
         return value
     if value.isdigit():
         return int(value)
-    try:
-        decoded = base64.b64decode(value, validate=True).decode("ascii")
-    except (ValueError, UnicodeDecodeError) as exc:
-        _log.debug("forge.recording.opaque_node_id", error=type(exc).__name__)
+    synthetic = _SYNTHETIC_NODE_RE.match(value)
+    if synthetic:
+        return int(synthetic.group(1))
+    current = _NEW_USER_NODE_RE.match(value)
+    if current:
+        number = _new_node_number(current.group(1))
+        return value if number is None else number
+    if not _BASE64_RE.fullmatch(value):
         return value
+    decoded = base64.b64decode(value).decode("ascii", errors="replace")
     m = _LEGACY_USER_NODE_RE.match(decoded)
     return int(m.group(1)) if m else value
 
 
+def user_id_values(node: object) -> list[object]:
+    """The ``id`` of every user object of a decoded value, JSON inside strings included."""
+    if isinstance(node, str):
+        if node.lstrip()[:1] not in ("{", "["):
+            return []
+        return [i for v in decode_json_values(node) or [] for i in user_id_values(v)]
+    if isinstance(node, dict):
+        found = [i for v in node.values() for i in user_id_values(v)]
+        if any(k in node for k in USER_KEYS) and "id" in node:
+            found.append(node["id"])
+        return found
+    if isinstance(node, list):
+        return [i for v in node for i in user_id_values(v)]
+    return []
+
+
+def declared_user_ids(node: object) -> list[int]:
+    """The sorted account numbers of every user id ``node`` holds, the value of :data:`SYNTHETIC_IDS_KEY`."""
+    numbers = {user_id_key(i) for i in user_id_values(node)}
+    return sorted(n for n in numbers if isinstance(n, int))
+
+
 @dataclass
 class UserIdMap:
-    """Real user id → synthetic id, a sequence in order of first appearance (D1, 0.7).
+    """Real user id → synthetic id, a sequence in order of first appearance (D1c).
 
-    The first account seen is ``1001``, the next ``1002``…; a node id
+    An account is keyed by ``(forge, number)``: the same number on GitHub
+    and on GitLab names two accounts and gets two synthetic ids. The first
+    account seen is :attr:`start`, the next ``start + 1``…; a node id
     becomes ``U_<n>`` with the same ``n`` as the account's numeric id.
     The mapping is never written anywhere, and a sequence carries no
     information about the id it replaces, so a fixture cannot be mapped
     back by enumerating small ids (as a hash of the id could).
 
     Attributes:
-        keep_synthetic: Leave ids that are already synthetic as they are
-            (the offline transform of hand-written fixtures); the
-            recorder remaps every id.
         start: The first number handed out.
-        ids: Account key → synthetic number.
+        ids: ``(forge, account)`` → synthetic number.
     """
 
-    keep_synthetic: bool = False
     start: int = SYNTHETIC_ID_START
-    ids: dict[object, int] = field(default_factory=dict)
+    ids: dict[tuple[str, object], int] = field(default_factory=dict)
 
-    def synthetic(self, value: object) -> object:
-        """The synthetic id for ``value`` (allocated on first sight)."""
-        if self.keep_synthetic and is_synthetic_user_id(value):
-            return value
+    def synthetic(self, value: object, *, forge: str, keep: frozenset[int] = frozenset()) -> object:
+        """The synthetic id for ``value`` on ``forge``, allocated on first sight.
+
+        Args:
+            value: A user id as the forge printed it.
+            forge: ``github`` or ``gitlab``.
+            keep: The synthetic numbers the fixture declares; such an id is
+                left as it is.
+
+        Returns:
+            The synthetic id, an ``int`` for an ``int`` and ``U_<n>`` for a string.
+        """
         key = user_id_key(value)
         if key is None:
             return value
-        n = self.ids.setdefault(key, self.start + len(self.ids))
+        if isinstance(key, int) and key in keep:
+            return value
+        n = self.ids.setdefault((forge, key), self.start + len(self.ids))
         return f"U_{n}" if isinstance(value, str) else n
 
-    def apply(self, payload: object) -> object:
+    def apply(self, payload: object, *, forge: str, keep: frozenset[int] = frozenset()) -> object:
         """Remap the ``id`` of every user object (one holding ``login`` or ``username``)."""
         if isinstance(payload, dict):
             user = any(k in payload for k in USER_KEYS)
             return {
-                k: self.synthetic(v) if user and k == "id" else self.apply(v)
+                k: self.synthetic(v, forge=forge, keep=keep)
+                if user and k == "id"
+                else self.apply(v, forge=forge, keep=keep)
                 for k, v in payload.items()
             }
         if isinstance(payload, list):
-            return [self.apply(v) for v in payload]
+            return [self.apply(v, forge=forge, keep=keep) for v in payload]
         return payload
 
-    def apply_known(self, payload: object) -> object:
-        """Remap every ``id`` whose account is already mapped (a result: ``Review.id``)."""
-        if isinstance(payload, dict):
-            return {
-                k: self._known(v) if k == "id" else self.apply_known(v) for k, v in payload.items()
-            }
-        if isinstance(payload, list):
-            return [self.apply_known(v) for v in payload]
-        return payload
+    def apply_result(
+        self, result: object, *, forge: str, method: str, keep: frozenset[int] = frozenset()
+    ) -> object:
+        """Remap the user ids of a recorded result, at :data:`RESULT_USER_ID_METHODS` positions only.
 
-    def _known(self, value: object) -> object:
-        """``value`` remapped when its account is in :attr:`ids`, else unchanged."""
-        if self.keep_synthetic and is_synthetic_user_id(value):
-            return value
-        key = user_id_key(value)
-        if key is None or key not in self.ids:
-            return value
-        n = self.ids[key]
-        return f"U_{n}" if isinstance(value, str) else n
+        Every other ``id`` of a result (a review, a comment, a thread, a
+        check run) is the object's own and is left as it is, even when its
+        number equals a user id seen elsewhere.
+        """
+        if (forge, method) not in RESULT_USER_ID_METHODS or not isinstance(result, list):
+            return result
+        return [
+            {**item, "id": self.synthetic(item["id"], forge=forge, keep=keep)}
+            if isinstance(item, dict) and "id" in item
+            else item
+            for item in result
+        ]
 
 
 def login_values(payload: object, path: str = "") -> list[tuple[str, str]]:
