@@ -159,7 +159,7 @@ LOGIN_KEYS: frozenset[str] = frozenset({"login", "username", "author", "resolved
 CLASS_WORD_RE = re.compile(r"^(maintainer|author|bot|agent|service)(-[1-9][0-9]*)?$")
 """A recorded login once classified: a class word, optionally ``-<n>``."""
 
-GITLAB_PROJECT_BOT_RE = re.compile(r"^project_[0-9]+_bot_[0-9a-f]+$")
+GITLAB_PROJECT_BOT_RE = re.compile(r"^project_[0-9]+_bot_[0-9a-f]+$", re.I)
 """A GitLab project access token user: a service account named after a real project id."""
 
 NON_PERSON_LOGINS: frozenset[str] = frozenset({"github-actions[bot]", "repoach-bot"})
@@ -177,17 +177,50 @@ PROSE_KEYS: frozenset[str] = frozenset(
 )
 """Recorded keys whose string value is free text a person wrote, where ``@<handle>`` mentions one."""
 
+TOKEN_CHARS = "A-Za-z0-9_-"
+"""The characters inside a token, as a regex class body (SP-RECORDER-REDACTS-BY-CLASS I1, 0.10).
+
+The one boundary of every whole-word pattern: the login replacer, the
+``@<login>`` replacer, the deny-list and the closure oracle all use
+:func:`token_pattern`. ``.``, ``:``, ``@``, ``/``, ``[``, ``]``, quotes
+and every other character delimit a token; ``-`` and ``_`` are inside one.
+"""
+
+
+def token_pattern(word: str) -> re.Pattern[str]:
+    """``word`` as a whole token (:data:`TOKEN_CHARS`), case-insensitive: the only whole-word pattern factory."""
+    return re.compile(rf"(?<![{TOKEN_CHARS}]){re.escape(word)}(?![{TOKEN_CHARS}])", re.I)
+
+
+CLI_PLACEHOLDER_RE = re.compile(
+    rf"(?<![{TOKEN_CHARS}])(?::(?:owner|repo|id)|/dev/null)(?![{TOKEN_CHARS}])"
+)
+"""The tools' own literals: the argv templates ``:owner``, ``:repo``, ``:id`` and git's ``/dev/null`` (0.10).
+
+``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
+written by the forge code and expanded by the CLI; ``--- /dev/null`` is
+how git names the missing side of an added or deleted file. None carries
+a recorded value. The replacer leaves them alone and the closure oracle
+does not judge them, so a login ``owner`` cannot turn the forge's own
+argv into one the replay does not make, nor a login ``dev`` a diff
+header. Case-sensitive: the tools write the lowercase forms only.
+"""
+
 _MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|\()"
 """What may not follow a handle: a handle character, a dotted name (``@pytest.fixture``) or a call."""
 
 MENTION_RE = re.compile(
-    rf"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?){_MENTION_END}"
+    rf"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?){_MENTION_END}", re.I
 )
-"""An ``@<handle>`` mention in free text (SP-RECORDER-REDACTS-BY-CLASS D2, 0.9).
+"""The finder of unknown ``@<handle>`` mentions in free text (SP-RECORDER-REDACTS-BY-CLASS D2, 0.9).
 
-Not an email (``a@b.example``), not a dotted name (``@pytest.fixture``,
-and so not a dotted GitLab username either), not a decorator call
-(``@lru_cache(…)``); a sentence-ending ``.`` is not part of the handle.
+A finder, not a boundary (0.10): it decides which unknown words become
+a role, and nothing is kept or refused by it. Not an email
+(``a@b.example``), not a dotted name (``@pytest.fixture``, and so not a
+dotted GitLab username either), not a decorator call (``@lru_cache(…)``);
+a sentence-ending ``.`` is not part of the handle. Once a login is a
+role it is replaced by :func:`mention_pattern` or :func:`token_pattern`,
+whose boundary is :data:`TOKEN_CHARS`.
 """
 
 PYTHON_DECORATORS: frozenset[str] = frozenset(
@@ -232,8 +265,8 @@ written with a leading ``@``, so the key cannot collide with one.
 
 
 def mention_pattern(login: str) -> re.Pattern[str]:
-    """The ``@<login>`` mention form of ``login`` in free text, case-insensitive."""
-    return re.compile(rf"(?<![A-Za-z0-9_.@/+-])@{re.escape(login)}{_MENTION_END}", re.I)
+    """The ``@<login>`` form of ``login``: :func:`token_pattern` of ``@`` and the login (I1, 0.10)."""
+    return token_pattern(f"@{login}")
 
 
 RECORDED_SOURCE_RE = re.compile(r"^recorded ([0-9]{4}-[0-9]{2}-[0-9]{2}) from (?!a live )[^\s;]+")
@@ -537,29 +570,32 @@ def redact_payload(value: object) -> object:
 
 
 def _login_pattern(login: str) -> re.Pattern[str]:
-    """``login`` as a whole token.
-
-    ``/``, ``=``, ``?`` and quotes delimit it. A ``:`` delimits it after
-    a host (``git@<host>:<login>/r``, an scp remote, 0.9) but not after
-    ``/`` or ``:`` (``repos/:owner/:repo`` names a placeholder, not a login).
-    """
-    start = r"(?:(?<![A-Za-z0-9_.:\[\]-])|(?<=[A-Za-z0-9.-]:))"
-    return re.compile(rf"{start}{re.escape(login)}(?![A-Za-z0-9_\[\]-])", re.I)
+    """``login`` as a whole token: :func:`token_pattern`, wherever it stands (I1, 0.10)."""
+    return token_pattern(login)
 
 
 def classify_text(text: str, roles: dict[str, str]) -> str:
     """Replace every login of ``roles`` appearing as a token in ``text`` by its class word.
 
     A :data:`MENTION_ONLY_PREFIX` key is replaced in its ``@<handle>``
-    form only (D2, 0.9).
+    form only (D2, 0.9). A :data:`CLI_PLACEHOLDER_RE` template is left
+    as it is (0.10); every other occurrence of the token is replaced,
+    after a ``:``, a ``.`` or a ``/`` alike.
     """
+    pieces = CLI_PLACEHOLDER_RE.split(text)
+    templates = CLI_PLACEHOLDER_RE.findall(text)
     for login in sorted(roles, key=len, reverse=True):
         if login.startswith(MENTION_ONLY_PREFIX):
-            handle = login.removeprefix(MENTION_ONLY_PREFIX)
-            text = mention_pattern(handle).sub(f"@{roles[login]}", text)
+            pattern = mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX))
+            word = f"@{roles[login]}"
         else:
-            text = _login_pattern(login).sub(roles[login], text)
-    return text
+            pattern = _login_pattern(login)
+            word = roles[login]
+        pieces = [pattern.sub(word, piece) for piece in pieces]
+    out = pieces[0]
+    for template, piece in zip(templates, pieces[1:], strict=True):
+        out += template + piece
+    return out
 
 
 def classify_logins(payload: object, roles: dict[str, str]) -> object:

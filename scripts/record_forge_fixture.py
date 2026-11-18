@@ -86,6 +86,7 @@ from repoach.forge.recording import (
     redact_urls_in_text,
     redact_urls_in_value,
     serialize_result,
+    token_pattern,
     unredacted_host,
     user_id_key,
 )
@@ -206,10 +207,8 @@ def read_denylist(config_dir: Path | None = None) -> list[str]:
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
-    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry whole-word, case-insensitive, ``-`` a word character."""
-    return [
-        re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(e)}(?![A-Za-z0-9_-])", re.I) for e in entries
-    ]
+    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.recording.token_pattern`, I1)."""
+    return [token_pattern(e) for e in entries]
 
 
 def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
