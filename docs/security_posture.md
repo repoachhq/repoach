@@ -143,8 +143,9 @@ tree.
 | absolute home path (`/home/<x>/…`, `/Users/<x>/…`) | `~/…` in prose; `<repo>/…` when the path is a checkout; `/path/to/…` in a recorded JSON value | never the `%h` specifier followed by a layout either |
 | a maintainer's directory layout under the home | `<layout>`; in a unit, the render token `@REPOACH_HOME@` (`deploy/systemd/README.md`) | |
 | system login, service account | `<user>`; in a recorded JSON value, the class word (`maintainer`, `author`, `bot`, `agent`, `service`) | |
-| forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot` | GitHub `login`, GitLab `username` and a user namespace alike |
+| forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot` | GitHub `login`, GitLab `username` alike; a namespace inside a recorded URL is `org` (row below) |
 | real name in a recorded user object | dropped: the `name` key is removed from the user object | `login`/`username` stay as class words; `name` elsewhere (check runs, jobs) is read by the forges and kept; every `id` is kept, an opaque identifier in none of these classes |
+| recorded forge URL (`url`, `web_url`, `html_url`, `link`, and a URL in recorded text) | `https://forge.example.com/org/<repo>/…`: the host becomes `forge.example.com`, the namespace `org`, the rest of the path is kept; a user object's own URLs are dropped | applied at record time by `scripts/record_forge_fixture.py`, re-applied offline by `scripts/redact_forge_fixtures.py` (SP-RECORDER-REDACTS-BY-CLASS) |
 | hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
 | public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted |
 | public IPv6 | `2001:db8::<n>` (RFC 3849) | |
