@@ -106,7 +106,7 @@ def thread_node(root_id: int, *, resolved: bool, path: str = "", line: int | Non
     """One ``reviewThreads`` node as GitHub answers it."""
     return {
         "isResolved": resolved,
-        "resolvedBy": {"login": "jwfaye"} if resolved else None,
+        "resolvedBy": {"login": "maintainer"} if resolved else None,
         "path": path,
         "line": line,
         "originalLine": line,

@@ -13,7 +13,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"id\": 5, \"iid\": 7, \"project_id\": 1, \"title\": \"feat: x\", \"description\": \"\", \"state\": \"opened\", \"created_at\": \"2026-10-19T09:00:00Z\", \"updated_at\": \"2026-10-19T10:05:00Z\", \"merge_status\": \"can_be_merged\", \"approved\": true, \"approvals_required\": 2, \"approvals_left\": 0, \"approved_by\": [{\"user\": {\"name\": \"Alice\", \"username\": \"alice\", \"id\": 11, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/alice\"}}, {\"user\": {\"name\": \"Bob\", \"username\": \"bob\", \"id\": 12, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/bob\"}}]}"
+      "stdout": "{\"id\": 5, \"iid\": 7, \"project_id\": 1, \"title\": \"feat: x\", \"description\": \"\", \"state\": \"opened\", \"created_at\": \"2026-10-19T09:00:00Z\", \"updated_at\": \"2026-10-19T10:05:00Z\", \"merge_status\": \"can_be_merged\", \"approved\": true, \"approvals_required\": 2, \"approvals_left\": 0, \"approved_by\": [{\"user\": {\"username\": \"alice\", \"id\": 11, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/alice\"}}, {\"user\": {\"username\": \"bob\", \"id\": 12, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/bob\"}}]}"
     }
   ],
   "case": "reviews_two_approvals",

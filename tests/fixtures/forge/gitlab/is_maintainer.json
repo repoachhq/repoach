@@ -1,6 +1,6 @@
 {
   "args": [
-    "jwfaye"
+    "maintainer"
   ],
   "bot_username": "repoach-bot",
   "calls": [
@@ -8,13 +8,13 @@
       "args": [
         "api",
         "--paginate",
-        "projects/:id/members/all?query=jwfaye&per_page=100"
+        "projects/:id/members/all?query=maintainer&per_page=100"
       ],
       "program": "glab",
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[{\"id\": 7, \"username\": \"jwfaye\", \"access_level\": 40, \"state\": \"active\"}]"
+      "stdout": "[{\"id\": 7, \"username\": \"maintainer\", \"access_level\": 40, \"state\": \"active\"}]"
     }
   ],
   "case": "is_maintainer",

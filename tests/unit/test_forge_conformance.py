@@ -12,7 +12,7 @@ repoach sent before the protocol existed.
 
 Fixtures whose ``source`` starts with ``recorded`` were captured by
 ``scripts/record_forge_fixture.py`` against repoachhq/repoach PR #200
-(merged, head branch deleted) and josephwfaye/yoob_2 MR !283 / !287
+(merged, head branch deleted) and maintainer/yoob_2 MR !283 / !287
 (merged, source branch deleted); ``synthetic`` ones cover what no
 read-only live call can produce (writes, merges, 403s, forged markers)
 and say why. On top of the byte-level replay, every test asserts the
@@ -101,6 +101,33 @@ def test_fixture_sets_are_paired() -> None:
     gitlab = {p.stem for p in (FIXTURES / "gitlab").glob("*.json")}
     assert github == gitlab
     assert len(github) >= 18
+
+
+def _user_objects(node: Any) -> list[dict[str, Any]]:
+    if isinstance(node, dict):
+        found = [node] if ("login" in node or "username" in node) else []
+        return found + [u for v in node.values() for u in _user_objects(v)]
+    if isinstance(node, list):
+        return [u for v in node for u in _user_objects(v)]
+    if isinstance(node, str) and node.lstrip()[:1] in ("{", "["):
+        decoder, text, at, found = json.JSONDecoder(), node.strip(), 0, []
+        while at < len(text):
+            value, at = decoder.raw_decode(text, at)
+            found += _user_objects(value)
+            at = len(text) - len(text[at:].lstrip())
+        return found
+    return []
+
+
+def test_recorded_user_objects_carry_no_name() -> None:
+    """A recorded user object keeps its class-word login and its id, never a real name."""
+    users = [
+        u
+        for path in sorted(FIXTURES.rglob("*.json"))
+        for u in _user_objects(json.loads(path.read_text(encoding="utf-8")))
+    ]
+    assert len(users) >= 40
+    assert [u for u in users if "name" in u] == []
 
 
 @pytest.mark.parametrize("forge_name", FORGES)
@@ -264,7 +291,7 @@ class _ThreadsGh(GitHubForge):
 def _threads_page(root_id: int, resolved: bool) -> dict[str, object]:
     node = {
         "isResolved": resolved,
-        "resolvedBy": {"login": "jwfaye"} if resolved else None,
+        "resolvedBy": {"login": "maintainer"} if resolved else None,
         "comments": {"nodes": [{"databaseId": root_id}]},
     }
     return {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [node]}}}}}
@@ -276,7 +303,7 @@ def test_review_threads_reads_every_slurped_page(tmp_path: Path) -> None:
     forge = _ThreadsGh(tmp_path, GhResult(0, json.dumps(pages), "", argv=["gh"]))
     threads = forge.review_threads(7)
     assert [(t.root_id, t.resolved, t.resolved_by) for t in threads] == [
-        (11, True, "jwfaye"),
+        (11, True, "maintainer"),
         (12, False, ""),
     ]
     assert forge.argvs[0][:4] == ["api", "graphql", "--paginate", "--slurp"]
@@ -592,12 +619,16 @@ def test_is_maintainer_gitlab_member_must_be_active(
     """A blocked user or a membership awaiting approval is no maintainer, whatever the level."""
     monkeypatch.setattr(gitlab_forge, "_today", lambda: FROZEN_TODAY)
     forge = _build("gitlab", tmp_path, "repoach-bot")
-    payload = [{"username": "jwfaye", "access_level": 40, **member}]
+    payload = [{"username": "maintainer", "access_level": 40, **member}]
     forge._spawn = ReplaySpawn(
         [
             Exchange(
                 program="glab",
-                args=["api", "--paginate", "projects/:id/members/all?query=jwfaye&per_page=100"],
+                args=[
+                    "api",
+                    "--paginate",
+                    "projects/:id/members/all?query=maintainer&per_page=100",
+                ],
                 stdin=None,
                 returncode=0,
                 stdout=json.dumps(payload),
@@ -605,7 +636,7 @@ def test_is_maintainer_gitlab_member_must_be_active(
             )
         ]
     )
-    assert forge.is_maintainer("jwfaye") is expected
+    assert forge.is_maintainer("maintainer") is expected
 
 
 def test_is_maintainer_edited_comments_are_flagged() -> None:

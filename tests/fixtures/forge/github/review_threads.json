@@ -23,7 +23,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[{\"data\": {\"repository\": {\"pullRequest\": {\"reviewThreads\": {\"pageInfo\": {\"hasNextPage\": false, \"endCursor\": \"Y3Vyc29yOnYyOpK0MjAyNi0xMS0wMVQyMjoxMTozNVrOsnvMGQ==\"}, \"nodes\": [{\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437504238}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437504247}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437510842}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437567002}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"jwfaye\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437567005}]}}]}}}}}]"
+      "stdout": "[{\"data\": {\"repository\": {\"pullRequest\": {\"reviewThreads\": {\"pageInfo\": {\"hasNextPage\": false, \"endCursor\": \"Y3Vyc29yOnYyOpK0MjAyNi0xMS0wMVQyMjoxMTozNVrOsnvMGQ==\"}, \"nodes\": [{\"isResolved\": true, \"resolvedBy\": {\"login\": \"maintainer\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437504238}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"maintainer\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437504247}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"maintainer\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437510842}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"maintainer\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437567002}]}}, {\"isResolved\": true, \"resolvedBy\": {\"login\": \"maintainer\"}, \"comments\": {\"nodes\": [{\"databaseId\": 4437567005}]}}]}}}}}]"
     }
   ],
   "case": "review_threads",
@@ -36,7 +36,7 @@
       "line": null,
       "path": "",
       "resolved": true,
-      "resolved_by": "jwfaye",
+      "resolved_by": "maintainer",
       "root_id": 4437504238,
       "thread_id": null
     },
@@ -44,7 +44,7 @@
       "line": null,
       "path": "",
       "resolved": true,
-      "resolved_by": "jwfaye",
+      "resolved_by": "maintainer",
       "root_id": 4437504247,
       "thread_id": null
     },
@@ -52,7 +52,7 @@
       "line": null,
       "path": "",
       "resolved": true,
-      "resolved_by": "jwfaye",
+      "resolved_by": "maintainer",
       "root_id": 4437510842,
       "thread_id": null
     },
@@ -60,7 +60,7 @@
       "line": null,
       "path": "",
       "resolved": true,
-      "resolved_by": "jwfaye",
+      "resolved_by": "maintainer",
       "root_id": 4437567002,
       "thread_id": null
     },
@@ -68,7 +68,7 @@
       "line": null,
       "path": "",
       "resolved": true,
-      "resolved_by": "jwfaye",
+      "resolved_by": "maintainer",
       "root_id": 4437567005,
       "thread_id": null
     }

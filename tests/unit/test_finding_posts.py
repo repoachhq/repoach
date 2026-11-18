@@ -48,6 +48,7 @@ from repoach.review.report import render_ledger_report
 from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 from tests.fixtures.generated_artefacts.harness import Repo, install, review
 
+MAINTAINER = "maintainer"
 PR = 7
 HEAD = "c0ffee" + "0" * 34
 BOT = "repoach-bot"
@@ -350,7 +351,7 @@ def test_dry_run_writes_no_post_and_reports_zero(
 
 
 class ThreadForge(BatchForge):
-    """Serves review threads and inline comments; ``jwfaye`` is the only maintainer."""
+    """Serves review threads and inline comments; ``maintainer`` is the only maintainer."""
 
     def __init__(self, threads: list[ReviewThread], inline: list[Comment] | None = None) -> None:
         super().__init__([])
@@ -369,7 +370,7 @@ class ThreadForge(BatchForge):
         return []
 
     def is_maintainer(self, login: str) -> bool:
-        return login == "jwfaye"
+        return login == MAINTAINER
 
 
 def _blocking(db: Path, *, line: int = 10) -> int:
@@ -416,13 +417,13 @@ def test_a_thread_resolved_by_a_maintainer_is_recorded_and_settles_nothing(
     db = tmp_path / "review.db"
     finding_id = _blocking(db)
     _post(db, finding_id, 77)
-    forge = ThreadForge([ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye")])
+    forge = ThreadForge([ReviewThread(root_id=77, resolved=True, resolved_by=MAINTAINER)])
 
     run = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
 
-    assert run.lines() == [f"thread closed by jwfaye for #{finding_id}"]
+    assert run.lines() == [f"thread closed by {MAINTAINER} for #{finding_id}"]
     [post] = fetch_finding_posts(db, PR)
-    assert (post.thread_closed_at_head, post.thread_closed_by) == (HEAD, "jwfaye")
+    assert (post.thread_closed_at_head, post.thread_closed_by) == (HEAD, MAINTAINER)
     assert fetch_findings(db, PR)[0].status is FindingStatus.VERIFIED
     again = detect_closed_threads(forge, db, pr_number=PR, head_sha="later")
     assert again.closures == []
@@ -470,7 +471,7 @@ def test_thread_resolved_with_unreadable_maintainer_permission_records_nothing(
             self.permission_reads += 1
             raise ForgeError("HTTP 502 reading permission")
 
-    forge = Unreadable([ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye")])
+    forge = Unreadable([ReviewThread(root_id=77, resolved=True, resolved_by=MAINTAINER)])
     forge.permission_reads = 0
 
     first = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
@@ -489,15 +490,15 @@ def test_two_posts_of_one_finding_closed_by_one_login_report_once(tmp_path: Path
     _post(db, finding_id, 88)
     forge = ThreadForge(
         [
-            ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye"),
-            ReviewThread(root_id=88, resolved=True, resolved_by="jwfaye"),
+            ReviewThread(root_id=77, resolved=True, resolved_by=MAINTAINER),
+            ReviewThread(root_id=88, resolved=True, resolved_by=MAINTAINER),
         ]
     )
 
     run = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
 
-    assert run.lines() == [f"thread closed by jwfaye for #{finding_id}"]
-    assert [p.thread_closed_by for p in fetch_finding_posts(db, PR)] == ["jwfaye", "jwfaye"]
+    assert run.lines() == [f"thread closed by {MAINTAINER} for #{finding_id}"]
+    assert [p.thread_closed_by for p in fetch_finding_posts(db, PR)] == [MAINTAINER, MAINTAINER]
 
 
 def test_unreadable_threads_redact_what_the_forge_echoed(tmp_path: Path) -> None:
@@ -553,7 +554,7 @@ def test_render_ledger_report_includes_closed_threads_section_only_when_thread_l
     db = tmp_path / "review.db"
     finding_id = _blocking(db)
     facts = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
-    line = f"thread closed by jwfaye for #{finding_id}"
+    line = f"thread closed by {MAINTAINER} for #{finding_id}"
 
     with_closure = render_ledger_report(
         db, pr_number=PR, decision=compute_merge_decision(facts), facts=facts, thread_lines=[line]
@@ -578,7 +579,7 @@ def test_thread_closure_write_failure_keeps_review_going(
         raise OperationalError("UPDATE finding_posts", {}, Exception("database is locked"))
 
     monkeypatch.setattr("repoach.review.finding_post_threads.mark_thread_closed", locked)
-    forge = ThreadForge([ReviewThread(root_id=77, resolved=True, resolved_by="jwfaye")])
+    forge = ThreadForge([ReviewThread(root_id=77, resolved=True, resolved_by=MAINTAINER)])
 
     run = ReviewTeamOrchestrator(forge=forge, db_path=db)._detect_thread_closures(PR, head_sha=HEAD)
 
@@ -637,10 +638,10 @@ def test_a_root_id_match_wins_over_a_discussion_id_match(tmp_path: Path) -> None
     forge = ThreadForge(
         [
             ReviewThread(root_id=900, thread_id=DISCUSSION, resolved=True, resolved_by="author"),
-            ReviewThread(root_id=501, thread_id="b" * 40, resolved=True, resolved_by="jwfaye"),
+            ReviewThread(root_id=501, thread_id="b" * 40, resolved=True, resolved_by=MAINTAINER),
         ]
     )
 
     run = detect_closed_threads(forge, db, pr_number=PR, head_sha=HEAD)
 
-    assert run.lines() == [f"thread closed by jwfaye for #{finding_id}"]
+    assert run.lines() == [f"thread closed by {MAINTAINER} for #{finding_id}"]
