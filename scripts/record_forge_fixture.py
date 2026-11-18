@@ -258,12 +258,12 @@ def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
 
     ``text`` is judged in every form the closure oracle judges it in
-    (:func:`repoach.forge.recording.oracle_forms`, 0.11): decoded, folded
+    (:func:`repoach.forge.recording.oracle_forms`, 0.11), literals included: decoded, folded
     and with the account number of every node id it holds, wherever the
     node id stands (``id=<node>``, ``see <node> here``), so an entry
     holding a numeric user id catches its node ids (R4).
     """
-    forms = oracle_forms(text)
+    forms = oracle_forms(text, literals=False)
     for n, pattern in enumerate(patterns, 1):
         if any(pattern.search(form) for form in forms):
             return n

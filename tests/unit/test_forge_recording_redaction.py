@@ -1906,6 +1906,11 @@ def test_the_tools_templates_are_not_judged() -> None:
     cited = _placed("per SP-OWNER-SETTLES-A-FINDING", "prose")
     assert residual(cited, found) is None
     assert residual(_placed("per sp-owner-settles", "prose"), found) is not None
+    deny = needles([], roles={}, denylist=("secretword", "repoach-bot"))
+    for text in ("per SP-SECRETWORD-X", "by repoach-bot"):
+        assert residual(_placed(text, "prose"), deny) is not None, text
+    entries = rec.Denylist(("secretword",))
+    assert entries.hit("per SP-SECRETWORD-X") == 1
 
 
 def test_the_offline_needles_accept_a_short_hand_written_login() -> None:
@@ -1928,6 +1933,11 @@ def test_non_person_logins_are_no_needles() -> None:
     assert _kinds(found, "login") == []
     assert _kinds(found, "segment") == ["repo-x"]
     assert residual(_placed("by github-actions[bot] and repoach-bot", "prose"), found) is None
+    owner = needles([], roles={"github": "author-3"})
+    kept = "by github-actions[bot], github-actions and repoach-bot"
+    assert residual(_placed(kept, "prose"), owner) is None
+    assert residual(_placed(f"{kept} on github", "prose"), owner) is not None
+    assert classify_text(f"{kept} on github", {"github": "author-3"}) == f"{kept} on author-3"
 
 
 def test_the_oracle_judges_encoded_and_lookalike_forms() -> None:

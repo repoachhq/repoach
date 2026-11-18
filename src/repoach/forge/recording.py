@@ -211,10 +211,19 @@ def token_pattern(word: str) -> re.Pattern[str]:
 
 CLI_PLACEHOLDER_RE = re.compile(
     rf"(?<![{TOKEN_CHARS}])"
-    r"(?::(?:owner|repo|id)|/dev/null|SP-[A-Z0-9]+(?:-[A-Z0-9]+)*)"
-    rf"(?![{TOKEN_CHARS}-])"
+    r"(?::(?:owner|repo|id)|/dev/null|SP-[A-Z0-9]+(?:-[A-Z0-9]+)*|"
+    + "|".join(
+        re.escape(login.removesuffix("[bot]")) + r"(?:\[bot\])?"
+        for login in sorted(NON_PERSON_LOGINS, key=len, reverse=True)
+    )
+    + rf")(?![{TOKEN_CHARS}-])"
 )
 """The tools' and the project's own literals (0.10, 0.11): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``SP-<ID>``.
+
+The :data:`NON_PERSON_LOGINS`, with or without their ``[bot]`` suffix,
+are literals too (0.11): kept as they are, so a needle that is one of
+their words (the ``github`` organisation owning the Actions app) is not
+judged inside ``github-actions[bot]``, nor replaced there.
 
 ``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
 written by the forge code and expanded by the CLI; ``--- /dev/null`` is
@@ -1274,7 +1283,7 @@ def _decoded_once(text: str) -> str:
     return unquote(html.unescape(unescaped))
 
 
-def oracle_forms(text: str) -> list[str]:
+def oracle_forms(text: str, *, literals: bool = True) -> list[str]:
     r"""Every form the closure oracle judges ``text`` in, casefolded (I2, I3, 0.11).
 
     The text as written; each layer of percent, HTML-entity and ``\u``
@@ -1283,10 +1292,12 @@ def oracle_forms(text: str) -> list[str]:
     and the account number of every node id any of them holds
     (:func:`embedded_id_numbers`). No form is built with a redaction
     regex, so a value the redactor did not recognise is still a substring
-    of one of them. A :data:`CLI_PLACEHOLDER_RE` template is blanked
-    first: it is the tools' literal, not a recorded value.
+    of one of them. A :data:`CLI_PLACEHOLDER_RE` literal is blanked
+    first, being no recorded value, unless ``literals`` is false: the
+    deny-list judges the text whole, a literal included, since an entry is
+    the maintainer's own declaration and is refused wherever it stands.
     """
-    current = CLI_PLACEHOLDER_RE.sub(" ", text)
+    current = CLI_PLACEHOLDER_RE.sub(" ", text) if literals else text
     stages = [current]
     for _ in range(_DECODE_ROUNDS):
         peeled = _decoded_once(current)
@@ -1624,7 +1635,8 @@ def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | 
     Each string of the fixture, keys included (:func:`scanned_strings`),
     is judged in every :func:`oracle_forms` form against each needle with
     :func:`token_pattern`, the one boundary. Those forms are built by
-    decoding, never by a redaction regex. The recorder's
+    decoding, never by a redaction regex; a deny-list entry is judged on
+    the forms that keep the literals, so no literal hides one. The recorder's
     :data:`CONSTANT_FIELDS` are judged by the deny-list only, and
     ``source`` without its :data:`RECORDED_SOURCE_HEAD_RE` head. The
     ordinal counts within the needle's kind.
@@ -1641,8 +1653,9 @@ def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | 
         elif path == "source":
             text = RECORDED_SOURCE_HEAD_RE.sub("", text)
         forms = oracle_forms(text)
+        whole = oracle_forms(text, literals=False)
         for kind, n, pattern in judged:
-            if any(pattern.search(form) for form in forms):
+            if any(pattern.search(form) for form in (whole if kind == "deny-list" else forms)):
                 return kind, n, path
     return None
 
