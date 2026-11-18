@@ -14,7 +14,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[{\"id\": \"d1\", \"notes\": [{\"id\": 1, \"body\": \"**[architect/major]** x\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": \"DiffNote\", \"created_at\": \"2026-10-19T10:00:00Z\", \"position\": {\"new_path\": \"a.py\", \"new_line\": 3, \"old_path\": \"a.py\", \"old_line\": null}}, {\"id\": 2, \"body\": \"reply\", \"author\": {\"username\": \"dev\"}, \"system\": false, \"type\": \"DiffNote\", \"created_at\": \"2026-10-19T10:00:00Z\", \"position\": {\"new_path\": \"a.py\", \"new_line\": 3, \"old_path\": \"a.py\", \"old_line\": null}}]}, {\"id\": \"d2\", \"notes\": [{\"id\": 3, \"body\": \"plain discussion\", \"author\": {\"username\": \"dev\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}]}]"
+      "stdout": "[{\"id\": \"d1\", \"notes\": [{\"id\": 1, \"body\": \"**[architect/major]** x\", \"author\": {\"username\": \"repoach-bot\"}, \"system\": false, \"type\": \"DiffNote\", \"created_at\": \"2026-10-19T10:00:00Z\", \"position\": {\"new_path\": \"a.py\", \"new_line\": 3, \"old_path\": \"a.py\", \"old_line\": null}}, {\"id\": 2, \"body\": \"reply\", \"author\": {\"username\": \"author-2\"}, \"system\": false, \"type\": \"DiffNote\", \"created_at\": \"2026-10-19T10:00:00Z\", \"position\": {\"new_path\": \"a.py\", \"new_line\": 3, \"old_path\": \"a.py\", \"old_line\": null}}]}, {\"id\": \"d2\", \"notes\": [{\"id\": 3, \"body\": \"plain discussion\", \"author\": {\"username\": \"author-2\"}, \"system\": false, \"type\": null, \"created_at\": \"2026-10-19T10:00:00Z\"}]}]"
     }
   ],
   "case": "comments_threaded",
@@ -35,7 +35,7 @@
       "thread_id": "d1"
     },
     {
-      "author": "dev",
+      "author": "author-2",
       "body": "reply",
       "created_at": "2026-10-19T10:00:00Z",
       "edited": true,

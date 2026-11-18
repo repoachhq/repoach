@@ -31,7 +31,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "https://github.com/o/r/pull/42#issuecomment-5\n"
+      "stdout": "https://forge.example.com/org/r/pull/42#issuecomment-5\n"
     }
   ],
   "case": "post_comment",

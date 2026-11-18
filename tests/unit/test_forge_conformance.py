@@ -321,7 +321,10 @@ def test_review_threads_raises_forge_error_on_bad_json_or_a_failed_call(tmp_path
 def test_reviews_two_approvals(forge_name: str, tmp_path: Path) -> None:
     """Two approvals become two ``APPROVED`` reviews carrying their authors."""
     reviews, _ = _replay(forge_name, "reviews_two_approvals", tmp_path)
-    assert [(r.author, r.state) for r in reviews] == [("alice", "APPROVED"), ("bob", "APPROVED")]
+    assert [(r.author, r.state) for r in reviews] == [
+        ("author-2", "APPROVED"),
+        ("author-3", "APPROVED"),
+    ]
 
 
 @pytest.mark.parametrize("forge_name", FORGES)

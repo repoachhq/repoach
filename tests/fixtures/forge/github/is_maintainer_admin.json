@@ -1,19 +1,19 @@
 {
   "args": [
-    "owner"
+    "author-2"
   ],
   "bot_username": "repoach-bot",
   "calls": [
     {
       "args": [
         "api",
-        "repos/:owner/:repo/collaborators/owner/permission"
+        "repos/:owner/:repo/collaborators/author-2/permission"
       ],
       "program": "gh",
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"permission\": \"admin\", \"role_name\": \"\", \"user\": {\"login\": \"owner\"}}"
+      "stdout": "{\"permission\": \"admin\", \"role_name\": \"\", \"user\": {\"login\": \"author-2\"}}"
     }
   ],
   "case": "is_maintainer_admin",
