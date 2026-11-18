@@ -1,7 +1,7 @@
 ---
 id: SP-GITLAB-NOTE-RECEIVER
 title: A GitLab note starts one thread-reply pipeline through an authenticated webhook receiver, with a scheduled fallback
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-17
@@ -26,6 +26,8 @@ constraints:
 ---
 
 # A GitLab note starts one thread-reply pipeline
+
+Amendment (0.7, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Amendment (0.6, 2026-11-18): the pipeline write is `create_pipeline`, not `dispatch_workflow`
 
@@ -731,24 +733,24 @@ flowchart LR
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_thread_webhook.py tests/unit/test_threads_receiver_unit.py tests/unit/test_threads_triggers.py` → green. Today (`92cd241`): the files do not exist and `git grep -n "X-Gitlab" origin/develop -- src` → 0.
 - [ ] AC2: `pytest -q tests/unit/test_ci_ledger_persists.py tests/unit/test_ci_entry.py` → green with the two generated jobs and the `threads_pipeline=` lines (`test_ci_ledger_persists.py` is SP-CI-LEDGER-PERSISTS's, landed before this spec).
-- [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `grep -rn "hel1\|yoob\|172\.18\.\|67827362\|/home/" deploy/systemd src/repoach/review/thread_webhook.py` → 0 (NG6).
+- [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `scripts/lint_no_personal_data.py --tree deploy/systemd` and `--tree src/repoach/review` → `personal-data: ok` (judged when SP-NO-PERSONAL-DATA-GATE lands), and `grep -rn "172\.18\.\|67827362" deploy/systemd src/repoach/review/thread_webhook.py` → 0 (NG6).
 - [ ] AC4 (live, by the operator of a deployment): the commands of C1 and C2 with their outputs, written beside them; the owner's run is the example below.
 
 ## Open Questions
 - None.
 
-## Example deployment: the owner's host (hel1) and the Yoob project, measured 2026-11-17
+## Example deployment: an operator's host, values replaced by placeholders, measured 2026-11-17
 
 This section is an example of D1–D10 applied to one deployment. It is
 not the design, not a default, and not a condition of the End state;
-every value here is the owner's. Measured over `ssh hel1` and on Yoob
+every value here is one operator's, its host, address and domains replaced by placeholders. Measured over `ssh <host>` and on Yoob
 `origin/develop` `6ee04ab`.
 
 | # | Fact | How the design applies |
 |---|---|---|
 | E1 | nginx is the container `yoob_nginx` (`nginx:1.25-alpine`) on `yoob_2_yoob_network`, subnet `172.18.0.0/16`, gateway `172.18.0.1`; `/etc/nginx` absent on the host; the bridge is `br-<12 hex>`, a name Docker assigns; `docker-compose.prod.yml` names `yoob_network` on nine services and pins no subnet (`:17`, `:68`, `:89`, `:149`, `:195`, `:228`, `:256`, `:281`, `:320`, `:325`) | the socket's `ListenStream=172.18.0.1:8787` (the bridge gateway, reachable from the container and the host only); `FreeBind` covers Docker starting after the socket; the Yoob MR pins `ipam: {config: [{subnet: 172.18.0.0/16, gateway: 172.18.0.1}]}` so the address cannot move; `REPOACH_THREADS_BEHIND_PROXY=1` |
 | E2 | `ufw` active, six rules, all `ALLOW IN` from `Anywhere`: 22, 80, 443 (v4 and v6); a `tailscale0` interface holds two more | one rule by address, not interface: `ufw allow in proto tcp from 172.18.0.0/16 to 172.18.0.1 port 8787`; 8787 is never public |
-| E3 | `yoob.dev` → `65.108.199.28` directly; the certificate's SANs are `yoob.dev`, `www.yoob.dev`, `studio.yoob.dev`; the `yoob.dev` block is `listen 443 ssl http2; server_name yoob.dev;` (`nginx/conf.d/yoob.conf:105-106`), its API locations already set `X-Real-IP` and `X-Forwarded-For` (`:131-132`); zones `api_limit`, `upload_limit` (`nginx/nginx.conf:45-46`) | public URL `https://yoob.dev/hooks/repoach`: `location = /hooks/repoach { limit_req zone=hooks_limit burst=10 nodelay; client_max_body_size 1m; limit_except POST { deny all; } proxy_pass http://172.18.0.1:8787/hooks/gitlab; proxy_set_header X-Gitlab-Token $http_x_gitlab_token; proxy_set_header X-Gitlab-Event $http_x_gitlab_event; proxy_set_header X-Gitlab-Event-UUID $http_x_gitlab_event_uuid; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; }` in that block, a `hooks_limit` zone (`5r/s`); no new DNS record or certificate |
+| E3 | `product.example.com` → `203.0.113.10` directly; the certificate's SANs are `product.example.com`, `www.product.example.com`, `studio.product.example.com`; the `product.example.com` block is `listen 443 ssl http2; server_name product.example.com;` (`nginx/conf.d/yoob.conf:105-106`), its API locations already set `X-Real-IP` and `X-Forwarded-For` (`:131-132`); zones `api_limit`, `upload_limit` (`nginx/nginx.conf:45-46`) | public URL `https://product.example.com/hooks/repoach`: `location = /hooks/repoach { limit_req zone=hooks_limit burst=10 nodelay; client_max_body_size 1m; limit_except POST { deny all; } proxy_pass http://172.18.0.1:8787/hooks/gitlab; proxy_set_header X-Gitlab-Token $http_x_gitlab_token; proxy_set_header X-Gitlab-Event $http_x_gitlab_event; proxy_set_header X-Gitlab-Event-UUID $http_x_gitlab_event_uuid; proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; }` in that block, a `hooks_limit` zone (`5r/s`); no new DNS record or certificate |
 | E4 | `systemd 255 (255.4-1ubuntu8.18)`, `systemd-creds` present, `has-tpm2` → `partial -firmware`, resolver `systemd-resolved` at `127.0.0.53`; no repoach installed; runners `gitlab-runner-{light,heavy,deploy}.service` | D2's first filling, `--with-key=host`; a venv at `/opt/repoach-threads/venv`, `ExecStart=/opt/repoach-threads/venv/bin/repoach threads serve --listen-fd`; `systemd-analyze verify` on the desk (same build) printed nothing for the pair with the binary stubbed, and only `Command /opt/repoach-threads/venv/bin/repoach is not executable` with the real path, 2026-11-17 |
 | E5 | Yoob's `workflow:rules`: `schedule` first, then `$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS → never`, then `merge_request_event`, `main`/`develop`, `tp/`, tags (`.gitlab-ci.yml:12-29`); every job excludes pipeline kinds through the anchors `.never_on_schedule` (15 uses, `:312-314`) and `.never_on_a_tp_push` (`:326-328`); a schedule pipeline must hold `release:nightly` and nothing else, and the nightly needs its schedule variable; the shapes are pinned by `test_a_schedule_pipeline_contains_exactly_the_nightly_release_job`, `test_the_nightly_release_job_needs_the_schedule_variable`, `test_a_tp_push_pipeline_contains_exactly_the_tp_jobs` (`tests/scripts/test_gitlab_ci_invariants.py:3566`, `:3575`, `:3612`) | the Yoob MR adds `- if: $REPOACH_THREADS_REPLY_MR` before the `never` rule, a third anchor `.never_on_a_threads_run` on every job's rules, and two invariants tests recomputed from the YAML, `test_a_threads_run_pipeline_contains_exactly_the_threads_reply_job` and `test_a_threads_schedule_contains_exactly_the_threads_schedule_job`; `repoach doctor --ci` prints `threads_pipeline=ok` afterwards |
 | E6 | Yoob does not `include:` the generated file (`grep -n "^include" .gitlab-ci.yml` → 0); its hand-written `review:gate` (`:1645-1669`) runs in `environment: review-gate` with `REPOACH_GITLAB_TOKEN` (`ci/review-gate.sh:143`), on `tags: [$YOOB_REVIEW_RUNNER_TAG]` (`"yoob-light"`, `:259`), with `cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`; `repoach.toml` sets `[state] db_path = ".repoach/repoach.db"` (`:92-95`); B-174 sits at `docs/BACKLOG.md:212` | the Yoob MR writes the two jobs by hand, text equal to `render_gitlab_threads_jobs`, in `environment: review-gate`, with `tags: [yoob-light]` written literally (not `$YOOB_LIGHT_RUNNER_TAG`, which may name the metered shared runner) so the fallback costs no shared minutes; the cache key resolves to `review:gate`'s |

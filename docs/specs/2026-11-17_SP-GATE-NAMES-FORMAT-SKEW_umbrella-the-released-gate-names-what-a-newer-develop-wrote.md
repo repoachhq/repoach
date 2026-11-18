@@ -1,11 +1,11 @@
 ---
 id: SP-GATE-NAMES-FORMAT-SKEW
 title: Umbrella — the released merge gate names every value a newer develop wrote that it cannot read, and never reads a non-judgement as green
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: []
@@ -20,6 +20,8 @@ constraints:
 ---
 
 # Umbrella — the released gate names what a newer develop wrote
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -53,7 +55,7 @@ the child that acts on it.
 | F5 | The incident: PR #302 (`3c0ba97`, 2026-11-16) added `Severity.NOTE`; at 2026-11-17 01:24 the gate of PR #303 (run 43995248874, `main` at `74cf2be`) crashed with `ValueError: 'note' is not a valid Severity`, exit 1, a red `merge-on-ci` run that no pull request check shows; #303 was admin-merged; release #304 (`b963130`, the same day) carried the enum and the next run read 8 findings | `gh run view 43995248874 --log-failed`; `docs/releasing.md`; the delivery state of 2026-11-16 |
 | F6 | The ledger already versions one table: `pr_spec_coverage.rule_version` (`SPEC_COVERAGE_RULE_VERSION = 2`), re-graded when stale (`refresh_stale_coverage`, `StaleCoverageRecomputeError`). `pr_findings` has no format version; columns added since creation are back-filled by four `ALTER TABLE` migrations, each named with its spec | `src/repoach/review/spec_gate.py:63,92,103`; `src/repoach/review/auto_merge.py:118,860`; `src/repoach/review/findings.py:450-493` |
 | F7 | `SKIPPED` is a success conclusion in both GitHub readers (`_SUCCESS_CONCLUSIONS = {SUCCESS, NEUTRAL, SKIPPED}`), so a required check whose job never ran is green; the GitLab forge reads `skipped` as a failure (`_PIPELINE_FAILURE = {failed, canceled, skipped}`) | `src/repoach/review/merge_wait.py:83-85,162-237`; `src/repoach/forge/github.py:95-98,223-263`; `src/repoach/forge/gitlab.py:96-97` |
-| F8 | R1, measured on the release PR #307's head `79b9321`: the `CI` run 44071742332 (`pull_request`, 11:11Z) concluded `skipped` because its actor was `github-actions[bot]` (the merge of #308 by `merge-on-ci.yml`), outside `ci.yml`'s allowlist. Its check runs: `Test suite (Python ${{ matrix.python-version }})` `skipped`, `wheel-build` `skipped` (twice), `wheel-smoke (${{ matrix.python-version }})` `skipped`. Under the five names, `wheel-build` reads green and the four matrix names are `missing`: the gate fails closed only because a job that never expands reports one check under its template name. After the owner's close/reopen (actor `jwfaye`), run 44081266335 (12:14Z) ran and the six check runs are `success` | `gh api repos/repoachhq/repoach/commits/79b9321/check-runs`; `gh run list --commit 79b9321`; `.github/workflows/ci.yml:33-35,120-122`; `.github/workflows/shellcheck.yml:30-32` |
+| F8 | R1, measured on the release PR #307's head `79b9321`: the `CI` run 44071742332 (`pull_request`, 11:11Z) concluded `skipped` because its actor was `github-actions[bot]` (the merge of #308 by `merge-on-ci.yml`), outside `ci.yml`'s allowlist. Its check runs: `Test suite (Python ${{ matrix.python-version }})` `skipped`, `wheel-build` `skipped` (twice), `wheel-smoke (${{ matrix.python-version }})` `skipped`. Under the five names, `wheel-build` reads green and the four matrix names are `missing`: the gate fails closed only because a job that never expands reports one check under its template name. After the owner's close/reopen (actor: the maintainer's handle), run 44081266335 (12:14Z) ran and the six check runs are `success` | `gh api repos/repoachhq/repoach/commits/79b9321/check-runs`; `gh run list --commit 79b9321`; `.github/workflows/ci.yml:33-35,120-122`; `.github/workflows/shellcheck.yml:30-32` |
 | F9 | `repoach.toml` is read by `load_project_config` with `extra="forbid"` on every section; the file keeps `[auto_merge]` commented "because an older installed repoach refuses an unknown key" (SP-PR-RUNS-AFFECTED-JOBS F14). In the gate, a `ConfigError` from the head's file reaches no handler (F4) | `src/repoach/project/config.py:168,192,559-560`; `repoach.toml:87` |
 | F10 | Precedents of a defined degradation: the release gate's `affected-jobs misses: cannot say: <why>` on a `ConfigError` or a harvest refusal; the attempts comment, whose read and write are inside `upsert_attempt`'s `try`, "logged as `merge_attempts.comment_failed` and never changes the outcome"; `TableError` names an unknown key of `.github/affected-jobs.toml` | `src/repoach/cli/release_cmds.py:75-105`; `src/repoach/review/merge_wait.py:496-520`; `src/repoach/affected/table.py:231-233` |
 | F11 | The skew window is short and frequent: six releases between 2026-11-02 and 2026-11-17 (#285, #287, #289, #291, #304, #307); `main..develop` is one commit (#309) today. Every merge into `develop` that touches an enum, a column, a config key or a workflow shape opens a window until the next release | `git log --first-parent origin/main`; `git log origin/main..origin/develop` |

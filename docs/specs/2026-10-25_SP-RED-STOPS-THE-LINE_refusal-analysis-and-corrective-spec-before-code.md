@@ -1,11 +1,11 @@
 ---
 id: SP-RED-STOPS-THE-LINE
 title: A red stops the line until a refusal analysis and a corrective spec amendment exist, and the Coder works from the amendment
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/line_stop.py, src/repoach/review/refusal_analysis.py, src/repoach/review/spec_amendment.py, prompts/review/refusal_analyst_0.1.0.md, prompts/review/amendment_verifier_0.1.0.md, prompts/review/coder_findings_0.2.0.md, tests/line_fakes.py, tests/unit/test_line_stop.py, tests/unit/test_line_release.py, tests/unit/test_refusal_analysis.py, tests/unit/test_spec_amendment.py, tests/unit/test_coder_from_amendment.py, tests/unit/test_line_doctor.py, tests/integration/test_red_stops_the_line_cycle.py]
@@ -25,6 +25,8 @@ constraints:
 ---
 
 # A red stops the line until a refusal analysis and a corrective spec amendment exist, and the Coder works from the amendment
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Decisions (orchestrator 2026-10-25, within the owner's rule « un rouge arrête la ligne »)
 
@@ -70,7 +72,7 @@ duration.
 ## Context
 
 Measured on `origin/develop` at `2706bb6` (2026-10-25) in
-`repoachhq/repoach`, and on Yoob `origin/develop` (`josephwfaye/yoob_2`).
+`repoachhq/repoach`, and on Yoob `origin/develop` (`<namespace>/yoob_2`).
 
 | # | Fact | Where |
 |---|------|-------|

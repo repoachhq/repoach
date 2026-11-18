@@ -1,11 +1,11 @@
 ---
 id: SP-CI-RED-IS-EVIDENCE
 title: Red, pending, missing and flaky CI are named findings, and a Coder fix needs the failing log
-version: 0.4
+version: 0.5
 status: draft
 author: agent
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/ci_evidence.py, tests/unit/test_ci_evidence.py, tests/unit/test_ci_verdict.py, tests/unit/test_ci_flaky.py, tests/unit/test_ci_required_checks.py, tests/unit/test_ci_doctor_required_checks.py]
@@ -24,6 +24,8 @@ constraints:
 ---
 
 # Red, pending, missing and flaky CI are named findings, and a Coder fix needs the failing log
+
+Amendment (0.5, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Decisions (owner 2026-10-25)
 
@@ -72,7 +74,7 @@ whose log it has not read.
 ## Context
 
 Measured on `origin/develop` at `53bb844` (2026-10-25), on
-`repoachhq/repoach` (GitHub) and on `josephwfaye/yoob_2` (GitLab).
+`repoachhq/repoach` (GitHub) and on `<namespace>/yoob_2` (GitLab).
 
 | # | Fact | Where |
 |---|------|-------|
@@ -88,7 +90,7 @@ Measured on `origin/develop` at `53bb844` (2026-10-25), on
 | F10 | On GitHub, the required check names come from the **classic** branch-protection endpoint only. When that endpoint is unreadable or empty, they fall back to the hard-coded `DEFAULT_REQUIRED_CHECK_NAMES = ("Test suite (Python 3.11)", "Test suite (Python 3.13)")`, which are repoach's own check names. On a foreign repository with no protection, the gate therefore waits for two checks that will never exist and refuses with `required_check_missing: Test suite (Python 3.11), …`. | `src/repoach/forge/github.py:70-78`, `:1441-1446`, `:1647-1669` |
 | F11 | **repoach's own repository has no required checks.** `GET repos/repoachhq/repoach/branches/{develop,main}/protection` returns `404 Branch not protected`. The repository uses two active **rulesets** instead: `develop: pull requests only, never rewritten` and `main: releases land as merge commits`. Their rules are `deletion`, `non_fast_forward` and `pull_request`, with no `required_status_checks`. `GET …/rules/branches/develop` returns `["deletion","non_fast_forward","pull_request"]`. repoach does not read rulesets at all. | measured 2026-10-25 with `gh api` |
 | F12 | Check names reported on repoach PR #245: `Architect / Sentinel / Tester / Scribe`, `Auto-merge to develop`, `Coder auto-fix loop`, `ShellCheck (warning-level)`, `Test suite (Python 3.11)`, `Test suite (Python 3.13)`, `wheel-build`, `wheel-smoke (3.11)`, `wheel-smoke (3.13)`. | `gh pr checks 245` |
-| F13 | **Yoob (GitLab):** `only_allow_merge_if_pipeline_succeeds = true` and `merge_method = merge`. On `develop` today two jobs are `allow_failure: true`: `prepare:runner-quota` (`.gitlab-ci.yml:363-369`) and `review:advisory` (`:1497-1505`). Every other job is required by GitLab's own semantics. Yoob MR !314 (open, auto-merge armed, "ci(review): make the repoach review a blocking gate that runs first") renames `review:advisory` → `review:gate`, sets `allow_failure: false` and moves it first. **This spec assumes !314 merged**, so the required-job list is every job except `prepare:runner-quota`, and it includes `review:gate`. repoach's GitLab adapter reads this as `required_checks=["pipeline"]` and judges `head_pipeline.status` alone, with `canceled` and `skipped` counted as failure. | `src/repoach/forge/gitlab.py:84-86`, `:732-773`, `:891-918`; measured with `glab api projects/josephwfaye%2Fyoob_2` |
+| F13 | **Yoob (GitLab):** `only_allow_merge_if_pipeline_succeeds = true` and `merge_method = merge`. On `develop` today two jobs are `allow_failure: true`: `prepare:runner-quota` (`.gitlab-ci.yml:363-369`) and `review:advisory` (`:1497-1505`). Every other job is required by GitLab's own semantics. Yoob MR !314 (open, auto-merge armed, "ci(review): make the repoach review a blocking gate that runs first") renames `review:advisory` → `review:gate`, sets `allow_failure: false` and moves it first. **This spec assumes !314 merged**, so the required-job list is every job except `prepare:runner-quota`, and it includes `review:gate`. repoach's GitLab adapter reads this as `required_checks=["pipeline"]` and judges `head_pipeline.status` alone, with `canceled` and `skipped` counted as failure. | `src/repoach/forge/gitlab.py:84-86`, `:732-773`, `:891-918`; measured with `glab api projects/<namespace>%2Fyoob_2` |
 | F14 | **Flakes are real and leave no trace.** Of 60 Yoob merge-request pipelines (2026-10-18 → 2026-10-25), 3 contain a job that failed and then succeeded inside the same pipeline: `2985935610` `test:api:unit` at `5aa17688`, `2972485058` `prepare:runner-quota` at `c4970719` (allow_failure), and `2968989923` `lint:conventions` at `d62ae6f5`. All three pipelines ended `success`. On repoach, 1 of 100 PR workflow runs (2026-10-21 → 10-25) is a second attempt: `Auto Review (review bots)`, `success` at `e5a6d2fc`. | `glab api …/pipelines/<id>/jobs?include_retried=true`; `gh api …/actions/runs?event=pull_request` |
 | F15 | The forge write barrier (`ForgeWriteBarrier`, SP-DRY-RUN-NEVER-POSTS) gates every **forge** write: API calls and mutating `gh`/`glab` argv. The Coder's `git push` (F7) is a git transport write and does not pass through it. | `src/repoach/forge/protocol.py:248-300`, `src/repoach/review/coder_loop.py:795-797` |
 | F16 | SP-AGENT-CONTEXT-LOOP (draft v0.5, PR #246) defines the evidence ledger `agent_evidence_reads(id, run_id, pr_number, head_sha, role, turn, path, line_start, line_end, sha256, created_at)`. Its G9b reserves the `ci-log:<check name>@<attempt id>` / `role='ci'` namespace for this spec. Its AC23 pins the namespace: rows are written through the ledger API, and `read_file`/`grep` refuse such a path, so no tool can serve or write one. | that spec, G9, G9b, AC23 |

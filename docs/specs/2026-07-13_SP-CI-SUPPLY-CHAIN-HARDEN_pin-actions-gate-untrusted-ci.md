@@ -1,11 +1,11 @@
 ---
 id: SP-CI-SUPPLY-CHAIN-HARDEN
 title: Pin CI actions, gate untrusted CI, document the branch-protection gap
-version: 0.1
+version: 0.2
 status: draft
 author: jfaye (Ferova audit 2026-07-13)
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-11-18
 
 owns:
   code: []
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # Pin CI actions, gate untrusted CI, document the branch-protection gap
+
+Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -44,7 +46,7 @@ conditions.
   `runs-on: self-hosted` (`auto-review.yml:73,297`) bound to
   `environment: bots` (`auto-review.yml:80,307`, six provider keys) with
   `permissions: contents: write` (`auto-review.yml:308-309`), gated only
-  by `contains(fromJSON('["jwfaye"]'), github.actor)`
+  by `contains(fromJSON('["<maintainer's handle>"]'), github.actor)`
   (`auto-review.yml:72,296,618`). Third-party actions are pinned to
   MUTABLE major tags — `actions/checkout@v4`
   (`auto-review.yml:98,136,328`), `actions/setup-python@v5`
@@ -66,7 +68,7 @@ conditions.
   in a trailing comment), not a mutable major tag.
 - G2: `ci.yml`'s PR-triggered `test` job carries an actor gate
   equivalent to the review workflow's
-  `contains(fromJSON('["jwfaye"]'), github.actor)`, so an untrusted
+  `contains(fromJSON('["<maintainer's handle>"]'), github.actor)`, so an untrusted
   actor cannot run PR code on the self-hosted runner via CI.
 - G3: the missing server-side branch protection (H2) and its
   client-side compensating controls (workflow actor gates + pre-push
@@ -94,7 +96,7 @@ conditions.
 - A1: the current SHA for each action tag is resolvable at
   implementation time (`gh api /repos/actions/checkout/git/refs/tags/v4`
   or the release commit) and will be captured in the pin.
-- A2: `jwfaye` remains the sole trusted actor; the actor allowlist
+- A2: the maintainer's handle remains the sole trusted actor; the actor allowlist
   stays a single-entry `fromJSON` array for parity across workflows.
 
 ## Interface
@@ -142,7 +144,7 @@ N/A (workflow/policy change).
   grep for `@v[0-9]` across both files returns nothing); each pin
   carries a trailing version comment.
 - [ ] AC2: `.github/workflows/ci.yml`'s `test` job carries an actor
-  gate (`contains(fromJSON('["jwfaye"]'), github.actor)`) equivalent to
+  gate (`contains(fromJSON('["<maintainer's handle>"]'), github.actor)`) equivalent to
   the `auto-review.yml` jobs; an untrusted actor cannot run PR code on
   the self-hosted runner via CI.
 - [ ] AC3: the server-side branch-protection limitation (H2), the

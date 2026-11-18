@@ -1,11 +1,11 @@
 ---
 id: SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN
 title: A required check whose job never ran (SKIPPED, or reported under its unexpanded template name) is a named failure, never green
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [tests/unit/test_skipped_required_check.py, tests/fixtures/check_runs/]
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # A required check that never ran is a named failure
+
+Amendment (0.6, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -45,7 +47,7 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
 |---|---|---|
 | F1 | `_SUCCESS_CONCLUSIONS = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})` in `merge_wait.py` and, a second copy, in `forge/github.py`; `judge_required_checks` counts a success conclusion green and `classify_required_checks` `continue`s on it | `src/repoach/review/merge_wait.py:83-85,215-224`; `src/repoach/forge/github.py:95-98,250-258` |
 | F2 | The GitLab forge reads `skipped` as a failure: `_PIPELINE_FAILURE = frozenset({"failed", "canceled", "skipped"})` | `src/repoach/forge/gitlab.py:96-97` |
-| F3 | Release PR #307, head `79b9321`: `CI` run 44071742332 (`pull_request`, actor `github-actions[bot]`, 2026-11-17 11:11Z) concluded `skipped`; its five jobs have `steps: 0` and conclusion `skipped`. The commit's check runs for that run: `Test suite (Python ${{ matrix.python-version }})` `skipped`, `wheel-build` `skipped` twice (two `wheel-build` check runs, the second a re-queue), `wheel-smoke (${{ matrix.python-version }})` `skipped` twice. The later run 44081266335 (actor `jwfaye`, 12:14Z) reports `Test suite (Python 3.11)`, `(3.13)`, `wheel-build`, `wheel-smoke (3.11)`, `(3.13)` `success` | `gh api repos/repoachhq/repoach/commits/79b9321150c9bb88aa79f6d96aeef238d9c45395/check-runs`; `gh api repos/repoachhq/repoach/actions/runs/44071742332/jobs` |
+| F3 | Release PR #307, head `79b9321`: `CI` run 44071742332 (`pull_request`, actor `github-actions[bot]`, 2026-11-17 11:11Z) concluded `skipped`; its five jobs have `steps: 0` and conclusion `skipped`. The commit's check runs for that run: `Test suite (Python ${{ matrix.python-version }})` `skipped`, `wheel-build` `skipped` twice (two `wheel-build` check runs, the second a re-queue), `wheel-smoke (${{ matrix.python-version }})` `skipped` twice. The later run 44081266335 (actor: the maintainer's handle, 12:14Z) reports `Test suite (Python 3.11)`, `(3.13)`, `wheel-build`, `wheel-smoke (3.11)`, `(3.13)` `success` | `gh api repos/repoachhq/repoach/commits/79b9321150c9bb88aa79f6d96aeef238d9c45395/check-runs`; `gh api repos/repoachhq/repoach/actions/runs/44071742332/jobs` |
 | F4 | Replaying F3's skipped run alone against the five names with today's code: `wheel-build` green, the four matrix names `missing` → `required_check_missing`, exit 5 (SP-MERGE-EXIT-CONTRACT). With `gate` in the list (six names after #310), `gate` would read green too | `src/repoach/review/merge_wait.py:162-237`; `src/repoach/review/auto_merge.py:360-366` |
 | F5 | `classify_required_checks` keeps the latest `startedAt` per name; `judge_required_checks` ignores `CANCELLED` runs when a live one exists and names `cancelled` when none does. Neither reads a name that is not required, so a template name present in the rollup (`wheel-smoke (${{ matrix.python-version }})`) is invisible | `src/repoach/forge/github.py:236-245`; `src/repoach/review/merge_wait.py:196-210` |
 | F7 | Verifier finding, 2026-11-17, on this branch at `8e08c9a`: the Coder's `fetch_ci_status` classified `gh pr checks` rows by bucket, `skipping` and `cancel` non-blocking and an empty row set green, so a head whose every check was skipped returned `CI_GREEN`; `run_coder_fix_from_findings` then called `resolve_broken_behavior_findings` and closed the CI-failure findings on a head that never ran CI | `src/repoach/review/coder_loop.py:838-853`, `src/repoach/review/coder_findings.py:528` (at `8e08c9a`) |

@@ -1,11 +1,11 @@
 ---
 id: SP-CLAUDE-CODE-FIRST-CLASS
 title: Claude Code as a first-class transport for the review inner loop
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/llm_proxy/providers/claude_code/loop_transport.py, src/repoach/llm_proxy/providers/claude_code/stream_events.py, src/repoach/llm_proxy/providers/claude_code/launch.py, src/repoach/review/review_tools_mcp.py, tests/unit/test_claude_code_launch_line.py, tests/unit/test_claude_code_stream_events.py, tests/unit/test_claude_code_loop_transport.py, tests/unit/test_review_tools_mcp.py, tests/integration/test_claude_code_live_probe.py]
@@ -29,6 +29,8 @@ constraints:
 ---
 
 # Claude Code as a first-class transport for the review inner loop
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -154,7 +156,7 @@ inspected event by event. Total probe spend: under 0.03 USD.
 | # | Fact |
 |---|---|
 | S1 | `pip index versions claude-agent-sdk` → `0.2.174` (latest; first `0.0.23`). The older `claude-code-sdk` stops at `0.0.25`. |
-| S2 | Not installed in `/home/jofaye/Documents/work/repoach/.venv` (it has `anthropic` only and no `pip`). Requires Python ≥ 3.10 and pulls in `anyio`, `jsonschema`, `mcp<3,>=1.23`, `sniffio`. |
+| S2 | Not installed in `<repo>/.venv` (it has `anthropic` only and no `pip`). Requires Python ≥ 3.10 and pulls in `anyio`, `jsonschema`, `mcp<3,>=1.23`, `sniffio`. |
 | S3 | The wheel is 121 MB because it bundles its own CLI (`_bundled/claude`, 291 MB, `__cli_version__ = "2.1.310"`). `ClaudeAgentOptions.cli_path` points it at another binary. The README says it "Requires Claude Code CLI 2.1.257 or later". |
 | S4 | `ClaudeAgentOptions` has `tools`, `allowed_tools`, `disallowed_tools`, `system_prompt`, `mcp_servers`, `strict_mcp_config`, `permission_mode` (`"default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "auto"`), `resume`, `session_id`, `max_turns`, `max_budget_usd`, `model`, `fallback_model`, `cwd`, `cli_path`, `settings`, `can_use_tool`, `hooks`, `include_partial_messages`, `output_format`. |
 | S5 | `@tool(name, description, input_schema)` + `create_sdk_mcp_server(...)` define in-process MCP tools (`McpSdkServerConfig`, `type: "sdk"`). Calls travel as `control_request` messages on the CLI's stream-json stdio (`_internal/query.py`). The SDK is a driver of the same CLI, not a second engine. |

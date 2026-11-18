@@ -1,7 +1,7 @@
 ---
 id: SP-CI-LEDGER-PERSISTS
 title: The generated CI jobs keep the findings ledger between jobs of one PR / MR
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-10-25
@@ -20,6 +20,8 @@ constraints:
 ---
 
 # The generated CI jobs keep the findings ledger between jobs of one PR / MR
+
+Amendment (0.5, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Amendment (0.4, 2026-11-18): the hand-written job is an anonymised fixture; the spec is for every project
 
@@ -299,7 +301,7 @@ flowchart TD
 - [ ] AC5 (fixture): two simulated jobs of PR 7 at one head, each in a fresh workspace, with only the paths the rendered snippet caches copied from job 1's workspace into job 2's, and fake reviewers and judge that count their calls: job 1 makes ≥1 reviewer call and reports `cached: false`; job 2 reports `cached: true`, 0 reviewer calls, 0 judge calls, the same verdict.
 - [ ] AC6 (fixture): the same as AC5 with `REPOACH_REVIEW_FORCE=1` in job 2's environment: job 2 reports `cached: false` and calls the reviewers.
 - [ ] AC7: `doctor --ci` with `REPOACH_DB_PATH=.repoach/repoach.db`, the ledger file present and the generated GitLab job file in the checkout prints `ledger=<root>/.repoach/repoach.db (cacheable)`, `ledger_present=yes`, `ledger_cache=review:advisory declared`; with an absolute path outside the root it prints `ledger not cacheable (outside workspace)`; with a job file lacking the cache stanza it prints `ledger_cache=review:advisory not declared`.
-- [ ] AC8 (D3): the anonymised fixture `tests/fixtures/ci/hand_written_review_job.yml` (0.4: a `review:gate` job with script `bash ci/<review script>.sh`, `REPOACH_*` variables, `tags: [<runner tag>]`, `environment: <environment>`, `cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`, and no project id, host or login: `grep -c -i "yoob\|hel1\|[0-9]\{8\}" tests/fixtures/ci/hand_written_review_job.yml` → `0`) yields `ledger_cache=review:gate declared`; a job not naming `repoach` is not listed.
+- [ ] AC8 (D3): the anonymised fixture `tests/fixtures/ci/hand_written_review_job.yml` (0.4: a `review:gate` job with script `bash ci/<review script>.sh`, `REPOACH_*` variables, `tags: [<runner tag>]`, `environment: <environment>`, `cache: {key: repoach-ledger-mr-$CI_MERGE_REQUEST_IID, paths: [.repoach/], when: always}`, and no project id, host or login: `scripts/lint_no_personal_data.py --tree tests/fixtures/ci/hand_written_review_job.yml` → `personal-data: ok` (judged when SP-NO-PERSONAL-DATA-GATE lands), and `grep -c "[0-9]\{8\}" tests/fixtures/ci/hand_written_review_job.yml` → `0` for the project id) yields `ledger_cache=review:gate declared`; a job not naming `repoach` is not listed.
 - [ ] AC9 (D2): `CI_PIPELINE_SOURCE=merge_request_event`, a repoach job declaring the ledger cache, the ledger absent → the warning line on stderr and exit 0; the ledger present → no warning.
 - [ ] AC10: `repoach init --ci gitlab` on a checkout holding the previous rendering reports `differs` (and `--force` rewrites it): the existing `plan_ci_init` contract holds for the new content (F9).
 - [ ] AC11 (0.3): `repoach arch check --base origin/develop` → `edge-honesty: ok`; `pytest -q tests/unit/test_ci_entry.py tests/unit/test_ledger_format_skew.py` → green with no new `tests/fixtures/ledger_format/N.json` (D4).

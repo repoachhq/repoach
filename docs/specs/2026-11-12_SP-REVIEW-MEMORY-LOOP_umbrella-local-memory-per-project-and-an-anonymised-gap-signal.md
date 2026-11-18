@@ -1,11 +1,11 @@
 ---
 id: SP-REVIEW-MEMORY-LOOP
 title: Umbrella — the review memory loop closes locally per project, fails fast, is watched, and feeds repoach's development through an anonymised gap signal
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-18
 
 owns:
   code: []
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # Umbrella — the review memory loop closes locally per project, fails fast, is watched, and feeds repoach's development anonymously
+
+Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -131,7 +133,7 @@ Owner decisions, gathered from the six specs, each with the option the owner acc
 
 | # | Decision | Spec | Recommendation |
 |---|---|---|---|
-| O1 | Where the anonymised signal is stored: owner receiver on hel1 (`https://gap.repoach.dev/v1/gap`, JSONL per month), a public PR-based repository, or preview-only for now | SP-ANONYMISED-GAP-SIGNAL Q1 | decided by owner 2026-11-12: the owner receiver, preview-only until it is up; the PR repository is refused (it attaches a login) |
+| O1 | Where the anonymised signal is stored: owner receiver on `<host>` (`https://gap.repoach.dev/v1/gap`, JSONL per month), a public PR-based repository, or preview-only for now | SP-ANONYMISED-GAP-SIGNAL Q1 | decided by owner 2026-11-12: the owner receiver, preview-only until it is up; the PR repository is refused (it attaches a login) |
 | O2 | The opt-in wording in `repoach.toml` and `preview` | SP-ANONYMISED-GAP-SIGNAL Q2 | decided by owner 2026-11-12: the proposed English sentence |
 | O3 | No identifier (k-anonymity by payload count, one send per period) versus a rotatable install id | SP-ANONYMISED-GAP-SIGNAL Q3 | decided by owner 2026-11-12: none |
 | O4 | Retention on the receiver | SP-ANONYMISED-GAP-SIGNAL Q4 | decided by owner 2026-11-12: raw 24 months, aggregates kept, k = 3, stated in `docs/privacy.md` |

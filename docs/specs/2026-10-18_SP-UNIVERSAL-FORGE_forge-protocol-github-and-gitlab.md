@@ -1,11 +1,11 @@
 ---
 id: SP-UNIVERSAL-FORGE
 title: Forge protocol with GitHub and GitLab implementations and one conformance suite
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-22
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/forge/, tests/unit/test_forge_conformance.py, tests/unit/test_forge_select.py, tests/fixtures/forge/]
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # Forge protocol with GitHub and GitLab implementations
+
+Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -58,7 +60,7 @@ runs against both.
   GitLab discussions carry a `position` object with
   `base_sha`/`start_sha`/`head_sha`/`new_path`/`new_line`.
 - Yoob: project id `67827362`, `merge_method: merge`, MR iid `283`
-  merged, author `josephwfaye`. Yoob's own `python-gitlab` client
+  merged, author the maintainer. Yoob's own `python-gitlab` client
   (`ci/autofix/autofix/gitlab_client.py`) is a reference, not a
   dependency.
 - The test fakes in `tests/unit/test_gh_client.py`,

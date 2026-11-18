@@ -1,11 +1,11 @@
 ---
 id: SP-MEMORY-BACKEND-LIVENESS
 title: The memory backend is watched and restarted when it stops answering, and the pinned seeds of a scope are recalled whatever the query words
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-18
 
 owns:
   code: [deploy/systemd/agentmemory.service, deploy/systemd/agentmemory-watchdog.service, deploy/systemd/agentmemory-watchdog.timer, deploy/systemd/agentmemory-watchdog.sh, src/repoach/memory/pinned.py, tests/unit/test_agentmemory_units.py, tests/unit/test_agentmemory_watchdog_script.py, tests/unit/test_pinned_seeds_recalled.py, tests/integration/test_agentmemory_live_seeds.py]
@@ -26,6 +26,8 @@ constraints:
 ---
 
 # The memory backend is watched and restarted, and the pinned seeds are recalled whatever the query words
+
+Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -133,13 +135,13 @@ Units (`deploy/systemd/`):
 
 | File | Key lines |
 |---|---|
-| `agentmemory.service` | `Restart=always`, `RestartSec=5`, `TimeoutStopSec=20`, `KillMode=mixed`, `MemoryHigh=1536M`, `MemoryMax=2048M`, `ExecStartPre=%h/services/agentmemory/deploy/rotate-log.sh` or an inline `sh -c` that rotates past 50 MB, `StandardOutput=append:%h/services/agentmemory/logs/agentmemory.log` |
-| `agentmemory-watchdog.service` | `Type=oneshot`, `ExecStart=%h/Documents/work/repoach/deploy/systemd/agentmemory-watchdog.sh` |
+| `agentmemory.service` | `Restart=always`, `RestartSec=5`, `TimeoutStopSec=20`, `KillMode=mixed`, `MemoryHigh=1536M`, `MemoryMax=2048M`, `ExecStartPre=<agentmemory checkout>/deploy/rotate-log.sh` or an inline `sh -c` that rotates past 50 MB, `StandardOutput=append:<agentmemory checkout>/logs/agentmemory.log` |
+| `agentmemory-watchdog.service` | `Type=oneshot`, `ExecStart=@REPOACH_HOME@/deploy/systemd/agentmemory-watchdog.sh` |
 | `agentmemory-watchdog.timer` | `OnBootSec=2min`, `OnUnitActiveSec=60s`, `AccuracySec=5s`, `WantedBy=timers.target` |
 
-The `%h/Documents/work/repoach` and `%h/services/agentmemory` paths follow the convention every unit of `deploy/systemd/` already uses, documented in `deploy/systemd/README.md:4-8` (adjust `WorkingDirectory` / `ExecStart` when the checkout lives elsewhere); the three new units add their install lines to that README (G1, AC5) and introduce no other layout.
+The `@REPOACH_HOME@` token and the `<agentmemory checkout>` path follow the convention of `deploy/systemd/README.md`: a tracked unit is a template rendered with an absolute path by `scripts/install_user_units.sh`, and no unit carries a directory layout (`<layout>`) under the home (SP-SCRUB-PERSONAL-DATA-AT-HEAD D3); the three new units add their install lines to that README (G1, AC5) and introduce no other layout.
 
-Script `agentmemory-watchdog.sh`: env `AGENTMEMORY_URL` (default `http://127.0.0.1:3111`), `AGENTMEMORY_UNIT` (default `agentmemory.service`), `WATCHDOG_LOG` (default `%h/services/agentmemory/logs/agentmemory-watchdog.log`); exit 0 healthy or restarted, 3 a tool missing.
+Script `agentmemory-watchdog.sh`: env `AGENTMEMORY_URL` (default `http://127.0.0.1:3111`), `AGENTMEMORY_UNIT` (default `agentmemory.service`), `WATCHDOG_LOG` (default `<agentmemory checkout>/logs/agentmemory-watchdog.log`); exit 0 healthy or restarted, 3 a tool missing.
 
 ## Behavior
 

@@ -1,11 +1,11 @@
 ---
 id: SP-UNIVERSAL-REPO
 title: Repoach runs on any repository — umbrella for the universality programme
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-20
+updated: 2026-11-18
 
 owns:
   code: []
@@ -20,6 +20,8 @@ constraints:
 ---
 
 # Repoach runs on any repository
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -200,7 +202,7 @@ hand-implement or decompose with `SP-DEVAGENT-DECOMPOSE` before
 | Dead free chains: every NIM head 410 since August, OpenRouter credit negative | `nim_health_probe`, `logs/nim_health.log` | direct providers (M4) make the gateway optional; a key, not a chain, is the default path |
 | Max-plan dependency: the only answering hop today shells out to `claude --print` on an interactive login shared with the owner's sessions | `src/repoach/llm_proxy/providers/claude_code/client.py:1-17,183-191` | `claude_code` stays one provider among four; the gauge runs on an API key |
 | Home-network SPOF: gateway, both runners, `.env`, the Max login sit on one PC behind a line that dropped twice at ~00:40 | `deploy/systemd/README.md:3-8`; Yoob memory on nightly breaks | nothing in this family requires that PC; CI entry runs wherever the host's CI runs |
-| hel1 as host: one paid box, no `gh`/`glab`/`claude` installed, Yoob's light runner already there | measured by SSH 2026-10-18 | the install child makes a bare venv enough; the token is a CI variable, not a login |
+| the owner's host as host: one paid box, no `gh`/`glab`/`claude` installed, Yoob's light runner already there | measured by SSH 2026-10-18 | the install child makes a bare venv enough; the token is a CI variable, not a login |
 | `_repo_root()` walks up to any ancestor `pyproject.toml` | `config.py:48-52` | M1 drops package-relative anchors |
 | `merge-on-ci` runs `main`'s code; a gate fix is inert until release | `merge-on-ci.yml:11-16` | out of scope (NG2); documented in the migration |
 | A shim that writes | plan W1 | M0 answers every write subcommand with exit 70; M3 replaces it |
@@ -215,7 +217,7 @@ hand-implement or decompose with `SP-DEVAGENT-DECOMPOSE` before
 - [ ] AC7: `repoach arch check --base origin/develop` → `edge-honesty: ok` with the eight specs of this family present.
 
 ## Open Questions
-- Q1: model budget for Yoob reviews — direct Anthropic API key (≈11 M tokens/month at 3.3 MR/day measured) or the Max OAuth token on hel1 (shared quota, Yoob autofix precedent)? Recommendation: key for CI, `claude_code` for M0 only.
+- Q1: model budget for Yoob reviews — direct Anthropic API key (≈11 M tokens/month at 3.3 MR/day measured) or the Max OAuth token on the owner's host (shared quota, Yoob autofix precedent)? Recommendation: key for CI, `claude_code` for M0 only.
 - Q2: `repoach.toml` at the host root (proposed, visible, one file) or `.repoach/config.toml` (hidden, groups the ledger)? Recommendation: root file, ledger under the XDG data dir by default.
 - Q3: gauge repository — `charmbracelet/gum` (Go, open PR #1171) is proposed; confirm, or name another the owner has never seen.
 - Q4: advisory for how many MRs before the gate blocks on Yoob (plan Q3)? The decision is a false-positive rate read from the ledger, not a date; recommend 20 MRs.

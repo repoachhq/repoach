@@ -1,11 +1,11 @@
 ---
 id: SP-CONVENTIONS-GATE
 title: Branch names, commit headers and PR titles follow Conventional Commits, enforced mechanically and configured per project
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-22
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/conventions/, src/repoach/cli/conventions_cmds.py, .githooks/commit-msg, scripts/lint_no_ai_attribution.py, tests/unit/test_conventions.py, tests/unit/test_conventions_config.py, tests/unit/test_conventions_attribution.py, tests/unit/test_conventions_squash_body.py, tests/unit/test_lint_no_ai_attribution.py]
@@ -20,6 +20,8 @@ constraints:
 ---
 
 # Conventions gate: branch, commit header, PR title
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -48,7 +50,7 @@ Conventional Commits defaults; a `fix` lane never rewrites history.
 | F4 | A plan step's `commit_message` is documented as a conventional subject and validated only for non-emptiness; the Developer commits it verbatim | `src/repoach/review/plan.py:211-231`; `dev_runner.py:377,552` |
 | F5 | The Coder's wrap-up commits are generated as `fix(wrapup): …` with no check on the rest of the header | `dev_runner.py:1213` |
 | F6 | Merges are `gh pr merge --squash`: the PR title is the subject of the commit that lands on `develop` | `src/repoach/review/auto_merge.py:450` |
-| F7 | Yoob's reference: a `commit-msg` hook with the closed type list `feat fix perf refactor docs test build ci chore style revert`, header regex `^(types)(\([a-z0-9._/-]+\))?!?: .+`, 72-character limit, lowercase subject, no trailing period, AI-attribution trailers stripped; and a CI job judging the branch name, every new commit and the MR title | `/home/jofaye/Documents/work/yoob_2/scripts/hooks/commit-msg:89-127`; `ci/lib/conventions.py:91-118` (French-word, sprint-code, AI-attribution patterns); `ci/lint-conventions.sh:110-113` |
+| F7 | Yoob's reference: a `commit-msg` hook with the closed type list `feat fix perf refactor docs test build ci chore style revert`, header regex `^(types)(\([a-z0-9._/-]+\))?!?: .+`, 72-character limit, lowercase subject, no trailing period, AI-attribution trailers stripped; and a CI job judging the branch name, every new commit and the MR title | `<yoob repo>/scripts/hooks/commit-msg:89-127`; `ci/lib/conventions.py:91-118` (French-word, sprint-code, AI-attribution patterns); `ci/lint-conventions.sh:110-113` |
 | F8 | No history is rewritten by any lane today: no `rebase`, `--amend` or `--force` push in `coder_loop.py`, `coder_findings.py`, `dev_runner.py`, `auto_merge.py`; the one `--force` is `git worktree remove` | measured by grep, `dev_runner.py:1018` |
 | F9 | `repoach init` scaffolds `.env` and `core.hooksPath` and writes no project configuration yet | `src/repoach/cli/init_cmds.py:28-79`; `SP-UNIVERSAL-REPO` G2 |
 | F10 | Measured 2026-10-22: commits on `develop`/`main` carry `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` trailers (`b18425e`), and the squash commits `aafd879` (#232) and `1946dda` (#235) concatenate every branch commit's trailers in their bodies: `gh pr merge --squash` without a body lets GitHub build it from the commits | `git log --format=%B origin/develop`; `src/repoach/forge/github.py` `GitHubForge.merge` |

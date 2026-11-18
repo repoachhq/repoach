@@ -1,11 +1,11 @@
 ---
 id: SP-AUTOMERGE-EVENT-DRIVEN
 title: Auto-merge never holds the runner slot — fail-fast CI gate + merge on CI completion
-version: 0.2
+version: 0.3
 status: draft
 author: jfaye (PR #79 auto-merge failure triage, 2026-07-13)
 created: 2026-07-13
-updated: 2026-07-14
+updated: 2026-11-18
 
 owns:
   code: []
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # Auto-merge never holds the runner slot — fail-fast CI gate + merge on CI completion
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -148,7 +150,7 @@ Lane 2 — OPERATOR-MANUAL (workflows):
     slot), same-repo head
     (`workflow_run.head_repository.full_name == github.repository`),
     and an actor allowlist that admits BOTH the owner and the fix-loop
-    bot: `contains(fromJSON('["jwfaye", "github-actions[bot]"]'),
+    bot: `contains(fromJSON('["<maintainer's handle>", "github-actions[bot]"]'),
     github.event.workflow_run.actor.login)` — coder-pushed heads have
     their released CI runs actored by `github-actions[bot]`
     (SP-CI-FIX-LOOP-CLOSURE), and admitting them is safe because the
