@@ -1,7 +1,7 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word and drops names, avatars and user ids at record time, and refuses a fixture it cannot classify
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-18
@@ -68,6 +68,13 @@ since replay compares argv and trust compares the bot login; the result is
 recomputed by replaying the redacted exchanges. The F1 line numbers are those
 of `0be2a56`.
 
+Amendment (0.7, 2026-11-18, owner decision on O1): a user `id` is still
+kept as a key, but its value is remapped to a synthetic one (D1c). The
+readers consume the GitLab approval user id (`gitlab.py:728`) only as an
+opaque number, so a stable synthetic value replays identically. Measured on
+the fixtures at `fc8df78`: 58 user-object ids, 52 of them real, 10 distinct
+accounts before and after.
+
 ## Intent
 
 Child 2 of SP-REPO-CARRIES-NO-PERSONAL-DATA. SP-SCRUB-PERSONAL-DATA-AT-HEAD
@@ -125,6 +132,24 @@ into `tests/fixtures/forge/`.
   these strings through (`url=str(mr.get("web_url") or "")`,
   `gitlab.py:223`), so a replayed recording yields the redacted URL
   unchanged, which the test pins by replaying through the readers.
+- D1c (0.7). **User ids are synthetic.** The `id` of every user object
+  (one holding `login` or `username`) is replaced by
+  `UserIdMap` (`src/repoach/forge/recording.py`): a sequence in order of
+  first appearance, the first account `1001`, the next `1002`…; a GitHub
+  node id becomes `U_<n>`, and a legacy node id (base64 of `04:User<n>`)
+  shares the number of the account's REST id, so one account keeps one
+  number. A result's `id` equal to a mapped account (a GitLab
+  `Review.id`) is remapped the same way. A sequence was chosen over a hash
+  because user ids are small and enumerable: a hash of the id, even
+  truncated, is reversed by hashing every candidate id, while a sequence
+  number carries nothing about the id it replaces and the mapping is never
+  written. The recorder remaps every id with one map per recording
+  (stable within a fixture); `scripts/redact_forge_fixtures.py` uses one
+  map for the whole corpus, so one account keeps one id across files,
+  leaves ids already synthetic (an integer below 10000, or `U_<n>`) as
+  they are, and starts the sequence after the highest synthetic id in use.
+  Two separate recordings of the same account may get different numbers;
+  no reader relates ids across fixtures.
 - D2. **Logins are classified at record time.** `classify_logins(payload,
   roles: dict[str, str]) -> object` replaces, recursively, every value of
   a `login`, `username`, `author`, `resolved_by` or `user` key that is a
@@ -268,10 +293,12 @@ records one fixture against a real pull request to check the shape
 |---|---|---|
 | `tests/unit/test_forge_recording_redaction.py::test_personal_keys_are_dropped_and_user_name_by_context_ids_kept` | D1: a payload with `avatar_url`, `node_id`, an `author` object with `id`, `login` and `name`, a thread object with `id` and `comments`, and a check-run object with `name` → the recorded object keeps the author `id`, the thread `id` and the check-run `name`, drops the author `name` and every `PERSONAL_KEY_RE` key | keep the author `name`, drop any `id`, or drop the check-run `name` |
 | `::test_url_values_keep_their_shape_with_placeholder_host_and_namespace` | D1b: `https://a.example/o/r/pull/12` → `https://forge.example.com/org/r/pull/12`; `https://b.example/g/s/r/-/merge_requests/7` → `https://forge.example.com/org/r/-/merge_requests/7`; `https://b.example/-/jobs/5` → `https://forge.example.com/-/jobs/5`; a non-URL value under `web_url` → dropped | keep the host, or drop the path |
-| `::test_forge_readers_work_on_a_redacted_recording` | D1b, F1b: a GitLab recording whose merge-request, pipeline and job answers carry redacted `web_url` values and job `name`s, replayed through `ReplaySpawn` into the forge's merge-request and pipeline readers → the returned `url`/`link` equal the redacted URLs and the job names are intact; a GitLab approvals answer with two `approved_by[].user` objects redacted to `username: maintainer` / `author-2` and ids `11`, `12` replayed through the reviews reader (`gitlab.py:725-728`) → two `Review`s with ids `11` and `12`; a GitHub recording's `author.login` redacted to `author` replayed through the change-request reader (`github.py:489`) → the author field is `author`, and its check-run `name`s (`github.py:281,1776`) are intact | drop `web_url`, `name` or a user `id` by key |
+| `::test_forge_readers_work_on_a_redacted_recording` | D1b, F1b: a GitLab recording whose merge-request, pipeline and job answers carry redacted `web_url` values and job `name`s, replayed through `ReplaySpawn` into the forge's merge-request and pipeline readers → the returned `url`/`link` equal the redacted URLs and the job names are intact; a GitLab approvals answer with two `approved_by[].user` objects redacted to `username: maintainer` / `author-2` and ids `11`, `12` replayed through the reviews reader (`gitlab.py:725-728`) → two `Review`s with the synthetic ids `1001` and `1002` in the same order (0.7); a GitHub recording's `author.login` redacted to `author` replayed through the change-request reader (`github.py:489`) → the author field is `author`, and its check-run `name`s (`github.py:281,1776`) are intact | drop `web_url`, `name` or a user `id` by key |
 | `::test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping` | D2: `roles={"x": "maintainer", "y": "author"}`; `login: x` in two objects and `resolved_by: x` → `maintainer` three times; argv `["api", "repos/o/r/collaborators/x/permission"]` → `collaborators/maintainer/permission`; a `z[bot]` login → `bot` | map one occurrence differently |
 | `::test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it` | D3: a stdout with `login: q` not in `roles` → exit 2 and `unclassified: …login` on stderr; a body with a literal home path (`/home/<x>/y`, spelled in the test, which is allow entry 8 of SP-NO-PERSONAL-DATA-GATE D4) → exit 2 and `generic class home_path`; `capsys` holds neither `q` nor the path's user segment | print the value, or exit 0 |
 | `::test_recorder_writes_class_words_and_a_replayed_result` (0.6) | End state: a recording through the CLI against a fake forge writes class words, no user `name` or URL, `bot_username` `bot`, and the result replayed from the redacted exchanges | keep a raw login, or write the live result |
+| `::test_fixtures_hold_no_real_user_id` (0.7) | D1c: every user-object id is synthetic, and no number in any fixture (decoded legacy node ids included) has the salted SHA-256 of the maintainer's GitHub or GitLab id, read from `gh api user` and `glab api user` when the test was written | keep one real id |
+| `::test_user_ids_map_to_a_stable_sequence` (0.7) | D1c: 1001, 1002 in order, the legacy node id shares its account's number, a non-user `id` is untouched, a synthetic id is kept offline | hash the id, or remap a check-run id |
 | `::test_existing_fixtures_are_a_fixed_point_of_the_redaction` (0.6) | D4, C2: `scripts/redact_forge_fixtures.py --check` changes nothing and no fixture holds a real forge-host URL | revert one fixture URL, or change the redaction without re-running the script |
 | `tests/unit/test_forge_conformance.py` (existing) | D4 (0.6): green on the fixtures as `scripts/redact_forge_fixtures.py` leaves them; `test_reviews_two_approvals` expects `author-2`/`author-3` | drop a key a forge reads |
 
@@ -308,4 +335,4 @@ flowchart LR
 
 ## Open Questions
 
-- O1 (0.6, owner): D1 keeps every `id`, so a recorded user object keeps the account's numeric forge id (a GitLab user id, a GitHub node id that decodes to the database id), which an API call maps back to the account. The readers consume a user `id` only for GitLab approvals (`gitlab.py:728`); replacing user ids by synthetic numbers at record time would keep the replay working. Not done here: it reverses D1 (0.3).
+- O1 (0.6): resolved by the owner on 2026-11-18, user ids become synthetic (D1c, 0.7).
