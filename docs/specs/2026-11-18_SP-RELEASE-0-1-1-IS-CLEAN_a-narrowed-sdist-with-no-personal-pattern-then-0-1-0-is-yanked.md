@@ -1,7 +1,7 @@
 ---
 id: SP-RELEASE-0-1-1-IS-CLEAN
 title: 0.1.1 is built from the scrubbed tree with a narrowed sdist, its downloaded artefacts pass the personal-data lint, and the owner yanks 0.1.0 with a reason
-version: 0.2
+version: 0.3
 status: reviewed
 author: agent
 created: 2026-11-18
@@ -29,6 +29,9 @@ nine names, not eight (F9, measured); the complete member list of the
 0.1.0 sdist (F2); the yank oracle reads PyPI's JSON `yanked` field only,
 since whether `pip index versions` hides a yanked release was not
 measured.
+
+Amendment (0.3, 2026-11-18): D2 counts child 3's allow entries as
+eight, as child 3 0.2 declares them.
 
 ## Intent
 
@@ -59,7 +62,7 @@ yank of 0.1.0 with a reason.
 ## Decisions (2026-11-18)
 
 - D1. **The sdist is narrowed to what builds the wheel plus the licence texts.** `pyproject.toml` gains `[tool.hatch.build.targets.sdist]` with `only-include = ["src/repoach", "prompts", "docs/specs/_TEMPLATE.md", "README.md", "LICENSE", "licenses", "pyproject.toml"]`; hatchling adds `PKG-INFO` and `.gitignore` itself (F9). `tests`, `docs` (but the template), `bench`, `deploy`, `scripts`, `.github`, `.claude`, `.githooks`, `assets`, `tmp`, `repoach.toml`, `SECURITY.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` and `.env.example` leave the sdist: none is imported by the package (`[tool.hatch.build.targets.wheel]` already ships without them, F1, F3) and each is the repository's, not the distribution's. `tests/unit/test_sdist_is_narrow.py` builds the sdist with `python -m build --sdist` into a temporary directory (skipped with the reason when `build` is not importable; CI's `wheel-build` installs it) and asserts the top-level member set equals the nine names of F9 and that `docs/` holds exactly `specs/_TEMPLATE.md`.
-- D2. **The artefact oracle is the lint of child 3.** `ci.yml`'s `wheel-build` job, after `python -m build`, extracts the sdist and the wheel into temporary directories and runs `scripts/lint_no_personal_data.py --tree <dir> --allow /dev/null` on each (no allow entries: of the seven entries of child 3 D4, none names a file the narrowed sdist or the wheel carries — `LICENSE` and `pyproject.toml` hold the real name, which is in no class and not in the deny-list — so the artefacts are judged with no exception at all, and the deny-list secret applies). `publish.yml`'s `pypi-smoke` job runs the same lint over `pip download --no-deps --no-binary :all: repoach==<version>` and `pip download --no-deps --only-binary :all: repoach==<version>`, extracted, before the pipx smoke, with the deny-list from the secret. The lint comes from the checked-out `scripts/` of the tag, which is why `pypi-smoke` checks out (`publish.yml:200-203`).
+- D2. **The artefact oracle is the lint of child 3.** `ci.yml`'s `wheel-build` job, after `python -m build`, extracts the sdist and the wheel into temporary directories and runs `scripts/lint_no_personal_data.py --tree <dir> --allow /dev/null` on each (no allow entries: of the eight entries of child 3 D4, none names a file the narrowed sdist or the wheel carries — `LICENSE` and `pyproject.toml` hold the real name, which is in no class and not in the deny-list — so the artefacts are judged with no exception at all, and the deny-list secret applies). `publish.yml`'s `pypi-smoke` job runs the same lint over `pip download --no-deps --no-binary :all: repoach==<version>` and `pip download --no-deps --only-binary :all: repoach==<version>`, extracted, before the pipx smoke, with the deny-list from the secret. The lint comes from the checked-out `scripts/` of the tag, which is why `pypi-smoke` checks out (`publish.yml:200-203`).
 - D3. **The release is 0.1.1, by the documented procedure.** `docs/releasing.md:61-107` as written: skew replay, release PR `develop` → `main` through the release gate (owner merges, `release-verify.yml` checks `main`), tag `v0.1.1`, approve `pypi`. The release PR description carries, under *Measured*, the parent's AC1 output (arch baseline) and child 1's C1 lines. `hatch-vcs` with `release-branch-semver` (`pyproject.toml:84-86`) derives `0.1.1` from the tag; nothing in the tree names the version.
 - D4. **The yank is the owner's, with a reason.** After `pypi-smoke` is green on 0.1.1 and AC2 is written, the owner yanks 0.1.0 on PyPI (project → Manage → Releases → 0.1.0 → Options → Yank) with the reason text: `Ships maintainer-personal paths, hosts and fixtures in docs/, tests/, bench/ and deploy/; superseded by 0.1.1 whose sdist holds the package only.` A yank keeps the files downloadable by exact pin (`pip install repoach==0.1.0` with a warning) and removes them from resolution without a pin, which is what the owner wants: no breakage for a pinned installer, no new installs of the leaking sdist. 0.0.1 stays: it is a 1 394-byte reservation with no content (F6).
 - D5. **Owner steps are named as steps.** O1 approve the `pypi` deployment; O2 yank 0.1.0; O3 (optional) a note in the GitHub release of `v0.1.1` reading "0.1.0 yanked: see the PyPI reason". No agent holds the PyPI or the environment credentials (`docs/releasing.md:32-34`).

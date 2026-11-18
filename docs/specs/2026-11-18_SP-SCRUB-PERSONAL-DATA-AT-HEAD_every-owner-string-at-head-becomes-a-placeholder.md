@@ -1,7 +1,7 @@
 ---
 id: SP-SCRUB-PERSONAL-DATA-AT-HEAD
 title: Every maintainer path, login, host, address and handle at HEAD becomes a placeholder or a class under one redaction rule; the systemd units are rendered with an absolute install path; the live units are untouched
-version: 0.2
+version: 0.3
 status: reviewed
 author: agent
 created: 2026-11-18
@@ -30,6 +30,13 @@ redaction moved to SP-RECORDER-REDACTS-BY-CLASS; the inventory of D2
 and the bump list of D7 completed (20 specs); the actor variable is
 set first (O0); the allow rule is named `denylist` like child 3's; the
 conditions recounted (C1 four lines, not one).
+
+Amendment (0.3, 2026-11-18): the verifier's NO-GO on 0.2. C1's two
+greps are scoped so that this family's own specs, which describe the
+patterns, do not fail them (measured on the branch tree: four lines and
+zero), and the `<layout>` grep is gone, since D1 prescribes `<layout>`
+as the replacement; the D1 row for `name` follows
+SP-RECORDER-REDACTS-BY-CLASS 0.2 (dropped in a user object only).
 
 ## Intent
 
@@ -90,7 +97,7 @@ spec cites them by number. What matters for the edits:
   | a maintainer's directory layout under the home | `<layout>`; in a unit, the render token `@REPOACH_HOME@` (D3) | |
   | system login, service account | `<user>`; in a recorded JSON value, the class word (`maintainer`, `author`, `bot`, `agent`, `service`) | SP-REVIEW-SETTLED-STAYS-SETTLED 0.7 rule, generalised |
   | forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot` | GitHub `login`, GitLab `username` alike |
-  | real name, forge node id, user id | dropped: the key is removed from the recorded object | `login`/`username` are read by the forges and stay as class words (`forge/recording.py:32-130`); `name` and a user object's `id` are not read and are dropped (SP-RECORDER-REDACTS-BY-CLASS D1); `node_id` is already dropped (`:138`) |
+  | real name, forge node id, user id | dropped: the key is removed from the recorded object | `login`/`username` are read by the forges and stay as class words (`forge/recording.py:32-130`); a user object's `name` and `id` are not read and are dropped, while `name` and `id` elsewhere (check runs, jobs, threads) are read and kept (SP-RECORDER-REDACTS-BY-CLASS D1, F1b); `node_id` is already dropped (`:138`); a URL value keeps its shape with a placeholder host and namespace (D1b) |
   | hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
   | public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted by the gate |
   | public IPv6 | `2001:db8::<n>` (RFC 3849) | |
@@ -185,13 +192,14 @@ spec cites them by number. What matters for the edits:
 
 ## End state
 
-`git grep -n -P '(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])' -- . ':!tmp'`
+`git grep -n -P '(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])' -- . ':!tmp' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*'`
 on `develop` prints exactly the four synthetic `HOME` lines of
 `tests/unit/test_review_planner_cc.py:139,142` and
 `tests/unit/test_secret_env.py:25,38` (declared in child 3's
-allow-list) and nothing else; `git grep -l '<layout>'` prints nothing;
-the owner's `git grep` for each of their strings prints the five
-attribution positions and nothing else; the three units verify on a
+allow-list, as is the excluded gate spec, whose worked examples spell
+the pattern) and nothing else; the owner's `git grep` for each of
+their strings, the layout string included, prints the five attribution
+positions and nothing else; the three units verify on a
 host with no checkout under the maintainer's layout; `pytest -q
 tests/unit/test_forge_conformance.py
 tests/unit/test_review_gate_forge_parity.py
@@ -313,7 +321,7 @@ personal strings by placeholders`.
 
 ## Success conditions
 
-- C1 (oracle: git, any machine): `git grep -n -P '(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])' -- . ':!tmp'` → exactly four lines, `tests/unit/test_review_planner_cc.py:139`, `:142`, `tests/unit/test_secret_env.py:25`, `:38` (measured at `0be2a56`: 8 files, the 6 of parent F1 go to 0); `git grep -n '%h/' -- deploy docs | grep -v -c 'Environment=PATH='` → `0` (measured at `0be2a56`: 16 lines in 5 files — the three units, the README and `…SP-MEMORY-BACKEND-LIVENESS_*.md:136-142`).
+- C1 (oracle: git, any machine; both greps exclude the specs of this family that spell the patterns as worked examples, which child 3's allow-list declares): `git grep -n -P '(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])' -- . ':!tmp' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*'` → exactly four lines, `tests/unit/test_review_planner_cc.py:139`, `:142`, `tests/unit/test_secret_env.py:25`, `:38` (measured on this branch's tree 2026-11-18: those four plus the 6 maintainer files of parent F1, which go to 0; the excluded gate spec holds 5 example lines); `git grep -n '%h/' -- deploy docs ':!docs/specs/2026-11-18_SP-SCRUB-PERSONAL-DATA-AT-HEAD_*' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*' | grep -v -c 'Environment=PATH='` → `0` (measured on this branch's tree: 16 lines in 5 files — the three units, the README and `…SP-MEMORY-BACKEND-LIVENESS_*.md:136-142` — which D2 and D3 rewrite; the two excluded specs hold 7 lines describing the pattern).
 - C2 (oracle: the owner's `git grep` on their machine, counts written beside AC2 by the verifier): for each of the owner's strings, `git grep -l <string> -- . ':!tmp'` names only files among `LICENSE`, `pyproject.toml`, `SECURITY.md`, `docs/languages.md`, `docs/specs/*.md` (`author:` lines only, checked with `git grep -n <string> docs/specs | grep -v ':author: '` → 0); for the layout string, no file.
 - C3 (oracle: pytest, CI): the six suites of the End state green, plus `tests/unit/test_user_units_take_an_install_path.py`.
 - C4 (oracle: systemd, CI or a fresh machine): the rendered units of the test (C3) verify with empty output; on a fresh machine, `scripts/install_user_units.sh --home "$PWD" --dest "$(mktemp -d)"` from a checkout with a `.venv` → exit 0 and three `verified:` lines.

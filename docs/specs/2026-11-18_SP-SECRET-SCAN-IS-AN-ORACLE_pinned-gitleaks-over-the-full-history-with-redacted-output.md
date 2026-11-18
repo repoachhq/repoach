@@ -1,7 +1,7 @@
 ---
 id: SP-SECRET-SCAN-IS-AN-ORACLE
 title: A pinned gitleaks scans the full history on a schedule and the pull request's range on every pull request, with redacted output, no baseline, the tool taken from the base ref and a checksum-verified binary
-version: 0.2
+version: 0.3
 status: reviewed
 author: agent
 created: 2026-11-18
@@ -31,6 +31,12 @@ history (the owner's scan and this spec's reproduction), so there is no
 pull request's base ref, so a pull request cannot edit the scanner that
 judges it; the checksum is measured and written; the release publishes
 no signature, so cosign is not a step.
+
+Amendment (0.3, 2026-11-18): the verifier's NO-GO on 0.2. The pull
+request that introduces the tool has no `scripts/secret_scan.sh` at
+its base, so its range job is skipped with a named reason and its
+commits are judged by the `workflow_dispatch` history run (D4b, C6);
+every later pull request runs the tool from its base.
 
 ## Intent
 
@@ -64,6 +70,7 @@ script the pull request cannot change.
 - D2. **Two modes, default rules.** `scripts/secret_scan.sh history <repo dir>` runs `gitleaks git --redact=100 --no-banner --report-format json --report-path <tmp>/report.json --log-opts=--all <repo dir>` over the full history (`fetch-depth: 0`); `scripts/secret_scan.sh range <base>..<head> <repo dir>` runs the same with `--log-opts="<base>..<head>"` over the commits a pull request adds. No `--config`: the default rules of the pinned version are the rule set (D3). Both print the finding count and, per finding, `rule`, `file`, `commit`, `line` and the fingerprint, never the secret: `--redact=100` replaces the whole match (F8). Exit 0 on no finding, 1 on a finding, 2 on a download, checksum or invocation error.
 - D3. **No baseline.** The default rules find nothing over the full history (F4, parent F12), so there is no `.gitleaks.toml`, no fingerprint, no path exception, and `tests/unit/test_secret_scan_workflow.py` pins that no `.gitleaks.toml` exists and that the script passes no `--config`. A future finding on a dummy is resolved by reshaping the dummy (a prefix with too few characters for the rule, as the ten dummies of F4 are today), not by an exception; if an exception ever becomes necessary, this spec is amended and the config uses `[[allowlists]]` with `condition = "AND"`, `paths` and `regexes` with `regexTarget = "match"`, each preceded by a `# reason:` line — never `OR`, which would allow anything in the named paths (F8).
 - D4. **Where it runs, and from which ref.** `.github/workflows/secret-scan.yml`: `on: schedule: cron: "0 4 * * 1"` (history mode, Mondays 04:00 UTC), `on: pull_request` (range mode, `${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}`), `on: workflow_dispatch` (history mode). One job, `secret-scan`, `runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}` (F5's test), `if: github.event_name != 'pull_request' || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)` (F6, with child 1's empty fallback), `permissions: contents: read`. Two checkouts, both pinned by SHA: the data at `path: repo` (`fetch-depth: 0`, the event's ref, so the pull request's commits are present), and the tool at `path: tool` with `ref: ${{ github.event.pull_request.base.sha || github.sha }}` and `sparse-checkout: scripts/secret_scan.sh`; the job runs `tool/scripts/secret_scan.sh … repo`. The trust model, stated: the script and its checksum come from the base ref, so a pull request cannot change the scanner that judges it; the workflow file itself is GitHub's choice for the event (the merge ref on `pull_request`, F9), and the actor gate on the job is what keeps an outsider's workflow edit from running on the runner (F6) — a pull request by an allowed actor that edits `secret-scan.yml` is reviewed like any `.github/` change (`[full]` row).
+- D4b. **The bootstrap pull request is skipped by name, and the next one proves the tool.** On the pull request that introduces `scripts/secret_scan.sh`, the base ref has no such file, so the `tool` checkout holds nothing to run. The job's `Scan` step begins with `if [ ! -f tool/scripts/secret_scan.sh ]; then echo "secret-scan: skipped, base ${BASE_SHA::12} has no scripts/secret_scan.sh (bootstrap: the tool lands with this pull request; its commits are judged by the workflow_dispatch history run, C2)"; exit 0; fi`, so the step concludes green with the reason in the log and nothing is scanned by a script the pull request wrote. The condition can only hold on a pull request whose base predates the tool — after the merge every base has the file, and a pull request that deletes the file still runs its base's copy. The implementer's `workflow_dispatch` run on the bootstrap branch (C2, history mode over `--all`, the branch's commits included) is the measurement that covers the skipped range; the first pull request after the merge proves the tool runs from base (C6).
 - D5. **Recurring, and a red stops the line.** The scheduled run is recurring by D4. A finding in history mode is a real secret or a dummy the rules match; the owner rotates a real secret (the workflow does not and cannot) and the pull request that follows reshapes a dummy (D3). A finding in range mode blocks the pull request like any red check; the owner may add the job to the required checks once it has run green three Mondays (an owner step, O1), so a transport failure does not block merges on day one.
 - D6. **The report is an artefact, redacted.** The JSON report is uploaded with `actions/upload-artifact` (pinned SHA, 14-day retention) only when findings exist; its `Secret` field is the redacted string by `--redact=100`, and `tests/unit/test_secret_scan_workflow.py` pins the flag's presence in the script so a later edit cannot drop it.
 
@@ -104,7 +111,9 @@ allow entry. The second hard part is the supply chain: a binary
 downloaded at run time is trusted only through a checksum the
 repository holds, and the script holding that checksum must be the base
 ref's, not the pull request's — two checkouts, one for the data and one
-for the tool, in one job.
+for the tool, in one job; which leaves exactly one pull request, the
+one that introduces the tool, with no tool at its base, and that one is
+skipped by name rather than judged by its own script (D4b).
 
 ## Goals
 
@@ -151,6 +160,7 @@ findings, exit 0.
 - A pull request whose range is empty (a re-run on the same head) → `secret-scan: 0 finding(s) over 0 commits`, exit 0.
 - A merge commit in the range → judged like any commit (`gitleaks git` reads every commit the log lists).
 - A pull request that edits `scripts/secret_scan.sh` → the base ref's script judges it; the edited script runs only once merged, on the next pull request.
+- The pull request that introduces the tool → `secret-scan: skipped, base <sha12> has no scripts/secret_scan.sh (bootstrap …)`, exit 0 (D4b); its commits are in the `workflow_dispatch` history run of C2.
 
 ### Failure scenarios
 
@@ -166,7 +176,7 @@ findings, exit 0.
 
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
-| `tests/unit/test_secret_scan_workflow.py::test_workflow_is_scheduled_pull_request_gated_pinned_and_takes_the_tool_from_base` | D4: `secret-scan.yml` has `schedule` with the cron, `pull_request`, `workflow_dispatch`; one job with the runner expression, the actor gate reading `vars.REPOACH_ALLOWED_ACTORS` with fallback `'[]'`, `permissions.contents == read`; two checkout steps, one with `path: repo` and `fetch-depth: 0`, one with `path: tool` and a `ref:` reading `base.sha`; the `run:` invokes `tool/scripts/secret_scan.sh`; every `uses:` a 40-hex SHA with a version comment | drop the schedule, a SHA pin, or run `repo/scripts/…` |
+| `tests/unit/test_secret_scan_workflow.py::test_workflow_is_scheduled_pull_request_gated_pinned_and_takes_the_tool_from_base` | D4: `secret-scan.yml` has `schedule` with the cron, `pull_request`, `workflow_dispatch`; one job with the runner expression, the actor gate reading `vars.REPOACH_ALLOWED_ACTORS` with fallback `'[]'`, `permissions.contents == read`; two checkout steps, one with `path: repo` and `fetch-depth: 0`, one with `path: tool` and a `ref:` reading `base.sha`; the `run:` tests `tool/scripts/secret_scan.sh` for existence first, prints `secret-scan: skipped, base` with the bootstrap reason and exits 0 when it is absent (D4b), and otherwise invokes `tool/scripts/secret_scan.sh`; every `uses:` a 40-hex SHA with a version comment | drop the schedule, a SHA pin, the bootstrap guard, or run `repo/scripts/…` |
 | `::test_script_pins_version_checksum_and_redaction_and_passes_no_config` | D1, D2, D3, D6: the script contains `GITLEAKS_VERSION="${GITLEAKS_VERSION:-8.30.1}"`, `GITLEAKS_SHA256` equal to F2's 64 hex, `--redact=100`, no `--config`; it refuses an unknown mode with exit 2 (`bash scripts/secret_scan.sh bogus .`) | drop `--redact`, add `--config`, or accept any mode |
 | `::test_script_refuses_a_checksum_mismatch_without_running` | D1: with `GITLEAKS_SHA256=0000…` and a fake tarball served from a `file://` URL via `GITLEAKS_URL`, exit 2 with `checksum: expected 0000` and no `gitleaks` process (a `PATH` spy) | run after a mismatch |
 | `::test_no_baseline_config_exists` | D3: `.gitleaks.toml` is absent from the tree root | add the file |
@@ -180,6 +190,7 @@ findings, exit 0.
 - C3 (oracle: a deliberately red pull request, closed unmerged, URL written beside AC3): a pull request adding a file with `ghp_` followed by 36 random alphanumerics → `secret-scan` red, one finding line naming the file and the commit, and `grep -c ghp_ <log>` → `0` beyond the rule name.
 - C4 (oracle: the scheduled run, URL of the first Monday run written beside AC2 by the owner): same output as C2.
 - C5 (oracle: git, any machine): `test ! -e .gitleaks.toml` → exit 0; `grep -c -- '--config' scripts/secret_scan.sh` → `0`.
+- C6 (oracle: two CI logs, URLs written beside AC3): the `secret-scan` job of this spec's own pull request shows the line `secret-scan: skipped, base <sha12> has no scripts/secret_scan.sh` and concludes success; the `secret-scan` job of the first pull request opened after the merge shows `gitleaks 8.30.1 verified (551f6fc8)` and `secret-scan: <k> finding(s) over <n> commits` with n ≥ 1 — the tool ran from base.
 
 ## Architecture Impact
 
@@ -203,7 +214,7 @@ flowchart LR
 
 - [ ] AC1: C1 green; C5 as written.
 - [ ] AC2: C2's run URL and its two output lines written here; C4's first Monday URL written here by the owner.
-- [ ] AC3: C3's pull request URL written here.
+- [ ] AC3: C3's pull request URL written here; C6's two job URLs and their lines written here.
 - [ ] AC4: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c '^dependency cycle'` → `27`; the `ownership conflict` lines are the parent's five.
 
 ## Open Questions
