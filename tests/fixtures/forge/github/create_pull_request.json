@@ -19,7 +19,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "Creating pull request\nhttps://forge.example.com/org/r/pull/43\n"
+      "stdout": "Creating pull request\nhttps://forge.example.com/org/project/pull/43\n"
     }
   ],
   "case": "create_pull_request",
@@ -42,7 +42,7 @@
     "number": 43,
     "state": "open",
     "title": "feat: x",
-    "url": "https://forge.example.com/org/r/pull/43"
+    "url": "https://forge.example.com/org/project/pull/43"
   },
   "source": "synthetic: write call: never executed against a live forge",
   "trimmed": null

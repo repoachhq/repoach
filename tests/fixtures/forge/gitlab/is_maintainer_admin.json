@@ -14,7 +14,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[{\"id\": 3, \"username\": \"author-2\", \"access_level\": 50, \"state\": \"active\"}]"
+      "stdout": "[{\"id\": 1005, \"username\": \"author-2\", \"access_level\": 50, \"state\": \"active\"}]"
     }
   ],
   "case": "is_maintainer_admin",
@@ -25,7 +25,7 @@
   "result": true,
   "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
   "synthetic_user_ids": [
-    3
+    1005
   ],
   "trimmed": null
 }

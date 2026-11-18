@@ -1,8 +1,9 @@
 """The forge recorder redacts by class at record time (SP-RECORDER-REDACTS-BY-CLASS).
 
 Personal keys and a user object's ``name`` and URLs are dropped, every
-``id`` is kept, URLs get a placeholder host and namespace with their
-path shape kept, logins become class words in stdout and argv, and the
+``id`` key is kept with a user object's value synthetic, URLs and remotes
+get a placeholder host, namespace and repository with their path shape
+kept, logins become class words in stdout and argv, and the
 recorder refuses an unclassified login or a generic personal value
 without printing it. The forge readers are replayed on redacted
 recordings, and the committed fixtures are a fixed point of the same
@@ -100,31 +101,65 @@ def test_personal_keys_are_dropped_and_user_name_by_context_ids_kept() -> None:
 
 def test_url_values_keep_their_shape_with_placeholder_host_and_namespace() -> None:
     """D1b: placeholder host and namespace, path kept; a non-URL under ``web_url`` is dropped."""
-    assert redact_url("https://a.example/o/r/pull/12") == "https://forge.example.com/org/r/pull/12"
+    assert (
+        redact_url("https://a.example/o/r/pull/12")
+        == "https://forge.example.com/org/project/pull/12"
+    )
     assert (
         redact_url("https://b.example/g/s/r/-/merge_requests/7")
-        == "https://forge.example.com/org/r/-/merge_requests/7"
+        == "https://forge.example.com/org/project/-/merge_requests/7"
     )
     assert redact_url("https://b.example/-/jobs/5") == "https://forge.example.com/-/jobs/5"
-    assert redact_url("https://b.example/g/s/r") == "https://forge.example.com/org/r"
+    assert redact_url("https://b.example/g/s/r") == "https://forge.example.com/org/project"
     assert (
         redact_url("https://a.example/o/r/actions/runs/42/job/100")
-        == "https://forge.example.com/org/r/actions/runs/42/job/100"
+        == "https://forge.example.com/org/project/actions/runs/42/job/100"
     )
     assert (
         redact_url("https://api.a.example/repos/o/r/issues/comments/9")
-        == "https://forge.example.com/repos/org/r/issues/comments/9"
+        == "https://forge.example.com/repos/org/project/issues/comments/9"
     )
     assert (
         redact_url("https://b.example/api/v4/projects/g%2Fs%2Fr/merge_requests/7/merge")
-        == "https://forge.example.com/api/v4/projects/org%2Fr/merge_requests/7/merge"
+        == "https://forge.example.com/api/v4/projects/org%2Fproject/merge_requests/7/merge"
     )
     assert redact_url("not a url") == ""
     assert redact_payload({"web_url": "not a url", "iid": 7}) == {"iid": 7}
     assert redact_payload({"body": "see https://git.corp.internal/g/r/-/jobs/5."}) == {
-        "body": "see https://forge.example.com/org/r/-/jobs/5."
+        "body": "see https://forge.example.com/org/project/-/jobs/5."
     }
     assert redact_payload({"body": "https://b.example/g/r"}) == {"body": "https://b.example/g/r"}
+
+
+def test_the_repository_name_is_a_placeholder_in_every_url_and_repository_object() -> None:
+    """D1b (0.9): the project segment is ``project``, in URLs and in the repository object's name and path."""
+    assert redact_url("https://a.example/o/private_repo") == "https://forge.example.com/org/project"
+    assert redact_url("https://a.example/o/private_repo.git") == (
+        "https://forge.example.com/org/project.git"
+    )
+    project = {
+        "id": 5,
+        "name": "private_repo",
+        "path": "private_repo",
+        "web_url": "https://b.example/g/private_repo",
+        "merge_method": "merge",
+    }
+    assert redact_payload(project) == {
+        "id": 5,
+        "name": "project",
+        "path": "project",
+        "web_url": "https://forge.example.com/org/project",
+        "merge_method": "merge",
+    }
+    assert redact_payload(redact_payload(project)) == redact_payload(project)
+    merge_request = {"name": "private_repo", "web_url": "https://b.example/g/r/-/merge_requests/7"}
+    assert redact_payload(merge_request)["name"] == "private_repo"
+    assert redact_payload({"body": "see https://forge.example.com/org/r/-/jobs/5"}) == {
+        "body": "see https://forge.example.com/org/project/-/jobs/5"
+    }
+    corpus = "".join(p.read_text() for p in sorted(FIXTURES.rglob("*.json")))
+    paths = set(re.findall(r"forge\.example\.com/(?:repos/)?org/([^/\"\\ ]+)", corpus))
+    assert paths == {"project"}
 
 
 def _raw_calls(
@@ -187,20 +222,22 @@ def test_forge_readers_work_on_a_redacted_recording(tmp_path: Path) -> None:
     ]
     _fx, calls = _raw_calls("gitlab", "pull_request", {0: mr_raw}, roles)
     pr = _replayed(_build("gitlab", tmp_path, ""), calls, "pull_request", 283)
-    assert pr.url == "https://forge.example.com/org/r/-/merge_requests/283"
+    assert pr.url == "https://forge.example.com/org/project/-/merge_requests/283"
     assert pr.author == "author"
     assert handle not in json.dumps(calls) and "Some Person" not in json.dumps(calls)
 
     _fx, calls = _raw_calls("gitlab", "checks", {0: mr_raw, 1: jobs_raw}, roles)
     checks = _replayed(_build("gitlab", tmp_path, ""), calls, "checks", 283)
     assert [(c.name, c.link) for c in checks] == [
-        ("unit:3.11", "https://forge.example.com/org/r/-/jobs/17"),
-        ("lint", "https://forge.example.com/org/r/-/jobs/18"),
+        ("unit:3.11", "https://forge.example.com/org/project/-/jobs/17"),
+        ("lint", "https://forge.example.com/org/project/-/jobs/18"),
     ]
 
     _fx, calls = _raw_calls("gitlab", "ci_status", {0: mr_raw}, roles)
     status = _replayed(_build("gitlab", tmp_path, ""), calls, "ci_status", 283)
-    assert [c.link for c in status.checks] == ["https://forge.example.com/org/r/-/pipelines/99"]
+    assert [c.link for c in status.checks] == [
+        "https://forge.example.com/org/project/-/pipelines/99"
+    ]
 
     approvals = decode_json_values(
         load_fixture(FIXTURES / "gitlab" / "reviews_two_approvals.json")["calls"][0]["stdout"]
@@ -234,7 +271,7 @@ def test_forge_readers_work_on_a_redacted_recording(tmp_path: Path) -> None:
     _fx, calls = _raw_calls("github", "pull_request", {0: gh_raw}, roles)
     pr = _replayed(_build("github", tmp_path, "bot"), calls, "pull_request", 200)
     assert pr.author == "author"
-    assert pr.url == "https://forge.example.com/org/r/pull/200"
+    assert pr.url == "https://forge.example.com/org/project/pull/200"
 
     runs = [
         {
@@ -249,7 +286,10 @@ def test_forge_readers_work_on_a_redacted_recording(tmp_path: Path) -> None:
     _fx, calls = _raw_calls("github", "checks", {0: runs}, roles)
     checks = _replayed(_build("github", tmp_path, "bot"), calls, "checks", 200)
     assert [(c.name, c.link) for c in checks] == [
-        ("Test suite (Python 3.11)", "https://forge.example.com/org/r/actions/runs/42/job/100"),
+        (
+            "Test suite (Python 3.11)",
+            "https://forge.example.com/org/project/actions/runs/42/job/100",
+        ),
         ("gate", ""),
     ]
 

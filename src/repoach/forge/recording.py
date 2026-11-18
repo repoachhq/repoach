@@ -287,6 +287,14 @@ PLACEHOLDER_HOST = "forge.example.com"
 PLACEHOLDER_NAMESPACE = "org"
 """The namespace every recorded URL is given."""
 
+PLACEHOLDER_PROJECT = "project"
+"""The repository name every recorded URL is given, a ``.git`` suffix kept (0.9).
+
+A repository's name is its owner's as much as its namespace is, and a
+private one names a private project; the readers pass URLs through and
+never parse the name back.
+"""
+
 _GITHUB_ROUTES: frozenset[str] = frozenset(
     {
         "actions",
@@ -313,42 +321,64 @@ _URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>()\[\]{}\\,]+")
 _EXAMPLE_HOST_RE = re.compile(
     r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^127\.|^localhost$", re.I
 )
-"""Hosts that name no one (RFC 2606, loopback); text URLs on them are kept."""
+"""Hosts that name no one (RFC 2606, loopback); text URLs on them are kept, except on :data:`PLACEHOLDER_HOST`."""
+
+
+def _project(segment: str) -> str:
+    """:data:`PLACEHOLDER_PROJECT`, with ``segment``'s ``.git`` suffix when it has one."""
+    return PLACEHOLDER_PROJECT + (".git" if segment.endswith(".git") else "")
 
 
 def _namespaced(segments: list[str]) -> list[str]:
-    """Replace the namespace of a forge path by :data:`PLACEHOLDER_NAMESPACE`."""
+    """Replace the namespace and the repository of a forge path by their placeholders."""
     core = [s for s in segments if s]
     if not core:
         return segments
     if segments[:3] == ["api", "v4", "projects"] and len(segments) > 3:
-        project = unquote(segments[3])
-        if "/" in project:
-            repo = project.rsplit("/", 1)[1]
-            return [*segments[:3], quote(f"{PLACEHOLDER_NAMESPACE}/{repo}", safe=""), *segments[4:]]
+        if "/" in unquote(segments[3]):
+            placeholder = f"{PLACEHOLDER_NAMESPACE}/{PLACEHOLDER_PROJECT}"
+            return [*segments[:3], quote(placeholder, safe=""), *segments[4:]]
         return segments
+    if segments[0] == "repos" and len(core) >= 3:
+        return ["repos", PLACEHOLDER_NAMESPACE, _project(segments[2]), *segments[3:]]
     if segments[0] in ("repos", "users", "orgs") and len(core) >= 2:
         return [segments[0], PLACEHOLDER_NAMESPACE, *segments[2:]]
     if "-" in segments:
         dash = segments.index("-")
         if dash >= 2:
-            return [PLACEHOLDER_NAMESPACE, *segments[dash - 1 :]]
+            return [PLACEHOLDER_NAMESPACE, _project(segments[dash - 1]), *segments[dash:]]
         return segments
     if len(core) < 3 or segments[2] in _GITHUB_ROUTES:
-        return [PLACEHOLDER_NAMESPACE, *segments[1:]]
+        rest = segments[1:]
+        if rest and rest[0]:
+            rest = [_project(rest[0]), *rest[1:]]
+        return [PLACEHOLDER_NAMESPACE, *rest]
     trailing = [""] if segments[-1] == "" else []
-    return [PLACEHOLDER_NAMESPACE, core[-1], *trailing]
+    return [PLACEHOLDER_NAMESPACE, _project(core[-1]), *trailing]
+
+
+def _repository_root(path: str) -> str | None:
+    """The repository name of a path that names a repository and nothing under it, else ``None``."""
+    segments = path.strip("/").split("/")
+    core = [s for s in segments if s]
+    if len(core) < 2 or len(core) != len(segments) or "-" in segments:
+        return None
+    if segments[0] in ("api", "repos", "users", "orgs"):
+        return None
+    if len(segments) > 2 and segments[2] in _GITHUB_ROUTES:
+        return None
+    return core[-1].removesuffix(".git")
 
 
 def redact_url(value: str) -> str:
-    """Rewrite a forge URL by class: placeholder host and namespace, path shape kept.
+    """Rewrite a forge URL by class: placeholder host, namespace and repository, path shape kept.
 
     ``https://<forge>/<owner>/<repo>/pull/12`` becomes
-    ``https://forge.example.com/org/<repo>/pull/12``; on GitLab every
+    ``https://forge.example.com/org/project/pull/12``; on GitLab every
     segment before the repository (the one preceding ``/-/``, or the
     last) is the namespace; ``/-/jobs/5`` with no namespace keeps its
     path. ``api/v4/projects/<group>%2F<repo>`` and ``repos/<owner>/<repo>``
-    API paths get the same namespace.
+    API paths get the same placeholders.
 
     Returns:
         The redacted URL, or ``""`` when ``value`` is not an ``http(s)``
@@ -367,14 +397,23 @@ def redact_url(value: str) -> str:
     return urlunsplit((parts.scheme, PLACEHOLDER_HOST, path, parts.query, parts.fragment))
 
 
+def _kept_host(host: str) -> bool:
+    """Whether a text URL on ``host`` is kept as it is: an RFC 2606 or loopback host, not the placeholder."""
+    return bool(_EXAMPLE_HOST_RE.search(host)) and host.casefold() != PLACEHOLDER_HOST
+
+
 def redact_urls_in_text(text: str) -> str:
-    """Apply :func:`redact_url` to every URL of ``text`` not on a placeholder host."""
+    """Apply :func:`redact_url` to every URL of ``text`` not on a kept host (:func:`_kept_host`).
+
+    A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a hand-written
+    one gets the placeholder path too (0.9).
+    """
 
     def _one(match: re.Match[str]) -> str:
         url = match.group(0).rstrip(".:;")
         tail = match.group(0)[len(url) :]
         host = urlsplit(url).hostname or ""
-        if not host or _EXAMPLE_HOST_RE.search(host):
+        if not host or _kept_host(host):
             return match.group(0)
         return (redact_url(url) or url) + tail
 
@@ -403,6 +442,23 @@ def redact_urls_in_value(value: object) -> object:
     return value
 
 
+def _repository_of(value: dict[str, object]) -> str | None:
+    """The repository an object's URL key names when it names nothing under it, else ``None``."""
+    for key, item in value.items():
+        if key not in URL_KEYS or not isinstance(item, str):
+            continue
+        try:
+            parts = urlsplit(item.strip())
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+            continue
+        if parts.scheme in ("http", "https") and parts.hostname:
+            name = _repository_root(parts.path)
+            if name is not None:
+                return name
+    return None
+
+
 def redact_payload(value: object) -> object:
     """Keep only :data:`RECORDED_FIELDS` keys, recursively, and redact by class.
 
@@ -411,15 +467,22 @@ def redact_payload(value: object) -> object:
     dropped too, while elsewhere ``name`` is a check-run or job name the
     forges read. ``id`` is kept in every object. A string under a
     :data:`URL_KEYS` key is rewritten by :func:`redact_url` and dropped
-    when it is not a URL; every other string has its URLs redacted.
+    when it is not a URL; every other string has its URLs redacted. In
+    a repository object (one whose URL names a repository and nothing
+    under it), a ``name`` or ``path`` equal to that repository's name
+    becomes :data:`PLACEHOLDER_PROJECT` (0.9).
     """
     if isinstance(value, dict):
         user = any(k in value for k in USER_KEYS)
+        repository = _repository_of(value)
         out: dict[str, object] = {}
         for key, item in value.items():
             if key not in RECORDED_FIELDS or PERSONAL_KEY_RE.match(key):
                 continue
             if user and (key == "name" or key in URL_KEYS):
+                continue
+            if repository is not None and key in ("name", "path") and item == repository:
+                out[key] = PLACEHOLDER_PROJECT
                 continue
             if key in URL_KEYS and isinstance(item, str):
                 redacted = redact_url(item)

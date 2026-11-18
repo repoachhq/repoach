@@ -21,7 +21,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[{\"author\": {\"id\": \"U_1001\", \"login\": \"maintainer\"}, \"baseRefName\": \"develop\", \"headRefName\": \"feat/sp-gh-glab-shim-dry-run\", \"headRefOid\": \"7684eae5d2972ef918d3e61a36e04e2a032105e6\", \"isDraft\": false, \"number\": 203, \"title\": \"feat(scripts): read-only gh-to-glab shim for a GitLab dry-run review (W1)\", \"url\": \"https://forge.example.com/org/repoach/pull/203\"}, {\"author\": {\"id\": \"U_1001\", \"login\": \"maintainer\"}, \"baseRefName\": \"develop\", \"headRefName\": \"feat/sp-universal-repo-spec\", \"headRefOid\": \"0c69899a7c6d97822a518e3a4b5b6587e722ab06\", \"isDraft\": false, \"number\": 202, \"title\": \"docs(specs): repoach runs on any repository — universal-tool spec family\", \"url\": \"https://forge.example.com/org/repoach/pull/202\"}]"
+      "stdout": "[{\"author\": {\"id\": \"U_1001\", \"login\": \"maintainer\"}, \"baseRefName\": \"develop\", \"headRefName\": \"feat/sp-gh-glab-shim-dry-run\", \"headRefOid\": \"7684eae5d2972ef918d3e61a36e04e2a032105e6\", \"isDraft\": false, \"number\": 203, \"title\": \"feat(scripts): read-only gh-to-glab shim for a GitLab dry-run review (W1)\", \"url\": \"https://forge.example.com/org/project/pull/203\"}, {\"author\": {\"id\": \"U_1001\", \"login\": \"maintainer\"}, \"baseRefName\": \"develop\", \"headRefName\": \"feat/sp-universal-repo-spec\", \"headRefOid\": \"0c69899a7c6d97822a518e3a4b5b6587e722ab06\", \"isDraft\": false, \"number\": 202, \"title\": \"docs(specs): repoach runs on any repository — universal-tool spec family\", \"url\": \"https://forge.example.com/org/project/pull/202\"}]"
     }
   ],
   "case": "open_pull_requests",
@@ -40,7 +40,7 @@
       "number": 203,
       "state": "open",
       "title": "feat(scripts): read-only gh-to-glab shim for a GitLab dry-run review (W1)",
-      "url": "https://forge.example.com/org/repoach/pull/203"
+      "url": "https://forge.example.com/org/project/pull/203"
     },
     {
       "author": "maintainer",
@@ -52,7 +52,7 @@
       "number": 202,
       "state": "open",
       "title": "docs(specs): repoach runs on any repository — universal-tool spec family",
-      "url": "https://forge.example.com/org/repoach/pull/202"
+      "url": "https://forge.example.com/org/project/pull/202"
     }
   ],
   "source": "recorded 2026-10-19 from a live github change request",

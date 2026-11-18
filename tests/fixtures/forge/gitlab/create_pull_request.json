@@ -20,7 +20,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "Creating merge request for feat/x into develop in o/r\n\n!8 feat: x (feat/x)\n https://forge.example.com/org/r/-/merge_requests/8\n"
+      "stdout": "Creating merge request for feat/x into develop in o/r\n\n!8 feat: x (feat/x)\n https://forge.example.com/org/project/-/merge_requests/8\n"
     }
   ],
   "case": "create_pull_request",
@@ -43,7 +43,7 @@
     "number": 8,
     "state": "open",
     "title": "feat: x",
-    "url": "https://forge.example.com/org/r/-/merge_requests/8"
+    "url": "https://forge.example.com/org/project/-/merge_requests/8"
   },
   "source": "synthetic: write call: never executed against a live forge",
   "trimmed": null
