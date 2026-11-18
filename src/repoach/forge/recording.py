@@ -351,17 +351,29 @@ _GITHUB_ROUTES: frozenset[str] = frozenset(
 URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git"})
 """Schemes of a forge URL: the web and API ones, and a remote's ``ssh://`` and ``git://`` (0.9)."""
 
-_URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git)://[^\s\"'<>()\[\]{}\\,]+")
-"""A URL inside free text (a log line, a ``glab`` error, a clone command)."""
+_URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git)://[^\s\"'<>()\[\]{}\\,]+", re.I)
+"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case (I2, 0.10)."""
 
 _SCP_IN_TEXT_RE = re.compile(
     r"(?<![A-Za-z0-9_.+/-])(?P<user>[A-Za-z0-9_.-]+)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)"
-    r":(?!//)(?P<path>(?:[A-Za-z0-9_.~%-]+/)+[A-Za-z0-9_.~%-]*)"
+    r":(?!//)(?P<path>(?:[A-Za-z0-9_.~%-]+/)+[A-Za-z0-9_.~%-]*)",
+    re.I,
 )
-"""An scp-style remote inside free text, ``<user>@<host>:<namespace>/<repo>`` (0.9).
+"""An scp-style remote inside free text, ``<user>@<host>:<namespace>/<repo>`` (0.9), any case.
 
-The path holds at least one ``/``, so a mailbox followed by ``:`` and a
-port number are not remotes.
+The path holds at least one ``/``. A mailbox followed by ``:<port>/<path>``
+is read as a remote too (0.10): the doubt resolves toward redaction, so
+the mailbox goes with the rest (:func:`redact_urls_in_text`).
+"""
+
+FRAGMENT_ANCHOR_RE = re.compile(
+    r"^(?:issuecomment-|note_|discussion_r|pullrequestreview-|discussion_)[0-9a-f]+$", re.I
+)
+"""The fragments a forge URL may keep (0.10): a comment's, a note's or a review's anchor, which a reader parses.
+
+Every other fragment, and every query, is dropped by :func:`redact_url`:
+either can carry a login (``?author=<login>``, ``#<login>``), and no
+reader consumes one.
 """
 
 _EXAMPLE_HOST_RE = re.compile(
@@ -372,7 +384,7 @@ _EXAMPLE_HOST_RE = re.compile(
 
 def _project(segment: str) -> str:
     """:data:`PLACEHOLDER_PROJECT`, with ``segment``'s ``.git`` suffix when it has one."""
-    return PLACEHOLDER_PROJECT + (".git" if segment.endswith(".git") else "")
+    return PLACEHOLDER_PROJECT + (".git" if segment.casefold().endswith(".git") else "")
 
 
 def _namespaced(segments: list[str]) -> list[str]:
@@ -424,8 +436,11 @@ def redact_url(value: str) -> str:
     segment before the repository (the one preceding ``/-/``, or the
     last) is the namespace; ``/-/jobs/5`` with no namespace keeps its
     path. ``api/v4/projects/<group>%2F<repo>`` and ``repos/<owner>/<repo>``
-    API paths get the same placeholders. An ``ssh://`` or ``git://``
-    remote keeps a ``git@`` user when it has one.
+    API paths get the same placeholders. A userinfo is never kept (0.10):
+    an ``ssh://`` or ``git://`` remote that had one is written ``git@``,
+    any other drops it. The scheme and host are written lowercase. The
+    query is dropped, and the fragment too unless it is a
+    :data:`FRAGMENT_ANCHOR_RE` anchor (0.10).
 
     Returns:
         The redacted URL, or ``""`` when ``value`` is not a URL of
@@ -442,9 +457,10 @@ def redact_url(value: str) -> str:
     if path.startswith("/") and len(path) > 1:
         path = "/" + "/".join(_namespaced(path[1:].split("/")))
     host = PLACEHOLDER_HOST
-    if parts.scheme in ("ssh", "git") and parts.username:
+    if parts.scheme in ("ssh", "git") and "@" in parts.netloc:
         host = f"git@{PLACEHOLDER_HOST}"
-    return urlunsplit((parts.scheme, host, path, parts.query, parts.fragment))
+    fragment = parts.fragment if FRAGMENT_ANCHOR_RE.match(parts.fragment) else ""
+    return urlunsplit((parts.scheme, host, path, "", fragment))
 
 
 def _kept_host(host: str) -> bool:
@@ -455,10 +471,12 @@ def _kept_host(host: str) -> bool:
 def redact_urls_in_text(text: str) -> str:
     """Redact every URL and scp-style remote of ``text`` not on a kept host (:func:`_kept_host`).
 
-    A URL goes through :func:`redact_url`; ``<user>@<host>:<ns>/<repo>``
-    becomes ``<user>@forge.example.com:org/project`` (0.9), its ``.git``
-    suffix kept. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so
-    a hand-written one gets the placeholder path too.
+    A URL goes through :func:`redact_url`. An scp remote
+    ``<user>@<host>:<ns>/<repo>`` is normalised through it too (0.10): read
+    as ``ssh://<user>@<host>/<ns>/<repo>``, redacted, and written back as
+    ``git@forge.example.com:org/project``, its ``.git`` suffix kept and its
+    user never. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a
+    hand-written one gets the placeholder path too.
     """
 
     def _one(match: re.Match[str]) -> str:
@@ -470,10 +488,10 @@ def redact_urls_in_text(text: str) -> str:
         return (redact_url(url) or url) + tail
 
     def _scp(match: re.Match[str]) -> str:
-        if _kept_host(match.group("host")):
+        if _kept_host(match.group("host").casefold()):
             return match.group(0)
-        path = "/".join(_namespaced(match.group("path").split("/")))
-        return f"{match.group('user')}@{PLACEHOLDER_HOST}:{path}"
+        url = redact_url(f"ssh://{match.group('user')}@{match.group('host')}/{match.group('path')}")
+        return url.removeprefix("ssh://").replace("/", ":", 1)
 
     return _SCP_IN_TEXT_RE.sub(_scp, _URL_IN_TEXT_RE.sub(_one, text))
 
