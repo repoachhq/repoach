@@ -35,43 +35,87 @@ one account keeps one number across files and two forges' accounts never
 share one; the sequence starts after the highest trusted number any
 fixture declares, and a corpus that would need a number past the range is
 exit 2 with nothing written. A recorded fixture's ``source`` names the forge, never the
-checkout's folder. A second run changes nothing, which
+checkout's folder. A repository id becomes a synthetic one in
+``2001..2999``, declared under ``synthetic_project_ids``. Every fixture is
+judged by the closure oracle (:func:`repoach.forge.recording.residual`)
+against the logins it held, the public forges' hosts and the deny-list
+before any file is written; a hit is exit 2 and nothing is written. A
+second run changes nothing, which
 ``tests/unit/test_forge_recording_redaction.py`` pins.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
-from typing import cast
+from types import ModuleType
+from typing import Any, Protocol, cast
 
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
     RECORDED_SOURCE_RE,
+    SYNTHETIC_ID_END,
     SYNTHETIC_ID_START,
     SYNTHETIC_IDS_KEY,
+    SYNTHETIC_PROJECT_ID_END,
+    SYNTHETIC_PROJECT_ID_START,
+    SYNTHETIC_PROJECT_IDS_KEY,
+    NeedleError,
+    Needles,
     SyntheticIdsExhaustedError,
     UserIdMap,
+    declared_project_ids,
     declared_user_ids,
     decode_json_values,
     is_classified_login,
     login_values,
     mention_pattern,
     mentions,
+    needles,
     recorded_source,
     redact_payload,
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
+    residual,
     trusted_declaration,
 )
 
 FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "forge"
+
+RECORDER = "record_forge_fixture"
+"""The recorder script's module name; its deny-list reader is the one this script uses."""
+
+
+def recorder() -> ModuleType:
+    """The recorder script as a module, the one already loaded when there is one.
+
+    The deny-list reader lives there (SP-NO-PERSONAL-DATA-GATE D3's copy);
+    reusing a loaded module keeps one :class:`DenylistError` class.
+    """
+    loaded = sys.modules.get(RECORDER)
+    if loaded is not None:
+        return loaded
+    spec = importlib.util.spec_from_file_location(
+        RECORDER, Path(__file__).with_name(f"{RECORDER}.py")
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(RECORDER)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[RECORDER] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class ResidualValueError(Exception):
+    """A redacted fixture still holds a needle (I3, 0.10); the message names its kind, ordinal and path."""
+
 
 FORGE_OF_DIRECTORY: dict[str, str] = {"github": "github", "gitlab": "gitlab", "gate": "github"}
 """The forge of a fixture that carries no ``forge`` key, by its directory.
@@ -253,6 +297,23 @@ def _remap_ids(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -
     return node
 
 
+def _remap_projects(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -> object:
+    """Remap repository ids in every exchange's JSON stdout (Q2, 0.10); an unchanged answer keeps its bytes."""
+    if isinstance(node, dict):
+        out = {k: _remap_projects(v, ids, forge, keep) for k, v in node.items()}
+        stdout = node.get("stdout")
+        if isinstance(stdout, str) and "returncode" in node:
+            values = decode_json_values(stdout)
+            if values is not None:
+                remapped = [ids.apply_projects(v, forge=forge, keep=keep) for v in values]
+                if remapped != values:
+                    out["stdout"] = _dumps(remapped)
+        return out
+    if isinstance(node, list):
+        return [_remap_projects(v, ids, forge, keep) for v in node]
+    return node
+
+
 def _source(data: dict[str, object], forge: str) -> dict[str, object]:
     """``data`` with a recorded ``source`` head naming the forge, not the checkout's folder."""
     source = data.get("source")
@@ -267,12 +328,33 @@ def _source(data: dict[str, object], forge: str) -> dict[str, object]:
     return {**data, "source": recorded_source(m.group(1), forge) + rest}
 
 
+def fixture_needles(data: dict[str, object], denylist: tuple[str, ...] = ()) -> Needles:
+    """The needles the offline transform can know of one fixture (I3, 0.10).
+
+    The logins :func:`legacy_roles` finds in the fixture as it was, the
+    public forges' hosts and the deny-list: the raw exchanges of a
+    hand-written or old fixture are the fixture itself.
+
+    Raises:
+        NeedleError: A login shorter than four characters, by ordinal.
+    """
+    return needles([], roles=legacy_roles(data), denylist=denylist, min_length=1)
+
+
 def redact_fixture(
-    data: dict[str, object], ids: UserIdMap | None = None, *, forge: str
+    data: dict[str, object],
+    ids: UserIdMap | None = None,
+    *,
+    forge: str,
+    projects: UserIdMap | None = None,
 ) -> dict[str, object]:
-    """The class-redacted copy of one fixture; ``ids`` is shared across the corpus."""
+    """The class-redacted copy of one fixture; ``ids`` and ``projects`` are shared across the corpus."""
     ids = ids if ids is not None else UserIdMap()
+    projects = projects if projects is not None else UserIdMap.for_projects()
     keep = trusted_declaration(data.get(SYNTHETIC_IDS_KEY))
+    keep_projects = trusted_declaration(
+        data.get(SYNTHETIC_PROJECT_IDS_KEY), SYNTHETIC_PROJECT_ID_START, SYNTHETIC_PROJECT_ID_END
+    )
     out = cast(dict[str, object], _exchanges(data))
     for key in ("args", "result"):
         if key in out:
@@ -281,14 +363,18 @@ def redact_fixture(
     if roles:
         out = cast(dict[str, object], _rename(out, roles))
     out = cast(dict[str, object], _remap_ids(out, ids, forge, keep))
+    out = cast(dict[str, object], _remap_projects(out, projects, forge, keep_projects))
     method = out.get("method")
     if "result" in out and isinstance(method, str):
         out["result"] = ids.apply_result(out["result"], forge=forge, method=method, keep=keep)
     out = _source(out, forge)
-    out.pop(SYNTHETIC_IDS_KEY, None)
-    declared = declared_user_ids(out)
-    if declared:
-        out[SYNTHETIC_IDS_KEY] = declared
+    for key, declared in (
+        (SYNTHETIC_IDS_KEY, declared_user_ids(out)),
+        (SYNTHETIC_PROJECT_IDS_KEY, declared_project_ids(out)),
+    ):
+        out.pop(key, None)
+        if declared:
+            out[key] = declared
     if list(data) == sorted(data):
         out = dict(sorted(out.items()))
     return out
@@ -299,29 +385,64 @@ def render(data: object, *, ascii_only: bool = False) -> str:
     return json.dumps(data, indent=2, ensure_ascii=ascii_only) + "\n"
 
 
-def corpus_start(fixtures: list[dict[str, object]]) -> int:
-    """The first number the corpus may hand out: after every trusted number a fixture declares."""
-    declared = [n for data in fixtures for n in trusted_declaration(data.get(SYNTHETIC_IDS_KEY))]
-    return max([SYNTHETIC_ID_START - 1, *declared]) + 1
+def corpus_start(
+    fixtures: list[dict[str, object]],
+    key: str = SYNTHETIC_IDS_KEY,
+    low: int = SYNTHETIC_ID_START,
+    high: int = SYNTHETIC_ID_END,
+) -> int:
+    """The first number the corpus may hand out: after every trusted number a fixture declares under ``key``."""
+    declared = [n for data in fixtures for n in trusted_declaration(data.get(key), low, high)]
+    return max([low - 1, *declared]) + 1
 
 
-def run(root: Path, *, check: bool) -> list[Path]:
+class DenylistLike(Protocol):
+    """What :func:`run` needs of the recorder's opaque ``Denylist``."""
+
+    def needle_values(self) -> tuple[str, ...]:
+        """The entries, for the needles only."""
+        ...
+
+
+def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> list[Path]:
     """Redact every ``*.json`` under ``root``; return the files that changed (or would).
 
-    Every file is transformed before any is written, so a refusal leaves
-    the corpus as it was.
+    Every file is transformed and judged by the closure oracle
+    (:func:`fixture_needles`, :func:`repoach.forge.recording.residual`)
+    before any is written, so a refusal leaves the corpus as it was.
+
+    Args:
+        root: The fixture corpus.
+        check: Write nothing; only say which files would change.
+        denylist: The deny-list (the recorder's ``read_denylist()`` when ``None``).
 
     Raises:
         UnknownForgeError: A fixture whose forge cannot be told.
         SyntheticIdsExhaustedError: The corpus needs a number past the synthetic range.
+        NeedleError: A needle the oracle cannot judge.
+        ResidualValueError: A redacted fixture still holds a needle.
     """
+    deny: DenylistLike = recorder().read_denylist() if denylist is None else denylist
     paths = sorted(root.rglob("*.json"))
     loaded = [(p, p.read_text(encoding="utf-8")) for p in paths]
     fixtures = [cast(dict[str, object], json.loads(text)) for _p, text in loaded]
     ids = UserIdMap(start=corpus_start(fixtures))
+    projects = UserIdMap.for_projects(
+        corpus_start(
+            fixtures,
+            SYNTHETIC_PROJECT_IDS_KEY,
+            SYNTHETIC_PROJECT_ID_START,
+            SYNTHETIC_PROJECT_ID_END,
+        )
+    )
     pending: list[tuple[Path, str]] = []
     for (path, text), data in zip(loaded, fixtures, strict=True):
-        new = redact_fixture(data, ids, forge=fixture_forge(path, data))
+        new = redact_fixture(data, ids, forge=fixture_forge(path, data), projects=projects)
+        left = residual(cast(dict[str, Any], new), fixture_needles(data, deny.needle_values()))
+        if left is not None:
+            kind, n, where = left
+            rel = path.relative_to(root).as_posix()
+            raise ResidualValueError(f"residual {kind} {n} at {rel}:{where}")
         if new != data:
             pending.append((path, render(new, ascii_only=text.isascii())))
     if not check:
@@ -338,7 +459,13 @@ def main(argv: list[str] | None = None) -> int:
     ns = parser.parse_args(argv)
     try:
         changed = run(ns.root, check=ns.check)
-    except (UnknownForgeError, SyntheticIdsExhaustedError) as exc:
+    except (
+        UnknownForgeError,
+        SyntheticIdsExhaustedError,
+        NeedleError,
+        ResidualValueError,
+        recorder().DenylistError,
+    ) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     verb = "would change" if ns.check else "changed"

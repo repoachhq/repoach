@@ -13,7 +13,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"id\": 67827362, \"description\": null, \"name\": \"project\", \"path\": \"project\", \"created_at\": \"2025-03-08T21:38:48.386Z\", \"web_url\": \"https://forge.example.com/org/project\", \"only_allow_merge_if_pipeline_succeeds\": true, \"merge_method\": \"merge\"}"
+      "stdout": "{\"id\": 2001, \"name\": \"project\", \"path\": \"project\", \"created_at\": \"2025-03-08T21:38:48.386Z\", \"web_url\": \"https://forge.example.com/org/project\", \"only_allow_merge_if_pipeline_succeeds\": true, \"merge_method\": \"merge\"}"
     },
     {
       "args": [
@@ -41,5 +41,8 @@
     ]
   },
   "source": "recorded 2026-10-19 from a live gitlab change request",
+  "synthetic_project_ids": [
+    2001
+  ],
   "trimmed": null
 }

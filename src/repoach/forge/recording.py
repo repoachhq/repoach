@@ -397,32 +397,82 @@ def _project(segment: str) -> str:
     return PLACEHOLDER_PROJECT + (".git" if segment.casefold().endswith(".git") else "")
 
 
-def _namespaced(segments: list[str]) -> list[str]:
-    """Replace the namespace and the repository of a forge path by their placeholders."""
+def _bare(segment: str) -> str:
+    """``segment`` without a ``.git`` suffix, in any case."""
+    return segment[:-4] if segment.casefold().endswith(".git") else segment
+
+
+@dataclass(frozen=True)
+class PathIdentity:
+    """A forge path split into what names someone and what does not.
+
+    Attributes:
+        segments: The path with its namespace and repository replaced by their placeholders.
+        namespace: The raw namespace segments (an owner, a group and its subgroups).
+        repository: The raw repository name, a ``.git`` suffix removed, or ``None``.
+    """
+
+    segments: list[str]
+    namespace: tuple[str, ...] = ()
+    repository: str | None = None
+
+
+def path_identity(segments: list[str]) -> PathIdentity:
+    """Split a forge path's segments into its placeholder form, its namespace and its repository.
+
+    The one reading of a forge path: :func:`redact_url` writes
+    :attr:`PathIdentity.segments`, and :func:`needles` takes the raw
+    namespace and repository as segment needles (0.10), so the two cannot
+    disagree on which segment named someone.
+    """
     core = [s for s in segments if s]
     if not core:
-        return segments
+        return PathIdentity(segments)
     if segments[:3] == ["api", "v4", "projects"] and len(segments) > 3:
-        if "/" in unquote(segments[3]):
+        parts = unquote(segments[3]).split("/")
+        if len(parts) > 1:
             placeholder = f"{PLACEHOLDER_NAMESPACE}/{PLACEHOLDER_PROJECT}"
-            return [*segments[:3], quote(placeholder, safe=""), *segments[4:]]
-        return segments
+            return PathIdentity(
+                [*segments[:3], quote(placeholder, safe=""), *segments[4:]],
+                tuple(parts[:-1]),
+                _bare(parts[-1]),
+            )
+        return PathIdentity(segments)
     if segments[0] == "repos" and len(core) >= 3:
-        return ["repos", PLACEHOLDER_NAMESPACE, _project(segments[2]), *segments[3:]]
-    if segments[0] in ("repos", "users", "orgs") and len(core) >= 2:
-        return [segments[0], PLACEHOLDER_NAMESPACE, *segments[2:]]
+        return PathIdentity(
+            ["repos", PLACEHOLDER_NAMESPACE, _project(segments[2]), *segments[3:]],
+            (segments[1],),
+            _bare(segments[2]),
+        )
+    if segments[0] in ("repos", "users", "orgs", "apps") and len(core) >= 2:
+        return PathIdentity([segments[0], PLACEHOLDER_NAMESPACE, *segments[2:]], (segments[1],))
     if "-" in segments:
         dash = segments.index("-")
         if dash >= 2:
-            return [PLACEHOLDER_NAMESPACE, _project(segments[dash - 1]), *segments[dash:]]
-        return segments
+            return PathIdentity(
+                [PLACEHOLDER_NAMESPACE, _project(segments[dash - 1]), *segments[dash:]],
+                tuple(s for s in segments[: dash - 1] if s),
+                _bare(segments[dash - 1]),
+            )
+        return PathIdentity(segments)
     if len(core) < 3 or segments[2] in _GITHUB_ROUTES:
         rest = segments[1:]
+        repository = None
         if rest and rest[0]:
+            repository = _bare(rest[0])
             rest = [_project(rest[0]), *rest[1:]]
-        return [PLACEHOLDER_NAMESPACE, *rest]
+        return PathIdentity([PLACEHOLDER_NAMESPACE, *rest], (segments[0],), repository)
     trailing = [""] if segments[-1] == "" else []
-    return [PLACEHOLDER_NAMESPACE, _project(core[-1]), *trailing]
+    return PathIdentity(
+        [PLACEHOLDER_NAMESPACE, _project(core[-1]), *trailing],
+        tuple(core[:-1]),
+        _bare(core[-1]),
+    )
+
+
+def _namespaced(segments: list[str]) -> list[str]:
+    """Replace the namespace and the repository of a forge path by their placeholders."""
+    return path_identity(segments).segments
 
 
 def _repository_root(path: str) -> str | None:
@@ -431,11 +481,11 @@ def _repository_root(path: str) -> str | None:
     core = [s for s in segments if s]
     if len(core) < 2 or len(core) != len(segments) or "-" in segments:
         return None
-    if segments[0] in ("api", "repos", "users", "orgs"):
+    if segments[0] in ("api", "repos", "users", "orgs", "apps"):
         return None
     if len(segments) > 2 and segments[2] in _GITHUB_ROUTES:
         return None
-    return core[-1].removesuffix(".git")
+    return _bare(core[-1])
 
 
 def redact_url(value: str) -> str:
@@ -1013,6 +1063,236 @@ def _secret_keys(value: object) -> list[str]:
     if isinstance(value, list):
         return [k for v in value for k in _secret_keys(v)]
     return []
+
+
+def fixture_strings(value: object, path: str) -> list[tuple[str, str]]:
+    """Every ``(key path, string)`` of a decoded value; a JSON stdout is walked inside.
+
+    A number is judged as its decimal string too (0.10): a user id left
+    as a JSON number is as much a value as one left in text.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [(path, str(value))]
+    if isinstance(value, dict):
+        return [hit for k, v in value.items() for hit in fixture_strings(v, f"{path}.{k}")]
+    if isinstance(value, list):
+        return [hit for i, v in enumerate(value) for hit in fixture_strings(v, f"{path}[{i}]")]
+    if isinstance(value, str):
+        decoded = decode_json_values(value) if value.lstrip()[:1] in ("{", "[") else None
+        if decoded is None:
+            return [(path, value)]
+        if len(decoded) == 1:
+            return fixture_strings(decoded[0], path)
+        return [hit for i, v in enumerate(decoded) for hit in fixture_strings(v, f"{path}[{i}]")]
+    return []
+
+
+def scanned_strings(fixture: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every string of a fixture about to be written: each exchange first, as ``exchanges[<i>]``, then every other key."""
+    calls: list[object] = list(fixture.get("calls") or [])
+    found = [hit for i, c in enumerate(calls) for hit in fixture_strings(c, f"exchanges[{i}]")]
+    for key, value in fixture.items():
+        if key != "calls":
+            found += fixture_strings(value, key)
+    return found
+
+
+NODE_ID_SHAPE_RE = re.compile(r"[A-Za-z0-9+/=_-]{6,}")
+"""A string that may be a GitHub node id (base64 or ``U_`` + base64url), judged by the number it encodes too."""
+
+NEEDLE_MIN_LENGTH = 4
+"""A needle shorter than this would match everywhere; it is a configuration error (exit 2), never a skip."""
+
+FORGE_HOSTS: frozenset[str] = frozenset({"github.com", "api.github.com", "gitlab.com"})
+"""The public forges' own hosts, needles of every recording (I3, 0.10)."""
+
+NEEDLE_KINDS: tuple[str, ...] = ("login", "host", "segment", "id", "deny-list")
+"""The sources of the closure oracle's needles, in the order they are judged (I3, 0.10)."""
+
+
+class NeedleError(Exception):
+    """A needle the oracle cannot judge (too short, or a class word or placeholder); the message names its kind and ordinal."""
+
+
+@dataclass(frozen=True, repr=False)
+class Needles:
+    """The values a built fixture must not hold, casefolded, by kind (I3, 0.10).
+
+    Built from the raw exchanges and from facts, never from the
+    redactor's output. Opaque: its ``repr`` counts, so no value reaches a
+    log, a traceback or ``pytest -l``.
+
+    Attributes:
+        entries: ``(kind, casefolded value)`` in order.
+        replacements: ``(raw value, placeholder)`` for the hosts and the
+            path segments the pipeline replaces as tokens.
+    """
+
+    entries: tuple[tuple[str, str], ...]
+    replacements: tuple[tuple[str, str], ...] = ()
+
+    def __repr__(self) -> str:
+        """A count, never a value."""
+        return f"<needles: {len(self.entries)}>"
+
+    def __len__(self) -> int:
+        """How many needles."""
+        return len(self.entries)
+
+    def mapping(self) -> dict[str, str]:
+        """Raw host or segment → its placeholder, for :func:`classify_logins` beside the roles."""
+        return dict(self.replacements)
+
+
+def _url_identities(text: str) -> list[tuple[str, list[str]]]:
+    """``(host, path segments)`` of every URL and scp remote in ``text``, host lowercased."""
+    found: list[tuple[str, list[str]]] = []
+    for m in _URL_IN_TEXT_RE.finditer(text):
+        try:
+            parts = urlsplit(m.group(0).rstrip(".:;"))
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+            continue
+        if parts.hostname:
+            found.append((parts.hostname, parts.path.lstrip("/").split("/")))
+    for m in _SCP_IN_TEXT_RE.finditer(text):
+        found.append((m.group("host").casefold(), m.group("path").split("/")))
+    return found
+
+
+def _id_forms(value: object) -> list[str]:
+    """A raw id as the strings it may stand as: its digits, and a node id's own string."""
+    key = user_id_key(value)
+    forms = [str(key)] if isinstance(key, int) else []
+    if isinstance(value, str) and value not in forms:
+        forms.append(value)
+    return forms
+
+
+def _names_no_one(value: str) -> bool:
+    """Whether a login or path segment is a :data:`NON_PERSON_LOGINS` entry, ``[bot]`` suffix or not (D2)."""
+    folded = value.casefold()
+    return any(
+        folded in (n.casefold(), n.casefold().removesuffix("[bot]")) for n in NON_PERSON_LOGINS
+    )
+
+
+def needles(
+    raw: object,
+    *,
+    roles: dict[str, str],
+    hosts: tuple[str, ...] = (),
+    denylist: tuple[str, ...] = (),
+    min_length: int = NEEDLE_MIN_LENGTH,
+) -> Needles:
+    """The closure oracle's needles of one recording (I3, 0.10), from the raw exchanges and facts.
+
+    - login: every key of ``roles``, a mention-only key without its ``@``;
+    - host: :data:`FORGE_HOSTS`, ``hosts`` (the remote's) and every host a
+      URL or remote of ``raw`` names, but an RFC 2606 or loopback one;
+    - segment: the namespace and repository of every URL or remote of
+      ``raw`` on one of those forge hosts (:func:`path_identity`);
+    - id: every raw user id and repository id, in each of its forms;
+    - deny-list: the maintainer's entries.
+
+    Args:
+        raw: The exchanges as the forge printed them, the method's
+            arguments and the remote's URL; never a redacted value.
+        roles: The recording's login → class word.
+        hosts: The forge instance's hosts (the remote's), lowercased here.
+        denylist: The deny-list entries.
+        min_length: The shortest needle that can be judged; the offline
+            transform passes 1, since its corpus is committed and reviewed.
+
+    Returns:
+        The needles, casefolded, each once, with the replacements of the
+        hosts (:data:`PLACEHOLDER_HOST`) and segments (:data:`PLACEHOLDER_NAMESPACE`,
+        :data:`PLACEHOLDER_PROJECT`).
+
+    Raises:
+        NeedleError: A needle shorter than :data:`NEEDLE_MIN_LENGTH`, or a
+            class word or placeholder, by kind and ordinal.
+    """
+    strings = [text for _path, text in fixture_strings(raw, "")]
+    forge_hosts = set(FORGE_HOSTS) | {h.casefold() for h in hosts if h}
+    found: dict[str, list[str]] = {kind: [] for kind in NEEDLE_KINDS}
+    replacements: dict[str, str] = {}
+    found["login"] = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles]
+    found["host"] = sorted(forge_hosts)
+    for text in strings:
+        for host, segments in _url_identities(text):
+            if not _EXAMPLE_HOST_RE.search(host):
+                found["host"].append(host)
+            if host in forge_hosts:
+                identity = path_identity(segments)
+                for segment in identity.namespace:
+                    found["segment"].append(segment)
+                    replacements.setdefault(segment, PLACEHOLDER_NAMESPACE)
+                if identity.repository:
+                    found["segment"].append(identity.repository)
+                    replacements.setdefault(identity.repository, PLACEHOLDER_PROJECT)
+    for host in found["host"]:
+        replacements.setdefault(host, PLACEHOLDER_HOST)
+    found["id"] = [f for v in user_id_values(raw) + project_id_values(raw) for f in _id_forms(v)]
+    found["deny-list"] = list(denylist)
+    entries: list[tuple[str, str]] = []
+    for kind in NEEDLE_KINDS:
+        seen: list[str] = []
+        named = (
+            v for v in found[kind] if v and not (kind in ("login", "segment") and _names_no_one(v))
+        )
+        for value in (v.casefold() for v in named):
+            if value not in seen:
+                seen.append(value)
+        for n, value in enumerate(seen, 1):
+            if len(value) < min_length:
+                raise NeedleError(f"needle {kind} {n}: too short")
+            if CLASS_WORD_RE.match(value) or value in _PLACEHOLDERS:
+                raise NeedleError(f"needle {kind} {n}: a class word or placeholder")
+            entries.append((kind, value))
+    kept = {v for _k, v in entries}
+    return Needles(
+        tuple(entries),
+        tuple(
+            (raw_value, word)
+            for raw_value, word in replacements.items()
+            if raw_value.casefold() in kept
+        ),
+    )
+
+
+_PLACEHOLDERS: frozenset[str] = frozenset(
+    {PLACEHOLDER_HOST, PLACEHOLDER_NAMESPACE, PLACEHOLDER_PROJECT}
+)
+"""The placeholders the redaction writes; a needle equal to one could never be told from it."""
+
+
+def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | None:
+    """The first needle a built fixture still holds, as ``(kind, ordinal, key path)``, or ``None`` (I3, 0.10).
+
+    Independent of every redaction regex: each string of the fixture
+    (:func:`scanned_strings`) is casefolded, also judged URL-decoded, a
+    node-id-shaped one also by the number it encodes, and searched for each
+    needle with :func:`token_pattern`, the one boundary. A
+    :data:`CLI_PLACEHOLDER_RE` template is not judged. The ordinal counts
+    within the needle's kind.
+    """
+    ordinals: list[tuple[str, int, re.Pattern[str]]] = []
+    counts: dict[str, int] = {}
+    for kind, value in found.entries:
+        counts[kind] = counts.get(kind, 0) + 1
+        ordinals.append((kind, counts[kind], token_pattern(value)))
+    for path, text in scanned_strings(fixture):
+        folded = CLI_PLACEHOLDER_RE.sub(" ", text).casefold()
+        forms = [folded, unquote(folded)]
+        if NODE_ID_SHAPE_RE.fullmatch(text):
+            number = user_id_key(text)
+            if isinstance(number, int):
+                forms.append(str(number))
+        for kind, n, pattern in ordinals:
+            if any(pattern.search(form) for form in forms):
+                return kind, n, path
+    return None
 
 
 @dataclass

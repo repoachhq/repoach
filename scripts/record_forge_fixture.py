@@ -40,7 +40,12 @@ IPv4 address, a mailbox outside the documentation domains), a URL or a
 remote on a host the redaction rewrites, or an entry of the maintainer's
 deny-list exits 2 naming the key path, never the value, and writes
 nothing. ``source`` names the forge and the date, never the checkout's
-folder.
+folder. Last, the closure oracle (:func:`repoach.forge.recording.residual`)
+searches the built fixture, casefolded and URL-decoded, for the needles
+taken from the raw exchanges, the ``origin`` remote and the deny-list —
+the logins, hosts, namespace and repository segments and raw ids — and a
+hit is exit 2 too (``residual <kind> <n> at <path>``). Logs go to stderr;
+stdout is the fixture's path or nothing.
 
 ``--trim N`` keeps only the first ``N`` items of every JSON array in
 recorded stdout (and of the recorded result), for listings too large to
@@ -50,14 +55,17 @@ commit; the fixture records that it was trimmed.
 from __future__ import annotations
 
 import argparse
+import copy
 import ipaddress
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from repoach.core.logging import get_logger
 from repoach.core.paths import user_config_dir
@@ -65,15 +73,20 @@ from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     MENTION_ONLY_PREFIX,
+    NODE_ID_SHAPE_RE,
     NON_PERSON_LOGINS,
     SYNTHETIC_IDS_KEY,
+    SYNTHETIC_PROJECT_IDS_KEY,
     Exchange,
+    NeedleError,
+    Needles,
     RecordingSpawn,
     ReplaySpawn,
     SyntheticIdsExhaustedError,
     UserIdMap,
     classify_logins,
     coerce_call,
+    declared_project_ids,
     declared_user_ids,
     decode_json_values,
     dump_fixture,
@@ -81,10 +94,13 @@ from repoach.forge.recording import (
     is_classified_login,
     login_values,
     mentions,
+    needles,
     recorded_source,
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
+    residual,
+    scanned_strings,
     serialize_result,
     token_pattern,
     unredacted_host,
@@ -150,10 +166,6 @@ DENYLIST_MIN_LENGTH = 4
 """SP-NO-PERSONAL-DATA-GATE D3: a shorter entry would match everywhere and is refused."""
 
 
-NODE_ID_SHAPE_RE = re.compile(r"[A-Za-z0-9+/=_-]{6,}")
-"""A string that may be a GitHub node id (base64 or ``U_`` + base64url), decoded before judging."""
-
-
 class UnclassifiedValueError(Exception):
     """A recorded value is a login with no class word, or matches a generic personal class.
 
@@ -170,7 +182,38 @@ def denylist_file(config_dir: Path | None = None) -> Path:
     return (config_dir if config_dir is not None else user_config_dir()) / DENYLIST_FILE_NAME
 
 
-def read_denylist(config_dir: Path | None = None) -> list[str]:
+class Denylist:
+    """The maintainer's deny-list entries, opaque (K8, 0.10).
+
+    Its ``repr`` is a count, so neither a log, a traceback nor ``pytest -l``
+    can show an entry; a caller asks :meth:`hit` for an ordinal and never
+    binds an entry or a pattern to a name of its own.
+    """
+
+    __slots__ = ("_entries", "_patterns")
+
+    def __init__(self, entries: tuple[str, ...] = ()) -> None:
+        self._entries = entries
+        self._patterns = denylist_patterns(list(entries))
+
+    def __repr__(self) -> str:
+        """A count, never an entry."""
+        return f"<denylist: {len(self._entries)} entries>"
+
+    def __len__(self) -> int:
+        """How many entries."""
+        return len(self._entries)
+
+    def hit(self, text: str) -> int | None:
+        """The ordinal of the first entry ``text`` holds (:func:`denylist_hit`), or ``None``."""
+        return denylist_hit(text, self._patterns)
+
+    def needle_values(self) -> tuple[str, ...]:
+        """The entries, for :func:`repoach.forge.recording.needles` only; never printed."""
+        return self._entries
+
+
+def read_denylist(config_dir: Path | None = None) -> Denylist:
     """The maintainer's deny-list, from the file and the environment merged (SP-NO-PERSONAL-DATA-GATE D3).
 
     A copy of that gate's reader (it lands later; not imported): the file
@@ -185,7 +228,8 @@ def read_denylist(config_dir: Path | None = None) -> list[str]:
             scratch one.
 
     Returns:
-        The entries in order, duplicates removed; empty when neither source exists.
+        The entries in order, duplicates removed, as an opaque
+        :class:`Denylist`; empty when neither source exists.
 
     Raises:
         DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by ordinal.
@@ -203,7 +247,7 @@ def read_denylist(config_dir: Path | None = None) -> list[str]:
     for n, entry in enumerate(entries, 1):
         if len(entry) < DENYLIST_MIN_LENGTH:
             raise DenylistError(f"deny-list entry {n}: too short")
-    return entries
+    return Denylist(tuple(entries))
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
@@ -319,22 +363,6 @@ def generic_class(text: str) -> str | None:
     return None
 
 
-def fixture_strings(value: object, path: str) -> list[tuple[str, str]]:
-    """Every ``(key path, string)`` of a decoded value; a JSON stdout is walked inside."""
-    if isinstance(value, dict):
-        return [hit for k, v in value.items() for hit in fixture_strings(v, f"{path}.{k}")]
-    if isinstance(value, list):
-        return [hit for i, v in enumerate(value) for hit in fixture_strings(v, f"{path}[{i}]")]
-    if isinstance(value, str):
-        decoded = decode_json_values(value) if value.lstrip()[:1] in ("{", "[") else None
-        if decoded is None:
-            return [(path, value)]
-        if len(decoded) == 1:
-            return fixture_strings(decoded[0], path)
-        return [hit for i, v in enumerate(decoded) for hit in fixture_strings(v, f"{path}[{i}]")]
-    return []
-
-
 def _decoded(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
     """``(path, decoded stdout value)`` of every JSON answer, in recording order."""
     out: list[tuple[str, object]] = []
@@ -409,7 +437,9 @@ def build_roles(
     return roles
 
 
-def refuse_unclassified(fixture: dict[str, Any], denylist: list[str] | None = None) -> None:
+def refuse_unclassified(
+    fixture: dict[str, Any], denylist: Denylist | None = None, found: Needles | None = None
+) -> None:
     """Raise :class:`UnclassifiedValueError` on any value of the fixture that may name someone.
 
     Every login under a login key must be a class word or a
@@ -418,12 +448,15 @@ def refuse_unclassified(fixture: dict[str, Any], denylist: list[str] | None = No
     the result alike — may match a generic personal class, hold a URL or
     an scp-style remote on a host the redaction rewrites
     (:func:`repoach.forge.recording.unredacted_host`, 0.9) or a deny-list
-    entry.
+    entry; and the closure oracle (:func:`repoach.forge.recording.residual`,
+    I3, 0.10) finds none of the recording's needles in it.
 
     Args:
         fixture: The fixture about to be written; ``calls`` are reported
             as ``exchanges[<i>]``.
-        denylist: The deny-list entries (:func:`read_denylist` when ``None``).
+        denylist: The deny-list (:func:`read_denylist` when ``None``).
+        found: The recording's needles (:func:`repoach.forge.recording.needles`);
+            ``None`` builds them from the deny-list alone.
 
     Raises:
         UnclassifiedValueError: Naming the key path, never the value.
@@ -433,19 +466,21 @@ def refuse_unclassified(fixture: dict[str, Any], denylist: list[str] | None = No
         for key_path, login in login_values(value):
             if login and not is_classified_login(login):
                 raise UnclassifiedValueError(f"unclassified: {path}.{key_path}")
-    patterns = denylist_patterns(read_denylist() if denylist is None else denylist)
-    scanned: list[tuple[str, object]] = [(f"exchanges[{i}]", c) for i, c in enumerate(calls)]
-    scanned += [(k, v) for k, v in fixture.items() if k != "calls"]
-    for root, value in scanned:
-        for path, text in fixture_strings(value, root):
-            rule = generic_class(text)
-            if rule is not None:
-                raise UnclassifiedValueError(f"generic class {rule} at {path}")
-            if unredacted_host(text):
-                raise UnclassifiedValueError(f"unredacted host at {path}")
-            entry = denylist_hit(text, patterns)
-            if entry is not None:
-                raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
+    deny = read_denylist() if denylist is None else denylist
+    for path, text in scanned_strings(fixture):
+        rule = generic_class(text)
+        if rule is not None:
+            raise UnclassifiedValueError(f"generic class {rule} at {path}")
+        if unredacted_host(text):
+            raise UnclassifiedValueError(f"unredacted host at {path}")
+        entry = deny.hit(text)
+        if entry is not None:
+            raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
+    oracle = found if found is not None else needles([], roles={}, denylist=deny.needle_values())
+    left = residual(fixture, oracle)
+    if left is not None:
+        kind, n, path = left
+        raise UnclassifiedValueError(f"residual {kind} {n} at {path}")
 
 
 def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
@@ -469,19 +504,53 @@ def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[d
 
 
 def synthesize_user_ids(
-    calls: list[dict[str, Any]], ids: UserIdMap, *, forge: str
+    calls: list[dict[str, Any]], ids: UserIdMap, *, forge: str, projects: UserIdMap | None = None
 ) -> list[dict[str, Any]]:
-    """Replace every user id of the recorded answers by its synthetic id (D1c)."""
+    """Replace every user id, and every repository id (Q2, 0.10), of the recorded answers by a synthetic one (D1c)."""
+    projects = projects if projects is not None else UserIdMap.for_projects()
     out: list[dict[str, Any]] = []
     for call in calls:
         new = dict(call)
         values = decode_json_values(call["stdout"])
         if values is not None:
             new["stdout"] = "\n".join(
-                json.dumps(ids.apply(v, forge=forge), ensure_ascii=False) for v in values
+                json.dumps(
+                    projects.apply_projects(ids.apply(v, forge=forge), forge=forge),
+                    ensure_ascii=False,
+                )
+                for v in values
             )
         out.append(new)
     return out
+
+
+def origin_url(cwd: Path) -> str:
+    """The ``origin`` remote of the checkout at ``cwd``, ``""`` when there is none; a needle source, never written."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _log.info("recorder.no_origin", error=type(exc).__name__)
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def _remote_hosts(url: str) -> tuple[str, ...]:
+    """The host of a remote URL or scp remote, lowercased, or none."""
+    if "://" in url:
+        try:
+            host = urlsplit(url).hostname or ""
+        except ValueError as exc:
+            _log.info("recorder.origin_unparsed", error=type(exc).__name__)
+            return ()
+        return (host,) if host else ()
+    head = url.split(":", 1)[0]
+    return (head.rsplit("@", 1)[-1].casefold(),) if ":" in url and "@" in head else ()
 
 
 def _set_bot(forge: Forge, login: str) -> None:
@@ -554,6 +623,8 @@ def record(
     except ForgeError as exc:
         live_raises = type(exc).__name__
     calls = [e.to_json() for e in recorder.exchanges]
+    remote = origin_url(cwd)
+    raw: list[object] = [copy.deepcopy(calls), copy.deepcopy(args), copy.deepcopy(kwargs), remote]
     for call in calls:
         call["stdout"] = redact_stdout(call["stdout"])
     if trim is not None:
@@ -561,10 +632,15 @@ def record(
             call["stdout"] = _trim_stdout(call["stdout"], trim)
     maintainer = str(args[0]) if method == "is_maintainer" and args else None
     roles = build_roles(calls, bot=forge.bot_username, maintainer=maintainer, author=author)
-    calls = classify_calls(calls, roles)
+    denylist = read_denylist()
+    found = needles(
+        raw, roles=roles, hosts=_remote_hosts(remote), denylist=denylist.needle_values()
+    )
+    known = {**found.mapping(), **roles}
+    calls = classify_calls(calls, known)
     calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name)
-    args = list(cast(list[Any], redact_urls_in_value(classify_logins(args, roles))))
-    kwargs = dict(cast(dict[str, Any], redact_urls_in_value(classify_logins(kwargs, roles))))
+    args = list(cast(list[Any], redact_urls_in_value(classify_logins(args, known))))
+    kwargs = dict(cast(dict[str, Any], redact_urls_in_value(classify_logins(kwargs, known))))
     bot = roles.get(forge.bot_username, forge.bot_username)
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     result, raises = _replay(forge_name, cwd, method, typed_args, typed_kwargs, calls, bot)
@@ -593,7 +669,10 @@ def record(
     declared = declared_user_ids(calls)
     if declared:
         fixture[SYNTHETIC_IDS_KEY] = declared
-    refuse_unclassified(fixture)
+    declared_projects = declared_project_ids(calls)
+    if declared_projects:
+        fixture[SYNTHETIC_PROJECT_IDS_KEY] = declared_projects
+    refuse_unclassified(fixture, denylist, found)
     path = out_root / forge_name / f"{case}.json"
     dump_fixture(path, fixture)
     return path
@@ -622,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
             trim=ns.trim,
             out_root=ns.out,
         )
-    except (UnclassifiedValueError, DenylistError, SyntheticIdsExhaustedError) as exc:
+    except (UnclassifiedValueError, DenylistError, SyntheticIdsExhaustedError, NeedleError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(f"{path}\n")
