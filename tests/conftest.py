@@ -6,8 +6,38 @@ its autouse fixtures to both without duplication.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 import structlog
+
+_SESSION_XDG_CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME")
+"""``XDG_CONFIG_HOME`` as the process found it, read when this conftest loads.
+
+That is before :func:`_hermetic_xdg_dirs` points it at a scratch
+directory for every test, so :func:`real_user_config_dir` can name the
+directory the developer (or the CI runner) actually configured.
+"""
+
+
+@pytest.fixture(scope="session")
+def real_user_config_dir() -> Path:
+    """The real ``user_config_dir()``, as it was before the suite made the XDG dirs hermetic.
+
+    Only a test that must read the maintainer's real, untracked
+    configuration asks for it: the deny-list test of
+    SP-RECORDER-REDACTS-BY-CLASS reads ``personal-denylist`` there
+    (SP-NO-PERSONAL-DATA-GATE D3, the file merged with
+    ``REPOACH_PERSONAL_DENYLIST``). Every other test keeps the scratch
+    directory. The XDG rule of ``repoach.core.paths.user_config_dir`` (only
+    an absolute value counts) is restated rather than imported, so this
+    conftest imports no package module; the test that asks for the
+    fixture holds the two equal.
+    """
+    raw = _SESSION_XDG_CONFIG_HOME or ""
+    base = Path(raw) if raw and Path(raw).is_absolute() else Path.home() / ".config"
+    return base / "repoach"
 
 
 @pytest.fixture(autouse=True)

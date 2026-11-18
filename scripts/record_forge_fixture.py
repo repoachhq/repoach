@@ -158,13 +158,24 @@ class DenylistError(Exception):
     """The deny-list holds an entry too short to judge with; the message names its ordinal only."""
 
 
-def read_denylist() -> list[str]:
+def denylist_file(config_dir: Path | None = None) -> Path:
+    """The deny-list file: ``personal-denylist`` under ``config_dir``, by default ``user_config_dir()``."""
+    return (config_dir if config_dir is not None else user_config_dir()) / DENYLIST_FILE_NAME
+
+
+def read_denylist(config_dir: Path | None = None) -> list[str]:
     """The maintainer's deny-list, from the file and the environment merged (SP-NO-PERSONAL-DATA-GATE D3).
 
     A copy of that gate's reader (it lands later; not imported): the file
-    ``user_config_dir() / "personal-denylist"``, one entry per line with
-    ``#`` comments, and :data:`DENYLIST_ENV`, newline- or comma-separated.
-    Both live outside the tree; no entry is ever printed or written.
+    :func:`denylist_file`, one entry per line with ``#`` comments, and
+    :data:`DENYLIST_ENV`, newline- or comma-separated. Both live outside
+    the tree; no entry is ever printed or written.
+
+    Args:
+        config_dir: The configuration directory holding the file; ``None``
+            reads ``user_config_dir()``. The test suite passes the real
+            directory, captured before it points ``XDG_CONFIG_HOME`` at a
+            scratch one.
 
     Returns:
         The entries in order, duplicates removed; empty when neither source exists.
@@ -173,7 +184,7 @@ def read_denylist() -> list[str]:
         DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by ordinal.
     """
     raw: list[str] = []
-    path = user_config_dir() / DENYLIST_FILE_NAME
+    path = denylist_file(config_dir)
     if path.is_file():
         for line in path.read_text(encoding="utf-8").splitlines():
             raw.append(line.split("#", 1)[0])

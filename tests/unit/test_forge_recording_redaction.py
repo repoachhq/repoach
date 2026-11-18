@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import inspect
 import json
 import re
 import sys
@@ -453,19 +454,8 @@ def test_fixtures_declare_exactly_their_synthetic_user_ids() -> None:
     assert wrong == []
 
 
-def test_fixtures_hold_no_denylisted_value() -> None:
-    """D1c (0.8): no entry of the maintainer's untracked deny-list (their real ids included) is in a forge fixture.
-
-    The entries are read at test time (SP-NO-PERSONAL-DATA-GATE D3), never
-    committed; a user id in node-id form is judged by the number it encodes.
-    A failure names the file and the entry's ordinal only.
-    """
-    entries = rec.read_denylist()
-    if not entries:
-        pytest.skip(
-            f"deny-list absent: neither ${rec.DENYLIST_ENV} nor "
-            f"user_config_dir()/{rec.DENYLIST_FILE_NAME} holds an entry (SP-NO-PERSONAL-DATA-GATE D3)"
-        )
+def _denylisted(entries: list[str]) -> list[tuple[str, int]]:
+    """``(file, ordinal)`` of every deny-list entry a file under :data:`FIXTURES` holds."""
     patterns = rec.denylist_patterns(entries)
     hits: list[tuple[str, int]] = []
     for path in sorted(FIXTURES.rglob("*")):
@@ -477,7 +467,65 @@ def test_fixtures_hold_no_denylisted_value() -> None:
             texts += [s for _key, s in rec.fixture_strings(json.loads(text), "")]
         found = {rec.denylist_hit(s, patterns) for s in texts} - {None}
         hits += [(path.relative_to(FIXTURES).as_posix(), cast(int, n)) for n in sorted(found)]
-    assert hits == []
+    return hits
+
+
+def _shown(path: Path) -> str:
+    """``path`` with the home directory written ``~``, so a message names the place and no account."""
+    home = Path.home()
+    return f"~/{path.relative_to(home).as_posix()}" if path.is_relative_to(home) else str(path)
+
+
+def test_fixtures_hold_no_denylisted_value(real_user_config_dir: Path) -> None:
+    """D1c (0.8, 0.9): no entry of the maintainer's untracked deny-list (their real ids included) is in a forge fixture.
+
+    The entries are read at test time (SP-NO-PERSONAL-DATA-GATE D3), never
+    committed: the file under the REAL configuration directory, captured
+    before the suite points ``XDG_CONFIG_HOME`` at a scratch one
+    (``real_user_config_dir``), merged with ``REPOACH_PERSONAL_DENYLIST``.
+    A user id in node-id form is judged by the number it encodes. A
+    failure names the file and the entry's ordinal only.
+    """
+    entries = rec.read_denylist(real_user_config_dir)
+    if not entries:
+        pytest.skip(
+            f"deny-list absent: {_shown(rec.denylist_file(real_user_config_dir))} holds no entry "
+            f"and ${rec.DENYLIST_ENV} is unset or empty (SP-NO-PERSONAL-DATA-GATE D3)"
+        )
+    assert _denylisted(entries) == []
+
+
+def test_the_denylist_file_route_is_read_under_pytest(
+    real_user_config_dir: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """D1c, O2 (0.9): the deny-list test reads the real configuration's file, the variable unset.
+
+    The suite's autouse ``_hermetic_xdg_dirs`` points ``XDG_CONFIG_HOME``
+    at a scratch directory; read through ``user_config_dir()``, the file
+    was never seen under pytest and the test skipped with a real file
+    present. The test asks for the directory captured before that.
+    """
+    assert real_user_config_dir != rec.user_config_dir()
+    assert not real_user_config_dir.is_relative_to(tmp_path_factory.getbasetemp())
+    parameters = inspect.signature(test_fixtures_hold_no_denylisted_value).parameters
+    assert list(parameters) == ["real_user_config_dir"]
+    source = inspect.getsource(test_fixtures_hold_no_denylisted_value)
+    assert source.count("read_denylist(real_user_config_dir)") == 1
+    assert source.count("denylist_file(real_user_config_dir)") == 1
+
+    monkeypatch.delenv(rec.DENYLIST_ENV, raising=False)
+    config = tmp_path / "config" / "repoach"
+    config.mkdir(parents=True)
+    rec.denylist_file(config).write_text(
+        "# a string every redacted fixture holds\nforge.example.com\n"
+    )
+    entries = rec.read_denylist(config)
+    assert entries == ["forge.example.com"]
+    hits = _denylisted(entries)
+    assert len(hits) >= 30 and {n for _file, n in hits} == {1}
 
 
 def _new_node(number: int) -> str:
