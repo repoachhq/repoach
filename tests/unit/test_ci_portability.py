@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.github_concurrency_sim import MAINTAINER, SimEvent, Simulator, pull_request_event
+
 _WORKFLOW_DIR = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 _RUNNER_EXPR = "${{ vars.REPOACH_RUNNER || 'self-hosted' }}"
 _REVIEW_RUNNER_EXPR = "${{ vars.REPOACH_REVIEW_RUNNER || vars.REPOACH_RUNNER || 'self-hosted' }}"
@@ -92,3 +94,34 @@ def test_actor_gates_source_the_allowlist_variable() -> None:
                 assert "vars.REPOACH_ALLOWED_ACTORS" in line
                 gated += 1
     assert gated >= 1
+
+
+_CI_JOBS = {"gate", "test", "wheel-build", "wheel-smoke"}
+_NOT_ALLOWED = "outside-contributor"
+
+
+def _ci_results(event: SimEvent) -> dict[str, str]:
+    records = Simulator.from_file(_WORKFLOW_DIR / "ci.yml").run([event])
+    return {r.job: r.result for r in records}
+
+
+def test_ci_runs_an_allowed_actors_pull_request() -> None:
+    """SP-SCRUB-PERSONAL-DATA-AT-HEAD D2: the allow-list admits its actor; every gated job runs."""
+    results = _ci_results(pull_request_event(0, 1, actor=MAINTAINER))
+    assert set(results) == _CI_JOBS
+    assert set(results.values()) == {"success"}
+
+
+def test_ci_skips_a_non_allowed_actors_pull_request_from_the_gate_on() -> None:
+    """The actor clause of ``gate`` itself skips an actor outside the allow-list, not only its dependants."""
+    results = _ci_results(pull_request_event(0, 1, actor=_NOT_ALLOWED))
+    assert results == dict.fromkeys(_CI_JOBS, "skipped")
+
+
+def test_ci_runs_a_push_whoever_pushed() -> None:
+    """A push is trusted by its branch protection: the allow-list does not apply to it."""
+    push = SimEvent(
+        at=0, event_name="push", actor=_NOT_ALLOWED, payload={"ref": "refs/heads/develop"}
+    )
+    results = _ci_results(push)
+    assert results == dict.fromkeys(_CI_JOBS, "success")
