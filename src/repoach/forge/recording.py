@@ -684,24 +684,34 @@ is remapped like any undeclared one.
 """
 
 
+SYNTHETIC_PROJECT_ID_START = 2001
+"""The first synthetic repository id (Q2, 0.10): a project id names a project as a user id names an account."""
+
+SYNTHETIC_PROJECT_ID_END = 2999
+"""The last synthetic repository id (0.10)."""
+
+SYNTHETIC_PROJECT_IDS_KEY = "synthetic_project_ids"
+"""The fixture key declaring the synthetic repository ids the fixture holds (0.10), as :data:`SYNTHETIC_IDS_KEY` does for users."""
+
+
 class SyntheticIdsExhaustedError(Exception):
-    """A map would hand out a number past :data:`SYNTHETIC_ID_END`."""
+    """A map would hand out a number past the end of its synthetic range."""
 
 
-def is_synthetic_number(value: object) -> bool:
-    """Whether ``value`` is an ``int`` in ``SYNTHETIC_ID_START..SYNTHETIC_ID_END``."""
-    return (
-        isinstance(value, int)
-        and not isinstance(value, bool)
-        and SYNTHETIC_ID_START <= value <= SYNTHETIC_ID_END
-    )
+def is_synthetic_number(
+    value: object, low: int = SYNTHETIC_ID_START, high: int = SYNTHETIC_ID_END
+) -> bool:
+    """Whether ``value`` is an ``int`` in ``low..high`` (by default the user range)."""
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
-def trusted_declaration(raw: object) -> frozenset[int]:
-    """The numbers of a ``synthetic_user_ids`` value that may be kept: the in-range ones only."""
+def trusted_declaration(
+    raw: object, low: int = SYNTHETIC_ID_START, high: int = SYNTHETIC_ID_END
+) -> frozenset[int]:
+    """The numbers of a declaration that may be kept: the ones in ``low..high`` only."""
     if not isinstance(raw, list):
         return frozenset()
-    return frozenset(n for n in raw if is_synthetic_number(n))
+    return frozenset(n for n in raw if is_synthetic_number(n, low, high))
 
 
 RESULT_USER_ID_METHODS: frozenset[tuple[str, str]] = frozenset({("gitlab", "reviews")})
@@ -799,6 +809,33 @@ def declared_user_ids(node: object) -> list[int]:
     return sorted(n for n in numbers if isinstance(n, int))
 
 
+def is_repository_object(node: object) -> bool:
+    """Whether ``node`` is a repository object: a dict whose URL names a repository and nothing under it."""
+    return isinstance(node, dict) and _repository_of(node) is not None
+
+
+def project_id_values(node: object) -> list[object]:
+    """The ``id`` of every repository object of a decoded value, JSON inside strings included (0.10)."""
+    if isinstance(node, str):
+        if node.lstrip()[:1] not in ("{", "["):
+            return []
+        return [i for v in decode_json_values(node) or [] for i in project_id_values(v)]
+    if isinstance(node, dict):
+        found = [i for v in node.values() for i in project_id_values(v)]
+        if is_repository_object(node) and "id" in node:
+            found.append(node["id"])
+        return found
+    if isinstance(node, list):
+        return [i for v in node for i in project_id_values(v)]
+    return []
+
+
+def declared_project_ids(node: object) -> list[int]:
+    """The sorted repository ids ``node`` holds, the value of :data:`SYNTHETIC_PROJECT_IDS_KEY` (0.10)."""
+    numbers = {user_id_key(i) for i in project_id_values(node)}
+    return sorted(n for n in numbers if isinstance(n, int))
+
+
 @dataclass
 class UserIdMap:
     """Real user id → synthetic id, a sequence in order of first appearance (D1c).
@@ -811,13 +848,26 @@ class UserIdMap:
     information about the id it replaces, so a fixture cannot be mapped
     back by enumerating small ids (as a hash of the id could).
 
+    The same class maps repository ids (Q2, 0.10) with ``low``/``high``
+    set to :data:`SYNTHETIC_PROJECT_ID_START`..:data:`SYNTHETIC_PROJECT_ID_END`
+    (:meth:`for_projects`, :meth:`apply_projects`).
+
     Attributes:
         start: The first number handed out.
         ids: ``(forge, account)`` → synthetic number.
+        low: The first number of the synthetic range a declaration may keep.
+        high: The last number of the range; the map never hands out more.
     """
 
     start: int = SYNTHETIC_ID_START
     ids: dict[tuple[str, object], int] = field(default_factory=dict)
+    low: int = SYNTHETIC_ID_START
+    high: int = SYNTHETIC_ID_END
+
+    @classmethod
+    def for_projects(cls, start: int = SYNTHETIC_PROJECT_ID_START) -> UserIdMap:
+        """A map of repository ids, in ``2001..2999`` (0.10)."""
+        return cls(start=start, low=SYNTHETIC_PROJECT_ID_START, high=SYNTHETIC_PROJECT_ID_END)
 
     def synthetic(self, value: object, *, forge: str, keep: frozenset[int] = frozenset()) -> object:
         """The synthetic id for ``value`` on ``forge``, allocated on first sight.
@@ -832,17 +882,18 @@ class UserIdMap:
             The synthetic id, an ``int`` for an ``int`` and ``U_<n>`` for a string.
 
         Raises:
-            SyntheticIdsExhaustedError: The next number would pass :data:`SYNTHETIC_ID_END`.
+            SyntheticIdsExhaustedError: The next number would pass :attr:`high`.
         """
         key = user_id_key(value)
         if key is None:
             return value
-        if is_synthetic_number(key) and key in keep:
+        if is_synthetic_number(key, self.low, self.high) and key in keep:
             return value
         if (forge, key) not in self.ids:
             n = self.start + len(self.ids)
-            if n > SYNTHETIC_ID_END:
-                raise SyntheticIdsExhaustedError(f"synthetic user id {n} past {SYNTHETIC_ID_END}")
+            if n > self.high:
+                kind = "user" if self.high == SYNTHETIC_ID_END else "project"
+                raise SyntheticIdsExhaustedError(f"synthetic {kind} id {n} past {self.high}")
             self.ids[(forge, key)] = n
         n = self.ids[(forge, key)]
         return f"U_{n}" if isinstance(value, str) else n
@@ -859,6 +910,22 @@ class UserIdMap:
             }
         if isinstance(payload, list):
             return [self.apply(v, forge=forge, keep=keep) for v in payload]
+        return payload
+
+    def apply_projects(
+        self, payload: object, *, forge: str, keep: frozenset[int] = frozenset()
+    ) -> object:
+        """Remap the ``id`` of every repository object (:func:`is_repository_object`, 0.10)."""
+        if isinstance(payload, dict):
+            repository = is_repository_object(payload)
+            return {
+                k: self.synthetic(v, forge=forge, keep=keep)
+                if repository and k == "id"
+                else self.apply_projects(v, forge=forge, keep=keep)
+                for k, v in payload.items()
+            }
+        if isinstance(payload, list):
+            return [self.apply_projects(v, forge=forge, keep=keep) for v in payload]
         return payload
 
     def apply_result(
