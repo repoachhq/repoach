@@ -150,6 +150,16 @@ PERSONAL_KEY_RE = re.compile(r"^(full_name|avatar_url|email|public_email|node_id
 URL_KEYS: frozenset[str] = frozenset({"url", "web_url", "html_url", "link"})
 """Keys whose string value is a forge URL, rewritten by :func:`redact_url`."""
 
+REPOSITORY_NAME_KEYS: frozenset[str] = frozenset({"name", "path"})
+"""Keys of a repository object written :data:`PLACEHOLDER_PROJECT` by key, whatever their value (I4, 0.10)."""
+
+REPOSITORY_DROPPED_KEYS: frozenset[str] = frozenset({"description"})
+"""Keys dropped from a repository object (I4, 0.10): prose about a possibly private project, read by no forge.
+
+``gitlab.py`` reads ``description`` from a merge request (its body),
+never from a project.
+"""
+
 USER_KEYS: frozenset[str] = frozenset({"login", "username"})
 """Keys that make an object a user object (its ``name`` and URLs are dropped)."""
 
@@ -558,20 +568,24 @@ def redact_payload(value: object) -> object:
     :data:`URL_KEYS` key is rewritten by :func:`redact_url` and dropped
     when it is not a URL; every other string has its URLs redacted. In
     a repository object (one whose URL names a repository and nothing
-    under it), a ``name`` or ``path`` equal to that repository's name
-    becomes :data:`PLACEHOLDER_PROJECT` (0.9).
+    under it), ``name`` and ``path`` become :data:`PLACEHOLDER_PROJECT`
+    by key, whatever their value, and ``description`` is dropped (I4,
+    0.10): the context decides, as a user object's ``name`` is dropped
+    because a ``login`` stands beside it.
     """
     if isinstance(value, dict):
         user = any(k in value for k in USER_KEYS)
-        repository = _repository_of(value)
+        repository = _repository_of(value) is not None
         out: dict[str, object] = {}
         for key, item in value.items():
             if key not in RECORDED_FIELDS or PERSONAL_KEY_RE.match(key):
                 continue
             if user and (key == "name" or key in URL_KEYS):
                 continue
-            if repository is not None and key in ("name", "path") and item == repository:
+            if repository and key in REPOSITORY_NAME_KEYS:
                 out[key] = PLACEHOLDER_PROJECT
+                continue
+            if repository and key in REPOSITORY_DROPPED_KEYS:
                 continue
             if key in URL_KEYS and isinstance(item, str):
                 redacted = redact_url(item)
