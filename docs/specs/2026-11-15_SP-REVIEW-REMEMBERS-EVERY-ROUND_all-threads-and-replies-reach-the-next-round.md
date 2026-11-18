@@ -1,17 +1,17 @@
 ---
 id: SP-REVIEW-REMEMBERS-EVERY-ROUND
 title: The reviewer remembers every round — all prior threads, every reply whoever wrote it, and their resolution state reach the next round's prompt
-version: 0.3
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-15
-updated: 2026-11-16
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/review_history.py, prompts/review/_review_history_0.1.0.md, tests/unit/test_review_history.py, tests/unit/test_review_history_in_prompt.py]
   resources: [format:review-history-block]
 
-depends_on: [SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-OWNER-SETTLES-A-FINDING, SP-EVIDENCE-SENTINEL-AUTHOR, SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-RESUMES-FAILED-ROLES]
+depends_on: [SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-OWNER-SETTLES-A-FINDING, SP-EVIDENCE-SENTINEL-AUTHOR, SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE, SP-FINDING-CITES-ITS-CODE, SP-REVIEW-RESUMES-FAILED-ROLES]
 provides_to: []
 
 constraints:
@@ -22,6 +22,64 @@ constraints:
 ---
 
 # The reviewer remembers every round
+
+## Amendment (0.6, 2026-11-18): the replay reads the anonymised fixture, the live condition is any project's
+
+Owner principle 2026-11-17, repoach is for everyone. C1 replayed
+rounds "as the Yoob `REVIEW-SPEC.md` and the MR hold them"; it replays
+SP-REVIEW-SETTLED-STAYS-SETTLED's recorded fixture, anonymised by the
+family's rule (logins replaced by their class, hosts and paths by
+placeholders), and asserts the `maintainer` class, not a login. C2 names
+a merge request of any project running this, with the owner's as a
+labelled reference measurement. The Context header labels the
+measurement of F4; the Open Questions name the owner's projects as an
+instance of Q1's setting.
+
+## Amendment (0.5, 2026-11-17): the replies come from `comments()`, the statuses are the enum's, the reply agent is scheduled
+
+Re-measured on `origin/develop` `92cd241` after the verifier's read.
+(1) `ReviewThread` carries `root_id`, `thread_id`, `resolved`,
+`resolved_by`, `path`, `line` and no reply (`protocol.py:583-588`); the
+replies with their author login and date are `Comment` rows of
+`Forge.comments(number)` (`author`, `body`, `created_at`, `in_reply_to`,
+`thread_id`, `protocol.py:505-512`), joined to the thread by
+`in_reply_to == root_id` on GitHub and `thread_id` on GitLab. F3, A2,
+the Hard part and the Interface say so. (2) D2's status list is
+`FindingStatus` as it is (`findings.py:144-153`): `proposed`,
+`verified`, `refuted`, `open`, `resolved`, `stuck`, `not_applicable`,
+`resolved_at_head`, `owner_resolved`, `noted`, plus `out_of_delta` once
+SP-REVIEW-DELTA-FIRST lands; `deferred` is no status. (3) NG3 said the
+reply agent was unscheduled; it is row 8b of SP-REVIEW-CONVERGES
+(SP-THREAD-REPLY-AGENT), lands after this spec, depends on it and edits
+`review_history.py` so a bot reply ending in its state line settles the
+point as the evidence sentinel does (its D9); the edge runs 8b → 5 and
+nothing here changes order. (4) The sentence that read "`owner_commands`;
+and `owner_commands`" is corrected; F1's line is `orchestrator.py:850`.
+
+## Amendment (0.4, 2026-11-17): the memory is built from tables that exist
+
+Re-measured on `origin/develop` `92cd241`. F3 of 0.3 named
+`finding_threads` and `finding_thread_events` as tables the ledger
+"already holds": `grep -rn "finding_threads\|finding_thread_events" src`
+→ 0. They are the design of SP-PR-THREADS-REMEMBER-AND-CLOSE (draft 0.5,
+no code, outside the owner's lane D order), and no spec in that order
+builds them. The block is therefore built from what exists and from
+what the order builds: `pr_findings`; `finding_posts`, which holds the
+thread id of every posted finding and the head and login that closed
+its thread (`thread_closed_at_head`, `thread_closed_by`,
+`src/repoach/review/finding_posts.py:74-91`, `mark_thread_closed`
+`:372`); the forge's `review_threads(number)` for the resolved state
+and `comments(number)` for the replies (0.5;
+`src/repoach/forge/protocol.py:486-512`, `:567`, `:724`, `:736`); and
+`owner_commands`. The edge to SP-PR-THREADS-REMEMBER-AND-CLOSE is
+withdrawn. The `finding_key` field and the `supersedes` lineage
+(`finding_events`) are not read here: SP-REVIEW-SETTLED-STAYS-SETTLED,
+which lands after this spec and depends on it, adds both to the block
+in `review_history.py` (its D5, D11, D14), so the edge runs one way, 6
+→ 5, and the family's order and cycle count are unchanged. NG3 and AC2
+are corrected to what exists: there is no thread-reply role on
+`92cd241`, and the placeholder-order pins live in
+`tests/unit/test_reviewer_prompts.py`.
 
 ## Amendment (0.3, 2026-11-16): at the cap, a settled register, not a count
 
@@ -35,7 +93,7 @@ execution", with "a list of requirements detailing when to consider the
 task complete") and §3.1 (a task whose needed facts are dropped "is
 guaranteed to suffer"); the paper text was read as untrusted data and
 the two passages were checked against it. G3, the Interface, the tests
-and C1 change accordingly; the oracle stays the !366 replay.
+and C1 change accordingly; the oracle stays the recorded replay.
 
 ## Intent
 
@@ -51,13 +109,16 @@ whoever wrote it, labelled by what the forge knows of the author.
 
 ## Context
 
-Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
+Measured 2026-11-15 on `origin/develop` `5354767`; F4 is a reference
+measurement (owner's dogfood) on one of the owner's merge requests,
+!366, from which `tests/fixtures/review/recorded_long_review.json`
+was recorded and anonymised.
 
 | # | Fact | Where |
 |---|---|---|
-| F1 | Prior rounds reach the prompt only through `{PRIOR_REVIEW}`: the latest dialogue row of the same role, reduced to its verdict, `summary[:200]`, `n_comments` and `diff_changed`; the rows themselves hold `summary[:400]` and each comment's `body[:400]` | `src/repoach/review/orchestrator.py:825`, `:2611-2643`, `:2762-2780`; `src/repoach/review/persistence.py:100-110` |
+| F1 | Prior rounds reach the prompt only through `{PRIOR_REVIEW}`: the latest dialogue row of the same role, reduced to its verdict, `summary[:200]`, `n_comments` and `diff_changed`; the rows themselves hold `summary[:400]` and each comment's `body[:400]` | `src/repoach/review/orchestrator.py:850` (`_build_prior_review_context(` call; the function at `:2687`, on `92cd241`), `:2611-2643`, `:2762-2780` as measured on `5354767`; `src/repoach/review/persistence.py:100-110` |
 | F2 | `{RESOLVED_DISAGREEMENTS}` carries at most eight threads per role whose root the role tagged and whose reply, by the trusted bot login, holds the evidence sentinel; a reply by anyone else, the owner included, is ignored | `src/repoach/review/thread_context.py:96`, `:182-215`; SP-EVIDENCE-SENTINEL-AUTHOR |
-| F3 | The ledger already holds what a memory needs: `pr_findings` (head, round, finder, claim type, severity, file, lines, claim, status, verification), `finding_posts` (the thread each finding opened), `finding_threads` and `finding_thread_events` (replies, by login, and closures), `owner_commands` (who settled what, with the reason) | `src/repoach/review/findings.py:246-265`; SP-FINDING-THREAD-IDS; SP-PR-THREADS-REMEMBER-AND-CLOSE; SP-OWNER-SETTLES-A-FINDING |
+| F3 (0.5) | The ledger holds what a memory needs except the replies: `pr_findings` (head, round, finder, claim type, severity, file, lines, claim, status, verification), `finding_posts` (the thread each finding opened, and the head and login that closed it), `owner_commands` (who settled what, with the reason). The replies are `Comment` rows of `Forge.comments(number)`, each with `author`, `body`, `created_at`, `in_reply_to` (the root's id on GitHub) and `thread_id` (the discussion on GitLab); a thread's resolved state and resolver are `ReviewThread.resolved` / `resolved_by` from `review_threads(number)`, which carries no reply and no author. `finding_threads` and `finding_thread_events` do not exist on `92cd241` (`grep -rn … src` → 0); SP-THREAD-REPLY-AGENT (order row 8b, after this spec) builds them and this spec reads neither | `src/repoach/review/findings.py:269-291`; `src/repoach/review/finding_posts.py:74-91`, `:372`; `src/repoach/forge/protocol.py:486-512`, `:567-588`, `:724`, `:736`; SP-FINDING-THREAD-IDS; SP-OWNER-SETTLES-A-FINDING |
 | F4 | On !366, round 12: of 8 threads, 2 re-raised points settled in round 11 with a measurement, 3 asked to confirm tests whose `file:line` a reply had already given; 5 of 8 were the reviewer's window, not the branch | Yoob `tmp/REVIEW-SPEC.md` §4–§6 |
 | F5 | Owner decision 2026-11-15 (a): the reviewer remembers every round — all prior threads, plus every reply and refutation whoever wrote it (owner, agents, bot), with their resolution state | brief, 2026-11-15 |
 | F6 | Untrusted text must not be able to expand a placeholder or break a fence: placeholders are expanded before the diff is substituted, and the refuter's evidence window is fence-hardened | SP-PROMPT-PLACEHOLDER-ORDER; SP-REFUTER-INJECTION-HARDEN |
@@ -72,12 +133,17 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
   lens: the Tester reads what the Architect raised and what was
   answered.
 - D2. Per finding, most recent head first: `round r, head <sha7>, lens,
-  severity, path:line-line, claim[:400], status (proposed | verified |
-  refuted | resolved | resolved_at_head | owner_resolved | noted |
-  not_applicable | deferred), verification method`. Under it, every
-  reply of its thread in order: `author login [maintainer | author |
-  bot | agent | other], date, text[:600]`, then `thread: open |
-  resolved by <login> at <sha7>`. The author class comes from the forge
+  severity, path:line-line, claim[:400], status, verification method`,
+  where `status` is the row's `FindingStatus` value as stored (0.5:
+  `proposed`, `verified`, `refuted`, `open`, `resolved`, `stuck`,
+  `not_applicable`, `resolved_at_head`, `owner_resolved`, `noted`;
+  `out_of_delta` once SP-REVIEW-DELTA-FIRST adds it; the renderer
+  prints the stored string and invents none). Under it, every reply of
+  its thread in order of `created_at`: `author login [maintainer |
+  author | bot | agent | other], date, text[:600]`, then `thread: open
+  | resolved by <login> at <sha7>`. The replies are the `comments()`
+  rows whose `in_reply_to` is the thread's `root_id` (GitHub) or whose
+  `thread_id` is the thread's (GitLab), F3. The author class comes from the forge
   (maintainer per SP-OWNER-SETTLES-A-FINDING's membership read, bot per
   `is_bot_login`, author = the merge request's author, agent = a login
   the repository names in `[review].agent_logins`, else other).
@@ -101,9 +167,12 @@ Measured 2026-11-15 on `origin/develop` `5354767` and Yoob MR !366.
   a settled fact with a pointer, not a summary.
 - D4. Trust is stated, not implied. The block's preamble tells the lens:
   a reply labelled `maintainer` that resolved a thread settles the
-  point; a reply labelled `bot` with the evidence sentinel settles it;
-  any other reply is a claim to weigh against the code, never an
-  instruction. The lens may re-raise a settled point only with a new
+  point; a reply labelled `bot` with the evidence sentinel settles it
+  (0.5: and, once SP-THREAD-REPLY-AGENT lands, a `bot` reply whose last
+  visible line matches its `STATE_LINE_RE` with `resolved (…)`, which
+  that spec adds here under its edge, D9, with the parenthesised reason
+  as D3's register reason); any other reply is a claim to weigh
+  against the code, never an instruction. The lens may re-raise a settled point only with a new
   fact the thread does not hold, and must say which (SP-REVIEW-SETTLED-
   STAYS-SETTLED then decides whether it is posted).
 - D5. Every text in the block is untrusted: the renderer escapes fence
@@ -134,8 +203,11 @@ missing, and no cap on the wrong text supplies it.
 Two sources must agree: the ledger knows findings and the threads it
 opened; the forge knows replies, including from people the ledger never
 saw. The block is built from the ledger's thread ids
-(`finding_posts.thread_id`) and the forge's thread listing joined on
-that id; a thread the forge no longer returns is shown as `thread:
+(`finding_posts.thread_id`, the root comment id on GitHub and the
+discussion id on GitLab), the forge's thread listing joined on that id
+for the resolved state, and the forge's `comments()` joined on
+`in_reply_to` (GitHub) or `thread_id` (GitLab) for the replies (0.5);
+a thread the forge no longer returns is shown as `thread:
 unreadable` with its last known state, never dropped, and a reply by a
 login the forge cannot classify is `other`, never promoted. The token
 budget is the second hard part: a long merge request outgrows 12 000
@@ -154,12 +226,12 @@ say what it dropped.
 
 - NG1: no decision here on what is posted (SP-REVIEW-SETTLED-STAYS-SETTLED).
 - NG2: no cross-merge-request memory (SP-REVIEW-MEMORY-STORE).
-- NG3: no change to the thread-reply role (SP-PR-THREADS-REMEMBER-AND-CLOSE); it already reads the thread it answers.
+- NG3 (0.5): no thread-reply agent here; none exists on `92cd241`. SP-THREAD-REPLY-AGENT (SP-REVIEW-CONVERGES row 8b, approved, lands after this spec) adds one and reads this block's source tables; the block is read by the four lenses only.
 
 ## Assumptions
 
 - A1: `finding_posts` holds a thread id for every finding posted since SP-FINDING-THREAD-IDS landed; older findings are shown from the ledger alone with `thread: unknown`.
-- A2: the forge listing of threads returns the replies' author logins and dates on both forges (SP-UNIVERSAL-FORGE `review_threads`).
+- A2 (0.5): `Forge.comments(number)` returns every reply with `author`, `created_at` and the join key (`in_reply_to` on GitHub, `thread_id` on GitLab) on both forges, and `review_threads(number)` the resolved state (SP-UNIVERSAL-FORGE; `protocol.py:505-512`, `:583-588`).
 
 ## Interface
 
@@ -190,7 +262,8 @@ class ReviewHistory(BaseModel):
 
 def register_line(finding: HistoryFinding) -> RegisterLine: ...     # the reason or the closing criterion, one sentence
 
-def build_review_history(forge: Forge, pr_number: int, *, db_path: Path, head_sha: str, max_tokens: int = 12000) -> ReviewHistory: ...
+def thread_replies(comments: Sequence[Comment], thread: ReviewThread) -> list[Comment]: ...   # 0.5: in_reply_to == root_id, or thread_id == thread.thread_id; by created_at
+def build_review_history(forge: Forge, pr_number: int, *, db_path: Path, head_sha: str, max_tokens: int = 12000) -> ReviewHistory: ...   # reads forge.review_threads and forge.comments once each
 def render_review_history(history: ReviewHistory) -> str: ...     # format:review-history-block, fence-escaped
 
 # reviewer.py (changed): placeholder {REVIEW_HISTORY}; {PRIOR_REVIEW} and {RESOLVED_DISAGREEMENTS} refused
@@ -224,6 +297,8 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 |---|---|---|
 | `tests/unit/test_review_history.py::test_every_reply_is_shown_whoever_wrote_it` | owner, author, agent, bot replies all present with their class | filter non-bot replies |
 | `::test_author_classes_from_the_forge` | D2 classes on fakes | label everyone `other` |
+| `::test_replies_are_joined_from_comments_by_in_reply_to_or_thread_id` | F3, A2 (0.5): on a fake forge, GitHub replies join by `in_reply_to == root_id`, GitLab replies by `thread_id`; a reply of another thread never appears; `review_threads` gives the resolved state only | read replies from `ReviewThread` (there are none) |
+| `::test_status_is_the_stored_enum_value` | D2 (0.5): every `FindingStatus` value renders as stored; no `deferred` | map statuses through a hand-written list |
 | `::test_cap_turns_older_threads_into_register_lines_open_first` | D3: with a cap that fits 6 of 20 threads in full, the other 14 are register lines, open ones first with a closing criterion, settled ones with a one-sentence reason; no thread absent | count instead of listing |
 | `::test_register_line_reason_is_the_settling_sentence` | the `/resolve` reason, the bot's evidence sentence, the refuter's text, `fixed at <sha7>` | repeat the claim as the reason |
 | `::test_register_never_drops_a_thread_under_any_cap` | cap just above the register's own size: every thread is a line | drop the oldest |
@@ -235,15 +310,17 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 
 ## Success conditions
 
-- C1: replaying !366's recorded rounds 1–11 (findings, replies, resolutions as the Yoob `REVIEW-SPEC.md` and the MR hold them) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
-- C2: on a live Yoob merge request after this lands, `jq .history.replies review-gate.json` equals the number of replies on the MR's repoach threads as the GitLab API lists them; oracle: `glab api` count.
+- C1: replaying the recorded rounds 1–11 (findings, replies, resolutions as SP-REVIEW-SETTLED-STAYS-SETTLED's anonymised fixture `tests/fixtures/review/recorded_long_review.json` holds them; 0.7) builds, for round 12, a block under 12 000 tokens that contains the round-11 measured replies to `c56ed3f7` and `e3555287` verbatim within 600 characters, and one register line for every thread of rounds 1–8 (45 threads by F4's counts) with its status and reason; oracle: the test asserts the two reply texts, the `maintainer` label, and `len(findings) + len(register) == 63` (the threads of rounds 1–11).
+- C2: on a live merge or pull request of any project running this, `jq .history.replies <the review JSON>` equals the number of replies on the request's repoach threads as the forge's API lists them; oracle: `glab api` or `gh api` count; `test_block_lists_every_reply_whoever_wrote_it` proves the same on the fixture forge before any live round. Reference measurement (owner's dogfood): the owner's first merge request after this lands, written beside this line as an instance.
 - C3: `grep -rn "PRIOR_REVIEW\|RESOLVED_DISAGREEMENTS" src prompts` → 0.
 
 ## Architecture Impact
-- Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-PR-THREADS-REMEMBER-AND-CLOSE, SP-OWNER-SETTLES-A-FINDING (reads `pr_findings`, `finding_posts`, `finding_threads`, `finding_thread_events`, `owner_commands`)
+- Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-FINDING-MODEL, SP-FINDING-THREAD-IDS, SP-OWNER-SETTLES-A-FINDING (reads `pr_findings`, `finding_posts` with its closure columns, `owner_commands`; 0.4: the edge to SP-PR-THREADS-REMEMBER-AND-CLOSE is withdrawn, its tables do not exist and are not built by the order)
+- No edge to SP-REVIEW-SETTLED-STAYS-SETTLED (0.4): that spec depends on this one and adds `finding_key` and the `supersedes` lineage to the block when it lands; an edge the other way would be a cycle.
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-EVIDENCE-SENTINEL-AUTHOR (the bot's sentinel keeps its settling meaning inside the block; the bot-only filter is retired)
 - Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-PROMPT-PLACEHOLDER-ORDER, SP-REFUTER-INJECTION-HARDEN (untrusted text position and escaping)
-- Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE (the orchestrator's step list changes; threads are read through the protocol)
+- Adds dependency: SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE (the orchestrator's step list changes; `review_threads` and `comments` are read through the protocol, 0.5)
+- No edge to SP-THREAD-REPLY-AGENT (0.5): that spec depends on this one and edits `review_history.py` under its edge (its D9); an edge the other way would be a cycle.
 - Adds dependency (0.3, order): SP-REVIEW-REMEMBERS-EVERY-ROUND -> SP-FINDING-CITES-ITS-CODE (the persona files this spec bumps are the ones that spec created at 0.6.0 / 0.5.0 / 0.5.0 / 0.6.0; the history block's `path:line` are anchored lines), SP-REVIEW-RESUMES-FAILED-ROLES (its reuse key names `persona_version`; a bump before it exists would be a key it never saw)
 - Removes: `thread_context.fetch_resolved_disagreements`, `orchestrator._build_prior_review_context`. No table, no cycle.
 
@@ -251,16 +328,16 @@ block lists them most recent first, each reply labelled; 3 100 tokens.
 ```mermaid
 flowchart LR
     L[pr_findings + finding_posts + owner_commands] --> J[join on thread id]
-    F[forge threads and replies] --> J
+    F[forge review_threads + comments] --> J
     J --> C[classify authors, cap by tokens]
     C --> R[render, escape] --> P[{REVIEW_HISTORY} in the four prompts]
 ```
 
 ## Acceptance Criteria
 - [ ] AC1: `pytest -q tests/unit/test_review_history.py tests/unit/test_review_history_in_prompt.py` → green. Today (`5354767`): the files do not exist; `fetch_resolved_disagreements` ignores every non-bot reply (`thread_context.py:187-195`).
-- [ ] AC2: `pytest -q tests/unit/test_thread_context*.py tests/unit/test_prompt_placeholder_order.py` → green after the removal of G4 (their resolved-disagreement cases deleted with the function).
+- [ ] AC2: `pytest -q tests/unit/test_thread_context*.py tests/unit/test_reviewer_prompts.py` → green after the removal of G4 (their resolved-disagreement cases deleted with the function; 0.4: `test_reviewer_prompts.py` carries the SP-PROMPT-PLACEHOLDER-ORDER pins, `test_untrusted_diff_tokens_not_expanded` and `test_coder_and_developer_render_inject_untrusted_last`; no `test_prompt_placeholder_order.py` exists).
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`.
 - [ ] AC4: `docs/review_redesign_architecture.md` names the block where it names `{PRIOR_REVIEW}` today.
 
 ## Open Questions
-- None. Decided by the owner on 2026-11-15: Q1 (who is an `agent`) — the logins of `[review].agent_logins` in `repoach.toml`; on Yoob the agents post as the maintainer and are classed so; Q2 (history cap) — fixed at 12 000 tokens, named in the block.
+- None. Decided by the owner on 2026-11-15: Q1 (who is an `agent`) — the logins of `[review].agent_logins` in `repoach.toml` (in the owner's own projects the agents post as the maintainer and are classed so, an instance); Q2 (history cap) — fixed at 12 000 tokens, named in the block.
