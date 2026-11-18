@@ -1,8 +1,8 @@
 ---
 id: SP-REPO-CARRIES-NO-PERSONAL-DATA
 title: Umbrella — the repository, its CI and its released artefacts carry no maintainer path, login, host, address or mailbox, and a generic gate keeps it so
-version: 0.3
-status: reviewed
+version: 0.4
+status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18

@@ -1,8 +1,8 @@
 ---
 id: SP-SECRET-SCAN-IS-AN-ORACLE
 title: A pinned gitleaks scans the full history on a schedule and the pull request's range on every pull request, with redacted output, no baseline, the tool taken from the base ref and a checksum-verified binary
-version: 0.3
-status: reviewed
+version: 0.4
+status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18

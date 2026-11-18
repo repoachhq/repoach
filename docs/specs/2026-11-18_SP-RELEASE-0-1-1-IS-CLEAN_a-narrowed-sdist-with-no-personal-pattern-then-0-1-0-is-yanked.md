@@ -1,8 +1,8 @@
 ---
 id: SP-RELEASE-0-1-1-IS-CLEAN
 title: 0.1.1 is built from the scrubbed tree with a narrowed sdist, its downloaded artefacts pass the personal-data lint, and the owner yanks 0.1.0 with a reason
-version: 0.3
-status: reviewed
+version: 0.4
+status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18

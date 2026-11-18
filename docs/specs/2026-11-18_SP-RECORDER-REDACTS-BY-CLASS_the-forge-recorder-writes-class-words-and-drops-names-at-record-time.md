@@ -1,8 +1,8 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word and drops names, avatars and user ids at record time, and refuses a fixture it cannot classify
-version: 0.3
-status: reviewed
+version: 0.4
+status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18

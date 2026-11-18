@@ -1,8 +1,8 @@
 ---
 id: SP-SCRUB-PERSONAL-DATA-AT-HEAD
 title: Every maintainer path, login, host, address and handle at HEAD becomes a placeholder or a class under one redaction rule; the systemd units are rendered with an absolute install path; the live units are untouched
-version: 0.4
-status: reviewed
+version: 0.5
+status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18

@@ -1,8 +1,8 @@
 ---
 id: SP-NO-PERSONAL-DATA-GATE
 title: A generic gate refuses absolute home paths, public addresses, personal mailboxes and an untracked per-maintainer deny-list, with a declared allow-list and redacted output, and would have refused today's tree
-version: 0.3
-status: reviewed
+version: 0.4
+status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18
