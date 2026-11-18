@@ -150,7 +150,7 @@ tree.
 | hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
 | public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted |
 | public IPv6 | `2001:db8::<n>` (RFC 3849) | |
-| mailbox | `<user>@example.com`; a forge noreply stays as is | |
+| mailbox | `<user>@example.com`; a forge noreply (`@users.noreply.github.com`, `@users.noreply.gitlab.com`, self-hosted `@users.noreply.<host>`) has its local part and host redacted by class (`author@users.noreply.forge.example.com` / `bot@users.noreply.forge.example.com`) | |
 | a domain of the owner's other product | `example.com`, or `product.example.com` when the sentence needs a product | the product's name alone is not personal data |
 
 The real-account rule (SP-RECORDER-REDACTS-BY-CLASS D2): wherever a string
@@ -166,13 +166,17 @@ repository object is a synthetic number in `2001..2999`, declared under
 `synthetic_project_ids`. Both tools then judge the fixture they are about to
 write with a closure oracle: the logins, hosts, namespace and repository
 names and raw ids the recording saw, and the deny-list, searched for as whole
-tokens (letters and digits; `-` and `_` delimit) in every string and every
-key a forge does not write, casefolded, decoded (percent, entities, `\u`),
-with full-width, invisible and lookalike letters folded and node ids read as
-their account number; one found is exit 2 and nothing is written. A third
-party's project linked on a public forge names no one of the recording and
-is not searched for. The one residual is a login the recording never learns,
-cited only as a bare word (SP-RECORDER-REDACTS-BY-CLASS NG4).
+tokens (letters and digits; `-` and `_` delimit) in every string (including
+`case`, `call["args"]`, and every key a forge does not write), casefolded,
+URL/entity/`\u`-decoded, with embedded user node ids (`MDQ6VXNl…` and `U_…`)
+read as their account number; one found is exit 2 and nothing is written. A
+third party's project linked on a public forge (or on an external host under an
+ssh-alias remote) names no one of the recording and is not searched for. The
+threat model is **accidental leaks** from real pull requests, not adversarial
+evasion: a login the recording never learns cited only as a bare word, Unicode
+confusables and invisible characters, Markdown-split or escaped values,
+non-node-id base64 and JSON-in-a-string escapes are out of scope
+(SP-RECORDER-REDACTS-BY-CLASS Threat model & NG4).
 
 Public attribution is not personal data: the copyright holder in `LICENSE`,
 the `authors` of `pyproject.toml`, the security contact in `SECURITY.md`, the
