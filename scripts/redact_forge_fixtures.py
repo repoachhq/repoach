@@ -55,6 +55,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol, cast
 
+from repoach.core.logging import route_default_logs_to_stderr
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
@@ -452,7 +453,8 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point."""
+    """CLI entry point: one line on stdout, or nothing and exit 2 on a refusal."""
+    route_default_logs_to_stderr()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("root", nargs="?", type=Path, default=FIXTURE_ROOT)
     parser.add_argument("--check", action="store_true")

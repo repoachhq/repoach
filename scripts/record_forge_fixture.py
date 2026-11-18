@@ -67,7 +67,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from repoach.core.logging import get_logger
+from repoach.core.logging import get_logger, route_default_logs_to_stderr
 from repoach.core.paths import user_config_dir
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
@@ -679,7 +679,8 @@ def record(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point."""
+    """CLI entry point: one line on stdout, the fixture's path, or nothing and exit 2 on a refusal."""
+    route_default_logs_to_stderr()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--forge", required=True, choices=["github", "gitlab"])
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
