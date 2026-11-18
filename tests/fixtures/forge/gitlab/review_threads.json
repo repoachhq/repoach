@@ -40,6 +40,10 @@
       "thread_id": "bac16f4451acdf6af51d435c6613c1ce787ce26b"
     }
   ],
-  "source": "recorded 2026-11-02 from maintainer/acme_2 MR !339 (merged); kept 2 resolved and 0 open DiffNote discussions of the 249 listed, two notes each",
+  "source": "recorded 2026-11-02 from a live gitlab change request, MR !339 (merged); kept 2 resolved and 0 open DiffNote discussions of the 249 listed, two notes each",
+  "synthetic_user_ids": [
+    1003,
+    1004
+  ],
   "trimmed": null
 }

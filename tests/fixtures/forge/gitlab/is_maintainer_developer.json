@@ -24,5 +24,9 @@
   "raises": null,
   "result": false,
   "source": "synthetic: answer shape of the documented endpoint (GitHub collaborators/<login>/permission, GitLab members/all), SP-OWNER-SETTLES-A-FINDING",
+  "synthetic_user_ids": [
+    8,
+    9
+  ],
   "trimmed": null
 }

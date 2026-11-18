@@ -121,6 +121,6 @@
     ],
     "state": "success"
   },
-  "source": "recorded 2026-10-19 from m3; check-runs --jq argv amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): the recorded lines predate completedAt/headSha and carry neither; required names passed explicitly and the protection read dropped 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4 widened the default list to five names, this recording predates the wheel jobs)",
+  "source": "recorded 2026-10-19 from a live github change request; check-runs --jq argv amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): the recorded lines predate completedAt/headSha and carry neither; required names passed explicitly and the protection read dropped 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF D4 widened the default list to five names, this recording predates the wheel jobs)",
   "trimmed": null
 }

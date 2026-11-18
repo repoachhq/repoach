@@ -29,6 +29,9 @@
     "bc6685b03a2bb6ff9c04d50569988f28ebe3dc15",
     "dc2d790483b6de6fb5696e50d31f648497a98535"
   ],
-  "source": "recorded 2026-10-19 from acme_2",
+  "source": "recorded 2026-10-19 from a live gitlab change request",
+  "synthetic_user_ids": [
+    1003
+  ],
   "trimmed": 5
 }

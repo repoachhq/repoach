@@ -90,6 +90,9 @@
       "workflow": "security"
     }
   ],
-  "source": "recorded 2026-10-19 from acme_2; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
+  "source": "recorded 2026-10-19 from a live gitlab change request; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
+  "synthetic_user_ids": [
+    1003
+  ],
   "trimmed": 5
 }

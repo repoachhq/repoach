@@ -38,5 +38,9 @@
     }
   ],
   "source": "synthetic: two approvals in GitLab's documented approvals shape (https://docs.gitlab.com/ee/api/merge_request_approvals.html#get-configuration-1, GET /projects/:id/merge_requests/:iid/approvals); no Acme MR carries an approval",
+  "synthetic_user_ids": [
+    11,
+    12
+  ],
   "trimmed": null
 }

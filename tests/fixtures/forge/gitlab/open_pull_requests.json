@@ -36,6 +36,9 @@
       "url": "https://forge.example.com/org/acme_2/-/merge_requests/289"
     }
   ],
-  "source": "recorded 2026-10-19 from acme_2",
+  "source": "recorded 2026-10-19 from a live gitlab change request",
+  "synthetic_user_ids": [
+    1003
+  ],
   "trimmed": 3
 }

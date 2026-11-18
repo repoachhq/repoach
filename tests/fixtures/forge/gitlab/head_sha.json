@@ -22,6 +22,9 @@
   "method": "head_sha",
   "raises": null,
   "result": "a9f7001cd82170b482a534d94b7bc0fede20f272",
-  "source": "recorded 2026-10-19 from acme_2",
+  "source": "recorded 2026-10-19 from a live gitlab change request",
+  "synthetic_user_ids": [
+    1003
+  ],
   "trimmed": null
 }

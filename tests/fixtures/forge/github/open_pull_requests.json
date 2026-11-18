@@ -55,6 +55,9 @@
       "url": "https://forge.example.com/org/repoach/pull/202"
     }
   ],
-  "source": "recorded 2026-10-19 from m3",
+  "source": "recorded 2026-10-19 from a live github change request",
+  "synthetic_user_ids": [
+    1001
+  ],
   "trimmed": null
 }

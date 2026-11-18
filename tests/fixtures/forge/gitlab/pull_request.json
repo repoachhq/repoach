@@ -33,6 +33,9 @@
     "title": "feat(soc): wire spi, i2c and gpio into the generated soc",
     "url": "https://forge.example.com/org/acme_2/-/merge_requests/283"
   },
-  "source": "recorded 2026-10-19 from acme_2",
+  "source": "recorded 2026-10-19 from a live gitlab change request",
+  "synthetic_user_ids": [
+    1003
+  ],
   "trimmed": null
 }

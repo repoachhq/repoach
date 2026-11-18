@@ -25,6 +25,6 @@
   "method": "head_sha",
   "raises": null,
   "result": "a39976339afa9f7ece3c4d6a4d51e697faab7e81",
-  "source": "recorded 2026-10-19 from m3",
+  "source": "recorded 2026-10-19 from a live github change request",
   "trimmed": null
 }
