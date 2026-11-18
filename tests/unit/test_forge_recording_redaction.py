@@ -16,7 +16,9 @@ import base64
 import importlib.util
 import inspect
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -25,6 +27,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
+from repoach.forge import recording
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
 from repoach.forge.protocol import Forge
@@ -32,26 +35,38 @@ from repoach.forge.recording import (
     NON_PERSON_LOGINS,
     PERSONAL_KEY_RE,
     SYNTHETIC_IDS_KEY,
+    SYNTHETIC_PROJECT_IDS_KEY,
+    TOKEN_CHARS,
     Exchange,
+    NeedleError,
     ReplaySpawn,
     SyntheticIdsExhaustedError,
     UserIdMap,
     classify_logins,
+    classify_text,
+    declared_project_ids,
     declared_user_ids,
     decode_json_values,
+    fixture_strings,
     is_synthetic_number,
     load_fixture,
+    mention_pattern,
     mentions,
+    needles,
+    project_id_values,
     redact_payload,
     redact_stdout,
     redact_url,
     redact_urls_in_text,
+    residual,
+    token_pattern,
     trusted_declaration,
     unredacted_host,
     user_id_key,
     user_id_values,
 )
 from repoach.forge.runner import CommandResult
+from tests.child_pytest import child_pytest_argv
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "forge"
@@ -402,16 +417,20 @@ def test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """D3: exit 2 naming the key path, never the value, and no fixture written."""
-    stdout = json.dumps([[{"id": 1, "user": {"login": "q"}, "state": "APPROVED", "body": ""}]])
-    assert _run_main(monkeypatch, tmp_path, stdout, {"x": "maintainer"}) == 2
+    stdout = json.dumps(
+        [[{"id": 1, "user": {"login": "q-handle"}, "state": "APPROVED", "body": ""}]]
+    )
+    assert _run_main(monkeypatch, tmp_path, stdout, {"x-handle": "maintainer"}) == 2
     err = capsys.readouterr()
     assert re.search(r"^unclassified: exchanges\[\d+\]\.stdout.*\.login$", err.err, re.M)
-    assert '"q"' not in err.err + err.out and ": q" not in err.err + err.out
+    assert "q-handle" not in err.err + err.out
     assert not (tmp_path / "out").exists()
 
     body = "log: /home/someone-x/y failed"
-    stdout = json.dumps([[{"id": 1, "user": {"login": "q"}, "state": "APPROVED", "body": body}]])
-    assert _run_main(monkeypatch, tmp_path, stdout, {"q": "author"}) == 2
+    stdout = json.dumps(
+        [[{"id": 1, "user": {"login": "q-handle"}, "state": "APPROVED", "body": body}]]
+    )
+    assert _run_main(monkeypatch, tmp_path, stdout, {"q-handle": "author"}) == 2
     err = capsys.readouterr()
     assert re.search(
         r"^generic class home_path at exchanges\[\d+\]\.stdout.*\.body$", err.err, re.M
@@ -447,9 +466,9 @@ def test_recorder_writes_class_words_and_a_replayed_result(
                     "id": 9,
                     "user": {
                         "id": 70707,
-                        "login": "q",
+                        "login": "q-handle",
                         "name": "Some Person",
-                        "html_url": "https://code.example.org/q",
+                        "html_url": "https://code.example.org/q-handle",
                     },
                     "state": "APPROVED",
                     "body": "lgtm",
@@ -462,7 +481,7 @@ def test_recorder_writes_class_words_and_a_replayed_result(
     path = Path(capsys.readouterr().out.strip())
     fixture = json.loads(path.read_text())
     text = json.dumps(fixture)
-    assert '\\"q\\"' not in text and "Some Person" not in text and "code.example.org" not in text
+    assert "q-handle" not in text and "Some Person" not in text and "code.example.org" not in text
     assert fixture["bot_username"] == "bot"
     assert json.loads(fixture["calls"][0]["stdout"])[0][0]["user"] == {
         "id": 1001,
@@ -506,9 +525,8 @@ def test_fixtures_declare_exactly_their_synthetic_user_ids() -> None:
     assert outside == []
 
 
-def _denylisted(entries: list[str]) -> list[tuple[str, int]]:
+def _denylisted(denylist: Any) -> list[tuple[str, int]]:
     """``(file, ordinal)`` of every deny-list entry a file under :data:`FIXTURES` holds."""
-    patterns = rec.denylist_patterns(entries)
     hits: list[tuple[str, int]] = []
     for path in sorted(FIXTURES.rglob("*")):
         if not path.is_file():
@@ -516,8 +534,8 @@ def _denylisted(entries: list[str]) -> list[tuple[str, int]]:
         text = path.read_bytes().decode("utf-8", errors="replace")
         texts = [text]
         if path.suffix == ".json":
-            texts += [s for _key, s in rec.fixture_strings(json.loads(text), "")]
-        found = {rec.denylist_hit(s, patterns) for s in texts} - {None}
+            texts += [s for _key, s in fixture_strings(json.loads(text), "")]
+        found = {denylist.hit(s) for s in texts} - {None}
         hits += [(path.relative_to(FIXTURES).as_posix(), cast(int, n)) for n in sorted(found)]
     return hits
 
@@ -575,7 +593,7 @@ def test_the_denylist_file_route_is_read_under_pytest(
         "# a string every redacted fixture holds\nforge.example.com\n"
     )
     entries = rec.read_denylist(config)
-    assert entries == ["forge.example.com"]
+    assert len(entries) == 1 and entries.hit("forge.example.com") == 1
     hits = _denylisted(entries)
     assert len(hits) >= 30 and {n for _file, n in hits} == {1}
 
@@ -591,34 +609,37 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
 ) -> None:
     """D3 (0.8): SP-NO-PERSONAL-DATA-GATE D3's two sources merged; the recorder refuses a hit by ordinal."""
     config = _no_denylist(monkeypatch, tmp_path)
-    assert rec.read_denylist() == []
+    assert len(rec.read_denylist()) == 0
     config.mkdir(parents=True)
     (config / rec.DENYLIST_FILE_NAME).write_text(
         "# the owner's strings\nsomeone-handle\n\n4242424242  # an id\n"
     )
     monkeypatch.setenv(rec.DENYLIST_ENV, "someone-host,someone-handle\n")
-    entries = rec.read_denylist()
-    assert entries == ["someone-handle", "4242424242", "someone-host"]
-    patterns = rec.denylist_patterns(entries)
-    assert rec.denylist_hit("ssh someone-host", patterns) == 3
-    assert rec.denylist_hit("control-someone-host", patterns) is None
-    assert rec.denylist_hit(base64.b64encode(b"04:User4242424242").decode(), patterns) == 2
-    assert rec.denylist_hit(_new_node(4242424242), patterns) == 2
-    assert rec.denylist_hit(_new_node(4242424243), patterns) is None
+    denylist = rec.read_denylist()
+    assert len(denylist) == 3 and repr(denylist) == "<denylist: 3 entries>"
+    assert [denylist.hit(t) for t in ("someone-handle", "4242424242", "someone-host")] == [1, 2, 3]
+    assert denylist.hit("ssh someone-host") == 3
+    assert denylist.hit("ssh SOMEONE-HOST.") == 3
+    assert denylist.hit("control-someone-host") is None
+    assert denylist.hit(base64.b64encode(b"04:User4242424242").decode()) == 2
+    assert denylist.hit(_new_node(4242424242)) == 2
+    assert denylist.hit(_new_node(4242424243)) is None
     monkeypatch.setenv(rec.DENYLIST_ENV, "abc")
     with pytest.raises(rec.DenylistError, match=r"^deny-list entry 3: too short$"):
         rec.read_denylist()
     (config / rec.DENYLIST_FILE_NAME).unlink()
 
     body = "deployed on someone-host"
-    stdout = json.dumps([[{"id": 1, "user": {"login": "q"}, "state": "APPROVED", "body": body}]])
-    assert _run_main(monkeypatch, tmp_path, stdout, {"q": "author"}, "someone-host") == 2
+    stdout = json.dumps(
+        [[{"id": 1, "user": {"login": "q-handle"}, "state": "APPROVED", "body": body}]]
+    )
+    assert _run_main(monkeypatch, tmp_path, stdout, {"q-handle": "author"}, "someone-host") == 2
     err = capsys.readouterr()
     assert re.search(r"^deny-list entry 1 at exchanges\[\d+\]\.stdout.*\.body$", err.err, re.M)
     assert "someone-host" not in err.err + err.out
-    assert _run_main(monkeypatch, tmp_path, stdout, {"q": "author"}, "abc") == 2
+    assert _run_main(monkeypatch, tmp_path, stdout, {"q-handle": "author"}, "abc") == 2
     err = capsys.readouterr()
-    assert err.err.strip() == "deny-list entry 1: too short"
+    assert err.err.splitlines()[-1] == "deny-list entry 1: too short"
     assert not (tmp_path / "out").exists()
 
 
@@ -642,11 +663,13 @@ def test_recorded_source_names_the_forge_and_the_refusal_covers_it(
         ("synthetic: a documented shape", "synthetic: a documented shape"),
     ):
         assert redact_fixtures.redact_fixture({"source": before}, forge="gitlab")["source"] == after
-    stdout = json.dumps([[{"id": 9, "user": {"login": "q"}, "state": "APPROVED", "body": ""}]])
+    stdout = json.dumps(
+        [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": ""}]]
+    )
     monkeypatch.setattr(rec, "recorded_source", lambda *_a: "recorded from /home/someone-x/y")
-    assert _run_main(monkeypatch, tmp_path, stdout, {"q": "author"}) == 2
+    assert _run_main(monkeypatch, tmp_path, stdout, {"q-handle": "author"}) == 2
     err = capsys.readouterr()
-    assert err.err.strip() == "generic class home_path at source"
+    assert err.err.splitlines()[-1] == "generic class home_path at source"
     assert not (tmp_path / "out").exists()
 
 
@@ -667,7 +690,7 @@ def test_an_unknown_mention_in_free_text_becomes_a_class_word(
     }
 
     stdout = json.dumps(
-        [[{"id": 9, "user": {"login": "q"}, "state": "APPROVED", "body": "ping @x-handle"}]]
+        [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": "ping @x-handle"}]]
     )
     monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
     assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
@@ -925,10 +948,10 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
         "description": "```\n@fenced-x\n```",
     }
     assert mentions(prose) == ["someone-x", "ok-x"]
-    payload = {"body": body, "diff": diff, "user": {"login": "q", "id": 5}}
+    payload = {"body": body, "diff": diff, "user": {"login": "q-handle", "id": 5}}
     calls = [{"args": ["api", "x"], "stdout": json.dumps(payload), "stderr": "", "returncode": 0}]
-    roles = rec.build_roles(calls, bot="", maintainer=None, author="q")
-    assert roles == {"q": "author", "@someone-x": "author-2"}
+    roles = rec.build_roles(calls, bot="", maintainer=None, author="q-handle")
+    assert roles == {"q-handle": "author", "@someone-x": "author-2"}
     out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
     assert (
         out["body"]
@@ -956,7 +979,9 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
     assert answer["diff"] == diff
     assert redacted["args"] == ["repos/:owner/:repo/pulls/someone-x"]
 
-    stdout = json.dumps([[{"id": 9, "user": {"login": "q"}, "state": "APPROVED", "body": body}]])
+    stdout = json.dumps(
+        [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": body}]]
+    )
     monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
     assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
     written = json.loads(Path(capsys.readouterr().out.strip()).read_text())
@@ -997,14 +1022,14 @@ def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() 
         built = rec.build_roles(recorded, bot="", maintainer=None, author="x-handle")
         calls = rec.classify_calls(recorded, built)
         assert "x-handle" not in json.dumps(calls) and "github.com" not in json.dumps(calls)
-        rec.refuse_unclassified({"source": "s", "calls": calls}, denylist=[])
+        rec.refuse_unclassified({"source": "s", "calls": calls}, denylist=rec.Denylist())
 
         raw = [{"args": [], "stdout": json.dumps(answer), "stderr": ""}]
         unredacted = rec.classify_calls(
             raw, rec.build_roles(raw, bot="", maintainer=None, author=None)
         )
         with pytest.raises(rec.UnclassifiedValueError, match=r"^unredacted host at exchanges\[0\]"):
-            rec.refuse_unclassified({"source": "s", "calls": unredacted}, denylist=[])
+            rec.refuse_unclassified({"source": "s", "calls": unredacted}, denylist=rec.Denylist())
 
     fixture = {"forge": "gitlab", "calls": [_exchange({"body": "clone git@gitlab.com:g/r.git"})]}
     out = redact_fixtures.redact_fixture(fixture, forge="gitlab")
@@ -1055,15 +1080,580 @@ def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
     ]
 
 
-def test_ci_passes_the_denylist_secret_to_the_unit_tests_only_and_never_echoes_it() -> None:
-    """O2, preference 6 (0.9): the unit-test step of ``ci.yml`` gets the secret; no step can print it."""
+def test_ci_passes_the_denylist_secret_to_the_denylist_test_only_and_never_echoes_it() -> None:
+    """O2, D6 (0.10): one step gets the secret and runs the deny-list test alone; no step can print it."""
     workflow = ROOT / ".github" / "workflows" / "ci.yml"
     text = workflow.read_text(encoding="utf-8")
     secret = "${{ secrets.REPOACH_PERSONAL_DENYLIST }}"
     assert text.count(secret) == 1
     steps = yaml.safe_load(text)["jobs"]["test"]["steps"]
     (step,) = [s for s in steps if secret in json.dumps(s)]
-    assert step["name"] == "Pytest"
+    assert step["name"] == "Pytest — fixture deny-list"
     assert step["env"] == {rec.DENYLIST_ENV: secret}
-    assert step["run"] == "pytest -q tests/unit -n auto --dist worksteal"
-    assert not re.search(r"set -[a-z]*x|\bxtrace\b|\becho\b|printenv|\benv\b", step["run"])
+    assert step["run"] == "pytest -q tests/unit/test_forge_recording_redaction.py -k denylisted"
+    selected = [n for n in globals() if n.startswith("test_") and "denylisted" in n]
+    assert selected == ["test_fixtures_hold_no_denylisted_value"]
+    (unit,) = [s for s in steps if s.get("name") == "Pytest"]
+    assert "env" not in unit
+    for each in (step, unit):
+        assert not re.search(r"set -[a-z]*x|\bxtrace\b|\becho\b|printenv|\benv\b", each["run"])
+
+
+def test_one_token_boundary_for_replacer_mention_and_denylist() -> None:
+    """I1 (0.10): the login replacer, the ``@`` replacer and the deny-list are one pattern modulo the word."""
+    assert TOKEN_CHARS == "A-Za-z0-9_-"
+    for word in ("jdoe", "a.b-c", "x[bot]"):
+        expected = token_pattern(word)
+        assert expected.flags & re.I
+        for pattern in (recording._login_pattern(word), rec.denylist_patterns([word])[0]):
+            assert (pattern.pattern, pattern.flags) == (expected.pattern, expected.flags)
+        at = token_pattern(f"@{word}")
+        assert (mention_pattern(word).pattern, mention_pattern(word).flags) == (
+            at.pattern,
+            at.flags,
+        )
+    text = (
+        "ping x.jdoe and jdoe. and JDoe and _jdoe and jdoe_x and a:jdoe and x/:jdoe "
+        "and git@h.io:jdoe/r and [jdoe] and 'jdoe' and ?u=jdoe#jdoe and @jdoe"
+    )
+    assert classify_text(text, {"jdoe": "author"}) == (
+        "ping x.author and author. and author and _jdoe and jdoe_x and a:author and x/:author "
+        "and git@h.io:author/r and [author] and 'author' and ?u=author#author and @author"
+    )
+    tools = "gh api repos/:owner/:repo/pulls; --- /dev/null; glab api projects/:id"
+    roles = {"owner": "author", "repo": "author-2", "dev": "author-3", "null": "author-4"}
+    assert classify_text(tools, roles) == tools
+    assert classify_text("owner/repo, dev, :OWNER", roles) == "author/author-2, author-3, :author"
+
+
+_HANDLE, _DOTTED, _SEGMENT, _RAW_HOST, _DENY = (
+    "x-handle",
+    "a.b-c",
+    "secretproj",
+    "git.corp-forge.io",
+    "someone-host",
+)
+_ID = 4242424242
+_ROLES = {_HANDLE: "author", _DOTTED: "author-2"}
+_RAW = [
+    {
+        "args": [],
+        "stderr": f"see https://{_RAW_HOST}/grp-x/repo-x",
+        "stdout": json.dumps(
+            [
+                {"user": {"login": _HANDLE, "id": _ID}},
+                {"user": {"username": _DOTTED}},
+                {"url": f"https://github.com/some-owner/{_SEGMENT}/pull/1"},
+            ]
+        ),
+    }
+]
+_TEXT_NEEDLES = (
+    (_HANDLE, "login"),
+    (_DOTTED, "login"),
+    ("github.com", "host"),
+    (_RAW_HOST, "host"),
+    (_SEGMENT, "segment"),
+    (str(_ID), "id"),
+    (_DENY, "deny-list"),
+)
+_CASES = (
+    lambda n: n,
+    str.upper,
+    str.title,
+    lambda n: "".join(c.upper() if i % 2 else c for i, c in enumerate(n)),
+)
+_HIT_NEIGHBOURS = (
+    "{n}",
+    "x.{n}",
+    "{n}.",
+    "@{n}",
+    "({n})",
+    "[{n}]",
+    '"{n}"',
+    "'{n}'",
+    "<{n}>",
+    "{n}:",
+    ":{n}",
+    "/{n}/",
+    "={n}&",
+    "#{n}",
+    "%2F{n}",
+    "{n}%2F",
+)
+_INSIDE_A_TOKEN = ("_{n}", "{n}_x")
+_CARRIERS = (
+    "https://{h}/{n}/repo-x",
+    "HTTPS://{H}/{n}/repo-x",
+    "ssh://{n}@{h}/grp-x/repo-x.git",
+    "{n}@{h}:grp-x/repo-x.git",
+    "git@{h}:{n}/repo-x.git",
+    "{n}@corp.io:8080/x",
+    "cc @{n}",
+    "@retry(3) @{n}",
+    "`@{n}`",
+    "@{n}.",
+    "@x.{n}",
+)
+_POSITIONS = ("prose", "diff", "text", "stderr", "stdin", "argv", "kwargs", "result", "source")
+_PIPELINE_POSITIONS = _POSITIONS[:7]
+
+
+def _sample_needles() -> recording.Needles:
+    """The needles of :data:`_RAW`: two logins, the forge and a raw host, segments, an id, a deny entry."""
+    return needles(_RAW, roles=_ROLES, denylist=(_DENY,))
+
+
+def _placed(text: str, position: str) -> dict[str, Any]:
+    """A recorded fixture holding ``text`` at ``position``, as the forge would have printed it."""
+    call: dict[str, Any] = {"args": ["api", "x"], "returncode": 0, "stdin": None, "stderr": ""}
+    call["stdout"] = json.dumps({"body": "ok"})
+    fixture: dict[str, Any] = {"source": "s", "kwargs": {}, "result": None, "calls": [call]}
+    if position in ("prose", "diff"):
+        call["stdout"] = json.dumps({"body" if position == "prose" else "diff": text})
+    elif position == "text":
+        call["stdout"] = text
+    elif position in ("stderr", "stdin"):
+        call[position] = text
+    elif position == "argv":
+        call["args"] = ["api", text]
+    elif position == "kwargs":
+        fixture["kwargs"] = {"k": text}
+    else:
+        fixture[position] = text
+    return fixture
+
+
+def _through_the_pipeline(fixture: dict[str, Any], found: recording.Needles) -> dict[str, Any]:
+    """``fixture`` as :func:`rec.record` writes it: redacted, classified, ids synthetic."""
+    calls = [dict(c) for c in fixture["calls"]]
+    for call in calls:
+        call["stdout"] = redact_stdout(call["stdout"])
+    known = {**found.mapping(), **_ROLES}
+    calls = rec.synthesize_user_ids(rec.classify_calls(calls, known), UserIdMap(), forge="github")
+    kwargs = recording.redact_urls_in_value(classify_logins(fixture["kwargs"], known))
+    return {**fixture, "calls": calls, "kwargs": kwargs}
+
+
+def _samples() -> list[tuple[str, str, str]]:
+    """``(text, needle, kind)`` of every case and neighbour, and of every carrier, of each text needle."""
+    out: list[tuple[str, str, str]] = []
+    for needle, kind in _TEXT_NEEDLES:
+        for case in _CASES:
+            out += [(n.format(n=case(needle)), needle, kind) for n in _HIT_NEIGHBOURS]
+        for carrier in _CARRIERS:
+            text = carrier.format(n=needle, h="github.com", H="GITHUB.COM")
+            out.append((text, needle, kind))
+    legacy = base64.b64encode(f"04:User{_ID}".encode()).decode()
+    out += [(legacy, str(_ID), "id"), (_new_node(_ID), str(_ID), "id")]
+    return out
+
+
+def test_residual_needles_are_seen_in_every_generated_form() -> None:
+    """I3, I2 (0.10): the oracle sees each needle in every case, neighbour, carrier and position; a token-inside one is no hit."""
+    found = _sample_needles()
+    assert {kind for kind, _v in found.entries} == set(recording.NEEDLE_KINDS)
+    missed: list[tuple[str, str]] = []
+    for text, _needle, _kind in _samples():
+        for position in _POSITIONS:
+            fixture = _placed(text, position)
+            if residual(fixture, found) is None:
+                missed.append((position, text))
+                continue
+            with pytest.raises(rec.UnclassifiedValueError):
+                rec.refuse_unclassified(fixture, rec.Denylist(), found)
+    assert missed == []
+    for needle, _kind in _TEXT_NEEDLES:
+        for neighbour in _INSIDE_A_TOKEN:
+            fixture = _placed(neighbour.format(n=needle), "prose")
+            assert residual(fixture, found) is None, neighbour
+    folded = needles([], roles={}, denylist=("strasse-host",))
+    assert residual(_placed("deployed on Straße-host", "prose"), folded) == (
+        "deny-list",
+        1,
+        "exchanges[0].stdout.body",
+    )
+    left = residual(_placed(f"merge into {_HANDLE}", "prose"), found)
+    assert left == ("login", 1, "exchanges[0].stdout.body")
+    with pytest.raises(rec.UnclassifiedValueError, match=r"^residual login 1 at exchanges\[0\]"):
+        rec.refuse_unclassified(_placed(f"merge into {_HANDLE}", "prose"), rec.Denylist(), found)
+
+
+ACCEPTED_REFUSALS = (
+    ("id", "a raw user id standing in free text: ids are replaced under an id key only"),
+    ("deny-list", "a deny-list entry: the list refuses, it never redacts"),
+    ("%2F{n}", "a needle right after a percent-escape: the replacer does not decode"),
+)
+"""Samples the pipeline knowingly leaves to the oracle (0.10): each is refused, never written."""
+
+
+def test_redactor_clears_every_generated_form() -> None:
+    """Quality (0.10): ``redact → classify → ids`` clears every sample but the accepted refusals."""
+    found = _sample_needles()
+    accepted_kinds = {k for k, _why in ACCEPTED_REFUSALS if not k.startswith("%")}
+    left: list[tuple[str, str]] = []
+    for text, needle, kind in _samples():
+        if kind in accepted_kinds or text.casefold().startswith(f"%2f{needle.casefold()}"):
+            continue
+        for position in _PIPELINE_POSITIONS:
+            written = _through_the_pipeline(_placed(text, position), found)
+            if residual(written, found) is not None:
+                left.append((position, text))
+    assert left == []
+
+
+def test_a_needle_the_oracle_cannot_judge_is_a_configuration_error() -> None:
+    """I3 (0.10): a needle under four characters, a class word or a placeholder is exit 2 by ordinal, never a skip."""
+    with pytest.raises(NeedleError, match=r"^needle login 1: too short$"):
+        needles([], roles={"abc": "author"})
+    with pytest.raises(NeedleError, match=r"^needle segment 1: a class word or placeholder$"):
+        needles(["see https://github.com/maintainer/repo-x/pull/1"], roles={})
+    with pytest.raises(NeedleError, match=r"^needle id 1: too short$"):
+        needles([json.dumps({"user": {"login": "author", "id": 7}})], roles={})
+    found = needles(["https://github.com/some-owner/repo-x"], roles={_HANDLE: "author"})
+    assert repr(found) == f"<needles: {len(found)}>"
+    assert found.mapping() == {
+        "some-owner": "org",
+        "repo-x": "project",
+        "api.github.com": "forge.example.com",
+        "github.com": "forge.example.com",
+        "gitlab.com": "forge.example.com",
+    }
+    assert recording.NEEDLE_MIN_LENGTH == rec.DENYLIST_MIN_LENGTH == 4
+
+
+def test_a_repository_object_name_and_path_are_placeholders_by_key() -> None:
+    """I4 (0.10): in a repository object ``name``/``path`` are ``project`` whatever their value; ``description`` goes."""
+    raw = {
+        "id": 67000001,
+        "name": "Secretproj",
+        "path": "secretproj-x",
+        "description": "the secret project",
+        "web_url": "https://gitlab.com/grp/secretproj",
+    }
+    out = redact_payload(raw)
+    assert out == {
+        "id": 67000001,
+        "name": "project",
+        "path": "project",
+        "web_url": "https://forge.example.com/org/project",
+    }
+    assert redact_payload(out) == out
+    projects = UserIdMap.for_projects()
+    remapped = projects.apply_projects([out, {"id": 5, "name": "unit"}], forge="gitlab")
+    assert remapped == [{**out, "id": 2001}, {"id": 5, "name": "unit"}]
+    assert project_id_values(remapped) == [2001] and declared_project_ids(remapped) == [2001]
+    merge_request = {
+        "name": "Secretproj",
+        "description": "body",
+        "web_url": "https://gitlab.com/g/r/-/merge_requests/7",
+    }
+    assert redact_payload(merge_request)["name"] == "Secretproj"
+    assert redact_payload(merge_request)["description"] == "body"
+    last = UserIdMap.for_projects(start=2999)
+    assert last.synthetic(5, forge="gitlab") == 2999
+    with pytest.raises(SyntheticIdsExhaustedError, match=r"^synthetic project id 3000 past 2999$"):
+        last.synthetic(6, forge="gitlab")
+
+
+def test_a_repository_id_is_synthetic_in_both_tools(tmp_path: Path) -> None:
+    """Q2 (0.10): the recorder and the offline transform both remap a repository id into ``2001..2999`` and declare it."""
+    project = {"id": 67000001, "name": "p", "web_url": "https://gitlab.com/grp/repo-x"}
+    calls = [{"args": [], "stdout": json.dumps(project), "stderr": ""}]
+    (recorded,) = rec.synthesize_user_ids(calls, UserIdMap(), forge="gitlab")
+    assert json.loads(recorded["stdout"])["id"] == 2001
+    assert declared_project_ids([recorded]) == [2001]
+    out = _corpus(
+        tmp_path, "c", {"gitlab/p.json": _fixture("gitlab", "branch_protection", [project])}
+    )
+    assert project_id_values(out["gitlab/p.json"]) == [2001]
+    assert out["gitlab/p.json"][SYNTHETIC_PROJECT_IDS_KEY] == [2001]
+
+
+def test_fixtures_declare_exactly_their_synthetic_project_ids() -> None:
+    """Q2 (0.10): every repository id of the corpus is synthetic, in ``2001..2999`` and declared."""
+    loaded = {p: json.loads(p.read_text()) for p in sorted(FIXTURES.rglob("*.json"))}
+    ids = [i for data in loaded.values() for i in project_id_values(data)]
+    assert ids and all(is_synthetic_number(i, 2001, 2999) for i in ids)
+    wrong = [
+        p.relative_to(FIXTURES).as_posix()
+        for p, data in loaded.items()
+        if data.get(SYNTHETIC_PROJECT_IDS_KEY, []) != declared_project_ids(data)
+    ]
+    assert wrong == []
+
+
+def test_a_remote_userinfo_is_never_kept() -> None:
+    """I5, I2 (0.10): one normaliser for URLs and scp remotes; no userinfo, query or foreign fragment survives."""
+    cases = {
+        "jdoe@gitlab.com:grp/r.git": "git@forge.example.com:org/project.git",
+        "JDOE@GITLAB.COM:GRP/R.GIT": "git@forge.example.com:org/project.git",
+        "jdoe@corp.io:8080/x": "git@forge.example.com:org/project",
+        "ssh://jdoe@gitlab.com/grp/r.git": "ssh://git@forge.example.com/org/project.git",
+        "https://jdoe:tok@gitlab.com/grp/r": "https://forge.example.com/org/project",
+        "git://gitlab.com/grp/r": "git://forge.example.com/org/project",
+        "HTTPS://GITHUB.COM/jdoe/r": "https://forge.example.com/org/project",
+        "https://github.com/jdoe/r?u=jdoe#jdoe": "https://forge.example.com/org/project",
+        "https://github.com/o/r/pull/4#issuecomment-5": (
+            "https://forge.example.com/org/project/pull/4#issuecomment-5"
+        ),
+    }
+    for raw, redacted in cases.items():
+        assert redact_urls_in_text(raw) == redacted, raw
+        assert unredacted_host(raw) and not unredacted_host(redacted)
+        assert "jdoe" not in redacted.casefold() and "tok" not in redacted
+    assert rec.generic_class(redact_urls_in_text("mail jdoe@corp.io:8080/x")) is None
+    assert redact_urls_in_text("host t@example.com:8080") == "host t@example.com:8080"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        rec.UnclassifiedValueError,
+        rec.DenylistError,
+        SyntheticIdsExhaustedError,
+        NeedleError,
+    ],
+)
+def test_every_refusal_class_of_the_recorder_exits_2_and_writes_nothing(
+    error: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """I6 a (0.10): each member of the recorder's except tuple is exit 2, one stderr line, nothing written."""
+
+    def _refuse(**_kw: object) -> Path:
+        raise error("refused at exchanges[0]")
+
+    monkeypatch.setattr(rec, "record", _refuse)
+    out = tmp_path / "out"
+    argv = ["--forge", "github", "--case", "c", "--method", "reviews", "--out", str(out)]
+    assert rec.main(argv) == 2
+    err = capsys.readouterr()
+    assert (err.out, err.err) == ("", "refused at exchanges[0]\n")
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        redact_fixtures.UnknownForgeError,
+        SyntheticIdsExhaustedError,
+        NeedleError,
+        redact_fixtures.ResidualValueError,
+        rec.DenylistError,
+    ],
+)
+def test_every_refusal_class_of_the_offline_transform_exits_2_and_writes_nothing(
+    error: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """I6 a (0.10): each member of the offline transform's except tuple is exit 2, one stderr line, empty stdout."""
+
+    def _refuse(_root: Path, **_kw: object) -> list[Path]:
+        raise error("refused at gitlab/a.json")
+
+    monkeypatch.setattr(redact_fixtures, "run", _refuse)
+    assert redact_fixtures.main([str(tmp_path)]) == 2
+    err = capsys.readouterr()
+    assert (err.out, err.err) == ("", "refused at gitlab/a.json\n")
+
+
+def test_offline_transform_writes_nothing_when_one_file_refuses(tmp_path: Path) -> None:
+    """I6 b, D4 (0.10): every file is computed and judged before any is written."""
+    first = _fixture(
+        "github",
+        "pull_request",
+        [{"author": {"login": "someone-x"}, "url": "https://github.com/o/r/pull/1"}],
+    )
+    seconds = (
+        ("unknown", "zzz/b.json", {"calls": []}, redact_fixtures.UnknownForgeError),
+        (
+            "residual",
+            "github/b.json",
+            _fixture(
+                "github",
+                "pull_request",
+                [{"author": {"login": "someone-y"}, "body": "by someone-y"}],
+            ),
+            redact_fixtures.ResidualValueError,
+        ),
+    )
+    for name, rel, second, error in seconds:
+        root = tmp_path / name
+        for path, data in (("github/a.json", first), (rel, second)):
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(json.dumps(data))
+        before = (root / "github" / "a.json").read_bytes()
+        with pytest.raises(error):
+            redact_fixtures.run(root, check=False, denylist=rec.Denylist())
+        assert (root / "github" / "a.json").read_bytes() == before
+    with pytest.raises(
+        redact_fixtures.ResidualValueError,
+        match=r"^residual login 1 at github/b\.json:exchanges\[0\]\.stdout\.body$",
+    ):
+        redact_fixtures.run(tmp_path / "residual", check=True, denylist=rec.Denylist())
+
+
+def test_mention_grammar_alternatives_each_have_a_witness() -> None:
+    """I6 c (0.10): each alternative of the mention finder has a non-standard-library witness."""
+    assert mentions({"body": "cc @kept-handle"}) == ["kept-handle"]
+    for witness in (
+        "@retry(3)",
+        "@x.y",
+        "`@spanned`",
+        "```\n@fenced\n```",
+        "@dash-",
+        "a@mail.example",
+    ):
+        assert mentions({"body": f"{witness} cc @kept-handle"}) == ["kept-handle"], witness
+    assert mentions({"body": "@dataclass"}) == []
+
+
+ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
+    "recording": frozenset(
+        {
+            "_BASE64_RE",
+            "_NEW_USER_NODE_RE",
+            "_SYNTHETIC_NODE_RE",
+            "_LEGACY_USER_NODE_RE",
+            "_CODE_SPAN_RE",
+            "RECORDED_SOURCE_RE",
+            "CLI_PLACEHOLDER_RE",
+            "CLASS_WORD_RE",
+            "NODE_ID_SHAPE_RE",
+        }
+    ),
+    "record_forge_fixture": frozenset(
+        {"HOME_PATH_RE", "IPV4_RE", "IPV4_VERSION_BEFORE_RE", "MAILBOX_RE", "URL_USERINFO_RE"}
+    ),
+    "redact_forge_fixtures": frozenset(),
+}
+"""Module patterns case-sensitive by nature: encodings, the placeholders the redaction writes, the tools' literals, and the gate's copied regexes."""
+
+
+def test_case_insensitive_patterns_are_flagged() -> None:
+    """I2 (0.10): every module-level recogniser of a scheme, host or login is ``re.I``; the exceptions are named."""
+    for module in (recording, rec, redact_fixtures):
+        name = module.__name__.rsplit(".", 1)[-1]
+        imported = {id(v) for v in vars(recording).values()} if module is not recording else set()
+        patterns = {
+            k: v
+            for k, v in vars(module).items()
+            if isinstance(v, re.Pattern) and id(v) not in imported
+        }
+        allowed = ALLOWED_CASE_SENSITIVE[name]
+        assert allowed <= set(patterns), name
+        blind = sorted(k for k, v in patterns.items() if k not in allowed and not v.flags & re.I)
+        assert blind == [], name
+
+
+def _run_script(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run ``argv`` in a fresh interpreter: no test process has configured the logging yet."""
+    env = {**os.environ, "XDG_CONFIG_HOME": str(cwd / "xdg")}
+    env.pop(rec.DENYLIST_ENV, None)
+    return subprocess.run(argv, capture_output=True, text=True, env=env, cwd=cwd, check=False)
+
+
+_DRIVER = """
+import importlib.util, json, sys
+from pathlib import Path
+from repoach.forge.github import GitHubForge
+from repoach.forge.runner import CommandResult
+spec = importlib.util.spec_from_file_location("record_forge_fixture", sys.argv[1])
+rec = importlib.util.module_from_spec(spec)
+sys.modules["record_forge_fixture"] = rec
+spec.loader.exec_module(rec)
+tmp = Path(sys.argv[2])
+def build(**_kw):
+    binary = tmp / "gh"
+    binary.write_text("")
+    forge = GitHubForge(cwd=tmp, gh_path=str(binary), bot_login="review-agent-x")
+    forge._spawn = lambda argv, *, input_data=None: CommandResult(
+        returncode=0, stdout=sys.argv[3], stderr="", argv=list(argv))
+    return forge
+rec.select_forge = build
+argv = ["--forge", "github", "--cwd", str(tmp), "--case", "c", "--method", "reviews",
+        "--args", "[7]", "--out", str(tmp / "out")]
+sys.exit(rec.main(argv))
+"""
+
+
+def test_scripts_print_one_line_and_log_to_stderr(tmp_path: Path) -> None:
+    """K8 (0.10): each script's stdout is its one result line, or empty on a refusal; logs go to stderr."""
+    driver = tmp_path / "driver.py"
+    driver.write_text(_DRIVER)
+    script = str(ROOT / "scripts" / "record_forge_fixture.py")
+    review = {"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": "ok"}
+    done = _run_script(
+        [sys.executable, str(driver), script, str(tmp_path), json.dumps([[review]])], tmp_path
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [str(tmp_path / "out" / "github" / "c.json")]
+    assert "recorder.author_unknown" in done.stderr
+    refused = {**review, "body": "log /home/someone-x/y"}
+    done = _run_script(
+        [sys.executable, str(driver), script, str(tmp_path), json.dumps([[refused]])], tmp_path
+    )
+    assert (done.returncode, done.stdout) == (2, "")
+    assert done.stderr.splitlines()[-1].startswith("generic class home_path at exchanges[")
+
+    corpus = tmp_path / "corpus"
+    (corpus / "github").mkdir(parents=True)
+    plain = _fixture("github", "diff", [])
+    plain["calls"] = [{**_exchange({}), "stdout": "not json"}]
+    (corpus / "github" / "a.json").write_text(json.dumps(plain))
+    offline = str(ROOT / "scripts" / "redact_forge_fixtures.py")
+    done = _run_script([sys.executable, offline, "--check", str(corpus)], tmp_path)
+    assert done.stdout.splitlines() == ["forge fixtures: 0 would change"]
+    assert "forge.recording.not_json" in done.stderr
+    (corpus / "zzz").mkdir()
+    (corpus / "zzz" / "b.json").write_text("{}")
+    done = _run_script([sys.executable, offline, str(corpus)], tmp_path)
+    assert (done.returncode, done.stdout) == (2, "")
+
+
+_LEAK_TEST = """
+import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("record_forge_fixture", {script!r})
+rec = importlib.util.module_from_spec(spec)
+sys.modules["record_forge_fixture"] = rec
+spec.loader.exec_module(rec)
+
+
+def _hits(denylist, corpus):
+    return [denylist.hit(line) for line in corpus.read_text().splitlines()]
+
+
+def test_leak():
+    denylist = rec.read_denylist(Path({config!r}))
+    found = rec.needles([], roles={{}}, denylist=denylist.needle_values())
+    assert len(found) and _hits(denylist, Path({corpus!r})) == []
+"""
+
+
+def test_denylist_entries_never_reach_a_local_or_a_repr(tmp_path: Path) -> None:
+    """K8 (0.10): a failing deny-list check under ``pytest -l`` names no entry; the reader returns an opaque value."""
+    marker = "leakmarker-" + "4711"
+    config = tmp_path / "config"
+    config.mkdir()
+    rec.denylist_file(config).write_text(f"{marker}\n")
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text(f"held {marker} here\n")
+    assert repr(rec.read_denylist(config)) == "<denylist: 1 entries>"
+    module = tmp_path / "test_leak.py"
+    script = str(ROOT / "scripts" / "record_forge_fixture.py")
+    module.write_text(_LEAK_TEST.format(script=script, config=str(config), corpus=str(corpus)))
+    done = _run_script(
+        child_pytest_argv(
+            "-l", "-p", "no:cacheprovider", "-q", str(module), basetemp=tmp_path / "child"
+        ),
+        tmp_path,
+    )
+    assert done.returncode == 1, done.stdout[-500:]
+    assert "test_leak" in done.stdout
+    assert marker not in done.stdout + done.stderr
