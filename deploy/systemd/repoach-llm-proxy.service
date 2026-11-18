@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Documents/work/repoach
+WorkingDirectory=@REPOACH_HOME@
 # SP-DEPLOY-SHELL-HARDENING: no ``EnvironmentFile=`` here.
 # Pydantic-settings reads ``.env`` and ``chains.env`` itself (with
 # proper inline-comment stripping). systemd's EnvironmentFile would
@@ -26,11 +26,11 @@ Environment=REPOACH_PROXY_HOST=127.0.0.1 REPOACH_PROXY_PORT=8084
 # fails with command-not-found. Backport of the 2026-07-19 ops fix
 # applied to the installed unit.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/Documents/work/repoach/.venv/bin/python -m repoach.llm_proxy
+ExecStart=@REPOACH_HOME@/.venv/bin/python -m repoach.llm_proxy
 Restart=on-failure
 RestartSec=10
-StandardOutput=append:%h/Documents/work/repoach/logs/llm_proxy.log
-StandardError=append:%h/Documents/work/repoach/logs/llm_proxy.log
+StandardOutput=append:@REPOACH_HOME@/logs/llm_proxy.log
+StandardError=append:@REPOACH_HOME@/logs/llm_proxy.log
 TimeoutStartSec=60
 
 [Install]
