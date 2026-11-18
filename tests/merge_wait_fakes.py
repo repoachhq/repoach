@@ -32,6 +32,8 @@ from repoach.forge.runner import CommandResult
 from repoach.review.findings import record_review_integrity
 from tests.forge_fakes import threads_page
 
+MAINTAINER = "maintainer"
+
 HEAD_259 = "ba9585eb07227b45168e907bd37b727cbafa1d1b"
 HEAD_256 = "c19344e43bb3b2ec5cf091eae287877a121ed2a7"
 HEAD_247 = "efb460f46b3d634966d0f6f6169aab60a288b76e"
@@ -246,7 +248,7 @@ class MergeWaitFixtureForge:
                 entry.update(status="completed", conclusion=conclusion, completedAt=iso(self.now))
         return {
             "event_name": "workflow_run",
-            "actor": "jwfaye",
+            "actor": MAINTAINER,
             "repository": REPOSITORY,
             "event": {
                 "action": "completed",
@@ -257,7 +259,7 @@ class MergeWaitFixtureForge:
                     "head_sha": target.head_sha,
                     "head_branch": target.head_ref,
                     "head_repository": {"full_name": REPOSITORY},
-                    "actor": {"login": "jwfaye"},
+                    "actor": {"login": MAINTAINER},
                 },
             },
         }
@@ -294,7 +296,7 @@ class MergeWaitFixtureForge:
             "body": "",
             "headRefName": pr.head_ref,
             "baseRefName": pr.base,
-            "author": {"login": "jwfaye"},
+            "author": {"login": MAINTAINER},
             "state": pr.state,
             "url": f"https://github.com/{REPOSITORY}/pull/{pr.number}",
             "headRefOid": pr.head_sha,

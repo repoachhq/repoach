@@ -9,6 +9,7 @@ instead of editing hardcoded literals across four files.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -69,7 +70,17 @@ def test_no_hardcoded_self_hosted_or_actor_literal_remains() -> None:
     for path in _workflow_files():
         text = path.read_text(encoding="utf-8")
         assert "runs-on: self-hosted" not in text
-        assert "fromJSON('[\"jwfaye\"]')" not in text
+        assert "fromJSON('[\"" not in text
+
+
+def test_actor_allowlist_has_no_login_fallback() -> None:
+    fallbacks = 0
+    for path in _workflow_files():
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"fromJSON\(vars\.REPOACH_ALLOWED_ACTORS \|\| ([^)]*)\)", text):
+            assert match.group(1) == "'[]'", f"{path.name}: {match.group(1)}"
+            fallbacks += 1
+    assert fallbacks >= 1
 
 
 def test_actor_gates_source_the_allowlist_variable() -> None:

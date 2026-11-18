@@ -15,7 +15,7 @@ the maintainer's machine. Two controls contain that trust:
 
 1. **Actor allowlist.** Every job that runs PR code — the `ci.yml` `test`
    matrix and the `auto-review.yml` review / `auto_fix` jobs — is gated by
-   `contains(fromJSON('["jwfaye"]'), github.actor)` on `pull_request`
+   `contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)` on `pull_request`
    events. A PR from any other actor does not execute code on the runner.
    (`push` / `workflow_dispatch` on protected branches are already trusted.)
 2. **Environment-scoped secrets.** Provider keys live in the `bots`
@@ -44,14 +44,14 @@ is immutable.
 ```yaml
 if: >-
   github.event_name != 'pull_request'
-  || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+  || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
 ```
 
 so an untrusted actor cannot run PR code on the self-hosted runner through CI,
 matching `auto-review.yml`. The allowlist is sourced from the
 `REPOACH_ALLOWED_ACTORS` repository variable (see *Fork portability* below);
-the `'["jwfaye"]'` literal is only the maintainer-repo default that applies
-when the variable is unset. `tests/unit/test_ci_portability.py` locks the
+the `'[]'` fallback is empty, so the workflows run no pull-request job
+until it is set. `tests/unit/test_ci_portability.py` locks the
 wiring so no workflow regresses to a hardcoded actor or runner.
 
 ## Fork portability — `REPOACH_RUNNER` and `REPOACH_ALLOWED_ACTORS`
@@ -59,14 +59,15 @@ wiring so no workflow regresses to a hardcoded actor or runner.
 `.github/workflows/*` is bot-forbidden, so its trust boundary must be
 reconfigurable without editing the files. Two GitHub **repository variables**
 (Settings → Secrets and variables → Actions → Variables) carry the
-deployment-specific values; both fall back to the maintainer defaults so this
-repo needs no configuration:
+deployment-specific values. `REPOACH_RUNNER` falls back to `self-hosted`;
+`REPOACH_ALLOWED_ACTORS` is required: the workflows run no pull-request job
+until it is set:
 
 | Variable | Default when unset | Purpose |
 | --- | --- | --- |
 | `REPOACH_RUNNER` | `self-hosted` | Runner label every job targets. A fork on GitHub-hosted runners sets `ubuntu-latest`. |
 | `REPOACH_REVIEW_RUNNER` | `REPOACH_RUNNER` | Runner label for the `review` and `auto_merge` jobs of `auto-review.yml` only, so reviews do not queue behind CI. `auto_fix` stays on `REPOACH_RUNNER`: it executes PR code. The review runner receives the `bots` provider keys and a `contents: write` token, so register it with only its own label (`--no-default-labels`) and never let it serve a job that runs PR code. |
-| `REPOACH_ALLOWED_ACTORS` | `["jwfaye"]` | JSON array of logins allowed to run PR code on the runner. A fork sets its own maintainers, e.g. `["alice","bob"]`. |
+| `REPOACH_ALLOWED_ACTORS` | `[]` (required: the workflows run no pull-request job until it is set) | JSON array of logins allowed to run PR code on the runner. Each repository sets its own maintainers, e.g. `["alice","bob"]`. |
 
 A forker's entire trust setup is therefore two variables in the GitHub UI — no
 workflow edits, which keeps the bot-forbidden files pristine. Set both together

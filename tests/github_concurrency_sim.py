@@ -40,6 +40,8 @@ _TOKEN_RE = re.compile(
 )
 _EXPR_RE = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 _STATUS_FUNCTIONS = ("success(", "failure(", "cancelled(", "always(")
+MAINTAINER = "maintainer"
+DEFAULT_VARIABLES: Mapping[str, str] = {"REPOACH_ALLOWED_ACTORS": json.dumps([MAINTAINER])}
 
 
 class ExpressionError(ValueError):
@@ -95,14 +97,14 @@ class Context:
 
     Attributes:
         github: The ``github`` context (``event_name``, ``actor``, ``event``…).
-        vars: Repository variables.
+        vars: Repository variables, ``DEFAULT_VARIABLES`` by default.
         needs: ``{job_id: {"result": str, "outputs": {...}}}``.
         inputs: Dispatch inputs.
         run_cancelled: Value of ``cancelled()``.
     """
 
     github: Mapping[str, Any]
-    vars: Mapping[str, Any] = field(default_factory=dict)
+    vars: Mapping[str, Any] = field(default_factory=lambda: dict(DEFAULT_VARIABLES))
     needs: Mapping[str, Any] = field(default_factory=dict)
     inputs: Mapping[str, Any] = field(default_factory=dict)
     run_cancelled: bool = False
@@ -314,7 +316,11 @@ class _Group:
 
 
 class Simulator:
-    """Replay events against one workflow under GitHub's concurrency rules."""
+    """Replay events against one workflow under GitHub's concurrency rules.
+
+    ``variables`` defaults to ``DEFAULT_VARIABLES``, the allow-list the live
+    repository sets, since the workflows run no pull-request job without it.
+    """
 
     def __init__(
         self,
@@ -329,7 +335,7 @@ class Simulator:
         self.jobs: Mapping[str, Mapping[str, Any]] = workflow.get("jobs") or {}
         self.durations = dict(durations or {})
         self.outputs = {k: dict(v) for k, v in (outputs or {}).items()}
-        self.variables = dict(variables or {})
+        self.variables = dict(DEFAULT_VARIABLES if variables is None else variables)
         self.repository = repository
         self.groups: dict[str, _Group] = {}
         self.runs: list[_Run] = []
@@ -527,7 +533,9 @@ def _needs_of(job: Mapping[str, Any]) -> list[str]:
     return [needs] if isinstance(needs, str) else list(needs)
 
 
-def review_event(at: float, pr: int, *, actor: str = "jwfaye", user_type: str = "User") -> SimEvent:
+def review_event(
+    at: float, pr: int, *, actor: str = MAINTAINER, user_type: str = "User"
+) -> SimEvent:
     """A ``pull_request_review`` event on ``pr`` (the review author is ``user_type``)."""
     return SimEvent(
         at=at,
@@ -545,7 +553,7 @@ def comment_event(
     at: float,
     pr: int,
     *,
-    actor: str = "jwfaye",
+    actor: str = MAINTAINER,
     author: str = "github-actions[bot]",
     author_type: str = "Bot",
     action: str = "edited",
@@ -568,7 +576,7 @@ def review_comment_event(
     pr: int,
     body: str,
     *,
-    actor: str = "jwfaye",
+    actor: str = MAINTAINER,
     author_type: str = "User",
 ) -> SimEvent:
     """A ``pull_request_review_comment`` event on ``pr``: a thread reply whose text is ``body``."""
@@ -585,7 +593,7 @@ def review_comment_event(
 
 
 def pull_request_event(
-    at: float, pr: int, *, action: str = "synchronize", actor: str = "jwfaye"
+    at: float, pr: int, *, action: str = "synchronize", actor: str = MAINTAINER
 ) -> SimEvent:
     """A ``pull_request`` event on ``pr`` (a push is ``synchronize``)."""
     return SimEvent(
@@ -613,6 +621,8 @@ def dispatch_event(
 
 
 __all__ = [
+    "DEFAULT_VARIABLES",
+    "MAINTAINER",
     "Context",
     "ExpressionError",
     "JobRecord",

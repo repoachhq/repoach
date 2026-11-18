@@ -20,6 +20,7 @@ import yaml
 from repoach.review.merge_wait import COALESCE_WINDOW_S
 from repoach.review.review_retry import REVIEW_RETRY_DELAY_S
 from tests.github_concurrency_sim import (
+    MAINTAINER,
     Context,
     JobRecord,
     SimEvent,
@@ -108,14 +109,14 @@ def test_a_reply_run_concludes_success_and_merge_on_ci_admits_it() -> None:
     completed = Context(
         github={
             "event_name": "workflow_run",
-            "actor": "jwfaye",
+            "actor": MAINTAINER,
             "repository": REPOSITORY,
             "event": {
                 "workflow_run": {
                     "conclusion": "success",
                     "event": "pull_request_review",
                     "head_repository": {"full_name": REPOSITORY},
-                    "actor": {"login": "jwfaye"},
+                    "actor": {"login": MAINTAINER},
                 }
             },
         }
@@ -141,7 +142,7 @@ def test_no_review_event_reaches_the_review_job() -> None:
 
 
 def _retry_ctx(
-    *, review_result: str, cause: str, retry_of: str = "", actor: str = "jwfaye"
+    *, review_result: str, cause: str, retry_of: str = "", actor: str = MAINTAINER
 ) -> Context:
     event_name = "workflow_dispatch" if retry_of else "pull_request"
     payload: dict[str, Any] = (

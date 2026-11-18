@@ -79,7 +79,7 @@ jobs:
       && (github.event_name != 'issue_comment'
           || github.event.issue.pull_request != null)
       && github.event.comment.user.type != 'Bot'
-      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -104,7 +104,7 @@ jobs:
       github.event_name == 'pull_request_review'
       && github.event.pull_request.draft != true
       && github.event.review.user.type != 'Bot'
-      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -150,7 +150,7 @@ jobs:
           || github.event.issue.pull_request != null)
       && (github.event_name != 'issue_comment'
           || github.event.comment.user.type != 'Bot')
-      && (contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && (contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
           || (github.event_name == 'workflow_dispatch'
               && github.actor == 'github-actions[bot]'
               && github.event.inputs.retry_of))
@@ -653,7 +653,7 @@ jobs:
       && ((needs.review.result == 'failure'
            && needs.review.outputs.incomplete_cause == 'transport'
            && !github.event.inputs.retry_of
-           && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor))
+           && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor))
           || (github.event_name == 'workflow_dispatch'
               && github.actor == 'github-actions[bot]'
               && github.event.inputs.retry_of
@@ -719,7 +719,7 @@ jobs:
     # defence in depth against a future trigger that bypasses review.
     if: >-
       needs.review.outputs.verdict != 'ERROR'
-      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
     # SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF G4: the merge group is
     # shared with merge-on-ci.yml and never cancels a running job.
     # GitHub keeps one pending job per group, so a newer pending job may
@@ -1293,7 +1293,7 @@ jobs:
     # so a retry run never pushes.
     if: >-
       !failure() && !cancelled()
-      && (contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      && (contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
           || (github.event_name == 'workflow_dispatch'
               && github.actor == 'github-actions[bot]'
               && github.event.inputs.retry_of))
