@@ -161,6 +161,8 @@ def _exchanges(node: object) -> object:
         out = {k: _exchanges(v) for k, v in node.items()}
         if "returncode" in node and isinstance(node.get("stdout"), str):
             out["stdout"] = redact_output(node["stdout"])
+            if isinstance(node.get("args"), list):
+                out["args"] = redact_urls_in_value(node["args"])
             for key in ("stderr", "stdin"):
                 if isinstance(node.get(key), str):
                     out[key] = redact_urls_in_text(node[key])

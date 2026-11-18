@@ -209,16 +209,40 @@ def token_pattern(word: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![{TOKEN_CHARS}]){re.escape(word)}(?![{TOKEN_CHARS}])", re.I)
 
 
-CLI_PLACEHOLDER_RE = re.compile(
-    rf"(?<![{TOKEN_CHARS}])"
-    r"(?::(?:owner|repo|id)|/dev/null|SP-[A-Z0-9]+(?:-[A-Z0-9]+)*|"
-    + "|".join(
+_SPEC_FILE_ID_RE = re.compile(r"_(SP-[A-Z0-9]+(?:-[A-Z0-9]+)*)_")
+"""Spec identifier segment of a ``docs/specs/<date>_<SP-ID>_<slug>.md`` file name (0.12, D3)."""
+
+
+def _repo_spec_ids() -> frozenset[str]:
+    """Every ``SP-<ID>`` of a specification under ``docs/specs/`` in this checkout."""
+    specs = Path(__file__).resolve().parents[3] / "docs" / "specs"
+    if not specs.is_dir():
+        return frozenset()
+    found: set[str] = set()
+    for path in specs.glob("*.md"):
+        match = _SPEC_FILE_ID_RE.search(path.name)
+        if match:
+            found.add(match.group(1))
+    return frozenset(found)
+
+
+SPEC_IDS: frozenset[str] = _repo_spec_ids()
+"""The project's actual specification identifiers from ``docs/specs/`` (0.12, D3)."""
+
+_LITERAL_PARTS: tuple[str, ...] = (
+    r":(?:owner|repo|id)",
+    r"/dev/null",
+    *(re.escape(sid) for sid in sorted(SPEC_IDS, key=len, reverse=True)),
+    *(
         re.escape(login.removesuffix("[bot]")) + r"(?:\[bot\])?"
         for login in sorted(NON_PERSON_LOGINS, key=len, reverse=True)
-    )
-    + rf")(?![{TOKEN_CHARS}-])"
+    ),
 )
-"""The tools' and the project's own literals (0.10, 0.11): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``SP-<ID>``.
+
+CLI_PLACEHOLDER_RE = re.compile(
+    rf"(?<![{TOKEN_CHARS}])(?:" + "|".join(_LITERAL_PARTS) + rf")(?![{TOKEN_CHARS}-])"
+)
+"""The tools' and the project's own literals (0.10, 0.11, 0.12): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, :data:`SPEC_IDS`.
 
 The :data:`NON_PERSON_LOGINS`, with or without their ``[bot]`` suffix,
 are literals too (0.11): kept as they are, so a needle that is one of
@@ -228,14 +252,13 @@ judged inside ``github-actions[bot]``, nor replaced there.
 ``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
 written by the forge code and expanded by the CLI; ``--- /dev/null`` is
 how git names the missing side of an added or deleted file; a spec
-identifier (``SP-OWNER-SETTLES-A-FINDING``) is this project's name for a
-specification, uppercase words joined by ``-``. None carries a recorded
-value. The replacer leaves them alone and the closure oracle does not
-judge them, so a login ``owner`` cannot turn the forge's own argv into
-one the replay does not make, a login ``dev`` a diff header, nor, with
-``-`` a delimiter since 0.11, a spec identifier's word a leak.
-Case-sensitive: the tools write the lowercase forms only, and a spec
-identifier is uppercase.
+identifier in :data:`SPEC_IDS` (``SP-OWNER-SETTLES-A-FINDING``) is an
+actual specification file under ``docs/specs/`` (0.12, D3: bounded to
+real spec ids so an invented ``SP-<login>`` or ``SP-<id>`` never hides a
+real value). None carries a recorded value. The replacer leaves them
+alone and the closure oracle does not judge them, except for the
+deny-list, which judges the text with literals kept. Case-sensitive: the
+tools write the lowercase forms only, and a spec identifier is uppercase.
 """
 
 _MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|\()"
@@ -445,46 +468,52 @@ def path_identity(segments: list[str]) -> PathIdentity:
     The one reading of a forge path: :func:`redact_url` writes
     :attr:`PathIdentity.segments`, and :func:`needles` takes the raw
     namespace and repository as segment needles (0.10), so the two cannot
-    disagree on which segment named someone.
+    disagree on which segment named someone. Empty segments from double
+    slashes (``org//repo``, ``repos//o/r``, ``users//u``) are collapsed
+    so they never shift or leak a real segment (0.12, D4); a trailing
+    slash is preserved.
     """
     core = [s for s in segments if s]
     if not core:
         return PathIdentity(segments)
-    if segments[:3] == ["api", "v4", "projects"] and len(segments) > 3:
-        parts = unquote(segments[3]).split("/")
+    trailing = [""] if segments[-1] == "" else []
+    if core[:3] == ["api", "v4", "projects"] and len(core) > 3:
+        parts = [p for p in unquote(core[3]).split("/") if p]
         if len(parts) > 1:
             placeholder = f"{PLACEHOLDER_NAMESPACE}/{PLACEHOLDER_PROJECT}"
             return PathIdentity(
-                [*segments[:3], quote(placeholder, safe=""), *segments[4:]],
+                [*core[:3], quote(placeholder, safe=""), *core[4:], *trailing],
                 tuple(parts[:-1]),
                 _bare(parts[-1]),
             )
-        return PathIdentity(segments)
-    if segments[0] == "repos" and len(core) >= 3:
+        return PathIdentity([*core, *trailing])
+    if core[0] == "repos" and len(core) >= 3:
         return PathIdentity(
-            ["repos", PLACEHOLDER_NAMESPACE, _project(segments[2]), *segments[3:]],
-            (segments[1],),
-            _bare(segments[2]),
+            ["repos", PLACEHOLDER_NAMESPACE, _project(core[2]), *core[3:], *trailing],
+            (core[1],),
+            _bare(core[2]),
         )
-    if segments[0] in ("repos", "users", "orgs", "apps") and len(core) >= 2:
-        return PathIdentity([segments[0], PLACEHOLDER_NAMESPACE, *segments[2:]], (segments[1],))
-    if "-" in segments:
-        dash = segments.index("-")
+    if core[0] in ("repos", "users", "orgs", "apps") and len(core) >= 2:
+        return PathIdentity(
+            [core[0], PLACEHOLDER_NAMESPACE, *core[2:], *trailing],
+            (core[1],),
+        )
+    if "-" in core:
+        dash = core.index("-")
         if dash >= 2:
             return PathIdentity(
-                [PLACEHOLDER_NAMESPACE, _project(segments[dash - 1]), *segments[dash:]],
-                tuple(s for s in segments[: dash - 1] if s),
-                _bare(segments[dash - 1]),
+                [PLACEHOLDER_NAMESPACE, _project(core[dash - 1]), *core[dash:], *trailing],
+                tuple(core[: dash - 1]),
+                _bare(core[dash - 1]),
             )
-        return PathIdentity(segments)
-    if len(core) < 3 or segments[2] in _GITHUB_ROUTES:
-        rest = segments[1:]
+        return PathIdentity([*core, *trailing])
+    if len(core) < 3 or core[2] in _GITHUB_ROUTES:
+        rest = core[1:]
         repository = None
-        if rest and rest[0]:
+        if rest:
             repository = _bare(rest[0])
             rest = [_project(rest[0]), *rest[1:]]
-        return PathIdentity([PLACEHOLDER_NAMESPACE, *rest], (segments[0],), repository)
-    trailing = [""] if segments[-1] == "" else []
+        return PathIdentity([PLACEHOLDER_NAMESPACE, *rest, *trailing], (core[0],), repository)
     return PathIdentity(
         [PLACEHOLDER_NAMESPACE, _project(core[-1]), *trailing],
         tuple(core[:-1]),
@@ -499,13 +528,12 @@ def _namespaced(segments: list[str]) -> list[str]:
 
 def _repository_root(path: str) -> str | None:
     """The repository name of a path that names a repository and nothing under it, else ``None``."""
-    segments = path.strip("/").split("/")
-    core = [s for s in segments if s]
-    if len(core) < 2 or len(core) != len(segments) or "-" in segments:
+    core = [s for s in path.strip("/").split("/") if s]
+    if len(core) < 2 or "-" in core:
         return None
-    if segments[0] in ("api", "repos", "users", "orgs", "apps"):
+    if core[0] in ("api", "repos", "users", "orgs", "apps"):
         return None
-    if len(segments) > 2 and segments[2] in _GITHUB_ROUTES:
+    if len(core) > 2 and core[2] in _GITHUB_ROUTES:
         return None
     return _bare(core[-1])
 
@@ -550,15 +578,28 @@ def _kept_host(host: str) -> bool:
     return bool(_EXAMPLE_HOST_RE.search(host)) and host.casefold() != PLACEHOLDER_HOST
 
 
+_NOREPLY_MAILBOX_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+\[\]-])(?P<local>[A-Za-z0-9._%+\[\]-]+)@"
+    r"(?P<host>(?:users\.)?noreply\.(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b",
+    re.I,
+)
+"""A forge noreply mailbox (GitHub/GitLab ``@users.noreply.<host>`` or ``@noreply.<host>``, 0.12 D6)."""
+
+
 def redact_urls_in_text(text: str) -> str:
-    """Redact every URL and scp-style remote of ``text`` not on a kept host (:func:`_kept_host`).
+    """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
     A URL goes through :func:`redact_url`. An scp remote
     ``<user>@<host>:<ns>/<repo>`` is normalised through it too (0.10): read
     as ``ssh://<user>@<host>/<ns>/<repo>``, redacted, and written back as
     ``git@forge.example.com:org/project``, its ``.git`` suffix kept and its
     user never. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a
-    hand-written one gets the placeholder path too.
+    hand-written one gets the placeholder path too. A forge noreply mailbox
+    (``<id>+<login>@users.noreply.github.com``,
+    ``<id>-<login>@users.noreply.gitlab.com``, 0.12 D6) has its local part
+    and host redacted by class to
+    ``<class>@users.noreply.forge.example.com``, so it neither leaks a
+    login or user id nor triggers a generic mailbox refusal.
     """
 
     def _one(match: re.Match[str]) -> str:
@@ -575,7 +616,17 @@ def redact_urls_in_text(text: str) -> str:
         url = redact_url(f"ssh://{match.group('user')}@{match.group('host')}/{match.group('path')}")
         return url.removeprefix("ssh://").replace("/", ":", 1)
 
-    return _SCP_IN_TEXT_RE.sub(_scp, _URL_IN_TEXT_RE.sub(_one, text))
+    def _noreply(match: re.Match[str]) -> str:
+        host = match.group("host").casefold()
+        if _kept_host(host) and not host.endswith(f".{PLACEHOLDER_HOST}"):
+            return match.group(0)
+        local = match.group("local").casefold()
+        role = "bot" if local == "bot" or local.endswith("[bot]") else "author"
+        return f"{role}@users.noreply.{PLACEHOLDER_HOST}"
+
+    return _NOREPLY_MAILBOX_RE.sub(
+        _noreply, _SCP_IN_TEXT_RE.sub(_scp, _URL_IN_TEXT_RE.sub(_one, text))
+    )
 
 
 def unredacted_host(text: str) -> bool:
@@ -1173,51 +1224,63 @@ def scanned_strings(fixture: dict[str, Any]) -> list[tuple[str, str]]:
     return found
 
 
-_NODE_IN_TEXT_RE = re.compile(r"U_[A-Za-z0-9_-]{2,}|[A-Za-z0-9+/]{8,}={0,2}")
-"""A run of text that may hold a GitHub user node id: ``U_`` and base64url, or standard base64 (0.11, R4)."""
+_NEW_NODE_IN_TEXT_RE = re.compile(r"(?=(U_[A-Za-z0-9_-]{2,}))")
+"""A ``U_`` user node id candidate anywhere in text, scanned independently of base64 runs (0.12, D2)."""
+
+_LEGACY_NODE_IN_TEXT_RE = re.compile(r"(?=(MDQ6VXNl[A-Za-z0-9+/]*={0,2}))")
+"""A legacy ``04:User<n>`` base64 node id prefix anywhere in text or a URL/branch run (0.12, D2)."""
+
+_LEGACY_USER_NODE_PREFIX_RE = re.compile(r"^04:User([0-9]+)")
+"""The ``04:User<n>`` prefix of a decoded legacy node id run, stopping before any trailing suffix."""
 
 _NODE_SUFFIX_MAX = 16
-"""The longest current-format node id suffix tried: MessagePack ``[0, <uint64>]`` is 12 bytes, 16 characters."""
+"""The longest current-format node id suffix tried: MessagePack ``[0, <uint64>]`` is 11 bytes, 15 characters."""
+
+_LEGACY_NODE_MAX = 40
+"""The longest legacy node id base64 prefix decoded: ``04:User`` plus 20 uint64 digits is 36 characters."""
 
 
-def _node_candidates(run: str) -> list[str]:
-    """The node ids a run of text may hold: every prefix of a ``U_`` run, every aligned tail of a base64 run.
-
-    A run is read greedily, so a node id followed by ``-patch-1`` or
-    preceded by ``x`` is inside it; the candidates cut it back out.
-    """
-    if run.startswith("U_"):
-        suffix = run[2:]
-        if suffix.isdigit():
-            return [run]
-        return [f"U_{suffix[:k]}" for k in range(2, min(len(suffix), _NODE_SUFFIX_MAX) + 1)]
-    out: list[str] = []
-    for start in range(4):
-        tail = run[start:]
-        body = tail.rstrip("=")
-        for cand in (tail, body[: len(body) - len(body) % 4]):
-            if len(cand) >= 8 and cand not in out:
-                out.append(cand)
-    return out
+def _legacy_node_number(run: str) -> int | None:
+    """The account number of a legacy ``MDQ6VXNl…`` run (possibly suffixed), or ``None``."""
+    body = run[:_LEGACY_NODE_MAX].rstrip("=")
+    if len(body) < 8:
+        return None
+    if len(body) % 4 == 1:
+        padded = body[: len(body) - len(body) % 4]
+    else:
+        padded = body + "=" * (-len(body) % 4)
+    decoded = base64.b64decode(padded).decode("ascii", errors="replace")
+    match = _LEGACY_USER_NODE_PREFIX_RE.match(decoded)
+    return int(match.group(1)) if match else None
 
 
 def embedded_id_numbers(text: str) -> list[str]:
-    """The account number of every user node id ``text`` holds, wherever it stands (0.11, R4).
+    """The account number of every user node id ``text`` holds, wherever it stands (0.11 R4, 0.12 D2).
 
-    ``id=<node>``, ``?node=<node>`` and ``see <node> here`` name an
-    account as much as ``<node>`` alone: every node-id-shaped run is
-    decoded (:func:`user_id_key`), on the text's own case, since base64
-    is case-sensitive. A run of digits is the number itself and is not
-    repeated.
+    Scans current-format ``U_…`` runs independently of base64 runs (so a
+    preceding URL path or alpha prefix never eats the ``U``) and finds
+    the legacy ``MDQ6VXNl`` prefix anywhere in a run (URL paths, branch
+    names, prefixed or suffixed strings), on the text's own case, since
+    base64 is case-sensitive. A run of digits is the number itself and is
+    not repeated.
     """
     numbers: list[str] = []
-    for m in _NODE_IN_TEXT_RE.finditer(text):
-        for cand in _node_candidates(m.group(0)):
-            if cand.isdigit():
-                continue
+    for m in _NEW_NODE_IN_TEXT_RE.finditer(text):
+        run = m.group(1)
+        suffix = run[2:]
+        candidates = (
+            [run]
+            if suffix.isdigit()
+            else [f"U_{suffix[:k]}" for k in range(2, min(len(suffix), _NODE_SUFFIX_MAX) + 1)]
+        )
+        for cand in candidates:
             number = user_id_key(cand)
             if isinstance(number, int) and str(number) not in numbers:
                 numbers.append(str(number))
+    for m in _LEGACY_NODE_IN_TEXT_RE.finditer(text):
+        number = _legacy_node_number(m.group(1))
+        if isinstance(number, int) and str(number) not in numbers:
+            numbers.append(str(number))
     return numbers
 
 
@@ -1362,18 +1425,87 @@ class Needles:
 
 
 _HOST_TOKEN_RE = re.compile(
-    r"(?<![A-Za-z0-9.-])"
+    r"(?<![A-Za-z0-9_.-])"
     r"((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9])"
     r"(?![A-Za-z0-9-])",
     re.I,
 )
 """A dotted name ending in a letter-led label: a host candidate, judged by its context (:func:`locations`)."""
 
-_AFTER_HOST_RE = re.compile(r"(?::[0-9]{1,5})?([/:])([^\s\"'<>()\[\]{}\\,?#|]*)", re.I)
-"""What may follow a host: a port, then ``/`` or an scp ``:``, then a path up to a delimiter, a query or a fragment."""
+_AFTER_HOST_RE = re.compile(
+    r"\.?(?:(?P<port>:[0-9]{1,5})?/(?P<slash>[^\s\"'<>()\[\]{}\\,?#|]*)"
+    r"|:(?P<scp>[^\s\"'<>()\[\]{}\\,?#|]*/[^\s\"'<>()\[\]{}\\,?#|]*))",
+    re.I,
+)
+"""What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>``."""
 
 _USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
+
+_NON_HOST_FIRST_LABELS: frozenset[str] = frozenset({"self", "cls"})
+"""Leading code receivers (``self.ms/1000``, ``cls.x/y``) never read as schemeless hosts (0.12, D6)."""
+
+_NON_HOST_TLDS: frozenset[str] = frozenset(
+    {
+        "adoc",
+        "cfg",
+        "cpp",
+        "cs",
+        "css",
+        "csv",
+        "env",
+        "erl",
+        "ex",
+        "exs",
+        "fs",
+        "go",
+        "gz",
+        "hpp",
+        "hs",
+        "html",
+        "ini",
+        "java",
+        "jl",
+        "jpg",
+        "js",
+        "json",
+        "kt",
+        "lock",
+        "log",
+        "lua",
+        "md",
+        "ml",
+        "ms",
+        "nim",
+        "pdf",
+        "php",
+        "pl",
+        "png",
+        "py",
+        "rb",
+        "rs",
+        "rst",
+        "sh",
+        "so",
+        "sql",
+        "sv",
+        "svg",
+        "swift",
+        "tar",
+        "tex",
+        "toml",
+        "ts",
+        "txt",
+        "vhd",
+        "whl",
+        "xml",
+        "yaml",
+        "yml",
+        "zig",
+        "zip",
+    }
+)
+"""File extensions and code attribute names never read as a schemeless host's TLD (0.12, D6)."""
 
 
 @dataclass(frozen=True)
@@ -1390,15 +1522,18 @@ class Location:
 
 
 def locations(text: str) -> list[Location]:
-    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11).
+    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12).
 
     A dotted name is a host when its context says so: ``//`` or
     ``<user>@`` before it (``https://h``, ``//h``, ``ssh://u@h``,
     ``u@h:g/r``), or a path after it (``h/g/r``, ``h:g/r``,
     ``h:8080/x``). A name right after a single ``/`` is a file path's
-    (``src/setup.py``), and one with nothing around it (``setup.py``) is
-    not read as a host. The scheme is not required, so a schemeless
-    ``gitlab.corp.io/grp/repo`` in prose is found as surely as a URL.
+    (``src/setup.py``), one with nothing around it (``setup.py``) is not
+    a host, and an un-led code expression (``self.ms/1000``,
+    ``README.md/foo``, ``foo.py:80/bar``) is rejected by receiver,
+    file-extension TLD and path shape (0.12, D6). The scheme is not
+    required, so a schemeless ``gitlab.corp.io/grp/repo`` in prose is
+    found as surely as a URL.
     """
     found: list[Location] = []
     for m in _HOST_TOKEN_RE.finditer(text):
@@ -1406,12 +1541,23 @@ def locations(text: str) -> list[Location]:
         if before.endswith("/") and not before.endswith("//"):
             continue
         after = _AFTER_HOST_RE.match(text, m.end())
-        path = after.group(2) if after else ""
+        path = (after.group("slash") or after.group("scp") or "") if after else ""
         led = before.endswith("//") or bool(_USER_BEFORE_RE.search(before))
-        if not led and "/" not in (after.group(0) if after else ""):
-            continue
+        host = m.group(1).casefold()
         segments = tuple(s for s in path.split("/")) if path else ()
-        found.append(Location(m.group(1).casefold(), segments))
+        if not led:
+            if not after:
+                continue
+            first = host.split(".", 1)[0]
+            tld = host.rsplit(".", 1)[-1]
+            if first in _NON_HOST_FIRST_LABELS or tld in _NON_HOST_TLDS:
+                continue
+            non_empty = [s for s in segments if s]
+            if not after.group("port") and (
+                len(non_empty) < 2 or all(s.isdigit() for s in non_empty)
+            ):
+                continue
+        found.append(Location(host, segments))
     return found
 
 
@@ -1448,7 +1594,7 @@ def is_public_forge_host(host: str) -> bool:
     return any(folded == d or folded.endswith(f".{d}") for d in PUBLIC_FORGE_DOMAINS)
 
 
-_API_PROJECT_RE = re.compile(r"^/?(?:api/v[34]/)?(repos|projects)/([^/?#\s]+)(?:/([^/?#\s]+))?")
+_API_PROJECT_RE = re.compile(r"^/*(?:api/v[34]/+)?(repos|projects)/+([^/?#\s]+)(?:/+([^/?#\s]+))?")
 """An API path naming a project: ``repos/<owner>/<repo>/…`` or ``projects/<group>%2F<repo>/…`` (argv)."""
 
 
@@ -1460,9 +1606,36 @@ def _api_project(text: str) -> tuple[str, ...]:
     if m.group(1) == "repos":
         parts = [m.group(2), m.group(3) or ""]
     else:
-        parts = unquote(m.group(2)).split("/")
+        parts = [p for p in unquote(m.group(2)).split("/") if p]
     named = tuple(p for p in parts if p and not CLI_PLACEHOLDER_RE.fullmatch(p) and not p.isdigit())
     return named if len(named) == len([p for p in parts if p]) and len(named) >= 2 else ()
+
+
+def _raw_url_host(raw: object) -> str | None:
+    """The first non-example host of a :data:`URL_KEYS` value in ``raw``, JSON inside strings included."""
+    stack: list[object] = [raw]
+    while stack:
+        node = stack.pop(0)
+        if isinstance(node, str):
+            if node.lstrip()[:1] in ("{", "["):
+                stack[:0] = decode_json_values(node) or []
+        elif isinstance(node, dict):
+            for key, item in node.items():
+                if key in URL_KEYS and isinstance(item, str):
+                    try:
+                        parts = urlsplit(item.strip())
+                    except ValueError as exc:
+                        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+                        continue
+                    if parts.scheme in URL_SCHEMES and parts.hostname:
+                        host = parts.hostname.casefold()
+                        if not _EXAMPLE_HOST_RE.search(host):
+                            return host
+                else:
+                    stack.append(item)
+        elif isinstance(node, list):
+            stack[:0] = list(node)
+    return None
 
 
 def raw_logins(raw: object) -> list[str]:
@@ -1519,7 +1692,7 @@ def needles(
     denylist: tuple[str, ...] = (),
     min_length: int = NEEDLE_MIN_LENGTH,
 ) -> Needles:
-    """The closure oracle's needles of one recording (I3, 0.11), from the raw exchanges and facts.
+    """The closure oracle's needles of one recording (I3, 0.11, 0.12), from the raw exchanges and facts.
 
     - login: every key of ``roles`` (a mention-only key without its
       ``@``) and every login of the raw answers (:func:`raw_logins`);
@@ -1528,10 +1701,13 @@ def needles(
     - segment: the recorded project's namespace and repository — the
       remote's path, the argv's API paths — and every namespace and
       repository of a URL on the remote's host when it is not a public
-      forge, or on any host that is not one when the remote names no
-      host (none, or an ssh alias). A third party's project on a public
-      forge (``github.com/python/cpython``) names no one of the recording
-      and is not a needle;
+      forge, or on the host inferred from :data:`URL_KEYS` when the
+      remote is an ssh alias (so third-party links like
+      ``docs.python.org`` never become segment needles under an ssh
+      alias, 0.12 D6), or on any private host when no remote exists at
+      all. A third party's project on a public forge
+      (``github.com/python/cpython``) names no one of the recording and
+      is not a needle;
     - id: every raw user id and repository id, in each of its forms;
     - deny-list: the maintainer's entries.
 
@@ -1555,6 +1731,8 @@ def needles(
     """
     strings = [text for _path, text in fixture_strings(raw, "")]
     instance, remote_path = remote_location(remote)
+    if instance is None and remote_path:
+        instance = _raw_url_host(raw)
     found: dict[str, list[str]] = {kind: [] for kind in NEEDLE_KINDS}
     replacements: dict[str, str] = {}
 
@@ -1578,7 +1756,8 @@ def needles(
                 continue
             found["host"].append(place.host)
             private = not is_public_forge_host(place.host)
-            if private and place.host == (instance or place.host) and place.segments:
+            matches_instance = place.host == instance if instance is not None else not remote_path
+            if private and matches_instance and place.segments:
                 _segments(place.segments)
     for host in found["host"]:
         replacements.setdefault(host, PLACEHOLDER_HOST)
@@ -1615,12 +1794,13 @@ _PLACEHOLDERS: frozenset[str] = frozenset(
 )
 """The placeholders the redaction writes; a needle equal to one could never be told from it."""
 
-CONSTANT_FIELDS: frozenset[str] = frozenset({"forge", "method", "case"})
-"""Top-level fields the recorder writes from its own arguments (0.11, R6), judged by the deny-list only.
+CONSTANT_FIELDS: frozenset[str] = frozenset({"forge", "method"})
+"""Top-level fields the recorder writes from closed enumerations (0.11 R6, 0.12 D3), judged by the deny-list only.
 
-``forge`` is ``github`` or ``gitlab``, ``method`` a protocol method's
-name and ``case`` the maintainer's file name; a segment needle that
-happens to spell one (a project named ``github``) is no leak there.
+``forge`` is ``github`` or ``gitlab`` and ``method`` is a protocol
+method's name; a segment needle that happens to spell one (a project
+named ``github``) is no leak there. ``case`` is free-form user input and
+is judged by every needle (0.12, D3).
 """
 
 RECORDED_SOURCE_HEAD_RE = re.compile(

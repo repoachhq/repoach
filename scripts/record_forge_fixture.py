@@ -333,6 +333,10 @@ def _public_ipv4(text: str) -> bool:
     return False
 
 
+_SCP_AFTER_MAILBOX_RE = re.compile(r":[^\s\"'<>()\[\]{}\\,/]+/", re.I)
+"""An scp remote path immediately after ``<user>@<host>``: requires ``/`` so ``:port`` or ``:word`` stays a mailbox."""
+
+
 def _personal_mailbox(text: str) -> bool:
     """Whether ``text`` holds a mailbox outside the documentation domains."""
     userinfo = [(m.start(), m.end()) for m in URL_USERINFO_RE.finditer(text)]
@@ -344,8 +348,7 @@ def _personal_mailbox(text: str) -> bool:
             continue
         if any(start <= m.start() < end for start, end in userinfo):
             continue
-        after = text[m.end() : m.end() + 2]
-        if after[:1] == ":" and after[1:2] not in ("", " ", "/"):
+        if _SCP_AFTER_MAILBOX_RE.match(text, m.end()):
             continue
         return True
     return False
@@ -494,17 +497,17 @@ def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[d
     out: list[dict[str, Any]] = []
     for call in calls:
         new = dict(call)
-        new["args"] = classify_logins(call["args"], roles)
+        new["args"] = classify_logins(redact_urls_in_value(call["args"]), roles)
         values = decode_json_values(call["stdout"])
         if values is None:
-            new["stdout"] = redact_urls_in_text(str(classify_logins(call["stdout"], roles)))
+            new["stdout"] = str(classify_logins(redact_urls_in_text(call["stdout"]), roles))
         else:
             new["stdout"] = "\n".join(
                 json.dumps(classify_logins(v, roles), ensure_ascii=False) for v in values
             )
         for key in ("stdin", "stderr"):
             if isinstance(call.get(key), str):
-                new[key] = redact_urls_in_text(str(classify_logins(call[key], roles)))
+                new[key] = str(classify_logins(redact_urls_in_text(call[key]), roles))
         out.append(new)
     return out
 
@@ -636,8 +639,8 @@ def record(
     known = {**found.mapping(), **roles}
     calls = classify_calls(calls, known)
     calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name)
-    args = list(cast(list[Any], redact_urls_in_value(classify_logins(args, known))))
-    kwargs = dict(cast(dict[str, Any], redact_urls_in_value(classify_logins(kwargs, known))))
+    args = list(cast(list[Any], classify_logins(redact_urls_in_value(args), known)))
+    kwargs = dict(cast(dict[str, Any], classify_logins(redact_urls_in_value(kwargs), known)))
     bot = roles.get(forge.bot_username, forge.bot_username)
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     result, raises = _replay(forge_name, cwd, method, typed_args, typed_kwargs, calls, bot)
