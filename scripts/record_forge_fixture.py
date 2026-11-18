@@ -65,7 +65,6 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 from repoach.core.logging import get_logger, route_default_logs_to_stderr
 from repoach.core.paths import user_config_dir
@@ -73,7 +72,6 @@ from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     MENTION_ONLY_PREFIX,
-    NODE_ID_SHAPE_RE,
     NON_PERSON_LOGINS,
     SYNTHETIC_IDS_KEY,
     SYNTHETIC_PROJECT_IDS_KEY,
@@ -95,6 +93,8 @@ from repoach.forge.recording import (
     login_values,
     mentions,
     needles,
+    oracle_forms,
+    raw_logins,
     recorded_source,
     redact_stdout,
     redact_urls_in_text,
@@ -104,7 +104,6 @@ from repoach.forge.recording import (
     serialize_result,
     token_pattern,
     unredacted_host,
-    user_id_key,
 )
 from repoach.forge.select import select_forge
 
@@ -258,15 +257,15 @@ def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
 def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
 
-    A string that is a user id in a non-numeric form (a GitHub node id)
-    is also judged by the account number it encodes
-    (:func:`repoach.forge.recording.user_id_key`), so an entry holding a
-    numeric user id catches its node ids.
+    ``text`` is judged in every form the closure oracle judges it in
+    (:func:`repoach.forge.recording.oracle_forms`, 0.11): decoded, folded
+    and with the account number of every node id it holds, wherever the
+    node id stands (``id=<node>``, ``see <node> here``), so an entry
+    holding a numeric user id catches its node ids (R4).
     """
-    number = user_id_key(text) if NODE_ID_SHAPE_RE.fullmatch(text) else None
-    candidates = [text] if not isinstance(number, int) else [text, str(number)]
+    forms = oracle_forms(text)
     for n, pattern in enumerate(patterns, 1):
-        if any(pattern.search(c) for c in candidates):
+        if any(pattern.search(form) for form in forms):
             return n
     return None
 
@@ -374,7 +373,12 @@ def _decoded(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
 
 
 def build_roles(
-    calls: list[dict[str, Any]], *, bot: str, maintainer: str | None, author: str | None
+    calls: list[dict[str, Any]],
+    *,
+    bot: str,
+    maintainer: str | None,
+    author: str | None,
+    also: list[str] | tuple[str, ...] = (),
 ) -> dict[str, str]:
     """Login → class word for one recording, stable across argv and stdout.
 
@@ -434,6 +438,8 @@ def build_roles(
             _add(login, mention=False)
         for login in mentions(value):
             _add(login, mention=True)
+    for login in also:
+        _add(login, mention=False)
     return roles
 
 
@@ -540,19 +546,6 @@ def origin_url(cwd: Path) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def _remote_hosts(url: str) -> tuple[str, ...]:
-    """The host of a remote URL or scp remote, lowercased, or none."""
-    if "://" in url:
-        try:
-            host = urlsplit(url).hostname or ""
-        except ValueError as exc:
-            _log.info("recorder.origin_unparsed", error=type(exc).__name__)
-            return ()
-        return (host,) if host else ()
-    head = url.split(":", 1)[0]
-    return (head.rsplit("@", 1)[-1].casefold(),) if ":" in url and "@" in head else ()
-
-
 def _set_bot(forge: Forge, login: str) -> None:
     """Give a forge the recording's classified bot login."""
     if hasattr(forge, "_bot_login"):
@@ -631,11 +624,15 @@ def record(
         for call in calls:
             call["stdout"] = _trim_stdout(call["stdout"], trim)
     maintainer = str(args[0]) if method == "is_maintainer" and args else None
-    roles = build_roles(calls, bot=forge.bot_username, maintainer=maintainer, author=author)
-    denylist = read_denylist()
-    found = needles(
-        raw, roles=roles, hosts=_remote_hosts(remote), denylist=denylist.needle_values()
+    roles = build_roles(
+        calls,
+        bot=forge.bot_username,
+        maintainer=maintainer,
+        author=author,
+        also=raw_logins(raw),
     )
+    denylist = read_denylist()
+    found = needles(raw, roles=roles, remote=remote, denylist=denylist.needle_values())
     known = {**found.mapping(), **roles}
     calls = classify_calls(calls, known)
     calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name)

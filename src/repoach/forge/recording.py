@@ -15,8 +15,10 @@ pins the exact calls each forge makes.
 from __future__ import annotations
 
 import base64
+import html
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ from pydantic import BaseModel
 
 from ..core.logging import get_logger
 from ..core.redaction import SECRET_VALUE_PATTERNS
+from . import protocol
 from .protocol import InlineCommentDraft, MergeMethod, ReviewDraft
 from .runner import CommandResult
 
@@ -187,13 +190,17 @@ PROSE_KEYS: frozenset[str] = frozenset(
 )
 """Recorded keys whose string value is free text a person wrote, where ``@<handle>`` mentions one."""
 
-TOKEN_CHARS = "A-Za-z0-9_-"
-"""The characters inside a token, as a regex class body (SP-RECORDER-REDACTS-BY-CLASS I1, 0.10).
+TOKEN_CHARS = "A-Za-z0-9"
+"""The characters inside a token, as a regex class body (SP-RECORDER-REDACTS-BY-CLASS I1, 0.11).
 
 The one boundary of every whole-word pattern: the login replacer, the
 ``@<login>`` replacer, the deny-list and the closure oracle all use
-:func:`token_pattern`. ``.``, ``:``, ``@``, ``/``, ``[``, ``]``, quotes
-and every other character delimit a token; ``-`` and ``_`` are inside one.
+:func:`token_pattern`. Letters and digits only: ``-``, ``_``, ``.``,
+``:``, ``@``, ``/``, quotes and every other character delimit a token,
+so ``<login>-patch-1`` (GitHub's web-edit branch), ``x-<v>``, ``_<v>``
+and ``<v>_x`` hold the value as a token. The oracle's doubt resolves
+toward refusing; the replacer, sharing the boundary, replaces wherever
+the oracle would look (0.11, R1).
 """
 
 
@@ -1065,16 +1072,71 @@ def _secret_keys(value: object) -> list[str]:
     return []
 
 
+FIXTURE_SCHEMA_KEYS: frozenset[str] = frozenset(
+    {
+        "args",
+        "bot_username",
+        "calls",
+        "case",
+        "forge",
+        "kwargs",
+        "method",
+        "program",
+        "raises",
+        "result",
+        "returncode",
+        "source",
+        "stderr",
+        "stdin",
+        "stdout",
+        "trimmed",
+        SYNTHETIC_IDS_KEY,
+        SYNTHETIC_PROJECT_IDS_KEY,
+    }
+)
+"""The keys a fixture and its exchanges are written with: the recorder's own words, never recorded data."""
+
+
+def _model_fields() -> frozenset[str]:
+    """Every field name of the protocol's models, the keys of a serialised ``result``."""
+    names: set[str] = set()
+    for value in vars(protocol).values():
+        if isinstance(value, type) and issubclass(value, BaseModel):
+            names |= set(value.model_fields)
+    return frozenset(names)
+
+
+CODE_KEYS: frozenset[str] = RECORDED_FIELDS | FIXTURE_SCHEMA_KEYS | _model_fields()
+"""Keys written by the forges' or this package's code (0.11, R5): named in a key path, never judged as a value.
+
+Every other key is recorded data: :func:`fixture_strings` yields it as a
+string to judge and names it in a path by its ordinal only, since the
+key may be the very value a refusal must not print.
+"""
+
+
 def fixture_strings(value: object, path: str) -> list[tuple[str, str]]:
-    """Every ``(key path, string)`` of a decoded value; a JSON stdout is walked inside.
+    """Every ``(key path, string)`` of a decoded value, keys included; a JSON stdout is walked inside.
 
     A number is judged as its decimal string too (0.10): a user id left
-    as a JSON number is as much a value as one left in text.
+    as a JSON number is as much a value as one left in text. A key is a
+    string of the fixture as much as a value is (D3, 0.11): every key
+    outside :data:`CODE_KEYS` is yielded at ``<path>.{key <i>}`` and its
+    value walked under that same ordinal path, so no path prints a key
+    that may name someone.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return [(path, str(value))]
     if isinstance(value, dict):
-        return [hit for k, v in value.items() for hit in fixture_strings(v, f"{path}.{k}")]
+        found: list[tuple[str, str]] = []
+        for i, (key, item) in enumerate(value.items()):
+            if key in CODE_KEYS:
+                found += fixture_strings(item, f"{path}.{key}")
+                continue
+            here = f"{path}.{{key {i}}}"
+            found.append((here, str(key)))
+            found += fixture_strings(item, here)
+        return found
     if isinstance(value, list):
         return [hit for i, v in enumerate(value) for hit in fixture_strings(v, f"{path}[{i}]")]
     if isinstance(value, str):
@@ -1091,20 +1153,158 @@ def scanned_strings(fixture: dict[str, Any]) -> list[tuple[str, str]]:
     """Every string of a fixture about to be written: each exchange first, as ``exchanges[<i>]``, then every other key."""
     calls: list[object] = list(fixture.get("calls") or [])
     found = [hit for i, c in enumerate(calls) for hit in fixture_strings(c, f"exchanges[{i}]")]
-    for key, value in fixture.items():
-        if key != "calls":
-            found += fixture_strings(value, key)
+    rest = {key: value for key, value in fixture.items() if key != "calls"}
+    found += [(path.lstrip("."), text) for path, text in fixture_strings(rest, "")]
     return found
 
 
-NODE_ID_SHAPE_RE = re.compile(r"[A-Za-z0-9+/=_-]{6,}")
-"""A string that may be a GitHub node id (base64 or ``U_`` + base64url), judged by the number it encodes too."""
+_NODE_IN_TEXT_RE = re.compile(r"U_[A-Za-z0-9_-]{2,}|[A-Za-z0-9+/]{8,}={0,2}")
+"""A run of text that may hold a GitHub user node id: ``U_`` and base64url, or standard base64 (0.11, R4)."""
+
+_NODE_SUFFIX_MAX = 16
+"""The longest current-format node id suffix tried: MessagePack ``[0, <uint64>]`` is 12 bytes, 16 characters."""
+
+
+def _node_candidates(run: str) -> list[str]:
+    """The node ids a run of text may hold: every prefix of a ``U_`` run, every aligned tail of a base64 run.
+
+    A run is read greedily, so a node id followed by ``-patch-1`` or
+    preceded by ``x`` is inside it; the candidates cut it back out.
+    """
+    if run.startswith("U_"):
+        suffix = run[2:]
+        if suffix.isdigit():
+            return [run]
+        return [f"U_{suffix[:k]}" for k in range(2, min(len(suffix), _NODE_SUFFIX_MAX) + 1)]
+    out: list[str] = []
+    for start in range(4):
+        tail = run[start:]
+        body = tail.rstrip("=")
+        for cand in (tail, body[: len(body) - len(body) % 4]):
+            if len(cand) >= 8 and cand not in out:
+                out.append(cand)
+    return out
+
+
+def embedded_id_numbers(text: str) -> list[str]:
+    """The account number of every user node id ``text`` holds, wherever it stands (0.11, R4).
+
+    ``id=<node>``, ``?node=<node>`` and ``see <node> here`` name an
+    account as much as ``<node>`` alone: every node-id-shaped run is
+    decoded (:func:`user_id_key`), on the text's own case, since base64
+    is case-sensitive. A run of digits is the number itself and is not
+    repeated.
+    """
+    numbers: list[str] = []
+    for m in _NODE_IN_TEXT_RE.finditer(text):
+        for cand in _node_candidates(m.group(0)):
+            if cand.isdigit():
+                continue
+            number = user_id_key(cand)
+            if isinstance(number, int) and str(number) not in numbers:
+                numbers.append(str(number))
+    return numbers
+
+
+_JSON_U_ESCAPE_RE = re.compile(r"\\u([0-9A-Fa-f]{4})")
+"""A JSON ``\\uXXXX`` escape written as text inside a string."""
+
+_DECODE_ROUNDS = 4
+"""How many times the oracle peels percent-, entity- and ``\\u``-encodings off a string (``%2525`` is two)."""
+
+CONFUSABLES = str.maketrans(
+    {
+        "а": "a",
+        "в": "b",
+        "е": "e",
+        "к": "k",
+        "м": "m",
+        "н": "h",
+        "о": "o",
+        "р": "p",
+        "с": "c",
+        "т": "t",
+        "у": "y",
+        "х": "x",
+        "і": "i",
+        "ј": "j",
+        "ѕ": "s",
+        "ԁ": "d",
+        "һ": "h",
+        "ӏ": "l",
+        "ԛ": "q",
+        "ԝ": "w",
+        "α": "a",
+        "ε": "e",
+        "ι": "i",
+        "κ": "k",
+        "ν": "v",
+        "ο": "o",
+        "ρ": "p",
+        "τ": "t",
+        "υ": "u",
+        "χ": "x",
+    }
+)
+"""Cyrillic and Greek letters drawn like a Latin one, mapped to it (0.11): a lookalike login is the login."""
+
+
+def _plain(text: str) -> str:
+    """``text`` with full-width forms, invisible characters and lookalike letters folded.
+
+    NFKC folds compatibility forms (full-width letters), format characters
+    (zero-width space, soft hyphen) are removed and :data:`CONFUSABLES` mapped.
+    """
+    if text.isascii():
+        return text
+    folded = unicodedata.normalize("NFKC", text)
+    visible = "".join(c for c in folded if unicodedata.category(c) != "Cf")
+    return visible.translate(CONFUSABLES)
+
+
+def _decoded_once(text: str) -> str:
+    r"""``text`` with one layer of ``\uXXXX``, HTML-entity and percent encoding removed."""
+    unescaped = _JSON_U_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+    return unquote(html.unescape(unescaped))
+
+
+def oracle_forms(text: str) -> list[str]:
+    r"""Every form the closure oracle judges ``text`` in, casefolded (I2, I3, 0.11).
+
+    The text as written; each layer of percent, HTML-entity and ``\u``
+    encoding peeled off in turn; each of those with compatibility forms,
+    invisible characters and lookalike letters folded (:func:`_plain`);
+    and the account number of every node id any of them holds
+    (:func:`embedded_id_numbers`). No form is built with a redaction
+    regex, so a value the redactor did not recognise is still a substring
+    of one of them. A :data:`CLI_PLACEHOLDER_RE` template is blanked
+    first: it is the tools' literal, not a recorded value.
+    """
+    current = CLI_PLACEHOLDER_RE.sub(" ", text)
+    stages = [current]
+    for _ in range(_DECODE_ROUNDS):
+        peeled = _decoded_once(current)
+        if peeled == current:
+            break
+        stages.append(peeled)
+        current = peeled
+    stages += [plain for plain in map(_plain, stages) if plain not in stages]
+    forms: list[str] = []
+    for stage in stages:
+        for form in (stage.casefold(), *embedded_id_numbers(stage)):
+            if form not in forms:
+                forms.append(form)
+    return forms
+
 
 NEEDLE_MIN_LENGTH = 4
 """A needle shorter than this would match everywhere; it is a configuration error (exit 2), never a skip."""
 
 FORGE_HOSTS: frozenset[str] = frozenset({"github.com", "api.github.com", "gitlab.com"})
 """The public forges' own hosts, needles of every recording (I3, 0.10)."""
+
+PUBLIC_FORGE_DOMAINS: tuple[str, ...] = ("github.com", "gitlab.com", "githubusercontent.com")
+"""A host under one of these is a public forge's (0.11): a project there is the recorded one or a third party's."""
 
 NEEDLE_KINDS: tuple[str, ...] = ("login", "host", "segment", "id", "deny-list")
 """The sources of the closure oracle's needles, in the order they are judged (I3, 0.10)."""
@@ -1144,19 +1344,136 @@ class Needles:
         return dict(self.replacements)
 
 
-def _url_identities(text: str) -> list[tuple[str, list[str]]]:
-    """``(host, path segments)`` of every URL and scp remote in ``text``, host lowercased."""
-    found: list[tuple[str, list[str]]] = []
-    for m in _URL_IN_TEXT_RE.finditer(text):
+_HOST_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9.-])"
+    r"((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9])"
+    r"(?![A-Za-z0-9-])",
+    re.I,
+)
+"""A dotted name ending in a letter-led label: a host candidate, judged by its context (:func:`locations`)."""
+
+_AFTER_HOST_RE = re.compile(r"(?::[0-9]{1,5})?([/:])([^\s\"'<>()\[\]{}\\,?#|]*)", re.I)
+"""What may follow a host: a port, then ``/`` or an scp ``:``, then a path up to a delimiter, a query or a fragment."""
+
+_USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
+"""Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
+
+
+@dataclass(frozen=True)
+class Location:
+    """A host and the path segments after it, as :func:`locations` reads them from raw text.
+
+    Attributes:
+        host: The host, lowercased.
+        segments: The path's segments (empty when the host stands alone).
+    """
+
+    host: str
+    segments: tuple[str, ...] = ()
+
+
+def locations(text: str) -> list[Location]:
+    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11).
+
+    A dotted name is a host when its context says so: ``//`` or
+    ``<user>@`` before it (``https://h``, ``//h``, ``ssh://u@h``,
+    ``u@h:g/r``), or a path after it (``h/g/r``, ``h:g/r``,
+    ``h:8080/x``). A name right after a single ``/`` is a file path's
+    (``src/setup.py``), and one with nothing around it (``setup.py``) is
+    not read as a host. The scheme is not required, so a schemeless
+    ``gitlab.corp.io/grp/repo`` in prose is found as surely as a URL.
+    """
+    found: list[Location] = []
+    for m in _HOST_TOKEN_RE.finditer(text):
+        before = text[: m.start()]
+        if before.endswith("/") and not before.endswith("//"):
+            continue
+        after = _AFTER_HOST_RE.match(text, m.end())
+        path = after.group(2) if after else ""
+        led = before.endswith("//") or bool(_USER_BEFORE_RE.search(before))
+        if not led and "/" not in (after.group(0) if after else ""):
+            continue
+        segments = tuple(s for s in path.split("/")) if path else ()
+        found.append(Location(m.group(1).casefold(), segments))
+    return found
+
+
+def remote_location(remote: str) -> tuple[str | None, tuple[str, ...]]:
+    """The host and path segments of a remote: a URL, an scp remote or an ssh alias (``alias:g/r``).
+
+    Returns:
+        ``(host, segments)``; the host is ``None`` for an ssh alias (a
+        name with no dot, resolved by the maintainer's ssh configuration)
+        or no remote, and the segments are still those of the path.
+    """
+    text = remote.strip()
+    if not text:
+        return None, ()
+    if "://" in text:
         try:
-            parts = urlsplit(m.group(0).rstrip(".:;"))
+            parts = urlsplit(text)
         except ValueError as exc:
             _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-            continue
-        if parts.hostname:
-            found.append((parts.hostname, parts.path.lstrip("/").split("/")))
-    for m in _SCP_IN_TEXT_RE.finditer(text):
-        found.append((m.group("host").casefold(), m.group("path").split("/")))
+            return None, ()
+        segments = tuple(s for s in parts.path.split("/") if s)
+        return (parts.hostname or None), segments
+    head, sep, path = text.partition(":")
+    if not sep:
+        return None, ()
+    host = head.rsplit("@", 1)[-1].casefold()
+    segments = tuple(s for s in path.split("/") if s)
+    return (host if "." in host else None), segments
+
+
+def is_public_forge_host(host: str) -> bool:
+    """Whether ``host`` is a public forge's (:data:`PUBLIC_FORGE_DOMAINS`), a subdomain included."""
+    folded = host.casefold()
+    return any(folded == d or folded.endswith(f".{d}") for d in PUBLIC_FORGE_DOMAINS)
+
+
+_API_PROJECT_RE = re.compile(r"^/?(?:api/v[34]/)?(repos|projects)/([^/?#\s]+)(?:/([^/?#\s]+))?")
+"""An API path naming a project: ``repos/<owner>/<repo>/…`` or ``projects/<group>%2F<repo>/…`` (argv)."""
+
+
+def _api_project(text: str) -> tuple[str, ...]:
+    """The namespace and repository segments an argv API path names, its CLI templates aside."""
+    m = _API_PROJECT_RE.match(text)
+    if m is None:
+        return ()
+    if m.group(1) == "repos":
+        parts = [m.group(2), m.group(3) or ""]
+    else:
+        parts = unquote(m.group(2)).split("/")
+    named = tuple(p for p in parts if p and not CLI_PLACEHOLDER_RE.fullmatch(p) and not p.isdigit())
+    return named if len(named) == len([p for p in parts if p]) and len(named) >= 2 else ()
+
+
+def raw_logins(raw: object) -> list[str]:
+    """Every login of the raw answers, under any key the redaction may drop (0.11, R2).
+
+    ``assignees[].login`` and ``mergedBy.login`` are not recorded fields,
+    so a login known only there never reaches ``roles``; read from the
+    raw decoded stdout, it is a needle and a role all the same. A class
+    word or a :data:`NON_PERSON_LOGINS` entry is not one.
+    """
+    found: list[str] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, str):
+            if node.lstrip()[:1] in ("{", "["):
+                for value in decode_json_values(node) or []:
+                    _walk(value)
+        elif isinstance(node, dict):
+            for key, item in node.items():
+                if key not in LOGIN_KEYS or not isinstance(item, str):
+                    _walk(item)
+                elif item and not is_classified_login(item) and item not in found:
+                    found.append(item)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(raw)
     return found
 
 
@@ -1181,17 +1498,23 @@ def needles(
     raw: object,
     *,
     roles: dict[str, str],
-    hosts: tuple[str, ...] = (),
+    remote: str = "",
     denylist: tuple[str, ...] = (),
     min_length: int = NEEDLE_MIN_LENGTH,
 ) -> Needles:
-    """The closure oracle's needles of one recording (I3, 0.10), from the raw exchanges and facts.
+    """The closure oracle's needles of one recording (I3, 0.11), from the raw exchanges and facts.
 
-    - login: every key of ``roles``, a mention-only key without its ``@``;
-    - host: :data:`FORGE_HOSTS`, ``hosts`` (the remote's) and every host a
-      URL or remote of ``raw`` names, but an RFC 2606 or loopback one;
-    - segment: the namespace and repository of every URL or remote of
-      ``raw`` on one of those forge hosts (:func:`path_identity`);
+    - login: every key of ``roles`` (a mention-only key without its
+      ``@``) and every login of the raw answers (:func:`raw_logins`);
+    - host: :data:`FORGE_HOSTS`, the remote's host and every host of
+      ``raw`` (:func:`locations`), but an RFC 2606 or loopback one;
+    - segment: the recorded project's namespace and repository — the
+      remote's path, the argv's API paths — and every namespace and
+      repository of a URL on the remote's host when it is not a public
+      forge, or on any host that is not one when the remote names no
+      host (none, or an ssh alias). A third party's project on a public
+      forge (``github.com/python/cpython``) names no one of the recording
+      and is not a needle;
     - id: every raw user id and repository id, in each of its forms;
     - deny-list: the maintainer's entries.
 
@@ -1199,7 +1522,7 @@ def needles(
         raw: The exchanges as the forge printed them, the method's
             arguments and the remote's URL; never a redacted value.
         roles: The recording's login → class word.
-        hosts: The forge instance's hosts (the remote's), lowercased here.
+        remote: The checkout's ``origin`` remote, ``""`` when it has none.
         denylist: The deny-list entries.
         min_length: The shortest needle that can be judged; the offline
             transform passes 1, since its corpus is committed and reviewed.
@@ -1214,23 +1537,32 @@ def needles(
             class word or placeholder, by kind and ordinal.
     """
     strings = [text for _path, text in fixture_strings(raw, "")]
-    forge_hosts = set(FORGE_HOSTS) | {h.casefold() for h in hosts if h}
+    instance, remote_path = remote_location(remote)
     found: dict[str, list[str]] = {kind: [] for kind in NEEDLE_KINDS}
     replacements: dict[str, str] = {}
-    found["login"] = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles]
-    found["host"] = sorted(forge_hosts)
+
+    def _segments(path: tuple[str, ...] | list[str]) -> None:
+        identity = path_identity(list(path))
+        for segment in identity.namespace:
+            found["segment"].append(segment)
+            replacements.setdefault(segment, PLACEHOLDER_NAMESPACE)
+        if identity.repository:
+            found["segment"].append(identity.repository)
+            replacements.setdefault(identity.repository, PLACEHOLDER_PROJECT)
+
+    found["login"] = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
+    found["host"] = sorted(FORGE_HOSTS | ({instance} if instance else set()))
+    if remote_path:
+        _segments(remote_path)
     for text in strings:
-        for host, segments in _url_identities(text):
-            if not _EXAMPLE_HOST_RE.search(host):
-                found["host"].append(host)
-            if host in forge_hosts:
-                identity = path_identity(segments)
-                for segment in identity.namespace:
-                    found["segment"].append(segment)
-                    replacements.setdefault(segment, PLACEHOLDER_NAMESPACE)
-                if identity.repository:
-                    found["segment"].append(identity.repository)
-                    replacements.setdefault(identity.repository, PLACEHOLDER_PROJECT)
+        _segments(_api_project(text))
+        for place in locations(text):
+            if _EXAMPLE_HOST_RE.search(place.host):
+                continue
+            found["host"].append(place.host)
+            private = not is_public_forge_host(place.host)
+            if private and place.host == (instance or place.host) and place.segments:
+                _segments(place.segments)
     for host in found["host"]:
         replacements.setdefault(host, PLACEHOLDER_HOST)
     found["id"] = [f for v in user_id_values(raw) + project_id_values(raw) for f in _id_forms(v)]
@@ -1266,16 +1598,30 @@ _PLACEHOLDERS: frozenset[str] = frozenset(
 )
 """The placeholders the redaction writes; a needle equal to one could never be told from it."""
 
+CONSTANT_FIELDS: frozenset[str] = frozenset({"forge", "method", "case"})
+"""Top-level fields the recorder writes from its own arguments (0.11, R6), judged by the deny-list only.
+
+``forge`` is ``github`` or ``gitlab``, ``method`` a protocol method's
+name and ``case`` the maintainer's file name; a segment needle that
+happens to spell one (a project named ``github``) is no leak there.
+"""
+
+RECORDED_SOURCE_HEAD_RE = re.compile(
+    r"^recorded [0-9]{4}-[0-9]{2}-[0-9]{2} from a live (?:github|gitlab) change request"
+)
+"""The template head :func:`recorded_source` writes; the oracle judges only what follows it (0.11, R6)."""
+
 
 def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | None:
-    """The first needle a built fixture still holds, as ``(kind, ordinal, key path)``, or ``None`` (I3, 0.10).
+    """The first needle a built fixture still holds, as ``(kind, ordinal, key path)``, or ``None`` (I3, 0.11).
 
-    Independent of every redaction regex: each string of the fixture
-    (:func:`scanned_strings`) is casefolded, also judged URL-decoded, a
-    node-id-shaped one also by the number it encodes, and searched for each
-    needle with :func:`token_pattern`, the one boundary. A
-    :data:`CLI_PLACEHOLDER_RE` template is not judged. The ordinal counts
-    within the needle's kind.
+    Each string of the fixture, keys included (:func:`scanned_strings`),
+    is judged in every :func:`oracle_forms` form against each needle with
+    :func:`token_pattern`, the one boundary. Those forms are built by
+    decoding, never by a redaction regex. The recorder's
+    :data:`CONSTANT_FIELDS` are judged by the deny-list only, and
+    ``source`` without its :data:`RECORDED_SOURCE_HEAD_RE` head. The
+    ordinal counts within the needle's kind.
     """
     ordinals: list[tuple[str, int, re.Pattern[str]]] = []
     counts: dict[str, int] = {}
@@ -1283,13 +1629,13 @@ def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | 
         counts[kind] = counts.get(kind, 0) + 1
         ordinals.append((kind, counts[kind], token_pattern(value)))
     for path, text in scanned_strings(fixture):
-        folded = CLI_PLACEHOLDER_RE.sub(" ", text).casefold()
-        forms = [folded, unquote(folded)]
-        if NODE_ID_SHAPE_RE.fullmatch(text):
-            number = user_id_key(text)
-            if isinstance(number, int):
-                forms.append(str(number))
-        for kind, n, pattern in ordinals:
+        judged = ordinals
+        if path in CONSTANT_FIELDS:
+            judged = [o for o in ordinals if o[0] == "deny-list"]
+        elif path == "source":
+            text = RECORDED_SOURCE_HEAD_RE.sub("", text)
+        forms = oracle_forms(text)
+        for kind, n, pattern in judged:
             if any(pattern.search(form) for form in forms):
                 return kind, n, path
     return None

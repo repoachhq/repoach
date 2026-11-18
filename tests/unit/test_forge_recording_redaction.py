@@ -620,9 +620,13 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
     assert [denylist.hit(t) for t in ("someone-handle", "4242424242", "someone-host")] == [1, 2, 3]
     assert denylist.hit("ssh someone-host") == 3
     assert denylist.hit("ssh SOMEONE-HOST.") == 3
-    assert denylist.hit("control-someone-host") is None
+    assert denylist.hit("control-someone-host") == 3
+    assert denylist.hit("controlsomeone-host") is None
     assert denylist.hit(base64.b64encode(b"04:User4242424242").decode()) == 2
     assert denylist.hit(_new_node(4242424242)) == 2
+    legacy = base64.b64encode(b"04:User4242424242").decode()
+    assert denylist.hit(f"see {legacy} here") == 2
+    assert denylist.hit(f"?node={_new_node(4242424242)}-patch") == 2
     assert denylist.hit(_new_node(4242424243)) is None
     monkeypatch.setenv(rec.DENYLIST_ENV, "abc")
     with pytest.raises(rec.DenylistError, match=r"^deny-list entry 3: too short$"):
@@ -1059,7 +1063,7 @@ def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
     assert out == {
         "author": {"login": "author"},
         "baseRefName": "author",
-        "headRefName": "main-fix",
+        "headRefName": "author-fix",
         "body": "merge into author",
     }
 
@@ -1101,7 +1105,7 @@ def test_ci_passes_the_denylist_secret_to_the_denylist_test_only_and_never_echoe
 
 def test_one_token_boundary_for_replacer_mention_and_denylist() -> None:
     """I1 (0.10): the login replacer, the ``@`` replacer and the deny-list are one pattern modulo the word."""
-    assert TOKEN_CHARS == "A-Za-z0-9_-"
+    assert TOKEN_CHARS == "A-Za-z0-9"
     for word in ("jdoe", "a.b-c", "x[bot]"):
         expected = token_pattern(word)
         assert expected.flags & re.I
@@ -1114,11 +1118,13 @@ def test_one_token_boundary_for_replacer_mention_and_denylist() -> None:
         )
     text = (
         "ping x.jdoe and jdoe. and JDoe and _jdoe and jdoe_x and a:jdoe and x/:jdoe "
-        "and git@h.io:jdoe/r and [jdoe] and 'jdoe' and ?u=jdoe#jdoe and @jdoe"
+        "and git@h.io:jdoe/r and [jdoe] and 'jdoe' and ?u=jdoe#jdoe and @jdoe "
+        "and jdoe-patch-1 and x-jdoe and xjdoe and jdoe2"
     )
     assert classify_text(text, {"jdoe": "author"}) == (
-        "ping x.author and author. and author and _jdoe and jdoe_x and a:author and x/:author "
-        "and git@h.io:author/r and [author] and 'author' and ?u=author#author and @author"
+        "ping x.author and author. and author and _author and author_x and a:author and x/:author "
+        "and git@h.io:author/r and [author] and 'author' and ?u=author#author and @author "
+        "and author-patch-1 and x-author and xjdoe and jdoe2"
     )
     tools = "gh api repos/:owner/:repo/pulls; --- /dev/null; glab api projects/:id"
     roles = {"owner": "author", "repo": "author-2", "dev": "author-3", "null": "author-4"}
@@ -1134,6 +1140,7 @@ _HANDLE, _DOTTED, _SEGMENT, _RAW_HOST, _DENY = (
     "someone-host",
 )
 _ID = 4242424242
+_REMOTE = f"git@github.com:some-owner/{_SEGMENT}.git"
 _ROLES = {_HANDLE: "author", _DOTTED: "author-2"}
 _RAW = [
     {
@@ -1179,9 +1186,13 @@ _HIT_NEIGHBOURS = (
     "={n}&",
     "#{n}",
     "%2F{n}",
+    "_{n}",
+    "{n}_x",
+    "x-{n}",
+    "{n}-patch-1",
     "{n}%2F",
 )
-_INSIDE_A_TOKEN = ("_{n}", "{n}_x")
+_INSIDE_A_TOKEN = ("x{n}", "{n}2")
 _CARRIERS = (
     "https://{h}/{n}/repo-x",
     "HTTPS://{H}/{n}/repo-x",
@@ -1201,7 +1212,7 @@ _PIPELINE_POSITIONS = _POSITIONS[:7]
 
 def _sample_needles() -> recording.Needles:
     """The needles of :data:`_RAW`: two logins, the forge and a raw host, segments, an id, a deny entry."""
-    return needles(_RAW, roles=_ROLES, denylist=(_DENY,))
+    return needles(_RAW, roles=_ROLES, remote=_REMOTE, denylist=(_DENY,))
 
 
 def _placed(text: str, position: str) -> dict[str, Any]:
@@ -1307,10 +1318,14 @@ def test_a_needle_the_oracle_cannot_judge_is_a_configuration_error() -> None:
     with pytest.raises(NeedleError, match=r"^needle login 1: too short$"):
         needles([], roles={"abc": "author"})
     with pytest.raises(NeedleError, match=r"^needle segment 1: a class word or placeholder$"):
-        needles(["see https://github.com/maintainer/repo-x/pull/1"], roles={})
+        needles([], roles={}, remote="git@github.com:maintainer/repo-x.git")
     with pytest.raises(NeedleError, match=r"^needle id 1: too short$"):
         needles([json.dumps({"user": {"login": "author", "id": 7}})], roles={})
-    found = needles(["https://github.com/some-owner/repo-x"], roles={_HANDLE: "author"})
+    found = needles(
+        ["https://github.com/some-owner/repo-x"],
+        roles={_HANDLE: "author"},
+        remote="https://github.com/some-owner/repo-x.git",
+    )
     assert repr(found) == f"<needles: {len(found)}>"
     assert found.mapping() == {
         "some-owner": "org",
@@ -1524,7 +1539,10 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
             "RECORDED_SOURCE_RE",
             "CLI_PLACEHOLDER_RE",
             "CLASS_WORD_RE",
-            "NODE_ID_SHAPE_RE",
+            "_NODE_IN_TEXT_RE",
+            "_JSON_U_ESCAPE_RE",
+            "_API_PROJECT_RE",
+            "RECORDED_SOURCE_HEAD_RE",
         }
     ),
     "record_forge_fixture": frozenset(
@@ -1657,3 +1675,271 @@ def test_denylist_entries_never_reach_a_local_or_a_repr(tmp_path: Path) -> None:
     assert done.returncode == 1, done.stdout[-500:]
     assert "test_leak" in done.stdout
     assert marker not in done.stdout + done.stderr
+
+
+def _one_call(stdout: object, args: list[str] | None = None) -> list[dict[str, Any]]:
+    """The raw exchanges of one call answering ``stdout`` as JSON (or as text when it is a string)."""
+    text = stdout if isinstance(stdout, str) else json.dumps(stdout)
+    return [
+        {"args": args or ["api", "x"], "returncode": 0, "stdin": None, "stderr": "", "stdout": text}
+    ]
+
+
+def _kinds(found: recording.Needles, kind: str) -> list[str]:
+    """The values of ``found`` of one kind; fake values only, for assertions on needle sources."""
+    return [value for k, value in found.entries if k == kind]
+
+
+def test_branch_names_holding_a_login_are_replaced_and_the_rest_refused() -> None:
+    """R1 (0.11): ``<login>-patch-1`` and ``x-<login>`` are cleared by the replacer; a deny entry so placed is refused."""
+    answer = {
+        "author": {"login": "q-handle"},
+        "headRefName": "q-handle-patch-1",
+        "body": "x-q-handle",
+    }
+    calls = _one_call(answer)
+    roles = rec.build_roles(calls, bot="", maintainer=None, author=None)
+    out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
+    assert out == {
+        "author": {"login": "author"},
+        "headRefName": "author-patch-1",
+        "body": "x-author",
+    }
+    found = needles([], roles={}, denylist=("deny-entry",))
+    for text in ("deny-entry-patch-1", "x-deny-entry", "_deny-entry", "deny-entry_x"):
+        assert residual(_placed(text, "prose"), found) == (
+            "deny-list",
+            1,
+            "exchanges[0].stdout.body",
+        )
+    assert residual(_placed("xdeny-entry", "prose"), found) is None
+
+
+def test_logins_under_dropped_keys_are_needles_and_roles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R2 (0.11): a login only under a key the redaction drops (``assignees``, ``mergedBy``) is a needle and a role."""
+    answer = {
+        "user": {"login": "q-handle"},
+        "assignees": [{"login": "q-other-a"}],
+        "mergedBy": {"login": "q-other-b"},
+        "body": "ping q-other-a and q-other-b",
+    }
+    raw = [_one_call(answer)]
+    assert recording.raw_logins(raw) == ["q-handle", "q-other-a", "q-other-b"]
+    assert recording.raw_logins([_one_call({"user": {"login": "github-actions[bot]"}})]) == []
+    found = needles(raw, roles={})
+    assert _kinds(found, "login") == ["q-handle", "q-other-a", "q-other-b"]
+    redacted = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw[0]]
+    roles = rec.build_roles(redacted, bot="", maintainer=None, author=None, also=["q-other-a"])
+    assert roles == {"q-handle": "author", "q-other-a": "author-2"}
+
+    stdout = json.dumps(
+        [
+            [
+                {
+                    "id": 9,
+                    "user": {"login": "q-handle"},
+                    "mergedBy": {"login": "q-other-b"},
+                    "state": "APPROVED",
+                    "body": "ping q-other-b",
+                }
+            ]
+        ]
+    )
+    assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
+    written = Path(capsys.readouterr().out.strip()).read_text()
+    assert "q-other-b" not in written and "q-handle" not in written
+
+
+def test_segments_come_from_the_recorded_project_and_any_private_host_it_cannot_tell() -> None:
+    """R3, R6 (0.11): the remote's path, the argv's API path and the instance's URLs give segments; a public third party does not."""
+    url = "https://git.corp-x.io/grp-x/proj-x/-/merge_requests/3"
+    raw = [_one_call({"web_url": url, "body": "see https://git.other-x.io/third-grp/third-proj"})]
+    without_remote = needles(raw, roles={})
+    assert _kinds(without_remote, "segment") == ["grp-x", "proj-x", "third-grp", "third-proj"]
+    on_instance = needles(raw, roles={}, remote="git@git.corp-x.io:grp-x/proj-x.git")
+    assert _kinds(on_instance, "segment") == ["grp-x", "proj-x"]
+    assert "git.corp-x.io" in _kinds(on_instance, "host")
+    alias = needles([_one_call({"body": "ok"})], roles={}, remote="corpalias:grp-y/proj-y.git")
+    assert _kinds(alias, "segment") == ["grp-y", "proj-y"]
+    assert "corpalias" not in _kinds(alias, "host")
+    other = needles(raw, roles={}, remote="git@git.third-x.io:grp-z/proj-z.git")
+    assert _kinds(other, "segment") == ["grp-z", "proj-z"]
+    assert "git.third-x.io" in _kinds(other, "host")
+    api = needles([_one_call({"body": "ok"}, ["api", "repos/own-x/repo-y/pulls/3"])], roles={})
+    assert _kinds(api, "segment") == ["own-x", "repo-y"]
+    templated = needles([_one_call({"body": "ok"}, ["api", "repos/:owner/:repo/pulls"])], roles={})
+    assert _kinds(templated, "segment") == []
+    gitlab = needles([_one_call({"body": "ok"}, ["api", "projects/grp-q%2Fproj-q/x"])], roles={})
+    assert _kinds(gitlab, "segment") == ["grp-q", "proj-q"]
+    public = "see https://github.com/python/cpython, https://github.com/git/git and pypa/pip"
+    third = needles(
+        [_one_call({"body": f"upgrade python; {public}"})],
+        roles={},
+        remote="git@github.com:own-x/repo-y.git",
+    )
+    assert _kinds(third, "segment") == ["own-x", "repo-y"]
+    assert classify_text("upgrade python", {**third.mapping()}) == "upgrade python"
+    assert residual(_placed("upgrade python and git", "prose"), third) is None
+
+
+def test_hosts_are_found_without_the_redactors_regexes() -> None:
+    """I3 (0.11): :func:`locations` reads schemeless and scp hosts; file names and decorators are not hosts."""
+    seen = recording.locations(
+        "hosted at gitlab.corp-x.io/grp-x/proj-x, clone u@git.corp-x.io:g/r.git, "
+        "port h.corp-x.io:8080/p and //cdn.corp-x.io/a, https://lone.corp-x.io and u@mail.corp-x.io "
+        "not src/setup.py, dir/setup.py/x, setup.py, test_x.py:12: or @pytest.fixture"
+    )
+    assert [(p.host, p.segments) for p in seen] == [
+        ("gitlab.corp-x.io", ("grp-x", "proj-x")),
+        ("git.corp-x.io", ("g", "r.git")),
+        ("h.corp-x.io", ("p",)),
+        ("cdn.corp-x.io", ("a",)),
+        ("lone.corp-x.io", ()),
+        ("mail.corp-x.io", ()),
+    ]
+    assert recording.remote_location("") == (None, ())
+    assert recording.remote_location("ssh://u@H.corp-x.io:22/g/r.git") == (
+        "h.corp-x.io",
+        ("g", "r.git"),
+    )
+    assert recording.is_public_forge_host("objects.githubusercontent.com")
+    assert not recording.is_public_forge_host("notgithub.com")
+
+
+def test_node_ids_inside_longer_strings_are_judged_by_their_number() -> None:
+    """R4 (0.11): ``id=<node>``, ``?node=<node>`` and ``see <node> here`` name the account as ``<node>`` does."""
+    found = needles([_one_call({"user": {"login": "q-handle", "id": _ID}})], roles={})
+    legacy = base64.b64encode(f"04:User{_ID}".encode()).decode()
+    for text in (
+        f"id={legacy}",
+        f"?node={_new_node(_ID)}",
+        f"see {legacy} here",
+        f"see {_new_node(_ID)}-patch here",
+        f"x{legacy}",
+    ):
+        left = residual(_placed(text, "prose"), found)
+        assert left is not None and left[0] == "id", text
+    assert recording.embedded_id_numbers(f"a {_new_node(_ID + 1)} b") == [str(_ID + 1)]
+    assert recording.embedded_id_numbers("U_1001 and plainwords1234") == ["1001"]
+
+
+def test_an_opaque_raw_id_is_a_needle_by_its_own_string() -> None:
+    """D3 (0.10): a raw user id that decodes to no number is judged by its own string."""
+    found = needles([_one_call({"user": {"login": "q-handle", "id": "opaque-id-x"}})], roles={})
+    assert _kinds(found, "id") == ["opaque-id-x"]
+    assert residual(_placed("held opaque-id-x", "prose"), found) == (
+        "id",
+        1,
+        "exchanges[0].stdout.body",
+    )
+
+
+def test_dict_keys_are_judged_and_never_named() -> None:
+    """R5 (0.11): a key outside the code's own words is a string of the fixture; its path names an ordinal."""
+    found = needles([], roles={"q-handle": "author"}, denylist=("deny-entry",))
+    fixture = _placed("ok", "prose")
+    fixture["result"] = {"number": 1, "q-handle": 1}
+    assert residual(fixture, found) == ("login", 1, "result.{key 1}")
+    fixture["result"] = {"state": "open", "nested": {"deny-entry": True}}
+    assert residual(fixture, found) == ("deny-list", 1, "result.{key 1}.{key 0}")
+    stdin_keys = _placed("ok", "prose")
+    stdin_keys["calls"][0]["stdin"] = json.dumps({"q-handle": "x"})
+    assert residual(stdin_keys, found) == ("login", 1, "exchanges[0].stdin.{key 0}")
+    code = needles([], roles={"state": "author"})
+    keyed = _placed("ok", "prose")
+    keyed["result"] = {"state": "open"}
+    assert residual(keyed, code) is None
+    assert "body" in recording.CODE_KEYS and "head_ref" in recording.CODE_KEYS
+
+
+def test_the_recorders_constant_fields_are_judged_by_the_denylist_only() -> None:
+    """R6 (0.11): ``forge``, ``method``, ``case`` and the ``source`` head are the recorder's words, not a leak."""
+    found = needles([], roles={}, remote="git@github.com:github/docs.git", denylist=("conv-case",))
+    assert "github" in _kinds(found, "segment")
+    fixture = _placed("ok", "prose")
+    fixture.update(
+        forge="github",
+        method="conversation_comments",
+        case="github",
+        source=recording.recorded_source("2026-11-18", "github"),
+    )
+    assert residual(fixture, found) is None
+    fixture["source"] = recording.recorded_source("2026-11-18", "github") + ", docs trimmed"
+    assert residual(fixture, found) == ("segment", 2, "source")
+    fixture["source"] = recording.recorded_source("2026-11-18", "github")
+    fixture["case"] = "conv-case"
+    assert residual(fixture, found) == ("deny-list", 1, "case")
+
+
+def test_residual_ordinals_count_within_their_kind() -> None:
+    """D3 (0.10): the message names the needle's ordinal in its kind, so two logins are told apart."""
+    found = needles(
+        [], roles={"q-first": "author", "q-second": "author-2"}, denylist=("deny-a", "deny-b")
+    )
+    assert residual(_placed("held q-second", "prose"), found) == (
+        "login",
+        2,
+        "exchanges[0].stdout.body",
+    )
+    assert residual(_placed("held deny-b", "prose"), found) == (
+        "deny-list",
+        2,
+        "exchanges[0].stdout.body",
+    )
+
+
+def test_the_tools_templates_are_not_judged() -> None:
+    """D3 (0.10): ``:owner``, ``:repo``, ``:id`` and ``/dev/null`` are the tools' literals, never a login."""
+    found = needles([], roles={"owner": "author", "null": "author-2"}, min_length=1)
+    fixture = _placed("ok", "prose")
+    fixture["calls"][0]["args"] = ["api", "repos/:owner/:repo/pulls", "--- /dev/null"]
+    assert residual(fixture, found) is None
+    fixture["calls"][0]["args"] = ["api", "repos/owner/x"]
+    assert residual(fixture, found) == ("login", 1, "exchanges[0].args[1]")
+
+
+def test_the_offline_needles_accept_a_short_hand_written_login() -> None:
+    """D4 (0.10): the committed corpus may hold a three-letter placeholder login; the offline needles judge it."""
+    data = _fixture("github", "reviews", [[{"user": {"login": "bob"}, "body": "hi"}]])
+    found = redact_fixtures.fixture_needles(data)
+    assert ("login", "bob") in found.entries
+
+
+def test_longer_logins_are_replaced_first() -> None:
+    """D2 (0.11): with ``-`` a delimiter, ``q-handle`` must be replaced before ``q-handle-x`` would be cut."""
+    roles = {"q-handle": "author", "q-handle-x": "author-2"}
+    assert classify_text("q-handle-x and q-handle", roles) == "author-2 and author"
+
+
+def test_non_person_logins_are_no_needles() -> None:
+    """D2 (0.10): the platform's and the project's own bots are kept, so neither is a needle."""
+    raw = [_one_call({"user": {"login": "github-actions[bot]"}, "body": "x"})]
+    found = needles(raw, roles={}, remote="git@github.com:repoach-bot/repo-x.git")
+    assert _kinds(found, "login") == []
+    assert _kinds(found, "segment") == ["repo-x"]
+    assert residual(_placed("by github-actions[bot] and repoach-bot", "prose"), found) is None
+
+
+def test_the_oracle_judges_encoded_and_lookalike_forms() -> None:
+    """I2, I3 (0.11): percent, double percent, entities, ``\\u`` escapes, full-width, invisible and lookalike letters."""
+    found = needles([], roles={"qhandle": "author"})
+    full = "".join(chr(ord(c) + 0xFEE0) for c in "qhandle")
+    for text in (
+        "qhandle%41",
+        "".join(f"%{ord(c):02X}" for c in "qhandle"),
+        "".join(f"%25{ord(c):02X}" for c in "qhandle"),
+        "&#113;handle",
+        "&#x71;handle",
+        "\\u0071handle",
+        full,
+        "qha​ndle",
+        "qha­ndle",
+        "qh\u0430ndle",
+    ):
+        assert residual(_placed(text, "prose"), found) == (
+            "login",
+            1,
+            "exchanges[0].stdout.body",
+        ), text
