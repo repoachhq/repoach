@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -142,13 +143,241 @@ SECRET_KEY_RE = re.compile(r"(token|secret|password|private_key|api_key|node_id|
 """Keys whose presence in a recorded answer means redaction failed."""
 
 
-def redact_payload(value: object) -> object:
-    """Keep only :data:`RECORDED_FIELDS` keys, recursively."""
+PERSONAL_KEY_RE = re.compile(r"^(full_name|avatar_url|email|public_email|node_id)$", re.I)
+"""Keys that name a person; :func:`redact_payload` drops them wherever they appear."""
+
+URL_KEYS: frozenset[str] = frozenset({"url", "web_url", "html_url", "link"})
+"""Keys whose string value is a forge URL, rewritten by :func:`redact_url`."""
+
+USER_KEYS: frozenset[str] = frozenset({"login", "username"})
+"""Keys that make an object a user object (its ``name`` and URLs are dropped)."""
+
+LOGIN_KEYS: frozenset[str] = frozenset({"login", "username", "author", "resolved_by", "user"})
+"""Keys whose string value is a login, replaced by its class word (:func:`classify_logins`)."""
+
+CLASS_WORD_RE = re.compile(r"^(maintainer|author|bot|agent|service)(-[1-9][0-9]*)?$")
+"""A recorded login once classified: a class word, optionally ``-<n>``."""
+
+GITLAB_PROJECT_BOT_RE = re.compile(r"^project_[0-9]+_bot_[0-9a-f]+$")
+"""A GitLab project access token user: a service account named after a real project id."""
+
+PLACEHOLDER_HOST = "forge.example.com"
+"""The host every recorded URL is given (an RFC 2606 domain)."""
+
+PLACEHOLDER_NAMESPACE = "org"
+"""The namespace every recorded URL is given."""
+
+_GITHUB_ROUTES: frozenset[str] = frozenset(
+    {
+        "actions",
+        "blob",
+        "branches",
+        "checks",
+        "commit",
+        "commits",
+        "compare",
+        "issues",
+        "pull",
+        "pulls",
+        "releases",
+        "runs",
+        "tags",
+        "tree",
+    }
+)
+"""Third path segments that mark a ``<owner>/<repo>/<route>`` GitHub URL."""
+
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>()\[\]{}\\,]+")
+"""An ``http(s)`` URL inside free text (a log line, a ``glab`` error)."""
+
+_EXAMPLE_HOST_RE = re.compile(
+    r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^127\.|^localhost$", re.I
+)
+"""Hosts that name no one (RFC 2606, loopback); text URLs on them are kept."""
+
+
+def _namespaced(segments: list[str]) -> list[str]:
+    """Replace the namespace of a forge path by :data:`PLACEHOLDER_NAMESPACE`."""
+    core = [s for s in segments if s]
+    if not core:
+        return segments
+    if segments[:3] == ["api", "v4", "projects"] and len(segments) > 3:
+        project = unquote(segments[3])
+        if "/" in project:
+            repo = project.rsplit("/", 1)[1]
+            return [*segments[:3], quote(f"{PLACEHOLDER_NAMESPACE}/{repo}", safe=""), *segments[4:]]
+        return segments
+    if segments[0] in ("repos", "users", "orgs") and len(core) >= 2:
+        return [segments[0], PLACEHOLDER_NAMESPACE, *segments[2:]]
+    if "-" in segments:
+        dash = segments.index("-")
+        if dash >= 2:
+            return [PLACEHOLDER_NAMESPACE, *segments[dash - 1 :]]
+        return segments
+    if len(core) < 3 or segments[2] in _GITHUB_ROUTES:
+        return [PLACEHOLDER_NAMESPACE, *segments[1:]]
+    trailing = [""] if segments[-1] == "" else []
+    return [PLACEHOLDER_NAMESPACE, core[-1], *trailing]
+
+
+def redact_url(value: str) -> str:
+    """Rewrite a forge URL by class: placeholder host and namespace, path shape kept.
+
+    ``https://<forge>/<owner>/<repo>/pull/12`` becomes
+    ``https://forge.example.com/org/<repo>/pull/12``; on GitLab every
+    segment before the repository (the one preceding ``/-/``, or the
+    last) is the namespace; ``/-/jobs/5`` with no namespace keeps its
+    path. ``api/v4/projects/<group>%2F<repo>`` and ``repos/<owner>/<repo>``
+    API paths get the same namespace.
+
+    Returns:
+        The redacted URL, or ``""`` when ``value`` is not an ``http(s)``
+        URL with a host (the caller drops the key).
+    """
+    try:
+        parts = urlsplit(value.strip())
+    except ValueError as exc:
+        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+        return ""
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return ""
+    path = parts.path
+    if path.startswith("/") and len(path) > 1:
+        path = "/" + "/".join(_namespaced(path[1:].split("/")))
+    return urlunsplit((parts.scheme, PLACEHOLDER_HOST, path, parts.query, parts.fragment))
+
+
+def redact_urls_in_text(text: str) -> str:
+    """Apply :func:`redact_url` to every URL of ``text`` not on a placeholder host."""
+
+    def _one(match: re.Match[str]) -> str:
+        url = match.group(0).rstrip(".:;")
+        tail = match.group(0)[len(url) :]
+        host = urlsplit(url).hostname or ""
+        if not host or _EXAMPLE_HOST_RE.search(host):
+            return match.group(0)
+        return (redact_url(url) or url) + tail
+
+    return _URL_IN_TEXT_RE.sub(_one, text)
+
+
+def redact_urls_in_value(value: object) -> object:
+    """Redact URLs in a decoded value whose keys are kept (a fixture's ``result``).
+
+    A string under a :data:`URL_KEYS` key goes through :func:`redact_url`
+    (kept as is when it is not a URL); every other string through
+    :func:`redact_urls_in_text`.
+    """
     if isinstance(value, dict):
-        return {k: redact_payload(v) for k, v in value.items() if k in RECORDED_FIELDS}
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            if key in URL_KEYS and isinstance(item, str) and item:
+                out[key] = redact_url(item) or redact_urls_in_text(item)
+            else:
+                out[key] = redact_urls_in_value(item)
+        return out
+    if isinstance(value, list):
+        return [redact_urls_in_value(v) for v in value]
+    if isinstance(value, str):
+        return redact_urls_in_text(value)
+    return value
+
+
+def redact_payload(value: object) -> object:
+    """Keep only :data:`RECORDED_FIELDS` keys, recursively, and redact by class.
+
+    :data:`PERSONAL_KEY_RE` keys are dropped everywhere; in a user object
+    (one holding ``login`` or ``username``) ``name`` and the URL keys are
+    dropped too, while elsewhere ``name`` is a check-run or job name the
+    forges read. ``id`` is kept in every object. A string under a
+    :data:`URL_KEYS` key is rewritten by :func:`redact_url` and dropped
+    when it is not a URL; every other string has its URLs redacted.
+    """
+    if isinstance(value, dict):
+        user = any(k in value for k in USER_KEYS)
+        out: dict[str, object] = {}
+        for key, item in value.items():
+            if key not in RECORDED_FIELDS or PERSONAL_KEY_RE.match(key):
+                continue
+            if user and (key == "name" or key in URL_KEYS):
+                continue
+            if key in URL_KEYS and isinstance(item, str):
+                redacted = redact_url(item)
+                if redacted:
+                    out[key] = redacted
+                continue
+            out[key] = redact_payload(item)
+        return out
     if isinstance(value, list):
         return [redact_payload(v) for v in value]
+    if isinstance(value, str):
+        return redact_urls_in_text(value)
     return value
+
+
+def _login_pattern(login: str) -> re.Pattern[str]:
+    """``login`` as a whole token (``/``, ``=``, ``?`` and quotes delimit it; ``:owner`` is a placeholder, not a login)."""
+    return re.compile(rf"(?<![A-Za-z0-9_.:\[\]-]){re.escape(login)}(?![A-Za-z0-9_\[\]-])", re.I)
+
+
+def classify_text(text: str, roles: dict[str, str]) -> str:
+    """Replace every login of ``roles`` appearing as a token in ``text`` by its class word."""
+    for login in sorted(roles, key=len, reverse=True):
+        text = _login_pattern(login).sub(roles[login], text)
+    return text
+
+
+def classify_logins(payload: object, roles: dict[str, str]) -> object:
+    """Replace every login in ``payload`` by its class word, recursively.
+
+    A string under a :data:`LOGIN_KEYS` key is looked up in ``roles``
+    (casefolded, as forges compare logins) and replaced when found; it
+    is left as is otherwise, for the recorder's unclassified check. Any
+    other string has the logins of ``roles`` replaced where they appear
+    as a token (argv such as ``collaborators/<login>/permission``).
+
+    Args:
+        payload: A decoded JSON value, or an argv list.
+        roles: Login → class word, built once per recording.
+
+    Returns:
+        The classified copy.
+    """
+    folded = {k.casefold(): v for k, v in roles.items()}
+    return _classify(payload, folded, roles)
+
+
+def _classify(payload: object, folded: dict[str, str], roles: dict[str, str]) -> object:
+    """:func:`classify_logins` with the casefolded mapping built once."""
+    if isinstance(payload, dict):
+        out: dict[str, object] = {}
+        for key, item in payload.items():
+            if key in LOGIN_KEYS and isinstance(item, str):
+                out[key] = folded.get(item.casefold(), item)
+            else:
+                out[key] = _classify(item, folded, roles)
+        return out
+    if isinstance(payload, list):
+        return [_classify(v, folded, roles) for v in payload]
+    if isinstance(payload, str):
+        return classify_text(payload, roles)
+    return payload
+
+
+def login_values(payload: object, path: str = "") -> list[tuple[str, str]]:
+    """Every ``(key path, value)`` of a string under a :data:`LOGIN_KEYS` key, in order."""
+    if isinstance(payload, dict):
+        found: list[tuple[str, str]] = []
+        for key, item in payload.items():
+            here = f"{path}.{key}" if path else key
+            if key in LOGIN_KEYS and isinstance(item, str):
+                found.append((here, item))
+            else:
+                found += login_values(item, here)
+        return found
+    if isinstance(payload, list):
+        return [hit for i, v in enumerate(payload) for hit in login_values(v, f"{path}[{i}]")]
+    return []
 
 
 def decode_json_values(text: str) -> list[object] | None:
