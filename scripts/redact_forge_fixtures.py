@@ -17,7 +17,10 @@ URLs redacted when it is text, its stderr's and stdin's URLs redacted; the
 top-level ``args`` and ``result`` have their URLs redacted. Logins already
 hold class words, except the hand-written placeholders of
 :data:`LEGACY_LOGINS`, which become ``author-<n>`` under login keys, as
-whole arguments and as path segments. A second run
+whole arguments and as path segments. Every real user id becomes a
+synthetic one from one sequence shared by the whole corpus
+(:class:`repoach.forge.recording.UserIdMap`), so one account keeps one
+id across files; ids already synthetic stay. A second run
 changes nothing, which ``tests/unit/test_forge_recording_redaction.py``
 pins.
 """
@@ -34,7 +37,11 @@ from typing import cast
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
+    SYNTHETIC_ID_START,
+    USER_KEYS,
+    UserIdMap,
     decode_json_values,
+    is_synthetic_user_id,
     login_values,
     redact_payload,
     redact_stdout,
@@ -153,8 +160,25 @@ def _dumps(values: list[object]) -> str:
     return "\n".join(json.dumps(v, ensure_ascii=False) for v in values)
 
 
-def redact_fixture(data: dict[str, object]) -> dict[str, object]:
-    """The class-redacted copy of one fixture."""
+def _remap_ids(node: object, ids: UserIdMap) -> object:
+    """Remap user ids in every exchange's JSON stdout; an unchanged answer keeps its bytes."""
+    if isinstance(node, dict):
+        out = {k: _remap_ids(v, ids) for k, v in node.items()}
+        if "returncode" in node and isinstance(node.get("stdout"), str):
+            values = decode_json_values(node["stdout"])
+            if values is not None:
+                remapped = [ids.apply(v) for v in values]
+                if remapped != values:
+                    out["stdout"] = _dumps(remapped)
+        return out
+    if isinstance(node, list):
+        return [_remap_ids(v, ids) for v in node]
+    return node
+
+
+def redact_fixture(data: dict[str, object], ids: UserIdMap | None = None) -> dict[str, object]:
+    """The class-redacted copy of one fixture; ``ids`` is shared across the corpus."""
+    ids = ids if ids is not None else UserIdMap(keep_synthetic=True)
     out = cast(dict[str, object], _exchanges(data))
     for key in ("args", "result"):
         if key in out:
@@ -162,7 +186,29 @@ def redact_fixture(data: dict[str, object]) -> dict[str, object]:
     roles = legacy_roles(out)
     if roles:
         out = cast(dict[str, object], _rename(out, roles))
+    out = cast(dict[str, object], _remap_ids(out, ids))
+    if "result" in out:
+        out["result"] = ids.apply_known(out["result"])
     return out
+
+
+def _synthetic_ids_in_use(node: object) -> list[int]:
+    """Every synthetic numeric user id already in a fixture (to start the sequence after it)."""
+    if isinstance(node, str) and node.lstrip()[:1] in ("{", "["):
+        return [n for v in decode_json_values(node) or [] for n in _synthetic_ids_in_use(v)]
+    if isinstance(node, dict):
+        found = [n for v in node.values() for n in _synthetic_ids_in_use(v)]
+        ident = node.get("id")
+        if (
+            any(k in node for k in USER_KEYS)
+            and isinstance(ident, int)
+            and is_synthetic_user_id(ident)
+        ):
+            found.append(ident)
+        return found
+    if isinstance(node, list):
+        return [n for v in node for n in _synthetic_ids_in_use(v)]
+    return []
 
 
 def render(data: object, *, ascii_only: bool = False) -> str:
@@ -173,10 +219,15 @@ def render(data: object, *, ascii_only: bool = False) -> str:
 def run(root: Path, *, check: bool) -> list[Path]:
     """Redact every ``*.json`` under ``root``; return the files that changed (or would)."""
     changed: list[Path] = []
-    for path in sorted(root.rglob("*.json")):
+    paths = sorted(root.rglob("*.json"))
+    used = [
+        n for p in paths for n in _synthetic_ids_in_use(json.loads(p.read_text(encoding="utf-8")))
+    ]
+    ids = UserIdMap(keep_synthetic=True, start=max([SYNTHETIC_ID_START - 1, *used]) + 1)
+    for path in paths:
         text = path.read_text(encoding="utf-8")
         data = json.loads(text)
-        new = redact_fixture(data)
+        new = redact_fixture(data, ids)
         if new == data:
             continue
         changed.append(path)

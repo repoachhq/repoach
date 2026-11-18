@@ -56,6 +56,7 @@ from repoach.forge.recording import (
     Exchange,
     RecordingSpawn,
     ReplaySpawn,
+    UserIdMap,
     classify_logins,
     coerce_call,
     decode_json_values,
@@ -324,6 +325,18 @@ def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[d
     return out
 
 
+def synthesize_user_ids(calls: list[dict[str, Any]], ids: UserIdMap) -> list[dict[str, Any]]:
+    """Replace every user id of the recorded answers by its synthetic id (D1, 0.7)."""
+    out: list[dict[str, Any]] = []
+    for call in calls:
+        new = dict(call)
+        values = decode_json_values(call["stdout"])
+        if values is not None:
+            new["stdout"] = "\n".join(json.dumps(ids.apply(v), ensure_ascii=False) for v in values)
+        out.append(new)
+    return out
+
+
 def _set_bot(forge: Forge, login: str) -> None:
     """Give a forge the recording's classified bot login."""
     if hasattr(forge, "_bot_login"):
@@ -402,6 +415,7 @@ def record(
     maintainer = str(args[0]) if method == "is_maintainer" and args else None
     roles = build_roles(calls, bot=forge.bot_username, maintainer=maintainer, author=author)
     calls = classify_calls(calls, roles)
+    calls = synthesize_user_ids(calls, UserIdMap())
     args = list(cast(list[Any], redact_urls_in_value(classify_logins(args, roles))))
     kwargs = dict(cast(dict[str, Any], redact_urls_in_value(classify_logins(kwargs, roles))))
     bot = roles.get(forge.bot_username, forge.bot_username)
