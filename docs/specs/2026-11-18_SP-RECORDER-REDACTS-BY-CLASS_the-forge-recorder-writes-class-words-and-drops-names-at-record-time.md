@@ -1,14 +1,14 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word and drops names, avatars and user ids at record time, and refuses a fixture it cannot classify
-version: 0.5
+version: 0.6
 status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-18
 
 owns:
-  code: [scripts/record_forge_fixture.py, tests/unit/test_forge_recording_redaction.py]
+  code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py]
   resources: []
 
 depends_on: [SP-UNIVERSAL-FORGE, SP-SCRUB-PERSONAL-DATA-AT-HEAD]
@@ -36,6 +36,37 @@ from `approved_by[].user`, and `reviews_two_approvals.json` expects
 classes. Only `name` is dropped in a user object. The user-object keys
 the readers consume are swept (F1c) and the replay test covers
 approvals.
+
+Amendment (0.6, 2026-11-18, the implementer, measured on `origin/develop`
+`7fd31af`): D4 was false. Parent F27: after child 1 the fixtures still
+held 115 `url`/`web_url`/`html_url` values on the real forge hosts, in 33
+files (`git grep -o -E '(url|web_url|html_url)\\?": \\?"https://(github\.com|gitlab\.com)' 7fd31af -- tests/fixtures/forge`
+→ 115, `-l` → 33; the parent counted 34), and 149 forge-host URLs in 41
+files once `api.github.com`, `link` values, argv, stdin, stderr and text
+stdout are counted (`docs.*` links excluded). The namespace SCRUB wrote
+(`maintainer`) is itself a real account on those hosts. So D4 and G4 are
+replaced: the fixtures are rewritten by the recorder's own functions,
+offline (`scripts/redact_forge_fixtures.py`, D4 below), and C2 is a fixed
+point instead of an empty diff. Other claims measured wrong against the
+code and corrected here: (a) `RECORDED_FIELDS` is not "every key the forges
+read" — `_squash_body_from_view` reads `commits[].messageHeadline` and
+`messageBody` (`github.py:170-175`); applying `redact_payload` to
+`github/merge.json` dropped them and turned `test_merge[github]` red, so
+the three keys are added (D1 no longer leaves `RECORDED_FIELDS` unchanged);
+(b) a user object keeps `state` beside `login`/`username` and `id`
+(GitLab), so "exactly what the readers consume" is false; its URL keys
+(`web_url`, `html_url`, `url`, a profile link) are now dropped with `name`;
+(c) GitHub's `gh pr checks` link is under `link`, a URL key the spec did not
+name: `link` joins `url`/`web_url`/`html_url`; (d) URLs also stand in free
+text (a `glab` error, `gh pr create` output, a check link passed as a method
+argument), so text URLs are redacted too, RFC 2606 and loopback hosts kept;
+(e) the hand-written placeholder logins `alice`, `bob`, `dev`, `devops` are
+also real accounts, and one GitLab project-bot username names a real project
+id: the transform maps them to `author-<n>` and `service`; (f) the recorder
+also classifies the method's arguments and the forge's bot login (`bot`),
+since replay compares argv and trust compares the bot login; the result is
+recomputed by replaying the redacted exchanges. The F1 line numbers are those
+of `0be2a56`.
 
 ## Intent
 
@@ -114,12 +145,21 @@ into `tests/fixtures/forge/`.
   three regexes are copied into the script with a comment naming their
   source and held equal by a test in SP-NO-PERSONAL-DATA-GATE, since that module lands later and the script must not import
   a module that may be absent.
-- D4. **The existing fixtures already have the target shape.**
-  SP-SCRUB-PERSONAL-DATA-AT-HEAD D2 rewrote them by hand to class words
-  and dropped `name` and the author's `id`; this spec changes no
-  fixture, and the conformance suite (`tests/unit/test_forge_conformance.py`)
-  is its regression oracle: a recorder that drops a key the forges read
-  would be red there.
+- D4 (0.6). **The existing fixtures are rewritten by the recorder's own
+  functions, offline.** `scripts/redact_forge_fixtures.py` applies
+  `redact_payload` to every recorded JSON stdout, `redact_urls_in_text` to
+  text stdout, stdin and stderr, and `redact_urls_in_value` to a fixture's
+  `args` and `result`; it re-records nothing and makes no network call.
+  Logins already hold class words after SP-SCRUB-PERSONAL-DATA-AT-HEAD D2,
+  except the hand-written placeholders (`alice`, `bob`, `dev`, `devops`),
+  which become the next free `author-<n>`, and a GitLab project-bot
+  username, which becomes `service`; `repoach-bot` (this project's bot) and
+  `github-actions[bot]` (the platform's service account) name no person and
+  stay. `--check` exits 1 when a file would change; the fixtures are its
+  fixed point, and the conformance suite
+  (`tests/unit/test_forge_conformance.py`) stays the regression oracle: a
+  redaction that drops a key the forges read is red there (it was, on
+  `commits`, amendment (a)).
 
 ## End state
 
@@ -130,8 +170,9 @@ no `avatar_url`, `email`, `node_id` or user `name` key exists, every
 and namespace with its path shape kept, every argv embeds a class word
 where a login stood, and the script exits 2 naming the key path when a
 value stays unclassified or matches a generic class;
-`tests/unit/test_forge_conformance.py` is green on the existing
-fixtures unchanged, and the forge readers return the redacted URL, the
+`scripts/redact_forge_fixtures.py --check` leaves the existing fixtures
+unchanged with no real forge-host URL in them (0.6),
+`tests/unit/test_forge_conformance.py` is green on them, and the forge readers return the redacted URL, the
 check-run names, the approvals' user ids and the class word as author
 from a redacted recording.
 
@@ -174,11 +215,11 @@ every object kind (F1b, F1c).
 - G1: personal keys dropped by name, the user object's `name` by context, every `id` kept, URL values redacted by class with their shape kept (D1, D1b).
 - G2: logins classified at record time in argv and stdout, with a stable mapping (D2).
 - G3: the recorder refuses an unclassified or generic-class value, exit 2, without printing it (D3).
-- G4: the existing fixtures and the conformance suite are unchanged (D4).
+- G4 (0.6): the existing fixtures are the fixed point of the same redaction, no URL on a real forge host is left in them, and the conformance suite is green on them (D4).
 
 ## Non-Goals
 
-- NG1: rewriting the existing fixtures (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2).
+- NG1 (0.6): re-recording the existing fixtures live; they are transformed offline (D4).
 - NG2: the generic lint (SP-NO-PERSONAL-DATA-GATE); this spec copies three regexes, it does not run the gate.
 - NG3: redacting secrets (F2 does it already).
 
@@ -230,12 +271,14 @@ records one fixture against a real pull request to check the shape
 | `::test_forge_readers_work_on_a_redacted_recording` | D1b, F1b: a GitLab recording whose merge-request, pipeline and job answers carry redacted `web_url` values and job `name`s, replayed through `ReplaySpawn` into the forge's merge-request and pipeline readers → the returned `url`/`link` equal the redacted URLs and the job names are intact; a GitLab approvals answer with two `approved_by[].user` objects redacted to `username: maintainer` / `author-2` and ids `11`, `12` replayed through the reviews reader (`gitlab.py:725-728`) → two `Review`s with ids `11` and `12`; a GitHub recording's `author.login` redacted to `author` replayed through the change-request reader (`github.py:489`) → the author field is `author`, and its check-run `name`s (`github.py:281,1776`) are intact | drop `web_url`, `name` or a user `id` by key |
 | `::test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping` | D2: `roles={"x": "maintainer", "y": "author"}`; `login: x` in two objects and `resolved_by: x` → `maintainer` three times; argv `["api", "repos/o/r/collaborators/x/permission"]` → `collaborators/maintainer/permission`; a `z[bot]` login → `bot` | map one occurrence differently |
 | `::test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it` | D3: a stdout with `login: q` not in `roles` → exit 2 and `unclassified: …login` on stderr; a body with a literal home path (`/home/<x>/y`, spelled in the test, which is allow entry 8 of SP-NO-PERSONAL-DATA-GATE D4) → exit 2 and `generic class home_path`; `capsys` holds neither `q` nor the path's user segment | print the value, or exit 0 |
-| `tests/unit/test_forge_conformance.py` (existing) | D4: green on the fixtures as SP-SCRUB-PERSONAL-DATA-AT-HEAD left them | drop a key a forge reads |
+| `::test_recorder_writes_class_words_and_a_replayed_result` (0.6) | End state: a recording through the CLI against a fake forge writes class words, no user `name` or URL, `bot_username` `bot`, and the result replayed from the redacted exchanges | keep a raw login, or write the live result |
+| `::test_existing_fixtures_are_a_fixed_point_of_the_redaction` (0.6) | D4, C2: `scripts/redact_forge_fixtures.py --check` changes nothing and no fixture holds a real forge-host URL | revert one fixture URL, or change the redaction without re-running the script |
+| `tests/unit/test_forge_conformance.py` (existing) | D4 (0.6): green on the fixtures as `scripts/redact_forge_fixtures.py` leaves them; `test_reviews_two_approvals` expects `author-2`/`author-3` | drop a key a forge reads |
 
 ## Success conditions
 
 - C1 (oracle: pytest, CI): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → green.
-- C2 (oracle: git): `git diff origin/develop --stat -- tests/fixtures/forge` → empty (D4).
+- C2 (0.6, oracle: the script and git): `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; `git grep -o -E 'https?://([a-z0-9.-]+\.)?(github|gitlab)\.com' -- tests/fixtures | grep -v '//docs\.' | wc -l` → `0` (D4).
 - C3 (oracle: the script, by the implementer, output written beside AC2): one recording against a real pull request → the written fixture passes `python -c` over its JSON: no key in `{avatar_url, full_name, email, public_email, node_id}` anywhere, no `name` beside a `login`/`username`, every `login`/`username` value in the class words or `author-<n>`/`bot-<n>`, every `url`/`web_url`/`html_url` value starting with `https://forge.example.com/`.
 
 ## Architecture Impact
@@ -257,10 +300,12 @@ flowchart LR
 
 ## Acceptance Criteria
 
-- [ ] AC1: C1 green; C2 empty; A2's grep count written here by the implementer.
-- [ ] AC2: C3's check output written here by the implementer.
+- [x] AC1: C1 green; C2 empty; A2's grep count written here by the implementer.
+  Measured 2026-11-18 on the branch: C1 `131 passed`; C2 `forge fixtures: 0 would change`, real-host URL count `0` (before: 115 under URL keys in 33 files, 149 in all in 41 files; 3 `docs.github.com`/`docs.gitlab.com` documentation links in `source` fields stay); A2 grep → `0`; the user-object readers are `github.py:239,489`, `gitlab.py:171,725,728`, unchanged.
+- [x] AC2: C3's check output written here by the implementer.
+  Recorded 2026-11-18, read-only, against repoachhq/repoach PR #316 (`--trim 5`, output under `tmp/`, not committed): `pull_request`, `conversation_comments`, `reviews`, `checks`, `review_threads` and `is_maintainer(<the gh user>)`, each exit 0; the check found 0 violations in each file (URL values 2/3/0/0/0/0 under `url`/`web_url`/`html_url`, every one on `https://forge.example.com/`; logins 1/3/4/0/0/1, all class words; 10 `link` values `https://forge.example.com/org/repoach/…`), 0 real-host URLs, and the account's login absent from every file.
 - [ ] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c '^dependency cycle'` → `27`; the `ownership conflict` lines are the parent's five.
 
 ## Open Questions
 
-- None.
+- O1 (0.6, owner): D1 keeps every `id`, so a recorded user object keeps the account's numeric forge id (a GitLab user id, a GitHub node id that decodes to the database id), which an API call maps back to the account. The readers consume a user `id` only for GitLab approvals (`gitlab.py:728`); replacing user ids by synthetic numbers at record time would keep the replay working. Not done here: it reverses D1 (0.3).
