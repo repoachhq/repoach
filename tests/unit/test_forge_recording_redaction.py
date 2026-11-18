@@ -465,3 +465,24 @@ def test_user_ids_map_to_a_stable_sequence() -> None:
     assert kept.apply({"user": {"id": 4321987, "username": "a"}}) == {
         "user": {"id": 1001, "username": "a"}
     }
+
+
+def test_offline_transform_remaps_a_result_id_with_its_account() -> None:
+    """D1c: a GitLab ``Review.id`` in a result follows its approver's synthetic id."""
+    approvals = {"approved_by": [{"user": {"username": "author-2", "id": 4321987}}]}
+    fixture = {
+        "args": [7],
+        "calls": [
+            {
+                "args": [],
+                "returncode": 0,
+                "stdin": None,
+                "stderr": "",
+                "stdout": json.dumps(approvals),
+            }
+        ],
+        "result": [{"author": "author-2", "id": 4321987, "state": "APPROVED"}],
+    }
+    out = redact_fixtures.redact_fixture(fixture)
+    assert json.loads(out["calls"][0]["stdout"])["approved_by"][0]["user"]["id"] == 1001
+    assert out["result"] == [{"author": "author-2", "id": 1001, "state": "APPROVED"}]
