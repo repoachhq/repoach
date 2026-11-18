@@ -1,7 +1,7 @@
 # W1 — repoach reviews a GitLab merge request, dry-run: what assumed GitHub
 
 Measured 2026-10-18 on repoach `feat/sp-gh-glab-shim-dry-run` (from `develop`
-`20dbb45`) against Yoob MR !283 (`josephwfaye/yoob_2`, merged, 36 files,
+`20dbb45`) against Yoob MR !283 (`<namespace>/yoob_2`, merged, 36 files,
 195 958 diff characters). Spec: `docs/specs/2026-10-18_SP-GH-GLAB-SHIM_disposable-gh-to-glab-read-shim.md`.
 Worksite: `docs/plans/2026-10-18_yoob-production-plan.md` § 4, W1. Nothing
 under `src/repoach` changed; the only adapter is `scripts/gh_glab_shim.py`,

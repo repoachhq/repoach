@@ -1,11 +1,11 @@
 ---
 id: SP-FINDING-THREAD-IDS
 title: Persist the forge comment and thread ids of every posted finding
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-10-19
-updated: 2026-11-02
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/finding_posts.py, src/repoach/review/finding_post_record.py, src/repoach/review/finding_post_threads.py, tests/unit/test_finding_posts.py, tests/unit/test_finding_posts_backfill.py, tests/integration/test_finding_thread_ids_end_to_end.py]
@@ -19,6 +19,8 @@ constraints:
 ---
 
 # Persist the forge comment and thread ids of every posted finding
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -45,8 +47,8 @@ Re-measured on `develop` `fb241b8` (2026-11-02); 0.1 measured `20dbb45`.
 | F7 | Schema changes on the review ledger are additive `ALTER TABLE` entries checked against the existing columns | `src/repoach/review/findings.py:421` (`_migrate_missing_findings_columns`) |
 | F8 | `SP-UNIVERSAL-LEDGER` (row L6, assumption A2) names `finding_posts` as the row its fate collector joins on and defers the write to "the posting path" | `docs/specs/2026-10-19_SP-UNIVERSAL-LEDGER_learns-from-use-without-being-intrusive.md:88,123` |
 | F9 | The owner commands join a thread reply to its finding by the root's file and line, because no finding stores its thread id | `src/repoach/review/owner_commands.py:247` (`_anchored`), used at `:302` |
-| F10 | GitHub reports a thread's resolution only through GraphQL: `reviewThreads { isResolved resolvedBy { login } comments(first:1) { nodes { databaseId } } }`. Measured on repoachhq/repoach #278: 5 threads, each `isResolved: true`, `resolvedBy.login: jwfaye`, keyed by the root's `databaseId` | `gh api graphql`, 2026-11-02 |
-| F11 | GitLab marks every note of a resolved discussion `resolved: true` with `resolved_by.username`. Measured on Yoob !339: the 70 diff discussions are resolved by `josephwfaye` | `glab api projects/:id/merge_requests/339/discussions`, 2026-11-02 |
+| F10 | GitHub reports a thread's resolution only through GraphQL: `reviewThreads { isResolved resolvedBy { login } comments(first:1) { nodes { databaseId } } }`. Measured on repoachhq/repoach #278: 5 threads, each `isResolved: true`, `resolvedBy.login: <maintainer's handle>`, keyed by the root's `databaseId` | `gh api graphql`, 2026-11-02 |
+| F11 | GitLab marks every note of a resolved discussion `resolved: true` with `resolved_by.username`. Measured on Yoob !339: the 70 diff discussions are resolved by the maintainer's account | `glab api projects/:id/merge_requests/339/discussions`, 2026-11-02 |
 | F12 | `gh api graphql` is a `POST` with fields, so the write barrier classed every GraphQL query as a write and refused it on the read path | `src/repoach/forge/protocol.py` (`is_write_argv`) |
 
 This spec is the prerequisite of `SP-UNIVERSAL-LEDGER` (its fate

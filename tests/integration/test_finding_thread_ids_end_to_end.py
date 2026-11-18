@@ -31,6 +31,7 @@ from repoach.review.orchestrator import run_review
 from repoach.review.reviewer import BotRole, ReviewComment, ReviewerOutcome, ReviewVerdict
 from tests.fixtures.generated_artefacts.harness import Forge, Repo, Review, install
 
+MAINTAINER = "maintainer"
 PR = 7
 REASON = "the branch protection is read back from the API and requires two approvals"
 
@@ -78,7 +79,7 @@ class GitHub(Forge):
         if args[:2] == ["api", "graphql"]:
             return GhResult(0, json.dumps([{"data": {"repository": None}}]), "", argv=args)
         if len(args) == 2 and args[0] == "api" and args[1].endswith("/permission"):
-            role = "maintain" if args[1].split("/")[-2] == "jwfaye" else "read"
+            role = "maintain" if args[1].split("/")[-2] == MAINTAINER else "read"
             return GhResult(0, json.dumps({"role_name": role}), "", argv=args)
         return super()._run(args, input_data=input_data)
 
@@ -171,7 +172,7 @@ def test_a_resolve_reply_settles_the_posted_finding_by_its_recorded_thread(
         {
             "id": 4437509999,
             "in_reply_to_id": root["id"],
-            "user": {"login": "jwfaye"},
+            "user": {"login": MAINTAINER},
             "path": "src/settings.py",
             "line": 9,
             "body": f"/resolve {REASON}",
@@ -186,7 +187,7 @@ def test_a_resolve_reply_settles_the_posted_finding_by_its_recorded_thread(
     assert settled.payload["owner_resolved"] == [
         {
             "finding_id": finding.id,
-            "login": "jwfaye",
+            "login": MAINTAINER,
             "reason": REASON,
             "comment_id": 4437509999,
             "head_sha": head,
@@ -194,6 +195,6 @@ def test_a_resolve_reply_settles_the_posted_finding_by_its_recorded_thread(
     ]
     assert settled.payload["final_verdict"] == "APPROVE"
     assert settled.exit_code == 0
-    assert f"owner-resolved #{finding.id} by jwfaye: {REASON}" in settled.stderr
+    assert f"owner-resolved #{finding.id} by {MAINTAINER}: {REASON}" in settled.stderr
     row = next(f for f in fetch_findings(bench.db_path, PR) if f.id == finding.id)
     assert row.status is FindingStatus.OWNER_RESOLVED

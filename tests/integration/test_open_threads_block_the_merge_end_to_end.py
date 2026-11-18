@@ -99,7 +99,7 @@ def test_an_open_thread_refuses_a_green_pr_until_it_is_resolved(
     assert decision.merge is False
     assert decision.reasons == ["1 unresolved review thread(s)"]
 
-    thread.update(isResolved=True, resolvedBy={"login": "jwfaye"})
+    thread.update(isResolved=True, resolvedBy={"login": "maintainer"})
 
     _, facts, decision = decide_at_head(
         PR, forge=forge, db=bench.db_path, ci_green=True, repo_root=repo.checkout, head_sha=head

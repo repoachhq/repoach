@@ -1,13 +1,13 @@
 {
   "args": [
-    "jwfaye"
+    "maintainer"
   ],
   "bot_username": "repoach-bot",
   "calls": [
     {
       "args": [
         "api",
-        "repos/:owner/:repo/collaborators/jwfaye/permission"
+        "repos/:owner/:repo/collaborators/maintainer/permission"
       ],
       "program": "gh",
       "returncode": 1,

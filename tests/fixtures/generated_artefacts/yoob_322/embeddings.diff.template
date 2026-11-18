@@ -13,7 +13,7 @@ index ba17c306..c44186d0 100644
    "embedding_dim": 768,
    "model_digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
    "ollama_version": "0.21.1",
-   "produced_on": "jofaye",
+   "produced_on": "maintainer",
 -  "produced_at": "2026-10-25T15:05:58Z",
 +  "produced_at": "2026-10-25T22:32:40Z",
    "document_prefix": "search_document: ",

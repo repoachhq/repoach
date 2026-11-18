@@ -1,7 +1,7 @@
 ---
 id: SP-REPO-CARRIES-NO-PERSONAL-DATA
 title: Umbrella — the repository, its CI and its released artefacts carry no maintainer path, login, host, address or mailbox, and a generic gate keeps it so
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-11-18
@@ -33,6 +33,25 @@ Amendment (0.3, 2026-11-18): F9's node id is kept, not scrubbed — a
 forge id is an opaque identifier in none of the five classes, and the
 GitLab readers consume a user's `id` (SP-RECORDER-REDACTS-BY-CLASS 0.3
 F1c); only the real name leaves the recorded user objects.
+
+Amendment (0.5, 2026-11-18): F8 and F9 undercounted, measured on
+`origin/develop` `1a81c5f` by the implementation of
+SP-SCRUB-PERSONAL-DATA-AT-HEAD (0.6). The maintainer's GitLab account
+(`<gl-login>`, a handle that is neither `<gh-login>` nor `<login>`), as a
+`username` and as the namespace of the recorded project path, is in 28
+files, 51 lines, 138 occurrences: 12 GitLab forge fixtures (recorded
+argv included), 4 test modules, 1 generated-artefacts fixture, 2 bench
+corpus cases, 2 plans and 7 specs (F25). The real name with a middle
+name (`<full name>`) is the `name` of the recorded user object in 11
+GitLab fixtures, 39 occurrences (F26); `git grep` of `<name>` does not
+match it. Neither is in child 3's recommended deny-list. Child 1
+rewrites both under its D1 rows 4 and 5. A fact for child 2 (F27):
+SP-RECORDER-REDACTS-BY-CLASS D4 says the existing fixtures already have
+the target shape; for D1b's URL rule they do not — after child 1, 34
+forge fixtures still hold 115 `url`/`web_url`/`html_url` values on the
+real forge hosts with their real namespaces, not
+`forge.example.com/org/…`. That child's design is unchanged here; its
+implementer rewrites those values or amends D4.
 
 ## Intent
 
@@ -87,6 +106,9 @@ domain (`<product-domain>`).
 | F22 | The owner's config directory helper exists for a per-user file | `src/repoach/core/paths.py:163-170` (`user_config_dir()` → `$XDG_CONFIG_HOME/repoach`) |
 | F23 | gitleaks' newest release is `v8.30.1` (2026-03-21); its assets are the platform tarballs and `gitleaks_8.30.1_checksums.txt`, with no signature or SBOM asset (`.sig`, `.pem`, `.sigstore`: none); `gitleaks/gitleaks-action` `v3.0.0` is commit `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e`; the action needs a licence key on an organisation repository, the binary does not | `gh api repos/gitleaks/gitleaks/releases/latest` (asset names re-read 2026-11-18); `gh api repos/gitleaks/gitleaks-action/git/ref/tags/v3.0.0` |
 | F24 | The actor allow-list variable is not set on the repository: `gh variable list` shows `REPOACH_REVIEW_RUNNER` only. The `gate` job's `if` (`ci.yml:37-39`) runs it on a pull request only for an actor in `fromJSON(vars.REPOACH_ALLOWED_ACTORS \|\| '["<gh-login>"]')`, and every other job needs `gate`, so with an empty fallback and the variable unset no pull request would run any job | `gh variable list` (2026-11-18); `.github/workflows/ci.yml:35-39` |
+| F25 | The maintainer's GitLab account `<gl-login>` (username and project namespace) is in 28 files, 51 lines, 138 occurrences; F8 did not count it | `git grep -l -i <gl-login> 1a81c5f -- .` → 28: `tests/fixtures/forge/gitlab/*.json` 12, `tests/unit/` 4 (`test_forge_conformance.py`, `test_forge_select.py`, `test_gh_glab_shim.py`, `test_init_foreign_repo.py`), `tests/fixtures/generated_artefacts/yoob_322/shape.json`, `bench/corpus/yoob/mr-296-*.yaml` 2, `docs/plans/` 2, `docs/specs/` 7 |
+| F26 | The real name with a middle name `<full name>` is the `name` key of the recorded GitLab user objects; F9 did not count it | 11 files under `tests/fixtures/forge/gitlab/`, 39 occurrences; no other file |
+| F27 | Recorded URL values keep the real forge hosts and namespaces, so SP-RECORDER-REDACTS-BY-CLASS D4 ("the existing fixtures already have the target shape") is false for its D1b | after child 1: `git grep -o -E '(url\|web_url\|html_url)\\?": \\?"https://(github\.com\|gitlab\.com)' -- tests/fixtures/forge` → 115 occurrences in 34 files |
 
 ## Decisions (2026-11-18)
 

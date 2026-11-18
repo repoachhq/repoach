@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-SETTLED-STAYS-SETTLED
 title: A finding that is resolved or refuted is not re-raised at a later head unless the code it cites changed; "changed" is the cited hunk or the enclosing symbol's body
-version: 0.8
+version: 0.9
 status: approved
 author: agent
 created: 2026-11-15
@@ -20,6 +20,8 @@ constraints:
 ---
 
 # A settled finding stays settled across heads unless the cited code changed
+
+Amendment (0.9, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Amendment (0.7, 2026-11-18): the recorded fixture is anonymised, the live condition is any project's
 
@@ -316,7 +318,7 @@ client.ts` has one hunk at lines 40–52: the mapped range is unchanged,
 | `::test_owner_resolved_is_suppressed_even_when_changed` | edge case | re-open |
 | `::test_bucket_is_not_used_across_heads` | F5 | use the fingerprint |
 | `::test_matching_unavailable_fails_open_and_names_it` | failure scenario | suppress silently |
-| `tests/integration/test_recorded_reraises_are_suppressed.py::test_round_12_posts_six_threads_and_names_two_suppressed` | the recorded rounds 9–12 (`tests/fixtures/review/recorded_long_review.json`: findings, statuses, replies, per-head diffs of the cited files; anonymised, 0.7: tokens redacted, every login replaced by its class `maintainer` / `author` / `bot` / `agent`, every host and path by a placeholder; the test asserts the classes and `grep -c -i "yoob\|hel1\|jofaye\|@[a-z]" tests/fixtures/review/recorded_long_review.json` → `0`) | a login or a host in the fixture, or the count 8 |
+| `tests/integration/test_recorded_reraises_are_suppressed.py::test_round_12_posts_six_threads_and_names_two_suppressed` | the recorded rounds 9–12 (`tests/fixtures/review/recorded_long_review.json`: findings, statuses, replies, per-head diffs of the cited files; anonymised, 0.7: tokens redacted, every login replaced by its class `maintainer` / `author` / `bot` / `agent`, every host and path by a placeholder; the test asserts the classes and `scripts/lint_no_personal_data.py --tree tests/fixtures/review/recorded_long_review.json` → `personal-data: ok` (judged when SP-NO-PERSONAL-DATA-GATE lands)) | a login or a host in the fixture, or the count 8 |
 | `tests/unit/test_settled_not_reraised.py::test_finding_key_is_stable_across_heads_and_lines` | D11: the same claim at H1 line 118 and H2 line 120 → one key; a changed claim or file → another; a ledger row written before this spec has one | hash the line or the head |
 | `::test_finding_key_is_printed_beside_the_row_id` | archive comment, report, JSON, thread root carry `F-<7 hex>`; `posted_finding_id` still joins the posted body | print the id alone |
 | `::test_resolve_by_key_settles_every_row_and_names_each` | D12: `/resolve #F-… reason` on two rows of one key at two heads → both `owner_resolved`, two `owner_commands` rows, one reply naming both; `/reopen #F-…` restores both | settle the first row only |

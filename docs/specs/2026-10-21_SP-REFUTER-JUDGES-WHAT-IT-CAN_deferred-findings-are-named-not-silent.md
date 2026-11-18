@@ -1,11 +1,11 @@
 ---
 id: SP-REFUTER-JUDGES-WHAT-IT-CAN
 title: Every deferred finding carries a named reason, and the judging cap is a setting
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-10-21
-updated: 2026-10-26
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/refuter.py, src/repoach/review/refuter_evidence.py, src/repoach/review/hallucination_guard.py, src/repoach/review/finding_verifiers.py, prompts/review/refuter_0.3.0.md, tests/unit/test_refuter_defers_unseen.py]
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # Every deferred finding carries a named reason, and the judging cap is a setting
+
+Amendment (0.4, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Amendment (0.3, 2026-10-26): the report lists every finding that drives the verdict
 
@@ -173,7 +175,7 @@ How the earlier refuted sites ended, where the reviewers raised them again:
 
 Evidence size per judged finding, under `ceil(utf8_bytes / 3)`: min 2 830, median 15 883, max 29 070 tokens across the 9 outcomes. Every finding fit in the 40 000-token context with the prompt and the 4 896-token reserve of that run (6 144 since the reply cap is 2 048). No item was left out for budget. Every `truncated items` entry is either the 50-hit cap or an identifier over 200 hits that this run left unserved. That rule left `BOARD_CONFIGS` (202 hits) unserved on 3 findings and is replaced by G11/G12: the 50 nearest hits are served, and a refutation resting on the rest is deferred. 9 judge calls in 109.4 s. The run was not repeated after G11–G13: the table above measures the code before them.
 
-The run before the last edit used one `git grep` per identifier with a 30 s timeout. On the loaded tower it timed out 5 times, and two deferrals came from it. It was replaced by one `git grep` per finding with a 120 s timeout: 0 timeouts in this run. G12 brings the timeout back to 30 s, now for the one search of the finding, under a 90 s deadline; a timeout now defers the finding without a judge call (G11).
+The run before the last edit used one `git grep` per identifier with a 30 s timeout. On the loaded `<host>` it timed out 5 times, and two deferrals came from it. It was replaced by one `git grep` per finding with a 120 s timeout: 0 timeouts in this run. G12 brings the timeout back to 30 s, now for the one search of the finding, under a 90 s deadline; a timeout now defers the finding without a judge call (G11).
 
 ## Intent
 
@@ -190,7 +192,7 @@ an operator reads are never two different things again.
 | # | Fact | Where |
 |---|---|---|
 | F1 | Two real `REPOACH_PROVIDER=claude_code --dry-run` reviews of Yoob MR !296 the same day: the earlier run made 3 refuter calls; the later `review pr 296 --dry-run` (69 s, 223 k tokens) recorded 19 findings deferred, 0 judged, no refuter row in the usage ledger, against 5 reviewer-role model calls (4 lenses + 1 round-2 Sentinel) | `docs/tech_debt.md:62` (row 57) |
-| F2 | MR !296 touches only `ci/review-advisory.sh`, `.gitlab-ci.yml`, `docs/BACKLOG.md`, `docs/developer_guide/workflows.md`, `tests/scripts/test_ci_minutes.sh`, `tests/scripts/test_review_advisory.sh` — shell/YAML/Markdown, no Python | `glab mr diff 296 --repo josephwfaye/yoob_2` (yoob_2 repo, read-only) |
+| F2 | MR !296 touches only `ci/review-advisory.sh`, `.gitlab-ci.yml`, `docs/BACKLOG.md`, `docs/developer_guide/workflows.md`, `tests/scripts/test_ci_minutes.sh`, `tests/scripts/test_review_advisory.sh` — shell/YAML/Markdown, no Python | `glab mr diff 296 --repo <namespace>/yoob_2` (yoob_2 repo, read-only) |
 | F3 | `JUDGED_CLAIM_TYPES = {DESIGN, SECURITY, SPEC_GAP}`; a finding of any other claim type only reaches the refuter once `verify_attempts >= 1` | `src/repoach/review/findings.py:58`, `src/repoach/review/refuter.py:202-206` |
 | F4 | `verify_finding` defers (returns `PROPOSED`, bumping `verify_attempts`) every claim type with no mechanical verifier — `BROKEN_BEHAVIOR`, `SPEC_GAP`, `DESIGN`, `SECURITY` all hit this branch, not only the judged types | `src/repoach/review/finding_verifiers.py:176-178` |
 | F5 | A finding with `verify_attempts == 0` and a non-judged claim type is excluded from `judged_targets` entirely — it contributes to none of `verified`/`refuted`/`deferred`. Already pinned by the existing suite | `src/repoach/review/refuter.py:201-206`, `tests/unit/test_refuter.py:186-201` (`test_judge_findings_no_targets_never_builds_judge`, asserts `counts == {"verified": 0, "refuted": 0, "deferred": 0}`) |

@@ -36,7 +36,7 @@ jobs:
     name: gate
     if: >-
       github.event_name != 'pull_request'
-      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     env:
       CI_BASE_BRANCH: ${{ github.base_ref || github.ref_name }}
@@ -112,7 +112,7 @@ jobs:
     # as collaborators are added — mirrors auto-review.yml.
     if: >-
       github.event_name != 'pull_request'
-      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
     needs: gate
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     strategy:
@@ -208,7 +208,7 @@ jobs:
     name: wheel-build
     if: >-
       github.event_name != 'pull_request'
-      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+      || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
     needs: gate
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     steps:

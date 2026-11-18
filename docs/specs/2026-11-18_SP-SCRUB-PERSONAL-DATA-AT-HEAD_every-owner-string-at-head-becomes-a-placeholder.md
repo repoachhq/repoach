@@ -1,7 +1,7 @@
 ---
 id: SP-SCRUB-PERSONAL-DATA-AT-HEAD
 title: Every maintainer path, login, host, address and handle at HEAD becomes a placeholder or a class under one redaction rule; the systemd units are rendered with an absolute install path; the live units are untouched
-version: 0.5
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-18
@@ -11,14 +11,14 @@ owns:
   code: [deploy/systemd/repoach-chainpilot.service, deploy/systemd/repoach-llm-proxy.service, deploy/systemd/repoach-nim-health.service, deploy/systemd/repoach-chainpilot.timer, deploy/systemd/repoach-nim-health.timer, deploy/systemd/README.md, scripts/install_user_units.sh, tests/unit/test_user_units_take_an_install_path.py, tests/unit/test_ci_portability.py, docs/security_posture.md]
   resources: [format:redaction-rule]
 
-depends_on: [SP-UNIVERSAL-FORGE, SP-PRECISION-MEASUREMENT, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ, SP-OWNER-SETTLES-A-FINDING, SP-FINDING-THREAD-IDS, SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED, SP-CI-SUPPLY-CHAIN-HARDEN, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-AUTOMERGE-EVENT-DRIVEN, SP-CONTRIBUTING, SP-GITLAB-NOTE-RECEIVER, SP-MEMORY-BACKEND-LIVENESS, SP-CI-LEDGER-PERSISTS, SP-REVIEW-DELTA-FIRST, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-UNIVERSAL-REPO, SP-ANONYMISED-GAP-SIGNAL, SP-REVIEW-MEMORY-LOOP, SP-CONVENTIONS-GATE, SP-PIN-TOOLCHAIN, SP-CLAUDE-CODE-FIRST-CLASS, SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-GATE-NAMES-FORMAT-SKEW, SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR, SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN]
+depends_on: [SP-UNIVERSAL-FORGE, SP-PRECISION-MEASUREMENT, SP-GENERATED-FILES-ARE-VERIFIED-NOT-READ, SP-OWNER-SETTLES-A-FINDING, SP-FINDING-THREAD-IDS, SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED, SP-CI-SUPPLY-CHAIN-HARDEN, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-AUTOMERGE-EVENT-DRIVEN, SP-CONTRIBUTING, SP-GITLAB-NOTE-RECEIVER, SP-MEMORY-BACKEND-LIVENESS, SP-CI-LEDGER-PERSISTS, SP-REVIEW-DELTA-FIRST, SP-REVIEW-SETTLED-STAYS-SETTLED, SP-UNIVERSAL-REPO, SP-ANONYMISED-GAP-SIGNAL, SP-REVIEW-MEMORY-LOOP, SP-CONVENTIONS-GATE, SP-PIN-TOOLCHAIN, SP-CLAUDE-CODE-FIRST-CLASS, SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-GATE-NAMES-FORMAT-SKEW, SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR, SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN, SP-UNIVERSAL-CI-ENTRY, SP-CI-RED-IS-EVIDENCE, SP-RED-STOPS-THE-LINE, SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES]
 provides_to: []
 
 constraints:
   documentation_ipv4_block: 203.0.113.0/24
   documentation_domain: example.com
   render_token: "@REPOACH_HOME@"
-  specs_bumped: 20
+  specs_bumped: 25
 ---
 
 # Every owner string at HEAD becomes a placeholder
@@ -42,6 +42,58 @@ Amendment (0.4, 2026-11-18): the recorded `id` keys are kept, user
 objects included — `gitlab.py:728` reads a user's `id` and the
 approvals fixture pins two of them (SP-RECORDER-REDACTS-BY-CLASS 0.3
 F1c); D1 and D2 drop only the user `name`.
+
+Amendment (0.6, 2026-11-18): the implementation measured three gaps
+against the code. (1) The parent's F8 and F9 counted the GitHub handle
+and three recorded names only: the maintainer's GitLab account, as a
+`username` and as the namespace of the recorded project path, was in
+12 GitLab fixtures (recorded argv included), 1 generated-artefacts
+fixture, 4 test modules, 2 bench corpus cases, 2 plans and 7 specs
+(28 files, umbrella F25), and the real name with a middle name
+was the `name` of the recorded user object in 11 GitLab fixtures; D1's
+rows 4 and 5 apply to them unchanged (a user namespace is a forge
+handle), so they are rewritten in this change, the namespace becoming
+`maintainer` in fixtures and tests and `<namespace>` in prose, and the
+rule's row 4 says so. The two synthetic names of
+`gitlab/reviews_two_approvals.json` and a project bot's already-masked
+name leave their user objects too, so the conformance suite pins one
+uniform shape (`test_recorded_user_objects_carry_no_name`). (2) Five
+more specs carried the GitLab handle or a host (`SP-UNIVERSAL-CI-ENTRY`,
+`SP-UNIVERSAL-FORGE`, `SP-CI-RED-IS-EVIDENCE`, `SP-RED-STOPS-THE-LINE`,
+`SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES`): 25 specs are bumped, not 20,
+and C5 counts 25; the four not yet in `depends_on` are added. (3) With
+the fallback `'[]'` the workflow simulator ran no actor-gated job, since
+it modelled an unset variable: `tests/github_concurrency_sim.py` gains
+`DEFAULT_VARIABLES`, the allow-list the live repository sets (O0, with
+the class word). The install script renders into a staging directory,
+verifies there and writes to `--dest` only on an empty verification, so
+a refusal leaves `--dest` untouched; it also refuses, exit 2, when
+`systemd-analyze` is absent. `bench/results/README.md` is the sibling
+line D2 names for the relative `corpus_root`. The replay test did not
+catch a host changed on one side (its diffs and its repository strings
+were independent inputs);
+`::test_the_recorded_diffs_move_the_host_the_repository_moves` ties
+them.
+
+Amendment (0.7, 2026-11-18): the verification measured four gaps.
+(1) No test read `bench/results/2026-10-21_planted_claude_code.json`:
+the Tests table named `test_bench_score` and `test_bench_cli`, which
+build their results in memory, so an absolute `corpus_root` put back in
+the published result stayed green. The row now names
+`test_bench_score.py::test_the_recorded_result_names_its_corpus_relative_to_the_checkout`,
+which loads that file. (2) The verify refusal and the
+`systemd-analyze`-absent refusal promised by 0.6 had no test; two rows
+pin them, each asserting exit 2, an untouched `--dest` and no
+`daemon-reload` among the calls a stub `systemctl` records. (3) No test
+read the actor clause of `ci.yml`'s `gate` (its `||` turned `&&`, or the
+clause dropped, kept the suite green); three simulator rows replay an
+allowed actor's pull request, a non-allowed actor's and a push. (4) D3
+reloaded the user manager whatever `--dest` was, so the README example
+and C4's fresh-machine oracle, both writing to `$(mktemp -d)`, reloaded
+the operator's real manager: the reload now runs only when `--dest` is
+the user unit directory (`${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`,
+the default, compared after resolving both paths); any other `--dest`
+prints `daemon-reload: skipped (--dest is not the user unit dir)`.
 
 ## Intent
 
@@ -101,7 +153,7 @@ spec cites them by number. What matters for the edits:
   | absolute home path (`/home/<x>/…`, `/Users/<x>/…`) | `~/…` in prose; `<repo>/…` when the path is a checkout; `/path/to/…` in a recorded JSON value | never `%h/<layout>` either |
   | a maintainer's directory layout under the home | `<layout>`; in a unit, the render token `@REPOACH_HOME@` (D3) | |
   | system login, service account | `<user>`; in a recorded JSON value, the class word (`maintainer`, `author`, `bot`, `agent`, `service`) | SP-REVIEW-SETTLED-STAYS-SETTLED 0.7 rule, generalised |
-  | forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot` | GitHub `login`, GitLab `username` alike |
+  | forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot` | GitHub `login`, GitLab `username` and a user namespace alike (0.6) |
   | real name in a recorded user object | dropped: the `name` key is removed from the user object | `login`/`username` are read by the forges and stay as class words (`forge/recording.py:32-130`); a user object's `name` is read by nothing and is dropped, while `name` elsewhere (check runs, jobs) is read and kept; every `id` is kept — a user's is read by `gitlab.py:728` and an id is an opaque identifier in none of the five classes (SP-RECORDER-REDACTS-BY-CLASS D1, F1b, F1c); `node_id`-named keys are already dropped (`:138`); a URL value keeps its shape with a placeholder host and namespace (D1b) |
   | hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
   | public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted by the gate |
@@ -133,7 +185,9 @@ spec cites them by number. What matters for the edits:
   a relative `--home` is refused), creates `<home>/logs`, runs
   `systemd-analyze --user verify` on the five rendered files and
   refuses with exit 2 if it prints anything, then `systemctl --user
-  daemon-reload`; it refuses to run when `systemctl --user` is
+  daemon-reload` when `<dest>` is the user unit directory (any other
+  `--dest` prints `daemon-reload: skipped (--dest is not the user unit
+  dir)` and reloads nothing, 0.7); it refuses to run when `systemctl --user` is
   unavailable, with the reason. `--dry-run` prints the rendered units
   to stdout and writes nothing. An operator who moves a checkout re-runs
   the script; an operator who prefers not to overwrite an installed
@@ -183,7 +237,10 @@ spec cites them by number. What matters for the edits:
   0.2→0.3, SP-FINDING-THREAD-IDS 0.2→0.3,
   SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF 0.3→0.4,
   SP-GATE-NAMES-FORMAT-SKEW 0.2→0.3, SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR
-  0.2→0.3, SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN 0.5→0.6.
+  0.2→0.3, SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN 0.5→0.6; and, measured by the
+  implementation (0.6), SP-UNIVERSAL-CI-ENTRY 0.3→0.4, SP-UNIVERSAL-FORGE 0.1→0.2,
+  SP-CI-RED-IS-EVIDENCE 0.4→0.5, SP-RED-STOPS-THE-LINE 0.2→0.3,
+  SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES 0.2→0.3: 25 specs.
   SP-REVIEW-FABLE-TIER is not edited (parent F21: its bump happened).
 - D8. **The commit identity is set, and from the gate on it is judged.**
   The owner set the repository-local `user.email` to the GitHub noreply
@@ -317,20 +374,24 @@ personal strings by placeholders`.
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
 | `tests/unit/test_user_units_take_an_install_path.py::test_units_carry_the_token_and_no_layout` | D3: each of the three services contains `@REPOACH_HOME@` in `WorkingDirectory=` and `ExecStart=`; no line of the five unit files or the README contains `%h/` except a line starting with `Environment=PATH=`, so no layout under the home survives | put a layout back |
-| `::test_rendered_units_verify_on_this_systemd` | D3: `install_user_units.sh --home <tmp checkout> --dest <tmp dir>` on a fake checkout holding executable stubs at `.venv/bin/repoach` and `.venv/bin/python` → exit 0, five `installed:` lines, three `verified:` lines, and `systemd-analyze --user verify <tmp dir>/*.service <tmp dir>/*.timer` run by the test prints nothing (skipped with the reason when `systemd-analyze` is absent); the rendered files contain no `@REPOACH_HOME@` | leave a token unrendered, or point `ExecStart=` at a missing file |
+| `::test_rendered_units_verify_on_this_systemd` | D3: `install_user_units.sh --home <tmp checkout> --dest <tmp dir>` on a fake checkout holding executable stubs at `.venv/bin/repoach` and `.venv/bin/python` → exit 0, five `installed:` lines, three `verified:` lines, and `systemd-analyze --user verify <tmp dir>/*.service <tmp dir>/*.timer` run by the test prints nothing (skipped with the reason when `systemd-analyze` is absent); the rendered files contain no `@REPOACH_HOME@`; the stub `systemctl` records `--user show-environment` only and stdout holds `daemon-reload: skipped (--dest is not the user unit dir)` (0.7) | leave a token unrendered, point `ExecStart=` at a missing file, or reload whatever `--dest` is |
+| `::test_only_the_user_unit_dir_is_reloaded` (0.7) | D3: with `XDG_CONFIG_HOME` and `HOME` in the test's directory and a stub `systemd-analyze` printing nothing, no `--dest` installs into `<XDG_CONFIG_HOME>/systemd/user` and records `--user daemon-reload`; `--dest <that dir>/` reloads too; a scratch `--dest` prints the skipped line and records no reload | never reload |
+| `::test_install_script_refuses_a_verification_that_prints` (0.7) | D3: a stub `systemd-analyze` printing one line → exit 2, the line relayed on stderr with the reason, `--dest` and `<home>/logs` absent, no `--user daemon-reload` recorded | ignore the verify output (M4) |
+| `::test_install_script_refuses_without_systemd_analyze` (0.7) | D3: `PATH` holding a stub `systemctl` and no `systemd-analyze` → exit 2 and `systemd-analyze not found`, `--dest` absent, no `--user daemon-reload` recorded | exit 0 when it is absent (M8), or drop the check |
 | `::test_install_script_refuses_without_user_systemd_and_a_relative_home` | D3: with `PATH` holding no `systemctl`, exit 2 and the reason; with `--home x`, exit 2 and the reason; `--dry-run` writes nothing and prints five `# --- ` headers | exit 0, or write under `--dry-run` |
+| `tests/unit/test_ci_portability.py::test_ci_runs_an_allowed_actors_pull_request`, `::test_ci_skips_a_non_allowed_actors_pull_request_from_the_gate_on`, `::test_ci_runs_a_push_whoever_pushed` (0.7) | D2: the workflow simulator replays `ci.yml` with `DEFAULT_VARIABLES`: an allowed actor's `pull_request` runs `gate`, `test`, `wheel-build`, `wheel-smoke`; a non-allowed actor's skips all four, `gate` included; a `push` by a non-allowed actor runs all four | turn `gate`'s `\|\|` into `&&` (M15), or drop `gate`'s actor clause (M2) |
 | `tests/unit/test_ci_portability.py::test_actor_allowlist_has_no_login_fallback` | D2: every `fromJSON(vars.REPOACH_ALLOWED_ACTORS \|\| …)` in `.github/workflows/*.yml` has the fallback `'[]'`, and no workflow contains `fromJSON('["` | put a handle back |
-| `tests/unit/test_forge_conformance.py` (existing, re-pointed) | D2: every replayed argv and every expected `login`/`username` is `maintainer`; `test_forge_conformance.py:595-608` builds `members/all?query=maintainer`; no recorded `author` object has a `name` key | keep one `args` with the handle |
-| `tests/integration/test_generated_artefacts_replay_yoob_322.py` (existing) | D2: green with `product.example.com` in fixture and test | change one of the two |
-| `tests/unit/test_bench_score.py` and `tests/unit/test_bench_cli.py` (existing) | D2: `corpus_root` relative resolves from the working directory | an absolute path in the result fixture |
+| `tests/unit/test_forge_conformance.py` (existing, re-pointed) | D2: every replayed argv and every expected `login`/`username` is `maintainer`; `test_forge_conformance.py:595-608` builds `members/all?query=maintainer`; no recorded user object has a `name` key (`::test_recorded_user_objects_carry_no_name`, 0.6) | keep one `args` with the handle, or put a `name` back |
+| `tests/integration/test_generated_artefacts_replay_yoob_322.py` (existing) | D2: green with `product.example.com` in fixture and test; `::test_the_recorded_diffs_move_the_host_the_repository_moves` (0.6) holds the first URL host of every removed and added diff line equal to the base and head hosts the replay repository is built from | change one of the two |
+| `tests/unit/test_bench_score.py::test_the_recorded_result_names_its_corpus_relative_to_the_checkout` (0.7) | D2: `load_result` on `bench/results/2026-10-21_planted_claude_code.json` gives `corpus_root` equal to the relative `bench/corpus/planted`, `load_corpus` on that path under the checkout root loads, and every recorded case id is one of its cases | an absolute path in the result fixture (M13) |
 
 ## Success conditions
 
 - C1 (oracle: git, any machine; both greps exclude the specs of this family that spell the patterns as worked examples, which child 3's allow-list declares): `git grep -n -P '(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])' -- . ':!tmp' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*'` → exactly four lines, `tests/unit/test_review_planner_cc.py:139`, `:142`, `tests/unit/test_secret_env.py:25`, `:38` (measured on this branch's tree 2026-11-18: those four plus the 6 maintainer files of parent F1, which go to 0; the excluded gate spec holds 5 example lines); `git grep -n '%h/' -- deploy docs ':!docs/specs/2026-11-18_SP-SCRUB-PERSONAL-DATA-AT-HEAD_*' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*' | grep -v -c 'Environment=PATH='` → `0` (measured on this branch's tree: 16 lines in 5 files — the three units, the README and `…SP-MEMORY-BACKEND-LIVENESS_*.md:136-142` — which D2 and D3 rewrite; the two excluded specs hold 7 lines describing the pattern).
 - C2 (oracle: the owner's `git grep` on their machine, counts written beside AC2 by the verifier): for each of the owner's strings, `git grep -l <string> -- . ':!tmp'` names only files among `LICENSE`, `pyproject.toml`, `SECURITY.md`, `docs/languages.md`, `docs/specs/*.md` (`author:` lines only, checked with `git grep -n <string> docs/specs | grep -v ':author: '` → 0); for the layout string, no file.
 - C3 (oracle: pytest, CI): the six suites of the End state green, plus `tests/unit/test_user_units_take_an_install_path.py`.
-- C4 (oracle: systemd, CI or a fresh machine): the rendered units of the test (C3) verify with empty output; on a fresh machine, `scripts/install_user_units.sh --home "$PWD" --dest "$(mktemp -d)"` from a checkout with a `.venv` → exit 0 and three `verified:` lines.
-- C5 (oracle: git): `for f in <the 20 specs of D7>; do grep -m1 '^version:' $f; done` shows each bumped value; `git diff origin/develop -- docs/specs | grep -c '^+version:'` → `20`.
+- C4 (oracle: systemd, CI or a fresh machine): the rendered units of the test (C3) verify with empty output; on a fresh machine, `scripts/install_user_units.sh --home "$PWD" --dest "$(mktemp -d)"` from a checkout with a `.venv` → exit 0, three `verified:` lines and `daemon-reload: skipped (--dest is not the user unit dir)`, the user manager not reloaded (0.7).
+- C5 (oracle: git): `for f in <the 25 specs of D7>; do grep -m1 '^version:' $f; done` shows each bumped value; `git diff origin/develop -- docs/specs | grep -c '^+version:'` → `27` (the 25 specs of D7, this spec's own bump, 0.7, and the umbrella's 0.5).
 - C6 (oracle: git): `git log --format=%ae origin/develop..HEAD | grep -v -c '@users.noreply.github.com$'` on the pull request's head → `0`.
 - C7 (oracle: gh, written beside AC4 with the date): `gh variable list | grep -c '^REPOACH_ALLOWED_ACTORS'` → `1` before the pull request opens.
 
@@ -343,6 +404,7 @@ personal strings by placeholders`.
 - Adds dependency: -> SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED (`.github/workflows/ci.yml` fallback, D2), -> SP-CI-SUPPLY-CHAIN-HARDEN (the actor allow-list it introduced and `docs/security_posture.md` it wrote, D1, D2), -> SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF (`tests/fixtures/merge_wait/*.yml` and its text, D2), -> SP-AUTOMERGE-EVENT-DRIVEN (its text, D2)
 - Adds dependency: -> SP-CONTRIBUTING (`docs/languages.md` allow entry, D2)
 - Adds dependency: -> SP-GITLAB-NOTE-RECEIVER (the example section and AC3, D2; the systemd floor, A1), -> SP-MEMORY-BACKEND-LIVENESS (the README convention it cites, D3)
+- Adds dependency: -> SP-UNIVERSAL-CI-ENTRY, -> SP-CI-RED-IS-EVIDENCE, -> SP-RED-STOPS-THE-LINE, -> SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES (their text, D2, 0.6)
 - Adds dependency: -> SP-CI-LEDGER-PERSISTS, -> SP-REVIEW-DELTA-FIRST, -> SP-REVIEW-SETTLED-STAYS-SETTLED (their oracles, D6), -> SP-UNIVERSAL-REPO, -> SP-ANONYMISED-GAP-SIGNAL, -> SP-REVIEW-MEMORY-LOOP, -> SP-CONVENTIONS-GATE, -> SP-PIN-TOOLCHAIN, -> SP-CLAUDE-CODE-FIRST-CLASS, -> SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB, -> SP-REFUTER-JUDGES-WHAT-IT-CAN, -> SP-GATE-NAMES-FORMAT-SKEW, -> SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR, -> SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN (their text, D2, D7)
 - New resource: `format:redaction-rule` (the D1 table). No table. No new cycle: this spec owns the five unit files, the README, one new test, one new script and two frontier files (`tests/unit/test_ci_portability.py`, `docs/security_posture.md`, unowned at `0be2a56` per `Registry.owner_of`), none imported by anything; every edge above is a document or fixture edit, not an import.
 

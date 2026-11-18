@@ -321,9 +321,9 @@ open, event-driven merge), you additionally need:
 2. provider keys as **repository secrets** (`NVIDIA_NIM_API_KEY`,
    `OPENROUTER_API_KEY`, … — same names as section 4);
 3. your GitHub username in the repository variable
-   `REPOACH_ALLOWED_ACTORS` — a JSON list such as `["you"]`; the
-   workflows default to `["jwfaye"]` when it is unset, and no YAML
-   edit is needed;
+   `REPOACH_ALLOWED_ACTORS` — a JSON list such as `["you"]`; it is
+   required: the workflows run no pull-request job until it is set,
+   and no YAML edit is needed;
 4. optionally `CLAUDE_CODE_ROUTINE_ID` / `CLAUDE_CODE_ROUTINE_TOKEN`
    secrets for push notifications into a Claude Code session.
 

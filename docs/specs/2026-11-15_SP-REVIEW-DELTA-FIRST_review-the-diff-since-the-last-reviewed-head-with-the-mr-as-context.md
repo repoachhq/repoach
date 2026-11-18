@@ -1,7 +1,7 @@
 ---
 id: SP-REVIEW-DELTA-FIRST
 title: From the second round on, the lenses review the diff since the last reviewed head, with the full merge request as cached context, and every fall-back to the full range is named
-version: 0.7
+version: 0.8
 status: approved
 author: agent
 created: 2026-11-15
@@ -21,6 +21,8 @@ constraints:
 ---
 
 # Delta-first review: the diff since the last reviewed head, the merge request as context
+
+Amendment (0.8, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Amendment (0.6, 2026-11-18): the live conditions are any project's, the ten-push fixture is named and anonymised
 
@@ -342,7 +344,7 @@ writes the context cache (57 k tokens), three read it; the report says
 - C1: replaying the recorded fixture's rounds 9–12 with their recorded heads and diffs, the target of each delta round contains every line the round's fix added and the report's `target_lines` equals the recorded compare size; oracle: the integration test on the fixture of SP-REVIEW-SETTLED-STAYS-SETTLED.
 - C2: on the same replay, the 15 remarks of rounds 9–11 on fix-added code are in delta; the 3 on pre-existing code are `out_of_delta` unless their comment names a target line; oracle: `findings.out_of_delta` count.
 - C3: on a live delta round of any project running this, through a gateway configured per `docs/getting_started.md`, the usage ledger shows `cache_read_tokens ≥ 0.9 × cache_write_tokens` of the first lens for lenses two to four, and the review's `cost.review_usd` is below the previous full round's by at least 40 %; oracle: `repoach usage --run <id>`; `test_gateway_forwards_cache_control` proves the forwarding on the fakes before any live round. Reference measurement (owner's dogfood): the owner's first delta round through the owner's gateway, written beside this line as an instance.
-- C4 (IH; 0.5, 0.6): on the recorded, anonymised ten-push merge request `tests/fixtures/review/ten_push_mr.json` replayed twice on the provider fakes, once with `[review].delta = false` and once with the default, the sum of `prompt_tokens` over the ten runs' `usage_ledger` rows drops by at least 50 % with the delta on, with the same set of findings open at the final head; oracle: `repoach usage --run <id>` for each of the twenty runs (F12), the twenty figures and the two sums written beside this line by the verifier; `grep -c -i "yoob\|hel1\|jofaye\|@[a-z]" tests/fixtures/review/ten_push_mr.json` → `0`.
+- C4 (IH; 0.5, 0.6): on the recorded, anonymised ten-push merge request `tests/fixtures/review/ten_push_mr.json` replayed twice on the provider fakes, once with `[review].delta = false` and once with the default, the sum of `prompt_tokens` over the ten runs' `usage_ledger` rows drops by at least 50 % with the delta on, with the same set of findings open at the final head; oracle: `repoach usage --run <id>` for each of the twenty runs (F12), the twenty figures and the two sums written beside this line by the verifier; `scripts/lint_no_personal_data.py --tree tests/fixtures/review/ten_push_mr.json` → `personal-data: ok` (judged when SP-NO-PERSONAL-DATA-GATE lands).
 - C5: (IH) on the planted corpus with each case split into two heads (the fixture's patch halved), the located-defect count is 10/10 with the second head reviewed as a delta round; oracle: `repoach bench report`.
 - C6: `pytest -q tests/unit/test_diff_scoper*.py tests/unit/test_review_pins_head.py tests/unit/test_gate_reverifies_at_head.py` → green.
 - C7 (0.4; oracle: `scripts/skew_replay.sh`): on this spec's branch, `scripts/skew_replay.sh origin/develop HEAD` → `ledger: format 3 is newer than this reader's 2 …`, exit 5; `scripts/skew_replay.sh HEAD HEAD` → `ledger: ok (format 3, …)`, exit 0; after the release that ships it, `scripts/skew_replay.sh origin/main origin/develop` → `ledger: ok`. The three command lines and outputs are written beside this line by the verifier.

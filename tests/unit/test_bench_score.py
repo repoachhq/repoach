@@ -30,8 +30,9 @@ from repoach.bench.corpus import (
     LabelledFinding,
     PlantedDefect,
     fingerprint,
+    load_corpus,
 )
-from repoach.bench.result import BenchResult, CaseRun, RecordedFinding
+from repoach.bench.result import BenchResult, CaseRun, RecordedFinding, load_result
 from repoach.bench.score import (
     Ratio,
     ReadmeLineRefusedError,
@@ -40,6 +41,10 @@ from repoach.bench.score import (
     score,
     totals_line,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
+RECORDED_RESULT = ROOT / "bench" / "results" / "2026-10-21_planted_claude_code.json"
+PLANTED_CORPUS = ROOT / "bench" / "corpus" / "planted"
 
 README_LINE = re.compile(
     r"precision [0-9.]+ \([0-9]+/[0-9]+\), recall [0-9.]+ \([0-9]+/[0-9]+\) on [0-9]+ "
@@ -241,3 +246,13 @@ def test_an_unlabelled_run_leaves_located_defects_out_of_recall() -> None:
     assert card.recall_pending == 1
     assert card.planted_located == 1
     assert card.planted_total == 2
+
+
+def test_the_recorded_result_names_its_corpus_relative_to_the_checkout() -> None:
+    """SP-SCRUB-PERSONAL-DATA-AT-HEAD D2: the published result carries no absolute path."""
+    result = load_result(RECORDED_RESULT)
+    root = Path(result.corpus_root)
+    assert not root.is_absolute(), "corpus_root must be relative to the checkout"
+    assert root == Path("bench/corpus/planted"), "corpus_root must resolve from the checkout root"
+    corpus = load_corpus(PLANTED_CORPUS)
+    assert {run.case for run in result.cases} <= {case.case for case in corpus.cases}

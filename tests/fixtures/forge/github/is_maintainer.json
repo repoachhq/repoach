@@ -1,19 +1,19 @@
 {
   "args": [
-    "jwfaye"
+    "maintainer"
   ],
   "bot_username": "repoach-bot",
   "calls": [
     {
       "args": [
         "api",
-        "repos/:owner/:repo/collaborators/jwfaye/permission"
+        "repos/:owner/:repo/collaborators/maintainer/permission"
       ],
       "program": "gh",
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"permission\": \"write\", \"role_name\": \"maintain\", \"user\": {\"login\": \"jwfaye\"}}"
+      "stdout": "{\"permission\": \"write\", \"role_name\": \"maintain\", \"user\": {\"login\": \"maintainer\"}}"
     }
   ],
   "case": "is_maintainer",

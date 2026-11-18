@@ -33,9 +33,9 @@ _MR = {
     "source_branch": "feat/wire-spi-gpio-i2c-into-the-soc",
     "target_branch": "develop",
     "sha": "a9f7001cd82170b482a534d94b7bc0fede20f272",
-    "author": {"username": "josephwfaye"},
+    "author": {"username": "maintainer"},
     "state": "merged",
-    "web_url": "https://gitlab.com/josephwfaye/yoob_2/-/merge_requests/283",
+    "web_url": "https://gitlab.com/maintainer/yoob_2/-/merge_requests/283",
 }
 
 _DISCUSSIONS_PAGE_1 = [
@@ -53,7 +53,7 @@ _DISCUSSIONS_PAGE_1 = [
                 "id": 11,
                 "type": "DiffNote",
                 "body": "reply",
-                "author": {"username": "josephwfaye"},
+                "author": {"username": "maintainer"},
                 "position": {"new_path": "src/a.py", "new_line": 7},
             },
         ]
@@ -118,7 +118,7 @@ def test_pr_view_maps_every_field_review_pr_reads() -> None:
         "body": "## Why",
         "headRefName": "feat/wire-spi-gpio-i2c-into-the-soc",
         "baseRefName": "develop",
-        "author": {"login": "josephwfaye"},
+        "author": {"login": "maintainer"},
         "state": "MERGED",
         "url": _MR["web_url"],
     }
@@ -155,7 +155,7 @@ def test_pull_comments_maps_diff_notes_across_pages_into_slurped_github_shape() 
             "path": "src/a.py",
             "line": 7,
             "body": "reply",
-            "user": {"login": "josephwfaye"},
+            "user": {"login": "maintainer"},
         },
         {
             "id": 20,

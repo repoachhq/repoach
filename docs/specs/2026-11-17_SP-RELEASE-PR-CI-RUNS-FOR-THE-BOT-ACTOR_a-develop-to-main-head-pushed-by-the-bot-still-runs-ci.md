@@ -1,11 +1,11 @@
 ---
 id: SP-RELEASE-PR-CI-RUNS-FOR-THE-BOT-ACTOR
 title: The release pull request's CI runs on a head the bot pushed; the actor allowlist admits the same-repo develop head into main without a close/reopen
-version: 0.2
+version: 0.3
 status: approved
 author: agent
 created: 2026-11-17
-updated: 2026-11-17
+updated: 2026-11-18
 
 owns:
   code: [tests/unit/test_ci_admits_the_release_head.py]
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # The release pull request's CI runs on a bot-pushed head
+
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -40,11 +42,11 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
 
 | # | Fact | Where |
 |---|---|---|
-| F1 | Every job of `ci.yml` and the one job of `shellcheck.yml` carries `if: github.event_name != 'pull_request' \|\| contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS \|\| '["jwfaye"]'), github.actor)`; the comment: "Untrusted PR code runs on a self-hosted runner: gate pull_request events to the maintainer allowlist" | `.github/workflows/ci.yml:29-35,120-122`; `.github/workflows/shellcheck.yml:24-32` |
+| F1 | Every job of `ci.yml` and the one job of `shellcheck.yml` carries `if: github.event_name != 'pull_request' \|\| contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS \|\| '["<maintainer's handle>"]'), github.actor)`; the comment: "Untrusted PR code runs on a self-hosted runner: gate pull_request events to the maintainer allowlist" | `.github/workflows/ci.yml:29-35,120-122`; `.github/workflows/shellcheck.yml:24-32` |
 | F2 | Release PR #307 (`develop` → `main`, head `79b9321`): `CI` run 44071742332 and `ShellCheck` run 44071742312 (`pull_request`, 11:11Z) concluded `skipped`, every job `skipped` with `steps: 0`; after the owner's close/reopen, runs 44081266335 and 44081266349 (12:14Z) concluded `success`. The head commit is the squash merge of #308, committed by `web-flow`; the push to `develop` that synchronised #307 was the gate's merge | `gh run list --commit 79b9321`; `gh api repos/repoachhq/repoach/actions/runs/44071742332/jobs`; `gh api repos/repoachhq/repoach/commits/79b9321` |
 | F3 | `merge-on-ci.yml` admits `github-actions[bot]` as the actor of a completed run for the same reason, with the same argument: the merge is re-verified at head, never trusted from the event | `.github/workflows/merge-on-ci.yml:68-77` |
 | F4 | After SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED (owner decision O2), `ci.yml` runs on `push` to `main` and `develop` with the full set; every commit of `develop` therefore runs on the self-hosted runner on the day it lands, as a trusted `push` event | `docs/specs/2026-11-16_SP-PR-RUNS-AFFECTED-JOBS_*.md`, decision g; `.github/workflows/ci.yml:4-9` |
-| F5 | `docs/releasing.md` and the delivery state record the workaround: "fix = gh pr close + reopen (actor jwfaye) gives real runs" | the delivery state of 2026-11-17, section 8 |
+| F5 | `docs/releasing.md` and the delivery state record the workaround: "fix = gh pr close + reopen (actor: the maintainer) gives real runs" | the delivery state of 2026-11-17, section 8 |
 | F6 | The release gate reads `ci_green` as a fact; under SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN a skipped run is `required_check_failed`, so without this spec every release pull request opens red until a close/reopen | `src/repoach/cli/release_cmds.py:176`; SP-SKIPPED-REQUIRED-CHECK-IS-NOT-GREEN D1 |
 
 ## Decisions (2026-11-17)
@@ -54,7 +56,7 @@ Measured 2026-11-17 on `origin/develop` `5cea5a7`.
   ```yaml
   if: >-
     github.event_name != 'pull_request'
-    || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+    || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["<maintainer's handle>"]'), github.actor)
     || (github.actor == 'github-actions[bot]'
         && github.event.pull_request.head.repo.full_name == github.repository
         && github.event.pull_request.head.ref == 'develop'

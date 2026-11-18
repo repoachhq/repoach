@@ -1,15 +1,46 @@
 # systemd --user units
 
 Version-controlled deploy units for the Repoach runtime and background
-cadences (run as `systemctl --user`). Paths use the `%h` specifier (the
-invoking user's home), so they assume the checkout at
-`%h/Documents/work/repoach` and its `.venv` runtime (`pip install -e
-".[dev]"` inside `%h/Documents/work/repoach/.venv`); adjust
-`WorkingDirectory` / `ExecStart` if either differs.
+cadences (run as `systemctl --user`). The tracked files are templates:
+each holds the render token `@REPOACH_HOME@` where the checkout path goes
+(`WorkingDirectory=`, `ExecStart=`, `StandardOutput=append:`,
+`StandardError=append:`), and they are never copied as they are.
+`scripts/install_user_units.sh` renders them with an absolute path, the
+checkout's `.venv` runtime (`pip install -e ".[dev]"` inside
+`<checkout>/.venv`) included:
 
-Common prerequisite: the units append their output under the checkout's
-`logs/` directory (gitignored) — `mkdir -p ~/Documents/work/repoach/logs`
-once before the first install.
+```bash
+scripts/install_user_units.sh                      # the checkout the script lives in
+scripts/install_user_units.sh --home /path/to/repoach
+scripts/install_user_units.sh --dry-run            # print the five rendered files, write nothing
+scripts/install_user_units.sh --dest "$(mktemp -d)"  # render and verify only, reload nothing
+```
+
+The script renders the three services and the two timers, verifies them
+with `systemd-analyze --user verify` (any output refuses the install with
+exit 2 and is relayed; nothing is written or reloaded), writes them to
+`--dest` (default `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`),
+creates the checkout's `logs/` directory (gitignored), where the units
+append their output, and runs `systemctl --user daemon-reload` when
+`--dest` is that user unit directory. Any other `--dest` prints
+`daemon-reload: skipped (--dest is not the user unit dir)` and leaves the
+user manager alone. A relative `--home`, a missing `systemctl --user`, a
+missing `systemd-analyze` and a failed verification are exit 2 with the
+reason. An operator who moves the
+checkout re-runs it.
+
+An operator who prefers not to overwrite an installed unit writes a
+drop-in holding literal absolute values instead, for example
+`~/.config/systemd/user/repoach-llm-proxy.service.d/path.conf`:
+
+```ini
+[Service]
+WorkingDirectory=/path/to/repoach
+ExecStart=
+ExecStart=/path/to/repoach/.venv/bin/python -m repoach.llm_proxy
+StandardOutput=append:/path/to/repoach/logs/llm_proxy.log
+StandardError=append:/path/to/repoach/logs/llm_proxy.log
+```
 
 ## LLM proxy (`repoach-llm-proxy`)
 
@@ -27,9 +58,7 @@ When the sharp-agent stack is retired, drop the `.env` override and the
 `REPOACH_PROXY_PORT=8084` line in the unit to reclaim the default 8082.
 
 ```bash
-mkdir -p ~/Documents/work/repoach/logs
-cp deploy/systemd/repoach-llm-proxy.service ~/.config/systemd/user/
-systemctl --user daemon-reload
+scripts/install_user_units.sh
 systemctl --user enable --now repoach-llm-proxy.service
 curl -s http://127.0.0.1:8084/health
 ```
@@ -43,9 +72,7 @@ proxy's health breaker at startup and feeds Chain Autopilot attribution
 the cadence both start blind.
 
 ```bash
-cp deploy/systemd/repoach-nim-health.service ~/.config/systemd/user/
-cp deploy/systemd/repoach-nim-health.timer   ~/.config/systemd/user/
-systemctl --user daemon-reload
+scripts/install_user_units.sh
 systemctl --user enable --now repoach-nim-health.timer
 systemctl --user list-timers repoach-nim-health.timer
 ```
@@ -67,9 +94,7 @@ available to run by hand; the cadence now drives the model-first path.)
 Install + enable:
 
 ```bash
-cp deploy/systemd/repoach-chainpilot.service ~/.config/systemd/user/
-cp deploy/systemd/repoach-chainpilot.timer   ~/.config/systemd/user/
-systemctl --user daemon-reload
+scripts/install_user_units.sh
 systemctl --user enable --now repoach-chainpilot.timer
 systemctl --user list-timers repoach-chainpilot.timer
 ```

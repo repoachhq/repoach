@@ -1,11 +1,11 @@
 ---
 id: SP-JOB-PROXY-IS-PRIVATE-TO-ITS-JOB
 title: Each CI job's LLM proxy runs on its own port and proves it is that job's process
-version: 1.1
+version: 1.2
 status: approved
 author: agent
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/llm_proxy/instance.py, scripts/job_proxy.sh, tests/job_proxy_fakes.py, tests/unit/test_job_proxy_instance.py, tests/unit/test_job_proxy_prove.py, tests/unit/test_job_proxy_workflow_wiring.py, tests/integration/test_job_proxy_collision.py]
@@ -22,6 +22,8 @@ constraints:
 
 # Each CI job's LLM proxy runs on its own port and proves it is that job's process
 
+Amendment (1.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
+
 ## Intent
 
 A red that stops the line, with its corrective spec and its fix in the same
@@ -37,7 +39,7 @@ answering `/health` is its own before it runs anything.
 Measured 2026-10-26 from `gh api repos/repoachhq/repoach/actions/jobs/<id>/logs`
 and `.github/workflows/auto-review.yml` at `origin/develop` `f4d2b41`.
 
-- F1, the host. `repoach-runner` (`/home/jofaye/actions-runner-ferova`) and
+- F1, the host. `repoach-runner` (`~/actions-runner-ferova`) and
   `repoach-runner-2` (`actions-runner-2`) are two self-hosted runners on one
   machine. They share one loopback interface.
 - F2, the wiring. Both proxy-starting jobs of `auto-review.yml` (`review`,

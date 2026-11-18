@@ -15,7 +15,7 @@ the maintainer's machine. Two controls contain that trust:
 
 1. **Actor allowlist.** Every job that runs PR code — the `ci.yml` `test`
    matrix and the `auto-review.yml` review / `auto_fix` jobs — is gated by
-   `contains(fromJSON('["jwfaye"]'), github.actor)` on `pull_request`
+   `contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)` on `pull_request`
    events. A PR from any other actor does not execute code on the runner.
    (`push` / `workflow_dispatch` on protected branches are already trusted.)
 2. **Environment-scoped secrets.** Provider keys live in the `bots`
@@ -44,14 +44,14 @@ is immutable.
 ```yaml
 if: >-
   github.event_name != 'pull_request'
-  || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)
+  || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)
 ```
 
 so an untrusted actor cannot run PR code on the self-hosted runner through CI,
 matching `auto-review.yml`. The allowlist is sourced from the
 `REPOACH_ALLOWED_ACTORS` repository variable (see *Fork portability* below);
-the `'["jwfaye"]'` literal is only the maintainer-repo default that applies
-when the variable is unset. `tests/unit/test_ci_portability.py` locks the
+the `'[]'` fallback is empty, so the workflows run no pull-request job
+until it is set. `tests/unit/test_ci_portability.py` locks the
 wiring so no workflow regresses to a hardcoded actor or runner.
 
 ## Fork portability — `REPOACH_RUNNER` and `REPOACH_ALLOWED_ACTORS`
@@ -59,14 +59,15 @@ wiring so no workflow regresses to a hardcoded actor or runner.
 `.github/workflows/*` is bot-forbidden, so its trust boundary must be
 reconfigurable without editing the files. Two GitHub **repository variables**
 (Settings → Secrets and variables → Actions → Variables) carry the
-deployment-specific values; both fall back to the maintainer defaults so this
-repo needs no configuration:
+deployment-specific values. `REPOACH_RUNNER` falls back to `self-hosted`;
+`REPOACH_ALLOWED_ACTORS` is required: the workflows run no pull-request job
+until it is set:
 
 | Variable | Default when unset | Purpose |
 | --- | --- | --- |
 | `REPOACH_RUNNER` | `self-hosted` | Runner label every job targets. A fork on GitHub-hosted runners sets `ubuntu-latest`. |
 | `REPOACH_REVIEW_RUNNER` | `REPOACH_RUNNER` | Runner label for the `review` and `auto_merge` jobs of `auto-review.yml` only, so reviews do not queue behind CI. `auto_fix` stays on `REPOACH_RUNNER`: it executes PR code. The review runner receives the `bots` provider keys and a `contents: write` token, so register it with only its own label (`--no-default-labels`) and never let it serve a job that runs PR code. |
-| `REPOACH_ALLOWED_ACTORS` | `["jwfaye"]` | JSON array of logins allowed to run PR code on the runner. A fork sets its own maintainers, e.g. `["alice","bob"]`. |
+| `REPOACH_ALLOWED_ACTORS` | `[]` (required: the workflows run no pull-request job until it is set) | JSON array of logins allowed to run PR code on the runner. Each repository sets its own maintainers, e.g. `["alice","bob"]`. |
 
 A forker's entire trust setup is therefore two variables in the GitHub UI — no
 workflow edits, which keeps the bot-forbidden files pristine. Set both together
@@ -124,3 +125,32 @@ risk for the single trusted maintainer.
 - This document is the security/ops reference the spec's G3 calls for; keep the
   action-pinning and actor-allowlist claims above in sync with the workflows if
   either changes.
+
+## Personal data in fixtures and docs
+
+repoach is for everyone, so no maintainer's path, login, host, address or
+mailbox belongs in code, defaults, docs, fixtures, bench results, oracles or
+shipped artefacts (SP-REPO-CARRIES-NO-PERSONAL-DATA). Every future fixture,
+bench result, doc and spec follows one rule (`format:redaction-rule`,
+SP-SCRUB-PERSONAL-DATA-AT-HEAD D1). An oracle that forbids a personal string
+never spells it: it runs `scripts/lint_no_personal_data.py --tree <path>`
+(SP-NO-PERSONAL-DATA-GATE), which detects the classes below and reads the
+strings no class can detect from a per-maintainer deny-list kept outside the
+tree.
+
+| Class | Replacement | Note |
+|---|---|---|
+| absolute home path (`/home/<x>/…`, `/Users/<x>/…`) | `~/…` in prose; `<repo>/…` when the path is a checkout; `/path/to/…` in a recorded JSON value | never the `%h` specifier followed by a layout either |
+| a maintainer's directory layout under the home | `<layout>`; in a unit, the render token `@REPOACH_HOME@` (`deploy/systemd/README.md`) | |
+| system login, service account | `<user>`; in a recorded JSON value, the class word (`maintainer`, `author`, `bot`, `agent`, `service`) | |
+| forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot` | GitHub `login`, GitLab `username` and a user namespace alike |
+| real name in a recorded user object | dropped: the `name` key is removed from the user object | `login`/`username` stay as class words; `name` elsewhere (check runs, jobs) is read by the forges and kept; every `id` is kept, an opaque identifier in none of these classes |
+| hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
+| public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted |
+| public IPv6 | `2001:db8::<n>` (RFC 3849) | |
+| mailbox | `<user>@example.com`; a forge noreply stays as is | |
+| a domain of the owner's other product | `example.com`, or `product.example.com` when the sentence needs a product | the product's name alone is not personal data |
+
+Public attribution is not personal data: the copyright holder in `LICENSE`,
+the `authors` of `pyproject.toml`, the security contact in `SECURITY.md`, the
+maintainer column of `docs/languages.md` and a spec's `author:` line stay.

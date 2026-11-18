@@ -68,13 +68,13 @@ jobs:
     if: >-
       (github.event_name == 'workflow_dispatch'
        && (github.actor == 'github-actions[bot]'
-           || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.actor)))
+           || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.actor)))
       || (github.event.workflow_run.conclusion == 'success'
           && (github.event.workflow_run.event == 'pull_request'
               || github.event.workflow_run.event == 'pull_request_review')
           && github.event.workflow_run.head_repository.full_name == github.repository
           && (github.event.workflow_run.actor.login == 'github-actions[bot]'
-              || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '["jwfaye"]'), github.event.workflow_run.actor.login)))
+              || contains(fromJSON(vars.REPOACH_ALLOWED_ACTORS || '[]'), github.event.workflow_run.actor.login)))
     runs-on: ${{ vars.REPOACH_RUNNER || 'self-hosted' }}
     timeout-minutes: 30
     permissions:

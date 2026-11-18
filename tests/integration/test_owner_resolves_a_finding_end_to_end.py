@@ -38,6 +38,7 @@ from repoach.review.head_reverify import reverify_older_findings
 from repoach.review.orchestrator import run_review
 from tests.fixtures.generated_artefacts.harness import Forge, Repo, Review, install
 
+MAINTAINER = "maintainer"
 PR = 7
 OLDER = "0cc9008" + "0" * 33
 REASON = "environment review-gate is protected: deploy access Maintainers, read back from the API"
@@ -71,7 +72,7 @@ class CommentingForge(Forge):
         if len(args) == 2 and args[0] == "api" and args[1].endswith("/permission"):
             login = args[1].split("/")[-2]
             self.permission_reads.append(login)
-            role = "maintain" if login == "jwfaye" else "read"
+            role = "maintain" if login == MAINTAINER else "read"
             return GhResult(
                 0, json.dumps({"permission": "write", "role_name": role}), "", argv=args
             )
@@ -155,7 +156,7 @@ def test_owner_resolve_flips_the_verdict_at_the_same_head(
 
     comment = {
         "id": 501,
-        "user": {"login": "jwfaye"},
+        "user": {"login": MAINTAINER},
         "body": f"/resolve #{blocker} {REASON}",
         "created_at": "2026-11-01T12:00:00Z",
         "updated_at": "2026-11-01T12:00:00Z",
@@ -171,17 +172,17 @@ def test_owner_resolve_flips_the_verdict_at_the_same_head(
     assert second.payload["owner_resolved"] == [
         {
             "finding_id": blocker,
-            "login": "jwfaye",
+            "login": MAINTAINER,
             "reason": REASON,
             "comment_id": 501,
             "head_sha": head,
         }
     ]
     assert second.payload["owner_commands"][0]["outcome"] == "applied"
-    assert f"owner-resolved #{blocker} by jwfaye: {REASON}" in second.stderr
+    assert f"owner-resolved #{blocker} by {MAINTAINER}: {REASON}" in second.stderr
     assert any(line.startswith("owner reply not posted: ") for line in second.stderr)
     assert second.payload["refused_writes"] == 0
-    assert owner.permission_reads == ["jwfaye"]
+    assert owner.permission_reads == [MAINTAINER]
     assert judge.calls == 1
     row = next(f for f in fetch_findings(bench.db_path, PR) if f.id == blocker)
     assert row.status is FindingStatus.OWNER_RESOLVED

@@ -1,11 +1,11 @@
 ---
 id: SP-UNIVERSAL-CI-ENTRY
 title: review pr and review gate from any CI with one semantics; the human-merge race ends in ALREADY_MERGED
-version: 0.3
+version: 0.4
 status: draft
 author: agent
 created: 2026-10-18
-updated: 2026-10-20
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/ci_entry/, src/repoach/__main__.py, tests/unit/test_ci_entry.py, tests/unit/test_ci_review.py, tests/unit/test_ci_init.py, tests/unit/test_ci_doctor.py, tests/unit/test_merge_race.py]
@@ -18,6 +18,8 @@ constraints: {}
 ---
 
 # review pr and review gate from any CI with one semantics
+
+Amendment (0.4, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -51,7 +53,7 @@ job.
   there is no `--post` flag, so a CI job that wants advisory output
   must remember the flag.
 - `review_bot_login` is global (`core/config.py:223`); a GitLab bot is a
-  project access token user, Yoob's would be `josephwfaye` or a token
+  project access token user, Yoob's would be the maintainer's account or a token
   user.
 
 ## Goals

@@ -1,11 +1,11 @@
 ---
 id: SP-PIN-TOOLCHAIN
 title: Pin ruff to one minor and spawn pytest and ruff through the running interpreter
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-11-18
 
 owns:
   code: [tests/unit/test_toolchain_pin.py, tests/unit/test_toolchain_spawn.py]
@@ -19,6 +19,8 @@ constraints:
 ---
 
 # Pin ruff to one minor and spawn tools through `sys.executable`
+
+Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -36,7 +38,7 @@ Measured on `develop` `20dbb45` (2026-10-19).
 | # | Fact | Where |
 |---|---|---|
 | F1 | The dev extra declares `ruff>=0.5` with no upper bound; CI runs `pip install -e ".[dev]"`, so every CI run resolves the newest ruff | `pyproject.toml:63`; `.github/workflows/ci.yml:54-57` |
-| F2 | The operator's venv holds `ruff 0.15.20`; PyPI's newest is `0.17.1` (2026-10-19) | `ruff --version` in `/home/jofaye/Documents/work/repoach/.venv`; `pip index versions ruff` |
+| F2 | The operator's venv holds `ruff 0.15.20`; PyPI's newest is `0.17.1` (2026-10-19) | `ruff --version` in `<repo>/.venv`; `pip index versions ruff` |
 | F3 | With `0.17.1` first on `PATH`, `ruff check src tests` reports one new violation — `tests/integration/test_chain_regen_freshness.py:104:9 SIM117` — so `scripts/ci_local.sh --fast` (`:115`) and the CI `Ruff check` step (`ci.yml:59-60`) go red on an unchanged tree; `ruff format --check` stays clean (466 files) | measured in a scratch install of `ruff==0.17.1` |
 | F4 | The eight gate test files (`test_ruff_gate_unsafe_fixes`, `test_devagent_tools`, `test_devagent_selfverify`, `test_dev_runner`, `test_coder_findings`, `test_selfverify_refutation`, `test_devagent_loop`, `test_review_planner`) pass 110/110 under both `0.15.20` and `0.17.1` on this tree; the "nine Developer-gate tests red" report attached to the unpinned range was not reproduced at `20dbb45` and is kept as a report, not a fact | same measurement, 238 s and 163 s |
 | F5 | `run_ruff_gate` spawns `shutil.which("ruff") or "ruff"` — the first `ruff` on `PATH`, not the one installed beside repoach | `src/repoach/review/coder_loop.py:651-677` |

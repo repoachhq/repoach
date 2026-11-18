@@ -4,6 +4,6 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/Documents/work/repoach
-ExecStart=%h/Documents/work/repoach/.venv/bin/repoach regenerate-chains
+WorkingDirectory=@REPOACH_HOME@
+ExecStart=@REPOACH_HOME@/.venv/bin/repoach regenerate-chains
 SuccessExitStatus=0 1

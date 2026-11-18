@@ -3,7 +3,7 @@ description: Yoob !296, dry runs recorded before SP-REVIEW-PINS-HEAD (no head on
 private: true
 source:
   kind: ledger
-  repo: https://gitlab.com/josephwfaye/yoob_2
+  repo: https://gitlab.com/maintainer/yoob_2
   pr: 296
   head_sha: unrecorded
 planted: []

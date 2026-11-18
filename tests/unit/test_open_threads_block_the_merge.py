@@ -51,7 +51,7 @@ from repoach.review.release_gate import (
 from repoach.review.report import render_ledger_report
 from repoach.review.reviewer import BotRole, ReviewVerdict
 from tests.forge_fakes import NO_OPEN_THREADS, thread_node, threads_page
-from tests.github_concurrency_sim import Context, job_condition
+from tests.github_concurrency_sim import MAINTAINER, Context, job_condition
 from tests.merge_wait_fakes import (
     HEAD_256,
     HEAD_259,
@@ -202,7 +202,7 @@ def test_auto_merge_refuses_a_green_pr_with_an_open_thread_then_merges_once_it_i
     assert comment is not None
     assert "1 unresolved review thread(s)" in str(comment["body"])
 
-    open_thread.update(isResolved=True, resolvedBy={"login": "jwfaye"})
+    open_thread.update(isResolved=True, resolvedBy={"login": MAINTAINER})
     fx.advance(60)
     second = run_auto_merge(
         259, forge=fx.forge, db_path=db, repo_root=REPO_ROOT, wait_seconds=0, clock=fx.clock
@@ -390,14 +390,14 @@ def test_a_reply_in_a_thread_rearms_the_merge_through_the_review_workflow() -> N
     completed = Context(
         github={
             "event_name": "workflow_run",
-            "actor": "jwfaye",
+            "actor": MAINTAINER,
             "repository": REPOSITORY,
             "event": {
                 "workflow_run": {
                     "conclusion": "success",
                     "event": "pull_request_review",
                     "head_repository": {"full_name": REPOSITORY},
-                    "actor": {"login": "jwfaye"},
+                    "actor": {"login": MAINTAINER},
                 }
             },
         }

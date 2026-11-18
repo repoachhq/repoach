@@ -3,7 +3,7 @@ description: Yoob !296 reviewed at its pinned head (owner runs, 2026-10-21)
 private: true
 source:
   kind: ledger
-  repo: https://gitlab.com/josephwfaye/yoob_2
+  repo: https://gitlab.com/maintainer/yoob_2
   pr: 296
   head_sha: d62ae6f5c45332e9ef62f7b6abbe06e7c3590ddc
 planted: []

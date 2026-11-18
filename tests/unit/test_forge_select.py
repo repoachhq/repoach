@@ -63,7 +63,7 @@ def _fake_binaries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *present: st
 
 def test_gitlab_scp_url_selects_gitlab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_binaries(monkeypatch, tmp_path, "gh", "glab")
-    root = _repo(tmp_path, "git@gitlab.com:josephwfaye/yoob_2.git")
+    root = _repo(tmp_path, "git@gitlab.com:maintainer/yoob_2.git")
     assert isinstance(select_forge(cwd=root), GitLabForge)
 
 
@@ -75,7 +75,7 @@ def test_github_https_url_selects_github(tmp_path: Path, monkeypatch: pytest.Mon
 
 def test_missing_binary_raises_naming_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_binaries(monkeypatch, tmp_path, "gh")
-    root = _repo(tmp_path, "git@gitlab.com:josephwfaye/yoob_2.git")
+    root = _repo(tmp_path, "git@gitlab.com:maintainer/yoob_2.git")
     with pytest.raises(ForgeUnavailableError) as info:
         select_forge(cwd=root)
     assert info.value.binary == "glab"
@@ -151,8 +151,8 @@ def test_explicit_env_bot_login_applies_to_gitlab(
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        ("git@gitlab.com:josephwfaye/yoob_2.git", "gitlab"),
-        ("https://gitlab.com/josephwfaye/yoob_2.git", "gitlab"),
+        ("git@gitlab.com:maintainer/yoob_2.git", "gitlab"),
+        ("https://gitlab.com/maintainer/yoob_2.git", "gitlab"),
         ("ssh://git@gitlab.example.com:2222/o/r.git", "gitlab"),
         ("https://github.com/repoachhq/repoach.git", "github"),
         ("git@github.com:repoachhq/repoach.git", "github"),

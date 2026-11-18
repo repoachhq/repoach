@@ -1,11 +1,11 @@
 ---
 id: SP-ANONYMISED-GAP-SIGNAL
 title: An anonymised gap signal for repoach's own development — counts and categories only, opt-in, previewed before every send and logged locally
-version: 0.1
+version: 0.2
 status: draft
 author: agent
 created: 2026-11-12
-updated: 2026-11-12
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/gap/, src/repoach/cli/gap_cmds.py, tests/unit/test_gap_signal_payload.py, tests/unit/test_gap_signal_consent.py, tests/unit/test_gap_signal_transport.py, tests/fixtures/gap/planted_ledger.sql]
@@ -25,6 +25,8 @@ constraints:
 ---
 
 # An anonymised gap signal for repoach's own development
+
+Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 ## Intent
 
@@ -284,7 +286,7 @@ flowchart TD
 - [ ] AC5: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `docs/privacy.md` exists and README links it; `docs/specs/2026-10-19_SP-UNIVERSAL-LEDGER_*.md` carries the amendment superseding its G7 and Privacy table.
 
 ## Open Questions
-- Q1 (decided by owner 2026-11-12: (a) the owner receiver on hel1 at https://gap.repoach.dev/v1/gap, preview and local log only until it is up; (b) refused): where the signal is stored. Options: (a) an owner-run receiver on `hel1` behind the existing reverse proxy at `https://gap.repoach.dev/v1/gap`, JSONL per month, as D7; (b) a public GitHub repository where senders open a pull request adding their payload file (transparent, but the sender's login becomes an identifier); (c) no receiver yet, preview and local log only, as SP-UNIVERSAL-LEDGER Q4 left it. Recommendation: (a), with (c) as the shipped state until the receiver is up; (b) is refused because it attaches an identity to every payload.
+- Q1 (decided by owner 2026-11-12: (a) the owner receiver on `<host>` at https://gap.repoach.dev/v1/gap, preview and local log only until it is up; (b) refused): where the signal is stored. Options: (a) an owner-run receiver on `<host>` behind the existing reverse proxy at `https://gap.repoach.dev/v1/gap`, JSONL per month, as D7; (b) a public GitHub repository where senders open a pull request adding their payload file (transparent, but the sender's login becomes an identifier); (c) no receiver yet, preview and local log only, as SP-UNIVERSAL-LEDGER Q4 left it. Recommendation: (a), with (c) as the shipped state until the receiver is up; (b) is refused because it attaches an identity to every payload.
 - Q2 (decided by owner 2026-11-12: the proposed English wording): the opt-in wording written by `repoach init` and printed by `preview`. Proposed: "Anonymised gap signal: counts and categories only (findings by claim type and outcome, lens precision, owner decisions, token bands). Never a path, a name, a text, an identifier or a date finer than the month. Off by default; `repoach gap preview` shows exactly what one send carries; every send is logged in `gap_sends.jsonl`." Recommendation: this wording, in English only, since it is a configuration file comment.
 - Q3 (decided by owner 2026-11-12: no identifier): no identifier at all (D2) or a rotatable random install id as SP-UNIVERSAL-LEDGER drafted? Recommendation: none; the owner's principle says anonymised, and k-anonymity by payload count with one send per period per repository gives the receiver what trends need.
 - Q4 (decided by owner 2026-11-12: as proposed: raw 24 months, aggregates kept, k = 3, stated in docs/privacy.md): retention. Proposed: raw payloads 24 months then deleted; aggregates kept; the retention and the k threshold stated in `docs/privacy.md` and on the receiver's root page. Recommendation: as proposed.

@@ -1,11 +1,11 @@
 ---
 id: SP-MERGE-QUEUE-BY-SPEC-DEPENDENCIES
 title: A merge queue that follows the spec graph, one merge at a time
-version: 0.2
+version: 0.3
 status: draft
 author: agent
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-11-18
 
 owns:
   code: [src/repoach/review/merge_queue.py, src/repoach/cli/queue_cmds.py, tests/queue_fakes.py, tests/unit/test_merge_queue_order.py, tests/unit/test_merge_queue_run.py, tests/unit/test_queue_cli.py, tests/unit/test_queue_gitlab_arming.py, tests/unit/test_queue_bot_wiring.py, tests/unit/test_queue_review_pr.py, tests/integration/test_merge_queue_cycle.py]
@@ -24,6 +24,8 @@ constraints:
 
 # A merge queue that follows the spec graph, one merge at a time
 
+Amendment (0.3, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
+
 ## Intent
 
 Owner, 2026-10-26: « un des avantages de repoach c'est de pouvoir merger
@@ -37,7 +39,7 @@ time, each one gated again on the integration head it will land on.
 ## Context
 
 Measured on `repoachhq/repoach` `origin/develop` at `9223169`
-(2026-10-26), and on Yoob `origin/develop` (`josephwfaye/yoob_2`) the
+(2026-10-26), and on Yoob `origin/develop` (`<namespace>/yoob_2`) the
 same day.
 
 | # | Fact | Where |

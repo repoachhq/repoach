@@ -53,6 +53,7 @@ from repoach.review.owner_store import (
 from repoach.review.report import archive_json, render_ledger_report
 from repoach.review.reviewer import ReviewVerdict
 
+MAINTAINER = "maintainer"
 PR = 339
 OLD = "a" * 40
 HEAD = "b" * 40
@@ -145,7 +146,7 @@ def _root(comment_id: int = 10, *, path: str = "ci/review-gate.sh", line: int = 
     return Comment(id=comment_id, author="repoach-bot", body="blocking: …", path=path, line=line)
 
 
-def _reply(comment_id: int, body: str, *, root: int = 10, author: str = "jwfaye") -> Comment:
+def _reply(comment_id: int, body: str, *, root: int = 10, author: str = MAINTAINER) -> Comment:
     return Comment(
         id=comment_id,
         author=author,
@@ -157,7 +158,7 @@ def _reply(comment_id: int, body: str, *, root: int = 10, author: str = "jwfaye"
     )
 
 
-def _pr_comment(comment_id: int, body: str, *, author: str = "jwfaye") -> Comment:
+def _pr_comment(comment_id: int, body: str, *, author: str = MAINTAINER) -> Comment:
     return Comment(
         id=comment_id,
         author=author,
@@ -202,21 +203,21 @@ def test_thread_reply_resolves_the_finding_it_anchors(db: Path) -> None:
     target = _finding(db)
     _finding(db, file="ci/other.sh", line=3)
     forge = FakeForge(
-        inline=[_root(), _reply(11, f"/resolve {REASON}")], maintainers={"jwfaye": True}
+        inline=[_root(), _reply(11, f"/resolve {REASON}")], maintainers={MAINTAINER: True}
     )
     run = _apply(forge, db)
     row = _row(db, target)
     assert row.status is FindingStatus.OWNER_RESOLVED
     assert row.verification_method == "owner_resolve"
-    assert row.verification_result == f"owner-resolved by jwfaye: {REASON}"
+    assert row.verification_result == f"owner-resolved by {MAINTAINER}: {REASON}"
     assert row.checked_at_sha == HEAD
     stored = fetch_owner_commands(db, PR)
     assert [(s.comment_id, s.finding_id, s.resolution, s.author) for s in stored] == [
-        (11, target, "owner_resolve", "jwfaye")
+        (11, target, "owner_resolve", MAINTAINER)
     ]
     assert stored[0].reason == REASON and stored[0].head_sha == HEAD
     assert [comment_id for comment_id, _ in forge.replies] == [10]
-    assert f"Finding #{target} owner-resolved by @jwfaye" in forge.replies[0][1]
+    assert f"Finding #{target} owner-resolved by @{MAINTAINER}" in forge.replies[0][1]
     assert run.unposted == []
 
 
@@ -225,7 +226,7 @@ def test_pr_level_command_names_the_finding(db: Path) -> None:
     target = _finding(db, file="ci/review-gate.sh", line=0)
     forge = FakeForge(
         conversation=[_pr_comment(30, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     _apply(forge, db)
     assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
@@ -238,7 +239,7 @@ def test_resolve_without_reason_is_answered_and_ignored(db: Path) -> None:
     short = "x" * (REASON_MIN_CHARS - 1)
     forge = FakeForge(
         conversation=[_pr_comment(31, f"/resolve #{target} {short}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     assert _row(db, target).status is FindingStatus.VERIFIED
@@ -255,7 +256,7 @@ def test_unknown_finding_is_answered_and_ignored(db: Path) -> None:
             _pr_comment(32, f"/resolve #999 {REASON}"),
             _pr_comment(33, f"/resolve {REASON}"),
         ],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     assert [row.outcome for row in run.handled] == ["unknown_finding", "unknown_finding"]
@@ -283,13 +284,13 @@ def test_unreadable_permission_applies_nothing_and_is_retried(db: Path) -> None:
     """A permission the forge cannot read applies nothing, records nothing, answers nothing."""
     target = _finding(db)
     forge = FakeForge(
-        conversation=[_pr_comment(35, f"/resolve #{target} {REASON}")], unreadable={"jwfaye"}
+        conversation=[_pr_comment(35, f"/resolve #{target} {REASON}")], unreadable={MAINTAINER}
     )
     run = _apply(forge, db)
     assert _row(db, target).status is FindingStatus.VERIFIED
-    assert run.unreadable == ["jwfaye"] and fetch_owner_commands(db, PR) == []
+    assert run.unreadable == [MAINTAINER] and fetch_owner_commands(db, PR) == []
     forge.unreadable.clear()
-    forge.maintainers["jwfaye"] = True
+    forge.maintainers[MAINTAINER] = True
     _apply(forge, db)
     assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
 
@@ -299,7 +300,7 @@ def test_ambiguous_thread_asks_for_the_id(db: Path) -> None:
     first = _finding(db)
     second = _finding(db, claim_type=ClaimType.DESIGN)
     forge = FakeForge(
-        inline=[_root(), _reply(12, f"/resolve {REASON}")], maintainers={"jwfaye": True}
+        inline=[_root(), _reply(12, f"/resolve {REASON}")], maintainers={MAINTAINER: True}
     )
     _apply(forge, db)
     assert _row(db, first).status is FindingStatus.VERIFIED
@@ -316,7 +317,7 @@ def test_resolve_on_a_settled_finding_is_a_noop_with_one_reply(db: Path) -> None
             _pr_comment(36, f"/resolve #{advisory} {REASON}"),
             _pr_comment(37, f"/resolve #{refuted} {REASON}"),
         ],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     assert [row.outcome for row in run.handled] == ["noop", "noop"]
@@ -335,7 +336,7 @@ def test_owner_resolved_is_settled_and_not_counted(db: Path) -> None:
     assert verdict_from_facts(before) is ReviewVerdict.REQUEST_CHANGES
     forge = FakeForge(
         conversation=[_pr_comment(38, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     _apply(forge, db)
     after = summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD)
@@ -348,7 +349,7 @@ def test_reverify_skips_an_owner_resolved_finding(db: Path, tmp_path: Path) -> N
     target = _finding(db)
     forge = FakeForge(
         conversation=[_pr_comment(39, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     _apply(forge, db)
 
@@ -374,7 +375,7 @@ def test_reopen_counts_the_finding_again(db: Path) -> None:
     target = _finding(db)
     forge = FakeForge(
         inline=[_root(), _reply(13, f"/resolve {REASON}"), _reply(14, "/reopen")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     row = _row(db, target)
@@ -384,7 +385,7 @@ def test_reopen_counts_the_finding_again(db: Path) -> None:
     assert summarise_ledger_facts(db, pr_number=PR, head_sha=HEAD).open_blocking_ids == [target]
     assert [r.resolution for r in run.handled] == ["owner_resolve", "owner_reopen"]
     assert run.settled == []
-    assert "reopened by @jwfaye" in forge.replies[1][1]
+    assert "reopened by @maintainer" in forge.replies[1][1]
 
 
 def test_a_command_is_applied_once_across_runs(db: Path) -> None:
@@ -392,7 +393,7 @@ def test_a_command_is_applied_once_across_runs(db: Path) -> None:
     target = _finding(db)
     forge = FakeForge(
         conversation=[_pr_comment(40, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     _apply(forge, db)
     second = _apply(forge, db)
@@ -409,7 +410,7 @@ def test_dry_run_prints_replies_and_a_posting_run_posts_them_once(db: Path) -> N
     target = _finding(db)
     forge = FakeForge(
         conversation=[_pr_comment(41, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     dry = _apply(forge, db, post=False)
     assert _row(db, target).status is FindingStatus.OWNER_RESOLVED
@@ -425,16 +426,16 @@ def test_report_line_and_json_name_the_owner(db: Path) -> None:
     target = _finding(db)
     forge = FakeForge(
         conversation=[_pr_comment(42, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
-    line = f"owner-resolved #{target} by jwfaye: {REASON}"
+    line = f"owner-resolved #{target} by {MAINTAINER}: {REASON}"
     assert run.lines()[0] == line
     assert "owner commands: 1 applied, 0 ignored" in run.lines()
     assert run.as_json() == [
         {
             "finding_id": target,
-            "login": "jwfaye",
+            "login": MAINTAINER,
             "reason": REASON,
             "comment_id": 42,
             "head_sha": HEAD,
@@ -444,7 +445,7 @@ def test_report_line_and_json_name_the_owner(db: Path) -> None:
         {
             "comment_id": 42,
             "command": "resolve",
-            "author": "jwfaye",
+            "author": MAINTAINER,
             "finding_id": target,
             "outcome": "applied",
         }
@@ -506,7 +507,7 @@ def test_failed_reply_stays_pending_and_is_retried(db: Path) -> None:
 
     forge = Flaky(
         conversation=[_pr_comment(46, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     first = _apply(forge, db)
     assert forge.posted == [] and len(first.unposted) == 1
@@ -520,7 +521,7 @@ def test_reopen_on_a_finding_not_owner_resolved_is_a_noop(db: Path) -> None:
     """``/reopen`` of a finding no owner settled changes nothing and says so."""
     target = _finding(db)
     forge = FakeForge(
-        conversation=[_pr_comment(47, f"/reopen #{target}")], maintainers={"jwfaye": True}
+        conversation=[_pr_comment(47, f"/reopen #{target}")], maintainers={MAINTAINER: True}
     )
     run = _apply(forge, db)
     assert [row.outcome for row in run.handled] == ["noop"]
@@ -532,7 +533,7 @@ def test_reopen_without_recorded_resolve_falls_back_to_verified(db: Path) -> Non
     """An owner-resolved row with no recorded ``/resolve`` reopens to ``verified``, counted."""
     target = _finding(db, status=FindingStatus.OWNER_RESOLVED)
     forge = FakeForge(
-        conversation=[_pr_comment(48, f"/reopen #{target}")], maintainers={"jwfaye": True}
+        conversation=[_pr_comment(48, f"/reopen #{target}")], maintainers={MAINTAINER: True}
     )
     run = _apply(forge, db)
     assert [row.resolution for row in run.handled] == ["owner_reopen"]
@@ -547,7 +548,7 @@ def test_reason_is_echoed_as_inert_code(db: Path) -> None:
     reason = "pinged @someone about `ptrace_scope` = 1 on the runner host, read back"
     forge = FakeForge(
         conversation=[_pr_comment(49, f"/resolve #{target} {reason}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     _apply(forge, db)
     assert f"`` {reason} ``" in forge.posted[0]
@@ -571,7 +572,7 @@ def test_edited_comment_is_not_a_command(db: Path) -> None:
     """An edited comment is refused with one reply, whoever wrote it, and changes nothing."""
     target = _finding(db)
     edited = _pr_comment(50, f"/resolve #{target} {REASON}").model_copy(update={"edited": True})
-    forge = FakeForge(conversation=[edited], maintainers={"jwfaye": True})
+    forge = FakeForge(conversation=[edited], maintainers={MAINTAINER: True})
     run = _apply(forge, db)
     _apply(forge, db)
     assert [row.outcome for row in run.handled] == ["edited"]
@@ -588,7 +589,7 @@ def test_resolve_refused_by_ledger_is_recorded_as_noop(
     monkeypatch.setattr(owner_commands, "update_finding_status", lambda *_a, **_k: False)
     forge = FakeForge(
         conversation=[_pr_comment(51, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     assert [(row.outcome, row.resolution) for row in run.handled] == [("noop", "")]
@@ -604,7 +605,7 @@ def test_thread_anchoring_no_finding_is_answered_and_ignored(db: Path) -> None:
             _root(60, path="docs/other.md", line=4),
             _reply(61, f"/resolve {REASON}", root=60),
         ],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     assert [row.outcome for row in run.handled] == ["unknown_finding"]
@@ -622,7 +623,7 @@ def test_resolve_reopen_resolve_ends_resolved_again(db: Path) -> None:
             _pr_comment(53, f"/reopen #{target}"),
             _pr_comment(54, f"/resolve #{target} {REASON}, confirmed a second time"),
         ],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     run = _apply(forge, db)
     assert [row.resolution for row in run.handled] == [
@@ -688,7 +689,7 @@ def test_command_row_is_written_before_the_finding_moves(
     monkeypatch.setattr(owner_commands, "update_finding_status", crash)
     forge = FakeForge(
         conversation=[_pr_comment(59, f"/resolve #{target} {REASON}")],
-        maintainers={"jwfaye": True},
+        maintainers={MAINTAINER: True},
     )
     with pytest.raises(RuntimeError):
         _apply(forge, db)
@@ -732,7 +733,7 @@ def test_a_ledger_error_applies_nothing_and_keeps_findings_blocking(
 def test_local_bench_forge_has_no_maintainers(tmp_path: Path) -> None:
     """The bench forge has no repository members: no login is a maintainer."""
     forge = LocalDiffForge(tmp_path, number=1, base_sha="a" * 40, head_sha="b" * 40, title="t")
-    assert forge.is_maintainer("jwfaye") is False
+    assert forge.is_maintainer(MAINTAINER) is False
     assert forge.is_maintainer("") is False
     assert forge.review_threads(1) == []
 
@@ -752,7 +753,7 @@ def test_record_and_move_skips_a_comment_another_run_stored(db: Path) -> None:
     command = parse_command(f"/resolve #{target} {REASON}")
     assert command is not None
     row = OwnerCommandRow(
-        pr_number=PR, comment_id=60, command="resolve", author="jwfaye", outcome="applied"
+        pr_number=PR, comment_id=60, command="resolve", author=MAINTAINER, outcome="applied"
     )
     assert record_owner_command(db, row)
     decision = owner_commands._Decision(owner_commands.OwnerOutcome.APPLIED, finding, "")
@@ -784,9 +785,9 @@ def test_resolve_reply_settles_the_recorded_finding_after_its_line_moved(db: Pat
     )
     root = Comment(id=77, author="repoach-bot", path="ci/review-gate.sh", line=14, created_at="1")
     reply = Comment(
-        id=78, author="jwfaye", body=f"/resolve {REASON}", in_reply_to=77, created_at="2"
+        id=78, author=MAINTAINER, body=f"/resolve {REASON}", in_reply_to=77, created_at="2"
     )
-    forge = FakeForge(inline=[root, reply], maintainers={"jwfaye": True})
+    forge = FakeForge(inline=[root, reply], maintainers={MAINTAINER: True})
 
     run = apply_owner_commands(forge, db, pr_number=PR, head_sha=HEAD, post=False)
 
