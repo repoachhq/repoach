@@ -145,8 +145,8 @@ tree.
 | system login, service account | `<user>`; in a recorded JSON value, the class word (`maintainer`, `author`, `bot`, `agent`, `service`) | |
 | forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot`, `service` | GitHub `login`, GitLab `username`, a login in argv and an `@<handle>` in a recorded body alike; a hand-written placeholder (`alice`, `owner`…) is a real account and gets a class word too; only `github-actions[bot]` (the platform's) and `repoach-bot` (this project's) name no person and stay; a namespace inside a recorded URL is `org` (row below) |
 | real name in a recorded user object | dropped: the `name` key is removed from the user object | `login`/`username` stay as class words; `name` elsewhere (check runs, jobs) is read by the forges and kept |
-| user id in a recorded user object (REST id, node id) | a synthetic number from `1001` up, `U_<n>` for a node id, declared by the fixture under `synthetic_user_ids` | the key is kept (GitLab reads the approver's id as `Review.id`); a sequence, never a hash, since a hash of a small id is reversed by enumeration; the maintainer's real ids are judged by the deny-list, never committed |
-| recorded forge URL (`url`, `web_url`, `html_url`, `link`, and a URL in recorded text) | `https://forge.example.com/org/<repo>/…`: the host becomes `forge.example.com`, the namespace `org`, the rest of the path is kept; a user object's own URLs are dropped | applied at record time by `scripts/record_forge_fixture.py`, re-applied offline by `scripts/redact_forge_fixtures.py` (SP-RECORDER-REDACTS-BY-CLASS); a recorded fixture's `source` names the forge, never the checkout's folder |
+| user id in a recorded user object (REST id, node id) | a synthetic number in `1001..1999`, `U_<n>` for a node id, declared by the fixture under `synthetic_user_ids`; a declared number outside that range is not trusted and is remapped | the key is kept (GitLab reads the approver's id as `Review.id`); a sequence, never a hash, since a hash of a small id is reversed by enumeration; the maintainer's real ids are judged by the deny-list, never committed |
+| recorded forge URL (`url`, `web_url`, `html_url`, `link`, and a URL or an scp/`ssh://` remote in recorded text) | `https://forge.example.com/org/project/…`: the host becomes `forge.example.com`, the namespace `org`, the repository `project` (a `.git` suffix kept, and a repository object's `name`/`path` too), the rest of the path is kept; a user object's own URLs are dropped | applied at record time by `scripts/record_forge_fixture.py`, re-applied offline by `scripts/redact_forge_fixtures.py` (SP-RECORDER-REDACTS-BY-CLASS); a recorded fixture's `source` names the forge, never the checkout's folder |
 | hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
 | public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted |
 | public IPv6 | `2001:db8::<n>` (RFC 3849) | |
@@ -159,7 +159,9 @@ stands for an actor — a login value, a login in argv, a mention, the bot login
 someone's account. A URL namespace a parser test writes from scratch on a real
 forge host (`o/r`, `owner/repo`, `acme/…`) names no actor and stays, as host
 detection needs the real host; one derived from a real account or project is
-replaced by `group/project`.
+replaced by `group/project`. A login known only from an `@<handle>` mention is
+replaced in that form only; a dotted `@a.b` and a standard-library decorator
+(`@dataclass`) are code, not mentions.
 
 Public attribution is not personal data: the copyright holder in `LICENSE`,
 the `authors` of `pyproject.toml`, the security contact in `SECURITY.md`, the
