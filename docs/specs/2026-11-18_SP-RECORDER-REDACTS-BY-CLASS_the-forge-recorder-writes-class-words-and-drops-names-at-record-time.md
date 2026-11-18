@@ -1,7 +1,7 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word and drops names, avatars and user ids at record time, and refuses a fixture it cannot classify
-version: 0.2
+version: 0.3
 status: reviewed
 author: agent
 created: 2026-11-18
@@ -29,6 +29,14 @@ dropped: URL values are redacted by class with their path shape kept
 (D1b), and `name` is dropped only inside a user object, like `id`
 (D1). A test replays a redacted recording through the forge readers.
 
+Amendment (0.3, 2026-11-18): the verifier's NO-GO on 0.2. `id` is
+kept everywhere: `gitlab.py:728` builds `Review(id=_int(user.get("id")))`
+from `approved_by[].user`, and `reviews_two_approvals.json` expects
+11 and 12 (F1c); an id is an opaque number in none of the owner's
+classes. Only `name` is dropped in a user object. The user-object keys
+the readers consume are swept (F1c) and the replay test covers
+approvals.
+
 ## Intent
 
 Child 2 of SP-REPO-CARRIES-NO-PERSONAL-DATA. SP-SCRUB-PERSONAL-DATA-AT-HEAD
@@ -46,6 +54,7 @@ into `tests/fixtures/forge/`.
 |---|---|---|
 | F1 | The recorder keeps an allow-list of keys and drops everything else, recursively; `login`, `name`, `username`, `id`, `url` and `web_url` are kept | `src/repoach/forge/recording.py:32` (`RECORDED_FIELDS`), `:74` (`"login"`), `:82` (`"name"`), `:122` (`"url"`), `:124` (`"username"`), `:125` (`"web_url"`), `:142-145` (`redact_payload`) |
 | F1b | The forges read `name` as a check-run or job name, `url` as a pull request's URL and `web_url` as a merge request's, a pipeline's and a job's URL; none reads `avatar_url`, `html_url`, `full_name` or `email` | `src/repoach/forge/github.py:281,1776,1809` (`entry.get("name")`, `r.get("name")`), `:501` (`payload.get("url")`); `src/repoach/forge/gitlab.py:223` (`mr.get("web_url")`), `:982` (`pipeline.get("web_url")`), `:1016` (`job.get("name")`), `:1021` (`job.get("web_url")`); `git grep -n -E '\.get\("(avatar_url\|html_url\|full_name\|email)"' src/repoach/forge` → 0 |
+| F1c | The keys the readers consume from a user object (`user`, `author`, `approved_by[].user`): `login` (`github.py:239,489`), `username` (`gitlab.py:171,725`) and the numeric `id` (`gitlab.py:728`, `Review(id=_int(user.get("id")) or 0)`); no reader consumes a user's `name`. The GitLab approvals fixture expects the user ids `11` and `12`; a dropped user `id` would replay as `0` | `git grep -n -E '(user\|author)\.get\("' src/repoach/forge/{github,gitlab}.py` → those five lines; `tests/fixtures/forge/gitlab/reviews_two_approvals.json` (`"id": 11`, `"id": 12`); the GitHub GraphQL `author.id` is the user's node id (`MDQ6…`), read by nothing, present in the three fixtures of F3 |
 | F2 | Secret-shaped keys are dropped by name: token, secret, password, private_key, api_key, `node_id`, email | `src/repoach/forge/recording.py:138` (`SECRET_KEY_RE`), `:191-194` (`_secret_keys`) |
 | F3 | Three fixtures carry the maintainer's handle as `login`, the real name as `name` and the GitHub user node id as the `id` of the recorded `author` object | `tests/fixtures/forge/gate/pr202_capture.json:17`; `tests/fixtures/forge/github/open_pull_requests.json:24`; `tests/fixtures/forge/github/pull_request.json:19` (parent F9) |
 | F4 | Twelve fixtures carry the handle, in `login`/`username` values and in recorded argv (`collaborators/<handle>/permission`, `members/all?query=<handle>`) | `tests/fixtures/forge/github/*.json` (7), `tests/fixtures/forge/gitlab/is_maintainer*.json` (4), `tests/fixtures/forge/gate/pr202_capture.json` (parent F8) |
@@ -56,14 +65,19 @@ into `tests/fixtures/forge/`.
 ## Decisions (2026-11-18)
 
 - D1. **Personal keys are dropped by name, beside the secret keys;
-  `name` and `id` by context.** `src/repoach/forge/recording.py` gains
-  `PERSONAL_KEY_RE = re.compile(r"^(full_name|avatar_url|email|
+  `name` by context; `id` kept everywhere.** `src/repoach/forge/recording.py`
+  gains `PERSONAL_KEY_RE = re.compile(r"^(full_name|avatar_url|email|
   public_email|node_id)$", re.I)` next to `SECRET_KEY_RE` (`:138`), and
   `redact_payload` (`:142`) drops a key matching it. In an object that
-  also holds `login` or `username` (a user object), `name` and `id` are
-  dropped too; elsewhere both are kept, since the forges read `name` as
-  a check-run or job name and `id` as a thread, comment or note id
-  (F1b). `RECORDED_FIELDS` is unchanged. This is an edit to
+  also holds `login` or `username` (a user object), `name` is dropped
+  too; elsewhere `name` is kept, since the forges read it as a check-run
+  or job name (F1b). `id` is kept in every object: the readers consume
+  it as a user id (`gitlab.py:728`), a thread, note, comment, review or
+  pipeline id (F1b, F1c), and an id — the GitLab integer or the GitHub
+  node-id string alike — is an opaque identifier in none of the owner's
+  five classes. The user-object keys left after D1 and D2 are exactly
+  what the readers consume (`login`/`username` as a class word, `id`),
+  and nothing else. `RECORDED_FIELDS` is unchanged. This is an edit to
   SP-UNIVERSAL-FORGE's file, declared in `depends_on`.
 - D1b. **URL values are redacted by class, their shape kept.** A string
   value under `url`, `web_url` or `html_url` goes through
@@ -111,14 +125,15 @@ into `tests/fixtures/forge/`.
 
 `scripts/record_forge_fixture.py` run against a real pull request
 writes a fixture in which every `login`/`username` is a class word,
-no `avatar_url`, `email`, `node_id`, user `name` or user `id` key
-exists, every `url`/`web_url`/`html_url` value has the placeholder host
+no `avatar_url`, `email`, `node_id` or user `name` key exists, every
+`id` is as recorded, every `url`/`web_url`/`html_url` value has the placeholder host
 and namespace with its path shape kept, every argv embeds a class word
 where a login stood, and the script exits 2 naming the key path when a
 value stays unclassified or matches a generic class;
 `tests/unit/test_forge_conformance.py` is green on the existing
-fixtures unchanged, and the forge readers return the redacted URL and
-the check-run names from a redacted recording.
+fixtures unchanged, and the forge readers return the redacted URL, the
+check-run names, the approvals' user ids and the class word as author
+from a redacted recording.
 
 ## Easy solution rejected
 
@@ -133,7 +148,9 @@ is the leak. Dropping `web_url`, `html_url` and `name` by key: rejected
 by measurement (F1b), the forges read the merge request's, pipeline's
 and job's URL and the check-run and job names; a dropped key would
 replay as an empty string and the conformance suite would pin the
-regression as the expected value.
+regression as the expected value. Dropping a user object's `id`:
+rejected by measurement (F1c), `Review(id=…)` reads it and the
+approvals fixture pins 11 and 12; an id is opaque, not personal.
 
 ## Hard part
 
@@ -144,16 +161,17 @@ finding, `tests/integration/test_owner_resolves_a_finding_end_to_end.py`)
 breaks on replay; so `roles` is built once per recording from the
 calls the recorder made, and the mapping is applied to argv and stdout
 alike. The second hard part is that the same key is personal in one
-object and functional in another: `id` and `name` are a user's in an
-`author` object and a thread's or a check run's elsewhere, and a URL
-carries the owner's namespace in a value the forges must keep reading
-— so the drop is decided by the sibling keys of the object, and a URL
-is rewritten to a placeholder host and namespace with its shape kept
-rather than dropped.
+object and functional in another: `name` is a person's in an `author`
+object and a check run's elsewhere, and a URL carries the owner's
+namespace in a value the forges must keep reading — so the drop of
+`name` is decided by the sibling keys of the object, a URL is rewritten
+to a placeholder host and namespace with its shape kept rather than
+dropped, and `id` is never touched, since the readers consume it in
+every object kind (F1b, F1c).
 
 ## Goals
 
-- G1: personal keys dropped by name, the user object's `name` and `id` by context, URL values redacted by class with their shape kept (D1, D1b).
+- G1: personal keys dropped by name, the user object's `name` by context, every `id` kept, URL values redacted by class with their shape kept (D1, D1b).
 - G2: logins classified at record time in argv and stdout, with a stable mapping (D2).
 - G3: the recorder refuses an unclassified or generic-class value, exit 2, without printing it (D3).
 - G4: the existing fixtures and the conformance suite are unchanged (D4).
@@ -167,7 +185,7 @@ rather than dropped.
 ## Assumptions
 
 - A1: SP-SCRUB-PERSONAL-DATA-AT-HEAD has merged, so the fixtures hold class words and the conformance suite expects them.
-- A2: no forge reads `avatar_url`, `html_url`, `full_name`, `email`, or the `name` or `id` of a user object (`git grep -n -E '\.get\("(avatar_url|html_url|full_name|email)"' src/repoach/forge` → 0 at `0be2a56`; the seven `name`/`web_url`/`url` readers of F1b read check runs, jobs, pipelines and change requests, not users — re-measured by the implementer and written beside AC1).
+- A2: no forge reads `avatar_url`, `html_url`, `full_name`, `email`, or the `name` of a user object (`git grep -n -E '\.get\("(avatar_url|html_url|full_name|email)"' src/repoach/forge` → 0 at `0be2a56`; the `name` readers of F1b read check runs and jobs; the user-object readers of F1c consume `login`, `username` and `id` only — re-measured by the implementer and written beside AC1).
 
 ## Interface
 
@@ -195,7 +213,7 @@ records one fixture against a real pull request to check the shape
 
 - A login appears only in argv (`members/all?query=<handle>`) and never in a stdout value → the recorder knows it from the call it made (`is_maintainer(<login>)`), so `roles` has it.
 - A `[bot]` login → `bot`; two different bots → `bot`, `bot-2`.
-- An `id` or a `name` in an object with no `login`/`username` sibling → kept (a thread or note id, a check-run or job name the forges read).
+- A `name` in an object with no `login`/`username` sibling → kept (a check-run or job name the forges read); an `id` anywhere → kept (user, thread, note, review, pipeline).
 - A `web_url` whose path has no namespace (`https://<gitlab>/-/jobs/5`) → host replaced, path kept.
 
 ### Failure scenarios
@@ -207,9 +225,9 @@ records one fixture against a real pull request to check the shape
 
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
-| `tests/unit/test_forge_recording_redaction.py::test_personal_keys_are_dropped_and_user_name_and_id_by_context` | D1: a payload with `avatar_url`, `node_id`, an `author` object with `id`, `login` and `name`, a thread object with `id` and `comments`, and a check-run object with `name` → the recorded object keeps the thread `id` and the check-run `name`, drops the author `id` and `name` and every `PERSONAL_KEY_RE` key | keep the author `name`, or drop the check-run `name` |
+| `tests/unit/test_forge_recording_redaction.py::test_personal_keys_are_dropped_and_user_name_by_context_ids_kept` | D1: a payload with `avatar_url`, `node_id`, an `author` object with `id`, `login` and `name`, a thread object with `id` and `comments`, and a check-run object with `name` → the recorded object keeps the author `id`, the thread `id` and the check-run `name`, drops the author `name` and every `PERSONAL_KEY_RE` key | keep the author `name`, drop any `id`, or drop the check-run `name` |
 | `::test_url_values_keep_their_shape_with_placeholder_host_and_namespace` | D1b: `https://a.example/o/r/pull/12` → `https://forge.example.com/org/r/pull/12`; `https://b.example/g/s/r/-/merge_requests/7` → `https://forge.example.com/org/r/-/merge_requests/7`; `https://b.example/-/jobs/5` → `https://forge.example.com/-/jobs/5`; a non-URL value under `web_url` → dropped | keep the host, or drop the path |
-| `::test_forge_readers_work_on_a_redacted_recording` | D1b, F1b: a GitLab recording whose merge-request, pipeline and job answers carry redacted `web_url` values and job `name`s, replayed through `ReplaySpawn` into the forge's merge-request and pipeline readers → the returned `url`/`link` equal the redacted URLs and the job names are intact; the same for a GitHub recording's check-run `name`s (`github.py:281,1776`) | drop `web_url` or `name` by key |
+| `::test_forge_readers_work_on_a_redacted_recording` | D1b, F1b: a GitLab recording whose merge-request, pipeline and job answers carry redacted `web_url` values and job `name`s, replayed through `ReplaySpawn` into the forge's merge-request and pipeline readers → the returned `url`/`link` equal the redacted URLs and the job names are intact; a GitLab approvals answer with two `approved_by[].user` objects redacted to `username: maintainer` / `author-2` and ids `11`, `12` replayed through the reviews reader (`gitlab.py:725-728`) → two `Review`s with ids `11` and `12`; a GitHub recording's `author.login` redacted to `author` replayed through the change-request reader (`github.py:489`) → the author field is `author`, and its check-run `name`s (`github.py:281,1776`) are intact | drop `web_url`, `name` or a user `id` by key |
 | `::test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping` | D2: `roles={"x": "maintainer", "y": "author"}`; `login: x` in two objects and `resolved_by: x` → `maintainer` three times; argv `["api", "repos/o/r/collaborators/x/permission"]` → `collaborators/maintainer/permission`; a `z[bot]` login → `bot` | map one occurrence differently |
 | `::test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it` | D3: a stdout with `login: q` not in `roles` → exit 2 and `unclassified: …login` on stderr; a body with a literal home path (`/home/<x>/y`, spelled in the test, which is allow entry 8 of SP-NO-PERSONAL-DATA-GATE D4) → exit 2 and `generic class home_path`; `capsys` holds neither `q` nor the path's user segment | print the value, or exit 0 |
 | `tests/unit/test_forge_conformance.py` (existing) | D4: green on the fixtures as SP-SCRUB-PERSONAL-DATA-AT-HEAD left them | drop a key a forge reads |
@@ -218,7 +236,7 @@ records one fixture against a real pull request to check the shape
 
 - C1 (oracle: pytest, CI): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → green.
 - C2 (oracle: git): `git diff origin/develop --stat -- tests/fixtures/forge` → empty (D4).
-- C3 (oracle: the script, by the implementer, output written beside AC2): one recording against a real pull request → the written fixture passes `python -c` over its JSON: no key in `{avatar_url, full_name, email, public_email, node_id}` anywhere, no `id` or `name` beside a `login`/`username`, every `login`/`username` value in the class words or `author-<n>`/`bot-<n>`, every `url`/`web_url`/`html_url` value starting with `https://forge.example.com/`.
+- C3 (oracle: the script, by the implementer, output written beside AC2): one recording against a real pull request → the written fixture passes `python -c` over its JSON: no key in `{avatar_url, full_name, email, public_email, node_id}` anywhere, no `name` beside a `login`/`username`, every `login`/`username` value in the class words or `author-<n>`/`bot-<n>`, every `url`/`web_url`/`html_url` value starting with `https://forge.example.com/`.
 
 ## Architecture Impact
 
@@ -231,7 +249,7 @@ records one fixture against a real pull request to check the shape
 ```mermaid
 flowchart LR
     P[real PR, gh/glab answers] --> C[classify_logins: roles → class words, argv + stdout]
-    C --> R[redact_payload: RECORDED_FIELDS minus PERSONAL_KEY_RE, user name/id by context, URLs by class]
+    C --> R[redact_payload: RECORDED_FIELDS minus PERSONAL_KEY_RE, user name by context, ids kept, URLs by class]
     R --> G{generic class or unclassified?}
     G -- yes --> E[exit 2, key path only]
     G -- no --> F[fixture written]
