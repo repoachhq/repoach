@@ -1,7 +1,7 @@
 ---
 id: SP-SCRUB-PERSONAL-DATA-AT-HEAD
 title: Every maintainer path, login, host, address and handle at HEAD becomes a placeholder or a class under one redaction rule; the systemd units are rendered with an absolute install path; the live units are untouched
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-11-18
@@ -74,6 +74,26 @@ catch a host changed on one side (its diffs and its repository strings
 were independent inputs);
 `::test_the_recorded_diffs_move_the_host_the_repository_moves` ties
 them.
+
+Amendment (0.7, 2026-11-18): the verification measured four gaps.
+(1) No test read `bench/results/2026-10-21_planted_claude_code.json`:
+the Tests table named `test_bench_score` and `test_bench_cli`, which
+build their results in memory, so an absolute `corpus_root` put back in
+the published result stayed green. The row now names
+`test_bench_score.py::test_the_recorded_result_names_its_corpus_relative_to_the_checkout`,
+which loads that file. (2) The verify refusal and the
+`systemd-analyze`-absent refusal promised by 0.6 had no test; two rows
+pin them, each asserting exit 2, an untouched `--dest` and no
+`daemon-reload` among the calls a stub `systemctl` records. (3) No test
+read the actor clause of `ci.yml`'s `gate` (its `||` turned `&&`, or the
+clause dropped, kept the suite green); three simulator rows replay an
+allowed actor's pull request, a non-allowed actor's and a push. (4) D3
+reloaded the user manager whatever `--dest` was, so the README example
+and C4's fresh-machine oracle, both writing to `$(mktemp -d)`, reloaded
+the operator's real manager: the reload now runs only when `--dest` is
+the user unit directory (`${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user`,
+the default, compared after resolving both paths); any other `--dest`
+prints `daemon-reload: skipped (--dest is not the user unit dir)`.
 
 ## Intent
 
@@ -165,7 +185,9 @@ spec cites them by number. What matters for the edits:
   a relative `--home` is refused), creates `<home>/logs`, runs
   `systemd-analyze --user verify` on the five rendered files and
   refuses with exit 2 if it prints anything, then `systemctl --user
-  daemon-reload`; it refuses to run when `systemctl --user` is
+  daemon-reload` when `<dest>` is the user unit directory (any other
+  `--dest` prints `daemon-reload: skipped (--dest is not the user unit
+  dir)` and reloads nothing, 0.7); it refuses to run when `systemctl --user` is
   unavailable, with the reason. `--dry-run` prints the rendered units
   to stdout and writes nothing. An operator who moves a checkout re-runs
   the script; an operator who prefers not to overwrite an installed
@@ -352,20 +374,24 @@ personal strings by placeholders`.
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
 | `tests/unit/test_user_units_take_an_install_path.py::test_units_carry_the_token_and_no_layout` | D3: each of the three services contains `@REPOACH_HOME@` in `WorkingDirectory=` and `ExecStart=`; no line of the five unit files or the README contains `%h/` except a line starting with `Environment=PATH=`, so no layout under the home survives | put a layout back |
-| `::test_rendered_units_verify_on_this_systemd` | D3: `install_user_units.sh --home <tmp checkout> --dest <tmp dir>` on a fake checkout holding executable stubs at `.venv/bin/repoach` and `.venv/bin/python` → exit 0, five `installed:` lines, three `verified:` lines, and `systemd-analyze --user verify <tmp dir>/*.service <tmp dir>/*.timer` run by the test prints nothing (skipped with the reason when `systemd-analyze` is absent); the rendered files contain no `@REPOACH_HOME@` | leave a token unrendered, or point `ExecStart=` at a missing file |
+| `::test_rendered_units_verify_on_this_systemd` | D3: `install_user_units.sh --home <tmp checkout> --dest <tmp dir>` on a fake checkout holding executable stubs at `.venv/bin/repoach` and `.venv/bin/python` → exit 0, five `installed:` lines, three `verified:` lines, and `systemd-analyze --user verify <tmp dir>/*.service <tmp dir>/*.timer` run by the test prints nothing (skipped with the reason when `systemd-analyze` is absent); the rendered files contain no `@REPOACH_HOME@`; the stub `systemctl` records `--user show-environment` only and stdout holds `daemon-reload: skipped (--dest is not the user unit dir)` (0.7) | leave a token unrendered, point `ExecStart=` at a missing file, or reload whatever `--dest` is |
+| `::test_only_the_user_unit_dir_is_reloaded` (0.7) | D3: with `XDG_CONFIG_HOME` and `HOME` in the test's directory and a stub `systemd-analyze` printing nothing, no `--dest` installs into `<XDG_CONFIG_HOME>/systemd/user` and records `--user daemon-reload`; `--dest <that dir>/` reloads too; a scratch `--dest` prints the skipped line and records no reload | never reload |
+| `::test_install_script_refuses_a_verification_that_prints` (0.7) | D3: a stub `systemd-analyze` printing one line → exit 2, the line relayed on stderr with the reason, `--dest` and `<home>/logs` absent, no `--user daemon-reload` recorded | ignore the verify output (M4) |
+| `::test_install_script_refuses_without_systemd_analyze` (0.7) | D3: `PATH` holding a stub `systemctl` and no `systemd-analyze` → exit 2 and `systemd-analyze not found`, `--dest` absent, no `--user daemon-reload` recorded | exit 0 when it is absent (M8), or drop the check |
 | `::test_install_script_refuses_without_user_systemd_and_a_relative_home` | D3: with `PATH` holding no `systemctl`, exit 2 and the reason; with `--home x`, exit 2 and the reason; `--dry-run` writes nothing and prints five `# --- ` headers | exit 0, or write under `--dry-run` |
+| `tests/unit/test_ci_portability.py::test_ci_runs_an_allowed_actors_pull_request`, `::test_ci_skips_a_non_allowed_actors_pull_request_from_the_gate_on`, `::test_ci_runs_a_push_whoever_pushed` (0.7) | D2: the workflow simulator replays `ci.yml` with `DEFAULT_VARIABLES`: an allowed actor's `pull_request` runs `gate`, `test`, `wheel-build`, `wheel-smoke`; a non-allowed actor's skips all four, `gate` included; a `push` by a non-allowed actor runs all four | turn `gate`'s `\|\|` into `&&` (M15), or drop `gate`'s actor clause (M2) |
 | `tests/unit/test_ci_portability.py::test_actor_allowlist_has_no_login_fallback` | D2: every `fromJSON(vars.REPOACH_ALLOWED_ACTORS \|\| …)` in `.github/workflows/*.yml` has the fallback `'[]'`, and no workflow contains `fromJSON('["` | put a handle back |
 | `tests/unit/test_forge_conformance.py` (existing, re-pointed) | D2: every replayed argv and every expected `login`/`username` is `maintainer`; `test_forge_conformance.py:595-608` builds `members/all?query=maintainer`; no recorded user object has a `name` key (`::test_recorded_user_objects_carry_no_name`, 0.6) | keep one `args` with the handle, or put a `name` back |
 | `tests/integration/test_generated_artefacts_replay_yoob_322.py` (existing) | D2: green with `product.example.com` in fixture and test; `::test_the_recorded_diffs_move_the_host_the_repository_moves` (0.6) holds the first URL host of every removed and added diff line equal to the base and head hosts the replay repository is built from | change one of the two |
-| `tests/unit/test_bench_score.py` and `tests/unit/test_bench_cli.py` (existing) | D2: `corpus_root` relative resolves from the working directory | an absolute path in the result fixture |
+| `tests/unit/test_bench_score.py::test_the_recorded_result_names_its_corpus_relative_to_the_checkout` (0.7) | D2: `load_result` on `bench/results/2026-10-21_planted_claude_code.json` gives `corpus_root` equal to the relative `bench/corpus/planted`, `load_corpus` on that path under the checkout root loads, and every recorded case id is one of its cases | an absolute path in the result fixture (M13) |
 
 ## Success conditions
 
 - C1 (oracle: git, any machine; both greps exclude the specs of this family that spell the patterns as worked examples, which child 3's allow-list declares): `git grep -n -P '(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])' -- . ':!tmp' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*'` → exactly four lines, `tests/unit/test_review_planner_cc.py:139`, `:142`, `tests/unit/test_secret_env.py:25`, `:38` (measured on this branch's tree 2026-11-18: those four plus the 6 maintainer files of parent F1, which go to 0; the excluded gate spec holds 5 example lines); `git grep -n '%h/' -- deploy docs ':!docs/specs/2026-11-18_SP-SCRUB-PERSONAL-DATA-AT-HEAD_*' ':!docs/specs/2026-11-18_SP-NO-PERSONAL-DATA-GATE_*' | grep -v -c 'Environment=PATH='` → `0` (measured on this branch's tree: 16 lines in 5 files — the three units, the README and `…SP-MEMORY-BACKEND-LIVENESS_*.md:136-142` — which D2 and D3 rewrite; the two excluded specs hold 7 lines describing the pattern).
 - C2 (oracle: the owner's `git grep` on their machine, counts written beside AC2 by the verifier): for each of the owner's strings, `git grep -l <string> -- . ':!tmp'` names only files among `LICENSE`, `pyproject.toml`, `SECURITY.md`, `docs/languages.md`, `docs/specs/*.md` (`author:` lines only, checked with `git grep -n <string> docs/specs | grep -v ':author: '` → 0); for the layout string, no file.
 - C3 (oracle: pytest, CI): the six suites of the End state green, plus `tests/unit/test_user_units_take_an_install_path.py`.
-- C4 (oracle: systemd, CI or a fresh machine): the rendered units of the test (C3) verify with empty output; on a fresh machine, `scripts/install_user_units.sh --home "$PWD" --dest "$(mktemp -d)"` from a checkout with a `.venv` → exit 0 and three `verified:` lines.
-- C5 (oracle: git): `for f in <the 25 specs of D7>; do grep -m1 '^version:' $f; done` shows each bumped value; `git diff origin/develop -- docs/specs | grep -c '^+version:'` → `27` (the 25 specs of D7, this spec's own bump, 0.6, and the umbrella's 0.5).
+- C4 (oracle: systemd, CI or a fresh machine): the rendered units of the test (C3) verify with empty output; on a fresh machine, `scripts/install_user_units.sh --home "$PWD" --dest "$(mktemp -d)"` from a checkout with a `.venv` → exit 0, three `verified:` lines and `daemon-reload: skipped (--dest is not the user unit dir)`, the user manager not reloaded (0.7).
+- C5 (oracle: git): `for f in <the 25 specs of D7>; do grep -m1 '^version:' $f; done` shows each bumped value; `git diff origin/develop -- docs/specs | grep -c '^+version:'` → `27` (the 25 specs of D7, this spec's own bump, 0.7, and the umbrella's 0.5).
 - C6 (oracle: git): `git log --format=%ae origin/develop..HEAD | grep -v -c '@users.noreply.github.com$'` on the pull request's head → `0`.
 - C7 (oracle: gh, written beside AC4 with the date): `gh variable list | grep -c '^REPOACH_ALLOWED_ACTORS'` → `1` before the pull request opens.
 
