@@ -602,13 +602,39 @@ def _classify(payload: object, folded: dict[str, str], roles: dict[str, str]) ->
 SYNTHETIC_ID_START = 1001
 """The first synthetic user id a recording hands out."""
 
-SYNTHETIC_IDS_KEY = "synthetic_user_ids"
-"""The fixture key declaring the synthetic user ids the fixture holds (D1c, 0.8).
+SYNTHETIC_ID_END = 1999
+"""The last synthetic user id (0.9): a declaration outside the range is not trusted."""
 
-The recorder writes the numbers it handed out; a hand-written fixture
-declares its own. A user id is synthetic because its fixture declares
-it, never because of its magnitude.
+SYNTHETIC_IDS_KEY = "synthetic_user_ids"
+"""The fixture key declaring the synthetic user ids the fixture holds (D1c, 0.8, 0.9).
+
+The recorder and the offline transform write the numbers they handed
+out. A user id is synthetic because its fixture declares it AND it lies
+in ``SYNTHETIC_ID_START..SYNTHETIC_ID_END`` (:func:`trusted_declaration`):
+a declared number outside the range — a real id typed into a fixture —
+is remapped like any undeclared one.
 """
+
+
+class SyntheticIdsExhaustedError(Exception):
+    """A map would hand out a number past :data:`SYNTHETIC_ID_END`."""
+
+
+def is_synthetic_number(value: object) -> bool:
+    """Whether ``value`` is an ``int`` in ``SYNTHETIC_ID_START..SYNTHETIC_ID_END``."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and SYNTHETIC_ID_START <= value <= SYNTHETIC_ID_END
+    )
+
+
+def trusted_declaration(raw: object) -> frozenset[int]:
+    """The numbers of a ``synthetic_user_ids`` value that may be kept: the in-range ones only."""
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(n for n in raw if is_synthetic_number(n))
+
 
 RESULT_USER_ID_METHODS: frozenset[tuple[str, str]] = frozenset({("gitlab", "reviews")})
 """``(forge, method)`` pairs whose result items carry a user id as ``id``.
@@ -732,17 +758,25 @@ class UserIdMap:
             value: A user id as the forge printed it.
             forge: ``github`` or ``gitlab``.
             keep: The synthetic numbers the fixture declares; such an id is
-                left as it is.
+                left as it is when it is in range (:func:`is_synthetic_number`).
 
         Returns:
             The synthetic id, an ``int`` for an ``int`` and ``U_<n>`` for a string.
+
+        Raises:
+            SyntheticIdsExhaustedError: The next number would pass :data:`SYNTHETIC_ID_END`.
         """
         key = user_id_key(value)
         if key is None:
             return value
-        if isinstance(key, int) and key in keep:
+        if is_synthetic_number(key) and key in keep:
             return value
-        n = self.ids.setdefault((forge, key), self.start + len(self.ids))
+        if (forge, key) not in self.ids:
+            n = self.start + len(self.ids)
+            if n > SYNTHETIC_ID_END:
+                raise SyntheticIdsExhaustedError(f"synthetic user id {n} past {SYNTHETIC_ID_END}")
+            self.ids[(forge, key)] = n
+        n = self.ids[(forge, key)]
         return f"U_{n}" if isinstance(value, str) else n
 
     def apply(self, payload: object, *, forge: str, keep: frozenset[int] = frozenset()) -> object:

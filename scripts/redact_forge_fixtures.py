@@ -23,15 +23,18 @@ that is not a class word or one of
 placeholder such as ``alice`` or ``owner`` included, since each is a real
 account — becomes the next free ``author-<n>`` (a ``[bot]`` login
 ``bot-<n>``, a GitLab project bot ``service``), under login keys, as whole
-arguments, as path segments and as ``@<handle>`` mentions in free text.
+arguments, as path segments and as ``@<handle>`` mentions in free text; a
+login known only from a mention is replaced in its ``@<handle>`` form only.
 
 Every user id the fixture does not declare under
-:data:`repoach.forge.recording.SYNTHETIC_IDS_KEY` becomes a synthetic one,
-from one sequence shared by the whole corpus and keyed by
-``(forge, id)`` (:class:`repoach.forge.recording.UserIdMap`), so one
-account keeps one number across files and two forges' accounts never
-share one; the sequence starts after the highest number any fixture
-declares. A recorded fixture's ``source`` names the forge, never the
+:data:`repoach.forge.recording.SYNTHETIC_IDS_KEY`, or declares outside
+``1001..1999`` (:func:`repoach.forge.recording.trusted_declaration`),
+becomes a synthetic one, from one sequence shared by the whole corpus and
+keyed by ``(forge, id)`` (:class:`repoach.forge.recording.UserIdMap`), so
+one account keeps one number across files and two forges' accounts never
+share one; the sequence starts after the highest trusted number any
+fixture declares, and a corpus that would need a number past the range is
+exit 2 with nothing written. A recorded fixture's ``source`` names the forge, never the
 checkout's folder. A second run changes nothing, which
 ``tests/unit/test_forge_recording_redaction.py`` pins.
 """
@@ -52,6 +55,7 @@ from repoach.forge.recording import (
     RECORDED_SOURCE_RE,
     SYNTHETIC_ID_START,
     SYNTHETIC_IDS_KEY,
+    SyntheticIdsExhaustedError,
     UserIdMap,
     declared_user_ids,
     decode_json_values,
@@ -64,6 +68,7 @@ from repoach.forge.recording import (
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
+    trusted_declaration,
 )
 
 FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "forge"
@@ -267,12 +272,7 @@ def redact_fixture(
 ) -> dict[str, object]:
     """The class-redacted copy of one fixture; ``ids`` is shared across the corpus."""
     ids = ids if ids is not None else UserIdMap()
-    raw_keep = data.get(SYNTHETIC_IDS_KEY)
-    keep = (
-        frozenset(n for n in raw_keep if isinstance(n, int))
-        if isinstance(raw_keep, list)
-        else frozenset()
-    )
+    keep = trusted_declaration(data.get(SYNTHETIC_IDS_KEY))
     out = cast(dict[str, object], _exchanges(data))
     for key in ("args", "result"):
         if key in out:
@@ -300,35 +300,34 @@ def render(data: object, *, ascii_only: bool = False) -> str:
 
 
 def corpus_start(fixtures: list[dict[str, object]]) -> int:
-    """The first number the corpus may hand out: after every number a fixture declares."""
-    declared = [
-        n
-        for data in fixtures
-        for n in cast(list[object], data.get(SYNTHETIC_IDS_KEY) or [])
-        if isinstance(n, int)
-    ]
+    """The first number the corpus may hand out: after every trusted number a fixture declares."""
+    declared = [n for data in fixtures for n in trusted_declaration(data.get(SYNTHETIC_IDS_KEY))]
     return max([SYNTHETIC_ID_START - 1, *declared]) + 1
 
 
 def run(root: Path, *, check: bool) -> list[Path]:
     """Redact every ``*.json`` under ``root``; return the files that changed (or would).
 
+    Every file is transformed before any is written, so a refusal leaves
+    the corpus as it was.
+
     Raises:
         UnknownForgeError: A fixture whose forge cannot be told.
+        SyntheticIdsExhaustedError: The corpus needs a number past the synthetic range.
     """
-    changed: list[Path] = []
     paths = sorted(root.rglob("*.json"))
     loaded = [(p, p.read_text(encoding="utf-8")) for p in paths]
     fixtures = [cast(dict[str, object], json.loads(text)) for _p, text in loaded]
     ids = UserIdMap(start=corpus_start(fixtures))
+    pending: list[tuple[Path, str]] = []
     for (path, text), data in zip(loaded, fixtures, strict=True):
         new = redact_fixture(data, ids, forge=fixture_forge(path, data))
-        if new == data:
-            continue
-        changed.append(path)
-        if not check:
-            path.write_text(render(new, ascii_only=text.isascii()), encoding="utf-8")
-    return changed
+        if new != data:
+            pending.append((path, render(new, ascii_only=text.isascii())))
+    if not check:
+        for path, rendered in pending:
+            path.write_text(rendered, encoding="utf-8")
+    return [path for path, _rendered in pending]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     ns = parser.parse_args(argv)
     try:
         changed = run(ns.root, check=ns.check)
-    except UnknownForgeError as exc:
+    except (UnknownForgeError, SyntheticIdsExhaustedError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     verb = "would change" if ns.check else "changed"

@@ -20,24 +20,27 @@ forges read (:data:`repoach.forge.recording.RECORDED_FIELDS`) are kept,
 and a fixture in which a token- or email-shaped value survives is refused.
 
 SP-RECORDER-REDACTS-BY-CLASS: personal keys, a user object's ``name``
-and URLs are dropped, every URL gets the placeholder host and namespace
-(:func:`repoach.forge.recording.redact_url`), and every login becomes
-its class word in stdout, argv and the method's arguments — the bot
-``bot``, the account an ``is_maintainer`` call asks about
-``maintainer``, the change request's author ``author``, any other
-``[bot]`` login ``bot-<n>``, a GitLab project bot ``service`` and any
-other login or ``@<handle>`` mentioned in free text ``author-<n>``; the
+and URLs are dropped, every URL and scp-style remote gets the placeholder
+host, namespace and repository (:func:`repoach.forge.recording.redact_url`,
+``forge.example.com/org/project``), and every login becomes its class
+word in stdout, argv and the method's arguments — the bot ``bot``, the
+account an ``is_maintainer`` call asks about ``maintainer``, the change
+request's author ``author``, any other ``[bot]`` login ``bot-<n>``, a
+GitLab project bot ``service`` and any other login ``author-<n>``; a
+login known only from an ``@<handle>`` in free text is ``author-<n>`` in
+that form only, and a decorator or a dotted name is no handle; the
 :data:`repoach.forge.recording.NON_PERSON_LOGINS` are kept. Every user
-id becomes a synthetic one (:class:`repoach.forge.recording.UserIdMap`),
-declared under ``synthetic_user_ids``. The
-result is then recomputed by replaying the redacted exchanges, so the
-fixture is what the readers return from it. The whole fixture, its
-``source`` included, is then judged: a login left unclassified, a string
-of a generic personal class (a home path, a public IPv4 address, a
-mailbox outside the documentation domains) or an entry of the
-maintainer's deny-list exits 2 naming the key path, never the value, and
-writes nothing. ``source`` names the forge and the date, never the
-checkout's folder.
+id becomes a synthetic one in ``1001..1999``
+(:class:`repoach.forge.recording.UserIdMap`), declared under
+``synthetic_user_ids``. The result is then recomputed by replaying the
+redacted exchanges, so the fixture is what the readers return from it.
+The whole fixture, its ``source`` included, is then judged: a login left
+unclassified, a string of a generic personal class (a home path, a public
+IPv4 address, a mailbox outside the documentation domains), a URL or a
+remote on a host the redaction rewrites, or an entry of the maintainer's
+deny-list exits 2 naming the key path, never the value, and writes
+nothing. ``source`` names the forge and the date, never the checkout's
+folder.
 
 ``--trim N`` keeps only the first ``N`` items of every JSON array in
 recorded stdout (and of the recorded result), for listings too large to
@@ -67,6 +70,7 @@ from repoach.forge.recording import (
     Exchange,
     RecordingSpawn,
     ReplaySpawn,
+    SyntheticIdsExhaustedError,
     UserIdMap,
     classify_logins,
     coerce_call,
@@ -619,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             trim=ns.trim,
             out_root=ns.out,
         )
-    except (UnclassifiedValueError, DenylistError) as exc:
+    except (UnclassifiedValueError, DenylistError, SyntheticIdsExhaustedError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(f"{path}\n")

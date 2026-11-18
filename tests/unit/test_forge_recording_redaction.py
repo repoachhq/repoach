@@ -33,16 +33,19 @@ from repoach.forge.recording import (
     SYNTHETIC_IDS_KEY,
     Exchange,
     ReplaySpawn,
+    SyntheticIdsExhaustedError,
     UserIdMap,
     classify_logins,
     declared_user_ids,
     decode_json_values,
+    is_synthetic_number,
     load_fixture,
     mentions,
     redact_payload,
     redact_stdout,
     redact_url,
     redact_urls_in_text,
+    trusted_declaration,
     unredacted_host,
     user_id_key,
     user_id_values,
@@ -494,6 +497,12 @@ def test_fixtures_declare_exactly_their_synthetic_user_ids() -> None:
         if data.get(SYNTHETIC_IDS_KEY, []) != declared_user_ids(data)
     ]
     assert wrong == []
+    outside = [
+        p.relative_to(FIXTURES).as_posix()
+        for p, data in loaded.items()
+        if not all(is_synthetic_number(n) for n in data.get(SYNTHETIC_IDS_KEY, []))
+    ]
+    assert outside == []
 
 
 def _denylisted(entries: list[str]) -> list[tuple[str, int]]:
@@ -720,8 +729,9 @@ def test_user_ids_map_to_a_stable_sequence_keyed_by_forge() -> None:
         {"id": 70707, "name": "check"},
     ]
     assert ids.synthetic(70707, forge="gitlab") == 1003
-    assert ids.synthetic(11, forge="gitlab", keep=frozenset({11})) == 11
-    assert ids.synthetic(4321987, forge="gitlab", keep=frozenset({11})) == 1004
+    assert ids.synthetic(1500, forge="gitlab", keep=frozenset({1500})) == 1500
+    assert ids.synthetic(11, forge="gitlab", keep=frozenset({11})) == 1004
+    assert ids.synthetic(4321987, forge="gitlab", keep=frozenset({1500})) == 1005
 
 
 def _exchange(payload: object) -> dict[str, Any]:
@@ -853,10 +863,38 @@ def test_an_undeclared_small_id_is_remapped_not_kept(tmp_path: Path) -> None:
     kept = _corpus(
         tmp_path,
         "kept",
-        {"gitlab/m.json": _fixture("gitlab", "is_maintainer", [answer], declared=[7])},
+        {
+            "gitlab/m.json": _fixture(
+                "gitlab", "is_maintainer", [{**answer[0], "id": 1500}], declared=[1500]
+            )
+        },
     )
-    assert user_id_values(kept["gitlab/m.json"]) == [7]
-    assert kept["gitlab/m.json"][SYNTHETIC_IDS_KEY] == [7]
+    assert user_id_values(kept["gitlab/m.json"]) == [1500]
+    assert kept["gitlab/m.json"][SYNTHETIC_IDS_KEY] == [1500]
+
+
+def test_a_declaration_outside_the_synthetic_range_is_not_trusted(tmp_path: Path) -> None:
+    """Preference 2 (0.9): a real id typed into ``synthetic_user_ids`` is remapped, never kept."""
+    assert trusted_declaration([7, 1000, 1001, 1999, 2000, 4321987, True, "1500"]) == {1001, 1999}
+    assert trusted_declaration("1001") == frozenset()
+    answer = [{"id": 4321987, "username": "maintainer", "access_level": 50}]
+    small = [{"id": 7, "username": "maintainer", "access_level": 50}]
+    out = _corpus(
+        tmp_path,
+        "c",
+        {
+            "gitlab/a.json": _fixture("gitlab", "is_maintainer", [answer], declared=[4321987]),
+            "gitlab/b.json": _fixture("gitlab", "is_maintainer", [small], declared=[7]),
+        },
+    )
+    assert user_id_values(out["gitlab/a.json"]) == [1001]
+    assert out["gitlab/a.json"][SYNTHETIC_IDS_KEY] == [1001]
+    assert user_id_values(out["gitlab/b.json"]) == [1002]
+    assert out["gitlab/b.json"][SYNTHETIC_IDS_KEY] == [1002]
+    last = UserIdMap(start=1999)
+    assert last.synthetic(5, forge="github") == 1999
+    with pytest.raises(SyntheticIdsExhaustedError):
+        last.synthetic(6, forge="github")
 
 
 def test_offline_transform_remaps_a_result_id_with_its_account() -> None:
