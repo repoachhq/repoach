@@ -12,7 +12,7 @@ repoach sent before the protocol existed.
 
 Fixtures whose ``source`` starts with ``recorded`` were captured by
 ``scripts/record_forge_fixture.py`` against repoachhq/repoach PR #200
-(merged, head branch deleted) and maintainer/yoob_2 MR !283 / !287
+(merged, head branch deleted) and a GitLab project's MR !283 / !287
 (merged, source branch deleted); ``synthetic`` ones cover what no
 read-only live call can produce (writes, merges, 403s, forged markers)
 and say why. On top of the byte-level replay, every test asserts the

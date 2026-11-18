@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 from repoach.cli.main import app
 from repoach.core.resources import spec_template_path
 
-YOOB_ORIGIN = "git@gitlab.com:maintainer/yoob_2.git"
+YOOB_ORIGIN = "git@gitlab.com:group/project.git"
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -119,7 +119,7 @@ def yoob_layout(tmp_path: Path) -> Path:
     _git(seed, "branch", "develop")
     bare = tmp_path / "remote.git"
     _git(tmp_path, "clone", "-q", "--bare", str(seed), str(bare))
-    clone = tmp_path / "yoob_2"
+    clone = tmp_path / "project"
     _git(tmp_path, "clone", "-q", str(bare), str(clone))
     _git(clone, "remote", "set-url", "origin", YOOB_ORIGIN)
     _git(clone, "config", "core.hooksPath", "scripts/hooks")
@@ -243,7 +243,7 @@ def test_merge_method_is_read_from_the_forge_api(
     assert code == 0, out
     config = tomllib.loads((yoob_layout / "repoach.toml").read_text(encoding="utf-8"))
     assert config["repoach"]["merge_method"] == "merge"
-    assert calls == [["glab", "api", "projects/maintainer%2Fyoob_2", "--hostname", "gitlab.com"]]
+    assert calls == [["glab", "api", "projects/group%2Fproject", "--hostname", "gitlab.com"]]
 
 
 def test_unreadable_forge_api_keeps_squash(
