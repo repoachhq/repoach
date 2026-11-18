@@ -14,6 +14,7 @@ pins the exact calls each forge makes.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from dataclasses import dataclass, field
@@ -362,6 +363,115 @@ def _classify(payload: object, folded: dict[str, str], roles: dict[str, str]) ->
     if isinstance(payload, str):
         return classify_text(payload, roles)
     return payload
+
+
+SYNTHETIC_ID_START = 1001
+"""The first synthetic user id a recording hands out."""
+
+SYNTHETIC_ID_LIMIT = 10000
+"""Numeric user ids below this are synthetic; a recorded one never is (D1, 0.7)."""
+
+_SYNTHETIC_NODE_RE = re.compile(r"^U_[0-9]+$")
+"""A synthetic GitHub user node id, ``U_<n>``."""
+
+_LEGACY_USER_NODE_RE = re.compile(r"^04:User([0-9]+)$")
+"""A decoded legacy GitHub user node id; its number is the account's numeric id."""
+
+
+def is_synthetic_user_id(value: object) -> bool:
+    """Whether ``value`` is a synthetic user id: an integer below the limit, or ``U_<n>``."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return 0 <= value < SYNTHETIC_ID_LIMIT
+    return isinstance(value, str) and bool(_SYNTHETIC_NODE_RE.match(value))
+
+
+def user_id_key(value: object) -> object:
+    """The account a user id names: a number for numeric and legacy node ids, else the string.
+
+    A legacy GitHub node id (base64 of ``04:User<n>``) and the REST id
+    ``<n>`` of the same account share one key, so both map to one
+    synthetic number.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return None
+    if isinstance(value, int):
+        return value
+    if value.isdigit():
+        return int(value)
+    try:
+        decoded = base64.b64decode(value, validate=True).decode("ascii")
+    except (ValueError, UnicodeDecodeError) as exc:
+        _log.debug("forge.recording.opaque_node_id", error=type(exc).__name__)
+        return value
+    m = _LEGACY_USER_NODE_RE.match(decoded)
+    return int(m.group(1)) if m else value
+
+
+@dataclass
+class UserIdMap:
+    """Real user id → synthetic id, a sequence in order of first appearance (D1, 0.7).
+
+    The first account seen is ``1001``, the next ``1002``…; a node id
+    becomes ``U_<n>`` with the same ``n`` as the account's numeric id.
+    The mapping is never written anywhere, and a sequence carries no
+    information about the id it replaces, so a fixture cannot be mapped
+    back by enumerating small ids (as a hash of the id could).
+
+    Attributes:
+        keep_synthetic: Leave ids that are already synthetic as they are
+            (the offline transform of hand-written fixtures); the
+            recorder remaps every id.
+        start: The first number handed out.
+        ids: Account key → synthetic number.
+    """
+
+    keep_synthetic: bool = False
+    start: int = SYNTHETIC_ID_START
+    ids: dict[object, int] = field(default_factory=dict)
+
+    def synthetic(self, value: object) -> object:
+        """The synthetic id for ``value`` (allocated on first sight)."""
+        if self.keep_synthetic and is_synthetic_user_id(value):
+            return value
+        key = user_id_key(value)
+        if key is None:
+            return value
+        n = self.ids.setdefault(key, self.start + len(self.ids))
+        return f"U_{n}" if isinstance(value, str) else n
+
+    def apply(self, payload: object) -> object:
+        """Remap the ``id`` of every user object (one holding ``login`` or ``username``)."""
+        if isinstance(payload, dict):
+            user = any(k in payload for k in USER_KEYS)
+            return {
+                k: self.synthetic(v) if user and k == "id" else self.apply(v)
+                for k, v in payload.items()
+            }
+        if isinstance(payload, list):
+            return [self.apply(v) for v in payload]
+        return payload
+
+    def apply_known(self, payload: object) -> object:
+        """Remap every ``id`` whose account is already mapped (a result: ``Review.id``)."""
+        if isinstance(payload, dict):
+            return {
+                k: self._known(v) if k == "id" else self.apply_known(v) for k, v in payload.items()
+            }
+        if isinstance(payload, list):
+            return [self.apply_known(v) for v in payload]
+        return payload
+
+    def _known(self, value: object) -> object:
+        """``value`` remapped when its account is in :attr:`ids`, else unchanged."""
+        if self.keep_synthetic and is_synthetic_user_id(value):
+            return value
+        key = user_id_key(value)
+        if key is None or key not in self.ids:
+            return value
+        n = self.ids[key]
+        return f"U_{n}" if isinstance(value, str) else n
 
 
 def login_values(payload: object, path: str = "") -> list[tuple[str, str]]:
