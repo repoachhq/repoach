@@ -6,8 +6,8 @@ index 1e84991f0..eb2f17a98 100644
  ## 2. Connexion à la Plateforme
  
  1. L'URL permanente officielle d'accès à la plateforme est :
--   - **URL fixe** : `https://studio.yoob.dev`
-+   - **URL fixe** : `https://yoob.dev` (l'ancienne adresse `https://studio.yoob.dev` redirige vers elle, chemin compris)
+-   - **URL fixe** : `https://studio.product.example.com`
++   - **URL fixe** : `https://product.example.com` (l'ancienne adresse `https://studio.product.example.com` redirige vers elle, chemin compris)
  2. Ouvrez l'URL dans un navigateur moderne (Google Chrome, Mozilla Firefox, Safari ou Microsoft Edge).
  3. L'application charge l'IHM complète de Yoob Studio.
  
@@ -15,8 +15,8 @@ index 1e84991f0..eb2f17a98 100644
  
  Dès l'ouverture, vous pouvez vérifier le bon fonctionnement des services :
  - **Indicateur de statut** : Un badge vert dans la barre supérieure ou latérale confirme la connexion avec le backend FastAPI.
--- **Point de contrôle de santé** : En accédant à `https://studio.yoob.dev/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :
-+- **Point de contrôle de santé** : En accédant à `https://yoob.dev/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :
+-- **Point de contrôle de santé** : En accédant à `https://studio.product.example.com/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :
++- **Point de contrôle de santé** : En accédant à `https://product.example.com/health`, vous obtenez un JSON confirmant l'état de PostgreSQL, Redis et des workers Celery :
    ```json
    {
      "status": "healthy",
@@ -24,8 +24,8 @@ index 1e84991f0..eb2f17a98 100644
      }
    }
    ```
--- **Documentation interactive Swagger** : Accessible à l'adresse `https://studio.yoob.dev/docs` pour tester les points d'API REST.
-+- **Documentation interactive Swagger** : Accessible à l'adresse `https://yoob.dev/docs` pour tester les points d'API REST.
+-- **Documentation interactive Swagger** : Accessible à l'adresse `https://studio.product.example.com/docs` pour tester les points d'API REST.
++- **Documentation interactive Swagger** : Accessible à l'adresse `https://product.example.com/docs` pour tester les points d'API REST.
  
  ---
  

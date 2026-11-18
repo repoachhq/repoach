@@ -115,14 +115,14 @@ def test_yoob_322_approves_once_the_embeddings_are_declared(
             "repoach.toml": (FIXTURE / "repoach.toml").read_text(encoding="utf-8"),
             "scripts/index_knowledge_corpus.py": '"""Recorded by the fixture."""\n',
             "api/data/knowledge_corpus.json": '{"chunks": 380}\n',
-            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": "studio.yoob.dev\n",
+            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": "studio.product.example.com\n",
             EMBEDDINGS: _sized("a", size),
         },
     )
     head = repo.push_head(
         {
-            "api/data/knowledge_corpus.json": '{"chunks": 380, "host": "yoob.dev"}\n',
-            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": "yoob.dev\n",
+            "api/data/knowledge_corpus.json": '{"chunks": 380, "host": "product.example.com"}\n',
+            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": "product.example.com\n",
             EMBEDDINGS: _sized("b", SHAPE["embeddings"]["bytes_after"]),
         },
         pr=PR,

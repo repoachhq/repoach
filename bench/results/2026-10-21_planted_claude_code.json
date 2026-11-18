@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "corpus": "planted",
-  "corpus_root": "/home/jofaye/Documents/work/repoach-worktrees/bench/bench/corpus/planted",
+  "corpus_root": "bench/corpus/planted",
   "corpus_sha": "813105285fc7",
   "provider": "claude_code",
   "reviewers": [
