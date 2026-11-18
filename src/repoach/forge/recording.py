@@ -315,8 +315,21 @@ _GITHUB_ROUTES: frozenset[str] = frozenset(
 )
 """Third path segments that mark a ``<owner>/<repo>/<route>`` GitHub URL."""
 
-_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>()\[\]{}\\,]+")
-"""An ``http(s)`` URL inside free text (a log line, a ``glab`` error)."""
+URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git"})
+"""Schemes of a forge URL: the web and API ones, and a remote's ``ssh://`` and ``git://`` (0.9)."""
+
+_URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git)://[^\s\"'<>()\[\]{}\\,]+")
+"""A URL inside free text (a log line, a ``glab`` error, a clone command)."""
+
+_SCP_IN_TEXT_RE = re.compile(
+    r"(?<![A-Za-z0-9_.+/-])(?P<user>[A-Za-z0-9_.-]+)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)"
+    r":(?!//)(?P<path>(?:[A-Za-z0-9_.~%-]+/)+[A-Za-z0-9_.~%-]*)"
+)
+"""An scp-style remote inside free text, ``<user>@<host>:<namespace>/<repo>`` (0.9).
+
+The path holds at least one ``/``, so a mailbox followed by ``:`` and a
+port number are not remotes.
+"""
 
 _EXAMPLE_HOST_RE = re.compile(
     r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^127\.|^localhost$", re.I
@@ -378,23 +391,27 @@ def redact_url(value: str) -> str:
     segment before the repository (the one preceding ``/-/``, or the
     last) is the namespace; ``/-/jobs/5`` with no namespace keeps its
     path. ``api/v4/projects/<group>%2F<repo>`` and ``repos/<owner>/<repo>``
-    API paths get the same placeholders.
+    API paths get the same placeholders. An ``ssh://`` or ``git://``
+    remote keeps a ``git@`` user when it has one.
 
     Returns:
-        The redacted URL, or ``""`` when ``value`` is not an ``http(s)``
-        URL with a host (the caller drops the key).
+        The redacted URL, or ``""`` when ``value`` is not a URL of
+        :data:`URL_SCHEMES` with a host (the caller drops the key).
     """
     try:
         parts = urlsplit(value.strip())
     except ValueError as exc:
         _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
         return ""
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    if parts.scheme not in URL_SCHEMES or not parts.hostname:
         return ""
     path = parts.path
     if path.startswith("/") and len(path) > 1:
         path = "/" + "/".join(_namespaced(path[1:].split("/")))
-    return urlunsplit((parts.scheme, PLACEHOLDER_HOST, path, parts.query, parts.fragment))
+    host = PLACEHOLDER_HOST
+    if parts.scheme in ("ssh", "git") and parts.username:
+        host = f"git@{PLACEHOLDER_HOST}"
+    return urlunsplit((parts.scheme, host, path, parts.query, parts.fragment))
 
 
 def _kept_host(host: str) -> bool:
@@ -403,10 +420,12 @@ def _kept_host(host: str) -> bool:
 
 
 def redact_urls_in_text(text: str) -> str:
-    """Apply :func:`redact_url` to every URL of ``text`` not on a kept host (:func:`_kept_host`).
+    """Redact every URL and scp-style remote of ``text`` not on a kept host (:func:`_kept_host`).
 
-    A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a hand-written
-    one gets the placeholder path too (0.9).
+    A URL goes through :func:`redact_url`; ``<user>@<host>:<ns>/<repo>``
+    becomes ``<user>@forge.example.com:org/project`` (0.9), its ``.git``
+    suffix kept. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so
+    a hand-written one gets the placeholder path too.
     """
 
     def _one(match: re.Match[str]) -> str:
@@ -417,7 +436,26 @@ def redact_urls_in_text(text: str) -> str:
             return match.group(0)
         return (redact_url(url) or url) + tail
 
-    return _URL_IN_TEXT_RE.sub(_one, text)
+    def _scp(match: re.Match[str]) -> str:
+        if _kept_host(match.group("host")):
+            return match.group(0)
+        path = "/".join(_namespaced(match.group("path").split("/")))
+        return f"{match.group('user')}@{PLACEHOLDER_HOST}:{path}"
+
+    return _SCP_IN_TEXT_RE.sub(_scp, _URL_IN_TEXT_RE.sub(_one, text))
+
+
+def unredacted_host(text: str) -> bool:
+    """Whether ``text`` holds a URL or an scp-style remote on a host :func:`redact_urls_in_text` rewrites.
+
+    After redaction no such host is left, so one found in a fixture about
+    to be written means a value escaped the redaction (D3, 0.9).
+    """
+    for match in _URL_IN_TEXT_RE.finditer(text):
+        host = urlsplit(match.group(0).rstrip(".:;")).hostname or ""
+        if host and not _EXAMPLE_HOST_RE.search(host):
+            return True
+    return any(not _EXAMPLE_HOST_RE.search(m.group("host")) for m in _SCP_IN_TEXT_RE.finditer(text))
 
 
 def redact_urls_in_value(value: object) -> object:
@@ -452,7 +490,7 @@ def _repository_of(value: dict[str, object]) -> str | None:
         except ValueError as exc:
             _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
             continue
-        if parts.scheme in ("http", "https") and parts.hostname:
+        if parts.scheme in URL_SCHEMES and parts.hostname:
             name = _repository_root(parts.path)
             if name is not None:
                 return name
@@ -499,8 +537,14 @@ def redact_payload(value: object) -> object:
 
 
 def _login_pattern(login: str) -> re.Pattern[str]:
-    """``login`` as a whole token (``/``, ``=``, ``?`` and quotes delimit it; ``:owner`` is a placeholder, not a login)."""
-    return re.compile(rf"(?<![A-Za-z0-9_.:\[\]-]){re.escape(login)}(?![A-Za-z0-9_\[\]-])", re.I)
+    """``login`` as a whole token.
+
+    ``/``, ``=``, ``?`` and quotes delimit it. A ``:`` delimits it after
+    a host (``git@<host>:<login>/r``, an scp remote, 0.9) but not after
+    ``/`` or ``:`` (``repos/:owner/:repo`` names a placeholder, not a login).
+    """
+    start = r"(?:(?<![A-Za-z0-9_.:\[\]-])|(?<=[A-Za-z0-9.-]:))"
+    return re.compile(rf"{start}{re.escape(login)}(?![A-Za-z0-9_\[\]-])", re.I)
 
 
 def classify_text(text: str, roles: dict[str, str]) -> str:

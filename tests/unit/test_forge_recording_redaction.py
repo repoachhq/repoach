@@ -42,6 +42,8 @@ from repoach.forge.recording import (
     redact_payload,
     redact_stdout,
     redact_url,
+    redact_urls_in_text,
+    unredacted_host,
     user_id_key,
     user_id_values,
 )
@@ -921,4 +923,53 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
     written = json.loads(Path(capsys.readouterr().out.strip()).read_text())
     assert written["result"][0]["body"] == (
         "use @pytest.fixture here, and see @dataclass; cc @author-2. mail a@b.example"
+    )
+
+
+def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() -> None:
+    """Defect 2 (0.9): ``git@<host>:<ns>/<repo>`` and ``ssh://`` are URLs; a classified login cannot survive in them."""
+    cases = {
+        "clone git@github.com:x-handle/r.git": "clone git@forge.example.com:org/project.git",
+        "git@gitlab.com:g/s/r.git, then": "git@forge.example.com:org/project.git, then",
+        "ssh://git@gitlab.com/x-handle/r.git": "ssh://git@forge.example.com/org/project.git",
+        "git://github.com/x-handle/r": "git://forge.example.com/org/project",
+        "git@forge.example.com:org/r.git": "git@forge.example.com:org/project.git",
+    }
+    for raw, redacted in cases.items():
+        assert redact_urls_in_text(raw) == redacted
+        assert unredacted_host(raw) is not raw.startswith("git@forge.example.com")
+        assert not unredacted_host(redacted)
+    for kept in ("mail a@b.example: hi", "host t@example.com:8080", "git@code.example.org:g/r.git"):
+        assert redact_urls_in_text(kept) == kept and not unredacted_host(kept)
+    assert (
+        redact_url("ssh://git@gitlab.com/x-handle/r.git")
+        == "ssh://git@forge.example.com/org/project.git"
+    )
+
+    roles = {"x-handle": "author", "owner": "author-2"}
+    assert classify_logins("git@code.example.org:x-handle/r.git", roles) == (
+        "git@code.example.org:author/r.git"
+    )
+    assert classify_logins("repos/:owner/:repo", roles) == "repos/:owner/:repo"
+
+    for text in ("clone git@github.com:x-handle/r.git", "ssh://git@gitlab.com/x-handle/r.git"):
+        answer = {"author": {"login": "x-handle"}, "body": text}
+        recorded = [{"args": [], "stdout": redact_stdout(json.dumps(answer)), "stderr": text}]
+        built = rec.build_roles(recorded, bot="", maintainer=None, author="x-handle")
+        calls = rec.classify_calls(recorded, built)
+        assert "x-handle" not in json.dumps(calls) and "github.com" not in json.dumps(calls)
+        rec.refuse_unclassified({"source": "s", "calls": calls}, denylist=[])
+
+        raw = [{"args": [], "stdout": json.dumps(answer), "stderr": ""}]
+        unredacted = rec.classify_calls(
+            raw, rec.build_roles(raw, bot="", maintainer=None, author=None)
+        )
+        with pytest.raises(rec.UnclassifiedValueError, match=r"^unredacted host at exchanges\[0\]"):
+            rec.refuse_unclassified({"source": "s", "calls": unredacted}, denylist=[])
+
+    fixture = {"forge": "gitlab", "calls": [_exchange({"body": "clone git@gitlab.com:g/r.git"})]}
+    out = redact_fixtures.redact_fixture(fixture, forge="gitlab")
+    assert (
+        json.loads(out["calls"][0]["stdout"])["body"]
+        == "clone git@forge.example.com:org/project.git"
     )

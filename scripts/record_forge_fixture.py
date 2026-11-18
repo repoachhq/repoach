@@ -82,6 +82,7 @@ from repoach.forge.recording import (
     redact_urls_in_text,
     redact_urls_in_value,
     serialize_result,
+    unredacted_host,
     user_id_key,
 )
 from repoach.forge.select import select_forge
@@ -411,7 +412,9 @@ def refuse_unclassified(fixture: dict[str, Any], denylist: list[str] | None = No
     Every login under a login key must be a class word or a
     :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry; no string of
     the fixture — ``source``, ``case``, the arguments, every exchange and
-    the result alike — may match a generic personal class or a deny-list
+    the result alike — may match a generic personal class, hold a URL or
+    an scp-style remote on a host the redaction rewrites
+    (:func:`repoach.forge.recording.unredacted_host`, 0.9) or a deny-list
     entry.
 
     Args:
@@ -435,6 +438,8 @@ def refuse_unclassified(fixture: dict[str, Any], denylist: list[str] | None = No
             rule = generic_class(text)
             if rule is not None:
                 raise UnclassifiedValueError(f"generic class {rule} at {path}")
+            if unredacted_host(text):
+                raise UnclassifiedValueError(f"unredacted host at {path}")
             entry = denylist_hit(text, patterns)
             if entry is not None:
                 raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
