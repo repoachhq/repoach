@@ -1011,3 +1011,44 @@ def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() 
         json.loads(out["calls"][0]["stdout"])["body"]
         == "clone git@forge.example.com:org/project.git"
     )
+
+
+def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Preference 4 (0.9): a login ``main`` is replaced in a branch field and in prose too; the replay stays consistent.
+
+    The safer option (D2): narrowing would keep the login's string where
+    a reader could tie it to the account, and keep argv and stdout apart.
+    """
+    answer = {
+        "author": {"login": "main"},
+        "baseRefName": "main",
+        "headRefName": "main-fix",
+        "body": "merge into main",
+    }
+    calls = [{"args": ["pr", "view", "1"], "stdout": json.dumps(answer), "stderr": ""}]
+    roles = rec.build_roles(calls, bot="", maintainer=None, author="main")
+    out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
+    assert out == {
+        "author": {"login": "author"},
+        "baseRefName": "author",
+        "headRefName": "main-fix",
+        "body": "merge into author",
+    }
+
+    stdout = json.dumps(
+        [[{"id": 9, "user": {"login": "main"}, "state": "APPROVED", "body": "rebase on main"}]]
+    )
+    monkeypatch.setattr(rec, "_author_of", lambda *_a: "main")
+    assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
+    fixture = json.loads(Path(capsys.readouterr().out.strip()).read_text())
+    assert fixture["result"] == [
+        {
+            "author": "author",
+            "body": "rebase on author",
+            "comments": [],
+            "id": 9,
+            "state": "APPROVED",
+        }
+    ]
