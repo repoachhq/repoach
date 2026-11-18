@@ -1,7 +1,7 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word, drops names and avatars, makes user ids synthetic at record time, and refuses a fixture it cannot classify
-version: 0.8
+version: 0.9
 status: approved
 author: agent
 created: 2026-11-18
@@ -128,6 +128,48 @@ did not list (it is now gone: D4 states the general rule); a `test:`
 commit edited this spec at 0.7 without a bump (`4f78a96`), which this entry
 supersedes.
 
+Amendment (0.9, 2026-11-18, the second verifier's NO-GO on `58b928a`, every
+item fixed, measured on the branch over `origin/develop` `7fd31af`):
+(a) defect 1 — the suite's autouse `_hermetic_xdg_dirs` points
+`XDG_CONFIG_HOME` at a scratch directory, so under pytest `read_denylist()`
+never saw `~/.config/repoach/personal-denylist`: with the real file present
+(10 entries, mode 600) the deny-list test skipped, and D1c, O2 and C1, which
+say the file and the variable are merged, were false under pytest. The
+test now asks for `real_user_config_dir`, a session fixture of
+`tests/conftest.py` that names the directory from `XDG_CONFIG_HOME` as the
+process found it, before the override; `read_denylist(config_dir)` reads the
+file there; every other test stays hermetic; the skip names the path it
+checked (home written `~`); a test pins the file route (D1c, D3).
+(b) defect 2 — `clone git@github.com:<login>/r.git` kept the login and the
+real host: `_login_pattern` refused a token after `:` (to keep `:owner`),
+and text URLs were `http(s)` only. An scp remote `<user>@<host>:<ns>/<repo>`
+and an `ssh://`/`git://` URL now get the placeholder host, namespace and
+repository in both tools; a login after `<host>:` is a token (not after `/:`
+or `::`); and D3 refuses any URL or remote left on a host the redaction
+rewrites (`unredacted host at <path>`). (c) preference 1 — `@pytest.fixture`,
+`@dataclass` and `@property` were handles, and the bare word was then
+replaced everywhere (`import dataclass` became `import author-3`): a dotted
+name, a decorator call, a standard-library decorator and anything in a
+Markdown code span are no handle, and a login known only from a mention is
+replaced in its `@<handle>` form only (D2). (d) preference 2 — a declared
+id was trusted at any value, so a real one could be declared: only
+`1001..1999` is trusted, a declaration outside it is remapped, and the six
+hand-written ids 0.8 declared (3, 7, 8, 9, 11, 12) are now remapped like any
+real id, so the D4 reproduction declares nothing (D1c, D4). (e) preference
+3 — commit `2122754` (`test(forge)`) edited this spec at 0.7 without a bump;
+its row was folded into the 0.8 `docs(specs)` commit before any push. (f)
+preference 4 — a login equal to a git word (`main`) is replaced in every
+value, branch fields and prose included; that is the safer option and is
+stated in D2. (g) preference 5 — the private project name stood in 30 URLs
+and a GitLab project object of the fixtures: the repository segment of
+every recorded URL is `project`, and a repository object's `name`/`path`
+too (D1b). (h) preference 6 — the repository secret
+`REPOACH_PERSONAL_DENYLIST` reaches the unit-test step of `ci.yml` (O2).
+Wrong facts corrected: D1c, O2 and C1 said the file was read under pytest,
+false until (a); D2's claim that `@pytest.fixture` in a diff "stays" held
+for diffs but not for the same decorator in prose, true after (c); AC1's
+C1 figure is now measured by the file route.
+
 ## Intent
 
 Child 2 of SP-REPO-CARRIES-NO-PERSONAL-DATA. SP-SCRUB-PERSONAL-DATA-AT-HEAD
@@ -179,15 +221,28 @@ into `tests/fixtures/forge/`.
   `forge.example.com`, the namespace (every path segment before the
   repository name — the first segment on GitHub, everything before the
   last segment preceding `/-/` or the last segment on GitLab) becomes
-  `org`, and the rest of the path is kept, so
+  `org`, the repository name becomes `project` (0.9; a `.git` suffix
+  kept), and the rest of the path is kept, so
   `https://<forge>/<owner>/<repo>/pull/12` records as
-  `https://forge.example.com/org/<repo>/pull/12` and
+  `https://forge.example.com/org/project/pull/12` and
   `https://<gitlab>/<group>/<sub>/<repo>/-/merge_requests/7` as
-  `https://forge.example.com/org/<repo>/-/merge_requests/7`. A value
-  that does not parse as an `http(s)` URL is dropped. The forges pass
+  `https://forge.example.com/org/project/-/merge_requests/7`. A value
+  that does not parse as a URL of `URL_SCHEMES` (`http`, `https`, `ssh`,
+  `git`) is dropped. The forges pass
   these strings through (`url=str(mr.get("web_url") or "")`,
   `gitlab.py:223`), so a replayed recording yields the redacted URL
   unchanged, which the test pins by replaying through the readers.
+  (0.9) A repository's name is its owner's as much as its namespace: in a
+  repository object — one whose URL names a repository and nothing under
+  it, such as GitLab's `projects/:id` answer — a `name` or `path` equal to
+  that repository's name becomes `project` too. In free text, an `http(s)`,
+  `ssh://` or `git://` URL and an scp remote `<user>@<host>:<ns>/<repo>`
+  (the path holding a `/`, so a mailbox before `:` and a port are not
+  remotes) get the same placeholders, unless the host is an RFC 2606 or
+  loopback host other than `forge.example.com` itself, which is redacted
+  again so a hand-written URL gets the placeholder path. A repository name
+  inside prose (a body naming the project) is not replaced by class; a
+  private project name belongs in the deny-list, which D3 refuses.
 - D1c (0.7, 0.8). **User ids are synthetic, and declared.** The `id` of
   every user object (one holding `login` or `username`) is replaced by
   `UserIdMap` (`src/repoach/forge/recording.py`): a sequence in order of
@@ -204,12 +259,21 @@ into `tests/fixtures/forge/`.
   comment's) is the object's own and is left as it is, even when its number
   equals a user id (0.8). A fixture declares the synthetic ids it holds
   under `synthetic_user_ids` (`SYNTHETIC_IDS_KEY`), a sorted list of their
-  numbers: the recorder writes it, a hand-written fixture states its own
-  (today `gitlab/is_maintainer.json` 7, `is_maintainer_admin.json` 3,
-  `is_maintainer_developer.json` 8 and 9, `reviews_two_approvals.json` 11
-  and 12), and the offline transform keeps exactly the declared ids and
-  remaps every other one, whatever its size (0.8, replacing the "below
-  10000" rule). The recorder remaps every id with one map per recording;
+  numbers: the recorder and the offline transform write it, and the
+  offline transform keeps exactly the declared ids and remaps every other
+  one, whatever its size (0.8, replacing the "below 10000" rule). Only a
+  declared number in `1001..1999` (`SYNTHETIC_ID_START..SYNTHETIC_ID_END`,
+  `trusted_declaration`) is trusted (0.9): a declaration outside the range
+  — a real id typed into a fixture by hand — is remapped like an
+  undeclared id, so a fixture cannot keep a real id by declaring it; a map
+  that would hand out a number past 1999 raises
+  `SyntheticIdsExhaustedError` (exit 2, nothing written). The six
+  hand-written ids 0.8 declared (`gitlab/is_maintainer.json` 7,
+  `is_maintainer_admin.json` 3, `is_maintainer_developer.json` 8 and 9,
+  `reviews_two_approvals.json` 11 and 12) are therefore remapped into the
+  range with the rest of the corpus, and no reader or test needs their old
+  values. A real account numbered 1001–1999 could still be declared by
+  hand; the deny-list test catches the maintainer's own. The recorder remaps every id with one map per recording;
   `scripts/redact_forge_fixtures.py` uses one map for the whole corpus,
   starting after the highest number any fixture declares, so a new number
   never collides with a declared one and one account keeps one number
@@ -224,7 +288,14 @@ into `tests/fixtures/forge/`.
   deny-list of SP-NO-PERSONAL-DATA-GATE D3 — the file
   `user_config_dir()/personal-denylist` and the variable
   `REPOACH_PERSONAL_DENYLIST`, merged — and skips, naming that reason,
-  when neither holds an entry (O2).
+  when neither holds an entry (O2). Under pytest the file is read from the
+  real configuration directory (0.9): the suite's autouse
+  `_hermetic_xdg_dirs` points `XDG_CONFIG_HOME` at a scratch directory, so
+  the test asks for the session fixture `real_user_config_dir`
+  (`tests/conftest.py`), which resolves `user_config_dir()` with
+  `XDG_CONFIG_HOME` as the process found it, and passes it to
+  `read_denylist(config_dir)`; the skip message names the file it checked,
+  the home directory written `~`.
 - D2. **Logins are classified at record time.** `classify_logins(payload,
   roles: dict[str, str]) -> object` replaces, recursively, every value of
   a `login`, `username`, `author`, `resolved_by` or `user` key that is a
@@ -256,7 +327,35 @@ into `tests/fixtures/forge/`.
   `PROSE_KEYS` (a diff, a log) is the repository's or the runner's content
   and is not searched for mentions — a decorator such as `@pytest.fixture`
   in a recorded diff stays — though a classified login is still replaced
-  there as a token. A URL namespace in a test written from scratch as a
+  there as a token.
+  What a handle is (0.9): `@` then GitHub/GitLab handle characters, not
+  followed by a handle character, by `.` and a word character (a dotted
+  name: `@pytest.fixture`, and so a dotted GitLab username such as
+  `@a.b`, which the mention rule does not catch — the deny-list does for
+  the maintainer's own) or by `(` (a decorator call); not a
+  standard-library decorator name (`PYTHON_DECORATORS`: `@dataclass`,
+  `@property`, `@staticmethod`…); not inside a Markdown code span or fenced
+  block. So the same decorator stays in prose as in a diff. A login known
+  only from a mention is keyed `@<login>` in `roles`
+  (`MENTION_ONLY_PREFIX`) and is replaced in its `@<handle>` form only,
+  everywhere; its bare word (`import dataclass`, a branch, a path, an
+  argv segment offline) is left alone, since nothing says it stands for
+  that person there. Seen later as a login, it is re-keyed with the same
+  word and replaced as a token. A classified login is a token after a
+  host's `:` too (`git@<host>:<login>/r`, 0.9), but not after `/:` or `::`
+  (`repos/:owner/:repo` names a placeholder).
+  A login equal to a common word (0.9, owner preference 4): the recorder
+  replaces a login as a whole token in every value, so a login `main`
+  turns a `baseRefName` `main` and the prose `merge into main` into
+  `author` (a `main-fix` branch stays, `-` being a word character). This is
+  the option chosen, as the safer one: narrowing the replacement in branch
+  and ref fields would keep the login's string beside the account's class
+  word, and would have to agree argv by argv with the replayed reads; a
+  value that disagrees fails the replay loudly (`ReplayMismatchError`)
+  instead of being written. The fixture then reads oddly — a branch named
+  `author` — and still replays, since the result is recomputed from the
+  classified exchanges; the recorder's author may record another change
+  request. A URL namespace in a test written from scratch as a
   parser input on a real forge host (`o/r`, `owner/repo`, `acme/…`, 45
   occurrences) is not an actor, names no one in context, and stays, since
   host detection needs the real host; a namespace derived from a real
@@ -269,7 +368,10 @@ into `tests/fixtures/forge/`.
   first, then `source`, `case`, the arguments and the result (0.8: the
   check runs on the built fixture, so it covers `source`) — matches
   one of the generic classes of SP-NO-PERSONAL-DATA-GATE D1 (a home path,
-  a public address, a mailbox outside the documentation domains) or an
+  a public address, a mailbox outside the documentation domains), holds a
+  URL or an scp remote on a host the redaction rewrites (0.9,
+  `unredacted host at <path>`, `unredacted_host`: after redaction none is
+  left, so one found means a value escaped it), or an
   entry of the maintainer's deny-list (0.8; `deny-list entry <n> at
   <path>`, by ordinal; a node-id-shaped string is also judged by the
   account number it encodes). The deny-list is read as
@@ -305,10 +407,12 @@ into `tests/fixtures/forge/`.
   fixed point, and the conformance suite
   (`tests/unit/test_forge_conformance.py`) stays the regression oracle: a
   redaction that drops a key the forges read is red there (it was, on
-  `commits`, amendment (a)). Reproduction (0.8): the fixtures of
-  `7fd31af`, with the six hand-written ids declared in their four files
-  (D1c), run through the script, are byte-identical to the branch's
-  fixtures, and a second run changes 0 files.
+  `commits`, amendment (a)). Reproduction (0.9, replacing 0.8's, which
+  first declared six hand-written ids): the fixtures of `7fd31af`,
+  untouched, run through the script (62 files changed), are
+  byte-identical to the branch's fixtures, a second run changes 0 files,
+  and `--check` exits 0. The transform computes every file before it
+  writes any, so a refusal leaves the corpus as it was.
 - D5 (0.8). **Placeholders derived from a real remote are replaced in the
   tests too.** `gitlab.com/maintainer/<private repository>`, its scp form
   `git@gitlab.com:maintainer/<private repository>.git` and its API form
@@ -331,6 +435,23 @@ into `tests/fixtures/forge/`.
   this project's public `repoachhq/repoach`, 2 `group/project`, 2 `docs.*`
   links; the scp forms are 8 `o`, 3 `owner`, 2 `repoachhq`, 4
   `group`.
+- D6 (0.9). **The deny-list test runs where the deny-list is.** Two
+  edits outside this spec's files, each its record here like D5's:
+  `tests/conftest.py` (SP-STRUCTLOG-CACHE-TEST-FIXTURE's) gains the
+  session fixture `real_user_config_dir` and the snapshot
+  `_SESSION_XDG_CONFIG_HOME` it reads, which no autouse fixture uses, so
+  every other test stays hermetic; `.github/workflows/ci.yml`
+  (SP-CI-JOBS-NO-OP-WHEN-NOT-AFFECTED's) passes the repository secret
+  `REPOACH_PERSONAL_DENYLIST` to the `Pytest` step of the `test` job, as
+  that step's env only. The step runs `pytest` alone — no `set -x`, no
+  `echo`, no `env` — the test prints counts and ordinals, never an entry,
+  and GitHub masks the value in the log. A pull request from a fork gets
+  no secret: GitHub passes the expression as an empty string, so the
+  variable is empty, and with no file on the runner the test skips
+  naming the reason (measured locally: `REPOACH_PERSONAL_DENYLIST=` and an
+  empty configuration directory → `1 skipped`); the `test` job's
+  `REPOACH_ALLOWED_ACTORS` guard already keeps an unknown actor's pull
+  request off the runner. A test pins the wiring.
 
 ## End state
 
@@ -338,10 +459,11 @@ into `tests/fixtures/forge/`.
 writes a fixture in which every `login`/`username` is a class word or a
 `NON_PERSON_LOGINS` entry, every `@<handle>` in free text a class word,
 no `avatar_url`, `email`, `node_id` or user `name` key exists, every
-user object's `id` is a synthetic number declared under
+user object's `id` is a synthetic number in `1001..1999` declared under
 `synthetic_user_ids` while every other `id` is as recorded, every
-`url`/`web_url`/`html_url`/`link` value has the placeholder host
-and namespace with its path shape kept, every argv embeds a class word
+`url`/`web_url`/`html_url`/`link` value, every URL and scp remote in text,
+has the placeholder host, namespace and repository (`org/project`) with
+its path shape kept, every argv embeds a class word
 where a login stood, `source` names the forge and not the checkout's
 folder, and the script exits 2 naming the key path when a value of the
 fixture stays unclassified, matches a generic class or a deny-list entry;
@@ -424,10 +546,11 @@ Inputs:
 - `PERSONAL_KEY_RE` and `redact_url(value: str) -> str` in `src/repoach/forge/recording.py`.
 - (0.8) `UserIdMap.synthetic/apply(…, *, forge, keep)`, `UserIdMap.apply_result(result, *, forge, method, keep)`, `user_id_key`, `user_id_values`, `declared_user_ids`, `SYNTHETIC_IDS_KEY`, `RESULT_USER_ID_METHODS`, `NON_PERSON_LOGINS`, `PROSE_KEYS`, `mentions`, `recorded_source` in `src/repoach/forge/recording.py`; `read_denylist`, `denylist_patterns`, `denylist_hit` in `scripts/record_forge_fixture.py`.
 - (0.8) the deny-list: `user_config_dir()/personal-denylist` and `REPOACH_PERSONAL_DENYLIST` (SP-NO-PERSONAL-DATA-GATE D3).
+- (0.9) `PLACEHOLDER_PROJECT`, `URL_SCHEMES`, `unredacted_host(text) -> bool`, `mention_pattern(login)`, `MENTION_ONLY_PREFIX`, `PYTHON_DECORATORS`, `SYNTHETIC_ID_END`, `is_synthetic_number`, `trusted_declaration`, `SyntheticIdsExhaustedError` in `src/repoach/forge/recording.py`; `denylist_file(config_dir=None)`, `read_denylist(config_dir=None)` in `scripts/record_forge_fixture.py`; the session fixture `real_user_config_dir` in `tests/conftest.py` (D6).
 - `scripts/record_forge_fixture.py` (existing CLI, unchanged arguments).
 
 Outputs:
-- a fixture file whose every login-bearing value is a class word or a non-person login, that holds no personal key and declares its synthetic user ids; or exit 2 with `unclassified: <key path>`, `generic class <rule> at <key path>`, `deny-list entry <n> at <key path>` or `deny-list entry <n>: too short` on stderr.
+- a fixture file whose every login-bearing value is a class word or a non-person login, that holds no personal key and declares its synthetic user ids; or exit 2 with `unclassified: <key path>`, `generic class <rule> at <key path>`, `unredacted host at <key path>` (0.9), `deny-list entry <n> at <key path>`, `deny-list entry <n>: too short` or `synthetic user id <n> past 1999` (0.9) on stderr.
 
 Errors:
 - `UnclassifiedValueError` (`scripts/record_forge_fixture.py`): a login-bearing key whose value is not a class word or a non-person login, or a string value matching a generic class or a deny-list entry; the message carries the key path, never the value.
@@ -450,6 +573,10 @@ records one fixture against a real pull request to check the shape
 - A `name` in an object with no `login`/`username` sibling → kept (a check-run or job name the forges read); an `id` key anywhere → kept, its value synthetic in a user object only (D1c).
 - (0.8) The same raw number on GitHub and GitLab → two synthetic ids. A GitHub review's or a check's result id equal to a user id → kept. A hand-written id the fixture does not declare → remapped and declared.
 - (0.8) `@<handle>` in a body → `@author-<n>`; `@pytest.fixture` in a diff → kept; `a@b.example` → not a mention.
+- (0.9) `@pytest.fixture`, `@dataclass`, `@lru_cache(…)`, `` `@x` `` in a body → kept, not a mention; `cc @someone` and `x = someone` in a diff → `cc @author-2`, `x = someone`.
+- (0.9) `clone git@<real host>:<login>/r.git` → `clone git@forge.example.com:org/project.git`; `ssh://git@<real host>/<ns>/r.git` → `ssh://git@forge.example.com/org/project.git`; one left unredacted → exit 2, `unredacted host at <path>`.
+- (0.9) A declared `4321987` or `7` → remapped; a declared `1500` → kept; a map past `1999` → exit 2.
+- (0.9) A login `main` → `author` in `baseRefName` and prose; `main-fix` kept.
 - A `web_url` whose path has no namespace (`https://<gitlab>/-/jobs/5`) → host replaced, path kept.
 
 ### Failure scenarios
@@ -464,29 +591,36 @@ records one fixture against a real pull request to check the shape
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
 | `tests/unit/test_forge_recording_redaction.py::test_personal_keys_are_dropped_and_user_name_by_context_ids_kept` | D1: a payload with `avatar_url`, `node_id`, an `author` object with `id`, `login` and `name`, a thread object with `id` and `comments`, and a check-run object with `name` → `redact_payload` keeps the author `id` (its value made synthetic by the separate D1c step, 0.8), the thread `id` and the check-run `name`, drops the author `name` and every `PERSONAL_KEY_RE` key | keep the author `name`, drop any `id`, or drop the check-run `name` |
-| `::test_url_values_keep_their_shape_with_placeholder_host_and_namespace` | D1b: `https://a.example/o/r/pull/12` → `https://forge.example.com/org/r/pull/12`; `https://b.example/g/s/r/-/merge_requests/7` → `https://forge.example.com/org/r/-/merge_requests/7`; `https://b.example/-/jobs/5` → `https://forge.example.com/-/jobs/5`; a non-URL value under `web_url` → dropped | keep the host, or drop the path |
+| `::test_url_values_keep_their_shape_with_placeholder_host_and_namespace` | D1b: `https://a.example/o/r/pull/12` → `https://forge.example.com/org/project/pull/12`; `https://b.example/g/s/r/-/merge_requests/7` → `https://forge.example.com/org/project/-/merge_requests/7`; `https://b.example/-/jobs/5` → `https://forge.example.com/-/jobs/5`; a non-URL value under `web_url` → dropped | keep the host, or drop the path |
+| `::test_the_repository_name_is_a_placeholder_in_every_url_and_repository_object` (0.9) | D1b, preference 5: a repository segment, with or without `.git`, is `project`; a repository object's `name`/`path` are `project`, idempotently, a merge request's `name` kept; a hand-written text URL on `forge.example.com` gets the placeholder path; every repository segment of the committed corpus is `project` | keep the segment, the object's name, or a placeholder-host text URL |
+| `::test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project` (0.9) | Defect 2: scp, `ssh://` and `git://` remotes redacted in text (both tools), a mailbox before `:` and a port kept, a login after `<host>:` classified and `:owner` not; a remote surviving `classify_calls` → `unredacted host at exchanges[0]…` | redact `http(s)` only, skip scp, keep the `:` lookbehind, or drop the refusal |
+| `::test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_only_its_at_form` (0.9) | Preference 1: the verifier's example — `@pytest.fixture`, `@dataclass` kept, `cc @author-2`, the diff (`import dataclass`, `x = someone-x`) unchanged in the recorder, offline and through the CLI; code spans and decorator calls are no mention; a mention seen later as a login is re-keyed | treat a decorator, a dotted name or a code span as a handle, or replace a mention-only login's bare word |
+| `::test_a_declaration_outside_the_synthetic_range_is_not_trusted` (0.9) | Preference 2: `trusted_declaration` keeps `1001..1999` only; a declared `4321987` and a declared `7` are remapped and the declarations rewritten; a map past 1999 raises | trust any declared int, or drop the upper bound |
+| `::test_a_login_equal_to_a_git_word_is_replaced_everywhere` (0.9) | Preference 4, D2: login `main` → `author` in `baseRefName` and prose, `main-fix` kept; a CLI recording replays to a consistent result | keep a ref field's value |
+| `::test_the_denylist_file_route_is_read_under_pytest` (0.9) | Defect 1, D1c, O2: `real_user_config_dir` is not the suite's scratch directory; the deny-list test asks for it and reads through it; a file-only deny-list (variable unset) is found in the corpus by ordinal | read the deny-list through the hermetic `user_config_dir()`, or ignore `config_dir` |
+| `::test_ci_passes_the_denylist_secret_to_the_unit_tests_only_and_never_echoes_it` (0.9) | D6: the secret appears once in `ci.yml`, as the env of the `test` job's `Pytest` step, whose `run` prints nothing | pass it to another step, or echo it |
 | `::test_forge_readers_work_on_a_redacted_recording` | D1b, F1b: a GitLab recording whose merge-request, pipeline and job answers carry redacted `web_url` values and job `name`s, replayed through `ReplaySpawn` into the forge's merge-request and pipeline readers → the returned `url`/`link` equal the redacted URLs and the job names are intact; a GitLab approvals answer with two `approved_by[].user` objects redacted to `username: maintainer` / `author-2` and ids `11`, `12` replayed through the reviews reader (`gitlab.py:725-728`) → two `Review`s with the synthetic ids `1001` and `1002` in the same order (0.7); a GitHub recording's `author.login` redacted to `author` replayed through the change-request reader (`github.py:489`) → the author field is `author`, and its check-run `name`s (`github.py:281,1776`) are intact | drop `web_url`, `name` or a user `id` by key |
 | `::test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping` | D2: `roles={"x": "maintainer", "y": "author"}`; `login: x` in two objects and `resolved_by: x` → `maintainer` three times; argv `["api", "repos/o/r/collaborators/x/permission"]` → `collaborators/maintainer/permission`; a `z[bot]` login → `bot` | map one occurrence differently |
 | `::test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it` | D3: a stdout with `login: q` not in `roles` → exit 2 and `unclassified: …login` on stderr; a body with a literal home path (`/home/<x>/y`, spelled in the test, which is allow entry 8 of SP-NO-PERSONAL-DATA-GATE D4) → exit 2 and `generic class home_path`; `capsys` holds neither `q` nor the path's user segment | print the value, or exit 0 |
 | `::test_recorder_writes_class_words_and_a_replayed_result` (0.6, 0.8) | End state: a recording through the CLI against a fake forge writes class words, no user `name` or URL, `bot_username` `bot`, `synthetic_user_ids` `[1001]`, a `source` naming the forge and not the folder, and the result replayed from the redacted exchanges | keep a raw login, write the live result, or name the folder |
-| `::test_fixtures_declare_exactly_their_synthetic_user_ids` (0.8) | D1c: every user id of every fixture is numeric-shaped and is exactly the set its fixture declares, no stale declaration | keep one undeclared id, or leave a stale one |
-| `::test_fixtures_hold_no_denylisted_value` (0.8, replaces 0.7's hashed-id test) | D1c, O2: no deny-list entry (the maintainer's real ids, read at run time) in any file under `tests/fixtures/forge/` (the corpus the recorder writes, where all 14 files holding them on `7fd31af` were; the tree-wide scan is SP-NO-PERSONAL-DATA-GATE's), node ids judged by the number they encode; skipped with the reason when the deny-list is absent; a failure names the file and the ordinal | keep one real id |
+| `::test_fixtures_declare_exactly_their_synthetic_user_ids` (0.8, 0.9) | D1c: every user id of every fixture is numeric-shaped and is exactly the set its fixture declares, no stale declaration, every declared number in `1001..1999` | keep one undeclared id, leave a stale one, or declare one out of range |
+| `::test_fixtures_hold_no_denylisted_value` (0.8, replaces 0.7's hashed-id test; 0.9) | D1c, O2: no deny-list entry (the maintainer's real ids, read at run time from the real configuration directory's file and the variable) in any file under `tests/fixtures/forge/` (the corpus the recorder writes, where all 14 files holding them on `7fd31af` were; the tree-wide scan is SP-NO-PERSONAL-DATA-GATE's), node ids judged by the number they encode; skipped, naming the file checked, when the deny-list is absent; a failure names the file and the ordinal | keep one real id |
 | `::test_denylist_is_read_from_the_file_and_the_variable_and_never_printed` (0.8) | D3: file and variable merged, comments and duplicates handled, whole-word with `-` a word character, a legacy and a current node id caught by their number, a 3-character entry refused by ordinal; the recorder exits 2 on a deny-listed body naming the ordinal and the path, and on a short entry | print an entry, or skip node ids |
 | `::test_recorded_source_names_the_forge_and_the_refusal_covers_it` (0.8) | P1: four `source` rewrites; a `source` holding a home path is exit 2, `generic class home_path at source` | name the folder, or skip `source` in D3 |
 | `::test_an_unknown_mention_in_free_text_becomes_a_class_word` (0.8) | D2: `mentions` finds body and title handles, not a decorator in a diff, an email, a class word or a non-person login; the recorder and the offline transform both write `@author-2` | ignore mentions in either tool |
 | `::test_non_person_logins_are_kept_and_every_other_login_is_classified` (0.8) | D2, D4: `NON_PERSON_LOGINS`; the recorder and the offline transform keep the two, classify `owner`, a project bot (`service`), a further `[bot]` and an unknown bot login | classify `repoach-bot`, or keep `owner` |
-| `::test_user_ids_map_to_a_stable_sequence_keyed_by_forge` (0.7, 0.8) | D1c: 1001, 1002 in order; REST, legacy and current node ids of one account share a number; a non-user `id` untouched; the same number on GitLab is another account; a declared id kept | hash the id, key by number only, or remap a check-run id |
+| `::test_user_ids_map_to_a_stable_sequence_keyed_by_forge` (0.7, 0.8, 0.9) | D1c: 1001, 1002 in order; REST, legacy and current node ids of one account share a number; a non-user `id` untouched; the same number on GitLab is another account; a declared in-range id kept, a declared 11 remapped | hash the id, key by number only, or remap a check-run id |
 | `::test_offline_ids_are_keyed_by_forge_so_two_accounts_never_merge` (0.8) | defect 3: a GitHub and a GitLab account with the same raw number in a two-file corpus → 1001 and 1002 | key the map by the number alone |
 | `::test_a_result_id_follows_its_account_only_where_it_is_a_user_id` (0.8) | defect 3: a GitLab reviews result id follows its approver; a GitLab checks result id and a GitHub reviews result id equal to a user id stay | remap every result id |
 | `::test_offline_sequence_is_one_per_corpus_and_starts_after_every_declared_id` (0.8) | M11, M13: a two-file corpus holding a declared 1001 and raw ids → 1001, 1002, 1003 in the first file and the shared account's 1003 in the second, declarations written | one map per fixture (M11), or start at 1001 (M13) |
-| `::test_an_undeclared_small_id_is_remapped_not_kept` (0.8) | P2: an undeclared 7 → 1001; a declared 7 → 7 | keep ids by magnitude |
+| `::test_an_undeclared_small_id_is_remapped_not_kept` (0.8, 0.9) | P2: an undeclared 7 → 1001; a declared 1500 → 1500 | keep ids by magnitude |
 | `::test_offline_transform_remaps_a_result_id_with_its_account` (0.7) | D1c: a result `Review.id` follows its approver's synthetic id offline, and is declared | leave the result id raw |
 | `::test_existing_fixtures_are_a_fixed_point_of_the_redaction` (0.6) | D4, C2: `scripts/redact_forge_fixtures.py --check` changes nothing and no fixture holds a real forge-host URL | revert one fixture URL, or change the redaction without re-running the script |
 | `tests/unit/test_forge_conformance.py` (existing) | D4 (0.6): green on the fixtures as `scripts/redact_forge_fixtures.py` leaves them; `test_reviews_two_approvals` expects `author-2`/`author-3` | drop a key a forge reads |
 
 ## Success conditions
 
-- C1 (oracle: pytest, CI): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → green; with the maintainer's deny-list present (O2) the deny-list test runs, without it it is the one skip, named (0.8).
+- C1 (oracle: pytest, CI): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → green; with the maintainer's deny-list present (O2) the deny-list test runs, without it it is the one skip, named (0.8); the deny-list counts as present when the file of the real configuration directory holds an entry, the variable unset (0.9).
 - C2 (0.6, oracle: the script and git): `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; `git grep -o -E 'https?://([a-z0-9.-]+\.)?(github|gitlab)\.com' -- tests/fixtures | grep -v '//docs\.' | wc -l` → `0` (D4).
 - C3 (oracle: the script, by the implementer, output written beside AC2): one recording against a real pull request, with the maintainer's login and numeric ids as deny-list → the written fixture passes a check over its JSON: no key in `{avatar_url, full_name, email, public_email, node_id}` anywhere, no `name` beside a `login`/`username`, every `login`/`username` value a class word, `author-<n>`/`bot-<n>` or a `NON_PERSON_LOGINS` entry, every `url`/`web_url`/`html_url`/`link` value starting with `https://forge.example.com/`, `synthetic_user_ids` equal to the fixture's user ids, `source` free of the checkout's folder name, and the login and ids absent from every file (0.8).
 
@@ -512,12 +646,15 @@ flowchart LR
 
 - [x] AC1: C1 green; C2 empty; A2's grep count written here by the implementer.
   Measured 2026-11-18 on the branch (0.8; the 0.7 entry said `131 passed`, the verifier measured 134 at `4f78a96`): C1 `142 passed, 1 skipped` without a deny-list, the skip naming its reason, and `143 passed` with the maintainer's two numeric ids as `REPOACH_PERSONAL_DENYLIST`; C2 `forge fixtures: 0 would change`, real-host URL count `0` (before: 115 under URL keys in 33 files, 149 in all in 41 files; 3 `docs.github.com`/`docs.gitlab.com` documentation links in `source` fields stay); A2 grep → `0`; the user-object readers are `github.py:239,489`, `gitlab.py:171,725,728`, unchanged; 58 user ids in 22 fixtures, 10 `(forge, account)` pairs on `7fd31af` and on the branch, all 22 declarations exact.
+  Re-measured 2026-11-18 on the branch (0.9), the deny-list by the FILE route (the maintainer's file, 10 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` unset): C1 `150 passed`, the deny-list test `PASSED`; with an empty configuration directory and the variable unset `149 passed, 1 skipped`, the skip naming the file it checked; the variable empty, as on a fork's pull request, `1 skipped`. C2 `forge fixtures: 0 would change`, exit 0; real-host URLs `0`, scp remotes on a real host `0`, the private project name in `0` files, every repository segment `project` (98). 58 user ids in 22 fixtures, 10 `(forge, account)` pairs, all 22 declarations exact and in `1001..1999`. D4 reproduction: `7fd31af`'s fixtures, untouched, `62 changed`, byte-identical to the branch's, second run `0 changed`, `--check` exit 0. Full `tests/unit -n 4` with ruff 0.15.4 first on PATH: `4558 passed, 64 skipped`, 0 failed. Mutation proof: 21 of 22 mutants killed; the survivor reads `XDG_CONFIG_HOME` at the session fixture's setup instead of the snapshot, which is equivalent because pytest sets a session fixture up before the function-scoped autouse fixtures of the same test.
 - [x] AC2: C3's check output written here by the implementer.
   Recorded 2026-11-18 (0.8), read-only, against repoachhq/repoach PR #316 (`--trim 5`, output under `tmp/`, not committed), the maintainer's login and two numeric ids as deny-list: `pull_request`, `conversation_comments`, `reviews`, `checks`, `review_threads` and `is_maintainer(<the gh user>)`, each exit 0; the check found 0 violations in each file (URL values 2/3/0/10/0/0 under `url`/`web_url`/`html_url`/`link`, every one on `https://forge.example.com/`; logins 1/3/4/0/0/1 and user ids 1/3/4/0/0/1, every declaration exact; every `source` free of the folder name), 0 real-host URLs, and the account's login and ids absent from every file (0 whole-word hits).
+  Re-recorded 2026-11-18 (0.9), same six calls against PR #316, the deny-list by the file route: each exit 0, 0 violations and 0 real-value hits in all six files, 0 real-host URLs, every repository segment `project` (17), 0 stderr lines naming the account.
 - [x] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c '^dependency cycle'` → `27`; the `ownership conflict` lines are the parent's five.
   Measured 2026-11-18 on the branch (0.8): `edge-honesty: ok`; 27 `dependency cycle` lines and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af` line for line.
+  Re-measured 2026-11-18 on the branch (0.9): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af` line for line.
 
 ## Open Questions
 
 - O1 (0.6): resolved by the owner on 2026-11-18, user ids become synthetic (D1c, 0.7).
-- O2 (0.8, owner, once): add the maintainer's numeric GitHub and GitLab user ids to the deny-list of SP-NO-PERSONAL-DATA-GATE O1 (the file on each machine, and the repository secret), so `test_fixtures_hold_no_denylisted_value` runs instead of skipping; until then it skips by name.
+- O2 (0.8, owner, once): add the maintainer's numeric GitHub and GitLab user ids to the deny-list of SP-NO-PERSONAL-DATA-GATE O1 (the file on each machine, and the repository secret), so `test_fixtures_hold_no_denylisted_value` runs instead of skipping; until then it skips by name. Resolved (0.9): the file exists on the maintainer's machine (10 entries, mode 600) and is read under pytest (D1c); the repository secret `REPOACH_PERSONAL_DENYLIST` exists on repoachhq/repoach and reaches the unit-test step (D6).
