@@ -47,6 +47,9 @@ SHAPE = json.loads((FIXTURE / "shape.json").read_text(encoding="utf-8"))
 EMBEDDINGS = SHAPE["embeddings"]["path"]
 CHECK_LINE = "scripts/index_knowledge_corpus.py --repo-root . --check"
 PR = SHAPE["mr"]
+BASE_HOST = "studio.product.example.com"
+HEAD_HOST = "product.example.com"
+_FIRST_URL_HOST = re.compile(r"https://([A-Za-z0-9.-]+)")
 
 
 def _sized(fill: str, size: int) -> str:
@@ -71,6 +74,26 @@ def _diff() -> str:
     corpus = (FIXTURE / "corpus.diff").read_text(encoding="utf-8")
     guide = (FIXTURE / "user_guide.diff").read_text(encoding="utf-8")
     return corpus + embeddings + guide
+
+
+def _first_hosts(diff: str, sign: str) -> list[str]:
+    """The host of the first URL on every ``sign`` line of a unified diff that holds one."""
+    found = []
+    for line in diff.splitlines():
+        if line.startswith(sign) and not line.startswith(sign * 3):
+            match = _FIRST_URL_HOST.search(line)
+            if match:
+                found.append(match.group(1))
+    return found
+
+
+def test_the_recorded_diffs_move_the_host_the_repository_moves() -> None:
+    """Each removed line names the base host and each added line the head host the replay repository holds."""
+    for name in ("corpus.diff", "user_guide.diff"):
+        diff = (FIXTURE / name).read_text(encoding="utf-8")
+        removed, added = _first_hosts(diff, "-"), _first_hosts(diff, "+")
+        assert removed and set(removed) == {BASE_HOST}, (name, removed)
+        assert added and set(added) == {HEAD_HOST}, (name, added)
 
 
 def _ledger(db_path: Path) -> list[str]:
@@ -115,14 +138,14 @@ def test_yoob_322_approves_once_the_embeddings_are_declared(
             "repoach.toml": (FIXTURE / "repoach.toml").read_text(encoding="utf-8"),
             "scripts/index_knowledge_corpus.py": '"""Recorded by the fixture."""\n',
             "api/data/knowledge_corpus.json": '{"chunks": 380}\n',
-            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": "studio.product.example.com\n",
+            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": f"{BASE_HOST}\n",
             EMBEDDINGS: _sized("a", size),
         },
     )
     head = repo.push_head(
         {
-            "api/data/knowledge_corpus.json": '{"chunks": 380, "host": "product.example.com"}\n',
-            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": "product.example.com\n",
+            "api/data/knowledge_corpus.json": json.dumps({"chunks": 380, "host": HEAD_HOST}) + "\n",
+            "docs/user_guide/ACCES_WEB_DISTANT_STAGIAIRE.md": f"{HEAD_HOST}\n",
             EMBEDDINGS: _sized("b", SHAPE["embeddings"]["bytes_after"]),
         },
         pr=PR,
