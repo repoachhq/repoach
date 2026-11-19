@@ -214,8 +214,8 @@ elif [[ "$run_wheel" == true ]] ; then
 fi
 
 if [[ "$run_code_lint" == true ]] ; then
-    run_step "ruff check"        ruff check src tests
-    run_step "ruff format --check" ruff format --check src tests
+    run_step "ruff check"        python -m ruff check src tests
+    run_step "ruff format --check" python -m ruff format --check src tests
     run_step "lint — no inline comments / no noqa" python scripts/lint_no_inline_comments.py --summary
     run_step "lint — no silent except" python scripts/lint_no_silent_except.py --summary
 fi

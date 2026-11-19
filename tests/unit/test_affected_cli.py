@@ -306,7 +306,7 @@ def test_ci_local_affected_test_selection_adds_lint_and_suite(checkout: tuple[Pa
         checkout, "job_test=true\\njob_wheel_build=false\\njob_wheel_smoke=false\\nmode=narrowed\\n"
     )
     assert rc == 0, stdout
-    assert "ruff check src tests" in calls
+    assert "python -m ruff check src tests" in calls
     assert "python -m pytest -q tests/unit -n auto --dist worksteal" in calls
     assert not any(call.startswith("python -m build") for call in calls)
 
@@ -319,7 +319,7 @@ def test_ci_local_affected_wheel_selection_adds_the_wheel_block(
     )
     assert rc == 0, stdout
     assert any(call.startswith("python -m build --sdist --wheel") for call in calls)
-    assert not any(call.startswith("ruff") for call in calls)
+    assert not any(call.startswith("python -m ruff") for call in calls)
     assert "python -m pytest -q tests/unit -n auto --dist worksteal" not in calls
 
 
