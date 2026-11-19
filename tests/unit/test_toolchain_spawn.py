@@ -472,3 +472,41 @@ def test_run_command_stops_on_the_typed_flag_not_on_tail_text(
     assert result.missing_module is True
     assert result.tail == "reworded tail"
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected", "module"),
+    [
+        (["ruff", "check"], [sys.executable, "-m", "ruff", "check"], "ruff"),
+        ([_PYTEST_MODULE, "-q"], [sys.executable, "-m", _PYTEST_MODULE, "-q"], _PYTEST_MODULE),
+        (
+            ["python", "-m", _PYTEST_MODULE, "-q"],
+            [sys.executable, "-m", _PYTEST_MODULE, "-q"],
+            _PYTEST_MODULE,
+        ),
+        (["python", "-m", "ruff", "check"], [sys.executable, "-m", "ruff", "check"], "ruff"),
+        (["python", "-m", "mypy", "src"], [sys.executable, "-m", "mypy", "src"], None),
+        (["python", "scripts/lint.py"], [sys.executable, "scripts/lint.py"], None),
+        (["python"], [sys.executable], None),
+        (["make", "lint"], ["make", "lint"], None),
+    ],
+)
+def test_resolve_repoach_argv_table_on_a_repoach_checkout(
+    tmp_path: Path, argv: list[str], expected: list[str], module: str | None
+) -> None:
+    _make_repoach_checkout(tmp_path)
+    assert commands._resolve_repoach_argv(argv, root=tmp_path) == (expected, module)
+
+
+@pytest.mark.parametrize(
+    "argv", [["ruff", "check"], [_PYTEST_MODULE, "-q"], ["python", "-m", _PYTEST_MODULE, "-q"]]
+)
+def test_resolve_repoach_argv_leaves_a_foreign_repository_untouched(
+    tmp_path: Path, argv: list[str]
+) -> None:
+    assert commands._resolve_repoach_argv(argv, root=tmp_path) == (argv, None)
+
+
+def test_resolve_repoach_argv_empty_argv_is_returned_as_is(tmp_path: Path) -> None:
+    _make_repoach_checkout(tmp_path)
+    assert commands._resolve_repoach_argv([], root=tmp_path) == ([], None)
