@@ -2829,16 +2829,16 @@ def test_api_project_ids_skip_doc_examples_and_cover_all_positions(
         cwd=tmp_path,
         case="proj_positions",
         method="check_log",
-        args=["projects/88442211/jobs/5"],
+        args=["api/v4/projects/88442211/jobs/5"],
         kwargs={"note": "https://gitlab.com/api/v4/projects/99553311/issues"},
         trim=None,
         out_root=tmp_path / "out",
     )
     fixture = json.loads(written.read_text(encoding="utf-8"))
-    assert fixture["args"] == ["projects/2001/jobs/5"]
+    assert fixture["args"] == ["api/v4/projects/2001/jobs/5"]
     assert fixture["kwargs"] == {"note": "https://forge.example.com/api/v4/projects/2002/issues"}
     assert fixture["result"] == (
-        "ok:projects/2001/jobs/5:https://forge.example.com/api/v4/projects/2002/issues"
+        "ok:api/v4/projects/2001/jobs/5:https://forge.example.com/api/v4/projects/2002/issues"
     )
     assert fixture[recording.SYNTHETIC_PROJECT_IDS_KEY] == [2001, 2002]
 
@@ -3060,3 +3060,85 @@ def test_public_reference_hosts_match_by_suffix_and_balance_url_parens() -> None
         "https://en.wikipedia.org/wiki/Python_(programming_language)"
     )
     assert residual(red_off, redact_fixtures.fixture_needles(fx_off)) is None
+
+
+def test_api_project_ids_ignore_year_paths_and_support_api_versions() -> None:
+    """R8-D2 (0.15): bare ``projects/<year>/`` paths are never project ids; ``api/v<N>/`` and ``glab api`` work cleanly."""
+    for year in range(2020, 2031):
+        folder_samples = (
+            f"Updated projects/{year}/q1.md with milestones ({year}-11-19).",
+            f"Moved spec to /projects/{year}/architecture.md (written in {year}).",
+            f"See docs/projects/{year}/roadmap.md for planning.",
+            f"Added src/projects/{year}/config.yaml and /projects/{year}/notes.txt.",
+        )
+        for text in folder_samples:
+            assert recording.project_id_values(text) == [], text
+            assert UserIdMap.for_projects().apply_projects(text, forge="gitlab") == text, text
+            item = {
+                "user": {"login": "pubauthx", "id": 52143687},
+                "body": text,
+                "created_at": f"{year}-11-19T12:00:00Z",
+            }
+            raw = _one_call([item])
+            found = needles(raw, roles={"pubauthx": "author"})
+            assert str(year) not in _kinds(found, "id"), text
+
+    for version in ("v3", "v4", "v5"):
+        url = f"https://git.zqcorp.io/api/{version}/projects/88442211/issues"
+        assert (
+            redact_url(url) == f"https://forge.example.com/api/{version}/projects/88442211/issues"
+        )
+        raw = _one_call(
+            {"web_url": "https://git.zqcorp.io/zqns/zqrepo/-/merge_requests/1", "body": url}
+        )
+        found = needles(raw, roles={}, remote="git@git.zqcorp.io:zqns/zqrepo.git")
+        assert version not in _kinds(found, "segment")
+        assert "88442211" in _kinds(found, "id")
+        assert (
+            UserIdMap.for_projects().apply_projects(redact_urls_in_text(url), forge="gitlab")
+            == f"https://forge.example.com/api/{version}/projects/2001/issues"
+        )
+        encoded = f"https://git.zqcorp.io/api/{version}/projects/zqns%2Fzqrepo/issues"
+        assert (
+            redact_url(encoded)
+            == f"https://forge.example.com/api/{version}/projects/org%2Fproject/issues"
+        )
+
+    glab_commands = (
+        (
+            "glab api projects/88442211/merge_requests/42",
+            "glab api projects/2001/merge_requests/42",
+        ),
+        (
+            "glab api /projects/88442211/merge_requests/42",
+            "glab api /projects/2001/merge_requests/42",
+        ),
+        ("glab api projects/88442211", "glab api projects/2001"),
+        ("glab api projects/88442211?statistics=true", "glab api projects/2001?statistics=true"),
+        ("glab api projects//88442211/issues", "glab api projects//2001/issues"),
+        (
+            "glab api -X POST /projects/88442211/notes",
+            "glab api -X POST /projects/2001/notes",
+        ),
+        (
+            "glab api --paginate projects/88442211/issues",
+            "glab api --paginate projects/2001/issues",
+        ),
+        ("glab api 'projects/88442211/issues'", "glab api 'projects/2001/issues'"),
+    )
+    for cmd, expected in glab_commands:
+        assert recording.project_id_values(cmd) == [88442211], cmd
+        assert UserIdMap.for_projects().apply_projects(cmd, forge="gitlab") == expected, cmd
+
+    assert recording.project_id_values("glab api projects/42/issues") == []
+    assert (
+        UserIdMap.for_projects().apply_projects("glab api projects/42/issues", forge="gitlab")
+        == "glab api projects/42/issues"
+    )
+    assert recording.project_id_values(["api", "/projects/88442211/merge_requests/42"]) == [
+        88442211
+    ]
+    assert UserIdMap.for_projects().apply_projects(
+        ["api", "/projects/88442211/merge_requests/42"], forge="gitlab"
+    ) == ["api", "/projects/2001/merge_requests/42"]
+    assert recording.project_id_values(["not-api", "projects/2026/q1.md"]) == []

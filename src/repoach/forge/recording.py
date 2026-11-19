@@ -530,6 +530,10 @@ class PathIdentity:
     repository: str | None = None
 
 
+_API_VERSION_RE = re.compile(r"^v[0-9]+$", re.I)
+"""An API version path segment such as ``v3`` or ``v4`` (0.15 R8-D2)."""
+
+
 def path_identity(segments: list[str]) -> PathIdentity:
     """Split a forge path's segments into its placeholder form, its namespace and its repository.
 
@@ -545,7 +549,12 @@ def path_identity(segments: list[str]) -> PathIdentity:
     if not core:
         return PathIdentity(segments)
     trailing = [""] if segments[-1] == "" else []
-    if core[:3] == ["api", "v4", "projects"] and len(core) > 3:
+    if (
+        len(core) > 3
+        and core[0].casefold() == "api"
+        and _API_VERSION_RE.match(core[1])
+        and core[2].casefold() == "projects"
+    ):
         parts = [p for p in unquote(core[3]).split("/") if p]
         if len(parts) > 1:
             placeholder = f"{PLACEHOLDER_NAMESPACE}/{PLACEHOLDER_PROJECT}"
@@ -1113,11 +1122,29 @@ def declared_user_ids(node: object) -> list[int]:
 
 
 _API_PROJECT_ID_RE = re.compile(
-    r"(?P<prefix>(?:(?<![A-Za-z0-9_.-])api/v[34]/+|(?<![A-Za-z0-9_./-])/?)projects/+)"
+    r"(?P<prefix>(?:(?<![A-Za-z0-9_.-])api/v[0-9]+/+"
+    r"|(?<![A-Za-z0-9_.-])glab[ \t]+api"
+    r"(?:[ \t]+-[A-Za-z0-9_=.-]+(?:[ \t]+(?!['\"]?/?projects/)[^\s'\"]+)?)*"
+    r"[ \t]+['\"]?/?)projects/+)"
     r"(?P<id>[0-9]+)(?![0-9A-Za-z_-])",
     re.I,
 )
-"""A numeric GitLab project id inside an ``api/v4/projects/<id>/…`` or ``projects/<id>/…`` path (0.13 R6-D5, 0.14 R7-D3)."""
+"""A numeric GitLab project id inside an ``api/v<N>/projects/<id>`` path or a ``glab api`` command line (0.13 R6-D5, 0.14 R7-D3, 0.15 R8-D2)."""
+
+_GLAB_API_ARG_PROJECT_ID_RE = re.compile(
+    r"^(?P<prefix>/?projects/+)(?P<id>[0-9]+)(?![0-9A-Za-z_-])",
+    re.I,
+)
+"""A numeric GitLab project id as an argv path argument of a ``glab api`` invocation (0.15 R8-D2)."""
+
+
+def _is_glab_api_argv(items: list[object]) -> bool:
+    """Whether ``items`` is a ``glab api`` argv list (``["api", ...]`` or ``["glab", "api", ...]``, 0.15 R8-D2)."""
+    if not items:
+        return False
+    if items[0] == "api":
+        return True
+    return len(items) >= 2 and items[0] == "glab" and items[1] == "api"
 
 
 def _kept_url_spans(text: str) -> list[tuple[int, int]]:
@@ -1167,7 +1194,14 @@ def project_id_values(node: object) -> list[object]:
             found.append(node["id"])
         return found
     if isinstance(node, list):
-        return [i for v in node for i in project_id_values(v)]
+        found = [i for v in node for i in project_id_values(v)]
+        if _is_glab_api_argv(node):
+            for item in node[1:]:
+                if isinstance(item, str):
+                    match = _GLAB_API_ARG_PROJECT_ID_RE.match(item)
+                    if match is not None and _is_real_api_project_id(match, []):
+                        found.append(int(match.group("id")))
+        return found
     return []
 
 
@@ -1266,7 +1300,22 @@ class UserIdMap:
                 for k, v in payload.items()
             }
         if isinstance(payload, list):
-            return [self.apply_projects(v, forge=forge, keep=keep) for v in payload]
+            is_api = _is_glab_api_argv(payload)
+            out_list: list[object] = []
+            for idx, item in enumerate(payload):
+                if is_api and idx > 0 and isinstance(item, str):
+                    match = _GLAB_API_ARG_PROJECT_ID_RE.match(item)
+                    if match is not None and _is_real_api_project_id(match, []):
+                        item = _GLAB_API_ARG_PROJECT_ID_RE.sub(
+                            lambda m: (
+                                f"{m.group('prefix')}"
+                                f"{self.synthetic(int(m.group('id')), forge=forge, keep=keep)}"
+                            ),
+                            item,
+                            count=1,
+                        )
+                out_list.append(self.apply_projects(item, forge=forge, keep=keep))
+            return out_list
         if isinstance(payload, str):
             kept = _kept_url_spans(payload)
             return _API_PROJECT_ID_RE.sub(
@@ -1784,7 +1833,9 @@ def is_public_forge_host(host: str) -> bool:
     return any(folded == d or folded.endswith(f".{d}") for d in PUBLIC_FORGE_DOMAINS)
 
 
-_API_PROJECT_RE = re.compile(r"^/*(?:api/v[34]/+)?(repos|projects)/+([^/?#\s]+)(?:/+([^/?#\s]+))?")
+_API_PROJECT_RE = re.compile(
+    r"^/*(?:api/v[0-9]+/+)?(repos|projects)/+([^/?#\s]+)(?:/+([^/?#\s]+))?"
+)
 """An API path naming a project: ``repos/<owner>/<repo>/…`` or ``projects/<group>%2F<repo>/…`` (argv)."""
 
 
