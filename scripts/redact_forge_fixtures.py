@@ -15,7 +15,7 @@ In a fixture, every exchange (an object holding ``stdout`` and
 ``returncode``) has its stdout redacted by
 :func:`repoach.forge.recording.redact_payload` when it is JSON and its
 URLs redacted when it is text, its stderr's and stdin's URLs redacted; the
-top-level ``args`` and ``result`` have their URLs redacted.
+top-level ``args``, ``kwargs`` and ``result`` have their URLs redacted.
 
 Logins follow the real-account rule the recorder applies: every login
 that is not a class word or one of
@@ -60,6 +60,7 @@ from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
+    NEEDLE_MIN_LENGTH,
     RECORDED_SOURCE_RE,
     SYNTHETIC_ID_END,
     SYNTHETIC_ID_START,
@@ -85,6 +86,7 @@ from repoach.forge.recording import (
     redact_urls_in_text,
     redact_urls_in_value,
     residual,
+    token_pattern,
     trusted_declaration,
 )
 
@@ -185,6 +187,13 @@ def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
     def _add(login: str, *, mention: bool) -> None:
         if not login or is_classified_login(login):
             return
+        folded = login.casefold()
+        if mention and any(k.casefold() == f"{folded}[bot]" for k in found):
+            return
+        if not mention and folded.endswith("[bot]"):
+            stem = folded[:-5]
+            for existing in [k for k, m_only in found.items() if m_only and k.casefold() == stem]:
+                del found[existing]
         found[login] = found.get(login, True) and mention
 
     bot = data.get("bot_username")
@@ -238,10 +247,15 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
 
 
 def _mention_text(text: str, roles: dict[str, str]) -> str:
-    """Replace every ``@<login>`` of ``roles`` in free text by ``@<class word>``."""
-    for login, word in roles.items():
+    """Replace every ``@<login>`` of ``roles`` (and any ``<name>[bot]`` stem) in free text by its class word."""
+    for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
         handle = login.removeprefix(MENTION_ONLY_PREFIX)
         text = mention_pattern(handle).sub(f"@{word}", text)
+        if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]"):
+            text = token_pattern(login).sub(word, text)
+            stem = login[:-5]
+            if len(stem) >= NEEDLE_MIN_LENGTH and not is_classified_login(stem):
+                text = token_pattern(stem).sub(word, text)
     return text
 
 
@@ -301,19 +315,24 @@ def _remap_ids(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -
 
 
 def _remap_projects(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -> object:
-    """Remap repository ids in every exchange's JSON stdout (Q2, 0.10); an unchanged answer keeps its bytes."""
+    """Remap repository ids in every exchange and ``api/v4/projects/<id>`` URL (Q2 0.10, 0.13); unchanged JSON keeps its bytes."""
     if isinstance(node, dict):
-        out = {k: _remap_projects(v, ids, forge, keep) for k, v in node.items()}
-        stdout = node.get("stdout")
-        if isinstance(stdout, str) and "returncode" in node:
-            values = decode_json_values(stdout)
-            if values is not None:
-                remapped = [ids.apply_projects(v, forge=forge, keep=keep) for v in values]
-                if remapped != values:
-                    out["stdout"] = _dumps(remapped)
+        out: dict[str, object] = {}
+        for k, v in node.items():
+            if k == "stdout" and isinstance(v, str) and "returncode" in node:
+                values = decode_json_values(v)
+                if values is not None:
+                    remapped = [ids.apply_projects(val, forge=forge, keep=keep) for val in values]
+                    out[k] = _dumps(remapped) if remapped != values else v
+                else:
+                    out[k] = ids.apply_projects(v, forge=forge, keep=keep)
+            else:
+                out[k] = _remap_projects(v, ids, forge, keep)
         return out
     if isinstance(node, list):
         return [_remap_projects(v, ids, forge, keep) for v in node]
+    if isinstance(node, str):
+        return ids.apply_projects(node, forge=forge, keep=keep)
     return node
 
 
@@ -339,7 +358,9 @@ def fixture_needles(data: dict[str, object], denylist: tuple[str, ...] = ()) -> 
     hand-written or old fixture are the fixture itself.
 
     Raises:
-        NeedleError: A login shorter than four characters, by ordinal.
+        NeedleError: A needle that is a class word or placeholder, by
+            kind and ordinal (``min_length=1`` accepts short hand-written
+            logins).
     """
     return needles([], roles=legacy_roles(data), denylist=denylist, min_length=1)
 
@@ -359,7 +380,7 @@ def redact_fixture(
         data.get(SYNTHETIC_PROJECT_IDS_KEY), SYNTHETIC_PROJECT_ID_START, SYNTHETIC_PROJECT_ID_END
     )
     out = cast(dict[str, object], _exchanges(data))
-    for key in ("args", "result"):
+    for key in ("args", "kwargs", "result"):
         if key in out:
             out[key] = redact_urls_in_value(out[key])
     roles = legacy_roles(out)

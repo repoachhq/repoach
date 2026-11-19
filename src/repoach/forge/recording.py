@@ -232,6 +232,8 @@ SPEC_IDS: frozenset[str] = _repo_spec_ids()
 _LITERAL_PARTS: tuple[str, ...] = (
     r":(?:owner|repo|id)",
     r"/dev/null",
+    r"docs\.github\.com",
+    r"docs\.gitlab\.com",
     *(re.escape(sid) for sid in sorted(SPEC_IDS, key=len, reverse=True)),
     *(
         re.escape(login.removesuffix("[bot]")) + r"(?:\[bot\])?"
@@ -242,12 +244,15 @@ _LITERAL_PARTS: tuple[str, ...] = (
 CLI_PLACEHOLDER_RE = re.compile(
     rf"(?<![{TOKEN_CHARS}])(?:" + "|".join(_LITERAL_PARTS) + rf")(?![{TOKEN_CHARS}-])"
 )
-"""The tools' and the project's own literals (0.10, 0.11, 0.12): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, :data:`SPEC_IDS`.
+"""The tools' and the project's own literals (0.10, 0.11, 0.12, 0.13): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``docs.github.com``, ``docs.gitlab.com``, :data:`SPEC_IDS`.
 
 The :data:`NON_PERSON_LOGINS`, with or without their ``[bot]`` suffix,
 are literals too (0.11): kept as they are, so a needle that is one of
 their words (the ``github`` organisation owning the Actions app) is not
-judged inside ``github-actions[bot]``, nor replaced there.
+judged inside ``github-actions[bot]``, nor replaced there. Public forge
+documentation hosts (``docs.github.com``, ``docs.gitlab.com``) are
+literals too (0.13), so keeping documentation links in text does not
+collide with the ``github.com`` / ``gitlab.com`` host needles.
 
 ``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
 written by the forge code and expanded by the CLI; ``--- /dev/null`` is
@@ -261,8 +266,8 @@ deny-list, which judges the text with literals kept. Case-sensitive: the
 tools write the lowercase forms only, and a spec identifier is uppercase.
 """
 
-_MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|\()"
-"""What may not follow a handle: a handle character, a dotted name (``@pytest.fixture``) or a call."""
+_MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|/[A-Za-z0-9_.-]|\()"
+"""What may not follow a handle: a handle character, a dotted name (``@pytest.fixture``), a scoped package (``@types/node``) or a call."""
 
 MENTION_RE = re.compile(
     rf"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?){_MENTION_END}", re.I
@@ -344,7 +349,10 @@ def mentions(payload: object) -> list[str]:
     A diff, a log or any other text outside those keys is the repository's
     or the runner's content, not a person addressing another, and is not
     searched. Inside them, a Markdown code span or fenced block is code,
-    and a :data:`PYTHON_DECORATORS` name is a decorator, not a handle.
+    a :data:`PYTHON_DECORATORS` name (case-insensitive, 0.13) is a
+    decorator or annotation, a scoped package ``@scope/pkg`` is a package
+    name, and a :data:`NON_PERSON_LOGINS` stem (``@github-actions``) names
+    no person.
     """
     found: list[str] = []
 
@@ -355,7 +363,11 @@ def mentions(payload: object) -> list[str]:
                     prose = _CODE_SPAN_RE.sub(lambda m: " " * len(m.group(0)), item)
                     for m in MENTION_RE.finditer(prose):
                         handle = m.group(1)
-                        if handle in PYTHON_DECORATORS or is_classified_login(handle):
+                        if (
+                            handle.casefold() in PYTHON_DECORATORS
+                            or is_classified_login(handle)
+                            or _names_no_one(handle)
+                        ):
                             continue
                         if handle not in found:
                             found.append(handle)
@@ -403,18 +415,21 @@ _GITHUB_ROUTES: frozenset[str] = frozenset(
 )
 """Third path segments that mark a ``<owner>/<repo>/<route>`` GitHub URL."""
 
-URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git"})
-"""Schemes of a forge URL: the web and API ones, and a remote's ``ssh://`` and ``git://`` (0.9)."""
+URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git", "ftp", "ftps"})
+"""Schemes of a URL redacted by class: web, API, git/ssh remotes and ftp(s) links (0.9, 0.13)."""
 
-_URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git)://[^\s\"'<>()\[\]{}\\,]+", re.I)
-"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case (I2, 0.10)."""
+_URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git|ftps?)://[^\s\"'<>()\[\]{}\\,`*|]+", re.I)
+"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case (I2, 0.10; Markdown delimiters terminate, 0.13)."""
+
+_URL_TRIM_TAIL = ".:;~_"
+"""Trailing punctuation and boundary GFM inline delimiters (``~``, ``_``) trimmed from text URLs without being eaten (0.13)."""
 
 _SCP_IN_TEXT_RE = re.compile(
-    r"(?<![A-Za-z0-9_.+/-])(?P<user>[A-Za-z0-9_.-]+)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)"
+    r"(?<![A-Za-z0-9_.+/-])(?P<user>[A-Za-z0-9_.-]+)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\.?"
     r":(?!//)(?P<path>(?:[A-Za-z0-9_.~%-]+/)+[A-Za-z0-9_.~%-]*)",
     re.I,
 )
-"""An scp-style remote inside free text, ``<user>@<host>:<namespace>/<repo>`` (0.9), any case.
+"""An scp-style remote inside free text, ``<user>@<host>:<namespace>/<repo>`` (0.9), any case, optional DNS trailing dot (0.13).
 
 The path holds at least one ``/``. A mailbox followed by ``:<port>/<path>``
 is read as a remote too (0.10): the doubt resolves toward redaction, so
@@ -435,6 +450,24 @@ _EXAMPLE_HOST_RE = re.compile(
     r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^127\.|^localhost$", re.I
 )
 """Hosts that name no one (RFC 2606, loopback); text URLs on them are kept, except on :data:`PLACEHOLDER_HOST`."""
+
+PUBLIC_REFERENCE_HOSTS: frozenset[str] = frozenset(
+    {
+        "docker.io",
+        "docs.github.com",
+        "docs.gitlab.com",
+        "ghcr.io",
+        "golang.org",
+        "k8s.io",
+        "npmjs.com",
+        "pkg.go.dev",
+        "proxy.golang.org",
+        "pypi.org",
+        "registry.npmjs.org",
+        "www.npmjs.com",
+    }
+)
+"""Well-known public registries, module hosts and forge documentation hosts kept in free text (0.13)."""
 
 
 def _project(segment: str) -> str:
@@ -573,8 +606,18 @@ def redact_url(value: str) -> str:
     return urlunsplit((parts.scheme, host, path, "", fragment))
 
 
+def _is_allowed_host(host: str) -> bool:
+    """Whether ``host`` is allowed in free text: an RFC 2606, loopback or :data:`PUBLIC_REFERENCE_HOSTS` host."""
+    return bool(_EXAMPLE_HOST_RE.search(host)) or host.casefold() in PUBLIC_REFERENCE_HOSTS
+
+
 def _kept_host(host: str) -> bool:
-    """Whether a text URL on ``host`` is kept as it is: an RFC 2606 or loopback host, not the placeholder."""
+    """Whether a text URL on ``host`` is kept as it is: an allowed host other than the placeholder."""
+    return _is_allowed_host(host) and host.casefold() != PLACEHOLDER_HOST
+
+
+def _example_host(host: str) -> bool:
+    """Whether ``host`` is an RFC 2606 or loopback host other than :data:`PLACEHOLDER_HOST`."""
     return bool(_EXAMPLE_HOST_RE.search(host)) and host.casefold() != PLACEHOLDER_HOST
 
 
@@ -585,36 +628,53 @@ _NOREPLY_MAILBOX_RE = re.compile(
 )
 """A forge noreply mailbox (GitHub/GitLab ``@users.noreply.<host>`` or ``@noreply.<host>``, 0.12 D6)."""
 
+_SYSTEM_NOREPLY_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+\[\]-])(?P<local>no-?reply)@"
+    r"(?P<host>(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b",
+    re.I,
+)
+"""A system noreply mailbox (``noreply@github.com``, ``noreply@<self-hosted>``, 0.13 R6-D5)."""
+
 
 def redact_urls_in_text(text: str) -> str:
     """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
-    A URL goes through :func:`redact_url`. An scp remote
-    ``<user>@<host>:<ns>/<repo>`` is normalised through it too (0.10): read
-    as ``ssh://<user>@<host>/<ns>/<repo>``, redacted, and written back as
-    ``git@forge.example.com:org/project``, its ``.git`` suffix kept and its
-    user never. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a
-    hand-written one gets the placeholder path too. A forge noreply mailbox
+    A URL goes through :func:`redact_url`, with trailing punctuation and
+    boundary GFM inline delimiters (``.:;~_``) preserved outside the URL
+    (0.13 R6-D1). An scp remote ``<user>@<host>:<ns>/<repo>`` is normalised
+    through it too (0.10): read as ``ssh://<user>@<host>/<ns>/<repo>``,
+    redacted, and written back as ``git@forge.example.com:org/project``,
+    its ``.git`` suffix kept and its user never. A URL on
+    :data:`PLACEHOLDER_HOST` is redacted again, so a hand-written one gets
+    the placeholder path too. Text URLs on :data:`PUBLIC_REFERENCE_HOSTS`
+    are kept (0.13). A forge noreply mailbox
     (``<id>+<login>@users.noreply.github.com``,
     ``<id>-<login>@users.noreply.gitlab.com``, 0.12 D6) has its local part
     and host redacted by class to
-    ``<class>@users.noreply.forge.example.com``, so it neither leaks a
-    login or user id nor triggers a generic mailbox refusal.
+    ``<class>@users.noreply.forge.example.com``; a system noreply mailbox
+    (``noreply@github.com``, 0.13 R6-D5) becomes
+    ``noreply@forge.example.com``.
     """
 
     def _one(match: re.Match[str]) -> str:
-        url = match.group(0).rstrip(".:;")
+        url = match.group(0).rstrip(_URL_TRIM_TAIL)
         tail = match.group(0)[len(url) :]
-        host = urlsplit(url).hostname or ""
+        parts = urlsplit(url)
+        host = parts.hostname or ""
         if not host or _kept_host(host):
+            if host and host.casefold() in PUBLIC_REFERENCE_HOSTS and is_public_forge_host(host):
+                return url.replace(host, host.casefold(), 1) + tail
             return match.group(0)
         return (redact_url(url) or url) + tail
 
     def _scp(match: re.Match[str]) -> str:
-        if _kept_host(match.group("host").casefold()):
+        if _example_host(match.group("host").casefold()):
             return match.group(0)
-        url = redact_url(f"ssh://{match.group('user')}@{match.group('host')}/{match.group('path')}")
-        return url.removeprefix("ssh://").replace("/", ":", 1)
+        raw_path = match.group("path")
+        path = raw_path.rstrip(_URL_TRIM_TAIL)
+        tail = raw_path[len(path) :]
+        url = redact_url(f"ssh://{match.group('user')}@{match.group('host')}/{path}")
+        return url.removeprefix("ssh://").replace("/", ":", 1) + tail
 
     def _noreply(match: re.Match[str]) -> str:
         host = match.group("host").casefold()
@@ -624,9 +684,16 @@ def redact_urls_in_text(text: str) -> str:
         role = "bot" if local == "bot" or local.endswith("[bot]") else "author"
         return f"{role}@users.noreply.{PLACEHOLDER_HOST}"
 
-    return _NOREPLY_MAILBOX_RE.sub(
+    def _system_noreply(match: re.Match[str]) -> str:
+        host = match.group("host").casefold()
+        if _example_host(host):
+            return match.group(0)
+        return f"{match.group('local').casefold()}@{PLACEHOLDER_HOST}"
+
+    step = _NOREPLY_MAILBOX_RE.sub(
         _noreply, _SCP_IN_TEXT_RE.sub(_scp, _URL_IN_TEXT_RE.sub(_one, text))
     )
+    return _SYSTEM_NOREPLY_RE.sub(_system_noreply, step)
 
 
 def unredacted_host(text: str) -> bool:
@@ -636,8 +703,8 @@ def unredacted_host(text: str) -> bool:
     to be written means a value escaped the redaction (D3, 0.9).
     """
     for match in _URL_IN_TEXT_RE.finditer(text):
-        host = urlsplit(match.group(0).rstrip(".:;")).hostname or ""
-        if host and not _EXAMPLE_HOST_RE.search(host):
+        host = urlsplit(match.group(0).rstrip(_URL_TRIM_TAIL)).hostname or ""
+        if host and not _is_allowed_host(host):
             return True
     return any(not _EXAMPLE_HOST_RE.search(m.group("host")) for m in _SCP_IN_TEXT_RE.finditer(text))
 
@@ -724,6 +791,22 @@ def redact_payload(value: object) -> object:
     return value
 
 
+def _bot_stem(login: str) -> str | None:
+    """The bare handle of a ``<name>[bot]`` login when long enough and not a class word, placeholder or non-person bot (0.13 R6-D2)."""
+    if not login.casefold().endswith("[bot]"):
+        return None
+    stem = login[:-5]
+    folded = stem.casefold()
+    if (
+        len(stem) < NEEDLE_MIN_LENGTH
+        or CLASS_WORD_RE.match(folded)
+        or folded in _PLACEHOLDERS
+        or _names_no_one(stem)
+    ):
+        return None
+    return stem
+
+
 def _login_pattern(login: str) -> re.Pattern[str]:
     """``login`` as a whole token: :func:`token_pattern`, wherever it stands (I1, 0.10)."""
     return token_pattern(login)
@@ -733,19 +816,31 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     """Replace every login of ``roles`` appearing as a token in ``text`` by its class word.
 
     A :data:`MENTION_ONLY_PREFIX` key is replaced in its ``@<handle>``
-    form only (D2, 0.9). A :data:`CLI_PLACEHOLDER_RE` template is left
-    as it is (0.10); every other occurrence of the token is replaced,
-    after a ``:``, a ``.`` or a ``/`` alike.
+    form only (D2, 0.9). A ``<name>[bot]`` key also replaces its bare
+    stem (``@dependabot``, ``Dependabot``) with the same class word so
+    bot login, mention and prose name stay one consistent identity
+    (0.13 R6-D2). A :data:`CLI_PLACEHOLDER_RE` template is left as it is
+    (0.10); every other occurrence of the token is replaced, after a
+    ``:``, a ``.`` or a ``/`` alike.
     """
     pieces = CLI_PLACEHOLDER_RE.split(text)
     templates = CLI_PLACEHOLDER_RE.findall(text)
-    for login in sorted(roles, key=len, reverse=True):
+    expanded = dict(roles)
+    present = {k.removeprefix(MENTION_ONLY_PREFIX).casefold() for k in roles}
+    for login, word in roles.items():
+        if login.startswith(MENTION_ONLY_PREFIX):
+            continue
+        stem = _bot_stem(login)
+        if stem is not None and stem.casefold() not in present:
+            expanded[stem] = word
+            present.add(stem.casefold())
+    for login in sorted(expanded, key=len, reverse=True):
         if login.startswith(MENTION_ONLY_PREFIX):
             pattern = mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX))
-            word = f"@{roles[login]}"
+            word = f"@{expanded[login]}"
         else:
             pattern = _login_pattern(login)
-            word = roles[login]
+            word = expanded[login]
         pieces = [pattern.sub(word, piece) for piece in pieces]
     out = pieces[0]
     for template, piece in zip(templates, pieces[1:], strict=True):
@@ -932,17 +1027,23 @@ def declared_user_ids(node: object) -> list[int]:
     return sorted(n for n in numbers if isinstance(n, int))
 
 
+_API_PROJECT_ID_RE = re.compile(r"(api/v[34]/+projects/+)([0-9]+)(?![0-9A-Za-z_-])", re.I)
+"""A numeric GitLab project id inside an ``api/v4/projects/<id>/…`` URL or path (0.13 R6-D5)."""
+
+
 def is_repository_object(node: object) -> bool:
     """Whether ``node`` is a repository object: a dict whose URL names a repository and nothing under it."""
     return isinstance(node, dict) and _repository_of(node) is not None
 
 
 def project_id_values(node: object) -> list[object]:
-    """The ``id`` of every repository object of a decoded value, JSON inside strings included (0.10)."""
+    """Every repository id of a decoded value: repository objects and ``api/v4/projects/<id>`` URLs, JSON inside strings included (0.10, 0.13)."""
     if isinstance(node, str):
-        if node.lstrip()[:1] not in ("{", "["):
-            return []
-        return [i for v in decode_json_values(node) or [] for i in project_id_values(v)]
+        if node.lstrip()[:1] in ("{", "["):
+            decoded = decode_json_values(node)
+            if decoded is not None:
+                return [i for v in decoded for i in project_id_values(v)]
+        return [int(m.group(2)) for m in _API_PROJECT_ID_RE.finditer(node)]
     if isinstance(node, dict):
         found = [i for v in node.values() for i in project_id_values(v)]
         if is_repository_object(node) and "id" in node:
@@ -1038,7 +1139,7 @@ class UserIdMap:
     def apply_projects(
         self, payload: object, *, forge: str, keep: frozenset[int] = frozenset()
     ) -> object:
-        """Remap the ``id`` of every repository object (:func:`is_repository_object`, 0.10)."""
+        """Remap the ``id`` of every repository object and ``api/v4/projects/<id>`` URL (0.10, 0.13 R6-D5)."""
         if isinstance(payload, dict):
             repository = is_repository_object(payload)
             return {
@@ -1049,6 +1150,11 @@ class UserIdMap:
             }
         if isinstance(payload, list):
             return [self.apply_projects(v, forge=forge, keep=keep) for v in payload]
+        if isinstance(payload, str):
+            return _API_PROJECT_ID_RE.sub(
+                lambda m: f"{m.group(1)}{self.synthetic(int(m.group(2)), forge=forge, keep=keep)}",
+                payload,
+            )
         return payload
 
     def apply_result(
@@ -1324,7 +1430,7 @@ CONFUSABLES = str.maketrans(
         "χ": "x",
     }
 )
-"""Cyrillic and Greek letters drawn like a Latin one, mapped to it (0.11): a lookalike login is the login."""
+"""Lowercase Cyrillic and Greek letters drawn like a Latin one: best-effort defence-in-depth (0.11; general confusables are NG4 since 0.12)."""
 
 
 def _plain(text: str) -> str:
@@ -1433,79 +1539,112 @@ _HOST_TOKEN_RE = re.compile(
 """A dotted name ending in a letter-led label: a host candidate, judged by its context (:func:`locations`)."""
 
 _AFTER_HOST_RE = re.compile(
-    r"\.?(?:(?P<port>:[0-9]{1,5})?/(?P<slash>[^\s\"'<>()\[\]{}\\,?#|]*)"
-    r"|:(?P<scp>[^\s\"'<>()\[\]{}\\,?#|]*/[^\s\"'<>()\[\]{}\\,?#|]*))",
+    r"\.?(?:(?P<port>:[0-9]{1,5})?/(?P<slash>[^\s\"'<>()\[\]{}\\,?#|`*]*)"
+    r"|:(?P<scp>[^\s\"'<>()\[\]{}\\,?#|`*]*/[^\s\"'<>()\[\]{}\\,?#|`*]*))",
     re.I,
 )
-"""What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>``."""
+"""What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>`` (Markdown delimiters terminate, 0.13)."""
 
 _USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
 
-_NON_HOST_FIRST_LABELS: frozenset[str] = frozenset({"self", "cls"})
-"""Leading code receivers (``self.ms/1000``, ``cls.x/y``) never read as schemeless hosts (0.12, D6)."""
+_IPV4_LED_HOST_RE = re.compile(
+    r"(?<![0-9A-Za-z_.-])([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?![0-9A-Za-z.-])",
+    re.I,
+)
+"""An IPv4 host literal, accepted by :func:`locations` only when scheme- or user-led (``//`` or ``<user>@``, 0.13)."""
 
-_NON_HOST_TLDS: frozenset[str] = frozenset(
+_NON_HOST_FIRST_LABELS: frozenset[str] = frozenset({"self", "cls"})
+"""Leading code receivers (``self.io/a/b``, ``cls.dev/x/y``) never read as schemeless hosts (0.12 D6, 0.13 R6-D3)."""
+
+_KNOWN_HOST_TLDS: frozenset[str] = frozenset(
     {
-        "adoc",
-        "cfg",
-        "cpp",
-        "cs",
-        "css",
-        "csv",
-        "env",
-        "erl",
-        "ex",
-        "exs",
-        "fs",
-        "go",
-        "gz",
-        "hpp",
-        "hs",
-        "html",
-        "ini",
-        "java",
-        "jl",
-        "jpg",
-        "js",
-        "json",
-        "kt",
-        "lock",
-        "log",
-        "lua",
-        "md",
-        "ml",
-        "ms",
-        "nim",
-        "pdf",
-        "php",
-        "pl",
-        "png",
-        "py",
-        "rb",
-        "rs",
-        "rst",
-        "sh",
-        "so",
-        "sql",
-        "sv",
-        "svg",
-        "swift",
-        "tar",
-        "tex",
-        "toml",
-        "ts",
-        "txt",
-        "vhd",
-        "whl",
-        "xml",
-        "yaml",
-        "yml",
-        "zig",
-        "zip",
+        "aero",
+        "ai",
+        "app",
+        "ar",
+        "au",
+        "be",
+        "bg",
+        "biz",
+        "br",
+        "ca",
+        "ch",
+        "cl",
+        "cloud",
+        "cn",
+        "co",
+        "codes",
+        "com",
+        "coop",
+        "cz",
+        "de",
+        "dev",
+        "digital",
+        "dk",
+        "edu",
+        "ee",
+        "engineering",
+        "es",
+        "eu",
+        "fi",
+        "fr",
+        "gg",
+        "gov",
+        "gr",
+        "hk",
+        "hr",
+        "hu",
+        "ie",
+        "il",
+        "int",
+        "io",
+        "it",
+        "jp",
+        "kr",
+        "lt",
+        "lu",
+        "lv",
+        "me",
+        "mil",
+        "museum",
+        "mx",
+        "net",
+        "network",
+        "nl",
+        "no",
+        "nz",
+        "online",
+        "org",
+        "pro",
+        "pt",
+        "ro",
+        "ru",
+        "se",
+        "sg",
+        "si",
+        "sk",
+        "software",
+        "systems",
+        "tech",
+        "tr",
+        "tv",
+        "tw",
+        "ua",
+        "uk",
+        "us",
+        "vn",
+        "xyz",
+        "za",
     }
 )
-"""File extensions and code attribute names never read as a schemeless host's TLD (0.12, D6)."""
+"""Positive DNS TLD allowlist for schemeless hosts (0.13 R6-D3), rejecting code attributes and wheel paths."""
+
+
+def _is_ipv4_host(host: str) -> bool:
+    """Whether ``host`` is a valid dotted-quad IPv4 address (four octets 0..255)."""
+    parts = host.split(".")
+    return len(parts) == 4 and all(p.isdigit() and int(p) <= 255 for p in parts)
 
 
 @dataclass(frozen=True)
@@ -1521,36 +1660,51 @@ class Location:
     segments: tuple[str, ...] = ()
 
 
-def locations(text: str) -> list[Location]:
-    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12).
+def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[Location]:
+    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12, 0.13).
 
     A dotted name is a host when its context says so: ``//`` or
     ``<user>@`` before it (``https://h``, ``//h``, ``ssh://u@h``,
-    ``u@h:g/r``), or a path after it (``h/g/r``, ``h:g/r``,
-    ``h:8080/x``). A name right after a single ``/`` is a file path's
-    (``src/setup.py``), one with nothing around it (``setup.py``) is not
-    a host, and an un-led code expression (``self.ms/1000``,
-    ``README.md/foo``, ``foo.py:80/bar``) is rejected by receiver,
-    file-extension TLD and path shape (0.12, D6). The scheme is not
-    required, so a schemeless ``gitlab.corp.io/grp/repo`` in prose is
-    found as surely as a URL.
+    ``u@h:g/r``, including scheme- or user-led IPv4 hosts such as
+    ``https://10.20.30.40/g/r``, 0.13), or a path after it (``h/g/r``,
+    ``h:g/r``, ``h:8080/x``). A name right after a single ``/`` is a
+    file path's (``src/setup.py``), one with nothing around it
+    (``setup.py``) is not a host, and an un-led candidate is accepted
+    only when its TLD is in :data:`_KNOWN_HOST_TLDS` or the host is in
+    ``known_hosts``, its first label is not in
+    :data:`_NON_HOST_FIRST_LABELS`, and its non-port path has at least
+    two non-empty non-all-digit segments (0.13 R6-D3). Trailing
+    punctuation and boundary GFM delimiters (``.:;~_``) are trimmed from
+    the path (0.13 R6-D1).
     """
+    candidates = sorted(
+        (
+            *((m, False) for m in _HOST_TOKEN_RE.finditer(text)),
+            *((m, True) for m in _IPV4_LED_HOST_RE.finditer(text)),
+        ),
+        key=lambda item: item[0].start(),
+    )
     found: list[Location] = []
-    for m in _HOST_TOKEN_RE.finditer(text):
+    for m, is_ipv4 in candidates:
         before = text[: m.start()]
         if before.endswith("/") and not before.endswith("//"):
             continue
-        after = _AFTER_HOST_RE.match(text, m.end())
-        path = (after.group("slash") or after.group("scp") or "") if after else ""
         led = before.endswith("//") or bool(_USER_BEFORE_RE.search(before))
         host = m.group(1).casefold()
+        if is_ipv4 and (not led or not _is_ipv4_host(host)):
+            continue
+        after = _AFTER_HOST_RE.match(text, m.end())
+        raw_path = (after.group("slash") or after.group("scp") or "") if after else ""
+        path = raw_path.rstrip(_URL_TRIM_TAIL)
         segments = tuple(s for s in path.split("/")) if path else ()
         if not led:
             if not after:
                 continue
             first = host.split(".", 1)[0]
             tld = host.rsplit(".", 1)[-1]
-            if first in _NON_HOST_FIRST_LABELS or tld in _NON_HOST_TLDS:
+            if first in _NON_HOST_FIRST_LABELS:
+                continue
+            if host not in known_hosts and tld not in _KNOWN_HOST_TLDS:
                 continue
             non_empty = [s for s in segments if s]
             if not after.group("port") and (
@@ -1629,7 +1783,7 @@ def _raw_url_host(raw: object) -> str | None:
                         continue
                     if parts.scheme in URL_SCHEMES and parts.hostname:
                         host = parts.hostname.casefold()
-                        if not _EXAMPLE_HOST_RE.search(host):
+                        if not _is_allowed_host(host):
                             return host
                 else:
                     stack.append(item)
@@ -1731,8 +1885,14 @@ def needles(
     """
     strings = [text for _path, text in fixture_strings(raw, "")]
     instance, remote_path = remote_location(remote)
-    if instance is None and remote_path:
-        instance = _raw_url_host(raw)
+    inferred = _raw_url_host(raw) if instance is None else None
+    if instance is None and (
+        remote_path or (inferred is not None and is_public_forge_host(inferred))
+    ):
+        instance = inferred
+    known_hosts = frozenset(
+        FORGE_HOSTS | ({instance} if instance else set()) | ({inferred} if inferred else set())
+    )
     found: dict[str, list[str]] = {kind: [] for kind in NEEDLE_KINDS}
     replacements: dict[str, str] = {}
 
@@ -1745,19 +1905,21 @@ def needles(
             found["segment"].append(identity.repository)
             replacements.setdefault(identity.repository, PLACEHOLDER_PROJECT)
 
-    found["login"] = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
+    raw_login_list = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
+    bot_stems = [stem for login in raw_login_list if (stem := _bot_stem(login)) is not None]
+    found["login"] = raw_login_list + bot_stems
     found["host"] = sorted(FORGE_HOSTS | ({instance} if instance else set()))
     if remote_path:
         _segments(remote_path)
     for text in strings:
         _segments(_api_project(text))
-        for place in locations(text):
-            if _EXAMPLE_HOST_RE.search(place.host):
+        for place in locations(text, known_hosts=known_hosts):
+            if _is_allowed_host(place.host):
                 continue
             found["host"].append(place.host)
             private = not is_public_forge_host(place.host)
             matches_instance = place.host == instance if instance is not None else not remote_path
-            if private and matches_instance and place.segments:
+            if private and (matches_instance or _is_ipv4_host(place.host)) and place.segments:
                 _segments(place.segments)
     for host in found["host"]:
         replacements.setdefault(host, PLACEHOLDER_HOST)

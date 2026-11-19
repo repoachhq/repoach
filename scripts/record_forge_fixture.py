@@ -417,15 +417,21 @@ def build_roles(
     def _add(login: str, *, mention: bool) -> None:
         if not login or is_classified_login(login):
             return
+        if mention and _key_of(f"{login}[bot]") is not None:
+            return
         key = _key_of(login)
         if key is not None:
             if not mention and key.startswith(MENTION_ONLY_PREFIX):
                 roles[login] = roles.pop(key)
             return
+        if not mention and login.casefold().endswith("[bot]"):
+            stem_key = _key_of(login[:-5])
+            if stem_key is not None and stem_key.startswith(MENTION_ONLY_PREFIX):
+                roles.pop(stem_key)
         if GITLAB_PROJECT_BOT_RE.match(login):
             word = _next("service")
         else:
-            word = _next("bot" if login.endswith("[bot]") else "author")
+            word = _next("bot" if login.casefold().endswith("[bot]") else "author")
         roles[MENTION_ONLY_PREFIX + login if mention else login] = word
 
     if bot and bot not in NON_PERSON_LOGINS:
@@ -515,7 +521,7 @@ def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[d
 def synthesize_user_ids(
     calls: list[dict[str, Any]], ids: UserIdMap, *, forge: str, projects: UserIdMap | None = None
 ) -> list[dict[str, Any]]:
-    """Replace every user id, and every repository id (Q2, 0.10), of the recorded answers by a synthetic one (D1c)."""
+    """Replace every user id, and every repository id (Q2 0.10, ``api/v4/projects/<id>`` 0.13), of the recorded answers by a synthetic one (D1c)."""
     projects = projects if projects is not None else UserIdMap.for_projects()
     out: list[dict[str, Any]] = []
     for call in calls:
@@ -529,6 +535,13 @@ def synthesize_user_ids(
                 )
                 for v in values
             )
+        else:
+            new["stdout"] = str(projects.apply_projects(call["stdout"], forge=forge))
+        if isinstance(call.get("args"), list):
+            new["args"] = projects.apply_projects(call["args"], forge=forge)
+        for key in ("stdin", "stderr"):
+            if isinstance(call.get(key), str):
+                new[key] = str(projects.apply_projects(call[key], forge=forge))
         out.append(new)
     return out
 
@@ -638,9 +651,24 @@ def record(
     found = needles(raw, roles=roles, remote=remote, denylist=denylist.needle_values())
     known = {**found.mapping(), **roles}
     calls = classify_calls(calls, known)
-    calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name)
-    args = list(cast(list[Any], classify_logins(redact_urls_in_value(args), known)))
-    kwargs = dict(cast(dict[str, Any], classify_logins(redact_urls_in_value(kwargs), known)))
+    projects = UserIdMap.for_projects()
+    calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name, projects=projects)
+    args = list(
+        cast(
+            list[Any],
+            projects.apply_projects(
+                classify_logins(redact_urls_in_value(args), known), forge=forge_name
+            ),
+        )
+    )
+    kwargs = dict(
+        cast(
+            dict[str, Any],
+            projects.apply_projects(
+                classify_logins(redact_urls_in_value(kwargs), known), forge=forge_name
+            ),
+        )
+    )
     bot = roles.get(forge.bot_username, forge.bot_username)
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     result, raises = _replay(forge_name, cwd, method, typed_args, typed_kwargs, calls, bot)
@@ -669,7 +697,7 @@ def record(
     declared = declared_user_ids(calls)
     if declared:
         fixture[SYNTHETIC_IDS_KEY] = declared
-    declared_projects = declared_project_ids(calls)
+    declared_projects = declared_project_ids(fixture)
     if declared_projects:
         fixture[SYNTHETIC_PROJECT_IDS_KEY] = declared_projects
     refuse_unclassified(fixture, denylist, found)

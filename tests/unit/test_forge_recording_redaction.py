@@ -1828,6 +1828,9 @@ def test_node_ids_inside_longer_strings_are_judged_by_their_number() -> None:
     legacy = base64.b64encode(f"04:User{_ID}".encode()).decode()
     padded_id = 4815162
     legacy_padded = base64.b64encode(f"04:User{padded_id}".encode()).decode()
+    unpadded_id = 48151623
+    legacy_unpadded = base64.b64encode(f"04:User{unpadded_id}".encode()).decode()
+    assert not legacy_unpadded.endswith("=")
     big_id = (1 << 33) + 7
     big_node = "U_" + base64.urlsafe_b64encode(
         b"\x92\x00\xcf" + big_id.to_bytes(8, "big")
@@ -1844,6 +1847,7 @@ def test_node_ids_inside_longer_strings_are_judged_by_their_number() -> None:
         f"https://example.com/users/{legacy}/profile",
         f"https://example.com/users/{_new_node(_ID)}/profile",
         f"abcdefg{_new_node(_ID)}",
+        f"U_foo{_new_node(_ID)}",
         f"feat/{legacy}",
         f"branch/{_new_node(_ID)}",
     ):
@@ -1856,6 +1860,19 @@ def test_node_ids_inside_longer_strings_are_judged_by_their_number() -> None:
         )
         is not None
     )
+    unpadded_found = needles(
+        [_one_call({"user": {"login": "q-handle", "id": unpadded_id}})], roles={}
+    )
+    for text in (
+        f"{legacy_unpadded}x",
+        f"{legacy_unpadded}suffix",
+        f"https://example.com/users/{legacy_unpadded}/profile",
+    ):
+        left = residual(_placed(text, "prose"), unpadded_found)
+        assert left is not None and left[0] == "id", text
+    assert str(unpadded_id) in recording.embedded_id_numbers(f"{legacy_unpadded}x")
+    assert str(unpadded_id) in recording.embedded_id_numbers(f"{legacy_unpadded}suffix")
+    assert str(_ID) in recording.embedded_id_numbers(f"U_foo{_new_node(_ID)}")
     big_found = needles([_one_call({"user": {"login": "q-handle", "id": big_id}})], roles={})
     assert residual(_placed(f"see {big_node} here", "prose"), big_found) is not None
     assert recording.embedded_id_numbers(f"a {_new_node(_ID + 1)} b") == [str(_ID + 1)]
@@ -2082,6 +2099,10 @@ def test_double_slash_urls_do_not_leak_segments() -> None:
         assert identity.repository == expected_repo, url
     assert recording._repository_root("/grp//secretproj") == "secretproj"
     assert recording._api_project("repos//own-x/repo-y/pulls") == ("own-x", "repo-y")
+    assert (
+        redact_url("https://github.com/own-x/repo-y/") == "https://forge.example.com/org/project/"
+    )
+    assert recording.path_identity(["own-x", "repo-y", ""]).segments == ["org", "project", ""]
 
 
 def test_call_args_urls_are_redacted_in_both_tools() -> None:
@@ -2166,6 +2187,16 @@ def test_noreply_mailboxes_are_redacted_by_class_and_not_refused() -> None:
     assert calls[0]["stderr"] == "Co-authored-by: X <author@users.noreply.forge.example.com>"
     assert rec.generic_class("contact real.person@private-mail.org:25") == "mailbox"
     assert rec.generic_class("contact real.person@private-mail.org:hello") == "mailbox"
+    assert redact_urls_in_text("contact user@noreply.example.com") == (
+        "contact user@noreply.example.com"
+    )
+    assert redact_urls_in_text("contact user@users.noreply.example.org") == (
+        "contact user@users.noreply.example.org"
+    )
+    assert (
+        redact_urls_in_text("Co-authored-by: X <realuser@users.noreply.forge.example.com>")
+        == "Co-authored-by: X <author@users.noreply.forge.example.com>"
+    )
 
 
 def test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_refused() -> None:
@@ -2202,3 +2233,285 @@ def test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_
     )
     found_sh = needles(self_hosted, roles={}, remote="mygl:grp-x/proj-x.git")
     assert _kinds(found_sh, "segment") == ["grp-x", "proj-x", "other-grp", "other-proj"]
+
+
+def test_markdown_delimiters_terminate_urls_and_preserve_kept_hosts() -> None:
+    """R6-D1 (0.13): backticks, ``*``, ``|``, ``~``, ``_`` terminate URLs in redaction and ``locations()``."""
+    kept = "Check `https://example.com` and `http://localhost` and `https://127.0.0.1:8080/health`."
+    assert redact_urls_in_text(kept) == kept
+    assert not unredacted_host(kept)
+    assert (
+        redact_urls_in_text("See `https://docs.python.org/3/library/re.html` for regex.")
+        == "See `https://forge.example.com/org/project` for regex."
+    )
+    assert (
+        redact_urls_in_text("|Py|https://docs.python.org/3/library/re.html|")
+        == "|Py|https://forge.example.com/org/project|"
+    )
+    assert (
+        redact_urls_in_text("See **https://git.zqcorp.io/zqgroup/zqsecondrepo** now")
+        == "See **https://forge.example.com/org/project** now"
+    )
+    assert (
+        redact_urls_in_text(
+            "Old ~~https://git.zqcorp.io/zqgroup/zqsecondrepo~~ and _https://git.zqcorp.io/zqgroup/zqthirdrepo_"
+        )
+        == "Old ~~https://forge.example.com/org/project~~ and _https://forge.example.com/org/project_"
+    )
+    assert (
+        redact_urls_in_text("git clone git@zqotherhost.io.:zqotherns/zqotherrepo.git")
+        == "git clone git@forge.example.com:org/project.git"
+    )
+    assert (
+        redact_urls_in_text("~~git@zqotherhost.io:zqotherns/zqotherrepo~~")
+        == "~~git@forge.example.com:org/project~~"
+    )
+    assert (
+        redact_urls_in_text("mirror ftp://git.zqother.io/zqotherns/zqotherrepo")
+        == "mirror ftp://forge.example.com/org/project"
+    )
+    locs = recording.locations(
+        "`https://git.zqcorp.io/zqgroup/zqsecondrepo` "
+        "**https://git.zqcorp.io/zqgroup/zqthirdrepo** "
+        "|https://git.zqcorp.io/zqgroup/zqfourthrepo| "
+        "~~https://git.zqcorp.io/zqgroup/zqfifthrepo~~ "
+        "_https://git.zqcorp.io/zqgroup/zqsixthrepo_"
+    )
+    assert [(loc.host, loc.segments) for loc in locs] == [
+        ("git.zqcorp.io", ("zqgroup", "zqsecondrepo")),
+        ("git.zqcorp.io", ("zqgroup", "zqthirdrepo")),
+        ("git.zqcorp.io", ("zqgroup", "zqfourthrepo")),
+        ("git.zqcorp.io", ("zqgroup", "zqfifthrepo")),
+        ("git.zqcorp.io", ("zqgroup", "zqsixthrepo")),
+    ]
+    raw = _one_call(
+        {
+            "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/1",
+            "body": "Moved from `https://git.zqcorp.io/zqgroup/zqsecondrepo` (see zqsecondrepo)",
+        }
+    )
+    found = needles(raw, roles={}, remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git")
+    assert "zqsecondrepo" in _kinds(found, "segment")
+    redacted = classify_text(
+        redact_urls_in_text(
+            "Moved from `https://git.zqcorp.io/zqgroup/zqsecondrepo` (see zqsecondrepo)"
+        ),
+        found.mapping(),
+    )
+    assert redacted == "Moved from `https://forge.example.com/org/project` (see project)"
+
+
+def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
+    """R6-D2 (0.13): bot login/mention/stem share one identity; ``@scope/pkg`` and ``@Override`` are not mentions."""
+    dep_body = (
+        "Dependabot will resolve any conflicts.\n"
+        "- `@dependabot rebase` will rebase\n"
+        "- @dependabot recreate will recreate\n"
+        "Bumps @types/node and @vue/cli; updates types. Missing @Override on override test. "
+        "cc @zqcolleague and @github-actions"
+    )
+    item = {"user": {"login": "dependabot[bot]", "id": 49699333}, "body": dep_body}
+    raw = _one_call([item])
+    redacted_calls = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw]
+    roles = rec.build_roles(
+        redacted_calls,
+        bot="repoach-bot",
+        maintainer=None,
+        author=None,
+        also=recording.raw_logins(raw),
+    )
+    assert roles == {"dependabot[bot]": "bot", "@zqcolleague": "author"}
+    found = needles(raw, roles=roles, remote="git@github.com:own-x/repo-y.git")
+    calls = rec.synthesize_user_ids(
+        rec.classify_calls(redacted_calls, {**found.mapping(), **roles}),
+        UserIdMap(),
+        forge="github",
+    )
+    fixture = {
+        "forge": "github",
+        "method": "conversation_comments",
+        "case": "dep",
+        "source": recording.recorded_source("2026-11-19", "github"),
+        "calls": calls,
+    }
+    rec.refuse_unclassified(fixture, rec.Denylist(), found)
+    out_item = json.loads(calls[0]["stdout"])[0]
+    assert out_item["user"]["login"] == "bot"
+    assert "dependabot" not in out_item["body"].casefold()
+    assert "@bot recreate" in out_item["body"]
+    assert "`@bot rebase`" in out_item["body"]
+    assert "@types/node" in out_item["body"]
+    assert "@vue/cli" in out_item["body"]
+    assert "@Override" in out_item["body"]
+    assert "@author" in out_item["body"]
+    assert "@github-actions" in out_item["body"]
+
+    mention_first = [
+        {"args": [], "stdout": json.dumps({"body": "cc @renovate please rebase"})},
+        {"args": [], "stdout": json.dumps({"user": {"login": "renovate[bot]"}})},
+    ]
+    assert rec.build_roles(mention_first, bot="", maintainer=None, author=None) == {
+        "renovate[bot]": "bot"
+    }
+
+    renovate_payload = {
+        "title": "chore(deps): update @actions/checkout and @babel/core",
+        "body": "Update GitHub Actions workflow and [@babel/core](https://github.com/babel/babel).",
+    }
+    assert mentions(renovate_payload) == []
+
+    offline_dep = {
+        "forge": "github",
+        "calls": [
+            _exchange(
+                [
+                    {
+                        "user": {"login": "dependabot[bot]", "id": 49699333},
+                        "body": "Dependabot: @dependabot rebase",
+                    }
+                ]
+            )
+        ],
+    }
+    offline_out = redact_fixtures.redact_fixture(offline_dep, forge="github")
+    assert residual(offline_out, redact_fixtures.fixture_needles(offline_dep)) is None
+
+
+def test_locations_uses_positive_host_rule_and_scheme_led_ipv4() -> None:
+    """R6-D3, Wrong Fact 2 (0.13): positive TLD / ``known_hosts`` rule rejects code & wheel paths; scheme-led IPv4 is parsed."""
+    for non_host in (
+        "cfg = config.dir/sub/file.toml",
+        "val = obj.total/count/100",
+        "root = tmp.root/src/app.py",
+        "const url = this.base/api/v1;",
+        "components.tsx/Header/index",
+        "Adding repoach-0.1.0.dist-info/licenses/LICENSE",
+        "Adding repoach-0.1.0.dist-info/METADATA",
+        "+    return cfg.root/sub/file",
+        "_obj.io/a/b",
+        "self.io/a/b",
+        "cls.dev/x/y",
+        "foo.io/bar",
+        "foo.io/100/200",
+        "see 10.0.0.5/zqotherns/zqotherrepo",
+    ):
+        assert recording.locations(non_host) == [], non_host
+    assert recording.locations(
+        "see git.corp.internal/grp-x/proj-x", known_hosts=frozenset({"git.corp.internal"})
+    ) == [recording.Location("git.corp.internal", ("grp-x", "proj-x"))]
+    assert recording.locations("Mirror at https://10.20.30.40/zqipgrp/zqiprepo") == [
+        recording.Location("10.20.30.40", ("zqipgrp", "zqiprepo"))
+    ]
+    assert recording.locations("bad https://999.0.0.1/a/b") == []
+    raw = _one_call(
+        {
+            "url": "https://github.com/own-x/repo-y/pull/1",
+            "body": "Mirror at https://10.20.30.40/zqipgrp/zqiprepo (see zqiprepo)",
+        }
+    )
+    found = needles(raw, roles={}, remote="")
+    assert "10.20.30.40" in _kinds(found, "host")
+    assert "zqiprepo" in _kinds(found, "segment")
+    redacted = classify_text(
+        redact_urls_in_text("Mirror at https://10.20.30.40/zqipgrp/zqiprepo (see zqiprepo)"),
+        found.mapping(),
+    )
+    assert redacted == "Mirror at https://forge.example.com/org/project (see project)"
+
+
+def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() -> None:
+    """R6-D5 (0.13): ``api/v4/projects/<id>`` maps to ``2001..2999``; offline redacts ``kwargs`` and ``noreply@github.com``."""
+    api_url = "https://gitlab.com/api/v4/projects/77665544/merge_requests/42"
+    raw_with_repo = _one_call(
+        {
+            "repository": {
+                "id": 77665544,
+                "name": "secretproj",
+                "path": "secretproj",
+                "web_url": "https://gitlab.com/grp-x/secretproj",
+            },
+            "description": f"API call: {api_url}",
+        }
+    )
+    found_only_url = needles(_one_call({"description": f"API call: {api_url}"}), roles={})
+    assert "77665544" in _kinds(found_only_url, "id")
+    redacted_calls = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw_with_repo]
+    calls = rec.synthesize_user_ids(redacted_calls, UserIdMap(), forge="gitlab")
+    parsed = json.loads(calls[0]["stdout"])
+    assert parsed["repository"]["id"] == 2001
+    assert (
+        parsed["description"]
+        == "API call: https://forge.example.com/api/v4/projects/2001/merge_requests/42"
+    )
+    assert recording.declared_project_ids(calls) == [2001]
+
+    sample_offline = {
+        "forge": "github",
+        "case": "c",
+        "method": "conversation_comments",
+        "args": [1],
+        "kwargs": {"note": "https://github.com/o/r/pull/1", "api": api_url},
+        "bot_username": "repoach-bot",
+        "source": recording.recorded_source("2026-11-19", "github"),
+        "trimmed": None,
+        "calls": [
+            _exchange(
+                [
+                    {
+                        "user": {"login": "author", "id": 1001},
+                        "body": "Committer: GitHub <noreply@github.com>; keep noreply@example.com",
+                    }
+                ]
+            )
+        ],
+        "synthetic_user_ids": [1001],
+        "result": None,
+        "raises": None,
+    }
+    red_off = redact_fixtures.redact_fixture(sample_offline, forge="github")
+    assert red_off["kwargs"] == {
+        "note": "https://forge.example.com/org/project/pull/1",
+        "api": "https://forge.example.com/api/v4/projects/2001/merge_requests/42",
+    }
+    assert red_off[recording.SYNTHETIC_PROJECT_IDS_KEY] == [2001]
+    assert json.loads(red_off["calls"][0]["stdout"])[0]["body"] == (
+        "Committer: GitHub <noreply@forge.example.com>; keep noreply@example.com"
+    )
+    assert residual(red_off, redact_fixtures.fixture_needles(sample_offline)) is None
+    assert redact_fixtures.redact_fixture(red_off, forge="github") == red_off
+
+
+def test_third_party_links_under_empty_remote_and_public_reference_hosts() -> None:
+    """Preferences 2 & 3 (0.13): ``remote=''`` infers public forge from URL keys; public reference hosts stay intact."""
+    raw = _one_call(
+        {
+            "url": "https://github.com/own-x/repo-y/pull/42",
+            "body": "See https://docs.python.org/3/library/re.html for regex.",
+        }
+    )
+    found = needles(raw, roles={}, remote="")
+    assert "3" not in _kinds(found, "segment")
+    assert _kinds(found, "segment") == []
+
+    prose = (
+        "FROM docker.io/library/python:3.12-slim\n"
+        "Pulling ghcr.io/astral-sh/uv:0.4.0\n"
+        'import "golang.org/x/sync/errgroup"\n'
+        'import "k8s.io/apimachinery/pkg/apis/meta/v1"\n'
+        "https://pypi.org/project/ruff/\n"
+        "https://www.npmjs.com/package/typescript\n"
+        "https://docs.github.com/en/actions\n"
+        "https://docs.gitlab.com/ee/api/\n"
+    )
+    assert redact_urls_in_text(prose) == prose
+    assert not unredacted_host(prose)
+    raw_ref = _one_call({"url": "https://github.com/own-x/repo-y/pull/42", "body": prose})
+    found_ref = needles(
+        raw_ref, roles={"zqxlogin": "author"}, remote="git@github.com:own-x/repo-y.git"
+    )
+    assert classify_text(redact_urls_in_text(prose), found_ref.mapping()) == prose
+    assert residual(_placed(prose, "prose"), found_ref) is None
+    assert residual(
+        _placed("https://docs.github.com/en/zqxlogin", "prose"),
+        found_ref,
+    ) == ("login", 1, "exchanges[0].stdout.body")
