@@ -47,12 +47,15 @@ class CommandResult:
         returncode: The exit status; ``None`` when it never ran or timed out.
         tail: Command line plus the last :data:`TAIL_CHARS` of output.
         stdout: The full standard output (empty when it never ran).
+        missing_module: True when the run failed only because the requested
+            toolchain module is not installed in the interpreter.
     """
 
     passed: bool
     returncode: int | None
     tail: str
     stdout: str = ""
+    missing_module: bool = False
 
 
 def _scrubbed_env() -> dict[str, str]:
@@ -93,6 +96,31 @@ def split_command(command: str) -> list[str]:
 
 _PYTHON_TOOLCHAIN_MODULES: frozenset[str] = frozenset({"ruff", "pytest"})
 """Modules resolved to ``sys.executable -m <module>`` on repoach itself."""
+
+
+def ruff_argv(*args: str) -> list[str]:
+    """Return the argv that runs the ruff installed beside this interpreter.
+
+    Args:
+        *args: Arguments passed to ruff.
+
+    Returns:
+        ``[sys.executable, "-m", "ruff", *args]``, never a ``PATH`` lookup.
+    """
+    return [sys.executable, "-m", "ruff", *args]
+
+
+def pytest_argv(*args: str, python: str | None = None) -> list[str]:
+    """Return the argv that runs pytest under an interpreter.
+
+    Args:
+        *args: Arguments passed to pytest.
+        python: Explicit interpreter, for the CI matrix; defaults to ``sys.executable``.
+
+    Returns:
+        ``[python or sys.executable, "-m", "pytest", *args]``.
+    """
+    return [python or sys.executable, "-m", "pytest", *args]
 
 
 def missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> str | None:
@@ -143,9 +171,9 @@ def _resolve_repoach_argv(argv: list[str], *, root: Path) -> tuple[list[str], st
         return argv, None
     head = argv[0]
     if head == "ruff":
-        return [sys.executable, "-m", "ruff", *argv[1:]], "ruff"
+        return ruff_argv(*argv[1:]), "ruff"
     if head == "pytest":
-        return [sys.executable, "-m", "pytest", *argv[1:]], "pytest"
+        return pytest_argv(*argv[1:]), "pytest"
     resolved = [sys.executable, *argv[1:]] if head == "python" else argv
     module = (
         resolved[2]
@@ -209,7 +237,7 @@ def run_argv(
     if missing_module is not None:
         missing = missing_module_tail(proc.returncode, missing_module, argv[0], stderr or "")
         if missing is not None:
-            return CommandResult(False, proc.returncode, missing, stdout or "")
+            return CommandResult(False, proc.returncode, missing, stdout or "", True)
     output = (stdout or "") + (stderr or "")
     tail = f"$ {shown}\n{output[-TAIL_CHARS:]}"
     if proc.returncode != 0:
@@ -319,11 +347,7 @@ def run_command(command: str, *, root: Path, timeout_s: int) -> CommandResult:
             label=label,
             missing_module=module,
         )
-        if (
-            module is not None
-            and not result.passed
-            and result.tail == f"{module} is not installed in {resolved_argv[0]}"
-        ):
+        if result.missing_module:
             return result
         tails.append(result.tail)
         stdout.append(result.stdout)
@@ -437,6 +461,8 @@ __all__ = [
     "CommandResult",
     "expand_test_command",
     "missing_module_tail",
+    "pytest_argv",
+    "ruff_argv",
     "run_argv",
     "run_command",
     "run_lint_gate",

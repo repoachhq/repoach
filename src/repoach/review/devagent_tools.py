@@ -34,9 +34,9 @@ from pathlib import Path
 
 from ..agent_engine.agent_loop import ToolDef
 from ..core.logging import get_logger
-from ..gates.commands import missing_module_tail, run_test_gate
+from ..gates.commands import missing_module_tail, pytest_argv, run_test_gate
 from ..gates.config import GatesConfig, load_gates_config
-from .coder_loop import is_path_allowed, pytest_argv, run_ruff_gate
+from .coder_loop import is_path_allowed, run_ruff_gate
 from .patch_apply import apply_search_replace_edits
 from .plan import require_repo_relative
 from .secret_env import scrubbed_env

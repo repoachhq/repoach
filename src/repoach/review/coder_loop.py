@@ -42,7 +42,13 @@ from typing import Any
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
-from ..gates.commands import missing_module_tail, run_lint_gate, run_test_gate
+from ..gates.commands import (
+    missing_module_tail,
+    pytest_argv,
+    ruff_argv,
+    run_lint_gate,
+    run_test_gate,
+)
 from ..gates.config import GatesConfig, current_gates_config, load_gates_config
 from .auto_merge import OUTCOME_SKIP_CI_PENDING, evaluate_ci_gate
 from .patch_apply import apply_search_replace_edits
@@ -159,36 +165,6 @@ def is_path_allowed(path: str, config: GatesConfig | None = None) -> bool:
     if norm in extra_paths:
         return False
     return all(not norm.startswith(prefix) for prefix in extra_prefixes)
-
-
-def ruff_argv(*args: str) -> list[str]:
-    """Return the argv that runs the ruff installed beside this interpreter.
-
-    Args:
-        *args: Arguments passed to ruff.
-
-    Returns:
-        ``[sys.executable, "-m", "ruff", *args]``, never a ``PATH`` lookup.
-    """
-    return [sys.executable, "-m", "ruff", *args]
-
-
-def pytest_argv(*args: str, python: str | None = None) -> list[str]:
-    """Return the argv that runs pytest under an interpreter.
-
-    Args:
-        *args: Arguments passed to pytest.
-        python: Explicit interpreter, for the CI matrix; defaults to ``sys.executable``.
-
-    Returns:
-        ``[python or sys.executable, "-m", "pytest", *args]``.
-    """
-    return [python or sys.executable, "-m", "pytest", *args]
-
-
-def _missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> str | None:
-    """Return a named tail when the child exited non-zero without ``module``, else ``None``."""
-    return missing_module_tail(rc, module, interpreter, stderr)
 
 
 def _run(
@@ -645,7 +621,7 @@ def run_pytest(repo_root: Path, *, python: str | None = None) -> tuple[bool, str
     """
     argv = pytest_argv("-q", "tests/unit", python=python)
     rc, stdout, stderr = _run(argv, cwd=repo_root, timeout_s=900, env=scrubbed_env())
-    missing = _missing_module_tail(rc, "pytest", argv[0], stderr)
+    missing = missing_module_tail(rc, "pytest", argv[0], stderr)
     if missing:
         return False, missing
     tail = (stdout + "\n" + stderr)[-4000:]
@@ -786,7 +762,7 @@ def run_ruff_gate(
     _run(fix_cmd, cwd=repo_root, timeout_s=120)
     _run(ruff_argv("format", "src", "tests"), cwd=repo_root, timeout_s=120)
     rc, stdout, stderr = _run(ruff_argv("check", "src", "tests"), cwd=repo_root, timeout_s=120)
-    missing = _missing_module_tail(rc, "ruff", sys.executable, stderr)
+    missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
     if missing:
         return False, missing
     if rc != 0:
@@ -794,7 +770,7 @@ def run_ruff_gate(
     rc, stdout, stderr = _run(
         ruff_argv("format", "--check", "src", "tests"), cwd=repo_root, timeout_s=120
     )
-    missing = _missing_module_tail(rc, "ruff", sys.executable, stderr)
+    missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
     if missing:
         return False, missing
     if rc != 0:

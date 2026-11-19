@@ -9,13 +9,17 @@ from types import SimpleNamespace
 import pytest
 
 from repoach.gates import commands
-from repoach.gates.commands import CommandResult, missing_module_tail, run_project_gate
+from repoach.gates.commands import (
+    CommandResult,
+    missing_module_tail,
+    pytest_argv,
+    ruff_argv,
+    run_project_gate,
+)
 from repoach.gates.config import GatesConfig
 from repoach.gates.selectors import parse_selector, run_selector
 from repoach.review import coder_loop, devagent_tools
 from repoach.review.coder_loop import (
-    pytest_argv,
-    ruff_argv,
     run_pytest,
     run_pytest_matrix,
     run_ruff_gate,
@@ -427,3 +431,44 @@ def test_developer_run_tests_ignores_missing_module_line_on_stdout(
     out = tools["run_tests"]("tests/unit")
     assert out.startswith("FAIL (pytest tests/unit)")
     assert "not installed" not in out
+
+
+def test_run_argv_sets_the_typed_missing_module_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _FakePopen:
+        returncode = 1
+
+        def __init__(self, argv, **kwargs) -> None:
+            self.argv = argv
+
+        def communicate(self, timeout=None) -> tuple[str, str]:
+            return "", f"{self.argv[0]}: No module named ruff\n"
+
+    monkeypatch.setattr(commands.subprocess, "Popen", _FakePopen)
+    named = commands.run_argv(
+        [sys.executable, "-m", "ruff"], cwd=tmp_path, timeout_s=5, missing_module="ruff"
+    )
+    other = commands.run_argv(
+        [sys.executable, "-m", "ruff"], cwd=tmp_path, timeout_s=5, missing_module="pytest"
+    )
+    assert named.missing_module is True
+    assert other.missing_module is False
+
+
+def test_run_command_stops_on_the_typed_flag_not_on_tail_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_repoach_checkout(tmp_path)
+    results = iter([CommandResult(False, 1, "reworded tail", "", True)])
+    calls: list[list[str]] = []
+
+    def fake_run_argv(argv, **kwargs):
+        calls.append(list(argv))
+        return next(results)
+
+    monkeypatch.setattr(commands, "run_argv", fake_run_argv)
+    result = commands.run_command("ruff check && ruff format", root=tmp_path, timeout_s=5)
+    assert result.missing_module is True
+    assert result.tail == "reworded tail"
+    assert len(calls) == 1
