@@ -3142,3 +3142,63 @@ def test_api_project_ids_ignore_year_paths_and_support_api_versions() -> None:
         ["api", "/projects/88442211/merge_requests/42"], forge="gitlab"
     ) == ["api", "/projects/2001/merge_requests/42"]
     assert recording.project_id_values(["not-api", "projects/2026/q1.md"]) == []
+
+
+def test_userinfo_rule_covers_empty_passwords_rfc3986_chars_and_scp_hosts() -> None:
+    """R8-D3, WF6 (0.15): one userinfo rule covers empty passwords, RFC 3986 chars and SCP on every host class."""
+    userinfo_variants = (
+        "https://token:@git.zqother.io/zqns/zqotherrepo",
+        "https://bob:sec!@git.zqother.io/zqns/zqotherrepo",
+        "https://bob:p@ss@git.zqother.io/zqns/zqotherrepo",
+        "https://bob:a$b&c'd(e)f*g+h,i;j=k~l%20m@git.zqother.io/zqns/zqotherrepo",
+        "https://first.last:@git.zqother.io/zqns/zqotherrepo",
+        "https://:@git.zqother.io/zqns/zqotherrepo",
+    )
+    for url in userinfo_variants:
+        text = f"Check {url} (see zqotherrepo)"
+        assert recording.locations(text) == [
+            recording.Location("git.zqother.io", ("zqns", "zqotherrepo"))
+        ], url
+        assert (
+            redact_urls_in_text(text)
+            == "Check https://forge.example.com/org/project (see zqotherrepo)"
+        ), url
+        assert unredacted_host(text), url
+        found = needles(
+            _one_call(
+                {
+                    "html_url": "https://github.com/zqgroup/zqmainrepo/pull/1",
+                    "body": text,
+                }
+            ),
+            roles={},
+            remote="",
+        )
+        assert "git.zqother.io" in _kinds(found, "host"), url
+        assert "zqotherrepo" in _kinds(found, "segment"), url
+        redacted = classify_text(redact_urls_in_text(text), found.mapping())
+        assert redacted == "Check https://forge.example.com/org/project (see project)", url
+        assert residual(_placed(redacted, "prose"), found) is None, url
+
+    assert recording.locations("Check (@pytest.fixture) and `@pytest.fixture`") == []
+
+    for scp_raw in (
+        "alice@example.com:org/repo.git",
+        "alice@forge.example.com:org/project.git",
+        "alice@ghcr.io:org/repo.git",
+        "alice@git.zqcorp.io:zqns/zqrepo.git",
+    ):
+        assert unredacted_host(scp_raw), scp_raw
+        redacted = redact_urls_in_text(scp_raw)
+        assert redacted == "git@forge.example.com:org/project.git", scp_raw
+        assert not unredacted_host(redacted), scp_raw
+
+    for scp_kept in ("git@example.com:org/r.git", "git@code.example.org:g/r.git"):
+        assert redact_urls_in_text(scp_kept) == scp_kept, scp_kept
+        assert not unredacted_host(scp_kept), scp_kept
+
+    assert unredacted_host("https://git@forge.example.com/org/project")
+    assert unredacted_host("http://git@forge.example.com/org/project")
+    assert unredacted_host("ssh://alice@forge.example.com/org/project.git")
+    assert not unredacted_host("ssh://git@forge.example.com/org/project.git")
+    assert not unredacted_host("git@forge.example.com:org/project.git")

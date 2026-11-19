@@ -420,14 +420,21 @@ _GITHUB_ROUTES: frozenset[str] = frozenset(
 URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git", "ftp", "ftps"})
 """Schemes of a URL redacted by class: web, API, git/ssh remotes and ftp(s) links (0.9, 0.13)."""
 
+_RFC3986_USERINFO_CHARS = r"A-Za-z0-9._~%!$&'()*+,;=:-"
+"""RFC 3986 Section 3.2.1 userinfo characters (unreserved, pct-encoded, sub-delims and ``:``; 0.15 R8-D3)."""
+
+_URL_USERINFO_PREFIX = rf"(?:[{_RFC3986_USERINFO_CHARS}@]+@)?"
+"""Optional URL userinfo prefix covering empty passwords and every RFC 3986 userinfo character (0.15 R8-D3)."""
+
 _URL_BODY_CHAR = r"[^\s\"'<>()\[\]{}\\,`*|]"
 """One non-delimiter character of a URL body in free text (0.15 Pref 2)."""
 
 _URL_IN_TEXT_RE = re.compile(
-    rf"(?:https?|ssh|git|ftps?)://(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))+",
+    rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
+    rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))+",
     re.I,
 )
-"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case, with GFM balanced parentheses (I2, 0.10; 0.13; 0.15 Pref 2)."""
+"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case, with RFC 3986 userinfo and GFM balanced parentheses (I2, 0.10; 0.13; 0.15 R8-D3, Pref 2)."""
 
 _URL_TRIM_TAIL = ".,:;!?)]}>'\"`*|~_"
 """Trailing prose punctuation and boundary Markdown delimiters trimmed from text URLs without being eaten (0.13, 0.14 R7-D2)."""
@@ -668,6 +675,28 @@ def _kept_host(host: str) -> bool:
     return _is_allowed_host(host) and host.casefold() != PLACEHOLDER_HOST
 
 
+def _allowed_userinfo(scheme: str, netloc: str, *, allow_example_git: bool = False) -> bool:
+    """Whether ``netloc`` carries no forbidden userinfo (0.15 R8-D3).
+
+    Userinfo is never allowed on non-``ssh``/``git`` schemes. On ``ssh`` and
+    ``git`` remotes only ``git@forge.example.com`` (plus ``git@<example>``
+    for SCP on RFC 2606 example hosts) is allowed; every other userinfo —
+    including empty or symbol passwords and SCP users on RFC 2606 hosts — is
+    forbidden.
+    """
+    if "@" not in netloc:
+        return True
+    if scheme.casefold() not in ("ssh", "git"):
+        return False
+    userinfo, _, hostport = netloc.rpartition("@")
+    if userinfo.casefold() != "git":
+        return False
+    host = hostport.partition(":")[0].rstrip(".").casefold()
+    if allow_example_git and _example_host(host):
+        return True
+    return netloc.casefold() == f"git@{PLACEHOLDER_HOST}"
+
+
 def _example_host(host: str) -> bool:
     """Whether ``host`` is an RFC 2606 or loopback host other than :data:`PLACEHOLDER_HOST`."""
     return bool(_EXAMPLE_HOST_RE.search(host)) and host.casefold() != PLACEHOLDER_HOST
@@ -737,10 +766,14 @@ def redact_urls_in_text(text: str) -> str:
         return (redact_url(url) or url) + tail
 
     def _scp(match: re.Match[str]) -> str:
-        if _example_host(match.group("host").casefold()):
+        host = match.group("host").casefold()
+        user = match.group("user")
+        if _example_host(host) and _allowed_userinfo(
+            "ssh", f"{user}@{host}", allow_example_git=True
+        ):
             return match.group(0)
         path, tail = _split_url_tail(match.group("path"))
-        url = redact_url(f"ssh://{match.group('user')}@{match.group('host')}/{path}")
+        url = redact_url(f"ssh://{user}@{match.group('host')}/{path}")
         return url.removeprefix("ssh://").replace("/", ":", 1) + tail
 
     def _noreply(match: re.Match[str]) -> str:
@@ -783,12 +816,15 @@ def unredacted_host(text: str) -> bool:
             continue
         if not _is_allowed_host(host):
             return True
-        if "@" in parts.netloc and (
-            parts.scheme not in ("ssh", "git")
-            or parts.netloc.casefold() != f"git@{PLACEHOLDER_HOST}"
-        ):
+        if not _allowed_userinfo(parts.scheme, parts.netloc):
             return True
-    return any(not _EXAMPLE_HOST_RE.search(m.group("host")) for m in _SCP_IN_TEXT_RE.finditer(text))
+    return any(
+        not _EXAMPLE_HOST_RE.search(m.group("host"))
+        or not _allowed_userinfo(
+            "ssh", f"{m.group('user')}@{m.group('host')}", allow_example_git=True
+        )
+        for m in _SCP_IN_TEXT_RE.finditer(text)
+    )
 
 
 def redact_urls_in_value(value: object) -> object:
@@ -1719,8 +1755,20 @@ _AFTER_HOST_RE = re.compile(
 )
 """What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>`` with GFM balanced parentheses (0.13, 0.15 Pref 2)."""
 
+_URL_USERINFO_BEFORE_RE = re.compile(rf"://[{_RFC3986_USERINFO_CHARS}@]+@$", re.I)
+"""Text ending in ``://<userinfo>@`` with any RFC 3986 userinfo character or empty password (0.15 R8-D3)."""
+
+_USERINFO_AHEAD_RE = re.compile(rf"[{_RFC3986_USERINFO_CHARS}@]*@", re.I)
+"""Remaining userinfo ending in ``@`` immediately after a dotted username inside ``scheme://user.name:pw@host`` (0.15 R8-D3)."""
+
 _USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
+
+
+def _has_user_before(before: str) -> bool:
+    """Whether ``before`` ends with URL or SCP/mailbox userinfo ``@`` (0.15 R8-D3)."""
+    return bool(_URL_USERINFO_BEFORE_RE.search(before) or _USER_BEFORE_RE.search(before))
+
 
 _IPV4_LED_HOST_RE = re.compile(
     r"(?<![0-9A-Za-z_.-])([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?![0-9A-Za-z.-])",
@@ -1742,10 +1790,12 @@ class Location:
     Attributes:
         host: The host, lowercased.
         segments: The path's segments (empty when the host stands alone).
+        authenticated: Whether the host was led by URL or SCP userinfo (``user[:pass]@``).
     """
 
     host: str
     segments: tuple[str, ...] = ()
+    authenticated: bool = field(default=False, compare=False)
 
 
 def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[Location]:
@@ -1780,7 +1830,10 @@ def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[L
         before = text[: m.start()]
         if before.endswith("/") and not before.endswith("//"):
             continue
-        led = before.endswith("//") or bool(_USER_BEFORE_RE.search(before))
+        if before.endswith("://") and _USERINFO_AHEAD_RE.match(text, m.end()):
+            continue
+        user_led = _has_user_before(before)
+        led = before.endswith("//") or user_led
         host = m.group(1).casefold()
         if is_ipv4 and (not led or not _is_ipv4_host(host)):
             continue
@@ -1796,7 +1849,7 @@ def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[L
                 len(non_empty) < 2 or all(s.isdigit() for s in non_empty)
             ):
                 continue
-        found.append(Location(host, segments))
+        found.append(Location(host, segments, authenticated=user_led))
     return found
 
 
@@ -2023,7 +2076,11 @@ def needles(
             found["host"].append(place.host)
             private = not is_public_forge_host(place.host)
             matches_instance = place.host == instance if instance is not None else not remote_path
-            if private and (matches_instance or _is_ipv4_host(place.host)) and place.segments:
+            if (
+                private
+                and (matches_instance or _is_ipv4_host(place.host) or place.authenticated)
+                and place.segments
+            ):
                 _segments(place.segments)
     for host in found["host"]:
         replacements.setdefault(host, PLACEHOLDER_HOST)
