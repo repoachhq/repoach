@@ -439,19 +439,52 @@ _URL_IN_TEXT_RE = re.compile(
 _URL_TRIM_TAIL = ".,:;!?)]}>'\"`*|~_"
 """Trailing prose punctuation and boundary Markdown delimiters trimmed from text URLs without being eaten (0.13, 0.14 R7-D2)."""
 
+_URL_TRIM_PUNCT = _URL_TRIM_TAIL.replace("_", "")
+"""Trailing prose punctuation and non-underscore Markdown delimiters trimmed before fragment/query handling (0.15 R8-D4)."""
 
-def _split_url_tail(raw_url: str) -> tuple[str, str]:
-    """Split trailing prose punctuation and boundary Markdown delimiters off ``raw_url`` without eating them (0.14 R7-D2, 0.15 Pref 2)."""
-    end = len(raw_url)
-    while end > 0 and raw_url[end - 1] in _URL_TRIM_TAIL:
-        if raw_url[end - 1] == ")" and raw_url[:end].count("(") >= raw_url[:end].count(")"):
+
+def _strip_balanced_tail(raw: str, chars: str) -> tuple[str, str]:
+    """Trim trailing ``chars`` off ``raw`` without cutting a balanced closing parenthesis (0.15 Pref 2)."""
+    end = len(raw)
+    while end > 0 and raw[end - 1] in chars:
+        if raw[end - 1] == ")" and raw[:end].count("(") >= raw[:end].count(")"):
             break
         end -= 1
-    return raw_url[:end], raw_url[end:]
+    return raw[:end], raw[end:]
+
+
+def _split_url_tail(raw_url: str, *, open_under: int = 0) -> tuple[str, str]:
+    """Split trailing prose punctuation and boundary Markdown delimiters off ``raw_url`` without eating them (0.14 R7-D2, 0.15 R8-D4).
+
+    Prose punctuation and non-underscore Markdown delimiters are trimmed first
+    (respecting GFM balanced parentheses). Trailing ``_`` inside a non-anchor
+    fragment or query (such as ``#__init__``) stays inside the URL unless
+    balanced by ``open_under`` leading underscores before the URL, so dropping
+    the fragment or query never leaves stray ``__`` behind.
+    """
+    core, punct_tail = _strip_balanced_tail(raw_url, _URL_TRIM_PUNCT)
+    has_query_or_frag = False
+    keep_frag_under = False
+    if "://" in core:
+        try:
+            parts = urlsplit(core)
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+            parts = None
+        if parts is not None and (parts.fragment or parts.query):
+            has_query_or_frag = True
+            if parts.fragment and FRAGMENT_ANCHOR_RE.match(parts.fragment.rstrip("_")):
+                keep_frag_under = True
+    if not has_query_or_frag or keep_frag_under:
+        return _strip_balanced_tail(raw_url, _URL_TRIM_TAIL)
+    if open_under > 0 and core.endswith("_"):
+        stripped = min(open_under, len(core) - len(core.rstrip("_")))
+        return core[:-stripped], core[-stripped:] + punct_tail
+    return core, punct_tail
 
 
 _SCP_IN_TEXT_RE = re.compile(
-    r"(?<![A-Za-z0-9_.+/-])(?P<user>[A-Za-z0-9_.-]+)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\.?"
+    r"(?<![A-Za-z0-9.+/-])(?P<user>[A-Za-z0-9][A-Za-z0-9_.+-]*)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\.?"
     r":(?!//)(?P<path>(?:[A-Za-z0-9_.~%-]+/)+[A-Za-z0-9_.~%-]*)",
     re.I,
 )
@@ -750,7 +783,11 @@ def redact_urls_in_text(text: str) -> str:
     """
 
     def _one(match: re.Match[str]) -> str:
-        url, tail = _split_url_tail(match.group(0))
+        start = match.start()
+        open_under = 0
+        while start - open_under > 0 and text[start - open_under - 1] == "_":
+            open_under += 1
+        url, tail = _split_url_tail(match.group(0), open_under=open_under)
         try:
             parts = urlsplit(url)
         except ValueError as exc:
@@ -1765,6 +1802,19 @@ _USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
 
 
+_COMMENT_SLASH_BEFORE_RE = re.compile(r"(?:^|\n)[+-]?[ \t]*/{2,}$|;[ \t]*/{2,}$", re.I)
+"""Line or inline single-line code comment slashes (``//config.dev/env/prod``) that are not protocol-relative URLs (0.15 Pref 1)."""
+
+
+def _is_slash_led(before: str) -> bool:
+    """Whether ``before`` ends in a URL ``://`` or non-comment protocol-relative ``//`` lead (0.15 Pref 1)."""
+    if not before.endswith("//"):
+        return False
+    if before.endswith("://"):
+        return True
+    return not bool(_COMMENT_SLASH_BEFORE_RE.search(before))
+
+
 def _has_user_before(before: str) -> bool:
     """Whether ``before`` ends with URL or SCP/mailbox userinfo ``@`` (0.15 R8-D3)."""
     return bool(_URL_USERINFO_BEFORE_RE.search(before) or _USER_BEFORE_RE.search(before))
@@ -1833,7 +1883,7 @@ def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[L
         if before.endswith("://") and _USERINFO_AHEAD_RE.match(text, m.end()):
             continue
         user_led = _has_user_before(before)
-        led = before.endswith("//") or user_led
+        led = _is_slash_led(before) or user_led
         host = m.group(1).casefold()
         if is_ipv4 and (not led or not _is_ipv4_host(host)):
             continue

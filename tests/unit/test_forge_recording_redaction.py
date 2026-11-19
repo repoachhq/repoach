@@ -3202,3 +3202,71 @@ def test_userinfo_rule_covers_empty_passwords_rfc3986_chars_and_scp_hosts() -> N
     assert unredacted_host("ssh://alice@forge.example.com/org/project.git")
     assert not unredacted_host("ssh://git@forge.example.com/org/project.git")
     assert not unredacted_host("git@forge.example.com:org/project.git")
+
+
+def test_url_termination_preserves_dunder_fragments_scp_delimiters_and_line_comments() -> None:
+    """R8-D4, Pref 1 (0.15): dunder fragments, SCP delimiters and ``//`` line comments survive cleanly."""
+    url_cases = (
+        (
+            "See https://github.com/python/cpython/blob/main/Lib/pathlib.py#__init__ for details.",
+            "See https://forge.example.com/org/project/blob/main/Lib/pathlib.py for details.",
+        ),
+        (
+            "See https://github.com/zqgroup/zqrepo/blob/main/a.py#__init__!",
+            "See https://forge.example.com/org/project/blob/main/a.py!",
+        ),
+        (
+            "_https://github.com/zqgroup/zqrepo/blob/main/a.py#__init___",
+            "_https://forge.example.com/org/project/blob/main/a.py_",
+        ),
+        (
+            "https://github.com/zqgroup/zqrepo/pull/1?q=__main__",
+            "https://forge.example.com/org/project/pull/1",
+        ),
+        (
+            "_https://github.com/zqgroup/zqrepo/pull/1#issuecomment-42_",
+            "_https://forge.example.com/org/project/pull/1#issuecomment-42_",
+        ),
+        (
+            "https://docs.github.com/en/rest#__init__",
+            "https://docs.github.com/en/rest#__init__",
+        ),
+        (
+            "_git@git.zqcorp.io:zqgroup/zqrepo.git_",
+            "_git@forge.example.com:org/project.git_",
+        ),
+        (
+            "__git@git.zqcorp.io:zqgroup/zqrepo.git__",
+            "__git@forge.example.com:org/project.git__",
+        ),
+        (
+            "git_bot@git.zqcorp.io:zqgroup/zqrepo.git",
+            "git@forge.example.com:org/project.git",
+        ),
+    )
+    for raw_text, expected in url_cases:
+        assert redact_urls_in_text(raw_text) == expected, raw_text
+
+    comment_samples = (
+        "//config.dev/env/prod",
+        "```go\n//config.dev/env/prod\nvar x = 1\n```",
+        "    //config.dev/env/prod",
+        "+//config.dev/env/prod",
+        "var x = 1; //config.dev/env/prod",
+        "///config.dev/env/prod",
+    )
+    for sample in comment_samples:
+        assert recording.locations(sample) == [], sample
+        found = needles(_one_call({"body": sample}), roles={})
+        assert "config.dev" not in _kinds(found, "host"), sample
+        assert classify_text(redact_urls_in_text(sample), found.mapping()) == sample, sample
+
+    assert recording.locations('<script src="//cdn.corp-x.io/app.js">') == [
+        recording.Location("cdn.corp-x.io", ("app.js",))
+    ]
+    assert recording.locations("https://config.dev/env/prod") == [
+        recording.Location("config.dev", ("env", "prod"))
+    ]
+    assert recording.locations("//github.com/org/repo", known_hosts=recording.FORGE_HOSTS) == [
+        recording.Location("github.com", ("org", "repo"))
+    ]
