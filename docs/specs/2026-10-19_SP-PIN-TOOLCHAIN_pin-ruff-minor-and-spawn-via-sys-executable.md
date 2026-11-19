@@ -1,17 +1,17 @@
 ---
 id: SP-PIN-TOOLCHAIN
 title: Pin ruff to one minor and spawn pytest and ruff through the running interpreter
-version: 0.3
+version: 0.4
 status: approved
 author: agent
 created: 2026-10-19
-updated: 2026-11-18
+updated: 2026-11-19
 
 owns:
   code: [tests/unit/test_toolchain_pin.py, tests/unit/test_toolchain_spawn.py]
   resources: []
 
-depends_on: [SP-DEVAGENT-TOOLS, SP-DEV-RUFF-UNSAFE-FIXES]
+depends_on: [SP-DEVAGENT-TOOLS, SP-DEV-RUFF-UNSAFE-FIXES, SP-CI-STATUS-CLIENT-CLASSIFY, SP-UNIVERSAL-GATES]
 provides_to: []
 
 constraints:
@@ -23,6 +23,8 @@ constraints:
 Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 Amendment (0.3, 2026-11-18): approved by the owner 2026-11-18.
+
+Amendment (0.4, 2026-11-19): declare `SP-CI-STATUS-CLIENT-CLASSIFY` and `SP-UNIVERSAL-GATES` in `depends_on` for `test_toolchain_spawn.py` imports and configured repoach gate resolution.
 
 ## Intent
 
@@ -109,6 +111,8 @@ tool runs `<venv python> -m pytest -q -- <target>`.
 ## Architecture Impact
 - Adds dependency: SP-PIN-TOOLCHAIN -> SP-DEVAGENT-TOOLS (`devagent_tools.run_tests` and `run_ruff` build their argv from the helpers)
 - Adds dependency: SP-PIN-TOOLCHAIN -> SP-DEV-RUFF-UNSAFE-FIXES (`coder_loop.run_ruff_gate` and `run_pytest_gate` build their argv from the helpers)
+- Adds dependency: SP-PIN-TOOLCHAIN -> SP-CI-STATUS-CLIENT-CLASSIFY (`test_toolchain_spawn.py` imports `repoach.review.coder_loop`, which that spec owns)
+- Adds dependency: SP-PIN-TOOLCHAIN -> SP-UNIVERSAL-GATES (`test_toolchain_spawn.py` imports `repoach.gates.*` to verify configured repoach gates resolve bare `ruff`/`pytest`/`python` through `sys.executable`)
 - New shared state: none; no cycle.
 
 ## Diagram
