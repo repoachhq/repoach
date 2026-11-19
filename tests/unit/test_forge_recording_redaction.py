@@ -131,6 +131,10 @@ def test_url_values_keep_their_shape_with_placeholder_host_and_namespace() -> No
         == "https://forge.example.com/org/project/-/merge_requests/7"
     )
     assert redact_url("https://b.example/-/jobs/5") == "https://forge.example.com/-/jobs/5"
+    assert redact_url("https://b.example/foo/-/jobs/5") == "https://forge.example.com/foo/-/jobs/5"
+    assert recording.path_identity(["foo", "-", "jobs", "5"]) == recording.PathIdentity(
+        ["foo", "-", "jobs", "5"]
+    )
     assert redact_url("https://b.example/g/s/r") == "https://forge.example.com/org/project"
     assert (
         redact_url("https://a.example/o/r/actions/runs/42/job/100")
