@@ -34,9 +34,9 @@ from pathlib import Path
 
 from ..agent_engine.agent_loop import ToolDef
 from ..core.logging import get_logger
-from ..gates.commands import run_test_gate
+from ..gates.commands import missing_module_tail, run_test_gate
 from ..gates.config import GatesConfig, load_gates_config
-from .coder_loop import is_path_allowed, run_ruff_gate
+from .coder_loop import is_path_allowed, pytest_argv, run_ruff_gate
 from .patch_apply import apply_search_replace_edits
 from .plan import require_repo_relative
 from .secret_env import scrubbed_env
@@ -211,7 +211,7 @@ def make_developer_tools(
         resolved = _resolve_in_repo(root, target)
         if isinstance(resolved, str):
             return resolved
-        argv = ["python", "-m", "pytest", "-q", "--", target]
+        argv = pytest_argv("-q", "--", target)
         try:
             proc = subprocess.run(
                 argv,
@@ -226,6 +226,10 @@ def make_developer_tools(
             return f"error: pytest binary not found: {exc}"
         except subprocess.TimeoutExpired:
             return f"error: tests timed out after {_TEST_TIMEOUT_S}s on {target!r}"
+        missing = missing_module_tail(proc.returncode, "pytest", argv[0], proc.stderr)
+        if missing:
+            _log.info("devagent_tools.run_tests", target=target, verdict="FAIL")
+            return f"FAIL (pytest {target})\n{missing}"
         tail = (proc.stdout + "\n" + proc.stderr)[-_TEST_TAIL_CAP_CHARS:]
         verdict = "PASS" if proc.returncode == 0 else "FAIL"
         _log.info("devagent_tools.run_tests", target=target, verdict=verdict)
