@@ -21,7 +21,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -178,15 +178,39 @@ def missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> 
     return None
 
 
+_BARE_TOOL_ARGV: dict[str, Callable[..., list[str]]] = {
+    "ruff": ruff_argv,
+    "pytest": pytest_argv,
+}
+"""Bare tool names a repoach checkout resolves to the interpreter's own copy."""
+
+
+def _rewrite_python_step(head: str, rest: list[str]) -> list[str]:
+    """Return a python step with a resolved interpreter and an isolated ``-m``.
+
+    Args:
+        head: The interpreter token (``python``, ``python3``, ``python3.13``).
+        rest: The tokens after it.
+
+    Returns:
+        The step on ``sys.executable`` for a bare ``python``; every
+        ``-m <module>`` step gains ``-P`` so the working directory stays
+        off ``sys.path``.
+    """
+    interpreter = sys.executable if head == "python" else head
+    if rest[:1] == ["-m"] and len(rest) > 1:
+        return [interpreter, "-P", *rest]
+    return [interpreter, *rest]
+
+
 def _resolve_repoach_argv(argv: list[str], *, root: Path) -> list[str]:
-    """Resolve bare Python toolchain commands to ``sys.executable`` on repoach itself.
+    """Resolve a configured step to the interpreter's own toolchain on repoach itself.
 
     Foreign repositories keep their declared ``[commands]`` untouched
     (SP-PIN-TOOLCHAIN: a project pinning its own ruff or pytest via
-    ``[commands]`` is unaffected).  On a repoach checkout, bare ``ruff``,
-    ``pytest`` and ``python -m ruff|pytest`` steps run through
-    ``sys.executable`` so the gates do not depend on ``PATH``, and a bare
-    ``python`` token becomes ``sys.executable``.
+    ``[commands]`` is unaffected).  On a repoach checkout, a bare tool
+    from :data:`_BARE_TOOL_ARGV` and a ``python`` step are rewritten so
+    the gates depend on neither ``PATH`` nor the working directory.
 
     Args:
         argv: One parsed command step.
@@ -198,18 +222,12 @@ def _resolve_repoach_argv(argv: list[str], *, root: Path) -> list[str]:
     if not argv or not is_repoach_checkout(root):
         return argv
     head = argv[0]
-    if head == "ruff":
-        return ruff_argv(*argv[1:])
-    if head == "pytest":
-        return pytest_argv(*argv[1:])
-    if not _PYTHON_NAME_RE.fullmatch(Path(head).name):
-        return argv
-    interpreter = sys.executable if head == "python" else head
-    rest = argv[1:]
-    module = toolchain_module([interpreter, *rest])
-    if rest[:1] == ["-m"] and module is not None:
-        return [interpreter, "-P", "-m", module, *rest[2:]]
-    return [interpreter, *rest]
+    bare = _BARE_TOOL_ARGV.get(head)
+    if bare is not None:
+        return bare(*argv[1:])
+    if _PYTHON_NAME_RE.fullmatch(Path(head).name):
+        return _rewrite_python_step(head, argv[1:])
+    return argv
 
 
 def run_argv(

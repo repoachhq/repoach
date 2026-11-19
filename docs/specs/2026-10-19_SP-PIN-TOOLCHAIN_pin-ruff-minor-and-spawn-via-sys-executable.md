@@ -1,7 +1,7 @@
 ---
 id: SP-PIN-TOOLCHAIN
 title: Pin ruff to one minor and spawn pytest and ruff through the running interpreter
-version: 0.6
+version: 0.7
 status: approved
 author: agent
 created: 2026-10-19
@@ -82,6 +82,8 @@ dev = [
 ```python
 def ruff_argv(*args: str) -> list[str]: ...       # [sys.executable, "-P", "-m", "ruff", *args]
 def pytest_argv(*args: str, python: str | None = None) -> list[str]: ...
+def toolchain_module(argv: Sequence[str]) -> str | None: ...   # "ruff" | "pytest" | None, read from the interpreter flags
+# CommandResult.missing_module: bool -- True when the step failed only because its -m module is not installed
 ```
 
 Inputs:
@@ -106,6 +108,7 @@ tool runs `<venv python> -P -m pytest -q -- <target>`.
 - `run_pytest_gate(root, python="python3.13")` → that interpreter, as today.
 - the operator upgrades ruff past the bound by hand → `test_toolchain_pin.py` goes red with `installed ruff 0.17.1 outside declared range >=0.15,<0.16`.
 - a project reviewed by repoach that pins its own ruff (through `SP-UNIVERSAL-GATES` `[commands]`) → unaffected; this spec covers repoach's own gates only.
+- repoach reviewing its own checkout with configured `[commands]` steps → a bare `ruff` or `pytest` step becomes `ruff_argv` / `pytest_argv`; a `python`, `python3` or `python3.N` step runs on `sys.executable` (a bare `python`) or its own interpreter, and every `-m <module>` step gains `-P`. `run_command` stops a `&&` chain on `CommandResult.missing_module`, never on the text of the tail.
 
 ### Failure scenarios
 - `sys.executable` has no pytest (a tool install without the dev extra) → the gate's tail says `pytest is not installed in <sys.executable>` and returns `False`.

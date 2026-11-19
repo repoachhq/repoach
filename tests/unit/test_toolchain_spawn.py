@@ -498,7 +498,7 @@ def test_run_command_stops_on_the_typed_flag_not_on_tail_text(
             _PYTEST_MODULE,
         ),
         (["python", "-m", "ruff", "check"], [sys.executable, "-P", "-m", "ruff", "check"], "ruff"),
-        (["python", "-m", "mypy", "src"], [sys.executable, "-m", "mypy", "src"], None),
+        (["python", "-m", "mypy", "src"], [sys.executable, "-P", "-m", "mypy", "src"], None),
         (["python", "scripts/lint.py"], [sys.executable, "scripts/lint.py"], None),
         (["python"], [sys.executable], None),
         (["make", "lint"], ["make", "lint"], None),

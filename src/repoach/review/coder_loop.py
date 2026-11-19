@@ -717,6 +717,20 @@ def _run_ruff(argv: list[str], repo_root: Path) -> tuple[int, str, str]:
     return _run(argv, cwd=repo_root, timeout_s=120, env=scrubbed_env())
 
 
+def _ruff_failure(label: str, argv: list[str], repo_root: Path) -> str | None:
+    """Run one verifying ruff step; return its failure text, ``None`` when clean.
+
+    The uninstalled-tool translation lives here, once, for every step.
+    """
+    rc, stdout, stderr = _run_ruff(argv, repo_root)
+    missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
+    if missing:
+        return missing
+    if rc != 0:
+        return f"ruff {label} failed:\n{(stdout + stderr)[-2000:]}"
+    return None
+
+
 def run_ruff_gate(
     repo_root: Path, *, unsafe_fixes: bool = False, config: GatesConfig | None = None
 ) -> tuple[bool, str]:
@@ -766,18 +780,10 @@ def run_ruff_gate(
         fix_cmd.append("--unsafe-fixes")
     _run_ruff(fix_cmd, repo_root)
     _run_ruff(ruff_argv("format", "src", "tests"), repo_root)
-    rc, stdout, stderr = _run_ruff(ruff_argv("check", "src", "tests"), repo_root)
-    missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
-    if missing:
-        return False, missing
-    if rc != 0:
-        return False, f"ruff check failed:\n{(stdout + stderr)[-2000:]}"
-    rc, stdout, stderr = _run_ruff(ruff_argv("format", "--check", "src", "tests"), repo_root)
-    missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
-    if missing:
-        return False, missing
-    if rc != 0:
-        return False, f"ruff format --check failed:\n{(stdout + stderr)[-2000:]}"
+    for label, args in (("check", ("check",)), ("format --check", ("format", "--check"))):
+        failure = _ruff_failure(label, ruff_argv(*args, "src", "tests"), repo_root)
+        if failure is not None:
+            return False, failure
     return True, "ruff clean"
 
 
