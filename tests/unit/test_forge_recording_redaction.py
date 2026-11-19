@@ -3821,3 +3821,43 @@ def test_glab_api_shlex_parsing_quoted_flags_argv_and_unbalanced_fallback() -> N
 
     assert recording.project_id_values('glab api -f "path=projects/2026/notes" issues') == []
     assert recording.project_id_values(["glab", "api", "-f", "projects/2026/notes", "issues"]) == []
+
+
+def test_web_projects_numeric_path_redacts_without_needle_error() -> None:
+    """Pref 2 (0.16): ``/projects/<id>/merge_requests/42`` without ``api/v<N>`` stays redacted without ``NeedleError``."""
+    url = "https://git.zqcorp.io/projects/88442211/merge_requests/42"
+    assert redact_url(url) == "https://forge.example.com/projects/project/merge_requests/42"
+    assert (
+        redact_url("https://git.zqcorp.io/projects/42/merge_requests/7")
+        == "https://forge.example.com/projects/project/merge_requests/7"
+    )
+    text = f"List projects at {url} (id 88442211)"
+    raw = _one_call(
+        {
+            "author": {"username": "zqxjdoe7", "id": 74928163},
+            "body": text,
+            "web_url": "https://git.zqcorp.io/zqns/zqrepo/-/merge_requests/1",
+        }
+    )
+    found = needles(raw, roles={"zqxjdoe7": "author"}, remote="git@git.zqcorp.io:zqns/zqrepo.git")
+    assert "42" not in _kinds(found, "segment")
+    assert "projects" not in _kinds(found, "segment")
+    assert "88442211" in _kinds(found, "segment")
+    redacted = classify_text(redact_urls_in_text(text), found.mapping())
+    assert redacted == (
+        "List projects at https://forge.example.com/projects/project/merge_requests/42 (id project)"
+    )
+    assert "88442211" not in redacted
+    assert "git.zqcorp.io" not in redacted
+    assert not unredacted_host(redacted)
+    assert residual(_placed(redacted, "prose"), found) is None
+
+    short_raw = _one_call(
+        {
+            "body": "See https://git.zqcorp.io/projects/42/merge_requests/7",
+            "web_url": "https://git.zqcorp.io/zqns/zqrepo/-/merge_requests/1",
+        }
+    )
+    short_found = needles(short_raw, roles={}, remote="git@git.zqcorp.io:zqns/zqrepo.git")
+    assert "42" not in _kinds(short_found, "segment")
+    assert "7" not in _kinds(short_found, "segment")

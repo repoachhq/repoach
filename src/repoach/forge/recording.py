@@ -751,6 +751,12 @@ def path_identity(segments: list[str]) -> PathIdentity:
             [core[0], PLACEHOLDER_NAMESPACE, *core[2:], *trailing],
             (core[1],),
         )
+    if core[0].casefold() == "projects" and len(core) >= 2 and core[1].isdigit():
+        return PathIdentity(
+            [core[0], PLACEHOLDER_PROJECT, *core[2:], *trailing],
+            (),
+            core[1] if len(core[1]) >= NEEDLE_MIN_LENGTH else None,
+        )
     if "-" in core:
         dash = core.index("-")
         if dash >= 2:
