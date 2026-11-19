@@ -18,6 +18,7 @@ import base64
 import html
 import json
 import re
+import string
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -190,6 +191,23 @@ PROSE_KEYS: frozenset[str] = frozenset(
 )
 """Recorded keys whose string value is free text a person wrote, where ``@<handle>`` mentions one."""
 
+_ASCII_ALNUM = string.ascii_letters + string.digits
+"""ASCII letters and digits used to compose regex character classes safely (0.16)."""
+
+
+def _char_class(chars: str, *, negated: bool = False, extra_escapes: tuple[str, ...] = ()) -> str:
+    r"""Build a regex character class from an explicit character set via :func:`re.escape` (0.16).
+
+    Every literal character is deduplicated, sorted and escaped so characters
+    such as ``-``, ``]``, ``^`` and ``\`` can never form accidental ranges
+    when interpolated into a pattern.
+    """
+    body = "".join(re.escape(ch) for ch in sorted(set(chars)))
+    body += "".join(extra_escapes)
+    prefix = "^" if negated else ""
+    return f"[{prefix}{body}]"
+
+
 TOKEN_CHARS = "A-Za-z0-9"
 """The characters inside a token, as a regex class body (SP-RECORDER-REDACTS-BY-CLASS I1, 0.11).
 
@@ -203,10 +221,16 @@ toward refusing; the replacer, sharing the boundary, replaces wherever
 the oracle would look (0.11, R1).
 """
 
+_TOKEN_CLASS = _char_class(_ASCII_ALNUM)
+"""Compiled character class for :data:`TOKEN_CHARS` (ASCII letters and digits, 0.16)."""
+
+_CLI_PLACEHOLDER_AFTER_CLASS = _char_class(_ASCII_ALNUM + "-")
+"""Characters that may not follow a :data:`CLI_PLACEHOLDER_RE` literal (0.16)."""
+
 
 def token_pattern(word: str) -> re.Pattern[str]:
     """``word`` as a whole token (:data:`TOKEN_CHARS`), case-insensitive: the only whole-word pattern factory."""
-    return re.compile(rf"(?<![{TOKEN_CHARS}]){re.escape(word)}(?![{TOKEN_CHARS}])", re.I)
+    return re.compile(rf"(?<!{_TOKEN_CLASS}){re.escape(word)}(?!{_TOKEN_CLASS})", re.I)
 
 
 _SPEC_FILE_ID_RE = re.compile(r"_(SP-[A-Z0-9]+(?:-[A-Z0-9]+)*)_")
@@ -242,7 +266,7 @@ _LITERAL_PARTS: tuple[str, ...] = (
 )
 
 CLI_PLACEHOLDER_RE = re.compile(
-    rf"(?<![{TOKEN_CHARS}])(?:" + "|".join(_LITERAL_PARTS) + rf")(?![{TOKEN_CHARS}-])"
+    rf"(?<!{_TOKEN_CLASS})(?:" + "|".join(_LITERAL_PARTS) + rf")(?!{_CLI_PLACEHOLDER_AFTER_CLASS})"
 )
 """The tools' and the project's own literals (0.10, 0.11, 0.12, 0.13, 0.14): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``docs.github.com``, ``docs.gitlab.com``, :data:`SPEC_IDS`.
 
@@ -268,11 +292,27 @@ outside the documentation hosts: the tools write the lowercase forms
 only, and a spec identifier is uppercase.
 """
 
-_MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|/[A-Za-z0-9_.-]|\()"
+_MENTION_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + "_.@/+-")
+"""Characters that may not immediately precede ``@<handle>`` in :data:`MENTION_RE` (0.16)."""
+
+_MENTION_HANDLE_CLASS = _char_class(_ASCII_ALNUM + "_-")
+"""Characters allowed inside a handle matched by :data:`MENTION_RE` (0.16)."""
+
+_MENTION_DOT_AFTER_CLASS = _char_class(_ASCII_ALNUM + "_")
+"""Characters after ``.`` that mark a dotted identifier such as ``@pytest.fixture`` (0.16)."""
+
+_MENTION_SLASH_AFTER_CLASS = _char_class(_ASCII_ALNUM + "_.-")
+"""Characters after ``/`` that mark a scoped package such as ``@types/node`` (0.16)."""
+
+_MENTION_END = (
+    rf"(?!{_MENTION_HANDLE_CLASS}|\.{_MENTION_DOT_AFTER_CLASS}"
+    rf"|/{_MENTION_SLASH_AFTER_CLASS}|\()"
+)
 """What may not follow a handle: a handle character, a dotted name (``@pytest.fixture``), a scoped package (``@types/node``) or a call."""
 
 MENTION_RE = re.compile(
-    rf"(?<![A-Za-z0-9_.@/+-])@([A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?){_MENTION_END}", re.I
+    rf"(?<!{_MENTION_BEFORE_BLOCK_CLASS})@({_TOKEN_CLASS}(?:{_MENTION_HANDLE_CLASS}*{_TOKEN_CLASS})?){_MENTION_END}",
+    re.I,
 )
 """The finder of unknown ``@<handle>`` mentions in free text (SP-RECORDER-REDACTS-BY-CLASS D2, 0.9).
 
@@ -420,14 +460,26 @@ _GITHUB_ROUTES: frozenset[str] = frozenset(
 URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git", "ftp", "ftps"})
 """Schemes of a URL redacted by class: web, API, git/ssh remotes and ftp(s) links (0.9, 0.13)."""
 
-_RFC3986_USERINFO_CHARS = r"A-Za-z0-9._~%!$&'()*+,;=:-"
-"""RFC 3986 Section 3.2.1 userinfo characters (unreserved, pct-encoded, sub-delims and ``:``; 0.15 R8-D3)."""
+_RFC3986_UNRESERVED_CHARS = _ASCII_ALNUM + "-._~"
+"""RFC 3986 Section 2.3 unreserved characters: ``ALPHA / DIGIT / "-" / "." / "_" / "~"`` (0.16 R9-D1)."""
 
-_URL_USERINFO_PREFIX = rf"(?:[{_RFC3986_USERINFO_CHARS}@]+@)?"
-"""Optional URL userinfo prefix covering empty passwords and every RFC 3986 userinfo character (0.15 R8-D3)."""
+_RFC3986_SUB_DELIM_CHARS = "!$&'()*+,;="
+"""RFC 3986 Section 2.2 sub-delims characters (0.16 R9-D1)."""
 
-_URL_BODY_CHAR = r"[^\s\"'<>()\[\]{}\\,`*|]"
-"""One non-delimiter character of a URL body in free text (0.15 Pref 2)."""
+_RFC3986_USERINFO_CHARSET = _RFC3986_UNRESERVED_CHARS + "%" + _RFC3986_SUB_DELIM_CHARS + ":"
+"""Exact RFC 3986 Section 3.2.1 userinfo character set (unreserved, pct-encoded ``%``, sub-delims and ``:``; 0.16 R9-D1)."""
+
+_RFC3986_USERINFO_CLASS = _char_class(_RFC3986_USERINFO_CHARSET)
+"""Compiled character class for :data:`_RFC3986_USERINFO_CHARSET`, built via :func:`_char_class` (0.16 R9-D1)."""
+
+_URL_USERINFO_PREFIX = rf"(?:(?:{_RFC3986_USERINFO_CLASS}*@)+)?"
+"""Optional URL userinfo prefix covering empty passwords, RFC 3986 userinfo characters and embedded ``@`` (0.15 R8-D3, 0.16 R9-D1)."""
+
+_URL_BODY_DELIMITERS = "\"'<>()[]{}\\,`*|"
+"""Delimiters excluded from a non-parenthesised URL body character in free text (0.16)."""
+
+_URL_BODY_CHAR = _char_class(_URL_BODY_DELIMITERS, negated=True, extra_escapes=(r"\s",))
+"""One non-delimiter character of a URL body in free text (0.15 Pref 2, 0.16)."""
 
 _URL_IN_TEXT_RE = re.compile(
     rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
@@ -483,9 +535,22 @@ def _split_url_tail(raw_url: str, *, open_under: int = 0) -> tuple[str, str]:
     return core, punct_tail
 
 
+_SCP_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + ".+/-")
+"""Characters that may not precede an SCP remote username outside a diff line prefix (0.16)."""
+
+_SCP_USER_CLASS = _char_class(_ASCII_ALNUM + "_.+-")
+"""Characters allowed after the first character of an SCP remote username (0.16)."""
+
+_SCP_HOST_LABEL_CLASS = _char_class(_ASCII_ALNUM + "-")
+"""Characters allowed inside a DNS host label (0.16)."""
+
+_SCP_PATH_CLASS = _char_class(_ASCII_ALNUM + "_.~%-")
+"""Characters allowed inside an SCP remote path segment (0.16)."""
+
 _SCP_IN_TEXT_RE = re.compile(
-    r"(?<![A-Za-z0-9.+/-])(?P<user>[A-Za-z0-9][A-Za-z0-9_.+-]*)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\.?"
-    r":(?!//)(?P<path>(?:[A-Za-z0-9_.~%-]+/)+[A-Za-z0-9_.~%-]*)",
+    rf"(?<!{_SCP_BEFORE_BLOCK_CLASS})(?P<user>{_TOKEN_CLASS}{_SCP_USER_CLASS}*)@"
+    rf"(?P<host>{_SCP_HOST_LABEL_CLASS}+(?:\.{_SCP_HOST_LABEL_CLASS}+)+)\.?"
+    rf":(?!//)(?P<path>(?:{_SCP_PATH_CLASS}+/)+{_SCP_PATH_CLASS}*)",
     re.I,
 )
 """An scp-style remote inside free text, ``<user>@<host>:<namespace>/<repo>`` (0.9), any case, optional DNS trailing dot (0.13).
@@ -735,16 +800,19 @@ def _example_host(host: str) -> bool:
     return bool(_EXAMPLE_HOST_RE.search(host)) and host.casefold() != PLACEHOLDER_HOST
 
 
+_NOREPLY_LOCAL_CLASS = _char_class(_ASCII_ALNUM + "._%+[]-")
+"""Characters allowed in the local part of a noreply mailbox (0.16)."""
+
 _NOREPLY_MAILBOX_RE = re.compile(
-    r"(?<![A-Za-z0-9._%+\[\]-])(?P<local>[A-Za-z0-9._%+\[\]-]+)@"
-    r"(?P<host>(?:users\.)?noreply\.(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b",
+    rf"(?<!{_NOREPLY_LOCAL_CLASS})(?P<local>{_NOREPLY_LOCAL_CLASS}+)@"
+    rf"(?P<host>(?:users\.)?noreply\.(?:{_SCP_HOST_LABEL_CLASS}+\.)+[A-Za-z]{{2,}})\b",
     re.I,
 )
 """A forge noreply mailbox (GitHub/GitLab ``@users.noreply.<host>`` or ``@noreply.<host>``, 0.12 D6)."""
 
 _SYSTEM_NOREPLY_RE = re.compile(
-    r"(?<![A-Za-z0-9._%+\[\]-])(?:(?P<local>no-?reply)@"
-    r"(?P<host>(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})|(?P<actions>actions)@github\.com)\b",
+    rf"(?<!{_NOREPLY_LOCAL_CLASS})(?:(?P<local>no-?reply)@"
+    rf"(?P<host>(?:{_SCP_HOST_LABEL_CLASS}+\.)+[A-Za-z]{{2,}})|(?P<actions>actions)@github\.com)\b",
     re.I,
 )
 """A system noreply mailbox (``noreply@github.com``, ``no-reply@<host>``, ``actions@github.com``, 0.13 R6-D5, 0.14)."""
@@ -1774,16 +1842,24 @@ class Needles:
         return dict(self.replacements)
 
 
+_HOST_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + "_.-")
+"""Characters that may not immediately precede a host candidate in :data:`_HOST_TOKEN_RE` (0.16)."""
+
 _HOST_TOKEN_RE = re.compile(
-    r"(?<![A-Za-z0-9_.-])"
-    r"((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9])"
-    r"(?![A-Za-z0-9-])",
+    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})"
+    rf"((?:{_TOKEN_CLASS}(?:{_SCP_HOST_LABEL_CLASS}*{_TOKEN_CLASS})?\.)+[A-Za-z]{_SCP_HOST_LABEL_CLASS}*{_TOKEN_CLASS})"
+    rf"(?!{_SCP_HOST_LABEL_CLASS})",
     re.I,
 )
 """A dotted name ending in a letter-led label: a host candidate, judged by its context (:func:`locations`)."""
 
-_AFTER_HOST_CHAR = r"[^\s\"'<>()\[\]{}\\,?#|`*]"
-_AFTER_HOST_NOSLASH = r"[^/\s\"'<>()\[\]{}\\,?#|`*]"
+_AFTER_HOST_DELIMITERS = "\"'<>()[]{}\\,?#|`*"
+"""Delimiters excluded from a path segment after a host candidate in :data:`_AFTER_HOST_RE` (0.16)."""
+
+_AFTER_HOST_CHAR = _char_class(_AFTER_HOST_DELIMITERS, negated=True, extra_escapes=(r"\s",))
+_AFTER_HOST_NOSLASH = _char_class(
+    _AFTER_HOST_DELIMITERS + "/", negated=True, extra_escapes=(r"\s",)
+)
 _AFTER_HOST_SEG = rf"(?:{_AFTER_HOST_CHAR}|\((?:{_AFTER_HOST_CHAR}|\({_AFTER_HOST_CHAR}*\))*\))*"
 _AFTER_HOST_RE = re.compile(
     rf"\.?(?:(?P<port>:[0-9]{{1,5}})?/(?P<slash>{_AFTER_HOST_SEG})"
@@ -1792,13 +1868,13 @@ _AFTER_HOST_RE = re.compile(
 )
 """What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>`` with GFM balanced parentheses (0.13, 0.15 Pref 2)."""
 
-_URL_USERINFO_BEFORE_RE = re.compile(rf"://[{_RFC3986_USERINFO_CHARS}@]+@$", re.I)
-"""Text ending in ``://<userinfo>@`` with any RFC 3986 userinfo character or empty password (0.15 R8-D3)."""
+_URL_USERINFO_BEFORE_RE = re.compile(rf"://(?:{_RFC3986_USERINFO_CLASS}*@)+$", re.I)
+"""Text ending in ``://<userinfo>@`` with any RFC 3986 userinfo character, empty password or embedded ``@`` (0.15 R8-D3, 0.16 R9-D1)."""
 
-_USERINFO_AHEAD_RE = re.compile(rf"[{_RFC3986_USERINFO_CHARS}@]*@", re.I)
-"""Remaining userinfo ending in ``@`` immediately after a dotted username inside ``scheme://user.name:pw@host`` (0.15 R8-D3)."""
+_USERINFO_AHEAD_RE = re.compile(rf"(?:{_RFC3986_USERINFO_CLASS}*@)+", re.I)
+"""Remaining userinfo ending in ``@`` immediately after a dotted username inside ``scheme://user.name:pw@host`` (0.15 R8-D3, 0.16 R9-D1)."""
 
-_USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
+_USER_BEFORE_RE = re.compile(rf"{_SCP_USER_CLASS}@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
 
 
@@ -1820,8 +1896,11 @@ def _has_user_before(before: str) -> bool:
     return bool(_URL_USERINFO_BEFORE_RE.search(before) or _USER_BEFORE_RE.search(before))
 
 
+_IPV4_AFTER_BLOCK_CLASS = _char_class(_ASCII_ALNUM + ".-")
+"""Characters that may not immediately follow an IPv4 host literal in :data:`_IPV4_LED_HOST_RE` (0.16)."""
+
 _IPV4_LED_HOST_RE = re.compile(
-    r"(?<![0-9A-Za-z_.-])([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?![0-9A-Za-z.-])",
+    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})([0-9]{{1,3}}(?:\.[0-9]{{1,3}}){{3}})(?!{_IPV4_AFTER_BLOCK_CLASS})",
     re.I,
 )
 """An IPv4 host literal, accepted by :func:`locations` only when scheme- or user-led (``//`` or ``<user>@``, 0.13)."""

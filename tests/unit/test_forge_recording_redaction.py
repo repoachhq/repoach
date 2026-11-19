@@ -18,6 +18,7 @@ import inspect
 import json
 import os
 import re
+import string
 import subprocess
 import sys
 from pathlib import Path
@@ -3369,3 +3370,122 @@ def test_offline_transform_redacts_all_six_positions_and_non_json_project_ids() 
     assert redacted[recording.SYNTHETIC_PROJECT_IDS_KEY] == [2001]
     assert residual(redacted, redact_fixtures.fixture_needles(fixture)) is None
     assert redact_fixtures.redact_fixture(redacted, forge="gitlab") == redacted
+
+
+def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
+    """R9-D1 (0.16): every regex character class is built via ``_char_class`` and matches its exact documented ASCII set."""
+    alnum = set(string.ascii_letters + string.digits)
+    all_ascii = [chr(code) for code in range(128)]
+    non_ascii = "\u00e9"
+    ascii_space = {ch for ch in all_ascii if ch.isspace()}
+
+    rfc3986_userinfo = alnum | set("-._~%!$&'()*+,;=:")
+    userinfo_pat = re.compile(rf"^{recording._RFC3986_USERINFO_CLASS}$")
+    matched_userinfo = {ch for ch in all_ascii if userinfo_pat.match(ch)}
+    assert matched_userinfo == rfc3986_userinfo
+    assert not userinfo_pat.match(non_ascii)
+    assert "-" in matched_userinfo
+    for excluded in ("<", ">", "?", "@", "/", "#"):
+        assert excluded not in matched_userinfo, excluded
+
+    documented_positive: tuple[tuple[str, str, set[str]], ...] = (
+        ("_TOKEN_CLASS", recording._TOKEN_CLASS, alnum),
+        ("_CLI_PLACEHOLDER_AFTER_CLASS", recording._CLI_PLACEHOLDER_AFTER_CLASS, alnum | {"-"}),
+        (
+            "_MENTION_BEFORE_BLOCK_CLASS",
+            recording._MENTION_BEFORE_BLOCK_CLASS,
+            alnum | set("_.@/+-"),
+        ),
+        ("_MENTION_HANDLE_CLASS", recording._MENTION_HANDLE_CLASS, alnum | set("_-")),
+        ("_MENTION_DOT_AFTER_CLASS", recording._MENTION_DOT_AFTER_CLASS, alnum | {"_"}),
+        ("_MENTION_SLASH_AFTER_CLASS", recording._MENTION_SLASH_AFTER_CLASS, alnum | set("_.-")),
+        ("_SCP_BEFORE_BLOCK_CLASS", recording._SCP_BEFORE_BLOCK_CLASS, alnum | set(".+/-")),
+        ("_SCP_USER_CLASS", recording._SCP_USER_CLASS, alnum | set("_.+-")),
+        ("_SCP_HOST_LABEL_CLASS", recording._SCP_HOST_LABEL_CLASS, alnum | {"-"}),
+        ("_SCP_PATH_CLASS", recording._SCP_PATH_CLASS, alnum | set("_.~%-")),
+        ("_NOREPLY_LOCAL_CLASS", recording._NOREPLY_LOCAL_CLASS, alnum | set("._%+[]-")),
+        ("_HOST_BEFORE_BLOCK_CLASS", recording._HOST_BEFORE_BLOCK_CLASS, alnum | set("_.-")),
+        ("_IPV4_AFTER_BLOCK_CLASS", recording._IPV4_AFTER_BLOCK_CLASS, alnum | set(".-")),
+    )
+    for name, cls_expr, expected in documented_positive:
+        pat = re.compile(rf"^{cls_expr}$")
+        got = {ch for ch in all_ascii if pat.match(ch)}
+        assert got == expected, name
+        assert not pat.match(non_ascii), name
+
+    documented_negated: tuple[tuple[str, str, set[str]], ...] = (
+        (
+            "_URL_BODY_CHAR",
+            recording._URL_BODY_CHAR,
+            set(all_ascii) - ascii_space - set("\"'<>()[]{}\\,`*|"),
+        ),
+        (
+            "_AFTER_HOST_CHAR",
+            recording._AFTER_HOST_CHAR,
+            set(all_ascii) - ascii_space - set("\"'<>()[]{}\\,?#|`*"),
+        ),
+        (
+            "_AFTER_HOST_NOSLASH",
+            recording._AFTER_HOST_NOSLASH,
+            set(all_ascii) - ascii_space - set("/\"'<>()[]{}\\,?#|`*"),
+        ),
+    )
+    for name, cls_expr, expected in documented_negated:
+        pat = re.compile(rf"^{cls_expr}$")
+        got = {ch for ch in all_ascii if pat.match(ch)}
+        assert got == expected, name
+        assert pat.match(non_ascii), name
+
+    for url in (
+        "https://x-access-token:@git.zqother.io/zqns/zqotherrepo",
+        "https://gitlab-ci-token:@git.zqother.io/zqns/zqotherrepo",
+        "https://oauth2-token:@git.zqother.io/zqns/zqotherrepo",
+        "https://ci-bot:pw!@git.zqother.io/zqns/zqotherrepo",
+        "https://first.last:my-pass@git.zqother.io/zqns/zqotherrepo",
+    ):
+        text = f"Clone {url} (host git.zqother.io, repo zqotherrepo)"
+        assert recording.locations(text) == [
+            recording.Location("git.zqother.io", ("zqns", "zqotherrepo"))
+        ], url
+        assert unredacted_host(text), url
+        found = needles(_one_call({"body": text}), roles={}, remote="")
+        assert "git.zqother.io" in _kinds(found, "host"), url
+        assert "zqotherrepo" in _kinds(found, "segment"), url
+        redacted = classify_text(redact_urls_in_text(text), found.mapping())
+        assert (
+            redacted
+            == "Clone https://forge.example.com/org/project (host forge.example.com, repo project)"
+        ), url
+        assert not unredacted_host(redacted), url
+        assert residual(_placed(redacted, "prose"), found) is None, url
+
+    kept_star = "Fetch https://x-access-token:pw*1@docs.python.org/3/library/re.html now"
+    assert unredacted_host(kept_star)
+    red_star = redact_urls_in_text(kept_star)
+    assert red_star == "Fetch https://forge.example.com/org/project now"
+    assert not unredacted_host(red_star)
+    assert "x-access-token" not in red_star and "pw*1" not in red_star
+
+    query_at = "See https://git.zqother.io?contact=a@example.com (host git.zqother.io)"
+    assert [loc.host for loc in recording.locations(query_at)] == [
+        "git.zqother.io",
+        "example.com",
+    ]
+    found_q = needles(_one_call({"body": query_at}), roles={}, remote="")
+    assert "git.zqother.io" in _kinds(found_q, "host")
+    red_q = classify_text(redact_urls_in_text(query_at), found_q.mapping())
+    assert red_q == "See https://forge.example.com (host forge.example.com)"
+    assert not unredacted_host(red_q)
+    assert residual(_placed(red_q, "prose"), found_q) is None
+
+    angle_adj = "See <https://git.zqother.io><a@example.com> (host git.zqother.io)"
+    assert [loc.host for loc in recording.locations(angle_adj)] == [
+        "git.zqother.io",
+        "example.com",
+    ]
+    found_a = needles(_one_call({"body": angle_adj}), roles={}, remote="")
+    assert "git.zqother.io" in _kinds(found_a, "host")
+    red_a = classify_text(redact_urls_in_text(angle_adj), found_a.mapping())
+    assert red_a == "See <https://forge.example.com><a@example.com> (host forge.example.com)"
+    assert not unredacted_host(red_a)
+    assert residual(_placed(red_a, "prose"), found_a) is None
