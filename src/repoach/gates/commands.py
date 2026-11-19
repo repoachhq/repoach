@@ -19,12 +19,14 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.logging import get_logger
+from ..core.paths import is_repoach_checkout
 from .config import GatesConfig
 
 _log = get_logger(__name__)
@@ -45,12 +47,15 @@ class CommandResult:
         returncode: The exit status; ``None`` when it never ran or timed out.
         tail: Command line plus the last :data:`TAIL_CHARS` of output.
         stdout: The full standard output (empty when it never ran).
+        missing_module: True when the run failed only because the requested
+            toolchain module is not installed in the interpreter.
     """
 
     passed: bool
     returncode: int | None
     tail: str
     stdout: str = ""
+    missing_module: bool = False
 
 
 def _scrubbed_env() -> dict[str, str]:
@@ -89,12 +94,149 @@ def split_command(command: str) -> list[str]:
     return words
 
 
+_PYTHON_NAME_RE = re.compile(r"python(?:\d+(?:\.\d+)*)?")
+"""A bare interpreter name: ``python``, ``python3``, ``python3.13``."""
+
+_PYTHON_TOOLCHAIN_MODULES: frozenset[str] = frozenset({"ruff", "pytest"})
+"""Modules resolved to ``sys.executable -m <module>`` on repoach itself."""
+
+
+def ruff_argv(*args: str) -> list[str]:
+    """Return the argv that runs the ruff installed beside this interpreter.
+
+    ``-P`` keeps the working directory off ``sys.path``, so a ``ruff.py``
+    planted in the repository under judgement can never shadow the tool.
+
+    Args:
+        *args: Arguments passed to ruff.
+
+    Returns:
+        ``[sys.executable, "-P", "-m", "ruff", *args]``, never a ``PATH`` lookup.
+    """
+    return [sys.executable, "-P", "-m", "ruff", *args]
+
+
+def pytest_argv(*args: str, python: str | None = None) -> list[str]:
+    """Return the argv that runs pytest under an interpreter.
+
+    ``-P`` keeps the working directory off ``sys.path`` for the same
+    reason as :func:`ruff_argv`.
+
+    Args:
+        *args: Arguments passed to pytest.
+        python: Explicit interpreter, for the CI matrix; defaults to ``sys.executable``.
+
+    Returns:
+        ``[python or sys.executable, "-P", "-m", "pytest", *args]``.
+    """
+    return [python or sys.executable, "-P", "-m", "pytest", *args]
+
+
+def toolchain_module(argv: Sequence[str]) -> str | None:
+    """Return the toolchain module a python step runs with ``-m``, else ``None``.
+
+    Args:
+        argv: One resolved command step whose head is an interpreter.
+
+    Returns:
+        ``"ruff"`` or ``"pytest"`` when the interpreter flags end in
+        ``-m <module>`` for one of them, else ``None``.
+    """
+    for index, token in enumerate(argv[1:], start=1):
+        if token == "-m":
+            module = argv[index + 1] if index + 1 < len(argv) else None
+            return module if module in _PYTHON_TOOLCHAIN_MODULES else None
+        if not token.startswith("-"):
+            return None
+    return None
+
+
+def missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> str | None:
+    """Return a named tail when ``interpreter -m module`` failed for a missing module.
+
+    Only a non-zero exit code is judged, and only ``stderr`` is scanned
+    line-by-line so green runs and test tracebacks on ``stdout`` never
+    masquerade as an uninstalled tool.
+
+    Args:
+        rc: Exit status of the child process.
+        module: Module name passed to ``-m`` (``"ruff"`` or ``"pytest"``).
+        interpreter: Interpreter path or name shown in the returned message.
+        stderr: Child standard error.
+
+    Returns:
+        ``"<module> is not installed in <interpreter>"`` when ``rc != 0``
+        and a line of ``stderr`` reports ``No module named <module>``,
+        else ``None``.
+    """
+    if rc == 0:
+        return None
+    pattern = re.compile(rf"(?:^|: )No module named (['\"]?){re.escape(module)}\1$")
+    for line in stderr.splitlines():
+        if pattern.search(line.strip()):
+            return f"{module} is not installed in {interpreter}"
+    return None
+
+
+_BARE_TOOL_ARGV: dict[str, Callable[..., list[str]]] = {
+    "ruff": ruff_argv,
+    "pytest": pytest_argv,
+}
+"""Bare tool names a repoach checkout resolves to the interpreter's own copy."""
+
+
+def _rewrite_python_step(head: str, rest: list[str]) -> list[str]:
+    """Return a python step with a resolved interpreter and an isolated ``-m``.
+
+    Args:
+        head: The interpreter token (``python``, ``python3``, ``python3.13``).
+        rest: The tokens after it.
+
+    Returns:
+        The step on ``sys.executable`` for a bare ``python``; every
+        ``-m <module>`` step gains ``-P`` so the working directory stays
+        off ``sys.path``.
+    """
+    interpreter = sys.executable if head == "python" else head
+    if rest[:1] == ["-m"] and len(rest) > 1:
+        return [interpreter, "-P", *rest]
+    return [interpreter, *rest]
+
+
+def _resolve_repoach_argv(argv: list[str], *, root: Path) -> list[str]:
+    """Resolve a configured step to the interpreter's own toolchain on repoach itself.
+
+    Foreign repositories keep their declared ``[commands]`` untouched
+    (SP-PIN-TOOLCHAIN: a project pinning its own ruff or pytest via
+    ``[commands]`` is unaffected).  On a repoach checkout, a bare tool
+    from :data:`_BARE_TOOL_ARGV` and a ``python`` step are rewritten so
+    the gates depend on neither ``PATH`` nor the working directory.
+
+    Args:
+        argv: One parsed command step.
+        root: Project root passed to :func:`run_command`.
+
+    Returns:
+        The step to spawn; ``argv`` itself when nothing applies.
+    """
+    if not argv or not is_repoach_checkout(root):
+        return argv
+    head = argv[0]
+    bare = _BARE_TOOL_ARGV.get(head)
+    if bare is not None:
+        return bare(*argv[1:])
+    if _PYTHON_NAME_RE.fullmatch(Path(head).name):
+        return _rewrite_python_step(head, argv[1:])
+    return argv
+
+
 def run_argv(
     argv: Sequence[str],
     *,
     cwd: Path,
     timeout_s: int,
     label: str | None = None,
+    missing_module: str | None = None,
 ) -> CommandResult:
     """Run ``argv`` in ``cwd`` with the scrubbed environment and a timeout.
 
@@ -104,6 +246,9 @@ def run_argv(
         timeout_s: Seconds before the process is killed.
         label: Command line shown at the head of the tail (defaults to
             the quoted ``argv``).
+        missing_module: When set, translate a non-zero exit whose
+            ``stderr`` reports ``No module named <missing_module>`` into
+            ``"<missing_module> is not installed in <argv[0]>"``.
 
     Returns:
         The :class:`CommandResult`.
@@ -136,6 +281,10 @@ def run_argv(
         return CommandResult(
             False, None, f"$ {shown}\n{partial[-TAIL_CHARS:]}\ntimeout after {timeout_s}s"
         )
+    if missing_module is not None:
+        missing = missing_module_tail(proc.returncode, missing_module, argv[0], stderr or "")
+        if missing is not None:
+            return CommandResult(False, proc.returncode, missing, stdout or "", True)
     output = (stdout or "") + (stderr or "")
     tail = f"$ {shown}\n{output[-TAIL_CHARS:]}"
     if proc.returncode != 0:
@@ -237,7 +386,17 @@ def run_command(command: str, *, root: Path, timeout_s: int) -> CommandResult:
             argv[0] = str((root / argv[0]).resolve())
         remaining = max(1, int(deadline - time.monotonic()))
         label = command if len(steps) == 1 else shlex.join(argv)
-        result = run_argv(argv, cwd=root, timeout_s=remaining, label=label)
+        resolved_argv = _resolve_repoach_argv(argv, root=root)
+        module = toolchain_module(resolved_argv)
+        result = run_argv(
+            resolved_argv,
+            cwd=root,
+            timeout_s=remaining,
+            label=label,
+            missing_module=module,
+        )
+        if result.missing_module:
+            return result
         tails.append(result.tail)
         stdout.append(result.stdout)
         if not result.passed:
@@ -349,6 +508,9 @@ __all__ = [
     "TAIL_CHARS",
     "CommandResult",
     "expand_test_command",
+    "missing_module_tail",
+    "pytest_argv",
+    "ruff_argv",
     "run_argv",
     "run_command",
     "run_lint_gate",
@@ -356,4 +518,5 @@ __all__ = [
     "run_test_gate",
     "split_command",
     "split_steps",
+    "toolchain_module",
 ]

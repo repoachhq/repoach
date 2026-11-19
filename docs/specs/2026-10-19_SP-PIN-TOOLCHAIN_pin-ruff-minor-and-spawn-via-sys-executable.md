@@ -1,17 +1,17 @@
 ---
 id: SP-PIN-TOOLCHAIN
 title: Pin ruff to one minor and spawn pytest and ruff through the running interpreter
-version: 0.3
+version: 0.7
 status: approved
 author: agent
 created: 2026-10-19
-updated: 2026-11-18
+updated: 2026-11-19
 
 owns:
   code: [tests/unit/test_toolchain_pin.py, tests/unit/test_toolchain_spawn.py]
   resources: []
 
-depends_on: [SP-DEVAGENT-TOOLS, SP-DEV-RUFF-UNSAFE-FIXES]
+depends_on: [SP-DEVAGENT-TOOLS, SP-DEV-RUFF-UNSAFE-FIXES, SP-CI-STATUS-CLIENT-CLASSIFY, SP-UNIVERSAL-GATES]
 provides_to: []
 
 constraints:
@@ -23,6 +23,10 @@ constraints:
 Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
 
 Amendment (0.3, 2026-11-18): approved by the owner 2026-11-18.
+
+Amendment (0.4, 2026-11-19): declare `SP-CI-STATUS-CLIENT-CLASSIFY` and `SP-UNIVERSAL-GATES` in `depends_on` for `test_toolchain_spawn.py` imports and configured repoach gate resolution.
+
+Amendment (0.5, 2026-11-19): Open Questions Q1 and Q2 marked resolved with the adopted answers; no behaviour change.
 
 ## Intent
 
@@ -51,9 +55,9 @@ Measured on `develop` `20dbb45` (2026-10-19).
 ## Goals
 
 - G1: `pyproject.toml` declares `ruff>=0.15,<0.16` (one minor, `ruff_minor`); a test reads the declaration and the installed version and fails when the installed ruff is outside the declared range or the range spans more than one minor.
-- G2: every spawn of ruff goes through `[sys.executable, "-m", "ruff", …]` and every spawn of pytest through `[sys.executable, "-m", "pytest", …]`; `run_pytest_gate(python=…)` keeps accepting an explicit interpreter for the CI matrix and defaults to `sys.executable` instead of a `PATH` lookup.
+- G2: every spawn of ruff goes through `[sys.executable, "-P", "-m", "ruff", …]` and every spawn of pytest through `[sys.executable, "-P", "-m", "pytest", …]`; `run_pytest_gate(python=…)` keeps accepting an explicit interpreter for the CI matrix and defaults to `sys.executable` instead of a `PATH` lookup.
 - G3: with `PATH` empty, the ruff gate, the pytest gate and the Developer's `run_tests` and `run_ruff` tools still run.
-- G4: the `scripts/ci_local.sh` and `.githooks/pre-commit` ruff calls use `python -m ruff` so the hook and the gate agree on the binary.
+- G4: the `scripts/ci_local.sh` and `.githooks/pre-commit` ruff calls use `python -P -m ruff` so the hook and the gate agree on the binary; `-P` keeps the working directory off `sys.path`, so a `ruff.py` planted in the repository under judgement never shadows the pinned tool.
 
 ## Non-Goals
 
@@ -76,8 +80,10 @@ dev = [
 ```
 
 ```python
-def ruff_argv(*args: str) -> list[str]: ...       # [sys.executable, "-m", "ruff", *args]
+def ruff_argv(*args: str) -> list[str]: ...       # [sys.executable, "-P", "-m", "ruff", *args]
 def pytest_argv(*args: str, python: str | None = None) -> list[str]: ...
+def toolchain_module(argv: Sequence[str]) -> str | None: ...   # "ruff" | "pytest" | None, read from the interpreter flags
+# CommandResult.missing_module: bool -- True when the step failed only because its -m module is not installed
 ```
 
 Inputs:
@@ -92,16 +98,17 @@ Errors:
 ## Behavior
 
 ### Nominal
-`run_ruff_gate(root)` runs `<venv python> -m ruff check --fix src
-tests`, `… -m ruff format src tests`, `… -m ruff check src tests`,
-`… -m ruff format --check src tests`. `run_pytest_gate(root)` runs
-`<venv python> -m pytest -q tests/unit`. The Developer's `run_tests`
-tool runs `<venv python> -m pytest -q -- <target>`.
+`run_ruff_gate(root)` runs `<venv python> -P -m ruff check --fix src
+tests`, `… -P -m ruff format src tests`, `… -P -m ruff check src tests`,
+`… -P -m ruff format --check src tests`. `run_pytest_gate(root)` runs
+`<venv python> -P -m pytest -q tests/unit`. The Developer's `run_tests`
+tool runs `<venv python> -P -m pytest -q -- <target>`.
 
 ### Edge cases
 - `run_pytest_gate(root, python="python3.13")` → that interpreter, as today.
 - the operator upgrades ruff past the bound by hand → `test_toolchain_pin.py` goes red with `installed ruff 0.17.1 outside declared range >=0.15,<0.16`.
 - a project reviewed by repoach that pins its own ruff (through `SP-UNIVERSAL-GATES` `[commands]`) → unaffected; this spec covers repoach's own gates only.
+- repoach reviewing its own checkout with configured `[commands]` steps → a bare `ruff` or `pytest` step becomes `ruff_argv` / `pytest_argv`; a `python`, `python3` or `python3.N` step runs on `sys.executable` (a bare `python`) or its own interpreter, and every `-m <module>` step gains `-P`. `run_command` stops a `&&` chain on `CommandResult.missing_module`, never on the text of the tail.
 
 ### Failure scenarios
 - `sys.executable` has no pytest (a tool install without the dev extra) → the gate's tail says `pytest is not installed in <sys.executable>` and returns `False`.
@@ -109,6 +116,8 @@ tool runs `<venv python> -m pytest -q -- <target>`.
 ## Architecture Impact
 - Adds dependency: SP-PIN-TOOLCHAIN -> SP-DEVAGENT-TOOLS (`devagent_tools.run_tests` and `run_ruff` build their argv from the helpers)
 - Adds dependency: SP-PIN-TOOLCHAIN -> SP-DEV-RUFF-UNSAFE-FIXES (`coder_loop.run_ruff_gate` and `run_pytest_gate` build their argv from the helpers)
+- Adds dependency: SP-PIN-TOOLCHAIN -> SP-CI-STATUS-CLIENT-CLASSIFY (`test_toolchain_spawn.py` imports `repoach.review.coder_loop`, which that spec owns)
+- Adds dependency: SP-PIN-TOOLCHAIN -> SP-UNIVERSAL-GATES (`test_toolchain_spawn.py` imports `repoach.gates.*` to verify configured repoach gates resolve bare `ruff`/`pytest`/`python` through `sys.executable`)
 - New shared state: none; no cycle.
 
 ## Diagram
@@ -122,12 +131,12 @@ flowchart TD
 ## Acceptance Criteria
 - [ ] AC1: `grep -nE '^\s*"ruff' pyproject.toml` → `63:    "ruff>=0.15,<0.16",`. Today: `63:    "ruff>=0.5",`.
 - [ ] AC2: `pytest -q tests/unit/test_toolchain_pin.py` → green: the declared range spans one minor and `importlib.metadata.version("ruff")` is inside it. Today: the file does not exist, and the assertion on the range would fail on `>=0.5`.
-- [ ] AC3: `pytest -q tests/unit/test_toolchain_spawn.py` → green: with `monkeypatch.setenv("PATH", "")` and a recording `_run`, `run_ruff_gate(root)` spawns four argv each starting `[sys.executable, "-m", "ruff"]`, `run_pytest_gate(root)` spawns `[sys.executable, "-m", "pytest", "-q", "tests/unit"]`, and the Developer `run_tests` tool spawns `[sys.executable, "-m", "pytest", "-q", "--", "tests/unit"]`. Today: `shutil.which("ruff")` is `None` so the argv starts with the bare string `"ruff"`, and `run_tests` starts with `"python"`.
+- [ ] AC3: `pytest -q tests/unit/test_toolchain_spawn.py` → green: with `monkeypatch.setenv("PATH", "")` and a recording `_run`, `run_ruff_gate(root)` spawns four argv each starting `[sys.executable, "-P", "-m", "ruff"]`, `run_pytest_gate(root)` spawns `[sys.executable, "-P", "-m", "pytest", "-q", "tests/unit"]`, and the Developer `run_tests` tool spawns `[sys.executable, "-P", "-m", "pytest", "-q", "--", "tests/unit"]`. Today: `shutil.which("ruff")` is `None` so the argv starts with the bare string `"ruff"`, and `run_tests` starts with `"python"`.
 - [ ] AC4: `env PATH=/nonexistent $(python -c 'import sys; print(sys.executable)') -c "from pathlib import Path; from repoach.review.coder_loop import run_ruff_gate; print(run_ruff_gate(Path('.'))[0])"` → `True`. Today: `False` with `ruff: No such file or directory` in the tail.
-- [ ] AC5: `grep -c 'python -m ruff' scripts/ci_local.sh .githooks/pre-commit` → `2` and `2`. Today: `0` and `0`.
+- [ ] AC5: `grep -c 'python -P -m ruff' scripts/ci_local.sh .githooks/pre-commit` → `2` and `3` (the hook's format hint names the command too). Today: `0` and `0`.
 - [ ] AC6: `pytest -q tests/unit/test_ruff_gate_unsafe_fixes.py tests/unit/test_devagent_tools.py tests/unit/test_devagent_selfverify.py tests/unit/test_dev_runner.py tests/unit/test_coder_findings.py tests/unit/test_selfverify_refutation.py tests/unit/test_devagent_loop.py tests/unit/test_review_planner.py` → `110 passed` with the pinned ruff; `scripts/ci_local.sh --fast` → green.
 - [ ] AC7: `repoach arch check --base develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- Q1: `0.15` is the minor the operator's venv holds today; CI resolves `0.17.1` and would fail on F3's SIM117. Pin to `0.15` now and bump by a dedicated commit that also fixes the SIM117, or fix the SIM117 first and pin to `0.17`? Recommendation: pin `0.15` now, since it is the measured green state; bump in its own PR.
-- Q2: who re-measures the "nine red tests" report? It was not reproduced at `20dbb45` under `0.17.1`; if it came from another tree or an older ruff, the row in `docs/tech_debt.md` that cites it should carry the SHA it was measured on.
+- Q1 (resolved): pin `0.15` now, as the measured green state, and bump in a dedicated PR that also fixes the SIM117. Adopted: `pyproject.toml` pins `ruff>=0.15,<0.16`.
+- Q2 (resolved): the "nine red tests" report was not reproduced at `20dbb45` under `0.17.1`, and no row of `docs/tech_debt.md` cites it, so there is nothing to re-measure or re-date; any future report must carry the SHA and ruff version it was measured on.

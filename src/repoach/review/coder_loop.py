@@ -32,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,7 +42,13 @@ from typing import Any
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
 from ..forge import Forge, ForgeError
-from ..gates.commands import run_lint_gate, run_test_gate
+from ..gates.commands import (
+    missing_module_tail,
+    pytest_argv,
+    ruff_argv,
+    run_lint_gate,
+    run_test_gate,
+)
 from ..gates.config import GatesConfig, current_gates_config, load_gates_config
 from .auto_merge import OUTCOME_SKIP_CI_PENDING, evaluate_ci_gate
 from .patch_apply import apply_search_replace_edits
@@ -606,18 +613,17 @@ def run_pytest(repo_root: Path, *, python: str | None = None) -> tuple[bool, str
     Args:
         repo_root: Repository root.
         python: Path or name of the Python interpreter to invoke
-            ``-m pytest`` under.  When ``None``, falls back to
-            ``shutil.which("pytest")`` for backwards compatibility
+            ``-m pytest`` under.  When ``None``, ``sys.executable``
+            runs it, never a ``PATH`` lookup
             (single-version local runs).  In CI we pass an explicit
             interpreter per matrix version (``python3.11`` / ``python3.13``)
             so the same runner can validate both before pushing.
     """
-    argv = [python, "-m", "pytest"] if python else [shutil.which("pytest") or "pytest"]
-    argv += [
-        "-q",
-        "tests/unit",
-    ]
+    argv = pytest_argv("-q", "tests/unit", python=python)
     rc, stdout, stderr = _run(argv, cwd=repo_root, timeout_s=900, env=scrubbed_env())
+    missing = missing_module_tail(rc, "pytest", argv[0], stderr)
+    if missing:
+        return False, missing
     tail = (stdout + "\n" + stderr)[-4000:]
     return rc == 0, tail
 
@@ -642,8 +648,7 @@ def _pytest_pythons(settings: Settings | None = None) -> list[str | None]:
     Returns:
         A non-empty list of interpreter strings, or ``[None]`` when
         the setting is unset or no listed interpreter resolves — in
-        which case :func:`run_pytest` falls back to the bare
-        ``pytest`` binary on PATH.
+        which case :func:`run_pytest` runs under ``sys.executable``.
     """
     resolved = settings or Settings()
     raw = (resolved.coder_pythons or "").strip()
@@ -707,6 +712,25 @@ def _run_configured_tests(repo_root: Path, config: GatesConfig) -> tuple[bool, s
     return True, f"tests green under {summary}"
 
 
+def _run_ruff(argv: list[str], repo_root: Path) -> tuple[int, str, str]:
+    """Run one ruff step in ``repo_root`` under the secret-scrubbed environment."""
+    return _run(argv, cwd=repo_root, timeout_s=120, env=scrubbed_env())
+
+
+def _ruff_failure(label: str, argv: list[str], repo_root: Path) -> str | None:
+    """Run one verifying ruff step; return its failure text, ``None`` when clean.
+
+    The uninstalled-tool translation lives here, once, for every step.
+    """
+    rc, stdout, stderr = _run_ruff(argv, repo_root)
+    missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
+    if missing:
+        return missing
+    if rc != 0:
+        return f"ruff {label} failed:\n{(stdout + stderr)[-2000:]}"
+    return None
+
+
 def run_ruff_gate(
     repo_root: Path, *, unsafe_fixes: bool = False, config: GatesConfig | None = None
 ) -> tuple[bool, str]:
@@ -751,20 +775,15 @@ def run_ruff_gate(
         if not resolved.lint_cmd:
             _log.info("coder.lint_gate_skipped", reason=tail)
         return passed, tail
-    ruff = shutil.which("ruff") or "ruff"
-    fix_cmd = [ruff, "check", "--fix", "src", "tests"]
+    fix_cmd = ruff_argv("check", "--fix", "src", "tests")
     if unsafe_fixes:
         fix_cmd.append("--unsafe-fixes")
-    _run(fix_cmd, cwd=repo_root, timeout_s=120)
-    _run([ruff, "format", "src", "tests"], cwd=repo_root, timeout_s=120)
-    rc, stdout, stderr = _run([ruff, "check", "src", "tests"], cwd=repo_root, timeout_s=120)
-    if rc != 0:
-        return False, f"ruff check failed:\n{(stdout + stderr)[-2000:]}"
-    rc, stdout, stderr = _run(
-        [ruff, "format", "--check", "src", "tests"], cwd=repo_root, timeout_s=120
-    )
-    if rc != 0:
-        return False, f"ruff format --check failed:\n{(stdout + stderr)[-2000:]}"
+    _run_ruff(fix_cmd, repo_root)
+    _run_ruff(ruff_argv("format", "src", "tests"), repo_root)
+    for label, args in (("check", ("check",)), ("format --check", ("format", "--check"))):
+        failure = _ruff_failure(label, ruff_argv(*args, "src", "tests"), repo_root)
+        if failure is not None:
+            return False, failure
     return True, "ruff clean"
 
 

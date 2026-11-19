@@ -30,7 +30,7 @@ failures=()
 
 if [[ ${#staged_py[@]} -gt 0 ]] ; then
     bold "ruff check (staged python)"
-    if ruff check "${staged_py[@]}" ; then
+    if python -P -m ruff check "${staged_py[@]}" ; then
         ok "ruff check"
     else
         fail "ruff check"
@@ -38,10 +38,10 @@ if [[ ${#staged_py[@]} -gt 0 ]] ; then
     fi
 
     bold "ruff format --check (staged python)"
-    if ruff format --check "${staged_py[@]}" ; then
+    if python -P -m ruff format --check "${staged_py[@]}" ; then
         ok "ruff format --check"
     else
-        fail "ruff format --check  (run: ruff format ${staged_py[*]})"
+        fail "ruff format --check  (run: python -P -m ruff format ${staged_py[*]})"
         failures+=("ruff format --check")
     fi
 
