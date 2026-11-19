@@ -22,7 +22,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import SplitResult, quote, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -232,8 +232,8 @@ SPEC_IDS: frozenset[str] = _repo_spec_ids()
 _LITERAL_PARTS: tuple[str, ...] = (
     r":(?:owner|repo|id)",
     r"/dev/null",
-    r"docs\.github\.com",
-    r"docs\.gitlab\.com",
+    r"(?i:docs\.github\.com)",
+    r"(?i:docs\.gitlab\.com)",
     *(re.escape(sid) for sid in sorted(SPEC_IDS, key=len, reverse=True)),
     *(
         re.escape(login.removesuffix("[bot]")) + r"(?:\[bot\])?"
@@ -244,15 +244,16 @@ _LITERAL_PARTS: tuple[str, ...] = (
 CLI_PLACEHOLDER_RE = re.compile(
     rf"(?<![{TOKEN_CHARS}])(?:" + "|".join(_LITERAL_PARTS) + rf")(?![{TOKEN_CHARS}-])"
 )
-"""The tools' and the project's own literals (0.10, 0.11, 0.12, 0.13): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``docs.github.com``, ``docs.gitlab.com``, :data:`SPEC_IDS`.
+"""The tools' and the project's own literals (0.10, 0.11, 0.12, 0.13, 0.14): ``:owner``, ``:repo``, ``:id``, ``/dev/null``, ``docs.github.com``, ``docs.gitlab.com``, :data:`SPEC_IDS`.
 
 The :data:`NON_PERSON_LOGINS`, with or without their ``[bot]`` suffix,
 are literals too (0.11): kept as they are, so a needle that is one of
 their words (the ``github`` organisation owning the Actions app) is not
 judged inside ``github-actions[bot]``, nor replaced there. Public forge
-documentation hosts (``docs.github.com``, ``docs.gitlab.com``) are
-literals too (0.13), so keeping documentation links in text does not
-collide with the ``github.com`` / ``gitlab.com`` host needles.
+documentation hosts (``docs.github.com``, ``docs.gitlab.com``, matched
+case-insensitively since 0.14) are literals too (0.13), so keeping
+documentation links in text does not collide with the ``github.com`` /
+``gitlab.com`` host needles regardless of host casing.
 
 ``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
 written by the forge code and expanded by the CLI; ``--- /dev/null`` is
@@ -262,8 +263,9 @@ actual specification file under ``docs/specs/`` (0.12, D3: bounded to
 real spec ids so an invented ``SP-<login>`` or ``SP-<id>`` never hides a
 real value). None carries a recorded value. The replacer leaves them
 alone and the closure oracle does not judge them, except for the
-deny-list, which judges the text with literals kept. Case-sensitive: the
-tools write the lowercase forms only, and a spec identifier is uppercase.
+deny-list, which judges the text with literals kept. Case-sensitive
+outside the documentation hosts: the tools write the lowercase forms
+only, and a spec identifier is uppercase.
 """
 
 _MENTION_END = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9_]|/[A-Za-z0-9_.-]|\()"
@@ -636,6 +638,13 @@ _SYSTEM_NOREPLY_RE = re.compile(
 """A system noreply mailbox (``noreply@github.com``, ``noreply@<self-hosted>``, 0.13 R6-D5)."""
 
 
+def _normalize_kept_url(parts: SplitResult) -> str:
+    """Return a kept-host URL with scheme and host lowercased on the original netloc (0.14 R7-D1)."""
+    return urlunsplit(
+        (parts.scheme, parts.netloc.casefold(), parts.path, parts.query, parts.fragment)
+    )
+
+
 def redact_urls_in_text(text: str) -> str:
     """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
@@ -646,9 +655,12 @@ def redact_urls_in_text(text: str) -> str:
     redacted, and written back as ``git@forge.example.com:org/project``,
     its ``.git`` suffix kept and its user never. A URL on
     :data:`PLACEHOLDER_HOST` is redacted again, so a hand-written one gets
-    the placeholder path too. Text URLs on :data:`PUBLIC_REFERENCE_HOSTS`
-    are kept (0.13). A forge noreply mailbox
-    (``<id>+<login>@users.noreply.github.com``,
+    the placeholder path too. A URL carrying userinfo (``user[:pass]@``) is
+    always redacted through :func:`redact_url`, whatever the host —
+    including :data:`PUBLIC_REFERENCE_HOSTS` and RFC 2606 hosts (0.14
+    R7-D1). Text URLs on :data:`PUBLIC_REFERENCE_HOSTS` without userinfo
+    are kept with their scheme and host lowercased (0.13, 0.14 R7-D1). A
+    forge noreply mailbox (``<id>+<login>@users.noreply.github.com``,
     ``<id>-<login>@users.noreply.gitlab.com``, 0.12 D6) has its local part
     and host redacted by class to
     ``<class>@users.noreply.forge.example.com``; a system noreply mailbox
@@ -659,12 +671,18 @@ def redact_urls_in_text(text: str) -> str:
     def _one(match: re.Match[str]) -> str:
         url = match.group(0).rstrip(_URL_TRIM_TAIL)
         tail = match.group(0)[len(url) :]
-        parts = urlsplit(url)
-        host = parts.hostname or ""
-        if not host or _kept_host(host):
-            if host and host.casefold() in PUBLIC_REFERENCE_HOSTS and is_public_forge_host(host):
-                return url.replace(host, host.casefold(), 1) + tail
+        try:
+            parts = urlsplit(url)
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
             return match.group(0)
+        host = parts.hostname or ""
+        if not host:
+            return match.group(0)
+        if "@" in parts.netloc:
+            return (redact_url(url) or url) + tail
+        if _kept_host(host):
+            return _normalize_kept_url(parts) + tail
         return (redact_url(url) or url) + tail
 
     def _scp(match: re.Match[str]) -> str:
@@ -697,14 +715,27 @@ def redact_urls_in_text(text: str) -> str:
 
 
 def unredacted_host(text: str) -> bool:
-    """Whether ``text`` holds a URL or an scp-style remote on a host :func:`redact_urls_in_text` rewrites.
+    """Whether ``text`` holds a URL or an scp-style remote on a host :func:`redact_urls_in_text` rewrites, or an unredacted URL userinfo.
 
-    After redaction no such host is left, so one found in a fixture about
-    to be written means a value escaped the redaction (D3, 0.9).
+    After redaction no such host or userinfo is left, so one found in a fixture about
+    to be written means a value escaped the redaction (D3, 0.9, 0.14 R7-D1).
     """
     for match in _URL_IN_TEXT_RE.finditer(text):
-        host = urlsplit(match.group(0).rstrip(_URL_TRIM_TAIL)).hostname or ""
-        if host and not _is_allowed_host(host):
+        url = match.group(0).rstrip(_URL_TRIM_TAIL)
+        try:
+            parts = urlsplit(url)
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+            continue
+        host = parts.hostname or ""
+        if not host:
+            continue
+        if not _is_allowed_host(host):
+            return True
+        if "@" in parts.netloc and (
+            parts.scheme not in ("ssh", "git")
+            or parts.netloc.casefold() != f"git@{PLACEHOLDER_HOST}"
+        ):
             return True
     return any(not _EXAMPLE_HOST_RE.search(m.group("host")) for m in _SCP_IN_TEXT_RE.finditer(text))
 

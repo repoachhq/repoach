@@ -2515,3 +2515,88 @@ def test_third_party_links_under_empty_remote_and_public_reference_hosts() -> No
         _placed("https://docs.github.com/en/zqxlogin", "prose"),
         found_ref,
     ) == ("login", 1, "exchanges[0].stdout.body")
+
+
+def test_public_hosts_strip_userinfo_and_normalize_host_case() -> None:
+    """R7-D1 (0.14): userinfo is never kept on any host; kept-host URLs normalize scheme and host case."""
+    for raw_url, expected in (
+        (
+            "curl https://alice:mysecret@ghcr.io/astral-sh/uv",
+            "curl https://forge.example.com/org/project",
+        ),
+        (
+            "curl https://zqxjdoe7:s3cr3t@ghcr.io/zqgroup/zqmainrepo",
+            "curl https://forge.example.com/org/project",
+        ),
+        (
+            "curl https://alice:mysecret@pypi.org/project/ruff/",
+            "curl https://forge.example.com/org/project/",
+        ),
+        (
+            "curl https://alice:mysecret@example.com/api/v1",
+            "curl https://forge.example.com/org/project",
+        ),
+    ):
+        redacted = redact_urls_in_text(raw_url)
+        assert redacted == expected, raw_url
+        assert unredacted_host(raw_url)
+        assert not unredacted_host(redacted)
+    assert unredacted_host("ssh://alice@forge.example.com/org/project.git")
+    assert not unredacted_host("ssh://git@forge.example.com/org/project.git")
+    assert redact_urls_in_text("ssh://alice@example.com/o/r.git") == (
+        "ssh://git@forge.example.com/org/project.git"
+    )
+
+    assert redact_urls_in_text(
+        "See https://Docs.GitHub.com/en/actions and https://Docs.GitLab.com/ee/api/"
+    ) == ("See https://docs.github.com/en/actions and https://docs.gitlab.com/ee/api/")
+    assert redact_urls_in_text("Ref: HTTPS://DOCS.GITHUB.COM/en/rest/pulls") == (
+        "Ref: https://docs.github.com/en/rest/pulls"
+    )
+    assert redact_urls_in_text("See https://PyPI.org/project/ruff/") == (
+        "See https://pypi.org/project/ruff/"
+    )
+    found = needles(
+        [_one_call({"body": "See https://Docs.GitHub.com/en/actions"})],
+        roles={},
+        remote="git@github.com:own-x/repo-y.git",
+    )
+    live_text = classify_text(
+        redact_urls_in_text(
+            "See https://Docs.GitHub.com/en/actions and https://Docs.GitLab.com/ee/api/"
+        ),
+        found.mapping(),
+    )
+    assert live_text == (
+        "See https://docs.github.com/en/actions and https://docs.gitlab.com/ee/api/"
+    )
+    assert residual(_placed("See Docs.GitHub.com/en/actions", "prose"), found) is None
+
+    fx_docs = {
+        "forge": "github",
+        "case": "c",
+        "method": "conversation_comments",
+        "args": [1],
+        "kwargs": {},
+        "bot_username": "repoach-bot",
+        "source": recording.recorded_source("2026-11-19", "github"),
+        "trimmed": None,
+        "calls": [
+            _exchange(
+                [
+                    {
+                        "user": {"login": "author", "id": 1001},
+                        "body": "See https://Docs.GitHub.com/en/actions and https://Docs.GitLab.com/ee/api/",
+                    }
+                ]
+            )
+        ],
+        "synthetic_user_ids": [1001],
+        "result": None,
+        "raises": None,
+    }
+    red_docs = redact_fixtures.redact_fixture(fx_docs, forge="github")
+    assert json.loads(red_docs["calls"][0]["stdout"])[0]["body"] == (
+        "See https://docs.github.com/en/actions and https://docs.gitlab.com/ee/api/"
+    )
+    assert residual(red_docs, redact_fixtures.fixture_needles(fx_docs)) is None
