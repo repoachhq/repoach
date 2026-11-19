@@ -638,11 +638,11 @@ _NOREPLY_MAILBOX_RE = re.compile(
 """A forge noreply mailbox (GitHub/GitLab ``@users.noreply.<host>`` or ``@noreply.<host>``, 0.12 D6)."""
 
 _SYSTEM_NOREPLY_RE = re.compile(
-    r"(?<![A-Za-z0-9._%+\[\]-])(?P<local>no-?reply)@"
-    r"(?P<host>(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b",
+    r"(?<![A-Za-z0-9._%+\[\]-])(?:(?P<local>no-?reply)@"
+    r"(?P<host>(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})|(?P<actions>actions)@github\.com)\b",
     re.I,
 )
-"""A system noreply mailbox (``noreply@github.com``, ``noreply@<self-hosted>``, 0.13 R6-D5)."""
+"""A system noreply mailbox (``noreply@github.com``, ``no-reply@<host>``, ``actions@github.com``, 0.13 R6-D5, 0.14)."""
 
 
 def _normalize_kept_url(parts: SplitResult) -> str:
@@ -672,8 +672,9 @@ def redact_urls_in_text(text: str) -> str:
     ``<id>-<login>@users.noreply.gitlab.com``, 0.12 D6) has its local part
     and host redacted by class to
     ``<class>@users.noreply.forge.example.com``; a system noreply mailbox
-    (``noreply@github.com``, 0.13 R6-D5) becomes
-    ``noreply@forge.example.com``.
+    (``noreply@github.com``, ``no-reply@<host>``, ``actions@github.com``,
+    0.13 R6-D5, 0.14) becomes ``noreply@forge.example.com`` (or
+    ``no-reply@forge.example.com``).
     """
 
     def _one(match: re.Match[str]) -> str:
@@ -708,6 +709,8 @@ def redact_urls_in_text(text: str) -> str:
         return f"{role}@users.noreply.{PLACEHOLDER_HOST}"
 
     def _system_noreply(match: re.Match[str]) -> str:
+        if match.group("actions") is not None:
+            return f"noreply@{PLACEHOLDER_HOST}"
         host = match.group("host").casefold()
         if _example_host(host):
             return match.group(0)

@@ -2551,6 +2551,22 @@ def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() 
     assert residual(red_off, redact_fixtures.fixture_needles(sample_offline)) is None
     assert redact_fixtures.redact_fixture(red_off, forge="github") == red_off
 
+    assert redact_urls_in_text("Author: github-actions[bot] <actions@github.com>") == (
+        "Author: github-actions[bot] <noreply@forge.example.com>"
+    )
+    assert redact_urls_in_text("Author: Bot <ACTIONS@GITHUB.COM>") == (
+        "Author: Bot <noreply@forge.example.com>"
+    )
+    assert redact_urls_in_text("Author: Bot <no-reply@github.com>") == (
+        "Author: Bot <no-reply@forge.example.com>"
+    )
+    assert rec.generic_class("Author: github-actions[bot] <noreply@forge.example.com>") is None
+    assert rec.generic_class("Author: Bot <no-reply@forge.example.com>") is None
+    assert redact_urls_in_text("Contact actions@privatecorp.com") == (
+        "Contact actions@privatecorp.com"
+    )
+    assert rec.generic_class("Contact actions@privatecorp.com") == "mailbox"
+
 
 def test_third_party_links_under_empty_remote_and_public_reference_hosts() -> None:
     """Preferences 2 & 3 (0.13): ``remote=''`` infers public forge from URL keys; public reference hosts stay intact."""
