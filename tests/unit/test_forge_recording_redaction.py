@@ -3270,3 +3270,102 @@ def test_url_termination_preserves_dunder_fragments_scp_delimiters_and_line_comm
     assert recording.locations("//github.com/org/repo", known_hosts=recording.FORGE_HOSTS) == [
         recording.Location("github.com", ("org", "repo"))
     ]
+
+
+def test_round8_guard_invariants_kill_surviving_mutants() -> None:
+    """R8-D6, WF4 (0.15): pin scheme guard, kept-span userinfo, ``Docs.GitLab.com`` literal, bot stem guards and leading-slash ``glab api``."""
+    assert unredacted_host("https://git@forge.example.com/org/project")
+    assert unredacted_host("http://git@forge.example.com/org/project")
+
+    userinfo_doc_url = "https://alice:secret@gitlab.example.com/api/v4/projects/88442211/issues"
+    assert recording.project_id_values(userinfo_doc_url) == [88442211]
+    assert (
+        UserIdMap.for_projects().apply_projects(userinfo_doc_url, forge="gitlab")
+        == "https://alice:secret@gitlab.example.com/api/v4/projects/2001/issues"
+    )
+
+    found_forge = needles([], roles={})
+    assert residual(_placed("See Docs.GitLab.com/ee/api", "prose"), found_forge) is None
+    assert residual(_placed("See DOCS.GITLAB.COM/ee/api", "prose"), found_forge) is None
+
+    assert recording.bot_mention_stem("author[bot]") is None
+    assert recording.bot_mention_stem("bot[bot]") is None
+    assert (
+        classify_text("cc @author and author[bot]", {"author[bot]": "bot"}) == "cc @author and bot"
+    )
+
+    assert recording.bot_mention_stem("github-actions[bot]") is None
+    assert recording.bot_mention_stem("repoach-bot[bot]") is None
+
+    assert (
+        classify_text("cc @cla and cla[bot]", {"cla[bot]": "bot", "@cla": "author-2"})
+        == "cc @author-2 and bot"
+    )
+
+    assert recording.project_id_values("glab api /projects/88442211/issues") == [88442211]
+    assert (
+        UserIdMap.for_projects().apply_projects(
+            "glab api /projects/88442211/issues", forge="gitlab"
+        )
+        == "glab api /projects/2001/issues"
+    )
+
+
+def test_offline_transform_redacts_all_six_positions_and_non_json_project_ids() -> None:
+    """R8-D6, WF1 (0.15): offline ``redact_fixture`` redacts URLs in args, kwargs, stdin, stderr, stdout and result, plus non-JSON stdout project ids."""
+    fixture = {
+        "forge": "gitlab",
+        "case": "offline_six_positions",
+        "method": "diff",
+        "args": ["https://git.zqcorp.io/zqns/zqargrepo/-/merge_requests/1"],
+        "kwargs": {"ref": "https://git.zqcorp.io/zqns/zqkwrepo/-/merge_requests/2"},
+        "bot_username": "repoach-bot",
+        "source": recording.recorded_source("2026-11-19", "gitlab"),
+        "trimmed": None,
+        "calls": [
+            {
+                "program": "glab",
+                "args": [
+                    "api",
+                    "projects/88442211/merge_requests/1/notes",
+                    "https://git.zqcorp.io/zqns/zqcallrepo",
+                ],
+                "stdin": "POST https://git.zqcorp.io/zqns/zqstdinrepo/notes",
+                "returncode": 0,
+                "stdout": (
+                    "diff --git a/ci.sh b/ci.sh\n"
+                    "+curl https://git.zqcorp.io/api/v4/projects/88442211/jobs\n"
+                    "+glab api /projects/88442211/pipelines\n"
+                ),
+                "stderr": "403 GET https://git.zqcorp.io/zqns/zqstderrrepo/members",
+            }
+        ],
+        "result": {
+            "url": "https://git.zqcorp.io/zqns/zqresrepo/-/merge_requests/1",
+            "body": "See https://git.zqcorp.io/zqns/zqresbody/issues/9",
+        },
+        "raises": None,
+    }
+    redacted = redact_fixtures.redact_fixture(fixture, forge="gitlab")
+    assert redacted["args"] == ["https://forge.example.com/org/project/-/merge_requests/1"]
+    assert redacted["kwargs"] == {"ref": "https://forge.example.com/org/project/-/merge_requests/2"}
+    assert redacted["result"] == {
+        "url": "https://forge.example.com/org/project/-/merge_requests/1",
+        "body": "See https://forge.example.com/org/project/issues/9",
+    }
+    call = redacted["calls"][0]
+    assert call["args"] == [
+        "api",
+        "projects/2001/merge_requests/1/notes",
+        "https://forge.example.com/org/project",
+    ]
+    assert call["stdin"] == "POST https://forge.example.com/org/project"
+    assert call["stderr"] == "403 GET https://forge.example.com/org/project"
+    assert call["stdout"] == (
+        "diff --git a/ci.sh b/ci.sh\n"
+        "+curl https://forge.example.com/api/v4/projects/2001/jobs\n"
+        "+glab api /projects/2001/pipelines\n"
+    )
+    assert redacted[recording.SYNTHETIC_PROJECT_IDS_KEY] == [2001]
+    assert residual(redacted, redact_fixtures.fixture_needles(fixture)) is None
+    assert redact_fixtures.redact_fixture(redacted, forge="gitlab") == redacted

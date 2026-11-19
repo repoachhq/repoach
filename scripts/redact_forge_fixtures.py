@@ -334,6 +334,8 @@ def _remap_projects(node: object, ids: UserIdMap, forge: str, keep: frozenset[in
                 out[k] = _remap_projects(v, ids, forge, keep)
         return out
     if isinstance(node, list):
+        if node and all(isinstance(v, str) for v in node):
+            return ids.apply_projects(node, forge=forge, keep=keep)
         return [_remap_projects(v, ids, forge, keep) for v in node]
     if isinstance(node, str):
         return ids.apply_projects(node, forge=forge, keep=keep)
