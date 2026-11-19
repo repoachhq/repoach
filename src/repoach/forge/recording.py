@@ -827,18 +827,23 @@ def redact_payload(value: object) -> object:
     return value
 
 
-def _bot_stem(login: str) -> str | None:
-    """The bare handle of a ``<name>[bot]`` login when long enough and not a class word, placeholder or non-person bot (0.13 R6-D2)."""
+def bot_mention_stem(login: str) -> str | None:
+    """The handle stem of a ``<name>[bot]`` login for ``@<stem>`` mentions, whatever its length, unless a class word or non-person bot (0.14 R7-D4)."""
     if not login.casefold().endswith("[bot]"):
         return None
     stem = login[:-5]
+    if not stem or CLASS_WORD_RE.match(stem.casefold()) or _names_no_one(stem):
+        return None
+    return stem
+
+
+def bot_stem(login: str) -> str | None:
+    """The bare prose stem of a ``<name>[bot]`` login when long enough and not a class word, placeholder or non-person bot (0.13 R6-D2, 0.14 R7-D4)."""
+    stem = bot_mention_stem(login)
+    if stem is None:
+        return None
     folded = stem.casefold()
-    if (
-        len(stem) < NEEDLE_MIN_LENGTH
-        or CLASS_WORD_RE.match(folded)
-        or folded in _PLACEHOLDERS
-        or _names_no_one(stem)
-    ):
+    if len(stem) < NEEDLE_MIN_LENGTH or folded in _PLACEHOLDERS:
         return None
     return stem
 
@@ -852,12 +857,13 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     """Replace every login of ``roles`` appearing as a token in ``text`` by its class word.
 
     A :data:`MENTION_ONLY_PREFIX` key is replaced in its ``@<handle>``
-    form only (D2, 0.9). A ``<name>[bot]`` key also replaces its bare
-    stem (``@dependabot``, ``Dependabot``) with the same class word so
-    bot login, mention and prose name stay one consistent identity
-    (0.13 R6-D2). A :data:`CLI_PLACEHOLDER_RE` template is left as it is
-    (0.10); every other occurrence of the token is replaced, after a
-    ``:``, a ``.`` or a ``/`` alike.
+    form only (D2, 0.9). A ``<name>[bot]`` key also replaces its
+    ``@<name>`` mention whatever the stem length (0.14 R7-D4), and its
+    bare prose stem when long enough and outside class words and
+    placeholders (0.13 R6-D2), so bot login, mention and prose name stay
+    one consistent identity. A :data:`CLI_PLACEHOLDER_RE` template is
+    left as it is (0.10); every other occurrence of the token is
+    replaced, after a ``:``, a ``.`` or a ``/`` alike.
     """
     pieces = CLI_PLACEHOLDER_RE.split(text)
     templates = CLI_PLACEHOLDER_RE.findall(text)
@@ -866,10 +872,16 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     for login, word in roles.items():
         if login.startswith(MENTION_ONLY_PREFIX):
             continue
-        stem = _bot_stem(login)
-        if stem is not None and stem.casefold() not in present:
-            expanded[stem] = word
-            present.add(stem.casefold())
+        bare = bot_stem(login)
+        if bare is not None:
+            if bare.casefold() not in present:
+                expanded[bare] = word
+                present.add(bare.casefold())
+            continue
+        mention_stem = bot_mention_stem(login)
+        if mention_stem is not None and mention_stem.casefold() not in present:
+            expanded[MENTION_ONLY_PREFIX + mention_stem] = word
+            present.add(mention_stem.casefold())
     for login in sorted(expanded, key=len, reverse=True):
         if login.startswith(MENTION_ONLY_PREFIX):
             pattern = mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX))
@@ -1979,7 +1991,17 @@ def needles(
             replacements.setdefault(identity.repository, PLACEHOLDER_PROJECT)
 
     raw_login_list = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
-    bot_stems = [stem for login in raw_login_list if (stem := _bot_stem(login)) is not None]
+    bot_stems: list[str] = []
+    for login in raw_login_list:
+        bare = bot_stem(login)
+        if bare is not None:
+            bot_stems.append(bare)
+            continue
+        mention_stem = bot_mention_stem(login)
+        if mention_stem is not None:
+            at_stem = f"{MENTION_ONLY_PREFIX}{mention_stem}"
+            if len(at_stem) >= min_length:
+                bot_stems.append(at_stem)
     found["login"] = raw_login_list + bot_stems
     found["host"] = sorted(FORGE_HOSTS | ({instance} if instance else set()))
     if remote_path:

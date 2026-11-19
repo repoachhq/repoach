@@ -60,7 +60,6 @@ from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
-    NEEDLE_MIN_LENGTH,
     RECORDED_SOURCE_RE,
     SYNTHETIC_ID_END,
     SYNTHETIC_ID_START,
@@ -72,6 +71,8 @@ from repoach.forge.recording import (
     Needles,
     SyntheticIdsExhaustedError,
     UserIdMap,
+    bot_mention_stem,
+    bot_stem,
     declared_project_ids,
     declared_user_ids,
     decode_json_values,
@@ -230,7 +231,7 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
     following = {"author": 2, "service": 1, "bot": 1}
     bot = data.get("bot_username")
     for login, mention_only in _unclassified_logins(data).items():
-        if login == bot or login.endswith("[bot]"):
+        if login == bot or login.casefold().endswith("[bot]"):
             kind = "bot"
         elif GITLAB_PROJECT_BOT_RE.match(login):
             kind = "service"
@@ -253,9 +254,12 @@ def _mention_text(text: str, roles: dict[str, str]) -> str:
         text = mention_pattern(handle).sub(f"@{word}", text)
         if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]"):
             text = token_pattern(login).sub(word, text)
-            stem = login[:-5]
-            if len(stem) >= NEEDLE_MIN_LENGTH and not is_classified_login(stem):
-                text = token_pattern(stem).sub(word, text)
+            mention_stem = bot_mention_stem(login)
+            if mention_stem is not None:
+                text = mention_pattern(mention_stem).sub(f"@{word}", text)
+            bare = bot_stem(login)
+            if bare is not None:
+                text = token_pattern(bare).sub(word, text)
     return text
 
 

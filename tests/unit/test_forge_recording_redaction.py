@@ -2734,3 +2734,107 @@ def test_api_project_ids_skip_doc_examples_and_cover_all_positions(
         "ok:projects/2001/jobs/5:https://forge.example.com/api/v4/projects/2002/issues"
     )
     assert fixture[recording.SYNTHETIC_PROJECT_IDS_KEY] == [2001, 2002]
+
+
+def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
+    """R7-D4, V7-17, V7-18 (0.14): short ``[bot]`` mentions classify in both tools; offline aligns ``_PLACEHOLDERS``, case and dedup."""
+    for bot_login, stem in (("cla[bot]", "cla"), ("bob[bot]", "bob"), ("ci[bot]", "ci")):
+        raw = _one_call(
+            [{"user": {"login": bot_login, "id": 44556677}, "body": f"Please run @{stem} check."}]
+        )
+        red_calls = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw]
+        roles = rec.build_roles(
+            red_calls,
+            bot="repoach-bot",
+            maintainer=None,
+            author=None,
+            also=recording.raw_logins(raw),
+        )
+        assert roles == {bot_login: "bot"}
+        found = needles(raw, roles=roles, remote="git@github.com:own-x/repo-y.git")
+        if len(f"@{stem}") >= recording.NEEDLE_MIN_LENGTH:
+            assert f"@{stem}" in _kinds(found, "login")
+            assert residual(_placed(f"Run @{stem} check", "prose"), found) is not None
+        calls = rec.synthesize_user_ids(
+            rec.classify_calls(red_calls, {**found.mapping(), **roles}),
+            UserIdMap(),
+            forge="github",
+        )
+        out_item = json.loads(calls[0]["stdout"])[0]
+        assert out_item["user"]["login"] == "bot"
+        assert out_item["body"] == "Please run @bot check."
+        fixture = {
+            "forge": "github",
+            "method": "conversation_comments",
+            "case": "short_bot",
+            "source": recording.recorded_source("2026-11-19", "github"),
+            "calls": calls,
+        }
+        rec.refuse_unclassified(fixture, rec.Denylist(), found)
+
+        fx_off = {
+            "forge": "github",
+            "calls": [
+                _exchange(
+                    [{"user": {"login": bot_login, "id": 44556677}, "body": f"Run @{stem} check"}]
+                )
+            ],
+        }
+        red_off = redact_fixtures.redact_fixture(fx_off, forge="github")
+        assert json.loads(red_off["calls"][0]["stdout"])[0]["body"] == "Run @bot check"
+        assert residual(red_off, redact_fixtures.fixture_needles(fx_off)) is None
+
+    found_dep = needles([], roles={"dependabot[bot]": "bot"})
+    assert "dependabot" in _kinds(found_dep, "login")
+    assert residual(_placed("Dependabot will rebase", "prose"), found_dep) == (
+        "login",
+        2,
+        "exchanges[0].stdout.body",
+    )
+
+    fx_proj_bot = {
+        "forge": "github",
+        "calls": [
+            _exchange(
+                [
+                    {
+                        "user": {"login": "project[bot]", "id": 44556677},
+                        "body": "See https://github.com/o/r/pull/1 and @project",
+                    }
+                ]
+            )
+        ],
+    }
+    red_proj = redact_fixtures.redact_fixture(fx_proj_bot, forge="github")
+    assert json.loads(red_proj["calls"][0]["stdout"])[0]["body"] == (
+        "See https://forge.example.com/org/project/pull/1 and @bot"
+    )
+    assert residual(red_proj, redact_fixtures.fixture_needles(fx_proj_bot)) is None
+
+    fx_upper_bot = {
+        "forge": "github",
+        "calls": [
+            _exchange(
+                [
+                    {
+                        "user": {"login": "Dependabot[BOT]", "id": 44556677},
+                        "body": "Dependabot: @dependabot rebase",
+                    }
+                ]
+            )
+        ],
+    }
+    assert redact_fixtures.legacy_roles(fx_upper_bot) == {"Dependabot[BOT]": "bot"}
+    red_upper = redact_fixtures.redact_fixture(fx_upper_bot, forge="github")
+    assert json.loads(red_upper["calls"][0]["stdout"])[0]["user"]["login"] == "bot"
+    assert json.loads(red_upper["calls"][0]["stdout"])[0]["body"] == "bot: @bot rebase"
+    assert residual(red_upper, redact_fixtures.fixture_needles(fx_upper_bot)) is None
+
+    fx_mention_first = {
+        "forge": "github",
+        "calls": [
+            _exchange([{"body": "cc @renovate please rebase"}]),
+            _exchange([{"user": {"login": "renovate[bot]", "id": 29139614}, "body": "ok"}]),
+        ],
+    }
+    assert redact_fixtures.legacy_roles(fx_mention_first) == {"renovate[bot]": "bot"}
