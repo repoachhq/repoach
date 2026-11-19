@@ -3399,6 +3399,7 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
         ("_MENTION_HANDLE_CLASS", recording._MENTION_HANDLE_CLASS, alnum | set("_-")),
         ("_MENTION_DOT_AFTER_CLASS", recording._MENTION_DOT_AFTER_CLASS, alnum | {"_"}),
         ("_MENTION_SLASH_AFTER_CLASS", recording._MENTION_SLASH_AFTER_CLASS, alnum | set("_.-")),
+        ("_DIFF_MARKER_CLASS", recording._DIFF_MARKER_CLASS, {"+", "-"}),
         ("_SCP_BEFORE_BLOCK_CLASS", recording._SCP_BEFORE_BLOCK_CLASS, alnum | set(".+/-")),
         ("_SCP_USER_CLASS", recording._SCP_USER_CLASS, alnum | set("_.+-")),
         ("_SCP_HOST_LABEL_CLASS", recording._SCP_HOST_LABEL_CLASS, alnum | {"-"}),
@@ -3489,3 +3490,90 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
     assert red_a == "See <https://forge.example.com><a@example.com> (host forge.example.com)"
     assert not unredacted_host(red_a)
     assert residual(_placed(red_a, "prose"), found_a) is None
+
+
+def test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted() -> None:
+    """R9-D2, V9-16 (0.16): unified-diff SCP lines and ``+`` usernames redact cleanly on live and offline paths."""
+    assert unredacted_host("user+ci@git.zqcorp.io:zqns/zqrepo.git")
+    assert (
+        redact_urls_in_text("user+ci@git.zqcorp.io:zqns/zqrepo.git")
+        == "git@forge.example.com:org/project.git"
+    )
+    assert (
+        redact_urls_in_text("foo-bar@git.zqcorp.io:zqns/zqrepo.git")
+        == "git@forge.example.com:org/project.git"
+    )
+    assert not unredacted_host("+git@example.com:org/repo.git")
+    assert redact_urls_in_text("+git@example.com:org/repo.git") == "+git@example.com:org/repo.git"
+
+    diff_shapes: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        (
+            "+git@git.zqcorp.io:zqns/zqrepo.git",
+            "+git@forge.example.com:org/project.git",
+            ("git.zqcorp.io", "zqns", "zqrepo"),
+        ),
+        (
+            "-alice@git.zqcorp.io:zqns/zqrepo.git",
+            "-git@forge.example.com:org/project.git",
+            ("alice", "git.zqcorp.io", "zqns", "zqrepo"),
+        ),
+        (
+            "+bob@git.zqcorp.io:zqns/zqrepo.git",
+            "+git@forge.example.com:org/project.git",
+            ("bob", "git.zqcorp.io", "zqns", "zqrepo"),
+        ),
+        (
+            "-alice@example.com:org/repo.git",
+            "-git@forge.example.com:org/project.git",
+            ("alice",),
+        ),
+        (
+            " alice@git.zqcorp.io:zqns/zqrepo.git",
+            " git@forge.example.com:org/project.git",
+            ("alice", "git.zqcorp.io", "zqns", "zqrepo"),
+        ),
+    )
+    for line, expected_line, forbidden in diff_shapes:
+        assert unredacted_host(line), line
+        assert redact_urls_in_text(line) == expected_line, line
+        assert not unredacted_host(expected_line), line
+
+        diff_text = f"diff --git a/remotes.txt b/remotes.txt\n{line}\n"
+        expected_diff = f"diff --git a/remotes.txt b/remotes.txt\n{expected_line}\n"
+        assert unredacted_host(diff_text), line
+        assert redact_urls_in_text(diff_text) == expected_diff, line
+        assert not unredacted_host(expected_diff), line
+
+        raw_call = {
+            "program": "glab",
+            "args": ["mr", "diff", "1"],
+            "stdin": None,
+            "returncode": 0,
+            "stdout": diff_text,
+            "stderr": "",
+        }
+        found = needles([[raw_call], [1], {}, ""], roles={}, remote="")
+        red_calls = rec.classify_calls([raw_call], found.mapping())
+        assert red_calls[0]["stdout"] == expected_diff, line
+        fixture = {
+            "forge": "gitlab",
+            "case": "diff_scp",
+            "method": "diff",
+            "args": [1],
+            "kwargs": {},
+            "bot_username": "repoach-bot",
+            "source": recording.recorded_source("2026-11-19", "gitlab"),
+            "trimmed": None,
+            "calls": red_calls,
+            "result": None,
+            "raises": None,
+        }
+        rec.refuse_unclassified(fixture, rec.Denylist(()), found)
+        for token in forbidden:
+            assert token not in red_calls[0]["stdout"], (line, token)
+
+        off_in = {**fixture, "calls": [raw_call]}
+        off_out = redact_fixtures.redact_fixture(off_in, forge="gitlab")
+        assert off_out["calls"][0]["stdout"] == expected_diff, line
+        assert residual(off_out, redact_fixtures.fixture_needles(off_in)) is None, line
+        assert redact_fixtures.redact_fixture(off_out, forge="gitlab") == off_out, line

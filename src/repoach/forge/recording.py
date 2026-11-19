@@ -535,6 +535,9 @@ def _split_url_tail(raw_url: str, *, open_under: int = 0) -> tuple[str, str]:
     return core, punct_tail
 
 
+_DIFF_MARKER_CLASS = _char_class("+-")
+"""Unified-diff line-leading ``+`` / ``-`` markers allowed immediately before an SCP remote (0.16 R9-D2)."""
+
 _SCP_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + ".+/-")
 """Characters that may not precede an SCP remote username outside a diff line prefix (0.16)."""
 
@@ -548,7 +551,8 @@ _SCP_PATH_CLASS = _char_class(_ASCII_ALNUM + "_.~%-")
 """Characters allowed inside an SCP remote path segment (0.16)."""
 
 _SCP_IN_TEXT_RE = re.compile(
-    rf"(?<!{_SCP_BEFORE_BLOCK_CLASS})(?P<user>{_TOKEN_CLASS}{_SCP_USER_CLASS}*)@"
+    rf"(?:(?<=\A{_DIFF_MARKER_CLASS})|(?<=\n{_DIFF_MARKER_CLASS})|(?<!{_SCP_BEFORE_BLOCK_CLASS}))"
+    rf"(?P<user>{_TOKEN_CLASS}{_SCP_USER_CLASS}*)@"
     rf"(?P<host>{_SCP_HOST_LABEL_CLASS}+(?:\.{_SCP_HOST_LABEL_CLASS}+)+)\.?"
     rf":(?!//)(?P<path>(?:{_SCP_PATH_CLASS}+/)+{_SCP_PATH_CLASS}*)",
     re.I,
