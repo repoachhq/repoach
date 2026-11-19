@@ -143,14 +143,14 @@ tree.
 | absolute home path (`/home/<x>/…`, `/Users/<x>/…`) | `~/…` in prose; `<repo>/…` when the path is a checkout; `/path/to/…` in a recorded JSON value | never the `%h` specifier followed by a layout either |
 | a maintainer's directory layout under the home | `<layout>`; in a unit, the render token `@REPOACH_HOME@` (`deploy/systemd/README.md`) | |
 | system login, service account | `<user>`; in a recorded JSON value, the class word (`maintainer`, `author`, `bot`, `agent`, `service`) | |
-| forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot`, `service` | GitHub `login`, GitLab `username`, a login in argv and an `@<handle>` in a recorded body alike; a `<name>[bot]` login shares one consistent class word across its login, `@<name>` mention and bare prose stem; a hand-written placeholder (`alice`, `owner`…) is a real account and gets a class word too; only `github-actions[bot]` (the platform's) and `repoach-bot` (this project's) name no person and stay; a namespace inside a recorded URL is `org` (row below) |
+| forge handle in a fixture or test | the class word with a stable suffix when several are needed: `maintainer`, `author`, `author-2`, `bot`, `service` | GitHub `login`, GitLab `username`, a login in argv and an `@<handle>` in a recorded body alike; a `<name>[bot]` login shares one consistent class word across its login and `@<name>` mention whatever the stem length (and its bare prose stem when ≥4 characters and outside class words and placeholders); a hand-written placeholder (`alice`, `owner`…) is a real account and gets a class word too; only `github-actions[bot]` (the platform's) and `repoach-bot` (this project's) name no person and stay; a namespace inside a recorded URL is `org` (row below) |
 | real name in a recorded user object | dropped: the `name` key is removed from the user object | `login`/`username` stay as class words; `name` elsewhere (check runs, jobs) is read by the forges and kept |
 | user id in a recorded user object (REST id, node id) | a synthetic number in `1001..1999`, `U_<n>` for a node id, declared by the fixture under `synthetic_user_ids`; a declared number outside that range is not trusted and is remapped | the key is kept (GitLab reads the approver's id as `Review.id`); a sequence, never a hash, since a hash of a small id is reversed by enumeration; the maintainer's real ids are judged by the deny-list, never committed |
-| recorded forge URL (`url`, `web_url`, `html_url`, `link`, and a URL or an scp/`ssh://` remote in recorded text) | `https://forge.example.com/org/project/…`: the host becomes `forge.example.com`, the namespace `org`, the repository `project` (a `.git` suffix kept, and a repository object's `name`/`path` by key, its `description` dropped; numeric `api/v4/projects/<id>/…` ids map to `2001..2999`), the rest of the path is kept, the query dropped and the fragment too unless it is a comment anchor; a userinfo is never kept (`git@` for a remote that had one, `git@forge.example.com:org/project` for an scp remote); a user object's own URLs are dropped; Markdown delimiters (`` ` ``, `*`, `|`, boundary `~`, `_`) terminate text URLs without being eaten; well-known public reference hosts (`docker.io`, `ghcr.io`, `golang.org`, `k8s.io`, `pypi.org`, `npmjs.com`, `docs.github.com`, `docs.gitlab.com`) stay intact in prose | applied at record time by `scripts/record_forge_fixture.py`, re-applied offline by `scripts/redact_forge_fixtures.py` (SP-RECORDER-REDACTS-BY-CLASS, covering `kwargs` as well as `args` and `result`); a recorded fixture's `source` names the forge, never the checkout's folder |
+| recorded forge URL (`url`, `web_url`, `html_url`, `link`, and a URL or an scp/`ssh://` remote in recorded text) | `https://forge.example.com/org/project/…`: the host becomes `forge.example.com`, the namespace `org`, the repository `project` (a `.git` suffix kept, and a repository object's `name`/`path` by key, its `description` dropped; real numeric `[api/v4/]projects/<id>/…` ids map to `2001..2999`, while doc examples on kept hosts such as `gitlab.example.com` or `< 4`-digit mock ids stay untouched), the rest of the path is kept, the query dropped and the fragment too unless it is a comment anchor; a userinfo (`user[:pass]@`) is never kept whatever the host — public reference hosts included (`git@` for an `ssh`/`git` remote that had one, `git@forge.example.com:org/project` for an scp remote); a user object's own URLs are dropped; trailing prose punctuation (`.,:;!?)]}>'"`) and Markdown delimiters (`` ` ``, `*`, `|`, `~`, `_`) terminate text URLs without being eaten; well-known public reference hosts (`docker.io`, `ghcr.io`, `golang.org`, `k8s.io`, `pypi.org`, `npmjs.com`, `docs.github.com`, `docs.gitlab.com`) stay intact in prose with scheme and host lowercased so case never changes a host decision | applied at record time by `scripts/record_forge_fixture.py`, re-applied offline by `scripts/redact_forge_fixtures.py` (SP-RECORDER-REDACTS-BY-CLASS, covering `args`, `kwargs`, `stdin`, `stderr`, stdout and `result`); a recorded fixture's `source` names the forge, never the checkout's folder |
 | hostname (short or FQDN) | `<host>`; in a URL, `example.com` or a subdomain of it | RFC 2606 |
 | public IPv4 | `203.0.113.<n>` (RFC 5737 TEST-NET-3) | `192.0.2.<n>` and `198.51.100.<n>` are also accepted |
 | public IPv6 | `2001:db8::<n>` (RFC 3849) | |
-| mailbox | `<user>@example.com`; a forge noreply (`@users.noreply.github.com`, `@users.noreply.gitlab.com`, self-hosted `@users.noreply.<host>`) has its local part and host redacted by class (`author@users.noreply.forge.example.com` / `bot@users.noreply.forge.example.com`); a system noreply (`noreply@github.com`, `noreply@<self-hosted>`) becomes `noreply@forge.example.com` | |
+| mailbox | `<user>@example.com`; a forge noreply (`@users.noreply.github.com`, `@users.noreply.gitlab.com`, self-hosted `@users.noreply.<host>`) has its local part and host redacted by class (`author@users.noreply.forge.example.com` / `bot@users.noreply.forge.example.com`); a system noreply (`noreply@github.com`, `no-reply@<host>`, `noreply@<self-hosted>`) or `actions@github.com` becomes `noreply@forge.example.com` (`no-reply@forge.example.com` for `no-reply@`) | |
 | a domain of the owner's other product | `example.com`, or `product.example.com` when the sentence needs a product | the product's name alone is not personal data |
 
 The real-account rule (SP-RECORDER-REDACTS-BY-CLASS D2): wherever a string
@@ -162,26 +162,32 @@ detection needs the real host; one derived from a real account or project is
 replaced by `group/project`. A login known only from an `@<handle>` mention is
 replaced in that form only; a dotted `@a.b`, a scoped package (`@scope/pkg`)
 and a standard-library decorator or annotation (`@dataclass`, `@Override`,
-case-insensitive) are code, not mentions. A repository id in a recorded
-repository object or `api/v4/projects/<id>/…` URL is a synthetic number in
-`2001..2999`, declared under `synthetic_project_ids`. Both tools then judge
-the fixture they are about to write with a closure oracle: the logins, hosts
-(positive DNS TLD / known-host rule for schemeless hosts, plus scheme-led
-IPv4 URLs such as `https://10.20.30.40/…`), namespace and repository names
-and raw ids the recording saw, and the deny-list, searched for as whole
-tokens (letters and digits; `-` and `_` delimit) in every string (including
-`case`, `call["args"]`, and every key a forge does not write), casefolded,
-URL/entity/`\u`-decoded, with embedded user node ids (`MDQ6VXNl…` and `U_…`)
-read as their account number; one found is exit 2 and nothing is written. A
-third party's project linked on a public forge (including under an ssh-alias
-or empty `origin` remote when `URL_KEYS` identify the public forge) names no
-one of the recording and is not searched for. The threat model is
-**accidental leaks** from real pull requests, not adversarial evasion: a
-login the recording never learns cited only as a bare word, schemeless
-private IPv4 paths (`10.0.0.5/…`), Unicode confusables and invisible
-characters, Markdown-split or escaped values, non-node-id base64 and
-JSON-in-a-string escapes are out of scope (SP-RECORDER-REDACTS-BY-CLASS
-Threat model & NG4).
+case-insensitive) are code, not mentions. A real repository id in a recorded
+repository object or `[api/v4/]projects/<id>/…` path (such as `glab api
+projects/<id>/…`) is a synthetic number in `2001..2999`, declared under
+`synthetic_project_ids`, while documentation examples (`gitlab.example.com`,
+`docs.gitlab.com`, or `< 4`-digit mock ids such as `/api/v4/projects/42`) are
+left intact. Both tools then judge the fixture they are about to write with a
+closure oracle: the logins, hosts (scheme-/user-led hosts including IPv4
+`https://10.20.30.40/…`, plus schemeless hosts only when in `known_hosts` —
+forge hosts, the remote/inferred host, or hosts already seen with a scheme or
+`@` in the same recording, avoiding corruption of macOS bundle paths and code
+attribute divisions such as `Xcode.app/Contents/…` or `config.dev/env/prod`),
+namespace and repository names and raw ids the recording saw, and the
+deny-list, searched for as whole tokens (letters and digits; `-` and `_`
+delimit) in every string (including `case`, `call["args"]`, and every key a
+forge does not write), casefolded, URL/entity/`\u`-decoded, with embedded user
+node ids (`MDQ6VXNl…` and `U_…`) read as their account number; one found is
+exit 2 and nothing is written. A third party's project linked on a public forge
+(or outside an inferred self-hosted instance when `remote=""` and `URL_KEYS`
+identify the recording's host) names no one of the recording and is not
+searched for as segments. The threat model is **accidental leaks** from real
+pull requests, not adversarial evasion: a login the recording never learns
+cited only as a bare word, schemeless private IPv4 paths (`10.0.0.5/…`),
+schemeless unknown third-party hosts never seen with a scheme or `@` in the
+same recording, Unicode confusables and invisible characters, Markdown-split or
+escaped values, non-node-id base64 and JSON-in-a-string escapes are out of
+scope (SP-RECORDER-REDACTS-BY-CLASS Threat model & NG4).
 
 Public attribution is not personal data: the copyright holder in `LICENSE`,
 the `authors` of `pyproject.toml`, the security contact in `SECURITY.md`, the
