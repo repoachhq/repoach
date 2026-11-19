@@ -1,7 +1,7 @@
 ---
 id: SP-PIN-TOOLCHAIN
 title: Pin ruff to one minor and spawn pytest and ruff through the running interpreter
-version: 0.4
+version: 0.5
 status: approved
 author: agent
 created: 2026-10-19
@@ -25,6 +25,8 @@ Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB
 Amendment (0.3, 2026-11-18): approved by the owner 2026-11-18.
 
 Amendment (0.4, 2026-11-19): declare `SP-CI-STATUS-CLIENT-CLASSIFY` and `SP-UNIVERSAL-GATES` in `depends_on` for `test_toolchain_spawn.py` imports and configured repoach gate resolution.
+
+Amendment (0.5, 2026-11-19): Open Questions Q1 and Q2 marked resolved with the adopted answers; no behaviour change.
 
 ## Intent
 
@@ -133,5 +135,5 @@ flowchart TD
 - [ ] AC7: `repoach arch check --base develop` → `edge-honesty: ok`.
 
 ## Open Questions
-- Q1: `0.15` is the minor the operator's venv holds today; CI resolves `0.17.1` and would fail on F3's SIM117. Pin to `0.15` now and bump by a dedicated commit that also fixes the SIM117, or fix the SIM117 first and pin to `0.17`? Recommendation: pin `0.15` now, since it is the measured green state; bump in its own PR.
-- Q2: who re-measures the "nine red tests" report? It was not reproduced at `20dbb45` under `0.17.1`; if it came from another tree or an older ruff, the row in `docs/tech_debt.md` that cites it should carry the SHA it was measured on.
+- Q1 (resolved): pin `0.15` now, as the measured green state, and bump in a dedicated PR that also fixes the SIM117. Adopted: `pyproject.toml` pins `ruff>=0.15,<0.16`.
+- Q2 (resolved): the "nine red tests" report was not reproduced at `20dbb45` under `0.17.1`, and no row of `docs/tech_debt.md` cites it, so there is nothing to re-measure or re-date; any future report must carry the SHA and ruff version it was measured on.
