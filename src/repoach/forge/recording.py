@@ -423,8 +423,15 @@ URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git", "ftp", "
 _URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git|ftps?)://[^\s\"'<>()\[\]{}\\,`*|]+", re.I)
 """A URL inside free text (a log line, a ``glab`` error, a clone command), any case (I2, 0.10; Markdown delimiters terminate, 0.13)."""
 
-_URL_TRIM_TAIL = ".:;~_"
-"""Trailing punctuation and boundary GFM inline delimiters (``~``, ``_``) trimmed from text URLs without being eaten (0.13)."""
+_URL_TRIM_TAIL = ".,:;!?)]}>'\"`*|~_"
+"""Trailing prose punctuation and boundary Markdown delimiters trimmed from text URLs without being eaten (0.13, 0.14 R7-D2)."""
+
+
+def _split_url_tail(raw_url: str) -> tuple[str, str]:
+    """Split trailing prose punctuation and boundary Markdown delimiters off ``raw_url`` without eating them (0.14 R7-D2)."""
+    url = raw_url.rstrip(_URL_TRIM_TAIL)
+    return url, raw_url[len(url) :]
+
 
 _SCP_IN_TEXT_RE = re.compile(
     r"(?<![A-Za-z0-9_.+/-])(?P<user>[A-Za-z0-9_.-]+)@(?P<host>[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\.?"
@@ -648,9 +655,10 @@ def _normalize_kept_url(parts: SplitResult) -> str:
 def redact_urls_in_text(text: str) -> str:
     """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
-    A URL goes through :func:`redact_url`, with trailing punctuation and
-    boundary GFM inline delimiters (``.:;~_``) preserved outside the URL
-    (0.13 R6-D1). An scp remote ``<user>@<host>:<ns>/<repo>`` is normalised
+    A URL goes through :func:`redact_url`, with trailing prose punctuation
+    (``.,:;!?)]}>'"``) and boundary Markdown delimiters (`` ` ``, ``*``,
+    ``|``, ``~``, ``_``) preserved outside the URL without being eaten
+    (0.13 R6-D1, 0.14 R7-D2). An scp remote ``<user>@<host>:<ns>/<repo>`` is normalised
     through it too (0.10): read as ``ssh://<user>@<host>/<ns>/<repo>``,
     redacted, and written back as ``git@forge.example.com:org/project``,
     its ``.git`` suffix kept and its user never. A URL on
@@ -669,8 +677,7 @@ def redact_urls_in_text(text: str) -> str:
     """
 
     def _one(match: re.Match[str]) -> str:
-        url = match.group(0).rstrip(_URL_TRIM_TAIL)
-        tail = match.group(0)[len(url) :]
+        url, tail = _split_url_tail(match.group(0))
         try:
             parts = urlsplit(url)
         except ValueError as exc:
@@ -688,9 +695,7 @@ def redact_urls_in_text(text: str) -> str:
     def _scp(match: re.Match[str]) -> str:
         if _example_host(match.group("host").casefold()):
             return match.group(0)
-        raw_path = match.group("path")
-        path = raw_path.rstrip(_URL_TRIM_TAIL)
-        tail = raw_path[len(path) :]
+        path, tail = _split_url_tail(match.group("path"))
         url = redact_url(f"ssh://{match.group('user')}@{match.group('host')}/{path}")
         return url.removeprefix("ssh://").replace("/", ":", 1) + tail
 
@@ -721,7 +726,7 @@ def unredacted_host(text: str) -> bool:
     to be written means a value escaped the redaction (D3, 0.9, 0.14 R7-D1).
     """
     for match in _URL_IN_TEXT_RE.finditer(text):
-        url = match.group(0).rstrip(_URL_TRIM_TAIL)
+        url, _tail = _split_url_tail(match.group(0))
         try:
             parts = urlsplit(url)
         except ValueError as exc:

@@ -2600,3 +2600,51 @@ def test_public_hosts_strip_userinfo_and_normalize_host_case() -> None:
         "See https://docs.github.com/en/actions and https://docs.gitlab.com/ee/api/"
     )
     assert residual(red_docs, redact_fixtures.fixture_needles(fx_docs)) is None
+
+
+def test_prose_punctuation_and_markdown_delimiters_terminate_urls_without_eating() -> None:
+    """R7-D2, Pref 5 (0.14): trailing prose punctuation and Markdown delimiters terminate URLs and are never eaten."""
+    kept_cases = (
+        "Try https://example.com! Also works on http://localhost!",
+        "Just published https://pypi.org/project/ruff/!",
+        "Did you check https://example.com?",
+        "Check https://example.com, https://example.com; https://example.com: https://example.com.",
+        "See (https://example.com) [https://example.com] {https://example.com} <https://example.com>",
+        "Quote 'https://example.com' and \"https://example.com\" and ~~https://example.com~~ and _https://example.com_",
+    )
+    for sample in kept_cases:
+        assert redact_urls_in_text(sample) == sample, sample
+        assert not unredacted_host(sample), sample
+
+    assert (
+        redact_urls_in_text("Did you check https://docs.python.org/3/library/re.html?")
+        == "Did you check https://forge.example.com/org/project?"
+    )
+    assert (
+        redact_urls_in_text("Check https://git.zqcorp.io/zqgroup/zqsecondrepo!")
+        == "Check https://forge.example.com/org/project!"
+    )
+    for punct in (".", ",", ":", ";", "!", "?", ")", "]", "}", ">", "'", '"'):
+        text = f"See https://git.zqcorp.io/zqgroup/zqsecondrepo{punct}"
+        assert redact_urls_in_text(text) == f"See https://forge.example.com/org/project{punct}", (
+            punct
+        )
+
+    assert recording.locations("Check https://git.zqcorp.io/zqgroup/zqsecondrepo!") == [
+        recording.Location("git.zqcorp.io", ("zqgroup", "zqsecondrepo"))
+    ]
+    raw = _one_call(
+        {
+            "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/1",
+            "body": "Check https://git.zqcorp.io/zqgroup/zqsecondrepo! (see zqsecondrepo docs)",
+        }
+    )
+    found = needles(raw, roles={}, remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git")
+    assert "zqsecondrepo" in _kinds(found, "segment")
+    redacted = classify_text(
+        redact_urls_in_text(
+            "Check https://git.zqcorp.io/zqgroup/zqsecondrepo! (see zqsecondrepo docs)"
+        ),
+        found.mapping(),
+    )
+    assert redacted == "Check https://forge.example.com/org/project! (see project docs)"
