@@ -194,7 +194,7 @@ def test_pytest_traceback_mentioning_missing_module_is_not_masked(
 ) -> None:
     traceback_out = (
         "FAILED tests/unit/test_toolchain_spawn.py::test_missing_pytest_is_named\n"
-        '>       _record(monkeypatch, rc=1, err="/x/python: No module named pytest")\n'
+        "E   ModuleNotFoundError: No module named 'pytest'\n"
         "AssertionError: assert False\n"
     )
     _record(monkeypatch, rc=1, out=traceback_out, err="")
@@ -207,7 +207,7 @@ def test_pytest_traceback_mentioning_missing_module_is_not_masked(
 def test_ruff_lint_output_mentioning_missing_module_is_not_masked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    lint_out = 'src/bad.py:1:30: F821 Undefined name `x`  # "No module named ruff"\n'
+    lint_out = "src/bad.py:1:30: F821 Undefined name `x`\n/x/python: No module named ruff\n"
     _record(monkeypatch, rc=1, out=lint_out, err="")
     ok, tail = run_ruff_gate(tmp_path)
     assert ok is False
@@ -387,3 +387,43 @@ def test_foreign_repo_configured_commands_stay_untouched(
         (["ruff", "check", "src"], None),
         ([_PYTEST_MODULE, "-q"], None),
     ]
+
+
+def test_configured_gate_ignores_missing_module_line_on_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_repoach_checkout(tmp_path)
+
+    class _FakePopen:
+        returncode = 1
+
+        def __init__(self, argv, **kwargs) -> None:
+            self.argv = argv
+
+        def communicate(self, timeout=None) -> tuple[str, str]:
+            return "E   ModuleNotFoundError: No module named 'pytest'\n", ""
+
+    monkeypatch.setattr(commands.subprocess, "Popen", _FakePopen)
+    ok, tail = run_pytest_matrix(tmp_path)
+    assert ok is False
+    assert "not installed" not in tail
+    assert "No module named 'pytest'" in tail
+
+
+def test_developer_run_tests_ignores_missing_module_line_on_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+
+    def fake_subprocess_run(argv, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="E   ModuleNotFoundError: No module named 'pytest'\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(devagent_tools.subprocess, "run", fake_subprocess_run)
+    tools = {tool.name: tool.callable_fn for tool in make_developer_tools(tmp_path)}
+    out = tools["run_tests"]("tests/unit")
+    assert out.startswith("FAIL (pytest tests/unit)")
+    assert "not installed" not in out
