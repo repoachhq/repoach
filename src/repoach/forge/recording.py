@@ -420,17 +420,27 @@ _GITHUB_ROUTES: frozenset[str] = frozenset(
 URL_SCHEMES: frozenset[str] = frozenset({"http", "https", "ssh", "git", "ftp", "ftps"})
 """Schemes of a URL redacted by class: web, API, git/ssh remotes and ftp(s) links (0.9, 0.13)."""
 
-_URL_IN_TEXT_RE = re.compile(r"(?:https?|ssh|git|ftps?)://[^\s\"'<>()\[\]{}\\,`*|]+", re.I)
-"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case (I2, 0.10; Markdown delimiters terminate, 0.13)."""
+_URL_BODY_CHAR = r"[^\s\"'<>()\[\]{}\\,`*|]"
+"""One non-delimiter character of a URL body in free text (0.15 Pref 2)."""
+
+_URL_IN_TEXT_RE = re.compile(
+    rf"(?:https?|ssh|git|ftps?)://(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))+",
+    re.I,
+)
+"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case, with GFM balanced parentheses (I2, 0.10; 0.13; 0.15 Pref 2)."""
 
 _URL_TRIM_TAIL = ".,:;!?)]}>'\"`*|~_"
 """Trailing prose punctuation and boundary Markdown delimiters trimmed from text URLs without being eaten (0.13, 0.14 R7-D2)."""
 
 
 def _split_url_tail(raw_url: str) -> tuple[str, str]:
-    """Split trailing prose punctuation and boundary Markdown delimiters off ``raw_url`` without eating them (0.14 R7-D2)."""
-    url = raw_url.rstrip(_URL_TRIM_TAIL)
-    return url, raw_url[len(url) :]
+    """Split trailing prose punctuation and boundary Markdown delimiters off ``raw_url`` without eating them (0.14 R7-D2, 0.15 Pref 2)."""
+    end = len(raw_url)
+    while end > 0 and raw_url[end - 1] in _URL_TRIM_TAIL:
+        if raw_url[end - 1] == ")" and raw_url[:end].count("(") >= raw_url[:end].count(")"):
+            break
+        end -= 1
+    return raw_url[:end], raw_url[end:]
 
 
 _SCP_IN_TEXT_RE = re.compile(
@@ -462,21 +472,37 @@ _EXAMPLE_HOST_RE = re.compile(
 
 PUBLIC_REFERENCE_HOSTS: frozenset[str] = frozenset(
     {
+        "crates.io",
         "docker.io",
         "docs.github.com",
         "docs.gitlab.com",
+        "docs.rs",
         "ghcr.io",
+        "go.dev",
         "golang.org",
         "k8s.io",
+        "mozilla.org",
         "npmjs.com",
-        "pkg.go.dev",
-        "proxy.golang.org",
+        "npmjs.org",
         "pypi.org",
-        "registry.npmjs.org",
-        "www.npmjs.com",
+        "python.org",
+        "readthedocs.io",
+        "readthedocs.org",
+        "stackoverflow.com",
+        "wikipedia.org",
     }
 )
-"""Well-known public registries, module hosts and forge documentation hosts kept in free text (0.13)."""
+"""Curated registrable suffixes of public documentation and package hosts kept in free text (0.13, 0.15 R8-D1).
+
+Matched by registrable suffix (exact host or ``.<suffix>``): for example
+``python.org`` covers ``docs.``, ``www.`` and ``peps.``; ``readthedocs.io``
+covers ``<project>.readthedocs.io``; ``docs.github.com`` and
+``docs.gitlab.com`` stay scoped to their documentation subdomains so
+``github.com`` and ``gitlab.com`` are never matched. Any unlisted host is
+rewritten (over-redaction is the safe direction). Kept URLs still have
+userinfo stripped, scheme and host lowercased, and path/query scanned for
+needles and deny-list values.
+"""
 
 
 def _project(segment: str) -> str:
@@ -615,9 +641,17 @@ def redact_url(value: str) -> str:
     return urlunsplit((parts.scheme, host, path, "", fragment))
 
 
+def _is_public_reference_host(host: str) -> bool:
+    """Whether ``host`` matches a curated suffix in :data:`PUBLIC_REFERENCE_HOSTS` (0.15 R8-D1)."""
+    folded = host.rstrip(".").casefold()
+    return any(
+        folded == suffix or folded.endswith(f".{suffix}") for suffix in PUBLIC_REFERENCE_HOSTS
+    )
+
+
 def _is_allowed_host(host: str) -> bool:
     """Whether ``host`` is allowed in free text: an RFC 2606, loopback or :data:`PUBLIC_REFERENCE_HOSTS` host."""
-    return bool(_EXAMPLE_HOST_RE.search(host)) or host.casefold() in PUBLIC_REFERENCE_HOSTS
+    return bool(_EXAMPLE_HOST_RE.search(host)) or _is_public_reference_host(host)
 
 
 def _kept_host(host: str) -> bool:
@@ -1626,12 +1660,15 @@ _HOST_TOKEN_RE = re.compile(
 )
 """A dotted name ending in a letter-led label: a host candidate, judged by its context (:func:`locations`)."""
 
+_AFTER_HOST_CHAR = r"[^\s\"'<>()\[\]{}\\,?#|`*]"
+_AFTER_HOST_NOSLASH = r"[^/\s\"'<>()\[\]{}\\,?#|`*]"
+_AFTER_HOST_SEG = rf"(?:{_AFTER_HOST_CHAR}|\((?:{_AFTER_HOST_CHAR}|\({_AFTER_HOST_CHAR}*\))*\))*"
 _AFTER_HOST_RE = re.compile(
-    r"\.?(?:(?P<port>:[0-9]{1,5})?/(?P<slash>[^\s\"'<>()\[\]{}\\,?#|`*]*)"
-    r"|:(?P<scp>[^\s\"'<>()\[\]{}\\,?#|`*]*/[^\s\"'<>()\[\]{}\\,?#|`*]*))",
+    rf"\.?(?:(?P<port>:[0-9]{{1,5}})?/(?P<slash>{_AFTER_HOST_SEG})"
+    rf"|:(?P<scp>{_AFTER_HOST_NOSLASH}*/{_AFTER_HOST_SEG}))",
     re.I,
 )
-"""What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>`` (Markdown delimiters terminate, 0.13)."""
+"""What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>`` with GFM balanced parentheses (0.13, 0.15 Pref 2)."""
 
 _USER_BEFORE_RE = re.compile(r"[A-Za-z0-9_.+-]@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
@@ -1700,7 +1737,7 @@ def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[L
             continue
         after = _AFTER_HOST_RE.match(text, m.end())
         raw_path = (after.group("slash") or after.group("scp") or "") if after else ""
-        path = raw_path.rstrip(_URL_TRIM_TAIL)
+        path, _tail = _split_url_tail(raw_path)
         segments = tuple(s for s in path.split("/")) if path else ()
         if not led:
             if not after or host not in known_hosts:

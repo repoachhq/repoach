@@ -2219,8 +2219,11 @@ def test_noreply_mailboxes_are_redacted_by_class_and_not_refused() -> None:
 
 
 def test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_refused() -> None:
-    """D6 (0.12): ``self.ms/1000``, ``README.md/foo``, ``foo.py:80/bar`` stay intact; ssh-alias skips third-party segments."""
-    body = "elapsed = self.ms/1000; see README.md/foo, foo.py:80/bar and https://docs.python.org/3/library/re.html"
+    """D6 (0.12, 0.15): ``self.ms/1000``, ``README.md/foo``, ``foo.py:80/bar`` stay intact; ssh-alias skips third-party segments."""
+    body = (
+        "elapsed = self.ms/1000; see README.md/foo, foo.py:80/bar, "
+        "https://docs.python.org/3/library/re.html and https://docs.vendor-unlisted.org/3/guide/re.html"
+    )
     item = {
         "user": {"login": "zqxjdoe7", "id": 48151623},
         "body": body,
@@ -2238,16 +2241,17 @@ def test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_
     assert "elapsed = self.ms/1000" in redacted_body
     assert "README.md/foo" in redacted_body
     assert "foo.py:80/bar" in redacted_body
+    assert "https://docs.python.org/3/library/re.html" in redacted_body
     assert "https://forge.example.com/org/project" in redacted_body
 
-    no_url_keys = _one_call({"body": "see https://docs.python.org/3/library/re.html"})
+    no_url_keys = _one_call({"body": "see https://docs.vendor-unlisted.org/3/library/re.html"})
     found_diff = needles(no_url_keys, roles={}, remote="mygh:own-x/repo-y.git")
     assert _kinds(found_diff, "segment") == ["own-x", "repo-y"]
 
     self_hosted = _one_call(
         {
             "web_url": "https://git.corp-x.io/grp-x/proj-x/-/merge_requests/3",
-            "body": "see https://git.corp-x.io/other-grp/other-proj and https://docs.python.org/3/library/re.html",
+            "body": "see https://git.corp-x.io/other-grp/other-proj and https://docs.vendor-unlisted.org/3/library/re.html",
         }
     )
     found_sh = needles(self_hosted, roles={}, remote="mygl:grp-x/proj-x.git")
@@ -2255,17 +2259,25 @@ def test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_
 
 
 def test_markdown_delimiters_terminate_urls_and_preserve_kept_hosts() -> None:
-    """R6-D1 (0.13): backticks, ``*``, ``|``, ``~``, ``_`` terminate URLs in redaction and ``locations()``."""
+    """R6-D1 (0.13, 0.15): backticks, ``*``, ``|``, ``~``, ``_`` terminate URLs in redaction and ``locations()``."""
     kept = "Check `https://example.com` and `http://localhost` and `https://127.0.0.1:8080/health`."
     assert redact_urls_in_text(kept) == kept
     assert not unredacted_host(kept)
     assert (
         redact_urls_in_text("See `https://docs.python.org/3/library/re.html` for regex.")
-        == "See `https://forge.example.com/org/project` for regex."
+        == "See `https://docs.python.org/3/library/re.html` for regex."
     )
     assert (
         redact_urls_in_text("|Py|https://docs.python.org/3/library/re.html|")
-        == "|Py|https://forge.example.com/org/project|"
+        == "|Py|https://docs.python.org/3/library/re.html|"
+    )
+    assert (
+        redact_urls_in_text("See `https://unlisted.vendor.org/3/library/re.html` for regex.")
+        == "See `https://forge.example.com/org/project` for regex."
+    )
+    assert (
+        redact_urls_in_text("|V|https://unlisted.vendor.org/3/library/re.html|")
+        == "|V|https://forge.example.com/org/project|"
     )
     assert (
         redact_urls_in_text("See **https://git.zqcorp.io/zqgroup/zqsecondrepo** now")
@@ -2577,7 +2589,7 @@ def test_third_party_links_under_empty_remote_and_public_reference_hosts() -> No
     raw = _one_call(
         {
             "url": "https://github.com/own-x/repo-y/pull/42",
-            "body": "See https://docs.python.org/3/library/re.html for regex.",
+            "body": "See https://docs.python.org/3/library/re.html and https://docs.vendor-unlisted.org/3/guide.html.",
         }
     )
     found = needles(raw, roles={}, remote="")
@@ -2709,6 +2721,10 @@ def test_prose_punctuation_and_markdown_delimiters_terminate_urls_without_eating
 
     assert (
         redact_urls_in_text("Did you check https://docs.python.org/3/library/re.html?")
+        == "Did you check https://docs.python.org/3/library/re.html?"
+    )
+    assert (
+        redact_urls_in_text("Did you check https://unlisted.vendor.org/3/library/re.html?")
         == "Did you check https://forge.example.com/org/project?"
     )
     assert (
@@ -2929,3 +2945,118 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
         ],
     }
     assert redact_fixtures.legacy_roles(fx_mention_first) == {"renovate[bot]": "bot"}
+
+
+def test_public_reference_hosts_match_by_suffix_and_balance_url_parens() -> None:
+    """R8-D1, Pref 2 (0.15): public reference hosts match by registrable suffix and keep GFM balanced parens."""
+    kept_urls = (
+        "https://docs.python.org/3/library/re.html",
+        "https://www.python.org/downloads/release/python-3120/",
+        "https://peps.python.org/pep-0695/",
+        "https://python.org/about/",
+        "https://readthedocs.org/projects/pytest/",
+        "https://pytest.readthedocs.io/en/stable/how-to/fixtures.html",
+        "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise",
+        "https://crates.io/crates/serde",
+        "https://docs.rs/serde/latest/serde/",
+        "https://stackoverflow.com/questions/123456/how-to-merge-dicts",
+        "https://en.wikipedia.org/wiki/Regular_expression",
+        "https://en.wikipedia.org/wiki/Python_(programming_language)",
+        "https://pypi.org/project/ruff/",
+        "https://www.npmjs.com/package/typescript",
+        "https://registry.npmjs.org/typescript",
+        "https://pkg.go.dev/golang.org/x/sync/errgroup",
+        "https://proxy.golang.org/",
+        "https://docs.github.com/en/actions/using-workflows",
+        "https://docs.gitlab.com/ee/api/merge_requests.html",
+    )
+    for url in kept_urls:
+        assert redact_urls_in_text(f"See {url} next") == f"See {url} next", url
+        assert not unredacted_host(f"See {url} next"), url
+        assert redact_urls_in_text(f"Did you check {url}?") == f"Did you check {url}?", url
+
+    assert (
+        redact_urls_in_text("See HTTPS://DOCS.PYTHON.ORG/3/library/re.html")
+        == "See https://docs.python.org/3/library/re.html"
+    )
+    assert (
+        redact_urls_in_text("See https://alice:secret@docs.python.org/3/library/re.html")
+        == "See https://forge.example.com/org/project"
+    )
+    assert unredacted_host("See https://alice:secret@docs.python.org/3/library/re.html")
+
+    for unlisted in (
+        "https://evilpython.org/a/b",
+        "https://python.org.evil.com/a/b",
+        "https://github.com/org/repo",
+        "https://gitlab.com/org/repo",
+        "https://unlisted.internal.example-corp.net/a/b",
+    ):
+        assert redact_urls_in_text(unlisted) == "https://forge.example.com/org/project", unlisted
+        assert unredacted_host(unlisted), unlisted
+
+    paren_cases = (
+        (
+            "[Python](https://en.wikipedia.org/wiki/Python_(programming_language))",
+            "[Python](https://en.wikipedia.org/wiki/Python_(programming_language))",
+        ),
+        (
+            "(https://en.wikipedia.org/wiki/Python_(programming_language)).",
+            "(https://en.wikipedia.org/wiki/Python_(programming_language)).",
+        ),
+        (
+            "(https://docs.python.org/3/library/re.html)",
+            "(https://docs.python.org/3/library/re.html)",
+        ),
+        (
+            "func(https://docs.python.org/3/library/re.html).bar()",
+            "func(https://docs.python.org/3/library/re.html).bar()",
+        ),
+        (
+            "See [wiki](https://git.zqcorp.io/zqns/foo_(bar)) now",
+            "See [wiki](https://forge.example.com/org/project) now",
+        ),
+    )
+    for raw_text, expected in paren_cases:
+        assert redact_urls_in_text(raw_text) == expected, raw_text
+
+    found = needles(
+        _one_call({"body": "ok"}),
+        roles={"zqxjdoe7": "author"},
+        denylist=("zqdenyval",),
+    )
+    assert residual(
+        _placed("https://docs.python.org/3/library/re.html?q=zqxjdoe7", "prose"), found
+    ) == ("login", 1, "exchanges[0].stdout.body")
+    assert residual(
+        _placed("https://pytest.readthedocs.io/en/latest/?ref=zqdenyval", "prose"), found
+    ) == ("deny-list", 1, "exchanges[0].stdout.body")
+    assert (
+        residual(
+            _placed("https://en.wikipedia.org/wiki/Python_(programming_language)", "prose"), found
+        )
+        is None
+    )
+
+    fx_off = {
+        "forge": "github",
+        "calls": [
+            _exchange(
+                [
+                    {
+                        "user": {"login": "author", "id": 1001},
+                        "body": (
+                            "See https://DOCS.PYTHON.ORG/3/library/re.html? and "
+                            "https://en.wikipedia.org/wiki/Python_(programming_language)"
+                        ),
+                    }
+                ]
+            )
+        ],
+    }
+    red_off = redact_fixtures.redact_fixture(fx_off, forge="github")
+    assert json.loads(red_off["calls"][0]["stdout"])[0]["body"] == (
+        "See https://docs.python.org/3/library/re.html? and "
+        "https://en.wikipedia.org/wiki/Python_(programming_language)"
+    )
+    assert residual(red_off, redact_fixtures.fixture_needles(fx_off)) is None

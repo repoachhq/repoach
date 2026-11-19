@@ -659,8 +659,9 @@ ORDINARY_CORPUS: tuple[OrdinaryCase, ...] = (
             "http://localhost!",
             "https://pypi.org/project/ruff/!",
             "https://example.com?",
-            "https://forge.example.com/org/project?",
+            "https://docs.python.org/3/library/re.html?",
         ),
+        must_not=("forge.example.com",),
     ),
     OrdinaryCase(
         label="gfm_table_and_backticked_urls",
@@ -679,8 +680,9 @@ ORDINARY_CORPUS: tuple[OrdinaryCase, ...] = (
             "`https://127.0.0.1:8080/health`",
             "|Ruff|https://pypi.org/project/ruff/|",
             "|Docs|https://docs.github.com/en/actions|",
-            "|Py|https://forge.example.com/org/project|",
+            "|Py|https://docs.python.org/3/library/re.html|",
         ),
+        must_not=("forge.example.com",),
     ),
     OrdinaryCase(
         label="gitlab_api_doc_examples_never_refuse_or_corrupt",
@@ -844,7 +846,8 @@ ORDINARY_CORPUS: tuple[OrdinaryCase, ...] = (
             url=f"https://{FAKE_HOST}/zqpuborg/zqpubrepo/-/merge_requests/1#note_1",
             body="See https://docs.python.org/3/library/re.html for regex help.",
         ),
-        must_have=("https://forge.example.com/org/project",),
+        must_have=("https://docs.python.org/3/library/re.html",),
+        must_not=("forge.example.com",),
     ),
     OrdinaryCase(
         label="github_empty_remote_and_ssh_alias_with_third_party_links",
