@@ -481,6 +481,15 @@ _URL_BODY_DELIMITERS = "\"'<>()[]{}\\,`*|"
 _URL_BODY_CHAR = _char_class(_URL_BODY_DELIMITERS, negated=True, extra_escapes=(r"\s",))
 """One non-delimiter character of a URL body in free text (0.15 Pref 2, 0.16)."""
 
+_JSON_VALUE_OPENER_CLASS = _char_class(":[,")
+"""JSON token characters that may precede an opening quote of a whole string value (0.16 R9-D3)."""
+
+_QUOTE_CLASS = _char_class("\"'")
+"""Single or double quote characters allowed in HTML/CSS attribute leads (0.16 R9-D3)."""
+
+_HSPACE_CLASS = _char_class(" \t")
+"""Horizontal whitespace characters (0.16 R9-D3)."""
+
 _URL_IN_TEXT_RE = re.compile(
     rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
     rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))+",
@@ -563,6 +572,59 @@ The path holds at least one ``/``. A mailbox followed by ``:<port>/<path>``
 is read as a remote too (0.10): the doubt resolves toward redaction, so
 the mailbox goes with the rest (:func:`redact_urls_in_text`).
 """
+
+_PROTO_REL_LEAD_RE = re.compile(
+    rf"(?:(?P<json>{_JSON_VALUE_OPENER_CLASS}{_HSPACE_CLASS}*\")"
+    rf"|=(?:{_QUOTE_CLASS})?"
+    rf"|(?<!{_MENTION_DOT_AFTER_CLASS})url\((?:{_QUOTE_CLASS})?"
+    rf"|\]\("
+    rf"|<)$",
+    re.I,
+)
+"""Positive URL-context leads immediately before a protocol-relative ``//host/path`` (0.16 R9-D3)."""
+
+_PROTO_REL_BODY = (
+    rf"//(?!/){_URL_USERINFO_PREFIX}"
+    rf"{_SCP_HOST_LABEL_CLASS}+(?:\.{_SCP_HOST_LABEL_CLASS}+)+\.?"
+    rf"(?::[0-9]{{1,5}})?/"
+    rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))*"
+)
+"""Host-and-path body of a protocol-relative URL ``//host/path`` (0.16 R9-D3)."""
+
+_PROTO_REL_IN_TEXT_RE = re.compile(
+    rf"(?P<lead>(?P<json>{_JSON_VALUE_OPENER_CLASS}{_HSPACE_CLASS}*\")"
+    rf"|=(?:{_QUOTE_CLASS})?"
+    rf"|(?<!{_MENTION_DOT_AFTER_CLASS})url\((?:{_QUOTE_CLASS})?"
+    rf"|\]\("
+    rf"|<)"
+    rf"(?P<url>{_PROTO_REL_BODY})",
+    re.I,
+)
+"""Protocol-relative ``//host/path`` in a positive URL context (JSON value, ``=``, ``url(``, ``](``, ``<``; 0.16 R9-D3)."""
+
+_PROTO_REL_WHOLE_RE = re.compile(rf"^(?P<url>{_PROTO_REL_BODY})$", re.I)
+"""Protocol-relative ``//host/path`` occupying a whole decoded structured JSON string value (0.16 R9-D3)."""
+
+_TEXT_VALUE_LEAVES: frozenset[str] = PROSE_KEYS | {
+    "stdout",
+    "stderr",
+    "stdin",
+    "diff",
+    "source",
+    "case",
+}
+"""Leaf key names whose string values hold prose or code rather than standalone structured JSON values (0.16 R9-D3)."""
+
+
+def is_structured_json_path(path: str) -> bool:
+    """Whether a :func:`fixture_strings` ``path`` addresses a structured non-prose JSON value (0.16 R9-D3)."""
+    if not path:
+        return False
+    leaf = path.rsplit(".", 1)[-1]
+    if not leaf or leaf.startswith("["):
+        return False
+    return leaf not in _TEXT_VALUE_LEAVES
+
 
 FRAGMENT_ANCHOR_RE = re.compile(
     r"^(?:issuecomment-|note_|discussion_r|pullrequestreview-|discussion_)[0-9a-f]+$", re.I
@@ -829,23 +891,61 @@ def _normalize_kept_url(parts: SplitResult) -> str:
     )
 
 
-def redact_urls_in_text(text: str) -> str:
-    """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
+def _redact_proto_rel(raw_url: str) -> str:
+    """Redact one protocol-relative URL ``//host/path``, preserving kept public hosts without userinfo (0.16 R9-D3)."""
+    url, tail = _split_url_tail(raw_url)
+    try:
+        parts = urlsplit(f"https:{url}")
+    except ValueError as exc:
+        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+        return raw_url
+    host = parts.hostname or ""
+    if not host:
+        return raw_url
+    if "@" not in parts.netloc and _kept_host(host):
+        return _normalize_kept_url(parts).removeprefix("https:") + tail
+    redacted = redact_url(f"https:{url}")
+    return (redacted.removeprefix("https:") if redacted else url) + tail
+
+
+def _unredacted_proto_rel(raw_url: str) -> bool:
+    """Whether a protocol-relative URL carries an unallowed host or forbidden userinfo (0.16 R9-D3)."""
+    url, _tail = _split_url_tail(raw_url)
+    try:
+        parts = urlsplit(f"https:{url}")
+    except ValueError as exc:
+        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+        return False
+    host = parts.hostname or ""
+    if not host:
+        return False
+    if not _is_allowed_host(host):
+        return True
+    return not _allowed_userinfo("https", parts.netloc)
+
+
+def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
+    """Redact every URL, protocol-relative URL in a positive URL context, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
     A URL goes through :func:`redact_url`, with trailing prose punctuation
     (``.,:;!?)]}>'"``) and boundary Markdown delimiters (`` ` ``, ``*``,
     ``|``, ``~``, ``_``) preserved outside the URL without being eaten
-    (0.13 R6-D1, 0.14 R7-D2). An scp remote ``<user>@<host>:<ns>/<repo>`` is normalised
-    through it too (0.10): read as ``ssh://<user>@<host>/<ns>/<repo>``,
-    redacted, and written back as ``git@forge.example.com:org/project``,
-    its ``.git`` suffix kept and its user never. A URL on
-    :data:`PLACEHOLDER_HOST` is redacted again, so a hand-written one gets
-    the placeholder path too. A URL carrying userinfo (``user[:pass]@``) is
-    always redacted through :func:`redact_url`, whatever the host —
-    including :data:`PUBLIC_REFERENCE_HOSTS` and RFC 2606 hosts (0.14
-    R7-D1). Text URLs on :data:`PUBLIC_REFERENCE_HOSTS` without userinfo
-    are kept with their scheme and host lowercased (0.13, 0.14 R7-D1). A
-    forge noreply mailbox (``<id>+<login>@users.noreply.github.com``,
+    (0.13 R6-D1, 0.14 R7-D2). A protocol-relative ``//host/path`` is
+    redacted only in a positive URL context — a whole JSON or decoded
+    structured string value (``whole_value=True``), after ``="`` / ``='`` /
+    ``=``, inside ``url(`` or ``](``, or after ``<`` — so single-line
+    ``//`` code comments stay byte-identical (0.16 R9-D3). An scp remote
+    ``<user>@<host>:<ns>/<repo>`` is normalised through it too (0.10): read
+    as ``ssh://<user>@<host>/<ns>/<repo>``, redacted, and written back as
+    ``git@forge.example.com:org/project``, its ``.git`` suffix kept and its
+    user never. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a
+    hand-written one gets the placeholder path too. A URL carrying userinfo
+    (``user[:pass]@``) is always redacted through :func:`redact_url`,
+    whatever the host — including :data:`PUBLIC_REFERENCE_HOSTS` and RFC
+    2606 hosts (0.14 R7-D1). Text URLs on :data:`PUBLIC_REFERENCE_HOSTS`
+    without userinfo are kept with their scheme and host lowercased (0.13,
+    0.14 R7-D1). A forge noreply mailbox
+    (``<id>+<login>@users.noreply.github.com``,
     ``<id>-<login>@users.noreply.gitlab.com``, 0.12 D6) has its local part
     and host redacted by class to
     ``<class>@users.noreply.forge.example.com``; a system noreply mailbox
@@ -853,6 +953,10 @@ def redact_urls_in_text(text: str) -> str:
     0.13 R6-D5, 0.14) becomes ``noreply@forge.example.com`` (or
     ``no-reply@forge.example.com``).
     """
+    if whole_value:
+        whole = _PROTO_REL_WHOLE_RE.match(text)
+        if whole is not None:
+            return _redact_proto_rel(whole.group("url"))
 
     def _one(match: re.Match[str]) -> str:
         start = match.start()
@@ -873,6 +977,11 @@ def redact_urls_in_text(text: str) -> str:
         if _kept_host(host):
             return _normalize_kept_url(parts) + tail
         return (redact_url(url) or url) + tail
+
+    def _proto_rel(match: re.Match[str]) -> str:
+        if match.group("json") is not None and match.string[match.end() : match.end() + 1] != '"':
+            return match.group(0)
+        return match.group("lead") + _redact_proto_rel(match.group("url"))
 
     def _scp(match: re.Match[str]) -> str:
         host = match.group("host").casefold()
@@ -901,18 +1010,21 @@ def redact_urls_in_text(text: str) -> str:
             return match.group(0)
         return f"{match.group('local').casefold()}@{PLACEHOLDER_HOST}"
 
-    step = _NOREPLY_MAILBOX_RE.sub(
-        _noreply, _SCP_IN_TEXT_RE.sub(_scp, _URL_IN_TEXT_RE.sub(_one, text))
-    )
+    with_urls = _PROTO_REL_IN_TEXT_RE.sub(_proto_rel, _URL_IN_TEXT_RE.sub(_one, text))
+    step = _NOREPLY_MAILBOX_RE.sub(_noreply, _SCP_IN_TEXT_RE.sub(_scp, with_urls))
     return _SYSTEM_NOREPLY_RE.sub(_system_noreply, step)
 
 
-def unredacted_host(text: str) -> bool:
-    """Whether ``text`` holds a URL or an scp-style remote on a host :func:`redact_urls_in_text` rewrites, or an unredacted URL userinfo.
+def unredacted_host(text: str, *, whole_value: bool = False) -> bool:
+    """Whether ``text`` holds a URL, positive-context protocol-relative URL or scp-style remote on a host :func:`redact_urls_in_text` rewrites, or an unredacted URL userinfo.
 
     After redaction no such host or userinfo is left, so one found in a fixture about
-    to be written means a value escaped the redaction (D3, 0.9, 0.14 R7-D1).
+    to be written means a value escaped the redaction (D3, 0.9, 0.14 R7-D1, 0.16 R9-D3).
     """
+    if whole_value:
+        whole = _PROTO_REL_WHOLE_RE.match(text)
+        if whole is not None and _unredacted_proto_rel(whole.group("url")):
+            return True
     for match in _URL_IN_TEXT_RE.finditer(text):
         url, _tail = _split_url_tail(match.group(0))
         try:
@@ -927,6 +1039,11 @@ def unredacted_host(text: str) -> bool:
             return True
         if not _allowed_userinfo(parts.scheme, parts.netloc):
             return True
+    for match in _PROTO_REL_IN_TEXT_RE.finditer(text):
+        if match.group("json") is not None and text[match.end() : match.end() + 1] != '"':
+            continue
+        if _unredacted_proto_rel(match.group("url")):
+            return True
     return any(
         not _EXAMPLE_HOST_RE.search(m.group("host"))
         or not _allowed_userinfo(
@@ -936,25 +1053,26 @@ def unredacted_host(text: str) -> bool:
     )
 
 
-def redact_urls_in_value(value: object) -> object:
+def redact_urls_in_value(value: object, *, whole_value: bool = False) -> object:
     """Redact URLs in a decoded value whose keys are kept (a fixture's ``result``).
 
     A string under a :data:`URL_KEYS` key goes through :func:`redact_url`
     (kept as is when it is not a URL); every other string through
-    :func:`redact_urls_in_text`.
+    :func:`redact_urls_in_text`, treating whole non-prose structured JSON
+    values as valid protocol-relative URL contexts (0.16 R9-D3).
     """
     if isinstance(value, dict):
         out: dict[str, object] = {}
         for key, item in value.items():
             if key in URL_KEYS and isinstance(item, str) and item:
-                out[key] = redact_url(item) or redact_urls_in_text(item)
+                out[key] = redact_url(item) or redact_urls_in_text(item, whole_value=True)
             else:
-                out[key] = redact_urls_in_value(item)
+                out[key] = redact_urls_in_value(item, whole_value=key not in _TEXT_VALUE_LEAVES)
         return out
     if isinstance(value, list):
-        return [redact_urls_in_value(v) for v in value]
+        return [redact_urls_in_value(v, whole_value=whole_value) for v in value]
     if isinstance(value, str):
-        return redact_urls_in_text(value)
+        return redact_urls_in_text(value, whole_value=whole_value)
     return value
 
 
@@ -1882,17 +2000,26 @@ _USER_BEFORE_RE = re.compile(rf"{_SCP_USER_CLASS}@$", re.I)
 """Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
 
 
-_COMMENT_SLASH_BEFORE_RE = re.compile(r"(?:^|\n)[+-]?[ \t]*/{2,}$|;[ \t]*/{2,}$", re.I)
-"""Line or inline single-line code comment slashes (``//config.dev/env/prod``) that are not protocol-relative URLs (0.15 Pref 1)."""
-
-
-def _is_slash_led(before: str) -> bool:
-    """Whether ``before`` ends in a URL ``://`` or non-comment protocol-relative ``//`` lead (0.15 Pref 1)."""
+def _is_slash_led(
+    before: str, *, text: str = "", url_end: int = 0, whole_value: bool = False
+) -> bool:
+    """Whether ``before`` ends in a URL ``://`` or positive-context protocol-relative ``//`` lead (0.16 R9-D3)."""
     if not before.endswith("//"):
         return False
     if before.endswith("://"):
         return True
-    return not bool(_COMMENT_SLASH_BEFORE_RE.search(before))
+    if before.endswith("///"):
+        return False
+    if whole_value and before == "//" and not any(ch.isspace() for ch in text):
+        return True
+    lead_match = _PROTO_REL_LEAD_RE.search(before[:-2])
+    if lead_match is None:
+        return False
+    if lead_match.group("json") is not None:
+        rest = text[url_end:]
+        close_quote = rest.find('"')
+        return close_quote != -1 and not any(ch.isspace() for ch in rest[:close_quote])
+    return True
 
 
 def _has_user_before(before: str) -> bool:
@@ -1931,25 +2058,30 @@ class Location:
     authenticated: bool = field(default=False, compare=False)
 
 
-def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[Location]:
-    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12, 0.13, 0.14).
+def locations(
+    text: str, *, known_hosts: frozenset[str] = frozenset(), whole_value: bool = False
+) -> list[Location]:
+    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12, 0.13, 0.14, 0.16).
 
-    A dotted name is a host when its context says so: ``//`` or
-    ``<user>@`` before it (``https://h``, ``//h``, ``ssh://u@h``,
-    ``u@h:g/r``, including scheme- or user-led IPv4 hosts such as
-    ``https://10.20.30.40/g/r``, 0.13), or an un-led path after a host
-    in ``known_hosts`` (``h/g/r``, ``h:g/r``, ``h:8080/x``, 0.14 Pref 4).
-    A name right after a single ``/`` is a file path's (``src/setup.py``),
-    one with nothing around it (``setup.py``) is not a host, and an
-    un-led candidate is accepted only when it is in ``known_hosts`` (a
-    forge host, the remote/inferred host, or a host already seen led by
-    ``//`` or ``@`` in the same fixture) and its non-port path has at
-    least two non-empty non-all-digit segments — so macOS bundle paths
-    (``Xcode.app/Contents/…``) and code attribute divisions
-    (``config.dev/env/prod``, ``ssl.ca/certs/root.pem``,
-    ``stream.io/read/write``, ``torch.net/layers/conv``) are never read
-    as hosts. Trailing prose punctuation and boundary Markdown delimiters
-    are trimmed from the path (0.13 R6-D1, 0.14 R7-D2).
+    A dotted name is a host when its context says so: ``://``, a
+    positive-context protocol-relative ``//`` (whole JSON or decoded
+    structured string value with ``whole_value=True``, ``="`` / ``='`` /
+    ``=``, ``url(``, ``](`` or ``<``; 0.16 R9-D3), or ``<user>@`` before it
+    (``https://h``, ``ssh://u@h``, ``u@h:g/r``, including scheme- or
+    user-led IPv4 hosts such as ``https://10.20.30.40/g/r``, 0.13), or an
+    un-led path after a host in ``known_hosts`` (``h/g/r``, ``h:g/r``,
+    ``h:8080/x``, 0.14 Pref 4). A name right after a single ``/`` is a file
+    path's (``src/setup.py``), one with nothing around it (``setup.py``) is
+    not a host, and an un-led candidate is accepted only when it is in
+    ``known_hosts`` (a forge host, the remote/inferred host, or a host
+    already seen led by ``://``, positive ``//`` or ``@`` in the same
+    fixture) and its non-port path has at least two non-empty non-all-digit
+    segments — so macOS bundle paths (``Xcode.app/Contents/…``), code
+    attribute divisions (``config.dev/env/prod``, ``ssl.ca/certs/root.pem``,
+    ``stream.io/read/write``, ``torch.net/layers/conv``) and single-line
+    ``//`` code comments are never read as hosts. Trailing prose punctuation
+    and boundary Markdown delimiters are trimmed from the path (0.13 R6-D1,
+    0.14 R7-D2).
     """
     candidates = sorted(
         (
@@ -1965,14 +2097,15 @@ def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[L
             continue
         if before.endswith("://") and _USERINFO_AHEAD_RE.match(text, m.end()):
             continue
+        after = _AFTER_HOST_RE.match(text, m.end())
+        raw_path = (after.group("slash") or after.group("scp") or "") if after else ""
+        path, tail = _split_url_tail(raw_path)
+        url_end = after.end() - len(tail) if after else m.end()
         user_led = _has_user_before(before)
-        led = _is_slash_led(before) or user_led
+        led = _is_slash_led(before, text=text, url_end=url_end, whole_value=whole_value) or user_led
         host = m.group(1).casefold()
         if is_ipv4 and (not led or not _is_ipv4_host(host)):
             continue
-        after = _AFTER_HOST_RE.match(text, m.end())
-        raw_path = (after.group("slash") or after.group("scp") or "") if after else ""
-        path, _tail = _split_url_tail(raw_path)
         segments = tuple(s for s in path.split("/")) if path else ()
         if not led:
             if not after or host not in known_hosts:
@@ -2156,15 +2289,15 @@ def needles(
         NeedleError: A needle shorter than :data:`NEEDLE_MIN_LENGTH`, or a
             class word or placeholder, by kind and ordinal.
     """
-    strings = [text for _path, text in fixture_strings(raw, "")]
+    located_strings = fixture_strings(raw, "")
     instance, remote_path = remote_location(remote)
     inferred = _raw_url_host(raw) if instance is None else None
     if instance is None and inferred is not None:
         instance = inferred
     seen_led_hosts = {
         place.host
-        for text in strings
-        for place in locations(text)
+        for path, text in located_strings
+        for place in locations(text, whole_value=is_structured_json_path(path))
         if not _is_ipv4_host(place.host) and not _is_allowed_host(place.host)
     }
     known_hosts = frozenset(
@@ -2201,9 +2334,11 @@ def needles(
     found["host"] = sorted(FORGE_HOSTS | ({instance} if instance else set()))
     if remote_path:
         _segments(remote_path)
-    for text in strings:
+    for path, text in located_strings:
         _segments(_api_project(text))
-        for place in locations(text, known_hosts=known_hosts):
+        for place in locations(
+            text, known_hosts=known_hosts, whole_value=is_structured_json_path(path)
+        ):
             if _is_allowed_host(place.host):
                 continue
             found["host"].append(place.host)

@@ -1799,7 +1799,7 @@ def test_hosts_are_found_without_the_redactors_regexes() -> None:
     """I3 (0.11, 0.12, 0.14): :func:`locations` reads led hosts and known schemeless hosts, casefolds them, and rejects code."""
     sample = (
         "hosted at gitlab.corp-x.io/grp-x/proj-x, clone u@git.corp-x.io:g/r.git, "
-        "port h.corp-x.io:8080/p and //cdn.corp-x.io/a, https://lone.corp-x.io and u@mail.corp-x.io, "
+        "port h.corp-x.io:8080/p and <//cdn.corp-x.io/a>, https://lone.corp-x.io and u@mail.corp-x.io, "
         "upper https://GIT.CORP-X.IO/g/r and dot git.corp-y.io./grp-y/proj-y, "
         "not src/setup.py, dir/setup.py/x, setup.py, test_x.py:12:, @pytest.fixture, "
         "self.ms/1000, self.ms/1000/60, README.md/foo, foo.py:80/bar or my_obj.ms/a/b"
@@ -3407,6 +3407,9 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
         ("_NOREPLY_LOCAL_CLASS", recording._NOREPLY_LOCAL_CLASS, alnum | set("._%+[]-")),
         ("_HOST_BEFORE_BLOCK_CLASS", recording._HOST_BEFORE_BLOCK_CLASS, alnum | set("_.-")),
         ("_IPV4_AFTER_BLOCK_CLASS", recording._IPV4_AFTER_BLOCK_CLASS, alnum | set(".-")),
+        ("_JSON_VALUE_OPENER_CLASS", recording._JSON_VALUE_OPENER_CLASS, {":", "[", ","}),
+        ("_QUOTE_CLASS", recording._QUOTE_CLASS, {'"', "'"}),
+        ("_HSPACE_CLASS", recording._HSPACE_CLASS, {" ", "\t"}),
     )
     for name, cls_expr, expected in documented_positive:
         pat = re.compile(rf"^{cls_expr}$")
@@ -3577,3 +3580,109 @@ def test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted() -> None:
         assert off_out["calls"][0]["stdout"] == expected_diff, line
         assert residual(off_out, redact_fixtures.fixture_needles(off_in)) is None, line
         assert redact_fixtures.redact_fixture(off_out, forge="gitlab") == off_out, line
+
+
+def test_protocol_relative_urls_require_positive_url_context_and_leave_code_comments_intact() -> (
+    None
+):
+    """R9-D3 (0.16): ``//host/path`` is a URL only in positive URL contexts; Go, JS, TS and C comments stay byte-identical."""
+    code_comments = (
+        "x := 1 //cfg.dev/env/prod",
+        "if x > 0 { //store.io/cache/hit",
+        "return x //metrics.net/count/ok",
+        "+x := 1 //store.io/val/2026",
+        "const cfg = load() //cfg.dev/env/prod",
+        "export default cfg //app.io/entry/main",
+        "if (ok) { //config.dev/env/prod",
+        "var x = 1; //config.dev/env/prod",
+        "//config.dev/env/prod",
+        "///config.dev/env/prod",
+        "+//config.dev/env/prod",
+        '{"note": "//cfg.dev/env/prod is a Go comment"}',
+    )
+    for sample in code_comments:
+        assert recording.locations(sample) == [], sample
+        assert redact_urls_in_text(sample) == sample, sample
+        assert not unredacted_host(sample), sample
+        found = needles(_one_call({"body": sample}), roles={})
+        assert "cfg.dev" not in _kinds(found, "host"), sample
+        assert "store.io" not in _kinds(found, "host"), sample
+        assert "config.dev" not in _kinds(found, "host"), sample
+        assert classify_text(redact_urls_in_text(sample), found.mapping()) == sample, sample
+
+    positive_cases: tuple[tuple[str, str, str], ...] = (
+        (
+            '<script src="//cdn.zqcorp.io/zqns/zqrepo/app.js"></script>',
+            '<script src="//forge.example.com/org/project"></script>',
+            "cdn.zqcorp.io",
+        ),
+        (
+            "<link href='//cdn.zqcorp.io/zqns/zqrepo/app.css'>",
+            "<link href='//forge.example.com/org/project'>",
+            "cdn.zqcorp.io",
+        ),
+        (
+            "<a href=//cdn.zqcorp.io/zqns/zqrepo/page>",
+            "<a href=//forge.example.com/org/project>",
+            "cdn.zqcorp.io",
+        ),
+        (
+            "background: url(//static.zqcorp.io/zqns/zqrepo/app.png);",
+            "background: url(//forge.example.com/org/project);",
+            "static.zqcorp.io",
+        ),
+        (
+            "See [x](//cdn.zqcorp.io/zqns/zqrepo/app.js) now",
+            "See [x](//forge.example.com/org/project) now",
+            "cdn.zqcorp.io",
+        ),
+        (
+            "See <//cdn.zqcorp.io/zqns/zqrepo/app.js> now",
+            "See <//forge.example.com/org/project> now",
+            "cdn.zqcorp.io",
+        ),
+        (
+            '{"cdn": "//private.zqcorp.io/zqns/zqrepo/app.js"}',
+            '{"cdn": "//forge.example.com/org/project"}',
+            "private.zqcorp.io",
+        ),
+        (
+            '["//private.zqcorp.io/zqns/zqrepo/app.js"]',
+            '["//forge.example.com/org/project"]',
+            "private.zqcorp.io",
+        ),
+    )
+    for raw_text, expected, host in positive_cases:
+        assert [loc.host for loc in recording.locations(raw_text)] == [host], raw_text
+        assert unredacted_host(raw_text), raw_text
+        red = redact_urls_in_text(raw_text)
+        assert red == expected, raw_text
+        assert not unredacted_host(red), raw_text
+        found = needles(_one_call({"body": raw_text}), roles={}, remote="")
+        assert host in _kinds(found, "host"), raw_text
+        assert residual(_placed(red, "prose"), found) is None, raw_text
+
+    assert recording.redact_urls_in_value({"cdn": "//private.zqcorp.io/zqns/zqrepo/app.js"}) == {
+        "cdn": "//forge.example.com/org/project"
+    }
+    assert recording.redact_urls_in_value({"body": "//config.dev/env/prod"}) == {
+        "body": "//config.dev/env/prod"
+    }
+    assert unredacted_host("//private.zqcorp.io/zqns/zqrepo/app.js", whole_value=True)
+    assert not unredacted_host("//forge.example.com/org/project", whole_value=True)
+    assert (
+        redact_urls_in_text('<script src="//DOCS.PYTHON.ORG/3/library/re.html"></script>')
+        == '<script src="//docs.python.org/3/library/re.html"></script>'
+    )
+    assert not unredacted_host('<script src="//docs.python.org/3/library/re.html"></script>')
+
+    known_private = needles(
+        _one_call({"body": "See https://git.zqcorp.io/zqns/zqrepo"}),
+        roles={},
+        remote="",
+    )
+    assert residual(_placed("//git.zqcorp.io/zqns/zqrepo", "prose"), known_private) == (
+        "host",
+        4,
+        "exchanges[0].stdout.body",
+    )

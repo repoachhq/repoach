@@ -90,6 +90,7 @@ from repoach.forge.recording import (
     dump_fixture,
     find_secrets,
     is_classified_login,
+    is_structured_json_path,
     login_values,
     mentions,
     needles,
@@ -486,7 +487,7 @@ def refuse_unclassified(
         rule = generic_class(text)
         if rule is not None:
             raise UnclassifiedValueError(f"generic class {rule} at {path}")
-        if unredacted_host(text):
+        if unredacted_host(text, whole_value=is_structured_json_path(path)):
             raise UnclassifiedValueError(f"unredacted host at {path}")
         entry = deny.hit(text)
         if entry is not None:
