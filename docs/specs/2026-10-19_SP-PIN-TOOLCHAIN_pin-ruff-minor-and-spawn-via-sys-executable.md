@@ -1,8 +1,8 @@
 ---
 id: SP-PIN-TOOLCHAIN
 title: Pin ruff to one minor and spawn pytest and ruff through the running interpreter
-version: 0.2
-status: draft
+version: 0.3
+status: approved
 author: agent
 created: 2026-10-19
 updated: 2026-11-18
@@ -21,6 +21,8 @@ constraints:
 # Pin ruff to one minor and spawn tools through `sys.executable`
 
 Amendment (0.2, 2026-11-18): personal strings replaced by placeholders (SP-SCRUB-PERSONAL-DATA-AT-HEAD D2); the fixture oracle is the class lint (D6).
+
+Amendment (0.3, 2026-11-18): approved by the owner 2026-11-18.
 
 ## Intent
 
