@@ -1063,8 +1063,35 @@ def declared_user_ids(node: object) -> list[int]:
     return sorted(n for n in numbers if isinstance(n, int))
 
 
-_API_PROJECT_ID_RE = re.compile(r"(api/v[34]/+projects/+)([0-9]+)(?![0-9A-Za-z_-])", re.I)
-"""A numeric GitLab project id inside an ``api/v4/projects/<id>/…`` URL or path (0.13 R6-D5)."""
+_API_PROJECT_ID_RE = re.compile(
+    r"(?P<prefix>(?:(?<![A-Za-z0-9_.-])api/v[34]/+|(?<![A-Za-z0-9_./-])/?)projects/+)"
+    r"(?P<id>[0-9]+)(?![0-9A-Za-z_-])",
+    re.I,
+)
+"""A numeric GitLab project id inside an ``api/v4/projects/<id>/…`` or ``projects/<id>/…`` path (0.13 R6-D5, 0.14 R7-D3)."""
+
+
+def _kept_url_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of kept-host text URLs without userinfo (documentation/example URLs, 0.14 R7-D3)."""
+    spans: list[tuple[int, int]] = []
+    for match in _URL_IN_TEXT_RE.finditer(text):
+        url, _tail = _split_url_tail(match.group(0))
+        try:
+            parts = urlsplit(url)
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+            continue
+        host = parts.hostname or ""
+        if host and "@" not in parts.netloc and _kept_host(host):
+            spans.append((match.start(), match.start() + len(url)))
+    return spans
+
+
+def _is_real_api_project_id(match: re.Match[str], kept_spans: list[tuple[int, int]]) -> bool:
+    """Whether an :data:`_API_PROJECT_ID_RE` match is a real project id rather than a doc example (0.14 R7-D3)."""
+    if len(match.group("id")) < NEEDLE_MIN_LENGTH:
+        return False
+    return not any(start <= match.start() < end for start, end in kept_spans)
 
 
 def is_repository_object(node: object) -> bool:
@@ -1073,13 +1100,18 @@ def is_repository_object(node: object) -> bool:
 
 
 def project_id_values(node: object) -> list[object]:
-    """Every repository id of a decoded value: repository objects and ``api/v4/projects/<id>`` URLs, JSON inside strings included (0.10, 0.13)."""
+    """Every real repository id of a decoded value: repository objects and non-example ``[api/v4/]projects/<id>`` paths, JSON inside strings included (0.10, 0.13, 0.14)."""
     if isinstance(node, str):
         if node.lstrip()[:1] in ("{", "["):
             decoded = decode_json_values(node)
             if decoded is not None:
                 return [i for v in decoded for i in project_id_values(v)]
-        return [int(m.group(2)) for m in _API_PROJECT_ID_RE.finditer(node)]
+        kept = _kept_url_spans(node)
+        return [
+            int(m.group("id"))
+            for m in _API_PROJECT_ID_RE.finditer(node)
+            if _is_real_api_project_id(m, kept)
+        ]
     if isinstance(node, dict):
         found = [i for v in node.values() for i in project_id_values(v)]
         if is_repository_object(node) and "id" in node:
@@ -1187,8 +1219,13 @@ class UserIdMap:
         if isinstance(payload, list):
             return [self.apply_projects(v, forge=forge, keep=keep) for v in payload]
         if isinstance(payload, str):
+            kept = _kept_url_spans(payload)
             return _API_PROJECT_ID_RE.sub(
-                lambda m: f"{m.group(1)}{self.synthetic(int(m.group(2)), forge=forge, keep=keep)}",
+                lambda m: (
+                    f"{m.group('prefix')}{self.synthetic(int(m.group('id')), forge=forge, keep=keep)}"
+                    if _is_real_api_project_id(m, kept)
+                    else m.group(0)
+                ),
                 payload,
             )
         return payload

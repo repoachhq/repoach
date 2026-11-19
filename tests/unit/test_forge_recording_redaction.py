@@ -2648,3 +2648,89 @@ def test_prose_punctuation_and_markdown_delimiters_terminate_urls_without_eating
         found.mapping(),
     )
     assert redacted == "Check https://forge.example.com/org/project! (see project docs)"
+
+
+def test_api_project_ids_skip_doc_examples_and_cover_all_positions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """R7-D3, V7-21, V7-22, WF5 (0.14): skip doc examples; remap ``[api/v4/]projects/<id>`` in every position."""
+    doc_samples = (
+        "Per GitLab docs: `curl https://gitlab.example.com/api/v4/projects/1/merge_requests`",
+        "Mock endpoint: `GET /api/v4/projects/42/issues`",
+        "Example: `curl https://gitlab.example.com/api/v4/projects/1234/issues`",
+        "Docs: `curl https://docs.gitlab.com/api/v4/projects/1234/issues`",
+        "Path: docs/projects/2025/roadmap.md",
+    )
+    for sample in doc_samples:
+        assert recording.project_id_values(sample) == [], sample
+        assert UserIdMap.for_projects().apply_projects(sample, forge="gitlab") == sample, sample
+        found_doc = needles(_one_call({"body": sample}), roles={})
+        assert _kinds(found_doc, "id") == [], sample
+
+    comment_cmd = "Repro: `glab api projects/88442211/merge_requests/42`"
+    assert recording.project_id_values(comment_cmd) == [88442211]
+    assert (
+        UserIdMap.for_projects().apply_projects(comment_cmd, forge="gitlab")
+        == "Repro: `glab api projects/2001/merge_requests/42`"
+    )
+
+    mixed = (
+        "Doc https://gitlab.example.com/api/v4/projects/1234/issues vs "
+        "real https://forge.example.com/api/v4/projects/88442211/issues"
+    )
+    assert recording.project_id_values(mixed) == [88442211]
+    assert UserIdMap.for_projects().apply_projects(mixed, forge="gitlab") == (
+        "Doc https://gitlab.example.com/api/v4/projects/1234/issues vs "
+        "real https://forge.example.com/api/v4/projects/2001/issues"
+    )
+
+    raw_calls = [
+        {
+            "program": "glab",
+            "args": ["api", "projects/88442211/merge_requests/42/notes"],
+            "stdin": "GET /api/v4/projects/88442211/issues",
+            "returncode": 0,
+            "stdout": "diff --git a/x b/x\n+# glab api projects/88442211/jobs/9\n",
+            "stderr": "404 https://forge.example.com/api/v4/projects/88442211/jobs/9",
+        }
+    ]
+    found_args = needles(raw_calls, roles={})
+    assert "88442211" in _kinds(found_args, "id")
+    synth = rec.synthesize_user_ids(raw_calls, UserIdMap(), forge="gitlab")
+    assert synth[0]["args"] == ["api", "projects/2001/merge_requests/42/notes"]
+    assert synth[0]["stdin"] == "GET /api/v4/projects/2001/issues"
+    assert synth[0]["stderr"] == "404 https://forge.example.com/api/v4/projects/2001/jobs/9"
+    assert synth[0]["stdout"] == "diff --git a/x b/x\n+# glab api projects/2001/jobs/9\n"
+    assert recording.declared_project_ids(synth) == [2001]
+
+    class _EchoForge:
+        bot_username = "repoach-bot"
+
+        def __init__(self) -> None:
+            self._spawn: Any = lambda argv, *, input_data=None: CommandResult(
+                returncode=0, stdout="ok", stderr="", argv=list(argv)
+            )
+
+        def check_log(self, url: str, *, note: str = "") -> str:
+            res = self._spawn(["glab", "api", "version"])
+            return f"{res.stdout}:{url}:{note}"
+
+    _no_denylist(monkeypatch, tmp_path)
+    monkeypatch.setattr(rec, "select_forge", lambda **_kw: _EchoForge())
+    written = rec.record(
+        forge_name="gitlab",
+        cwd=tmp_path,
+        case="proj_positions",
+        method="check_log",
+        args=["projects/88442211/jobs/5"],
+        kwargs={"note": "https://gitlab.com/api/v4/projects/99553311/issues"},
+        trim=None,
+        out_root=tmp_path / "out",
+    )
+    fixture = json.loads(written.read_text(encoding="utf-8"))
+    assert fixture["args"] == ["projects/2001/jobs/5"]
+    assert fixture["kwargs"] == {"note": "https://forge.example.com/api/v4/projects/2002/issues"}
+    assert fixture["result"] == (
+        "ok:projects/2001/jobs/5:https://forge.example.com/api/v4/projects/2002/issues"
+    )
+    assert fixture[recording.SYNTHETIC_PROJECT_IDS_KEY] == [2001, 2002]
