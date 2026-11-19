@@ -1639,92 +1639,6 @@ _IPV4_LED_HOST_RE = re.compile(
 )
 """An IPv4 host literal, accepted by :func:`locations` only when scheme- or user-led (``//`` or ``<user>@``, 0.13)."""
 
-_NON_HOST_FIRST_LABELS: frozenset[str] = frozenset({"self", "cls"})
-"""Leading code receivers (``self.io/a/b``, ``cls.dev/x/y``) never read as schemeless hosts (0.12 D6, 0.13 R6-D3)."""
-
-_KNOWN_HOST_TLDS: frozenset[str] = frozenset(
-    {
-        "aero",
-        "ai",
-        "app",
-        "ar",
-        "au",
-        "be",
-        "bg",
-        "biz",
-        "br",
-        "ca",
-        "ch",
-        "cl",
-        "cloud",
-        "cn",
-        "co",
-        "codes",
-        "com",
-        "coop",
-        "cz",
-        "de",
-        "dev",
-        "digital",
-        "dk",
-        "edu",
-        "ee",
-        "engineering",
-        "es",
-        "eu",
-        "fi",
-        "fr",
-        "gg",
-        "gov",
-        "gr",
-        "hk",
-        "hr",
-        "hu",
-        "ie",
-        "il",
-        "int",
-        "io",
-        "it",
-        "jp",
-        "kr",
-        "lt",
-        "lu",
-        "lv",
-        "me",
-        "mil",
-        "museum",
-        "mx",
-        "net",
-        "network",
-        "nl",
-        "no",
-        "nz",
-        "online",
-        "org",
-        "pro",
-        "pt",
-        "ro",
-        "ru",
-        "se",
-        "sg",
-        "si",
-        "sk",
-        "software",
-        "systems",
-        "tech",
-        "tr",
-        "tv",
-        "tw",
-        "ua",
-        "uk",
-        "us",
-        "vn",
-        "xyz",
-        "za",
-    }
-)
-"""Positive DNS TLD allowlist for schemeless hosts (0.13 R6-D3), rejecting code attributes and wheel paths."""
-
 
 def _is_ipv4_host(host: str) -> bool:
     """Whether ``host`` is a valid dotted-quad IPv4 address (four octets 0..255)."""
@@ -1746,21 +1660,24 @@ class Location:
 
 
 def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[Location]:
-    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12, 0.13).
+    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12, 0.13, 0.14).
 
     A dotted name is a host when its context says so: ``//`` or
     ``<user>@`` before it (``https://h``, ``//h``, ``ssh://u@h``,
     ``u@h:g/r``, including scheme- or user-led IPv4 hosts such as
-    ``https://10.20.30.40/g/r``, 0.13), or a path after it (``h/g/r``,
-    ``h:g/r``, ``h:8080/x``). A name right after a single ``/`` is a
-    file path's (``src/setup.py``), one with nothing around it
-    (``setup.py``) is not a host, and an un-led candidate is accepted
-    only when its TLD is in :data:`_KNOWN_HOST_TLDS` or the host is in
-    ``known_hosts``, its first label is not in
-    :data:`_NON_HOST_FIRST_LABELS`, and its non-port path has at least
-    two non-empty non-all-digit segments (0.13 R6-D3). Trailing
-    punctuation and boundary GFM delimiters (``.:;~_``) are trimmed from
-    the path (0.13 R6-D1).
+    ``https://10.20.30.40/g/r``, 0.13), or an un-led path after a host
+    in ``known_hosts`` (``h/g/r``, ``h:g/r``, ``h:8080/x``, 0.14 Pref 4).
+    A name right after a single ``/`` is a file path's (``src/setup.py``),
+    one with nothing around it (``setup.py``) is not a host, and an
+    un-led candidate is accepted only when it is in ``known_hosts`` (a
+    forge host, the remote/inferred host, or a host already seen led by
+    ``//`` or ``@`` in the same fixture) and its non-port path has at
+    least two non-empty non-all-digit segments — so macOS bundle paths
+    (``Xcode.app/Contents/…``) and code attribute divisions
+    (``config.dev/env/prod``, ``ssl.ca/certs/root.pem``,
+    ``stream.io/read/write``, ``torch.net/layers/conv``) are never read
+    as hosts. Trailing prose punctuation and boundary Markdown delimiters
+    are trimmed from the path (0.13 R6-D1, 0.14 R7-D2).
     """
     candidates = sorted(
         (
@@ -1783,13 +1700,7 @@ def locations(text: str, *, known_hosts: frozenset[str] = frozenset()) -> list[L
         path = raw_path.rstrip(_URL_TRIM_TAIL)
         segments = tuple(s for s in path.split("/")) if path else ()
         if not led:
-            if not after:
-                continue
-            first = host.split(".", 1)[0]
-            tld = host.rsplit(".", 1)[-1]
-            if first in _NON_HOST_FIRST_LABELS:
-                continue
-            if host not in known_hosts and tld not in _KNOWN_HOST_TLDS:
+            if not after or host not in known_hosts:
                 continue
             non_empty = [s for s in segments if s]
             if not after.group("port") and (
@@ -1971,12 +1882,19 @@ def needles(
     strings = [text for _path, text in fixture_strings(raw, "")]
     instance, remote_path = remote_location(remote)
     inferred = _raw_url_host(raw) if instance is None else None
-    if instance is None and (
-        remote_path or (inferred is not None and is_public_forge_host(inferred))
-    ):
+    if instance is None and inferred is not None:
         instance = inferred
+    seen_led_hosts = {
+        place.host
+        for text in strings
+        for place in locations(text)
+        if not _is_ipv4_host(place.host) and not _is_allowed_host(place.host)
+    }
     known_hosts = frozenset(
-        FORGE_HOSTS | ({instance} if instance else set()) | ({inferred} if inferred else set())
+        FORGE_HOSTS
+        | ({instance} if instance else set())
+        | ({inferred} if inferred else set())
+        | seen_led_hosts
     )
     found: dict[str, list[str]] = {kind: [] for kind in NEEDLE_KINDS}
     replacements: dict[str, str] = {}

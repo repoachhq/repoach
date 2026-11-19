@@ -1756,10 +1756,13 @@ def test_logins_under_dropped_keys_are_needles_and_roles(
 
 
 def test_segments_come_from_the_recorded_project_and_any_private_host_it_cannot_tell() -> None:
-    """R3, R6 (0.11): the remote's path, the argv's API path and the instance's URLs give segments; a public third party does not."""
+    """R3, R6 (0.11), Pref 3 (0.14): remote/API/inferred-instance URLs give segments; without any host cue all private hosts do; public third parties never do."""
     url = "https://git.corp-x.io/grp-x/proj-x/-/merge_requests/3"
     raw = [_one_call({"web_url": url, "body": "see https://git.other-x.io/third-grp/third-proj"})]
-    without_remote = needles(raw, roles={})
+    inferred_remote = needles(raw, roles={})
+    assert _kinds(inferred_remote, "segment") == ["grp-x", "proj-x"]
+    no_url_key = [_one_call({"body": f"see {url} and https://git.other-x.io/third-grp/third-proj"})]
+    without_remote = needles(no_url_key, roles={})
     assert _kinds(without_remote, "segment") == ["grp-x", "proj-x", "third-grp", "third-proj"]
     on_instance = needles(raw, roles={}, remote="git@git.corp-x.io:grp-x/proj-x.git")
     assert _kinds(on_instance, "segment") == ["grp-x", "proj-x"]
@@ -1788,13 +1791,17 @@ def test_segments_come_from_the_recorded_project_and_any_private_host_it_cannot_
 
 
 def test_hosts_are_found_without_the_redactors_regexes() -> None:
-    """I3 (0.11, 0.12): :func:`locations` reads schemeless and scp hosts, casefolds them, and rejects code."""
-    seen = recording.locations(
+    """I3 (0.11, 0.12, 0.14): :func:`locations` reads led hosts and known schemeless hosts, casefolds them, and rejects code."""
+    sample = (
         "hosted at gitlab.corp-x.io/grp-x/proj-x, clone u@git.corp-x.io:g/r.git, "
         "port h.corp-x.io:8080/p and //cdn.corp-x.io/a, https://lone.corp-x.io and u@mail.corp-x.io, "
         "upper https://GIT.CORP-X.IO/g/r and dot git.corp-y.io./grp-y/proj-y, "
         "not src/setup.py, dir/setup.py/x, setup.py, test_x.py:12:, @pytest.fixture, "
         "self.ms/1000, self.ms/1000/60, README.md/foo, foo.py:80/bar or my_obj.ms/a/b"
+    )
+    seen = recording.locations(
+        sample,
+        known_hosts=frozenset({"gitlab.corp-x.io", "h.corp-x.io", "git.corp-y.io"}),
     )
     assert [(p.host, p.segments) for p in seen] == [
         ("gitlab.corp-x.io", ("grp-x", "proj-x")),
@@ -1805,6 +1812,14 @@ def test_hosts_are_found_without_the_redactors_regexes() -> None:
         ("mail.corp-x.io", ()),
         ("git.corp-x.io", ("g", "r")),
         ("git.corp-y.io", ("grp-y", "proj-y")),
+    ]
+    led_only = recording.locations(sample)
+    assert [(p.host, p.segments) for p in led_only] == [
+        ("git.corp-x.io", ("g", "r.git")),
+        ("cdn.corp-x.io", ("a",)),
+        ("lone.corp-x.io", ()),
+        ("mail.corp-x.io", ()),
+        ("git.corp-x.io", ("g", "r")),
     ]
     upper_instance = needles(
         [_one_call({"body": "see https://GIT.CORP-X.IO/grp-x/proj-x"})],
@@ -2378,7 +2393,7 @@ def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
 
 
 def test_locations_uses_positive_host_rule_and_scheme_led_ipv4() -> None:
-    """R6-D3, Wrong Fact 2 (0.13): positive TLD / ``known_hosts`` rule rejects code & wheel paths; scheme-led IPv4 is parsed."""
+    """R6-D3, Wrong Fact 2 (0.13), Prefs 3-4, V7-14/23/24 (0.14): schemeless hosts require ``known_hosts``; scheme-led IPv4 is parsed."""
     for non_host in (
         "cfg = config.dir/sub/file.toml",
         "val = obj.total/count/100",
@@ -2388,6 +2403,11 @@ def test_locations_uses_positive_host_rule_and_scheme_led_ipv4() -> None:
         "Adding repoach-0.1.0.dist-info/licenses/LICENSE",
         "Adding repoach-0.1.0.dist-info/METADATA",
         "+    return cfg.root/sub/file",
+        "Using Xcode.app/Contents/Developer/usr/bin/clang and MyApp.app/Contents/MacOS/app",
+        "path = config.dev/env/prod",
+        "cert = ssl.ca/certs/root.pem",
+        "buf = stream.io/read/write",
+        "layer = torch.net/layers/conv",
         "_obj.io/a/b",
         "self.io/a/b",
         "cls.dev/x/y",
@@ -2396,6 +2416,15 @@ def test_locations_uses_positive_host_rule_and_scheme_led_ipv4() -> None:
         "see 10.0.0.5/zqotherns/zqotherrepo",
     ):
         assert recording.locations(non_host) == [], non_host
+    assert recording.locations("_obj.io/a/b", known_hosts=frozenset({"obj.io"})) == []
+    assert recording.locations("foo.io/bar", known_hosts=frozenset({"foo.io"})) == []
+    assert recording.locations("foo.io/100/200", known_hosts=frozenset({"foo.io"})) == []
+    assert (
+        recording.locations(
+            "see 10.0.0.5/zqotherns/zqotherrepo", known_hosts=frozenset({"10.0.0.5"})
+        )
+        == []
+    )
     assert recording.locations(
         "see git.corp.internal/grp-x/proj-x", known_hosts=frozenset({"git.corp.internal"})
     ) == [recording.Location("git.corp.internal", ("grp-x", "proj-x"))]
@@ -2417,6 +2446,48 @@ def test_locations_uses_positive_host_rule_and_scheme_led_ipv4() -> None:
         found.mapping(),
     )
     assert redacted == "Mirror at https://forge.example.com/org/project (see project)"
+
+    raw_sh_empty_remote = _one_call(
+        {
+            "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/1",
+            "body": "See https://docs.python.org/3/library/re.html for regex help.",
+        }
+    )
+    found_sh = needles(raw_sh_empty_remote, roles={}, remote="")
+    assert _kinds(found_sh, "segment") == ["zqgroup", "zqmainrepo"]
+    assert "3" not in _kinds(found_sh, "segment")
+
+    raw_known_schemeless = _one_call(
+        {
+            "web_url": "https://git.corp.internal/grp-x/proj-x/-/merge_requests/1",
+            "body": "Mirror at git.corp.internal/grp-x/otherproj",
+        }
+    )
+    found_known = needles(
+        raw_known_schemeless, roles={}, remote="git@git.corp.internal:grp-x/proj-x.git"
+    )
+    assert "otherproj" in _kinds(found_known, "segment")
+
+    raw_seen_led = _one_call(
+        [
+            {"body": "Primary https://git.seen.internal/grp-x/proj-x"},
+            {"body": "Secondary git.seen.internal/grp-x/secondproj"},
+        ]
+    )
+    found_seen_led = needles(raw_seen_led, roles={}, remote="")
+    assert "git.seen.internal" in _kinds(found_seen_led, "host")
+    assert "secondproj" in _kinds(found_seen_led, "segment")
+
+    raw_ref_first = _one_call(
+        {
+            "items": [
+                {"url": "https://docs.github.com/en/actions"},
+                {"url": "https://pypi.org/project/ruff/"},
+                {"url": "https://git.corp-x.io/grp-x/proj-x/-/merge_requests/1"},
+            ]
+        }
+    )
+    assert recording._raw_url_host(raw_ref_first) == "git.corp-x.io"
 
 
 def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() -> None:
