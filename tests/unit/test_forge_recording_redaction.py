@@ -3142,6 +3142,10 @@ def test_api_project_ids_ignore_year_paths_and_support_api_versions() -> None:
     assert UserIdMap.for_projects().apply_projects(
         ["api", "/projects/88442211/merge_requests/42"], forge="gitlab"
     ) == ["api", "/projects/2001/merge_requests/42"]
+    assert recording.project_id_values(["glab", "api", "projects/88442211/issues"]) == [88442211]
+    assert UserIdMap.for_projects().apply_projects(
+        ["glab", "api", "projects/88442211/issues"], forge="gitlab"
+    ) == ["glab", "api", "projects/2001/issues"]
     assert recording.project_id_values(["not-api", "projects/2026/q1.md"]) == []
 
 
@@ -3686,3 +3690,134 @@ def test_protocol_relative_urls_require_positive_url_context_and_leave_code_comm
         4,
         "exchanges[0].stdout.body",
     )
+
+
+def test_glab_api_shlex_parsing_quoted_flags_argv_and_unbalanced_fallback() -> None:
+    """R9-D4, V9-07 (0.16): ``shlex`` parses ``glab api`` flags in text and argv, with safe unbalanced-quote fallback."""
+    pid = 66554433
+    cmd_cases: tuple[tuple[str, str], ...] = (
+        (
+            f"Run `glab api -H 'Accept: application/json' /projects/{pid}/issues`",
+            "Run `glab api -H 'Accept: application/json' /projects/2001/issues`",
+        ),
+        (
+            f'Run glab api -f "body=hello world" projects/{pid}/notes',
+            'Run glab api -f "body=hello world" projects/2001/notes',
+        ),
+        (
+            f"Run glab api --raw-field 'title=Fix bug' projects/{pid}/merge_requests",
+            "Run glab api --raw-field 'title=Fix bug' projects/2001/merge_requests",
+        ),
+        (
+            f"Run glab api --header='PRIVATE-TOKEN: x' projects/{pid}/issues",
+            "Run glab api --header='PRIVATE-TOKEN: x' projects/2001/issues",
+        ),
+        (
+            f"Run glab api projects/{pid}/notes — it's fast",
+            "Run glab api projects/2001/notes — it's fast",
+        ),
+        (
+            f"Broken glab api -H 'Accept: application/json /projects/{pid}/issues",
+            "Broken glab api -H 'Accept: application/json /projects/2001/issues",
+        ),
+    )
+    for raw_body, expected_body in cmd_cases:
+        assert recording.project_id_values(raw_body) == [pid], raw_body
+        raw_call = {
+            "program": "glab",
+            "args": ["api", "projects/:id/merge_requests/1/notes"],
+            "stdin": None,
+            "returncode": 0,
+            "stdout": json.dumps(
+                [
+                    {
+                        "author": {"username": "zqxjdoe7", "id": 74928163},
+                        "body": raw_body,
+                        "web_url": "https://git.zqcorp.io/zqns/zqrepo/-/merge_requests/1#note_1",
+                    }
+                ]
+            ),
+            "stderr": "",
+        }
+        raw = [[raw_call], [1], {}, "git@git.zqcorp.io:zqns/zqrepo.git"]
+        red_calls = [{**raw_call, "stdout": recording.redact_stdout(raw_call["stdout"])}]
+        roles = rec.build_roles(
+            red_calls,
+            bot="repoach-bot",
+            maintainer=None,
+            author=None,
+            also=recording.raw_logins(raw),
+        )
+        found = needles(raw, roles=roles, remote="git@git.zqcorp.io:zqns/zqrepo.git")
+        red_calls = rec.classify_calls(red_calls, {**found.mapping(), **roles})
+        red_calls = rec.synthesize_user_ids(
+            red_calls, UserIdMap(), forge="gitlab", projects=UserIdMap.for_projects()
+        )
+        fixture: dict[str, Any] = {
+            "forge": "gitlab",
+            "case": "glab_shlex",
+            "method": "conversation_comments",
+            "args": [1],
+            "kwargs": {},
+            "bot_username": "repoach-bot",
+            "source": recording.recorded_source("2026-11-19", "gitlab"),
+            "trimmed": None,
+            "calls": red_calls,
+            "result": None,
+            "raises": None,
+        }
+        fixture[SYNTHETIC_IDS_KEY] = recording.declared_user_ids(red_calls)
+        fixture[SYNTHETIC_PROJECT_IDS_KEY] = recording.declared_project_ids(fixture)
+        assert fixture[SYNTHETIC_PROJECT_IDS_KEY] == [2001], raw_body
+        assert json.loads(red_calls[0]["stdout"])[0]["body"] == expected_body, raw_body
+        rec.refuse_unclassified(fixture, rec.Denylist(()), found)
+
+    argv_cases: tuple[tuple[list[str], list[str]], ...] = (
+        (["glab", "api", f"projects/{pid}/issues"], ["glab", "api", "projects/2001/issues"]),
+        (
+            ["glab", "api", "-H", "Accept: application/json", f"/projects/{pid}/issues"],
+            ["glab", "api", "-H", "Accept: application/json", "/projects/2001/issues"],
+        ),
+        (
+            ["api", "--header=PRIVATE-TOKEN: x", f"projects/{pid}/notes"],
+            ["api", "--header=PRIVATE-TOKEN: x", "projects/2001/notes"],
+        ),
+        (
+            ["glab", "api", "--", f"/projects/{pid}/issues"],
+            ["glab", "api", "--", "/projects/2001/issues"],
+        ),
+    )
+    for argv_in, argv_want in argv_cases:
+        assert recording.project_id_values(argv_in) == [pid], argv_in
+        assert UserIdMap.for_projects().apply_projects(argv_in, forge="gitlab") == argv_want, (
+            argv_in
+        )
+        off_fx = {
+            "forge": "gitlab",
+            "case": "glab_argv",
+            "method": "diff",
+            "args": [1],
+            "kwargs": {},
+            "bot_username": "repoach-bot",
+            "source": recording.recorded_source("2026-11-19", "gitlab"),
+            "trimmed": None,
+            "calls": [
+                {
+                    "program": "glab",
+                    "args": argv_in,
+                    "stdin": None,
+                    "returncode": 0,
+                    "stdout": "ok",
+                    "stderr": "",
+                }
+            ],
+            "result": None,
+            "raises": None,
+        }
+        off_red = redact_fixtures.redact_fixture(off_fx, forge="gitlab")
+        assert off_red["calls"][0]["args"] == argv_want, argv_in
+        assert off_red[SYNTHETIC_PROJECT_IDS_KEY] == [2001], argv_in
+        assert residual(off_red, redact_fixtures.fixture_needles(off_fx)) is None, argv_in
+
+    assert recording.project_id_values('glab api -f "path=projects/2026/notes" issues') == []
+    assert recording.project_id_values(["glab", "api", "-f", "projects/2026/notes", "issues"]) == []

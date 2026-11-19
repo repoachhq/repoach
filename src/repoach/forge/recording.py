@@ -18,8 +18,10 @@ import base64
 import html
 import json
 import re
+import shlex
 import string
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -489,6 +491,9 @@ _QUOTE_CLASS = _char_class("\"'")
 
 _HSPACE_CLASS = _char_class(" \t")
 """Horizontal whitespace characters (0.16 R9-D3)."""
+
+_HOST_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + "_.-")
+"""Characters that may not immediately precede a host, API path or ``glab api`` command token (0.16)."""
 
 _URL_IN_TEXT_RE = re.compile(
     rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
@@ -1385,29 +1390,176 @@ def declared_user_ids(node: object) -> list[int]:
 
 
 _API_PROJECT_ID_RE = re.compile(
-    r"(?P<prefix>(?:(?<![A-Za-z0-9_.-])api/v[0-9]+/+"
-    r"|(?<![A-Za-z0-9_.-])glab[ \t]+api"
-    r"(?:[ \t]+-[A-Za-z0-9_=.-]+(?:[ \t]+(?!['\"]?/?projects/)[^\s'\"]+)?)*"
-    r"[ \t]+['\"]?/?)projects/+)"
-    r"(?P<id>[0-9]+)(?![0-9A-Za-z_-])",
+    rf"(?P<prefix>(?<!{_HOST_BEFORE_BLOCK_CLASS})api/v[0-9]+/+projects/+)"
+    rf"(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
     re.I,
 )
-"""A numeric GitLab project id inside an ``api/v<N>/projects/<id>`` path or a ``glab api`` command line (0.13 R6-D5, 0.14 R7-D3, 0.15 R8-D2)."""
+"""A numeric GitLab project id inside an ``api/v<N>/projects/<id>`` path (0.13 R6-D5, 0.14 R7-D3, 0.15 R8-D2, 0.16 R9-D4)."""
 
 _GLAB_API_ARG_PROJECT_ID_RE = re.compile(
-    r"^(?P<prefix>/?projects/+)(?P<id>[0-9]+)(?![0-9A-Za-z_-])",
+    rf"^(?P<prefix>/?projects/+)(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
     re.I,
 )
-"""A numeric GitLab project id as an argv path argument of a ``glab api`` invocation (0.15 R8-D2)."""
+"""A numeric GitLab project id as the positional endpoint of a ``glab api`` invocation (0.15 R8-D2, 0.16 R9-D4)."""
+
+_GLAB_API_RAW_ENDPOINT_ID_RE = re.compile(
+    rf"^{_HSPACE_CLASS}*{_QUOTE_CLASS}?/?projects/+(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
+    re.I,
+)
+"""Exact numeric id span inside the raw source slice of a ``glab api`` endpoint token (0.16 R9-D4)."""
+
+_GLAB_API_CMD_RE = re.compile(
+    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})glab{_HSPACE_CLASS}+api(?={_HSPACE_CLASS})",
+    re.I,
+)
+"""Start of a ``glab api`` command invocation inside free text (0.16 R9-D4)."""
+
+_GLAB_API_FALLBACK_ID_RE = re.compile(
+    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})projects/+(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
+    re.I,
+)
+"""Safe fallback scanning ``projects/<digits>`` after ``glab api`` when ``shlex`` sees an unbalanced quote (0.16 R9-D4)."""
+
+_GLAB_API_VALUE_FLAGS: frozenset[str] = frozenset(
+    {
+        "-F",
+        "--field",
+        "-H",
+        "--header",
+        "--hostname",
+        "--input",
+        "-X",
+        "--method",
+        "-f",
+        "--raw-field",
+    }
+)
+"""Documented ``glab api`` CLI flags that consume the following token as their value (0.16 R9-D4)."""
 
 
-def _is_glab_api_argv(items: list[object]) -> bool:
+def _is_glab_api_argv(items: Sequence[object]) -> bool:
     """Whether ``items`` is a ``glab api`` argv list (``["api", ...]`` or ``["glab", "api", ...]``, 0.15 R8-D2)."""
     if not items:
         return False
     if items[0] == "api":
         return True
     return len(items) >= 2 and items[0] == "glab" and items[1] == "api"
+
+
+def _glab_api_endpoint(tokens: Sequence[object]) -> tuple[int, str] | None:
+    """Index and value of the first positional endpoint in a ``glab api`` token sequence (0.16 R9-D4).
+
+    Shared by both ``shlex``-tokenised command lines and argv lists. Skips
+    flags in both ``-H value`` (via :data:`_GLAB_API_VALUE_FLAGS`) and
+    ``--header=value`` forms, boolean flags, and ``--``.
+    """
+    folded = [t.casefold() if isinstance(t, str) else "" for t in tokens]
+    if not _is_glab_api_argv(folded):
+        return None
+    idx = 1 if folded[0] == "api" else 2
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if not isinstance(tok, str):
+            idx += 1
+            continue
+        if tok == "--":
+            if idx + 1 < len(tokens) and isinstance(tokens[idx + 1], str):
+                return idx + 1, str(tokens[idx + 1])
+            return None
+        if tok.startswith("-") and tok != "-":
+            if "=" in tok:
+                idx += 1
+            elif tok in _GLAB_API_VALUE_FLAGS:
+                idx += 2
+            else:
+                idx += 1
+            continue
+        return idx, tok
+    return None
+
+
+def _glab_api_text_id_spans(text: str) -> list[tuple[int, int, int]]:
+    """``(start, end, project_id)`` spans of numeric project ids in ``glab api`` commands inside ``text`` (0.16 R9-D4)."""
+    spans: list[tuple[int, int, int]] = []
+    for cmd_match in _GLAB_API_CMD_RE.finditer(text):
+        cmd_start = cmd_match.start()
+        line_end = text.find("\n", cmd_start)
+        if line_end == -1:
+            line_end = len(text)
+        cmd_end = line_end
+        if cmd_start > 0 and text[cmd_start - 1] == "`":
+            closing_tick = text.find("`", cmd_start, line_end)
+            if closing_tick != -1:
+                cmd_end = closing_tick
+        segment = text[cmd_start:cmd_end]
+        lexer = shlex.shlex(segment, posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens: list[str] = []
+        raw_spans: list[tuple[int, int]] = []
+        endpoint: tuple[int, str] | None = None
+        try:
+            while True:
+                pos0 = lexer.instream.tell()
+                tok = lexer.get_token()
+                if tok is None:
+                    break
+                pos1 = lexer.instream.tell()
+                tokens.append(tok)
+                raw_spans.append((pos0, pos1))
+                endpoint = _glab_api_endpoint(tokens)
+                if endpoint is not None:
+                    break
+        except ValueError as exc:
+            _log.debug("forge.recording.glab_shlex_fallback", error=type(exc).__name__)
+            tail_offset = cmd_match.end() - cmd_start
+            for fb in _GLAB_API_FALLBACK_ID_RE.finditer(segment, tail_offset):
+                if len(fb.group("id")) >= NEEDLE_MIN_LENGTH:
+                    spans.append(
+                        (
+                            cmd_start + fb.start("id"),
+                            cmd_start + fb.end("id"),
+                            int(fb.group("id")),
+                        )
+                    )
+            continue
+        if endpoint is None:
+            continue
+        ep_idx, ep_tok = endpoint
+        ep_match = _GLAB_API_ARG_PROJECT_ID_RE.match(ep_tok)
+        if ep_match is None or len(ep_match.group("id")) < NEEDLE_MIN_LENGTH:
+            continue
+        pos0, pos1 = raw_spans[ep_idx]
+        raw_slice = segment[pos0:pos1]
+        raw_id = _GLAB_API_RAW_ENDPOINT_ID_RE.match(raw_slice) or _GLAB_API_FALLBACK_ID_RE.search(
+            raw_slice
+        )
+        if raw_id is not None:
+            spans.append(
+                (
+                    cmd_start + pos0 + raw_id.start("id"),
+                    cmd_start + pos0 + raw_id.end("id"),
+                    int(ep_match.group("id")),
+                )
+            )
+    return spans
+
+
+def _api_project_id_spans(text: str) -> list[tuple[int, int, int]]:
+    """Sorted non-overlapping ``(start, end, project_id)`` spans of real API and ``glab api`` project ids in ``text`` (0.16 R9-D4)."""
+    kept = _kept_url_spans(text)
+    found: list[tuple[int, int, int]] = []
+    for match in _API_PROJECT_ID_RE.finditer(text):
+        if _is_real_api_project_id(match, kept):
+            found.append((match.start("id"), match.end("id"), int(match.group("id"))))
+    for start, end, pid in _glab_api_text_id_spans(text):
+        if any(k_start <= start < k_end for k_start, k_end in kept):
+            continue
+        if any(s <= start < e or start <= s < end for s, e, _ in found):
+            continue
+        found.append((start, end, pid))
+    found.sort(key=lambda item: item[0])
+    return found
 
 
 def _kept_url_spans(text: str) -> list[tuple[int, int]]:
@@ -1439,18 +1591,13 @@ def is_repository_object(node: object) -> bool:
 
 
 def project_id_values(node: object) -> list[object]:
-    """Every real repository id of a decoded value: repository objects and non-example ``[api/v4/]projects/<id>`` paths, JSON inside strings included (0.10, 0.13, 0.14)."""
+    """Every real repository id of a decoded value: repository objects and non-example ``api/v<N>/projects/<id>`` / ``glab api`` paths, JSON inside strings included (0.10, 0.13, 0.14, 0.16)."""
     if isinstance(node, str):
         if node.lstrip()[:1] in ("{", "["):
             decoded = decode_json_values(node)
             if decoded is not None:
                 return [i for v in decoded for i in project_id_values(v)]
-        kept = _kept_url_spans(node)
-        return [
-            int(m.group("id"))
-            for m in _API_PROJECT_ID_RE.finditer(node)
-            if _is_real_api_project_id(m, kept)
-        ]
+        return [pid for _start, _end, pid in _api_project_id_spans(node)]
     if isinstance(node, dict):
         found = [i for v in node.values() for i in project_id_values(v)]
         if is_repository_object(node) and "id" in node:
@@ -1458,12 +1605,12 @@ def project_id_values(node: object) -> list[object]:
         return found
     if isinstance(node, list):
         found = [i for v in node for i in project_id_values(v)]
-        if _is_glab_api_argv(node):
-            for item in node[1:]:
-                if isinstance(item, str):
-                    match = _GLAB_API_ARG_PROJECT_ID_RE.match(item)
-                    if match is not None and _is_real_api_project_id(match, []):
-                        found.append(int(match.group("id")))
+        endpoint = _glab_api_endpoint(node)
+        if endpoint is not None:
+            _idx, ep_tok = endpoint
+            match = _GLAB_API_ARG_PROJECT_ID_RE.match(ep_tok)
+            if match is not None and _is_real_api_project_id(match, []):
+                found.append(int(match.group("id")))
         return found
     return []
 
@@ -1563,10 +1710,11 @@ class UserIdMap:
                 for k, v in payload.items()
             }
         if isinstance(payload, list):
-            is_api = _is_glab_api_argv(payload)
+            endpoint = _glab_api_endpoint(payload)
+            ep_idx = endpoint[0] if endpoint is not None else -1
             out_list: list[object] = []
             for idx, item in enumerate(payload):
-                if is_api and idx > 0 and isinstance(item, str):
+                if idx == ep_idx and isinstance(item, str):
                     match = _GLAB_API_ARG_PROJECT_ID_RE.match(item)
                     if match is not None and _is_real_api_project_id(match, []):
                         item = _GLAB_API_ARG_PROJECT_ID_RE.sub(
@@ -1580,15 +1728,17 @@ class UserIdMap:
                 out_list.append(self.apply_projects(item, forge=forge, keep=keep))
             return out_list
         if isinstance(payload, str):
-            kept = _kept_url_spans(payload)
-            return _API_PROJECT_ID_RE.sub(
-                lambda m: (
-                    f"{m.group('prefix')}{self.synthetic(int(m.group('id')), forge=forge, keep=keep)}"
-                    if _is_real_api_project_id(m, kept)
-                    else m.group(0)
-                ),
-                payload,
-            )
+            spans = _api_project_id_spans(payload)
+            if not spans:
+                return payload
+            parts: list[str] = []
+            cursor = 0
+            for start, end, pid in spans:
+                parts.append(payload[cursor:start])
+                parts.append(str(self.synthetic(pid, forge=forge, keep=keep)))
+                cursor = end
+            parts.append(payload[cursor:])
+            return "".join(parts)
         return payload
 
     def apply_result(
@@ -1963,9 +2113,6 @@ class Needles:
         """Raw host or segment → its placeholder, for :func:`classify_logins` beside the roles."""
         return dict(self.replacements)
 
-
-_HOST_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + "_.-")
-"""Characters that may not immediately precede a host candidate in :data:`_HOST_TOKEN_RE` (0.16)."""
 
 _HOST_TOKEN_RE = re.compile(
     rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})"
