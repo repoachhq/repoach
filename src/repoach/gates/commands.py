@@ -19,12 +19,14 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.logging import get_logger
+from ..core.paths import is_repoach_checkout
 from .config import GatesConfig
 
 _log = get_logger(__name__)
@@ -89,12 +91,77 @@ def split_command(command: str) -> list[str]:
     return words
 
 
+_PYTHON_TOOLCHAIN_MODULES: frozenset[str] = frozenset({"ruff", "pytest"})
+"""Modules resolved to ``sys.executable -m <module>`` on repoach itself."""
+
+
+def missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> str | None:
+    """Return a named tail when ``interpreter -m module`` failed for a missing module.
+
+    Only a non-zero exit code is judged, and only ``stderr`` is scanned
+    line-by-line so green runs and test tracebacks on ``stdout`` never
+    masquerade as an uninstalled tool.
+
+    Args:
+        rc: Exit status of the child process.
+        module: Module name passed to ``-m`` (``"ruff"`` or ``"pytest"``).
+        interpreter: Interpreter path or name shown in the returned message.
+        stderr: Child standard error.
+
+    Returns:
+        ``"<module> is not installed in <interpreter>"`` when ``rc != 0``
+        and a line of ``stderr`` reports ``No module named <module>``,
+        else ``None``.
+    """
+    if rc == 0:
+        return None
+    pattern = re.compile(rf"(?:^|: )No module named (['\"]?){re.escape(module)}\1$")
+    for line in stderr.splitlines():
+        if pattern.search(line.strip()):
+            return f"{module} is not installed in {interpreter}"
+    return None
+
+
+def _resolve_repoach_argv(argv: list[str], *, root: Path) -> tuple[list[str], str | None]:
+    """Resolve bare Python toolchain commands to ``sys.executable`` on repoach itself.
+
+    Foreign repositories keep their declared ``[commands]`` untouched
+    (SP-PIN-TOOLCHAIN: a project pinning its own ruff or pytest via
+    ``[commands]`` is unaffected).  On a repoach checkout, bare ``ruff``,
+    ``pytest`` and ``python`` tokens run through ``sys.executable`` so
+    the gates do not depend on ``PATH``.
+
+    Args:
+        argv: One parsed command step.
+        root: Project root passed to :func:`run_command`.
+
+    Returns:
+        ``(resolved_argv, module)`` where ``module`` is ``"ruff"`` or
+        ``"pytest"`` when the step invokes ``-m <module>``, else ``None``.
+    """
+    if not argv or not is_repoach_checkout(root):
+        return argv, None
+    head = argv[0]
+    if head == "ruff":
+        return [sys.executable, "-m", "ruff", *argv[1:]], "ruff"
+    if head == "pytest":
+        return [sys.executable, "-m", "pytest", *argv[1:]], "pytest"
+    resolved = [sys.executable, *argv[1:]] if head == "python" else argv
+    module = (
+        resolved[2]
+        if len(resolved) >= 3 and resolved[1] == "-m" and resolved[2] in _PYTHON_TOOLCHAIN_MODULES
+        else None
+    )
+    return resolved, module
+
+
 def run_argv(
     argv: Sequence[str],
     *,
     cwd: Path,
     timeout_s: int,
     label: str | None = None,
+    missing_module: str | None = None,
 ) -> CommandResult:
     """Run ``argv`` in ``cwd`` with the scrubbed environment and a timeout.
 
@@ -104,6 +171,9 @@ def run_argv(
         timeout_s: Seconds before the process is killed.
         label: Command line shown at the head of the tail (defaults to
             the quoted ``argv``).
+        missing_module: When set, translate a non-zero exit whose
+            ``stderr`` reports ``No module named <missing_module>`` into
+            ``"<missing_module> is not installed in <argv[0]>"``.
 
     Returns:
         The :class:`CommandResult`.
@@ -136,6 +206,10 @@ def run_argv(
         return CommandResult(
             False, None, f"$ {shown}\n{partial[-TAIL_CHARS:]}\ntimeout after {timeout_s}s"
         )
+    if missing_module is not None:
+        missing = missing_module_tail(proc.returncode, missing_module, argv[0], stderr or "")
+        if missing is not None:
+            return CommandResult(False, proc.returncode, missing, stdout or "")
     output = (stdout or "") + (stderr or "")
     tail = f"$ {shown}\n{output[-TAIL_CHARS:]}"
     if proc.returncode != 0:
@@ -237,7 +311,20 @@ def run_command(command: str, *, root: Path, timeout_s: int) -> CommandResult:
             argv[0] = str((root / argv[0]).resolve())
         remaining = max(1, int(deadline - time.monotonic()))
         label = command if len(steps) == 1 else shlex.join(argv)
-        result = run_argv(argv, cwd=root, timeout_s=remaining, label=label)
+        resolved_argv, module = _resolve_repoach_argv(argv, root=root)
+        result = run_argv(
+            resolved_argv,
+            cwd=root,
+            timeout_s=remaining,
+            label=label,
+            missing_module=module,
+        )
+        if (
+            module is not None
+            and not result.passed
+            and result.tail == f"{module} is not installed in {resolved_argv[0]}"
+        ):
+            return result
         tails.append(result.tail)
         stdout.append(result.stdout)
         if not result.passed:
@@ -349,6 +436,7 @@ __all__ = [
     "TAIL_CHARS",
     "CommandResult",
     "expand_test_command",
+    "missing_module_tail",
     "run_argv",
     "run_command",
     "run_lint_gate",
