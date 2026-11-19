@@ -198,7 +198,7 @@ def test_builtin_config_runs_todays_ruff_argv(
     calls: list[list[str]] = []
 
     def fake_run(argv: list[str], **_: object) -> tuple[int, str, str]:
-        calls.append(argv[3:])
+        calls.append(argv[4:])
         return 0, "", ""
 
     monkeypatch.setattr(coder_loop, "_run", fake_run)

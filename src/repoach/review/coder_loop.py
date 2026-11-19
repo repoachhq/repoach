@@ -712,6 +712,11 @@ def _run_configured_tests(repo_root: Path, config: GatesConfig) -> tuple[bool, s
     return True, f"tests green under {summary}"
 
 
+def _run_ruff(argv: list[str], repo_root: Path) -> tuple[int, str, str]:
+    """Run one ruff step in ``repo_root`` under the secret-scrubbed environment."""
+    return _run(argv, cwd=repo_root, timeout_s=120, env=scrubbed_env())
+
+
 def run_ruff_gate(
     repo_root: Path, *, unsafe_fixes: bool = False, config: GatesConfig | None = None
 ) -> tuple[bool, str]:
@@ -759,17 +764,15 @@ def run_ruff_gate(
     fix_cmd = ruff_argv("check", "--fix", "src", "tests")
     if unsafe_fixes:
         fix_cmd.append("--unsafe-fixes")
-    _run(fix_cmd, cwd=repo_root, timeout_s=120)
-    _run(ruff_argv("format", "src", "tests"), cwd=repo_root, timeout_s=120)
-    rc, stdout, stderr = _run(ruff_argv("check", "src", "tests"), cwd=repo_root, timeout_s=120)
+    _run_ruff(fix_cmd, repo_root)
+    _run_ruff(ruff_argv("format", "src", "tests"), repo_root)
+    rc, stdout, stderr = _run_ruff(ruff_argv("check", "src", "tests"), repo_root)
     missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
     if missing:
         return False, missing
     if rc != 0:
         return False, f"ruff check failed:\n{(stdout + stderr)[-2000:]}"
-    rc, stdout, stderr = _run(
-        ruff_argv("format", "--check", "src", "tests"), cwd=repo_root, timeout_s=120
-    )
+    rc, stdout, stderr = _run_ruff(ruff_argv("format", "--check", "src", "tests"), repo_root)
     missing = missing_module_tail(rc, "ruff", sys.executable, stderr)
     if missing:
         return False, missing

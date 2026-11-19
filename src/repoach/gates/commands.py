@@ -94,6 +94,9 @@ def split_command(command: str) -> list[str]:
     return words
 
 
+_PYTHON_NAME_RE = re.compile(r"python(?:\d+(?:\.\d+)*)?")
+"""A bare interpreter name: ``python``, ``python3``, ``python3.13``."""
+
 _PYTHON_TOOLCHAIN_MODULES: frozenset[str] = frozenset({"ruff", "pytest"})
 """Modules resolved to ``sys.executable -m <module>`` on repoach itself."""
 
@@ -101,26 +104,51 @@ _PYTHON_TOOLCHAIN_MODULES: frozenset[str] = frozenset({"ruff", "pytest"})
 def ruff_argv(*args: str) -> list[str]:
     """Return the argv that runs the ruff installed beside this interpreter.
 
+    ``-P`` keeps the working directory off ``sys.path``, so a ``ruff.py``
+    planted in the repository under judgement can never shadow the tool.
+
     Args:
         *args: Arguments passed to ruff.
 
     Returns:
-        ``[sys.executable, "-m", "ruff", *args]``, never a ``PATH`` lookup.
+        ``[sys.executable, "-P", "-m", "ruff", *args]``, never a ``PATH`` lookup.
     """
-    return [sys.executable, "-m", "ruff", *args]
+    return [sys.executable, "-P", "-m", "ruff", *args]
 
 
 def pytest_argv(*args: str, python: str | None = None) -> list[str]:
     """Return the argv that runs pytest under an interpreter.
+
+    ``-P`` keeps the working directory off ``sys.path`` for the same
+    reason as :func:`ruff_argv`.
 
     Args:
         *args: Arguments passed to pytest.
         python: Explicit interpreter, for the CI matrix; defaults to ``sys.executable``.
 
     Returns:
-        ``[python or sys.executable, "-m", "pytest", *args]``.
+        ``[python or sys.executable, "-P", "-m", "pytest", *args]``.
     """
-    return [python or sys.executable, "-m", "pytest", *args]
+    return [python or sys.executable, "-P", "-m", "pytest", *args]
+
+
+def toolchain_module(argv: Sequence[str]) -> str | None:
+    """Return the toolchain module a python step runs with ``-m``, else ``None``.
+
+    Args:
+        argv: One resolved command step whose head is an interpreter.
+
+    Returns:
+        ``"ruff"`` or ``"pytest"`` when the interpreter flags end in
+        ``-m <module>`` for one of them, else ``None``.
+    """
+    for index, token in enumerate(argv[1:], start=1):
+        if token == "-m":
+            module = argv[index + 1] if index + 1 < len(argv) else None
+            return module if module in _PYTHON_TOOLCHAIN_MODULES else None
+        if not token.startswith("-"):
+            return None
+    return None
 
 
 def missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> str | None:
@@ -150,37 +178,38 @@ def missing_module_tail(rc: int, module: str, interpreter: str, stderr: str) -> 
     return None
 
 
-def _resolve_repoach_argv(argv: list[str], *, root: Path) -> tuple[list[str], str | None]:
+def _resolve_repoach_argv(argv: list[str], *, root: Path) -> list[str]:
     """Resolve bare Python toolchain commands to ``sys.executable`` on repoach itself.
 
     Foreign repositories keep their declared ``[commands]`` untouched
     (SP-PIN-TOOLCHAIN: a project pinning its own ruff or pytest via
     ``[commands]`` is unaffected).  On a repoach checkout, bare ``ruff``,
-    ``pytest`` and ``python`` tokens run through ``sys.executable`` so
-    the gates do not depend on ``PATH``.
+    ``pytest`` and ``python -m ruff|pytest`` steps run through
+    ``sys.executable`` so the gates do not depend on ``PATH``, and a bare
+    ``python`` token becomes ``sys.executable``.
 
     Args:
         argv: One parsed command step.
         root: Project root passed to :func:`run_command`.
 
     Returns:
-        ``(resolved_argv, module)`` where ``module`` is ``"ruff"`` or
-        ``"pytest"`` when the step invokes ``-m <module>``, else ``None``.
+        The step to spawn; ``argv`` itself when nothing applies.
     """
     if not argv or not is_repoach_checkout(root):
-        return argv, None
+        return argv
     head = argv[0]
     if head == "ruff":
-        return ruff_argv(*argv[1:]), "ruff"
+        return ruff_argv(*argv[1:])
     if head == "pytest":
-        return pytest_argv(*argv[1:]), "pytest"
-    resolved = [sys.executable, *argv[1:]] if head == "python" else argv
-    module = (
-        resolved[2]
-        if len(resolved) >= 3 and resolved[1] == "-m" and resolved[2] in _PYTHON_TOOLCHAIN_MODULES
-        else None
-    )
-    return resolved, module
+        return pytest_argv(*argv[1:])
+    if not _PYTHON_NAME_RE.fullmatch(Path(head).name):
+        return argv
+    interpreter = sys.executable if head == "python" else head
+    rest = argv[1:]
+    module = toolchain_module([interpreter, *rest])
+    if rest[:1] == ["-m"] and module is not None:
+        return [interpreter, "-P", "-m", module, *rest[2:]]
+    return [interpreter, *rest]
 
 
 def run_argv(
@@ -339,7 +368,8 @@ def run_command(command: str, *, root: Path, timeout_s: int) -> CommandResult:
             argv[0] = str((root / argv[0]).resolve())
         remaining = max(1, int(deadline - time.monotonic()))
         label = command if len(steps) == 1 else shlex.join(argv)
-        resolved_argv, module = _resolve_repoach_argv(argv, root=root)
+        resolved_argv = _resolve_repoach_argv(argv, root=root)
+        module = toolchain_module(resolved_argv)
         result = run_argv(
             resolved_argv,
             cwd=root,
@@ -470,4 +500,5 @@ __all__ = [
     "run_test_gate",
     "split_command",
     "split_steps",
+    "toolchain_module",
 ]

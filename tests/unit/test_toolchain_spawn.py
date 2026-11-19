@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -85,9 +86,15 @@ def _record_gate_argv(
 
 
 def test_argv_helpers_use_sys_executable() -> None:
-    assert ruff_argv("check", "src") == [sys.executable, "-m", "ruff", "check", "src"]
-    assert pytest_argv("-q") == [sys.executable, "-m", _PYTEST_MODULE, "-q"]
-    assert pytest_argv("-q", python="python3.13") == ["python3.13", "-m", _PYTEST_MODULE, "-q"]
+    assert ruff_argv("check", "src") == [sys.executable, "-P", "-m", "ruff", "check", "src"]
+    assert pytest_argv("-q") == [sys.executable, "-P", "-m", _PYTEST_MODULE, "-q"]
+    assert pytest_argv("-q", python="python3.13") == [
+        "python3.13",
+        "-P",
+        "-m",
+        _PYTEST_MODULE,
+        "-q",
+    ]
 
 
 def test_ruff_gate_spawns_four_argv_through_the_interpreter(
@@ -98,10 +105,10 @@ def test_ruff_gate_spawns_four_argv_through_the_interpreter(
     ok, _ = run_ruff_gate(tmp_path)
     assert ok is True
     assert calls == [
-        [sys.executable, "-m", "ruff", "check", "--fix", "src", "tests"],
-        [sys.executable, "-m", "ruff", "format", "src", "tests"],
-        [sys.executable, "-m", "ruff", "check", "src", "tests"],
-        [sys.executable, "-m", "ruff", "format", "--check", "src", "tests"],
+        [sys.executable, "-P", "-m", "ruff", "check", "--fix", "src", "tests"],
+        [sys.executable, "-P", "-m", "ruff", "format", "src", "tests"],
+        [sys.executable, "-P", "-m", "ruff", "check", "src", "tests"],
+        [sys.executable, "-P", "-m", "ruff", "format", "--check", "src", "tests"],
     ]
 
 
@@ -112,7 +119,7 @@ def test_pytest_gate_spawns_through_the_interpreter(
     calls = _record(monkeypatch)
     ok, _ = run_pytest(tmp_path)
     assert ok is True
-    assert calls == [[sys.executable, "-m", _PYTEST_MODULE, "-q", "tests/unit"]]
+    assert calls == [[sys.executable, "-P", "-m", _PYTEST_MODULE, "-q", "tests/unit"]]
 
 
 def test_pytest_gate_keeps_an_explicit_interpreter(
@@ -120,7 +127,7 @@ def test_pytest_gate_keeps_an_explicit_interpreter(
 ) -> None:
     calls = _record(monkeypatch)
     run_pytest(tmp_path, python="python3.13")
-    assert calls == [["python3.13", "-m", _PYTEST_MODULE, "-q", "tests/unit"]]
+    assert calls == [["python3.13", "-P", "-m", _PYTEST_MODULE, "-q", "tests/unit"]]
 
 
 def test_missing_ruff_is_named_not_command_not_found(
@@ -249,7 +256,7 @@ def test_developer_run_tests_spawns_through_the_interpreter(
     monkeypatch.setattr(devagent_tools.subprocess, "run", fake_subprocess_run)
     tools = {tool.name: tool.callable_fn for tool in make_developer_tools(tmp_path)}
     tools["run_tests"]("tests/unit")
-    assert seen == [[sys.executable, "-m", _PYTEST_MODULE, "-q", "--", "tests/unit"]]
+    assert seen == [[sys.executable, "-P", "-m", _PYTEST_MODULE, "-q", "--", "tests/unit"]]
 
 
 def test_developer_run_tests_names_missing_pytest(
@@ -278,8 +285,8 @@ def test_repoach_configured_gates_resolve_toolchain_to_sys_executable(
     ok_lint, _ = run_ruff_gate(tmp_path)
     assert ok_lint is True
     assert calls == [
-        ([sys.executable, "-m", "ruff", "check", "src", "tests"], "ruff"),
-        ([sys.executable, "-m", "ruff", "format", "--check", "src", "tests"], "ruff"),
+        ([sys.executable, "-P", "-m", "ruff", "check", "src", "tests"], "ruff"),
+        ([sys.executable, "-P", "-m", "ruff", "format", "--check", "src", "tests"], "ruff"),
         ([sys.executable, "scripts/lint_no_inline_comments.py", "--summary"], None),
         ([sys.executable, "scripts/lint_no_silent_except.py", "--summary"], None),
     ]
@@ -287,18 +294,20 @@ def test_repoach_configured_gates_resolve_toolchain_to_sys_executable(
     calls.clear()
     ok_test, _ = run_pytest_matrix(tmp_path)
     assert ok_test is True
-    assert calls == [([sys.executable, "-m", _PYTEST_MODULE, "-q", "tests/unit"], _PYTEST_MODULE)]
+    assert calls == [
+        ([sys.executable, "-P", "-m", _PYTEST_MODULE, "-q", "tests/unit"], _PYTEST_MODULE)
+    ]
 
     calls.clear()
     tools = {tool.name: tool.callable_fn for tool in make_developer_tools(tmp_path)}
     assert tools["run_ruff"]().startswith("PASS")
     assert tools["run_tests"]("tests/unit").startswith("PASS")
     assert [argv for argv, _ in calls] == [
-        [sys.executable, "-m", "ruff", "check", "src", "tests"],
-        [sys.executable, "-m", "ruff", "format", "--check", "src", "tests"],
+        [sys.executable, "-P", "-m", "ruff", "check", "src", "tests"],
+        [sys.executable, "-P", "-m", "ruff", "format", "--check", "src", "tests"],
         [sys.executable, "scripts/lint_no_inline_comments.py", "--summary"],
         [sys.executable, "scripts/lint_no_silent_except.py", "--summary"],
-        [sys.executable, "-m", _PYTEST_MODULE, "-q", "tests/unit"],
+        [sys.executable, "-P", "-m", _PYTEST_MODULE, "-q", "tests/unit"],
     ]
 
     calls.clear()
@@ -316,7 +325,7 @@ def test_repoach_configured_gates_resolve_toolchain_to_sys_executable(
     assert run_selector(tmp_path, selector, cfg)[0] is True
     assert calls == [
         ([sys.executable, "scripts/check.py"], None),
-        ([sys.executable, "-m", "ruff", "check", "src"], "ruff"),
+        ([sys.executable, "-P", "-m", "ruff", "check", "src"], "ruff"),
     ]
 
 
@@ -349,8 +358,8 @@ def test_repoach_configured_matrix_expansion(
     ok, _ = run_pytest_matrix(tmp_path)
     assert ok is True
     assert calls == [
-        ([sys.executable, "-m", _PYTEST_MODULE, "-q", "tests/unit"], _PYTEST_MODULE),
-        (["python3.13", "-m", _PYTEST_MODULE, "-q", "tests/unit"], _PYTEST_MODULE),
+        ([sys.executable, "-P", "-m", _PYTEST_MODULE, "-q", "tests/unit"], _PYTEST_MODULE),
+        (["python3.13", "-P", "-m", _PYTEST_MODULE, "-q", "tests/unit"], _PYTEST_MODULE),
     ]
 
 
@@ -447,10 +456,10 @@ def test_run_argv_sets_the_typed_missing_module_flag(
 
     monkeypatch.setattr(commands.subprocess, "Popen", _FakePopen)
     named = commands.run_argv(
-        [sys.executable, "-m", "ruff"], cwd=tmp_path, timeout_s=5, missing_module="ruff"
+        [sys.executable, "-P", "-m", "ruff"], cwd=tmp_path, timeout_s=5, missing_module="ruff"
     )
     other = commands.run_argv(
-        [sys.executable, "-m", "ruff"], cwd=tmp_path, timeout_s=5, missing_module="pytest"
+        [sys.executable, "-P", "-m", "ruff"], cwd=tmp_path, timeout_s=5, missing_module="pytest"
     )
     assert named.missing_module is True
     assert other.missing_module is False
@@ -477,14 +486,18 @@ def test_run_command_stops_on_the_typed_flag_not_on_tail_text(
 @pytest.mark.parametrize(
     ("argv", "expected", "module"),
     [
-        (["ruff", "check"], [sys.executable, "-m", "ruff", "check"], "ruff"),
-        ([_PYTEST_MODULE, "-q"], [sys.executable, "-m", _PYTEST_MODULE, "-q"], _PYTEST_MODULE),
+        (["ruff", "check"], [sys.executable, "-P", "-m", "ruff", "check"], "ruff"),
         (
-            ["python", "-m", _PYTEST_MODULE, "-q"],
-            [sys.executable, "-m", _PYTEST_MODULE, "-q"],
+            [_PYTEST_MODULE, "-q"],
+            [sys.executable, "-P", "-m", _PYTEST_MODULE, "-q"],
             _PYTEST_MODULE,
         ),
-        (["python", "-m", "ruff", "check"], [sys.executable, "-m", "ruff", "check"], "ruff"),
+        (
+            ["python", "-m", _PYTEST_MODULE, "-q"],
+            [sys.executable, "-P", "-m", _PYTEST_MODULE, "-q"],
+            _PYTEST_MODULE,
+        ),
+        (["python", "-m", "ruff", "check"], [sys.executable, "-P", "-m", "ruff", "check"], "ruff"),
         (["python", "-m", "mypy", "src"], [sys.executable, "-m", "mypy", "src"], None),
         (["python", "scripts/lint.py"], [sys.executable, "scripts/lint.py"], None),
         (["python"], [sys.executable], None),
@@ -495,7 +508,8 @@ def test_resolve_repoach_argv_table_on_a_repoach_checkout(
     tmp_path: Path, argv: list[str], expected: list[str], module: str | None
 ) -> None:
     _make_repoach_checkout(tmp_path)
-    assert commands._resolve_repoach_argv(argv, root=tmp_path) == (expected, module)
+    assert commands._resolve_repoach_argv(argv, root=tmp_path) == expected
+    assert commands.toolchain_module(expected) == module
 
 
 @pytest.mark.parametrize(
@@ -504,9 +518,61 @@ def test_resolve_repoach_argv_table_on_a_repoach_checkout(
 def test_resolve_repoach_argv_leaves_a_foreign_repository_untouched(
     tmp_path: Path, argv: list[str]
 ) -> None:
-    assert commands._resolve_repoach_argv(argv, root=tmp_path) == (argv, None)
+    assert commands._resolve_repoach_argv(argv, root=tmp_path) == argv
 
 
 def test_resolve_repoach_argv_empty_argv_is_returned_as_is(tmp_path: Path) -> None:
     _make_repoach_checkout(tmp_path)
-    assert commands._resolve_repoach_argv([], root=tmp_path) == ([], None)
+    assert commands._resolve_repoach_argv([], root=tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("argv", "module"),
+    [
+        ([sys.executable, "-P", "-m", "ruff", "check"], "ruff"),
+        ([sys.executable, "-m", _PYTEST_MODULE], _PYTEST_MODULE),
+        ([sys.executable, "-m", "mypy"], None),
+        ([sys.executable, "script.py", "-m", "ruff"], None),
+        ([sys.executable, "-m"], None),
+        ([sys.executable], None),
+        ([], None),
+    ],
+)
+def test_toolchain_module_reads_only_the_interpreter_flags(
+    argv: list[str], module: str | None
+) -> None:
+    assert commands.toolchain_module(argv) == module
+
+
+def test_toolchain_argv_keeps_the_working_directory_off_sys_path() -> None:
+    assert ruff_argv()[1] == "-P"
+    assert pytest_argv()[1] == "-P"
+    assert pytest_argv(python="python3.13")[:2] == ["python3.13", "-P"]
+
+
+def test_a_planted_ruff_module_in_the_working_directory_is_not_imported(tmp_path: Path) -> None:
+    (tmp_path / "ruff.py").write_text("raise SystemExit(97)\n")
+    shadowed = subprocess.run(
+        [sys.executable, "-m", "ruff", "--version"], cwd=tmp_path, capture_output=True, check=False
+    )
+    isolated = subprocess.run(
+        ruff_argv("--version"), cwd=tmp_path, capture_output=True, check=False
+    )
+    assert shadowed.returncode == 97
+    assert isolated.returncode == 0
+
+
+def test_every_ruff_step_runs_under_the_scrubbed_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[dict[str, str] | None] = []
+
+    def fake_run(argv, *, cwd, timeout_s=300, env=None):
+        seen.append(env)
+        return 0, "", ""
+
+    monkeypatch.setattr(coder_loop, "_run", fake_run)
+    monkeypatch.setattr(coder_loop, "scrubbed_env", lambda: {"SCRUBBED": "1"})
+    ok, _ = run_ruff_gate(tmp_path)
+    assert ok is True
+    assert seen == [{"SCRUBBED": "1"}] * 4
