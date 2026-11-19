@@ -41,7 +41,7 @@ if [[ ${#staged_py[@]} -gt 0 ]] ; then
     if python -m ruff format --check "${staged_py[@]}" ; then
         ok "ruff format --check"
     else
-        fail "ruff format --check  (run: ruff format ${staged_py[*]})"
+        fail "ruff format --check  (run: python -m ruff format ${staged_py[*]})"
         failures+=("ruff format --check")
     fi
 
