@@ -1,11 +1,11 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word, drops names and avatars, makes user ids synthetic at record time, and refuses a fixture it cannot classify
-version: 0.12
+version: 0.13
 status: approved
 author: agent
 created: 2026-11-18
-updated: 2026-11-18
+updated: 2026-11-19
 
 owns:
   code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py]
@@ -302,6 +302,62 @@ Wrong facts corrected: D1b now lists `link` beside `url`/`web_url`/
 command's `94 project` / `1 project\` quirk vs the 0.10 command's
 `99 project`.
 
+Amendment (0.13, 2026-11-19, the sixth verifier's NO-GO on `83ab01f`,
+every item fixed, measured on the branch over `origin/develop`
+`7fd31af`). (R6-D1) Markdown delimiters — backtick, `*`, `|` in
+`_URL_IN_TEXT_RE` and `_AFTER_HOST_RE`, and trailing boundary `~` and
+`_` via `_URL_TRIM_TAIL` in `redact_urls_in_text`, `unredacted_host` and
+`locations()` — terminate text URLs without being eaten, so backticked
+RFC 2606 / loopback URLs stay unchanged and backticked/bold/table/tilde/
+underscore self-hosted URLs yield clean segment needles; `_SCP_IN_TEXT_RE`
+accepts an optional DNS trailing dot and `URL_SCHEMES` / `_URL_IN_TEXT_RE`
+include `ftp`/`ftps`. (R6-D2) Any `<name>[bot]` login (such as
+`dependabot[bot]`, `renovate[bot]`) shares one consistent class word
+across its login key, `@<name>` mention and bare prose stem (in
+`build_roles`, `classify_text`, `needles` and offline `legacy_roles`/
+`_rename`), while `@github-actions` is skipped via `_names_no_one`;
+`_MENTION_END` rejects `/[A-Za-z0-9_.-]` so npm scoped packages
+(`@types/node`, `@vue/cli`, `@babel/core`, `@actions/checkout`) are not
+mentions; `PYTHON_DECORATORS` is checked case-insensitively (`@Override`).
+(R6-D3) `locations()` replaces the growing `_NON_HOST_TLDS` denylist with
+a positive DNS TLD allowlist (`_KNOWN_HOST_TLDS`) plus `known_hosts`
+(the forge/remote host), rejecting code expressions
+(`config.dir/sub/file.toml`, `obj.total/count/100`, `this.base/api/v1`,
+`components.tsx/Header/index`, `cfg.root/sub/file`) and wheel paths
+(`*.dist-info/…`) while still finding real schemeless hosts
+(`gitlab.corp-x.io/grp-x/proj-x`, trailing-dot form) and custom-TLD
+known hosts; scheme- or user-led IPv4 URLs (`https://10.20.30.40/…`)
+are also parsed by `locations()` and collected as host and segment
+needles so self-hosted IPv4 mirrors cannot leak prose repo names.
+(R6-D4) All 10 round-6 surviving mutants (`V5-11`, `R5-D2b`/`V6-03`,
+`V6-01`, `V6-11`, `V6-17`, `V6-18`, `V6-22`, `V6-24`, `V6-25`, `V6-26`)
+plus 17 new 0.13 mutants are killed in a detached git worktree with a
+verified green baseline and strict `rc == 1` kill criterion (AC1).
+(R6-D5) Numeric GitLab project ids in `api/v4/projects/<id>/…` URLs map
+through the same `UserIdMap.for_projects()` (`2001..2999`), are declared
+under `synthetic_project_ids`, and are collected by `project_id_values`;
+offline `scripts/redact_forge_fixtures.py` also redacts `kwargs`, and
+`redact_urls_in_text` rewrites system noreply mailboxes
+(`noreply@github.com`, `noreply@<self-hosted>`) to
+`noreply@forge.example.com`. (Preferences 2–4) `needles()` infers the
+public forge host from `URL_KEYS` when `remote=""` so third-party links
+like `docs.python.org` do not raise `NeedleError`; well-known public
+reference hosts (`PUBLIC_REFERENCE_HOSTS`: `docker.io`, `ghcr.io`,
+`golang.org`, `k8s.io`, `pypi.org`, `npmjs.com`, `www.npmjs.com`,
+`registry.npmjs.org`, `pkg.go.dev`, `proxy.golang.org`,
+`docs.github.com`, `docs.gitlab.com`) stay intact in free text
+(`docs.github.com` and `docs.gitlab.com` are literals in
+`CLI_PLACEHOLDER_RE` so they do not collide with `FORGE_HOSTS`);
+`CONFUSABLES` docstring aligned with 0.12 NG4. (Preference 1 — RFC 2606
+subdomain mailboxes, `actions@github.com`, 4-part versions `from … to …`,
+and Windows `C:\Users\<unknown>\…` — belongs to the shared constants of
+SP-NO-PERSONAL-DATA-GATE and is left unchanged here.) Wrong facts
+corrected: 0.12 AC1's "26 of 26 mutants killed" was false (`tmp/r5/mutate.py`
+omitted `prompts/` and crashed `rc=4` on unmodified HEAD; real count was
+24/26, `V5-11` and `R5-D2b` survived); schemeless `10.0.0.5/…` is a
+schemeless private IPv4 path, not CIDR-shaped, and is now named in NG4;
+`fixture_needles` docstring corrected to state `min_length=1`.
+
 ## Intent
 
 Child 2 of SP-REPO-CARRIES-NO-PERSONAL-DATA. SP-SCRUB-PERSONAL-DATA-AT-HEAD
@@ -421,7 +477,17 @@ claim that they are caught in general.
   `author@users.noreply.forge.example.com` (or
   `bot@users.noreply.forge.example.com` when the local part is `bot` or
   ends in `[bot]`), so Co-authored-by trailers neither leak ids/logins
-  nor trigger a `generic class mailbox` refusal.
+  nor trigger a `generic class mailbox` refusal. (0.13, R6-D1, R6-D5,
+  Pref 3) Markdown delimiters (`` ` ``, `*`, `|`, and trailing boundary
+  `~`, `_`) terminate text URLs without being eaten; `_SCP_IN_TEXT_RE`
+  accepts an optional DNS trailing dot; `URL_SCHEMES` and
+  `_URL_IN_TEXT_RE` include `ftp`/`ftps`; system noreply mailboxes
+  (`noreply@github.com`, `noreply@<self-hosted>`) become
+  `noreply@forge.example.com`; well-known public reference hosts
+  (`PUBLIC_REFERENCE_HOSTS`: `docker.io`, `ghcr.io`, `golang.org`,
+  `k8s.io`, `pypi.org`, `npmjs.com`, `www.npmjs.com`,
+  `registry.npmjs.org`, `pkg.go.dev`, `proxy.golang.org`,
+  `docs.github.com`, `docs.gitlab.com`) stay intact in free text.
 - D1c (0.7, 0.8). **User ids are synthetic, and declared.** The `id` of
   every user object (one holding `login` or `username`) is replaced by
   `UserIdMap` (`src/repoach/forge/recording.py`): a sequence in order of
@@ -487,6 +553,10 @@ claim that they are caught in general.
   The corpus held one, `gitlab/branch_protection.json`, now `2001`; no
   reader consumes a project's `id`. A GitLab project bot is `service` by
   its class — a service account — not because its name holds an id.
+  (0.13, R6-D5) Numeric project ids in `api/v4/projects/<id>/…` URLs and
+  paths (`_API_PROJECT_ID_RE`) are collected by `project_id_values`,
+  remapped by the same `UserIdMap.for_projects()` (`apply_projects`) to
+  `2001..2999`, and declared under `synthetic_project_ids`.
 - D2. **Logins are classified at record time.** `classify_logins(payload,
   roles: dict[str, str]) -> object` replaces, recursively, every value of
   a `login`, `username`, `author`, `resolved_by` or `user` key that is a
@@ -521,14 +591,22 @@ claim that they are caught in general.
   and is not searched for mentions — a decorator such as `@pytest.fixture`
   in a recorded diff stays — though a classified login is still replaced
   there as a token.
-  What a handle is (0.9): `@` then GitHub/GitLab handle characters, not
+  What a handle is (0.9, 0.13 R6-D2): `@` then GitHub/GitLab handle characters, not
   followed by a handle character, by `.` and a word character (a dotted
   name: `@pytest.fixture`, and so a dotted GitLab username such as
   `@a.b`, which the mention rule does not catch — the deny-list does for
-  the maintainer's own) or by `(` (a decorator call); not a
-  standard-library decorator name (`PYTHON_DECORATORS`: `@dataclass`,
-  `@property`, `@staticmethod`…); not inside a Markdown code span or fenced
-  block. So the same decorator stays in prose as in a diff. A login known
+  the maintainer's own), by `/` and a package character (an npm scoped
+  package: `@types/node`, `@vue/cli`, `@babel/core`, `@actions/checkout`)
+  or by `(` (a decorator call); not a standard-library decorator name
+  (`PYTHON_DECORATORS`, matched case-insensitively so `@Override` is
+  skipped); not a `NON_PERSON_LOGINS` stem (`@github-actions`); not
+  inside a Markdown code span or fenced block. So the same decorator
+  stays in prose as in a diff. A `<name>[bot]` login (such as
+  `dependabot[bot]`, `renovate[bot]`) shares one consistent class word
+  across its login key, `@<name>` mention and bare prose stem (when the
+  stem is at least `NEEDLE_MIN_LENGTH` and not a class word or
+  placeholder), so bot PR templates neither split into two identities
+  nor refuse on bare prose mentions. A login known
   only from a mention is keyed `@<login>` in `roles`
   (`MENTION_ONLY_PREFIX`) and is replaced in its `@<handle>` form only,
   everywhere; its bare word (`import dataclass`, a branch, a path, an
@@ -555,7 +633,8 @@ claim that they are caught in general.
   CLI expands, git's `/dev/null`, the project's actual specification
   identifiers from `docs/specs/` (`SPEC_IDS`, 0.12 D3: bounded to real
   spec files so an invented `SP-<login>` or `SP-<id>` never hides a real
-  value), and `NON_PERSON_LOGINS` with or without `[bot]` — carry no
+  value), `docs.github.com` and `docs.gitlab.com` (0.13 Pref 3: public
+  forge documentation hosts kept in free text), and `NON_PERSON_LOGINS` with or without `[bot]` — carry no
   recorded value, so the replacer leaves them alone and the oracle does
   not judge them (the deny-list always judges with literals kept); a login
   `owner` therefore cannot make the forge's own argv one the replay does
@@ -617,21 +696,24 @@ claim that they are caught in general.
     refused;
   - `host`: the public forges' own (`FORGE_HOSTS`: `github.com`,
     `api.github.com`, `gitlab.com`), the remote's, and every host
-    `locations` finds in a raw string, but an RFC 2606 or loopback one;
-  - `segment` (0.11 R3, R6; 0.12 D6): the RECORDED project's namespace and
-    repository — the remote's path, an ssh alias's (`alias:grp/repo`)
-    included, and the argv's API paths (`repos/<o>/<r>`,
-    `projects/<g>%2F<r>`, double slashes collapsed, the CLI templates
-    aside) — plus the namespace and repository of every raw URL on the
-    remote's host when that host is not a public forge's
-    (`is_public_forge_host`: `github.com`, `gitlab.com`,
-    `githubusercontent.com` and their subdomains). When the remote is an
-    ssh alias (naming a path but no host), the forge host is inferred from
-    the raw `URL_KEYS` (`_raw_url_host`), so private-instance URLs still
-    contribute segments while third-party links in prose (such as
+    `locations` finds in a raw string, but an RFC 2606, loopback or
+    `PUBLIC_REFERENCE_HOSTS` one (0.13 Pref 3);
+  - `segment` (0.11 R3, R6; 0.12 D6; 0.13 Pref 2 & R6-D3): the RECORDED
+    project's namespace and repository — the remote's path, an ssh
+    alias's (`alias:grp/repo`) included, and the argv's API paths
+    (`repos/<o>/<r>`, `projects/<g>%2F<r>`, double slashes collapsed,
+    the CLI templates aside) — plus the namespace and repository of
+    every raw URL on the remote's host when that host is not a public
+    forge's (`is_public_forge_host`: `github.com`, `gitlab.com`,
+    `githubusercontent.com` and their subdomains), and of every
+    scheme- or user-led IPv4 URL (`https://10.20.30.40/…`, 0.13). When
+    the remote is an ssh alias (naming a path but no host), or when
+    `remote=""` and raw `URL_KEYS` identify a public forge host
+    (0.13 Pref 2), the forge host is inferred from `_raw_url_host`, so
+    third-party links in prose (such as
     `docs.python.org/3/library/re.html`) never become segment needles or
-    raise `NeedleError`; only when there is no remote at all (`remote=""`)
-    does every private host contribute segments.
+    raise `NeedleError`; only when `remote=""` and no public forge is
+    identified does every private host contribute segments.
     A third party's project on a public forge (`github.com/python/cpython`,
     `pypa/pip`, `git/git`) is not a needle: it names no one of the
     recording, is never refused, never rewrites prose (`upgrade python`
@@ -683,12 +765,19 @@ claim that they are caught in general.
   followed by an scp path containing `/` (`_SCP_AFTER_MAILBOX_RE`), so
   `user@host:25` and `user@host:word` are refused as `generic class
   mailbox` (0.12 D6).
-  Independence, stated exactly (0.11, 0.12): the oracle shares no
+  Independence, stated exactly (0.11, 0.12, 0.13): the oracle shares no
   recogniser with the redactor. Hosts and segments are found by
   `locations`, a reader of hosts by their context (`//` or `<user>@`
-  before, a path after, optional DNS trailing dot; un-led code expressions
-  such as `self.ms/1000`, `README.md/foo` and `foo.py:80/bar` rejected by
-  receiver, file-extension TLD and path shape, 0.12 D6) that is not
+  before, including scheme- or user-led IPv4 hosts such as
+  `https://10.20.30.40/…`, or a path after with optional DNS trailing
+  dot; un-led candidates require a TLD in the positive DNS allowlist
+  `_KNOWN_HOST_TLDS` or membership in `known_hosts`, a first label
+  outside `_NON_HOST_FIRST_LABELS`, and at least two non-empty
+  non-all-digit segments when no port is present, rejecting code
+  expressions such as `config.dir/sub/file.toml`, `this.base/api/v1`,
+  `components.tsx/Header/index` and wheel paths `*.dist-info/…`,
+  0.13 R6-D3; Markdown delimiters terminate URLs and trailing `.:;~_`
+  are trimmed, 0.13 R6-D1) that is not
   `_URL_IN_TEXT_RE` or `_SCP_IN_TEXT_RE`, so a schemeless
   `gitlab.corp.io/grp/repo` in prose is found; the forms are built by
   decoding, never by a redaction regex. Three readers are
@@ -725,7 +814,7 @@ claim that they are caught in general.
   functions, offline.** `scripts/redact_forge_fixtures.py` applies
   `redact_payload` to every recorded JSON stdout, `redact_urls_in_text` to
   text stdout, stdin and stderr, and `redact_urls_in_value` to a fixture's
-  `args` and `result`; it re-records nothing and makes no network call.
+  `args`, `kwargs` (0.13 R6-D5) and `result`; it re-records nothing and makes no network call.
   Logins follow D2's real-account rule: every login that is neither a class
   word nor a `NON_PERSON_LOGINS` entry — under a login key, as the
   fixture's `bot_username`, as a whole argument or a path segment, as an
@@ -787,8 +876,9 @@ claim that they are caught in general.
   placeholders (`o`, `owner`, `acme`, `x` and two `o%2Fr` API paths), 7 of
   this project's public `repoachhq/repoach`, 2 `group/project`, 2 `docs.*`
   links; the scp forms are 8 `o`, 3 `owner`, 2 `repoachhq`, 4
-  `group` (at 0.12: 74 occurrences on 71 lines after adding synthetic test
-  cases in `test_forge_recording_redaction.py`).
+  `group` (at 0.12: 74 occurrences on 71 lines; at 0.13: 85 occurrences
+  on 82 lines after adding synthetic test cases in
+  `test_forge_recording_redaction.py`).
   Two further edits outside this spec's files, declared here (0.11, 0.12):
   the fake pull request URL of `tests/merge_wait_fakes.py`
   (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF's fixture forge, commit
@@ -797,9 +887,10 @@ claim that they are caught in general.
   and
   `docs/security_posture.md` (the project's posture page) states the
   recorded forge URL, the synthetic user and project ids, the real-account
-  rule, the remote normaliser, the closure oracle, the noreply rule and
-  the accidental-leak threat model, in six commits (0.12 correction: five
-  at 0.11, not four).
+  rule, the remote normaliser, the closure oracle, the noreply rule,
+  public reference hosts, bot stems, IPv4 rules and the accidental-leak
+  threat model, in seven commits (0.12 correction: five at 0.11, not
+  four; six at 0.12; seven at 0.13).
   Both are string or prose edits, no import and no behaviour; ownership
   stays where it was.
 - D6 (0.9). **The deny-list test runs where the deny-list is.** Two
@@ -914,7 +1005,8 @@ keyed by forge so that no two accounts ever share one inside a corpus.
 - NG3: redacting secrets (F2 does it already).
 - NG4 (0.10, owner decision Q3; extended 0.12, owner decision 2026-11-18): accepted residuals and out-of-scope adversarial forms under the **accidental-leak** threat model:
   1. A login the recording never learns — one that stands only as a bare word in prose, under no login key and with no `@`, or one spelled like a common word cited alone. Nothing makes it a needle, and refusing every unknown word would make every pull request unrecordable. Covers: the maintainer's own accounts are in the deny-list, which refuses them anywhere; for anyone else, the recorder's author trims (`--trim`) or records another change request.
-  2. Adversarial evasion forms crafted on purpose to defeat the recorder (0.12):
+  2. Schemeless private IPv4 paths without `//` or `<user>@` (such as `10.0.0.5/zqotherns/zqotherrepo`, 0.13 Wrong Fact 2): un-led dotted-quad strings are not parsed as hosts by `locations()` so RFC 1918 addresses and version-like numbers in logs/code are not corrupted. Scheme- or user-led IPv4 URLs (`https://10.20.30.40/…`) ARE parsed, redacted and checked for prose repo leaks since 0.13.
+  3. Adversarial evasion forms crafted on purpose to defeat the recorder (0.12):
      - Unicode confusables of any case (Cyrillic, Greek, full-width, combining marks) and invisible characters (`U+034F`, `U+FE0F`, etc.) (D1);
      - Markdown-split or escaped values (`**zqx**jdoe7`, `*zqx*jdoe7`, `` `zqx`jdoe7 ``, `zq\_jdoe`, `zq\-jdoe`, HTML comment/tag splits, newline splits);
      - values encoded in non-node-id base64 (arbitrary base64 blobs, JWT payloads);
@@ -935,7 +1027,7 @@ Inputs:
 - (0.8) `UserIdMap.synthetic/apply(…, *, forge, keep)`, `UserIdMap.apply_result(result, *, forge, method, keep)`, `user_id_key`, `user_id_values`, `declared_user_ids`, `SYNTHETIC_IDS_KEY`, `RESULT_USER_ID_METHODS`, `NON_PERSON_LOGINS`, `PROSE_KEYS`, `mentions`, `recorded_source` in `src/repoach/forge/recording.py`; `read_denylist`, `denylist_patterns`, `denylist_hit` in `scripts/record_forge_fixture.py`.
 - (0.8) the deny-list: `user_config_dir()/personal-denylist` and `REPOACH_PERSONAL_DENYLIST` (SP-NO-PERSONAL-DATA-GATE D3).
 - (0.9) `PLACEHOLDER_PROJECT`, `URL_SCHEMES`, `unredacted_host(text) -> bool`, `mention_pattern(login)`, `MENTION_ONLY_PREFIX`, `PYTHON_DECORATORS`, `SYNTHETIC_ID_END`, `is_synthetic_number`, `trusted_declaration`, `SyntheticIdsExhaustedError` in `src/repoach/forge/recording.py`; `denylist_file(config_dir=None)`, `read_denylist(config_dir=None)` in `scripts/record_forge_fixture.py`; the session fixture `real_user_config_dir` in `tests/conftest.py` (D6).
-- (0.10) `TOKEN_CHARS`, `token_pattern(word)`, `CLI_PLACEHOLDER_RE`, `FRAGMENT_ANCHOR_RE`, `PathIdentity`, `path_identity(segments)`, `REPOSITORY_NAME_KEYS`, `REPOSITORY_DROPPED_KEYS`, `SYNTHETIC_PROJECT_ID_START`, `SYNTHETIC_PROJECT_ID_END`, `SYNTHETIC_PROJECT_IDS_KEY`, `UserIdMap.for_projects`, `UserIdMap.apply_projects`, `is_repository_object`, `project_id_values`, `declared_project_ids`, `fixture_strings`, `scanned_strings`, (0.11) `FIXTURE_SCHEMA_KEYS`, `CODE_KEYS`, `embedded_id_numbers`, `oracle_forms`, `CONFUSABLES`, `PUBLIC_FORGE_DOMAINS`, `Location`, `locations`, `remote_location`, `is_public_forge_host`, `raw_logins`, `CONSTANT_FIELDS` (0.12: `{"forge", "method"}`, `case` removed), `RECORDED_SOURCE_HEAD_RE` (0.10's `NODE_ID_SHAPE_RE` removed), `NEEDLE_MIN_LENGTH`, `FORGE_HOSTS`, `NEEDLE_KINDS`, `NeedleError`, `Needles`, `needles(raw, *, roles, remote="", denylist=(), min_length=4)` (0.11: `remote` replaces `hosts`), `residual(fixture, needles)`, (0.12) `SPEC_IDS` (actual `docs/specs/` spec identifiers bounding `CLI_PLACEHOLDER_RE`) in `src/repoach/forge/recording.py`; `Denylist` (opaque), `origin_url(cwd)`, `build_roles(..., also=())` (0.11) in `scripts/record_forge_fixture.py` (0.10's `_remote_hosts` removed); `fixture_needles`, `ResidualValueError`, `recorder()` in `scripts/redact_forge_fixtures.py`; both scripts call `route_default_logs_to_stderr()`.
+- (0.10) `TOKEN_CHARS`, `token_pattern(word)`, `CLI_PLACEHOLDER_RE`, `FRAGMENT_ANCHOR_RE`, `PathIdentity`, `path_identity(segments)`, `REPOSITORY_NAME_KEYS`, `REPOSITORY_DROPPED_KEYS`, `SYNTHETIC_PROJECT_ID_START`, `SYNTHETIC_PROJECT_ID_END`, `SYNTHETIC_PROJECT_IDS_KEY`, `UserIdMap.for_projects`, `UserIdMap.apply_projects`, `is_repository_object`, `project_id_values`, `declared_project_ids`, `fixture_strings`, `scanned_strings`, (0.11) `FIXTURE_SCHEMA_KEYS`, `CODE_KEYS`, `embedded_id_numbers`, `oracle_forms`, `CONFUSABLES`, `PUBLIC_FORGE_DOMAINS`, `Location`, `locations(text, *, known_hosts=frozenset())` (0.13: `known_hosts` optional kwarg), `remote_location`, `is_public_forge_host`, `raw_logins`, `CONSTANT_FIELDS` (0.12: `{"forge", "method"}`, `case` removed), `RECORDED_SOURCE_HEAD_RE` (0.10's `NODE_ID_SHAPE_RE` removed), `NEEDLE_MIN_LENGTH`, `FORGE_HOSTS`, `NEEDLE_KINDS`, `NeedleError`, `Needles`, `needles(raw, *, roles, remote="", denylist=(), min_length=4)` (0.11: `remote` replaces `hosts`), `residual(fixture, needles)`, (0.12) `SPEC_IDS` (actual `docs/specs/` spec identifiers bounding `CLI_PLACEHOLDER_RE`), (0.13) `PUBLIC_REFERENCE_HOSTS` (kept public registries, module hosts and forge docs hosts) and `URL_SCHEMES` extended with `ftp`/`ftps` in `src/repoach/forge/recording.py`; `Denylist` (opaque), `origin_url(cwd)`, `build_roles(..., also=())` (0.11) in `scripts/record_forge_fixture.py` (0.10's `_remote_hosts` removed); `fixture_needles`, `ResidualValueError`, `recorder()` in `scripts/redact_forge_fixtures.py`; both scripts call `route_default_logs_to_stderr()`.
 - `scripts/record_forge_fixture.py` (existing CLI, unchanged arguments).
 
 Outputs:
@@ -975,6 +1067,7 @@ records one fixture against a real pull request to check the shape
 - (0.10) The recorded project's name in a body or check name (`repoach`, from the `origin` remote) → `project`; a `NON_PERSON_LOGINS` login (`repoach-bot`) or its app path is no needle and stays.
 - (0.10) A participant whose login has under four characters, a raw user id under four digits, or a namespace spelled like a class word → exit 2, `needle <kind> <n>: …`, nothing written.
 - (0.12) Double-slash URLs (`https://github.com/o//r`, `repos//o/r`, `users//u`) → empty segments collapsed, no segment leaked (D4); URLs in `call["args"]` redacted in both tools (D5); `175728472+Copilot@users.noreply.github.com` and `1234-bob@users.noreply.gitlab.com` → `author@users.noreply.forge.example.com` (or `bot@…` for `[bot]`), not refused as `generic class mailbox` (D6); `self.ms/1000`, `README.md/foo`, `foo.py:80/bar` untouched by `locations()` (D6); `https://docs.python.org/3/library/re.html` under ssh-alias remote `mygh:o/r.git` written without `NeedleError` (D6); `MDQ6VXNl…` and `U_…` inside URL paths, branch names and affixed strings refused by `residual()` and `Denylist.hit()` (D2); `case` holding a login or segment refused (D3).
+- (0.13) Backticked, bold, table-pipe, tilde and underscore-delimited URLs (`\`https://example.com\``, `**https://git.corp.io/g/r**`, `|url|`, `~~url~~`, `_url_`) keep delimiters intact and yield clean segment needles (R6-D1); `dependabot[bot]` / `@dependabot` / bare `Dependabot` (and `renovate[bot]`, `github-actions[bot]`) stay one consistent identity, `@scope/pkg` and `@Override` are not mentions (R6-D2); `config.dir/sub/file.toml`, `this.base/api/v1`, `components.tsx/Header/index`, `*.dist-info/…`, `_obj.io/a/b`, `self.io/a/b`, `foo.io/bar`, `foo.io/100/200` rejected by `locations()`, while `https://10.20.30.40/g/r` is parsed and redacted (R6-D3, Wrong Fact 2); `api/v4/projects/<id>/…` maps to synthetic `2001..2999`, offline `redact_forge_fixtures.py` redacts `kwargs`, and `noreply@github.com` becomes `noreply@forge.example.com` (R6-D5); `https://docs.python.org/3/library/re.html` under `remote=""` (public forge `URL_KEYS`) writes without `NeedleError` (Pref 2); `PUBLIC_REFERENCE_HOSTS` (`docker.io`, `ghcr.io`, `golang.org`, `k8s.io`, `pypi.org`, `npmjs.com`, `docs.github.com`, `docs.gitlab.com`) stay intact in prose (Pref 3).
 
 ### Failure scenarios
 
@@ -1035,6 +1128,11 @@ records one fixture against a real pull request to check the shape
 | `::test_call_args_urls_are_redacted_in_both_tools` (0.12) | D5: URLs with userinfo, query and third-party paths in `call["args"]` redacted in `classify_calls` and offline `_exchanges` | R5-D5a, R5-D5b |
 | `::test_noreply_mailboxes_are_redacted_by_class_and_not_refused` (0.12) | D6: GitHub/GitLab noreply mailboxes redacted to `author@users.noreply.forge.example.com` / `bot@…` in stdout and stderr; `real.person@private-mail.org:25` and `:hello` refused as `mailbox` | R5-D6a, R5-D6d |
 | `::test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_refused` (0.12) | D6: `self.ms/1000`, `README.md/foo`, `foo.py:80/bar` uncorrupted; `docs.python.org` under ssh-alias remote `mygh:o/r.git` does not raise `NeedleError`, while self-hosted ssh-alias still collects its own instance's segments | R5-D6b, R5-D6c |
+| `::test_markdown_delimiters_terminate_urls_and_preserve_kept_hosts` (0.13) | R6-D1: backticks, `*`, `|`, trailing `~`/`_` terminate text URLs and `locations()`, keeping RFC 2606/loopback hosts unchanged and extracting clean segments; trailing-dot scp and `ftp://` redacted | R6-D1a, R6-D1b, R6-D1c |
+| `::test_bots_scoped_packages_and_case_insensitive_decorators` (0.13) | R6-D2: `dependabot[bot]` / `@dependabot` / bare `Dependabot` (and `renovate[bot]`, mention-first, offline) share one identity; `@github-actions` skipped; `@types/node`, `@vue/cli`, `@babel/core`, `@actions/checkout` and `@Override` not mentions; `@zqcolleague` still classified | R6-D2a, R6-D2b, R6-D2c, R6-D2d, R6-D2e |
+| `::test_locations_uses_positive_host_rule_and_scheme_led_ipv4` (0.13) | R6-D3, R6-D4, Wrong Fact 2: positive `_KNOWN_HOST_TLDS` / `known_hosts` rule rejects code/wheel/diff expressions and `_obj.io/a/b`, `self.io/a/b`, `cls.dev/x/y`, `foo.io/bar`, `foo.io/100/200`, `10.0.0.5/…`; scheme-led `https://10.20.30.40/…` parsed and redacted | V6-22, V6-24, V6-25, V6-26, R6-D3a, R6-D3b, R6-D3c |
+| `::test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply` (0.13) | R6-D5: `api/v4/projects/<id>/…` maps to `2001..2999` (shared with repository objects), declared under `synthetic_project_ids`; offline redacts `kwargs` and `noreply@github.com` idempotently | R6-D5a, R6-D5b, R6-D5c |
+| `::test_third_party_links_under_empty_remote_and_public_reference_hosts` (0.13) | Prefs 2 & 3: `docs.python.org` under `remote=""` with public-forge `URL_KEYS` does not raise `NeedleError`; `PUBLIC_REFERENCE_HOSTS` (`docker.io`, `ghcr.io`, `golang.org`, `k8s.io`, `pypi.org`, `www.npmjs.com`, `docs.github.com`, `docs.gitlab.com`) kept intact without colliding with `FORGE_HOSTS` while still catching path leaks | R6-P2, R6-P3a, R6-P3b |
 | `::test_a_repository_object_name_and_path_are_placeholders_by_key` (0.10) | I4, Q2: `Secretproj`/`secretproj-x` → `project`, `description` dropped, idempotent; a merge request's `name` and `description` kept; the project map's `2001`, its end at 2999 | I4-a, I4-b |
 | `::test_a_repository_id_is_synthetic_in_both_tools` (0.10) | Q2: the recorder and the offline transform remap a repository id to `2001` and declare it | I4-c, I4-d |
 | `::test_fixtures_declare_exactly_their_synthetic_project_ids` (0.10) | Q2: every repository id of the corpus is in `2001..2999` and declared | keep a real project id |
@@ -1079,7 +1177,8 @@ flowchart LR
   Re-measured 2026-11-18 on the branch (0.9), the deny-list by the FILE route (the maintainer's file, 10 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` unset): C1 `150 passed`, the deny-list test `PASSED`; with an empty configuration directory and the variable unset `149 passed, 1 skipped`, the skip naming the file it checked; the variable empty, as on a fork's pull request, `1 skipped`. C2 `forge fixtures: 0 would change`, exit 0; real-host URLs `0`, scp remotes on a real host `0`, the private project name in `0` files, every repository segment `project` (98). 58 user ids in 22 fixtures, 10 `(forge, account)` pairs, all 22 declarations exact and in `1001..1999`. D4 reproduction: `7fd31af`'s fixtures, untouched, `62 changed`, byte-identical to the branch's, second run `0 changed`, `--check` exit 0. Full `tests/unit -n 4` with ruff 0.15.4 first on PATH: `4558 passed, 64 skipped`, 0 failed. Mutation proof: 21 of 22 mutants killed; the survivor reads `XDG_CONFIG_HOME` at the session fixture's setup instead of the snapshot, which is equivalent because pytest sets a session fixture up before the function-scoped autouse fixtures of the same test.
   Re-measured 2026-11-18 on the branch (0.10), each figure with its command, at the head. C1 by the FILE route (the maintainer's file, 31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` unset): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → `172 passed`, `-k denylisted` → `test_fixtures_hold_no_denylisted_value PASSED`; with `XDG_CONFIG_HOME` at an empty directory → `171 passed, 1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; `git grep -o -E 'https?://([a-z0-9.-]+\.)?(github|gitlab)\.com' -- tests/fixtures | wc -l` → `0`; `git grep -o -i -E '(github|gitlab)\.com' -- tests/fixtures/forge | wc -l` → `0` (the three documentation links now cite by title); every repository segment `project`: `git grep -o -h -E 'forge\.example\.com(/api/v4/projects/[^/"\\ ]+|/repos/org/[^/"\\ ]+|/org/[^/"\\ ]+)' -- tests/fixtures/forge | sed -E 's/.*(org%2F|org\/)//' | sort | uniq -c` → `99 project` (0.9's "98" had no command). D4 reproduction (`tmp/` script, not committed): `7fd31af`'s fixtures through the script → exit 2, `residual deny-list 31 at gate/pr202_capture.json:…`, 0 files written; with the two hand edits first → `62 changed`, `diff -r` against the branch's fixtures 0 lines, second run `0 changed`, `--check` exit 0. Full `tests/unit -n 4` with ruff 0.15.4 first on PATH: `4580 passed, 64 skipped`, 0 failed. Per commit of `origin/develop..HEAD`, needles from `gh api user`, `glab api user` and the deny-list (35 needles, casefolded, URL-decoded, on `token_pattern`'s boundary): 0 hits in the added lines and in the message of every commit. Mutation proof (the implementer's runner, `tmp/r3/mutate.py`, not committed; each mutant applied alone, then `pytest -x tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py`): 51 mutants, 51 killed, 0 survivors — I1-a … I1-e (a private lookbehind in each replacer and the deny-list, `.` a token character, the `:<word>` exception), I2-a … I2-d (no casefold, no `re.I` on `token_pattern`, the URL or the scp regex), I3-a … I3-n (no URL-decoding, each of the needle sources dropped but one — 0.11 correction: the remote host's segment source had no mutant, and the verifier's V4-06 and V4-07 survived it —, `residual` dropped from either tool, a short or class-word needle skipped, node ids or numbers not judged), I4-a … I4-d (the equality rule, `description` kept, a repository id kept by either tool), I5-a … I5-f (scp user, ssh and http userinfo, query, any fragment kept, a mailbox before `:<port>/` not a remote), I6-a1 … I6-a9 (each member of both `except` tuples), I6-b (write as it goes), I6-c1 … I6-c4 (each mention alternative), K8-a … K8-d (either script logging to stdout, either repr showing values). Two survivors of a first run, I2-a and I4-c/I4-d, were killed by adding a casefold-only sample (`Straße`) and `test_a_repository_id_is_synthetic_in_both_tools`.
   Re-measured 2026-11-18 on the branch (0.11), at `046e79a` (the spec commit adds no code), each figure with its command. C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → `186 passed`, `test_fixtures_hold_no_denylisted_value` and `test_the_denylist_file_route_is_read_under_pytest` PASSED; with `XDG_CONFIG_HOME` at an empty directory → `185 passed, 1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs in `tests/fixtures` 0, scp remotes on a real host 0; `git grep -h -o -E 'forge\.example\.com[:/]org/[^/" ]+' -- tests/fixtures/forge | sed -E 's#.*org/##' | sort | uniq -c` → `94 project` and `1 project\` (0.12 correction: 0.11 omitted `\\` from the character class and wrote `95 project`), and 0.10's command (with the `api/v4/projects` and `repos/org` forms) → `99 project`: no segment but `project`. D4 reproduction (`tmp/r4/rebuild.sh`, not committed): `7fd31af`'s fixtures → exit 2, `residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body` (a key outside `CODE_KEYS` is named by ordinal, R5), corpus unchanged; with the two hand edits first → `62 changed`, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Full `tests/unit -n 4`, ruff 0.15.4 first on PATH: see AC3's 0.11 line. The verifier's probes `tmp/verify4/probe.py` … `probe6.py` (one call signature in `probe.py` changed from `hosts=` to `remote=`): `probe.py` 1012 rows, 0 survivors, the key-only fixture refused (`residual login 1 at result.{key 0}`); every node-id, `-patch`, deny-list, dropped-key and self-hosted form of `probe2`–`probe5` refused or written with 0 detections; `probe6`'s four third-party links written, `upgrade python` kept. Mutation proof (`tmp/r4/mutate.py`, not committed; each mutant alone, then `pytest -x -n 4` on the redaction and conformance tests): 48 mutants, 48 killed — the verifier's V4-01 … V4-16 re-targeted at 0.11 (V4-07 as 07a, the public-host test inverted, and 07b, the instance condition dropped), and M01 … M31 on the new code (raw logins and `also`, remote path, API path and its templates, keys judged and named by ordinal, constant fields full and none, `source` head, one decoding round, no NFKC, no entities, no `\u`, no lookalikes, no format-character removal, no embedded ids, base64 offsets, `U_` prefixes, the `//` and `<user>@` leads, a file path read as a host, an alias kept as a host, public subdomains, spec ids judged or any case, kept logins judged, the deny-list on blanked forms in either tool, `residual` off in either tool). The verifier's own `tmp/verify4/mutate.py`, run unchanged on a worktree at `0f61a9b`: the 8 mutants whose text still exists killed, the other 8 not applicable, being re-targeted above. V4-16 is not equivalent: `<n>%41` is a hit on the raw form only, since URL-decoding makes `<n>A` another token (`test_the_oracle_judges_encoded_and_lookalike_forms`). Per commit of `origin/develop..HEAD`: see AC3's 0.11 line.
-  Re-measured 2026-11-18 on the branch (0.12), at `9e27f44`/`3540131` (the spec commit adds no code). C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset): `190 passed`; with `XDG_CONFIG_HOME` at an empty directory: `189 passed, 1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs `0`; repo segments (0.10 command) `99 project`. D4 reproduction from `origin/develop` (`7fd31af`): raw develop → exit 2 (`residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body`), corpus unchanged; with hand edits → `62 changed`, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Probes (`tmp/verify5/adversarial.py`, `tmp/verify5/overrefusal.py`): every realistic form in Sections C–G redacted or refused (every remaining survivor is in NG4, plus intentional declared literals `:owner`, `/dev/null`, `github-actions[bot]`, and schemeless private IPv4 CIDR-shaped `10.0.0.5/...`); every ordinary PR over-refusal and corruption case (`docs.python.org` under ssh alias, GitHub/GitLab noreply mailboxes, `self.ms/1000`, `README.md/foo`, `foo.py:80/bar`) written cleanly without corruption. Mutation proof (`tmp/r5/mutate.py`, throwaway copy, `pytest -x --tb=no -n 4` on redaction + conformance tests): 26 of 26 mutants killed, 0 survived — all 15 realistic V5 mutants (`V5-01, 03, 04, 05, 06, 08, 09, 10, 11, 13, 14, 15, 16, 17, 18`; `V5-07` is Greek confusables, now NG4; `V5-02` and `V5-12` are structurally eliminated) plus 11 new 0.12 mutants (`R5-D2a..R5-D6d`).
+  Re-measured 2026-11-18 on the branch (0.12), at `9e27f44`/`3540131` (the spec commit adds no code). C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset): `190 passed`; with `XDG_CONFIG_HOME` at an empty directory: `189 passed, 1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs `0`; repo segments (0.10 command) `99 project`. D4 reproduction from `origin/develop` (`7fd31af`): raw develop → exit 2 (`residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body`), corpus unchanged; with hand edits → `62 changed`, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Probes (`tmp/verify5/adversarial.py`, `tmp/verify5/overrefusal.py`): every realistic form in Sections C–G redacted or refused (every remaining survivor is in NG4, plus intentional declared literals `:owner`, `/dev/null`, `github-actions[bot]`, and schemeless private IPv4 `10.0.0.5/...` — 0.13 correction: `0.12` misdescribed this as "CIDR-shaped"; it is a schemeless private IPv4 path with non-digit segments and is now named in NG4); every ordinary PR over-refusal and corruption case (`docs.python.org` under ssh alias, GitHub/GitLab noreply mailboxes, `self.ms/1000`, `README.md/foo`, `foo.py:80/bar`) written cleanly without corruption. Mutation proof (`tmp/r5/mutate.py`): 0.13 correction — 0.12's claim of "26 of 26 mutants killed, 0 survived" was false because `tmp/r5/mutate.py`'s `copy_tree()` omitted `prompts/`, causing pytest collection to crash (`rc=4`) on unmodified HEAD without a baseline check; re-running the 26 mutants in a valid detached git worktree gave **24 killed, 2 survived** (`V5-11`, `R5-D2b`).
+  Re-measured 2026-11-19 on the branch (0.13), at `a1e7c27`/`60ae815` (the spec commit adds no code). C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset): `195 passed`; `-k 'denylisted or file_route'` → `2 passed`; with `XDG_CONFIG_HOME` at an empty directory: `194 passed, 1 skipped`; fork-PR simulation (`REPOACH_PERSONAL_DENYLIST=` + empty config dir): `1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs `0`; `github`/`gitlab.com` in `tests/fixtures/forge` `0`; repo segments (0.10 command) `99 project`; A2 grep `0`. D4 reproduction from `origin/develop` (`7fd31af`): raw develop → exit 2 (`residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body`), corpus unchanged; with hand edits → `62 changed`, 0 diff lines vs HEAD, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Probes: `tmp/verify5/adversarial.py` every survivor is in NG4 (including schemeless `10.0.0.5/…`) or declared literals (`:owner`, `/dev/null`, `github-actions[bot]`); `tmp/verify6/r6_realistic_sweep.py` fixes all in-scope defects (`planted_survivors=1` — only Preference 1 Windows `C:\Users\<unknown>\…` deferred to SP-NO-PERSONAL-DATA-GATE; `ordinary_refused=3` — only Preference 1 `actions@github.com`, `from 1.2.3.4 to 1.2.3.5`, `demo@sub.example.com` deferred to SP-NO-PERSONAL-DATA-GATE; `ordinary_corrupted=1` — only `|Ruff|https://pypi.org/project/ruff/|` intentionally kept per Preference 3 with closing `|` intact). Mutation proof (`tmp/r6/mutate.py`, detached git worktree, unmodified baseline verified GREEN `193 passed in 9.03s`, strict `rc == 1` with failing test name required per kill): **27 of 27 killed, 0 survived, 0 crashed, 0 not_applied** — all 10 round-6 survivors (`V5-11`, `V6-01`, `V6-03`/`R5-D2b`, `V6-11`, `V6-17`, `V6-18`, `V6-22`, `V6-24`, `V6-25`, `V6-26`) plus 17 new 0.13 mutants (`R6-D1a..c`, `R6-D2a..e`, `R6-D3a..c`, `R6-D5a..c`, `R6-P2`, `R6-P3a..b`).
 - [x] AC2: C3's check output written here by the implementer.
   Recorded 2026-11-18 (0.8), read-only, against repoachhq/repoach PR #316 (`--trim 5`, output under `tmp/`, not committed), the maintainer's login and two numeric ids as deny-list: `pull_request`, `conversation_comments`, `reviews`, `checks`, `review_threads` and `is_maintainer(<the gh user>)`, each exit 0; the check found 0 violations in each file (URL values 2/3/0/10/0/0 under `url`/`web_url`/`html_url`/`link`, every one on `https://forge.example.com/`; logins 1/3/4/0/0/1 and user ids 1/3/4/0/0/1, every declaration exact; every `source` free of the folder name), 0 real-host URLs, and the account's login and ids absent from every file (0 whole-word hits).
   Re-recorded 2026-11-18 (0.9), same six calls against PR #316, the deny-list by the file route: each exit 0, 0 violations and 0 real-value hits in all six files, 0 real-host URLs, every repository segment `project` (17), 0 stderr lines naming the account.
@@ -1087,12 +1186,14 @@ flowchart LR
   Correction (0.11): the 0.10 entry above misread its own refusal. Re-measured by the fourth verifier on `5393cb6`, `conversation_comments` exited 2 on `residual segment 4 at forge`: a comment linked a third party's repository on `github.com`, its namespace `github` became a segment needle and hit the fixture's own `forge` field. That was R6, a false refusal, not the deny-list working.
   Re-recorded 2026-11-18 (0.11), read-only, the six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, `--cwd` this repository, the deny-list by the file route, 31 entries, `tmp/verify4/c3.sh` and its checker): all six exit 0, stdout one line each, and C3's check over the six files finds 0 violations and 0 real-value hits on a letters-and-digits boundary (the gh account's login, id and node id, the 31 entries, `github.com`, `gitlab.com`), every URL on `forge.example.com`; 2 stderr lines each, none naming the account. `conversation_comments` is now written clean: the third-party links its comments hold neither refuse nor rewrite it (R6). An intermediate commit is recorded for what it taught: on `14b1aad` one run of the call ended on `deny-list entry 31` (an allowed refusal) and a later one on `residual login 2 at …user.login`, a true finding of R2's new source — a six-character login needle (measured by length only) equal to a word of the kept `github-actions[bot]`, which `-` now delimits — fixed in `046e79a` by making the non-person logins literals (D3). The pull request is live, so each recording measures its comments at that moment.
   Re-recorded 2026-11-18 (0.12), read-only, all six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, FILE-route deny-list, 31 entries): all six exit 0, stdout 1 line each, `tmp/verify5/c3check.py` reports 0 violations and 0 real-value hits in all six JSON files (URLs 10/1/0/2/0/0, logins 0/1/1/1/0/4) and 0 real-value hits in all six stderr logs (2 lines each).
+  Re-recorded 2026-11-19 (0.13), read-only, all six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, FILE-route deny-list, 31 entries, 38 needles): all six exit 0, stdout 1 line each, `tmp/verify6/r6_c3_check.py` reports 0 violations and 0 real-value hits in all six JSON files (URLs 10/1/0/2/0/0, logins 0/2/1/2/0/8) and `total_stderr_real_hits=0` (2 lines each).
 - [x] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c '^dependency cycle'` → `27`; the `ownership conflict` lines are the parent's five.
   Measured 2026-11-18 on the branch (0.8): `edge-honesty: ok`; 27 `dependency cycle` lines and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af` line for line.
   Re-measured 2026-11-18 on the branch (0.9): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af` line for line.
   Re-measured 2026-11-18 on the branch (0.10): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, `diff` against `origin/develop` `7fd31af`'s empty.
   Re-measured 2026-11-18 on the branch (0.11): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af`'s line for line; `ruff check` and `ruff format --check` (0.15.4) on `src tests scripts` exit 0; full `tests/unit -n 4` with ruff 0.15.4 first on PATH: `4594 passed, 64 skipped`, 0 failed, with the two docs commits over `046e79a` applied. Per commit of `origin/develop..HEAD` (`tmp/r4/history.py`, needles from `gh api user`, `glab api user`, the private remote's repository and the 31 entries, casefolded and URL-decoded, on both the 0.10 boundary and the letters-and-digits one): 45 commits, 0 hits on either boundary in the added lines and the message of every commit; every commit Conventional, English, noreply author and committer, no attribution trailer.
   Re-measured 2026-11-18 on the branch (0.12): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af`; `ruff check`, `ruff format --check` (0.15.4), `lint_no_inline_comments.py` (`total=0`) and `lint_no_silent_except.py` (`total=0`) exit 0. Post-commit full unit suite, graph diff and history scan recorded in `tmp/REPORT-r5.md`.
+  Re-measured 2026-11-19 on the branch (0.13): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af`; `ruff check`, `ruff format --check` (0.15.4, 696 files), `lint_no_inline_comments.py` (`total=0`) and `lint_no_silent_except.py` (`total=0`) exit 0; post-commit full `tests/unit -n 4` (clean env), history scan and commit hygiene recorded in `tmp/REPORT-r6-fix.md`.
 
 ## Open Questions
 
