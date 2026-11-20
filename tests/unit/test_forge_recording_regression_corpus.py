@@ -1,4 +1,4 @@
-"""Permanent regression corpus promoted from verifier rounds 5, 6, 7 and 8 (SP-RECORDER-REDACTS-BY-CLASS 0.15).
+"""Permanent regression corpus promoted from verifier rounds 5, 6, 7, 8 and 9 (SP-RECORDER-REDACTS-BY-CLASS 0.16).
 
 Every realistic sample from the round-5, round-6, round-7 and round-8
 verification sweeps lives here as an unbundled, single-probe, table-driven
@@ -63,6 +63,7 @@ FAKE_LOGIN = "zqxjdoe7"
 FAKE_LOGIN_2 = "zqreviewer"
 FAKE_HOST = "git.zqcorp.io"
 FAKE_HOST_2 = "mirror.zqcorp.net"
+FAKE_REPO_2 = "zqbillrepo"
 FAKE_NS = "zqgroup"
 FAKE_REPO = "zqmainrepo"
 FAKE_UID = 74928163
@@ -107,6 +108,7 @@ class PipelineInput:
     base_ref: str | None = None
     argv_extra: tuple[str, ...] = ()
     api_path: str | None = None
+    call_args: tuple[str, ...] | None = None
     stderr: str = ""
     stdin: str | None = None
     case: str = "sample"
@@ -163,7 +165,9 @@ def _run_pipeline(inp: PipelineInput) -> tuple[str, str, dict[str, Any] | None]:
         raw_calls = [
             {
                 "program": "gh" if inp.forge == "github" else "glab",
-                "args": ["api", inp.api_path or default_api, *inp.argv_extra],
+                "args": list(inp.call_args)
+                if inp.call_args is not None
+                else ["api", inp.api_path or default_api, *inp.argv_extra],
                 "stdin": inp.stdin,
                 "returncode": 0,
                 "stdout": json.dumps(items),
@@ -1627,6 +1631,310 @@ PLANTED_CORPUS: tuple[PlantedCase, ...] = (
         expected_status="REFUSED",
         expected_error_prefix="residual login 2 at exchanges[0].stdout[0].body",
     ),
+    *(
+        PlantedCase(
+            label=f"r10_userinfo_empty_password_{name}",
+            inp=PipelineInput(
+                forge="gitlab",
+                remote="",
+                body=(
+                    f"Clone https://{user}:@{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2} (see {FAKE_REPO_2})"
+                ),
+            ),
+            expected_status="WRITTEN",
+            markers=(user, FAKE_HOST_2, FAKE_REPO_2),
+            must_have=("Clone https://forge.example.com/org/project (see project)",),
+        )
+        for name, user in (
+            ("x_access_token", "x-access-token"),
+            ("gitlab_ci_token", "gitlab-ci-token"),
+            ("oauth2_token", "oauth2-token"),
+            ("deploy_key_1", "deploy-key-1"),
+            ("first_last_dev", "first-last.dev"),
+        )
+    ),
+    *(
+        PlantedCase(
+            label=f"r10_userinfo_hyphen_user_password_char_{name}",
+            inp=PipelineInput(
+                forge="gitlab",
+                remote="",
+                body=(
+                    f"Fetch https://ci-bot:pw{char}x@{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2} "
+                    f"(see {FAKE_REPO_2})"
+                ),
+            ),
+            expected_status="WRITTEN",
+            markers=("ci-bot", FAKE_HOST_2, FAKE_REPO_2),
+            must_have=("Fetch https://forge.example.com/org/project (see project)",),
+        )
+        for name, char in (
+            ("tilde", "~"),
+            ("bang", "!"),
+            ("dollar", "$"),
+            ("amp", "&"),
+            ("squote", "'"),
+            ("lparen", "("),
+            ("rparen", ")"),
+            ("star", "*"),
+            ("comma", ","),
+            ("semi", ";"),
+            ("eq", "="),
+            ("colon", ":"),
+        )
+    ),
+    PlantedCase(
+        label="r10_userinfo_star_password_on_kept_public_host",
+        inp=PipelineInput(
+            body="Fetch https://x-access-token:pw*1@docs.python.org/3/library/re.html now",
+        ),
+        expected_status="WRITTEN",
+        markers=("x-access-token", "pw*1"),
+        must_have=("Fetch https://forge.example.com/org/project now",),
+    ),
+    PlantedCase(
+        label="r10_userinfo_quote_password_on_kept_public_host",
+        inp=PipelineInput(
+            body="Fetch https://x-access-token:pw'1@developer.mozilla.org/en-US/docs/ now",
+        ),
+        expected_status="WRITTEN",
+        markers=("x-access-token", "pw'1"),
+        must_have=("Fetch https://forge.example.com/org/project/ now",),
+    ),
+    PlantedCase(
+        label="r10_userinfo_dotted_user_hyphen_password",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            body=f"Clone https://first.last:my-pass@{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2} ({FAKE_REPO_2})",
+        ),
+        expected_status="WRITTEN",
+        markers=("first.last", "my-pass", FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("Clone https://forge.example.com/org/project (project)",),
+    ),
+    PlantedCase(
+        label="r10_query_string_with_at_sign_and_prose_host",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            body=f"See https://{FAKE_HOST_2}?contact=alice@example.com (host {FAKE_HOST_2})",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2,),
+        must_have=("See https://forge.example.com",),
+    ),
+    PlantedCase(
+        label="r10_adjacent_angle_urls_and_mailbox",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            body=f"See <https://{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2}><alice@example.com> now",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("See <https://forge.example.com/org/project>",),
+    ),
+    PlantedCase(
+        label="r10_diff_scp_added_line_git_user",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            raw_text_stdout=f"diff --git a/sub b/sub\n+git@{FAKE_HOST_2}:{FAKE_NS}/{FAKE_REPO_2}.git\n",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("+git@forge.example.com:org/project.git",),
+    ),
+    PlantedCase(
+        label="r10_diff_scp_removed_line_named_user",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            raw_text_stdout=f"diff --git a/sub b/sub\n-alice@{FAKE_HOST_2}:{FAKE_NS}/{FAKE_REPO_2}.git\n",
+        ),
+        expected_status="WRITTEN",
+        markers=("alice", FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("-git@forge.example.com:org/project.git",),
+    ),
+    PlantedCase(
+        label="r10_diff_scp_added_line_named_user",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            raw_text_stdout=f"diff --git a/sub b/sub\n+bob@{FAKE_HOST_2}:{FAKE_NS}/{FAKE_REPO_2}.git\n",
+        ),
+        expected_status="WRITTEN",
+        markers=("bob", FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("+git@forge.example.com:org/project.git",),
+    ),
+    PlantedCase(
+        label="r10_diff_scp_removed_line_named_user_on_example_host",
+        inp=PipelineInput(
+            raw_text_stdout="diff --git a/sub b/sub\n-alice@example.com:org/repo.git\n",
+        ),
+        expected_status="WRITTEN",
+        markers=("alice",),
+        must_have=("-git@forge.example.com:org/project.git",),
+    ),
+    PlantedCase(
+        label="r10_scp_plus_in_user_name",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            body=f"Clone ci+bot@{FAKE_HOST_2}:{FAKE_NS}/{FAKE_REPO_2}.git for {FAKE_REPO_2}",
+        ),
+        expected_status="WRITTEN",
+        markers=("ci+bot", FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("Clone git@forge.example.com:org/project.git for project",),
+    ),
+    PlantedCase(
+        label="r10_glab_api_quoted_header_flag",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"Repro: `glab api -H 'Accept: application/json' /projects/{FAKE_PID}/issues`",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("Repro: `glab api -H 'Accept: application/json' /projects/2001/issues`",),
+    ),
+    PlantedCase(
+        label="r10_glab_api_double_quoted_field_flag",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f'Run `glab api -f "body=hello world" projects/{FAKE_PID}/notes`',
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=('Run `glab api -f "body=hello world" projects/2001/notes`',),
+    ),
+    PlantedCase(
+        label="r10_glab_api_raw_field_flag",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"Run `glab api --raw-field 'title=Fix bug' projects/{FAKE_PID}/merge_requests`",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("Run `glab api --raw-field 'title=Fix bug' projects/2001/merge_requests`",),
+    ),
+    PlantedCase(
+        label="r10_glab_api_header_equals_flag",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"Run `glab api --header='PRIVATE-TOKEN: x' projects/{FAKE_PID}/issues`",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("Run `glab api --header='PRIVATE-TOKEN: x' projects/2001/issues`",),
+    ),
+    PlantedCase(
+        label="r10_glab_api_method_flag_in_text",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"Repro: `glab api -X POST /projects/{FAKE_PID}/notes`",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("Repro: `glab api -X POST /projects/2001/notes`",),
+    ),
+    PlantedCase(
+        label="r10_glab_api_unbalanced_quote_falls_back_safely",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"Run `glab api -H 'Accept: x projects/{FAKE_PID}/issues`",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("projects/2001/issues",),
+    ),
+    PlantedCase(
+        label="r10_glab_api_full_argv_list",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            call_args=("glab", "api", f"/projects/{FAKE_PID}/jobs"),
+            body="ok",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("/projects/2001/jobs",),
+    ),
+    PlantedCase(
+        label="r10_web_projects_numeric_merge_request_path",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"See https://{FAKE_HOST}/projects/{FAKE_PID}/merge_requests/42 for context",
+        ),
+        expected_status="WRITTEN",
+        markers=(str(FAKE_PID),),
+        must_have=("See https://forge.example.com/projects/project/merge_requests/42 for context",),
+    ),
+    PlantedCase(
+        label="r10_protocol_relative_json_string_value",
+        inp=PipelineInput(
+            body=json.dumps({"cdn": f"//{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2}/app.js"}),
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=('{"cdn": "//forge.example.com/org/project"}',),
+    ),
+    PlantedCase(
+        label="r10_protocol_relative_script_src",
+        inp=PipelineInput(
+            body=f'<script src="//{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2}/app.js"></script>',
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=('<script src="//forge.example.com/org/project"></script>',),
+    ),
+    PlantedCase(
+        label="r10_protocol_relative_css_url",
+        inp=PipelineInput(
+            body=f"a {{ background: url(//{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2}/bg.png) }}",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("a { background: url(//forge.example.com/org/project) }",),
+    ),
+    PlantedCase(
+        label="r10_protocol_relative_markdown_link",
+        inp=PipelineInput(
+            body=f"See [x](//{FAKE_HOST_2}/{FAKE_NS}/{FAKE_REPO_2}/page) now",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("See [x](//forge.example.com/org/project) now",),
+    ),
+    PlantedCase(
+        label="r10_top_args_projects_path_with_api_v4_kwargs",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body="ok",
+            top_args=(f"projects/{FAKE_PID}/jobs",),
+            top_kwargs={"ref": f"https://{FAKE_HOST}/api/v4/projects/{FAKE_PID}/issues"},
+        ),
+        expected_status="REFUSED",
+        expected_error_prefix="residual id 2 at args[0]",
+    ),
+    PlantedCase(
+        label="r10_italic_scp_remote_keeps_closing_underscore",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote="",
+            body=f"Use _git@{FAKE_HOST_2}:{FAKE_NS}/{FAKE_REPO_2}.git_ now",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST_2, FAKE_REPO_2),
+        must_have=("Use _git@forge.example.com:org/project.git_ now",),
+    ),
 )
 
 
@@ -2197,6 +2505,78 @@ ORDINARY_CORPUS: tuple[OrdinaryCase, ...] = (
             "@@ -1,4 +1,5 @@\n @pytest.fixture\n def f(cfg):\n"
             "-    return self.ms/1000\n+    return cfg.root/sub/file\n"
         ),
+    ),
+    *(
+        OrdinaryCase(
+            label=f"r10_code_line_comment_after_code_{name}",
+            inp=_ordinary(body=f"```{lang}\n{code}\n```"),
+            exact_body=f"```{lang}\n{code}\n```",
+        )
+        for name, lang, code in (
+            ("go_assign", "go", "x := 1 //cfg.dev/env/prod"),
+            ("go_brace", "go", "if x > 0 { //store.io/cache/hit"),
+            ("go_return", "go", "return x //metrics.net/count/ok"),
+            ("js_call", "ts", "const cfg = load() //cfg.dev/env/prod"),
+            ("js_export", "ts", "export default cfg //app.io/entry/main"),
+            ("c_brace", "c", "if (ok) { //config.dev/env/prod"),
+            ("c_semicolon", "c", "int x = 1; //store.net/cache/l1"),
+            ("c_line_start", "c", "//cfg.dev/env/prod"),
+            ("c_doc_comment", "c", "///api.io/v2/schema"),
+        )
+    ),
+    OrdinaryCase(
+        label="r10_go_multi_function_with_inline_comments",
+        inp=_ordinary(
+            body=(
+                "```go\npackage main\nfunc load() int {\n\tx := 1 //cfg.dev/env/prod\n"
+                "\tif x > 0 { //store.io/cache/hit\n\t\treturn x //metrics.net/count/ok\n\t}\n"
+                "\treturn 0\n}\n```"
+            )
+        ),
+        exact_body=(
+            "```go\npackage main\nfunc load() int {\n\tx := 1 //cfg.dev/env/prod\n"
+            "\tif x > 0 { //store.io/cache/hit\n\t\treturn x //metrics.net/count/ok\n\t}\n"
+            "\treturn 0\n}\n```"
+        ),
+    ),
+    OrdinaryCase(
+        label="r10_semicolon_free_ts_block_with_inline_comments",
+        inp=_ordinary(
+            body=(
+                "```ts\nconst cfg = load() //cfg.dev/env/prod\nconst url = this.base/api/v1\n"
+                "export default cfg //app.io/entry/main\n```"
+            )
+        ),
+        exact_body=(
+            "```ts\nconst cfg = load() //cfg.dev/env/prod\nconst url = this.base/api/v1\n"
+            "export default cfg //app.io/entry/main\n```"
+        ),
+    ),
+    OrdinaryCase(
+        label="r10_go_diff_with_comments_year_projects_and_docs_python",
+        inp=_ordinary(
+            raw_text_stdout=(
+                "diff --git a/projects/2026/main.go b/projects/2026/main.go\n"
+                "--- a/projects/2026/main.go\n+++ b/projects/2026/main.go\n"
+                "@@ -1,3 +1,4 @@\n+//cfg.dev/env/prod\n"
+                "+// See https://docs.python.org/3/library/re.html\n"
+                "+x := 1 //store.io/val/2026\n"
+            )
+        ),
+        exact_body=(
+            "diff --git a/projects/2026/main.go b/projects/2026/main.go\n"
+            "--- a/projects/2026/main.go\n+++ b/projects/2026/main.go\n"
+            "@@ -1,3 +1,4 @@\n+//cfg.dev/env/prod\n"
+            "+// See https://docs.python.org/3/library/re.html\n"
+            "+x := 1 //store.io/val/2026\n"
+        ),
+    ),
+    OrdinaryCase(
+        label="r10_italic_kept_scp_example_remote",
+        inp=_ordinary(
+            body="Example: _git@example.com:org/demo.git_ and __git@sub.example.org:team/app.git__."
+        ),
+        exact_body="Example: _git@example.com:org/demo.git_ and __git@sub.example.org:team/app.git__.",
     ),
 )
 
