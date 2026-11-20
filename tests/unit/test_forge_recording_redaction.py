@@ -3990,3 +3990,41 @@ def test_protocol_relative_body_context_and_value_rules_by_construction() -> Non
     raw = _one_call({"payload": json.dumps({"cdn": "//git.zqcorp.io/app.js"})})
     found = needles(raw, roles={}, remote="")
     assert "git.zqcorp.io" in _kinds(found, "host")
+
+
+def test_userinfo_chains_host_token_boundary_and_nested_parens_by_construction() -> None:
+    """R9-D5 (0.16): userinfo before and ahead of a host, the host token boundary and nested parentheses each hold on their own inputs."""
+    tail = "git.zqcorp.io/zqns/zqrepo"
+    for url in (
+        f"https://@{tail}",
+        f"https://zqa@{tail}",
+        f"https://zqa:@{tail}",
+        f"https://zqa@zqb@{tail}",
+        f"https://zqa@zq!@{tail}",
+        f"https://zqa:zq!@zqb:zq*@{tail}",
+        f"https://:@{tail}",
+    ):
+        places = recording.locations(f"Clone {url} now")
+        assert [p.host for p in places] == ["git.zqcorp.io"], url
+        assert places[0].authenticated, url
+        assert places[0].segments == ("zqns", "zqrepo"), url
+        assert redact_urls_in_text(f"Clone {url} now") == (
+            "Clone https://forge.example.com/org/project now"
+        ), url
+        assert not unredacted_host(redact_urls_in_text(url)), url
+        assert unredacted_host(url), url
+    for url in (
+        f"https://first.last@{tail}",
+        f"https://first.last:zqpass@{tail}",
+        f"https://first.last:zqpass@zqb@{tail}",
+        f"https://first.last:@{tail}",
+        f"https://first.last:my-pass@{tail}",
+    ):
+        assert [p.host for p in recording.locations(url)] == ["git.zqcorp.io"], url
+    assert recording.locations("see https://zqhost.zqcorp-/zqns/zqrepo") == []
+    assert recording.locations("see https://zqhost.zqcorp1/zqns/zqrepo")[0].host == "zqhost.zqcorp1"
+    nested = recording.locations("https://git.zqcorp.io/zqns/Item_(a_(b))")
+    assert nested[0].segments == ("zqns", "Item_(a_(b))")
+    assert redact_urls_in_text("https://git.zqcorp.io/zqns/Item_(a_(b)) end") == (
+        "https://forge.example.com/org/project end"
+    )

@@ -2123,7 +2123,7 @@ _AFTER_HOST_RE = re.compile(
 _URL_USERINFO_BEFORE_RE = re.compile(rf"://(?:{_RFC3986_USERINFO_CLASS}*@)+$", re.I)
 """Text ending in ``://<userinfo>@`` with any RFC 3986 userinfo character, empty password or embedded ``@`` (0.15 R8-D3, 0.16 R9-D1)."""
 
-_USERINFO_AHEAD_RE = re.compile(rf"(?:{_RFC3986_USERINFO_CLASS}*@)+", re.I)
+_USERINFO_AHEAD_RE = re.compile(rf"{_RFC3986_USERINFO_CLASS}*@", re.I)
 """Remaining userinfo ending in ``@`` immediately after a dotted username inside ``scheme://user.name:pw@host`` (0.15 R8-D3, 0.16 R9-D1)."""
 
 _USER_BEFORE_RE = re.compile(rf"{_SCP_USER_CLASS}@$", re.I)
