@@ -531,16 +531,15 @@ def _split_url_tail(raw_url: str, *, open_under: int = 0) -> tuple[str, str]:
     core, punct_tail = _strip_balanced_tail(raw_url, _URL_TRIM_PUNCT)
     has_query_or_frag = False
     keep_frag_under = False
-    if "://" in core:
-        try:
-            parts = urlsplit(core)
-        except ValueError as exc:
-            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-            parts = None
-        if parts is not None and (parts.fragment or parts.query):
-            has_query_or_frag = True
-            if parts.fragment and FRAGMENT_ANCHOR_RE.match(parts.fragment.rstrip("_")):
-                keep_frag_under = True
+    try:
+        parts = urlsplit(core)
+    except ValueError as exc:
+        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+        parts = None
+    if parts is not None and (parts.fragment or parts.query):
+        has_query_or_frag = True
+        if parts.fragment and FRAGMENT_ANCHOR_RE.match(parts.fragment.rstrip("_")):
+            keep_frag_under = True
     if not has_query_or_frag or keep_frag_under:
         return _strip_balanced_tail(raw_url, _URL_TRIM_TAIL)
     if open_under > 0 and core.endswith("_"):
@@ -589,7 +588,7 @@ _PROTO_REL_LEAD_RE = re.compile(
 """Positive URL-context leads immediately before a protocol-relative ``//host/path`` (0.16 R9-D3)."""
 
 _PROTO_REL_BODY = (
-    rf"//(?!/){_URL_USERINFO_PREFIX}"
+    rf"//{_URL_USERINFO_PREFIX}"
     rf"{_SCP_HOST_LABEL_CLASS}+(?:\.{_SCP_HOST_LABEL_CLASS}+)+\.?"
     rf"(?::[0-9]{{1,5}})?/"
     rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))*"
@@ -623,8 +622,6 @@ _TEXT_VALUE_LEAVES: frozenset[str] = PROSE_KEYS | {
 
 def is_structured_json_path(path: str) -> bool:
     """Whether a :func:`fixture_strings` ``path`` addresses a structured non-prose JSON value (0.16 R9-D3)."""
-    if not path:
-        return False
     leaf = path.rsplit(".", 1)[-1]
     if not leaf or leaf.startswith("["):
         return False
@@ -2141,8 +2138,6 @@ def _is_slash_led(
         return False
     if before.endswith("://"):
         return True
-    if before.endswith("///"):
-        return False
     if whole_value and before == "//" and not any(ch.isspace() for ch in text):
         return True
     lead_match = _PROTO_REL_LEAD_RE.search(before[:-2])
@@ -2232,8 +2227,8 @@ def locations(
             continue
         after = _AFTER_HOST_RE.match(text, m.end())
         raw_path = (after.group("slash") or after.group("scp") or "") if after else ""
-        path, tail = _split_url_tail(raw_path)
-        url_end = after.end() - len(tail) if after else m.end()
+        path, _tail = _split_url_tail(raw_path)
+        url_end = after.end() if after else m.end()
         user_led = _has_user_before(before)
         led = _is_slash_led(before, text=text, url_end=url_end, whole_value=whole_value) or user_led
         host = m.group(1).casefold()

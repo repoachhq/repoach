@@ -3924,3 +3924,69 @@ def test_glab_api_command_recognition_flag_table_and_span_rules_by_construction(
     assert UserIdMap.for_projects().apply_projects(
         ["glab", "api", "-H", "a b", f"projects/{pid}/projects/{pid}"], forge="gitlab"
     ) == ["glab", "api", "-H", "a b", f"projects/2001/projects/{pid}"]
+
+
+def test_protocol_relative_body_context_and_value_rules_by_construction() -> None:
+    """R9-D5 (0.16): protocol-relative body parts, lead lookbehinds, value positions and tails each hold on their own inputs."""
+    forge = "zqns/zqrepo/app.js"
+    for src, want in (
+        (f'src="//git.zqcorp.io:8080/{forge}"', 'src="//forge.example.com/org/project"'),
+        (f'src="//git.zqcorp.io./{forge}"', 'src="//forge.example.com/org/project"'),
+        (f'src="//zquser:zqpass@git.zqcorp.io/{forge}"', 'src="//forge.example.com/org/project"'),
+        (f'src="//git.zqcorp.io/{forge}#__init__"', 'src="//forge.example.com/org/project"'),
+        ("src=//git.zqcorp.io/zqns/zqrepo.", "src=//forge.example.com/org/project."),
+        ('src="//zquser:zqpass@docs.python.org/x"', 'src="//forge.example.com/org"'),
+        ('src="//docs.python.org/x".', 'src="//docs.python.org/x".'),
+        ("src=//docs.python.org/x.", "src=//docs.python.org/x."),
+    ):
+        assert redact_urls_in_text(src) == want, src
+    assert unredacted_host("<//zquser:zqpass@docs.python.org/x")
+    assert unredacted_host(f'src="//git.zqcorp.io:8080/{forge}"')
+    assert not unredacted_host('src="//docs.python.org/x"')
+
+    for untouched in (
+        "self.myurl(//cfg.dev/env/prod)",
+        "my_url(//cfg.dev/env/prod)",
+        "<///cfg.dev/env/prod",
+        "=///cfg.dev/env/prod",
+        "x := 1 //cfg.dev/env/prod",
+    ):
+        assert redact_urls_in_text(untouched) == untouched, untouched
+        assert not unredacted_host(untouched), untouched
+    assert recording.locations('x=" cfg.dev/env/prod') == []
+    assert recording.locations("self.myurl(//cfg.dev/env/prod)") == []
+    assert recording.locations("my_url(//cfg.dev/env/prod)") == []
+    assert [p.host for p in recording.locations("css url(//cfg.dev/env/prod)")] == ["cfg.dev"]
+    assert recording.locations("a b cfg.dev/env/prod") == []
+
+    assert recording.is_structured_json_path("calls[0].stdout[0].cdn")
+    assert recording.is_structured_json_path("result.links")
+    assert not recording.is_structured_json_path("")
+    assert not recording.is_structured_json_path("[0]")
+    assert not recording.is_structured_json_path("calls[0].stdout")
+    assert not recording.is_structured_json_path("calls[0].diff")
+    assert not recording.is_structured_json_path("x.body")
+
+    host_path = "//git.zqcorp.io/zqns/zqrepo/pull/1"
+    assert recording.redact_urls_in_value({"html_url": host_path}) == {
+        "html_url": "//forge.example.com/org/project/pull/1"
+    }
+    assert recording.redact_urls_in_value({"links": [host_path]}) == {
+        "links": ["//forge.example.com/org/project/pull/1"]
+    }
+    assert recording.redact_urls_in_value({"links": {"cdn": host_path}}) == {
+        "links": {"cdn": "//forge.example.com/org/project/pull/1"}
+    }
+    text_leaves = {"stdout": "//cfg.dev/env/prod", "diff": "//cfg.dev/env/prod"}
+    assert recording.redact_urls_in_value(text_leaves) == text_leaves
+    assert recording.redact_urls_in_value({"body": [host_path]}) == {"body": [host_path]}
+    assert redact_urls_in_text(host_path, whole_value=True) == (
+        "//forge.example.com/org/project/pull/1"
+    )
+    assert redact_urls_in_text(host_path) == host_path
+    assert unredacted_host(host_path, whole_value=True)
+    assert not unredacted_host(host_path)
+
+    raw = _one_call({"payload": json.dumps({"cdn": "//git.zqcorp.io/app.js"})})
+    found = needles(raw, roles={}, remote="")
+    assert "git.zqcorp.io" in _kinds(found, "host")
