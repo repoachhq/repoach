@@ -3861,3 +3861,66 @@ def test_web_projects_numeric_path_redacts_without_needle_error() -> None:
     short_found = needles(short_raw, roles={}, remote="git@git.zqcorp.io:zqns/zqrepo.git")
     assert "42" not in _kinds(short_found, "segment")
     assert "7" not in _kinds(short_found, "segment")
+
+
+def test_glab_api_command_recognition_flag_table_and_span_rules_by_construction() -> None:
+    """R9-D5 (0.16): ``glab api`` command, flag, endpoint and span rules each hold on their own enumerated inputs."""
+    pid = 66554433
+    other = 87654321
+    value_flags = ("-F", "--field", "-H", "--header", "--hostname", "--input", "-X")
+    value_flags += ("--method", "-f", "--raw-field")
+    assert frozenset(value_flags) == recording._GLAB_API_VALUE_FLAGS
+    for flag in value_flags:
+        argv = ["glab", "api", flag, "a b", f"projects/{pid}/x"]
+        assert project_id_values(argv) == [pid], flag
+        assert project_id_values(f"glab api {flag} 'a b' projects/{pid}/x") == [pid], flag
+    for flag in ("-i", "--include", "--paginate", "--silent", "--"):
+        assert project_id_values(["glab", "api", flag, f"projects/{pid}/x"]) == [pid], flag
+    assert project_id_values(["glab", "api", 42, f"projects/{pid}/x"]) == [pid]
+    assert project_id_values(["GLAB", "API", f"projects/{pid}/x"]) == [pid]
+    assert project_id_values(f"GLAB API projects/{pid}/x") == [pid]
+    assert project_id_values(["glab", "mr", f"projects/{pid}/x"]) == []
+    assert project_id_values(["glab"]) == []
+    assert project_id_values(["foo", "api", f"projects/{pid}/x"]) == []
+
+    assert project_id_values(f"my-glab api projects/{pid}/x") == []
+    assert project_id_values(f"glab apix 'projects/{pid}/x") == []
+    assert project_id_values(f"glab api 'myprojects/{pid}/x") == []
+    assert project_id_values(f"glab api projects/{pid}-foo/x") == []
+    assert project_id_values(f"glab api projects/{pid}_foo/x") == []
+    assert project_id_values(f"https://git.zqcorp.io/api/v4/projects/{pid}-foo/x") == []
+    assert project_id_values(f"x-api/v4/projects/{pid}/x") == []
+    assert project_id_values("glab api 'projects/12/x") == []
+    assert project_id_values("glab api projects/12/x") == []
+
+    assert project_id_values(f"`glab api -X POST` then see projects/{pid}/x") == []
+    assert project_id_values(f"glab api -X POST\nprojects/{pid}/x") == []
+    assert project_id_values(f"`glab api -X` projects/{pid}/x") == []
+    assert project_id_values(["glab", "api", f"projects/{pid}-foo/x"]) == []
+    assert UserIdMap.for_projects().apply_projects(
+        ["glab", "api", f"projects/{pid}-foo/x"], forge="gitlab"
+    ) == ["glab", "api", f"projects/{pid}-foo/x"]
+    assert project_id_values(f"glab api projects/{pid}/x projects/{other}/y 'oops") == [pid]
+    assert project_id_values(f"glab api projects/{pid}/x projects/{other}/y") == [pid]
+    assert project_id_values(f"glab api -f body=#1 projects/{pid}/z") == [pid]
+    assert project_id_values(f"glab api \\projects/{pid}/x") == [pid]
+    assert project_id_values(f"glab api 'api/v4/projects/{pid}/x") == [pid]
+
+    mixed = f"glab api projects/{pid}/x then https://git.zqcorp.io/api/v4/projects/{other}/y"
+    assert project_id_values(mixed) == [pid, other]
+    assert UserIdMap.for_projects().apply_projects(mixed, forge="gitlab") == (
+        "glab api projects/2001/x then https://git.zqcorp.io/api/v4/projects/2002/y"
+    )
+    unbalanced = f"glab api 'api/v4/projects/{pid}/x"
+    assert UserIdMap.for_projects().apply_projects(unbalanced, forge="gitlab") == (
+        "glab api 'api/v4/projects/2001/x"
+    )
+    reversed_order = (
+        f"https://git.zqcorp.io/api/v4/projects/{other}/y then glab api projects/{pid}/x"
+    )
+    assert UserIdMap.for_projects().apply_projects(reversed_order, forge="gitlab") == (
+        "https://git.zqcorp.io/api/v4/projects/2001/y then glab api projects/2002/x"
+    )
+    assert UserIdMap.for_projects().apply_projects(
+        ["glab", "api", "-H", "a b", f"projects/{pid}/projects/{pid}"], forge="gitlab"
+    ) == ["glab", "api", "-H", "a b", f"projects/2001/projects/{pid}"]

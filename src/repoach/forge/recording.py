@@ -1408,12 +1408,6 @@ _GLAB_API_ARG_PROJECT_ID_RE = re.compile(
 )
 """A numeric GitLab project id as the positional endpoint of a ``glab api`` invocation (0.15 R8-D2, 0.16 R9-D4)."""
 
-_GLAB_API_RAW_ENDPOINT_ID_RE = re.compile(
-    rf"^{_HSPACE_CLASS}*{_QUOTE_CLASS}?/?projects/+(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
-    re.I,
-)
-"""Exact numeric id span inside the raw source slice of a ``glab api`` endpoint token (0.16 R9-D4)."""
-
 _GLAB_API_CMD_RE = re.compile(
     rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})glab{_HSPACE_CLASS}+api(?={_HSPACE_CLASS})",
     re.I,
@@ -1424,7 +1418,7 @@ _GLAB_API_FALLBACK_ID_RE = re.compile(
     rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})projects/+(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
     re.I,
 )
-"""Safe fallback scanning ``projects/<digits>`` after ``glab api`` when ``shlex`` sees an unbalanced quote (0.16 R9-D4)."""
+"""``projects/<digits>`` inside a ``glab api`` command: the exact id span in an endpoint token's raw source slice, and the safe fallback scan when ``shlex`` sees an unbalanced quote (0.16 R9-D4)."""
 
 _GLAB_API_VALUE_FLAGS: frozenset[str] = frozenset(
     {
@@ -1457,7 +1451,8 @@ def _glab_api_endpoint(tokens: Sequence[object]) -> tuple[int, str] | None:
 
     Shared by both ``shlex``-tokenised command lines and argv lists. Skips
     flags in both ``-H value`` (via :data:`_GLAB_API_VALUE_FLAGS`) and
-    ``--header=value`` forms, boolean flags, and ``--``.
+    ``--header=value`` forms and boolean flags (``--`` and ``-`` count as
+    boolean flags).
     """
     folded = [t.casefold() if isinstance(t, str) else "" for t in tokens]
     if not _is_glab_api_argv(folded):
@@ -1468,17 +1463,8 @@ def _glab_api_endpoint(tokens: Sequence[object]) -> tuple[int, str] | None:
         if not isinstance(tok, str):
             idx += 1
             continue
-        if tok == "--":
-            if idx + 1 < len(tokens) and isinstance(tokens[idx + 1], str):
-                return idx + 1, str(tokens[idx + 1])
-            return None
-        if tok.startswith("-") and tok != "-":
-            if "=" in tok:
-                idx += 1
-            elif tok in _GLAB_API_VALUE_FLAGS:
-                idx += 2
-            else:
-                idx += 1
+        if tok.startswith("-"):
+            idx += 2 if tok in _GLAB_API_VALUE_FLAGS else 1
             continue
         return idx, tok
     return None
@@ -1518,8 +1504,7 @@ def _glab_api_text_id_spans(text: str) -> list[tuple[int, int, int]]:
                     break
         except ValueError as exc:
             _log.debug("forge.recording.glab_shlex_fallback", error=type(exc).__name__)
-            tail_offset = cmd_match.end() - cmd_start
-            for fb in _GLAB_API_FALLBACK_ID_RE.finditer(segment, tail_offset):
+            for fb in _GLAB_API_FALLBACK_ID_RE.finditer(segment):
                 if len(fb.group("id")) >= NEEDLE_MIN_LENGTH:
                     spans.append(
                         (
@@ -1537,9 +1522,7 @@ def _glab_api_text_id_spans(text: str) -> list[tuple[int, int, int]]:
             continue
         pos0, pos1 = raw_spans[ep_idx]
         raw_slice = segment[pos0:pos1]
-        raw_id = _GLAB_API_RAW_ENDPOINT_ID_RE.match(raw_slice) or _GLAB_API_FALLBACK_ID_RE.search(
-            raw_slice
-        )
+        raw_id = _GLAB_API_FALLBACK_ID_RE.search(raw_slice)
         if raw_id is not None:
             spans.append(
                 (
@@ -1559,8 +1542,6 @@ def _api_project_id_spans(text: str) -> list[tuple[int, int, int]]:
         if _is_real_api_project_id(match, kept):
             found.append((match.start("id"), match.end("id"), int(match.group("id"))))
     for start, end, pid in _glab_api_text_id_spans(text):
-        if any(k_start <= start < k_end for k_start, k_end in kept):
-            continue
         if any(s <= start < e or start <= s < end for s, e, _ in found):
             continue
         found.append((start, end, pid))
@@ -1729,7 +1710,6 @@ class UserIdMap:
                                 f"{self.synthetic(int(m.group('id')), forge=forge, keep=keep)}"
                             ),
                             item,
-                            count=1,
                         )
                 out_list.append(self.apply_projects(item, forge=forge, keep=keep))
             return out_list
