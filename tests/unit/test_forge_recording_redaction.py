@@ -4028,3 +4028,67 @@ def test_userinfo_chains_host_token_boundary_and_nested_parens_by_construction()
     assert redact_urls_in_text("https://git.zqcorp.io/zqns/Item_(a_(b)) end") == (
         "https://forge.example.com/org/project end"
     )
+
+
+def test_url_tail_splitting_public_host_normalisation_and_balanced_tail_by_construction() -> None:
+    """R9-D5, V9-01, V9-05, V9-15 (0.16): tail splitting, public-host normalisation and balanced-tail trimming each hold on their own inputs."""
+    assert recording._strip_balanced_tail("https://example.com/a)", ".,)") == (
+        "https://example.com/a",
+        ")",
+    )
+    assert recording._strip_balanced_tail("https://example.com/a_(b))", ".,)") == (
+        "https://example.com/a_(b)",
+        ")",
+    )
+    assert recording._strip_balanced_tail("https://example.com/a_(b)", ".,)") == (
+        "https://example.com/a_(b)",
+        "",
+    )
+    assert recording._strip_balanced_tail("...", ".") == ("", "...")
+    assert recording._strip_balanced_tail("", ".") == ("", "")
+
+    for host in (
+        "docs.python.org",
+        "docs.python.org.",
+        "DOCS.PYTHON.ORG",
+        "Docs.Python.Org.",
+        "python.org",
+        "peps.python.org.",
+        "PYTEST.READTHEDOCS.IO",
+    ):
+        assert recording._is_public_reference_host(host), host
+    for host in ("evilpython.org", "python.org.evil.io", "docs.python.org.evil.io", "github.com"):
+        assert not recording._is_public_reference_host(host), host
+    assert recording._allowed_userinfo("ssh", "git@example.com.", allow_example_git=True)
+    assert recording._allowed_userinfo("ssh", "git@EXAMPLE.COM", allow_example_git=True)
+    assert not recording._allowed_userinfo("ssh", "git@example.com.")
+    assert redact_urls_in_text("See https://docs.python.org./3/library/re.html now") == (
+        "See https://docs.python.org./3/library/re.html now"
+    )
+    assert redact_urls_in_text("See HTTPS://DOCS.PYTHON.ORG./3/library/re.html now") == (
+        "See https://docs.python.org./3/library/re.html now"
+    )
+    assert not unredacted_host("See https://docs.python.org./3/library/re.html now")
+
+    assert redact_urls_in_text("https://github.com/zqgroup/zqrepo/pull/1#issuecomment-42_") == (
+        "https://forge.example.com/org/project/pull/1#issuecomment-42_"
+    )
+    assert redact_urls_in_text("_https://github.com/zqgroup/zqrepo/pull/1#issuecomment-42_") == (
+        "_https://forge.example.com/org/project/pull/1#issuecomment-42_"
+    )
+    assert redact_urls_in_text("_https://github.com/zqgroup/zqrepo/pull/1?q=__main___.") == (
+        "_https://forge.example.com/org/project/pull/1_."
+    )
+    assert redact_urls_in_text("https://github.com/zqgroup/zqrepo/pull/1?q=__main__.") == (
+        "https://forge.example.com/org/project/pull/1."
+    )
+    assert redact_urls_in_text("https://github.com/zqgroup/zqrepo/blob/main/a.py#__init__") == (
+        "https://forge.example.com/org/project/blob/main/a.py"
+    )
+    assert redact_urls_in_text("clone 12345+zqlogin@users.noreply.github.com:zqns/zqrepo.git") == (
+        "clone git@forge.example.com:org/project.git"
+    )
+    for marker in ("+", "-"):
+        assert redact_urls_in_text(
+            f"{marker}12345+zqlogin@users.noreply.github.com:zqns/zqrepo.git"
+        ) == (f"{marker}git@forge.example.com:org/project.git")
