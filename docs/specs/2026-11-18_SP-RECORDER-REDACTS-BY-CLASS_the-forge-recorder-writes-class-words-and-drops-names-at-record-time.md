@@ -1,11 +1,11 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word, drops names and avatars, makes user ids synthetic at record time, and refuses a fixture it cannot classify
-version: 0.15
+version: 0.16
 status: approved
 author: agent
 created: 2026-11-18
-updated: 2026-11-19
+updated: 2026-11-20
 
 owns:
   code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_regression_corpus.py]
@@ -450,20 +450,29 @@ needles and deny-list values. `_URL_IN_TEXT_RE`, `_AFTER_HOST_RE` and
 (`https://en.wikipedia.org/wiki/Python_(programming_language)`) stay intact
 while outer enclosing parentheses are preserved. Pinned by
 `test_public_reference_hosts_match_by_suffix_and_balance_url_parens`
-(`R9-D1b`) and `test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_refused` (`R9-D1a`).
+(`R9-D1b`) and `test_python_code_and_third_party_links_under_ssh_alias_are_not_corrupted_or_refused` (`R9-D1a`);
+the trailing-dot and case normalisation of `_is_public_reference_host` and the
+balanced-tail trimming of `_strip_balanced_tail` are pinned by
+`test_url_tail_splitting_public_host_normalisation_and_balanced_tail_by_construction`
+(`V9-01`, `V9-05`; 0.16 — 0.15 named the first test for these and it stayed
+green under both mutants).
 (2) **Project ids scoped to API shapes (R8-D2)**: numeric project ids are
 taken only from `api/v<N>/projects/<id>` paths (`_API_PROJECT_ID_RE`,
 `_API_VERSION_RE`, `path_identity`, handling `v3`/`v4`/`v5`/… cleanly
-without `NeedleError` on `"v3"`) or `glab api /?projects/<id>` command
-lines and argv lists (`_GLAB_API_ARG_PROJECT_ID_RE`, `_is_glab_api_argv`),
+without `NeedleError` on `"v3"`) or `glab api` command
+lines tokenised with `shlex` and argv lists (`_glab_api_endpoint`,
+`_glab_api_text_id_spans`, `_GLAB_API_VALUE_FLAGS`, `_GLAB_API_ARG_PROJECT_ID_RE`,
+`_is_glab_api_argv`, 0.16),
 never from bare repository or file paths (`projects/2026/q1.md`,
 `/projects/2025/architecture.md`), eliminating year-path corruption and
 2026 PR refusals. Property-tested across years 2020–2030 and ordinary
 folder paths in `test_api_project_ids_ignore_year_paths_and_support_api_versions`
-(`R9-D2a`, `V8-17`), with argv and offline coverage pinned by
+(`R9-D2a`, `V8-17`; the `["glab", "api", …]` argv form by
+`test_glab_api_shlex_parsing_quoted_flags_argv_and_unbalanced_fallback`, `V9-07`),
+with argv and offline coverage pinned by
 `test_api_project_ids_skip_doc_examples_and_cover_all_positions` (`R9-D2b`)
 and `test_offline_transform_redacts_all_six_positions_and_non_json_project_ids` (`R9-D2c`).
-(3) **Unified userinfo rule (R8-D3, WF6)**: one rule (`_RFC3986_USERINFO_CHARS`,
+(3) **Unified userinfo rule (R8-D3, WF6)**: one rule (`_RFC3986_USERINFO_CLASS`,
 `_URL_USERINFO_PREFIX`, `_URL_USERINFO_BEFORE_RE`, `_USERINFO_AHEAD_RE`,
 `_has_user_before`, `_allowed_userinfo`, and `Location.authenticated`)
 governs `locations()`, `needles()`, `redact_url`, `redact_urls_in_text`,
@@ -482,12 +491,15 @@ while allowing only `git@forge.example.com` and `git@<example>`). Pinned by
 `#__init__` and `?q=__main__` leave no stray `__` (while matching paired
 leading `_` delimiters via `open_under`); `_SCP_IN_TEXT_RE` requires an
 alphanumeric first user character so italic `_git@host:ns/repo.git_` never
-eats its opening `_`; `_is_slash_led` / `_COMMENT_SLASH_BEFORE_RE` exclude
-single-line code comments without a space after `//` (`//config.dev/env/prod`,
-`+//config.dev/env/prod`, `var x = 1; //config.dev/env/prod`, `///…`) from
-protocol-relative URL parsing. Pinned by
+eats its opening `_`; `_is_slash_led` accepted a `//host` unless a regex
+said it followed a comment (`_COMMENT_SLASH_BEFORE_RE`, replaced in 0.16 by the
+positive URL-context rule: a protocol-relative `//host/path` is read only in
+a whole JSON or decoded structured string value, after `="` / `='` / `=`,
+in `url(` or `](`, or after `<`; everywhere else `//` starts a comment and
+the text stays byte-identical). Pinned by
 `test_url_termination_preserves_dunder_fragments_scp_delimiters_and_line_comments`
-(`R9-D4a`–`R9-D4c`).
+(`R9-D4a`–`R9-D4c`) and, at 0.16, by
+`test_protocol_relative_urls_require_positive_url_context_and_leave_code_comments_intact`.
 (5) **Unbundled exact-outcome regression corpus (R8-D5, WF3)**:
 `tests/unit/test_forge_recording_regression_corpus.py` expanded from 51 to
 205 rows (160 unbundled single-probe `PlantedCase` rows each asserting ONE
@@ -495,7 +507,9 @@ exact expected outcome — `WRITTEN` with concrete redacted assertions,
 `REFUSED` with expected refusal prefix, or `NEEDLE_ERR` with expected error
 prefix; 38 `OrdinaryCase` rows asserting `title` whenever set and removing
 the 3 rows that pinned `docs.python.org` corruption; 7 `OFFLINE_CORPUS`
-rows), promoting every missing realistic probe from rounds 5, 6, 7 and 8.
+rows), promoting the realistic probes from rounds 5, 6, 7 and 8 — all but
+two, `R8-P24` and `R8-Inv1`, which 0.15 wrongly claimed (promoted at 0.16,
+which holds 260 rows).
 (6) **Mutants & offline 6-position coverage (R8-D6, WF1, WF4)**: added
 `test_round8_guard_invariants_kill_surviving_mutants` (killing `V8-06`,
 `V8-08`, `V8-09`, `V8-10`, `V8-11`, `V8-14`, `V8-17`) and
@@ -512,6 +526,67 @@ rules.
 (8) **Rebase**: rebased onto `origin/develop` `8ee2c38` (`build(ci): pin ruff
 and spawn the toolchain through the interpreter (#318)`); verified `.venv`
 pins `ruff 0.15.4` via `python -P -m ruff`.
+
+Amendment (0.16, 2026-11-20, the ninth verifier's NO-GO on `f82aa41`, every
+defect class fixed by construction in one commit per class, based on
+`origin/develop` `8ee2c38`, which had not moved: nothing to merge). The root cause was the
+same for the ninth time: a hand-written regex accepting a shape different
+from the class it names. Each class below is now built from an explicit
+set or a positive rule and proved by a test that enumerates its inputs:
+(1) **Userinfo class (R9-D1, WF1, WF4)**: `_RFC3986_USERINFO_CHARS`
+concatenated with `@` formed the ASCII range `:-@`, dropping `-` and
+admitting `<`, `>` and `?`. Every character class of `recording.py` is
+now built by `_char_class` (one `re.escape` per character, optional
+negation) from an explicit set; the userinfo class is exactly
+`unreserved / pct-encoded / sub-delims / ":"`. Pinned by
+`test_regex_character_classes_and_rfc3986_userinfo_enumeration` (all 128
+ASCII characters plus one non-ASCII one) and
+`test_userinfo_chains_host_token_boundary_and_nested_parens_by_construction`.
+(2) **SCP remotes in unified diffs (R9-D2, V9-16)**: `_SCP_IN_TEXT_RE` now
+accepts a line-leading `+` / `-` diff marker (`_DIFF_MARKER_CLASS`) and a
+`+` inside the user. Pinned by
+`test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted`.
+(3) **Protocol-relative URLs versus `//` comments (R9-D3)**: replaced the
+"what comes before the slashes" heuristic with a positive URL-context
+rule (whole JSON or decoded structured string value, `="` / `='` / `=`,
+`url(`, `](`, `<`); `//` elsewhere starts a comment. Residual, named: a
+bare `//host/path` at the start of a line in prose is not redacted (it
+is still a needle when the host is seen in any other position, so the
+closure oracle refuses it). Pinned by
+`test_protocol_relative_urls_require_positive_url_context_and_leave_code_comments_intact`
+and `test_protocol_relative_body_context_and_value_rules_by_construction`.
+(4) **`glab api` command lines (R9-D4, V9-07, WF3)**: tokenised with
+`shlex` (POSIX), value flags skipped through `_GLAB_API_VALUE_FLAGS` in both
+the `-H v` and `--header=v` forms, the first positional token is the
+endpoint, one function (`_glab_api_endpoint`) serves text and argv; an
+unbalanced quote falls back to every `projects/<digits>` after `glab api`.
+Pinned by `test_glab_api_shlex_parsing_quoted_flags_argv_and_unbalanced_fallback`
+and `test_glab_api_command_recognition_flag_table_and_span_rules_by_construction`.
+(5) **Web `projects/<id>/merge_requests/42` (Pref 2)**: redacted without a
+`NeedleError`, pinned by `test_web_projects_numeric_path_redacts_without_needle_error`
+and `test_web_projects_identity_distinguishes_numeric_ids_from_names_by_construction`.
+(6) **Mutants (R9-D5, WF2, WF3)**: `V9-01` (trailing dot of a public host),
+`V9-07`, `V9-15` and `V9-16` now die, each by the test named in this
+amendment, never by the test 0.15 named (which stayed green under `V9-01`
+and `V9-07`). Mutation proof (`tmp/r9/mutate.py`, six throwaway worktrees at the final code, baseline GREEN `472 passed`, strict kill = rc 1 plus a `FAILED` line, log `tmp/r9/mutate.log`): the 35 mutants of `tmp/r8/mutate.log` (11 + 7 + 5 + 12), the 19 verifier mutants `V9-01`–`V9-19` and 180 new `N10-xx` mutants on every function changed this round make 234 mutants: **219 killed, 0 survived, 0 crashed, 0 not applied, 15 retired** because the code they mutated was proven equivalent and removed (`V9-09`, `V9-19`, `N10-29`, `N10-46`, `N10-65`, `N10-67`, `N10-68`, `N10-89`, `N10-97`, `N10-98`, `N10-105`, `N10-112`, `N10-122`, `N10-128`, `N10-166`); no mutant was rewritten to make it die. `V9-05` (`_strip_balanced_tail`'s balance check, unreachable through the public callers because every URL regex only emits balanced trailing parentheses) is killed by a direct test of the function instead of being waived.
+Simplifications that the mutation run proved equivalent were made in the
+code instead of waived: the dead `=` branch, the `--` and `-` special
+cases of `_glab_api_endpoint`, `_GLAB_API_RAW_ENDPOINT_ID_RE` (subsumed by
+the fallback search), the `tail_offset` of the fallback scan, the
+unreachable kept-span check on `glab` spans, `count=1`, the `(?!/)` and
+`///` guards, the tail adjustment of `url_end`, the repetition of
+`_USERINFO_AHEAD_RE` and the empty-path guard of `is_structured_json_path`.
+Dropping the `"://" in core` guard of `_split_url_tail` also fixed a real
+defect the mutant exposed: `//host/ns/repo#__init__` left a stray `__`.
+(7) **Corpus (WF5)**: `R8-P24` and `R8-Inv1` and every round-9 planted
+survivor and corruption are one exact-outcome row each (260 rows).
+(8) **Wrong facts corrected**: 0.15's "every RFC 3986 userinfo character"
+was false (WF1); `test_public_reference_hosts_match_by_suffix_and_balance_url_parens`
+and `test_api_project_ids_ignore_year_paths_and_support_api_versions` did
+not pin the trailing-dot and `["glab", "api", …]` claims (WF2, WF3); one
+shared userinfo rule did not cover diff SCP lines (WF4); the corpus
+completeness claim omitted two probes (WF5). Each claim now names the test
+that turns red, taken from `tmp/r9/mutate.log`. The measurements are written under AC1 and AC3.
 
 ## Intent
 
@@ -647,8 +722,13 @@ claim that they are caught in general.
   accepts an optional DNS trailing dot (pinned by
   `test_prose_punctuation_and_markdown_delimiters_terminate_urls_without_eating`
   and `test_url_termination_preserves_dunder_fragments_scp_delimiters_and_line_comments`);
-  `URL_SCHEMES` and `_URL_IN_TEXT_RE` include `ftp`/`ftps` and cover every
-  RFC 3986 userinfo character (`_RFC3986_USERINFO_CHARS`) and empty
+  `URL_SCHEMES` and `_URL_IN_TEXT_RE` include `ftp`/`ftps` and cover exactly
+  the RFC 3986 userinfo characters — unreserved, percent-encoded, sub-delims
+  and `:`, built by `_char_class` from the explicit set
+  `_RFC3986_USERINFO_CHARSET` so no accidental range can form (`-` is in;
+  `<`, `>`, `?`, `/`, `#` and `@` are out; pinned by
+  `test_regex_character_classes_and_rfc3986_userinfo_enumeration`, which
+  enumerates all 128 ASCII characters plus one non-ASCII one) — and empty
   passwords (`token:@`); one shared userinfo rule (`_allowed_userinfo`,
   `_has_user_before`) governs `locations()`, `redact_url`,
   `redact_urls_in_text`, `unredacted_host()` and SCP remotes across every
@@ -656,9 +736,14 @@ claim that they are caught in general.
   `git` userinfo is never kept, and on `ssh`/`git`/SCP only the `git@`
   placeholder (`git@forge.example.com` or `git@<example-host>`) stays,
   while `alice@example.com:org/repo.git` is redacted to
-  `git@forge.example.com:org/project.git` and flagged by `unredacted_host`
+  `git@forge.example.com:org/project.git` and flagged by `unredacted_host`,
+  also on a unified-diff line behind a line-leading `+` or `-` marker
+  (`+bob@host:ns/repo.git`, `-alice@example.com:org/repo.git`, a `+` inside
+  the user as in `user+ci@host:ns/repo.git`, `_DIFF_MARKER_CLASS`, pinned by
+  `test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted`, 0.16)
   (pinned by `test_public_hosts_strip_userinfo_and_normalize_host_case`,
-  `test_userinfo_rule_covers_empty_passwords_rfc3986_chars_and_scp_hosts`
+  `test_userinfo_rule_covers_empty_passwords_rfc3986_chars_and_scp_hosts`,
+  `test_userinfo_chains_host_token_boundary_and_nested_parens_by_construction`
   and `test_round8_guard_invariants_kill_surviving_mutants`); public
   documentation and package hosts without userinfo are kept in free text
   by a curated **registrable-suffix rule** (`_is_public_reference_host`,
@@ -748,9 +833,16 @@ claim that they are caught in general.
   taken only in an API shape — `api/v<N>/projects/<id>` paths
   (`_API_PROJECT_ID_RE`, `_API_VERSION_RE`, `path_identity`, covering
   `v3`/`v4`/`v5`/… cleanly without `NeedleError` on `"v3"`) or `glab api`
-  command lines and argv lists (`glab api /?projects/<id>`,
-  `_GLAB_API_ARG_PROJECT_ID_RE`, `_is_glab_api_argv`) — never from bare
-  `projects/<n>/…` repository or file paths (`projects/2026/q1.md`,
+  `glab api` command lines and argv lists — the command is tokenised
+  with `shlex` (POSIX, no comment character), the documented value flags of
+  `_GLAB_API_VALUE_FLAGS` are skipped in both the `-H value` and the
+  `--header=value` form, and the first positional token is the endpoint
+  (`_glab_api_endpoint`, `_glab_api_text_id_spans`,
+  `_GLAB_API_ARG_PROJECT_ID_RE`, `_is_glab_api_argv`, 0.16 R9-D4; an unbalanced
+  quote falls back to taking every `projects/<digits>` after `glab api`; pinned
+  by `test_glab_api_shlex_parsing_quoted_flags_argv_and_unbalanced_fallback` and
+  `test_glab_api_command_recognition_flag_table_and_span_rules_by_construction`) —
+  never from bare `projects/<n>/…` repository or file paths (`projects/2026/q1.md`,
   `/projects/2025/architecture.md`). They are collected by
   `project_id_values`, remapped by the same `UserIdMap.for_projects()`
   (`apply_projects`) to `2001..2999` across `args`, `kwargs`, `stdin`,
@@ -985,11 +1077,13 @@ claim that they are caught in general.
   Independence, stated exactly (0.11, 0.12, 0.13, 0.14, 0.15): the oracle
   shares no recogniser with the redactor. Hosts and segments are found by
   `locations`, a reader of hosts by their context (non-comment `//` via
-  `_is_slash_led` / `_COMMENT_SLASH_BEFORE_RE` — excluding single-line code
-  comments without a space such as `//config.dev/env/prod`, 0.15 Pref 1,
-  pinned by `test_url_termination_preserves_dunder_fragments_scp_delimiters_and_line_comments`
+  `_is_slash_led` and `_PROTO_REL_LEAD_RE` — a protocol-relative `//host`
+  only in a positive URL context, so code comments such as
+  `x := 1 //cfg.dev/env/prod` stay out, 0.16 R9-D3, pinned by
+  `test_protocol_relative_urls_require_positive_url_context_and_leave_code_comments_intact`
+  and `test_protocol_relative_body_context_and_value_rules_by_construction`
   — or `<user[:pass]>@` via `_has_user_before` covering empty passwords and
-  every RFC 3986 userinfo character, 0.15 R8-D3, pinned by
+  exactly the RFC 3986 userinfo characters, 0.15 R8-D3, 0.16 R9-D1, pinned by
   `test_userinfo_rule_covers_empty_passwords_rfc3986_chars_and_scp_hosts`,
   including scheme- or user-led IPv4 hosts such as `https://10.20.30.40/…`,
   or an un-led path after a host in
@@ -1004,7 +1098,8 @@ claim that they are caught in general.
   `*.dist-info/…`, 0.14 Pref 4; trailing prose punctuation
   `.,:;!?)]}>'"` and Markdown delimiters terminate URLs and are trimmed
   without being eaten while preserving GFM balanced parentheses via
-  `_AFTER_HOST_RE` and `_split_url_tail`, 0.13 R6-D1, 0.14 R7-D2, 0.15 Pref 2)
+  `_AFTER_HOST_RE` and `_split_url_tail`, 0.13 R6-D1, 0.14 R7-D2, 0.15 Pref 2,
+  pinned by `test_url_tail_splitting_public_host_normalisation_and_balanced_tail_by_construction`)
   that is not
   `_URL_IN_TEXT_RE` or `_SCP_IN_TEXT_RE`, so a schemeless known host
   `gitlab.corp.io/grp/repo` in prose is found; the forms are built by
@@ -1127,8 +1222,8 @@ claim that they are caught in general.
   rule, the remote normaliser, the closure oracle, the noreply rule,
   registrable-suffix public reference hosts, bot stems, IPv4 rules, 0.14
   invariants, 0.15 public-host/project-id/userinfo/termination rules and the
-  accidental-leak threat model, in nine commits (0.12 correction: five at
-  0.11, not four; six at 0.12; seven at 0.13; eight at 0.14; nine at 0.15).
+  accidental-leak threat model, in ten commits (0.12 correction: five at
+  0.11, not four; six at 0.12; seven at 0.13; eight at 0.14; nine at 0.15; ten at 0.16).
   Both are string or prose edits, no import and no behaviour; ownership
   stays where it was.
 - D6 (0.9). **The deny-list test runs where the deny-list is.** Two
@@ -1241,7 +1336,7 @@ keyed by forge so that no two accounts ever share one inside a corpus.
 - NG1 (0.6): re-recording the existing fixtures live; they are transformed offline (D4).
 - NG2: the generic lint (SP-NO-PERSONAL-DATA-GATE); this spec copies three regexes, it does not run the gate.
 - NG3: redacting secrets (F2 does it already).
-- NG4 (0.10, owner decision Q3; extended 0.12, owner decision 2026-11-18): accepted residuals and out-of-scope adversarial forms under the **accidental-leak** threat model:
+- NG4 (0.10, owner decision Q3; extended 0.12, owner decision 2026-11-18; extended 0.16): accepted residuals and out-of-scope adversarial forms under the **accidental-leak** threat model:
   1. A login the recording never learns — one that stands only as a bare word in prose, under no login key and with no `@`, or one spelled like a common word cited alone. Nothing makes it a needle, and refusing every unknown word would make every pull request unrecordable. Covers: the maintainer's own accounts are in the deny-list, which refuses them anywhere; for anyone else, the recorder's author trims (`--trim`) or records another change request.
   2. Schemeless private IPv4 paths without `//` or `<user>@` (such as `10.0.0.5/zqotherns/zqotherrepo`, 0.13 Wrong Fact 2): un-led dotted-quad strings are not parsed as hosts by `locations()` so RFC 1918 addresses and version-like numbers in logs/code are not corrupted. Scheme- or user-led IPv4 URLs (`https://10.20.30.40/…`) ARE parsed, redacted and checked for prose repo leaks since 0.13.
   3. Schemeless unknown third-party hosts without `//` or `<user>@`, not in `FORGE_HOSTS`, not the remote/inferred host, and never seen led by `//` or `@` in the same recording (such as `gitlab.zqcorp.internal/zqgroup/zqsecret`, `git.zqcorp.sh/zqgroup/zqsecret`, `git.zqother.io./zqotherns/zqotherrepo`, 0.14 Pref 4): arbitrary un-led `a.b/c/d` strings are indistinguishable from macOS bundle paths (`Xcode.app/Contents/…`) and code attribute divisions (`config.dev/env/prod`, `ssl.ca/certs/root.pem`, `stream.io/read/write`, `torch.net/layers/conv`), so `locations()` accepts an un-led host only when it is in `known_hosts` (`FORGE_HOSTS`, remote/inferred host, or seen led in the same recording). Covers: the maintainer's own self-hosted hosts belong in the deny-list, and any host cited with a scheme or `@` anywhere in the recording is automatically added to `known_hosts`.
@@ -1251,6 +1346,7 @@ keyed by forge so that no two accounts ever share one inside a corpus.
      - values encoded in non-node-id base64 (arbitrary base64 blobs, JWT payloads);
      - JSON-in-a-string escapes (`\\uXXXX`, `\/` escaped slashes, raw JSON snippets embedded mid-prose) (D8), and other non-standard evasion encodings (5+ rounds of percent-encoding, `\x`, `\U`, `\u{…}`, hyphen/underscore swaps, or substring concatenation inside a larger alphanumeric token without a delimiter).
      What 0.11 already handles for these forms (`CONFUSABLES`, `Cf` removal, NFKC, 4-round URL/entity/`\uXXXX` decoding) is kept intact as best-effort defence-in-depth, not extended, and no claim is made that they are caught in general. Accepted, named and bounded: a finding of any of these forms is NG4, not a defect.
+  5. (0.16, R9-D3) A protocol-relative `//host/path` outside the positive URL contexts — bare prose after a space (`Loaded from //cdn.zqcorp.io/ns/repo/v1.js`), at the start of a line, after code, after `{`, `)` or `;` — is read as a comment and stays byte-identical, because in code and diffs a `//` is a comment far more often than a URL and the old "what comes before the slashes" guess corrupted Go, JS, TS and C. Its host is still replaced as a token (and refused when it survives) whenever the same host is a needle from another position — the recording's remote, a URL, a user-led remote — pinned by the corpus row `r10_prose_double_slash_host_known_from_remote_is_replaced_as_a_token`; a private host that stands only in such a position is not learnt. A `//host/path` as a whole JSON or decoded string value, after `="` / `='` / `=`, in `url(` or `](`, or after `<` is a positive context and is redacted.
 
 ## Assumptions
 
@@ -1384,6 +1480,16 @@ records one fixture against a real pull request to check the shape
 | `::test_url_termination_preserves_dunder_fragments_scp_delimiters_and_line_comments` (0.15) | R8-D4, Pref 1: `#__init__` and `?q=__main__` drop without stray `__`, paired italic `_https://…#__init___` and kept `#issuecomment-42_` preserve delimiters, italic `_git@host:ns/repo.git_` and `__git@…__` preserve leading `_`, and space-less `//config.dev/env/prod` single-line comments (line-start, indented, diff `+`, inline `;`, `///`) stay untouched while `<script src="//…">` and `https://…` still parse | R9-D4a, R9-D4b, R9-D4c |
 | `::test_round8_guard_invariants_kill_surviving_mutants` (0.15) | R8-D6, WF4: `http://`/`https://git@forge.example.com` flagged by `unredacted_host`; userinfo URL on `gitlab.example.com` is NOT skipped by `_kept_url_spans`; `Docs.GitLab.com` / `DOCS.GITLAB.COM` pass `residual()`; `bot_mention_stem` rejects class words (`author[bot]`, `bot[bot]`) and `NON_PERSON_LOGINS` (`github-actions[bot]`, `repoach-bot[bot]`); `classify_text` does not overwrite explicit `@cla` role; `glab api /projects/<id>` leading slash | V8-06, V8-08, V8-09, V8-10, V8-11, V8-14, V8-17 |
 | `::test_offline_transform_redacts_all_six_positions_and_non_json_project_ids` (0.15) | R8-D6, WF1: offline `redact_fixture` redacts URLs across all six positions (`args`, `kwargs`, `stdin`, `stderr`, JSON/non-JSON `stdout`, `result`), remaps project ids in non-JSON `stdout` (`api/v4/projects/<id>`, `glab api /projects/<id>`) and `call["args"]` string lists (`["api", "projects/<id>/…"]`), declares `synthetic_project_ids`, passes `residual()`, and is idempotent | OFF-01, OFF-02, OFF-03, OFF-04, R9-D2c |
+| `::test_regex_character_classes_and_rfc3986_userinfo_enumeration` (0.16) | R9-D1, WF1: `_char_class` escapes every character and negates on request; the userinfo class matches exactly `unreserved / pct-encoded / sub-delims / ":"` over all 128 ASCII characters plus one non-ASCII one (`-` in; `<`, `>`, `?`, `@`, `/`, `#` out); `x-access-token:@`, `gitlab-ci-token:@`, `oauth2-token:@`, `ci-bot:pw!@`, `x-access-token:pw*1@docs.python.org`, `first.last:my-pass@host`, `host?contact=a@example.com (host host)` and `<https://host><a@example.com>` parse, strip the userinfo and redact the prose host and repository | `R9-D3a`, `V9-12`, `V9-13`, `V9-16`, `V9-17`, `N10-01…N10-04`, `N10-07…N10-22`, `N10-43`, `N10-124…N10-126`, `N10-130…N10-131`, `N10-133…N10-144`, `N10-147…N10-160`, `N10-180` |
+| `::test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted` (0.16) | R9-D2, V9-16: `+git@…`, `-alice@…`, `+bob@…`, `-alice@example.com:…` and `user+ci@host:ns/repo.git` redacted by `redact_urls_in_text` and flagged by `unredacted_host`, live and offline | `R9-D3b`, `R9-D3c`, `R9-D4b`, `V9-10`, `V9-11`, `V9-16`, `V9-17`, `N10-04…N10-06`, `N10-13`, `N10-174` |
+| `::test_protocol_relative_urls_require_positive_url_context_and_leave_code_comments_intact` (0.16) | R9-D3: `<script src="//…">`, `url(//…)`, `[x](//…)` and `{"cdn": "//…"}` redacted; Go, JS, TS and C `//` comments (`x := 1 //cfg.dev/env/prod`, `if x > 0 { //store.io/cache/hit`, `const cfg = load() //cfg.dev/env/prod`, `if (ok) { //config.dev/env/prod`) byte-identical | `R9-D1a`, `R9-D4c`, `V9-18`, `N10-02…N10-03`, `N10-23…N10-26`, `N10-28`, `N10-34…N10-43`, `N10-47`, `N10-50…N10-55`, `N10-60`, `N10-62`, `N10-64`, `N10-127`, `N10-141`, `N10-143`, `N10-152…N10-153`, `N10-155…N10-156`, `N10-169` |
+| `::test_glab_api_shlex_parsing_quoted_flags_argv_and_unbalanced_fallback` (0.16) | R9-D4, V9-07: `-H 'Accept: application/json'`, `-f "body=hello world"`, `--raw-field 'title=Fix bug'`, `--header='PRIVATE-TOKEN: x'` remap the project id to `2001` and declare it; the `["glab", "api", …]` argv form; an unbalanced quote falls back without leaking | `R9-D2b`, `R9-D2c`, `V8-17`, `V9-07`, `V9-08`, `N10-66`, `N10-71`, `N10-73`, `N10-75…N10-76`, `N10-83`, `N10-88`, `N10-94…N10-96`, `N10-108…N10-110`, `N10-175…N10-178` |
+| `::test_web_projects_numeric_path_redacts_without_needle_error` (0.16) | Pref 2: `https://<host>/projects/<id>/merge_requests/42` stays redacted and raises no `NeedleError` | `N10-02`, `N10-113`, `N10-115…N10-117` |
+| `::test_glab_api_command_recognition_flag_table_and_span_rules_by_construction` (0.16) | R9-D5: every flag of `_GLAB_API_VALUE_FLAGS`, boolean flags, non-`str` argv items, upper-case `GLAB API`, non-`glab api` argv, command-start and command-end boundaries (`my-glab`, `apix`, closing backtick, newline), the id lookahead, the `NEEDLE_MIN_LENGTH` floor, first-endpoint-only, `#` in a token, a backslash-escaped endpoint, unbalanced-quote fallback, and span order, overlap and single application in `apply_projects` | `V9-07`, `V9-08`, `N10-66`, `N10-69`, `N10-71…N10-82`, `N10-84…N10-87`, `N10-90…N10-96`, `N10-99…N10-104`, `N10-106…N10-108`, `N10-110`, `N10-150`, `N10-158…N10-159`, `N10-175…N10-178` |
+| `::test_protocol_relative_body_context_and_value_rules_by_construction` (0.16) | R9-D5: port, trailing DNS dot, userinfo, `#__init__` fragment and trailing punctuation of a protocol-relative URL; `url(`, `=`, `<`, `](` and JSON leads with their lookbehinds; whole-value positions (`is_structured_json_path`, `redact_urls_in_value` under URL keys, lists and nested dicts, text leaves untouched); `needles()` reads a double-encoded `//host` value | `R9-D1a`, `R9-D4a`, `R9-D4c`, `N10-02`, `N10-26…N10-28`, `N10-30…N10-34`, `N10-36`, `N10-38…N10-39`, `N10-44…N10-45`, `N10-47…N10-52`, `N10-55…N10-64`, `N10-124`, `N10-127`, `N10-129`, `N10-156`, `N10-160`, `N10-163`, `N10-169`, `N10-179` |
+| `::test_userinfo_chains_host_token_boundary_and_nested_parens_by_construction` (0.16) | R9-D5: empty, chained and symbol userinfo before a host, userinfo ahead of a dotted user, the host-token boundary and doubly nested parentheses | `R9-D1b`, `R9-D3a`, `V9-04`, `V9-13`, `N10-02…N10-03`, `N10-14`, `N10-43`, `N10-119…N10-121`, `N10-123…N10-126`, `N10-132`, `N10-143`, `N10-145` |
+| `::test_url_tail_splitting_public_host_normalisation_and_balanced_tail_by_construction` (0.16) | V9-01, V9-05, V9-15: `_strip_balanced_tail` direct cases, trailing-dot and case normalisation in `_is_public_reference_host` and `_allowed_userinfo`, unitalicised and italic comment anchors, `+`/`-` diff markers before a noreply SCP remote | `R9-D1a`, `R9-D1b`, `R9-D4a`, `R9-D4b`, `V7-08`, `V9-01`, `V9-02`, `V9-03`, `V9-04`, `V9-05`, `V9-10`, `V9-14`, `V9-15`, `V9-16`, `V9-17`, `N10-02`, `N10-04…N10-05`, `N10-161…N10-165`, `N10-167…N10-168`, `N10-170…N10-174` |
+| `::test_web_projects_identity_distinguishes_numeric_ids_from_names_by_construction` (0.16) | R9-D5: `projects/<name>/…` stays namespace and repository while `projects/<digits>/…` keeps its trailing path and reports only ids of at least `NEEDLE_MIN_LENGTH` digits | `N10-113…N10-118` |
 | `::test_a_repository_object_name_and_path_are_placeholders_by_key` (0.10) | I4, Q2: `Secretproj`/`secretproj-x` → `project`, `description` dropped, idempotent; a merge request's `name` and `description` kept; the project map's `2001`, its end at 2999 | I4-a, I4-b |
 | `::test_a_repository_id_is_synthetic_in_both_tools` (0.10) | Q2: the recorder and the offline transform remap a repository id to `2001` and declare it | I4-c, I4-d |
 | `::test_fixtures_declare_exactly_their_synthetic_project_ids` (0.10) | Q2: every repository id of the corpus is in `2001..2999` and declared | keep a real project id |
@@ -1395,7 +1501,7 @@ records one fixture against a real pull request to check the shape
 | `::test_case_insensitive_patterns_are_flagged` (0.10) | I2: every module-level pattern of `recording.py` and the two scripts is `re.I` but the named case-sensitive ones (encodings, the class words, the tools' literals, the gate's copied regexes) | I2-c, I2-d |
 | `::test_scripts_print_one_line_and_log_to_stderr` (0.10) | K8: in a fresh interpreter, each script's stdout is its one line on success and empty on a refusal, and its logs reach stderr | K8-a, K8-b |
 | `::test_denylist_entries_never_reach_a_local_or_a_repr` (0.10) | K8: `read_denylist` is opaque; a failing deny-list check under `pytest -l` prints no entry | K8-c |
-| `tests/unit/test_forge_recording_regression_corpus.py` (0.14, 0.15) | Convergence rule 1, R8-D5, WF3: permanent table-driven regression corpus promoted from verifier rounds 5, 6, 7 and 8 (205 rows: 160 unbundled single-probe `PlantedCase` rows each asserting ONE exact expected outcome — `WRITTEN` with concrete redacted assertions, `REFUSED` with refusal prefix, or `NEEDLE_ERR` with error prefix; 38 `OrdinaryCase` rows asserting `title` whenever set and keeping public doc hosts intact; 7 `OFFLINE_CORPUS` rows; fake values only) | any regression across realistic leaks, over-refusals, corruptions, `title` handling, or offline parity |
+| `tests/unit/test_forge_recording_regression_corpus.py` (0.14, 0.15, 0.16) | Convergence rule 1, R8-D5, WF3, R9 WF5: permanent table-driven regression corpus promoted from verifier rounds 5, 6, 7, 8 and 9 (260 rows: 202 unbundled single-probe `PlantedCase` rows each asserting ONE exact expected outcome — `WRITTEN` with concrete redacted assertions, `REFUSED` with refusal prefix, or `NEEDLE_ERR` with error prefix; 51 `OrdinaryCase` rows asserting `title` whenever set and keeping public doc hosts intact; 7 `OFFLINE_CORPUS` rows; fake values only; every round-9 planted survivor and corruption, `R8-P24` and `R8-Inv1` included, is one row) | any regression across realistic leaks, over-refusals, corruptions, `title` handling, or offline parity |
 | `tests/unit/test_forge_conformance.py` (existing) | D4 (0.6): green on the fixtures as `scripts/redact_forge_fixtures.py` leaves them; `test_reviews_two_approvals` expects `author-2`/`author-3` | drop a key a forge reads |
 
 ## Success conditions
@@ -1433,6 +1539,7 @@ flowchart LR
   Re-measured 2026-11-19 on the branch (0.13), at `a1e7c27`/`60ae815` (the spec commit adds no code). C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset): `195 passed`; `-k 'denylisted or file_route'` → `2 passed`; with `XDG_CONFIG_HOME` at an empty directory: `194 passed, 1 skipped`; fork-PR simulation (`REPOACH_PERSONAL_DENYLIST=` + empty config dir): `1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs `0`; `github`/`gitlab.com` in `tests/fixtures/forge` `0`; repo segments (0.10 command) `99 project`; A2 grep `0`. D4 reproduction from `origin/develop` (`7fd31af`): raw develop → exit 2 (`residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body`), corpus unchanged; with hand edits → `62 changed`, 0 diff lines vs HEAD, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Probes: `tmp/verify5/adversarial.py` every survivor is in NG4 (including schemeless `10.0.0.5/…`) or declared literals (`:owner`, `/dev/null`, `github-actions[bot]`); `tmp/verify6/r6_realistic_sweep.py` fixes all in-scope defects (`planted_survivors=1` — only Preference 1 Windows `C:\Users\<unknown>\…` deferred to SP-NO-PERSONAL-DATA-GATE; `ordinary_refused=3` — only Preference 1 `actions@github.com`, `from 1.2.3.4 to 1.2.3.5`, `demo@sub.example.com` deferred to SP-NO-PERSONAL-DATA-GATE; `ordinary_corrupted=1` — only `|Ruff|https://pypi.org/project/ruff/|` intentionally kept per Preference 3 with closing `|` intact). Mutation proof (`tmp/r6/mutate.py`, detached git worktree, unmodified baseline verified GREEN `193 passed in 9.03s`, strict `rc == 1` with failing test name required per kill): **27 of 27 killed, 0 survived, 0 crashed, 0 not_applied** — all 10 round-6 survivors (`V5-11`, `V6-01`, `V6-03`/`R5-D2b`, `V6-11`, `V6-17`, `V6-18`, `V6-22`, `V6-24`, `V6-25`, `V6-26`; 0.14 Wrong Fact 4 note: `tmp/r6/mutate.py` had rewritten `V5-11`'s text, though independent verification confirmed the original `V5-11` form was also killed) plus 17 new 0.13 mutants (`R6-D1a..c`, `R6-D2a..e`, `R6-D3a..c`, `R6-D5a..c`, `R6-P2`, `R6-P3a..b`).
   Re-measured 2026-11-19 on the branch (0.14), at `1bffab1`/`7441a89` (the spec commit adds no code). C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset): `199 passed`; `-k 'denylisted or file_route'` → `2 passed`; with `XDG_CONFIG_HOME` at an empty directory: `198 passed, 1 skipped`; fork-PR simulation (`REPOACH_PERSONAL_DENYLIST=` + empty config dir): `1 skipped`. Permanent regression corpus `tests/unit/test_forge_recording_regression_corpus.py`: `51 passed`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs `0`; `github`/`gitlab.com` in `tests/fixtures/forge` `0`; repo segments (0.10 command) `99 project`; A2 grep `0`. D4 reproduction from `origin/develop` (`7fd31af`): raw develop → exit 2 (`residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body`), corpus unchanged; with hand edits → `62 changed`, 0 diff lines vs HEAD, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Probes: `tmp/verify7/r7_extra_probes.py` all clean (`Docs.GitHub.com`/`Docs.GitLab.com` lowercased + offline `residual: None`, `cla[bot]` → `@bot`, `Dependabot[BOT]` → `bot`, `project[bot]` keeps `/org/project/`, `!` and `?` tails preserved); `tmp/verify6/r6_realistic_sweep.py` (`actions@github.com` now clean; remaining 3 rows are the 3 deferred SP-NO-PERSONAL-DATA-GATE Preference-1 items plus the stale `pypi.org` probe); `tmp/verify7/r7_realistic_sweep.py` (0 in-scope planted survivors — only the 2 NG4 Pref 4 unknown schemeless hosts; 0 in-scope ordinary refusals/corruptions); `tmp/verify5/adversarial.py` (39 survivors, every one named in NG4 — including Pref 4's schemeless unknown host `git.zqother.io./…` — or declared literals). Mutation proof (`tmp/r7/mutate.py`, detached git worktree, unmodified baseline verified GREEN `248 passed in 9.02s`, strict `rc == 1` with failing test name required per kill): **34 of 34 killed, 0 survived, 0 crashed, 0 not_applied** — 9 exact round-6 survivors (with the exact original `V5-11` form), all 11 round-7 survivors (`V7-05`, `V7-07`, `V7-08` on real normalization, `V7-14`, `V7-17`, `V7-18`, `V7-21`, `V7-22`, `V7-23`, `V7-24`, `V7-25`), and 14 new 0.14 mutants (`R7-D1a..c`, `R7-D2a..b`, `R7-D3a..c`, `R7-D4a..c`, `R7-P3`, `R7-P4`, `R7-ACT`).
   Re-measured 2026-11-19 on the branch (0.15, rebased onto `origin/develop` `8ee2c38`), at `8735a42` (the spec commit adds no code). C1 by the FILE route (`REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset, including `test_forge_recording_regression_corpus.py`): `410 passed` (`205` core + `205` unbundled regression corpus rows). C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0. Mutation proof (`tmp/r8/mutate.py` / `tmp/r8/mutate.log`, detached git worktree, unmodified baseline verified GREEN `408 passed in 7.61s`, strict `rc == 1` with failing test name required per kill): **35 of 35 killed, 0 survived, 0 crashed, 0 not_applied** — 11 round-7 survivors (`V7-05`, `V7-07`, `V7-08`, `V7-14`, `V7-17`, `V7-18`, `V7-21`–`V7-25`), all 7 round-8 survivors (`V8-06`, `V8-08`, `V8-09`, `V8-10`, `V8-11`, `V8-14`, `V8-17`), all 5 offline coverage-claim mutants (`OFF-01`–`OFF-05`), and 12 new round-9 mutants (`R9-D1a..b`, `R9-D2a..c`, `R9-D3a..d`, `R9-D4a..c`). Post-commit full `tests/unit -n 4` (clean env), C2 rebuild, verify5/6/7/8 sweeps, arch check/graph parity, and history scan recorded in `tmp/REPORT-r8-fix.md`.
+  Re-measured 2026-11-20 on the branch (0.16, based on `origin/develop` `8ee2c38`, which had not moved), at `55f6133` (the docs commits add no code). C1 by the FILE route (31 entries, mode 600; `REPOACH_PERSONAL_DENYLIST` and `XDG_CONFIG_HOME` unset, including the regression corpus and `test_review_gate_forge_parity.py`): `475 passed`; `-k 'denylisted or file_route'` → `2 passed`; with `XDG_CONFIG_HOME` at an empty directory: `474 passed, 1 skipped`; fork-PR simulation (`REPOACH_PERSONAL_DENYLIST=` + empty config dir): `1 skipped`. C2: `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; real-host URLs `0`; `github`/`gitlab.com` in `tests/fixtures/forge` `0`; repo segments (0.10 command) `99 project`. D4 reproduction from `origin/develop` (`8ee2c38`): raw develop → exit 2 (`residual deny-list 31 at gate/pr202_capture.json:{key 4}.stdout.body`), corpus unchanged; with hand edits → `62 changed`, `diff -r` 0 lines, 0 files not byte-identical (96 vs 96), second run `0 changed`, `--check` exit 0. Full `tests/unit -n 4` (clean env, `GIT_CONFIG_*` unset): `4930 passed, 64 skipped`, 0 failed. Verifier probes: `r9_item1_rules.py` D1 `74` / D2 `61` / D3 `62` tested, `0` anomalies, D4 `32` tested with `3` anomalies — two `/search` route expectation differences of the probe itself (0 stray `__`) and the named prose `//host` residual of NG4 item 5; `r9_fresh_sweep.py` `planted_survivors=0`, `ordinary_refused=0 ordinary_corrupted=0`; the claim spot-check (`tmp/r9/g_claims.py`, 22 claims, each run on the NAMED test alone against its mutation): `named_red=22 named_green=0`. Mutation proof: see Amendment 0.16 (6).
 - [x] AC2: C3's check output written here by the implementer.
   Recorded 2026-11-18 (0.8), read-only, against repoachhq/repoach PR #316 (`--trim 5`, output under `tmp/`, not committed), the maintainer's login and two numeric ids as deny-list: `pull_request`, `conversation_comments`, `reviews`, `checks`, `review_threads` and `is_maintainer(<the gh user>)`, each exit 0; the check found 0 violations in each file (URL values 2/3/0/10/0/0 under `url`/`web_url`/`html_url`/`link`, every one on `https://forge.example.com/`; logins 1/3/4/0/0/1 and user ids 1/3/4/0/0/1, every declaration exact; every `source` free of the folder name), 0 real-host URLs, and the account's login and ids absent from every file (0 whole-word hits).
   Re-recorded 2026-11-18 (0.9), same six calls against PR #316, the deny-list by the file route: each exit 0, 0 violations and 0 real-value hits in all six files, 0 real-host URLs, every repository segment `project` (17), 0 stderr lines naming the account.
@@ -1442,6 +1549,7 @@ flowchart LR
   Re-recorded 2026-11-18 (0.12), read-only, all six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, FILE-route deny-list, 31 entries): all six exit 0, stdout 1 line each, `tmp/verify5/c3check.py` reports 0 violations and 0 real-value hits in all six JSON files (URLs 10/1/0/2/0/0, logins 0/1/1/1/0/4) and 0 real-value hits in all six stderr logs (2 lines each).
   Re-recorded 2026-11-19 (0.13), read-only, all six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, FILE-route deny-list, 31 entries, 38 needles): all six exit 0, stdout 1 line each, `tmp/verify6/r6_c3_check.py` reports 0 violations and 0 real-value hits in all six JSON files (URLs 10/1/0/2/0/0, logins 0/2/1/2/0/8) and `total_stderr_real_hits=0` (2 lines each).
   Re-recorded 2026-11-19 (0.14), read-only, all six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, FILE-route deny-list, 31 entries, 38 needles): all six exit 0, stdout 1 line each, `tmp/verify6/r6_c3_check.py` reports 0 violations and 0 real-value hits in all six JSON files (URLs 10/1/0/2/0/0, logins 0/2/1/2/0/8) and `total_stderr_real_hits=0` (2 lines each).
+  Re-recorded 2026-11-20 (0.16), read-only, all six calls of C3 against repoachhq/repoach PR #316 (`--trim 5`, `--cwd` this worktree, FILE-route deny-list, 31 entries, 38 needles): all six exit 0, stdout 1 line each, `tmp/verify6/r6_c3_check.py` reports 0 violations and 0 real-value hits in all six JSON files (URLs 10/1/0/2/0/0, logins 0/2/1/2/0/8) and `total_stderr_real_hits=0` (2 lines each).
 - [x] AC3: `repoach arch check --base origin/develop` → `edge-honesty: ok`; `repoach arch graph --check 2>&1 | grep -c '^dependency cycle'` → `27`; the `ownership conflict` lines are the parent's five.
   Measured 2026-11-18 on the branch (0.8): `edge-honesty: ok`; 27 `dependency cycle` lines and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af` line for line.
   Re-measured 2026-11-18 on the branch (0.9): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af` line for line.
@@ -1451,6 +1559,7 @@ flowchart LR
   Re-measured 2026-11-19 on the branch (0.13): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af`; `ruff check`, `ruff format --check` (0.15.4, 696 files), `lint_no_inline_comments.py` (`total=0`) and `lint_no_silent_except.py` (`total=0`) exit 0; post-commit full `tests/unit -n 4` (clean env), history scan and commit hygiene recorded in `tmp/REPORT-r6-fix.md`.
   Re-measured 2026-11-19 on the branch (0.14): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `7fd31af`; `ruff check`, `ruff format --check` (0.15.4), `lint_no_inline_comments.py` (`total=0`) and `lint_no_silent_except.py` (`total=0`) exit 0; post-commit full `tests/unit -n 4` (clean env), history scan and commit hygiene recorded in `tmp/REPORT-r7-fix.md`.
   Re-measured 2026-11-19 on the branch (0.15, rebased onto `origin/develop` `8ee2c38`): `edge-honesty: ok`; `ruff check`, `ruff format --check` (`python -P -m ruff`, 0.15.4, 699 files), `lint_no_inline_comments.py` (`total=0`) and `lint_no_silent_except.py` (`total=0`) exit 0; post-commit full `tests/unit -n 4` (clean env), graph parity against `origin/develop` `8ee2c38`, C2 rebuild, verify sweeps, history scan and commit hygiene recorded in `tmp/REPORT-r8-fix.md`.
+  Re-measured 2026-11-20 on the branch (0.16, merged with `origin/develop` `8ee2c38`): `edge-honesty: ok`; 27 `dependency cycle` and 5 `ownership conflict` lines, identical to `origin/develop` `8ee2c38`; `ruff check`, `ruff format --check` (`python -P -m ruff`, 0.15.4, 699 files), `lint_no_inline_comments.py` (`total=0`) and `lint_no_silent_except.py` (`total=0`) exit 0; history scan of every commit of `origin/develop..HEAD` (added lines and messages, 38 needles, letters-and-digits boundary): `0` hits; commit hygiene: `0` errors, noreply author and committer on every commit, single spec bumps; post-commit full `tests/unit -n 4` (clean env), graph parity, C2 rebuild, verify sweeps and the mutation proof recorded in `tmp/REPORT-r9-fix.md`.
 
 ## Open Questions
 
