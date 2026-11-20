@@ -1935,6 +1935,17 @@ PLANTED_CORPUS: tuple[PlantedCase, ...] = (
         markers=(FAKE_HOST_2, FAKE_REPO_2),
         must_have=("Use _git@forge.example.com:org/project.git_ now",),
     ),
+    PlantedCase(
+        label="r10_prose_double_slash_host_known_from_remote_is_replaced_as_a_token",
+        inp=PipelineInput(
+            forge="gitlab",
+            remote=GL_REMOTE,
+            body=f"Loaded from //{FAKE_HOST}/{FAKE_NS}/{FAKE_REPO}/v1.js",
+        ),
+        expected_status="WRITTEN",
+        markers=(FAKE_HOST, FAKE_NS, FAKE_REPO),
+        must_have=("Loaded from //forge.example.com/org/project/project",),
+    ),
 )
 
 
