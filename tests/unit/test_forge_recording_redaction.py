@@ -4092,3 +4092,26 @@ def test_url_tail_splitting_public_host_normalisation_and_balanced_tail_by_const
         assert redact_urls_in_text(
             f"{marker}12345+zqlogin@users.noreply.github.com:zqns/zqrepo.git"
         ) == (f"{marker}git@forge.example.com:org/project.git")
+
+
+def test_web_projects_identity_distinguishes_numeric_ids_from_names_by_construction() -> None:
+    """R9-D5 (0.16): the web ``projects/<id>`` identity needs a numeric second segment, keeps the trailing path and reports long ids only."""
+    identity = recording.path_identity
+    assert identity(["projects", "dashboard", "issues"]) == recording.PathIdentity(
+        ["org", "project", "issues"], ("projects",), "dashboard"
+    )
+    assert identity(["projects", "88442211", "-", "issues", "3"]) == recording.PathIdentity(
+        ["projects", "project", "-", "issues", "3"], (), "88442211"
+    )
+    assert identity(["projects", "88442211", "merge_requests", "7", ""]) == recording.PathIdentity(
+        ["projects", "project", "merge_requests", "7", ""], (), "88442211"
+    )
+    assert identity(["projects", "42", "merge_requests", "7"]) == recording.PathIdentity(
+        ["projects", "project", "merge_requests", "7"], (), None
+    )
+    assert redact_url("https://git.zqcorp.io/projects/dashboard/issues") == (
+        "https://forge.example.com/org/project/issues"
+    )
+    assert redact_url("https://git.zqcorp.io/projects/88442211/-/issues/3") == (
+        "https://forge.example.com/projects/project/-/issues/3"
+    )
