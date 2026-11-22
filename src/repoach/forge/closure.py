@@ -618,7 +618,7 @@ def _ipv6(text: str) -> ipaddress.IPv6Address | None:
     body = text.strip("[]")
     head, gap, tail = body.partition("::")
     groups = [*(head.split(":") if head else []), *(tail.split(":") if tail else [])]
-    shaped = all(0 < len(g) <= 4 and set(g) <= _HEX for g in groups)
+    shaped = all(0 < len(g) <= 4 and all(c in _HEX for c in g) for g in groups)
     fits = len(groups) < 8 if gap else len(groups) == 8
     return ipaddress.IPv6Address(body) if shaped and fits else None
 

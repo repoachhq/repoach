@@ -1228,6 +1228,8 @@ def test_a_bracketed_ipv6_literal_is_judged_like_an_ipv4_address() -> None:
     assert [h.host for h in closure.hosts("git@[fd00::1]:o/r")] == ["[fd00::1]"]
     assert closure.hosts("see [fd00::1] and [fd00::1]:80 and a[::1]") == []
     assert closure.hosts("see [1:2] [1:2:3] [x::1] [::g] [] [:::]") == []
+    assert [h.host for h in closure.hosts("see http://[::]/x")] == ["[::]"]
+    assert closure.public_addresses("ssh [2a00:1450::1]") == ["[2a00:1450::1]"]
     assert closure.public_addresses("ssh [2a00:1450:4001::1]:22") == ["[2a00:1450:4001::1]"]
     assert closure.public_addresses("ssh [2A00:1450:4001::1]") == ["[2A00:1450:4001::1]"]
     assert closure.public_addresses("see http://[2a00:1450:4001::1]/x") == []
