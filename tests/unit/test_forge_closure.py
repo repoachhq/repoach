@@ -1045,7 +1045,7 @@ def test_reader_positions_flags_and_edges_by_enumeration() -> None:
     for phrase in ("version  8.8.8.8:80", "versio 8.8.8.8:80", "a version: 8.8.8.8:80"):
         assert [h.host for h in closure.hosts(phrase)] == ["8.8.8.8"], phrase
     assert closure.hosts("x //8.8.8.8/y")[0].led
-    assert [(h.host, h.led) for h in closure.hosts("x /8.8.8.8/y")] == [("8.8.8.8", False)]
+    assert closure.hosts("x /8.8.8.8/y") == []
     assert [h.host for h in closure.hosts("a=1.1.1.1:80")] == ["1.1.1.1"]
     assert [h.host for h in closure.hosts("a>1.1.1.1:80")] == ["1.1.1.1"]
     for comparator in ("==", ">=", "<=", "~=", "!="):
@@ -1330,6 +1330,31 @@ def test_the_version_guard_of_a_led_address_is_observable() -> None:
         assert closure.hosts(text) == [], text
     for text in ("http://8.8.8.8 y", "//8.8.8.8 y", "x@8.8.8.8 y", "http://8.8.8.8/x"):
         assert [h.host for h in closure.hosts(text)] == ["8.8.8.8"], text
+
+
+def test_a_quad_after_a_single_slash_is_a_version_and_a_comparator_allows_spaces() -> None:
+    """D8 IPv4 (0.20, C4 and C59): a path segment is a version context; spaces after a comparator keep it one."""
+    for text in (
+        "https://repo.maven.apache.org/maven2/x/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.pom",
+        "https://pypi.org/project/x/1.2.3.4/files",
+        "https://files.pythonhosted.org/packages/ab/cd/12.6.1.1/x.whl",
+        "https://api.nuget.org/v3-flatcontainer/x/1.2.3.4/x.1.2.3.4.nupkg",
+        "x /8.8.8.8/y",
+        "proxy/104.16.0.1:8080/x",
+        "a/1.2.3.4",
+    ):
+        assert [h.host for h in closure.hosts(text) if h.host[0].isdigit()] == [], text
+    for text in ("//8.8.8.8/x", "x//8.8.8.8/y", "http://8.8.8.8/x"):
+        assert [(h.host, h.led) for h in closure.hosts(text)] == [("8.8.8.8", True)], text
+    assert [h.host for h in closure.hosts("see 1.2.3.4/24")] == ["1.2.3.4"]
+    assert closure.hosts("see 10.0.0.0/8")[0].led is False
+    for gap in ("", " ", "  ", "   ", "\t"):
+        for comparator in closure._COMPARATORS:
+            assert closure.hosts(f"pkg {comparator}{gap}8.8.8.8:80") == [], (comparator, gap)
+            assert closure.hosts(f"pkg {comparator}{gap}8.8.8.8/x") == [], (comparator, gap)
+    assert closure.hosts("pkg  >=   8.8.8.8:80") == []
+    assert [h.host for h in closure.hosts("pkg >>  8.8.8.8:80")] == ["8.8.8.8"]
+    assert [h.host for h in closure.hosts("pkg ==\n8.8.8.8:80")] == ["8.8.8.8"]
 
 
 def test_an_ipv6_zone_id_is_part_of_the_literal_and_an_ipv4_tail_is_read() -> None:

@@ -681,8 +681,17 @@ def _runs(text: str) -> list[tuple[int, int, str]]:
 
 
 def _version_context(text: str, start: int, end: int) -> bool:
+    """Whether the quad at ``start:end`` stands in a version position, never an address.
+
+    A path segment (a single ``/`` right before it, not ``//``:
+    ``/ojdbc8/19.3.0.0/``), a comparator operand with any spaces
+    (``pkg  >=  1.2.3.4``), a ``version`` label's value, or a quad carrying
+    a pre-release or build tag (``-``, ``+`` right after).
+    """
     before = text[:start]
-    if before.rstrip(" ").endswith(_COMPARATORS):
+    if before.endswith("/") and not before.endswith("//"):
+        return True
+    if before.rstrip(" \t").endswith(_COMPARATORS):
         return True
     stem = before[:-1] if before[-1:] in (" ", ":", "=") else before
     return stem.casefold().endswith("version") or text[end : end + 1] in ("-", "+")
@@ -705,9 +714,12 @@ def hosts(text: str) -> list[Host]:
     :data:`HOST_TLDS` and a first label that is not a reverse-DNS head.
     A dotted IPv4 address follows the same rule whatever its octets: it is
     a host when it is led by a scheme, a ``<local>@`` or ``//``, or followed
-    by ``/<segment>`` or ``:<port digits>``, outside a version context; a
-    bare quad in prose is ordinary text. A bracketed IPv6 address, with or
-    without a zone id, is a host when it is led.
+    by ``/<segment>`` or ``:<port digits>``, outside a version context
+    (:func:`_version_context`); a bare quad in prose is ordinary text. A
+    quad right after a single ``/`` (not ``//``) is a path segment, a
+    version context (``/ojdbc8/19.3.0.0/``), so ``1.2.3.4/24`` is still an
+    address (followed) and ``x /8.8.8.8/y`` is not. A bracketed IPv6
+    address, with or without a zone id, is a host when it is led.
     """
     found: list[Host] = []
     for start, end, run in _runs(text):

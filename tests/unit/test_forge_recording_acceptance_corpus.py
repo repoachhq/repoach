@@ -9392,6 +9392,35 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="GET https://forge.example.com/users/org for org"),
         markers=("api.kvncloud.io", "kvnperson"),
     ),
+    Row(
+        id="v20_version_segment_maven_four_part",
+        source="verify019/probes.py",
+        inp=Sample(
+            body="[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.pom"
+        ),
+        outcome=Written(
+            text="[INFO] Downloading from central: https://repo.maven.apache.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.pom"
+        ),
+    ),
+    Row(
+        id="v20_version_segment_pypi_four_part",
+        source="verify019/probes.py",
+        inp=Sample(body="see https://pypi.org/project/x/1.2.3.4/files"),
+        outcome=Written(text="see https://pypi.org/project/x/1.2.3.4/files"),
+    ),
+    Row(
+        id="v20_version_segment_pythonhosted_four_part",
+        source="verify019/probes.py",
+        inp=Sample(body="https://files.pythonhosted.org/packages/ab/cd/12.6.1.1/x.whl"),
+        outcome=Written(text="https://files.pythonhosted.org/packages/ab/cd/12.6.1.1/x.whl"),
+    ),
+    Row(
+        id="v20_public_ipv4_as_path_segment_NG4_9",
+        source="fable020/sweep.py",
+        inp=Sample(body="see https://files.pythonhosted.org/104.16.0.1/json"),
+        outcome=Written(text="see https://files.pythonhosted.org/104.16.0.1/json"),
+        residual=True,
+    ),
 )
 
 
