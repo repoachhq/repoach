@@ -14,6 +14,7 @@ import ipaddress
 import re
 import string
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -1398,6 +1399,41 @@ def test_a_quad_after_a_single_slash_is_a_version_and_a_comparator_allows_spaces
     assert closure.hosts("pkg  >=   8.8.8.8:80") == []
     assert [h.host for h in closure.hosts("pkg >>  8.8.8.8:80")] == ["8.8.8.8"]
     assert [h.host for h in closure.hosts("pkg ==\n8.8.8.8:80")] == ["8.8.8.8"]
+
+
+def test_the_readers_are_linear_in_the_text() -> None:
+    """C15 (0.20): the host readers look back without copying the prefix; 5 000 URLs and a 1 MB diff stay under a bound."""
+    none = closure.Known(())
+    many = " ".join(f"http://a{i}.b{i}.io/x/y" for i in range(5000))
+    started = time.perf_counter()
+    assert len(closure.hosts(many)) == 5000
+    assert closure.judge(many, none) == closure.Refusal("unknown host")
+    diff = ("+" + "x.y.z 1.2.3 a.b.c.io " * 20) * 5000
+    assert closure.hosts(diff) == [] and closure.judge(diff, none) is None
+    assert time.perf_counter() - started < 8.0
+    for text, expected in (
+        ("1://acme.zz", []),
+        ("x+y-z.q://acme.zz", ["acme.zz"]),
+        ("a ://acme.zz", []),
+        ("://acme.zz", []),
+        ("+.-://acme.zz", []),
+        ("é://acme.zz", []),
+        ("svn+ssh://acme.zz", ["acme.zz"]),
+        ("a@acme.zz", ["acme.zz"]),
+        ("=@acme.zz", []),
+        ("x //8.8.8.8/y", ["8.8.8.8"]),
+        ("x /8.8.8.8/y", []),
+        ("version 8.8.8.8:80", []),
+        ("Version: 8.8.8.8:80", ["8.8.8.8"]),
+        ("Version:8.8.8.8:80", []),
+        ("aversion=8.8.8.8:80", []),
+        ("versio 8.8.8.8:80", ["8.8.8.8"]),
+        ("pkg  >=\t 8.8.8.8:80", []),
+        ("8.8.8.8:80", ["8.8.8.8"]),
+    ):
+        assert [h.host for h in closure.hosts(text)] == expected, text
+    assert closure._scheme_before("http", 4) and not closure._scheme_before("1", 1)
+    assert not closure._scheme_before("", 0) and closure._scheme_before("x", 1)
 
 
 def test_a_mailbox_on_a_placeholder_address_names_no_one() -> None:

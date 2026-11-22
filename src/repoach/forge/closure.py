@@ -492,7 +492,10 @@ _SEGMENT_START = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
 
 _LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
-_SCHEME_BEFORE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*$")
+_SCHEME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789" + "+.-"
+)
+"""The characters of a URL scheme (RFC 3986 ``ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )``)."""
 
 _STRING_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\(/)")
 """The string-literal escapes of JSON and the C family that hide a delimiter: ``\\uXXXX``, ``\\xHH`` and ``\\/``."""
@@ -719,11 +722,19 @@ def _local_before(text: str, at: int) -> str:
     return local if any(c.isalnum() for c in local) else ""
 
 
+def _scheme_before(text: str, end: int) -> bool:
+    """Whether a scheme ends right at ``end``: a run of :data:`_SCHEME_CHARS` holding a letter."""
+    begin = end
+    while begin > 0 and text[begin - 1] in _SCHEME_CHARS:
+        begin -= 1
+    return any(c.isalpha() for c in text[begin:end])
+
+
 def _led(text: str, start: int) -> bool:
-    before = text[:start]
-    if before.endswith("://") and _SCHEME_BEFORE.search(before[:-3]):
+    """Whether ``<scheme>://`` or ``<local>@`` stands right before offset ``start``; reads back, never copies."""
+    if text.endswith("://", 0, start) and _scheme_before(text, start - 3):
         return True
-    return before.endswith("@") and _local_before(text, start - 1) != ""
+    return text.endswith("@", 0, start) and _local_before(text, start - 1) != ""
 
 
 def _runs(text: str) -> list[tuple[int, int, str]]:
@@ -747,13 +758,16 @@ def _version_context(text: str, start: int, end: int) -> bool:
     (``pkg  >=  1.2.3.4``), a ``version`` label's value, or a quad carrying
     a pre-release or build tag (``-``, ``+`` right after).
     """
-    before = text[:start]
-    if before.endswith("/") and not before.endswith("//"):
+    if text.endswith("/", 0, start) and not text.endswith("//", 0, start):
         return True
-    if before.rstrip(" \t").endswith(_COMPARATORS):
+    unspaced = start
+    while unspaced > 0 and text[unspaced - 1] in " \t":
+        unspaced -= 1
+    if text.endswith(_COMPARATORS, 0, unspaced):
         return True
-    stem = before[:-1] if before[-1:] in (" ", ":", "=") else before
-    return stem.casefold().endswith("version") or text[end : end + 1] in ("-", "+")
+    stem = start - 1 if text[start - 1 : start] in (" ", ":", "=") else start
+    labelled = text[max(0, stem - 7) : stem].casefold() == "version"
+    return labelled or text[end : end + 1] in ("-", "+")
 
 
 def _followed(text: str, end: int) -> bool:
@@ -783,7 +797,7 @@ def hosts(text: str) -> list[Host]:
     found: list[Host] = []
     for start, end, run in _runs(text):
         led = _led(text, start)
-        slashes = text[:start].endswith("//")
+        slashes = text.endswith("//", 0, start)
         address = _ipv4(run.rstrip("."))
         if (
             address is not None
@@ -805,7 +819,7 @@ def hosts(text: str) -> list[Host]:
         ):
             found.append(Host(host, False, start, end))
     for start, end, _address in _bracketed(text):
-        if _led(text, start) or text[:start].endswith("//"):
+        if _led(text, start) or text.endswith("//", 0, start):
             found.append(Host(text[start:end], True, start, end, literal=True))
     return found
 
@@ -831,7 +845,7 @@ def public_addresses(text: str) -> list[str]:
     found = []
     for start, end, address in _bracketed(text):
         literal = text[start:end]
-        led = _led(text, start) or text[:start].endswith("//")
+        led = _led(text, start) or text.endswith("//", 0, start)
         if not led and address.is_global and literal.count(":") > 2:
             found.append(literal)
     return found
