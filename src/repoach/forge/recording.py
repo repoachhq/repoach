@@ -1725,17 +1725,18 @@ def _walk_dicts(node: object) -> list[dict[str, object]]:
     return []
 
 
-def _follow_segments(segments: list[str], *, instance: bool) -> list[str]:
+def _follow_segments(segments: list[str], *, full: bool) -> list[str]:
     """The segments after a host that name its namespace and repository.
 
-    On the recorded project's own host every segment counts (the project's
-    pages sit under its repository); on any other host only the first two
-    do, so ``//cdn.example.io/<ns>/<repo>/app.js`` keeps ``app.js``.
+    In a URL on the recorded instance every segment counts, since the
+    project's pages sit under its repository; after any other lead
+    (``//cdn.example.io/<ns>/<repo>/app.js``, a bare host, another
+    host's URL) only the first two do, so the file name stays.
     """
     named = [s for s in segments if s]
     if not named:
         return []
-    if instance or "-" in named or named[0].casefold() in _API_ROOTS:
+    if full or "-" in named or named[0].casefold() in _API_ROOTS:
         return segments
     return named[:2]
 
@@ -1909,7 +1910,8 @@ def known_values(
             if is_public_forge_host(place.host):
                 continue
             follow = _follow_segments(
-                _path_after(text, place.end), instance=place.host.casefold() == instance
+                _path_after(text, place.end),
+                full=text[: place.start].endswith("://") and place.host.casefold() == instance,
             )
             if follow:
                 _segments(follow, hard=False)
