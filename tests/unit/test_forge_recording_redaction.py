@@ -3930,7 +3930,20 @@ def test_path_identity_names_the_namespace_and_the_repository_by_enumeration() -
     ghe_user = identity(["api", "v3", "users", "zqu", ""])
     assert ghe_user.segments == ["api", "v3", "users", "org", ""]
     assert ghe_user.namespace == ("zqu",)
-    assert identity(["API", "V3", "REPOS"]).segments == ["org", "project"]
+    assert identity(["API", "V3", "repos", "zqo", "zqr"]).segments == [
+        "API",
+        "V3",
+        "repos",
+        "org",
+        "project",
+    ]
+    assert identity(["api", "v3", "repos", "zqo", "zqr", ""]).segments[-1] == ""
+    assert identity(["api", "v3", "repos", "zqo"]).segments == ["api", "v3", "repos", "org"]
+    assert identity(["api", "v3", "users", "zqu"]).segments == ["api", "v3", "users", "org"]
+    assert identity(["api", "v3", "orgs", "zqo", "x"]).segments == ["api", "v3", "orgs", "org", "x"]
+    assert identity(["api", "v3", "apps", "zqa", "x"]).segments == ["api", "v3", "apps", "org", "x"]
+    assert identity(["api", "x", "repos", "zqo", "zqr"]).repository == "zqr"
+    assert identity(["api", "v3", "gists", "zqo", "zqr"]).segments == ["org", "project"]
     assert identity(["api", "v4", "projects", "123"]) == recording.PathIdentity(
         ["api", "v4", "projects", "123"]
     )

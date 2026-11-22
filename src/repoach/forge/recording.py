@@ -688,7 +688,7 @@ def path_identity(segments: list[str]) -> PathIdentity:
         len(core) > 3
         and core[0].casefold() == "api"
         and _API_VERSION_RE.match(core[1])
-        and core[2].casefold() in _API_RESOURCES
+        and core[2] in _API_RESOURCES
     ):
         inner = path_identity([*core[2:], *trailing])
         return PathIdentity([*core[:2], *inner.segments], inner.namespace, inner.repository)
