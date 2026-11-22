@@ -55,7 +55,7 @@ import re
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from repoach.core.logging import route_default_logs_to_stderr
 from repoach.forge import closure
@@ -163,7 +163,7 @@ def redact_output(stdout: str) -> str:
     return redact_stdout(stdout)
 
 
-def _exchanges(node: object) -> object:
+def _exchanges(node: object) -> Any:
     """Redact every exchange-shaped object of ``node``, recursively."""
     if isinstance(node, dict):
         out = {k: _exchanges(v) for k, v in node.items()}
@@ -217,17 +217,18 @@ def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
     stack: list[object] = [data]
     while stack:
         node = stack.pop(0)
-        if isinstance(node, str) and node.lstrip()[:1] in ("{", "["):
-            stack[:0] = decode_json_values(node) or []
-            continue
-        for _path, login in login_values(node):
-            _add(login, mention=False)
-        for login in mentions(node):
-            _add(login, mention=True)
-        if isinstance(node, dict):
-            stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
-        elif isinstance(node, list):
-            stack[:0] = list(node)
+        if isinstance(node, str):
+            if node.lstrip()[:1] in ("{", "["):
+                stack[:0] = decode_json_values(node) or []
+        else:
+            for _path, login in login_values(node):
+                _add(login, mention=False)
+            for login in mentions(node):
+                _add(login, mention=True)
+            if isinstance(node, dict):
+                stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
+            elif isinstance(node, list):
+                stack[:0] = list(node)
     return found
 
 
@@ -245,28 +246,27 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
     following = {"author": 2, "service": 1, "bot": 1}
     bot = data.get("bot_username")
     unclassified = _unclassified_logins(data)
+    siblings = {b.casefold(): b for b in unclassified if b.casefold().endswith("[bot]")}
     stems = {
-        k: next(b for b in unclassified if b.casefold() == f"{k.casefold()}[bot]")
-        for k in unclassified
-        if not k.casefold().endswith("[bot]")
-        and any(b.casefold() == f"{k.casefold()}[bot]" for b in unclassified)
+        k: siblings[f"{k.casefold()}[bot]"]
+        for k, mention_only in unclassified.items()
+        if not mention_only and f"{k.casefold()}[bot]" in siblings
     }
     for login, mention_only in unclassified.items():
-        if login in stems:
-            continue
-        if login == bot or login.casefold().endswith("[bot]"):
-            kind = "bot"
-        elif GITLAB_PROJECT_BOT_RE.match(login):
-            kind = "service"
-        else:
-            kind = "author"
-        while True:
-            n = following[kind]
-            following[kind] = n + 1
-            word = kind if n == 1 else f"{kind}-{n}"
-            if not re.search(rf'"{re.escape(word)}\\*"', text):
-                break
-        roles[MENTION_ONLY_PREFIX + login if mention_only else login] = word
+        if login not in stems:
+            if login == bot or login.casefold().endswith("[bot]"):
+                kind = "bot"
+            elif GITLAB_PROJECT_BOT_RE.match(login):
+                kind = "service"
+            else:
+                kind = "author"
+            while True:
+                n = following[kind]
+                following[kind] = n + 1
+                word = kind if n == 1 else f"{kind}-{n}"
+                if not re.search(rf'"{re.escape(word)}\\*"', text):
+                    break
+            roles[MENTION_ONLY_PREFIX + login if mention_only else login] = word
     for stem, bot_login in stems.items():
         roles[stem] = roles[bot_login]
     return roles
@@ -296,7 +296,7 @@ def _mention_text(text: str, roles: dict[str, str]) -> str:
     return outside_literals(text, rewrite)
 
 
-def _rename(node: object, roles: dict[str, str]) -> object:
+def _rename(node: object, roles: dict[str, str]) -> Any:
     """Replace ``roles`` logins under login keys and as mentions; JSON stdout is walked inside."""
     if isinstance(node, dict):
         out: dict[str, object] = {}
@@ -336,7 +336,7 @@ def _dumps(values: list[object]) -> str:
     return "\n".join(json.dumps(v, ensure_ascii=False) for v in values)
 
 
-def _remap_ids(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -> object:
+def _remap_ids(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -> Any:
     """Remap user ids in every exchange's JSON stdout; an unchanged answer keeps its bytes."""
     if isinstance(node, dict):
         out = {k: _remap_ids(v, ids, forge, keep) for k, v in node.items()}
@@ -353,7 +353,7 @@ def _remap_ids(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -
     return node
 
 
-def _remap_projects(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -> object:
+def _remap_projects(node: object, ids: UserIdMap, forge: str, keep: frozenset[int]) -> Any:
     """Remap repository ids in every exchange and ``api/v4/projects/<id>`` URL (Q2 0.10, 0.13); unchanged JSON keeps its bytes."""
     if isinstance(node, dict):
         out: dict[str, object] = {}
@@ -429,7 +429,7 @@ def fixture_known(
     )
 
 
-def _replace_known(node: object, known: closure.Known) -> object:
+def _replace_known(node: object, known: closure.Known) -> Any:
     """Replace every known value in every string of a fixture; keys, ``forge`` and ``method`` are left."""
     if isinstance(node, dict):
         out: dict[str, object] = {}
@@ -477,19 +477,19 @@ def redact_fixture(
     keep_projects = trusted_declaration(
         data.get(SYNTHETIC_PROJECT_IDS_KEY), SYNTHETIC_PROJECT_ID_START, SYNTHETIC_PROJECT_ID_END
     )
-    out = cast(dict[str, object], _exchanges(data))
+    out: dict[str, Any] = _exchanges(data)
     for key in ("args", "kwargs", "result"):
         if key in out:
             out[key] = redact_urls_in_value(out[key])
     roles = legacy_roles(out)
     if roles:
-        out = cast(dict[str, object], _rename(out, roles))
-    out = cast(dict[str, object], _remap_ids(out, ids, forge, keep))
-    out = cast(dict[str, object], _remap_projects(out, projects, forge, keep_projects))
+        out = _rename(out, roles)
+    out = _remap_ids(out, ids, forge, keep)
+    out = _remap_projects(out, projects, forge, keep_projects)
     known = fixture_known(
         data, roles=roles, remote=remote, denylist=denylist, ids=ids, projects=projects, forge=forge
     )
-    out = cast(dict[str, object], _replace_known(out, known))
+    out = _replace_known(out, known)
     method = out.get("method")
     if "result" in out and isinstance(method, str):
         out["result"] = ids.apply_result(out["result"], forge=forge, method=method, keep=keep)
@@ -504,9 +504,7 @@ def redact_fixture(
     if list(data) == sorted(data):
         out = dict(sorted(out.items()))
     try:
-        recorder().refuse_unclassified(
-            cast(dict[str, Any], out), recorder().Denylist(denylist), known
-        )
+        recorder().refuse_unclassified(out, recorder().Denylist(denylist), known)
     except recorder().UnclassifiedValueError as exc:
         raise ResidualValueError(str(exc)) from exc
     return out
@@ -557,7 +555,7 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
     deny: DenylistLike = recorder().read_denylist() if denylist is None else denylist
     paths = sorted(root.rglob("*.json"))
     loaded = [(p, p.read_text(encoding="utf-8")) for p in paths]
-    fixtures = [cast(dict[str, object], json.loads(text)) for _p, text in loaded]
+    fixtures: list[dict[str, object]] = [json.loads(text) for _p, text in loaded]
     ids = UserIdMap(start=corpus_start(fixtures))
     projects = UserIdMap.for_projects(
         corpus_start(

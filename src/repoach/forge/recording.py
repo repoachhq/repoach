@@ -872,7 +872,7 @@ def redact_urls_in_text(text: str) -> str:
     return _SYSTEM_NOREPLY_RE.sub(_system_noreply, step)
 
 
-def redact_urls_in_value(value: object) -> object:
+def redact_urls_in_value(value: Any) -> Any:
     """Redact URLs in a decoded value whose keys are kept (a fixture's ``result``).
 
     A string under a :data:`URL_KEYS` key goes through :func:`redact_url`
@@ -1026,7 +1026,7 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     return outside_literals(text, rewrite)
 
 
-def classify_logins(payload: object, roles: dict[str, str]) -> object:
+def classify_logins(payload: Any, roles: dict[str, str]) -> Any:
     """Replace every login in ``payload`` by its class word, recursively.
 
     A string under a :data:`LOGIN_KEYS` key is looked up in ``roles``
@@ -1311,8 +1311,8 @@ class UserIdMap:
         return payload
 
     def apply_projects(
-        self, payload: object, *, forge: str, keep: frozenset[int] = frozenset()
-    ) -> object:
+        self, payload: Any, *, forge: str, keep: frozenset[int] = frozenset()
+    ) -> Any:
         """Remap the ``id`` of every repository object and ``api/v4/projects/<id>`` URL (0.10, 0.13 R6-D5)."""
         if isinstance(payload, dict):
             repository = is_repository_object(payload)
@@ -2020,7 +2020,7 @@ def replace_known(text: str, known: closure.Known, mapping: dict[str, str] | Non
     )
 
 
-def replace_known_in_value(value: object, known: closure.Known) -> object:
+def replace_known_in_value(value: Any, known: closure.Known) -> Any:
     """:func:`replace_known` on every string of a decoded value; keys are never rewritten."""
     if isinstance(value, dict):
         return {k: replace_known_in_value(v, known) for k, v in value.items()}

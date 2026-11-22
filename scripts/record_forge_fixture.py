@@ -68,7 +68,7 @@ import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from repoach.core.logging import get_logger, route_default_logs_to_stderr
 from repoach.core.paths import user_config_dir
@@ -599,19 +599,13 @@ def record(
     projects = UserIdMap.for_projects()
     calls = synthesize_user_ids(calls, ids, forge=forge_name, projects=projects)
     args = list(
-        cast(
-            list[Any],
-            projects.apply_projects(
-                classify_logins(redact_urls_in_value(args), roles), forge=forge_name
-            ),
+        projects.apply_projects(
+            classify_logins(redact_urls_in_value(args), roles), forge=forge_name
         )
     )
     kwargs = dict(
-        cast(
-            dict[str, Any],
-            projects.apply_projects(
-                classify_logins(redact_urls_in_value(kwargs), roles), forge=forge_name
-            ),
+        projects.apply_projects(
+            classify_logins(redact_urls_in_value(kwargs), roles), forge=forge_name
         )
     )
     known = known_values(
@@ -624,8 +618,8 @@ def record(
         forge=forge_name,
     )
     calls = replace_known_in_calls(calls, known)
-    args = list(cast(list[Any], replace_known_in_value(args, known)))
-    kwargs = dict(cast(dict[str, Any], replace_known_in_value(kwargs, known)))
+    args = list(replace_known_in_value(args, known))
+    kwargs = dict(replace_known_in_value(kwargs, known))
     bot = roles.get(forge.bot_username, forge.bot_username)
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
 
