@@ -20,10 +20,11 @@ forges read (:data:`repoach.forge.recording.RECORDED_FIELDS`) are kept,
 and a fixture in which a token- or email-shaped value survives is refused.
 
 SP-RECORDER-REDACTS-BY-CLASS: personal keys, a user object's ``name``
-and URLs are dropped, every URL and scp-style remote gets the placeholder
-host, namespace and repository (:func:`repoach.forge.recording.redact_url`,
+and URLs are dropped, every URL and scp-style remote the convenience layer
+recognises gets the placeholder host, namespace and repository
+(:func:`repoach.forge.recording.redact_url`,
 ``forge.example.com/org/project``), and every login becomes its class
-word in stdout, argv and the method's arguments — the bot ``bot``, the
+word in stdout, argv and the method's arguments: the bot ``bot``, the
 account an ``is_maintainer`` call asks about ``maintainer``, the change
 request's author ``author``, any other ``[bot]`` login ``bot-<n>``, a
 GitLab project bot ``service`` and any other login ``author-<n>``; a
@@ -32,19 +33,22 @@ that form only, and a decorator or a dotted name is no handle; the
 :data:`repoach.forge.recording.NON_PERSON_LOGINS` are kept. Every user
 id becomes a synthetic one in ``1001..1999``
 (:class:`repoach.forge.recording.UserIdMap`), declared under
-``synthetic_user_ids``. The result is then recomputed by replaying the
-redacted exchanges, so the fixture is what the readers return from it.
-The whole fixture, its ``source`` included, is then judged: a login left
-unclassified, a string of a generic personal class (a home path, a public
-IPv4 address, a mailbox outside the documentation domains), a URL or a
-remote on a host the redaction rewrites, or an entry of the maintainer's
-deny-list exits 2 naming the key path, never the value, and writes
-nothing. ``source`` names the forge and the date, never the checkout's
-folder. Last, the closure oracle (:func:`repoach.forge.recording.residual`)
-searches the built fixture, casefolded and URL-decoded, for the needles
-taken from the raw exchanges, the ``origin`` remote and the deny-list —
-the logins, hosts, namespace and repository segments and raw ids — and a
-hit is exit 2 too (``residual <kind> <n> at <path>``). Logs go to stderr;
+``synthetic_user_ids``.
+
+Every private value the recording holds in a structured field, and the
+hosts the oracle reads in any string, is a known value
+(:func:`repoach.forge.recording.known_values`); each is replaced in every
+string by its class token (:func:`repoach.forge.recording.replace_known`),
+whatever shape it stands in. The result is then recomputed by replaying
+the redacted exchanges, so the fixture is what the readers return from it.
+The whole fixture, its ``source`` included, is judged last: a login left
+unclassified, a home path, an entry of the maintainer's deny-list or
+anything the closure oracle (:func:`repoach.forge.closure.judge`)
+refuses (a known value, a host that is neither a placeholder nor public,
+a public address, a mailbox that is neither a placeholder nor a
+documentation literal) exits 2 naming a reason, a kind, an ordinal and
+the key path, never the value, and writes nothing. ``source`` names the
+forge and the date, never the checkout's folder. Logs go to stderr;
 stdout is the fixture's path or nothing.
 
 ``--trim N`` keeps only the first ``N`` items of every JSON array in
@@ -167,7 +171,7 @@ class Denylist:
         return denylist_hit(text, self._patterns)
 
     def needle_values(self) -> tuple[str, ...]:
-        """The entries, for :func:`repoach.forge.recording.needles` only; never printed."""
+        """The entries, for :func:`repoach.forge.recording.known_values` only; never printed."""
         return self._entries
 
 

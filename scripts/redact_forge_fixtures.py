@@ -37,9 +37,11 @@ fixture declares, and a corpus that would need a number past the range is
 exit 2 with nothing written. A recorded fixture's ``source`` names the forge, never the
 checkout's folder. A repository id becomes a synthetic one in
 ``2001..2999``, declared under ``synthetic_project_ids``. Every fixture is
-judged by the closure oracle (:func:`repoach.forge.recording.residual`)
-against the logins it held, the public forges' hosts and the deny-list
-before any file is written; a hit is exit 2 and nothing is written. A
+judged by the recorder's own judge
+(:func:`record_forge_fixture.refuse_unclassified`, the closure oracle
+:func:`repoach.forge.closure.judge`) against the known values of its own
+structured fields, the public forges' hosts and the deny-list before any
+file is written; a refusal is exit 2 and nothing is written. A
 second run changes nothing, which
 ``tests/unit/test_forge_recording_redaction.py`` pins.
 """
@@ -534,7 +536,7 @@ class DenylistLike(Protocol):
     """What :func:`run` needs of the recorder's opaque ``Denylist``."""
 
     def needle_values(self) -> tuple[str, ...]:
-        """The entries, for the needles only."""
+        """The entries, for the known values only."""
         ...
 
 
@@ -542,7 +544,7 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
     """Redact every ``*.json`` under ``root``; return the files that changed (or would).
 
     Every file is transformed and judged by the closure oracle
-    (:func:`fixture_needles`, :func:`repoach.forge.recording.residual`)
+    (:func:`fixture_known`, :func:`repoach.forge.closure.judge`)
     before any is written, so a refusal leaves the corpus as it was.
 
     Args:

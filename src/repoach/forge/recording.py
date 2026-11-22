@@ -284,7 +284,7 @@ judged inside ``github-actions[bot]``, nor replaced there. Public forge
 documentation hosts (``docs.github.com``, ``docs.gitlab.com``, matched
 case-insensitively since 0.14) are literals too (0.13), so keeping
 documentation links in text does not collide with the ``github.com`` /
-``gitlab.com`` host needles regardless of host casing.
+``gitlab.com`` host values regardless of host casing.
 
 ``gh api repos/:owner/:repo/…`` and ``glab api projects/:id/…`` are
 written by the forge code and expanded by the CLI; ``--- /dev/null`` is
@@ -616,8 +616,8 @@ def path_identity(segments: list[str]) -> PathIdentity:
     """Split a forge path's segments into its placeholder form, its namespace and its repository.
 
     The one reading of a forge path: :func:`redact_url` writes
-    :attr:`PathIdentity.segments`, and :func:`needles` takes the raw
-    namespace and repository as segment needles (0.10), so the two cannot
+    :attr:`PathIdentity.segments`, and :func:`known_values` takes the raw
+    namespace and repository as segment values (0.10), so the two cannot
     disagree on which segment named someone. Empty segments from double
     slashes (``org//repo``, ``repos//o/r``, ``users//u``) are collapsed
     so they never shift or leak a real segment (0.12, D4); a trailing
@@ -1516,7 +1516,7 @@ NEEDLE_MIN_LENGTH = 4
 """A needle shorter than this would match everywhere; it is a configuration error (exit 2), never a skip."""
 
 FORGE_HOSTS: frozenset[str] = frozenset({"github.com", "api.github.com", "gitlab.com"})
-"""The public forges' own hosts, needles of every recording (I3, 0.10)."""
+"""The public forges' own hosts, known values of every recording (I3, 0.10)."""
 
 PUBLIC_FORGE_DOMAINS: tuple[str, ...] = ("github.com", "gitlab.com", "githubusercontent.com")
 """A host under one of these is a public forge's (0.11): a project there is the recorded one or a third party's."""
