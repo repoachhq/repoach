@@ -1833,7 +1833,7 @@ def known_values(
             _add("segment", identity.repository, PLACEHOLDER_PROJECT, hard=hard)
 
     def _host(value: str) -> None:
-        _add("host", value, PLACEHOLDER_HOST, hard=False)
+        soft["host"].append((value, PLACEHOLDER_HOST))
 
     def _add_id(number: object, *, project: bool) -> None:
         key = user_id_key(number)
@@ -1872,15 +1872,10 @@ def known_values(
             who = next((str(node[k]) for k in USER_KEYS if isinstance(node.get(k), str)), "")
             word = _role(who)
             name = node.get("name")
-            if isinstance(name, str) and len(name) >= min_length:
-                if CLASS_WORD_RE.match(name.casefold()) is None:
-                    _add("name", name, "", hard=False)
+            if isinstance(name, str):
+                _add("name", name, "", hard=False)
                 for part in _NAME_WORD_RE.findall(name):
-                    if (
-                        len(part) >= NEEDLE_MIN_LENGTH
-                        and CLASS_WORD_RE.match(part.casefold()) is None
-                    ):
-                        _add("name", part, word, hard=False)
+                    _add("name", part, word, hard=False)
             for key in _MAILBOX_KEYS:
                 box = node.get(key)
                 if isinstance(box, str) and "@" in box:
@@ -1928,9 +1923,7 @@ def known_values(
         _add_id(number, project=True)
     for text in (t for _p, t in strings):
         for match in _PROJECT_ID_RE.finditer(text):
-            number = int(match.group("id"))
-            if number not in keep_projects:
-                _add("id", str(number), str(projects.synthetic(number, forge=forge)), hard=True)
+            _add_id(int(match.group("id")), project=True)
 
     entries: list[tuple[str, str]] = []
     tokens: dict[str, str] = {}
@@ -2017,9 +2010,7 @@ def replace_known(text: str, known: closure.Known, mapping: dict[str, str] | Non
         ``text`` with each known value replaced.
     """
     table = dict(mapping) if mapping is not None else known.mapping()
-    live = tuple(
-        (v, table[v]) for k, v in known.entries if k not in ("login", "deny-list") and table.get(v)
-    )
+    live = tuple((v, table[v]) for k, v in known.entries if k != "login" and table.get(v))
     built = _replacer(live)
     if built is None:
         return text
