@@ -8022,11 +8022,11 @@ ROWS: tuple[Row, ...] = (
         outcome=Refused("public address at exchanges[0].stdout[0].body"),
     ),
     Row(
-        id="v17_private_ipv4_path_followed_reads_namespace",
+        id="v17_private_ipv4_path_followed_NG4_2",
         source="verify017/probes.py",
         inp=Sample(body="see 10.1.2.3/kvnteam/kvnbilling"),
-        outcome=Written(text="see 10.1.2.3/org/project"),
-        markers=("kvnteam", "kvnbilling"),
+        outcome=Written(text="see 10.1.2.3/kvnteam/kvnbilling"),
+        residual=True,
     ),
     Row(
         id="v17_stderr_known_url",
@@ -9207,11 +9207,11 @@ ROWS: tuple[Row, ...] = (
         residual=True,
     ),
     Row(
-        id="v18_followed_private_ipv4_reads_namespace",
+        id="v18_followed_private_ipv4_port_path_NG4_2",
         source="verify018/probes.py",
         inp=Sample(body="see 10.1.2.3:8080/kvnteam/kvnbilling"),
-        outcome=Written(text="see 10.1.2.3:8080/org/project"),
-        markers=("kvnteam", "kvnbilling"),
+        outcome=Written(text="see 10.1.2.3:8080/kvnteam/kvnbilling"),
+        residual=True,
     ),
     Row(
         id="v18_led_public_ipv4_mapped_in_ipv6",
@@ -9293,6 +9293,37 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="cc zqupkey", extra_item={"LOGIN": "zqupkey"}),
         outcome=Written(text="cc zqupkey"),
         residual=True,
+    ),
+    Row(
+        id="v20_followed_private_ipv4_curl_metrics",
+        source="verify019/probes.py",
+        inp=Sample(body="curl 10.0.0.12:8080/metrics"),
+        outcome=Written(text="curl 10.0.0.12:8080/metrics"),
+    ),
+    Row(
+        id="v20_followed_private_ipv4_api_path",
+        source="verify019/probes.py",
+        inp=Sample(body="GET 10.0.0.12:8080/api/v1/health"),
+        outcome=Written(text="GET 10.0.0.12:8080/api/v1/health"),
+    ),
+    Row(
+        id="v20_followed_private_ipv4_docker_pull",
+        source="verify019/probes.py",
+        inp=Sample(body="docker pull 10.0.0.12:5000/library/python:3.12"),
+        outcome=Written(text="docker pull 10.0.0.12:5000/library/python:3.12"),
+    ),
+    Row(
+        id="v20_followed_private_ipv4_stderr_dial",
+        source="fable020/sweep.py",
+        inp=Sample(stderr="dial tcp 10.96.0.1:443/api: i/o timeout"),
+        outcome=Written(text="dial tcp 10.96.0.1:443/api: i/o timeout"),
+    ),
+    Row(
+        id="v20_led_private_ipv4_reads_namespace",
+        source="fable020/sweep.py",
+        inp=Sample(body="see //10.1.2.3/kvnteam/kvnbilling/x"),
+        outcome=Written(text="see //forge.example.com/org/project/x"),
+        markers=("10.1.2.3", "kvnteam", "kvnbilling"),
     ),
 )
 

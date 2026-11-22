@@ -5047,22 +5047,31 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
     assert _kinds(needles(_one_call(plain), roles={}), "name") == []
 
 
-def test_known_values_read_the_namespace_and_repository_after_an_address_in_every_case() -> None:
-    """D8 (0.19): a quad led or followed is a host, its namespace and repository are read, public or private."""
+def test_known_values_read_the_path_after_a_led_address_only() -> None:
+    """D8, D7 source 3 (0.20): a led quad is a host whose path is read; a followed quad is judged, its path never read."""
+    for body in (
+        "see https://104.16.0.1/kvnteam/kvnbilling",
+        "see https://10.1.2.3/kvnteam/kvnbilling",
+        "see //10.1.2.3/kvnteam/kvnbilling/x",
+        "ssh deploy@10.1.2.3:kvnteam/kvnbilling",
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
+        assert _kinds(found, "host"), body
     for body in (
         "see 104.16.0.1/kvnteam/kvnbilling",
         "see 10.1.2.3/kvnteam/kvnbilling",
         "see 104.16.0.1:8080/kvnteam/kvnbilling",
-        "see https://104.16.0.1/kvnteam/kvnbilling",
-        "see https://10.1.2.3/kvnteam/kvnbilling",
+        "curl 10.0.0.12:8080/metrics",
+        "docker pull 10.0.0.12:5000/library/python:3.12",
     ):
         found = needles(_one_call({"body": body}), roles={})
-        assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
+        assert _kinds(found, "segment") == [], body
+        assert not any(h[0].isdigit() for h in _kinds(found, "host")), body
+        assert recording.replace_known(body, found) == body
     for body in ("see 104.16.0.1/kvnteam/kvnbilling", "see 104.16.0.1:8080/kvnteam"):
         found = needles(_one_call({"body": body}), roles={})
-        assert "104.16.0.1" not in _kinds(found, "host"), body
-        out = recording.replace_known(body, found)
-        assert closure.judge(out, found) == closure.Refusal("public address"), out
+        assert closure.judge(body, found) == closure.Refusal("public address"), body
     found = needles(_one_call({"body": "see https://104.16.0.1/kvnteam"}), roles={})
     assert "104.16.0.1" in _kinds(found, "host")
 

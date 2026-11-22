@@ -1984,9 +1984,10 @@ def known_values(
                 )
                 if allowed and not place.literal:
                     continue
-                if not allowed and (place.led or not closure.is_address(place.host)):
+                reads_path = place.led or not closure.is_address(place.host)
+                if not allowed and reads_path:
                     _host(place.host)
-                if is_public_forge_host(place.host):
+                if is_public_forge_host(place.host) or not reads_path:
                     continue
                 follow = _follow_segments(
                     _path_after(form, place.end),
