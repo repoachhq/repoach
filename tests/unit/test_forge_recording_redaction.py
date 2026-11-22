@@ -4965,3 +4965,17 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
     assert kept == {"source": f"{head}, tagged org", "case": "recorded"}
     other = redact_fixtures._replace_known({"body": "recorded here", "note": f"{head}"}, known)
     assert other == {"body": "org here", "note": f"{head}".replace("recorded", "org")}
+
+
+def test_offline_stems_touch_only_the_mention_of_their_own_bot() -> None:
+    """D4: a mention is a stem only when ``<mention>[bot]`` is a login of the fixture, whatever else is mentioned."""
+    mention = {"body": "cc @zqname"}
+    long_login = {"user": {"login": "zqname12345"}}
+    assert redact_fixtures.legacy_roles(_roles_data(mention, long_login)) == {
+        "@zqname": "author-2",
+        "zqname12345": "author-3",
+    }
+    elsewhere = _roles_data({"body": "cc @zqother"}, {"user": {"login": "zqbot[bot]"}})
+    assert redact_fixtures.legacy_roles(elsewhere) == {"@zqother": "author-2", "zqbot[bot]": "bot"}
+    plain = _roles_data({"user": {"login": "zqplain"}}, {"user": {"login": "zqbot[bot]"}})
+    assert redact_fixtures.legacy_roles(plain) == {"zqplain": "author-2", "zqbot[bot]": "bot"}
