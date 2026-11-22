@@ -32,7 +32,7 @@ from structlog.testing import capture_logs
 from repoach.forge import closure, recording
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
-from repoach.forge.protocol import Forge
+from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
     NON_PERSON_LOGINS,
     PERSONAL_KEY_RE,
@@ -4607,3 +4607,209 @@ def test_remaining_edges_of_the_path_reader_the_roles_and_the_soft_names() -> No
         "marta",
         "zqkowalska",
     )
+
+
+def _record_through(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    forge: Forge,
+    *,
+    method: str,
+    args: list[Any],
+    kwargs: dict[str, Any] | None = None,
+    trim: int | None = None,
+    remote: str = "",
+    author: str | None = None,
+) -> dict[str, Any]:
+    """Run :func:`rec.record` against ``forge`` and read the fixture back."""
+    _no_denylist(monkeypatch, tmp_path)
+    monkeypatch.setattr(rec, "select_forge", lambda **_kw: forge)
+    monkeypatch.setattr(rec, "origin_url", lambda _cwd: remote)
+    monkeypatch.setattr(rec, "_author_of", lambda *_a: author)
+    path = rec.record(
+        forge_name="github",
+        cwd=tmp_path,
+        case="c",
+        method=method,
+        args=args,
+        kwargs=kwargs or {},
+        trim=trim,
+        out_root=tmp_path / "out",
+    )
+    return cast(dict[str, Any], json.loads(path.read_text()))
+
+
+def _github_answering(tmp_path: Path, answers: list[CommandResult]) -> Forge:
+    """A GitHub forge whose calls answer ``answers`` in order, the last one repeated."""
+    forge = _build("github", tmp_path, "repoach-bot")
+    queue = list(answers)
+
+    def _spawn(argv: list[str], *, input_data: str | None = None) -> CommandResult:
+        done = queue.pop(0) if len(queue) > 1 else queue[0]
+        return CommandResult(
+            returncode=done.returncode, stdout=done.stdout, stderr=done.stderr, argv=list(argv)
+        )
+
+    cast(Any, forge)._spawn = _spawn
+    return forge
+
+
+def test_record_trims_classifies_the_maintainer_and_names_its_refusals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The recorder: ``--trim``, the ``is_maintainer`` login, the declared keys, and each refusal's exact words."""
+    permission = json.dumps(
+        {"permission": "admin", "role_name": "admin", "user": {"login": "zqmaint"}}
+    )
+    forge = _github_answering(tmp_path, [CommandResult(0, permission, "", [])])
+    fixture = _record_through(
+        monkeypatch, tmp_path, forge, method="is_maintainer", args=["zqmaint"]
+    )
+    assert fixture["args"] == ["maintainer"]
+    assert json.loads(fixture["calls"][0]["stdout"])["user"]["login"] == "maintainer"
+    assert fixture["calls"][0]["args"][1].endswith("collaborators/maintainer/permission")
+    assert set(fixture) == {
+        "forge",
+        "case",
+        "method",
+        "args",
+        "kwargs",
+        "bot_username",
+        "source",
+        "trimmed",
+        "calls",
+        "result",
+        "raises",
+    }
+    assert fixture["method"] == "is_maintainer" and fixture["trimmed"] is None
+    assert fixture["bot_username"] == "repoach-bot"
+    listing = json.dumps(
+        [
+            {"id": 1, "body": f"body {n}", "user": {"login": "zqlogin", "id": 74928163 + n}}
+            for n in range(3)
+        ]
+    )
+    many = _github_answering(tmp_path, [CommandResult(0, listing, "", [])])
+    trimmed = _record_through(
+        monkeypatch, tmp_path, many, method="conversation_comments", args=[7], trim=2
+    )
+    assert trimmed["trimmed"] == 2
+    assert len(json.loads(trimmed["calls"][0]["stdout"])) == 2
+    whole = _record_through(
+        monkeypatch,
+        tmp_path,
+        _github_answering(tmp_path, [CommandResult(0, listing, "", [])]),
+        method="conversation_comments",
+        args=[7],
+    )
+    assert len(json.loads(whole["calls"][0]["stdout"])) == 3
+    binary = tmp_path / "gh"
+
+    class _Extra(GitHubForge):
+        def conversation_comments(self, number: int, *extra: Any, **_kw: Any) -> list[Any]:
+            self._spawn([str(binary), "api", "x"])
+            return []
+
+    extra = _Extra(cwd=tmp_path, gh_path=str(binary), bot_login="repoach-bot")
+    cast(Any, extra)._spawn = lambda argv, *, input_data=None: CommandResult(
+        0, "[]", "", list(argv)
+    )
+    host_only = _record_through(
+        monkeypatch,
+        tmp_path,
+        extra,
+        method="conversation_comments",
+        args=[7, "git.zqcorp.io"],
+        kwargs={"note": "see git.zqcorp.io and zqmainrepo"},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    assert host_only["args"] == [7, "forge.example.com"]
+    assert host_only["kwargs"] == {"note": "see forge.example.com and project"}
+    with pytest.raises(
+        SystemExit, match=r"^refusing to record write method 'post_comment': fixtures never post$"
+    ):
+        rec.record(
+            forge_name="github",
+            cwd=tmp_path,
+            case="c",
+            method="post_comment",
+            args=[],
+            kwargs={},
+            trim=None,
+            out_root=tmp_path / "w",
+        )
+    token = "ghp_" + "A1" * 12
+    leaky = _github_answering(tmp_path, [CommandResult(0, json.dumps([{"body": token}]), "", [])])
+    with pytest.raises(
+        SystemExit, match=r"^refusing to write a fixture carrying 1 secret-shaped value\(s\)$"
+    ):
+        _record_through(monkeypatch, tmp_path, leaky, method="conversation_comments", args=[7])
+    assert not (tmp_path / "w").exists()
+
+
+def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The replay of the redacted exchanges sets the classified bot, reports a forge error by its class and disagrees by exit."""
+    forge = _build("github", tmp_path, "repoach-bot")
+    monkeypatch.setattr(rec, "select_forge", lambda **_kw: forge)
+    probe = _build("github", tmp_path, "repoach-bot")
+    recorder = recording.RecordingSpawn(
+        inner=lambda argv, *, input_data=None: CommandResult(1, "", "boom", list(argv))
+    )
+    cast(Any, probe)._spawn = recorder
+    with pytest.raises(ForgeError):
+        probe.pull_request(7)
+    failing = [e.to_json() for e in recorder.exchanges]
+    result, raises = rec._replay("github", tmp_path, "pull_request", [7], {}, failing, "zqbotword")
+    assert (result, raises) == (None, "ForgeError") or raises is not None
+    assert forge._bot_login == "zqbotword"
+    other = _build("github", tmp_path, "repoach-bot")
+    monkeypatch.setattr(rec, "select_forge", lambda **_kw: other)
+    rec._replay("github", tmp_path, "pull_request", [7], {}, failing, None)
+    assert other._bot_login == "repoach-bot"
+    assert rec.generic_class("a /home/zqperson/x") == "home_path"
+    with pytest.raises(
+        rec.UnclassifiedValueError, match=r"^unclassified: exchanges\[0\]\.stdout\.user\.login$"
+    ):
+        rec.refuse_unclassified(
+            {"source": "s", "calls": [_exchange({"user": {"login": "zqunknown"}})]},
+            rec.Denylist(),
+            None,
+        )
+    stdin = rec.replace_known_in_calls(
+        [{"args": ["a"], "stdout": "x", "stdin": "zqgroup", "stderr": "zqgroup"}],
+        recording.known_values(
+            [[], [], {}, "git@h.io:zqgroup/zqrepo.git"],
+            roles={},
+            remote="git@h.io:zqgroup/zqrepo.git",
+        ),
+    )
+    assert stdin[0]["stdin"] == "org" and stdin[0]["stderr"] == "org"
+
+
+def test_build_roles_keeps_a_mention_when_a_longer_login_follows_and_skips_the_known_author() -> (
+    None
+):
+    """D2: only a ``[bot]`` login promotes its mention-only stem, and an author already named is not added twice."""
+    mention = {"args": [], "stdout": json.dumps({"body": "cc @zqname"})}
+    other = {"args": [], "stdout": json.dumps({"user": {"login": "zqname12345"}})}
+    assert rec.build_roles([mention, other], bot="", maintainer=None, author=None) == {
+        "@zqname": "author",
+        "zqname12345": "author-2",
+    }
+    upper = {"args": [], "stdout": json.dumps({"user": {"login": "ZQName[BOT]"}})}
+    assert rec.build_roles([mention, upper], bot="", maintainer=None, author=None) == {
+        "ZQName[BOT]": "bot",
+        "ZQName": "bot",
+    }
+    assert rec.build_roles([], bot="", maintainer=None, author="repoach-bot") == {}
+    assert rec.build_roles([other], bot="", maintainer=None, author="repoach-bot") == {
+        "zqname12345": "author-2"
+    }
+    assert rec.build_roles([], bot="zqrobot", maintainer=None, author="zqrobot") == {
+        "zqrobot": "bot"
+    }
+    assert rec.build_roles([], bot="", maintainer="zqmaint", author="zqmaint") == {
+        "zqmaint": "maintainer"
+    }
