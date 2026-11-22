@@ -1978,7 +1978,7 @@ def known_values(
                 )
                 if allowed and not place.literal:
                     continue
-                if not allowed:
+                if not allowed and (place.led or not closure.is_address(place.host)):
                     _host(place.host)
                 if is_public_forge_host(place.host):
                     continue

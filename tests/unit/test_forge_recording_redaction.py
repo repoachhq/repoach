@@ -491,7 +491,7 @@ def test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it(
     mailbox = "@".join(["p", "mail-provider.org"])
     nothing = closure.Known(())
     for text, reason in (
-        (f"ip {address} here", "public address"),
+        (f"ip {address}:22 here", "public address"),
         (f"mail {mailbox}", "unknown host"),
         ("mail p@10.0.0.5", "unknown host"),
         ("1+noreply@users.example.org", "unknown mailbox"),
@@ -3808,13 +3808,13 @@ def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate(
         call = _exchange([{"user": {"login": login}, "body": body}])
         return {"source": "s", "calls": [call]}
 
-    everything = "/home/zq/x zqdeny zqlogin git.acme.io/x 8.8.8.8 a@gmail.com"
+    everything = "/home/zq/x zqdeny zqlogin git.acme.io/x 8.8.8.8:22 a@gmail.com"
     steps = (
         (everything, r"^generic class home_path at "),
-        ("zqdeny zqlogin git.acme.io/x 8.8.8.8 a@gmail.com", r"^deny-list entry 1 at "),
-        ("zqlogin git.acme.io/x 8.8.8.8 a@gmail.com", r"^residual login 1 at "),
-        ("git.acme.io/x 8.8.8.8 a@gmail.com", r"^unknown host at "),
-        ("8.8.8.8 a@b.example.com", r"^public address at "),
+        ("zqdeny zqlogin git.acme.io/x 8.8.8.8:22 a@gmail.com", r"^deny-list entry 1 at "),
+        ("zqlogin git.acme.io/x 8.8.8.8:22 a@gmail.com", r"^residual login 1 at "),
+        ("git.acme.io/x 8.8.8.8:22 a@gmail.com", r"^unknown host at "),
+        ("8.8.8.8:22 a@b.example.com", r"^public address at "),
         ("a@b.example.com", r"^unknown mailbox at "),
     )
     for body, pattern in steps:
@@ -5045,6 +5045,26 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
     )
     plain = {"label": {"name": "bug", "color": "red"}, "repo": {"name": "zqmainrepo", "id": 5}}
     assert _kinds(needles(_one_call(plain), roles={}), "name") == []
+
+
+def test_known_values_read_the_namespace_and_repository_after_an_address_in_every_case() -> None:
+    """D8 (0.19): a quad led or followed is a host, its namespace and repository are read, public or private."""
+    for body in (
+        "see 104.16.0.1/kvnteam/kvnbilling",
+        "see 10.1.2.3/kvnteam/kvnbilling",
+        "see 104.16.0.1:8080/kvnteam/kvnbilling",
+        "see https://104.16.0.1/kvnteam/kvnbilling",
+        "see https://10.1.2.3/kvnteam/kvnbilling",
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
+    for body in ("see 104.16.0.1/kvnteam/kvnbilling", "see 104.16.0.1:8080/kvnteam"):
+        found = needles(_one_call({"body": body}), roles={})
+        assert "104.16.0.1" not in _kinds(found, "host"), body
+        out = recording.replace_known(body, found)
+        assert closure.judge(out, found) == closure.Refusal("public address"), out
+    found = needles(_one_call({"body": "see https://104.16.0.1/kvnteam"}), roles={})
+    assert "104.16.0.1" in _kinds(found, "host")
 
 
 def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:

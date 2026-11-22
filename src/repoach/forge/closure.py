@@ -402,6 +402,7 @@ _COMPARATORS = ("==", ">=", "<=", "~=", "!=")
 
 PUBLIC_SUFFIXES: frozenset[str] = frozenset(
     {
+        "apache.org",
         "cloudflare.com",
         "crates.io",
         "docker.io",
@@ -438,7 +439,7 @@ _DOC_MAILBOX_HOST = re.compile(
 
 _RUN = re.compile(r"[A-Za-z0-9.-]+")
 
-_BRACKETED = re.compile(r"\[([0-9a-f:]{2,45})\]", re.I)
+_BRACKETED = re.compile(r"\[([0-9a-f:.]{2,45})(?:%(?:25)?[A-Za-z0-9._~-]+)?\]", re.I)
 
 _HEX = frozenset("0123456789abcdefABCDEF")
 
@@ -491,7 +492,8 @@ class Host:
 
     Attributes:
         host: The host as written, without its trailing dot.
-        led: Whether a scheme ``://``, a ``<local>@`` or, for an address, ``//`` stands right before it.
+        led: Whether a scheme ``://``, a ``<local>@`` or, for an address, ``//`` stands right before it;
+            an address that is only followed is not led.
         start: Offset of the first character.
         end: Offset after the last character.
         literal: Whether it is a bracketed IPv6 literal, ``host`` then holding the brackets.
@@ -616,11 +618,16 @@ def _ipv4(text: str) -> ipaddress.IPv4Address | None:
 def _ipv6(text: str) -> ipaddress.IPv6Address | None:
     """``text`` as an IPv6 address in hex groups, its brackets dropped, else ``None``."""
     body = text.strip("[]")
+    mapped = body.rpartition(":")[2]
+    if ":" in body and "." in mapped:
+        if _ipv4(mapped) is None:
+            return None
+        body = body[: len(body) - len(mapped)] + "0:0"
     head, gap, tail = body.partition("::")
     groups = [*(head.split(":") if head else []), *(tail.split(":") if tail else [])]
     shaped = all(0 < len(g) <= 4 and all(c in _HEX for c in g) for g in groups)
     fits = len(groups) < 8 if gap else len(groups) == 8
-    return ipaddress.IPv6Address(body) if shaped and fits else None
+    return ipaddress.IPv6Address(text.strip("[]")) if shaped and fits else None
 
 
 def _bracketed(text: str) -> list[tuple[int, int, ipaddress.IPv6Address]]:
@@ -696,17 +703,23 @@ def hosts(text: str) -> list[Host]:
     ``//`` or followed by ``/<segment>`` or ``:<port digits>``, it is a
     host when it has three labels or more, a last label of
     :data:`HOST_TLDS` and a first label that is not a reverse-DNS head.
-    A dotted IPv4 address or a bracketed IPv6 address is a host when it
-    is led by a scheme, a ``<local>@`` or ``//``, outside a version
-    context.
+    A dotted IPv4 address follows the same rule whatever its octets: it is
+    a host when it is led by a scheme, a ``<local>@`` or ``//``, or followed
+    by ``/<segment>`` or ``:<port digits>``, outside a version context; a
+    bare quad in prose is ordinary text. A bracketed IPv6 address, with or
+    without a zone id, is a host when it is led.
     """
     found: list[Host] = []
     for start, end, run in _runs(text):
         led = _led(text, start)
         slashes = text[:start].endswith("//")
         address = _ipv4(run.rstrip("."))
-        if address is not None and (led or slashes) and not _version_context(text, start, end):
-            found.append(Host(run.rstrip("."), True, start, end))
+        if (
+            address is not None
+            and (led or slashes or _followed(text, end))
+            and not _version_context(text, start, end)
+        ):
+            found.append(Host(run.rstrip("."), led or slashes, start, end))
         labels = _label_run(run)
         host = run[:-1] if run.endswith(".") else run
         if labels is None:
@@ -726,31 +739,25 @@ def hosts(text: str) -> list[Host]:
     return found
 
 
-def _version_shaped(address: ipaddress.IPv4Address) -> bool:
-    """Whether a dotted quad reads as a version (``1.8.0.252``, ``4.8.1.0``): a zero octet is no host's."""
-    return 0 in address.packed
+def is_address(host: str) -> bool:
+    """Whether ``host`` is a dotted IPv4 address."""
+    return _ipv4(_canonical_host(host)) is not None
+
+
+def is_public_address(host: str) -> bool:
+    """Whether ``host`` is a dotted IPv4 address outside every reserved network."""
+    address = _ipv4(_canonical_host(host))
+    return address is not None and not any(address in n for n in IPV4_RESERVED)
 
 
 def public_addresses(text: str) -> list[str]:
-    """Every un-led public IPv4 or bracketed IPv6 address of ``text``, outside a version context.
+    """Every un-led public bracketed IPv6 address of ``text``.
 
-    An IPv6 literal needs more than two colons: ``xs[2020::]`` and
-    ``xs[::2]`` are slices, and a slice holds two at most.
+    A literal needs more than two colons: ``xs[2020::]`` and ``xs[::2]``
+    are slices, and a slice holds two at most. A public IPv4 address is
+    judged as a host (:func:`hosts`, :func:`judge`), never here.
     """
     found = []
-    for start, end, run in _runs(text):
-        body = run.rstrip(".")
-        address = _ipv4(body)
-        if (
-            address is None
-            or _led(text, start)
-            or text[:start].endswith("//")
-            or _version_context(text, start, end)
-            or _version_shaped(address)
-        ):
-            continue
-        if not any(address in n for n in IPV4_RESERVED):
-            found.append(body)
     for start, end, address in _bracketed(text):
         literal = text[start:end]
         led = _led(text, start) or text[:start].endswith("//")
@@ -905,8 +912,12 @@ def judge(text: str, known: Known) -> Refusal | None:
         return Refusal("residual", left[0], left[1])
     forms = decoded_forms(_blank(text, known.literals))
     for place in (h for form in forms for h in hosts(form)):
-        if not is_placeholder_host(place.host) and not is_public_host(place.host):
+        if is_placeholder_host(place.host) or is_public_host(place.host):
+            continue
+        if place.led or not is_address(place.host):
             return Refusal("unknown host")
+        if is_public_address(place.host):
+            return Refusal("public address")
     if any(public_addresses(form) for form in forms):
         return Refusal("public address")
     if any(not is_literal_mailbox(b) for form in forms for b in mailboxes(form)):
