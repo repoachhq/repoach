@@ -1237,6 +1237,12 @@ def test_the_judge_reads_hosts_addresses_and_mailboxes_in_every_decoded_form() -
         assert closure.judge(text, none) == closure.Refusal("unknown mailbox"), text
     for text in ("ssh to 8&#46;8&#46;8&#46;8:22 now", "ssh to 8%2E8%2E8%2E8%3A22 now"):
         assert closure.judge(text, none) == closure.Refusal("public address"), text
+    for text in (
+        "ssh to %5B2a00%3A1450%3A4001%3A%3A1%5D now",
+        "ssh to &#91;2a00:1450:4001::1&#93; now",
+        "ssh to [2a00:1450:4001::1] now",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("public address"), text
     assert closure.judge("see https%3A%2F%2Fexample.com%2Fx and a%40example.com", none) is None
     assert closure.judge("100%25 done, a%2Fb", none) is None
     assert closure.judge("see https%3A%2F%2Fdocs.python.org%2F3", none) is None
