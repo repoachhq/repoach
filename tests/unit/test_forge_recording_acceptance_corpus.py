@@ -7673,6 +7673,1391 @@ ROWS: tuple[Row, ...] = (
             text="GitHub <noreply@forge.example.com>; Actions <noreply@forge.example.com>; keep `https://example.com`"
         ),
     ),
+    Row(
+        id="v17_cookie_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Set-Cookie: host=git.zqcorp.io; Path=/",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="Set-Cookie: host=forge.example.com; Path=/"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_upper_path",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="See GIT.ZQCORP.IO/ZQGROUP/ZQMAINREPO now",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="See forge.example.com/org/project now"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_pct_dots_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="host git%2Ezqcorp%2Eio here",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Refused("residual host 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_html_entity_dots_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="host git&#46;zqcorp&#46;io here",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Refused("residual host 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_json_u_escape_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="host \\u0067it.zqcorp.io here",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Refused("residual host 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_pct_encoded_url_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="next=https%3A%2F%2Fgit.zqcorp.io%2Fzqgroup%2Fzqmainrepo",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="next=https%3A%2F%2Fforge.example.com%2Forg%2Fproject"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_pct_ns_repo",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="path zqgroup%2Fzqmainrepo here",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="path org%2Fproject here"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_double_pct_ns_repo",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="path zqgroup%252Fzqmainrepo here",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Refused("residual segment 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_host_port_path",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="pull git.zqcorp.io:8443/zqgroup/zqmainrepo",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="pull forge.example.com:8443/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_unc_path",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="share \\\\git.zqcorp.io\\zqmainrepo\\x",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="share \\\\forge.example.com\\project\\x"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_git_plus_ssh_port",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="git+ssh://git@git.zqcorp.io:2222/zqgroup/zqmainrepo.git",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="git+ssh://git@forge.example.com/org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_md_link_login",
+        source="verify017/probes.py",
+        inp=Sample(body="by [zqxjdoe7](https://github.com/zqxjdoe7)"),
+        outcome=Written(text="by [author](https://forge.example.com/org)"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_coauthor_login_local",
+        source="verify017/probes.py",
+        inp=Sample(body="Co-authored-by: Marta <zqxjdoe7@zqmail.io>"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_login_possessive",
+        source="verify017/probes.py",
+        inp=Sample(body="zqxjdoe7's branch is stale"),
+        outcome=Written(text="author's branch is stale"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_login_upper",
+        source="verify017/probes.py",
+        inp=Sample(body="ping ZQXJDOE7 please"),
+        outcome=Written(text="ping author please"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_uid_query",
+        source="verify017/probes.py",
+        inp=Sample(body="https://example.com/x?user_id=74928163&v=4"),
+        outcome=Written(text="https://example.com/x?user_id=1001&v=4"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_login_github_io",
+        source="verify017/probes.py",
+        inp=Sample(body="https://zqxjdoe7.github.io/zqmainrepo/"),
+        outcome=Written(text="https://forge.example.com/org/"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_ns_gitlab_io",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="pages at https://zqgroup.gitlab.io/zqmainrepo/",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="pages at https://forge.example.com/org/"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_ssh_config",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Host git.zqcorp.io\n  User zqxjdoe7\n  Port 2222",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="Host forge.example.com\n  User author\n  Port 2222"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_docker_registry_port",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="FROM git.zqcorp.io:5000/zqgroup/zqmainrepo:latest",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="FROM forge.example.com:5000/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_pip_git_https",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="pip install git+https://git.zqcorp.io/zqgroup/zqmainrepo.git@v1",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="pip install git+https://forge.example.com/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_go_get",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="go get git.zqcorp.io/zqgroup/zqmainrepo@latest",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="go get forge.example.com/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_go_import_unknown_private",
+        source="verify017/probes.py",
+        inp=Sample(body='import "code.kvncloud.io/kvnteam/kvnbilling/pkg"'),
+        outcome=Written(text='import "forge.example.com/org/project/pkg"'),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_unknown_private_userinfo_port",
+        source="verify017/probes.py",
+        inp=Sample(body="https://deploy:tok@code.kvncloud.io:8443/kvnteam/kvnbilling"),
+        outcome=Written(text="https://forge.example.com/org/project"),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_apex_two_label_scheme_led",
+        source="verify017/probes.py",
+        inp=Sample(body="https://kvncloud.io/kvnteam/kvnbilling"),
+        outcome=Written(text="https://forge.example.com/org/project"),
+        markers=("kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_apex_two_label_unled_NG4_3",
+        source="verify017/probes.py",
+        inp=Sample(body="see kvncloud.io/kvnteam/kvnbilling"),
+        outcome=Written(text="see kvncloud.io/kvnteam/kvnbilling"),
+    ),
+    Row(
+        id="v17_apex_two_label_pct_scheme",
+        source="verify017/probes.py",
+        inp=Sample(body="redirect=https%3A%2F%2Fkvncloud.io%2Fkvnteam%2Fkvnbilling"),
+        outcome=Written(text="redirect=https%3A%2F%2Fforge.example.com%2Forg%2Fproject"),
+        markers=("kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_three_label_pct_scheme",
+        source="verify017/probes.py",
+        inp=Sample(body="redirect=https%3A%2F%2Fcode.kvncloud.io%2Fkvnteam%2Fkvnbilling"),
+        outcome=Written(text="redirect=https%3A%2F%2Fforge.example.com%2Forg%2Fproject"),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_three_label_pct_path_only",
+        source="verify017/probes.py",
+        inp=Sample(body="see code.kvncloud.io%2Fkvnteam%2Fkvnbilling"),
+        outcome=Written(text="see forge.example.com%2Forg%2Fproject"),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_mailbox_entity_at",
+        source="verify017/probes.py",
+        inp=Sample(body="mail kvnperson&#64;kvnmail.io"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_mailbox_pct_at",
+        source="verify017/probes.py",
+        inp=Sample(body="mail kvnperson%40kvnmail.io"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_mailto_known_login",
+        source="verify017/probes.py",
+        inp=Sample(body="mailto:zqxjdoe7@zqmail.io"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_personal_mailbox_unknown",
+        source="verify017/probes.py",
+        inp=Sample(body="write to kvnperson@kvnmail.io"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_mailbox_example_subdomain",
+        source="verify017/probes.py",
+        inp=Sample(body="write to kvnperson@mail.example.com"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_ipv6_url_private_path",
+        source="verify017/probes.py",
+        inp=Sample(body="http://[2001:db8::1]/kvnteam/kvnbilling/x"),
+        outcome=Written(text="http://[2001:db8::1]/org/project/x"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_ipv6_url_known_path",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="http://[2001:db8::1]/zqgroup/zqmainrepo/x",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="http://[2001:db8::1]/org/project/x"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_public_ipv4_led_path",
+        source="verify017/probes.py",
+        inp=Sample(body="http://51.15.20.30/kvnteam/kvnbilling"),
+        outcome=Written(text="http://forge.example.com/org/project"),
+        markers=("51.15.20.30", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_public_ipv4_unled",
+        source="verify017/probes.py",
+        inp=Sample(body="ssh to 51.15.20.30:22"),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_private_ipv4_path_NG4_2",
+        source="verify017/probes.py",
+        inp=Sample(body="see 10.1.2.3/kvnteam/kvnbilling"),
+        outcome=Written(text="see 10.1.2.3/kvnteam/kvnbilling"),
+    ),
+    Row(
+        id="v17_stderr_known_url",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stderr="fatal: unable to access 'https://git.zqcorp.io/zqgroup/zqmainrepo.git/'",
+        ),
+        outcome=Written(
+            text="fatal: unable to access 'https://forge.example.com/org/project.git/'"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_stdin_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stdin='{"body": "cc zqxjdoe7 at git.zqcorp.io"}',
+        ),
+        outcome=Written(text='{"body": "cc author at forge.example.com"}'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_kwargs_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            top_kwargs={"ref": "zqgroup/zqmainrepo@git.zqcorp.io"},
+        ),
+        outcome=Refused("unknown mailbox at kwargs.{key 0}"),
+    ),
+    Row(
+        id="v17_argv_encoded_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            api_path="projects/zqgroup%2Fzqmainrepo/merge_requests/42/notes",
+        ),
+        outcome=Written(text='["api", "projects/org%2Fproject/merge_requests/42/notes"]'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_diff_repo_dir",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/zqmainrepo/x.py b/zqmainrepo/x.py\n+import zqmainrepo\n",
+        ),
+        outcome=Written(text="diff --git a/project/x.py b/project/x.py\n+import project\n"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_title_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            title="zqgroup/zqmainrepo: fix",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_json_key_known_segment",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={"zqgroup": {"zqmainrepo": 1}},
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_json_key_known_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={"git.zqcorp.io": 1},
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_node_id_in_stderr",
+        source="verify017/probes.py",
+        inp=Sample(
+            stderr="GraphQL: Could not resolve to a node with the global id of 'MDQ6VXNlcjc0OTI4MTYz'"
+        ),
+        outcome=Written(text="GraphQL: Could not resolve to a node with the global id of 'U_1001'"),
+        markers=("MDQ6VXNlcjc0OTI4MTYz",),
+    ),
+    Row(
+        id="v17_deny_pct",
+        source="verify017/probes.py",
+        inp=Sample(body="x zqd%65nyval y"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v17_deny_argv",
+        source="verify017/probes.py",
+        inp=Sample(api_path="repos/:owner/:repo/issues/42/comments?q=zqdenyval"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].args[1]"),
+    ),
+    Row(
+        id="v17_deny_key",
+        source="verify017/probes.py",
+        inp=Sample(extra_item={"zqdenyval": 1}),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="v17_deny_in_title",
+        source="verify017/probes.py",
+        inp=Sample(title="zqdenyval cleanup"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].title"),
+    ),
+    Row(
+        id="v17_prefixed_label_known_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="cdn-git.zqcorp.io/assets",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="forge.example.com/org"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_repo_as_subdomain",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="https://zqmainrepo.git.zqcorp.io/",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="https://forge.example.com/"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_login_as_subdomain_unknown",
+        source="verify017/probes.py",
+        inp=Sample(body="https://zqxjdoe7.kvncloud.io/"),
+        outcome=Written(text="https://forge.example.com/"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163", "kvncloud.io"),
+    ),
+    Row(
+        id="v17_s3_bucket_ns",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="https://zqgroup.s3.amazonaws.com/zqmainrepo/a.tgz",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="https://forge.example.com/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_autolink_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="<https://git.zqcorp.io/zqgroup/zqmainrepo>",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="<https://forge.example.com/org/project>"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_html_comment_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="<!-- mirror: git.zqcorp.io -->",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="<!-- mirror: forge.example.com -->"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_py_import_repo",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="from zqmainrepo.core import x",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="from project.core import x"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_hash_uid",
+        source="verify017/probes.py",
+        inp=Sample(body="see #74928163 on the tracker"),
+        outcome=Written(text="see #1001 on the tracker"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_host_trailing_dot",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="resolve git.zqcorp.io. first",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="resolve forge.example.com. first"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_login_curly_apostrophe",
+        source="verify017/probes.py",
+        inp=Sample(body="zqxjdoe7’s fix"),
+        outcome=Written(text="author’s fix"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_insteadof_token_var",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body='git config url."https://x:${TOKEN}@git.zqcorp.io/".insteadOf ssh://git@git.zqcorp.io/',
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(
+            text='git config url."https://forge.example.com/".insteadOf ssh://git@forge.example.com/'
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_json_in_json_string",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body='{"payload": "{\\"host\\": \\"git.zqcorp.io\\", \\"ns\\": \\"zqgroup\\"}"}',
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(
+            text='{"payload": "{\\"host\\": \\"forge.example.com\\", \\"ns\\": \\"org\\"}"}'
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_upper_scheme_host",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="HTTPS://GIT.ZQCORP.IO/ZQGROUP/ZQMAINREPO/-/ISSUES/1",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="https://forge.example.com/org/project/-/ISSUES/1"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_avatar_uid",
+        source="verify017/probes.py",
+        inp=Sample(body="https://avatars.githubusercontent.com/u/74928163?v=4"),
+        outcome=Written(text="https://forge.example.com/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_commit_author_name_no_login",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Thanks Zqkowalska",
+            extra_item={
+                "commit": {"author": {"name": "Marta Zqkowalska", "email": "marta@zqmail.io"}}
+            },
+        ),
+        outcome=Written(text="Thanks author"),
+        markers=("Zqkowalska", "zqmail.io"),
+    ),
+    Row(
+        id="v17_commits_authors_name",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Thanks Zqkowalska",
+            extra_item={
+                "commits": [
+                    {
+                        "authors": [
+                            {
+                                "login": "zqxjdoe7",
+                                "id": 74928163,
+                                "name": "Marta Zqkowalska",
+                                "email": "marta@zqmail.io",
+                            }
+                        ],
+                        "messageHeadline": "x",
+                    }
+                ]
+            },
+        ),
+        outcome=Written(text="Thanks author"),
+        markers=("Zqkowalska", "zqmail.io"),
+    ),
+    Row(
+        id="v17_assignee_no_prose_dropped_key_only",
+        source="verify017/probes.py",
+        inp=Sample(body="ok", extra_item={"assignees": [{"login": "zqassignee9", "id": 55443322}]}),
+        outcome=Written(text="ok"),
+        markers=("zqassignee9", "55443322"),
+    ),
+    Row(
+        id="v17_reviewer_in_requested_reviewers",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="cc zqrev5",
+            extra_item={"requested_reviewers": [{"login": "zqrev5", "id": 55443399}]},
+        ),
+        outcome=Written(text="cc author-2"),
+        markers=("zqrev5", "55443399"),
+    ),
+    Row(
+        id="v17_gitlab_user_web_url_selfhosted",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="profile https://git.zqcorp.io/zqxjdoe7",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="profile https://forge.example.com/org"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_known_host_old_gitlab_mr_route",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="see https://git.zqcorp.io/zqgroup/zqmainrepo/merge_requests/7",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="see https://forge.example.com/org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_ghe_api_url_key",
+        source="verify017/probes.py",
+        inp=Sample(
+            extra_item={
+                "url": "https://ghe.zqcorp.io/api/v3/repos/zqgroup/zqmainrepo/issues/comments/1"
+            }
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("ghe.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="v17_gitlab_group_web_url_key",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={"group": {"web_url": "https://git.zqcorp.io/groups/zqgroup"}},
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_ftp_known",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="ftp://git.zqcorp.io/zqgroup/zqmainrepo/",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="ftp://forge.example.com/org/project/"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_ws_scheme_unknown",
+        source="verify017/probes.py",
+        inp=Sample(body="wss://code.kvncloud.io/kvnteam/kvnbilling/socket"),
+        outcome=Written(text="wss://forge.example.com/org/project/socket"),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v17_legacy_node_odd_padding",
+        source="verify017/probes.py",
+        inp=Sample(body="id MDQ6VXNlcjc0OTI4MTYz=== x"),
+        outcome=Written(text="id U_1001=== x"),
+        markers=("MDQ6VXNlcjc0OTI4MTYz",),
+    ),
+    Row(
+        id="v17_legacy_node_lower",
+        source="verify017/probes.py",
+        inp=Sample(body="id mdq6vxnlcjc0oti4mtyz x"),
+        outcome=Written(text="id U_1001 x"),
+        markers=("mdq6vxnlcjc0oti4mtyz",),
+    ),
+    Row(
+        id="v17_zero_width_split_NG4_4",
+        source="verify017/probes.py",
+        inp=Sample(body="zqx\u200bjdoe7 here"),
+        outcome=Written(text="zqx\u200bjdoe7 here"),
+    ),
+    Row(
+        id="v17_host_in_dotenv_no_scheme",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="GIT_HOST=git.zqcorp.io\nGIT_REPO=zqgroup/zqmainrepo",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="GIT_HOST=forge.example.com\nGIT_REPO=org/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_priv_host_two_label_dotenv",
+        source="verify017/probes.py",
+        inp=Sample(body="CDN_HOST=kvncloud.io\nCDN_PATH=/kvnteam/kvnbilling"),
+        outcome=Written(text="CDN_HOST=kvncloud.io\nCDN_PATH=/kvnteam/kvnbilling"),
+    ),
+    Row(
+        id="v17_uid_padded_in_html_attr",
+        source="verify017/probes.py",
+        inp=Sample(body='<img data-user="74928163">'),
+        outcome=Written(text='<img data-user="1001">'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_pid_projects_prose",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="glab api projects/88442211",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={"project": {"id": 88442211}},
+        ),
+        outcome=Written(text="glab api projects/2001"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="v17_known_repo_in_c_include",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body='#include "zqmainrepo/api.h"',
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text='#include "project/api.h"'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_known_in_yaml_anchor",
+        source="verify017/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="repo: &r zqgroup/zqmainrepo\nhost: git.zqcorp.io",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+        ),
+        outcome=Written(text="repo: &r org/project\nhost: forge.example.com"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
+    ),
+    Row(
+        id="v17_js_response_data_id",
+        source="verify017/probes.py",
+        inp=Sample(body="```js\nconst userId = response.data.id;\n```"),
+        outcome=Written(text="```js\nconst userId = response.data.id;\n```"),
+    ),
+    Row(
+        id="v17_js_event_target_name",
+        source="verify017/probes.py",
+        inp=Sample(body="```js\nconst field = event.target.name;\n```"),
+        outcome=Written(text="```js\nconst field = event.target.name;\n```"),
+    ),
+    Row(
+        id="v17_py_self_logger_info",
+        source="verify017/probes.py",
+        inp=Sample(body='```py\nself.logger.info("started")\n```'),
+        outcome=Written(text='```py\nself.logger.info("started")\n```'),
+    ),
+    Row(
+        id="v17_py_request_user_email",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nreturn request.user.email\n```"),
+        outcome=Written(text="```py\nreturn request.user.email\n```"),
+    ),
+    Row(
+        id="v17_py_self_task_run",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nself.task.run()\n```"),
+        outcome=Written(text="```py\nself.task.run()\n```"),
+    ),
+    Row(
+        id="v17_py_self_server_host",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nhost = self.server.host\n```"),
+        outcome=Written(text="```py\nhost = self.server.host\n```"),
+    ),
+    Row(
+        id="v17_py_app_config_name",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nprint(app.config.name)\n```"),
+        outcome=Written(text="```py\nprint(app.config.name)\n```"),
+    ),
+    Row(
+        id="v17_js_this_props_id",
+        source="verify017/probes.py",
+        inp=Sample(body="```jsx\n<Item key={this.props.id} />\n```"),
+        outcome=Written(text="```jsx\n<Item key={this.props.id} />\n```"),
+    ),
+    Row(
+        id="v17_js_arr_items_at",
+        source="verify017/probes.py",
+        inp=Sample(body="```js\nconst last = arr.items.at(-1);\n```"),
+        outcome=Written(text="```js\nconst last = arr.items.at(-1);\n```"),
+    ),
+    Row(
+        id="v17_py_user_profile_group",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\ng = user.profile.group\n```"),
+        outcome=Written(text="```py\ng = user.profile.group\n```"),
+    ),
+    Row(
+        id="v17_py_self_browser_page",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nawait self.browser.page.goto(url)\n```"),
+        outcome=Written(text="```py\nawait self.browser.page.goto(url)\n```"),
+    ),
+    Row(
+        id="v17_ts_obj_meta_info",
+        source="verify017/probes.py",
+        inp=Sample(body="```ts\nconst v = pkg.meta.info;\n```"),
+        outcome=Written(text="```ts\nconst v = pkg.meta.info;\n```"),
+    ),
+    Row(
+        id="v17_java_system_out_println",
+        source="verify017/probes.py",
+        inp=Sample(body="```java\nSystem.out.println(x);\n```"),
+        outcome=Written(text="```java\nSystem.out.println(x);\n```"),
+    ),
+    Row(
+        id="v17_java_this_config_build",
+        source="verify017/probes.py",
+        inp=Sample(body="```java\nreturn this.config.build();\n```"),
+        outcome=Written(text="```java\nreturn this.config.build();\n```"),
+    ),
+    Row(
+        id="v17_java_reverse_dns",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```java\nimport com.fasterxml.jackson.core.JsonParser;\nimport org.apache.commons.io.IOUtils;\n```"
+        ),
+        outcome=Written(
+            text="```java\nimport com.fasterxml.jackson.core.JsonParser;\nimport org.apache.commons.io.IOUtils;\n```"
+        ),
+    ),
+    Row(
+        id="v17_go_comment_pkg",
+        source="verify017/probes.py",
+        inp=Sample(body="```go\nx := cfg.Server.Host // default host\nfmt.Println(x)\n```"),
+        outcome=Written(text="```go\nx := cfg.Server.Host // default host\nfmt.Println(x)\n```"),
+    ),
+    Row(
+        id="v17_go_struct_fields",
+        source="verify017/probes.py",
+        inp=Sample(body="```go\nreturn c.Config.App.Name\n```"),
+        outcome=Written(text="```go\nreturn c.Config.App.Name\n```"),
+    ),
+    Row(
+        id="v17_rust_mod_path",
+        source="verify017/probes.py",
+        inp=Sample(body="```rust\nuse crate::config::app::Name;\nlet v = self.state.id;\n```"),
+        outcome=Written(text="```rust\nuse crate::config::app::Name;\nlet v = self.state.id;\n```"),
+    ),
+    Row(
+        id="v17_c_struct_access",
+        source="verify017/probes.py",
+        inp=Sample(body="```c\nreturn ctx->cfg.net.host; // host\n```"),
+        outcome=Written(text="```c\nreturn ctx->cfg.net.host; // host\n```"),
+    ),
+    Row(
+        id="v17_cpp_namespace",
+        source="verify017/probes.py",
+        inp=Sample(body="```cpp\nstd::cout << app.config.name << std::endl;\n```"),
+        outcome=Written(text="```cpp\nstd::cout << app.config.name << std::endl;\n```"),
+    ),
+    Row(
+        id="v17_ts_window_app_config",
+        source="verify017/probes.py",
+        inp=Sample(body="```ts\nwindow.app.config.dev = true;\n```"),
+        outcome=Written(text="```ts\nwindow.app.config.dev = true;\n```"),
+    ),
+    Row(
+        id="v17_py_os_path",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\np = os.path.join(a, b)\nsys.stdout.write(p)\n```"),
+        outcome=Written(text="```py\np = os.path.join(a, b)\nsys.stdout.write(p)\n```"),
+    ),
+    Row(
+        id="v17_py_np_linalg_norm",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nn = np.linalg.norm(v)\n```"),
+        outcome=Written(text="```py\nn = np.linalg.norm(v)\n```"),
+    ),
+    Row(
+        id="v17_py_pandas_df_loc",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nv = df.loc[0].name\n```"),
+        outcome=Written(text="```py\nv = df.loc[0].name\n```"),
+    ),
+    Row(
+        id="v17_py_decorators",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```py\n@pytest.mark.parametrize('x', [1])\n@app.route('/x')\n@dataclass\n```"
+        ),
+        outcome=Written(
+            text="```py\n@pytest.mark.parametrize('x', [1])\n@app.route('/x')\n@dataclass\n```"
+        ),
+    ),
+    Row(
+        id="v17_css_at_rules",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```css\n@media (max-width: 600px) { body { margin: 0; } }\n@import url('base.css');\n@keyframes spin { }\n```"
+        ),
+        outcome=Written(
+            text="```css\n@media (max-width: 600px) { body { margin: 0; } }\n@import url('base.css');\n@keyframes spin { }\n```"
+        ),
+    ),
+    Row(
+        id="v17_css_font_face",
+        source="verify017/probes.py",
+        inp=Sample(body="```css\n@font-face { font-family: X; src: url(fonts/a.woff2); }\n```"),
+        outcome=Written(
+            text="```css\n@font-face { font-family: X; src: url(fonts/a.woff2); }\n```"
+        ),
+    ),
+    Row(
+        id="v17_scss_mixins",
+        source="verify017/probes.py",
+        inp=Sample(body="```scss\n@mixin flex { display: flex; }\n@include flex;\n```"),
+        outcome=Written(text="```scss\n@mixin flex { display: flex; }\n@include flex;\n```"),
+    ),
+    Row(
+        id="v17_version_four_part_jdk",
+        source="verify017/probes.py",
+        inp=Sample(body="Upgraded the JDK to 1.8.0.252 and dotnet to 4.8.1.0"),
+        outcome=Written(text="Upgraded the JDK to 1.8.0.252 and dotnet to 4.8.1.0"),
+    ),
+    Row(
+        id="v17_version_four_part_pinned_space",
+        source="verify017/probes.py",
+        inp=Sample(body="requires pkg == 1.2.3.4"),
+        outcome=Written(text="requires pkg == 1.2.3.4"),
+    ),
+    Row(
+        id="v17_ipv4_private_bind",
+        source="verify017/probes.py",
+        inp=Sample(body="Listening on 0.0.0.0:8080 and 127.0.0.1:5432"),
+        outcome=Written(text="Listening on 0.0.0.0:8080 and 127.0.0.1:5432"),
+    ),
+    Row(
+        id="v17_ipv4_doc_range",
+        source="verify017/probes.py",
+        inp=Sample(body="example peer 203.0.113.9 and 192.0.2.1"),
+        outcome=Written(text="example peer 203.0.113.9 and 192.0.2.1"),
+    ),
+    Row(
+        id="v17_ci_log_gha",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Run actions/checkout@v4\n  with: fetch-depth: 0\nnpm ERR! code ERESOLVE\nnpm ERR! peer dep missing"
+        ),
+        outcome=Written(
+            text="Run actions/checkout@v4\n  with: fetch-depth: 0\nnpm ERR! code ERESOLVE\nnpm ERR! peer dep missing"
+        ),
+    ),
+    Row(
+        id="v17_ci_log_pytest",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="FAILED tests/unit/test_x.py::test_y - AssertionError\n1 failed, 21 passed in 0.42s"
+        ),
+        outcome=Written(
+            text="FAILED tests/unit/test_x.py::test_y - AssertionError\n1 failed, 21 passed in 0.42s"
+        ),
+    ),
+    Row(
+        id="v17_ci_log_docker_pull",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Pulling from library/python\nDigest: sha256:ab12\nStatus: Downloaded newer image for python:3.12-slim"
+        ),
+        outcome=Written(
+            text="Pulling from library/python\nDigest: sha256:ab12\nStatus: Downloaded newer image for python:3.12-slim"
+        ),
+    ),
+    Row(
+        id="v17_ci_log_maven",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/commons/commons-io/2.11.0/commons-io-2.11.0.pom"
+        ),
+        outcome=Written(
+            text="[INFO] Downloading from central: https://forge.example.com/org/project"
+        ),
+    ),
+    Row(
+        id="v17_yaml_k8s",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: 2\n```"
+        ),
+        outcome=Written(
+            text="```yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  replicas: 2\n```"
+        ),
+    ),
+    Row(
+        id="v17_yaml_gitlab_ci",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```yaml\nimage: python:3.12\nstages: [test]\ntest:\n  script:\n    - pip install -e .\n    - pytest -q\n```"
+        ),
+        outcome=Written(
+            text="```yaml\nimage: python:3.12\nstages: [test]\ntest:\n  script:\n    - pip install -e .\n    - pytest -q\n```"
+        ),
+    ),
+    Row(
+        id="v17_toml_pyproject",
+        source="verify017/probes.py",
+        inp=Sample(
+            body='```toml\n[project]\nname = "demo"\nversion = "1.2.3"\nrequires-python = ">=3.12"\n```'
+        ),
+        outcome=Written(
+            text='```toml\n[project]\nname = "demo"\nversion = "1.2.3"\nrequires-python = ">=3.12"\n```'
+        ),
+    ),
+    Row(
+        id="v17_ini_setup_cfg",
+        source="verify017/probes.py",
+        inp=Sample(body="```ini\n[tool:pytest]\naddopts = -q\ntestpaths = tests\n```"),
+        outcome=Written(text="```ini\n[tool:pytest]\naddopts = -q\ntestpaths = tests\n```"),
+    ),
+    Row(
+        id="v17_dockerfile",
+        source="verify017/probes.py",
+        inp=Sample(
+            body='```dockerfile\nFROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -e .\nCMD ["python", "-m", "app"]\n```'
+        ),
+        outcome=Written(
+            text='```dockerfile\nFROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nRUN pip install -e .\nCMD ["python", "-m", "app"]\n```'
+        ),
+    ),
+    Row(
+        id="v17_makefile",
+        source="verify017/probes.py",
+        inp=Sample(body="```make\ntest:\n\tpytest -q\nlint:\n\truff check .\n```"),
+        outcome=Written(text="```make\ntest:\n\tpytest -q\nlint:\n\truff check .\n```"),
+    ),
+    Row(
+        id="v17_nginx_conf",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```nginx\nserver {\n  listen 80;\n  server_name _;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n```"
+        ),
+        outcome=Written(
+            text="```nginx\nserver {\n  listen 80;\n  server_name _;\n  location / { proxy_pass http://127.0.0.1:8000; }\n}\n```"
+        ),
+    ),
+    Row(
+        id="v17_json_package",
+        source="verify017/probes.py",
+        inp=Sample(
+            body='```json\n{"name": "demo", "version": "1.0.0", "scripts": {"test": "vitest run"}}\n```'
+        ),
+        outcome=Written(
+            text='```json\n{"name": "demo", "version": "1.0.0", "scripts": {"test": "vitest run"}}\n```'
+        ),
+    ),
+    Row(
+        id="v17_md_table_prose",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="| col | val |\n|---|---|\n| a | 1 |\n\nLGTM, one nit: rename `foo.bar.baz` to `qux`."
+        ),
+        outcome=Written(
+            text="| col | val |\n|---|---|\n| a | 1 |\n\nLGTM, one nit: rename `foo.bar.baz` to `qux`."
+        ),
+    ),
+    Row(
+        id="v17_md_file_names_three_labels",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Touched `settings.local.py`, `config.h.in`, `CHANGELOG.v1.md`, `deploy.prod.sh`, `index.d.ts`, `app.module.ts`, `jest.config.js`."
+        ),
+        outcome=Written(
+            text="Touched `settings.local.py`, `config.h.in`, `CHANGELOG.v1.md`, `deploy.prod.sh`, `index.d.ts`, `app.module.ts`, `jest.config.js`."
+        ),
+    ),
+    Row(
+        id="v17_ts_angular_module",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```ts\nimport { AppModule } from './app.module';\nexport const env = environment.api.url;\n```"
+        ),
+        outcome=Written(
+            text="```ts\nimport { AppModule } from './app.module';\nexport const env = environment.api.url;\n```"
+        ),
+    ),
+    Row(
+        id="v17_py_django_settings",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```py\nfrom django.conf import settings\nsettings.DATABASES['default']['NAME']\n```"
+        ),
+        outcome=Written(
+            text="```py\nfrom django.conf import settings\nsettings.DATABASES['default']['NAME']\n```"
+        ),
+    ),
+    Row(
+        id="v17_py_sqlalchemy",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nq = session.query(User).filter(User.email == email).one()\n```"),
+        outcome=Written(
+            text="```py\nq = session.query(User).filter(User.email == email).one()\n```"
+        ),
+    ),
+    Row(
+        id="v17_js_process_env",
+        source="verify017/probes.py",
+        inp=Sample(body="```js\nconst port = process.env.PORT || 3000;\napp.listen(port);\n```"),
+        outcome=Written(
+            text="```js\nconst port = process.env.PORT || 3000;\napp.listen(port);\n```"
+        ),
+    ),
+    Row(
+        id="v17_js_express_req",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```js\napp.get('/u/:id', (req, res) => res.json({ id: req.params.id }));\n```"
+        ),
+        outcome=Written(
+            text="```js\napp.get('/u/:id', (req, res) => res.json({ id: req.params.id }));\n```"
+        ),
+    ),
+    Row(
+        id="v17_public_hosts_kept",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="See https://docs.python.org/3/library/re.html and https://pypi.org/project/ruff/ and https://en.wikipedia.org/wiki/Python_(programming_language)"
+        ),
+        outcome=Written(
+            text="See https://docs.python.org/3/library/re.html and https://pypi.org/project/ruff/ and https://en.wikipedia.org/wiki/Python_(programming_language)"
+        ),
+    ),
+    Row(
+        id="v17_github_docs_kept",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Per https://docs.github.com/en/rest/pulls and https://docs.gitlab.com/ee/api/"
+        ),
+        outcome=Written(
+            text="Per https://docs.github.com/en/rest/pulls and https://docs.gitlab.com/ee/api/"
+        ),
+    ),
+    Row(
+        id="v17_shell_pipeline",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```sh\ncat a.txt | grep -v '^#' | sort -u > b.txt\nchmod +x deploy.sh && ./deploy.sh\n```"
+        ),
+        outcome=Written(
+            text="```sh\ncat a.txt | grep -v '^#' | sort -u > b.txt\nchmod +x deploy.sh && ./deploy.sh\n```"
+        ),
+    ),
+    Row(
+        id="v17_regex_in_code",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nRE = re.compile(r'^[a-z0-9.-]+\\.(com|org|io)$')\n```"),
+        outcome=Written(text="```py\nRE = re.compile(r'^[a-z0-9.-]+\\.(com|org|io)$')\n```"),
+    ),
+    Row(
+        id="v17_semver_ranges",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="Bumps react from 18.2.0 to 18.3.1 and @types/node from 20.11.0 to 20.12.7."
+        ),
+        outcome=Written(
+            text="Bumps react from 18.2.0 to 18.3.1 and @types/node from 20.11.0 to 20.12.7."
+        ),
+    ),
+    Row(
+        id="v17_macos_bundle",
+        source="verify017/probes.py",
+        inp=Sample(body="Crash in /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild"),
+        outcome=Written(
+            text="Crash in /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild"
+        ),
+    ),
+    Row(
+        id="v17_windows_paths",
+        source="verify017/probes.py",
+        inp=Sample(body="Fails on C:\\Program Files\\Git\\bin\\git.exe with exit 128"),
+        outcome=Written(text="Fails on C:\\Program Files\\Git\\bin\\git.exe with exit 128"),
+    ),
+    Row(
+        id="v17_email_rfc2606",
+        source="verify017/probes.py",
+        inp=Sample(body="Contact support@example.com or admin@example.org"),
+        outcome=Written(text="Contact support@example.com or admin@example.org"),
+    ),
+    Row(
+        id="v17_prose_plain_review",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="LGTM. Two nits inline; the retry loop should back off exponentially. Merging after CI."
+        ),
+        outcome=Written(
+            text="LGTM. Two nits inline; the retry loop should back off exponentially. Merging after CI."
+        ),
+    ),
+    Row(
+        id="v17_prose_ordinary_words",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="We run the build at night, host the docs on the site and email the team the page."
+        ),
+        outcome=Written(
+            text="We run the build at night, host the docs on the site and email the team the page."
+        ),
+    ),
+    Row(
+        id="v17_py_three_label_call_chain",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```py\nresult = client.users.get(id=5)\nitems = resp.json().get('items')\n```"
+        ),
+        outcome=Written(
+            text="```py\nresult = client.users.get(id=5)\nitems = resp.json().get('items')\n```"
+        ),
+    ),
+    Row(
+        id="v17_py_self_config_dev_pinned",
+        source="verify017/probes.py",
+        inp=Sample(body="```py\nif self.config.dev: pass\n```"),
+        outcome=Written(text="```py\nif self.config.dev: pass\n```"),
+    ),
+    Row(
+        id="v17_js_date_locale",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```js\nconst s = new Date().toLocaleDateString('en-US');\nconsole.error(err.response.status);\n```"
+        ),
+        outcome=Written(
+            text="```js\nconst s = new Date().toLocaleDateString('en-US');\nconsole.error(err.response.status);\n```"
+        ),
+    ),
+    Row(
+        id="v17_go_mod_file",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```\nmodule example.com/demo\n\ngo 1.22\n\nrequire github.com/stretchr/testify v1.9.0\n```"
+        ),
+        outcome=Written(
+            text="```\nmodule example.com/demo\n\ngo 1.22\n\nrequire forge.example.com/stretchr/testify v1.9.0\n```"
+        ),
+    ),
+    Row(
+        id="v17_rust_cargo",
+        source="verify017/probes.py",
+        inp=Sample(
+            body='```toml\n[dependencies]\nserde = { version = "1.0", features = ["derive"] }\ntokio = "1"\n```'
+        ),
+        outcome=Written(
+            text='```toml\n[dependencies]\nserde = { version = "1.0", features = ["derive"] }\ntokio = "1"\n```'
+        ),
+    ),
+    Row(
+        id="v17_c_includes",
+        source="verify017/probes.py",
+        inp=Sample(
+            body='```c\n#include <stdio.h>\n#include "config.h"\nint main(void) { return 0; }\n```'
+        ),
+        outcome=Written(
+            text='```c\n#include <stdio.h>\n#include "config.h"\nint main(void) { return 0; }\n```'
+        ),
+    ),
+    Row(
+        id="v17_cpp_templates",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```cpp\nstd::vector<std::pair<int, std::string>> v;\nauto it = std::find_if(v.begin(), v.end(), pred);\n```"
+        ),
+        outcome=Written(
+            text="```cpp\nstd::vector<std::pair<int, std::string>> v;\nauto it = std::find_if(v.begin(), v.end(), pred);\n```"
+        ),
+    ),
+    Row(
+        id="v17_java_annotations",
+        source="verify017/probes.py",
+        inp=Sample(
+            body="```java\n@Override\npublic String toString() { return this.name; }\n@Test void t() {}\n```"
+        ),
+        outcome=Written(
+            text="```java\n@Override\npublic String toString() { return this.name; }\n@Test void t() {}\n```"
+        ),
+    ),
+    Row(
+        id="v17_ci_log_gitlab_runner",
+        source="verify017/probes.py",
+        inp=Sample(
+            body='Running with gitlab-runner 17.0.0\nPreparing the "docker" executor\nUsing Docker executor with image python:3.12 ...\nJob succeeded'
+        ),
+        outcome=Written(
+            text='Running with gitlab-runner 17.0.0\nPreparing the "docker" executor\nUsing Docker executor with image python:3.12 ...\nJob succeeded'
+        ),
+    ),
 )
 
 
