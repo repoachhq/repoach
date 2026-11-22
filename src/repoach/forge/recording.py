@@ -1601,7 +1601,7 @@ def _instance_host(raw: object) -> str | None:
         for key, item in node.items():
             if key in URL_KEYS and isinstance(item, str):
                 try:
-                    parts = urlsplit(item.strip())
+                    parts = urlsplit(item)
                 except ValueError as exc:
                     _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
                     continue
