@@ -4418,3 +4418,192 @@ def test_known_values_ids_ordering_and_json_in_strings() -> None:
         recording.ReplaySpawn([recording.Exchange("gh", ["a"], None, 0, "", "")])(["gh", "b"])
     with pytest.raises(recording.ReplayMismatchError, match=r"^stdin differs for \['a'\]$"):
         recording.ReplaySpawn([recording.Exchange("gh", ["a"], "in", 0, "", "")])(["gh", "a"])
+
+
+def _roles_data(*answers: object) -> dict[str, Any]:
+    """A hand-written fixture holding ``answers`` as exchanges."""
+    return {"forge": "github", "calls": [_exchange(a) for a in answers]}
+
+
+def test_offline_and_live_roles_give_a_bot_stem_its_own_word_only_when_mentioned() -> None:
+    """D2: ``<name>[bot]`` and its bare stem share a word when the recording mentions the stem, in either order."""
+    bot = {"user": {"login": "zqbot[bot]"}, "body": "ok"}
+    mention = {"body": "cc @zqbot please"}
+    both = {"zqbot[bot]": "bot", "zqbot": "bot"}
+    assert redact_fixtures.legacy_roles(_roles_data(bot, mention)) == both
+    assert redact_fixtures.legacy_roles(_roles_data(mention, bot)) == both
+    assert redact_fixtures.legacy_roles(_roles_data(bot)) == {"zqbot[bot]": "bot"}
+    assert redact_fixtures.legacy_roles(_roles_data(mention)) == {"@zqbot": "author-2"}
+    assert redact_fixtures.legacy_roles(
+        _roles_data({"user": {"login": "ci[bot]"}, "body": "cc @ci"})
+    ) == {"ci[bot]": "bot"}
+    assert redact_fixtures.legacy_roles(
+        _roles_data({"user": {"login": "project[bot]"}, "body": "cc @project"})
+    ) == {"project[bot]": "bot"}
+    assert redact_fixtures.legacy_roles(
+        _roles_data({"user": {"login": "Dependabot[BOT]"}, "body": "cc @dependabot"})
+    ) == {"Dependabot[BOT]": "bot", "dependabot": "bot"}
+    assert redact_fixtures.legacy_roles(
+        _roles_data({"user": {"login": "zqbot[bot]"}, "body": "cc @ZQBOT"})
+    ) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
+    two = redact_fixtures.legacy_roles(
+        _roles_data({"user": {"login": "zqone[bot]"}}, {"user": {"login": "zqtwo[bot]"}})
+    )
+    assert two == {"zqone[bot]": "bot", "zqtwo[bot]": "bot-2"}
+    gitlab = redact_fixtures.legacy_roles(
+        _roles_data({"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}})
+    )
+    assert gitlab == {"project_88442211_bot_a1b2c3d4e5f6": "service"}
+    calls = [
+        {"args": [], "stdout": json.dumps(mention)},
+        {"args": [], "stdout": json.dumps(bot)},
+    ]
+    assert rec.build_roles(calls, bot="", maintainer=None, author=None) == both
+    assert rec.build_roles(calls[::-1], bot="", maintainer=None, author=None) == both
+    assert rec.build_roles(calls[1:], bot="", maintainer=None, author=None) == {"zqbot[bot]": "bot"}
+    assert rec.build_roles(calls[:1], bot="", maintainer=None, author=None) == {"@zqbot": "author"}
+    short = [{"args": [], "stdout": json.dumps({"user": {"login": "ci[bot]"}, "body": "cc @ci"})}]
+    assert rec.build_roles(short, bot="", maintainer=None, author=None) == {"ci[bot]": "bot"}
+    assert rec.build_roles([], bot="repoach-bot", maintainer="zqmaint", author="zqauth") == {
+        "zqmaint": "maintainer",
+        "zqauth": "author",
+    }
+    assert rec.build_roles([], bot="zqrobot", maintainer=None, author=None) == {"zqrobot": "bot"}
+
+
+def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_fields() -> None:
+    """D4: every string is rewritten but ``forge``, ``method``, ``case``, keys and the source head."""
+    known = recording.known_values(
+        [[], [], {}, "git@git.zqcorp.io:zqgroup/zqmainrepo.git"],
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    data = {
+        "forge": "zqgroup",
+        "method": "zqgroup",
+        "case": "zqgroup",
+        "source": "recorded 2026-11-22 from a live github change request on zqgroup",
+        "zqgroup": "zqgroup",
+        "args": ["zqgroup", 5, None],
+        "calls": [
+            {
+                "returncode": 0,
+                "args": ["zqgroup"],
+                "stdout": json.dumps({"body": "zqgroup"}),
+                "stderr": "zqgroup",
+                "stdin": "zqgroup",
+            },
+            {"stdout": "zqgroup", "args": ["zqgroup"]},
+        ],
+    }
+    out = redact_fixtures._replace_known(data, known)
+    assert out["forge"] == out["method"] == out["case"] == "zqgroup"
+    assert out["source"] == "recorded 2026-11-22 from a live github change request on org"
+    assert out["zqgroup"] == "org"
+    assert out["args"] == ["org", 5, None]
+    first, second = out["calls"]
+    assert json.loads(first["stdout"]) == {"body": "org"}
+    assert (first["args"], first["stderr"], first["stdin"]) == (["org"], "org", "org")
+    assert second["stdout"] == "org"
+    headless = redact_fixtures._replace_known({"source": "zqgroup elsewhere"}, known)
+    assert headless["source"] == "org elsewhere"
+    assert redact_fixtures._replace_known(7, known) == 7
+    calls = rec.replace_known_in_calls(
+        [
+            {
+                "args": ["zqgroup"],
+                "stdout": json.dumps({"b": "zqgroup"}),
+                "stderr": "zqgroup",
+                "stdin": None,
+            }
+        ],
+        known,
+    )
+    assert calls == [
+        {"args": ["org"], "stdout": json.dumps({"b": "org"}), "stderr": "org", "stdin": None}
+    ]
+    bare = rec.replace_known_in_calls([{"stdout": "zqgroup"}], known)
+    assert bare == [{"stdout": "org"}]
+    known_offline = redact_fixtures.fixture_known(
+        {
+            "calls": [_exchange({"user": {"login": "author", "id": 1001}})],
+            "synthetic_user_ids": [1001],
+            "synthetic_project_ids": [2001],
+            "args": [],
+            "kwargs": {},
+        },
+        roles={"zqlogin": "author"},
+        forge="gitlab",
+    )
+    assert ("login", "zqlogin") in known_offline.entries
+    assert not known_offline.values("id")
+
+
+def test_remaining_edges_of_the_path_reader_the_roles_and_the_soft_names() -> None:
+    """D1b, D7: trailing slashes, a dash deep in a path, the closed API roots, one-digit ports, role cases, soft names."""
+    identity = recording.path_identity
+    assert identity(["api", "v4", "projects", "123", ""]).segments == [
+        "api",
+        "v4",
+        "projects",
+        "123",
+        "",
+    ]
+    assert identity(["foo", "-", "jobs", ""]).segments == ["foo", "-", "jobs", ""]
+    deep = identity(["zqa", "zqb", "zqc.git", "-", "x"])
+    assert deep.segments == ["org", "project.git", "-", "x"]
+    assert (deep.namespace, deep.repository) == (("zqa", "zqb"), "zqc")
+    assert {"api", "repos", "users", "orgs", "apps"} == recording._API_ROOTS
+    for root in ("api", "repos", "users", "orgs", "apps"):
+        assert recording._follow_segments([root, "x", "y", "z"], full=False) == [
+            root,
+            "x",
+            "y",
+            "z",
+        ]
+    assert recording._follow_segments(["other", "x", "y", "z"], full=False) == ["other", "x"]
+    assert recording._path_after("h.io:5/a/b", 4) == ["a", "b"]
+    assert recording._path_after("h.io:12/a/b", 4) == ["a", "b"]
+    assert recording._instance_host([{"web_url": "  https://zqhost.io/x  "}]) == "zqhost.io"
+    assert recording._unique([("a", "1"), ("A", "2"), ("B", "3"), ("b", "4")]) == [
+        ("a", "1"),
+        ("B", "3"),
+    ]
+    user = {"login": "zqlogin", "name": "Marta Zqkowalska"}
+    raw = [[{"stdout": json.dumps({"user": user}), "args": []}], [], {}, ""]
+    known = recording.known_values(raw, roles={"ZQLogin": "maintainer"})
+    assert known.mapping()["marta"] == "maintainer"
+    for odd in ("Project", "Org", "Forge.Example.Com", "Maintainer", "AUTHOR", "Jo", "A B"):
+        odd_user = {"user": {"login": "zqlogin", "name": odd, "email": "a@b"}}
+        odd_known = recording.known_values(
+            [[{"stdout": json.dumps(odd_user), "args": []}], [], {}, ""],
+            roles={"zqlogin": "author"},
+        )
+        assert not set(odd_known.values("name")) & {"project", "org", "maintainer", "author", "jo"}
+    short = recording.known_values(
+        [
+            [{"stdout": json.dumps({"user": {"login": "zqlogin", "email": "a@b"}}), "args": []}],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+    )
+    assert short.values("mailbox") == ()
+    remote = "git@git.zqcorp.io:zqgroup/zqmainrepo.git"
+    upper = recording.known_values(
+        [
+            [{"stdout": "see HTTPS://GIT.ZQCORP.IO/zqgroup/zqmainrepo/zqextra/zqfile", "args": []}],
+            [],
+            {},
+            remote,
+        ],
+        roles={},
+        remote=remote,
+    )
+    assert "zqextra" in upper.values("segment")
+    assert recording.known_values(raw, roles={}).values("name") == (
+        "marta zqkowalska",
+        "marta",
+        "zqkowalska",
+    )
