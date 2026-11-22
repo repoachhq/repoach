@@ -4971,3 +4971,51 @@ def test_offline_stems_touch_only_the_mention_of_their_own_bot() -> None:
     assert redact_fixtures.legacy_roles(elsewhere) == {"@zqother": "author-2", "zqbot[bot]": "bot"}
     plain = _roles_data({"user": {"login": "zqplain"}}, {"user": {"login": "zqbot[bot]"}})
     assert redact_fixtures.legacy_roles(plain) == {"zqplain": "author-2", "zqbot[bot]": "bot"}
+
+
+def test_known_values_read_encoded_forms_and_replace_them_without_a_stray_percent() -> None:
+    """D2 (0.18): a host, a namespace and a repository behind ``%2F`` or ``%3A`` are known values, replaced whole."""
+    for body in (
+        "redirect=https%3A%2F%2Fcode.kvncloud.io%2Fkvnteam%2Fkvnbilling",
+        "redirect=https%3A%2F%2Fcode.kvncloud.io/kvnteam/kvnbilling",
+        "see code.kvncloud.io%2Fkvnteam%2Fkvnbilling",
+        "see &#104;ttps://code.kvncloud.io/kvnteam/kvnbilling",
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert "code.kvncloud.io" in _kinds(found, "host"), body
+        assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
+        assert not any(v.startswith("2f") for v in _kinds(found, "host")), body
+        out = recording.replace_known(body, found)
+        assert "%forge" not in out and "kvn" not in out, out
+        assert closure.judge(out, found) is None, out
+    found = needles(_one_call({"body": "see %2F%2Fgit.zqcorp.io/zqns/zqrepo"}), roles={})
+    assert recording.replace_known("x%2F%2Fgit.zqcorp.io", found) == "x%2F%2Fforge.example.com"
+    assert recording.replace_known("x%2F%2Fgit.zqcorp.io%2Fzqns", found) == (
+        "x%2F%2Fforge.example.com%2Forg"
+    )
+
+
+def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -> None:
+    """D8, D5 (0.18): the namespace and repository after an IPv6 literal, a git author's name next to its mailbox."""
+    for body, host in (
+        ("http://[2001:db8::1]/kvnteam/kvnbilling/x", None),
+        ("http://[fd00::1]/kvnteam/kvnbilling/x", "[fd00::1]"),
+        ("ssh://git@[fd00::1]:2222/kvnteam/kvnbilling", "[fd00::1]"),
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
+        assert (host in _kinds(found, "host")) == (host is not None), body
+        out = recording.replace_known(body, found)
+        assert "kvn" not in out and closure.judge(out, found) is None, out
+    answer = {
+        "body": "Thanks Zqkowalska and marta",
+        "commit": {"author": {"name": "Marta Zqkowalska", "email": "marta@zqmail.io"}},
+    }
+    found = needles(_one_call(answer), roles={})
+    assert {"zqkowalska", "marta"} <= set(_kinds(found, "name"))
+    assert "marta@zqmail.io" in _kinds(found, "mailbox")
+    assert recording.replace_known("Thanks Zqkowalska and marta", found) == (
+        "Thanks author and author"
+    )
+    plain = {"label": {"name": "bug", "color": "red"}, "repo": {"name": "zqmainrepo", "id": 5}}
+    assert _kinds(needles(_one_call(plain), roles={}), "name") == []

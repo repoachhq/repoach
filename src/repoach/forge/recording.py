@@ -1868,7 +1868,9 @@ def known_values(
 
     strings = fixture_strings(raw, "")
     for node in _walk_dicts(raw):
-        if any(key in node for key in USER_KEYS):
+        if any(key in node for key in USER_KEYS) or (
+            "name" in node and any(key in node for key in _MAILBOX_KEYS)
+        ):
             who = next((str(node[k]) for k in USER_KEYS if isinstance(node.get(k), str)), "")
             word = _role(who)
             name = node.get("name")
@@ -1904,18 +1906,23 @@ def known_values(
         _segments(_api_project(text), hard=True)
         for found in _ENCODED_PROJECT_RE.finditer(text):
             _segments(unquote(found.group("path")).split("/"), hard=False)
-        for place in closure.hosts(text):
-            if closure.is_placeholder_host(place.host) or closure.is_public_host(place.host):
-                continue
-            _host(place.host)
-            if is_public_forge_host(place.host):
-                continue
-            follow = _follow_segments(
-                _path_after(text, place.end),
-                full=text[: place.start].endswith("://") and place.host.casefold() == instance,
-            )
-            if follow:
-                _segments(follow, hard=False)
+        for form in closure.decoded_forms(text):
+            for place in closure.hosts(form):
+                allowed = closure.is_placeholder_host(place.host) or closure.is_public_host(
+                    place.host
+                )
+                if allowed and not place.literal:
+                    continue
+                if not allowed:
+                    _host(place.host)
+                if is_public_forge_host(place.host):
+                    continue
+                follow = _follow_segments(
+                    _path_after(form, place.end),
+                    full=form[: place.start].endswith("://") and place.host.casefold() == instance,
+                )
+                if follow:
+                    _segments(follow, hard=False)
 
     for number in user_id_values(raw):
         _add_id(number, project=False)
