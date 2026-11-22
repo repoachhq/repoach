@@ -282,8 +282,13 @@ def test_mailbox_rule_literals_credentials_and_doc_domains_by_enumeration() -> N
     assert box.start == 2
     assert box.end == len("x ${a}.b+c%d_e@h.example.com")
     assert closure.mailboxes("a@b.io@c.io")[0].host == "b.io"
-    for char in string.ascii_letters + string.digits + "._%+-:${}":
+    for char in string.ascii_letters + string.digits:
         assert closure.mailboxes(f"{char}@h.io")[0].local == char
+    for char in "._%+-:${}":
+        assert closure.mailboxes(f"{char}@h.io") == []
+        assert closure.mailboxes(f"a{char}@h.io")[0].local == f"a{char}"
+        assert closure.hosts(f"{char}@h.zz") == []
+    assert closure.hosts("+@pytest.fixture") == []
     for char in " /\"'<>()[]\\,;=!?#|*`~^&":
         assert closure.mailboxes(f"a{char}b@h.io")[0].local == "b"
     assert closure.mailboxes("MAILTO:a@h.io")[0].local == "a"
@@ -515,7 +520,13 @@ def test_residual_judges_known_values_in_decoded_forms_and_embedded_node_ids() -
     literal = closure.Known((("login", "github"),), literals=("github-actions[bot]", "github"))
     assert closure.residual("by github-actions[bot] now", literal) is None
     assert closure.residual("by github now", literal) is None
-    assert closure.residual("GITHUB-ACTIONS[BOT]", literal) is None
+    assert closure.residual("GITHUB-ACTIONS[BOT]", literal) == ("login", 1)
+    assert (
+        closure.residual(
+            "Docs.GitHub.com", closure.Known((("login", "github"),), ("docs.github.com",))
+        )
+        is None
+    )
     assert closure.residual("by github-actionsx", literal) == ("login", 1)
     assert closure.residual("xgithub", literal) is None
     assert closure.residual("github.com", literal) is None

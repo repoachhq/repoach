@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import base64
 import functools
-import html
 import json
 import re
 import shlex
 import string
-import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -232,8 +230,15 @@ _CLI_PLACEHOLDER_AFTER_CLASS = _char_class(_ASCII_ALNUM + "-")
 
 
 def token_pattern(word: str) -> re.Pattern[str]:
-    """``word`` as a whole token (:data:`TOKEN_CHARS`), case-insensitive: the only whole-word pattern factory."""
-    return re.compile(rf"(?<!{_TOKEN_CLASS}){re.escape(word)}(?!{_TOKEN_CLASS})", re.I)
+    """``word`` as a whole token (:data:`TOKEN_CHARS`), case-insensitive: the only whole-word pattern factory.
+
+    A ``%2F`` or ``%2f`` right before the word is a delimiter as well:
+    ``projects/<ns>%2F<repo>`` is the one URL-encoded shape the forges' own
+    argv carries (D7).
+    """
+    return re.compile(
+        rf"(?:(?<!{_TOKEN_CLASS})|(?<=%2[Ff])){re.escape(word)}(?!{_TOKEN_CLASS})", re.I
+    )
 
 
 _SPEC_FILE_ID_RE = re.compile(r"_(SP-[A-Z0-9]+(?:-[A-Z0-9]+)*)_")
@@ -971,44 +976,6 @@ def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
     with_urls = _PROTO_REL_IN_TEXT_RE.sub(_proto_rel, _URL_IN_TEXT_RE.sub(_one, text))
     step = _NOREPLY_MAILBOX_RE.sub(_noreply, _SCP_IN_TEXT_RE.sub(_scp, with_urls))
     return _SYSTEM_NOREPLY_RE.sub(_system_noreply, step)
-
-
-def unredacted_host(text: str, *, whole_value: bool = False) -> bool:
-    """Whether ``text`` holds a URL, positive-context protocol-relative URL or scp-style remote on a host :func:`redact_urls_in_text` rewrites, or an unredacted URL userinfo.
-
-    After redaction no such host or userinfo is left, so one found in a fixture about
-    to be written means a value escaped the redaction (D3, 0.9, 0.14 R7-D1, 0.16 R9-D3).
-    """
-    if whole_value:
-        whole = _PROTO_REL_WHOLE_RE.match(text)
-        if whole is not None and _unredacted_proto_rel(whole.group("url")):
-            return True
-    for match in _URL_IN_TEXT_RE.finditer(text):
-        url, _tail = _split_url_tail(match.group(0))
-        try:
-            parts = urlsplit(url)
-        except ValueError as exc:
-            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-            continue
-        host = parts.hostname or ""
-        if not host:
-            continue
-        if not _is_allowed_host(host):
-            return True
-        if not _allowed_userinfo(parts.scheme, parts.netloc):
-            return True
-    for match in _PROTO_REL_IN_TEXT_RE.finditer(text):
-        if match.group("json") is not None and text[match.end() : match.end() + 1] != '"':
-            continue
-        if _unredacted_proto_rel(match.group("url")):
-            return True
-    return any(
-        not closure.is_placeholder_host(m.group("host"))
-        or not _allowed_userinfo(
-            "ssh", f"{m.group('user')}@{m.group('host')}", allow_example_git=True
-        )
-        for m in _SCP_IN_TEXT_RE.finditer(text)
-    )
 
 
 def redact_urls_in_value(value: object, *, whole_value: bool = False) -> object:
@@ -1829,159 +1796,6 @@ def scanned_strings(fixture: dict[str, Any]) -> list[tuple[str, str]]:
     return found
 
 
-_NEW_NODE_IN_TEXT_RE = re.compile(r"(?=(U_[A-Za-z0-9_-]{2,}))")
-"""A ``U_`` user node id candidate anywhere in text, scanned independently of base64 runs (0.12, D2)."""
-
-_LEGACY_NODE_IN_TEXT_RE = re.compile(r"(?=(MDQ6VXNl[A-Za-z0-9+/]*={0,2}))")
-"""A legacy ``04:User<n>`` base64 node id prefix anywhere in text or a URL/branch run (0.12, D2)."""
-
-_LEGACY_USER_NODE_PREFIX_RE = re.compile(r"^04:User([0-9]+)")
-"""The ``04:User<n>`` prefix of a decoded legacy node id run, stopping before any trailing suffix."""
-
-_NODE_SUFFIX_MAX = 16
-"""The longest current-format node id suffix tried: MessagePack ``[0, <uint64>]`` is 11 bytes, 15 characters."""
-
-_LEGACY_NODE_MAX = 40
-"""The longest legacy node id base64 prefix decoded: ``04:User`` plus 20 uint64 digits is 36 characters."""
-
-
-def _legacy_node_number(run: str) -> int | None:
-    """The account number of a legacy ``MDQ6VXNl…`` run (possibly suffixed), or ``None``."""
-    body = run[:_LEGACY_NODE_MAX].rstrip("=")
-    if len(body) < 8:
-        return None
-    if len(body) % 4 == 1:
-        padded = body[: len(body) - len(body) % 4]
-    else:
-        padded = body + "=" * (-len(body) % 4)
-    decoded = base64.b64decode(padded).decode("ascii", errors="replace")
-    match = _LEGACY_USER_NODE_PREFIX_RE.match(decoded)
-    return int(match.group(1)) if match else None
-
-
-def embedded_id_numbers(text: str) -> list[str]:
-    """The account number of every user node id ``text`` holds, wherever it stands (0.11 R4, 0.12 D2).
-
-    Scans current-format ``U_…`` runs independently of base64 runs (so a
-    preceding URL path or alpha prefix never eats the ``U``) and finds
-    the legacy ``MDQ6VXNl`` prefix anywhere in a run (URL paths, branch
-    names, prefixed or suffixed strings), on the text's own case, since
-    base64 is case-sensitive. A run of digits is the number itself and is
-    not repeated.
-    """
-    numbers: list[str] = []
-    for m in _NEW_NODE_IN_TEXT_RE.finditer(text):
-        run = m.group(1)
-        suffix = run[2:]
-        candidates = (
-            [run]
-            if suffix.isdigit()
-            else [f"U_{suffix[:k]}" for k in range(2, min(len(suffix), _NODE_SUFFIX_MAX) + 1)]
-        )
-        for cand in candidates:
-            number = user_id_key(cand)
-            if isinstance(number, int) and str(number) not in numbers:
-                numbers.append(str(number))
-    for m in _LEGACY_NODE_IN_TEXT_RE.finditer(text):
-        number = _legacy_node_number(m.group(1))
-        if isinstance(number, int) and str(number) not in numbers:
-            numbers.append(str(number))
-    return numbers
-
-
-_JSON_U_ESCAPE_RE = re.compile(r"\\u([0-9A-Fa-f]{4})")
-"""A JSON ``\\uXXXX`` escape written as text inside a string."""
-
-_DECODE_ROUNDS = 4
-"""How many times the oracle peels percent-, entity- and ``\\u``-encodings off a string (``%2525`` is two)."""
-
-CONFUSABLES = str.maketrans(
-    {
-        "а": "a",
-        "в": "b",
-        "е": "e",
-        "к": "k",
-        "м": "m",
-        "н": "h",
-        "о": "o",
-        "р": "p",
-        "с": "c",
-        "т": "t",
-        "у": "y",
-        "х": "x",
-        "і": "i",
-        "ј": "j",
-        "ѕ": "s",
-        "ԁ": "d",
-        "һ": "h",
-        "ӏ": "l",
-        "ԛ": "q",
-        "ԝ": "w",
-        "α": "a",
-        "ε": "e",
-        "ι": "i",
-        "κ": "k",
-        "ν": "v",
-        "ο": "o",
-        "ρ": "p",
-        "τ": "t",
-        "υ": "u",
-        "χ": "x",
-    }
-)
-"""Lowercase Cyrillic and Greek letters drawn like a Latin one: best-effort defence-in-depth (0.11; general confusables are NG4 since 0.12)."""
-
-
-def _plain(text: str) -> str:
-    """``text`` with full-width forms, invisible characters and lookalike letters folded.
-
-    NFKC folds compatibility forms (full-width letters), format characters
-    (zero-width space, soft hyphen) are removed and :data:`CONFUSABLES` mapped.
-    """
-    if text.isascii():
-        return text
-    folded = unicodedata.normalize("NFKC", text)
-    visible = "".join(c for c in folded if unicodedata.category(c) != "Cf")
-    return visible.translate(CONFUSABLES)
-
-
-def _decoded_once(text: str) -> str:
-    r"""``text`` with one layer of ``\uXXXX``, HTML-entity and percent encoding removed."""
-    unescaped = _JSON_U_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
-    return unquote(html.unescape(unescaped))
-
-
-def oracle_forms(text: str, *, literals: bool = True) -> list[str]:
-    r"""Every form the closure oracle judges ``text`` in, casefolded (I2, I3, 0.11).
-
-    The text as written; each layer of percent, HTML-entity and ``\u``
-    encoding peeled off in turn; each of those with compatibility forms,
-    invisible characters and lookalike letters folded (:func:`_plain`);
-    and the account number of every node id any of them holds
-    (:func:`embedded_id_numbers`). No form is built with a redaction
-    regex, so a value the redactor did not recognise is still a substring
-    of one of them. A :data:`CLI_PLACEHOLDER_RE` literal is blanked
-    first, being no recorded value, unless ``literals`` is false: the
-    deny-list judges the text whole, a literal included, since an entry is
-    the maintainer's own declaration and is refused wherever it stands.
-    """
-    current = CLI_PLACEHOLDER_RE.sub(" ", text) if literals else text
-    stages = [current]
-    for _ in range(_DECODE_ROUNDS):
-        peeled = _decoded_once(current)
-        if peeled == current:
-            break
-        stages.append(peeled)
-        current = peeled
-    stages += [plain for plain in map(_plain, stages) if plain not in stages]
-    forms: list[str] = []
-    for stage in stages:
-        for form in (stage.casefold(), *embedded_id_numbers(stage)):
-            if form not in forms:
-                forms.append(form)
-    return forms
-
-
 NEEDLE_MIN_LENGTH = 4
 """A needle shorter than this would match everywhere; it is a configuration error (exit 2), never a skip."""
 
@@ -1991,75 +1805,9 @@ FORGE_HOSTS: frozenset[str] = frozenset({"github.com", "api.github.com", "gitlab
 PUBLIC_FORGE_DOMAINS: tuple[str, ...] = ("github.com", "gitlab.com", "githubusercontent.com")
 """A host under one of these is a public forge's (0.11): a project there is the recorded one or a third party's."""
 
-NEEDLE_KINDS: tuple[str, ...] = ("login", "host", "segment", "id", "deny-list")
-"""The sources of the closure oracle's needles, in the order they are judged (I3, 0.10)."""
-
 
 class NeedleError(Exception):
     """A needle the oracle cannot judge (too short, or a class word or placeholder); the message names its kind and ordinal."""
-
-
-@dataclass(frozen=True, repr=False)
-class Needles:
-    """The values a built fixture must not hold, casefolded, by kind (I3, 0.10).
-
-    Built from the raw exchanges and from facts, never from the
-    redactor's output. Opaque: its ``repr`` counts, so no value reaches a
-    log, a traceback or ``pytest -l``.
-
-    Attributes:
-        entries: ``(kind, casefolded value)`` in order.
-        replacements: ``(raw value, placeholder)`` for the hosts and the
-            path segments the pipeline replaces as tokens.
-    """
-
-    entries: tuple[tuple[str, str], ...]
-    replacements: tuple[tuple[str, str], ...] = ()
-
-    def __repr__(self) -> str:
-        """A count, never a value."""
-        return f"<needles: {len(self.entries)}>"
-
-    def __len__(self) -> int:
-        """How many needles."""
-        return len(self.entries)
-
-    def mapping(self) -> dict[str, str]:
-        """Raw host or segment → its placeholder, for :func:`classify_logins` beside the roles."""
-        return dict(self.replacements)
-
-
-_HOST_TOKEN_RE = re.compile(
-    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})"
-    rf"((?:{_TOKEN_CLASS}(?:{_SCP_HOST_LABEL_CLASS}*{_TOKEN_CLASS})?\.)+[A-Za-z]{_SCP_HOST_LABEL_CLASS}*{_TOKEN_CLASS})"
-    rf"(?!{_SCP_HOST_LABEL_CLASS})",
-    re.I,
-)
-"""A dotted name ending in a letter-led label: a host candidate, judged by its context (:func:`locations`)."""
-
-_AFTER_HOST_DELIMITERS = "\"'<>()[]{}\\,?#|`*"
-"""Delimiters excluded from a path segment after a host candidate in :data:`_AFTER_HOST_RE` (0.16)."""
-
-_AFTER_HOST_CHAR = _char_class(_AFTER_HOST_DELIMITERS, negated=True, extra_escapes=(r"\s",))
-_AFTER_HOST_NOSLASH = _char_class(
-    _AFTER_HOST_DELIMITERS + "/", negated=True, extra_escapes=(r"\s",)
-)
-_AFTER_HOST_SEG = rf"(?:{_AFTER_HOST_CHAR}|\((?:{_AFTER_HOST_CHAR}|\({_AFTER_HOST_CHAR}*\))*\))*"
-_AFTER_HOST_RE = re.compile(
-    rf"\.?(?:(?P<port>:[0-9]{{1,5}})?/(?P<slash>{_AFTER_HOST_SEG})"
-    rf"|:(?P<scp>{_AFTER_HOST_NOSLASH}*/{_AFTER_HOST_SEG}))",
-    re.I,
-)
-"""What may follow a host: an optional DNS dot, then optional port + ``/`` or scp ``:<path-with-slash>`` with GFM balanced parentheses (0.13, 0.15 Pref 2)."""
-
-_URL_USERINFO_BEFORE_RE = re.compile(rf"://(?:{_RFC3986_USERINFO_CLASS}*@)+$", re.I)
-"""Text ending in ``://<userinfo>@`` with any RFC 3986 userinfo character, empty password or embedded ``@`` (0.15 R8-D3, 0.16 R9-D1)."""
-
-_USERINFO_AHEAD_RE = re.compile(rf"{_RFC3986_USERINFO_CLASS}*@", re.I)
-"""Remaining userinfo ending in ``@`` immediately after a dotted username inside ``scheme://user.name:pw@host`` (0.15 R8-D3, 0.16 R9-D1)."""
-
-_USER_BEFORE_RE = re.compile(rf"{_SCP_USER_CLASS}@$", re.I)
-"""Text ending in ``<user>@``: the host after it is a remote's or a mailbox's (``@pytest.fixture`` is neither)."""
 
 
 def _is_slash_led(
@@ -2080,103 +1828,6 @@ def _is_slash_led(
         close_quote = rest.find('"')
         return close_quote != -1 and not any(ch.isspace() for ch in rest[:close_quote])
     return True
-
-
-def _has_user_before(before: str) -> bool:
-    """Whether ``before`` ends with URL or SCP/mailbox userinfo ``@`` (0.15 R8-D3)."""
-    return bool(_URL_USERINFO_BEFORE_RE.search(before) or _USER_BEFORE_RE.search(before))
-
-
-_IPV4_AFTER_BLOCK_CLASS = _char_class(_ASCII_ALNUM + ".-")
-"""Characters that may not immediately follow an IPv4 host literal in :data:`_IPV4_LED_HOST_RE` (0.16)."""
-
-_IPV4_LED_HOST_RE = re.compile(
-    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})([0-9]{{1,3}}(?:\.[0-9]{{1,3}}){{3}})(?!{_IPV4_AFTER_BLOCK_CLASS})",
-    re.I,
-)
-"""An IPv4 host literal, accepted by :func:`locations` only when scheme- or user-led (``//`` or ``<user>@``, 0.13)."""
-
-
-def _is_ipv4_host(host: str) -> bool:
-    """Whether ``host`` is a valid dotted-quad IPv4 address (four octets 0..255)."""
-    parts = host.split(".")
-    return len(parts) == 4 and all(p.isdigit() and int(p) <= 255 for p in parts)
-
-
-@dataclass(frozen=True)
-class Location:
-    """A host and the path segments after it, as :func:`locations` reads them from raw text.
-
-    Attributes:
-        host: The host, lowercased.
-        segments: The path's segments (empty when the host stands alone).
-        authenticated: Whether the host was led by URL or SCP userinfo (``user[:pass]@``).
-    """
-
-    host: str
-    segments: tuple[str, ...] = ()
-    authenticated: bool = field(default=False, compare=False)
-
-
-def locations(
-    text: str, *, known_hosts: frozenset[str] = frozenset(), whole_value: bool = False
-) -> list[Location]:
-    """Every host of ``text`` with the path after it, read without the redactor's regexes (I3, 0.11, 0.12, 0.13, 0.14, 0.16).
-
-    A dotted name is a host when its context says so: ``://``, a
-    positive-context protocol-relative ``//`` (whole JSON or decoded
-    structured string value with ``whole_value=True``, ``="`` / ``='`` /
-    ``=``, ``url(``, ``](`` or ``<``; 0.16 R9-D3), or ``<user>@`` before it
-    (``https://h``, ``ssh://u@h``, ``u@h:g/r``, including scheme- or
-    user-led IPv4 hosts such as ``https://10.20.30.40/g/r``, 0.13), or an
-    un-led path after a host in ``known_hosts`` (``h/g/r``, ``h:g/r``,
-    ``h:8080/x``, 0.14 Pref 4). A name right after a single ``/`` is a file
-    path's (``src/setup.py``), one with nothing around it (``setup.py``) is
-    not a host, and an un-led candidate is accepted only when it is in
-    ``known_hosts`` (a forge host, the remote/inferred host, or a host
-    already seen led by ``://``, positive ``//`` or ``@`` in the same
-    fixture) and its non-port path has at least two non-empty non-all-digit
-    segments — so macOS bundle paths (``Xcode.app/Contents/…``), code
-    attribute divisions (``config.dev/env/prod``, ``ssl.ca/certs/root.pem``,
-    ``stream.io/read/write``, ``torch.net/layers/conv``) and single-line
-    ``//`` code comments are never read as hosts. Trailing prose punctuation
-    and boundary Markdown delimiters are trimmed from the path (0.13 R6-D1,
-    0.14 R7-D2).
-    """
-    candidates = sorted(
-        (
-            *((m, False) for m in _HOST_TOKEN_RE.finditer(text)),
-            *((m, True) for m in _IPV4_LED_HOST_RE.finditer(text)),
-        ),
-        key=lambda item: item[0].start(),
-    )
-    found: list[Location] = []
-    for m, is_ipv4 in candidates:
-        before = text[: m.start()]
-        if before.endswith("/") and not before.endswith("//"):
-            continue
-        if before.endswith("://") and _USERINFO_AHEAD_RE.match(text, m.end()):
-            continue
-        after = _AFTER_HOST_RE.match(text, m.end())
-        raw_path = (after.group("slash") or after.group("scp") or "") if after else ""
-        path, _tail = _split_url_tail(raw_path)
-        url_end = after.end() if after else m.end()
-        user_led = _has_user_before(before)
-        led = _is_slash_led(before, text=text, url_end=url_end, whole_value=whole_value) or user_led
-        host = m.group(1).casefold()
-        if is_ipv4 and (not led or not _is_ipv4_host(host)):
-            continue
-        segments = tuple(s for s in path.split("/")) if path else ()
-        if not led:
-            if not after or host not in known_hosts:
-                continue
-            non_empty = [s for s in segments if s]
-            if not after.group("port") and (
-                len(non_empty) < 2 or all(s.isdigit() for s in non_empty)
-            ):
-                continue
-        found.append(Location(host, segments, authenticated=user_led))
-    return found
 
 
 def remote_location(remote: str) -> tuple[str | None, tuple[str, ...]]:
@@ -2233,35 +1884,25 @@ def _api_project(text: str) -> tuple[str, ...]:
         if p
         and not CLI_PLACEHOLDER_RE.fullmatch(p)
         and not p.isdigit()
+        and not (p.startswith("{") and p.endswith("}"))
         and p.casefold() not in _PLACEHOLDERS
     )
     return named if len(named) == len([p for p in parts if p]) and len(named) >= 2 else ()
 
 
-def _raw_url_host(raw: object) -> str | None:
-    """The first non-example host of a :data:`URL_KEYS` value in ``raw``, JSON inside strings included."""
-    stack: list[object] = [raw]
-    while stack:
-        node = stack.pop(0)
-        if isinstance(node, str):
-            if node.lstrip()[:1] in ("{", "["):
-                stack[:0] = decode_json_values(node) or []
-        elif isinstance(node, dict):
-            for key, item in node.items():
-                if key in URL_KEYS and isinstance(item, str):
-                    try:
-                        parts = urlsplit(item.strip())
-                    except ValueError as exc:
-                        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-                        continue
-                    if parts.scheme in URL_SCHEMES and parts.hostname:
-                        host = parts.hostname.casefold()
-                        if not _is_allowed_host(host):
-                            return host
-                else:
-                    stack.append(item)
-        elif isinstance(node, list):
-            stack[:0] = list(node)
+def _instance_host(raw: object) -> str | None:
+    """The first host of a :data:`URL_KEYS` value in ``raw`` that is neither a placeholder nor public: the recorded instance."""
+    for node in _walk_dicts(raw):
+        for key, item in node.items():
+            if key in URL_KEYS and isinstance(item, str):
+                try:
+                    parts = urlsplit(item.strip())
+                except ValueError as exc:
+                    _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+                    continue
+                host = (parts.hostname or "").casefold()
+                if parts.scheme in URL_SCHEMES and host and not _is_allowed_host(host):
+                    return host
     return None
 
 
@@ -2311,142 +1952,6 @@ def _names_no_one(value: str) -> bool:
     )
 
 
-def needles(
-    raw: object,
-    *,
-    roles: dict[str, str],
-    remote: str = "",
-    denylist: tuple[str, ...] = (),
-    min_length: int = NEEDLE_MIN_LENGTH,
-) -> Needles:
-    """The closure oracle's needles of one recording (I3, 0.11, 0.12), from the raw exchanges and facts.
-
-    - login: every key of ``roles`` (a mention-only key without its
-      ``@``) and every login of the raw answers (:func:`raw_logins`);
-    - host: :data:`FORGE_HOSTS`, the remote's host and every host of
-      ``raw`` (:func:`locations`), but an RFC 2606 or loopback one;
-    - segment: the recorded project's namespace and repository — the
-      remote's path, the argv's API paths — and every namespace and
-      repository of a URL on the remote's host when it is not a public
-      forge, or on the host inferred from :data:`URL_KEYS` when the
-      remote is an ssh alias (so third-party links like
-      ``docs.python.org`` never become segment needles under an ssh
-      alias, 0.12 D6), or on any private host when no remote exists at
-      all. A third party's project on a public forge
-      (``github.com/python/cpython``) names no one of the recording and
-      is not a needle;
-    - id: every raw user id and repository id, in each of its forms;
-    - deny-list: the maintainer's entries.
-
-    Args:
-        raw: The exchanges as the forge printed them, the method's
-            arguments and the remote's URL; never a redacted value.
-        roles: The recording's login → class word.
-        remote: The checkout's ``origin`` remote, ``""`` when it has none.
-        denylist: The deny-list entries.
-        min_length: The shortest needle that can be judged; the offline
-            transform passes 1, since its corpus is committed and reviewed.
-
-    Returns:
-        The needles, casefolded, each once, with the replacements of the
-        hosts (:data:`PLACEHOLDER_HOST`) and segments (:data:`PLACEHOLDER_NAMESPACE`,
-        :data:`PLACEHOLDER_PROJECT`).
-
-    Raises:
-        NeedleError: A needle shorter than :data:`NEEDLE_MIN_LENGTH`, or a
-            class word or placeholder, by kind and ordinal.
-    """
-    located_strings = fixture_strings(raw, "")
-    instance, remote_path = remote_location(remote)
-    inferred = _raw_url_host(raw) if instance is None else None
-    if instance is None and inferred is not None:
-        instance = inferred
-    seen_led_hosts = {
-        place.host
-        for path, text in located_strings
-        for place in locations(text, whole_value=is_structured_json_path(path))
-        if not _is_ipv4_host(place.host) and not _is_allowed_host(place.host)
-    }
-    known_hosts = frozenset(
-        FORGE_HOSTS
-        | ({instance} if instance else set())
-        | ({inferred} if inferred else set())
-        | seen_led_hosts
-    )
-    found: dict[str, list[str]] = {kind: [] for kind in NEEDLE_KINDS}
-    replacements: dict[str, str] = {}
-
-    def _segments(path: tuple[str, ...] | list[str]) -> None:
-        identity = path_identity(list(path))
-        for segment in identity.namespace:
-            found["segment"].append(segment)
-            replacements.setdefault(segment, PLACEHOLDER_NAMESPACE)
-        if identity.repository:
-            found["segment"].append(identity.repository)
-            replacements.setdefault(identity.repository, PLACEHOLDER_PROJECT)
-
-    raw_login_list = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
-    bot_stems: list[str] = []
-    for login in raw_login_list:
-        bare = bot_stem(login)
-        if bare is not None:
-            bot_stems.append(bare)
-            continue
-        mention_stem = bot_mention_stem(login)
-        if mention_stem is not None:
-            at_stem = f"{MENTION_ONLY_PREFIX}{mention_stem}"
-            if len(at_stem) >= min_length:
-                bot_stems.append(at_stem)
-    found["login"] = raw_login_list + bot_stems
-    found["host"] = sorted(FORGE_HOSTS | ({instance} if instance else set()))
-    if remote_path:
-        _segments(remote_path)
-    for path, text in located_strings:
-        _segments(_api_project(text))
-        for place in locations(
-            text, known_hosts=known_hosts, whole_value=is_structured_json_path(path)
-        ):
-            if _is_allowed_host(place.host):
-                continue
-            found["host"].append(place.host)
-            private = not is_public_forge_host(place.host)
-            matches_instance = place.host == instance if instance is not None else not remote_path
-            if (
-                private
-                and (matches_instance or _is_ipv4_host(place.host) or place.authenticated)
-                and place.segments
-            ):
-                _segments(place.segments)
-    for host in found["host"]:
-        replacements.setdefault(host, PLACEHOLDER_HOST)
-    found["id"] = [f for v in user_id_values(raw) + project_id_values(raw) for f in _id_forms(v)]
-    found["deny-list"] = list(denylist)
-    entries: list[tuple[str, str]] = []
-    for kind in NEEDLE_KINDS:
-        seen: list[str] = []
-        named = (
-            v for v in found[kind] if v and not (kind in ("login", "segment") and _names_no_one(v))
-        )
-        for value in (v.casefold() for v in named):
-            if value not in seen:
-                seen.append(value)
-        for n, value in enumerate(seen, 1):
-            if len(value) < min_length:
-                raise NeedleError(f"needle {kind} {n}: too short")
-            if CLASS_WORD_RE.match(value) or value in _PLACEHOLDERS:
-                raise NeedleError(f"needle {kind} {n}: a class word or placeholder")
-            entries.append((kind, value))
-    kept = {v for _k, v in entries}
-    return Needles(
-        tuple(entries),
-        tuple(
-            (raw_value, word)
-            for raw_value, word in replacements.items()
-            if raw_value.casefold() in kept
-        ),
-    )
-
-
 _PLACEHOLDERS: frozenset[str] = frozenset(
     {PLACEHOLDER_HOST, PLACEHOLDER_NAMESPACE, PLACEHOLDER_PROJECT}
 )
@@ -2465,37 +1970,6 @@ RECORDED_SOURCE_HEAD_RE = re.compile(
     r"^recorded [0-9]{4}-[0-9]{2}-[0-9]{2} from a live (?:github|gitlab) change request"
 )
 """The template head :func:`recorded_source` writes; the oracle judges only what follows it (0.11, R6)."""
-
-
-def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | None:
-    """The first needle a built fixture still holds, as ``(kind, ordinal, key path)``, or ``None`` (I3, 0.11).
-
-    Each string of the fixture, keys included (:func:`scanned_strings`),
-    is judged in every :func:`oracle_forms` form against each needle with
-    :func:`token_pattern`, the one boundary. Those forms are built by
-    decoding, never by a redaction regex; a deny-list entry is judged on
-    the forms that keep the literals, so no literal hides one. The recorder's
-    :data:`CONSTANT_FIELDS` are judged by the deny-list only, and
-    ``source`` without its :data:`RECORDED_SOURCE_HEAD_RE` head. The
-    ordinal counts within the needle's kind.
-    """
-    ordinals: list[tuple[str, int, re.Pattern[str]]] = []
-    counts: dict[str, int] = {}
-    for kind, value in found.entries:
-        counts[kind] = counts.get(kind, 0) + 1
-        ordinals.append((kind, counts[kind], token_pattern(value)))
-    for path, text in scanned_strings(fixture):
-        judged = ordinals
-        if path in CONSTANT_FIELDS:
-            judged = [o for o in ordinals if o[0] == "deny-list"]
-        elif path == "source":
-            text = RECORDED_SOURCE_HEAD_RE.sub("", text)
-        forms = oracle_forms(text)
-        whole = oracle_forms(text, literals=False)
-        for kind, n, pattern in judged:
-            if any(pattern.search(form) for form in (whole if kind == "deny-list" else forms)):
-                return kind, n, path
-    return None
 
 
 _PROJECT_ID_RE = re.compile(r"(?<![A-Za-z0-9])projects/+(?P<id>[0-9]{5,})(?![A-Za-z0-9])", re.I)
@@ -2642,7 +2116,7 @@ def known_values(
         return by_login.get(login.casefold(), "author")
 
     def _add(kind: str, value: str, token: str, *, hard: bool) -> None:
-        if value:
+        if value and not (kind in ("login", "segment") and _names_no_one(value)):
             (strict if hard else soft)[kind].append((value, token))
 
     def _segments(path: Sequence[str], *, hard: bool) -> None:
@@ -2662,7 +2136,8 @@ def known_values(
         forms = _id_encodings(key) if isinstance(key, int) else _id_forms(number)
         for form in forms:
             token = _id_token(form, key, ids=ids, projects=projects, forge=forge, project=project)
-            _add("id", form, token, hard=True)
+            if token != form:
+                _add("id", form, token, hard=True)
 
     logins = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
     for login in logins:
@@ -2675,7 +2150,7 @@ def known_values(
             _add("login", f"{MENTION_ONLY_PREFIX}{mention}", word, hard=True)
 
     remote_host, remote_path = remote_location(remote)
-    instance = remote_host.casefold() if remote_host else _raw_url_host(raw)
+    instance = remote_host.casefold() if remote_host else _instance_host(raw)
     own = (
         {remote_host.casefold()}
         if remote_host and not closure.is_public_host(remote_host)
@@ -2800,12 +2275,12 @@ def _unique(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
 def _id_token(
     form: str, key: object, *, ids: UserIdMap, projects: UserIdMap, forge: str, project: bool
 ) -> str:
-    """The synthetic form of one id string: digits stay digits, a node id becomes ``U_<n>``."""
-    if not isinstance(key, int):
-        return form
+    """The synthetic form of one id string: digits stay digits, a node id becomes ``U_<n>``, an opaque id ``U_<n>``."""
     owner = projects if project else ids
     number = owner.synthetic(key, forge=forge)
-    return str(number) if form.isdigit() else f"U_{number}"
+    if isinstance(key, int):
+        return str(number) if form.isdigit() else f"U_{number}"
+    return str(number)
 
 
 @functools.lru_cache(maxsize=64)

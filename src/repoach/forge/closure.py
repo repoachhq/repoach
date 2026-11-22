@@ -614,13 +614,20 @@ def _label_run(run: str) -> list[str] | None:
     return labels
 
 
+def _local_before(text: str, at: int) -> str:
+    """The run of :data:`LOCAL_CHARS` right before the ``@`` at ``at``; empty unless it holds a letter or digit."""
+    begin = at
+    while begin > 0 and text[begin - 1] in LOCAL_CHARS:
+        begin -= 1
+    local = text[begin:at]
+    return local if any(c.isalnum() for c in local) else ""
+
+
 def _led(text: str, start: int) -> bool:
     before = text[:start]
     if before.endswith("://") and _SCHEME_BEFORE.search(before[:-3]):
         return True
-    if before.endswith("@"):
-        return len(before) > 1 and before[-2] in LOCAL_CHARS
-    return False
+    return before.endswith("@") and _local_before(text, start - 1) != ""
 
 
 def _runs(text: str) -> list[tuple[int, int, str]]:
@@ -695,11 +702,10 @@ def mailboxes(text: str) -> list[Mailbox]:
     """Every ``<local>@<host>`` of ``text``, ``local`` a run of :data:`LOCAL_CHARS`, ``host`` a label run or an IPv4."""
     found = []
     for at in (i for i, c in enumerate(text) if c == "@"):
-        begin = at
-        while begin > 0 and text[begin - 1] in LOCAL_CHARS:
-            begin -= 1
-        if begin == at:
+        local = _local_before(text, at)
+        if not local:
             continue
+        begin = at - len(local)
         m = _RUN.match(text, at + 1)
         if m is None:
             continue
@@ -707,11 +713,10 @@ def mailboxes(text: str) -> list[Mailbox]:
         body = run[:-1] if run.endswith(".") else run
         if _label_run(run) is None and _ipv4(body) is None:
             continue
-        local = text[begin:at]
         if local.casefold().startswith("mailto:"):
             begin += 7
             local = local[7:]
-        if local:
+        if any(c.isalnum() for c in local):
             found.append(Mailbox(local, body, begin, at + 1 + len(body)))
     return found
 
@@ -803,9 +808,12 @@ _LITERAL_PATTERNS: dict[tuple[str, ...], re.Pattern[str]] = {}
 
 def _literal_pattern(literals: tuple[str, ...]) -> re.Pattern[str]:
     if literals not in _LITERAL_PATTERNS:
-        alternation = "|".join(re.escape(x) for x in sorted(literals, key=len, reverse=True))
+        alternation = "|".join(
+            f"(?i:{re.escape(x)})" if x.startswith("docs.") else re.escape(x)
+            for x in sorted(literals, key=len, reverse=True)
+        )
         _LITERAL_PATTERNS[literals] = re.compile(
-            rf"(?<![{_ALNUM}])(?:{alternation})(?![{_ALNUM}-])", re.IGNORECASE
+            rf"(?<![{_ALNUM}])(?:{alternation})(?![{_ALNUM}-])"
         )
     return _LITERAL_PATTERNS[literals]
 

@@ -58,6 +58,7 @@ from typing import Any, Protocol, cast
 from repoach.core.logging import route_default_logs_to_stderr
 from repoach.forge import closure
 from repoach.forge.recording import (
+    CLI_PLACEHOLDER_RE,
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
@@ -270,17 +271,31 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
 
 
 def _mention_text(text: str, roles: dict[str, str]) -> str:
-    """Replace every ``@<login>`` of ``roles`` (and any ``<name>[bot]`` stem) in free text by its class word."""
+    """Replace every login of ``roles`` in free text by its class word, a tool literal left as it is.
+
+    The ``@<login>`` form of every login (and a ``<name>[bot]`` login's
+    ``@<stem>``) and the bare form of every login that is not mention-only.
+    """
+    pieces = CLI_PLACEHOLDER_RE.split(text)
+    templates = CLI_PLACEHOLDER_RE.findall(text)
     for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
         handle = login.removeprefix(MENTION_ONLY_PREFIX)
-        text = mention_pattern(handle).sub(f"@{word}", text)
-        if not login.startswith(MENTION_ONLY_PREFIX):
-            text = token_pattern(login).sub(word, text)
-        if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]"):
-            mention_stem = bot_mention_stem(login)
+        mention_stem = (
+            bot_mention_stem(login)
+            if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]")
+            else None
+        )
+        for n, piece in enumerate(pieces):
+            piece = mention_pattern(handle).sub(f"@{word}", piece)
+            if not login.startswith(MENTION_ONLY_PREFIX):
+                piece = token_pattern(login).sub(word, piece)
             if mention_stem is not None:
-                text = mention_pattern(mention_stem).sub(f"@{word}", text)
-    return text
+                piece = mention_pattern(mention_stem).sub(f"@{word}", piece)
+            pieces[n] = piece
+    out = pieces[0]
+    for template, piece in zip(templates, pieces[1:], strict=True):
+        out += template + piece
+    return out
 
 
 def _rename(node: object, roles: dict[str, str]) -> object:
