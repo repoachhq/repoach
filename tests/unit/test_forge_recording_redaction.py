@@ -4917,3 +4917,51 @@ def test_record_refuses_a_replay_that_disagrees_with_the_live_call(
     ):
         _record_through(monkeypatch, tmp_path, flaky, method="conversation_comments", args=[7])
     assert not (tmp_path / "out").exists()
+
+
+def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_never_rewritten() -> (
+    None
+):
+    """D4: a new login takes the next class word the fixture lacks; longer words win; the recorded head stays."""
+    held = _roles_data(
+        {"user": {"login": "author"}}, {"user": {"login": "author-2"}}, {"user": {"login": "zqnew"}}
+    )
+    assert redact_fixtures.legacy_roles(held) == {"zqnew": "author-3"}
+    bots = _roles_data(
+        {"user": {"login": "bot"}},
+        {"user": {"login": "zqone[bot]"}},
+        {"user": {"login": "zqtwo[bot]"}},
+    )
+    assert redact_fixtures.legacy_roles(bots) == {"zqone[bot]": "bot-2", "zqtwo[bot]": "bot-3"}
+    services = _roles_data({"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}})
+    services["bot_username"] = "repoach-bot"
+    assert redact_fixtures.legacy_roles(services) == {
+        "project_88442211_bot_a1b2c3d4e5f6": "service"
+    }
+    padded = {
+        "forge": "github",
+        "calls": [
+            {
+                "args": [],
+                "returncode": 0,
+                "stdout": " " + json.dumps({"user": {"login": "zqpadded"}}),
+            }
+        ],
+    }
+    assert redact_fixtures.legacy_roles(padded) == {"zqpadded": "author-2"}
+    assert (
+        redact_fixtures._mention_text(
+            "zqname-x and zqname", {"zqname": "author-10", "zqname-x": "bot"}
+        )
+        == "bot and author-10"
+    )
+    head = "recorded 2026-11-22 from a live github change request"
+    known = recording.known_values(
+        [[], [], {}], roles={}, remote="git@git.zqcorp.io:recorded/zqmainrepo.git"
+    )
+    kept = redact_fixtures._replace_known(
+        {"source": f"{head}, tagged recorded", "case": "recorded"}, known
+    )
+    assert kept == {"source": f"{head}, tagged org", "case": "recorded"}
+    other = redact_fixtures._replace_known({"body": "recorded here", "note": f"{head}"}, known)
+    assert other == {"body": "org here", "note": f"{head}".replace("recorded", "org")}
