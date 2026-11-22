@@ -354,6 +354,7 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
         "zm",
         "zw",
     ]
+    reserved = ["ac", "eu", "su", "uk"]
     generic = [
         "com",
         "net",
@@ -431,7 +432,10 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
         "localhost",
     ]
     assert len(iso) == 249
-    assert (set(iso) | set(generic) | set(private)) - closure.EXTENSION_TLDS == closure.HOST_TLDS
+    assert (
+        set(iso) | set(reserved) | set(generic) | set(private)
+    ) - closure.EXTENSION_TLDS == closure.HOST_TLDS
+    assert {"eu", "su", "uk"} <= closure.HOST_TLDS and "ac" not in closure.HOST_TLDS
     assert all(2 <= len(t) <= 12 and t.isascii() and t.islower() for t in closure.HOST_TLDS)
     assert not closure.HOST_TLDS & closure.EXTENSION_TLDS
     assert {
@@ -455,16 +459,17 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
         assert code in closure.HOST_TLDS
     for head in closure.REVERSE_DNS_HEADS:
         assert head in closure.HOST_TLDS
-        assert closure.hosts(f"{head}.acme.tools") == []
+        assert closure.hosts(f"{head}.acme.tools/x") == []
     assert {"com", "org", "net", "io", "dev", "me", "co", "edu", "gov"} == closure.REVERSE_DNS_HEADS
-    assert closure.hosts("a.b.zq") == []
+    assert closure.hosts("a.b.zq/x") == []
     for tld in sorted(closure.HOST_TLDS):
-        found = closure.hosts(f"see svc.acme.{tld} now")
+        found = closure.hosts(f"see svc.acme.{tld}/x now")
         assert [h.host for h in found] == [f"svc.acme.{tld}"], tld
         assert found[0].led is False
-        assert closure.hosts(f"see acme.{tld} now") == [], tld
-    for tld in sorted(closure.EXTENSION_TLDS):
         assert closure.hosts(f"see svc.acme.{tld} now") == [], tld
+        assert closure.hosts(f"see acme.{tld}/x now") == [], tld
+    for tld in sorted(closure.EXTENSION_TLDS):
+        assert closure.hosts(f"see svc.acme.{tld}/x now") == [], tld
         led = closure.hosts(f"see https://svc.acme.{tld} now")
         assert [h.host for h in led] == [f"svc.acme.{tld}"], tld
     for scheme in ("http", "https", "ssh", "git", "ftp", "ftps", "svn+ssh", "x-y.z"):
@@ -478,24 +483,24 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
     assert closure.hosts("Xcode.app config.dev ssl.ca stream.io torch.net os.path README.md") == []
     assert closure.hosts("com.example.app org.apache.commons.io") == []
     assert closure.hosts("self.config.dev") == []
-    assert {"self.config.dev"} == closure.NON_HOST_TOKENS
-    assert [h.host for h in closure.hosts("a.b.io.")] == ["a.b.io"]
-    assert closure.hosts("-a.b.io")[0].host == "a.b.io"
-    assert [h.host for h in closure.hosts("x--y.zq.io")] == ["x--y.zq.io"]
-    assert closure.hosts("-x.zq.io-") != []
-    assert closure.hosts("1x.zq.io") != []
-    assert closure.hosts("a.b..io") == []
-    assert closure.hosts("a." + "b" * 64 + ".io") == []
-    assert closure.hosts("a." + "b" * 63 + ".io") != []
-    assert closure.hosts("a.b.i0") == []
-    assert closure.hosts("a.b.i") == []
+    assert [h.host for h in closure.hosts("a.b.io./x")] == ["a.b.io"]
+    assert closure.hosts("-a.b.io/x")[0].host == "a.b.io"
+    assert [h.host for h in closure.hosts("x--y.zq.io/x")] == ["x--y.zq.io"]
+    assert [h.host for h in closure.hosts("https://x.zq.io- y")] == ["x.zq.io"]
+    assert closure.hosts("1x.zq.io/x") != []
+    assert closure.hosts("a.b..io/x") == []
+    assert closure.hosts("a." + "b" * 64 + ".io/x") == []
+    assert closure.hosts("a." + "b" * 63 + ".io/x") != []
+    assert closure.hosts("a.b.i0/x") == []
+    assert closure.hosts("a.b.i/x") == []
     for char in map(chr, range(128)):
-        text = f"{char}svc.acme.io{char}"
-        found = closure.hosts(text)
+        found = closure.hosts(f"{char}svc.acme.io/x")
         inside = char.isalnum() or char in ".-"
         assert (not found or found[0].host == "svc.acme.io") or inside, repr(char)
         if not inside:
             assert [h.host for h in found] == ["svc.acme.io"], repr(char)
+            after = closure.hosts(f"https://svc.acme.io{char}")
+            assert [h.host for h in after] == ["svc.acme.io"], repr(char)
 
 
 def test_ipv4_rule_reserved_table_version_lead_and_led_addresses_by_enumeration() -> None:
@@ -520,7 +525,7 @@ def test_ipv4_rule_reserved_table_version_lead_and_led_addresses_by_enumeration(
     for net in map(ipaddress.IPv4Network, networks):
         for address in (net[0], net[-1]):
             assert closure.public_addresses(f"at {address} now") == []
-    for public in ("8.8.8.8", "11.22.33.44", "172.32.0.1", "100.128.0.1", "1.1.1.1"):
+    for public in ("8.8.8.8", "11.22.33.44", "172.32.1.1", "100.128.1.1", "1.1.1.1"):
         assert closure.public_addresses(f"at {public} now") == [public]
         assert [h.host for h in closure.hosts(f"https://{public}/x")] == [public]
         assert [h.host for h in closure.hosts(f"//{public}/x")] == [public]
@@ -544,6 +549,12 @@ def test_ipv4_rule_reserved_table_version_lead_and_led_addresses_by_enumeration(
     assert closure.public_addresses("addr 8.8.8.0008") == []
     assert closure.public_addresses("addr 008.8.8.8") == ["008.8.8.8"]
     assert closure.public_addresses("addr 8.8.8.8:80") == ["8.8.8.8"]
+    for shaped in ("1.8.0.252", "4.8.1.0", "11.0.3.4", "8.8.0.8"):
+        assert closure.public_addresses(f"JDK {shaped} and dotnet") == [], shaped
+        assert [h.host for h in closure.hosts(f"https://{shaped}/x")] == [shaped], shaped
+    assert closure.public_addresses("pkg == 1.2.3.4") == []
+    assert closure.public_addresses("pkg  >=   1.2.3.4") == []
+    assert closure.public_addresses("pkg = 1.2.3.4") == ["1.2.3.4"]
     assert closure.is_placeholder_host("203.0.113.9")
     assert closure.is_placeholder_host("127.1.2.3")
     assert not closure.is_placeholder_host("10.0.0.1")
@@ -948,14 +959,16 @@ def test_value_types_are_frozen_and_carry_their_documented_defaults() -> None:
 
 def test_reader_positions_flags_and_edges_by_enumeration() -> None:
     """D8: offsets, the ``led`` flag, trailing dots, hyphen runs, schemes, version contexts and unterminated mailboxes."""
-    found = closure.hosts("x -git.acme.io. y")
+    found = closure.hosts("x -git.acme.io./z y")
     assert [(h.host, h.led, h.start, h.end) for h in found] == [("git.acme.io", False, 3, 15)]
     found = closure.hosts("see https://git.acme.io/x")
     assert [(h.host, h.led, h.start, h.end) for h in found] == [("git.acme.io", True, 12, 23)]
-    found = closure.hosts("a ..git.acme.io")
+    found = closure.hosts("a ..git.acme.io/x")
     assert (found[0].start, found[0].end) == (4, 15)
-    found = closure.hosts("a ---git.acme.io---")
+    found = closure.hosts("a ---git.acme.io/x")
     assert (found[0].start, found[0].end) == (5, 16)
+    found = closure.hosts("a https://git.acme.io---")
+    assert (found[0].start, found[0].end) == (10, 21)
     found = closure.hosts("ssh://8.8.8.8./x")
     assert [(h.host, h.led, h.start) for h in found] == [("8.8.8.8", True, 6)]
     assert [h.led for h in closure.hosts("//8.8.8.8/x")] == [True]
@@ -970,7 +983,7 @@ def test_reader_positions_flags_and_edges_by_enumeration() -> None:
     assert closure.hosts("x=@acme.zz") == []
     assert [h.host for h in closure.hosts("1@acme.zz")] == ["acme.zz"]
     assert closure.hosts("https://8.8.8.8/x")[0].end == 15
-    assert closure.hosts("a.b.c.io")[0].end == 8
+    assert closure.hosts("a.b.c.io/x")[0].end == 8
     assert closure.hosts("https://x.io/a")[0].start == 8
     for phrase in (
         "version 8.8.8.8",
@@ -1070,13 +1083,200 @@ def test_reader_positions_flags_and_edges_by_enumeration() -> None:
 
 def test_case_is_folded_by_every_reader_and_a_blanked_literal_separates_its_neighbours() -> None:
     """D8, D3: hosts, tokens and literals are judged casefolded; a blanked literal never fuses what stood around it."""
-    assert [h.host for h in closure.hosts("SVC.ACME.IO")] == ["SVC.ACME.IO"]
-    assert [h.host for h in closure.hosts("svc.acme.Io")] == ["svc.acme.Io"]
-    assert closure.hosts("COM.ACME.TOOLS") == []
-    assert closure.hosts("Com.acme.tools") == []
-    assert closure.hosts("SELF.CONFIG.DEV") == []
-    assert closure.hosts("Self.Config.Dev") == []
+    assert [h.host for h in closure.hosts("SVC.ACME.IO/x")] == ["SVC.ACME.IO"]
+    assert [h.host for h in closure.hosts("svc.acme.Io/x")] == ["svc.acme.Io"]
+    assert closure.hosts("COM.ACME.TOOLS/x") == []
+    assert closure.hosts("Com.acme.tools/x") == []
     assert [h.host for h in closure.hosts("ssh://SVC.Acme.PY")] == ["SVC.Acme.PY"]
     known = closure.Known((("deny-list", "x__y"),), (":owner",))
     assert closure.residual("x_:owner_y", known) is None
     assert closure.residual("x__y", known) == ("deny-list", 1)
+
+
+def test_a_dotted_name_is_a_host_only_when_led_or_followed_by_construction() -> None:
+    """D8 (0.18): led by a scheme, ``<local>@`` or ``//``, or followed by ``/<segment>`` or ``:<port>``; else ordinary text."""
+    bare = (
+        "response.data.id",
+        "self.logger.info",
+        "request.user.email",
+        "self.server.host",
+        "app.config.name",
+        "this.props.id",
+        "arr.items.at",
+        "cfg.Server.Host",
+        "ctx.cfg.net.host",
+        "window.app.config.dev",
+        "req.params.id",
+        "self.config.dev",
+        "mirror.zqcorp.net",
+        "code.kvncloud.io",
+    )
+    for name in bare:
+        assert closure.hosts(f"x = {name};") == [], name
+        assert closure.hosts(f"Host {name} is down") == [], name
+        assert closure.hosts(f"{name}()") == [], name
+        assert closure.hosts(f"{name}: up") == [], name
+        assert closure.hosts(f"{name}:x") == [], name
+        assert closure.hosts(f"{name}: 8080") == [], name
+        assert closure.hosts(f"{name}/") == [], name
+        assert closure.hosts(f"{name}/ x") == [], name
+        assert closure.hosts(f"{name}//x") == [], name
+        found = closure.hosts(f"see {name}/seg")
+        assert [(h.host, h.led) for h in found] == [(name, False)], name
+        assert [h.host for h in closure.hosts(f"see {name}:8080")] == [name], name
+        assert [h.host for h in closure.hosts(f"see //{name}")] == [name], name
+        assert [h.host for h in closure.hosts(f"see https://{name}")] == [name], name
+        assert [h.host for h in closure.hosts(f"see git@{name}")] == [name], name
+    for first in "abcxyzABCXYZ0129_-.~%":
+        assert [h.host for h in closure.hosts(f"see svc.acme.io/{first}b")] == ["svc.acme.io"]
+    for first in " \t\n/?#:@!'\"()<>[]{}\\,;=&*+^`|":
+        assert closure.hosts(f"see svc.acme.io/{first}b") == [], repr(first)
+    for digit in "0123456789":
+        assert [h.host for h in closure.hosts(f"see svc.acme.io:{digit}")] == ["svc.acme.io"]
+    for other in "abcxyzABC_-./ \n@%":
+        assert closure.hosts(f"see svc.acme.io:{other}1") == [], repr(other)
+    assert closure.hosts("see svc.acme.io") == []
+    assert closure.hosts("see svc.acme.io/") == []
+    assert closure.hosts("see svc.acme.io:") == []
+    assert closure.hosts("see acme.io/seg") == []
+    assert closure.hosts("see acme.io:8080") == []
+    assert [h.host for h in closure.hosts("see //acme.io")] == []
+    assert [h.host for h in closure.hosts("see https://acme.io")] == ["acme.io"]
+    assert [h.host for h in closure.hosts("see git@acme.io:o/r")] == ["acme.io"]
+    assert closure.hosts("main.py:42") == []
+    assert closure.hosts("a.b.rs:42 and x.y.sh/run") == []
+
+
+def test_a_bare_dotted_host_in_prose_is_the_documented_residual() -> None:
+    """NG4 (0.18): a third-party private host cited bare in prose is neither a host nor refused; a known one is still replaced."""
+    prose = "Host mirror.zqcorp.net is down, ask code.kvncloud.io"
+    assert closure.hosts(prose) == []
+    assert closure.judge(prose, closure.Known(())) is None
+    known = closure.Known((("host", "mirror.zqcorp.net"),))
+    assert closure.judge(prose, known) == closure.Refusal("residual", "host", 1)
+    assert closure.judge("Host mirror.zqcorp.net/x is down", closure.Known(())) == closure.Refusal(
+        "unknown host"
+    )
+
+
+def test_a_percent_escape_is_never_part_of_a_label_run() -> None:
+    """D2 (0.18): ``%2F`` before a name is a delimiter, so ``%2Fcode.acme.io`` reads ``code.acme.io``."""
+    found = closure.hosts("a%2Fcode.acme.io/x")
+    assert [(h.host, h.start) for h in found] == [("code.acme.io", 4)]
+    assert [h.host for h in closure.hosts("a%2fcode.acme.io/x")] == ["code.acme.io"]
+    assert [h.host for h in closure.hosts("https://%2Facme.io")] == []
+    assert [h.host for h in closure.hosts("a%code.acme.io/x")] == ["code.acme.io"]
+    assert closure.hosts("a%e2.acme.io/x") == []
+    assert [h.host for h in closure.hosts("a%2.acme.io/x")] == ["2.acme.io"]
+    assert [h.host for h in closure.hosts("a%G2code.acme.io/x")] == ["G2code.acme.io"]
+    assert [h.host for h in closure.hosts("a%2Gcode.acme.io/x")] == ["2Gcode.acme.io"]
+    assert [h.host for h in closure.hosts("%2Fcode.acme.io/x")] == ["code.acme.io"]
+    assert closure.hosts("https%3A%2F%2Fcode.acme.io%2Fx") == []
+    decoded = closure.decoded_forms("https%3A%2F%2Fcode.acme.io%2Fx")
+    assert [h.host for h in closure.hosts(decoded[-1])] == ["code.acme.io"]
+
+
+def test_the_judge_reads_hosts_addresses_and_mailboxes_in_every_decoded_form() -> None:
+    """D2 (0.18): an encoded lead, segment or ``@`` counts as the character it encodes."""
+    none = closure.Known(())
+    for text in (
+        "redirect=https%3A%2F%2Fkvncloud.io%2Fkvnteam%2Fkvnbilling",
+        "redirect=https%3A%2F%2Fcode.kvncloud.io%2Fkvnteam",
+        "see code.kvncloud.io%2Fkvnteam%2Fkvnbilling",
+        "see code.kvncloud.io%3A8443",
+        "see &#104;ttps://kvncloud.io/x",
+        "see https:&#47;&#47;kvncloud.io",
+        "see \\u0068ttps://kvncloud.io",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    for text in ("mail kvnperson&#64;kvnmail.io", "mail kvnperson%40kvnmail.io"):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    for text in ("mail kvnperson&#64;mail.example.com", "mail kvnperson%40mail.example.com"):
+        assert closure.judge(text, none) == closure.Refusal("unknown mailbox"), text
+    for text in ("ssh to 8&#46;8&#46;8&#46;8 now", "ssh to 8%2E8%2E8%2E8 now"):
+        assert closure.judge(text, none) == closure.Refusal("public address"), text
+    assert closure.judge("see https%3A%2F%2Fexample.com%2Fx and a%40example.com", none) is None
+    assert closure.judge("100%25 done, a%2Fb", none) is None
+    assert closure.judge("see https%3A%2F%2Fdocs.python.org%2F3", none) is None
+
+
+def test_the_legacy_node_reader_never_raises_on_a_malformed_run() -> None:
+    """D3 (0.18): ``MDQ6VXNl`` runs of any length and padding are read or ignored, never a crash."""
+    body = "MDQ6VXNlcjc0OTI4MTYzabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0123456789+/"
+    for length in range(8, 60):
+        for pad in ("", "=", "==", "==="):
+            text = f"x {body[:length]}{pad} y"
+            assert isinstance(closure.node_id_numbers(text), list), (length, pad)
+    assert closure.node_id_numbers("see MDQ6VXNlcjc0O= here") == ["74"]
+    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYz= here") == ["74928163"]
+    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTY= here") == ["7492816"]
+    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYz== here") == ["74928163"]
+    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYzA here") == ["74928163"]
+    assert closure.node_id_numbers("MDQ6VXNlcjc0O" + "=" * 2) == ["74"]
+
+
+def test_a_bracketed_ipv6_literal_is_judged_like_an_ipv4_address() -> None:
+    """D8 (0.18): led it is a host, un-led and global it is a public address, a documentation prefix is placeholder."""
+    for literal in ("[2001:db8::1]", "[2001:DB8::1]", "[3fff::1]", "[::1]"):
+        assert closure.is_placeholder_host(literal), literal
+        assert closure.is_placeholder_host(literal.strip("[]")), literal
+    for literal in ("[fd00::1]", "[fe80::1]", "[2a00:1450::1]", "[::2]"):
+        assert not closure.is_placeholder_host(literal), literal
+    found = closure.hosts("see http://[2a00:1450::1]/ns/repo")
+    assert [(h.host, h.led, h.literal) for h in found] == [("[2a00:1450::1]", True, True)]
+    assert [h.host for h in closure.hosts("x //[fd00::1]:8080/y")] == ["[fd00::1]"]
+    assert [h.host for h in closure.hosts("git@[fd00::1]:o/r")] == ["[fd00::1]"]
+    assert closure.hosts("see [fd00::1] and [fd00::1]:80 and a[::1]") == []
+    assert closure.hosts("see [1:2] [1:2:3] [x::1] [::g] [] [:::]") == []
+    assert closure.public_addresses("ssh [2a00:1450:4001::1]:22") == ["[2a00:1450:4001::1]"]
+    assert closure.public_addresses("ssh [2A00:1450:4001::1]") == ["[2A00:1450:4001::1]"]
+    assert closure.public_addresses("see http://[2a00:1450:4001::1]/x") == []
+    assert closure.public_addresses("see //[2a00:1450:4001::1]/x") == []
+    assert closure.public_addresses("see user@[2a00:1450:4001::1]") == []
+    assert closure.public_addresses("xs[2020::] xs[::2] xs[2a00::] xs[2a00::1]") == []
+    assert closure.public_addresses("ssh [2001:db8:1::1] [fd00:1::1] [fe80:1::1]") == []
+    assert closure.judge("see http://[2a00:1450::1]/x", closure.Known(())) == closure.Refusal(
+        "unknown host"
+    )
+    assert closure.judge("see http://[2001:db8::1]/x", closure.Known(())) is None
+    assert closure.judge("ssh [2a00:1450:4001::1]", closure.Known(())) == closure.Refusal(
+        "public address"
+    )
+    for text, expected in (
+        ("[::1]", "::1"),
+        ("[::]", "::"),
+        ("[1:2:3:4:5:6:7:8]", "1:2:3:4:5:6:7:8"),
+        ("[1:2:3:4:5:6:7::]", "1:2:3:4:5:6:7:0"),
+        ("[1::]", "1::"),
+        ("[0001:0002:0003:0004:0005:0006:0007:0008]", "1:2:3:4:5:6:7:8"),
+    ):
+        assert str(closure._ipv6(text)) == expected, text
+    for text in (
+        "[1:2]",
+        "[1:2:3:4:5:6:7]",
+        "[1:2:3:4:5:6:7:8:9]",
+        "[1:2:3:4:5:6:7:8::]",
+        "[1::2::3]",
+        "[:1:2]",
+        "[1:2:]",
+        "[::12345]",
+        "[::g]",
+        "[a:::b]",
+        "[1.2.3.4]",
+        "",
+    ):
+        assert closure._ipv6(text) is None, text
+
+
+def test_the_version_guard_of_a_led_address_is_observable() -> None:
+    """H07 (0.18): a led address followed by ``-`` or ``+`` or after a comparator is a version, not a host."""
+    for text in (
+        "http://8.8.8.8+1/x",
+        "http://8.8.8.8- y",
+        "//8.8.8.8+rc",
+        "x@8.8.8.8-1",
+        "//10.0.0.1+1",
+    ):
+        assert closure.hosts(text) == [], text
+    for text in ("http://8.8.8.8 y", "//8.8.8.8 y", "x@8.8.8.8 y", "http://8.8.8.8/x"):
+        assert [h.host for h in closure.hosts(text)] == ["8.8.8.8"], text

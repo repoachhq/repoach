@@ -277,6 +277,9 @@ _ISO_COUNTRY_CODES = [
     "zw",
 ]
 
+_RESERVED_COUNTRY_CODES = ["ac", "eu", "su", "uk"]
+"""Country-level codes outside ISO 3166-1 (exceptional reservations and retired codes) that name hosts."""
+
 _GENERIC_TLDS = [
     "com",
     "net",
@@ -350,17 +353,17 @@ EXTENSION_TLDS: frozenset[str] = frozenset(
 """Country codes that are also file extensions: un-led, ``x.h.in`` is a file, not a host."""
 
 HOST_TLDS: frozenset[str] = (
-    frozenset(_ISO_COUNTRY_CODES) | frozenset(_GENERIC_TLDS) | frozenset(_PRIVATE_USE_TLDS)
+    frozenset(_ISO_COUNTRY_CODES)
+    | frozenset(_RESERVED_COUNTRY_CODES)
+    | frozenset(_GENERIC_TLDS)
+    | frozenset(_PRIVATE_USE_TLDS)
 ) - EXTENSION_TLDS
-"""The explicit list of last labels that make an un-led run of three labels a host."""
+"""The explicit list of last labels that make a run of three labels a host."""
 
 REVERSE_DNS_HEADS: frozenset[str] = frozenset(
     {"com", "org", "net", "io", "dev", "me", "co", "edu", "gov"}
 )
 """First labels of Java, Android and Maven names (``com.example.app``): never a host un-led."""
-
-NON_HOST_TOKENS: frozenset[str] = frozenset({"self.config.dev"})
-"""Exact casefolded un-led tokens known to be ordinary text; an over-refusal is fixed here, never in a rule."""
 
 LOCAL_CHARS = (
     "._%+-:${}" + "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789"
@@ -391,6 +394,9 @@ IPV4_RESERVED = tuple(
 _RFC5737 = tuple(
     ipaddress.IPv4Network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
 )
+
+_IPV6_DOCUMENTATION = tuple(ipaddress.IPv6Network(n) for n in ("2001:db8::/32", "3fff::/20"))
+"""The IPv6 documentation prefixes (RFC 3849, RFC 9637): a literal in one names no one."""
 
 _COMPARATORS = ("==", ">=", "<=", "~=", "!=")
 
@@ -431,6 +437,14 @@ _DOC_MAILBOX_HOST = re.compile(
 )
 
 _RUN = re.compile(r"[A-Za-z0-9.-]+")
+
+_BRACKETED = re.compile(r"\[([0-9a-f:]{2,45})\]", re.I)
+
+_HEX = frozenset("0123456789abcdefABCDEF")
+
+_DIGITS = frozenset("0123456789")
+
+_SEGMENT_START = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.~%")
 
 _LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
@@ -477,15 +491,17 @@ class Host:
 
     Attributes:
         host: The host as written, without its trailing dot.
-        led: Whether a scheme ``://`` or ``<local>@`` stands right before it.
+        led: Whether a scheme ``://``, a ``<local>@`` or, for an address, ``//`` stands right before it.
         start: Offset of the first character.
         end: Offset after the last character.
+        literal: Whether it is a bracketed IPv6 literal, ``host`` then holding the brackets.
     """
 
     host: str
     led: bool
     start: int
     end: int
+    literal: bool = False
 
 
 @dataclass(frozen=True)
@@ -567,9 +583,14 @@ def is_placeholder_host(host: str) -> bool:
         if folded == base or folded.endswith("." + base):
             return True
     address = _ipv4(folded)
-    if address is None:
-        return False
-    return address in ipaddress.IPv4Network("127.0.0.0/8") or any(address in n for n in _RFC5737)
+    if address is not None:
+        return address in ipaddress.IPv4Network("127.0.0.0/8") or any(
+            address in n for n in _RFC5737
+        )
+    literal = _ipv6(folded)
+    return literal is not None and (
+        literal.is_loopback or any(literal in n for n in _IPV6_DOCUMENTATION)
+    )
 
 
 def is_public_host(host: str) -> bool:
@@ -590,6 +611,26 @@ def _ipv4(text: str) -> ipaddress.IPv4Address | None:
     if any(int(p) > 255 for p in parts):
         return None
     return ipaddress.IPv4Address(".".join(str(int(p)) for p in parts))
+
+
+def _ipv6(text: str) -> ipaddress.IPv6Address | None:
+    """``text`` as an IPv6 address in hex groups, its brackets dropped, else ``None``."""
+    body = text.strip("[]")
+    head, gap, tail = body.partition("::")
+    groups = [*(head.split(":") if head else []), *(tail.split(":") if tail else [])]
+    shaped = all(0 < len(g) <= 4 and set(g) <= _HEX for g in groups)
+    fits = len(groups) < 8 if gap else len(groups) == 8
+    return ipaddress.IPv6Address(body) if shaped and fits else None
+
+
+def _bracketed(text: str) -> list[tuple[int, int, ipaddress.IPv6Address]]:
+    """Every ``[<IPv6 address>]`` of ``text`` as ``(start, end, address)``."""
+    found = []
+    for m in _BRACKETED.finditer(text):
+        address = _ipv6(m.group(1))
+        if address is not None:
+            found.append((m.start(), m.end(), address))
+    return found
 
 
 def _label_run(run: str) -> list[str] | None:
@@ -622,39 +663,49 @@ def _led(text: str, start: int) -> bool:
 def _runs(text: str) -> list[tuple[int, int, str]]:
     found = []
     for m in _RUN.finditer(text):
-        run = m.group(0)
+        begin, run = m.start(), m.group(0)
+        if text[begin - 1 : begin] == "%" and run[:1] in _HEX and run[1:2] in _HEX:
+            begin, run = begin + 2, run[2:]
         lead = len(run) - len(run.lstrip("-."))
         stripped = run[lead:].rstrip("-")
         if stripped:
-            found.append((m.start() + lead, m.start() + lead + len(stripped), stripped))
+            found.append((begin + lead, begin + lead + len(stripped), stripped))
     return found
 
 
 def _version_context(text: str, start: int, end: int) -> bool:
     before = text[:start]
-    if before.endswith(_COMPARATORS):
+    if before.rstrip(" ").endswith(_COMPARATORS):
         return True
     stem = before[:-1] if before[-1:] in (" ", ":", "=") else before
     return stem.casefold().endswith("version") or text[end : end + 1] in ("-", "+")
 
 
-def hosts(text: str) -> list[Host]:
-    """Every host-shaped token of ``text``, led (H1) or un-led (H2), in order.
+def _followed(text: str, end: int) -> bool:
+    """Whether ``/<segment>`` or ``:<port digits>`` stands right after offset ``end``."""
+    mark, after = text[end : end + 1], text[end + 1 : end + 2]
+    return (mark == "/" and after in _SEGMENT_START) or (mark == ":" and after in _DIGITS)
 
-    A label run of two or more labels is a host when a scheme or a
-    ``<local>@`` stands right before it; un-led it needs three labels, a
-    last label of :data:`HOST_TLDS` and a first label that is not a
-    reverse-DNS head. A dotted IPv4 address is a host when it is led.
+
+def hosts(text: str) -> list[Host]:
+    """Every host-shaped token of ``text``, in order: the one rule that makes a name a host.
+
+    A dotted name is a host only when it is **led** or **followed**, and
+    never otherwise, whatever its last label. Led by a scheme ``://`` or
+    by ``<local>@``, a label run of two or more labels is a host. Led by
+    ``//`` or followed by ``/<segment>`` or ``:<port digits>``, it is a
+    host when it has three labels or more, a last label of
+    :data:`HOST_TLDS` and a first label that is not a reverse-DNS head.
+    A dotted IPv4 address or a bracketed IPv6 address is a host when it
+    is led by a scheme, a ``<local>@`` or ``//``, outside a version
+    context.
     """
     found: list[Host] = []
     for start, end, run in _runs(text):
         led = _led(text, start)
+        slashes = text[:start].endswith("//")
         address = _ipv4(run.rstrip("."))
-        if (
-            address is not None
-            and (led or text[:start].endswith("//"))
-            and not _version_context(text, start, end)
-        ):
+        if address is not None and (led or slashes) and not _version_context(text, start, end):
             found.append(Host(run.rstrip("."), True, start, end))
         labels = _label_run(run)
         host = run[:-1] if run.endswith(".") else run
@@ -666,14 +717,26 @@ def hosts(text: str) -> list[Host]:
             len(labels) >= 3
             and labels[-1].casefold() in HOST_TLDS
             and labels[0].casefold() not in REVERSE_DNS_HEADS
-            and host.casefold() not in NON_HOST_TOKENS
+            and (slashes or _followed(text, end))
         ):
             found.append(Host(host, False, start, end))
+    for start, end, _address in _bracketed(text):
+        if _led(text, start) or text[:start].endswith("//"):
+            found.append(Host(text[start:end], True, start, end, literal=True))
     return found
 
 
+def _version_shaped(address: ipaddress.IPv4Address) -> bool:
+    """Whether a dotted quad reads as a version (``1.8.0.252``, ``4.8.1.0``): a zero octet is no host's."""
+    return 0 in address.packed
+
+
 def public_addresses(text: str) -> list[str]:
-    """Every un-led public IPv4 address of ``text``, outside a version context."""
+    """Every un-led public IPv4 or bracketed IPv6 address of ``text``, outside a version context.
+
+    An IPv6 literal needs more than two colons: ``xs[2020::]`` and
+    ``xs[::2]`` are slices, and a slice holds two at most.
+    """
     found = []
     for start, end, run in _runs(text):
         body = run.rstrip(".")
@@ -683,10 +746,16 @@ def public_addresses(text: str) -> list[str]:
             or _led(text, start)
             or text[:start].endswith("//")
             or _version_context(text, start, end)
+            or _version_shaped(address)
         ):
             continue
         if not any(address in n for n in IPV4_RESERVED):
             found.append(body)
+    for start, end, address in _bracketed(text):
+        literal = text[start:end]
+        led = _led(text, start) or text[:start].endswith("//")
+        if not led and address.is_global and literal.count(":") > 2:
+            found.append(literal)
     return found
 
 
@@ -755,12 +824,10 @@ def _new_node_number(suffix: str) -> int | None:
 
 
 def _legacy_number(run: str) -> int | None:
-    body = run[:40]
+    body = run[:40].rstrip("=")
     if len(body) % 4 == 1:
-        padded = body[: len(body) - len(body) % 4]
-    else:
-        padded = body + "=" * (-len(body) % 4)
-    decoded = base64.b64decode(padded).decode("ascii", errors="replace")
+        body = body[:-1]
+    decoded = base64.b64decode(body + "=" * (-len(body) % 4)).decode("ascii", errors="replace")
     match = _LEGACY_DECODED.match(decoded)
     return int(match.group(1)) if match else None
 
@@ -836,11 +903,12 @@ def judge(text: str, known: Known) -> Refusal | None:
     left = residual(text, known)
     if left is not None:
         return Refusal("residual", left[0], left[1])
-    for place in hosts(_blank(text, known.literals)):
+    forms = decoded_forms(_blank(text, known.literals))
+    for place in (h for form in forms for h in hosts(form)):
         if not is_placeholder_host(place.host) and not is_public_host(place.host):
             return Refusal("unknown host")
-    if public_addresses(_blank(text, known.literals)):
+    if any(public_addresses(form) for form in forms):
         return Refusal("public address")
-    if any(not is_literal_mailbox(b) for b in mailboxes(_blank(text, known.literals))):
+    if any(not is_literal_mailbox(b) for form in forms for b in mailboxes(form)):
         return Refusal("unknown mailbox")
     return None

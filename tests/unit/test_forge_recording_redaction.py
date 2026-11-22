@@ -3253,11 +3253,7 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
     assert "x-access-token" not in red_star and "pw*1" not in red_star
 
     query_at = "See https://git.zqother.io?contact=a@example.com (host git.zqother.io)"
-    assert [loc[0] for loc in locations(query_at)] == [
-        "git.zqother.io",
-        "example.com",
-        "git.zqother.io",
-    ]
+    assert [loc[0] for loc in locations(query_at)] == ["git.zqother.io", "example.com"]
     found_q = needles(_one_call({"body": query_at}), roles={}, remote="")
     assert "git.zqother.io" in _kinds(found_q, "host")
     red_q = classify_text(redact_urls_in_text(query_at), found_q.mapping())
@@ -3266,11 +3262,7 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
     assert residual(_placed(red_q, "prose"), found_q) is None
 
     angle_adj = "See <https://git.zqother.io><a@example.com> (host git.zqother.io)"
-    assert [loc[0] for loc in locations(angle_adj)] == [
-        "git.zqother.io",
-        "example.com",
-        "git.zqother.io",
-    ]
+    assert [loc[0] for loc in locations(angle_adj)] == ["git.zqother.io", "example.com"]
     found_a = needles(_one_call({"body": angle_adj}), roles={}, remote="")
     assert "git.zqother.io" in _kinds(found_a, "host")
     red_a = classify_text(redact_urls_in_text(angle_adj), found_a.mapping())
@@ -3816,12 +3808,12 @@ def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate(
         call = _exchange([{"user": {"login": login}, "body": body}])
         return {"source": "s", "calls": [call]}
 
-    everything = "/home/zq/x zqdeny zqlogin git.acme.io 8.8.8.8 a@gmail.com"
+    everything = "/home/zq/x zqdeny zqlogin git.acme.io/x 8.8.8.8 a@gmail.com"
     steps = (
         (everything, r"^generic class home_path at "),
-        ("zqdeny zqlogin git.acme.io 8.8.8.8 a@gmail.com", r"^deny-list entry 1 at "),
-        ("zqlogin git.acme.io 8.8.8.8 a@gmail.com", r"^residual login 1 at "),
-        ("git.acme.io 8.8.8.8 a@gmail.com", r"^unknown host at "),
+        ("zqdeny zqlogin git.acme.io/x 8.8.8.8 a@gmail.com", r"^deny-list entry 1 at "),
+        ("zqlogin git.acme.io/x 8.8.8.8 a@gmail.com", r"^residual login 1 at "),
+        ("git.acme.io/x 8.8.8.8 a@gmail.com", r"^unknown host at "),
         ("8.8.8.8 a@b.example.com", r"^public address at "),
         ("a@b.example.com", r"^unknown mailbox at "),
     )
@@ -3847,7 +3839,7 @@ def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate(
         rec.refuse_unclassified({"method": "zqdeny", "calls": []}, deny, known)
     with pytest.raises(rec.UnclassifiedValueError, match=r"^unknown host at source$"):
         rec.refuse_unclassified(
-            {"source": "recorded 2026-11-22 from a live github change request on git.acme.io"},
+            {"source": "recorded 2026-11-22 from a live github change request on git.acme.io/x"},
             rec.Denylist(()),
             known,
         )
@@ -4719,12 +4711,12 @@ def test_record_trims_classifies_the_maintainer_and_names_its_refusals(
         tmp_path,
         extra,
         method="conversation_comments",
-        args=[7, "see git.zqargs.io"],
-        kwargs={"note": "at git.zqkw.io and zqmainrepo"},
+        args=[7, "see git.zqargs.io:8443"],
+        kwargs={"note": "at git.zqkw.io:22 and zqmainrepo"},
         remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
     )
-    assert host_only["args"] == [7, "see forge.example.com"]
-    assert host_only["kwargs"] == {"note": "at forge.example.com and project"}
+    assert host_only["args"] == [7, "see forge.example.com:8443"]
+    assert host_only["kwargs"] == {"note": "at forge.example.com:22 and project"}
     with pytest.raises(
         SystemExit, match=r"^refusing to record write method 'post_comment': fixtures never post$"
     ):
@@ -4853,8 +4845,8 @@ def test_offline_known_values_and_redaction_read_every_field_of_the_fixture() ->
     data = {
         "forge": "github",
         "method": "reviews",
-        "args": ["see git.zqcorp.io"],
-        "kwargs": {"note": "at git.acme.io"},
+        "args": ["see git.zqcorp.io:8443"],
+        "kwargs": {"note": "at git.acme.io:22"},
         "calls": [],
         "result": None,
     }
