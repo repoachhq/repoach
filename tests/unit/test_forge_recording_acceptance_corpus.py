@@ -27,6 +27,7 @@ import base64
 import copy
 import importlib.util
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1902,7 +1903,7 @@ ROWS: tuple[Row, ...] = (
             body="Loaded from //git.zqcorp.io/zqgroup/zqmainrepo/v1.js",
             remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
         ),
-        outcome=Written(text="Loaded from //forge.example.com/org/project/project"),
+        outcome=Written(text="Loaded from //forge.example.com/org/project/v1.js"),
         markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
     ),
     Row(
@@ -3104,7 +3105,7 @@ ROWS: tuple[Row, ...] = (
             remote="",
             deny=("kvnsecret42", "84729163"),
         ),
-        outcome=Written(text='<script src="//forge.example.com/org/project"></script>'),
+        outcome=Written(text='<script src="//forge.example.com/org/project/dist/app.js"></script>'),
         markers=("code.kvncloud.io", "kvnbilling"),
     ),
     Row(
@@ -3119,7 +3120,9 @@ ROWS: tuple[Row, ...] = (
             remote="",
             deny=("kvnsecret42", "84729163"),
         ),
-        outcome=Written(text="@author-2 { src: url(//forge.example.com/org/project); }"),
+        outcome=Written(
+            text="@font-face { src: url(//forge.example.com/org/project/fonts/a.woff2); }"
+        ),
         markers=("code.kvncloud.io", "kvnbilling"),
     ),
     Row(
@@ -3151,7 +3154,7 @@ ROWS: tuple[Row, ...] = (
             remote="",
             deny=("kvnsecret42", "84729163"),
         ),
-        outcome=Written(text='{"name": "app", "cdn": "//forge.example.com/org/project/"}'),
+        outcome=Written(text='{"name": "app", "cdn": "//forge.example.com/org/project/v2/"}'),
         markers=("code.kvncloud.io", "kvnbilling"),
     ),
     Row(
@@ -3167,7 +3170,7 @@ ROWS: tuple[Row, ...] = (
             deny=("kvnsecret42", "84729163"),
         ),
         outcome=Written(
-            text="diff --git a/index.html b/index.html\n+<link href='//forge.example.com/org/project' rel='stylesheet'>\n"
+            text="diff --git a/index.html b/index.html\n+<link href='//forge.example.com/org/project/a.css' rel='stylesheet'>\n"
         ),
         markers=("code.kvncloud.io", "kvnbilling"),
     ),
@@ -3183,7 +3186,7 @@ ROWS: tuple[Row, ...] = (
             remote="",
             deny=("kvnsecret42", "84729163"),
         ),
-        outcome=Written(text="Assets: [bundle](//forge.example.com/org/project)"),
+        outcome=Written(text="Assets: [bundle](//forge.example.com/org/project/bundle.js)"),
         markers=("code.kvncloud.io", "kvnbilling"),
     ),
     Row(
@@ -7227,8 +7230,7 @@ ROWS: tuple[Row, ...] = (
             remote="git@github.com:pubteam9/pubrepo9.git",
             deny=("kvnsecret42",),
         ),
-        outcome=Written(text="Host forge.example.com is down"),
-        markers=("mirror.zqcorp.net",),
+        outcome=Written(text="Host mirror.zqcorp.net is down"),
     ),
     Row(
         id="code_two_label_apex_host_schemeless_prose_residual",
@@ -7908,18 +7910,39 @@ def _node_new(number: int) -> str:
 
 
 def _live_only_values(inp: Sample) -> list[str]:
-    """Values only the live recorder learns from the recording (logins, ids and their node forms)."""
+    """Values only the live recorder learns from the recording.
+
+    Every login under a ``login`` or ``username`` key and its ``[bot]``
+    stem, each word of a ``name``, a mailbox, its local part and its
+    host, and every ``id`` with its node forms, wherever the object
+    stands: the offline transform sees a committed fixture, where the
+    keys that held them are already dropped.
+    """
     values: list[str] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, list):
+            for member in node:
+                _walk(member)
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key in ("login", "username") and isinstance(value, str):
+                values.append(value)
+                if value.casefold().endswith("[bot]"):
+                    values.append(value[:-5])
+            elif key == "name" and isinstance(value, str):
+                values.extend([value, *re.findall(r"[^\W_]+", value)])
+            elif key in ("email", "public_email", "commit_email") and isinstance(value, str):
+                local, _at, host = value.rpartition("@")
+                values.extend([value, local, host])
+            elif key == "id" and isinstance(value, int):
+                values.extend([str(value), _node_legacy(value), _node_new(value)])
+            else:
+                _walk(value)
+
     for item in _items(inp):
-        user = item.get("user") or item.get("author") or {}
-        if isinstance(user, dict):
-            for key, value in user.items():
-                if key in ("login", "username", "name", "email"):
-                    values.append(str(value))
-                    if str(value).casefold().endswith("[bot]"):
-                        values.append(str(value)[:-5])
-                if key == "id" and isinstance(value, int):
-                    values += [str(value), _node_legacy(value), _node_new(value)]
+        _walk(item)
     if inp.author:
         values.append(inp.author)
     folded = {v.casefold() for v in values if v}
