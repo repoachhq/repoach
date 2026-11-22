@@ -5159,10 +5159,8 @@ def test_offline_redaction_rewrites_urls_in_arguments_keyword_arguments_and_resu
     assert out["result"] == "https://forge.example.com/org/project/pull/14"
 
 
-def test_offline_roles_read_the_logins_of_the_keyword_arguments_not_of_the_positional_ones() -> (
-    None
-):
-    """D4 (0.18): a login under a dropped key in ``kwargs`` gets a class word; ``args`` members are never walked, so a login there is refused."""
+def test_offline_roles_walk_the_keyword_arguments_and_refuse_positional_logins() -> None:
+    """D4 (0.18): ``kwargs`` keeps its keys, so ``legacy_roles`` reads a login there itself; ``args`` members are never renamed, so a login there is refused."""
     data = {
         "forge": "github",
         "method": "m",
