@@ -54,6 +54,7 @@ import itertools
 import json
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol
@@ -86,6 +87,7 @@ from repoach.forge.recording import (
     mention_pattern,
     mentions,
     outside_literals,
+    raw_logins,
     recorded_source,
     redact_payload,
     redact_stdout,
@@ -181,13 +183,13 @@ def _exchanges(node: object) -> Any:
     return node
 
 
-def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
+def _unclassified_logins(data: dict[str, object], also: Sequence[str] = ()) -> dict[str, bool]:
     """Every login of ``data`` that is not a class word nor a non-person login → whether it is mention-only.
 
     In order of first appearance: the bot login first, then the logins
     under login keys and the ``@<handle>`` mentions in free text, JSON
-    stdout walked inside. A login also seen under a login key or as the
-    bot is not mention-only.
+    stdout walked inside, then ``also``. A login also seen under a login
+    key, in ``also`` or as the bot is not mention-only.
     """
     found: dict[str, bool] = {}
 
@@ -213,6 +215,8 @@ def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
                 stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
             elif isinstance(node, list):
                 stack[:0] = list(node)
+    for login in also:
+        _add(login, mention=False)
     for bot_login in [k for k in found if k.casefold().endswith("[bot]")]:
         stem = bot_login[:-5].casefold()
         for k in [k for k, mention_only in found.items() if mention_only and k.casefold() == stem]:
@@ -228,8 +232,11 @@ def _word(kind: str, n: int) -> str:
     return kind if n == 1 else f"{kind}-{n}"
 
 
-def legacy_roles(data: dict[str, object]) -> dict[str, str]:
-    """Each unclassified login of ``data`` → the next class word the fixture lacks.
+def legacy_roles(data: dict[str, object], also: Sequence[str] = ()) -> dict[str, str]:
+    """Each unclassified login of ``data`` and of ``also`` → the next class word the fixture lacks.
+
+    ``also`` holds the logins the raw answers carry under keys the redaction
+    drops (:func:`repoach.forge.recording.raw_logins`), as the live recorder reads them.
 
     The bot login becomes ``bot``, another ``[bot]`` login ``bot-<n>``, a
     GitLab project bot ``service`` (then ``service-<n>``), any other login
@@ -241,7 +248,7 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
     roles: dict[str, str] = {}
     following = {"author": 2, "service": 1, "bot": 1}
     bot = data.get("bot_username")
-    unclassified = _unclassified_logins(data)
+    unclassified = _unclassified_logins(data, also)
     siblings = {b.casefold(): b for b in unclassified}
     stems = {
         k: siblings[f"{k.casefold()}[bot]"]
@@ -478,7 +485,9 @@ def redact_fixture(
     for key in ("args", "kwargs", "result"):
         if key in out:
             out[key] = redact_urls_in_value(out[key])
-    roles = legacy_roles(out)
+    roles = legacy_roles(
+        out, also=raw_logins([data.get("calls"), data.get("args"), data.get("kwargs")])
+    )
     if roles:
         out = _rename(out, roles)
     out = _remap_ids(out, ids, forge, keep)

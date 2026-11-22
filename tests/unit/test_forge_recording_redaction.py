@@ -5040,3 +5040,33 @@ def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
     ]
     assert "font-face" in recording.CSS_AT_RULES and "media" in recording.CSS_AT_RULES
     assert all(rule == rule.casefold() for rule in recording.CSS_AT_RULES)
+
+
+def test_offline_roles_read_the_logins_under_the_keys_the_redaction_drops() -> None:
+    """D4 (0.18): ``assignees[].login`` and ``mergedBy.login`` get a class word offline, as ``raw_logins`` does live."""
+    raw = _roles_data(
+        {"user": {"login": "zqauthor"}, "body": "ok"},
+        {"assignees": [{"login": "zqassignee"}], "mergedBy": {"login": "zqmerger"}},
+    )
+    dropped = recording.raw_logins([raw["calls"], None, None])
+    assert dropped == ["zqauthor", "zqassignee", "zqmerger"]
+    redacted = redact_fixtures._exchanges(raw)
+    assert redact_fixtures.legacy_roles(redacted) == {"zqauthor": "author-2"}
+    assert redact_fixtures.legacy_roles(redacted, also=dropped) == {
+        "zqauthor": "author-2",
+        "zqassignee": "author-3",
+        "zqmerger": "author-4",
+    }
+    assert redact_fixtures.legacy_roles(
+        redacted, also=["author", "github-actions[bot]", "zqauthor"]
+    ) == {"zqauthor": "author-2"}
+    prose = _roles_data(
+        {"assignees": [{"login": "zqassignee"}]},
+        {"body": "Assigned to zqassignee, thanks @zqassignee and zqmerger"},
+    )
+    out = redact_fixtures.redact_fixture(prose, forge="github")
+    text = json.dumps(out)
+    assert "zqassignee" not in text and "assignees" not in text
+    assert json.loads(out["calls"][1]["stdout"])["body"] == (
+        "Assigned to author-2, thanks @author-2 and zqmerger"
+    )
