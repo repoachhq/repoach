@@ -1748,8 +1748,13 @@ _PROJECT_ID_RE = re.compile(r"(?<![A-Za-z0-9])projects/+(?P<id>[0-9]{5,})(?![A-Z
 _NAME_WORD_RE = re.compile(r"[^\W_]+")
 """A word of a person's name: letters and digits."""
 
-_MAILBOX_KEYS: frozenset[str] = frozenset({"email", "public_email", "commit_email"})
+_MAILBOX_KEYS: frozenset[str] = frozenset(
+    {"email", "public_email", "commit_email", "author_email", "committer_email"}
+)
 """User-object keys holding a mailbox, read into the known values before the keys are dropped (D1)."""
+
+_NAME_KEYS: tuple[str, ...] = ("name", "author_name", "committer_name")
+"""Keys holding a person's name beside a mailbox: a user object's, a GitLab commit object's (D5)."""
 
 _ENCODED_PROJECT_RE = re.compile(
     r"projects/+(?P<path>[A-Za-z0-9._-]+(?:%2[Ff][A-Za-z0-9._-]+)+)", re.I
@@ -1934,15 +1939,16 @@ def known_values(
     strings = fixture_strings(raw, "")
     for node in _walk_dicts(raw):
         if any(key in node for key in USER_KEYS) or (
-            "name" in node and any(key in node for key in _MAILBOX_KEYS)
+            any(key in node for key in _NAME_KEYS) and any(key in node for key in _MAILBOX_KEYS)
         ):
             who = next((str(node[k]) for k in USER_KEYS if isinstance(node.get(k), str)), "")
             word = _role(who)
-            name = node.get("name")
-            if isinstance(name, str):
-                _add("name", name, "", hard=False)
-                for part in _NAME_WORD_RE.findall(name):
-                    _add("name", part, word, hard=False)
+            for name_key in _NAME_KEYS:
+                name = node.get(name_key)
+                if isinstance(name, str):
+                    _add("name", name, "", hard=False)
+                    for part in _NAME_WORD_RE.findall(name):
+                        _add("name", part, word, hard=False)
             for key in _MAILBOX_KEYS:
                 box = node.get(key)
                 if isinstance(box, str) and "@" in box:

@@ -5067,6 +5067,25 @@ def test_known_values_read_the_namespace_and_repository_after_an_address_in_ever
     assert "104.16.0.1" in _kinds(found, "host")
 
 
+def test_known_values_read_a_gitlab_commit_objects_author_and_committer_names() -> None:
+    """D5 (0.19): ``author_name`` beside ``author_email`` is learnt like ``name`` beside ``email``."""
+    answer = {
+        "body": "Zqnorek pushed, Brandt reviewed",
+        "author_name": "Kazimir Zqnorek",
+        "author_email": "kaz@zqmail.io",
+        "committer_name": "Liana Brandt",
+        "committer_email": "lia@zqmail.io",
+    }
+    found = needles(_one_call(answer), roles={})
+    assert {"zqnorek", "brandt", "kazimir", "liana"} <= set(_kinds(found, "name"))
+    assert {"kaz@zqmail.io", "lia@zqmail.io"} <= set(_kinds(found, "mailbox"))
+    assert recording.replace_known("Zqnorek pushed, Brandt reviewed", found) == (
+        "author pushed, author reviewed"
+    )
+    alone = {"author_name": "Kazimir Zqnorek", "title": "x"}
+    assert _kinds(needles(_one_call(alone), roles={}), "name") == []
+
+
 def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
     """D2 (0.18): ``@font-face`` and every at-rule keyword of CSS, Sass and Tailwind is a stylesheet, not a handle."""
     expected = [
