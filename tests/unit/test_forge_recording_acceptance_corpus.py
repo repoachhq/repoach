@@ -9590,11 +9590,11 @@ ROWS: tuple[Row, ...] = (
         markers=("zqreviewer",),
     ),
     Row(
-        id="v20_short_handle_bare_word_NG4_1",
+        id="v20_short_handle_at_form_replaced_bare_word_kept",
         source="fable020/sweep.py",
         inp=Sample(body="cc @bob, as bob said"),
         outcome=Written(text="cc @author-2, as bob said"),
-        residual=True,
+        markers=("@bob",),
     ),
     Row(
         id="v20_file_line_diagnostics_on_extension_codes",
@@ -10021,12 +10021,22 @@ def _is_planted(row: Row) -> bool:
 
 
 def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
-    """AC1 (0.19): the counts of the spec come from the file, and a residual is a written, unmarked, planted row."""
+    """AC1 (0.19, 0.20): the counts of the spec come from the file, and a residual is a written, unmarked, planted row."""
     planted = [row for row in ROWS if _is_planted(row)]
     ordinary = [row for row in ROWS if not _is_planted(row)]
     assert len(planted) + len(ordinary) == len(ROWS)
     residual = [row for row in ROWS if row.residual]
     assert residual
+    assert all(_is_planted(row) for row in residual)
+    refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
+    assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
+        799,
+        544,
+        255,
+        71,
+        15,
+    )
+    assert all(not row.residual for row in refused)
     for row in residual:
         assert isinstance(row.outcome, Written) and not row.markers, row.id
         assert row.outcome.text == row.inp.body, row.id
