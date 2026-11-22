@@ -980,6 +980,17 @@ def _login_pattern(login: str) -> re.Pattern[str]:
     return token_pattern(login)
 
 
+def outside_literals(text: str, rewrite: Callable[[str], str]) -> str:
+    """``text`` with ``rewrite`` applied to every stretch between :data:`CLI_PLACEHOLDER_RE` literals, which stay as they are."""
+    out: list[str] = []
+    last = 0
+    for match in CLI_PLACEHOLDER_RE.finditer(text):
+        out += [rewrite(text[last : match.start()]), match.group(0)]
+        last = match.end()
+    out.append(rewrite(text[last:]))
+    return "".join(out)
+
+
 def classify_text(text: str, roles: dict[str, str]) -> str:
     """Replace every login of ``roles`` appearing as a token in ``text`` by its class word.
 
@@ -992,29 +1003,27 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     left as it is (0.10); every other occurrence of the token is
     replaced, after a ``:``, a ``.`` or a ``/`` alike.
     """
-    pieces = CLI_PLACEHOLDER_RE.split(text)
-    templates = CLI_PLACEHOLDER_RE.findall(text)
     expanded = dict(roles)
     present = {k.removeprefix(MENTION_ONLY_PREFIX).casefold() for k in roles}
     for login, word in roles.items():
-        if login.startswith(MENTION_ONLY_PREFIX):
-            continue
         mention_stem = bot_mention_stem(login)
         if mention_stem is not None and mention_stem.casefold() not in present:
             expanded[MENTION_ONLY_PREFIX + mention_stem] = word
-            present.add(mention_stem.casefold())
+    rules: list[tuple[re.Pattern[str], str]] = []
     for login in sorted(expanded, key=len, reverse=True):
         if login.startswith(MENTION_ONLY_PREFIX):
-            pattern = mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX))
-            word = f"@{expanded[login]}"
+            rules.append(
+                (mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX)), f"@{expanded[login]}")
+            )
         else:
-            pattern = _login_pattern(login)
-            word = expanded[login]
-        pieces = [pattern.sub(word, piece) for piece in pieces]
-    out = pieces[0]
-    for template, piece in zip(templates, pieces[1:], strict=True):
-        out += template + piece
-    return out
+            rules.append((_login_pattern(login), expanded[login]))
+
+    def rewrite(piece: str) -> str:
+        for pattern, word in rules:
+            piece = pattern.sub(word, piece)
+        return piece
+
+    return outside_literals(text, rewrite)
 
 
 def classify_logins(payload: object, roles: dict[str, str]) -> object:
@@ -1596,7 +1605,7 @@ def _instance_host(raw: object) -> str | None:
                 except ValueError as exc:
                     _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
                     continue
-                host = (parts.hostname or "").casefold()
+                host = parts.hostname or ""
                 if parts.scheme in URL_SCHEMES and host and not _is_allowed_host(host):
                     return host
     return None
@@ -1813,7 +1822,7 @@ def known_values(
         return by_login.get(login.casefold(), "author")
 
     def _add(kind: str, value: str, token: str, *, hard: bool) -> None:
-        if value and not (kind in ("login", "segment") and _names_no_one(value)):
+        if value and not (kind == "segment" and _names_no_one(value)):
             (strict if hard else soft)[kind].append((value, token))
 
     def _segments(path: Sequence[str], *, hard: bool) -> None:
@@ -1823,14 +1832,17 @@ def known_values(
         if identity.repository:
             _add("segment", identity.repository, PLACEHOLDER_PROJECT, hard=hard)
 
-    def _host(value: str, *, hard: bool) -> None:
-        _add("host", value, PLACEHOLDER_HOST, hard=hard)
+    def _host(value: str) -> None:
+        _add("host", value, PLACEHOLDER_HOST, hard=False)
 
     def _add_id(number: object, *, project: bool) -> None:
         key = user_id_key(number)
         if isinstance(key, int) and key in (keep_projects if project else keep_users):
             return
-        forms = _id_encodings(key) if isinstance(key, int) else _id_forms(number)
+        if isinstance(key, int):
+            forms = [str(key)] if project else _id_encodings(key)
+        else:
+            forms = _id_forms(number)
         for form in forms:
             token = _id_token(form, key, ids=ids, projects=projects, forge=forge, project=project)
             if token != form:
@@ -1847,14 +1859,10 @@ def known_values(
             _add("login", f"{MENTION_ONLY_PREFIX}{mention}", word, hard=True)
 
     remote_host, remote_path = remote_location(remote)
-    instance = remote_host.casefold() if remote_host else _instance_host(raw)
-    own = (
-        {remote_host.casefold()}
-        if remote_host and not closure.is_public_host(remote_host)
-        else set()
-    )
+    instance = remote_host if remote_host else _instance_host(raw)
+    own = {remote_host} if remote_host and not closure.is_public_host(remote_host) else set()
     for host in sorted(FORGE_HOSTS | own):
-        _host(host, hard=True)
+        _host(host)
     if remote_path:
         _segments(remote_path, hard=True)
 
@@ -1883,7 +1891,7 @@ def known_values(
                     if not closure.is_placeholder_host(domain) and not closure.is_public_host(
                         domain
                     ):
-                        _host(domain, hard=False)
+                        _host(domain)
         for key, item in node.items():
             if key in URL_KEYS and isinstance(item, str):
                 try:
@@ -1891,22 +1899,20 @@ def known_values(
                 except ValueError as exc:
                     _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
                     continue
-                host = (parts.hostname or "").casefold()
+                host = parts.hostname or ""
                 if parts.scheme in URL_SCHEMES and host and not _is_allowed_host(host):
-                    _host(host, hard=True)
+                    _host(host)
                     if not is_public_forge_host(host):
                         _segments([s for s in parts.path.split("/") if s], hard=True)
 
     for _path, text in strings:
         _segments(_api_project(text), hard=True)
         for found in _ENCODED_PROJECT_RE.finditer(text):
-            named = [p for p in unquote(found.group("path")).split("/") if p]
-            if len(named) > 1:
-                _segments(named, hard=False)
+            _segments(unquote(found.group("path")).split("/"), hard=False)
         for place in closure.hosts(text):
             if closure.is_placeholder_host(place.host) or closure.is_public_host(place.host):
                 continue
-            _host(place.host.casefold(), hard=False)
+            _host(place.host)
             if is_public_forge_host(place.host):
                 continue
             follow = _follow_segments(
@@ -1981,7 +1987,7 @@ def _id_token(
     return str(number)
 
 
-@functools.lru_cache(maxsize=64)
+@functools.cache
 def _replacer(tokens: tuple[tuple[str, str], ...]) -> tuple[re.Pattern[str], dict[str, str]] | None:
     """The one pattern that finds every known value as a whole token, longest first, and its token table."""
     if not tokens:
@@ -2018,13 +2024,9 @@ def replace_known(text: str, known: closure.Known, mapping: dict[str, str] | Non
     if built is None:
         return text
     pattern, replacements = built
-    pieces = CLI_PLACEHOLDER_RE.split(text)
-    templates = CLI_PLACEHOLDER_RE.findall(text)
-    pieces = [pattern.sub(lambda m: replacements[m.group(0).casefold()], p) for p in pieces]
-    out = pieces[0]
-    for template, piece in zip(templates, pieces[1:], strict=True):
-        out += template + piece
-    return out
+    return outside_literals(
+        text, lambda piece: pattern.sub(lambda m: replacements[m.group(0).casefold()], piece)
+    )
 
 
 def replace_known_in_value(value: object, known: closure.Known) -> object:

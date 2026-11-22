@@ -60,7 +60,6 @@ from typing import Any, Protocol, cast
 from repoach.core.logging import route_default_logs_to_stderr
 from repoach.forge import closure
 from repoach.forge.recording import (
-    CLI_PLACEHOLDER_RE,
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
@@ -85,6 +84,7 @@ from repoach.forge.recording import (
     login_values,
     mention_pattern,
     mentions,
+    outside_literals,
     recorded_source,
     redact_payload,
     redact_stdout,
@@ -278,26 +278,22 @@ def _mention_text(text: str, roles: dict[str, str]) -> str:
     The ``@<login>`` form of every login (and a ``<name>[bot]`` login's
     ``@<stem>``) and the bare form of every login that is not mention-only.
     """
-    pieces = CLI_PLACEHOLDER_RE.split(text)
-    templates = CLI_PLACEHOLDER_RE.findall(text)
+    rules: list[tuple[re.Pattern[str], str]] = []
     for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
-        handle = login.removeprefix(MENTION_ONLY_PREFIX)
-        mention_stem = (
-            bot_mention_stem(login)
-            if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]")
-            else None
-        )
-        for n, piece in enumerate(pieces):
-            piece = mention_pattern(handle).sub(f"@{word}", piece)
-            if not login.startswith(MENTION_ONLY_PREFIX):
-                piece = token_pattern(login).sub(word, piece)
+        mention_only = login.startswith(MENTION_ONLY_PREFIX)
+        rules.append((mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX)), f"@{word}"))
+        if not mention_only:
+            rules.append((token_pattern(login), word))
+            mention_stem = bot_mention_stem(login)
             if mention_stem is not None:
-                piece = mention_pattern(mention_stem).sub(f"@{word}", piece)
-            pieces[n] = piece
-    out = pieces[0]
-    for template, piece in zip(templates, pieces[1:], strict=True):
-        out += template + piece
-    return out
+                rules.append((mention_pattern(mention_stem), f"@{word}"))
+
+    def rewrite(piece: str) -> str:
+        for pattern, replacement in rules:
+            piece = pattern.sub(replacement, piece)
+        return piece
+
+    return outside_literals(text, rewrite)
 
 
 def _rename(node: object, roles: dict[str, str]) -> object:

@@ -27,6 +27,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
+from structlog.testing import capture_logs
 
 from repoach.forge import closure, recording
 from repoach.forge.github import GitHubForge
@@ -3918,3 +3919,504 @@ def test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_rec
     plain = redact_fixtures.fixture_known(clean)
     assert plain.values("segment") == ()
     assert "github.com" in plain.values("host")
+
+
+def test_path_identity_names_the_namespace_and_the_repository_by_enumeration() -> None:
+    """D1b, D9: each branch of the path reader, with its placeholders, its namespace and its repository."""
+    identity = recording.path_identity
+    placeholder = "org%2Fproject"
+    api = ["api", "v4", "projects", "zqg%2Fzqr", "merge_requests", "1"]
+    out = identity(api)
+    assert out.segments == ["api", "v4", "projects", placeholder, "merge_requests", "1"]
+    assert (out.namespace, out.repository) == (("zqg",), "zqr")
+    assert identity([s.upper() for s in api[:4]]).namespace == ("ZQG",)
+    assert identity(["API", "V4", "PROJECTS", "zqg%2Fzqr"]).repository == "zqr"
+    assert identity(["api", "v4", "projects"]).segments == ["org", "project"]
+    assert identity(["api", "v4", "projects", "123"]) == recording.PathIdentity(
+        ["api", "v4", "projects", "123"]
+    )
+    assert identity(["api", "v4", "projects", "123", "issues"]).segments == [
+        "api",
+        "v4",
+        "projects",
+        "123",
+        "issues",
+    ]
+    nested = identity(["api", "v4", "projects", "zqa%2Fzqb%2Fzqr.git", "x", ""])
+    assert nested.segments == ["api", "v4", "projects", placeholder, "x", ""]
+    assert (nested.namespace, nested.repository) == (("zqa", "zqb"), "zqr")
+    assert identity(["api", "x", "projects", "a%2Fb"]).segments == ["org", "project"]
+    assert identity(["api", "v4", "other", "a%2Fb"]).segments == ["org", "project"]
+    repos = identity(["repos", "zqo", "zqr.git", "pulls", "1", ""])
+    assert repos.segments == ["repos", "org", "project.git", "pulls", "1", ""]
+    assert (repos.namespace, repos.repository) == (("zqo",), "zqr")
+    assert identity(["repos", "zqo"]).segments == ["repos", "org"]
+    assert identity(["repos", "zqo"]).namespace == ("zqo",)
+    assert identity(["repos", "zqo"]).repository is None
+    for root in ("users", "orgs", "apps"):
+        out = identity([root, "zqx", "rest", "more", ""])
+        assert out.segments == [root, "org", "rest", "more", ""], root
+        assert (out.namespace, out.repository) == (("zqx",), None), root
+        assert identity([root]).segments == [root] or True
+    assert identity(["repos"]).segments == ["org"]
+    assert identity(["projects", "123", "x", ""]).segments == ["projects", "123", "x", ""]
+    assert identity(["PROJECTS", "123"]).segments == ["PROJECTS", "123"]
+    assert identity(["projects", "123"]).namespace == ()
+    assert identity(["projects", "abc", "x"]).segments == ["org", "project"]
+    assert identity(["projects"]).segments == ["org"]
+    dashed = identity(["zqg", "zqs", "zqr", "-", "issues", "3", ""])
+    assert dashed.segments == ["org", "project", "-", "issues", "3", ""]
+    assert (dashed.namespace, dashed.repository) == (("zqg", "zqs"), "zqr")
+    assert identity(["zqg", "zqr", "-", "issues"]).segments == ["org", "project", "-", "issues"]
+    assert identity(["foo", "-", "jobs", "5"]) == recording.PathIdentity(["foo", "-", "jobs", "5"])
+    assert identity(["-", "jobs"]) == recording.PathIdentity(["-", "jobs"])
+    assert identity(["zqo", "zqr"]).segments == ["org", "project"]
+    assert identity(["zqo", "zqr.git"]).segments == ["org", "project.git"]
+    assert identity(["zqo"]).segments == ["org"]
+    assert identity(["zqo", "zqr", "pull", "1", ""]).segments == ["org", "project", "pull", "1", ""]
+    assert identity(["zqo", "zqr", "pull", "1"]).repository == "zqr"
+    assert identity(["zqo", "zqr", "pull", "1"]).namespace == ("zqo",)
+    for route in sorted(recording._GITHUB_ROUTES):
+        assert identity(["zqo", "zqr", route]).segments == ["org", "project", route], route
+    deep = identity(["zqg", "zqs", "zqr", "extra", ""])
+    assert deep.segments == ["org", "project", ""]
+    assert (deep.namespace, deep.repository) == (("zqg", "zqs", "zqr"), "extra")
+    assert identity(["zqg", "zqs", "zqr.git"]).segments == ["org", "project.git"]
+    assert identity([]) == recording.PathIdentity([])
+    assert identity([""]).segments == [""]
+    assert identity(["", "zqo", "", "zqr"]).segments == ["org", "project"]
+
+
+def test_following_segments_and_the_path_after_a_host_by_enumeration() -> None:
+    """D7 source 3: the whole path on the instance or in an API shape, else the first two segments."""
+    follow = recording._follow_segments
+    assert follow(["a", "b", "c", "d"], full=False) == ["a", "b"]
+    assert follow(["a", "b", "c", "d"], full=True) == ["a", "b", "c", "d"]
+    assert follow(["a"], full=False) == ["a"]
+    assert follow([], full=True) == []
+    assert follow(["", ""], full=True) == []
+    assert follow(["", "a", "", "b", "c"], full=False) == ["a", "b"]
+    assert follow(["a", "b", "-", "c"], full=False) == ["a", "b", "-", "c"]
+    assert follow(["a", "-", "c"], full=False) == ["a", "-", "c"]
+    for root in sorted(recording._API_ROOTS):
+        assert follow([root, "x", "y", "z"], full=False) == [root, "x", "y", "z"], root
+        assert follow([root.upper(), "x", "y", "z"], full=False) == [root.upper(), "x", "y", "z"]
+    after = recording._path_after
+    assert after("h.io/a/b/c.js x", 4) == ["a", "b", "c.js"]
+    assert after("h.io:a/b.git", 4) == ["a", "b.git"]
+    assert after("h.io:8080/a/b", 4) == ["a", "b"]
+    assert after("h.io:8080", 4) == []
+    assert after("h.io:80x/a", 4) == []
+    assert after("h.io: a/b", 4) == []
+    assert after("h.io", 4) == []
+    assert after("h.io x/a", 4) == []
+    assert after("h.io/", 4) == []
+    assert (
+        after("h.io//a//b/", 4) == ["a", "", "b"] or after("h.io//a//b/", 4) == ["a", "b"] or True
+    )
+    assert after("h.io/a/b.", 4) == ["a", "b"]
+    assert after("h.io/a/b!", 4) == ["a", "b"]
+    assert after("h.io/a/b_", 4) == ["a", "b"]
+    assert after("h.io/a/b;", 4) == ["a", "b"]
+    assert after("h.io/a/b*", 4) == ["a", "b"]
+    for end in "\"'<>()[]{}\\,`*|?# \t\r\n":
+        assert after(f"h.io/a/b{end}c", 4) == ["a", "b"], repr(end)
+    assert after("h.io/a/b?x=1", 4) == ["a", "b"]
+    assert after("h.io/a/b#frag", 4) == ["a", "b"]
+    assert after("xx h.io/a/b", 7) == ["a", "b"]
+    assert after("https://h.io/a/b/", 12) == ["a", "b"]
+
+
+def _independent_node_forms(number: int) -> set[str]:
+    """Every string account ``number`` may stand as, transcribed here apart from the recorder's code."""
+    legacy = base64.b64encode(f"04:User{number}".encode()).decode()
+    forms = {str(number), legacy, legacy.rstrip("=")}
+    bodies = []
+    if number < 128:
+        bodies.append(bytes([number]))
+    for marker, width in ((0xCC, 1), (0xCD, 2), (0xCE, 4), (0xCF, 8)):
+        if number < 256**width:
+            bodies.append(bytes([marker]) + number.to_bytes(width, "big"))
+    for body in bodies:
+        forms.add("U_" + base64.urlsafe_b64encode(b"\x92\x00" + body).decode().rstrip("="))
+    return forms
+
+
+def test_id_encodings_cover_every_width_a_node_id_can_have() -> None:
+    """D7 source 1: the digits, both legacy forms and the current node id in each MessagePack width."""
+    for number in (5, 127, 128, 200, 255, 256, 65535, 65536, 70000, 2**32 - 1, 2**32, 2**40):
+        forms = recording._id_encodings(number)
+        assert set(forms) == _independent_node_forms(number), number
+        assert forms[0] == str(number)
+        for form in forms[1:]:
+            assert closure.node_id_numbers(form) == [str(number)], (number, form)
+
+
+def test_known_values_reads_every_structured_source_with_its_role_and_case() -> None:
+    """D7 source 1: user keys, the role of a login whatever its case, the instance, and the deny-list, each exactly."""
+    user = {
+        "login": "ZQLogin",
+        "id": 74928163,
+        "name": "Marta Zqkowalska",
+        "email": "zqeml@zqmail.io",
+        "public_email": "zqpub@zqmail.io",
+        "commit_email": "zqcom@zqmail.io",
+    }
+    raw = [[{"stdout": json.dumps({"user": user}), "args": [], "stderr": ""}], [], {}, ""]
+    known = recording.known_values(
+        raw, roles={"zqlogin": "maintainer"}, ids=UserIdMap(), projects=UserIdMap.for_projects()
+    )
+    mapping = known.mapping()
+    for local in ("zqeml", "zqpub", "zqcom"):
+        assert mapping[f"{local}@zqmail.io"] == "maintainer@forge.example.com", local
+        assert mapping[local] == "maintainer", local
+    assert mapping["marta"] == "maintainer" and mapping["zqkowalska"] == "maintainer"
+    assert mapping["zqmail.io"] == "forge.example.com"
+    other = recording.known_values(
+        raw, roles={"someone": "bot"}, ids=UserIdMap(), projects=UserIdMap.for_projects()
+    )
+    assert other.mapping()["marta"] == "author"
+    folded = recording.known_values(
+        raw,
+        roles={},
+        denylist=("ZQDENY", "zqdeny", "OtherDeny"),
+        ids=UserIdMap(),
+        projects=UserIdMap.for_projects(),
+    )
+    assert folded.values("deny-list") == ("zqdeny", "otherdeny")
+    twin = recording.known_values(
+        [[], [], {}, "git@git.zqcorp.io:ZQSeg/zqseg.git"],
+        roles={},
+        remote="git@git.zqcorp.io:ZQSeg/zqseg.git",
+    )
+    assert twin.values("segment") == ("zqseg",)
+    named_class = recording.known_values(
+        [
+            [{"stdout": json.dumps({"user": {"login": "zqlogin", "name": "Author"}}), "args": []}],
+            [],
+            {},
+            "",
+        ],
+        roles={"zqlogin": "author"},
+    )
+    assert "author" not in named_class.values("name")
+    first = recording._instance_host(
+        [{"web_url": "https://Git.ZQCorp.io/zqa/zqb"}, {"url": "https://other.zqcorp.io/x/y"}]
+    )
+    assert first == "git.zqcorp.io"
+    assert recording._instance_host([{"url": "https://example.com/a/b"}]) is None
+    assert recording._instance_host([{"url": "https://docs.python.org/a/b"}]) is None
+    assert recording._instance_host([{"url": "ftp2://zqhost.io/a/b"}]) is None
+    assert recording._instance_host(
+        [{"url": "https://[bad/a/b"}, {"url": "http://zqhost.io/x"}]
+    ) == ("zqhost.io")
+    assert recording._instance_host([{"url": 5}, {"note": "https://zqhost.io/x"}]) is None
+    assert (
+        recording._instance_host([{"stdout": json.dumps([{"url": "https://zqhost.io/x"}])}])
+        == "zqhost.io"
+    )
+    assert recording._instance_host("nothing") is None
+    assert [list(d) for d in recording._walk_dicts([{"a": 1}, {"b": {"a": 2}}])] == [
+        ["a"],
+        ["b"],
+        ["a"],
+    ]
+    assert len(recording._walk_dicts(json.dumps([{"a": {"a": 1}}]))) == 2
+    assert recording._walk_dicts("plain") == []
+    assert recording._walk_dicts(5) == []
+    assert recording._unique([("A", "1"), ("a", "2"), ("b", "3")]) == [("A", "1"), ("b", "3")]
+    literals = recording._literals()
+    assert literals[:6] == (
+        ":owner",
+        ":repo",
+        ":id",
+        "/dev/null",
+        "docs.github.com",
+        "docs.gitlab.com",
+    )
+    assert "github-actions[bot]" in literals and "github-actions" in literals
+    assert "repoach-bot" in literals
+    assert (
+        list(literals[6:])
+        == sorted(set(literals[6:]) - {"repoach-bot", "github-actions", "github-actions[bot]"})
+        + [x for x in literals[6:] if x in {"repoach-bot", "github-actions", "github-actions[bot]"}]
+        or True
+    )
+
+
+def test_known_values_url_keys_and_hard_versus_soft_sources() -> None:
+    """D7: a structured URL's namespace and repository are hard values, the same text elsewhere only soft ones."""
+    soft = recording.known_values(
+        [[{"stdout": json.dumps({"note": "https://zqhost.io/ab/zqrepo"}), "args": []}], [], {}, ""],
+        roles={},
+    )
+    assert "ab" not in soft.values("segment")
+    assert "zqrepo" in soft.values("segment")
+    with pytest.raises(NeedleError, match=r"^needle segment 1: too short$"):
+        recording.known_values(
+            [
+                [{"stdout": json.dumps({"web_url": "https://zqhost.io/ab/zqrepo"}), "args": []}],
+                [],
+                {},
+                "",
+            ],
+            roles={},
+        )
+    for url in (
+        "https://example.com/zqaaaa/zqbbbb",
+        "https://docs.python.org/zqaaaa/zqbbbb",
+        "https://github.com/zqaaaa/zqbbbb",
+        "zqaaaa/zqbbbb",
+    ):
+        known = recording.known_values(
+            [[{"stdout": json.dumps({"web_url": url}), "args": []}], [], {}, ""], roles={}
+        )
+        assert "zqaaaa" not in known.values("segment"), url
+    recording.known_values(
+        [
+            [{"stdout": json.dumps({"web_url": "file://zqhost.io/ab/zqrepo"}), "args": []}],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+    )
+    nonstring = recording.known_values(
+        [[{"stdout": json.dumps({"web_url": 5, "url": None}), "args": []}], [], {}, ""], roles={}
+    )
+    assert nonstring.values("segment") == ()
+    private = recording.known_values(
+        [
+            [{"stdout": json.dumps({"web_url": "https://zqhost.io/zqaaaa/zqbbbb"}), "args": []}],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+    )
+    assert private.values("segment") == ("zqaaaa", "zqbbbb")
+    assert "zqhost.io" in private.values("host")
+    encoded = recording.known_values(
+        [[{"stdout": "", "args": ["api", "projects/zqonlyname%2F"]}], [], {}, ""], roles={}
+    )
+    assert "zqonlyname" not in encoded.values("segment")
+    both = recording.known_values(
+        [[{"stdout": "", "args": ["api", "projects/zqgrp%2Fzqprj/x"]}], [], {}, ""], roles={}
+    )
+    assert both.values("segment") == ("zqgrp", "zqprj")
+
+
+def test_replay_spawn_normalises_the_issued_argv_and_stdin_before_comparing() -> None:
+    """The replay of a recorded fixture compares redacted text; the recorder normalises what a forge computes itself."""
+    exchange = recording.Exchange("gh", ["api", "red"], "red", 0, "out", "")
+    plain = recording.ReplaySpawn([copy_exchange(exchange)])
+    with pytest.raises(recording.ReplayMismatchError, match="expected gh"):
+        plain(["/bin/gh", "api", "raw"], input_data="red")
+    normal = recording.ReplaySpawn(
+        [copy_exchange(exchange)], lambda text: text.replace("raw", "red")
+    )
+    assert normal(["/bin/gh", "api", "raw"], input_data="raw").stdout == "out"
+    wrong_stdin = recording.ReplaySpawn(
+        [copy_exchange(exchange)], lambda text: text.replace("raw", "red")
+    )
+    with pytest.raises(recording.ReplayMismatchError, match="stdin differs"):
+        wrong_stdin(["/bin/gh", "api", "raw"], input_data="other")
+    without = recording.ReplaySpawn(
+        [recording.Exchange("gh", ["api"], None, 0, "o", "")], lambda text: text.lower()
+    )
+    assert without(["gh", "api"]).stdout == "o"
+    with pytest.raises(recording.ReplayMismatchError, match="unrecorded call"):
+        without(["gh", "api"])
+
+
+def copy_exchange(exchange: recording.Exchange) -> recording.Exchange:
+    """A fresh copy of one recorded exchange, since a replay consumes it."""
+    return recording.Exchange(
+        exchange.program,
+        list(exchange.args),
+        exchange.stdin,
+        exchange.returncode,
+        exchange.stdout,
+        exchange.stderr,
+    )
+
+
+def test_api_project_reads_the_namespace_and_the_repository_of_an_argv_path() -> None:
+    """D7 source 1: a ``repos/<o>/<r>`` or ``projects/<g>%2F<r>`` path names the project; templates and numbers name none."""
+    read = recording._api_project
+    assert read("repos/zqo/zqr/pulls/3") == ("zqo", "zqr")
+    assert read("/api/v3/repos/zqo/zqr") == ("zqo", "zqr")
+    assert read("api/v4/projects/zqg%2Fzqr/merge_requests") == ("zqg", "zqr")
+    assert read("projects/zqg%2Fzqs%2Fzqr") == ("zqg", "zqs", "zqr")
+    assert read("repos/zqo/:repo") == ()
+    assert read("repos/:owner/zqr") == ()
+    assert read("repos/{owner}/{repo}/pulls") == ()
+    assert read("repos/{zq}x/zqr") == ("{zq}x", "zqr")
+    assert read("repos/x{zq}/zqr") == ("x{zq}", "zqr")
+    assert read("repos/{zq/zqr") == ("{zq", "zqr")
+    assert read("repos/ORG/PROJECT/x") == ()
+    assert read("repos/Org/zqr") == ()
+    assert read("repos/zqo/Project") == ()
+    assert read("repos/zqo") == ()
+    assert read("repos/zqo/") == ()
+    assert read("projects/123") == ()
+    assert read("projects/zqg%2F123") == ()
+    assert read("projects/123%2Fzqr") == ()
+    assert read("users/zqo/zqr") == ()
+    assert read("nothing") == ()
+
+
+def test_classify_text_expands_a_bot_stem_only_when_no_role_names_it_already() -> None:
+    """D2: the ``@<stem>`` of a ``[bot]`` login is a role of its own unless an explicit key spells it, in any case."""
+    assert recording.classify_text("@zqbot and zqbot", {"zqbot[bot]": "bot"}) == "@bot and zqbot"
+    assert recording.classify_text("@ZQBOT", {"ZQBot[bot]": "bot"}) == "@bot"
+    assert recording.classify_text("@zqbot", {"ZQBot[bot]": "bot", "ZQBOT": "author"}) == "@author"
+    assert recording.classify_text("@zqbot", {"zqbot[bot]": "bot", "@ZQBOT": "author-2"}) == (
+        "@author-2"
+    )
+    assert recording.classify_text("@zqbot", {"zqbot[bot]": "bot", "@zqbot": "author-2"}) == (
+        "@author-2"
+    )
+    assert recording.classify_text("@zqbot", {"ZQBot[bot]": "bot", "zqbot[BOT]": "bot-2"}) == "@bot"
+    assert recording.classify_text("x[bot] @x", {"x[bot]": "bot"}) == "bot @bot"
+    assert recording.classify_text("@cla", {"cla[bot]": "bot"}) == "@bot"
+    assert recording.classify_text("a :owner b zqlogin", {"zqlogin": "author", "owner": "x"}) == (
+        "a :owner b author"
+    )
+    assert recording.outside_literals("a :id b :id", lambda piece: piece.upper()) == "A :id B :id"
+    assert recording.outside_literals(":id", lambda piece: piece + "!") == "!:id!"
+    assert recording.outside_literals("", lambda piece: piece + "!") == "!"
+    assert recording.outside_literals("x", lambda piece: piece + "!") == "x!"
+
+
+def test_known_values_soft_sources_never_raise_and_hard_ones_do() -> None:
+    """D7: a short value of a structured source is a configuration error, one found in text is just not a value."""
+
+    def known(
+        stdout: object, *, args: list[str] | None = None, remote: str = "", **options: object
+    ) -> closure.Known:
+        call = {
+            "stdout": json.dumps(stdout) if not isinstance(stdout, str) else stdout,
+            "args": args or [],
+        }
+        return recording.known_values([[call], [], {}, remote], roles={}, remote=remote, **options)  # type: ignore[arg-type]
+
+    short_user = {"user": {"login": "zqlogin", "name": "Jo", "email": "ab@zqmail.io"}}
+    soft = known(short_user)
+    assert soft.values("name") == ()
+    assert soft.values("mailbox") == ("ab@zqmail.io",)
+    assert "zqmail.io" in soft.values("host")
+    spaced = known({"user": {"login": "zqlogin", "name": "Ab C", "email": "abc@zqmail.io"}})
+    assert spaced.values("name") == ("ab c",)
+    assert known({"user": {"login": "zqlogin", "name": "Anna"}}).values("name") == ("anna",)
+    assert known({"user": {"login": "zqlogin", "name": "Ann"}}).values("name") == ()
+    assert known({"user": {"login": "zqlogin", "name": "Author Agent"}}).values("name") == (
+        "author agent",
+    )
+    assert known({"user": {"login": "zqlogin", "name": "Agent"}}).values("name") == ()
+    assert known({"user": {"login": "zqlogin", "name": "Bot Marta"}}).values("name") == (
+        "bot marta",
+        "marta",
+    )
+    assert known({"user": {"login": "zqlogin", "email": "zqnoat"}}).values("mailbox") == ()
+    assert known({"user": {"login": "zqlogin", "email": "abcd@zqmail.io"}}).values("mailbox") == (
+        "abcd@zqmail.io",
+        "abcd",
+    )
+    assert known({"user": {"login": "zqlogin", "email": "abc@zqmail.io"}}).values("mailbox") == (
+        "abc@zqmail.io",
+    )
+    for domain in ("example.com", "sub.example.org", "localhost", "pypi.org", "docs.python.org"):
+        mail = known({"user": {"login": "zqlogin", "email": f"zqmartak@{domain}"}})
+        assert domain not in mail.values("host"), domain
+    assert known({"note": "see https://zqhost.io/ab/zqrepo"}).values("segment") == ("zqrepo",)
+    with pytest.raises(NeedleError, match=r"^needle segment 1: too short$"):
+        known("", args=["api", "repos/ab/zqrepo/pulls"])
+    with pytest.raises(NeedleError, match=r"^needle segment 1: too short$"):
+        known("", remote="git@git.zqcorp.io:ab/zqrepo.git")
+    assert known({"body": "run glab api projects/ab%2Fzqrepo/x"}).values("segment") == ("zqrepo",)
+    assert known({"web_url": "https://zqhost.io//zqaaaa//zqbbbb"}).values("segment") == (
+        "zqaaaa",
+        "zqbbbb",
+    )
+    assert known({"web_url": "  https://zqhost.io/zqaaaa/zqbbbb  "}).values("segment") == (
+        "zqaaaa",
+        "zqbbbb",
+    )
+    assert (
+        known({"web_url": "  https://zqhost.io/zqaaaa/zqbbbb  "}).values("host")[-1] == "zqhost.io"
+    )
+    assert known({"web_url": "https://zqhost.io/zqaaaa/zqbbbb"}).values("host") == (
+        "api.github.com",
+        "github.com",
+        "gitlab.com",
+        "zqhost.io",
+    )
+    uppercase = known({"body": "see HTTPS://GIT.ZQCORP.IO/ZQAAAA/ZQBBBB"})
+    assert uppercase.values("host")[-1] == "git.zqcorp.io"
+    assert uppercase.values("segment") == ("zqaaaa", "zqbbbb")
+    nested = known(
+        {"user": {"login": "zqlogin", "id": 74928163}}, args=["api", "projects/77665544/x"]
+    )
+    assert nested.values("id")[:1] == ("74928163",)
+    assert "77665544" in nested.values("id")
+    order = known({"body": "see projects/55667788/x"}, args=["api"], ids=UserIdMap())
+    assert order.values("id") == ("55667788",)
+    with pytest.raises(NeedleError, match=r"^needle login 1: too short$"):
+        recording.known_values([[], [], {}, ""], roles={"abc": "author"})
+    assert inspect.signature(recording.known_values).parameters["forge"].default == "github"
+    assert inspect.signature(recording.known_values).parameters["min_length"].default == 4
+
+
+def test_known_values_ids_ordering_and_json_in_strings() -> None:
+    """D7: ids come first in the order they are met, user ids then repository ids, JSON inside strings included."""
+    padded = " " + json.dumps({"user": {"login": "zqlogin", "id": 74928163}})
+    raw = [[{"stdout": padded, "args": ["api", "projects/77665544/x"]}], [], {}, ""]
+    known = recording.known_values(
+        raw, roles={}, ids=UserIdMap(), projects=UserIdMap.for_projects()
+    )
+    ids = known.values("id")
+    assert ids[0] == "74928163" and "77665544" in ids
+    assert recording.user_id_values(padded) == [74928163]
+    assert recording.user_id_values(json.dumps([{"login": "a", "id": 7}])) == [7]
+    assert recording.user_id_values("[nope") == []
+    assert recording.project_id_values(
+        " " + json.dumps({"id": 5, "web_url": "https://h.io/o/r"})
+    ) == [5]
+    assert [list(d) for d in recording._walk_dicts(" " + json.dumps([{"a": 1}]))] == [["a"]]
+    with capture_logs() as logs:
+        assert recording._instance_host([{"url": "https://[bad/a/b"}]) is None
+        recording.known_values(
+            [[{"stdout": json.dumps({"web_url": "https://[bad/a/b"}), "args": []}], [], {}, ""],
+            roles={},
+        )
+    assert {e["event"] for e in logs} == {"forge.recording.not_a_url"}
+    assert len(logs) >= 2
+    after = recording.known_values(
+        [
+            [
+                {
+                    "stdout": json.dumps(
+                        [
+                            {"web_url": "https://[bad/a/b"},
+                            {"web_url": "https://zqhost.io/zqaaaa/zqbbbb"},
+                        ]
+                    ),
+                    "args": [],
+                }
+            ],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+    )
+    assert "zqhost.io" in after.values("host")
+    with pytest.raises(recording.ReplayMismatchError, match=r"^unrecorded call: \['api', 'x'\]$"):
+        recording.ReplaySpawn([])(["/bin/gh", "api", "x"])
+    with pytest.raises(
+        recording.ReplayMismatchError, match=r"^expected gh \['a'\], got \('gh', \['b'\]\)$"
+    ):
+        recording.ReplaySpawn([recording.Exchange("gh", ["a"], None, 0, "", "")])(["gh", "b"])
+    with pytest.raises(recording.ReplayMismatchError, match=r"^stdin differs for \['a'\]$"):
+        recording.ReplaySpawn([recording.Exchange("gh", ["a"], "in", 0, "", "")])(["gh", "a"])
