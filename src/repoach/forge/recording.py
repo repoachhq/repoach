@@ -18,7 +18,6 @@ import base64
 import functools
 import json
 import re
-import shlex
 import string
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -498,8 +497,6 @@ _QUOTE_CLASS = _char_class("\"'")
 _HSPACE_CLASS = _char_class(" \t")
 """Horizontal whitespace characters (0.16 R9-D3)."""
 
-_HOST_BEFORE_BLOCK_CLASS = _char_class(_ASCII_ALNUM + "_.-")
-"""Characters that may not immediately precede a host, API path or ``glab api`` command token (0.16)."""
 
 _URL_IN_TEXT_RE = re.compile(
     rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
@@ -1301,183 +1298,6 @@ def declared_user_ids(node: object) -> list[int]:
     """The sorted account numbers of every user id ``node`` holds, the value of :data:`SYNTHETIC_IDS_KEY`."""
     numbers = {user_id_key(i) for i in user_id_values(node)}
     return sorted(n for n in numbers if isinstance(n, int))
-
-
-_API_PROJECT_ID_RE = re.compile(
-    rf"(?P<prefix>(?<!{_HOST_BEFORE_BLOCK_CLASS})api/v[0-9]+/+projects/+)"
-    rf"(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
-    re.I,
-)
-"""A numeric GitLab project id inside an ``api/v<N>/projects/<id>`` path (0.13 R6-D5, 0.14 R7-D3, 0.15 R8-D2, 0.16 R9-D4)."""
-
-_GLAB_API_ARG_PROJECT_ID_RE = re.compile(
-    rf"^(?P<prefix>/?projects/+)(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
-    re.I,
-)
-"""A numeric GitLab project id as the positional endpoint of a ``glab api`` invocation (0.15 R8-D2, 0.16 R9-D4)."""
-
-_GLAB_API_CMD_RE = re.compile(
-    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})glab{_HSPACE_CLASS}+api(?={_HSPACE_CLASS})",
-    re.I,
-)
-"""Start of a ``glab api`` command invocation inside free text (0.16 R9-D4)."""
-
-_GLAB_API_FALLBACK_ID_RE = re.compile(
-    rf"(?<!{_HOST_BEFORE_BLOCK_CLASS})projects/+(?P<id>[0-9]+)(?!{_MENTION_HANDLE_CLASS})",
-    re.I,
-)
-"""``projects/<digits>`` inside a ``glab api`` command: the exact id span in an endpoint token's raw source slice, and the safe fallback scan when ``shlex`` sees an unbalanced quote (0.16 R9-D4)."""
-
-_GLAB_API_VALUE_FLAGS: frozenset[str] = frozenset(
-    {
-        "-F",
-        "--field",
-        "-H",
-        "--header",
-        "--hostname",
-        "--input",
-        "-X",
-        "--method",
-        "-f",
-        "--raw-field",
-    }
-)
-"""Documented ``glab api`` CLI flags that consume the following token as their value (0.16 R9-D4)."""
-
-
-def _is_glab_api_argv(items: Sequence[object]) -> bool:
-    """Whether ``items`` is a ``glab api`` argv list (``["api", ...]`` or ``["glab", "api", ...]``, 0.15 R8-D2)."""
-    if not items:
-        return False
-    if items[0] == "api":
-        return True
-    return len(items) >= 2 and items[0] == "glab" and items[1] == "api"
-
-
-def _glab_api_endpoint(tokens: Sequence[object]) -> tuple[int, str] | None:
-    """Index and value of the first positional endpoint in a ``glab api`` token sequence (0.16 R9-D4).
-
-    Shared by both ``shlex``-tokenised command lines and argv lists. Skips
-    flags in both ``-H value`` (via :data:`_GLAB_API_VALUE_FLAGS`) and
-    ``--header=value`` forms and boolean flags (``--`` and ``-`` count as
-    boolean flags).
-    """
-    folded = [t.casefold() if isinstance(t, str) else "" for t in tokens]
-    if not _is_glab_api_argv(folded):
-        return None
-    idx = 1 if folded[0] == "api" else 2
-    while idx < len(tokens):
-        tok = tokens[idx]
-        if not isinstance(tok, str):
-            idx += 1
-            continue
-        if tok.startswith("-"):
-            idx += 2 if tok in _GLAB_API_VALUE_FLAGS else 1
-            continue
-        return idx, tok
-    return None
-
-
-def _glab_api_text_id_spans(text: str) -> list[tuple[int, int, int]]:
-    """``(start, end, project_id)`` spans of numeric project ids in ``glab api`` commands inside ``text`` (0.16 R9-D4)."""
-    spans: list[tuple[int, int, int]] = []
-    for cmd_match in _GLAB_API_CMD_RE.finditer(text):
-        cmd_start = cmd_match.start()
-        line_end = text.find("\n", cmd_start)
-        if line_end == -1:
-            line_end = len(text)
-        cmd_end = line_end
-        if cmd_start > 0 and text[cmd_start - 1] == "`":
-            closing_tick = text.find("`", cmd_start, line_end)
-            if closing_tick != -1:
-                cmd_end = closing_tick
-        segment = text[cmd_start:cmd_end]
-        lexer = shlex.shlex(segment, posix=True)
-        lexer.whitespace_split = True
-        lexer.commenters = ""
-        tokens: list[str] = []
-        raw_spans: list[tuple[int, int]] = []
-        endpoint: tuple[int, str] | None = None
-        try:
-            while True:
-                pos0 = lexer.instream.tell()
-                tok = lexer.get_token()
-                if tok is None:
-                    break
-                pos1 = lexer.instream.tell()
-                tokens.append(tok)
-                raw_spans.append((pos0, pos1))
-                endpoint = _glab_api_endpoint(tokens)
-                if endpoint is not None:
-                    break
-        except ValueError as exc:
-            _log.debug("forge.recording.glab_shlex_fallback", error=type(exc).__name__)
-            for fb in _GLAB_API_FALLBACK_ID_RE.finditer(segment):
-                if len(fb.group("id")) >= NEEDLE_MIN_LENGTH:
-                    spans.append(
-                        (
-                            cmd_start + fb.start("id"),
-                            cmd_start + fb.end("id"),
-                            int(fb.group("id")),
-                        )
-                    )
-            continue
-        if endpoint is None:
-            continue
-        ep_idx, ep_tok = endpoint
-        ep_match = _GLAB_API_ARG_PROJECT_ID_RE.match(ep_tok)
-        if ep_match is None or len(ep_match.group("id")) < NEEDLE_MIN_LENGTH:
-            continue
-        pos0, pos1 = raw_spans[ep_idx]
-        raw_slice = segment[pos0:pos1]
-        raw_id = _GLAB_API_FALLBACK_ID_RE.search(raw_slice)
-        if raw_id is not None:
-            spans.append(
-                (
-                    cmd_start + pos0 + raw_id.start("id"),
-                    cmd_start + pos0 + raw_id.end("id"),
-                    int(ep_match.group("id")),
-                )
-            )
-    return spans
-
-
-def _api_project_id_spans(text: str) -> list[tuple[int, int, int]]:
-    """Sorted non-overlapping ``(start, end, project_id)`` spans of real API and ``glab api`` project ids in ``text`` (0.16 R9-D4)."""
-    kept = _kept_url_spans(text)
-    found: list[tuple[int, int, int]] = []
-    for match in _API_PROJECT_ID_RE.finditer(text):
-        if _is_real_api_project_id(match, kept):
-            found.append((match.start("id"), match.end("id"), int(match.group("id"))))
-    for start, end, pid in _glab_api_text_id_spans(text):
-        if any(s <= start < e or start <= s < end for s, e, _ in found):
-            continue
-        found.append((start, end, pid))
-    found.sort(key=lambda item: item[0])
-    return found
-
-
-def _kept_url_spans(text: str) -> list[tuple[int, int]]:
-    """Spans of kept-host text URLs without userinfo (documentation/example URLs, 0.14 R7-D3)."""
-    spans: list[tuple[int, int]] = []
-    for match in _URL_IN_TEXT_RE.finditer(text):
-        url, _tail = _split_url_tail(match.group(0))
-        try:
-            parts = urlsplit(url)
-        except ValueError as exc:
-            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-            continue
-        host = parts.hostname or ""
-        if host and "@" not in parts.netloc and _kept_host(host):
-            spans.append((match.start(), match.start() + len(url)))
-    return spans
-
-
-def _is_real_api_project_id(match: re.Match[str], kept_spans: list[tuple[int, int]]) -> bool:
-    """Whether an :data:`_API_PROJECT_ID_RE` match is a real project id rather than a doc example (0.14 R7-D3)."""
-    if len(match.group("id")) < NEEDLE_MIN_LENGTH:
-        return False
-    return not any(start <= match.start() < end for start, end in kept_spans)
 
 
 def is_repository_object(node: object) -> bool:

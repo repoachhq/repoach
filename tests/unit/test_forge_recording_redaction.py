@@ -3201,7 +3201,6 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
         ("_SCP_HOST_LABEL_CLASS", recording._SCP_HOST_LABEL_CLASS, alnum | {"-"}),
         ("_SCP_PATH_CLASS", recording._SCP_PATH_CLASS, alnum | set("_.~%-")),
         ("_NOREPLY_LOCAL_CLASS", recording._NOREPLY_LOCAL_CLASS, alnum | set("._%+[]-")),
-        ("_HOST_BEFORE_BLOCK_CLASS", recording._HOST_BEFORE_BLOCK_CLASS, alnum | set("_.-")),
         ("_JSON_VALUE_OPENER_CLASS", recording._JSON_VALUE_OPENER_CLASS, {":", "[", ","}),
         ("_QUOTE_CLASS", recording._QUOTE_CLASS, {'"', "'"}),
         ("_HSPACE_CLASS", recording._HSPACE_CLASS, {" ", "\t"}),
