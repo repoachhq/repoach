@@ -5035,6 +5035,43 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
         assert "kvn" not in out and closure.judge(out, found) is None, out
 
 
+def test_an_ipv6_url_in_text_is_rewritten_by_the_convenience_layer_and_is_a_fixed_point() -> None:
+    """D1b (0.20, C8): a bracketed IPv6 host is a text URL; rewritten it carries no port, kept it is byte-identical but for case."""
+    text = recording.redact_urls_in_text
+    for raw, expected in (
+        (
+            "see http://[2a00:1450::1]:8443/kvnteam/kvnbilling/x now",
+            "see http://forge.example.com/org/project now",
+        ),
+        (
+            "see https://[fd00::1]/kvnteam/kvnbilling now",
+            "see https://forge.example.com/org/project now",
+        ),
+        (
+            "ssh://git@[fd00::1]:2222/kvnteam/kvnbilling.git",
+            "ssh://git@forge.example.com/org/project.git",
+        ),
+        ("http://[2a00:1450::1]:8443 now", "http://forge.example.com now"),
+        ("http://[fe80::1%25eth0]:8080/kvnteam/kvnbilling", "http://forge.example.com/org/project"),
+        ("curl http://[::1]:8000/health", "curl http://[::1]:8000/health"),
+        ("see http://[2001:db8::1]:8080/docs", "see http://[2001:db8::1]:8080/docs"),
+        ("see http://[2001:DB8:0:0::1]/kvnteam/x", "see http://[2001:db8:0:0::1]/kvnteam/x"),
+        ("(http://[2a00:1450::1]/kvnteam/kvnbilling)", "(http://forge.example.com/org/project)"),
+        (
+            "<http://[2a00:1450::1]:443/kvnteam/kvnbilling>",
+            "<http://forge.example.com/org/project>",
+        ),
+        ("see http://10.1.2.3:8080/kvnteam/kvnbilling", "see http://forge.example.com/org/project"),
+        ("see http://code.kvncloud.io:8443/kvnteam", "see http://forge.example.com/org"),
+    ):
+        out = text(raw)
+        assert out == expected, raw
+        assert text(out) == out, raw
+    assert recording._URL_IN_TEXT_RE.search("x [2a00::1] y") is None
+    assert recording._URL_IN_TEXT_RE.search("http://[2a00::1]").group(0) == "http://[2a00::1]"
+    assert recording._URL_IN_TEXT_RE.search("http://[bad host]/x") is None
+
+
 def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:
     """D7 source 3 (0.20, NG4-11): a text path yields values only with a repository or through an API root."""
     for body, segments in (

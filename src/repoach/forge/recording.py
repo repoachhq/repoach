@@ -543,12 +543,26 @@ _URL_BODY_CHAR = _char_class(_URL_BODY_DELIMITERS, negated=True, extra_escapes=(
 """One non-delimiter character of a URL body in free text (0.15 Pref 2, 0.16)."""
 
 
+_URL_IPV6_HOST = r"\[[0-9A-Za-z:.%_~-]+\]"
+"""A bracketed IPv6 host, zone id included, right after the userinfo: the one place ``[`` belongs in a URL (0.20)."""
+
+_URL_BODY = rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))"
+"""One body character of a text URL, or a GFM balanced parenthesis group."""
+
 _URL_IN_TEXT_RE = re.compile(
     rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
-    rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))+",
+    rf"(?:{_URL_IPV6_HOST}{_URL_BODY}*|{_URL_BODY}+)",
     re.I,
 )
-"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case, with RFC 3986 userinfo and GFM balanced parentheses (I2, 0.10; 0.13; 0.15 R8-D3, Pref 2)."""
+"""A URL inside free text (a log line, a ``glab`` error, a clone command), any case, with RFC 3986 userinfo, a bracketed IPv6 host and GFM balanced parentheses (I2, 0.10; 0.13; 0.15 R8-D3, Pref 2; 0.20).
+
+Without the bracketed host an IPv6 URL was never a text URL (``[`` is a
+body delimiter), so only the token replacement rewrote it, keeping its
+port and the rest of its path, and the offline transform then rewrote
+that again: the fixture was not a fixed point. One rule now: a
+rewritten URL carries the placeholder host and no port; a kept one is
+byte-identical but for its scheme and host case.
+"""
 
 _URL_TRIM_TAIL = ".,:;!?)]}>'\"`*|~_"
 """Trailing prose punctuation and boundary Markdown delimiters trimmed from text URLs without being eaten (0.13, 0.14 R7-D2)."""

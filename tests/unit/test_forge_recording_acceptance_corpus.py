@@ -9346,8 +9346,8 @@ ROWS: tuple[Row, ...] = (
     Row(
         id="v20_ipv6_doc_upper_padded_path_NG4_12",
         source="verify018/probes.py",
-        inp=Sample(body="http://[2001:DB8:0:0::1]/kvnteam/kvnbilling"),
-        outcome=Written(text="http://[2001:DB8:0:0::1]/kvnteam/kvnbilling"),
+        inp=Sample(body="http://[2001:db8:0:0::1]/kvnteam/kvnbilling"),
+        outcome=Written(text="http://[2001:db8:0:0::1]/kvnteam/kvnbilling"),
         residual=True,
     ),
     Row(
@@ -9493,6 +9493,33 @@ ROWS: tuple[Row, ...] = (
         source="fable020/sweep.py",
         inp=Sample(body="const re = /\\/api\\/v1\\x2f(\\d+)/; see \\/ and \\x2f alone"),
         outcome=Written(text="const re = /\\/api\\/v1\\x2f(\\d+)/; see \\/ and \\x2f alone"),
+    ),
+    Row(
+        id="v20_ipv6_global_url_port_path_no_port_kept",
+        source="fable020/sweep.py",
+        inp=Sample(body="see http://[2a00:1450::1]:8443/kvnteam/kvnbilling/x now"),
+        outcome=Written(text="see http://forge.example.com/org/project now"),
+        markers=("2a00:1450::1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_ipv6_ula_ssh_url_port_dropped",
+        source="fable020/sweep.py",
+        inp=Sample(body="ssh://git@[fd00::1]:2222/kvnteam/kvnbilling.git"),
+        outcome=Written(text="ssh://git@forge.example.com/org/project.git"),
+        markers=("fd00::1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_ipv6_zone_url_port_path",
+        source="verify019/probes.py",
+        inp=Sample(body="http://[2a00:1450::1%25eth0]:443/kvnteam/kvnbilling"),
+        outcome=Written(text="http://forge.example.com/org/project"),
+        markers=("2a00:1450::1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_ipv6_doc_upper_url_lowercased_kept",
+        source="fable020/sweep.py",
+        inp=Sample(body="see http://[2001:DB8::1]:8080/docs"),
+        outcome=Written(text="see http://[2001:db8::1]:8080/docs"),
     ),
 )
 
