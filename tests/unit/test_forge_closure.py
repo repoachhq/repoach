@@ -442,19 +442,41 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
         "ac",
         "am",
         "cc",
+        "cr",
+        "cu",
+        "gd",
         "in",
         "md",
         "mk",
         "ml",
+        "mm",
         "pl",
         "pm",
+        "pro",
         "ps",
         "py",
         "rs",
+        "sc",
         "sh",
         "so",
+        "st",
+        "sv",
         "tf",
     } == closure.EXTENSION_TLDS
+    for diagnostic in (
+        "kernel/foo.bar.cu:12:3: error: undefined",
+        "top/core.alu.sv:33: syntax error",
+        "src/settings.local.py:10:5: E501",
+        "config.h.in:5: error",
+        "app.main.cr:7:1: unexpected token",
+        "ui/scene.menu.gd:3: Parse Error",
+        "view.controller.mm:88: error",
+        "build/app.core.pro:2: Unknown module",
+        "repl/boot.init.sc:1: not found",
+        "Object.subclass.st:4: parse error",
+    ):
+        assert closure.hosts(diagnostic) == [], diagnostic
+        assert closure.judge(diagnostic, closure.Known(())) is None, diagnostic
     for code in ("com", "io", "dev", "ai", "de", "fr", "internal", "local", "corp", "example"):
         assert code in closure.HOST_TLDS
     for head in closure.REVERSE_DNS_HEADS:

@@ -348,9 +348,45 @@ _PRIVATE_USE_TLDS = [
 ]
 
 EXTENSION_TLDS: frozenset[str] = frozenset(
-    {"ac", "am", "cc", "in", "md", "mk", "ml", "pl", "pm", "ps", "py", "rs", "sh", "so", "tf"}
+    {
+        "ac",
+        "am",
+        "cc",
+        "cr",
+        "cu",
+        "gd",
+        "in",
+        "md",
+        "mk",
+        "ml",
+        "mm",
+        "pl",
+        "pm",
+        "pro",
+        "ps",
+        "py",
+        "rs",
+        "sc",
+        "sh",
+        "so",
+        "st",
+        "sv",
+        "tf",
+    }
 )
-"""Country codes that are also file extensions: un-led, ``x.h.in`` is a file, not a host."""
+"""Country and generic codes that are also the extension of a source, build or binary file.
+
+A compiler or a linter cites a three-label file name as ``<file>:<line>``
+(``settings.local.py:10``, ``config.h.in:5``, ``kernel/foo.bar.cu:12:3``,
+``core.alu.sv:33``), the one follow shape a file name shares with a host;
+un-led, such a name is a file, not a host. The class: autoconf and
+automake (``ac``, ``am``, ``in``, ``mk``), C++ and CUDA (``cc``, ``cu``),
+Crystal (``cr``), GDScript (``gd``), Markdown (``md``), OCaml (``ml``),
+Objective-C++ (``mm``), Perl (``pl``, ``pm``), Qt and Prolog (``pro``),
+PostScript (``ps``), Python (``py``), Rust (``rs``), Scala scripts
+(``sc``), shell (``sh``), shared objects (``so``), Smalltalk (``st``),
+SystemVerilog (``sv``), Terraform (``tf``).
+"""
 
 HOST_TLDS: frozenset[str] = (
     frozenset(_ISO_COUNTRY_CODES)

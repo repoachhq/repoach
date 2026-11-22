@@ -9596,6 +9596,16 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="cc @author-2, as bob said"),
         residual=True,
     ),
+    Row(
+        id="v20_file_line_diagnostics_on_extension_codes",
+        source="fable020/sweep.py",
+        inp=Sample(
+            raw_text_stdout="kernel/foo.bar.cu:12:3: error: undefined\ntop/core.alu.sv:33: syntax error\nsrc/settings.local.py:10:5: E501\n"
+        ),
+        outcome=Written(
+            text="kernel/foo.bar.cu:12:3: error: undefined\ntop/core.alu.sv:33: syntax error\nsrc/settings.local.py:10:5: E501\n"
+        ),
+    ),
 )
 
 
