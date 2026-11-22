@@ -291,22 +291,11 @@ _GENERIC_TLDS = [
     "pro",
     "dev",
     "app",
-    "io",
     "cloud",
     "tech",
     "site",
     "online",
     "xyz",
-    "co",
-    "me",
-    "tv",
-    "ai",
-    "ly",
-    "to",
-    "fm",
-    "gg",
-    "gl",
-    "ws",
     "wiki",
     "page",
     "live",
@@ -458,6 +447,8 @@ _LEGACY_NODE = re.compile(r"(?=(MDQ6VXNl[+/A-Za-z0-9]*={0,2}))")
 _LEGACY_DECODED = re.compile(r"^04:User(\d+)")
 
 _MSGPACK_WIDTH = {0xCC: 1, 0xCD: 2, 0xCE: 4, 0xCF: 8}
+
+_NODE_LENGTHS = (4, 6, 7, 10, 15)
 
 KINDS: tuple[str, ...] = ("login", "host", "segment", "id", "name", "mailbox")
 """The kinds of known value the recorder replaces, in the order they are judged."""
@@ -659,10 +650,12 @@ def hosts(text: str) -> list[Host]:
     for start, end, run in _runs(text):
         led = _led(text, start)
         address = _ipv4(run.rstrip("."))
-        if address is not None:
-            if (led or text[:start].endswith("//")) and not _version_context(text, start, end):
-                found.append(Host(run.rstrip("."), True, start, end))
-            continue
+        if (
+            address is not None
+            and (led or text[:start].endswith("//"))
+            and not _version_context(text, start, end)
+        ):
+            found.append(Host(run.rstrip("."), True, start, end))
         labels = _label_run(run)
         host = run[:-1] if run.endswith(".") else run
         if labels is None:
@@ -749,10 +742,8 @@ def decoded_forms(text: str) -> list[str]:
 
 
 def _new_node_number(suffix: str) -> int | None:
-    if len(suffix) % 4 == 1:
-        return None
     raw = base64.urlsafe_b64decode(suffix + "=" * (-len(suffix) % 4))
-    if raw[:2] != b"\x92\x00" or len(raw) < 3:
+    if raw[:2] != b"\x92\x00":
         return None
     marker, body = raw[2], raw[3:]
     if marker < 0x80 and not body:
@@ -764,7 +755,7 @@ def _new_node_number(suffix: str) -> int | None:
 
 
 def _legacy_number(run: str) -> int | None:
-    body = run[:40].rstrip("=")
+    body = run[:40]
     if len(body) % 4 == 1:
         padded = body[: len(body) - len(body) % 4]
     else:
@@ -785,7 +776,8 @@ def node_id_numbers(text: str) -> list[str]:
         else:
             found = [
                 n
-                for k in range(4, min(len(suffix), 16) + 1)
+                for k in _NODE_LENGTHS
+                if k <= len(suffix)
                 if (n := _new_node_number(suffix[:k])) is not None
             ]
         for number in found:

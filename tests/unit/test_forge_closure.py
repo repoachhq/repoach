@@ -1066,3 +1066,17 @@ def test_reader_positions_flags_and_edges_by_enumeration() -> None:
     one = base64.b64encode(b"04:User1").decode()
     assert closure.node_id_numbers(one) == ["1"]
     assert closure.node_id_numbers(one.rstrip("=")) == ["1"]
+
+
+def test_case_is_folded_by_every_reader_and_a_blanked_literal_separates_its_neighbours() -> None:
+    """D8, D3: hosts, tokens and literals are judged casefolded; a blanked literal never fuses what stood around it."""
+    assert [h.host for h in closure.hosts("SVC.ACME.IO")] == ["SVC.ACME.IO"]
+    assert [h.host for h in closure.hosts("svc.acme.Io")] == ["svc.acme.Io"]
+    assert closure.hosts("COM.ACME.TOOLS") == []
+    assert closure.hosts("Com.acme.tools") == []
+    assert closure.hosts("SELF.CONFIG.DEV") == []
+    assert closure.hosts("Self.Config.Dev") == []
+    assert [h.host for h in closure.hosts("ssh://SVC.Acme.PY")] == ["SVC.Acme.PY"]
+    known = closure.Known((("deny-list", "x__y"),), (":owner",))
+    assert closure.residual("x_:owner_y", known) is None
+    assert closure.residual("x__y", known) == ("deny-list", 1)
