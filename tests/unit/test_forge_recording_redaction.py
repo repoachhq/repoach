@@ -5151,3 +5151,23 @@ def test_offline_redaction_rewrites_urls_in_arguments_keyword_arguments_and_resu
     assert out["args"] == ["https://forge.example.com/org/project/pull/12", 7]
     assert out["kwargs"] == {"url": "https://forge.example.com/org/project/pull/13"}
     assert out["result"] == "https://forge.example.com/org/project/pull/14"
+
+
+def test_offline_roles_read_the_logins_of_the_keyword_arguments_not_of_the_positional_ones() -> (
+    None
+):
+    """D4 (0.18): a login under a dropped key in ``kwargs`` gets a class word; ``args`` members are never walked, so a login there is refused."""
+    data = {
+        "forge": "github",
+        "method": "m",
+        "args": [],
+        "kwargs": {"mergedBy": {"login": "zqkwtwo"}},
+        "calls": [_exchange({"body": "cc zqkwtwo"})],
+        "result": None,
+    }
+    out = redact_fixtures.redact_fixture(data, forge="github")
+    assert json.loads(out["calls"][0]["stdout"])["body"] == "cc author-2"
+    assert out["kwargs"] == {"mergedBy": {"login": "author-2"}}
+    positional = {**data, "args": [{"assignees": [{"login": "zqargone"}]}], "kwargs": {}}
+    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^residual login 1 at args"):
+        redact_fixtures.redact_fixture(positional, forge="github")

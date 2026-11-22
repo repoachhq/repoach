@@ -485,9 +485,7 @@ def redact_fixture(
     for key in ("args", "kwargs", "result"):
         if key in out:
             out[key] = redact_urls_in_value(out[key])
-    roles = legacy_roles(
-        out, also=raw_logins([data.get("calls"), data.get("args"), data.get("kwargs")])
-    )
+    roles = legacy_roles(out, also=raw_logins([data.get("calls"), data.get("kwargs")]))
     if roles:
         out = _rename(out, roles)
     out = _remap_ids(out, ids, forge, keep)
