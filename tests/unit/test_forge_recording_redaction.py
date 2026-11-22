@@ -3645,6 +3645,23 @@ def test_known_values_are_replaced_as_tokens_in_every_position_by_construction()
     )
 
 
+def test_a_short_mention_only_handle_is_replaced_in_its_at_form_and_never_refuses() -> None:
+    """D2, D7 (0.20, C12): ``@bob`` is a role replaced in its ``@`` form; its bare word is no value and raises nothing."""
+    for handle in ("bob", "joe", "a", "ab", "x1"):
+        known = recording.known_values([[], [], {}, ""], roles={f"@{handle}": "author-2"})
+        assert not known.values("login"), handle
+        assert recording.classify_text(
+            f"cc @{handle} and {handle}", {f"@{handle}": "author-2"}
+        ) == (f"cc @author-2 and {handle}")
+    long = recording.known_values([[], [], {}, ""], roles={"@zqmention": "author-2"})
+    assert long.values("login") == ("zqmention",)
+    for handle in ("bob", "abc"):
+        with pytest.raises(NeedleError, match=r"^needle login 1: too short$"):
+            recording.known_values([[], [], {}, ""], roles={handle: "author"})
+    offline = recording.known_values([[], [], {}, ""], roles={"@bob": "author-2"}, min_length=1)
+    assert not offline.values("login")
+
+
 def test_known_values_mention_only_login_is_a_value_in_its_at_form_only() -> None:
     """D2, D7: a login known only from an ``@`` mention is judged as ``@<login>`` and its bare word is a value too."""
     known = recording.known_values(

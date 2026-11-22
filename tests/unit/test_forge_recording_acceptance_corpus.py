@@ -9582,6 +9582,20 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="the @author-2 field is null, cc @author"),
         markers=("zqxjdoe7",),
     ),
+    Row(
+        id="v20_short_handle_mention_replaced_in_at_form",
+        source="fable020/sweep.py",
+        inp=Sample(body="cc @bob and @zqreviewer please"),
+        outcome=Written(text="cc @author-2 and @author-3 please"),
+        markers=("zqreviewer",),
+    ),
+    Row(
+        id="v20_short_handle_bare_word_NG4_1",
+        source="fable020/sweep.py",
+        inp=Sample(body="cc @bob, as bob said"),
+        outcome=Written(text="cc @author-2, as bob said"),
+        residual=True,
+    ),
 )
 
 

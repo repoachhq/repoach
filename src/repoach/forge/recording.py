@@ -2284,6 +2284,9 @@ def known_values(
     :data:`URL_KEYS` values and of the remote, the recorded project's
     namespace and repository), from the deny-list, and from the hosts
     :func:`repoach.forge.closure.hosts` finds in any string of ``raw``.
+    A login known only from a mention and shorter than
+    :data:`NEEDLE_MIN_LENGTH` is no value (0.20): the convenience layer
+    replaces its ``@`` form and its bare word is too short to be a token.
 
     Args:
         raw: The exchanges as the forge printed them, the method's
@@ -2345,9 +2348,14 @@ def known_values(
             if token != form:
                 _add("id", form, token, hard=True)
 
+    mention_only = {
+        k.removeprefix(MENTION_ONLY_PREFIX) for k in roles if k.startswith(MENTION_ONLY_PREFIX)
+    }
     logins = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
     for login in logins:
         if _names_no_one(login):
+            continue
+        if login in mention_only and len(login) < NEEDLE_MIN_LENGTH:
             continue
         word = _role(login)
         _add("login", login, word, hard=True)
