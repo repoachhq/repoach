@@ -410,7 +410,7 @@ def fixture_known(
     Raises:
         NeedleError: A structured value that is a class word or placeholder, by kind and ordinal.
     """
-    raw = [data.get("calls"), data.get("args"), data.get("kwargs"), remote]
+    raw = [data.get("calls"), data.get("args"), data.get("kwargs")]
     return known_values(
         raw,
         roles=roles or {},

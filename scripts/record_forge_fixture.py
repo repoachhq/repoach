@@ -579,7 +579,7 @@ def record(
         live_raises = type(exc).__name__
     calls = [e.to_json() for e in recorder.exchanges]
     remote = origin_url(cwd)
-    raw: list[object] = [copy.deepcopy(calls), copy.deepcopy(args), copy.deepcopy(kwargs), remote]
+    raw: list[object] = [copy.deepcopy(calls), copy.deepcopy(args), copy.deepcopy(kwargs)]
     for call in calls:
         call["stdout"] = redact_stdout(call["stdout"])
     if trim is not None:
