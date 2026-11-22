@@ -9221,22 +9221,64 @@ ROWS: tuple[Row, ...] = (
         markers=("104.16.0.1", "kvnteam", "kvnbilling"),
     ),
     Row(
-        id="v18_gitlab_commit_author_committer_names",
+        id="v18_gitlab_commit_author_name",
         source="verify018/probes.py",
         inp=Sample(
             forge="gitlab",
-            body="Zqnorek pushed and Brandt reviewed",
+            body="Zqnorek pushed",
             remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
             url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
             extra_item={
-                "author_name": "Kazimir Zqnorek",
-                "author_email": "kaz@zqmail.io",
-                "committer_name": "Liana Brandt",
-                "committer_email": "lia@zqmail.io",
+                "commit": {"author_name": "Kazimir Zqnorek", "author_email": "kazmail@zqmail.io"}
             },
         ),
-        outcome=Written(text="author pushed and author reviewed"),
-        markers=("Zqnorek", "Brandt", "zqmail.io"),
+        outcome=Written(text="author pushed"),
+        markers=("Zqnorek", "zqmail.io"),
+    ),
+    Row(
+        id="v18_gitlab_commit_committer_name",
+        source="verify018/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Brandt reviewed",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={
+                "commit": {"committer_name": "Liana Brandt", "committer_email": "liamail@zqmail.io"}
+            },
+        ),
+        outcome=Written(text="author reviewed"),
+        markers=("Brandt", "zqmail.io"),
+    ),
+    Row(
+        id="v18_gitlab_commit_author_mailbox_local_part",
+        source="verify018/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="mail kazmail please",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={
+                "commit": {"author_name": "Kazimir Zqnorek", "author_email": "kazmail@zqmail.io"}
+            },
+        ),
+        outcome=Written(text="mail author please"),
+        markers=("kazmail", "zqmail.io"),
+    ),
+    Row(
+        id="v18_gitlab_commit_committer_mailbox_local_part",
+        source="verify018/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="mail liamail please",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={
+                "commit": {"committer_name": "Liana Brandt", "committer_email": "liamail@zqmail.io"}
+            },
+        ),
+        outcome=Written(text="mail author please"),
+        markers=("liamail", "zqmail.io"),
     ),
     Row(
         id="v18_name_only_user_NG4_1",
