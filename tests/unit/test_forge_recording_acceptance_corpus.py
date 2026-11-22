@@ -9612,6 +9612,14 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="https://api.nuget.org/v3-flatcontainer/x/1.2.3.4/x.1.2.3.4.nupkg"),
         outcome=Written(text="https://api.nuget.org/v3-flatcontainer/x/1.2.3.4/x.1.2.3.4.nupkg"),
     ),
+    Row(
+        id="v20_version_label_with_separators",
+        source="fable020/sweep.py",
+        inp=Sample(body="Deployed Version: 1.8.0.252/linux and version = 1.8.0.252:8443 today"),
+        outcome=Written(
+            text="Deployed Version: 1.8.0.252/linux and version = 1.8.0.252:8443 today"
+        ),
+    ),
 )
 
 

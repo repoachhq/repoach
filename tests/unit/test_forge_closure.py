@@ -1065,9 +1065,13 @@ def test_reader_positions_flags_and_edges_by_enumeration() -> None:
         "version=8.8.8.8:80",
         "VERSION:8.8.8.8:80",
         "a version:8.8.8.8:80",
+        "version  8.8.8.8:80",
+        "a version: 8.8.8.8:80",
+        "Version:\t8.8.8.8:80",
+        "version = 8.8.8.8:80",
     ):
         assert closure.hosts(phrase) == [], phrase
-    for phrase in ("version  8.8.8.8:80", "versio 8.8.8.8:80", "a version: 8.8.8.8:80"):
+    for phrase in ("versio 8.8.8.8:80", "version x 8.8.8.8:80", "versions 8.8.8.8:80"):
         assert [h.host for h in closure.hosts(phrase)] == ["8.8.8.8"], phrase
     assert closure.hosts("x //8.8.8.8/y")[0].led
     assert closure.hosts("x /8.8.8.8/y") == []
@@ -1424,7 +1428,7 @@ def test_the_readers_are_linear_in_the_text() -> None:
         ("x //8.8.8.8/y", ["8.8.8.8"]),
         ("x /8.8.8.8/y", []),
         ("version 8.8.8.8:80", []),
-        ("Version: 8.8.8.8:80", ["8.8.8.8"]),
+        ("Version: 8.8.8.8:80", []),
         ("Version:8.8.8.8:80", []),
         ("aversion=8.8.8.8:80", []),
         ("versio 8.8.8.8:80", ["8.8.8.8"]),

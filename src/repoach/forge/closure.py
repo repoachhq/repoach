@@ -755,8 +755,9 @@ def _version_context(text: str, start: int, end: int) -> bool:
 
     A path segment (a single ``/`` right before it, not ``//``:
     ``/ojdbc8/19.3.0.0/``), a comparator operand with any spaces
-    (``pkg  >=  1.2.3.4``), a ``version`` label's value, or a quad carrying
-    a pre-release or build tag (``-``, ``+`` right after).
+    (``pkg  >=  1.2.3.4``), a ``version`` label's value after any run of
+    label separators (``Version: 1.2.3.4``, ``version = 1.2.3.4``), or a
+    quad carrying a pre-release or build tag (``-``, ``+`` right after).
     """
     if text.endswith("/", 0, start) and not text.endswith("//", 0, start):
         return True
@@ -765,7 +766,9 @@ def _version_context(text: str, start: int, end: int) -> bool:
         unspaced -= 1
     if text.endswith(_COMPARATORS, 0, unspaced):
         return True
-    stem = start - 1 if text[start - 1 : start] in (" ", ":", "=") else start
+    stem = start
+    while stem > 0 and text[stem - 1] in " \t:=":
+        stem -= 1
     labelled = text[max(0, stem - 7) : stem].casefold() == "version"
     return labelled or text[end : end + 1] in ("-", "+")
 
