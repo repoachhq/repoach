@@ -4292,14 +4292,12 @@ def test_classify_text_expands_a_bot_stem_only_when_no_role_names_it_already() -
 def test_known_values_soft_sources_never_raise_and_hard_ones_do() -> None:
     """D7: a short value of a structured source is a configuration error, one found in text is just not a value."""
 
-    def known(
-        stdout: object, *, args: list[str] | None = None, remote: str = "", **options: object
-    ) -> closure.Known:
+    def known(stdout: object, *, args: list[str] | None = None, remote: str = "") -> closure.Known:
         call = {
             "stdout": json.dumps(stdout) if not isinstance(stdout, str) else stdout,
             "args": args or [],
         }
-        return recording.known_values([[call], [], {}, remote], roles={}, remote=remote, **options)  # type: ignore[arg-type]
+        return recording.known_values([[call], [], {}, remote], roles={}, remote=remote)
 
     short_user = {"user": {"login": "zqlogin", "name": "Jo", "email": "ab@zqmail.io"}}
     soft = known(short_user)
@@ -4360,7 +4358,7 @@ def test_known_values_soft_sources_never_raise_and_hard_ones_do() -> None:
     )
     assert nested.values("id")[:1] == ("74928163",)
     assert "77665544" in nested.values("id")
-    order = known({"body": "see projects/55667788/x"}, args=["api"], ids=UserIdMap())
+    order = known({"body": "see projects/55667788/x"}, args=["api"])
     assert order.values("id") == ("55667788",)
     with pytest.raises(NeedleError, match=r"^needle login 1: too short$"):
         recording.known_values([[], [], {}, ""], roles={"abc": "author"})
