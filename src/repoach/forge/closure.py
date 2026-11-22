@@ -403,9 +403,7 @@ _RFC5737 = tuple(
     ipaddress.IPv4Network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
 )
 
-_VERSION_LEADS = ("==", ">=", "<=", "~=", "!=", "version", "Version", "VERSION")
-
-_VERSION_TAILS = (".tar", ".whl", ".zip", ".gz")
+_COMPARATORS = ("==", ">=", "<=", "~=", "!=")
 
 PUBLIC_SUFFIXES: frozenset[str] = frozenset(
     {
@@ -531,7 +529,7 @@ class Refusal:
     n: int = 0
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True)
 class Known:
     """The private values a built fixture must not hold, casefolded, by kind.
 
@@ -572,7 +570,7 @@ def _canonical_host(host: str) -> str:
 def is_placeholder_host(host: str) -> bool:
     """Whether ``host`` names no one: RFC 2606, loopback, RFC 5737, the placeholder."""
     folded = _canonical_host(host)
-    if folded in ("localhost", "example", "test", "invalid"):
+    if folded == "localhost":
         return True
     for base in ("example.com", "example.org", "example.net", "example", "test", "invalid"):
         if folded == base or folded.endswith("." + base):
@@ -643,9 +641,10 @@ def _runs(text: str) -> list[tuple[int, int, str]]:
 
 def _version_context(text: str, start: int, end: int) -> bool:
     before = text[:start]
-    if any(before.endswith(lead) for lead in _VERSION_LEADS):
+    if before.endswith(_COMPARATORS):
         return True
-    return text[end : end + 1] in ("-", "+") or text.startswith(_VERSION_TAILS, end)
+    stem = before[:-1] if before[-1:] in (" ", ":", "=") else before
+    return stem.casefold().endswith("version") or text[end : end + 1] in ("-", "+")
 
 
 def hosts(text: str) -> list[Host]:
@@ -665,9 +664,9 @@ def hosts(text: str) -> list[Host]:
                 found.append(Host(run.rstrip("."), True, start, end))
             continue
         labels = _label_run(run)
+        host = run[:-1] if run.endswith(".") else run
         if labels is None:
             continue
-        host = run[:-1] if run.endswith(".") else run
         if led:
             found.append(Host(host, True, start, end))
         elif (
@@ -703,8 +702,6 @@ def mailboxes(text: str) -> list[Mailbox]:
     found = []
     for at in (i for i, c in enumerate(text) if c == "@"):
         local = _local_before(text, at)
-        if not local:
-            continue
         begin = at - len(local)
         m = _RUN.match(text, at + 1)
         if m is None:
@@ -768,8 +765,6 @@ def _new_node_number(suffix: str) -> int | None:
 
 def _legacy_number(run: str) -> int | None:
     body = run[:40].rstrip("=")
-    if len(body) < 8:
-        return None
     if len(body) % 4 == 1:
         padded = body[: len(body) - len(body) % 4]
     else:
@@ -790,7 +785,7 @@ def node_id_numbers(text: str) -> list[str]:
         else:
             found = [
                 n
-                for k in range(2, min(len(suffix), 16) + 1)
+                for k in range(4, min(len(suffix), 16) + 1)
                 if (n := _new_node_number(suffix[:k])) is not None
             ]
         for number in found:
@@ -809,8 +804,7 @@ _LITERAL_PATTERNS: dict[tuple[str, ...], re.Pattern[str]] = {}
 def _literal_pattern(literals: tuple[str, ...]) -> re.Pattern[str]:
     if literals not in _LITERAL_PATTERNS:
         alternation = "|".join(
-            f"(?i:{re.escape(x)})" if x.startswith("docs.") else re.escape(x)
-            for x in sorted(literals, key=len, reverse=True)
+            f"(?i:{re.escape(x)})" if x.startswith("docs.") else re.escape(x) for x in literals
         )
         _LITERAL_PATTERNS[literals] = re.compile(
             rf"(?<![{_ALNUM}])(?:{alternation})(?![{_ALNUM}-])"

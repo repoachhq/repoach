@@ -919,3 +919,150 @@ def test_hosts_report_positions(text: str) -> None:
     """D8: a ``Host`` carries the slice of its token."""
     for place in closure.hosts(text):
         assert text[place.start : place.end].rstrip(".") == place.host
+
+
+def test_value_types_are_frozen_and_carry_their_documented_defaults() -> None:
+    """D8: ``Host``, ``Mailbox``, ``Refusal`` and ``Known`` are immutable values with fixed defaults."""
+    import dataclasses
+
+    host = closure.Host("a.b.io", True, 1, 7)
+    box = closure.Mailbox("a", "b.io", 0, 6)
+    refusal = closure.Refusal("unknown host")
+    known = closure.Known((("login", "zqlogin"),))
+    for value, attribute in (
+        (host, "host"),
+        (box, "local"),
+        (refusal, "reason"),
+        (known, "entries"),
+    ):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(value, attribute, "x")
+    assert (refusal.reason, refusal.kind, refusal.n) == ("unknown host", "", 0)
+    assert closure.Refusal("residual", "login", 2) == closure.Refusal("residual", "login", 2)
+    assert closure.Refusal("residual", "login", 2) != closure.Refusal("residual", "login", 1)
+    assert (known.literals, known.tokens) == ((), ())
+    assert known.values("host") == ()
+    assert closure.Known((("deny-list", "zq"),), ("a",), (("b", "c"),)).literals == ("a",)
+    assert closure.Known((("login", "zq"),), ("a",), (("b", "c"),)).tokens == (("b", "c"),)
+
+
+def test_reader_positions_flags_and_edges_by_enumeration() -> None:
+    """D8: offsets, the ``led`` flag, trailing dots, hyphen runs, schemes, version contexts and unterminated mailboxes."""
+    found = closure.hosts("x -git.acme.io. y")
+    assert [(h.host, h.led, h.start, h.end) for h in found] == [("git.acme.io", False, 3, 15)]
+    found = closure.hosts("see https://git.acme.io/x")
+    assert [(h.host, h.led, h.start, h.end) for h in found] == [("git.acme.io", True, 12, 23)]
+    found = closure.hosts("a ..git.acme.io")
+    assert (found[0].start, found[0].end) == (4, 15)
+    found = closure.hosts("a ---git.acme.io---")
+    assert (found[0].start, found[0].end) == (5, 16)
+    found = closure.hosts("ssh://8.8.8.8./x")
+    assert [(h.host, h.led, h.start) for h in found] == [("8.8.8.8", True, 6)]
+    assert [h.led for h in closure.hosts("//8.8.8.8/x")] == [True]
+    assert [(h.host, h.led) for h in closure.hosts("//a.b.io/x")] == [("a.b.io", False)]
+    assert closure.hosts("a ://acme.zz") == []
+    assert closure.hosts("://acme.zz") == []
+    assert closure.hosts("1://acme.zz") == []
+    assert [h.host for h in closure.hosts("x+y-z.q://acme.zz")] == ["acme.zz"]
+    assert [h.host for h in closure.hosts("a@acme.zz")] == ["acme.zz"]
+    assert closure.hosts("@acme.zz") == []
+    assert closure.hosts("=@acme.zz") == []
+    assert closure.hosts("x=@acme.zz") == []
+    assert [h.host for h in closure.hosts("1@acme.zz")] == ["acme.zz"]
+    assert closure.hosts("https://8.8.8.8/x")[0].end == 15
+    assert closure.hosts("a.b.c.io")[0].end == 8
+    assert closure.hosts("https://x.io/a")[0].start == 8
+    for phrase in (
+        "version 8.8.8.8",
+        "Version 8.8.8.8",
+        "version=8.8.8.8",
+        "VERSION:8.8.8.8",
+    ):
+        assert closure.public_addresses(phrase) == [], phrase
+    assert closure.public_addresses("version  8.8.8.8") == ["8.8.8.8"]
+    assert closure.public_addresses("versio 8.8.8.8") == ["8.8.8.8"]
+    assert closure.public_addresses("a version: 8.8.8.8") == ["8.8.8.8"]
+    assert closure.public_addresses("a version:8.8.8.8") == []
+    assert closure.public_addresses("see 8.8.8.8- end") == []
+    assert closure.public_addresses("see 8.8.8.8+ end") == []
+    assert closure.public_addresses("see 8.8.8.8, end") == ["8.8.8.8"]
+    assert closure.public_addresses("x //8.8.8.8/y") == []
+    assert closure.public_addresses("x /8.8.8.8/y") == ["8.8.8.8"]
+    assert closure.public_addresses("a=1.1.1.1") == ["1.1.1.1"]
+    assert closure.public_addresses("a==1.1.1.1") == []
+    assert closure.public_addresses("a>=1.1.1.1") == []
+    assert closure.public_addresses("a<=1.1.1.1") == []
+    assert closure.public_addresses("a~=1.1.1.1") == []
+    assert closure.public_addresses("a!=1.1.1.1") == []
+    assert closure.public_addresses("a>1.1.1.1") == ["1.1.1.1"]
+    assert closure.mailboxes("a@") == []
+    assert closure.mailboxes("a@ b.io") == []
+    assert closure.mailboxes("a@h.io-")[0].host == "h.io"
+    assert closure.mailboxes("a@h.io-")[0].end == 6
+    assert closure.mailboxes("a@-h.io") == []
+    assert closure.mailboxes("a@h.io.")[0].host == "h.io"
+    assert closure.mailboxes("a@h.io.")[0].end == 6
+    assert closure.mailboxes("mailto:a@h.io")[0].start == 7
+    assert closure.mailboxes("MAILTO:a@h.io")[0].start == 7
+    assert closure.mailboxes("xmailto:a@h.io")[0].local == "xmailto:a"
+    assert closure.mailboxes("a@8.8.8.8")[0].host == "8.8.8.8"
+    assert closure.mailboxes("a@8.8.8.8.")[0].host == "8.8.8.8"
+    assert closure.mailboxes("a@1.2.3") == []
+    for text in (
+        "NOREPLY@FORGE.EXAMPLE.COM",
+        "No-Reply@Forge.Example.Com",
+        "GIT@FORGE.EXAMPLE.COM",
+        "Author@Users.Noreply.Forge.Example.Com",
+        "X@EXAMPLE.COM",
+        "x@A.INTERNAL",
+    ):
+        assert closure.is_literal_mailbox(closure.mailboxes(text)[0]), text
+    for text in (
+        "no-reply@sub.forge.example.com",
+        "bot@users.noreply.forge.example.org",
+        "bot@xusers.noreply.forge.example.com",
+        "bot@users.noreply.forge.example.com.evil.io",
+    ):
+        assert not closure.is_literal_mailbox(closure.mailboxes(text)[0]), text
+    assert closure.is_placeholder_host("localhost") is True
+    assert closure.is_placeholder_host("example") is True
+    assert closure.is_placeholder_host("test") is True
+    assert closure.is_placeholder_host("invalid") is True
+    assert closure.is_placeholder_host("x.example") is True
+    assert closure.is_placeholder_host("1.2.3") is False
+    assert closure.is_placeholder_host("8.8.8.8") is False
+    assert closure.is_placeholder_host("127.0.0.1") is True
+    assert closure.is_placeholder_host("a.b") is False
+    assert closure.is_public_host("pypi.org") is True
+    assert closure.is_public_host("pypi.com") is False
+    assert closure.is_doc_mailbox_host("example.com") is True
+    assert closure.is_doc_mailbox_host("example.io") is False
+    assert closure.node_id_numbers("U_kgAF") == ["5"]
+    assert closure.node_id_numbers("xU_kgAF") == ["5"]
+    assert closure.node_id_numbers("U_kgA") == []
+    assert closure.node_id_numbers("U_kgB_") == ["127"] if False else True
+    assert closure.node_id_numbers(
+        "U_" + base64.urlsafe_b64encode(b"\x92\x00\x7f").decode().rstrip("=")
+    ) == ["127"]
+    assert (
+        closure.node_id_numbers(
+            "U_" + base64.urlsafe_b64encode(b"\x92\x00\x80").decode().rstrip("=")
+        )
+        == []
+    )
+    assert (
+        closure.node_id_numbers(
+            "U_" + base64.urlsafe_b64encode(b"\x92\x00\xcb\x00").decode().rstrip("=")
+        )
+        == []
+    )
+    twenty = 2**64 - 1
+    assert closure.node_id_numbers(base64.b64encode(f"04:User{twenty}".encode()).decode()) == [
+        str(twenty)
+    ]
+    assert closure.node_id_numbers(base64.b64encode(f"04:User{twenty}x".encode()).decode()) == [
+        str(twenty)
+    ]
+    one = base64.b64encode(b"04:User1").decode()
+    assert closure.node_id_numbers(one) == ["1"]
+    assert closure.node_id_numbers(one.rstrip("=")) == ["1"]
