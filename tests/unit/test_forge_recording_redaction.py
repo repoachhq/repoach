@@ -3924,6 +3924,13 @@ def test_path_identity_names_the_namespace_and_the_repository_by_enumeration() -
     assert identity([s.upper() for s in api[:4]]).namespace == ("ZQG",)
     assert identity(["API", "V4", "PROJECTS", "zqg%2Fzqr"]).repository == "zqr"
     assert identity(["api", "v4", "projects"]).segments == ["org", "project"]
+    ghe = identity(["api", "v3", "repos", "zqo", "zqr", "issues", "comments", "1"])
+    assert ghe.segments == ["api", "v3", "repos", "org", "project", "issues", "comments", "1"]
+    assert (ghe.namespace, ghe.repository) == (("zqo",), "zqr")
+    ghe_user = identity(["api", "v3", "users", "zqu", ""])
+    assert ghe_user.segments == ["api", "v3", "users", "org", ""]
+    assert ghe_user.namespace == ("zqu",)
+    assert identity(["API", "V3", "REPOS"]).segments == ["org", "project"]
     assert identity(["api", "v4", "projects", "123"]) == recording.PathIdentity(
         ["api", "v4", "projects", "123"]
     )
@@ -5019,3 +5026,17 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
     )
     plain = {"label": {"name": "bug", "color": "red"}, "repo": {"name": "zqmainrepo", "id": 5}}
     assert _kinds(needles(_one_call(plain), roles={}), "name") == []
+
+
+def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
+    """D2 (0.18): ``@font-face`` and every at-rule keyword of CSS, Sass and Tailwind is a stylesheet, not a handle."""
+    for rule in sorted(recording.CSS_AT_RULES):
+        assert recording.mentions({"body": f"@{rule} {{ a: b }}"}) == [], rule
+        assert recording.mentions({"body": f"@{rule.upper()} x"}) == [], rule
+    assert recording.mentions({"body": "@font-face { src: url(x) } cc @zqperson"}) == ["zqperson"]
+    assert recording.mentions({"body": "@media-person and @fontface"}) == [
+        "media-person",
+        "fontface",
+    ]
+    assert "font-face" in recording.CSS_AT_RULES and "media" in recording.CSS_AT_RULES
+    assert all(rule == rule.casefold() for rule in recording.CSS_AT_RULES)

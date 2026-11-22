@@ -360,6 +360,59 @@ PYTHON_DECORATORS: frozenset[str] = frozenset(
 """Bare decorator names of the standard library (builtins, ``abc``, ``contextlib``, ``dataclasses``,
 ``enum``, ``functools``, ``typing``, ``warnings``): ``@<name>`` in prose is code, never a handle."""
 
+CSS_AT_RULES: frozenset[str] = frozenset(
+    {
+        "apply",
+        "at-root",
+        "charset",
+        "container",
+        "content",
+        "counter-style",
+        "custom-variant",
+        "debug",
+        "document",
+        "each",
+        "else",
+        "error",
+        "extend",
+        "font-face",
+        "font-feature-values",
+        "for",
+        "forward",
+        "function",
+        "if",
+        "import",
+        "include",
+        "keyframes",
+        "layer",
+        "media",
+        "mixin",
+        "namespace",
+        "page",
+        "plugin",
+        "position-try",
+        "property",
+        "responsive",
+        "return",
+        "scope",
+        "screen",
+        "source",
+        "starting-style",
+        "supports",
+        "tailwind",
+        "theme",
+        "use",
+        "utility",
+        "variant",
+        "variants",
+        "view-transition",
+        "viewport",
+        "warn",
+        "while",
+    }
+)
+"""The at-rule keywords of CSS, Sass and Tailwind: ``@font-face`` in prose is a stylesheet, never a handle."""
+
 _CODE_SPAN_RE = re.compile(r"```.*?(?:```|\Z)|`[^`\n]*`", re.S)
 """A fenced block or an inline code span of Markdown prose, where ``@<name>`` is code."""
 
@@ -399,7 +452,8 @@ def mentions(payload: object) -> list[str]:
     or the runner's content, not a person addressing another, and is not
     searched. Inside them, a Markdown code span or fenced block is code,
     a :data:`PYTHON_DECORATORS` name (case-insensitive, 0.13) is a
-    decorator or annotation, a scoped package ``@scope/pkg`` is a package
+    decorator or annotation, a :data:`CSS_AT_RULES` keyword is a
+    stylesheet rule, a scoped package ``@scope/pkg`` is a package
     name, and a :data:`NON_PERSON_LOGINS` stem (``@github-actions``) names
     no person.
     """
@@ -413,7 +467,7 @@ def mentions(payload: object) -> list[str]:
                     for m in MENTION_RE.finditer(prose):
                         handle = m.group(1)
                         if (
-                            handle.casefold() in PYTHON_DECORATORS
+                            handle.casefold() in PYTHON_DECORATORS | CSS_AT_RULES
                             or is_classified_login(handle)
                             or _names_no_one(handle)
                         ):
@@ -611,6 +665,9 @@ class PathIdentity:
 _API_VERSION_RE = re.compile(r"^v[0-9]+$", re.I)
 """An API version path segment such as ``v3`` or ``v4`` (0.15 R8-D2)."""
 
+_API_RESOURCES: tuple[str, ...] = ("repos", "users", "orgs", "apps")
+"""First path segments of a GitHub API route that name an owner: ``repos/<o>/<r>``, ``users/<u>``."""
+
 
 def path_identity(segments: list[str]) -> PathIdentity:
     """Split a forge path's segments into its placeholder form, its namespace and its repository.
@@ -627,6 +684,14 @@ def path_identity(segments: list[str]) -> PathIdentity:
     if not core:
         return PathIdentity(segments)
     trailing = [""] if segments[-1] == "" else []
+    if (
+        len(core) > 3
+        and core[0].casefold() == "api"
+        and _API_VERSION_RE.match(core[1])
+        and core[2].casefold() in _API_RESOURCES
+    ):
+        inner = path_identity([*core[2:], *trailing])
+        return PathIdentity([*core[:2], *inner.segments], inner.namespace, inner.repository)
     if (
         len(core) > 3
         and core[0].casefold() == "api"
@@ -648,7 +713,7 @@ def path_identity(segments: list[str]) -> PathIdentity:
             (core[1],),
             _bare(core[2]),
         )
-    if core[0] in ("repos", "users", "orgs", "apps") and len(core) >= 2:
+    if core[0] in _API_RESOURCES and len(core) >= 2:
         return PathIdentity(
             [core[0], PLACEHOLDER_NAMESPACE, *core[2:], *trailing],
             (core[1],),
