@@ -123,13 +123,19 @@ class Refused:
 
 @dataclass(frozen=True)
 class Row:
-    """One acceptance row: an id, its source probe, its input and its one outcome."""
+    """One acceptance row: an id, its source probe, its input and its one outcome.
+
+    A row is **planted** when it carries a marker that must not survive, when it is refused, or
+    when it is a ``residual``: a planted shape that NG4 documents as accepted and that is
+    therefore written as it stands. Every other row is ordinary text.
+    """
 
     id: str
     source: str
     inp: Sample
     outcome: Written | Refused
     markers: tuple[str, ...] = ()
+    residual: bool = False
 
 
 ROWS: tuple[Row, ...] = (
@@ -6236,7 +6242,7 @@ ROWS: tuple[Row, ...] = (
         markers=("11.22.33.44", "zqipns", "zqiprepo"),
     ),
     Row(
-        id="g_ipv4_public_bare_prose_refused",
+        id="g_ipv4_public_bare_prose_written_NG4_9",
         source="spec017-new",
         inp=Sample(
             body="ssh: connect to host 11.22.33.44 port 22: Connection refused",
@@ -6247,8 +6253,8 @@ ROWS: tuple[Row, ...] = (
             remote="git@github.com:pubteam9/pubrepo9.git",
             deny=("kvnsecret42",),
         ),
-        outcome=Refused("public address at exchanges[0].stdout[0].body"),
-        markers=("11.22.33.44",),
+        outcome=Written(text="ssh: connect to host 11.22.33.44 port 22: Connection refused"),
+        residual=True,
     ),
     Row(
         id="g_ipv4_private_bare_prose_written",
@@ -7231,6 +7237,7 @@ ROWS: tuple[Row, ...] = (
             deny=("kvnsecret42",),
         ),
         outcome=Written(text="Host mirror.zqcorp.net is down"),
+        residual=True,
     ),
     Row(
         id="code_two_label_apex_host_schemeless_prose_residual",
@@ -7245,6 +7252,7 @@ ROWS: tuple[Row, ...] = (
             deny=("kvnsecret42",),
         ),
         outcome=Written(text="Mirror at zqcorp.io/zqotherns/zqotherrepo is stale"),
+        residual=True,
     ),
     Row(
         id="code_two_label_apex_host_scheme_led",
@@ -7928,6 +7936,7 @@ ROWS: tuple[Row, ...] = (
         source="verify017/probes.py",
         inp=Sample(body="see kvncloud.io/kvnteam/kvnbilling"),
         outcome=Written(text="see kvncloud.io/kvnteam/kvnbilling"),
+        residual=True,
     ),
     Row(
         id="v17_apex_two_label_pct_scheme",
@@ -8013,10 +8022,11 @@ ROWS: tuple[Row, ...] = (
         outcome=Refused("public address at exchanges[0].stdout[0].body"),
     ),
     Row(
-        id="v17_private_ipv4_path_NG4_2",
+        id="v17_private_ipv4_path_followed_reads_namespace",
         source="verify017/probes.py",
         inp=Sample(body="see 10.1.2.3/kvnteam/kvnbilling"),
-        outcome=Written(text="see 10.1.2.3/kvnteam/kvnbilling"),
+        outcome=Written(text="see 10.1.2.3/org/project"),
+        markers=("kvnteam", "kvnbilling"),
     ),
     Row(
         id="v17_stderr_known_url",
@@ -8439,6 +8449,7 @@ ROWS: tuple[Row, ...] = (
         source="verify017/probes.py",
         inp=Sample(body="zqx\u200bjdoe7 here"),
         outcome=Written(text="zqx\u200bjdoe7 here"),
+        residual=True,
     ),
     Row(
         id="v17_host_in_dotenv_no_scheme",
@@ -8745,7 +8756,7 @@ ROWS: tuple[Row, ...] = (
             body="[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/commons/commons-io/2.11.0/commons-io-2.11.0.pom"
         ),
         outcome=Written(
-            text="[INFO] Downloading from central: https://forge.example.com/org/project"
+            text="[INFO] Downloading from central: https://repo.maven.apache.org/maven2/org/apache/commons/commons-io/2.11.0/commons-io-2.11.0.pom"
         ),
     ),
     Row(
@@ -9058,6 +9069,189 @@ ROWS: tuple[Row, ...] = (
             text='Running with gitlab-runner 17.0.0\nPreparing the "docker" executor\nUsing Docker executor with image python:3.12 ...\nJob succeeded'
         ),
     ),
+    Row(
+        id="v18_o_es_1",
+        source="verify018/probes.py",
+        inp=Sample(body="El despliegue falló en la versión 3.4.0.12; volvemos a la 3.3.9.1."),
+        outcome=Written(text="El despliegue falló en la versión 3.4.0.12; volvemos a la 3.3.9.1."),
+    ),
+    Row(
+        id="v18_o_pt_1",
+        source="verify018/probes.py",
+        inp=Sample(body="O pipeline quebrou na versão 1.2.0.33; revertendo para 1.1.9.8."),
+        outcome=Written(text="O pipeline quebrou na versão 1.2.0.33; revertendo para 1.1.9.8."),
+    ),
+    Row(
+        id="v18_cfg_4",
+        source="verify018/probes.py",
+        inp=Sample(body="resolver 1.1.1.1 8.8.8.8 valid=300s;"),
+        outcome=Written(text="resolver 1.1.1.1 8.8.8.8 valid=300s;"),
+    ),
+    Row(
+        id="v18_ver_1",
+        source="verify018/probes.py",
+        inp=Sample(body="Bump to 1.2.3.4 (build 20261122)"),
+        outcome=Written(text="Bump to 1.2.3.4 (build 20261122)"),
+    ),
+    Row(
+        id="v18_ver_7",
+        source="verify018/probes.py",
+        inp=Sample(body="firmware 2.4.1.9 -> 2.4.2.0"),
+        outcome=Written(text="firmware 2.4.1.9 -> 2.4.2.0"),
+    ),
+    Row(
+        id="v18_ver_8",
+        source="verify018/probes.py",
+        inp=Sample(body="pkg = 1.2.3.4"),
+        outcome=Written(text="pkg = 1.2.3.4"),
+    ),
+    Row(
+        id="v18_ipv_2",
+        source="verify018/probes.py",
+        inp=Sample(body="DNS: 9.9.9.9 (Quad9)"),
+        outcome=Written(text="DNS: 9.9.9.9 (Quad9)"),
+    ),
+    Row(
+        id="v18_ipv_3",
+        source="verify018/probes.py",
+        inp=Sample(body="release 24.4.1.2 of the appliance fixes the leak"),
+        outcome=Written(text="release 24.4.1.2 of the appliance fixes the leak"),
+    ),
+    Row(
+        id="v18_ipv_6",
+        source="verify018/probes.py",
+        inp=Sample(body="agent 7.52.3.101 installed"),
+        outcome=Written(text="agent 7.52.3.101 installed"),
+    ),
+    Row(
+        id="v18_ipv_8",
+        source="verify018/probes.py",
+        inp=Sample(body="Cisco IOS 15.2(4)M and ASA 9.12.4.1"),
+        outcome=Written(text="Cisco IOS 15.2(4)M and ASA 9.12.4.1"),
+    ),
+    Row(
+        id="v18_v01_zone_id_pct_global_led",
+        source="verify018/probes.py",
+        inp=Sample(body="http://[2a00:1450::1%25eth0]/kvnteam/kvnbilling"),
+        outcome=Written(text="http://forge.example.com/org/project"),
+        markers=("2a00:1450::1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v18_v02_zone_id_raw_linklocal_led",
+        source="verify018/probes.py",
+        inp=Sample(body="http://[fe80::1%eth0]/kvnteam/kvnbilling"),
+        outcome=Written(text="http://forge.example.com/org/project"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v18_v05_ipv4_mapped_led",
+        source="verify018/probes.py",
+        inp=Sample(body="http://[::ffff:51.15.20.30]/kvnteam/kvnbilling"),
+        outcome=Written(text="http://forge.example.com/org/project"),
+        markers=("51.15.20.30", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v18_a05_gitlab_commit_author_name_email_keys",
+        source="verify018/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Zqnorek pushed",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={
+                "author_name": "Kaz Zqnorek",
+                "author_email": "kaz@zqmail.io",
+                "committer_name": "Kaz Zqnorek",
+            },
+        ),
+        outcome=Written(text="author pushed"),
+        markers=("Zqnorek", "zqmail.io"),
+    ),
+    Row(
+        id="v18_v04_unbracketed_global_unled",
+        source="verify018/probes.py",
+        inp=Sample(body="ping 2a00:1450:4001:80b::200e now"),
+        outcome=Written(text="ping 2a00:1450:4001:80b::200e now"),
+        residual=True,
+    ),
+    Row(
+        id="v18_v13_ipv6_unled_ula_path_NG4_2",
+        source="verify018/probes.py",
+        inp=Sample(body="see [fd00::1]/kvnteam/kvnbilling"),
+        outcome=Written(text="see [fd00::1]/kvnteam/kvnbilling"),
+        residual=True,
+    ),
+    Row(
+        id="v18_followed_public_ipv4_port",
+        source="verify018/probes.py",
+        inp=Sample(body="connect to 104.16.0.1:8080 now"),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v18_followed_public_ipv4_segment",
+        source="verify018/probes.py",
+        inp=Sample(body="see 104.16.0.1/kvnteam"),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v18_followed_public_ipv4_port_and_path",
+        source="verify018/probes.py",
+        inp=Sample(body="see 104.16.0.1:8443/kvnteam/kvnbilling"),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v18_bare_public_ipv4_in_prose_NG4_9",
+        source="verify018/probes.py",
+        inp=Sample(body="ping 104.16.0.1 now"),
+        outcome=Written(text="ping 104.16.0.1 now"),
+        residual=True,
+    ),
+    Row(
+        id="v18_followed_private_ipv4_reads_namespace",
+        source="verify018/probes.py",
+        inp=Sample(body="see 10.1.2.3:8080/kvnteam/kvnbilling"),
+        outcome=Written(text="see 10.1.2.3:8080/org/project"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v18_led_public_ipv4_mapped_in_ipv6",
+        source="verify018/probes.py",
+        inp=Sample(body="ssh://[::ffff:104.16.0.1]/kvnteam/kvnbilling"),
+        outcome=Written(text="ssh://forge.example.com/org/project"),
+        markers=("104.16.0.1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v18_gitlab_commit_author_committer_names",
+        source="verify018/probes.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Zqnorek pushed and Brandt reviewed",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={
+                "author_name": "Kazimir Zqnorek",
+                "author_email": "kaz@zqmail.io",
+                "committer_name": "Liana Brandt",
+                "committer_email": "lia@zqmail.io",
+            },
+        ),
+        outcome=Written(text="author pushed and author reviewed"),
+        markers=("Zqnorek", "Brandt", "zqmail.io"),
+    ),
+    Row(
+        id="v18_name_only_user_NG4_1",
+        source="verify018/probes.py",
+        inp=Sample(body="zqnamedonly wrote", extra_item={"user": {"name": "zqnamedonly"}}),
+        outcome=Written(text="zqnamedonly wrote"),
+        residual=True,
+    ),
+    Row(
+        id="v18_login_upper_key_NG4_1",
+        source="verify018/probes.py",
+        inp=Sample(body="cc zqupkey", extra_item={"LOGIN": "zqupkey"}),
+        outcome=Written(text="cc zqupkey"),
+        residual=True,
+    ),
 )
 
 
@@ -9294,6 +9488,9 @@ def _node_new(number: int) -> str:
     return "U_" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
+_MAILBOX_KEYS = ("email", "public_email", "commit_email", "author_email", "committer_email")
+
+
 def _live_only_values(inp: Sample) -> list[str]:
     """Values only the live recorder learns from the recording.
 
@@ -9316,9 +9513,9 @@ def _live_only_values(inp: Sample) -> list[str]:
                 values.append(value)
                 if value.casefold().endswith("[bot]"):
                     values.append(value[:-5])
-            elif key == "name" and isinstance(value, str):
+            elif key in ("name", "author_name", "committer_name") and isinstance(value, str):
                 values.extend([value, *re.findall(r"[^\W_]+", value)])
-            elif key in ("email", "public_email", "commit_email") and isinstance(value, str):
+            elif key in _MAILBOX_KEYS and isinstance(value, str):
                 local, _at, host = value.rpartition("@")
                 values.extend([value, local, host])
             elif key == "id" and isinstance(value, int):
@@ -9448,6 +9645,31 @@ def _offline_prefix_problems(prefix: str, message: str) -> list[str]:
 
 
 FAILURES: list[tuple[str, list[str]]] = []
+
+
+def _is_planted(row: Row) -> bool:
+    """A planted row: a marker, a refusal or a documented residual."""
+    return bool(row.markers) or row.residual or not isinstance(row.outcome, Written)
+
+
+def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
+    """AC1 (0.19): the counts of the spec come from the file, and a residual is a written, unmarked, planted row."""
+    planted = [row for row in ROWS if _is_planted(row)]
+    ordinary = [row for row in ROWS if not _is_planted(row)]
+    assert len(planted) + len(ordinary) == len(ROWS)
+    residual = [row for row in ROWS if row.residual]
+    assert residual
+    for row in residual:
+        assert isinstance(row.outcome, Written) and not row.markers, row.id
+        assert row.outcome.text == row.inp.body, row.id
+    for row in ordinary:
+        assert isinstance(row.outcome, Written) and not row.markers, row.id
+    unmarked = [
+        row
+        for row in ROWS
+        if isinstance(row.outcome, Written) and not row.markers and "NG4" in row.id
+    ]
+    assert all(row.residual for row in unmarked), [row.id for row in unmarked if not row.residual]
 
 
 def test_acceptance_corpus_live_and_offline(
