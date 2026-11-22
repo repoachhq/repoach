@@ -699,9 +699,10 @@ def test_mailbox_rule_literals_credentials_and_doc_domains_by_enumeration() -> N
 
 
 def test_public_allowlist_and_placeholder_class_by_enumeration() -> None:
-    """D8: the 24 suffixes exact and as ``.<suffix>``, trailing dot, case, forge hosts never public."""
+    """D8: the 26 suffixes exact and as ``.<suffix>``, trailing dot, case, forge hosts never public."""
     suffixes = {
         "crates.io",
+        "nuget.org",
         "docker.io",
         "docs.github.com",
         "docs.gitlab.com",
@@ -728,7 +729,8 @@ def test_public_allowlist_and_placeholder_class_by_enumeration() -> None:
         "apache.org",
     }
     assert suffixes == closure.PUBLIC_SUFFIXES
-    assert len(closure.PUBLIC_SUFFIXES) == 25
+    assert len(closure.PUBLIC_SUFFIXES) == 26
+    assert closure.is_public_host("api.nuget.org") and not closure.is_public_host("nuget.com")
     for suffix in suffixes:
         assert closure.is_public_host(suffix)
         assert closure.is_public_host(f"www.{suffix}")

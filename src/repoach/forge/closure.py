@@ -458,6 +458,7 @@ PUBLIC_SUFFIXES: frozenset[str] = frozenset(
         "k8s.io",
         "mend.io",
         "mozilla.org",
+        "nuget.org",
         "npmjs.com",
         "npmjs.org",
         "pypi.org",

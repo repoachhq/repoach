@@ -9606,6 +9606,12 @@ ROWS: tuple[Row, ...] = (
             text="kernel/foo.bar.cu:12:3: error: undefined\ntop/core.alu.sv:33: syntax error\nsrc/settings.local.py:10:5: E501\n"
         ),
     ),
+    Row(
+        id="v20_nuget_flatcontainer_url_kept",
+        source="verify019/probes.py",
+        inp=Sample(body="https://api.nuget.org/v3-flatcontainer/x/1.2.3.4/x.1.2.3.4.nupkg"),
+        outcome=Written(text="https://api.nuget.org/v3-flatcontainer/x/1.2.3.4/x.1.2.3.4.nupkg"),
+    ),
 )
 
 
