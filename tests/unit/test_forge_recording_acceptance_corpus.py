@@ -7990,11 +7990,11 @@ ROWS: tuple[Row, ...] = (
         outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
     ),
     Row(
-        id="v17_ipv6_url_private_path",
+        id="v17_ipv6_doc_url_path_NG4_12",
         source="verify017/probes.py",
         inp=Sample(body="http://[2001:db8::1]/kvnteam/kvnbilling/x"),
-        outcome=Written(text="http://[2001:db8::1]/org/project/x"),
-        markers=("kvnteam", "kvnbilling"),
+        outcome=Written(text="http://[2001:db8::1]/kvnteam/kvnbilling/x"),
+        residual=True,
     ),
     Row(
         id="v17_ipv6_url_known_path",
@@ -9324,6 +9324,38 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="see //10.1.2.3/kvnteam/kvnbilling/x"),
         outcome=Written(text="see //forge.example.com/org/project/x"),
         markers=("10.1.2.3", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_ipv6_loopback_url_health",
+        source="verify019/probes.py",
+        inp=Sample(body="curl http://[::1]:8000/health"),
+        outcome=Written(text="curl http://[::1]:8000/health"),
+    ),
+    Row(
+        id="v20_ipv6_doc_url_docs",
+        source="verify019/probes.py",
+        inp=Sample(body="see http://[2001:db8::1]:8080/docs"),
+        outcome=Written(text="see http://[2001:db8::1]:8080/docs"),
+    ),
+    Row(
+        id="v20_localhost_api_path_not_read",
+        source="fable020/sweep.py",
+        inp=Sample(body="GET http://localhost:3000/api/users returns the api users"),
+        outcome=Written(text="GET http://localhost:3000/api/users returns the api users"),
+    ),
+    Row(
+        id="v20_ipv6_doc_upper_padded_path_NG4_12",
+        source="verify018/probes.py",
+        inp=Sample(body="http://[2001:DB8:0:0::1]/kvnteam/kvnbilling"),
+        outcome=Written(text="http://[2001:DB8:0:0::1]/kvnteam/kvnbilling"),
+        residual=True,
+    ),
+    Row(
+        id="v20_led_private_ipv6_reads_namespace",
+        source="fable020/sweep.py",
+        inp=Sample(body="see //[fd00::1]/kvnteam/kvnbilling/x"),
+        outcome=Written(text="see //forge.example.com/org/project/x"),
+        markers=("fd00::1", "kvnteam", "kvnbilling"),
     ),
 )
 

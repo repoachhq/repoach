@@ -5022,17 +5022,35 @@ def test_known_values_read_encoded_forms_and_replace_them_without_a_stray_percen
 
 
 def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -> None:
-    """D8, D5 (0.18): the namespace and repository after an IPv6 literal, a git author's name next to its mailbox."""
+    """D8, D5 (0.18, 0.20): the namespace and repository after a led private IPv6 literal, a git author's name next to its mailbox."""
     for body, host in (
-        ("http://[2001:db8::1]/kvnteam/kvnbilling/x", None),
         ("http://[fd00::1]/kvnteam/kvnbilling/x", "[fd00::1]"),
         ("ssh://git@[fd00::1]:2222/kvnteam/kvnbilling", "[fd00::1]"),
+        ("see //[2a00:1450::1]/kvnteam/kvnbilling/x", "[2a00:1450::1]"),
     ):
         found = needles(_one_call({"body": body}), roles={})
         assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
-        assert (host in _kinds(found, "host")) == (host is not None), body
+        assert host in _kinds(found, "host"), body
         out = recording.replace_known(body, found)
         assert "kvn" not in out and closure.judge(out, found) is None, out
+
+
+def test_nothing_is_read_after_a_placeholder_class_host() -> None:
+    """D7 source 3 (0.20, NG4-12): a placeholder-class or public host names no one, so its path is never read, IPv4, IPv6 and name alike."""
+    for body in (
+        "http://[2001:db8::1]/kvnteam/kvnbilling/x",
+        "http://[2001:DB8:0:0::1]:8080/kvnteam/kvnbilling",
+        "curl http://[::1]:8000/health",
+        "http://127.0.0.1:8000/kvnteam/kvnbilling",
+        "http://localhost:3000/api/users",
+        "see //www.example.com/kvnteam/kvnbilling",
+        "https://files.pythonhosted.org/packages/kvnteam/kvnbilling/x.whl",
+        "ssh git@203.0.113.9:kvnteam/kvnbilling",
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert _kinds(found, "segment") == [], body
+        assert recording.replace_known(body, found) == body, body
+        assert closure.judge(body, found) is None, body
     answer = {
         "body": "Thanks Zqkowalska and marta",
         "commit": {"author": {"name": "Marta Zqkowalska", "email": "marta@zqmail.io"}},

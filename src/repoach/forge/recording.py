@@ -1982,7 +1982,7 @@ def known_values(
                 allowed = closure.is_placeholder_host(place.host) or closure.is_public_host(
                     place.host
                 )
-                if allowed and not place.literal:
+                if allowed:
                     continue
                 reads_path = place.led or not closure.is_address(place.host)
                 if not allowed and reads_path:
