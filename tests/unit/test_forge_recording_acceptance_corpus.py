@@ -9449,6 +9449,19 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="bind http://[::]:8080/metrics"),
         outcome=Written(text="bind http://[::]:8080/metrics"),
     ),
+    Row(
+        id="v20_ipv6_mapped_leading_zero_octet_led",
+        source="verify019/probes.py",
+        inp=Sample(body="http://[::ffff:01.2.3.4]/kvnteam/kvnbilling"),
+        outcome=Written(text="http://forge.example.com/org/project"),
+        markers=("01.2.3.4", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_node_prefix_with_a_long_digit_run",
+        source="fable020/crash_probe.py",
+        inp=Sample(body="id U_" + "9" * 5000 + " here"),
+        outcome=Written(text="id U_" + "9" * 5000 + " here"),
+    ),
 )
 
 

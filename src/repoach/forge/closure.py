@@ -471,6 +471,9 @@ _MSGPACK_WIDTH = {0xCC: 1, 0xCD: 2, 0xCE: 4, 0xCF: 8}
 
 _NODE_LENGTHS = (4, 6, 7, 10, 15)
 
+_NODE_DIGITS = 20
+"""The most digits a synthetic ``U_<n>`` node id can carry (a 64-bit number); a longer run is no id and never an exception."""
+
 KINDS: tuple[str, ...] = ("login", "host", "segment", "id", "name", "mailbox")
 """The kinds of known value the recorder replaces, in the order they are judged."""
 
@@ -626,18 +629,26 @@ def _ipv4(text: str) -> ipaddress.IPv4Address | None:
 
 
 def _ipv6(text: str) -> ipaddress.IPv6Address | None:
-    """``text`` as an IPv6 address in hex groups, its brackets dropped, else ``None``."""
+    """``text`` as an IPv6 address in hex groups, its brackets dropped, else ``None``; never raises.
+
+    A dotted tail is read through :func:`_ipv4` and the address is built
+    from its canonical form, so ``::ffff:01.2.3.4`` is ``::ffff:1.2.3.4``
+    rather than an exception.
+    """
     body = text.strip("[]")
-    mapped = body.rpartition(":")[2]
+    leading, colon, mapped = body.rpartition(":")
+    shaped_body = body
     if "." in mapped:
-        if _ipv4(mapped) is None:
+        tail_address = _ipv4(mapped)
+        if tail_address is None:
             return None
-        body = body[: len(body) - len(mapped)] + "0:0"
-    head, gap, tail = body.partition("::")
+        body = f"{leading}{colon}{tail_address}"
+        shaped_body = f"{leading}{colon}0:0"
+    head, gap, tail = shaped_body.partition("::")
     groups = [*(head.split(":") if head else []), *(tail.split(":") if tail else [])]
     shaped = all(0 < len(g) <= 4 and all(c in _HEX for c in g) for g in groups)
     fits = len(groups) < 8 if gap else len(groups) == 8
-    return ipaddress.IPv6Address(text.strip("[]")) if shaped and fits else None
+    return ipaddress.IPv6Address(body) if shaped and fits else None
 
 
 def _bracketed(text: str) -> list[tuple[int, int, ipaddress.IPv6Address]]:
@@ -868,7 +879,7 @@ def node_id_numbers(text: str) -> list[str]:
         run = m.group(1)
         suffix = run[2:]
         if suffix.isdigit():
-            found = [int(suffix)]
+            found = [int(suffix)] if len(suffix) <= _NODE_DIGITS else []
         else:
             found = [
                 n

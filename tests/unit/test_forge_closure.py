@@ -1376,6 +1376,39 @@ def test_a_quad_after_a_single_slash_is_a_version_and_a_comparator_allows_spaces
     assert [h.host for h in closure.hosts("pkg ==\n8.8.8.8:80")] == ["8.8.8.8"]
 
 
+def test_the_oracle_never_raises_on_a_mapped_tail_or_a_long_digit_run() -> None:
+    """D3 (0.20, C6): a dotted tail with a leading zero and a U_ run of thousands of digits are read, never raised on."""
+    none = closure.Known(())
+    for text, expected in (
+        ("[::ffff:01.2.3.4]", "::ffff:1.2.3.4"),
+        ("[::ffff:001.002.003.004]", "::ffff:1.2.3.4"),
+        ("[::FFFF:104.16.0.1]", "::ffff:104.16.0.1"),
+        ("[0:0:0:0:0:ffff:10.0.0.1]", "::ffff:10.0.0.1"),
+        ("[1:2:3:4:5:6:1.2.3.4]", "1:2:3:4:5:6:102:304"),
+        ("[::1.2.3.4]", "::102:304"),
+    ):
+        assert closure._ipv6(text) == ipaddress.IPv6Address(expected), text
+    for text in (
+        "[::ffff:999.1.1.1]",
+        "[::ffff:1.2.3]",
+        "[::1.2.3.4.5]",
+        "[1.2.3.4]",
+        "[::ffff:1.2.3.4:5]",
+    ):
+        assert closure._ipv6(text) is None, text
+    assert closure.judge("http://[::ffff:01.2.3.4]/kvnteam/kvnbilling", none) == closure.Refusal(
+        "unknown host"
+    )
+    assert closure.judge("see [::ffff:01.2.3.4]:8080", none) == closure.Refusal("public address")
+    assert closure.judge("see [::ffff:010.0.0.1]:8080", none) is None
+    assert closure.node_id_numbers("U_" + "9" * 5000) == []
+    assert closure.node_id_numbers("U_" + "9" * 21) == []
+    assert closure.node_id_numbers("U_" + "9" * 20) == ["9" * 20]
+    assert closure.node_id_numbers("U_18446744073709551615") == ["18446744073709551615"]
+    assert closure.judge("U_" + "7" * 10000 + " MDQ6VXNl" + "A" * 4000, none) is None
+    assert closure.residual("U_" + "1" * 5000, closure.Known((("id", "1111"),))) is None
+
+
 def test_an_ipv6_zone_id_is_part_of_the_literal_and_an_ipv4_tail_is_read() -> None:
     """D8 (0.19): ``%<zone>`` and ``%25<zone>`` end a bracketed literal, a dotted tail is two groups."""
     for text, host in (
