@@ -9462,6 +9462,38 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="id U_" + "9" * 5000 + " here"),
         outcome=Written(text="id U_" + "9" * 5000 + " here"),
     ),
+    Row(
+        id="v20_escaped_slash_public_ipv4_url",
+        source="verify019/probes.py",
+        inp=Sample(body="http:\\/\\/104.16.0.1\\/kvnteam\\/kvnbilling"),
+        outcome=Written(text="http:\\/\\/forge.example.com\\/org\\/project"),
+        markers=("104.16.0.1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_escaped_slash_private_host_url",
+        source="verify018/probes.py",
+        inp=Sample(body='{"web_url":"https:\\/\\/code.kvncloud.io\\/kvnteam\\/kvnbilling"}'),
+        outcome=Written(text='{"web_url":"https:\\/\\/forge.example.com\\/org\\/project"}'),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_hex_escaped_private_host_url_refused",
+        source="verify018/probes.py",
+        inp=Sample(body="see https:\\x2f\\x2fcode.kvncloud.io\\x2fkvnteam\\x2fkvnbilling"),
+        outcome=Refused("residual host"),
+    ),
+    Row(
+        id="v20_escaped_slash_followed_public_ipv4_refused",
+        source="fable020/sweep.py",
+        inp=Sample(body="see 104.16.0.1\\/kvnteam now"),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="v20_escapes_in_ordinary_code",
+        source="fable020/sweep.py",
+        inp=Sample(body="const re = /\\/api\\/v1\\x2f(\\d+)/; see \\/ and \\x2f alone"),
+        outcome=Written(text="const re = /\\/api\\/v1\\x2f(\\d+)/; see \\/ and \\x2f alone"),
+    ),
 )
 
 

@@ -457,7 +457,8 @@ _LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 
 _SCHEME_BEFORE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*$")
 
-_JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+_STRING_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\(/)")
+"""The string-literal escapes of JSON and the C family that hide a delimiter: ``\\uXXXX``, ``\\xHH`` and ``\\/``."""
 
 _DECODE_ROUNDS = 4
 
@@ -833,12 +834,22 @@ def is_literal_mailbox(box: Mailbox) -> bool:
     return ":" not in local and is_doc_mailbox_host(host)
 
 
+def _escaped_char(match: re.Match[str]) -> str:
+    code = match.group(1) or match.group(2)
+    return chr(int(code, 16)) if code else "/"
+
+
 def _unescape_once(text: str) -> str:
-    return unquote(html.unescape(_JSON_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), text)))
+    return unquote(html.unescape(_STRING_ESCAPE.sub(_escaped_char, text)))
 
 
 def decoded_forms(text: str) -> list[str]:
-    r"""``text`` and each layer of percent, HTML-entity and ``\uXXXX`` encoding peeled off, up to four."""
+    r"""``text`` and each layer of string-escape, HTML-entity and percent encoding peeled off, up to four.
+
+    The string-escape layer is ``\uXXXX``, ``\xHH`` and ``\/``: the JSON
+    and C-family escapes a pasted payload carries (PHP and Go encode ``/``
+    as ``\/``), so ``http:\/\/<host>\/<ns>`` is judged as its plain form.
+    """
     forms = [text]
     current = text
     for _ in range(_DECODE_ROUNDS):

@@ -1649,7 +1649,7 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
             "_RUN",
             "_LABEL",
             "_SCHEME_BEFORE",
-            "_JSON_ESCAPE",
+            "_STRING_ESCAPE",
             "_NEW_NODE",
             "_LEGACY_NODE",
             "_LEGACY_DECODED",

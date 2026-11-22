@@ -1376,6 +1376,40 @@ def test_a_quad_after_a_single_slash_is_a_version_and_a_comparator_allows_spaces
     assert [h.host for h in closure.hosts("pkg ==\n8.8.8.8:80")] == ["8.8.8.8"]
 
 
+def test_json_and_hex_string_escapes_are_a_decoded_layer() -> None:
+    r"""D3, D2 (0.20, C7): ``\/`` and ``\xHH`` are peeled like ``\uXXXX``, so an escaped URL is judged as its plain form."""
+    none = closure.Known(())
+    assert closure.decoded_forms("http:\\/\\/a.b.c\\/d") == [
+        "http:\\/\\/a.b.c\\/d",
+        "http://a.b.c/d",
+    ]
+    assert closure.decoded_forms("\\x2f\\x2Fa\\x3a8") == ["\\x2f\\x2Fa\\x3a8", "//a:8"]
+    assert closure.decoded_forms("\\u002f\\x2f\\/") == ["\\u002f\\x2f\\/", "///"]
+    assert closure.decoded_forms("a\\\\/b") == ["a\\\\/b", "a\\/b", "a/b"]
+    assert closure.decoded_forms('\\xzz \\x2 \\u12 \\n \\t \\"') == ['\\xzz \\x2 \\u12 \\n \\t \\"']
+    for text in ("see 104.16.0.1\\/kvnteam", "see 104.16.0.1\\x3a8080"):
+        assert closure.judge(text, none) == closure.Refusal("public address"), text
+    for text in (
+        "http:\\/\\/104.16.0.1\\/kvnteam\\/kvnbilling",
+        "https\\x3a\\x2f\\x2f104.16.0.1\\x2fkvnteam",
+        "http:\\/\\/code.kvncloud.io\\/kvnteam\\/kvnbilling",
+        "see code.kvncloud.io\\/kvnteam",
+        "https\\x3a\\x2f\\x2fcode.kvncloud.io\\x2fkvnteam",
+        "\\x2f\\x2fcode.kvncloud.io\\x2fkvnteam",
+        "kvnperson\\x40kvnmail.io",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    known = closure.Known((("host", "git.zqcorp.io"), ("segment", "zqgroup")))
+    assert closure.residual("https:\\/\\/git.zqcorp.io\\/zqgroup", known) == ("host", 1)
+    assert closure.residual("x\\x2fzqgroup\\x2fy", known) == ("segment", 1)
+    for text in (
+        "a regex \\/\\d+\\x2f and a\\x2fb",
+        "http:\\/\\/example.com\\/x and \\x2f\\x2flocalhost\\x2fy",
+        "see \\/ and \\x2f alone",
+    ):
+        assert closure.judge(text, none) is None, text
+
+
 def test_the_oracle_never_raises_on_a_mapped_tail_or_a_long_digit_run() -> None:
     """D3 (0.20, C6): a dotted tail with a leading zero and a U_ run of thousands of digits are read, never raised on."""
     none = closure.Known(())
