@@ -56,55 +56,56 @@ from __future__ import annotations
 
 import argparse
 import copy
-import ipaddress
 import json
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from repoach.core.logging import get_logger, route_default_logs_to_stderr
 from repoach.core.paths import user_config_dir
+from repoach.forge import closure
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
+    CONSTANT_FIELDS,
     GITLAB_PROJECT_BOT_RE,
     MENTION_ONLY_PREFIX,
     NON_PERSON_LOGINS,
+    RECORDED_SOURCE_HEAD_RE,
     SYNTHETIC_IDS_KEY,
     SYNTHETIC_PROJECT_IDS_KEY,
     Exchange,
     NeedleError,
-    Needles,
     RecordingSpawn,
     ReplaySpawn,
     SyntheticIdsExhaustedError,
     UserIdMap,
+    bot_stem,
     classify_logins,
     coerce_call,
     declared_project_ids,
     declared_user_ids,
     decode_json_values,
     dump_fixture,
-    find_secrets,
+    find_secret_tokens,
     is_classified_login,
-    is_structured_json_path,
+    known_values,
     login_values,
     mentions,
-    needles,
-    oracle_forms,
     raw_logins,
     recorded_source,
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
-    residual,
+    replace_known,
+    replace_known_in_stdout,
+    replace_known_in_value,
     scanned_strings,
     serialize_result,
-    token_pattern,
-    unredacted_host,
 )
 from repoach.forge.select import select_forge
 
@@ -112,49 +113,6 @@ _log = get_logger(__name__)
 
 HOME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])")
 """Copy of SP-NO-PERSONAL-DATA-GATE D1 ``home_path`` (that lint lands later; not imported)."""
-
-IPV4_RE = re.compile(r"(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d]|\.\d)")
-"""Copy of SP-NO-PERSONAL-DATA-GATE D1 ``public_ipv4`` token."""
-
-IPV4_RESERVED = tuple(
-    ipaddress.IPv4Network(n)
-    for n in (
-        "0.0.0.0/8",
-        "10.0.0.0/8",
-        "100.64.0.0/10",
-        "127.0.0.0/8",
-        "169.254.0.0/16",
-        "172.16.0.0/12",
-        "192.0.0.0/24",
-        "192.0.2.0/24",
-        "192.168.0.0/16",
-        "198.18.0.0/15",
-        "198.51.100.0/24",
-        "203.0.113.0/24",
-        "224.0.0.0/4",
-        "240.0.0.0/4",
-    )
-)
-"""The ``public_ipv4`` exclusions of SP-NO-PERSONAL-DATA-GATE D1 (``255.255.255.255`` is in 240/4)."""
-
-IPV4_VERSION_BEFORE_RE = re.compile(r"(v|V|==|>=|<=|~=|!=|version[ :=]?)$")
-"""Text ending this way makes a four-component token a version, not an address."""
-
-IPV4_VERSION_AFTER = ("-", "+", ".tar", ".whl", ".zip", ".gz")
-"""Text starting this way after the token makes it a version or an archive name."""
-
-MAILBOX_RE = re.compile(
-    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9]([A-Za-z0-9._%+-]*[A-Za-z0-9])?@([A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b"
-)
-"""Copy of SP-NO-PERSONAL-DATA-GATE D1 ``mailbox``."""
-
-MAILBOX_DOC_DOMAIN_RE = re.compile(
-    r"(^example\.(com|org|net)$|\.(invalid|test|example|localhost|internal)$|^localhost$)", re.I
-)
-"""Mailbox domains that name no one (``mailbox`` exclusions)."""
-
-URL_USERINFO_RE = re.compile(r"(?<=://)(?:(?!://)\S)+@")
-"""Copy of ``repoach.core.redaction._URL_USERINFO`` (SP-NO-PERSONAL-DATA-GATE F8)."""
 
 DENYLIST_ENV = "REPOACH_PERSONAL_DENYLIST"
 """SP-NO-PERSONAL-DATA-GATE D3: the deny-list in CI, newline- or comma-separated."""
@@ -251,20 +209,19 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
-    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.recording.token_pattern`, I1)."""
-    return [token_pattern(e) for e in entries]
+    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.closure.token_pattern`)."""
+    return [closure.token_pattern(e) for e in entries]
 
 
 def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
 
     ``text`` is judged in every form the closure oracle judges it in
-    (:func:`repoach.forge.recording.oracle_forms`, 0.11), literals included: decoded, folded
+    (:func:`repoach.forge.closure.forms_of`), literals kept: decoded, casefolded
     and with the account number of every node id it holds, wherever the
-    node id stands (``id=<node>``, ``see <node> here``), so an entry
-    holding a numeric user id catches its node ids (R4).
+    node id stands, so an entry holding a numeric user id catches its node ids.
     """
-    forms = oracle_forms(text, literals=False)
+    forms = closure.forms_of(text)
     for n, pattern in enumerate(patterns, 1):
         if any(pattern.search(form) for form in forms):
             return n
@@ -318,52 +275,9 @@ def _trim_stdout(stdout: str, limit: int) -> str:
     return json.dumps(_trim(merged, limit))
 
 
-def _public_ipv4(text: str) -> bool:
-    """Whether ``text`` holds a public IPv4 address outside a version context."""
-    for m in IPV4_RE.finditer(text):
-        octets = [int(g) for g in m.groups()]
-        if any(o > 255 for o in octets):
-            continue
-        if IPV4_VERSION_BEFORE_RE.search(text[: m.start()]):
-            continue
-        if text[m.end() :].startswith(IPV4_VERSION_AFTER):
-            continue
-        address = ipaddress.IPv4Address(".".join(map(str, octets)))
-        if not any(address in net for net in IPV4_RESERVED):
-            return True
-    return False
-
-
-_SCP_AFTER_MAILBOX_RE = re.compile(r":[^\s\"'<>()\[\]{}\\,/]+/", re.I)
-"""An scp remote path immediately after ``<user>@<host>``: requires ``/`` so ``:port`` or ``:word`` stays a mailbox."""
-
-
-def _personal_mailbox(text: str) -> bool:
-    """Whether ``text`` holds a mailbox outside the documentation domains."""
-    userinfo = [(m.start(), m.end()) for m in URL_USERINFO_RE.finditer(text)]
-    for m in MAILBOX_RE.finditer(text):
-        local, _, domain = m.group(0).partition("@")
-        if MAILBOX_DOC_DOMAIN_RE.search(domain):
-            continue
-        if any(w in part.lower() for part in (local, domain) for w in ("noreply", "no-reply")):
-            continue
-        if any(start <= m.start() < end for start, end in userinfo):
-            continue
-        if _SCP_AFTER_MAILBOX_RE.match(text, m.end()):
-            continue
-        return True
-    return False
-
-
 def generic_class(text: str) -> str | None:
-    """The first generic personal class ``text`` matches, or ``None``."""
-    if HOME_PATH_RE.search(text):
-        return "home_path"
-    if _public_ipv4(text):
-        return "public_ipv4"
-    if _personal_mailbox(text):
-        return "mailbox"
-    return None
+    """``home_path`` when ``text`` holds a home directory path, else ``None``."""
+    return "home_path" if HOME_PATH_RE.search(text) else None
 
 
 def _decoded(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
@@ -418,22 +332,29 @@ def build_roles(
     def _add(login: str, *, mention: bool) -> None:
         if not login or is_classified_login(login):
             return
-        if mention and _key_of(f"{login}[bot]") is not None:
+        bot_key = _key_of(f"{login}[bot]") if mention else None
+        if bot_key is not None:
+            if bot_stem(bot_key) is not None and _key_of(login) is None:
+                roles[login] = roles[bot_key]
             return
         key = _key_of(login)
         if key is not None:
             if not mention and key.startswith(MENTION_ONLY_PREFIX):
                 roles[login] = roles.pop(key)
             return
+        promoted = None
         if not mention and login.casefold().endswith("[bot]"):
             stem_key = _key_of(login[:-5])
             if stem_key is not None and stem_key.startswith(MENTION_ONLY_PREFIX):
-                roles.pop(stem_key)
+                promoted = roles.pop(stem_key)
         if GITLAB_PROJECT_BOT_RE.match(login):
             word = _next("service")
         else:
             word = _next("bot" if login.casefold().endswith("[bot]") else "author")
         roles[MENTION_ONLY_PREFIX + login if mention else login] = word
+        stem = bot_stem(login) if promoted is not None else None
+        if stem is not None:
+            roles[stem] = word
 
     if bot and bot not in NON_PERSON_LOGINS:
         roles[bot] = _next("bot")
@@ -454,28 +375,28 @@ def build_roles(
 
 
 def refuse_unclassified(
-    fixture: dict[str, Any], denylist: Denylist | None = None, found: Needles | None = None
+    fixture: dict[str, Any],
+    denylist: Denylist | None = None,
+    known: closure.Known | None = None,
 ) -> None:
-    """Raise :class:`UnclassifiedValueError` on any value of the fixture that may name someone.
+    """Raise :class:`UnclassifiedValueError` on any value of the fixture that may name someone (D3, 0.17).
 
     Every login under a login key must be a class word or a
-    :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry; no string of
-    the fixture — ``source``, ``case``, the arguments, every exchange and
-    the result alike — may match a generic personal class, hold a URL or
-    an scp-style remote on a host the redaction rewrites
-    (:func:`repoach.forge.recording.unredacted_host`, 0.9) or a deny-list
-    entry; and the closure oracle (:func:`repoach.forge.recording.residual`,
-    I3, 0.10) finds none of the recording's needles in it.
+    :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry. Then each
+    string of the fixture, in this order, may hold no home path, no
+    deny-list entry and nothing the closure oracle
+    (:func:`repoach.forge.closure.judge`) refuses: a known value, a host
+    that is neither a placeholder nor public, a public address or a mailbox
+    that is neither a placeholder nor a documentation literal.
 
     Args:
         fixture: The fixture about to be written; ``calls`` are reported
             as ``exchanges[<i>]``.
         denylist: The deny-list (:func:`read_denylist` when ``None``).
-        found: The recording's needles (:func:`repoach.forge.recording.needles`);
-            ``None`` builds them from the deny-list alone.
+        known: The recording's known values; none when ``None``.
 
     Raises:
-        UnclassifiedValueError: Naming the key path, never the value.
+        UnclassifiedValueError: Naming a reason, a kind, an ordinal and the key path, never the value.
     """
     calls: list[dict[str, Any]] = list(fixture.get("calls") or [])
     for path, value in _decoded(calls):
@@ -483,20 +404,22 @@ def refuse_unclassified(
             if login and not is_classified_login(login):
                 raise UnclassifiedValueError(f"unclassified: {path}.{key_path}")
     deny = read_denylist() if denylist is None else denylist
+    judged = known if known is not None else closure.Known(())
     for path, text in scanned_strings(fixture):
         rule = generic_class(text)
         if rule is not None:
             raise UnclassifiedValueError(f"generic class {rule} at {path}")
-        if unredacted_host(text, whole_value=is_structured_json_path(path)):
-            raise UnclassifiedValueError(f"unredacted host at {path}")
         entry = deny.hit(text)
         if entry is not None:
             raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
-    oracle = found if found is not None else needles([], roles={}, denylist=deny.needle_values())
-    left = residual(fixture, oracle)
-    if left is not None:
-        kind, n, path = left
-        raise UnclassifiedValueError(f"residual {kind} {n} at {path}")
+        if path in CONSTANT_FIELDS:
+            continue
+        if path == "source":
+            text = RECORDED_SOURCE_HEAD_RE.sub("", text)
+        refusal = closure.judge(text, judged)
+        if refusal is not None:
+            where = f" {refusal.kind} {refusal.n}" if refusal.reason == "residual" else ""
+            raise UnclassifiedValueError(f"{refusal.reason}{where} at {path}")
 
 
 def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
@@ -547,6 +470,23 @@ def synthesize_user_ids(
     return out
 
 
+def replace_known_in_calls(
+    calls: list[dict[str, Any]], known: closure.Known
+) -> list[dict[str, Any]]:
+    """Replace every known value (D7) in every exchange's argv, stdin, stdout and stderr."""
+    out: list[dict[str, Any]] = []
+    for call in calls:
+        new = dict(call)
+        if isinstance(call.get("args"), list):
+            new["args"] = replace_known_in_value(call["args"], known)
+        new["stdout"] = replace_known_in_stdout(call["stdout"], known)
+        for key in ("stdin", "stderr"):
+            if isinstance(call.get(key), str):
+                new[key] = replace_known(call[key], known)
+        out.append(new)
+    return out
+
+
 def origin_url(cwd: Path) -> str:
     """The ``origin`` remote of the checkout at ``cwd``, ``""`` when there is none; a needle source, never written."""
     try:
@@ -592,12 +532,13 @@ def _replay(
     typed_kwargs: dict[str, Any],
     calls: list[dict[str, Any]],
     bot: str | None = None,
+    normalize: Callable[[str], str] | None = None,
 ) -> tuple[object, str | None]:
     """Recompute the result from the redacted exchanges so the fixture stays self-consistent."""
     forge = select_forge(override=forge_name, cwd=cwd)
     if bot is not None:
         _set_bot(forge, bot)
-    forge._spawn = ReplaySpawn([Exchange.from_json(c) for c in calls])
+    forge._spawn = ReplaySpawn([Exchange.from_json(c) for c in calls], normalize)
     try:
         return serialize_result(getattr(forge, method)(*typed_args, **typed_kwargs)), None
     except ForgeError as exc:
@@ -649,16 +590,15 @@ def record(
         also=raw_logins(raw),
     )
     denylist = read_denylist()
-    found = needles(raw, roles=roles, remote=remote, denylist=denylist.needle_values())
-    known = {**found.mapping(), **roles}
-    calls = classify_calls(calls, known)
+    calls = classify_calls(calls, roles)
+    ids = UserIdMap()
     projects = UserIdMap.for_projects()
-    calls = synthesize_user_ids(calls, UserIdMap(), forge=forge_name, projects=projects)
+    calls = synthesize_user_ids(calls, ids, forge=forge_name, projects=projects)
     args = list(
         cast(
             list[Any],
             projects.apply_projects(
-                classify_logins(redact_urls_in_value(args), known), forge=forge_name
+                classify_logins(redact_urls_in_value(args), roles), forge=forge_name
             ),
         )
     )
@@ -666,18 +606,38 @@ def record(
         cast(
             dict[str, Any],
             projects.apply_projects(
-                classify_logins(redact_urls_in_value(kwargs), known), forge=forge_name
+                classify_logins(redact_urls_in_value(kwargs), roles), forge=forge_name
             ),
         )
     )
+    known = known_values(
+        raw,
+        roles=roles,
+        remote=remote,
+        denylist=denylist.needle_values(),
+        ids=ids,
+        projects=projects,
+        forge=forge_name,
+    )
+    calls = replace_known_in_calls(calls, known)
+    args = list(cast(list[Any], replace_known_in_value(args, known)))
+    kwargs = dict(cast(dict[str, Any], replace_known_in_value(kwargs, known)))
     bot = roles.get(forge.bot_username, forge.bot_username)
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
-    result, raises = _replay(forge_name, cwd, method, typed_args, typed_kwargs, calls, bot)
+
+    def _normalize(text: str) -> str:
+        """The issued text as the fixture records it: the pipeline applied to one string."""
+        value = classify_logins(redact_urls_in_value(text), roles)
+        return str(replace_known(str(projects.apply_projects(value, forge=forge_name)), known))
+
+    result, raises = _replay(
+        forge_name, cwd, method, typed_args, typed_kwargs, calls, bot, _normalize
+    )
     if raises != live_raises:
         raise SystemExit(
             "refusing to write a fixture whose redacted replay disagrees with the live call"
         )
-    leaked = [hit for call in calls for hit in find_secrets(call["stdout"] + call["stderr"])]
+    leaked = [hit for call in calls for hit in find_secret_tokens(call["stdout"] + call["stderr"])]
     if leaked:
         raise SystemExit(
             f"refusing to write a fixture carrying {len(leaked)} secret-shaped value(s)"
@@ -701,7 +661,7 @@ def record(
     declared_projects = declared_project_ids(fixture)
     if declared_projects:
         fixture[SYNTHETIC_PROJECT_IDS_KEY] = declared_projects
-    refuse_unclassified(fixture, denylist, found)
+    refuse_unclassified(fixture, denylist, known)
     path = out_root / forge_name / f"{case}.json"
     dump_fixture(path, fixture)
     return path

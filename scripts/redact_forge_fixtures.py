@@ -56,10 +56,12 @@ from types import ModuleType
 from typing import Any, Protocol, cast
 
 from repoach.core.logging import route_default_logs_to_stderr
+from repoach.forge import closure
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
+    RECORDED_SOURCE_HEAD_RE,
     RECORDED_SOURCE_RE,
     SYNTHETIC_ID_END,
     SYNTHETIC_ID_START,
@@ -68,7 +70,6 @@ from repoach.forge.recording import (
     SYNTHETIC_PROJECT_ID_START,
     SYNTHETIC_PROJECT_IDS_KEY,
     NeedleError,
-    Needles,
     SyntheticIdsExhaustedError,
     UserIdMap,
     bot_mention_stem,
@@ -77,16 +78,17 @@ from repoach.forge.recording import (
     declared_user_ids,
     decode_json_values,
     is_classified_login,
+    known_values,
     login_values,
     mention_pattern,
     mentions,
-    needles,
     recorded_source,
     redact_payload,
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
-    residual,
+    replace_known,
+    replace_known_in_stdout,
     token_pattern,
     trusted_declaration,
 )
@@ -118,7 +120,7 @@ def recorder() -> ModuleType:
 
 
 class ResidualValueError(Exception):
-    """A redacted fixture still holds a needle (I3, 0.10); the message names its kind, ordinal and path."""
+    """The oracle refuses a redacted fixture (D3, D4); the message names a reason, a kind, an ordinal and a path, never a value."""
 
 
 FORGE_OF_DIRECTORY: dict[str, str] = {"github": "github", "gitlab": "gitlab", "gate": "github"}
@@ -189,13 +191,22 @@ def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
         if not login or is_classified_login(login):
             return
         folded = login.casefold()
-        if mention and any(k.casefold() == f"{folded}[bot]" for k in found):
+        bot_key = (
+            next((k for k in found if k.casefold() == f"{folded}[bot]"), None) if mention else None
+        )
+        if bot_key is not None:
+            if bot_stem(bot_key) is not None:
+                found[login] = False
             return
+        promoted: list[str] = []
         if not mention and folded.endswith("[bot]"):
             stem = folded[:-5]
-            for existing in [k for k, m_only in found.items() if m_only and k.casefold() == stem]:
+            promoted = [k for k, m_only in found.items() if m_only and k.casefold() == stem]
+            for existing in promoted:
                 del found[existing]
         found[login] = found.get(login, True) and mention
+        if promoted and bot_stem(login) is not None:
+            found[promoted[0]] = False
 
     bot = data.get("bot_username")
     if isinstance(bot, str):
@@ -230,7 +241,16 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
     roles: dict[str, str] = {}
     following = {"author": 2, "service": 1, "bot": 1}
     bot = data.get("bot_username")
-    for login, mention_only in _unclassified_logins(data).items():
+    unclassified = _unclassified_logins(data)
+    stems = {
+        k: next(b for b in unclassified if b.casefold() == f"{k.casefold()}[bot]")
+        for k in unclassified
+        if not k.casefold().endswith("[bot]")
+        and any(b.casefold() == f"{k.casefold()}[bot]" for b in unclassified)
+    }
+    for login, mention_only in unclassified.items():
+        if login in stems:
+            continue
         if login == bot or login.casefold().endswith("[bot]"):
             kind = "bot"
         elif GITLAB_PROJECT_BOT_RE.match(login):
@@ -244,6 +264,8 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
             if not re.search(rf'"{re.escape(word)}\\*"', text):
                 break
         roles[MENTION_ONLY_PREFIX + login if mention_only else login] = word
+    for stem, bot_login in stems.items():
+        roles[stem] = roles[bot_login]
     return roles
 
 
@@ -252,14 +274,12 @@ def _mention_text(text: str, roles: dict[str, str]) -> str:
     for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
         handle = login.removeprefix(MENTION_ONLY_PREFIX)
         text = mention_pattern(handle).sub(f"@{word}", text)
-        if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]"):
+        if not login.startswith(MENTION_ONLY_PREFIX):
             text = token_pattern(login).sub(word, text)
+        if not login.startswith(MENTION_ONLY_PREFIX) and login.casefold().endswith("[bot]"):
             mention_stem = bot_mention_stem(login)
             if mention_stem is not None:
                 text = mention_pattern(mention_stem).sub(f"@{word}", text)
-            bare = bot_stem(login)
-            if bare is not None:
-                text = token_pattern(bare).sub(word, text)
     return text
 
 
@@ -276,6 +296,8 @@ def _rename(node: object, roles: dict[str, str]) -> object:
                 out[key] = item if values is None or renamed == values else _dumps(renamed)
             elif key == "args" and isinstance(item, list):
                 out[key] = [_segment(a, roles) if isinstance(a, str) else a for a in item]
+            elif key == "case" and isinstance(item, str):
+                out[key] = item
             elif isinstance(item, str):
                 out[key] = _mention_text(item, roles)
             else:
@@ -356,19 +378,65 @@ def _source(data: dict[str, object], forge: str) -> dict[str, object]:
     return {**data, "source": recorded_source(m.group(1), forge) + rest}
 
 
-def fixture_needles(data: dict[str, object], denylist: tuple[str, ...] = ()) -> Needles:
-    """The needles the offline transform can know of one fixture (I3, 0.10).
+def fixture_known(
+    data: dict[str, object],
+    *,
+    roles: dict[str, str] | None = None,
+    remote: str = "",
+    denylist: tuple[str, ...] = (),
+    ids: UserIdMap | None = None,
+    projects: UserIdMap | None = None,
+    forge: str = "github",
+) -> closure.Known:
+    """The known values (D7) the offline transform can learn from one fixture's own structured fields.
 
-    The logins :func:`legacy_roles` finds in the fixture as it was, the
-    public forges' hosts and the deny-list: the raw exchanges of a
-    hand-written or old fixture are the fixture itself.
+    The fixture's exchanges, ``args`` and ``kwargs`` are the raw recording;
+    ``remote`` and ``denylist`` are the inputs the live recorder has and a
+    committed fixture has not. Declared synthetic ids are never values.
 
     Raises:
-        NeedleError: A needle that is a class word or placeholder, by
-            kind and ordinal (``min_length=1`` accepts short hand-written
-            logins).
+        NeedleError: A structured value that is a class word or placeholder, by kind and ordinal.
     """
-    return needles([], roles=legacy_roles(data), denylist=denylist, min_length=1)
+    raw = [data.get("calls"), data.get("args"), data.get("kwargs"), remote]
+    return known_values(
+        raw,
+        roles=roles or {},
+        remote=remote,
+        denylist=denylist,
+        min_length=1,
+        ids=ids,
+        projects=projects,
+        forge=forge,
+        keep_users=trusted_declaration(data.get(SYNTHETIC_IDS_KEY)),
+        keep_projects=trusted_declaration(
+            data.get(SYNTHETIC_PROJECT_IDS_KEY),
+            SYNTHETIC_PROJECT_ID_START,
+            SYNTHETIC_PROJECT_ID_END,
+        ),
+    )
+
+
+def _replace_known(node: object, known: closure.Known) -> object:
+    """Replace every known value in every string of a fixture; keys, ``forge`` and ``method`` are left."""
+    if isinstance(node, dict):
+        out: dict[str, object] = {}
+        for key, item in node.items():
+            if key in ("forge", "method", "case"):
+                out[key] = item
+            elif key == "stdout" and isinstance(item, str) and "returncode" in node:
+                out[key] = replace_known_in_stdout(item, known)
+            elif key == "source" and isinstance(item, str):
+                head = RECORDED_SOURCE_HEAD_RE.match(item)
+                cut = head.end() if head else 0
+                out[key] = item[:cut] + replace_known(item[cut:], known)
+            else:
+                out[key] = _replace_known(item, known)
+        return out
+    if isinstance(node, list):
+        return [_replace_known(v, known) for v in node]
+    if isinstance(node, str):
+        return replace_known(node, known)
+    return node
 
 
 def redact_fixture(
@@ -377,8 +445,19 @@ def redact_fixture(
     *,
     forge: str,
     projects: UserIdMap | None = None,
+    remote: str = "",
+    denylist: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    """The class-redacted copy of one fixture; ``ids`` and ``projects`` are shared across the corpus."""
+    """The class-redacted copy of one fixture: the live pipeline minus the forge (D4, 0.17).
+
+    ``ids`` and ``projects`` are shared across the corpus.
+
+    Raises:
+        NeedleError: A structured value that is a class word or placeholder.
+        ResidualValueError: The redacted fixture is refused by :func:`repoach.forge.recording`'s
+            oracle: a known value, an unknown host, a public address, an unknown mailbox, a
+            deny-list entry, a home path or an unclassified login.
+    """
     ids = ids if ids is not None else UserIdMap()
     projects = projects if projects is not None else UserIdMap.for_projects()
     keep = trusted_declaration(data.get(SYNTHETIC_IDS_KEY))
@@ -394,6 +473,10 @@ def redact_fixture(
         out = cast(dict[str, object], _rename(out, roles))
     out = cast(dict[str, object], _remap_ids(out, ids, forge, keep))
     out = cast(dict[str, object], _remap_projects(out, projects, forge, keep_projects))
+    known = fixture_known(
+        data, roles=roles, remote=remote, denylist=denylist, ids=ids, projects=projects, forge=forge
+    )
+    out = cast(dict[str, object], _replace_known(out, known))
     method = out.get("method")
     if "result" in out and isinstance(method, str):
         out["result"] = ids.apply_result(out["result"], forge=forge, method=method, keep=keep)
@@ -407,6 +490,12 @@ def redact_fixture(
             out[key] = declared
     if list(data) == sorted(data):
         out = dict(sorted(out.items()))
+    try:
+        recorder().refuse_unclassified(
+            cast(dict[str, Any], out), recorder().Denylist(denylist), known
+        )
+    except recorder().UnclassifiedValueError as exc:
+        raise ResidualValueError(str(exc)) from exc
     return out
 
 
@@ -466,13 +555,20 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
         )
     )
     pending: list[tuple[Path, str]] = []
+    entries = deny.needle_values()
     for (path, text), data in zip(loaded, fixtures, strict=True):
-        new = redact_fixture(data, ids, forge=fixture_forge(path, data), projects=projects)
-        left = residual(cast(dict[str, Any], new), fixture_needles(data, deny.needle_values()))
-        if left is not None:
-            kind, n, where = left
-            rel = path.relative_to(root).as_posix()
-            raise ResidualValueError(f"residual {kind} {n} at {rel}:{where}")
+        rel = path.relative_to(root).as_posix()
+        try:
+            new = redact_fixture(
+                data,
+                ids,
+                forge=fixture_forge(path, data),
+                projects=projects,
+                denylist=entries,
+            )
+        except ResidualValueError as exc:
+            reason, _sep, where = str(exc).rpartition(" at ")
+            raise ResidualValueError(f"{reason} at {rel}:{where}" if _sep else str(exc)) from exc
         if new != data:
             pending.append((path, render(new, ascii_only=text.isascii())))
     if not check:

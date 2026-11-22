@@ -15,13 +15,14 @@ pins the exact calls each forge makes.
 from __future__ import annotations
 
 import base64
+import functools
 import html
 import json
 import re
 import shlex
 import string
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ from pydantic import BaseModel
 
 from ..core.logging import get_logger
 from ..core.redaction import SECRET_VALUE_PATTERNS
-from . import protocol
+from . import closure, protocol
 from .protocol import InlineCommentDraft, MergeMethod, ReviewDraft
 from .runner import CommandResult
 
@@ -468,7 +469,7 @@ _RFC3986_UNRESERVED_CHARS = _ASCII_ALNUM + "-._~"
 _RFC3986_SUB_DELIM_CHARS = "!$&'()*+,;="
 """RFC 3986 Section 2.2 sub-delims characters (0.16 R9-D1)."""
 
-_RFC3986_USERINFO_CHARSET = _RFC3986_UNRESERVED_CHARS + "%" + _RFC3986_SUB_DELIM_CHARS + ":"
+_RFC3986_USERINFO_CHARSET = _RFC3986_UNRESERVED_CHARS + "%" + _RFC3986_SUB_DELIM_CHARS + ":{}"
 """Exact RFC 3986 Section 3.2.1 userinfo character set (unreserved, pct-encoded ``%``, sub-delims and ``:``; 0.16 R9-D1)."""
 
 _RFC3986_USERINFO_CLASS = _char_class(_RFC3986_USERINFO_CHARSET)
@@ -638,45 +639,6 @@ either can carry a login (``?author=<login>``, ``#<login>``), and no
 reader consumes one.
 """
 
-_EXAMPLE_HOST_RE = re.compile(
-    r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^127\.|^localhost$", re.I
-)
-"""Hosts that name no one (RFC 2606, loopback); text URLs on them are kept, except on :data:`PLACEHOLDER_HOST`."""
-
-PUBLIC_REFERENCE_HOSTS: frozenset[str] = frozenset(
-    {
-        "crates.io",
-        "docker.io",
-        "docs.github.com",
-        "docs.gitlab.com",
-        "docs.rs",
-        "ghcr.io",
-        "go.dev",
-        "golang.org",
-        "k8s.io",
-        "mozilla.org",
-        "npmjs.com",
-        "npmjs.org",
-        "pypi.org",
-        "python.org",
-        "readthedocs.io",
-        "readthedocs.org",
-        "stackoverflow.com",
-        "wikipedia.org",
-    }
-)
-"""Curated registrable suffixes of public documentation and package hosts kept in free text (0.13, 0.15 R8-D1).
-
-Matched by registrable suffix (exact host or ``.<suffix>``): for example
-``python.org`` covers ``docs.``, ``www.`` and ``peps.``; ``readthedocs.io``
-covers ``<project>.readthedocs.io``; ``docs.github.com`` and
-``docs.gitlab.com`` stay scoped to their documentation subdomains so
-``github.com`` and ``gitlab.com`` are never matched. Any unlisted host is
-rewritten (over-redaction is the safe direction). Kept URLs still have
-userinfo stripped, scheme and host lowercased, and path/query scanned for
-needles and deny-list values.
-"""
-
 
 def _project(segment: str) -> str:
     """:data:`PLACEHOLDER_PROJECT`, with ``segment``'s ``.git`` suffix when it has one."""
@@ -749,11 +711,7 @@ def path_identity(segments: list[str]) -> PathIdentity:
             (core[1],),
         )
     if core[0].casefold() == "projects" and len(core) >= 2 and core[1].isdigit():
-        return PathIdentity(
-            [core[0], PLACEHOLDER_PROJECT, *core[2:], *trailing],
-            (),
-            core[1] if len(core[1]) >= NEEDLE_MIN_LENGTH else None,
-        )
+        return PathIdentity([*core, *trailing])
     if "-" in core:
         dash = core.index("-")
         if dash >= 2:
@@ -829,17 +787,9 @@ def redact_url(value: str) -> str:
     return urlunsplit((parts.scheme, host, path, "", fragment))
 
 
-def _is_public_reference_host(host: str) -> bool:
-    """Whether ``host`` matches a curated suffix in :data:`PUBLIC_REFERENCE_HOSTS` (0.15 R8-D1)."""
-    folded = host.rstrip(".").casefold()
-    return any(
-        folded == suffix or folded.endswith(f".{suffix}") for suffix in PUBLIC_REFERENCE_HOSTS
-    )
-
-
 def _is_allowed_host(host: str) -> bool:
-    """Whether ``host`` is allowed in free text: an RFC 2606, loopback or :data:`PUBLIC_REFERENCE_HOSTS` host."""
-    return bool(_EXAMPLE_HOST_RE.search(host)) or _is_public_reference_host(host)
+    """Whether ``host`` is allowed in free text: a placeholder-class or public host (:mod:`repoach.forge.closure`)."""
+    return closure.is_placeholder_host(host) or closure.is_public_host(host)
 
 
 def _kept_host(host: str) -> bool:
@@ -871,7 +821,7 @@ def _allowed_userinfo(scheme: str, netloc: str, *, allow_example_git: bool = Fal
 
 def _example_host(host: str) -> bool:
     """Whether ``host`` is an RFC 2606 or loopback host other than :data:`PLACEHOLDER_HOST`."""
-    return bool(_EXAMPLE_HOST_RE.search(host)) and host.casefold() != PLACEHOLDER_HOST
+    return closure.is_placeholder_host(host) and host.casefold() != PLACEHOLDER_HOST
 
 
 _NOREPLY_LOCAL_CLASS = _char_class(_ASCII_ALNUM + "._%+[]-")
@@ -949,8 +899,8 @@ def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
     user never. A URL on :data:`PLACEHOLDER_HOST` is redacted again, so a
     hand-written one gets the placeholder path too. A URL carrying userinfo
     (``user[:pass]@``) is always redacted through :func:`redact_url`,
-    whatever the host — including :data:`PUBLIC_REFERENCE_HOSTS` and RFC
-    2606 hosts (0.14 R7-D1). Text URLs on :data:`PUBLIC_REFERENCE_HOSTS`
+    whatever the host — including :func:`repoach.forge.closure.is_public_host` hosts and RFC
+    2606 hosts (0.14 R7-D1). Text URLs on public hosts
     without userinfo are kept with their scheme and host lowercased (0.13,
     0.14 R7-D1). A forge noreply mailbox
     (``<id>+<login>@users.noreply.github.com``,
@@ -1053,7 +1003,7 @@ def unredacted_host(text: str, *, whole_value: bool = False) -> bool:
         if _unredacted_proto_rel(match.group("url")):
             return True
     return any(
-        not _EXAMPLE_HOST_RE.search(m.group("host"))
+        not closure.is_placeholder_host(m.group("host"))
         or not _allowed_userinfo(
             "ssh", f"{m.group('user')}@{m.group('host')}", allow_example_git=True
         )
@@ -1188,12 +1138,6 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     present = {k.removeprefix(MENTION_ONLY_PREFIX).casefold() for k in roles}
     for login, word in roles.items():
         if login.startswith(MENTION_ONLY_PREFIX):
-            continue
-        bare = bot_stem(login)
-        if bare is not None:
-            if bare.casefold() not in present:
-                expanded[bare] = word
-                present.add(bare.casefold())
             continue
         mention_stem = bot_mention_stem(login)
         if mention_stem is not None and mention_stem.casefold() not in present:
@@ -1575,27 +1519,20 @@ def is_repository_object(node: object) -> bool:
 
 
 def project_id_values(node: object) -> list[object]:
-    """Every real repository id of a decoded value: repository objects and non-example ``api/v<N>/projects/<id>`` / ``glab api`` paths, JSON inside strings included (0.10, 0.13, 0.14, 0.16)."""
+    """Every repository id of a decoded value: repository objects and ``projects/<n>`` tokens of five digits or more (D9, 0.17), JSON inside strings included."""
     if isinstance(node, str):
         if node.lstrip()[:1] in ("{", "["):
             decoded = decode_json_values(node)
             if decoded is not None:
                 return [i for v in decoded for i in project_id_values(v)]
-        return [pid for _start, _end, pid in _api_project_id_spans(node)]
+        return [int(m.group("id")) for m in _PROJECT_ID_RE.finditer(node)]
     if isinstance(node, dict):
         found = [i for v in node.values() for i in project_id_values(v)]
         if is_repository_object(node) and "id" in node:
             found.append(node["id"])
         return found
     if isinstance(node, list):
-        found = [i for v in node for i in project_id_values(v)]
-        endpoint = _glab_api_endpoint(node)
-        if endpoint is not None:
-            _idx, ep_tok = endpoint
-            match = _GLAB_API_ARG_PROJECT_ID_RE.match(ep_tok)
-            if match is not None and _is_real_api_project_id(match, []):
-                found.append(int(match.group("id")))
-        return found
+        return [i for v in node for i in project_id_values(v)]
     return []
 
 
@@ -1694,34 +1631,15 @@ class UserIdMap:
                 for k, v in payload.items()
             }
         if isinstance(payload, list):
-            endpoint = _glab_api_endpoint(payload)
-            ep_idx = endpoint[0] if endpoint is not None else -1
-            out_list: list[object] = []
-            for idx, item in enumerate(payload):
-                if idx == ep_idx and isinstance(item, str):
-                    match = _GLAB_API_ARG_PROJECT_ID_RE.match(item)
-                    if match is not None and _is_real_api_project_id(match, []):
-                        item = _GLAB_API_ARG_PROJECT_ID_RE.sub(
-                            lambda m: (
-                                f"{m.group('prefix')}"
-                                f"{self.synthetic(int(m.group('id')), forge=forge, keep=keep)}"
-                            ),
-                            item,
-                        )
-                out_list.append(self.apply_projects(item, forge=forge, keep=keep))
-            return out_list
+            return [self.apply_projects(v, forge=forge, keep=keep) for v in payload]
         if isinstance(payload, str):
-            spans = _api_project_id_spans(payload)
-            if not spans:
-                return payload
-            parts: list[str] = []
-            cursor = 0
-            for start, end, pid in spans:
-                parts.append(payload[cursor:start])
-                parts.append(str(self.synthetic(pid, forge=forge, keep=keep)))
-                cursor = end
-            parts.append(payload[cursor:])
-            return "".join(parts)
+            return _PROJECT_ID_RE.sub(
+                lambda m: (
+                    m.group(0)[: m.start("id") - m.start()]
+                    + str(self.synthetic(int(m.group("id")), forge=forge, keep=keep))
+                ),
+                payload,
+            )
         return payload
 
     def apply_result(
@@ -1794,6 +1712,20 @@ def redact_stdout(text: str) -> str:
 def find_secrets(text: str) -> list[str]:
     """Return every secret-shaped value or key found in ``text`` (and its JSON)."""
     found = [m.group(0) for pattern in SECRET_VALUE_PATTERNS for m in pattern.finditer(text)]
+    for value in decode_json_values(text) or []:
+        found += _secret_keys(value)
+    return found
+
+
+SECRET_TOKEN_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    pattern for pattern in SECRET_VALUE_PATTERNS if "@" not in pattern.pattern
+)
+"""The forge-token shapes of :data:`SECRET_VALUE_PATTERNS`; a mailbox is the closure oracle's to judge (D3, 0.17)."""
+
+
+def find_secret_tokens(text: str) -> list[str]:
+    """Return every forge token shape and secret-shaped key found in ``text`` (and its JSON), mailboxes aside."""
+    found = [m.group(0) for pattern in SECRET_TOKEN_PATTERNS for m in pattern.finditer(text)]
     for value in decode_json_values(text) or []:
         found += _secret_keys(value)
     return found
@@ -2295,7 +2227,14 @@ def _api_project(text: str) -> tuple[str, ...]:
         parts = [m.group(2), m.group(3) or ""]
     else:
         parts = [p for p in unquote(m.group(2)).split("/") if p]
-    named = tuple(p for p in parts if p and not CLI_PLACEHOLDER_RE.fullmatch(p) and not p.isdigit())
+    named = tuple(
+        p
+        for p in parts
+        if p
+        and not CLI_PLACEHOLDER_RE.fullmatch(p)
+        and not p.isdigit()
+        and p.casefold() not in _PLACEHOLDERS
+    )
     return named if len(named) == len([p for p in parts if p]) and len(named) >= 2 else ()
 
 
@@ -2559,6 +2498,383 @@ def residual(fixture: dict[str, Any], found: Needles) -> tuple[str, int, str] | 
     return None
 
 
+_PROJECT_ID_RE = re.compile(r"(?<![A-Za-z0-9])projects/+(?P<id>[0-9]{5,})(?![A-Za-z0-9])", re.I)
+"""A ``projects/<n>`` token with ``n`` of at least five digits, in any string (D9, 0.17)."""
+
+_NAME_WORD_RE = re.compile(r"[^\W_]+")
+"""A word of a person's name: letters and digits."""
+
+_MAILBOX_KEYS: frozenset[str] = frozenset({"email", "public_email", "commit_email"})
+"""User-object keys holding a mailbox, read into the known values before the keys are dropped (D1)."""
+
+_ENCODED_PROJECT_RE = re.compile(
+    r"projects/+(?P<path>[A-Za-z0-9._-]+(?:%2[Ff][A-Za-z0-9._-]+)+)", re.I
+)
+"""A ``projects/<group>%2F<repo>`` token: the one URL-encoded shape a forge's own argv carries (D7 source 3)."""
+
+_PATH_END = "\"'<>()[]{}\\,`*|?# \t\r\n"
+"""Characters that end the path read after a host (D7 source 3)."""
+
+_API_ROOTS: frozenset[str] = frozenset({"api", "repos", "users", "orgs", "apps"})
+"""First path segments whose identity needs more than two segments."""
+
+
+def _literals() -> tuple[str, ...]:
+    """The tool and project literals the oracle blanks: CLI templates, documentation hosts, spec ids, non-person logins."""
+    named = [":owner", ":repo", ":id", "/dev/null", "docs.github.com", "docs.gitlab.com"]
+    for login in NON_PERSON_LOGINS:
+        named += [login, login.removesuffix("[bot]")]
+    return (*named, *sorted(SPEC_IDS))
+
+
+def _id_encodings(number: int) -> list[str]:
+    """Every string a user account number may stand as: digits, legacy and current node ids."""
+    legacy = base64.b64encode(f"04:User{number}".encode()).decode()
+    forms = [str(number), legacy, legacy.rstrip("=")]
+    packed: list[bytes] = []
+    if number < 0x80:
+        packed.append(bytes([number]))
+    for marker, width in sorted(_MSGPACK_UINT_WIDTH.items()):
+        if number < 1 << (8 * width):
+            packed.append(bytes([marker]) + number.to_bytes(width, "big"))
+    for body in packed:
+        forms.append("U_" + base64.urlsafe_b64encode(b"\x92\x00" + body).decode().rstrip("="))
+    return forms
+
+
+def _walk_dicts(node: object) -> list[dict[str, object]]:
+    """Every dict of a decoded value, JSON inside strings included."""
+    if isinstance(node, str):
+        if node.lstrip()[:1] not in ("{", "["):
+            return []
+        return [d for v in decode_json_values(node) or [] for d in _walk_dicts(v)]
+    if isinstance(node, dict):
+        return [node] + [d for v in node.values() for d in _walk_dicts(v)]
+    if isinstance(node, list):
+        return [d for v in node for d in _walk_dicts(v)]
+    return []
+
+
+def _follow_segments(segments: list[str], *, instance: bool) -> list[str]:
+    """The segments after a host that name its namespace and repository.
+
+    On the recorded project's own host every segment counts (the project's
+    pages sit under its repository); on any other host only the first two
+    do, so ``//cdn.example.io/<ns>/<repo>/app.js`` keeps ``app.js``.
+    """
+    named = [s for s in segments if s]
+    if not named:
+        return []
+    if instance or "-" in named or named[0].casefold() in _API_ROOTS:
+        return segments
+    return named[:2]
+
+
+def _path_after(text: str, end: int) -> list[str]:
+    """The path segments written right after a host that ends at ``end``: ``/<a>/<b>`` or scp ``:<a>/<b>``."""
+    lead = text[end : end + 1]
+    if lead == ":":
+        rest = text[end + 1 :]
+        if rest[:1].isdigit():
+            head = re.match(r"[0-9]{1,5}(?=/)", rest)
+            if head is None:
+                return []
+            rest = rest[head.end() :]
+    elif lead == "/":
+        rest = text[end:]
+    else:
+        return []
+    stop = next((i for i, c in enumerate(rest) if c in _PATH_END), len(rest))
+    path = rest[:stop].rstrip(_URL_TRIM_TAIL).strip("/")
+    return path.split("/") if path else []
+
+
+def known_values(
+    raw: object,
+    *,
+    roles: dict[str, str],
+    remote: str = "",
+    denylist: tuple[str, ...] = (),
+    min_length: int = NEEDLE_MIN_LENGTH,
+    ids: UserIdMap | None = None,
+    projects: UserIdMap | None = None,
+    forge: str = "github",
+    keep_users: frozenset[int] = frozenset(),
+    keep_projects: frozenset[int] = frozenset(),
+) -> closure.Known:
+    """The private values one recording holds, with the class token each becomes (D7).
+
+    Built before any rewrite from the structured fields of ``raw`` (logins,
+    user and repository ids, a user's name and mailboxes, the hosts of
+    :data:`URL_KEYS` values and of the remote, the recorded project's
+    namespace and repository), from the deny-list, and from the hosts
+    :func:`repoach.forge.closure.hosts` finds in any string of ``raw``.
+
+    Args:
+        raw: The exchanges as the forge printed them, the method's
+            arguments and the remote; never a redacted value.
+        roles: The recording's login -> class word.
+        remote: The checkout's ``origin`` remote, ``""`` when it has none.
+        denylist: The deny-list entries (judged, never replaced).
+        min_length: The shortest value a structured source may hold; the
+            offline transform passes 1 for logins and segments.
+        ids: The user-id map the structured pass filled; a fresh one when ``None``.
+        projects: The repository-id map; a fresh one when ``None``.
+        forge: ``github`` or ``gitlab``, the key of the id maps.
+        keep_users: Declared synthetic user numbers, never values.
+        keep_projects: Declared synthetic repository numbers, never values.
+
+    Returns:
+        The known values, casefolded, each once per kind, with their tokens.
+
+    Raises:
+        NeedleError: A structured value shorter than ``min_length`` or equal
+            to a class word or placeholder, by kind and ordinal.
+    """
+    ids = ids if ids is not None else UserIdMap()
+    projects = projects if projects is not None else UserIdMap.for_projects()
+    strict: dict[str, list[tuple[str, str]]] = {kind: [] for kind in closure.KINDS}
+    soft: dict[str, list[tuple[str, str]]] = {kind: [] for kind in closure.KINDS}
+
+    by_login = {k.removeprefix(MENTION_ONLY_PREFIX).casefold(): v for k, v in roles.items()}
+
+    def _role(login: str) -> str:
+        return by_login.get(login.casefold(), "author")
+
+    def _add(kind: str, value: str, token: str, *, hard: bool) -> None:
+        if value:
+            (strict if hard else soft)[kind].append((value, token))
+
+    def _segments(path: Sequence[str], *, hard: bool) -> None:
+        identity = path_identity(list(path))
+        for segment in identity.namespace:
+            _add("segment", segment, PLACEHOLDER_NAMESPACE, hard=hard)
+        if identity.repository:
+            _add("segment", identity.repository, PLACEHOLDER_PROJECT, hard=hard)
+
+    def _host(value: str, *, hard: bool) -> None:
+        _add("host", value, PLACEHOLDER_HOST, hard=hard)
+
+    def _add_id(number: object, *, project: bool) -> None:
+        key = user_id_key(number)
+        if isinstance(key, int) and key in (keep_projects if project else keep_users):
+            return
+        forms = _id_encodings(key) if isinstance(key, int) else _id_forms(number)
+        for form in forms:
+            token = _id_token(form, key, ids=ids, projects=projects, forge=forge, project=project)
+            _add("id", form, token, hard=True)
+
+    logins = [k.removeprefix(MENTION_ONLY_PREFIX) for k in roles] + raw_logins(raw)
+    for login in logins:
+        if _names_no_one(login):
+            continue
+        word = _role(login)
+        _add("login", login, word, hard=True)
+        mention = bot_mention_stem(login)
+        if mention is not None and len(mention) + 1 >= min_length:
+            _add("login", f"{MENTION_ONLY_PREFIX}{mention}", word, hard=True)
+
+    remote_host, remote_path = remote_location(remote)
+    instance = remote_host.casefold() if remote_host else _raw_url_host(raw)
+    own = (
+        {remote_host.casefold()}
+        if remote_host and not closure.is_public_host(remote_host)
+        else set()
+    )
+    for host in sorted(FORGE_HOSTS | own):
+        _host(host, hard=True)
+    if remote_path:
+        _segments(remote_path, hard=True)
+
+    strings = fixture_strings(raw, "")
+    for node in _walk_dicts(raw):
+        if any(key in node for key in USER_KEYS):
+            who = next((str(node[k]) for k in USER_KEYS if isinstance(node.get(k), str)), "")
+            word = _role(who)
+            name = node.get("name")
+            if isinstance(name, str) and len(name) >= min_length:
+                if CLASS_WORD_RE.match(name.casefold()) is None:
+                    _add("name", name, "", hard=False)
+                for part in _NAME_WORD_RE.findall(name):
+                    if (
+                        len(part) >= NEEDLE_MIN_LENGTH
+                        and CLASS_WORD_RE.match(part.casefold()) is None
+                    ):
+                        _add("name", part, word, hard=False)
+            for key in _MAILBOX_KEYS:
+                box = node.get(key)
+                if isinstance(box, str) and "@" in box:
+                    local, _, domain = box.rpartition("@")
+                    _add("mailbox", box, f"{word}@{PLACEHOLDER_HOST}", hard=False)
+                    if len(local) >= NEEDLE_MIN_LENGTH:
+                        _add("mailbox", local, word, hard=False)
+                    if not closure.is_placeholder_host(domain) and not closure.is_public_host(
+                        domain
+                    ):
+                        _host(domain, hard=False)
+        for key, item in node.items():
+            if key in URL_KEYS and isinstance(item, str):
+                try:
+                    parts = urlsplit(item.strip())
+                except ValueError as exc:
+                    _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+                    continue
+                host = (parts.hostname or "").casefold()
+                if parts.scheme in URL_SCHEMES and host and not _is_allowed_host(host):
+                    _host(host, hard=True)
+                    if not is_public_forge_host(host):
+                        _segments([s for s in parts.path.split("/") if s], hard=True)
+
+    for _path, text in strings:
+        _segments(_api_project(text), hard=True)
+        for found in _ENCODED_PROJECT_RE.finditer(text):
+            named = [p for p in unquote(found.group("path")).split("/") if p]
+            if len(named) > 1:
+                _segments(named, hard=False)
+        for place in closure.hosts(text):
+            if closure.is_placeholder_host(place.host) or closure.is_public_host(place.host):
+                continue
+            _host(place.host.casefold(), hard=False)
+            if is_public_forge_host(place.host):
+                continue
+            follow = _follow_segments(
+                _path_after(text, place.end), instance=place.host.casefold() == instance
+            )
+            if follow:
+                _segments(follow, hard=False)
+
+    for number in user_id_values(raw):
+        _add_id(number, project=False)
+    for number in project_id_values(raw):
+        _add_id(number, project=True)
+    for text in (t for _p, t in strings):
+        for match in _PROJECT_ID_RE.finditer(text):
+            number = int(match.group("id"))
+            if number not in keep_projects:
+                _add("id", str(number), str(projects.synthetic(number, forge=forge)), hard=True)
+
+    entries: list[tuple[str, str]] = []
+    tokens: dict[str, str] = {}
+    for kind in closure.KINDS:
+        seen: set[str] = set()
+        for n, (value, token) in enumerate(_unique(strict[kind]), 1):
+            folded = value.casefold()
+            if len(folded) < (NEEDLE_MIN_LENGTH if kind == "id" else min_length):
+                if kind == "id" and min_length < NEEDLE_MIN_LENGTH:
+                    continue
+                raise NeedleError(f"needle {kind} {n}: too short")
+            if CLASS_WORD_RE.match(folded) or folded in _PLACEHOLDERS:
+                raise NeedleError(f"needle {kind} {n}: a class word or placeholder")
+            seen.add(folded)
+            entries.append((kind, folded))
+            tokens.setdefault(folded, token)
+        for value, token in _unique(soft[kind]):
+            folded = value.casefold()
+            if (
+                len(folded) < NEEDLE_MIN_LENGTH
+                or CLASS_WORD_RE.match(folded)
+                or folded in _PLACEHOLDERS
+                or folded in seen
+                or _names_no_one(folded)
+            ):
+                continue
+            seen.add(folded)
+            entries.append((kind, folded))
+            tokens.setdefault(folded, token)
+    for value in dict.fromkeys(v.casefold() for v in denylist):
+        entries.append(("deny-list", value))
+    return closure.Known(tuple(entries), _literals(), tuple(tokens.items()))
+
+
+def _unique(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``pairs`` without a repeated value (casefolded), the first token kept."""
+    seen: set[str] = set()
+    out = []
+    for value, token in pairs:
+        if value.casefold() not in seen:
+            seen.add(value.casefold())
+            out.append((value, token))
+    return out
+
+
+def _id_token(
+    form: str, key: object, *, ids: UserIdMap, projects: UserIdMap, forge: str, project: bool
+) -> str:
+    """The synthetic form of one id string: digits stay digits, a node id becomes ``U_<n>``."""
+    if not isinstance(key, int):
+        return form
+    owner = projects if project else ids
+    number = owner.synthetic(key, forge=forge)
+    return str(number) if form.isdigit() else f"U_{number}"
+
+
+@functools.lru_cache(maxsize=64)
+def _replacer(tokens: tuple[tuple[str, str], ...]) -> tuple[re.Pattern[str], dict[str, str]] | None:
+    """The one pattern that finds every known value as a whole token, longest first, and its token table."""
+    if not tokens:
+        return None
+    table = dict(tokens)
+    alternation = "|".join(re.escape(v) for v in sorted(table, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?:(?<![{_ASCII_ALNUM}])|(?<=%2[Ff]))(?:{alternation})(?![{_ASCII_ALNUM}])", re.I
+    )
+    return pattern, table
+
+
+def replace_known(text: str, known: closure.Known, mapping: dict[str, str] | None = None) -> str:
+    """Replace every known value in ``text`` by its class token, at every position (D7).
+
+    One pass over the longest value first, so a replaced value is never
+    touched twice. A :data:`CLI_PLACEHOLDER_RE` literal is left as it is.
+    A login is the convenience layer's (:func:`classify_logins`); a
+    ``deny-list`` value is never replaced, the oracle refuses it.
+
+    Args:
+        text: Any string of the fixture.
+        known: The recording's known values.
+        mapping: Casefolded value -> token; the known values' own by default.
+
+    Returns:
+        ``text`` with each known value replaced.
+    """
+    table = dict(mapping) if mapping is not None else known.mapping()
+    live = tuple(
+        (v, table[v]) for k, v in known.entries if k not in ("login", "deny-list") and table.get(v)
+    )
+    built = _replacer(live)
+    if built is None:
+        return text
+    pattern, replacements = built
+    pieces = CLI_PLACEHOLDER_RE.split(text)
+    templates = CLI_PLACEHOLDER_RE.findall(text)
+    pieces = [pattern.sub(lambda m: replacements[m.group(0).casefold()], p) for p in pieces]
+    out = pieces[0]
+    for template, piece in zip(templates, pieces[1:], strict=True):
+        out += template + piece
+    return out
+
+
+def replace_known_in_value(value: object, known: closure.Known) -> object:
+    """:func:`replace_known` on every string of a decoded value; keys are never rewritten."""
+    if isinstance(value, dict):
+        return {k: replace_known_in_value(v, known) for k, v in value.items()}
+    if isinstance(value, list):
+        return [replace_known_in_value(v, known) for v in value]
+    if isinstance(value, str):
+        return replace_known(value, known)
+    return value
+
+
+def replace_known_in_stdout(text: str, known: closure.Known) -> str:
+    """:func:`replace_known` on a recorded stdout: JSON answers are walked, text is replaced whole."""
+    values = decode_json_values(text)
+    if values is None:
+        return replace_known(text, known)
+    return "\n".join(
+        json.dumps(replace_known_in_value(v, known), ensure_ascii=False) for v in values
+    )
+
+
 @dataclass
 class Exchange:
     """One recorded subprocess call.
@@ -2646,16 +2962,25 @@ class ReplaySpawn:
 
     Attributes:
         exchanges: The recorded exchanges still to be consumed.
+        normalize: Applied to every issued argv element and stdin before the
+            comparison, so a raw value a forge computes itself (a remote, a
+            link) is compared in the redacted form it was recorded in; none
+            for a committed fixture, whose argv are compared as they are.
     """
 
     exchanges: list[Exchange]
+    normalize: Callable[[str], str] | None = None
 
     def __call__(self, argv: list[str], *, input_data: str | None = None) -> CommandResult:
         """Return the next recorded result after checking the argv matches."""
         if not self.exchanges:
             raise ReplayMismatchError(f"unrecorded call: {argv[1:]}")
         expected = self.exchanges.pop(0)
-        actual = (_program(argv[0]), list(argv[1:]))
+        issued = list(argv[1:])
+        if self.normalize is not None:
+            issued = [self.normalize(a) for a in issued]
+            input_data = self.normalize(input_data) if input_data else input_data
+        actual = (_program(argv[0]), issued)
         if actual != (expected.program, expected.args):
             raise ReplayMismatchError(f"expected {expected.program} {expected.args}, got {actual}")
         if (input_data or None) != (expected.stdin or None):
