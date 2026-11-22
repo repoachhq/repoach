@@ -395,6 +395,12 @@ _RFC5737 = tuple(
     ipaddress.IPv4Network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
 )
 
+_UNSPECIFIED_BROADCAST = (
+    ipaddress.IPv4Address("0.0.0.0"),
+    ipaddress.IPv4Address("255.255.255.255"),
+)
+"""The unspecified and the limited-broadcast address (RFC 1122): a bind or a log line, never a machine."""
+
 _IPV6_DOCUMENTATION = tuple(ipaddress.IPv6Network(n) for n in ("2001:db8::/32", "3fff::/20"))
 """The IPv6 documentation prefixes (RFC 3849, RFC 9637): a literal in one names no one."""
 
@@ -577,7 +583,7 @@ def _canonical_host(host: str) -> str:
 
 
 def is_placeholder_host(host: str) -> bool:
-    """Whether ``host`` names no one: RFC 2606, loopback, RFC 5737, the placeholder."""
+    """Whether ``host`` names no one: RFC 2606, loopback, unspecified, broadcast, RFC 5737, the placeholder."""
     folded = _canonical_host(host)
     if folded == "localhost":
         return True
@@ -586,12 +592,16 @@ def is_placeholder_host(host: str) -> bool:
             return True
     address = _ipv4(folded)
     if address is not None:
-        return address in ipaddress.IPv4Network("127.0.0.0/8") or any(
-            address in n for n in _RFC5737
+        return (
+            address in ipaddress.IPv4Network("127.0.0.0/8")
+            or address in _UNSPECIFIED_BROADCAST
+            or any(address in n for n in _RFC5737)
         )
     literal = _ipv6(folded)
     return literal is not None and (
-        literal.is_loopback or any(literal in n for n in _IPV6_DOCUMENTATION)
+        literal.is_loopback
+        or literal.is_unspecified
+        or any(literal in n for n in _IPV6_DOCUMENTATION)
     )
 
 

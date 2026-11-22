@@ -1332,6 +1332,25 @@ def test_the_version_guard_of_a_led_address_is_observable() -> None:
         assert [h.host for h in closure.hosts(text)] == ["8.8.8.8"], text
 
 
+def test_the_unspecified_and_broadcast_addresses_are_placeholder_class() -> None:
+    """D8 (0.20, C5): 0.0.0.0, 255.255.255.255 and :: are a bind or a log line, never a machine."""
+    for host in ("0.0.0.0", "255.255.255.255", "[::]", "::", "0.0.0.0.", "[::1]", "127.0.0.1"):
+        assert closure.is_placeholder_host(host), host
+    for host in ("0.0.0.1", "0.1.2.3", "255.255.255.254", "255.255.255.0", "[::2]", "[1::]"):
+        assert not closure.is_placeholder_host(host), host
+    none = closure.Known(())
+    for text in (
+        "Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)",
+        "open http://0.0.0.0:8000/docs",
+        "http://255.255.255.255/x",
+        "Listening on 0.0.0.0:8000 and [::]:8000",
+        "see http://[::]:8080/x",
+    ):
+        assert closure.judge(text, none) is None, text
+        assert [h.host for h in closure.hosts(text)], text
+    assert closure.judge("see http://0.1.2.3/x", none) == closure.Refusal("unknown host")
+
+
 def test_a_quad_after_a_single_slash_is_a_version_and_a_comparator_allows_spaces() -> None:
     """D8 IPv4 (0.20, C4 and C59): a path segment is a version context; spaces after a comparator keep it one."""
     for text in (

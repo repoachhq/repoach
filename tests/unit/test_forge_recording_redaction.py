@@ -5079,6 +5079,8 @@ def test_nothing_is_read_after_a_placeholder_class_host() -> None:
         "curl http://[::1]:8000/health",
         "http://127.0.0.1:8000/kvnteam/kvnbilling",
         "http://localhost:3000/api/users",
+        "http://0.0.0.0:8000/docs",
+        "see http://[::]:8080/kvnteam/kvnbilling",
         "see //www.example.com/kvnteam/kvnbilling",
         "https://files.pythonhosted.org/packages/kvnteam/kvnbilling/x.whl",
         "ssh git@203.0.113.9:kvnteam/kvnbilling",

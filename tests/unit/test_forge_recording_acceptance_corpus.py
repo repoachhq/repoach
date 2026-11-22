@@ -9421,6 +9421,34 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="see https://files.pythonhosted.org/104.16.0.1/json"),
         residual=True,
     ),
+    Row(
+        id="v20_uvicorn_running_on_unspecified_address",
+        source="verify019/probes.py",
+        inp=Sample(
+            raw_text_stdout="INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)\n"
+        ),
+        outcome=Written(
+            text="INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)\n"
+        ),
+    ),
+    Row(
+        id="v20_unspecified_address_led_docs",
+        source="verify019/probes.py",
+        inp=Sample(body="open http://0.0.0.0:8000/docs"),
+        outcome=Written(text="open http://0.0.0.0:8000/docs"),
+    ),
+    Row(
+        id="v20_broadcast_address_led",
+        source="verify019/probes.py",
+        inp=Sample(body="http://255.255.255.255/x"),
+        outcome=Written(text="http://255.255.255.255/x"),
+    ),
+    Row(
+        id="v20_ipv6_unspecified_led",
+        source="fable020/sweep.py",
+        inp=Sample(body="bind http://[::]:8080/metrics"),
+        outcome=Written(text="bind http://[::]:8080/metrics"),
+    ),
 )
 
 
