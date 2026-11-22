@@ -1,14 +1,14 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word, drops names and avatars, makes user ids synthetic at record time, and refuses a fixture it cannot classify
-version: 0.17
+version: 0.18
 status: approved
 author: agent
 created: 2026-11-18
 updated: 2026-11-22
 
 owns:
-  code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_regression_corpus.py, tests/unit/test_forge_recording_acceptance_corpus.py, tests/unit/test_forge_closure.py]
+  code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_acceptance_corpus.py, tests/unit/test_forge_closure.py]
   resources: []
 
 depends_on: [SP-UNIVERSAL-FORGE, SP-SCRUB-PERSONAL-DATA-AT-HEAD]
@@ -631,15 +631,20 @@ written unchanged or with exactly the stated public-host-preserving output,
 across Go, JS, TS, C, C++, Rust, Java and Python with `//` comments and
 dotted identifiers, macOS bundle paths, reverse-DNS package names,
 three-label file names, CI logs, Markdown and configuration formats.
-**Host-shaped, by construction** (D8): a dotted label run is a host when it
-is led by a scheme or by `<user>@` (any length), or when it has at least
-three labels and its last label is in the explicit `HOST_TLDS` list and its
-first label is not a reverse-DNS head; an IPv4 address is a host when it is
-led, and a public address anywhere is refused. Two-label tokens that are
-not led (`Xcode.app`, `config.dev`, `ssl.ca`, `stream.io`, `torch.net`,
-`os.path`, `self.config`, `np.array`, `file.py`, `README.md`) are therefore
-ordinary text by construction, and a two-label private apex host cited only
-un-led or protocol-relative is the named residual (NG4-3).
+**Host-shaped, by construction** (D8, amended 0.18): a dotted label run is a
+host when it is led by a scheme or by `<user>@` (any length), or when it is
+led by `//` or followed by `/<segment>` or `:<port>` and has at least three
+labels, a last label in the explicit `HOST_TLDS` list and a first label that
+is not a reverse-DNS head; an IPv4 address is a host when it is led, and an
+un-led public address is refused unless it reads as a version. A dotted
+name that is neither led nor followed (`response.data.id`, `Xcode.app`,
+`config.dev`, `ssl.ca`, `stream.io`, `torch.net`, `os.path`, `self.config`,
+`np.array`, `file.py`, `README.md`, `Host mirror.zqcorp.net is down`) is
+ordinary text by construction: at 0.17 this paragraph held for two labels
+only and was false for three (19 of 70 ordinary snippets corrupted), a
+two-label private apex host cited only un-led or protocol-relative is the
+named residual (NG4-3) and a third party's three-label private host cited
+bare is NG4-8.
 **The acceptance corpus, written first and frozen** (`tests/unit/test_forge_recording_acceptance_corpus.py`,
 569 rows, one input and exactly one outcome each, through the public
 `record` path live and `redact_fixture` offline): every row of the 0.16
@@ -688,6 +693,84 @@ secret-shaped value(s)` — 79 corpus rows, none of which the 0.16 regression
 corpus could see because it bypassed `record()`. D3 states the fix: the
 recorder's secret gate judges forge-token shapes only; mailboxes are the
 oracle's.
+
+Amendment (0.18, 2026-11-22, owner decisions after the eleventh
+verifier's NO-GO on `db92cee`: the 0.17 design stands, one rule of it was
+too wide; one implementation pass). The verifier measured, at 0.17, 19 of
+70 ordinary snippets corrupted (`response.data.id`, `self.logger.info(`,
+`request.user.email`, `cfg.Server.Host` rewritten to `forge.example.com`:
+55 entries of `HOST_TLDS` are common identifier tails, so any dotted
+chain of three names ending in one was a host), 5 leaks through encoded
+forms, one crash, one order-dependent test and two over-refusals of
+four-part versions. 0.18 fixes each by the rule of its class:
+(a) **A dotted name is a host only when it is led or followed** (D8, one
+place, `closure.hosts`): led by a scheme `://`, by `<local>@` (a run of
+two labels or more) or by `//`, or followed by `/<segment>` or
+`:<port digits>` (a run of three labels or more on a listed TLD, first
+label not a reverse-DNS head); anything else is ordinary text, whatever
+its last label. Known values (D7) are replaced everywhere with no lead
+and no follow. `NON_HOST_TOKENS` is deleted: its one entry was a crutch
+the rule no longer needs. The new residual is NG4-8: a third party's
+private host cited bare in prose is written. Pinned by
+`test_a_dotted_name_is_a_host_only_when_led_or_followed_by_construction`,
+`test_a_bare_dotted_host_in_prose_is_the_documented_residual` and the
+corpus rows `v17_*` (70 ordinary: 0 corrupted, 0 refused but the two
+documented placeholder-host rewrites).
+(b) **Four-part versions** (`1.8.0.252`, `4.8.1.0`, `pkg == 1.2.3.4`): a
+comparator may stand before the quad with spaces, and a quad with a zero
+octet reads as a version, so it is never judged as a bare public
+address (a led one is still a host); NG4-9 names the address this lets
+through. **IPv6**: a bracketed literal is judged like IPv4 (led by a
+scheme, `<local>@` or `//` it is a host, un-led and global with more than
+two colons it is a `public address`; `[::1]`, `2001:db8::/32` and
+`3fff::/20` are placeholder-class, so `http://[2001:db8::1]/<ns>/<repo>`
+keeps its host and replaces the namespace and the repository).
+(c) **Encoded forms** (D2): `hosts`, `mailboxes` and `public_addresses`
+run over `decoded_forms(text)` in `judge`, and `hosts` does in D7 source 3,
+so `https%3A%2F%2Fcode.kvncloud.io%2F<ns>%2F<repo>`, `<local>&#64;<host>`
+and `<local>%40<host>` are replaced or refused; a percent escape is never
+part of a label run, so `%2F%2Fgit.zqcorp.io` leaves no stray `%`.
+(d) **Defects**: `_legacy_number` never raises (a run ending in `=` was
+padded twice: D3; `test_the_legacy_node_reader_never_raises_on_a_malformed_run`);
+the order-dependent test failed because `configure_logging` leaves an
+INFO-level filtering wrapper class in structlog's global configuration
+and a `debug` event never reaches `capture_logs` (the autouse fixture of
+`tests/conftest.py` now resets the wrapper class beside the cache flag,
+`test_6_capture_logs_sees_a_debug_event_after_the_level_filter`); a git
+author or committer object (a `name` beside an `email`, no `login`)
+yields its name words (D5, D7 source 1); the GHE `url` key
+`…/api/v3/repos/<o>/<r>/…` no longer raises `NeedleError`
+(`path_identity` skips a leading `api/v<N>` before `repos`, `users`,
+`orgs` and `apps`); `@font-face` and every CSS, Sass and Tailwind at-rule
+is no mention (`CSS_AT_RULES`); the offline transform reads the logins
+under keys it drops through `legacy_roles(data, also=raw_logins(exchanges))`,
+as the live recorder does; the `_version_context` guard of a led IPv4
+address has a test; `uk`, `eu`, `su` and `ac` join the country codes of
+`HOST_TLDS` (`ac` stays in `EXTENSION_TLDS`, hence out).
+(e) **The harness and seven rows** (owner authorisation): `_live_only_values`
+of the acceptance corpus reads every login under a `login` or `username`
+key, each word of a name, a mailbox with its local part and host, and
+every `id` with its node forms, wherever the object stands, so the five
+rows that cite them pass offline with no edit; seven rows are corrected
+to the D1b/D7 expectation (`reg_r10_prose_double_slash_host_known_from_remote_is_replaced_as_a_token`,
+`r10_p22`, `r10_p23`, `r10_p25`, `r10_p26`, `r10_p27`: a
+protocol-relative path is kept; and `code_three_label_private_host_schemeless_no_path`:
+NG4-8); 155 rows `v17_*` are added from the verifier's probes (85 planted,
+70 ordinary). Corpus at 0.18: 724 rows = 505 planted + 219
+ordinary = 658 written + 66 refused.
+(f) **Wrong facts corrected**: AC5's counts (the suite gave 4703 passed and
+2 failed, not 4704 and 1: one of the two was the order-dependent test);
+D4's list of the values only the live path learns (it named the user's
+login, name and id, and missed the logins under `assignees` and
+`mergedBy`, each word of a name, the local part and host of a mailbox
+and repository ids); the claim that ordinary text is safe by
+construction (preamble (d) and D8: false for any three-label chain on a
+listed TLD at 0.17); the end state, which said no string holds a host
+that is not a placeholder (false for an encoded form at 0.17); AC3's
+log path (`tmp/impl017/mutate.log`, not `tmp/r11/mutate.log`);
+`owns.code`, which still listed the deleted
+`tests/unit/test_forge_recording_regression_corpus.py`; D8's `HOST_TLDS`,
+which claimed every ISO 3166-1 alpha-2 code and missed `uk`, `eu`, `su`.
 
 ## Intent
 
@@ -750,8 +833,9 @@ whole behaviour row by row.
      under a dropped key counts), every `id` of a user object in every
      form `user_id_key` names (the number, its digit string, the legacy
      node id padded and unpadded, the current `U_` node id — kind `id`),
-     every `id` of a repository object (kind `id`), a user object's `name`
-     (kind `name`: the whole value, which is judged but not replaced, and
+     every `id` of a repository object (kind `id`), a user object's `name`, or
+     the `name` beside a mailbox of a git author or committer object that holds
+     no `login` (0.18; kind `name`: the whole value, which is judged but not replaced, and
      each of its words of at least `NEEDLE_MIN_LENGTH` letters or digits,
      which are replaced: row `name_multiword_name_in_title`), a user object's `email`,
      `public_email` or `commit_email` (kind `mailbox`: the whole mailbox
@@ -764,7 +848,8 @@ whole behaviour row by row.
      kind `segment`, through `path_identity`);
   2. **the deny-list** (kind `deny-list`; a numeric entry also in its two
      node-id forms);
-  3. **the text reader of the oracle** (D8, `closure.hosts(text)`): every
+  3. **the text reader of the oracle** (D8, `closure.hosts`, run over every
+     decoded form of the string, 0.18): every
      host-shaped token found in any string of the raw exchanges that is
      neither a placeholder-class host nor on the public allowlist is a
      `host` value, and the namespace and repository of the path that
@@ -827,18 +912,25 @@ whole behaviour row by row.
     (`URL_SCHEMES` or any `[A-Za-z][A-Za-z0-9+.-]*://`) or by
     `<local>@` (a non-empty run of `LOCAL_CHARS` = letters, digits,
     `._%+-:${}` right before `@`); every such run is a host, whatever `n`;
-  - **H2, un-led**: `n >= 3`, `Ln` in `HOST_TLDS`, `L1` not in
-    `REVERSE_DNS_HEADS` (`com`, `org`, `net`, `io`, `dev`, `me`, `co`,
-    `edu`, `gov`: Java/Android/Maven reverse-DNS names such as
-    `com.example.app` and `org.apache.commons.io`), and the run not in
-    `NON_HOST_TOKENS` (an explicit frozenset, `self.config.dev` since row
-    `code_python_comments_and_dotted_identifiers`: an
-    over-refusal found later is fixed by adding the exact token there,
-    never by widening a rule). A protocol-relative `//` lead is **not**
-    H1: `//<run>` is judged by H2, so `x := 1 //cfg.dev/env/prod` is a
-    comment and `//code.kvncloud.io/ns/repo` is a host, in every quoting,
-    spacing and assignment context alike;
-  - `HOST_TLDS`: the explicit frozenset of every ISO 3166-1 alpha-2 code,
+  - **H2, led by `//` or followed** (0.18): `n >= 3`, `Ln` in `HOST_TLDS`,
+    `L1` not in `REVERSE_DNS_HEADS` (`com`, `org`, `net`, `io`, `dev`, `me`,
+    `co`, `edu`, `gov`: Java/Android/Maven reverse-DNS names such as
+    `com.example.app` and `org.apache.commons.io`), and the run either
+    right after `//` or right before `/<segment>` (a letter, a digit or one
+    of `_-.~%` after the slash) or `:<port digits>`. **A dotted name that is
+    neither led (by a scheme, `<local>@` or `//`) nor followed is ordinary
+    text, whatever its last label** (`response.data.id`, `self.logger.info`,
+    `cfg.Server.Host`, `Host mirror.zqcorp.net is down`): the rule is
+    stated here and in `closure.hosts`, nowhere else. A host known from a
+    structured field is replaced everywhere, led or not (D7). A
+    protocol-relative `//` lead is **not** H1: `//<run>` needs three labels,
+    so `x := 1 //cfg.dev/env/prod` is a comment and
+    `//code.kvncloud.io/ns/repo` is a host, in every quoting, spacing and
+    assignment context alike. `NON_HOST_TOKENS` is deleted. A percent
+    escape (`%2F`) before a run is a delimiter, never part of its first
+    label;
+  - `HOST_TLDS`: the explicit frozenset of every ISO 3166-1 alpha-2 code and
+    of the reserved or retired country codes `uk`, `eu`, `su` and `ac`,
     the generic TLDs listed in the module (`com`, `net`, `org`, `edu`,
     `gov`, `mil`, `int`, `info`, `biz`, `name`, `pro`, `dev`, `app`, `io`,
     `cloud`, `tech`, `site`, `online`, `xyz`, `co`, `me`, `tv`, `ai`,
@@ -859,11 +951,20 @@ whole behaviour row by row.
   - **IPv4**: a dotted quad with token boundaries, not preceded by `v`,
     `V`, `==`, `>=`, `<=`, `~=`, `!=` or `version` and not followed by
     `-`, `+`, `.tar`, `.whl`, `.zip`, `.gz` (the 0.10 version rule, moved
-    here with `IPV4_RESERVED`): led (H1, and, for an address only, by
+    here with `IPV4_RESERVED`; 0.18: spaces may stand between a comparator
+    and the quad, and a quad with a zero octet reads as a version, so
+    `1.8.0.252` and `4.8.1.0` are never a bare public address): led (H1, and, for an address only, by
     `//`: rows `g_ipv4_*_led_proto_rel_*`) it is a host; un-led it is judged
     only when **public** (outside `IPV4_RESERVED`), reason `public
     address`; an un-led private, loopback or RFC 5737 address is ordinary
     text (`10.0.0.12:5432`, `127.0.0.1:8000`, `203.0.113.9`);
+  - **IPv6** (0.18): a bracketed literal `[<hex groups>]` that parses as an IPv6
+    address; led (by a scheme, `<local>@` or `//`) it is a host, un-led and
+    global with more than two colons (`xs[2020::]` and `xs[::2]` are slices)
+    it is a `public address`; the loopback and the documentation prefixes
+    `2001:db8::/32` and `3fff::/20` are placeholder-class, and the
+    namespace and repository after a led literal are read (D7 source 3) even
+    when the literal is allowed;
   - **placeholder-class hosts** (`is_placeholder_host`): `forge.example.com`,
     `example.com`/`.org`/`.net` and their subdomains, any `.example`,
     `.test`, `.invalid`, `localhost`, `127.0.0.0/8`, and the RFC 5737
@@ -1098,11 +1199,17 @@ whole behaviour row by row.
   computed before any file is written). Parity, pinned by the acceptance
   test's offline leg: for every written row, `redact_fixture(live
   fixture)` is the live fixture (a fixed point); for every row whose raw
-  text holds no value only the live recorder learns (a raw login, its
-  `[bot]` stem, a raw id or node id, the author), the raw text put back
+  text holds no value only the live recorder learns (every login under a
+  `login` or `username` key, including the logins of `assignees` and
+  `mergedBy` that the redaction drops, and their `[bot]` stems; each word
+  of a name; a mailbox, its local part and its host; every `id` with its
+  node forms, a repository's included; the author), the raw text put back
   into the live fixture's structured frame transforms to exactly the live
   fixture; for every refused row of that kind, the raw recording is
-  refused with the same reason prefix. `--check` and the 0.9
+  refused with the same reason prefix. 0.18: the offline transform also
+  gives the logins under dropped keys a class word, as `raw_logins` does
+  live (`legacy_roles(data, also=raw_logins(exchanges))`: `args` and `kwargs` keep the keys the redaction drops, so `legacy_roles` walks `kwargs` itself, and a login in the members of `args`, which are never renamed, is refused; a committed fixture has
+  no such key left, so the counterpart concerns a raw recording only). `--check` and the 0.9
   reproduction stand (C2: the committed fixtures are a fixed point and
   the rebuild from `7fd31af` is byte-identical).
 - D5 (0.8) and D6 (0.9) — unchanged: the placeholders derived from a
@@ -1167,8 +1274,12 @@ every user and repository id is a declared synthetic number, every URL
 and remote the convenience layer recognises carries the placeholder host,
 namespace and repository with its shape kept, and no string holds a host
 that is neither a placeholder nor public, nor a public address, nor a
-mailbox that is neither a placeholder nor a documentation literal; or it
-exits 2 naming the reason and the position (D3). The offline transform
+mailbox that is neither a placeholder nor a documentation literal, each
+read in its encoded forms (percent, entity and `\uXXXX`, four rounds) as
+well as written (0.18; at 0.17 only a known value was); or it
+exits 2 naming the reason and the position (D3). A third party's private
+host cited bare in prose, and two-label hosts un-led, are the named
+residuals (NG4-3, NG4-8). The offline transform
 does the same with the same functions (D4). The acceptance corpus is
 green live and offline, the oracle is independent by test, and a mutation
 run on `closure.py` leaves no non-equivalent survivor.
@@ -1180,7 +1291,7 @@ each round fixed the shapes found and the next round found new ones, and
 round 10 regressed round 9's. A TLD list alone for host shape: rejected
 by the ordinary corpus — `config.dev`, `stream.io`, `ssl.ca`, `file.py`,
 `README.md`, `run.sh` all end in a real TLD, so a two-label rule refuses
-ordinary code; the rule needs the lead or the third label (D8). Requiring
+ordinary code; the rule needs a lead or a follow and the third label (D8, 0.18). Requiring
 a scheme or `@` for every host: rejected by round 10 — `const CDN =
 '//code.kvncloud.io/…'` and YAML `cdn: //…` have neither. Refusing every
 `//host` lead as a URL: rejected — Go, JS, TS, C and Java comments
@@ -1218,6 +1329,8 @@ ids declared) stand.
   1. A login the recording never learns — cited only as a bare word, under no login key and with no `@`. The maintainer's own accounts are in the deny-list; anyone else's is trimmed (`--trim`) or another change request is recorded. Rows `r10_p03_pip_index_token_private_registry` (a third party's `qwzpayments` with `remote=""`, written; its sibling `r10_p03b` with the remote known, replaced).
   2. An un-led private, loopback or RFC 5737 IPv4 address (`10.0.0.5/ns/repo`, `10.0.0.12:5432`): ordinary text (row `g_ipv4_private_bare_prose_written`). A led one is a host (D8).
   3. A **two-label** host that stands only un-led or protocol-relative and in no structured field (`zqcorp.io/ns/repo` in prose, `//zqcorp.io/…`): indistinguishable from a code token by construction (D8 H2 needs three labels), written as is (row `code_two_label_apex_host_schemeless_prose_residual`); the same host scheme-led, `@`-led or in any `URL_KEYS` value or the remote is a known value and is replaced everywhere (row `code_two_label_apex_host_scheme_led`). Likewise a host whose TLD is in `EXTENSION_TLDS`, un-led.
+  8. (0.18, owner decision D1) A third party's private host cited **bare in prose** — a dotted name with no scheme, no `<local>@`, no `//` before it and no `/<segment>` or `:<port>` after it — is ordinary text, whatever its last label, and is written as is (`Host mirror.zqcorp.net is down`, row `code_three_label_private_host_schemeless_no_path`, test `test_a_bare_dotted_host_in_prose_is_the_documented_residual`); led or followed it is a host and is refused or replaced, and a host known from a structured field is replaced wherever it stands. The price of not corrupting `response.data.id` and `self.logger.info`.
+  9. (0.18) A public IPv4 address with a zero octet cited bare in prose (`104.16.0.1`) reads as a version (`1.8.0.252`, `4.8.1.0`) and is written; led by a scheme, `<local>@` or `//` it is a host (`test_ipv4_rule_reserved_table_version_lead_and_led_addresses_by_enumeration`).
   4. Adversarial evasion forms (0.12, unchanged in scope; the 0.11 confusable and invisible-character pass is dropped from the oracle): Unicode confusables and invisible characters, Markdown-split or escaped values, non-node-id base64, JSON-in-a-string escapes beyond four decoding rounds. A finding of these forms is NG4, not a defect.
   5. A mailbox the convenience layer turns into `<class word>@forge.example.com` is refused, not written (D3 accepted refusals): the author of a recording that quotes a personal mailbox trims it.
   6. A project id of fewer than five digits cited in text is written as is (D9; `projects/1234` on a self-hosted instance with fewer than 10 000 projects); under an `id` key it is synthetic whatever its size (D1c).
@@ -1232,7 +1345,7 @@ ids declared) stand.
 ## Interface
 
 Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **What 0.17 removes or demotes**):
-- `src/repoach/forge/closure.py`: `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `NON_HOST_TOKENS`, `LOCAL_CHARS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 24 registrable suffixes), `is_placeholder_host(host)`, `is_public_host(host)`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `unknown host`, `public address`, `unknown mailbox`.
+- `src/repoach/forge/closure.py`: `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `LOCAL_CHARS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 24 registrable suffixes), `is_placeholder_host(host)`, `is_public_host(host)`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `unknown host`, `public address`, `unknown mailbox`.
 - `src/repoach/forge/recording.py`: `known_values(raw, *, roles, remote="", denylist=(), min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `_PROJECT_ID_RE`, `project_id_values` (D9), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
 - `scripts/record_forge_fixture.py`: `refuse_unclassified(fixture, denylist, known)`, `generic_class` (home path only), `build_roles`, `Denylist`, `read_denylist`, `origin_url`, `record`, the CLI unchanged.
 - `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=())`, `fixture_known(data, *, roles=None, remote="", denylist=(), ids=None, projects=None, forge="github")`, `ResidualValueError`, `run`, the CLI unchanged.
@@ -1268,8 +1381,8 @@ kept); `${CI_JOB_TOKEN}` and `$GITLAB_TOKEN` userinfo (written, the
 userinfo gone); a `glab api` line with an apostrophe, two ids, an
 unbalanced quote, `%2F` (`r10_c_*`, `r10_d_*`, `r10_i1_d4_*`: ids `2001`,
 `2002`, segments `org%2Fproject`); a three-label schemeless private host
-in prose with or without a path (`code_three_label_private_host_*`:
-replaced); a two-label apex host un-led (written, NG4-3) and scheme-led
+in prose with a path or a port (`code_three_label_private_host_*`:
+replaced) and without either (written, NG4-8); a two-label apex host un-led (written, NG4-3) and scheme-led
 (replaced); three-label file names and reverse-DNS package names
 (unchanged); `files.pythonhosted.org`, `cdnjs.cloudflare.com`,
 `cdn.jsdelivr.net`, `www.mend.io`, `docs.renovatebot.com` (kept); a user
@@ -1284,8 +1397,8 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 - A home path → exit 2, `generic class home_path at <path>`.
 - A deny-list entry, a node form of a numeric one included → exit 2, `deny-list entry <n> at <path>`.
 - A known value the replacer missed (an encoded form, a key, a mention-only bare word, an embedded node id) → exit 2, `residual <kind> <n> at <path>`.
-- A three-label host on a listed suffix that is neither a placeholder nor public, after replacement → exit 2, `unknown host at <path>` (only reachable when D7 missed it: the oracle's reader is also `K`'s source 3, so a mutation of `replace_known` is what this catches).
-- An un-led public IPv4 → exit 2, `public address at <path>`.
+- A host that is led or followed (D8) and is neither a placeholder nor public, after replacement, in any decoded form → exit 2, `unknown host at <path>` (only reachable when D7 missed it: the oracle's reader is also `K`'s source 3, so a mutation of `replace_known` is what this catches).
+- An un-led public IPv4 address that does not read as a version, or an un-led global IPv6 literal, in any decoded form → exit 2, `public address at <path>`.
 - A personal mailbox, a credential userinfo the convenience layer left → exit 2, `unknown mailbox at <path>`.
 - The deny-list is absent → judged with none; the fixture test skips, naming the reason (unchanged).
 
@@ -1293,7 +1406,7 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 
 | Test | What it pins | Mutation that must turn it red |
 |---|---|---|
-| `tests/unit/test_forge_recording_acceptance_corpus.py::test_acceptance_corpus_live_and_offline` (0.17, 569 rows) | AC1: every row's one outcome through `record()` against a fake forge and through `redact_fixture` with the row's remote and deny-list; markers never survive; exact text, title and named fields; offline parity and fixed point | any change of D1b, D2, D3, D7, D8, D9 or D4 that alters one row's text or reason; measured 2026-11-22 on `95ccaf9`: 188 rows red live, every row red offline |
+| `tests/unit/test_forge_recording_acceptance_corpus.py::test_acceptance_corpus_live_and_offline` (0.18, 724 rows) | AC1: every row's one outcome through `record()` against a fake forge and through `redact_fixture` with the row's remote and deny-list; markers never survive; exact text, title and named fields; offline parity and fixed point | any change of D1b, D2, D3, D7, D8, D9 or D4 that alters one row's text or reason; measured 2026-11-22 on `95ccaf9`: 188 rows red live, every row red offline |
 | `tests/unit/test_forge_closure.py::test_the_oracle_shares_no_code_object_with_the_redactor` (0.17) | AC2, D3 independence: no shared `re.Pattern`/function/class/frozenset object, no import, no equal pattern source | import anything from `recording` into `closure`, or alias one pattern |
 | `::test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeration` (0.17) | D8: `HOST_TLDS` membership and shape, `EXTENSION_TLDS` absent, `REVERSE_DNS_HEADS`, `NON_HOST_TOKENS`, H1 for every scheme and `<local>@` lead, H2 for two versus three labels, the 128 ASCII delimiters | add or remove one code, accept two labels un-led, accept a `//` lead as H1 |
 | `::test_ipv4_rule_reserved_table_version_lead_and_led_addresses_by_enumeration` (0.17) | D8: every `IPV4_RESERVED` network, every version lead and archive tail, led public and private addresses as hosts, un-led public refused | drop one network, drop one lead |
@@ -1306,6 +1419,18 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 | `::test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate` (0.17) | D3 order, `find_secret_tokens` (a mailbox is not a secret, a `ghp_` token is) | reorder, restore the mailbox pattern |
 | `::test_userinfo_class_accepts_shell_variables` (0.17) | D1b: `${VAR}` and `$VAR` userinfo stripped, no corruption | drop `${}` from the class |
 | `::test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_recorder` (0.17) | D4: `redact_fixture(remote=, denylist=)` builds the same `K` as `record()` on the same exchanges | ignore `remote` |
+| `tests/unit/test_forge_closure.py::test_a_dotted_name_is_a_host_only_when_led_or_followed_by_construction` (0.18) | D8: every lead and every follow, the segment-start characters and the port digits one by one, the ordinary identifiers that are never hosts | widen the follow, drop the `//` lead, let a bare name through |
+| `::test_a_bare_dotted_host_in_prose_is_the_documented_residual` (0.18) | NG4-8: bare, written; known, residual; followed, unknown host | make a bare name a host |
+| `::test_a_percent_escape_is_never_part_of_a_label_run` (0.18) | D2: `%2F` and `%2f` before a run, one hex digit, a non-hex digit | read the escape as a label |
+| `::test_the_judge_reads_hosts_addresses_and_mailboxes_in_every_decoded_form` (0.18) | D2: encoded lead, segment, `@` and dots refused, encoded placeholders kept | judge the raw form only |
+| `::test_the_legacy_node_reader_never_raises_on_a_malformed_run` (0.18) | D3: every length and padding of a `MDQ6VXNl` run | pad twice |
+| `::test_a_bracketed_ipv6_literal_is_judged_like_an_ipv4_address` (0.18) | D8 IPv6: led, un-led, slices, documentation prefixes, the parser's accept and reject table | accept a slice, drop a prefix |
+| `::test_the_version_guard_of_a_led_address_is_observable` (0.18) | H07: a led address before `-` or `+` is a version | drop the guard |
+| `tests/unit/test_forge_recording_redaction.py::test_known_values_read_encoded_forms_and_replace_them_without_a_stray_percent` (0.18) | D2, D7 source 3: encoded host, namespace and repository learnt, replaced whole | read the raw form only |
+| `::test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors` (0.18) | D8, D5: namespace and repository after an IPv6 literal, a git author's name words | drop the `literal` follow, require a login |
+| `::test_css_at_rules_are_no_mention_and_the_other_handles_stay` (0.18) | D2: every at-rule keyword, upper-cased too | drop a keyword |
+| `::test_offline_roles_read_the_logins_under_the_keys_the_redaction_drops` (0.18) | D4: `legacy_roles(also=)` | ignore `also` |
+| `tests/unit/test_logging_cache_disabled_for_tests.py::test_6_capture_logs_sees_a_debug_event_after_the_level_filter` (0.18) | D4 test order: the wrapper class is reset before each test | remove the reset |
 | the unchanged 0.6–0.16 tests of `test_forge_recording_redaction.py` not retired in **What 0.17 removes or demotes** | D1, D1c, D2, D5, D6, the deny-list route and opacity, the conformance replay | as at 0.16 |
 | `tests/unit/test_forge_recording_regression_corpus.py` (0.14–0.16) | folded into the acceptance corpus and deleted (0.17): its rows are the `reg_*` rows | as at 0.16 |
 | `tests/unit/test_forge_conformance.py` (existing) | D4, C2 | as at 0.6 |
@@ -1318,11 +1443,11 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 
 ## Acceptance Criteria
 
-- [ ] AC1: the acceptance corpus passes, live and offline, with its `xfail` mark removed (`pytest -q tests/unit/test_forge_recording_acceptance_corpus.py` → `1 passed`); no row edited; the counts (rows, planted, ordinary, by source) written here by the implementer. Counts (implementer, 2026-11-22): 569 rows = 420 planted (a marker, or a refusal) + 149 ordinary = 518 written + 51 refused; by source 260 `reg_*` rows of the folded regression corpus (202 planted, 51 ordinary, 7 offline), 139 round-10 probes, 170 generated along the 0.17 axes. Measured at the branch head: 558 rows pass live and offline and 11 differ, the mark is removed and the test is red on those 11 and on nothing else: `reg_dropped_key_assignees_login_redacted`, `reg_dropped_key_mergedby_login_redacted`, `name_user_object_name_dropped_and_prose_word`, `email_dropped_key_local_part_in_prose` and `pid_known_repository_id_in_prose_replaced_by_synthetic` (the offline leg expects the transform to learn a value that only a key the fixture drops carries, which `_live_only_values` of the harness does not see), `reg_r10_prose_double_slash_host_known_from_remote_is_replaced_as_a_token` (expects `v1.js` replaced where `r10_i1_item3_proto_rel_host_from_remote` and `g_private_known_proto_rel_*`, same shape, expect it kept) and `r10_p22`, `r10_p23`, `r10_p25`, `r10_p26`, `r10_p27` (expect the 0.16 rewriting of a `//host/<ns>/<repo>/<path>` to `/org/project`, where D1b and rows `r10_a_proto_rel_*` keep the path). None is edited; the owner decides.
+- [x] AC1: the acceptance corpus passes, live and offline, with its `xfail` mark removed (`pytest -q tests/unit/test_forge_recording_acceptance_corpus.py` → `1 passed`); no row edited to match the code but the seven the owner authorised (amendment 0.18 (e)); the counts written here. Counts (implementer, 2026-11-22, 0.18): 724 rows = 505 planted (a marker, or a refusal) + 219 ordinary = 658 written + 66 refused; by source 260 `reg_*` rows of the folded regression corpus, 139 round-10 probes, 170 generated along the 0.17 axes and 155 `v17_*` rows of the verifier's probes (85 planted, 70 ordinary). Measured at `232a218`: every row passes live and offline.
 - [x] AC2: the oracle independence test passes (`test_the_oracle_shares_no_code_object_with_the_redactor`).
-- [x] AC3: a mutation run on `src/repoach/forge/closure.py` — every line of every reader and every set mutated by the operator classes of `tmp/r9/mutate.py` (constant, boundary, negation, deletion, set membership), run in a detached worktree with a verified green baseline, strict kill = rc 1 plus a `FAILED` line — leaves **0 non-equivalent survivors**; each equivalent survivor named with its proof; log written under `tmp/r11/mutate.log` and summarised here. Measured (implementer, `tmp/impl017/mutate.py`, seven detached worktrees, baseline green, kill = rc 1 plus a failure line): `closure.py` 1 220 sites, 1 176 killed, 21 mutants that cannot import, 15 equivalent survivors (14 country codes of `_ISO_COUNTRY_CODES` that are also in `EXTENSION_TLDS` and are subtracted anyway, and `_LEGACY_NODE_MAX` 40 to 41, which the `len % 4 == 1` alignment trims back to 40; each proved by comparing every public constant and the outputs of every reader on 4 000 and more inputs), 0 non-equivalent survivors; the functions this pass changed in `recording.py` (637 sites, 632 killed, 3 import failures), `record_forge_fixture.py` (184 sites, 182 killed) and `redact_forge_fixtures.py` (189 sites, 185 killed, 4 mutants of the next-word search that never terminate) leave 0. The same operator classes, applied by the AST tool `tmp/impl017/mutate.py` (comparison, boolean, negation removal, constants, literal elements, method swaps, dropped calls and `continue`).
-- [ ] AC4: C1 green; C2 with the rebuild byte-identical; C3 (live PR #316, `--trim 5`) green; figures written here with their commands. Measured: C2 `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, the rebuild from `origin/develop` with the two hand edits is byte-identical (0 diff lines, a second run changes 0 files), `git grep` for a forge host in `tests/fixtures/forge` → 0; C3 the six methods exit 0, 0 real-value hits in the six files and the six stderr files (38 deny-list entries loaded); C1 is red on the acceptance corpus's 11 rows only (AC1).
-- [ ] AC5: the full unit suite (`tmp/r6/clean_env.sh .venv/bin/python -m pytest -q tests/unit`), `ruff check`, `ruff format --check` (`python -P -m ruff`, the pinned version) and `repoach arch check --base origin/develop` → green, `edge-honesty: ok`, the cycle and conflict lines identical to `origin/develop`'s. Measured: `tmp/r6/clean_env.sh` full `tests/unit -n 4` → 4 704 passed, 64 skipped, 1 failed (`test_acceptance_corpus_live_and_offline`, the 11 rows of AC1); `ruff check` and `ruff format --check` (`python -P -m ruff` 0.15.4) clean; `repoach arch check --base origin/develop` rc 0, `edge-honesty: ok`; `repoach arch graph --check` 27 cycles and 5 conflicts, the same lines as `origin/develop` once `closure.py` leaves this spec's `owns.code` (it sat under SP-UNIVERSAL-FORGE's directory, a sixth conflict).
+- [x] AC3: a mutation run on `src/repoach/forge/closure.py` — every line of every reader and every set mutated by the operator classes of `tmp/impl017/mutate.py` (comparison, boolean, negation removal, constants, literal elements, method swaps, dropped calls and `continue`), run in detached worktrees with a verified green baseline, strict kill = rc 1 plus a `FAILED` line — leaves **0 non-equivalent survivors**; each equivalent survivor named with its proof; log written under `tmp/impl017/mutate.log` (0.17) and `tmp/fix017/mutate.log` (0.18) and summarised here. Measured at 0.18 (`tmp/fix017/mutate.py`, seven detached worktrees): `closure.py` 1 324 sites, 1 277 killed, 23 mutants that cannot import (a constant or a `+` mutated in `IPV4_RESERVED`, `_RFC5737`, `_IPV6_DOCUMENTATION` or `LOCAL_CHARS` raises at import), 16 equivalent survivors (14 country codes of `_ISO_COUNTRY_CODES` and `ac` of `_RESERVED_COUNTRY_CODES` that are also in `EXTENSION_TLDS` and are subtracted anyway, and `run[:40]` 40 to 41, which the `len % 4 == 1` alignment trims back to 40; each proved by comparing every public constant and the outputs of every reader on 4 000 and more inputs, `tmp/fix017/equiv.py`), 8 identical, 0 non-equivalent survivors. Two mutants of that run were real and are gone: `set(g) <= _HEX` of the IPv6 reader (always true for a group of four characters, an equivalent mutation kept in the code, rewritten `all(c in _HEX for c in g)`) and `count(":") > 3` (a global literal with exactly three colons, now pinned). The functions changed in `recording.py` (`known_values`, `path_identity`, `mentions`, `CSS_AT_RULES`, `_API_RESOURCES`): 430 sites at the first run, 337 killed, 93 survivors (90 in the at-rule set, which the test iterated instead of enumerating, `mentions`' code-span blanking and two `.casefold()` of `path_identity`), all killed after the tests and the exact-case rule of `afd7ef0` and `be0a518`; second run 267 sites, 266 killed, one survivor (`> 3` of the versioned prefix), killed by `03085ef`. `redact_forge_fixtures.py` (`redact_fixture`, `legacy_roles`, `_unclassified_logins`, final code) 114 sites, 112 killed, 2 non-terminating (the loop condition of the next free class word: the suite never ends), 0 survivors; two equivalent mutations of the first run (`args` and `kwargs` in the list read by `raw_logins`) are gone, the code reading the exchanges only (`232a218`). Logged in `tmp/fix017/mutate.log`.
+- [x] AC4: C1 green; C2 with the rebuild byte-identical; C3 (live PR #316, `--trim 5`) green; figures written here with their commands. Measured at `232a218`: C2 `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, the rebuild from `origin/develop` with the two hand edits is byte-identical (0 diff lines, 96 files, a second run changes 0 files), `git grep` for a forge host in `tests/fixtures/forge` → 0; C3 the six read methods exit 0, 0 real-value hits in the six files and their stderr (37 needles); C1 (`pytest -q` of the five files of the condition) → 261 passed.
+- [x] AC5: the full unit suite (`tmp/r6/clean_env.sh .venv/bin/python -m pytest -q tests/unit -n 4`), `ruff check`, `ruff format --check` (`python -P -m ruff`, the pinned version) and `repoach arch check --base origin/develop` → green, `edge-honesty: ok`, the cycle and conflict lines identical to `origin/develop`'s. Measured at `232a218`: `tmp/r6/clean_env.sh` full `tests/unit -n 4`, run twice → 4 720 passed, 64 skipped, 0 failed (4 784 collected); `ruff check` and `ruff format --check` (`python -P -m ruff`) clean; `repoach arch check --base origin/develop` rc 0, `edge-honesty: ok`; `repoach arch graph --check` 27 cycles and 5 conflicts, the same lines as `origin/develop` (at 0.17 the suite gave 4 703 passed and 2 failed, not the "4 704 passed, 1 failed" this line first said: `test_known_values_ids_ordering_and_json_in_strings` depended on the run order, D4).
 - [x] AC6: every symbol of **What 0.17 removes or demotes** marked delete is absent from `src/` and `scripts/` (`git grep -n <symbol>` → 0), every retired test named in its deleting commit, and no new regex of `recording.py` or the scripts recognises a `//`, `glab api` or mailbox shape for safety.
 - [x] AC7: `docs/security_posture.md` states D7, D8, D9 and the deletion in its own `docs(security)` commit; the spec is bumped once, in one `docs(specs)` commit.
 
