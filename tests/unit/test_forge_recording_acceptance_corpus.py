@@ -9175,7 +9175,7 @@ ROWS: tuple[Row, ...] = (
         residual=True,
     ),
     Row(
-        id="v18_v13_ipv6_unled_ula_path_NG4_2",
+        id="v18_v13_ipv6_unled_ula_path_NG4_10",
         source="verify018/probes.py",
         inp=Sample(body="see [fd00::1]/kvnteam/kvnbilling"),
         outcome=Written(text="see [fd00::1]/kvnteam/kvnbilling"),
@@ -9613,6 +9613,13 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="https://api.nuget.org/v3-flatcontainer/x/1.2.3.4/x.1.2.3.4.nupkg"),
     ),
     Row(
+        id="v20_encoded_lone_segment_in_title_NG4_11",
+        source="verify018/probes.py",
+        inp=Sample(title="https%3A%2F%2Fcode.kvncloud.io%2Fkvnteam", body="x"),
+        outcome=Written(text="x", title="https%3A%2F%2Fforge.example.com%2Fkvnteam"),
+        residual=True,
+    ),
+    Row(
         id="v20_version_label_with_separators",
         source="fable020/sweep.py",
         inp=Sample(body="Deployed Version: 1.8.0.252/linux and version = 1.8.0.252:8443 today"),
@@ -10030,11 +10037,11 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        799,
-        544,
+        800,
+        545,
         255,
         71,
-        15,
+        16,
     )
     assert all(not row.residual for row in refused)
     for row in residual:
