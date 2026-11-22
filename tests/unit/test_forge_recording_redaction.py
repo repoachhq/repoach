@@ -4719,12 +4719,12 @@ def test_record_trims_classifies_the_maintainer_and_names_its_refusals(
         tmp_path,
         extra,
         method="conversation_comments",
-        args=[7, "git.zqcorp.io"],
-        kwargs={"note": "see git.zqcorp.io and zqmainrepo"},
+        args=[7, "see git.zqargs.io"],
+        kwargs={"note": "at git.zqkw.io and zqmainrepo"},
         remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
     )
-    assert host_only["args"] == [7, "forge.example.com"]
-    assert host_only["kwargs"] == {"note": "see forge.example.com and project"}
+    assert host_only["args"] == [7, "see forge.example.com"]
+    assert host_only["kwargs"] == {"note": "at forge.example.com and project"}
     with pytest.raises(
         SystemExit, match=r"^refusing to record write method 'post_comment': fixtures never post$"
     ):
@@ -4890,3 +4890,30 @@ def test_offline_known_values_and_redaction_read_every_field_of_the_fixture() ->
     assert list(stamped) == sorted(stamped) and stamped["synthetic_user_ids"] == [1001]
     stamped_unsorted = redact_fixtures.redact_fixture(declared, forge="github")
     assert list(stamped_unsorted)[-1] == "synthetic_user_ids"
+
+
+def test_record_refuses_a_replay_that_disagrees_with_the_live_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The redacted replay must raise what the live call raised, or nothing is written."""
+    binary = tmp_path / "gh"
+    seen = {"calls": 0}
+
+    class _Flaky(GitHubForge):
+        def conversation_comments(self, number: int, *extra: Any, **_kw: Any) -> list[Any]:
+            self._spawn([str(binary), "api", "x"])
+            seen["calls"] += 1
+            if seen["calls"] == 1:
+                raise ForgeError("first call only")
+            return []
+
+    flaky = _Flaky(cwd=tmp_path, gh_path=str(binary), bot_login="repoach-bot")
+    cast(Any, flaky)._spawn = lambda argv, *, input_data=None: CommandResult(
+        0, "[]", "", list(argv)
+    )
+    with pytest.raises(
+        SystemExit,
+        match=r"^refusing to write a fixture whose redacted replay disagrees with the live call$",
+    ):
+        _record_through(monkeypatch, tmp_path, flaky, method="conversation_comments", args=[7])
+    assert not (tmp_path / "out").exists()
