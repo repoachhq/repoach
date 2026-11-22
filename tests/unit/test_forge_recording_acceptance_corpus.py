@@ -9539,6 +9539,49 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="ssh deploy@10.1.2.3 now"),
         outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
     ),
+    Row(
+        id="v20_doc_tags_in_prose_are_no_mention",
+        source="fable020/sweep.py",
+        inp=Sample(
+            body="/** @param x the value @returns the sum @throws Error @see other @var int */"
+        ),
+        outcome=Written(
+            text="/** @param x the value @returns the sum @throws Error @see other @var int */"
+        ),
+    ),
+    Row(
+        id="v20_language_annotations_in_prose_are_no_mention",
+        source="fable020/sweep.py",
+        inp=Sample(
+            body="add @Override and @SuppressWarnings; in Kotlin @JvmStatic, in Swift @objc @escaping"
+        ),
+        outcome=Written(
+            text="add @Override and @SuppressWarnings; in Kotlin @JvmStatic, in Swift @objc @escaping"
+        ),
+    ),
+    Row(
+        id="v20_css_at_rules_completed_are_no_mention",
+        source="fable020/sweep.py",
+        inp=Sample(
+            body="@color-profile and @custom-media { @config x; @font-palette-values --p {} }"
+        ),
+        outcome=Written(
+            text="@color-profile and @custom-media { @config x; @font-palette-values --p {} }"
+        ),
+    ),
+    Row(
+        id="v20_credential_before_at_is_no_mention",
+        source="fable020/sweep.py",
+        inp=Sample(body="DATABASE_URL=postgres://app:${DB_PASSWORD}@localhost:5432/db"),
+        outcome=Written(text="DATABASE_URL=postgres://app:${DB_PASSWORD}@localhost:5432/db"),
+    ),
+    Row(
+        id="v20_framework_annotation_is_a_mention_residual",
+        source="fable020/sweep.py",
+        inp=Sample(body="the @Autowired field is null, cc @zqxjdoe7"),
+        outcome=Written(text="the @author-2 field is null, cc @author"),
+        markers=("zqxjdoe7",),
+    ),
 )
 
 

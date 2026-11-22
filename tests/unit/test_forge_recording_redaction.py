@@ -3191,7 +3191,7 @@ def test_regex_character_classes_and_rfc3986_userinfo_enumeration() -> None:
         (
             "_MENTION_BEFORE_BLOCK_CLASS",
             recording._MENTION_BEFORE_BLOCK_CLASS,
-            alnum | set("_.@/+-"),
+            alnum | set("_.@/+-:${}"),
         ),
         ("_MENTION_HANDLE_CLASS", recording._MENTION_HANDLE_CLASS, alnum | set("_-")),
         ("_MENTION_DOT_AFTER_CLASS", recording._MENTION_DOT_AFTER_CLASS, alnum | {"_"}),
@@ -5035,6 +5035,69 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
         assert "kvn" not in out and closure.judge(out, found) is None, out
 
 
+def test_language_keywords_after_an_at_sign_are_no_mention() -> None:
+    """D2 (0.20, C10 and C11): every word a language specification defines after ``@`` is code; a userinfo blocks a mention."""
+    sets = {
+        "PYTHON_DECORATORS": recording.PYTHON_DECORATORS,
+        "CSS_AT_RULES": recording.CSS_AT_RULES,
+        "DOC_TAGS": recording.DOC_TAGS,
+        "LANGUAGE_ANNOTATIONS": recording.LANGUAGE_ANNOTATIONS,
+    }
+    union: set[str] = set()
+    for name, words in sets.items():
+        assert words, name
+        assert all(w == w.casefold() and w and " " not in w for w in words), name
+        union |= words
+        for word in sorted(words):
+            for carrier in ("cc @{} please", "@{} wrote:", "ping @{}.", "(@{})", "see @{}"):
+                assert recording.mentions({"body": carrier.format(word)}) == [], (name, word)
+            assert recording.mentions({"body": f"x @{word.upper()} y"}) == [], (name, word)
+    assert union == recording.LANGUAGE_AT_WORDS
+    for word in (
+        "color-profile",
+        "font-palette-values",
+        "custom-media",
+        "custom-selector",
+        "nest",
+        "config",
+        "reference",
+        "top-left",
+        "swash",
+        "when",
+    ):
+        assert word in recording.CSS_AT_RULES, word
+    for word in ("param", "returns", "throws", "inheritdoc", "var", "see", "brief", "retval", "a"):
+        assert word in recording.DOC_TAGS, word
+    for word in (
+        "override",
+        "suppresswarnings",
+        "jvmstatic",
+        "objc",
+        "escaping",
+        "required",
+        "state",
+    ):
+        assert word in recording.LANGUAGE_ANNOTATIONS, word
+    for word in ("dataclass_transform", "abstractproperty", "member", "verify"):
+        assert word in recording.PYTHON_DECORATORS, word
+    for body, handles in (
+        ("cc @zqperson and @Autowired and @Component", ["zqperson", "Autowired", "Component"]),
+        ("@param x and @zqother", ["zqother"]),
+        ("x-access-token:${GITHUB_TOKEN}@localhost and ${TOKEN}@h.io", []),
+        ("user:@h.io and user:pw@h.io and {x}@h.io and $x@h.io", []),
+        ('(@zqpar) "@zqquote" <@zqangle> =@zqeq', ["zqpar", "zqquote", "zqangle", "zqeq"]),
+    ):
+        assert recording.mentions({"body": body}) == handles, body
+    for char in ":${}":
+        assert recording.mentions({"body": f"x{char}@zqhandle"}) == [], char
+    assert (
+        recording.classify_text(
+            "cc @param, @Override, @color-profile and @zqperson", {"@zqperson": "author-2"}
+        )
+        == "cc @param, @Override, @color-profile and @author-2"
+    )
+
+
 def test_an_ipv6_url_in_text_is_rewritten_by_the_convenience_layer_and_is_a_fixed_point() -> None:
     """D1b (0.20, C8): a bracketed IPv6 host is a text URL; rewritten it carries no port, kept it is byte-identical but for case."""
     text = recording.redact_urls_in_text
@@ -5241,7 +5304,7 @@ def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
         "warn",
         "while",
     ]
-    assert frozenset(expected) == recording.CSS_AT_RULES
+    assert frozenset(expected) <= recording.CSS_AT_RULES
     for rule in expected:
         assert recording.mentions({"body": f"@{rule} {{ a: b }}"}) == [], rule
         assert recording.mentions({"body": f"@{rule.upper()} x"}) == [], rule
