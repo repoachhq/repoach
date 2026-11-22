@@ -488,15 +488,6 @@ _URL_BODY_DELIMITERS = "\"'<>()[]{}\\,`*|"
 _URL_BODY_CHAR = _char_class(_URL_BODY_DELIMITERS, negated=True, extra_escapes=(r"\s",))
 """One non-delimiter character of a URL body in free text (0.15 Pref 2, 0.16)."""
 
-_JSON_VALUE_OPENER_CLASS = _char_class(":[,")
-"""JSON token characters that may precede an opening quote of a whole string value (0.16 R9-D3)."""
-
-_QUOTE_CLASS = _char_class("\"'")
-"""Single or double quote characters allowed in HTML/CSS attribute leads (0.16 R9-D3)."""
-
-_HSPACE_CLASS = _char_class(" \t")
-"""Horizontal whitespace characters (0.16 R9-D3)."""
-
 
 _URL_IN_TEXT_RE = re.compile(
     rf"(?:https?|ssh|git|ftps?)://{_URL_USERINFO_PREFIX}"
@@ -579,56 +570,6 @@ The path holds at least one ``/``. A mailbox followed by ``:<port>/<path>``
 is read as a remote too (0.10): the doubt resolves toward redaction, so
 the mailbox goes with the rest (:func:`redact_urls_in_text`).
 """
-
-_PROTO_REL_LEAD_RE = re.compile(
-    rf"(?:(?P<json>{_JSON_VALUE_OPENER_CLASS}{_HSPACE_CLASS}*\")"
-    rf"|=(?:{_QUOTE_CLASS})?"
-    rf"|(?<!{_MENTION_DOT_AFTER_CLASS})url\((?:{_QUOTE_CLASS})?"
-    rf"|\]\("
-    rf"|<)$",
-    re.I,
-)
-"""Positive URL-context leads immediately before a protocol-relative ``//host/path`` (0.16 R9-D3)."""
-
-_PROTO_REL_BODY = (
-    rf"//{_URL_USERINFO_PREFIX}"
-    rf"{_SCP_HOST_LABEL_CLASS}+(?:\.{_SCP_HOST_LABEL_CLASS}+)+\.?"
-    rf"(?::[0-9]{{1,5}})?/"
-    rf"(?:{_URL_BODY_CHAR}|\((?:{_URL_BODY_CHAR}|\({_URL_BODY_CHAR}*\))*\))*"
-)
-"""Host-and-path body of a protocol-relative URL ``//host/path`` (0.16 R9-D3)."""
-
-_PROTO_REL_IN_TEXT_RE = re.compile(
-    rf"(?P<lead>(?P<json>{_JSON_VALUE_OPENER_CLASS}{_HSPACE_CLASS}*\")"
-    rf"|=(?:{_QUOTE_CLASS})?"
-    rf"|(?<!{_MENTION_DOT_AFTER_CLASS})url\((?:{_QUOTE_CLASS})?"
-    rf"|\]\("
-    rf"|<)"
-    rf"(?P<url>{_PROTO_REL_BODY})",
-    re.I,
-)
-"""Protocol-relative ``//host/path`` in a positive URL context (JSON value, ``=``, ``url(``, ``](``, ``<``; 0.16 R9-D3)."""
-
-_PROTO_REL_WHOLE_RE = re.compile(rf"^(?P<url>{_PROTO_REL_BODY})$", re.I)
-"""Protocol-relative ``//host/path`` occupying a whole decoded structured JSON string value (0.16 R9-D3)."""
-
-_TEXT_VALUE_LEAVES: frozenset[str] = PROSE_KEYS | {
-    "stdout",
-    "stderr",
-    "stdin",
-    "diff",
-    "source",
-    "case",
-}
-"""Leaf key names whose string values hold prose or code rather than standalone structured JSON values (0.16 R9-D3)."""
-
-
-def is_structured_json_path(path: str) -> bool:
-    """Whether a :func:`fixture_strings` ``path`` addresses a structured non-prose JSON value (0.16 R9-D3)."""
-    leaf = path.rsplit(".", 1)[-1]
-    if not leaf or leaf.startswith("["):
-        return False
-    return leaf not in _TEXT_VALUE_LEAVES
 
 
 FRAGMENT_ANCHOR_RE = re.compile(
@@ -851,50 +792,15 @@ def _normalize_kept_url(parts: SplitResult) -> str:
     )
 
 
-def _redact_proto_rel(raw_url: str) -> str:
-    """Redact one protocol-relative URL ``//host/path``, preserving kept public hosts without userinfo (0.16 R9-D3)."""
-    url, tail = _split_url_tail(raw_url)
-    try:
-        parts = urlsplit(f"https:{url}")
-    except ValueError as exc:
-        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-        return raw_url
-    host = parts.hostname or ""
-    if not host:
-        return raw_url
-    if "@" not in parts.netloc and _kept_host(host):
-        return _normalize_kept_url(parts).removeprefix("https:") + tail
-    redacted = redact_url(f"https:{url}")
-    return (redacted.removeprefix("https:") if redacted else url) + tail
-
-
-def _unredacted_proto_rel(raw_url: str) -> bool:
-    """Whether a protocol-relative URL carries an unallowed host or forbidden userinfo (0.16 R9-D3)."""
-    url, _tail = _split_url_tail(raw_url)
-    try:
-        parts = urlsplit(f"https:{url}")
-    except ValueError as exc:
-        _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-        return False
-    host = parts.hostname or ""
-    if not host:
-        return False
-    if not _is_allowed_host(host):
-        return True
-    return not _allowed_userinfo("https", parts.netloc)
-
-
-def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
-    """Redact every URL, protocol-relative URL in a positive URL context, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
+def redact_urls_in_text(text: str) -> str:
+    """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
     A URL goes through :func:`redact_url`, with trailing prose punctuation
     (``.,:;!?)]}>'"``) and boundary Markdown delimiters (`` ` ``, ``*``,
     ``|``, ``~``, ``_``) preserved outside the URL without being eaten
-    (0.13 R6-D1, 0.14 R7-D2). A protocol-relative ``//host/path`` is
-    redacted only in a positive URL context — a whole JSON or decoded
-    structured string value (``whole_value=True``), after ``="`` / ``='`` /
-    ``=``, inside ``url(`` or ``](``, or after ``<`` — so single-line
-    ``//`` code comments stay byte-identical (0.16 R9-D3). An scp remote
+    (0.13 R6-D1, 0.14 R7-D2). A protocol-relative ``//host/path`` is not
+    rewritten by shape: its host, namespace and repository are known values
+    (D7) and its path is kept (0.17). An scp remote
     ``<user>@<host>:<ns>/<repo>`` is normalised through it too (0.10): read
     as ``ssh://<user>@<host>/<ns>/<repo>``, redacted, and written back as
     ``git@forge.example.com:org/project``, its ``.git`` suffix kept and its
@@ -913,10 +819,6 @@ def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
     0.13 R6-D5, 0.14) becomes ``noreply@forge.example.com`` (or
     ``no-reply@forge.example.com``).
     """
-    if whole_value:
-        whole = _PROTO_REL_WHOLE_RE.match(text)
-        if whole is not None:
-            return _redact_proto_rel(whole.group("url"))
 
     def _one(match: re.Match[str]) -> str:
         start = match.start()
@@ -937,11 +839,6 @@ def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
         if _kept_host(host):
             return _normalize_kept_url(parts) + tail
         return (redact_url(url) or url) + tail
-
-    def _proto_rel(match: re.Match[str]) -> str:
-        if match.group("json") is not None and match.string[match.end() : match.end() + 1] != '"':
-            return match.group(0)
-        return match.group("lead") + _redact_proto_rel(match.group("url"))
 
     def _scp(match: re.Match[str]) -> str:
         host = match.group("host").casefold()
@@ -970,31 +867,30 @@ def redact_urls_in_text(text: str, *, whole_value: bool = False) -> str:
             return match.group(0)
         return f"{match.group('local').casefold()}@{PLACEHOLDER_HOST}"
 
-    with_urls = _PROTO_REL_IN_TEXT_RE.sub(_proto_rel, _URL_IN_TEXT_RE.sub(_one, text))
+    with_urls = _URL_IN_TEXT_RE.sub(_one, text)
     step = _NOREPLY_MAILBOX_RE.sub(_noreply, _SCP_IN_TEXT_RE.sub(_scp, with_urls))
     return _SYSTEM_NOREPLY_RE.sub(_system_noreply, step)
 
 
-def redact_urls_in_value(value: object, *, whole_value: bool = False) -> object:
+def redact_urls_in_value(value: object) -> object:
     """Redact URLs in a decoded value whose keys are kept (a fixture's ``result``).
 
     A string under a :data:`URL_KEYS` key goes through :func:`redact_url`
     (kept as is when it is not a URL); every other string through
-    :func:`redact_urls_in_text`, treating whole non-prose structured JSON
-    values as valid protocol-relative URL contexts (0.16 R9-D3).
+    :func:`redact_urls_in_text`.
     """
     if isinstance(value, dict):
         out: dict[str, object] = {}
         for key, item in value.items():
             if key in URL_KEYS and isinstance(item, str) and item:
-                out[key] = redact_url(item) or redact_urls_in_text(item, whole_value=True)
+                out[key] = redact_url(item) or redact_urls_in_text(item)
             else:
-                out[key] = redact_urls_in_value(item, whole_value=key not in _TEXT_VALUE_LEAVES)
+                out[key] = redact_urls_in_value(item)
         return out
     if isinstance(value, list):
-        return [redact_urls_in_value(v, whole_value=whole_value) for v in value]
+        return [redact_urls_in_value(v) for v in value]
     if isinstance(value, str):
-        return redact_urls_in_text(value, whole_value=whole_value)
+        return redact_urls_in_text(value)
     return value
 
 
@@ -1628,26 +1524,6 @@ PUBLIC_FORGE_DOMAINS: tuple[str, ...] = ("github.com", "gitlab.com", "githubuser
 
 class NeedleError(Exception):
     """A needle the oracle cannot judge (too short, or a class word or placeholder); the message names its kind and ordinal."""
-
-
-def _is_slash_led(
-    before: str, *, text: str = "", url_end: int = 0, whole_value: bool = False
-) -> bool:
-    """Whether ``before`` ends in a URL ``://`` or positive-context protocol-relative ``//`` lead (0.16 R9-D3)."""
-    if not before.endswith("//"):
-        return False
-    if before.endswith("://"):
-        return True
-    if whole_value and before == "//" and not any(ch.isspace() for ch in text):
-        return True
-    lead_match = _PROTO_REL_LEAD_RE.search(before[:-2])
-    if lead_match is None:
-        return False
-    if lead_match.group("json") is not None:
-        rest = text[url_end:]
-        close_quote = rest.find('"')
-        return close_quote != -1 and not any(ch.isspace() for ch in rest[:close_quote])
-    return True
 
 
 def remote_location(remote: str) -> tuple[str | None, tuple[str, ...]]:
