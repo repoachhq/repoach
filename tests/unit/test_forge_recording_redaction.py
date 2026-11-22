@@ -5043,10 +5043,62 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
 
 def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
     """D2 (0.18): ``@font-face`` and every at-rule keyword of CSS, Sass and Tailwind is a stylesheet, not a handle."""
-    for rule in sorted(recording.CSS_AT_RULES):
+    expected = [
+        "apply",
+        "at-root",
+        "charset",
+        "container",
+        "content",
+        "counter-style",
+        "custom-variant",
+        "debug",
+        "document",
+        "each",
+        "else",
+        "error",
+        "extend",
+        "font-face",
+        "font-feature-values",
+        "for",
+        "forward",
+        "function",
+        "if",
+        "import",
+        "include",
+        "keyframes",
+        "layer",
+        "media",
+        "mixin",
+        "namespace",
+        "page",
+        "plugin",
+        "position-try",
+        "property",
+        "responsive",
+        "return",
+        "scope",
+        "screen",
+        "source",
+        "starting-style",
+        "supports",
+        "tailwind",
+        "theme",
+        "use",
+        "utility",
+        "variant",
+        "variants",
+        "view-transition",
+        "viewport",
+        "warn",
+        "while",
+    ]
+    assert frozenset(expected) == recording.CSS_AT_RULES
+    for rule in expected:
         assert recording.mentions({"body": f"@{rule} {{ a: b }}"}) == [], rule
         assert recording.mentions({"body": f"@{rule.upper()} x"}) == [], rule
     assert recording.mentions({"body": "@font-face { src: url(x) } cc @zqperson"}) == ["zqperson"]
+    assert recording.mentions({"body": "@`code`zqword"}) == []
+    assert recording.mentions({"body": "x`code`@zqother"}) == ["zqother"]
     assert recording.mentions({"body": "@media-person and @fontface"}) == [
         "media-person",
         "fontface",
@@ -5083,3 +5135,19 @@ def test_offline_roles_read_the_logins_under_the_keys_the_redaction_drops() -> N
     assert json.loads(out["calls"][1]["stdout"])["body"] == (
         "Assigned to author-2, thanks @author-2 and zqmerger"
     )
+
+
+def test_offline_redaction_rewrites_urls_in_arguments_keyword_arguments_and_results() -> None:
+    """D1b, D4: a URL of ``args``, ``kwargs`` or ``result`` keeps its shape with the placeholder namespace and repository."""
+    data = {
+        "forge": "github",
+        "method": "m",
+        "args": ["https://github.com/zqnsone/zqrepoone/pull/12", 7],
+        "kwargs": {"url": "https://github.com/zqnstwo/zqrepotwo/pull/13"},
+        "calls": [],
+        "result": "https://github.com/zqnsthree/zqrepothree/pull/14",
+    }
+    out = redact_fixtures.redact_fixture(data, forge="github")
+    assert out["args"] == ["https://forge.example.com/org/project/pull/12", 7]
+    assert out["kwargs"] == {"url": "https://forge.example.com/org/project/pull/13"}
+    assert out["result"] == "https://forge.example.com/org/project/pull/14"
