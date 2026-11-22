@@ -4813,3 +4813,80 @@ def test_build_roles_keeps_a_mention_when_a_longer_login_follows_and_skips_the_k
     assert rec.build_roles([], bot="", maintainer="zqmaint", author="zqmaint") == {
         "zqmaint": "maintainer"
     }
+
+
+def test_offline_roles_by_enumeration_of_orders_numbering_and_mention_text() -> None:
+    """D4: the order a stem and its bot are met in, the numbering after a stem, longer logins first, mention-only words."""
+    short_mention = {"body": "cc @ci"}
+    short_bot = {"user": {"login": "ci[bot]"}}
+    assert redact_fixtures.legacy_roles(_roles_data(short_mention, short_bot)) == {"ci[bot]": "bot"}
+    assert redact_fixtures.legacy_roles(_roles_data(short_bot, short_mention)) == {"ci[bot]": "bot"}
+    bot = {"user": {"login": "zqbot[bot]"}, "body": "cc @zqbot"}
+    other = {"user": {"login": "zqother"}}
+    assert redact_fixtures.legacy_roles(_roles_data(bot, other)) == {
+        "zqbot[bot]": "bot",
+        "zqother": "author-2",
+        "zqbot": "bot",
+    }
+    assert redact_fixtures.legacy_roles(_roles_data(other, bot)) == {
+        "zqother": "author-2",
+        "zqbot[bot]": "bot",
+        "zqbot": "bot",
+    }
+    upper_mention = _roles_data({"user": {"login": "zqbot[bot]"}}, {"body": "cc @ZQBOT"})
+    assert redact_fixtures.legacy_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
+    mention_text = redact_fixtures._mention_text
+    assert mention_text("zqname-x and zqname", {"zqname": "author", "zqname-x": "author-2"}) == (
+        "author-2 and author"
+    )
+    assert mention_text("zqmention and @zqmention", {"@zqmention": "author-2"}) == (
+        "zqmention and @author-2"
+    )
+    assert mention_text("@zqbot zqbot[bot] :owner", {"zqbot[bot]": "bot", "owner": "author"}) == (
+        "@bot bot :owner"
+    )
+    assert mention_text("x", {}) == "x"
+
+
+def test_offline_known_values_and_redaction_read_every_field_of_the_fixture() -> None:
+    """D4: arguments, keyword arguments, results and the remote feed the known values; key order is kept."""
+    data = {
+        "forge": "github",
+        "method": "reviews",
+        "args": ["see git.zqcorp.io"],
+        "kwargs": {"note": "at git.acme.io"},
+        "calls": [],
+        "result": None,
+    }
+    known = redact_fixtures.fixture_known(data, remote="git@git.remote.io:zqgroup/zqmainrepo.git")
+    hosts = known.values("host")
+    assert {"git.zqcorp.io", "git.acme.io"} <= set(hosts)
+    assert known.values("segment") == ("zqgroup", "zqmainrepo")
+    assert redact_fixtures.fixture_known({"calls": []}).values("login") == ()
+    assert ("login", "a") in redact_fixtures.fixture_known(
+        {"calls": []}, roles={"a": "author"}
+    ).entries
+    default_forge = inspect.signature(redact_fixtures.fixture_known).parameters["forge"].default
+    assert default_forge == "github"
+    url = "https://github.com/zqpubown/zqpubrepo?tab=readme"
+    fixture = {
+        "forge": "github",
+        "method": "reviews",
+        "args": [url],
+        "kwargs": {"k": url},
+        "calls": [],
+        "result": {"link": url, "body": url},
+    }
+    out = redact_fixtures.redact_fixture(fixture, forge="github")
+    placeholder = "https://forge.example.com/org/project"
+    assert out["args"] == [placeholder]
+    assert out["kwargs"] == {"k": placeholder}
+    assert out["result"]["body"] == placeholder
+    assert list(out) == ["forge", "method", "args", "kwargs", "calls", "result"]
+    ordered = redact_fixtures.redact_fixture(dict(sorted(fixture.items())), forge="github")
+    assert list(ordered) == sorted(ordered)
+    declared = {**fixture, "calls": [_exchange({"user": {"login": "author", "id": 74928163}})]}
+    stamped = redact_fixtures.redact_fixture(dict(sorted(declared.items())), forge="github")
+    assert list(stamped) == sorted(stamped) and stamped["synthetic_user_ids"] == [1001]
+    stamped_unsorted = redact_fixtures.redact_fixture(declared, forge="github")
+    assert list(stamped_unsorted)[-1] == "synthetic_user_ids"
