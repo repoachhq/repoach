@@ -5084,6 +5084,8 @@ def test_known_values_read_a_gitlab_commit_objects_author_and_committer_names() 
     )
     alone = {"author_name": "Kazimir Zqnorek", "title": "x"}
     assert _kinds(needles(_one_call(alone), roles={}), "name") == []
+    mailbox_alone = {"author_email": "kaz@zqmail.io", "title": "x"}
+    assert _kinds(needles(_one_call(mailbox_alone), roles={}), "mailbox") == []
 
 
 def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
