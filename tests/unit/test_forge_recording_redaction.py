@@ -5035,6 +5035,42 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
         assert "kvn" not in out and closure.judge(out, found) is None, out
 
 
+def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:
+    """D7 source 3 (0.20, NG4-11): a text path yields values only with a repository or through an API root."""
+    for body, segments in (
+        ("open https://code.kvncloud.io/docs and read the docs", []),
+        ("see //code.kvncloud.io/kvnteam now", []),
+        ("curl https://code.kvncloud.io/explore/", []),
+        ("https://code.kvncloud.io/kvnteam/kvnbilling", ["kvnteam", "kvnbilling"]),
+        ("https://code.kvncloud.io/kvnteam/kvnbilling/issues/5", ["kvnteam", "kvnbilling"]),
+        ("https://api.kvncloud.io/users/kvnperson", ["kvnperson"]),
+        ("https://api.kvncloud.io/orgs/kvnteam/repos", ["kvnteam"]),
+        ("https://api.kvncloud.io/repos/kvnteam/kvnbilling/pulls", ["kvnteam", "kvnbilling"]),
+        ("https://api.kvncloud.io/api/v3/users/kvnperson", ["kvnperson"]),
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert _kinds(found, "segment") == segments, body
+    found = needles(
+        _one_call({"body": "open https://code.kvncloud.io/docs and read the docs"}), roles={}
+    )
+    assert recording.replace_known("read the docs", found) == "read the docs"
+    for root in sorted(recording._API_ROOTS):
+        assert recording._api_route([root, "x"]) and recording._api_route(["", root.upper(), "x"])
+    assert not recording._api_route([]) and not recording._api_route(["", ""])
+    assert not recording._api_route(["docs"]) and not recording._api_route(["x", "users"])
+    instance = needles(
+        _one_call(
+            {
+                "body": "see https://git.zqcorp.io/explore and https://git.zqcorp.io/zqgroup/zqother/-/jobs/5"
+            }
+        ),
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    assert "explore" not in _kinds(instance, "segment")
+    assert {"zqgroup", "zqother"} <= set(_kinds(instance, "segment"))
+
+
 def test_nothing_is_read_after_a_placeholder_class_host() -> None:
     """D7 source 3 (0.20, NG4-12): a placeholder-class or public host names no one, so its path is never read, IPv4, IPv6 and name alike."""
     for body in (

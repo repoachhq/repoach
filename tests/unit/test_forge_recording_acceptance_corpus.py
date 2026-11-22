@@ -8168,7 +8168,7 @@ ROWS: tuple[Row, ...] = (
             remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
             url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
         ),
-        outcome=Written(text="forge.example.com/org"),
+        outcome=Written(text="forge.example.com/assets"),
         markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7", "74928163"),
     ),
     Row(
@@ -9356,6 +9356,41 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="see //[fd00::1]/kvnteam/kvnbilling/x"),
         outcome=Written(text="see //forge.example.com/org/project/x"),
         markers=("fd00::1", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_lone_segment_private_host_url_docs_word_kept",
+        source="fable020/sweep.py",
+        inp=Sample(body="open https://code.kvncloud.io/docs and read the docs"),
+        outcome=Written(text="open https://forge.example.com/org and read the docs"),
+        markers=("code.kvncloud.io",),
+    ),
+    Row(
+        id="v20_lone_segment_private_ipv4_url_health_word_kept",
+        source="fable020/sweep.py",
+        inp=Sample(body="curl http://192.168.1.10:8080/health shows health"),
+        outcome=Written(text="curl http://forge.example.com/org shows health"),
+        markers=("192.168.1.10",),
+    ),
+    Row(
+        id="v20_lone_segment_proto_rel_NG4_11",
+        source="fable020/sweep.py",
+        inp=Sample(body="see //code.kvncloud.io/kvnteam now"),
+        outcome=Written(text="see //forge.example.com/kvnteam now"),
+        markers=("code.kvncloud.io",),
+    ),
+    Row(
+        id="v20_two_segments_proto_rel_reads_namespace",
+        source="fable020/sweep.py",
+        inp=Sample(body="see //code.kvncloud.io/kvnteam/kvnbilling now"),
+        outcome=Written(text="see //forge.example.com/org/project now"),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v20_api_root_users_reads_owner",
+        source="fable020/sweep.py",
+        inp=Sample(body="GET https://api.kvncloud.io/users/kvnperson for kvnperson"),
+        outcome=Written(text="GET https://forge.example.com/users/org for org"),
+        markers=("api.kvncloud.io", "kvnperson"),
     ),
 )
 

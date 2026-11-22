@@ -1820,6 +1820,19 @@ def _follow_segments(segments: list[str], *, full: bool) -> list[str]:
     return named[:2]
 
 
+def _api_route(path: Sequence[str]) -> bool:
+    """Whether ``path`` names an owner through an API root (``users/<u>``, ``repos/<o>/<r>``, ``api/v<N>/…``).
+
+    A text path names someone only with both a namespace and a
+    repository, or through such a root; a lone segment after a host
+    (``/docs``, ``/health``, ``/explore``) is a page, not an identity
+    (D7 source 3, NG4-11), so the word is not learnt and not replaced
+    wherever else it stands.
+    """
+    named = [s for s in path if s]
+    return bool(named) and named[0].casefold() in _API_ROOTS
+
+
 def _path_after(text: str, end: int) -> list[str]:
     """The path segments written right after a host that ends at ``end``: ``/<a>/<b>`` or scp ``:<a>/<b>``."""
     lead = text[end : end + 1]
@@ -1897,6 +1910,8 @@ def known_values(
 
     def _segments(path: Sequence[str], *, hard: bool) -> None:
         identity = path_identity(list(path))
+        if not hard and identity.repository is None and not _api_route(path):
+            return
         for segment in identity.namespace:
             _add("segment", segment, PLACEHOLDER_NAMESPACE, hard=hard)
         if identity.repository:
