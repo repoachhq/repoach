@@ -619,7 +619,7 @@ def _ipv6(text: str) -> ipaddress.IPv6Address | None:
     """``text`` as an IPv6 address in hex groups, its brackets dropped, else ``None``."""
     body = text.strip("[]")
     mapped = body.rpartition(":")[2]
-    if ":" in body and "." in mapped:
+    if "." in mapped:
         if _ipv4(mapped) is None:
             return None
         body = body[: len(body) - len(mapped)] + "0:0"
