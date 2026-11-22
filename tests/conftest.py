@@ -57,8 +57,15 @@ def _disable_structlog_logger_cache_for_tests() -> None:
     resetting it before EACH test (not once per session) is required: a
     fixture that ran only at session start would not survive any later
     CLI-invoking test re-enabling the flag for everything after it.
+
+    ``configure_logging`` also installs a wrapper class that filters at
+    the configured level (INFO by default), so a ``debug`` event of a
+    later test never reaches ``capture_logs`` in the same worker: the
+    wrapper is reset to structlog's own default, which filters nothing.
     """
-    structlog.configure(cache_logger_on_first_use=False)
+    structlog.configure(
+        cache_logger_on_first_use=False, wrapper_class=structlog.make_filtering_bound_logger(0)
+    )
 
 
 @pytest.fixture(autouse=True)

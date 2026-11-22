@@ -65,3 +65,14 @@ def test_4_capture_logs_sees_the_captured_event() -> None:
 
     assert entries != []
     assert any(entry["event"] == "captured_event" for entry in entries)
+
+
+def test_5_a_last_cli_invoking_test_installs_the_level_filter() -> None:
+    configure_logging()
+
+
+def test_6_capture_logs_sees_a_debug_event_after_the_level_filter() -> None:
+    with capture_logs() as entries:
+        _target_log.debug("captured_debug_event")
+
+    assert [entry["event"] for entry in entries] == ["captured_debug_event"]
