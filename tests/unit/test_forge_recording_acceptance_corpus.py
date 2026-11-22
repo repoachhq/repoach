@@ -9521,6 +9521,24 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="see http://[2001:DB8::1]:8080/docs"),
         outcome=Written(text="see http://[2001:db8::1]:8080/docs"),
     ),
+    Row(
+        id="v20_mailbox_on_loopback_address_written",
+        source="fable020/sweep.py",
+        inp=Sample(body="ssh root@127.0.0.1 and scp x deploy@0.0.0.0:/tmp"),
+        outcome=Written(text="ssh root@127.0.0.1 and scp x deploy@0.0.0.0:/tmp"),
+    ),
+    Row(
+        id="v20_mailbox_on_rfc5737_address_written",
+        source="fable020/sweep.py",
+        inp=Sample(stderr="Permission denied for admin@203.0.113.9 (publickey)."),
+        outcome=Written(text="Permission denied for admin@203.0.113.9 (publickey)."),
+    ),
+    Row(
+        id="v20_mailbox_on_private_address_refused",
+        source="fable020/sweep.py",
+        inp=Sample(body="ssh deploy@10.1.2.3 now"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
 )
 
 

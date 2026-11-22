@@ -1376,6 +1376,36 @@ def test_a_quad_after_a_single_slash_is_a_version_and_a_comparator_allows_spaces
     assert [h.host for h in closure.hosts("pkg ==\n8.8.8.8:80")] == ["8.8.8.8"]
 
 
+def test_a_mailbox_on_a_placeholder_address_names_no_one() -> None:
+    """D8 mailbox (0.20, C9): loopback, unspecified, broadcast and RFC 5737 hosts are documentation hosts for a mailbox."""
+    none = closure.Known(())
+    for text in (
+        "ssh root@127.0.0.1",
+        "deploy@0.0.0.0",
+        "x@255.255.255.255",
+        "admin@203.0.113.9",
+        "a@192.0.2.1.",
+        "mailto:ops@198.51.100.7",
+        "noreply@127.0.0.1",
+    ):
+        boxes = closure.mailboxes(text)
+        assert len(boxes) == 1 and closure.is_literal_mailbox(boxes[0]), text
+        assert closure.judge(text, none) is None, text
+    for text in (
+        "jane@10.0.0.5",
+        "root@104.16.0.1",
+        "x@224.0.0.251",
+        "x@100.64.0.1",
+        "x@0.0.0.1",
+        "user:pw@127.0.0.1",
+        "x-access-token:${T}@0.0.0.0",
+        "author@forge.example.com",
+    ):
+        boxes = closure.mailboxes(text)
+        assert boxes and not closure.is_literal_mailbox(boxes[-1]), text
+        assert closure.judge(text, none) is not None, text
+
+
 def test_json_and_hex_string_escapes_are_a_decoded_layer() -> None:
     r"""D3, D2 (0.20, C7): ``\/`` and ``\xHH`` are peeled like ``\uXXXX``, so an escaped URL is judged as its plain form."""
     none = closure.Known(())

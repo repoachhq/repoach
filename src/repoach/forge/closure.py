@@ -822,10 +822,18 @@ def mailboxes(text: str) -> list[Mailbox]:
 
 
 def is_literal_mailbox(box: Mailbox) -> bool:
-    """Whether ``box`` is a placeholder or a documentation literal rather than a personal mailbox."""
+    """Whether ``box`` is a placeholder or a documentation literal rather than a personal mailbox.
+
+    A placeholder-class address (loopback, unspecified, broadcast, RFC
+    5737) is a documentation host for a mailbox too: ``root@127.0.0.1``
+    names no one, like ``root@localhost``. ``forge.example.com`` is not
+    (NG4-5): only ``git@`` and the noreply placeholders stand on it.
+    """
     local, host = box.local.casefold().lstrip("._%+-$"), _canonical_host(box.host)
     if local == "git" and is_placeholder_host(host):
         return True
+    if is_address(host) and is_placeholder_host(host):
+        return ":" not in local
     if host == "forge.example.com" and local in ("noreply", "no-reply"):
         return True
     suffix = ".users.noreply.forge.example.com"
