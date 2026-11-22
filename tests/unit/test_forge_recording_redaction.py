@@ -3943,6 +3943,12 @@ def test_path_identity_names_the_namespace_and_the_repository_by_enumeration() -
     assert identity(["api", "v3", "orgs", "zqo", "x"]).segments == ["api", "v3", "orgs", "org", "x"]
     assert identity(["api", "v3", "apps", "zqa", "x"]).segments == ["api", "v3", "apps", "org", "x"]
     assert identity(["api", "x", "repos", "zqo", "zqr"]).repository == "zqr"
+    bare = identity(["api", "v3", "repos"])
+    assert (bare.segments, bare.namespace, bare.repository) == (
+        ["org", "project"],
+        ("api", "v3"),
+        "repos",
+    )
     assert identity(["api", "v3", "gists", "zqo", "zqr"]).segments == ["org", "project"]
     assert identity(["api", "v4", "projects", "123"]) == recording.PathIdentity(
         ["api", "v4", "projects", "123"]
