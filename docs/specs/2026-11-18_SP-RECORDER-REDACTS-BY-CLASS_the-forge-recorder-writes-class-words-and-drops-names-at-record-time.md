@@ -8,7 +8,7 @@ created: 2026-11-18
 updated: 2026-11-22
 
 owns:
-  code: [src/repoach/forge/closure.py, scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_regression_corpus.py, tests/unit/test_forge_recording_acceptance_corpus.py, tests/unit/test_forge_closure.py]
+  code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_regression_corpus.py, tests/unit/test_forge_recording_acceptance_corpus.py, tests/unit/test_forge_closure.py]
   resources: []
 
 depends_on: [SP-UNIVERSAL-FORGE, SP-SCRUB-PERSONAL-DATA-AT-HEAD]
@@ -751,8 +751,9 @@ whole behaviour row by row.
      form `user_id_key` names (the number, its digit string, the legacy
      node id padded and unpadded, the current `U_` node id — kind `id`),
      every `id` of a repository object (kind `id`), a user object's `name`
-     (kind `name`: the whole value and each of its words of at least
-     `NEEDLE_MIN_LENGTH` letters or digits), a user object's `email`,
+     (kind `name`: the whole value, which is judged but not replaced, and
+     each of its words of at least `NEEDLE_MIN_LENGTH` letters or digits,
+     which are replaced: row `name_multiword_name_in_title`), a user object's `email`,
      `public_email` or `commit_email` (kind `mailbox`: the whole mailbox
      and its local part when at least `NEEDLE_MIN_LENGTH`; its host is a
      `host` value), the host of every URL under `URL_KEYS` and of the
@@ -764,11 +765,14 @@ whole behaviour row by row.
   2. **the deny-list** (kind `deny-list`; a numeric entry also in its two
      node-id forms);
   3. **the text reader of the oracle** (D8, `closure.hosts(text)`): every
-     host-shaped token found in any string of the raw exchanges is a
+     host-shaped token found in any string of the raw exchanges that is
+     neither a placeholder-class host nor on the public allowlist is a
      `host` value, and the namespace and repository of the path that
-     follows it (`/<a>/<b>`, through `path_identity`) are `segment`
-     values when the host is neither a public forge's, nor on the public
-     allowlist, nor a placeholder-class host (D8); a `projects/<a>%2F<b>`
+     follows it are `segment` values when the host is not a public
+     forge's (through `path_identity`: every segment of a URL behind a
+     scheme on the recorded instance, the first two `/<a>/<b>` after any
+     other lead, so `//cdn.example.io/<ns>/<repo>/app.js` keeps
+     `app.js`; rows `r10_a_proto_rel_*`, `reg_url_ftps_*`); a `projects/<a>%2F<b>`
      token in any string yields `a` and `b` as segments; a project id by
      D9 is an `id` value.
   A value shorter than `NEEDLE_MIN_LENGTH` (4) or equal to a class word
@@ -778,13 +782,19 @@ whole behaviour row by row.
   comes from source 3 (a third party's short segment must not make a
   recording unrecordable; the host itself is still a value). A
   `NON_PERSON_LOGINS` login, with or without `[bot]`, is no value; a
-  `[bot]` login's stem follows D2.
+  `[bot]` login's stem follows D2: its `@<stem>` mention is a login value
+  always, and its bare stem only when the recording mentions it (rows
+  `reg_renovate_with_actions_checkout_title_and_docs_github` and
+  `r10_o32_renovate_mend_io_and_docs_renovatebot`). The deny-list entries
+  stand in `Known` as kind `deny-list`, judged by `residual` after the six
+  kinds and never replaced.
   **Replacement** (`replace_known(text, known, mapping) -> str`): every
   value is replaced in every string of the fixture — every exchange's
   stdout (JSON values and raw text alike), stdin, stderr and argv, the
-  method's `args` and `kwargs`, `case`, `source` after its head, every
+  method's `args` and `kwargs`, `source` after its head, every
   key outside `CODE_KEYS` being judged but never rewritten (a forge reads
-  it) — by its class token: a login by its role word (D2), a host by
+  it), and `case` being judged but never rewritten (it is the author's own
+  word: rows `reg_case_field_*` refuse a known value in it) — by its class token: a login by its role word (D2), a host by
   `forge.example.com`, a namespace by `org`, a repository by `project`, a
   user id by its synthetic number and a node id by `U_<n>` (D1c), a
   repository id by its synthetic `2001..2999` number, a name word and a
@@ -821,7 +831,8 @@ whole behaviour row by row.
     `REVERSE_DNS_HEADS` (`com`, `org`, `net`, `io`, `dev`, `me`, `co`,
     `edu`, `gov`: Java/Android/Maven reverse-DNS names such as
     `com.example.app` and `org.apache.commons.io`), and the run not in
-    `NON_HOST_TOKENS` (an explicit, initially empty frozenset: an
+    `NON_HOST_TOKENS` (an explicit frozenset, `self.config.dev` since row
+    `code_python_comments_and_dotted_identifiers`: an
     over-refusal found later is fixed by adding the exact token there,
     never by widening a rule). A protocol-relative `//` lead is **not**
     H1: `//<run>` is judged by H2, so `x := 1 //cfg.dev/env/prod` is a
@@ -848,7 +859,8 @@ whole behaviour row by row.
   - **IPv4**: a dotted quad with token boundaries, not preceded by `v`,
     `V`, `==`, `>=`, `<=`, `~=`, `!=` or `version` and not followed by
     `-`, `+`, `.tar`, `.whl`, `.zip`, `.gz` (the 0.10 version rule, moved
-    here with `IPV4_RESERVED`): led (H1) it is a host; un-led it is judged
+    here with `IPV4_RESERVED`): led (H1, and, for an address only, by
+    `//`: rows `g_ipv4_*_led_proto_rel_*`) it is a host; un-led it is judged
     only when **public** (outside `IPV4_RESERVED`), reason `public
     address`; an un-led private, loopback or RFC 5737 address is ordinary
     text (`10.0.0.12:5432`, `127.0.0.1:8000`, `203.0.113.9`);
@@ -867,7 +879,10 @@ whole behaviour row by row.
     recorded person's, so it is a `host` value and becomes the
     placeholder;
   - **mailbox** (`mailboxes(text)`): `<local>@<host>` with `local` a
-    non-empty run of `LOCAL_CHARS` and `host` a label run or an IPv4; it
+    run of `LOCAL_CHARS` holding a letter or a digit, its `mailto:` prefix
+    dropped and its leading `._%+-$` ignored when judging the literals
+    (`_git@forge.example.com`, `+git@…`, diff markers), and `host` a label
+    run or an IPv4; it
     is a **literal** when the whole string is `git@<placeholder-class
     host>`, `noreply@forge.example.com`, `no-reply@forge.example.com`,
     `<class word>@users.noreply.forge.example.com` (the D1b noreply
@@ -992,10 +1007,11 @@ whole behaviour row by row.
   `api/v<N>/projects/<n>` path, a web `projects/<n>/merge_requests/42`
   path) and the `id` of every repository object name a project; each is
   an `id` value of `K` (D7) and is remapped to `2001..2999`
-  (`UserIdMap.for_projects`, `synthetic_project_ids`, D1c) in every
-  position, the convenience layer never turning the number into
-  `project` (`path_identity` treats `projects/<digits>` as an id
-  segment). Four digits and fewer are never ids (`projects/2026/q1.md`,
+  (`UserIdMap.for_projects`, D1c) in every position, the convenience
+  layer never turning the number into `project` (`path_identity` treats
+  `projects/<digits>` as an id segment). `synthetic_project_ids` declares
+  the `id` of a repository object only: a synthetic number standing in
+  text has four digits and is no project id. Four digits and fewer are never ids (`projects/2026/q1.md`,
   `/projects/2025/architecture.md`, `glab api /projects/42/issues`,
   `gitlab.example.com/api/v4/projects/1234/…` stay byte-identical; a
   self-hosted project numbered below 10 000 is the named residual,
@@ -1216,10 +1232,10 @@ ids declared) stand.
 ## Interface
 
 Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **What 0.17 removes or demotes**):
-- `src/repoach/forge/closure.py`: `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `NON_HOST_TOKENS`, `LOCAL_CHARS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 24 registrable suffixes), `is_placeholder_host(host)`, `is_public_host(host)`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `node_id_numbers(text) -> list[str]`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `unknown host`, `public address`, `unknown mailbox`.
-- `src/repoach/forge/recording.py`: `known_values(raw, *, roles, remote="", denylist=(), min_length=4) -> Known`, `replace_known(text, known, mapping) -> str`, `Known.mapping()`, `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `_PROJECT_ID_RE`, `project_id_values` (D9), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
+- `src/repoach/forge/closure.py`: `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `NON_HOST_TOKENS`, `LOCAL_CHARS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 24 registrable suffixes), `is_placeholder_host(host)`, `is_public_host(host)`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `unknown host`, `public address`, `unknown mailbox`.
+- `src/repoach/forge/recording.py`: `known_values(raw, *, roles, remote="", denylist=(), min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `_PROJECT_ID_RE`, `project_id_values` (D9), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
 - `scripts/record_forge_fixture.py`: `refuse_unclassified(fixture, denylist, known)`, `generic_class` (home path only), `build_roles`, `Denylist`, `read_denylist`, `origin_url`, `record`, the CLI unchanged.
-- `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=())`, `fixture_known(data, *, remote, denylist)`, `ResidualValueError`, `run`, the CLI unchanged.
+- `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=())`, `fixture_known(data, *, roles=None, remote="", denylist=(), ids=None, projects=None, forge="github")`, `ResidualValueError`, `run`, the CLI unchanged.
 
 Outputs: a fixture file, or exit 2 with one of `unclassified: <path>`, `generic class home_path at <path>`, `deny-list entry <n> at <path>`, `deny-list entry <n>: too short`, `residual <kind> <n> at <path>` (kinds `login`, `host`, `segment`, `id`, `name`, `mailbox`), `unknown host at <path>`, `public address at <path>`, `unknown mailbox at <path>`, `needle <kind> <n>: too short`, `needle <kind> <n>: a class word or placeholder`, `synthetic user id <n> past 1999`, `synthetic project id <n> past 2999`, `refusing to write a fixture carrying <n> secret-shaped value(s)` on stderr, stdout empty. `generic class mailbox`, `generic class public_ipv4` and `unredacted host` are no longer written by anything.
 
@@ -1239,9 +1255,9 @@ a row to edit. One recording against PR #316 (C3) closes the pass.
 ### Edge cases
 
 Every edge case of 0.8–0.16 is a row of the acceptance corpus or of
-`tests/unit/test_forge_recording_regression_corpus.py` (which stays,
-unchanged, until the implementer folds it into the acceptance corpus in
-the same pass: its rows are the acceptance rows prefixed `reg_`). New at
+`tests/unit/test_forge_recording_regression_corpus.py` (folded into the
+acceptance corpus and deleted in the 0.17 pass: its rows are the
+acceptance rows prefixed `reg_`). New at
 0.17, each a row: a private host in a quoted or spaced assignment in Go,
 JS, TS, Python, TOML, YAML (single-quoted or bare), PHP, Ruby, CSS
 `url( … )`, a JS template literal, an HTML attribute with spaces, a diff
@@ -1291,31 +1307,31 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 | `::test_userinfo_class_accepts_shell_variables` (0.17) | D1b: `${VAR}` and `$VAR` userinfo stripped, no corruption | drop `${}` from the class |
 | `::test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_recorder` (0.17) | D4: `redact_fixture(remote=, denylist=)` builds the same `K` as `record()` on the same exchanges | ignore `remote` |
 | the unchanged 0.6–0.16 tests of `test_forge_recording_redaction.py` not retired in **What 0.17 removes or demotes** | D1, D1c, D2, D5, D6, the deny-list route and opacity, the conformance replay | as at 0.16 |
-| `tests/unit/test_forge_recording_regression_corpus.py` (0.14–0.16) | stays green until folded into the acceptance corpus; its rows are the `reg_*` rows | as at 0.16 |
+| `tests/unit/test_forge_recording_regression_corpus.py` (0.14–0.16) | folded into the acceptance corpus and deleted (0.17): its rows are the `reg_*` rows | as at 0.16 |
 | `tests/unit/test_forge_conformance.py` (existing) | D4, C2 | as at 0.6 |
 
 ## Success conditions
 
-- C1 (oracle: pytest, CI): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_recording_regression_corpus.py tests/unit/test_forge_recording_acceptance_corpus.py tests/unit/test_forge_closure.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → green, the deny-list test by the file route; the acceptance module without its `xfail` mark.
+- C1 (oracle: pytest, CI): `pytest -q tests/unit/test_forge_recording_redaction.py tests/unit/test_forge_recording_acceptance_corpus.py tests/unit/test_forge_closure.py tests/unit/test_forge_conformance.py tests/unit/test_review_gate_forge_parity.py` → green, the deny-list test by the file route; the acceptance module without its `xfail` mark.
 - C2 (oracle: the script and git): `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, exit 0; the rebuild from `7fd31af`'s fixtures (the two hand edits of 0.10 applied first) is byte-identical to the branch's, a second run changes 0 files; `git grep -o -E 'https?://([a-z0-9.-]+\.)?(github|gitlab)\.com' -- tests/fixtures/forge` → empty but `docs.*`.
 - C3 (oracle: the script, by the implementer, output written beside AC5): the six read methods of 0.11 against repoachhq/repoach PR #316 (`--trim 5`, `--cwd` the checkout, the deny-list by the file route), each exit 0, 0 real-value hits in the six files, measured with the maintainer's own deny-list and reported as counts.
 
 ## Acceptance Criteria
 
-- [ ] AC1: the acceptance corpus passes, live and offline, with its `xfail` mark removed (`pytest -q tests/unit/test_forge_recording_acceptance_corpus.py` → `1 passed`); no row edited; the counts (rows, planted, ordinary, by source) written here by the implementer.
-- [ ] AC2: the oracle independence test passes (`test_the_oracle_shares_no_code_object_with_the_redactor`).
-- [ ] AC3: a mutation run on `src/repoach/forge/closure.py` — every line of every reader and every set mutated by the operator classes of `tmp/r9/mutate.py` (constant, boundary, negation, deletion, set membership), run in a detached worktree with a verified green baseline, strict kill = rc 1 plus a `FAILED` line — leaves **0 non-equivalent survivors**; each equivalent survivor named with its proof; log written under `tmp/r11/mutate.log` and summarised here.
-- [ ] AC4: C1 green; C2 with the rebuild byte-identical; C3 (live PR #316, `--trim 5`) green; figures written here with their commands.
-- [ ] AC5: the full unit suite (`tmp/r6/clean_env.sh .venv/bin/python -m pytest -q tests/unit`), `ruff check`, `ruff format --check` (`python -P -m ruff`, the pinned version) and `repoach arch check --base origin/develop` → green, `edge-honesty: ok`, the cycle and conflict lines identical to `origin/develop`'s.
-- [ ] AC6: every symbol of **What 0.17 removes or demotes** marked delete is absent from `src/` and `scripts/` (`git grep -n <symbol>` → 0), every retired test named in its deleting commit, and no new regex of `recording.py` or the scripts recognises a `//`, `glab api` or mailbox shape for safety.
-- [ ] AC7: `docs/security_posture.md` states D7, D8, D9 and the deletion in its own `docs(security)` commit; the spec is bumped once, in one `docs(specs)` commit.
+- [ ] AC1: the acceptance corpus passes, live and offline, with its `xfail` mark removed (`pytest -q tests/unit/test_forge_recording_acceptance_corpus.py` → `1 passed`); no row edited; the counts (rows, planted, ordinary, by source) written here by the implementer. Counts (implementer, 2026-11-22): 569 rows = 420 planted (a marker, or a refusal) + 149 ordinary = 518 written + 51 refused; by source 260 `reg_*` rows of the folded regression corpus (202 planted, 51 ordinary, 7 offline), 139 round-10 probes, 170 generated along the 0.17 axes. Measured at the branch head: 558 rows pass live and offline and 11 differ, the mark is removed and the test is red on those 11 and on nothing else: `reg_dropped_key_assignees_login_redacted`, `reg_dropped_key_mergedby_login_redacted`, `name_user_object_name_dropped_and_prose_word`, `email_dropped_key_local_part_in_prose` and `pid_known_repository_id_in_prose_replaced_by_synthetic` (the offline leg expects the transform to learn a value that only a key the fixture drops carries, which `_live_only_values` of the harness does not see), `reg_r10_prose_double_slash_host_known_from_remote_is_replaced_as_a_token` (expects `v1.js` replaced where `r10_i1_item3_proto_rel_host_from_remote` and `g_private_known_proto_rel_*`, same shape, expect it kept) and `r10_p22`, `r10_p23`, `r10_p25`, `r10_p26`, `r10_p27` (expect the 0.16 rewriting of a `//host/<ns>/<repo>/<path>` to `/org/project`, where D1b and rows `r10_a_proto_rel_*` keep the path). None is edited; the owner decides.
+- [x] AC2: the oracle independence test passes (`test_the_oracle_shares_no_code_object_with_the_redactor`).
+- [x] AC3: a mutation run on `src/repoach/forge/closure.py` — every line of every reader and every set mutated by the operator classes of `tmp/r9/mutate.py` (constant, boundary, negation, deletion, set membership), run in a detached worktree with a verified green baseline, strict kill = rc 1 plus a `FAILED` line — leaves **0 non-equivalent survivors**; each equivalent survivor named with its proof; log written under `tmp/r11/mutate.log` and summarised here. Measured (implementer, `tmp/impl017/mutate.py`, seven detached worktrees, baseline green, kill = rc 1 plus a failure line): `closure.py` 1 220 sites, 1 176 killed, 21 mutants that cannot import, 15 equivalent survivors (14 country codes of `_ISO_COUNTRY_CODES` that are also in `EXTENSION_TLDS` and are subtracted anyway, and `_LEGACY_NODE_MAX` 40 to 41, which the `len % 4 == 1` alignment trims back to 40; each proved by comparing every public constant and the outputs of every reader on 4 000 and more inputs), 0 non-equivalent survivors; the functions this pass changed in `recording.py` (637 sites, 632 killed, 3 import failures), `record_forge_fixture.py` (184 sites, 182 killed) and `redact_forge_fixtures.py` (189 sites, 185 killed, 4 mutants of the next-word search that never terminate) leave 0. The same operator classes, applied by the AST tool `tmp/impl017/mutate.py` (comparison, boolean, negation removal, constants, literal elements, method swaps, dropped calls and `continue`).
+- [ ] AC4: C1 green; C2 with the rebuild byte-identical; C3 (live PR #316, `--trim 5`) green; figures written here with their commands. Measured: C2 `scripts/redact_forge_fixtures.py --check` → `forge fixtures: 0 would change`, the rebuild from `origin/develop` with the two hand edits is byte-identical (0 diff lines, a second run changes 0 files), `git grep` for a forge host in `tests/fixtures/forge` → 0; C3 the six methods exit 0, 0 real-value hits in the six files and the six stderr files (38 deny-list entries loaded); C1 is red on the acceptance corpus's 11 rows only (AC1).
+- [ ] AC5: the full unit suite (`tmp/r6/clean_env.sh .venv/bin/python -m pytest -q tests/unit`), `ruff check`, `ruff format --check` (`python -P -m ruff`, the pinned version) and `repoach arch check --base origin/develop` → green, `edge-honesty: ok`, the cycle and conflict lines identical to `origin/develop`'s. Measured: `tmp/r6/clean_env.sh` full `tests/unit -n 4` → 4 704 passed, 64 skipped, 1 failed (`test_acceptance_corpus_live_and_offline`, the 11 rows of AC1); `ruff check` and `ruff format --check` (`python -P -m ruff` 0.15.4) clean; `repoach arch check --base origin/develop` rc 0, `edge-honesty: ok`; `repoach arch graph --check` 27 cycles and 5 conflicts, the same lines as `origin/develop` once `closure.py` leaves this spec's `owns.code` (it sat under SP-UNIVERSAL-FORGE's directory, a sixth conflict).
+- [x] AC6: every symbol of **What 0.17 removes or demotes** marked delete is absent from `src/` and `scripts/` (`git grep -n <symbol>` → 0), every retired test named in its deleting commit, and no new regex of `recording.py` or the scripts recognises a `//`, `glab api` or mailbox shape for safety.
+- [x] AC7: `docs/security_posture.md` states D7, D8, D9 and the deletion in its own `docs(security)` commit; the spec is bumped once, in one `docs(specs)` commit.
 
 ## Architecture Impact
 
-- Adds module: `src/repoach/forge/closure.py` (owned by this spec; imports the standard library only).
+- Adds module: `src/repoach/forge/closure.py` (under the `src/repoach/forge/` directory SP-UNIVERSAL-FORGE owns, so it is not listed in this spec's `owns.code`, which the architecture gate would report as a second owner; tested by this spec; imports the standard library only).
 - Adds dependency: `src/repoach/forge/recording.py` → `src/repoach/forge/closure.py` (D7 source 3, the placeholder and public predicates). The reverse edge is forbidden by test (AC2).
 - Removes coupling: the recorder script no longer carries the gate's `mailbox` and `public_ipv4` copies (two of the three 0.8 copies); `HOME_PATH_RE` and the documentation-domain list remain, the latter now in `closure.py`.
-- Cycles and ownership conflicts: unchanged (27 and 5 at 0.16, re-measured under AC5).
+- Cycles and ownership conflicts: unchanged (27 and 5 at `origin/develop` `8ee2c38`, re-measured under AC5: the same lines).
 
 ## Diagram
 
@@ -1334,6 +1350,6 @@ flowchart LR
 ## Open Questions
 
 - O1, O2, Q1–Q4 (0.6–0.10): resolved as recorded at 0.16.
-- Q5 (0.17, owner): SP-NO-PERSONAL-DATA-GATE D1's documentation-domain rule, copied here, accepts `example.com` exactly and `.example` suffixes; the recorder's noreply placeholders `author@users.noreply.forge.example.com` / `bot@…` / `noreply@forge.example.com` are on `forge.example.com`, which that rule does not accept. Either the gate adds `forge.example.com` and its subdomains to its documentation domains when it lands, or the placeholders move to `author@users.noreply.example.com`. The oracle treats the four placeholders as literals meanwhile (D8).
-- Q6 (0.17, owner): `HOST_TLDS` is an explicit list (ISO 3166-1 alpha-2 plus the generic TLDs named in D8). The alternative is the full IANA root zone (about 1 500 entries) committed as a data file and refreshed by hand; it would catch a self-hosted forge on an exotic new TLD cited un-led, at the cost of a file to maintain. Default if unanswered: the explicit list; an exotic-TLD host is learnt when led or structured.
-- Q7 (0.17, owner): D9's threshold is five digits, so a self-hosted project id below 10 000 cited only in text is written (NG4-6). Lowering it to four digits refuses or rewrites every `projects/<year>/…` path of 2020–2030 (R8-D2, the round-8 over-refusal). Default if unanswered: five.
+- Q5 (0.17, owner, resolved 2026-11-22): the placeholders stay on `forge.example.com`, and SP-NO-PERSONAL-DATA-GATE will accept `example.com` and all its subdomains (RFC 2606). The question as asked: SP-NO-PERSONAL-DATA-GATE D1's documentation-domain rule, copied here, accepts `example.com` exactly and `.example` suffixes; the recorder's noreply placeholders `author@users.noreply.forge.example.com` / `bot@…` / `noreply@forge.example.com` are on `forge.example.com`, which that rule does not accept. Either the gate adds `forge.example.com` and its subdomains to its documentation domains when it lands, or the placeholders move to `author@users.noreply.example.com`. The oracle treats the four placeholders as literals meanwhile (D8).
+- Q6 (0.17, owner, resolved 2026-11-22: the explicit list): `HOST_TLDS` is an explicit list (ISO 3166-1 alpha-2 plus the generic TLDs named in D8). The alternative is the full IANA root zone (about 1 500 entries) committed as a data file and refreshed by hand; it would catch a self-hosted forge on an exotic new TLD cited un-led, at the cost of a file to maintain. Default if unanswered: the explicit list; an exotic-TLD host is learnt when led or structured.
+- Q7 (0.17, owner, resolved 2026-11-22: five digits): D9's threshold is five digits, so a self-hosted project id below 10 000 cited only in text is written (NG4-6). Lowering it to four digits refuses or rewrites every `projects/<year>/…` path of 2020–2030 (R8-D2, the round-8 over-refusal). Default if unanswered: five.
