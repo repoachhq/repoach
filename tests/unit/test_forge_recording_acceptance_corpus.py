@@ -19,8 +19,6 @@ generated along the 0.17 axes (host class, position, syntactic carrier,
 ordinary code in eight languages). Values are synthetic.
 
 The corpus is frozen: a row is never edited to match an implementation.
-The module is ``xfail(strict=True)`` until 0.17 lands; the implementer
-removes the mark (0.17 AC1).
 """
 
 from __future__ import annotations
@@ -42,10 +40,6 @@ from repoach.forge.github import GitHubForge, comment_from_github
 from repoach.forge.gitlab import GitLabForge, note_to_comment
 from repoach.forge.protocol import Diff, Forge, diff_files
 from repoach.forge.runner import CommandResult
-
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="SP-RECORDER-REDACTS-BY-CLASS 0.17 not implemented"
-)
 
 ROOT = Path(__file__).resolve().parents[2]
 

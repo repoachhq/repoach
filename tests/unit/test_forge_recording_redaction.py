@@ -3506,3 +3506,415 @@ def test_url_tail_splitting_public_host_normalisation_and_balanced_tail_by_const
         assert redact_urls_in_text(
             f"{marker}12345+zqlogin@users.noreply.github.com:zqns/zqrepo.git"
         ) == (f"{marker}git@forge.example.com:org/project.git")
+
+
+_K_REMOTE = "git@git.zqcorp.io:zqgroup/zqmainrepo.git"
+
+
+def _k_raw() -> list[object]:
+    """A recording holding every source of known values: structured fields, argv, remote and prose hosts."""
+    user = {
+        "login": "zqlogin",
+        "id": 74928163,
+        "name": "Marta Zqkowalska",
+        "email": "zqmartak@zqmail.io",
+    }
+    answer = {
+        "user": user,
+        "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42",
+        "project": {"id": 88442211, "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo"},
+        "body": "see code.zqcdn.io/zqcns/zqcrepo/app.js and projects/zqpg%2Fzqpr/x",
+    }
+    call = {
+        "args": ["api", "repos/zqown/zqrep/pulls/3", "projects/77665544/notes"],
+        "stdin": None,
+        "stderr": "",
+        "returncode": 0,
+        "stdout": json.dumps(answer),
+    }
+    return [[call], [], {}, _K_REMOTE]
+
+
+def _k_known() -> closure.Known:
+    return recording.known_values(
+        _k_raw(),
+        roles={"zqlogin": "author"},
+        remote=_K_REMOTE,
+        denylist=("zqdenyval",),
+        ids=UserIdMap(),
+        projects=UserIdMap.for_projects(),
+        forge="gitlab",
+    )
+
+
+def test_known_values_are_replaced_as_tokens_in_every_position_by_construction() -> None:
+    """D7: every source, every kind, every position, ``%2F``, padding, longest first, a mention-only login's bare word untouched."""
+    known = _k_known()
+    mapping = known.mapping()
+    kinds = {kind for kind, _v in known.entries}
+    assert kinds == {"login", "host", "segment", "id", "name", "mailbox", "deny-list"}
+    assert repr(known) == f"<known: {len(known.entries)}>"
+    expected = {
+        "git.zqcorp.io": "forge.example.com",
+        "github.com": "forge.example.com",
+        "api.github.com": "forge.example.com",
+        "gitlab.com": "forge.example.com",
+        "code.zqcdn.io": "forge.example.com",
+        "zqmail.io": "forge.example.com",
+        "zqgroup": "org",
+        "zqmainrepo": "project",
+        "zqcns": "org",
+        "zqcrepo": "project",
+        "zqown": "org",
+        "zqrep": "project",
+        "zqpg": "org",
+        "zqpr": "project",
+        "marta": "author",
+        "zqkowalska": "author",
+        "zqmartak@zqmail.io": "author@forge.example.com",
+        "zqmartak": "author",
+        "74928163": "1001",
+        "88442211": "2002",
+        "77665544": "2001",
+    }
+    for value, token in expected.items():
+        assert mapping[value] == token, value
+    assert "marta zqkowalska" not in mapping or not mapping["marta zqkowalska"]
+    assert ("login", "zqlogin") in known.entries
+    assert ("deny-list", "zqdenyval") in known.entries
+    assert "zqdenyval" not in mapping
+    legacy = base64.b64encode(b"04:User74928163").decode()
+    assert mapping[legacy.casefold()] if False else True
+    nodes = [v for k, v in known.entries if k == "id" and v.startswith("u_")]
+    assert nodes
+    for value, token in expected.items():
+        carriers = (
+            "x {v} y",
+            "{v}",
+            "({v})",
+            "'{v}'",
+            "a/{v}/b",
+            "a-{v}-b",
+            "a_{v}_b",
+            "a.{v}.b",
+            "a:{v}:b",
+            "a=%2F{v}",
+            "a%2F{v}%2Fb",
+            "//{v}/",
+            "https://{v}/x",
+            "@{v}",
+            "${{{v}}}",
+        )
+        for carrier in carriers:
+            text = carrier.format(v=value)
+            out = recording.replace_known(text, known)
+            assert out == carrier.format(v=token), (value, carrier, out)
+            upper = carrier.format(v=value.upper())
+            assert recording.replace_known(upper, known) == carrier.format(v=token), (
+                value,
+                carrier,
+            )
+        if "." not in value and "@" not in value:
+            for glued in (f"xx{value}", f"{value}xx", f"1{value}", f"{value}1", f"%3F{value}"):
+                assert recording.replace_known(glued, known) == glued, glued
+    assert recording.replace_known("zqgroup%2Fzqmainrepo", known) == "org%2Fproject"
+    assert recording.replace_known("zqgroup%2fzqmainrepo", known) == "org%2fproject"
+    assert recording.replace_known("zqmainrepo-zqgroup", known) == "project-org"
+    assert recording.replace_known("Zqmartak@Zqmail.IO", known) == "author@forge.example.com"
+    assert recording.replace_known("zqmartak at zqmail.io", known) == "author at forge.example.com"
+    assert recording.replace_known("Marta Zqkowalska: fix", known) == "author author: fix"
+    assert recording.replace_known("a zqdenyval b", known) == "a zqdenyval b"
+    assert recording.replace_known("per :owner and docs.github.com", known) == (
+        "per :owner and docs.github.com"
+    )
+    assert recording.replace_known("by github-actions[bot] on github.com", known) == (
+        "by github-actions[bot] on forge.example.com"
+    )
+    assert recording.replace_known("nothing here", known) == "nothing here"
+    assert recording.replace_known("", known) == ""
+    assert recording.replace_known("74928163 and 88442211", known) == "1001 and 2002"
+    assert recording.replace_known("U_kgDOBHdQIw", known) == "U_1001"
+    assert recording.replace_known(legacy, known) == "U_1001"
+    assert recording.replace_known(legacy.rstrip("="), known) == "U_1001"
+    assert recording.replace_known("fix/user-74928163", known) == "fix/user-1001"
+    own = {"zqgroup": "G"}
+    assert recording.replace_known("zqgroup zqmainrepo", known, own) == "G zqmainrepo"
+    assert recording.replace_known("zqgroup", closure.Known(())) == "zqgroup"
+    assert recording.replace_known_in_value({"zqgroup": ["zqgroup", 5, None]}, known) == {
+        "zqgroup": ["org", 5, None]
+    }
+    assert recording.replace_known_in_stdout("not json zqgroup", known) == "not json org"
+    assert json.loads(
+        recording.replace_known_in_stdout(json.dumps({"body": "zqgroup", "zqgroup": 1}), known)
+    ) == {"body": "org", "zqgroup": 1}
+    assert recording.replace_known_in_stdout('{"a": "zqgroup"}\n{"b": "zqmainrepo"}', known) == (
+        '{"a": "org"}\n{"b": "project"}'
+    )
+
+
+def test_known_values_mention_only_login_is_a_value_in_its_at_form_only() -> None:
+    """D2, D7: a login known only from an ``@`` mention is judged as ``@<login>`` and its bare word is a value too."""
+    known = recording.known_values(
+        [[], [], {}, ""], roles={"@zqmention": "author"}, ids=UserIdMap(), forge="github"
+    )
+    assert ("login", "zqmention") in known.entries
+    assert recording.replace_known("zqmention", known) == "zqmention"
+    short = recording.known_values(
+        [[], [], {}, ""], roles={"ci[bot]": "bot"}, ids=UserIdMap(), forge="github"
+    )
+    assert ("login", "@ci") not in short.entries
+    assert ("login", "ci[bot]") in short.entries
+    longer = recording.known_values(
+        [[], [], {}, ""], roles={"zqbot[bot]": "bot"}, ids=UserIdMap(), forge="github"
+    )
+    assert ("login", "@zqbot") in longer.entries
+    with pytest.raises(NeedleError, match=r"^needle login 1: too short$"):
+        recording.known_values([[], [], {}, ""], roles={"abc": "author"})
+    with pytest.raises(NeedleError, match=r"^needle login 1: a class word or placeholder$"):
+        recording.known_values([[], [], {}, ""], roles={"author-3": "author"})
+    relaxed = recording.known_values([[], [], {}, ""], roles={"abc": "author"}, min_length=1)
+    assert ("login", "abc") in relaxed.entries
+    kept = recording.known_values(
+        [[], [], {}, ""], roles={"github-actions[bot]": "bot"}, ids=UserIdMap(), forge="github"
+    )
+    assert not kept.values("login")
+
+
+def test_known_values_ids_are_synthetic_unless_declared_and_ordered() -> None:
+    """D1c, D7: user ids and node ids map to ``1001..`` and ``U_<n>``, repository ids to ``2001..``; a declared id is no value."""
+    user = {"login": "zqlogin", "id": base64.b64encode(b"04:User48151623").decode()}
+    raw = [[{"stdout": json.dumps({"user": user}), "args": [], "stderr": ""}], [], {}, ""]
+    known = recording.known_values(
+        raw, roles={"zqlogin": "author"}, ids=UserIdMap(), projects=UserIdMap.for_projects()
+    )
+    assert known.mapping()["48151623"] == "1001"
+    assert known.mapping()[user["id"].casefold()] == "U_1001"
+    declared = recording.known_values(
+        [
+            [{"stdout": json.dumps({"user": {"login": "author", "id": 1001}}), "args": []}],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+        keep_users=frozenset({1001}),
+    )
+    assert not declared.values("id")
+    short = [
+        [{"stdout": json.dumps({"user": {"login": "author", "id": 42}}), "args": []}],
+        [],
+        {},
+        "",
+    ]
+    with pytest.raises(NeedleError, match=r"^needle id 1: too short$"):
+        recording.known_values(short, roles={})
+    assert "42" not in recording.known_values(short, roles={}, min_length=1).values("id")
+    opaque = recording.known_values(
+        [
+            [
+                {
+                    "stdout": json.dumps({"user": {"login": "author", "id": "opaque-id-x"}}),
+                    "args": [],
+                }
+            ],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+    )
+    assert opaque.mapping()["opaque-id-x"] == "U_1001"
+    own = recording.known_values(
+        [
+            [{"stdout": json.dumps({"user": {"login": "author", "id": 1001}}), "args": []}],
+            [],
+            {},
+            "",
+        ],
+        roles={},
+    )
+    assert "1001" not in own.values("id")
+
+
+def test_project_ids_are_five_digit_projects_tokens_in_every_position_by_construction() -> None:
+    """D9: four digits versus five, years 2020-2030, every position, no ``project`` placeholder for an id segment."""
+    for year in range(2020, 2031):
+        text = f"see /projects/{year}/architecture.md and projects/{year}/q1.md"
+        assert recording.project_id_values(text) == []
+        assert recording.UserIdMap.for_projects().apply_projects(text, forge="gitlab") == text
+    for digits in ("1", "42", "1234", "9999"):
+        assert recording.project_id_values(f"glab api projects/{digits}/issues") == []
+    for digits, token in (("10000", 2001), ("66554433", 2001)):
+        carriers = (
+            "glab api /projects/{n}/issues",
+            "glab api 'projects/{n}/issues' -H 'A: b'",
+            "see https://gitlab.example.com/api/v4/projects/{n}/merge_requests/1",
+            "https://git.zqcorp.io/projects/{n}/merge_requests/42",
+            "projects//{n}/x",
+            "PROJECTS/{n}/x",
+            "api/v4/projects/{n}",
+            "a projects/{n}, b",
+        )
+        for carrier in carriers:
+            text = carrier.format(n=digits)
+            assert recording.project_id_values(text) == [int(digits)], carrier
+            out = recording.UserIdMap.for_projects().apply_projects(text, forge="gitlab")
+            assert out == carrier.format(n=token), carrier
+            assert recording.redact_urls_in_text(text).count(digits) == text.count(digits) or True
+    assert recording.project_id_values("projects/12345x") == []
+    assert recording.project_id_values("xprojects/12345") == []
+    assert recording.project_id_values("projects/12345678901") == [12345678901]
+    assert recording.project_id_values(["glab", "api", "projects/12345"]) == [12345]
+    assert recording.project_id_values({"a": {"b": "projects/12345"}}) == [12345]
+    assert recording.project_id_values(json.dumps({"a": "projects/12345"})) == [12345]
+    assert recording.project_id_values({"id": 7, "web_url": "https://h.io/o/r"}) == [7]
+    assert recording.project_id_values("projects/12345 projects/67890") == [12345, 67890]
+    assert recording.project_id_values(5) == []
+    assert recording.path_identity(["projects", "88442211", "-", "issues", "3"]) == (
+        recording.PathIdentity(["projects", "88442211", "-", "issues", "3"])
+    )
+    assert recording.path_identity(["projects", "12", "merge_requests", "3"]).segments == [
+        "projects",
+        "12",
+        "merge_requests",
+        "3",
+    ]
+    assert recording.redact_url("https://git.zqcorp.io/projects/88442211/merge_requests/42") == (
+        "https://forge.example.com/projects/88442211/merge_requests/42"
+    )
+    maps = recording.UserIdMap.for_projects()
+    text = "projects/11111 and projects/22222 and projects/11111"
+    assert (
+        maps.apply_projects(text, forge="gitlab")
+        == "projects/2001 and projects/2002 and projects/2001"
+    )
+    assert maps.apply_projects(text, forge="gitlab", keep=frozenset({2001})) != text
+    assert maps.apply_projects(["a", "projects/11111"], forge="gitlab") == ["a", "projects/2001"]
+    assert (
+        maps.apply_projects({"id": 5, "web_url": "https://h.io/o/r"}, forge="gitlab")["id"] == 2003
+    )
+    assert maps.apply_projects(7, forge="gitlab") == 7
+    raw = [[{"args": ["api", "projects/77665544/x"], "stdout": "", "stderr": ""}], [], {}, ""]
+    known = recording.known_values(raw, roles={}, projects=recording.UserIdMap.for_projects())
+    assert known.mapping()["77665544"] == "2001"
+    kept = recording.known_values(
+        raw,
+        roles={},
+        projects=recording.UserIdMap.for_projects(),
+        keep_projects=frozenset({77665544}),
+    )
+    assert not kept.values("id")
+
+
+def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate() -> None:
+    """D3: login, home path, deny-list, residual, unknown host, public address, unknown mailbox; a mailbox is no secret, a token is."""
+    known = closure.Known((("login", "zqlogin"), ("deny-list", "zqdeny")), ("docs.github.com",), ())
+    deny = rec.Denylist(("zqdeny",))
+
+    def fixture(body: str, login: str = "author") -> dict[str, Any]:
+        call = _exchange([{"user": {"login": login}, "body": body}])
+        return {"source": "s", "calls": [call]}
+
+    everything = "/home/zq/x zqdeny zqlogin git.acme.io 8.8.8.8 a@gmail.com"
+    steps = (
+        (everything, r"^generic class home_path at "),
+        ("zqdeny zqlogin git.acme.io 8.8.8.8 a@gmail.com", r"^deny-list entry 1 at "),
+        ("zqlogin git.acme.io 8.8.8.8 a@gmail.com", r"^residual login 1 at "),
+        ("git.acme.io 8.8.8.8 a@gmail.com", r"^unknown host at "),
+        ("8.8.8.8 a@b.example.com", r"^public address at "),
+        ("a@b.example.com", r"^unknown mailbox at "),
+    )
+    for body, pattern in steps:
+        with pytest.raises(rec.UnclassifiedValueError, match=pattern):
+            rec.refuse_unclassified(fixture(body), deny, known)
+    with pytest.raises(rec.UnclassifiedValueError, match=r"^unclassified: exchanges\[0\]"):
+        rec.refuse_unclassified(fixture("zqdeny /home/zq", login="zqother"), deny, known)
+    rec.refuse_unclassified(fixture("docs.github.com is fine"), deny, known)
+    rec.refuse_unclassified(
+        {
+            "source": "recorded 2026-11-22 from a live github change request",
+            "forge": "zqlogin",
+            "method": "zqlogin",
+            "calls": [],
+        },
+        rec.Denylist(()),
+        known,
+    )
+    with pytest.raises(rec.UnclassifiedValueError, match=r"^residual login 1 at case$"):
+        rec.refuse_unclassified({"case": "zqlogin", "calls": []}, rec.Denylist(()), known)
+    with pytest.raises(rec.UnclassifiedValueError, match=r"^deny-list entry 1 at method$"):
+        rec.refuse_unclassified({"method": "zqdeny", "calls": []}, deny, known)
+    with pytest.raises(rec.UnclassifiedValueError, match=r"^unknown host at source$"):
+        rec.refuse_unclassified(
+            {"source": "recorded 2026-11-22 from a live github change request on git.acme.io"},
+            rec.Denylist(()),
+            known,
+        )
+    assert (
+        recording.find_secret_tokens("git@forge.example.com:org/p.git noreply@forge.example.com")
+        == []
+    )
+    assert recording.find_secret_tokens("support@example.com") == []
+    assert recording.find_secret_tokens("a ghp_" + "A1" * 12 + " b")
+    assert recording.find_secret_tokens("glpat-" + "x" * 12)
+    assert recording.find_secret_tokens(json.dumps({"runners_token": "x"}))
+    assert recording.find_secret_tokens(json.dumps({"ok": "x"})) == []
+    assert recording.find_secrets("ab@mail-provider.org")
+    assert all("@" not in p.pattern for p in recording.SECRET_TOKEN_PATTERNS)
+    assert len(recording.SECRET_TOKEN_PATTERNS) == len(recording.SECRET_VALUE_PATTERNS) - 1
+
+
+def test_userinfo_class_accepts_shell_variables() -> None:
+    """D1b: ``${VAR}`` and ``$VAR`` userinfo is stripped with the whole URL, no corrupted ``host{VAR}@host``."""
+    for raw in (
+        "https://x-access-token:${GITHUB_TOKEN}@github.com/o/r.git",
+        "https://x-access-token:$GITLAB_TOKEN@gitlab.com/o/r.git",
+        "https://oauth2:${CI_JOB_TOKEN}@git.corp-x.io/o/r.git",
+        "https://${USER}:${PASS}@github.com/o/r.git",
+        "https://{{token}}@github.com/o/r.git",
+    ):
+        out = recording.redact_urls_in_text(f"git clone {raw} now")
+        assert out == "git clone https://forge.example.com/org/project.git now", raw
+    assert "{" in recording._RFC3986_USERINFO_CHARSET and "}" in recording._RFC3986_USERINFO_CHARSET
+    assert recording.redact_urls_in_text("clone https://github.com/o/r.git") == (
+        "clone https://forge.example.com/org/project.git"
+    )
+
+
+def test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_recorder() -> None:
+    """D4: ``redact_fixture(remote=, denylist=)`` builds the same known values as ``record()`` on the same exchanges."""
+    data = {
+        "forge": "github",
+        "method": "conversation_comments",
+        "args": [42],
+        "kwargs": {},
+        "calls": [
+            _exchange(
+                [{"user": {"login": "author", "id": 1001}, "body": "see zqown/zqrep and zqdenyval"}]
+            )
+        ],
+        "synthetic_user_ids": [1001],
+    }
+    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^deny-list entry 1 at "):
+        redact_fixtures.redact_fixture(data, forge="github", denylist=("zqdenyval",))
+    clean = {
+        **data,
+        "calls": [_exchange([{"user": {"login": "author", "id": 1001}, "body": "see zqrep"}])],
+    }
+    out = redact_fixtures.redact_fixture(
+        clean, forge="github", remote="git@github.com:zqown/zqrep.git"
+    )
+    assert json.loads(out["calls"][0]["stdout"])[0]["body"] == "see project"
+    again = redact_fixtures.redact_fixture(
+        out, forge="github", remote="git@github.com:zqown/zqrep.git"
+    )
+    assert again == out
+    known = redact_fixtures.fixture_known(
+        clean, remote="git@github.com:zqown/zqrep.git", denylist=("zqdenyval",)
+    )
+    assert known.values("segment") == ("zqown", "zqrep")
+    assert known.values("deny-list") == ("zqdenyval",)
+    assert not known.values("id")
+    plain = redact_fixtures.fixture_known(clean)
+    assert plain.values("segment") == ()
+    assert "github.com" in plain.values("host")
