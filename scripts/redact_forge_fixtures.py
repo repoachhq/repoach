@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import itertools
 import json
 import re
 import sys
@@ -191,25 +192,8 @@ def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
     found: dict[str, bool] = {}
 
     def _add(login: str, *, mention: bool) -> None:
-        if not login or is_classified_login(login):
-            return
-        folded = login.casefold()
-        bot_key = (
-            next((k for k in found if k.casefold() == f"{folded}[bot]"), None) if mention else None
-        )
-        if bot_key is not None:
-            if bot_stem(bot_key) is not None:
-                found[login] = False
-            return
-        promoted: list[str] = []
-        if not mention and folded.endswith("[bot]"):
-            stem = folded[:-5]
-            promoted = [k for k, m_only in found.items() if m_only and k.casefold() == stem]
-            for existing in promoted:
-                del found[existing]
-        found[login] = found.get(login, True) and mention
-        if promoted and bot_stem(login) is not None:
-            found[promoted[0]] = False
+        if login and not is_classified_login(login):
+            found[login] = found.get(login, True) and mention
 
     bot = data.get("bot_username")
     if isinstance(bot, str):
@@ -229,7 +213,19 @@ def _unclassified_logins(data: dict[str, object]) -> dict[str, bool]:
                 stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
             elif isinstance(node, list):
                 stack[:0] = list(node)
+    for bot_login in [k for k in found if k.casefold().endswith("[bot]")]:
+        stem = bot_login[:-5].casefold()
+        for k in [k for k, mention_only in found.items() if mention_only and k.casefold() == stem]:
+            if bot_stem(bot_login) is None:
+                del found[k]
+            else:
+                found[k] = False
     return found
+
+
+def _word(kind: str, n: int) -> str:
+    """The class word of the ``n``-th account of ``kind``: ``author``, then ``author-2``."""
+    return kind if n == 1 else f"{kind}-{n}"
 
 
 def legacy_roles(data: dict[str, object]) -> dict[str, str]:
@@ -246,7 +242,7 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
     following = {"author": 2, "service": 1, "bot": 1}
     bot = data.get("bot_username")
     unclassified = _unclassified_logins(data)
-    siblings = {b.casefold(): b for b in unclassified if b.casefold().endswith("[bot]")}
+    siblings = {b.casefold(): b for b in unclassified}
     stems = {
         k: siblings[f"{k.casefold()}[bot]"]
         for k, mention_only in unclassified.items()
@@ -260,12 +256,13 @@ def legacy_roles(data: dict[str, object]) -> dict[str, str]:
                 kind = "service"
             else:
                 kind = "author"
-            while True:
-                n = following[kind]
-                following[kind] = n + 1
-                word = kind if n == 1 else f"{kind}-{n}"
-                if not re.search(rf'"{re.escape(word)}\\*"', text):
-                    break
+            n = next(
+                n
+                for n in itertools.count(following[kind])
+                if not re.search(rf'"{re.escape(_word(kind, n))}\\*"', text)
+            )
+            following[kind] = n + 1
+            word = _word(kind, n)
             roles[MENTION_ONLY_PREFIX + login if mention_only else login] = word
     for stem, bot_login in stems.items():
         roles[stem] = roles[bot_login]
@@ -280,9 +277,9 @@ def _mention_text(text: str, roles: dict[str, str]) -> str:
     """
     rules: list[tuple[re.Pattern[str], str]] = []
     for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
-        mention_only = login.startswith(MENTION_ONLY_PREFIX)
-        rules.append((mention_pattern(login.removeprefix(MENTION_ONLY_PREFIX)), f"@{word}"))
-        if not mention_only:
+        handle = login.removeprefix(MENTION_ONLY_PREFIX)
+        rules.append((mention_pattern(handle), f"@{word}"))
+        if handle == login:
             rules.append((token_pattern(login), word))
             mention_stem = bot_mention_stem(login)
             if mention_stem is not None:
@@ -567,7 +564,8 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
     )
     pending: list[tuple[Path, str]] = []
     entries = deny.needle_values()
-    for (path, text), data in zip(loaded, fixtures, strict=True):
+    for index, (path, text) in enumerate(loaded):
+        data = fixtures[index]
         rel = path.relative_to(root).as_posix()
         try:
             new = redact_fixture(
